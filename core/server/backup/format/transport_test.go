@@ -519,3 +519,21 @@ func TestCancelAllEndsAWatchedTransfer(t *testing.T) {
 		t.Fatal("a shutdown is not a stall")
 	}
 }
+
+// A transfer begun after the stop must be cancelled the moment it is made, not
+// a scheduler tick later: a client that checks its context first would
+// otherwise start real work on a process that is going away.
+func TestATransferBegunAfterCancelAllStartsCancelled(t *testing.T) {
+	t.Cleanup(ResetShutdownForTesting)
+	SetShutdown(context.Background())
+	CancelAll()
+	ctx, w := Watch(context.Background())
+	t.Cleanup(w.Stop)
+	life, cancel := Lifetime(context.Background())
+	t.Cleanup(cancel)
+	for name, c := range map[string]context.Context{"Watch": ctx, "Lifetime": life} {
+		if c.Err() == nil {
+			t.Errorf("%s after CancelAll returned a live context", name)
+		}
+	}
+}

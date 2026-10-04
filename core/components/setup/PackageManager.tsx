@@ -5,6 +5,7 @@ import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { enabledStatusFor } from '@tinycld/core/lib/setup/set-package-enabled'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
@@ -36,6 +37,7 @@ import {
     Text,
     View,
 } from 'react-native'
+import { AutoUpgradeSection } from './AutoUpgradeSection'
 import { shouldAdoptRunningJob } from './adopt-running-job'
 import { PageHeader, SectionLabel, SlugTag } from './console-ui'
 import {
@@ -209,6 +211,8 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                     </>
                 }
             />
+
+            <AutoUpgradeSection pb={pb} isVisible={isVisible} />
 
             <InstallPackageModal
                 isOpen={showInstall}
@@ -519,7 +523,7 @@ function PackageActions({
     })
 
     const handleUninstall = async () => {
-        const response = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/uninstall`, {
+        const response = await serverFetch(`${PB_SERVER_ADDR}/api/admin/packages/uninstall`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1174,7 +1178,7 @@ function InstallPackageModal({
         setSubmitError(null)
         setIsInstalling(true)
         try {
-            const response = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/install`, {
+            const response = await serverFetch(`${PB_SERVER_ADDR}/api/admin/packages/install`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

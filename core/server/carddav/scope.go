@@ -39,7 +39,7 @@ type singleOrgScope struct {
 
 func (s singleOrgScope) book() Book {
 	return Book{
-		Path:        "/carddav/u/ab/" + s.bookSegment + "/",
+		Path:        carddavPrefix + "/u/ab/" + s.bookSegment + "/",
 		Name:        "Contacts",
 		Description: "Contacts",
 	}

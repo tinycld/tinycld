@@ -39,9 +39,9 @@ const (
 	progActivate      = 96
 	progCommit        = 98
 	// The final milestone: the new build is fully assembled and recorded, and the
-	// only thing left is the exit-75 relaunch onto it. Emitting 100 here lets the
-	// bar read "done" before the restart drops the stream; the durable job-status
-	// poll then confirms success across the relaunch.
+	// only thing left is the relaunch onto it. Emitting 100 here lets the bar
+	// read "done" before this process stops and the stream drops; the durable
+	// job-status poll then confirms success across the relaunch.
 	progRestart = 100
 )
 
@@ -59,10 +59,15 @@ type rebuildDeps struct {
 	// production wiring in rebuild() always sets it.
 	verifyCompat func(m RebuildManifest, buildDir string) error
 	pipeline     func(job *installjob.Job, buildDir string) (buildOutput, error)
-	backupDB     func() error
-	restoreDB    func() error
-	syncMig      func(buildDir string) (SyncResult, error)
-	activate     func(buildID string) error
+	// tagLog saves the build id on this job's pkg_install_log row. It runs
+	// before backupDB, so the snapshot a rollback restores carries it too:
+	// the boot reconciler finds the rolled-back build's rows by it whichever
+	// database (snapshot or finalized) is live. Optional (nil-safe).
+	tagLog    func(buildID string) error
+	backupDB  func() error
+	restoreDB func() error
+	syncMig   func(buildDir string) (SyncResult, error)
+	activate  func(buildID string) error
 	// recoverDB re-bootstraps the live app's DB pools after the out-of-band DB
 	// access of backupDB + syncMig, so the post-activate registry/build-record
 	// writes see the real tables. Optional (nil-safe).
@@ -74,8 +79,10 @@ type rebuildDeps struct {
 	commitRegistry func() error
 	prune          func(keep int) error
 	// finalizeLog records the terminal state of the pkg_install_log row the UI
-	// polls (status endpoint). It MUST run before restart() — restart os.Exit's
-	// the process, so a deferred finalize would never fire. Optional (nil-safe).
+	// polls (status endpoint). It MUST run before restart(): without a
+	// supervisor restart os.Exit's the process, and under one the process may
+	// be drained at any moment after, so a deferred finalize might never fire.
+	// Optional (nil-safe).
 	finalizeLog func(status, errMsg string)
 	restart     func()
 }
@@ -123,10 +130,22 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "build", err)
 	}
+	// Tag before the backup: if the new build is rolled back, the boot
+	// reconciler finds this job's row by the build id in whichever database
+	// is then live. Only bookkeeping, so a failure does not stop the rebuild.
+	if d.tagLog != nil {
+		if err := d.tagLog(m.BuildID); err != nil {
+			jobLogf(job, "WARNING: could not save the build id on the install log (a rollback may not mark it): %v", err)
+		}
+	}
 	// From here the DB may change — back it up so we can roll back.
 	emitProgress(job, "Backing up your data", progBackupDB, "Creating SQLite backup")
+	// Every failure from here until activation leaves this process serving, so
+	// each one resumes writes after it has put the database back.
+	resumeWrites := pauseWritesForBackup()
 	if err := timeStep(job, "backup database", d.backupDB); err != nil {
 		_ = os.RemoveAll(buildDir)
+		resumeWrites()
 		return d.fail(job, "backup", err)
 	}
 	emitProgress(job, "Updating your data", progSyncMig, "Reconciling schema to new build")
@@ -140,12 +159,14 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 		jobLogf(job, "migration sync failed — restoring DB backup + discarding build")
 		restore(d)
 		_ = os.RemoveAll(buildDir)
+		resumeWrites()
 		return d.fail(job, "migrate", err)
 	}
 	emitProgress(job, "Switching to the new version", progActivate, "Flipping current symlink")
 	if err := timeStep(job, "activate build", func() error { return d.activate(m.BuildID) }); err != nil {
 		jobLogf(job, "activate failed — restoring DB backup")
 		restore(d)
+		resumeWrites()
 		return d.fail(job, "activate", err)
 	}
 	jobLogf(job, "current symlink now points at build %s", m.BuildID)
@@ -189,7 +210,8 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 	}
 	job.Status = "success"
 	jobLogf(job, "rebuild succeeded in %s — restarting onto build %s", monoSince(rebuildStart), m.BuildID)
-	// Finalize the install log BEFORE restart — restart os.Exit's the process.
+	// Finalize the install log BEFORE restart: without a supervisor the
+	// process exits at once, and under one it may be drained at any moment.
 	if d.finalizeLog != nil {
 		d.finalizeLog("success", "")
 	}
@@ -209,8 +231,9 @@ func restore(d rebuildDeps) {
 		// running live app, whose connection pool holds a now-stale mmap of the old
 		// WAL index — its next write would fail "disk image is malformed". Re-open
 		// the pools so the live process (which keeps serving after a pre-activation
-		// failure) sees the restored DB cleanly. Post-activation failures restore in
-		// the entrypoint instead (different process), so this only matters here.
+		// failure) sees the restored DB cleanly. Post-activation failures are rolled
+		// back by the supervisor once this process has stopped, so this only
+		// matters here.
 		if d.recoverDB != nil {
 			if err := d.recoverDB(); err != nil {
 				srvLog.Error("rebuild: DB reconnect after restore failed", "err", err)
@@ -267,6 +290,7 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installjob.Job, m Re
 		pipeline: func(j *installjob.Job, bd string) (buildOutput, error) {
 			return runBuildPipeline(j, bd, m.BuildID)
 		},
+		tagLog: func(buildID string) error { return tagInstallLog(app, logRecord, buildID) },
 		backupDB: func() error {
 			r, e := backupDatabase(filepath.Join(buildDir, "tinycld"))
 			restoreClosure = r
@@ -342,21 +366,25 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installjob.Job, m Re
 		finalizeLog: func(status, errMsg string) {
 			finalizeInstallLog(app, logRecord, status, errMsg, job.LogLines)
 		},
-		restart: func() {
-			// Arm the surviving data.db.backup as a rollback snapshot BEFORE the
-			// restart. This is the post-activation success path: DOWN migrations
-			// already ran against the live DB and the symlink already flipped, so if
-			// the new binary fails its health probe the entrypoint must restore the
-			// DB (not just the symlink). Arming leaves the backup file in place +
-			// drops a marker the entrypoint commits (deletes) on a healthy boot.
-			armDatabaseBackup(m.BuildID)
-			// Flush all pre-restart writes (install-log finalize, registry mirror)
-			// from the WAL into data.db before the hard os.Exit, or the new binary
-			// reads a data.db missing them.
-			checkpointWAL(app)
-			requestRestart("")
-		},
+		restart: func() { restartOntoBuild(app, m.BuildID, false) },
 	}
+}
+
+// restartOntoBuild is the post-activation success path's restart, and
+// reports whether the restart is under way (see requestRestart).
+func restartOntoBuild(app *pocketbase.PocketBase, buildID string, cold bool) (underway bool) {
+	// Arm the surviving data.db.backup as a rollback snapshot BEFORE the
+	// restart. DOWN migrations already ran against the live DB and the symlink
+	// already flipped, so if the new build never becomes ready the supervisor
+	// must restore the DB (not just the symlink). Arming leaves the backup file
+	// in place + drops a marker the supervisor commits (deletes) once the new
+	// build is ready.
+	armDatabaseBackup(buildID)
+	// Flush all pre-restart writes (install-log finalize, registry mirror)
+	// from the WAL into data.db before the restart, or the new binary reads a
+	// data.db missing them.
+	checkpointWAL(app)
+	return requestRestart(cold)
 }
 
 // logRecipeHashBreadcrumb best-effort computes and logs the build's recipe
@@ -422,7 +450,7 @@ func recordRebuildBuild(app core.App, m RebuildManifest, buildDir string, out bu
 // archive's release dir (buildArchiveFor(buildID).release/native/).
 //
 // This closes a gap in the install pipeline: the pipeline stages native bundles
-// into release-staging/<id>/native/ for the entrypoint's web promote_release, but
+// into release-staging/<id>/native/ for the supervisor's web promote, but
 // /api/app/bundle (serveBuildFile) and the revert/rollback path read from the
 // build archive's release/native/ — which nothing else populates for an install
 // build (only the base seed copies a release dir). Without this step the OTA

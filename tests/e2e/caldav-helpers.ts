@@ -2,10 +2,10 @@ import ICAL from 'ical.js'
 import { TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
 
 // Tests now go through the dev.ts proxy on TEST_EXPO_PORT (see
-// playwright.config.ts), which fans /caldav to the same PB instance the
+// playwright.config.ts), which fans /calendar to the same PB instance the
 // app is talking to. Same-origin via the proxy keeps cookies/auth aligned
 // with the browser context.
-const CALDAV_BASE = `http://127.0.0.1:${process.env.E2E_PORT ?? 7200}/caldav`
+const CALDAV_BASE = 'http://127.0.0.1:7200/calendar'
 
 export interface CalDAVCalendar {
     id: string
@@ -107,7 +107,7 @@ export async function propfindCalendars(): Promise<CalDAVCalendar[]> {
     const responses = parseMultistatusResponses(xml)
 
     return responses.flatMap(r => {
-        const m = /\/caldav\/u\/cal\/([^/]+)\/?$/.exec(r.href)
+        const m = /\/calendar\/u\/cal\/([^/]+)\/?$/.exec(r.href)
         if (!m?.[1]) return []
         return [{ id: m[1], name: r.displayname ?? '', path: r.href }]
     })
@@ -129,7 +129,7 @@ export async function propfindEvents(calendarId: string): Promise<CalDAVEventRef
 
     return responses
         .map(r => {
-            const m = /\/caldav\/u\/cal\/[^/]+\/([^/]+)\.ics$/.exec(r.href)
+            const m = /\/calendar\/u\/cal\/[^/]+\/([^/]+)\.ics$/.exec(r.href)
             if (!m) return null
             return { href: r.href, uid: m[1], etag: r.etag ?? '' }
         })

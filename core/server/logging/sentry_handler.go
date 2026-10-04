@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/getsentry/sentry-go"
@@ -45,10 +46,10 @@ func (h *sentryHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	extra := make(map[string]any, len(h.attrs)+r.NumAttrs())
 	for _, a := range h.attrs {
-		extra[a.Key] = a.Value.Any()
+		extra[a.Key] = sentryValue(a.Value)
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		extra[a.Key] = a.Value.Any()
+		extra[a.Key] = sentryValue(a.Value)
 		return true
 	})
 
@@ -62,6 +63,19 @@ func (h *sentryHandler) Handle(ctx context.Context, r slog.Record) error {
 		hub.CaptureMessage(r.Message)
 	})
 	return nil
+}
+
+// sentryValue is v as the event's JSON should carry it. An error goes as
+// its text: most error values have no exported fields, so they would
+// serialize to {}. fmt, not err.Error(): a typed-nil pointer in the error
+// interface panics in its own Error method, and fmt turns that into "<nil>"
+// (or a PANIC= note) instead of crashing the caller that logged it.
+func sentryValue(v slog.Value) any {
+	a := v.Resolve().Any()
+	if err, ok := a.(error); ok {
+		return fmt.Sprint(err)
+	}
+	return a
 }
 
 func (h *sentryHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

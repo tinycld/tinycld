@@ -1,4 +1,5 @@
 import { originalPositionFor, TraceMap } from '@jridgewell/trace-mapping'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { parse as parseStack } from 'stacktrace-parser'
 
 // Client-side stack symbolication for the web build.
@@ -30,7 +31,7 @@ async function loadMap(mapUrl: string): Promise<TraceMap | null> {
     const cached = mapCache.get(mapUrl)
     if (cached !== undefined) return cached
     try {
-        const res = await fetch(mapUrl)
+        const res = await serverFetch(mapUrl)
         if (!res.ok) {
             mapCache.set(mapUrl, null)
             return null

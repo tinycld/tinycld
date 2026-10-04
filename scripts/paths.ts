@@ -25,22 +25,33 @@ export function goVersion(): string {
     return version
 }
 
-// The gopbs replace line core's go.mod pins (the fork core/server/backup/pbs
-// depends on). A member server module that imports a package importing
-// coreserver needs the same replace in its own go.work, or a standalone build
-// resolves the unforked github.com/osshield/gopbs and fails to compile against
-// it. Read from core's go.mod rather than duplicated here, so bumping the pin
-// in one place (core/server/go.mod) is the whole update — same reasoning as
-// goVersion() above.
-export function gopbsReplace(): string {
+// The forked-dependency replace lines core's go.mod pins. A member server
+// module that imports a package importing coreserver needs the same replaces in
+// its own go.work, or a standalone build resolves the UNFORKED module: for
+// gopbs that fails to compile, and for go-webdav it compiles against upstream's
+// CalDAV server, whose PropPatch stub differs from the fork's — so a member's
+// tests would pass against behaviour the app never runs.
+//
+// Read from core's go.mod rather than duplicated here, so bumping a pin in one
+// place (core/server/go.mod) is the whole update — same reasoning as
+// goVersion() above. Path replaces (the PocketBase fork, the nested
+// backup/format module) are resolved per-member and handled separately.
+const FORKED_DEPS = ['github.com/osshield/gopbs', 'github.com/emersion/go-webdav']
+
+export function forkedReplaces(): string[] {
     const modPath = path.join(APP_DIR, 'core', 'server', 'go.mod')
-    const line = fs
-        .readFileSync(modPath, 'utf8')
-        .match(/^replace\s+github\.com\/osshield\/gopbs\s*=>\s*\S+\s+\S+/m)?.[0]
-    if (!line) {
-        throw new Error(`could not read the gopbs replace from ${modPath}`)
-    }
-    return line
+    const mod = fs.readFileSync(modPath, 'utf8')
+    return FORKED_DEPS.map(dep => {
+        const pattern = new RegExp(
+            `^replace\\s+${dep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=>\\s*\\S+\\s+\\S+`,
+            'm'
+        )
+        const line = mod.match(pattern)?.[0]
+        if (!line) {
+            throw new Error(`could not read the ${dep} replace from ${modPath}`)
+        }
+        return line
+    })
 }
 
 export const GENERATED_DIR = path.join(APP_DIR, 'lib', 'generated')

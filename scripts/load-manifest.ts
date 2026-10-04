@@ -30,91 +30,16 @@ export interface PackageManifest {
     seed?: { script: string }
     tests?: { directory: string }
     build?: { script: string }
-    // mailListeners: this package serves mail protocols. A self-hosted
-    // deployment binds its own ports; where the process is embedded in a
-    // supervisor that owns the public ports, the supervisor injects pre-bound
-    // sockets and Register discovers them through core's embedded-context
-    // seam. Keep in step with core/lib/packages/types.ts.
-    server?: { package: string; module: string; mailListeners?: boolean }
+    server?: { package: string; module: string }
+    // Public TCP ports this package's server code listens on. The supervisor
+    // that holds the public ports binds them once and passes them to each
+    // server process. Keep in step with core/lib/packages/types.ts.
+    ports?: PackagePort[]
     // Go payload package (dir relative to the member root, e.g. 'server/api')
     // holding the exported HTTP request/response structs. The generator emits
     // lib/generated/<slug>-api.ts from it (see scripts/gen-payload-types.ts);
     // TS imports the types as @tinycld/app-generated/<slug>-api.
     payloads?: { package: string }
-    // Protocol capabilities. Core serves these; a package contributes only the
-    // config, so a deployment that links no feature Go still gets the protocol
-    // — the supervisor materializes these blocks into the runtime config dir
-    // and core reads them there. Keep in step with core/lib/packages/types.ts.
-    carddav?: {
-        collection: string
-        listFilter: string
-        sort?: string
-        ownerField: string
-        uidField: string
-        softDeleteField?: string
-        vcard: {
-            version: string
-            name: { given: string; family: string }
-            simple: Record<string, string>
-            revField?: string
-        }
-    }
-    // Storage-bearing collections. core/quota enforces the ceilings from this
-    // as record hooks, so no write path can skip them. A source with no
-    // ownerField counts toward the org ceiling only.
-    quota?: {
-        collection: string
-        sizeField: string
-        ownerField?: string
-    }[]
-    webdav?: {
-        prefix: string
-        collection: string
-        fields: {
-            name: string
-            parent: string
-            isFolder: string
-            size: string
-            file: string
-            owner: string
-            mimeType?: string
-            updated?: string
-        }
-        // Binds the feature's per-user soft-delete state; when set, a DAV
-        // DELETE stamps it instead of destroying the record.
-        trash?: {
-            collection: string
-            itemField: string
-            userField: string
-            trashedAtField: string
-        }
-    }
-    caldav?: {
-        prefix?: string
-        calendarCollection: string
-        eventCollection: string
-        calendar: { name: string; description?: string }
-        event: {
-            calendar: string
-            uid: string
-            owner: string
-            title: string
-            description?: string
-            location?: string
-            start: string
-            end: string
-            allDay?: string
-            recurrence?: string
-            guests?: string
-            reminder?: string
-            busyStatus?: string
-            visibility?: string
-            updated?: string
-            created?: string
-            // Values for required select fields a minimal client payload omits.
-            defaults?: Record<string, string>
-        }
-    }
     // CLI commands this package contributes to the `tinycld` binary.
     // package/module mirror `server` and drive gen-cli.ts. Cobra owns the
     // command list and --help; the package's Go server owns its OAuth scopes.
@@ -156,6 +81,14 @@ export interface PackageManifest {
      * steps are a0 (workspace), a1 (apps), a2 (email), a3 (team).
      */
     setupSteps?: { id: string; label: string; module: string; order?: string }[]
+}
+
+// Keep in step with core/lib/packages/types.ts's PackagePort.
+export interface PackagePort {
+    name: string
+    port: number
+    addrEnv?: string
+    enabled?: { env: string; default: boolean }
 }
 
 // Import a member's manifest.ts (ESM default export). This file is run via tsx,

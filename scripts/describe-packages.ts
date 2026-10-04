@@ -1,7 +1,23 @@
 import { CORE_SLOT_TARGET, CORE_SLOTS } from '../core/lib/setup/core-slots'
 import { isValidOrderKey } from '../core/lib/setup/order'
 import type { ConfigPkg, ConfigSetupStep } from './gen-config'
-import type { PackageManifest } from './load-manifest'
+import type { PackageManifest, PackagePort } from './load-manifest'
+
+// Names the supervisor reserves for the public HTTP(S) listeners it owns
+// itself — a package cannot claim one of these as a port name.
+const RESERVED_PORT_NAMES = new Set(['http', 'https', 'http-redirect'])
+
+// Ports the supervisor itself binds — :80/:443 for the autocert HTTP-01 /
+// HTTPS listeners (core/server/supervise/config.go autocertHTTPAddr /
+// autocertHTTPSAddr), :7090 for its default plain-HTTP listener
+// (defaultHTTPAddr). A package claiming one of these would make the
+// supervisor's own bind collide with — or silently lose to — a package's.
+const RESERVED_SUPERVISOR_PORTS = new Set([80, 443, 7090])
+
+export interface PortsFeature {
+    slug: string
+    ports?: PackagePort[]
+}
 
 export function schemaTypeName(slug: string): string {
     const camel = slug.replace(/-([a-z])/g, (_m, c) => c.toUpperCase())
@@ -170,6 +186,56 @@ export function validateEventSources(pkgs: ConfigPkg[]): void {
                     `[generate] ${p.slug}: eventSource targets '${s.target}', which does not declare eventSourceHost: true. Upgrade '${s.target}' to a version that hosts event sources or drop the contribution.`
                 )
             }
+        }
+    }
+}
+
+/**
+ * Cross-package validation for `ports`. Names and port numbers must be
+ * unique across the whole installed set — the supervisor binds each one
+ * exactly once and looks it up by name, so a collision would make one
+ * package's listener silently win (or bind the wrong socket). Reserved
+ * names belong to the supervisor's own HTTP(S) listeners.
+ */
+export function validatePorts(features: PortsFeature[]): void {
+    const slugByPort = new Map<number, string>()
+    const slugByName = new Map<string, string>()
+    for (const f of features) {
+        for (const p of f.ports ?? []) {
+            if (!Number.isInteger(p.port) || p.port < 1 || p.port > 65535) {
+                throw new Error(
+                    `[generate] ${f.slug}: port '${p.name}' has value ${p.port}, which is outside 1-65535`
+                )
+            }
+            if (!/^[a-z0-9-]+$/.test(p.name)) {
+                throw new Error(
+                    `[generate] ${f.slug}: port name '${p.name}' is invalid — names must match [a-z0-9-]+`
+                )
+            }
+            if (RESERVED_PORT_NAMES.has(p.name)) {
+                throw new Error(
+                    `[generate] ${f.slug}: port name '${p.name}' is reserved for the supervisor's own listener`
+                )
+            }
+            if (RESERVED_SUPERVISOR_PORTS.has(p.port)) {
+                throw new Error(
+                    `[generate] ${f.slug}: port ${p.port} is reserved — the supervisor binds it itself`
+                )
+            }
+            const portOwner = slugByPort.get(p.port)
+            if (portOwner) {
+                throw new Error(
+                    `[generate] port ${p.port} is declared by both '${portOwner}' and '${f.slug}' — each public port must be claimed once`
+                )
+            }
+            slugByPort.set(p.port, f.slug)
+            const nameOwner = slugByName.get(p.name)
+            if (nameOwner) {
+                throw new Error(
+                    `[generate] port name '${p.name}' is declared by both '${nameOwner}' and '${f.slug}' — each name must be unique`
+                )
+            }
+            slugByName.set(p.name, f.slug)
         }
     }
 }

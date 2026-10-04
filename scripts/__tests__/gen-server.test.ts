@@ -7,6 +7,7 @@ import {
     buildGoWork,
     buildMemberGoWork,
     buildPackageExtensionsGo,
+    buildPortsJson,
     replaceSymlink,
     type ServerPkg,
 } from '../gen-server'
@@ -54,13 +55,16 @@ describe('buildGoWork', () => {
 
 const gopbsReplaceLine =
     'replace github.com/osshield/gopbs => github.com/nathanstitt/gopbs v0.0.0-20260929212904-191e2150ab06'
+const webdavReplaceLine =
+    'replace github.com/emersion/go-webdav => github.com/nathanstitt/go-webdav v0.7.1-0.20261001184608-67abd707e045'
+const forkedReplaceLines = [gopbsReplaceLine, webdavReplaceLine]
 
 describe('buildMemberGoWork', () => {
     it('replaces core so a standalone member build resolves it', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
             '../../tinycld/third_party/pocketbase',
-            gopbsReplaceLine
+            forkedReplaceLines
         )
         expect(work).toContain('use .')
         expect(work).toContain('replace tinycld.org/core => ../../tinycld/core/server')
@@ -72,7 +76,7 @@ describe('buildMemberGoWork', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
             '../../tinycld/third_party/pocketbase',
-            gopbsReplaceLine
+            forkedReplaceLines
         )
         expect(work).toContain(
             'replace tinycld.org/core/backup/format v0.0.0 => ../../tinycld/core/server/backup/format'
@@ -85,7 +89,7 @@ describe('buildMemberGoWork', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
             '../../tinycld/third_party/pocketbase',
-            gopbsReplaceLine
+            forkedReplaceLines
         )
         expect(work).toContain(
             'replace github.com/pocketbase/pocketbase => ../../tinycld/third_party/pocketbase'
@@ -99,9 +103,23 @@ describe('buildMemberGoWork', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
             '../../tinycld/third_party/pocketbase',
-            gopbsReplaceLine
+            forkedReplaceLines
         )
         expect(work).toContain(gopbsReplaceLine)
+    })
+
+    // go-webdav is forked for its CalDAV PROPPATCH handling. Unlike gopbs the
+    // unforked module still COMPILES, so a member missing this replace builds
+    // and tests green against a different server than the app ships — the
+    // failure is silent, which is why every forked pin is carried, not just the
+    // ones that break the build.
+    it('carries every forked replace, not only the first', () => {
+        const work = buildMemberGoWork(
+            '../../tinycld/core/server',
+            '../../tinycld/third_party/pocketbase',
+            forkedReplaceLines
+        )
+        expect(work).toContain(webdavReplaceLine)
     })
 })
 
@@ -236,5 +254,47 @@ describe('buildBundledPackages', () => {
             hasServer: true,
             source: 'github:tinycld/tinycld',
         })
+    })
+})
+
+describe('buildPortsJson', () => {
+    it('emits [] when no package declares ports', () => {
+        const json = buildPortsJson([
+            { slug: 'acme', ports: undefined },
+            { slug: 'zeta', ports: [] },
+        ])
+        expect(JSON.parse(json)).toEqual([])
+    })
+
+    it('emits one entry per declared port, sorted by slug then name, omitting unset optional keys', () => {
+        const json = buildPortsJson([
+            {
+                slug: 'zeta',
+                ports: [{ name: 'zeta-sync', port: 2525 }],
+            },
+            {
+                slug: 'acme',
+                ports: [
+                    {
+                        name: 'acme-imap',
+                        port: 993,
+                        addrEnv: 'ACME_IMAP_ADDR',
+                        enabled: { env: 'ACME_IMAP_ENABLED', default: true },
+                    },
+                    { name: 'acme-smtp', port: 465 },
+                ],
+            },
+        ])
+        expect(JSON.parse(json)).toEqual([
+            {
+                slug: 'acme',
+                name: 'acme-imap',
+                port: 993,
+                addrEnv: 'ACME_IMAP_ADDR',
+                enabled: { env: 'ACME_IMAP_ENABLED', default: true },
+            },
+            { slug: 'acme', name: 'acme-smtp', port: 465 },
+            { slug: 'zeta', name: 'zeta-sync', port: 2525 },
+        ])
     })
 })

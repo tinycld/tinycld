@@ -441,6 +441,15 @@ func createInstallLog(app core.App, job *installjob.Job, action string) *core.Re
 	record.Set("status", "running")
 	record.Set("started_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
 
+	trigger := job.Trigger
+	if trigger == "" {
+		trigger = "manual"
+	}
+	record.Set("trigger", trigger)
+	if len(job.Changes) > 0 {
+		record.Set("changes", job.Changes)
+	}
+
 	if err := app.Save(record); err != nil {
 		srvLog.Error("failed to create install log", "err", err)
 		return nil
@@ -459,6 +468,21 @@ func updateInstallLogSlug(app core.App, record *core.Record, slug string) {
 	if err := app.Save(record); err != nil {
 		srvLog.Warn("failed to update install log slug", "recordID", record.Id, "slug", slug, "err", err)
 	}
+}
+
+// tagInstallLog saves the build id on the job's install-log row. It sets it
+// on the record the rebuild holds, not on a fresh copy found by job_id: the
+// finalize saves that same record later, and a copy without the field would
+// write it back empty.
+func tagInstallLog(app core.App, record *core.Record, buildID string) error {
+	if record == nil {
+		return nil
+	}
+	record.Set("build_id", buildID)
+	if err := app.Save(record); err != nil {
+		return fmt.Errorf("coreserver: save build id on install log %s: %w", record.Id, err)
+	}
+	return nil
 }
 
 func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg string, logLines []string) {
@@ -568,4 +592,22 @@ func resolveServerDir() string {
 		return filepath.Join(".", "server")
 	}
 	return dir
+}
+
+// automationDefsFile is the materialized automation catalog the generator
+// writes (scripts/gen-automation.ts).
+const automationDefsFile = "automation_defs.json"
+
+// automationDefsPath is where the generator wrote automation_defs.json for
+// the binary whose dir is serverDir (resolveServerDir()). The generator
+// writes into the app's server/ dir (SERVER_DIR in scripts/paths.ts). The
+// image, bare metal and the in-app rebuild put the binary one level above
+// that dir, at <app>/tinycld; dev builds it into <app>/server/ itself. So the
+// file is in serverDir/server/ when it is there, and in serverDir otherwise.
+func automationDefsPath(serverDir string) string {
+	nested := filepath.Join(serverDir, "server", automationDefsFile)
+	if _, err := os.Stat(nested); err == nil {
+		return nested
+	}
+	return filepath.Join(serverDir, automationDefsFile)
 }

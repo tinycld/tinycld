@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/emersion/go-ical"
 	"github.com/emersion/go-webdav/caldav"
@@ -58,6 +59,24 @@ func (o *observed) CalendarHomeSetPath(ctx context.Context) (string, error) {
 	out, err := o.inner.CalendarHomeSetPath(ctx)
 	o.note(ctx, "CalendarHomeSetPath", err)
 	return out, err
+}
+
+// UpdateCalendar forwards to the inner backend when it accepts PROPPATCH.
+//
+// Declared explicitly rather than inherited: caldav.Backend does not carry
+// UpdateCalendar, so without this the wrapper would hide the inner backend's
+// implementation from the library's CalendarUpdater type assertion and every
+// PROPPATCH would silently report "not implemented" — but only on a deployment
+// that configured an error reporter, since an unwrapped backend keeps its own
+// method.
+func (o *observed) UpdateCalendar(ctx context.Context, path string, update caldav.CalendarUpdate) error {
+	updater, ok := o.inner.(caldav.CalendarUpdater)
+	if !ok {
+		return fmt.Errorf("caldav: backend does not support PROPPATCH")
+	}
+	err := updater.UpdateCalendar(ctx, path, update)
+	o.note(ctx, "UpdateCalendar", err)
+	return err
 }
 
 func (o *observed) CreateCalendar(ctx context.Context, cal *caldav.Calendar) error {

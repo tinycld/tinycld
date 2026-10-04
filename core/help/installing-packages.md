@@ -43,6 +43,13 @@ When you install, update, or remove a package, a progress panel shows each step 
 
 To see the full build output, click **View debug log**. The debug log shows the commands the server ran and the messages they printed. Use it when a step fails. Click **Hide debug log** to go back to the step list.
 
+When the build is done, the server starts the new build next to the old one. The panel shows *Waiting for the server to start the new build…* until the new build answers. Then:
+
+- In a browser, click **Reload** to load the new build in your tab.
+- In the mobile app, the new build loads the next time you open the app.
+
+If the new build does not answer within two minutes, the panel shows **Reload** with a note that the server is still switching. If the reload shows the old build, wait a minute and reload again.
+
 ## Installing a new package
 
 For developers, packages are linked into the app shell with:

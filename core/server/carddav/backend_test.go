@@ -4,9 +4,9 @@ import "testing"
 
 func TestExtractVCardUID(t *testing.T) {
 	cases := []struct{ path, want string }{
-		{"/carddav/u/ab/default/urn:uuid:abc.vcf", "urn:uuid:abc"},
-		{"/carddav/u/ab/default/", ""},
-		{"/carddav/u/ab/default/plain.vcf", "plain"},
+		{"/contacts/u/ab/default/urn:uuid:abc.vcf", "urn:uuid:abc"},
+		{"/contacts/u/ab/default/", ""},
+		{"/contacts/u/ab/default/plain.vcf", "plain"},
 	}
 	for _, tc := range cases {
 		if got := extractVCardUID(tc.path); got != tc.want {
@@ -20,13 +20,13 @@ func TestHasPrefix(t *testing.T) {
 		path string
 		want bool
 	}{
-		{"/carddav", true},
-		{"/carddav/", true},
-		{"/carddav/u/ab/default/", true},
+		{"/contacts", true},
+		{"/contacts/", true},
+		{"/contacts/u/ab/default/", true},
 		{"/.well-known/carddav", true},
 		{"/api/health", false},
 		{"/", false},
-		{"/carddavx", false},
+		{"/contactsx", false},
 	}
 	for _, tc := range cases {
 		if got := HasPrefix(tc.path); got != tc.want {

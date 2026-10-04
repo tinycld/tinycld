@@ -1,5 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import type { PortsFeature } from './describe-packages'
 import type { PackageManifest } from './load-manifest'
 import { goVersion } from './paths'
 import { assertSafeImportField } from './validate-generated-field'
@@ -85,7 +86,7 @@ export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
 export function buildMemberGoWork(
     coreRelPath: string,
     forkRelPath: string,
-    gopbsReplaceLine: string
+    forkedReplaceLines: string[]
 ): string {
     // A member that imports the sobek-forked core must resolve the same fork, or a
     // standalone `go build`/`go test` from <member>/server hits a goja↔sobek
@@ -107,11 +108,12 @@ export function buildMemberGoWork(
         '',
         `replace github.com/pocketbase/pocketbase => ${forkRelPath}`,
         '',
-        // core/server/backup/pbs imports the forked gopbs client; a member whose
-        // server imports coreserver (transitively pulling that package in) needs
-        // the same replace, or a standalone build resolves the unforked module.
-        gopbsReplaceLine,
-        '',
+        // core pins forked dependencies (the gopbs client, go-webdav's DAV
+        // servers); a member whose server imports coreserver — transitively
+        // pulling them in — needs the same replaces, or a standalone build
+        // resolves the unforked module and compiles against different code than
+        // the app ships.
+        ...forkedReplaceLines.flatMap(line => [line, '']),
     ].join('\n')
 }
 
@@ -150,6 +152,25 @@ export function buildBundledPackages(features: BundledPkgInput[]): string {
         manifestJson: JSON.stringify(f.manifest),
         ...(f.source ? { source: f.source } : {}),
     }))
+    return `${JSON.stringify(rows, null, 2)}\n`
+}
+
+export interface PortsEntry {
+    slug: string
+    name: string
+    port: number
+    addrEnv?: string
+    enabled?: { env: string; default: boolean }
+}
+
+// Emit server/ports.json — read by core's Go listeners.ReadPorts at supervisor
+// start. Sorted by slug then name so the file is stable across generator runs
+// (deterministic diffs, no reordering noise in version control of a built
+// image). [] when no installed package declares a port.
+export function buildPortsJson(features: PortsFeature[]): string {
+    const rows: PortsEntry[] = features
+        .flatMap(f => (f.ports ?? []).map(p => ({ slug: f.slug, ...p })))
+        .sort((a, b) => a.slug.localeCompare(b.slug) || a.name.localeCompare(b.name))
     return `${JSON.stringify(rows, null, 2)}\n`
 }
 

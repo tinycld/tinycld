@@ -151,18 +151,17 @@ export interface PackageManifest {
         directory: string
     }
 
-    /**
-     * `mailListeners`: this package serves mail protocols. A self-hosted
-     * deployment binds its own ports; where the process is embedded in a
-     * supervisor that owns the public ports, the supervisor injects pre-bound
-     * sockets and the package's single Register discovers them through core's
-     * embedded-context seam instead of binding anything itself.
-     */
     server?: {
         package: string
         module: string
-        mailListeners?: boolean
     }
+
+    /**
+     * Public TCP ports this package's server code listens on. The supervisor
+     * that holds the public ports binds them once and passes them to each
+     * server process.
+     */
+    ports?: PackagePort[]
 
     /**
      * Go payload package (dir relative to the member root, e.g. 'server/api')
@@ -174,96 +173,6 @@ export interface PackageManifest {
     payloads?: {
         package: string
     }
-
-    /**
-     * Protocol capabilities. Core serves these; a package contributes only the
-     * config, so a deployment that links no feature Go still gets the
-     * protocol — the supervisor materializes these blocks into the runtime
-     * config dir and core reads them there.
-     */
-    carddav?: {
-        collection: string
-        listFilter: string
-        sort?: string
-        ownerField: string
-        uidField: string
-        softDeleteField?: string
-        vcard: {
-            version: string
-            name: { given: string; family: string }
-            simple: Record<string, string>
-            revField?: string
-        }
-    }
-
-    caldav?: {
-        prefix?: string
-        calendarCollection: string
-        eventCollection: string
-        calendar: {
-            name: string
-            description?: string
-        }
-        event: {
-            calendar: string
-            uid: string
-            owner: string
-            title: string
-            description?: string
-            location?: string
-            start: string
-            end: string
-            allDay?: string
-            recurrence?: string
-            guests?: string
-            reminder?: string
-            busyStatus?: string
-            visibility?: string
-            updated?: string
-            created?: string
-            /**
-             * Values for required select fields a minimal client payload
-             * omits (e.g. a bare VEVENT carries neither TRANSP nor CLASS).
-             */
-            defaults?: Record<string, string>
-        }
-    }
-
-    webdav?: {
-        prefix: string
-        collection: string
-        fields: {
-            name: string
-            parent: string
-            isFolder: string
-            size: string
-            file: string
-            owner: string
-            mimeType?: string
-            updated?: string
-        }
-        /**
-         * Binds the feature's per-user soft-delete state; when set, a DAV
-         * DELETE stamps it instead of destroying the record.
-         */
-        trash?: {
-            collection: string
-            itemField: string
-            userField: string
-            trashedAtField: string
-        }
-    }
-
-    /**
-     * Storage-bearing collections. core/quota enforces the ceilings from this
-     * as record hooks, so no write path can skip them. A source with no
-     * ownerField counts toward the org ceiling only.
-     */
-    quota?: {
-        collection: string
-        sizeField: string
-        ownerField?: string
-    }[]
 
     /**
      * Command-line commands this package contributes to the `tinycld` binary.
@@ -363,4 +272,17 @@ export interface PackageManifest {
      * steps are a0 (workspace), a1 (apps), a2 (email), a3 (team).
      */
     setupSteps?: { id: string; label: string; module: string; order?: string }[]
+}
+
+export interface PackagePort {
+    /** Stable name the server code asks for, e.g. 'acme-sync'. [a-z0-9-]+ */
+    name: string
+    port: number
+    /** Env var that overrides the listen address (host:port). */
+    addrEnv?: string
+    /**
+     * Env var that turns the port on or off. default true: on unless the var
+     * is 'false'; default false: on only if the var is 'true'.
+     */
+    enabled?: { env: string; default: boolean }
 }

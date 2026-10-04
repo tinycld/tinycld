@@ -182,3 +182,37 @@ func TestUnsubscribe_StopsDelivery(t *testing.T) {
 	default:
 	}
 }
+
+// A process that asked to be replaced keeps serving until it is stopped. No
+// job may start in that time: it would work on data and a build that the
+// next process already owns.
+func TestHoldForReplacement_RefusesEveryLaterClaim(t *testing.T) {
+	t.Cleanup(ResetForTesting)
+	ResetForTesting()
+
+	restarting := New("install", "acme", "")
+	if _, ok := Claim(restarting); !ok {
+		t.Fatal("claim on an idle interlock lost")
+	}
+	HoldForReplacement()
+	Release(restarting)
+
+	busy, ok := Claim(New("backup", "", ""))
+	if ok || busy != restarting {
+		t.Fatalf("Claim after HoldForReplacement = %v %v, want the held job and false", busy, ok)
+	}
+	if !Running() {
+		t.Fatal("Running() false while held")
+	}
+}
+
+func TestHoldForReplacement_WithNoJobStillRefuses(t *testing.T) {
+	t.Cleanup(ResetForTesting)
+	ResetForTesting()
+
+	HoldForReplacement()
+	busy, ok := Claim(New("backup", "", ""))
+	if ok || busy == nil {
+		t.Fatalf("Claim = %v %v, want a busy job and false", busy, ok)
+	}
+}

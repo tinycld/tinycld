@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,10 +22,11 @@ import (
 	"tinycld.org/core/backup/repo"
 	"tinycld.org/core/installjob"
 	"tinycld.org/core/notify"
+	"tinycld.org/core/readonly"
 )
 
 // Rebuilder turns an archive's lockfile into a binary that carries exactly that
-// package set, and ends the process so the supervisor launches the new one. A
+// package set, and asks for this process to be replaced by one running it. A
 // deployment that cannot rebuild itself registers nothing, and a restore of a
 // different package set is refused instead.
 //
@@ -33,9 +35,22 @@ import (
 // backup and staged the whole archive; releasing first left a window in which an
 // install could claim the interlock and the rebuilder would get ErrBusy, throwing
 // all of that away. From the call onward the rebuilder OWNS the job and is
-// responsible for releasing it — on success it never returns (the process ends),
-// and on error it must release before returning.
+// responsible for releasing it: on error it must release before returning.
+//
+// A rebuilder that succeeds ends in one of three ways, and releases the job
+// in each one that returns:
+//   - ErrRestartUnderway: a supervisor will stop this process later.
+//   - It never returns: without a supervisor the process exits at once.
+//   - nil: it built and activated the binary, but nothing will restart this
+//     process (a dev-mode server). The staged restore is then still
+//     unapplied, and runRestore records that a restart is owed.
 type Rebuilder func(ctx context.Context, job *installjob.Job, lockfile format.Lockfile) error
+
+// ErrRestartUnderway is what a Rebuilder returns when it succeeded and the
+// process will be stopped and replaced later rather than ending now. It is
+// not a failure: the restore stays behind the maintenance 503 until this
+// process is gone, as it does while any restart is on its way.
+var ErrRestartUnderway = errors.New("backup: restart under way")
 
 var (
 	rebuilderMu sync.RWMutex
@@ -54,12 +69,13 @@ func HasRebuilder() bool {
 	return rebuilder != nil
 }
 
-// restartFn ends the process so the supervisor relaunches it onto the staged
-// data. It is a seam rather than an os.Exit so the package's own tests can
-// observe the request instead of killing the test binary.
+// restartFn asks for this process to be replaced by one that boots onto the
+// staged data: a supervisor drains it later, or, without one, it exits at once.
+// It is a seam rather than a direct call so the package's own tests can observe
+// the request instead of killing the test binary.
 //
-// It REPORTS whether it will restart. A composition that cannot end the process
-// — a dev-mode server, which has no supervisor to relaunch it — must say so,
+// It REPORTS whether it will restart. A composition that cannot be replaced
+// — a dev-mode server, which has nothing to relaunch it — must say so,
 // because the restore's own state depends on the answer: a restore that returns
 // believing the process is on its way out leaves `restoring` set, and every
 // request after it meets the maintenance 503 with nothing coming to clear it.
@@ -69,8 +85,8 @@ var (
 	restarted bool
 )
 
-// SetRestart names the function that ends the process so the supervisor
-// relaunches it. It returns false when it will NOT restart, so the restore can
+// SetRestart names the function that asks for this process to be replaced.
+// It returns false when it will NOT restart, so the restore can
 // leave the deployment serving instead of waiting behind the 503 forever.
 func SetRestart(fn func() (restarted bool)) {
 	restartMu.Lock()
@@ -155,12 +171,19 @@ func SwapSource(jobID, url string) error {
 
 // StartRestore inserts the ledger row and restores on a goroutine, so an HTTP
 // caller gets an id rather than holding a connection open for the transfer.
+//
+// Like Start, the restore is tracked against app so StopAll can hold the app
+// open until its last write.
 func StartRestore(app core.App, req RestoreRequest) (string, error) {
-	row, job, err := beginRestore(app, req)
+	finished, err := trackRun(app)
 	if err != nil {
 		return "", err
 	}
-	finished := watchRestore()
+	row, job, err := beginRestore(app, req)
+	if err != nil {
+		finished()
+		return "", err
+	}
 	go func() {
 		defer finished()
 		_ = runRestore(app, req, row, job)
@@ -171,13 +194,19 @@ func StartRestore(app core.App, req RestoreRequest) (string, error) {
 // Restore is StartRestore without the goroutine: it returns once the archive is
 // staged and the rebuild or restart has been asked for.
 //
-// No HTTP handler may use it. Phase 6 ends the process, so a handler that ran a
-// restore synchronously would never write its response: the caller would see a
+// No HTTP handler may use it. Phase 6 can end the process at once (a restart
+// without a supervisor exits), so a handler that ran a restore synchronously
+// might never write its response: the caller would see a
 // dropped connection and no job id to poll, which is the only thing that survives
 // the restart. It is here for callers that ARE the process's last act — the
 // package's own tests, which stub the restart seam, and an embedder driving a
 // restore from outside the HTTP surface.
 func Restore(app core.App, req RestoreRequest) (string, error) {
+	finished, err := trackRun(app)
+	if err != nil {
+		return "", err
+	}
+	defer finished()
 	row, job, err := beginRestore(app, req)
 	if err != nil {
 		return "", err
@@ -224,11 +253,13 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	defer release()
 
 	// The source is closed the same guarded way as the interlock, and for a
-	// harder reason: phase 6 ENDS THE PROCESS. A rebuilder that succeeds never
-	// returns, and requestRestart is an os.Exit in every real composition, so a
-	// deferred close alone never runs in production. An uploaded archive's Close
-	// is what removes its spool file, so the spool leaked on every restore that
-	// worked — the whole organization, left in restore/upload, for good.
+	// harder reason: phase 6 leads to the end of the process. A rebuilder that
+	// succeeds either never returns (requestRestart exits) or returns
+	// ErrRestartUnderway while a supervisor stops this process at a moment of
+	// its choosing, so a deferred close alone cannot be relied on to run. An
+	// uploaded archive's Close is what removes its spool file, so the spool
+	// leaked on every restore that worked — the whole organization, left in
+	// restore/upload, for good.
 	//
 	// Closing early is safe because the archive has already been staged into
 	// pending/ by then. The boot swap reads the staged copy; nothing after
@@ -248,15 +279,23 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	}
 	defer closeSource()
 
-	if aerr := audit.Log(app, "restore.started", "backup", id, "restore", req.Request, nil); aerr != nil {
-		log.Warn("could not audit the start of a restore", "id", id, "err", aerr)
-	}
-
 	// manifest is a pointer so "never read" stays distinguishable from "read and
 	// empty": a zero-valued manifest in the ledger reads as a real archive of
 	// nothing.
 	var manifest *format.Manifest
+	// Named-return err: this closure is the single place a failed restore is
+	// unwound, whichever return — or panic — got here. It is deferred before any
+	// work, so nothing in the body can escape it.
 	defer func() {
+		// A panic leaves err nil, which reads as a restore that worked and left
+		// the row "running" and a marker armed over whatever was half staged.
+		// Turning it into the error routes it through the same unwind as any
+		// failure: disarm, discard the staging, close the row, announce. It is
+		// not re-panicked, because a crashed process can do none of that.
+		if p := recover(); p != nil {
+			err = fmt.Errorf("restore: panic: %v", p)
+			log.Error("restore panicked", "id", id, "panic", p, "stack", string(debug.Stack()))
+		}
 		if err == nil {
 			// The row stays "running" on purpose. Only the restored process can
 			// say the restore worked, because only it boots on the staged data.
@@ -273,14 +312,23 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		if rerr := os.Remove(armedPath(app)); rerr != nil && !os.IsNotExist(rerr) {
 			log.Warn("could not disarm a failed restore", "id", id, "err", rerr)
 		}
-		if ferr := finishRow(app, row, "failed", repo.PutResult{}, err.Error(), manifest, row.GetString("repository")); ferr != nil {
-			log.Error("could not finalize restore row", "id", id, "err", ferr)
-		}
+		errMsg := err.Error()
+		survive(id, "finalize", func() {
+			if ferr := finishRow(app, row, "failed", repo.PutResult{}, errMsg, manifest, row.GetString("repository")); ferr != nil {
+				log.Error("could not finalize restore row", "id", id, "err", ferr)
+			}
+		})
 		// Failure is the only outcome this process can announce. Success is
 		// announced by the post-boot finalizer, because a restore that worked
 		// ends by replacing the process that ran it.
-		announceRestore(app, req, row, false, err.Error())
+		ctx, cancel := format.Lifetime(context.Background())
+		defer cancel()
+		survive(id, "announce", func() { announceRestore(ctx, app, req, row, false, errMsg) })
 	}()
+
+	if aerr := audit.Log(app, "restore.started", "backup", id, "restore", req.Request, nil); aerr != nil {
+		log.Warn("could not audit the start of a restore", "id", id, "err", aerr)
+	}
 
 	// A remote source can expire at any point, including while phase 1 is still
 	// reading the manifest, so it is registered for a swap before the first byte
@@ -465,11 +513,15 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	rebuilderMu.RUnlock()
 	if fn != nil && !req.Force {
 		// The claim is handed over, NOT released: see Rebuilder. released is set
-		// first so the success path — where the rebuilder ends the process and
-		// never returns — cannot have this function's deferred release take the
-		// claim back from it.
+		// first so the success path — where the rebuilder never returns, or
+		// returns ErrRestartUnderway while this process waits to be stopped —
+		// cannot have this function's deferred release take the claim back from
+		// it.
 		released = true
 		rerr := fn(context.Background(), job, read.Lockfile)
+		if errors.Is(rerr, ErrRestartUnderway) {
+			return nil
+		}
 		if rerr != nil {
 			// A rebuilder that failed is expected to have released the job, but
 			// the interlock is process-wide: if it did not, nothing else could
@@ -478,9 +530,10 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 			installjob.Release(job)
 			return rerr
 		}
-		// A rebuilder that SUCCEEDED ends the process and never returns. Reaching
-		// this line therefore means it built the binary and then found nothing
-		// would restart — a dev-mode server, whose requestRestart is a no-op. The
+		// A rebuilder that SUCCEEDED either never returns (the process exits) or
+		// returns ErrRestartUnderway, handled above. Reaching this line therefore
+		// means it built the binary and then found nothing would restart — a
+		// dev-mode server, whose requestRestart is a no-op. The
 		// staged restore is as unapplied as on the no-rebuild path below, and for
 		// the same reason, so it is recorded the same way.
 		restartSkipped(app, row)
@@ -529,7 +582,17 @@ const (
 	expiryStallPolls = 4
 )
 
-func newExpiryWatcher(app core.App, row *core.Record, src *format.RangeSource) *expiryWatcher {
+// stallSource is what the watcher reads of a restore's ranged source.
+type stallSource interface {
+	Offset() int64
+	Blocked() bool
+}
+
+// expiryTickForTesting reports that the watcher's ticker fired. Only the
+// package's own tests set it, before the watcher starts.
+var expiryTickForTesting func()
+
+func newExpiryWatcher(app core.App, row *core.Record, src stallSource) *expiryWatcher {
 	w := &expiryWatcher{stopCh: make(chan struct{}), done: make(chan struct{})}
 	// The watcher never touches row: saving it from here would race the restore
 	// goroutine's own saves. It writes through a fresh read of the same id.
@@ -540,27 +603,39 @@ func newExpiryWatcher(app core.App, row *core.Record, src *format.RangeSource) *
 		defer t.Stop()
 		last := src.Offset()
 		stalled := 0
-		blocked := false
+		// waiting is the state the source is in; shown is the state last
+		// written to the row.
+		waiting, shown := false, false
 		for {
 			select {
 			case <-w.stopCh:
 				return
 			case <-t.C:
 			}
+			if expiryTickForTesting != nil {
+				expiryTickForTesting()
+			}
 			cur := src.Offset()
 			if cur != last {
 				stalled = 0
-				if blocked {
-					blocked = false
-					setRestoreStatus(app, id, "running", nil)
-				}
+				waiting = false
 			} else {
 				stalled++
 			}
 			last = cur
-			if !blocked && stalled >= expiryStallPolls && src.Blocked() {
-				blocked = true
+			if !waiting && stalled >= expiryStallPolls && src.Blocked() {
+				waiting = true
+			}
+			// While read-only the write is skipped and shown stays behind,
+			// so the first tick after the mode ends writes the state then.
+			if waiting == shown || readonly.Active() {
+				continue
+			}
+			shown = waiting
+			if waiting {
 				setRestoreStatus(app, id, "waiting_for_source", map[string]any{"resume_offset": cur})
+			} else {
+				setRestoreStatus(app, id, "running", nil)
 			}
 		}
 	}()
@@ -618,14 +693,14 @@ func mergeMeta(row *core.Record, extra map[string]any) map[string]any {
 // as arming ends by replacing the process, so this process is never the one that
 // can say it worked — the post-boot finalizer calls this with ok=true once it has
 // booted on the staged data.
-func announceRestore(app core.App, req RestoreRequest, row *core.Record, ok bool, errMsg string) {
+func announceRestore(ctx context.Context, app core.App, req RestoreRequest, row *core.Record, ok bool, errMsg string) {
 	typ, title, body, action := "core.restore.succeeded", "Restore completed",
 		"This organization was restored from a backup.", "restore.succeeded"
 	if !ok {
 		typ, title, body, action = "core.restore.failed", "Restore failed",
 			"Restoring from a backup failed: "+errMsg, "restore.failed"
 	}
-	if _, err := notify.Administrators(app, notify.NotifyParams{
+	if _, err := notify.AdministratorsContext(ctx, app, notify.NotifyParams{
 		Type: typ, Package: "core", Title: title, Body: body, URL: "/settings/backups",
 	}); err != nil {
 		log.Warn("could not notify administrators about a restore", "err", err)

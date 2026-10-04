@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { ActivityIndicator, Platform, ScrollView, Text, View } from 'react-native'
 import type { PreviewProps } from '../types'
 import { useAuthedFileURL } from '../use-authed-file-url'
@@ -11,7 +12,7 @@ export function CodePreview({ source }: PreviewProps) {
     const { data: content, isLoading: contentLoading } = useQuery({
         queryKey: ['code-preview', url],
         queryFn: async () => {
-            const resp = await fetch(url)
+            const resp = await serverFetch(url)
             const text = await resp.text()
             return text.slice(0, MAX_PREVIEW_BYTES)
         },

@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"tinycld.org/core/automation"
+	"tinycld.org/core/autoupgrade"
 	"tinycld.org/core/backup"
 	"tinycld.org/core/groups"
 	"tinycld.org/core/logging"
@@ -24,6 +25,7 @@ import (
 	"tinycld.org/core/offboard"
 	"tinycld.org/core/pkgaccess"
 	"tinycld.org/core/quota"
+	"tinycld.org/core/readonly"
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/search"
 	"tinycld.org/core/sharelink"
@@ -241,7 +243,17 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		// instead, which is the right answer for a binary that cannot change
 		// what it carries.
 		RegisterBackupSelfRebuild(app)
+		// A deployment that can rebuild itself also schedules its own updates.
+		// SetDelegate binds no hook, so the composition parity test is
+		// unaffected.
+		autoupgrade.SetDelegate(newLocalScheduler(app))
 	}
+
+	// Serving on a supervisor's listeners, reporting ready and draining on
+	// request. A composition layered on top owns its own process lifecycle and
+	// listeners, so this is not shared. Binds nothing unless a supervisor
+	// started this process, so it changes no hook count.
+	registerSupervised(app)
 
 	// Which deployment shape wrote an archive is recorded in every manifest, so
 	// a restore can tell what it is reading before it starts. Set in Register
@@ -291,6 +303,15 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// Static serving on a managed deployment is separate open work: the
 	// supervisor materializes pb_public but nothing serves it yet.
 	registerStaticServe(app, opts)
+}
+
+// registerSharedMiddleware binds the router middleware every composition
+// shares, in the order that matters: read-only first, so a write refused
+// during a pause never reaches Sentry's 5xx capture; then Sentry, which must
+// see every other request.
+func registerSharedMiddleware(app core.App) {
+	readonly.Register(app)
+	registerSentryMiddlewareCore(app)
 }
 
 // RegisterSharedEarly holds the registrations that must precede everything
@@ -344,11 +365,8 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 		return nil
 	})
 
-	// Sentry must register first so its router middleware sees every route.
-	// Middleware bound after a route is added does not apply retroactively.
-	// The client only initializes when a DSN exists in system_settings, so in
-	// an unconfigured deployment this is an inert pass-through.
-	RegisterSentry(app)
+	// Read-only mode, then Sentry: see registerSharedMiddleware.
+	registerSharedMiddleware(app)
 
 	// System-wide settings (Sentry/web-push/mail creds). Loads the
 	// system_settings collection into the in-memory SystemConfig once the DB is
@@ -371,6 +389,9 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 // bind in guard → demo-audit → disabled order.
 func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterPkgEnableHook(app)
+	// Automatic package updates: the write guard, the policy hook and the
+	// status route are the same everywhere; the Delegate behind them is not.
+	RegisterAutoUpgrade(app)
 	notify.Register(app)
 	notify.RegisterCommentMentionHooks(app)
 	// Teach the realtime broker how to verify anonymous share-session
@@ -434,14 +455,14 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	// Inert with no materialized defs (a workspace with no
 	// automation-contributing packages), so this is a no-op call in that case.
 	automation.Register(app, automation.Options{
-		DefsPath: filepath.Join(resolveServerDir(), "automation_defs.json"),
+		DefsPath: automationDefsPath(resolveServerDir()),
 	})
 
-	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no
-	// longer serves a protocol handler itself: a package's own Go server (e.g.
-	// contacts) mounts /carddav via OnServe and relies on this bypass for
-	// non-browser DAV clients. A managed deployment mounts the same protocols from
-	// materialized config, so it needs the bypass for the same reason.
+	// Registered by core even though core serves no protocol handler itself: a
+	// package's own Go server mounts its tree via OnServe (contacts /carddav,
+	// calendar /caldav, drive /drive) and relies on this bypass for non-browser
+	// DAV clients. A hosting tenant runs the same package Go, so it needs it for
+	// the same reason. See shouldBypassCORS for the paths.
 	registerDavCorsBypass(app)
 }
 
@@ -463,7 +484,7 @@ func registerDavCorsBypass(app *pocketbase.PocketBase) {
 			}
 			original := mw.Func
 			mw.Func = func(re *core.RequestEvent) error {
-				if isDavPath(re.Request.URL.Path) {
+				if shouldBypassCORS(re.Request.URL.Path) {
 					return re.Next()
 				}
 				return original(re)
@@ -474,17 +495,30 @@ func registerDavCorsBypass(app *pocketbase.PocketBase) {
 	})
 }
 
-// isDavPath reports whether a request belongs to a DAV protocol mount rather
-// than the SPA.
+// shouldBypassCORS reports whether PocketBase's default CORS middleware must
+// be skipped for a request.
 //
-// `/dav` is the RESERVED namespace for protocol mounts; no package slug may
-// claim it. This used to list bare "/drive", which is also the in-app route:
-// once the single-org migration dropped the /a/<orgSlug> segment the two
-// collided, and since a literal route beats the SPA catch-all, a hard load of
-// /drive reached Basic-Auth WebDAV instead of the app.
-func isDavPath(path string) bool {
-	return strings.HasPrefix(path, "/caldav") ||
-		strings.HasPrefix(path, "/carddav") ||
+// It is built for a browser talking to a JSON API: it answers OPTIONS
+// preflights itself and stamps Access-Control-* headers. A DAV client is not a
+// browser — Finder and Apple Calendar send OPTIONS as a real protocol question
+// ("which methods and DAV classes do you support?") and need the handler's
+// answer, not a preflight.
+//
+// Covers the protocol mounts and the .well-known discovery aliases that
+// redirect to them. The aliases keep their RFC 6764 names (/.well-known/caldav,
+// /.well-known/carddav) wherever the trees mount — clients probe those exact
+// paths. They are not DAV mounts themselves, but a client hits them first and
+// must not meet CORS there either.
+//
+// A mount shadows the SPA catch-all at its own path — a literal route wins — so
+// a mount listed here is a path the app cannot also serve. That is the
+// deliberate trade for /calendar, /contacts and /drive: the path someone types
+// when connecting a client is worth more than a browser hard-load of the same
+// path, which the app reaches at /a/<slug>.
+func shouldBypassCORS(path string) bool {
+	return strings.HasPrefix(path, "/calendar") ||
+		strings.HasPrefix(path, "/contacts") ||
+		strings.HasPrefix(path, "/drive") ||
 		strings.HasPrefix(path, "/dav") ||
 		strings.HasPrefix(path, "/.well-known/caldav") ||
 		strings.HasPrefix(path, "/.well-known/carddav") ||
@@ -540,13 +574,21 @@ func registerSchemaHooks(app *pocketbase.PocketBase, typesDir string) {
 	})
 }
 
-func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
+func registerStaticServe(app core.App, opts Options) {
+	registerStaticServeWith(app, opts, mailAdmins)
+}
+
+// registerStaticServeWith takes the mail path so a test can make it block.
+func registerStaticServeWith(app core.App, opts Options, mail bootMailFn) {
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
 		Func: func(e *core.ServeEvent) error {
 			GenerateSchemas(e.App, opts.TypesDir)
 			SyncBundledPackages(e.App)
 			SeedBaseBuild(e.App)
 			ReconcileRolledBackInstall(e.App)
+			// The notices read what ReconcileRolledBackInstall marked, so they
+			// start after it, and never in this chain (see startBootNotices).
+			startBootNotices(e.App, mail)
 
 			// Per-route asset handlers, registered before the catch-all so
 			// the asset prefixes win. Both paths read from the cross-release

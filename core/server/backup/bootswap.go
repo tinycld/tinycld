@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -272,7 +273,7 @@ func recordRollback(app core.App, rb rolledBack) error {
 	if err := app.Save(row); err != nil {
 		return err
 	}
-	announceRestore(app, RestoreRequest{}, row, false, reason)
+	announceRestore(context.Background(), app, RestoreRequest{}, row, false, reason)
 	return nil
 }
 
@@ -340,7 +341,7 @@ func FinalizeRestore(app core.App) error {
 	if err := finishFinalize(app, a); err != nil {
 		return err
 	}
-	announceRestore(app, RestoreRequest{}, row, true, "")
+	announceRestore(context.Background(), app, RestoreRequest{}, row, true, "")
 	return nil
 }
 

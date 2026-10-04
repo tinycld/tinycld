@@ -72,6 +72,10 @@ func runScheduledRepositoryBackup(app core.App) {
 		return
 	}
 	if _, err := backup.Start(app, backup.Request{Kind: backup.KindScheduled, Repo: r, TargetHost: r.Kind()}); err != nil {
+		if errors.Is(err, backup.ErrStopping) {
+			srvLog.Info("scheduled backup skipped: the server is shutting down")
+			return
+		}
 		if errors.Is(err, backup.ErrBusy) {
 			srvLog.Warn("scheduled backup skipped: another job is running")
 			return

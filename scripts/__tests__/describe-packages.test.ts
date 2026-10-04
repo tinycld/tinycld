@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { PortsFeature } from '../describe-packages'
 import {
     manifestToConfigPkg,
     schemaTypeName,
     validateEventSources,
     validateNavShortcuts,
+    validatePorts,
     validateSidebarContributions,
 } from '../describe-packages'
 
@@ -364,5 +366,97 @@ describe('validateNavShortcuts', () => {
         expect(() =>
             validateNavShortcuts([withShortcut('a'), withShortcut('b'), withShortcut('c', 'c')])
         ).not.toThrow()
+    })
+})
+
+describe('validatePorts', () => {
+    const feature = (slug: string, ports: PortsFeature['ports']): PortsFeature => ({
+        slug,
+        ports,
+    })
+
+    it('accepts a valid set', () => {
+        expect(() =>
+            validatePorts([
+                feature('acme', [{ name: 'acme-sync', port: 1234 }]),
+                feature('zeta', [{ name: 'zeta-sync', port: 5678 }]),
+            ])
+        ).not.toThrow()
+    })
+
+    it('tolerates packages that declare no ports', () => {
+        expect(() => validatePorts([feature('acme', undefined)])).not.toThrow()
+    })
+
+    it('rejects two packages declaring the same port', () => {
+        expect(() =>
+            validatePorts([
+                feature('acme', [{ name: 'acme-sync', port: 1234 }]),
+                feature('zeta', [{ name: 'zeta-sync', port: 1234 }]),
+            ])
+        ).toThrow(/'acme' and 'zeta'/)
+    })
+
+    it('rejects two packages declaring the same name', () => {
+        expect(() =>
+            validatePorts([
+                feature('acme', [{ name: 'shared-name', port: 1234 }]),
+                feature('zeta', [{ name: 'shared-name', port: 5678 }]),
+            ])
+        ).toThrow(/'acme' and 'zeta'/)
+    })
+
+    it('rejects port 0', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'acme-sync', port: 0 }])])).toThrow(
+            /1-65535/
+        )
+    })
+
+    it('rejects port 70000', () => {
+        expect(() =>
+            validatePorts([feature('acme', [{ name: 'acme-sync', port: 70000 }])])
+        ).toThrow(/1-65535/)
+    })
+
+    it('rejects an uppercase name', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'ACME-SYNC', port: 1234 }])])).toThrow(
+            /\[a-z0-9-\]\+/
+        )
+    })
+
+    it('rejects the reserved name http', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'http', port: 1234 }])])).toThrow(
+            /reserved/
+        )
+    })
+
+    it('rejects the reserved name https', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'https', port: 1234 }])])).toThrow(
+            /reserved/
+        )
+    })
+
+    it('rejects the reserved name http-redirect', () => {
+        expect(() =>
+            validatePorts([feature('acme', [{ name: 'http-redirect', port: 1234 }])])
+        ).toThrow(/reserved/)
+    })
+
+    it('rejects port 80, which the supervisor binds for its own redirect listener', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'acme-sync', port: 80 }])])).toThrow(
+            /80.*supervisor|supervisor.*80/
+        )
+    })
+
+    it('rejects port 443, which the supervisor binds for its own HTTPS listener', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'acme-sync', port: 443 }])])).toThrow(
+            /443.*supervisor|supervisor.*443/
+        )
+    })
+
+    it('rejects port 7090, which the supervisor binds for its own default HTTP listener', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'acme-sync', port: 7090 }])])).toThrow(
+            /7090.*supervisor|supervisor.*7090/
+        )
     })
 })

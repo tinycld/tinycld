@@ -554,14 +554,16 @@ function spawnExpo(expoPort: number, onReady: () => void): ChildProcess {
 // WebDAV used to mount at bare /drive, which collided with the in-app /drive
 // route back when app routes sat at the root: a literal route beats Expo's
 // catch-all, so a hard load of /drive reached Basic-Auth WebDAV and the SPA
-// was unreachable. App routes now live under /a, so that particular overlap
-// is gone — but /dav stays reserved so protocol mounts never share a
-// namespace with package slugs, and so this can't regress if /a ever moves.
+// was unreachable. App routes now live under /a, so the protocol mounts take
+// the bare slugs (/calendar, /contacts, /drive) — the paths someone types when
+// connecting a client. /dav stays reserved so a mount can always be moved back
+// out of slug space.
 const PB_PREFIXES = [
     '/api',
     '/_',
-    '/caldav',
-    '/carddav',
+    '/calendar',
+    '/contacts',
+    '/drive',
     '/dav',
     '/.well-known/caldav',
     '/.well-known/carddav',

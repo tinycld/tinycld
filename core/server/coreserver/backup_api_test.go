@@ -67,6 +67,17 @@ func setupBackupCollections(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 	t.Cleanup(app.Cleanup)
+	// Registered after app.Cleanup, so it runs before it. A run started with
+	// backup.Start outlives the ledger's "succeeded": it then notifies the
+	// administrators and posts its callback through this app. Closing the
+	// database under it panics in whichever test runs next.
+	//
+	// The reset comes after the wait, so a restore still running finishes on
+	// the seams restoreSeams installed rather than on the real ones.
+	t.Cleanup(func() {
+		stopBackupRuns(t, app)
+		backup.ResetForTesting()
+	})
 
 	// The guard for the above: if a future change makes the data dir land in a
 	// shared root again, this fails here rather than by corrupting another
@@ -219,29 +230,18 @@ func allowLoopbackBackupTargets(t *testing.T, allow bool) {
 // over rather than releasing it, so a rebuilder that dropped it would leave the
 // interlock held and every later test would see ErrBusy.
 //
-// Cleanup goes through backup.ResetForTesting rather than unsetting one seam,
-// because the package holds more process-wide state than the rebuilder — a left
-// restoring flag would put every later request behind the maintenance 503.
-// A restore now ALWAYS runs on a goroutine (the upload branch used to be
-// synchronous), so the seams also count restores in flight: a test that asserted
-// its 202 and returned would otherwise let app.Cleanup close the database under a
-// running restore, which panics in whichever test happens to be next.
+// The seams are removed by setupBackupCollections' cleanup, which waits for the
+// app's runs and then calls backup.ResetForTesting. Reset rather than unset one
+// seam, because the package holds more process-wide state than the rebuilder —
+// a left restoring flag would put every later request behind the maintenance
+// 503. Every caller builds its app with setupBackupCollections.
 func restoreSeams(t *testing.T) {
 	t.Helper()
-	var done sync.WaitGroup
-	backup.SetRestoreWatcher(func() func() {
-		done.Add(1)
-		return done.Done
-	})
 	backup.RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
 		installjob.Release(job)
 		return nil
 	})
 	backup.SetRestart(func() bool { return true })
-	// Before ResetForTesting, so the wait happens while the seams are still the
-	// ones the restore is using.
-	t.Cleanup(backup.ResetForTesting)
-	t.Cleanup(done.Wait)
 }
 
 func makeBackupUser(t *testing.T, app core.App, email, role string) *core.Record {
@@ -283,6 +283,18 @@ func waitFor(t testing.TB, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("condition was never met within 5s")
+}
+
+// stopBackupRuns is the stop the terminate hook makes, run at the end of a
+// test: it waits for every backup and restore the test left running on app,
+// so the test app's cleanup never closes the database under one.
+func stopBackupRuns(t testing.TB, app core.App) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := backup.StopAll(ctx, app); err != nil {
+		t.Fatalf("a run was still going 5s after the test: %v", err)
+	}
 }
 
 // closeBuffer lets a test hand backup.Run a sink it can read afterwards.
@@ -1064,96 +1076,6 @@ func TestBackupToTargetSurvivesTheRequestEnding(t *testing.T) {
 	}
 }
 
-// A probe boots a full server on the real data directory and is then killed. It
-// must leave every piece of restore state alone: a kill between the swap and the
-// finalize makes the REAL boot see a swapped marker with no finished restore
-// behind it and roll the operator's restore back.
-func TestBootProbeLeavesRestoreStateForTheRealBoot(t *testing.T) {
-	t.Setenv("TINYCLD_BOOT_PROBE", "1")
-	app := setupBackupCollections(t)
-	restoreSeams(t)
-	makeBackupUser(t, app, "owner@example.com", "owner")
-
-	col, err := app.FindCollectionByNameOrId("backups")
-	if err != nil {
-		t.Fatal(err)
-	}
-	abandoned := core.NewRecord(col)
-	abandoned.Set("kind", "manual")
-	abandoned.Set("status", "running")
-	abandoned.Set("started", types.NowDateTime().Add(-time.Hour))
-	if err := app.Save(abandoned); err != nil {
-		t.Fatal(err)
-	}
-
-	dataDir := app.DataDir()
-	restoreDir := filepath.Join(filepath.Dir(dataDir), "restore")
-	pending := filepath.Join(restoreDir, "pending", "r1")
-	if err := os.MkdirAll(pending, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	live, err := os.ReadFile(filepath.Join(dataDir, "data.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pending, "data.db"), live, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pending, ".staged"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	marker, err := json.Marshal(map[string]any{
-		"id": "r1", "pending": pending, "manifest": format.Manifest{Core: "1.2.3"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	armed := filepath.Join(restoreDir, "armed")
-	if err := os.WriteFile(armed, marker, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// A scratch file the real boot would wipe. The probe must leave it: the run
-	// that owns it may still be the live process's.
-	scratch := filepath.Join(filepath.Dir(dataDir), "backup-tmp")
-	if err := os.MkdirAll(scratch, 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	RegisterBackupBoot(app)
-	if err := app.OnBootstrap().Trigger(&core.BootstrapEvent{App: app}, func(*core.BootstrapEvent) error {
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(armed); err != nil {
-		t.Fatalf("the probe consumed the armed marker: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(restoreDir, "swapped")); !os.IsNotExist(err) {
-		t.Fatal("the probe performed the swap")
-	}
-	if _, err := os.Stat(filepath.Join(pending, "data.db")); err != nil {
-		t.Fatalf("the probe moved the staged data in: %v", err)
-	}
-	if _, err := os.Stat(scratch); err != nil {
-		t.Fatalf("the probe wiped the backup scratch directory: %v", err)
-	}
-	reread, err := app.FindRecordById("backups", abandoned.Id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := reread.GetString("status"); got != "running" {
-		t.Fatalf("the probe closed a running row as %q", got)
-	}
-	rows, err := app.FindRecordsByFilter("backups", "kind = 'restore'", "", 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 0 {
-		t.Fatalf("the probe finalized a restore: %d rows", len(rows))
-	}
-}
-
 // The server PUTs to, and GETs from, a URL the caller supplies. Only an admin or
 // the owner can ask, and no response body is ever surfaced — but the loopback
 // interface and link-local addresses are reachable ONLY from the server and are
@@ -1430,34 +1352,5 @@ func TestBootClearsAStrandedUploadSpool(t *testing.T) {
 	}
 	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
 		t.Fatalf("the backup scratch directory must still be cleared too: %v", err)
-	}
-}
-
-// A boot probe runs on the real data directory and is then killed, so it must
-// leave every piece of restore state alone — including a spool file belonging to
-// a restore the REAL boot is about to carry on with.
-func TestBootProbeLeavesAnUploadSpoolAlone(t *testing.T) {
-	t.Setenv("TINYCLD_BOOT_PROBE", "1")
-	app := setupBackupCollections(t)
-	restoreSeams(t)
-
-	spoolDir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
-	if err := os.MkdirAll(spoolDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	spool := filepath.Join(spoolDir, "x.age")
-	if err := os.WriteFile(spool, []byte("a whole organization"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	RegisterBackupBoot(app)
-	if err := app.OnBootstrap().Trigger(&core.BootstrapEvent{App: app}, func(*core.BootstrapEvent) error {
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(spool); err != nil {
-		t.Fatalf("a probe must not touch a spool the real boot will handle: %v", err)
 	}
 }

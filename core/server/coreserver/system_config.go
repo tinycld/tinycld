@@ -137,7 +137,7 @@ func (c *SystemConfig) set(key, value string, isSecret bool) {
 func refuseManagedWrite(e *core.RecordEvent) error {
 	if syscfg.IsManaged(e.Record.GetString("key")) {
 		return apis.NewForbiddenError(
-			"This setting is managed by your hosting provider and cannot be changed here.", nil)
+			"This setting is managed by the server's operator and cannot be changed here.", nil)
 	}
 	return e.Next()
 }
@@ -181,7 +181,8 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// Load after bootstrap/migrations, before the server begins handling
 	// requests, then perform the initial Sentry init from the loaded values.
 	// OnServe fires once per boot at that point. The Sentry middleware is already
-	// bound (RegisterSentry); this supplies the client the middleware reports to.
+	// bound (registerSharedMiddleware); this supplies the client the middleware
+	// reports to.
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		systemConfig.load(app)
 		initSentryFromConfig()

@@ -785,7 +785,7 @@ func TestCallbackFailureLogsNoCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	postCallback("http://127.0.0.1:1/cb?token=SECRET", row)
+	postCallback(context.Background(), "http://127.0.0.1:1/cb?token=SECRET", row)
 
 	line := buf.String()
 	if !strings.Contains(line, "backup callback failed") {
