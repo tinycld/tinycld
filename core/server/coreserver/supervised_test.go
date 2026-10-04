@@ -30,12 +30,24 @@ import (
 // It returns the listener and the supervisor's end of the control socket.
 func supervisedFixture(t *testing.T) (net.Listener, net.Conn) {
 	t.Helper()
+	l := loopbackListener(t)
+	return l, supervisedFixtureWith(t, map[string]net.Listener{supervise.ListenerHTTP: l})
+}
+
+func loopbackListener(t *testing.T) net.Listener {
+	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { l.Close() })
+	return l
+}
 
+// supervisedFixtureWith is supervisedFixture with the inherited listeners
+// given by name. It returns the supervisor's end of the control socket.
+func supervisedFixtureWith(t *testing.T, ls map[string]net.Listener) net.Conn {
+	t.Helper()
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -49,12 +61,13 @@ func supervisedFixture(t *testing.T) (net.Listener, net.Conn) {
 	}
 	t.Cleanup(func() { parent.Close(); childEnd.Close() })
 
-	t.Cleanup(listeners.SetForTest(map[string]net.Listener{supervise.ListenerHTTP: l}))
+	t.Cleanup(listeners.SetForTest(ls))
 	t.Cleanup(listeners.SetFilesForTest(map[string]*os.File{supervise.ControlFD: childEnd}))
 	t.Cleanup(func() { setControl(nil) })
 	t.Cleanup(readonly.Leave)
 	t.Cleanup(resetReplacementForTest)
-	return l, parent
+	t.Cleanup(drainhooks.ResetForTest)
+	return parent
 }
 
 // recvLine reads one raw control line from the supervisor's end, bounded.

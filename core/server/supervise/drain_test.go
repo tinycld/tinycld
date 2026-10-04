@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -171,5 +172,89 @@ func TestDrainIdleKeepAliveConnectionIsClosed(t *testing.T) {
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := r.ReadByte(); err == nil || strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("idle keep-alive connection still open after the drain: %v", err)
+	}
+}
+
+// slowHandOff is a listener whose Accept holds each connection it accepted
+// until release closes: the window between the kernel's accept and the
+// Drainer seeing the connection.
+type slowHandOff struct {
+	net.Listener
+	accepted chan net.Conn
+	release  chan struct{}
+	closed   chan struct{}
+	once     sync.Once
+}
+
+func (l *slowHandOff) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	l.accepted <- c
+	<-l.release
+	return c, nil
+}
+
+func (l *slowHandOff) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return l.Listener.Close()
+}
+
+// A connection the listener accepted just before the drain stopped it, but
+// had not yet handed to the server, must still be served. A drain that
+// checks for pending connections before that hand-off sees none, shuts
+// down, and the process exits with the request unread.
+func TestDrainServesAConnectionInTheAcceptWindow(t *testing.T) {
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &slowHandOff{Listener: inner, accepted: make(chan net.Conn, 1), release: make(chan struct{}), closed: make(chan struct{})}
+	srv := &http.Server{Handler: okHandler()}
+	d := NewDrainer(srv)
+	go srv.Serve(d.Listener(l))
+	t.Cleanup(func() { srv.Close() })
+
+	conn, err := net.Dial("tcp", inner.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	io.WriteString(conn, "GET / HTTP/1.1\r\nHost: test\r\n\r\n")
+	var serverSide net.Conn
+	select {
+	case serverSide = <-l.accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the listener did not accept the connection")
+	}
+
+	// Once Drain returns the process exits: its connections go with it.
+	drained := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := d.Drain(ctx)
+		serverSide.Close()
+		drained <- err
+	}()
+	select {
+	case <-l.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the drain did not stop the listener")
+	}
+	close(l.release)
+
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("the connection accepted as the drain began got no response: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "ok" {
+		t.Fatalf("response = %q, want ok", body)
+	}
+	if err := <-drained; err != nil {
+		t.Fatalf("Drain = %v", err)
 	}
 }

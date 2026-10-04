@@ -243,21 +243,30 @@ once.
 
 ### 3. Draining the old child
 
-Told to drain, a child first runs the drain-begin handlers packages register
-(`tinycld.org/core/drainhooks`), so a package serving its own port (such as
-IMAP and SMTP) stops accepting there at once. It then stops accepting new HTTP
-connections, turns off HTTP
-keep-alives so each connection closes after its current request, waits (up to
-30s, `ChildDrainTimeout`) for in-flight requests to finish, then shuts down and
-exits. A long-lived connection (a realtime subscription, IMAP IDLE) is cut at
-the end of that budget; clients reconnect against the new child.
+Told to drain, a child first stops accepting new HTTP connections (on the main
+port and on the `:80` redirect port) and turns off HTTP keep-alives, so each
+connection closes after its current request. It then runs the drain-begin
+handlers (`tinycld.org/core/drainhooks`). Core's own handler ends every
+realtime (SSE) stream, so its client reconnects at once, to the new child,
+instead of hearing nothing of the new child's events for the length of the
+drain; a realtime connect that still reaches the draining child is answered
+`503`. A package serving its own port (such as IMAP and SMTP) stops
+accepting there at the same point. The child then waits (up to 30s,
+`ChildDrainTimeout`) for in-flight requests on both HTTP servers to finish,
+including a connection accepted in the instant before accepting stopped, then
+shuts down and exits. A long-lived connection that is not a realtime stream
+(IMAP IDLE) is cut at the end of that budget; clients reconnect against the new
+child.
 
 **Keep-alive edge case:** an idle keep-alive connection to the draining child
-is closed as part of turning keep-alives off, not after its next request. A
-reverse proxy (or browser) that happens to reuse that exact connection in the
-instant it closes sees one failed request and retries on a fresh connection —
-in practice a single transient `502` at the moment of a swap, never a
-sustained outage.
+is closed when keep-alives turn off, not after its next request. A client that
+sends its next request on that connection as it closes gets nothing back: the
+connection reads EOF or is reset, before the request was read. That is at most
+one failed request per idle connection, and a retry on a fresh connection
+reaches the new child. The swap test in `core/server/supervise/run_test.go`
+drives such a client through a swap and checks exactly this. A reverse proxy
+or browser retries on its own, so in practice it is at most a single transient
+`502` at the moment of a swap, never a sustained outage.
 
 ### Unsupervised fallback
 

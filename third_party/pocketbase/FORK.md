@@ -55,7 +55,7 @@ The goal is that an upstream merge touches as few of our lines as possible.
 | `NoAttachDBConnect`: connections that cannot `ATTACH` another database file | `core/db_noattach*.go` | `core/base.go` (`ReapplyNoAttachLimits` after each pool is configured) |
 | Cross-instance notify events are not lost on kqueue (macOS/BSD) | `core/notify_watcher_tinycld.go` | `core/notify_watcher.go`; `core/notify_watcher_test.go` fixes a race in the test |
 | `core.OnFilesystemDelete`: the storage delete hook, exported so a backup can hold deletes | `core/filesystem_hooks_tinycld.go` | — |
-| `apis.SetRedirectListener`: Serve's HTTP->HTTPS redirect server uses an injected listener instead of binding `config.HttpAddr` itself | `apis/serve_redirect_tinycld.go` | `apis/serve.go` (one call) |
+| `apis.SetRedirectListener`: Serve's HTTP->HTTPS redirect server uses an injected listener instead of binding `config.HttpAddr` itself. `apis.SetRedirectServerHook`: a hook gets the redirect server and its listener before it serves, and returns the listener to serve on | `apis/serve_redirect_tinycld.go` | `apis/serve.go` (one call) |
 
 ### Why `core/db.go` sets `event.App = app`
 

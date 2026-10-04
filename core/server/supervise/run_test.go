@@ -599,6 +599,165 @@ func (l *load) end() {
 	<-l.stopped
 }
 
+// keepAliveLoad sends a request every 5 ms on one kept-alive connection at
+// a time. It speaks HTTP by hand so no client library retries a failed
+// request out of sight: the test must see each one.
+type keepAliveLoad struct {
+	addr string
+
+	mu     sync.Mutex
+	bodies []string
+	// closedUnder counts requests that failed because the server closed an
+	// idle kept-alive connection as the request went out. Each was retried
+	// at once on a fresh connection.
+	closedUnder int
+	// retryFailed holds the retries of those requests that failed too.
+	retryFailed []error
+	// failed holds every other failure.
+	failed []error
+
+	stop, stopped chan struct{}
+}
+
+func startKeepAliveLoad(addr string) *keepAliveLoad {
+	l := &keepAliveLoad{addr: addr, stop: make(chan struct{}), stopped: make(chan struct{})}
+	go l.run()
+	return l
+}
+
+type keepAliveConn struct {
+	net.Conn
+	r *bufio.Reader
+	// answered is how many requests this connection has carried.
+	answered int
+}
+
+func (l *keepAliveLoad) run() {
+	defer close(l.stopped)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	var c *keepAliveConn
+	defer func() {
+		if c != nil {
+			c.Close()
+		}
+	}()
+	for {
+		select {
+		case <-l.stop:
+			return
+		case <-tick.C:
+		}
+		if c == nil {
+			var err error
+			if c, err = l.dial(); err != nil {
+				l.record("", fmt.Errorf("dial: %w", err))
+				continue
+			}
+		}
+		body, again, err := c.roundTrip()
+		if err != nil && c.answered > 0 && closedUnderRequest(err) {
+			c.Close()
+			l.mu.Lock()
+			l.closedUnder++
+			l.mu.Unlock()
+			body, c, err = l.retry()
+			if err != nil {
+				l.mu.Lock()
+				l.retryFailed = append(l.retryFailed, err)
+				l.mu.Unlock()
+				continue
+			}
+			l.record(body, nil)
+			continue
+		}
+		l.record(body, err)
+		if !again || err != nil {
+			c.Close()
+			c = nil
+		}
+	}
+}
+
+// retry sends the request again on a fresh connection, and returns that
+// connection when the server keeps it open.
+func (l *keepAliveLoad) retry() (string, *keepAliveConn, error) {
+	c, err := l.dial()
+	if err != nil {
+		return "", nil, err
+	}
+	body, again, err := c.roundTrip()
+	if err != nil || !again {
+		c.Close()
+		return body, nil, err
+	}
+	return body, c, nil
+}
+
+func (l *keepAliveLoad) dial() (*keepAliveConn, error) {
+	c, err := net.DialTimeout("tcp", l.addr, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return &keepAliveConn{Conn: c, r: bufio.NewReader(c)}, nil
+}
+
+// roundTrip sends one request and reads its answer. again reports whether
+// the server keeps the connection open for the next one.
+func (c *keepAliveConn) roundTrip() (body string, again bool, err error) {
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(c, "GET / HTTP/1.1\r\nHost: test\r\n\r\n"); err != nil {
+		return "", false, err
+	}
+	// ReadResponse reports a connection that closed before any byte as
+	// ErrUnexpectedEOF, the same as one cut mid-answer. Only the first is
+	// the documented limit, so it is told apart here.
+	if _, err := c.r.Peek(1); err != nil {
+		return "", false, err
+	}
+	resp, err := http.ReadResponse(c.r, nil)
+	if err != nil {
+		return "", false, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", false, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", false, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	c.answered++
+	return string(b), !resp.Close, nil
+}
+
+// closedUnderRequest reports whether err is the server closing the
+// connection before it read the request: nothing came back at all.
+func closedUnderRequest(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
+}
+
+func (l *keepAliveLoad) record(body string, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err != nil {
+		l.failed = append(l.failed, err)
+		return
+	}
+	l.bodies = append(l.bodies, body)
+}
+
+func (l *keepAliveLoad) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.bodies)
+}
+
+func (l *keepAliveLoad) end() {
+	close(l.stop)
+	<-l.stopped
+}
+
 // --- tests ---
 
 func TestRunSwapUnderLoad(t *testing.T) {
@@ -612,19 +771,35 @@ func TestRunSwapUnderLoad(t *testing.T) {
 	a := r.waitEvent("A", "ready", 1)
 	waitBody(t, h.addr, "A")
 	ld := startLoad(h.addr)
-	waitFor(t, 10*time.Second, "load on A", func() bool { return ld.count() >= 10 })
+	ka := startKeepAliveLoad(h.addr)
+	waitFor(t, 10*time.Second, "load on A", func() bool { return ld.count() >= 10 && ka.count() >= 10 })
 
 	r.trigger(a)
 	r.waitEvent("A", "exit", 1)
-	atExit := ld.count()
-	waitFor(t, 10*time.Second, "load on B", func() bool { return ld.count() >= atExit+20 })
+	atExit, kaAtExit := ld.count(), ka.count()
+	waitFor(t, 10*time.Second, "load on B", func() bool { return ld.count() >= atExit+20 && ka.count() >= kaAtExit+20 })
 	ld.end()
+	ka.end()
 
 	if ld.refused != 0 || len(ld.failed) != 0 {
 		t.Fatalf("refused connections = %d, failed requests = %d (%v)", ld.refused, len(ld.failed), ld.failed)
 	}
 	if first, last := ld.bodies[0], ld.bodies[len(ld.bodies)-1]; first != "A" || last != "B" {
 		t.Fatalf("answers went %q ... %q, want A ... B", first, last)
+	}
+	// The limit docs/live-install.md states: the drain closes A's idle
+	// kept-alive connection, so the one request sent on it as it closes
+	// fails, and its retry on a fresh connection succeeds. Nothing else
+	// fails.
+	t.Logf("keep-alive client: %d answers, %d requests closed under", len(ka.bodies), ka.closedUnder)
+	if len(ka.failed) != 0 || len(ka.retryFailed) != 0 {
+		t.Fatalf("keep-alive client: failed requests %v, failed retries %v", ka.failed, ka.retryFailed)
+	}
+	if ka.closedUnder > 1 {
+		t.Fatalf("keep-alive client: %d requests failed on a closed connection, want at most the one A's drain closed", ka.closedUnder)
+	}
+	if first, last := ka.bodies[0], ka.bodies[len(ka.bodies)-1]; first != "A" || last != "B" {
+		t.Fatalf("keep-alive answers went %q ... %q, want A ... B", first, last)
 	}
 	bReady, aDrain, aExit := r.index("B", "ready", 1), r.index("A", "drain", 1), r.index("A", "exit", 1)
 	if bReady >= aDrain || aDrain >= aExit {

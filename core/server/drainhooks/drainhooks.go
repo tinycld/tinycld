@@ -1,10 +1,11 @@
 // Package drainhooks lets a package act the moment a supervised server
 // begins to drain. A supervisor drains the old server only once the next
 // one is ready on the same ports, so from that moment new connections
-// belong to the next server. Core drains its HTTP server itself; a package
-// that serves its own protocol on a port the supervisor passed in registers
-// here to stop accepting on that port at once, instead of when PocketBase's
-// terminate hooks reach it after the HTTP drain.
+// belong to the next server. Core drains its HTTP server itself, and
+// registers here to end its realtime streams; a package that serves its own
+// protocol on a port the supervisor passed in registers here to stop
+// accepting on that port at once, instead of when PocketBase's terminate
+// hooks reach it after the HTTP drain.
 //
 // Core names no package: each package calls OnBegin from its own Register().
 // The registry is process-global and is meant to be populated at startup.

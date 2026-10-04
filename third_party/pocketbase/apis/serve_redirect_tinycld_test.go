@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,5 +129,61 @@ func TestSetRedirectListenerWarnsWhenCalledTooLate(t *testing.T) {
 
 	if !bytes.Contains(buf.Bytes(), []byte("SetRedirectListener called after")) {
 		t.Fatalf("expected a late-call warning, got log output: %s", buf.String())
+	}
+}
+
+// countingListener counts the connections it hands out.
+type countingListener struct {
+	net.Listener
+	accepted atomic.Int32
+}
+
+func (l *countingListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err == nil {
+		l.accepted.Add(1)
+	}
+	return c, err
+}
+
+// The redirect server must serve on the listener the hook returns, so a
+// caller can follow the server's connections (to drain it) from the start.
+func TestServeHTTPRedirectServesOnTheHookListener(t *testing.T) {
+	app := core.NewBaseApp(core.BaseAppConfig{})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetRedirectListener(app, l)
+
+	type hooked struct {
+		srv *http.Server
+		l   *countingListener
+	}
+	calls := make(chan hooked, 1)
+	SetRedirectServerHook(app, func(srv *http.Server, in net.Listener) net.Listener {
+		if in != l {
+			t.Errorf("the hook got listener %v, want the injected %v", in.Addr(), l.Addr())
+		}
+		h := hooked{srv: srv, l: &countingListener{Listener: in}}
+		calls <- h
+		return h.l
+	})
+	go serveHTTPRedirect(app, "203.0.113.1:80", handlerReturning("redirect"))
+
+	if body := getBody(t, l.Addr().String()); body != "redirect" {
+		t.Fatalf("body = %q", body)
+	}
+	var h hooked
+	select {
+	case h = <-calls:
+	default:
+		t.Fatal("the redirect server never called the hook")
+	}
+	if h.l.accepted.Load() == 0 {
+		t.Fatal("the redirect server did not serve on the hook's listener")
+	}
+	if h.srv != app.Store().Get(redirectServerStoreKey) {
+		t.Fatal("the hook did not get the redirect server")
 	}
 }

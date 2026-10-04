@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -68,9 +69,13 @@ func (d *Drainer) Listener(l net.Listener) net.Listener {
 	return dl
 }
 
-// Drain stops accepting, waits (within ctx) for every HTTP/1 connection
-// accepted so far to finish its request, then shuts the server down.
-func (d *Drainer) Drain(ctx context.Context) error {
+// StopAccepting stops accepting on every listener and turns keep-alives off,
+// so each HTTP/1 connection closes after its current request. Drain does
+// this first. Call it on its own to stop new requests before work that must
+// not race them, such as ending long-lived responses whose clients will
+// reconnect at once: with keep-alives on, a client could send its reconnect
+// on the same connection and land on this server again.
+func (d *Drainer) StopAccepting() {
 	d.mu.Lock()
 	ls := d.ls
 	d.mu.Unlock()
@@ -78,6 +83,12 @@ func (d *Drainer) Drain(ctx context.Context) error {
 		l.stop()
 	}
 	d.srv.SetKeepAlivesEnabled(false)
+}
+
+// Drain stops accepting, waits (within ctx) for every HTTP/1 connection
+// accepted so far to finish its request, then shuts the server down.
+func (d *Drainer) Drain(ctx context.Context) error {
+	d.StopAccepting()
 
 	tick := time.NewTicker(drainPoll)
 	defer tick.Stop()
@@ -92,11 +103,16 @@ func (d *Drainer) Drain(ctx context.Context) error {
 }
 
 // pending reports whether a connection still has a request Shutdown could
-// drop: one that is being served, or one accepted recently that has not
-// sent its request yet.
+// drop: one that is being served, one accepted recently that has not sent
+// its request yet, or one a listener accepted but has not handed over yet.
 func (d *Drainer) pending() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	for _, l := range d.ls {
+		if l.handingOff.Load() > 0 {
+			return true
+		}
+	}
 	for _, c := range d.conns {
 		if c.h2 {
 			continue
@@ -153,11 +169,21 @@ type drainListener struct {
 	stopOnce, closeOnce sync.Once
 	stopped, closed     chan struct{}
 	stopErr             error
+
+	// handingOff counts Accepts between the listener under this one and
+	// the Drainer recording the connection. A connection in that window is
+	// in no map yet, so a drain that looked only at the map would shut
+	// down and drop its request. Counting calls, rather than waiting for an
+	// Accept to fail after the stop, keeps a drain from waiting its whole
+	// budget on a listener no Serve is accepting on.
+	handingOff atomic.Int32
 }
 
 func (l *drainListener) Accept() (net.Conn, error) {
+	l.handingOff.Add(1)
 	c, err := l.Listener.Accept()
 	if err != nil {
+		l.handingOff.Add(-1)
 		select {
 		case <-l.stopped:
 			<-l.closed
@@ -167,6 +193,7 @@ func (l *drainListener) Accept() (net.Conn, error) {
 		}
 	}
 	l.d.accepted(c)
+	l.handingOff.Add(-1)
 	return c, nil
 }
 

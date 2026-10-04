@@ -8,8 +8,10 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/pocketbase/pocketbase/apis"
@@ -45,6 +47,7 @@ const drainShutdownPriority = -10000
 type drain struct {
 	mu        sync.Mutex
 	drainer   *supervise.Drainer
+	redirect  *supervise.Drainer
 	requested bool
 }
 
@@ -52,6 +55,17 @@ func (d *drain) setDrainer(dr *supervise.Drainer) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.drainer = dr
+}
+
+// redirectListener is the fork's redirect server hook: it follows the :80
+// redirect server's connections so a drain lets its requests finish too,
+// instead of PocketBase's one-second shutdown of it after the main drain.
+func (d *drain) redirectListener(srv *http.Server, l net.Listener) net.Listener {
+	dr := supervise.NewDrainer(srv)
+	d.mu.Lock()
+	d.redirect = dr
+	d.mu.Unlock()
+	return dr.Listener(l)
 }
 
 func (d *drain) begin() {
@@ -64,29 +78,69 @@ func (d *drain) begin() {
 	}
 }
 
-// shutdown stops accepting (it closes the listener this process serves on,
-// which is a dup: the supervisor's own copy stays open for the next child)
+// shutdown stops accepting (it closes the listeners this process serves on,
+// which are dups: the supervisor's own copies stay open for the next child)
 // and answers every request already accepted, within ChildDrainTimeout.
 //
-// The drain-begin handlers run first: a package serving its own port stops
-// accepting on it now, as HTTP does, rather than when its terminate hook
-// runs after the HTTP drain.
+// Accepting stops first, with keep-alives off, so a client whose connection
+// a begin handler ends (a realtime stream) reconnects to the next server
+// rather than to this one. The drain-begin handlers run next: a package
+// serving its own port stops accepting on it now, as HTTP does, rather than
+// when its terminate hook runs after the HTTP drain.
 func (d *drain) shutdown() {
 	d.mu.Lock()
-	dr, requested := d.drainer, d.requested
+	requested := d.requested
+	var drainers []*supervise.Drainer
+	for _, dr := range []*supervise.Drainer{d.drainer, d.redirect} {
+		if dr != nil {
+			drainers = append(drainers, dr)
+		}
+	}
 	d.mu.Unlock()
 	if !requested {
 		return
 	}
-	drainhooks.RunBegin()
-	if dr == nil {
-		return
+	for _, dr := range drainers {
+		dr.StopAccepting()
 	}
+	drainhooks.RunBegin()
 	ctx, cancel := context.WithTimeout(context.Background(), supervise.ChildDrainTimeout)
 	defer cancel()
-	if err := dr.Drain(ctx); err != nil {
-		srvLog.Warn("drain budget ran out; cutting the connections still open", "err", err)
+	var wg sync.WaitGroup
+	for _, dr := range drainers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := dr.Drain(ctx); err != nil {
+				srvLog.Warn("drain budget ran out; cutting the connections still open", "err", err)
+			}
+		}()
 	}
+	wg.Wait()
+}
+
+// endRealtimeOnDrain ends every realtime stream when a drain begins. A
+// stream never goes idle, so the drain would otherwise wait its whole
+// budget for it while its client hears no events the next server sends;
+// ended, the client reconnects at once, and accepting has already stopped
+// here, so it reaches the next server. A connect that still reaches this
+// server (on a connection accepted before the drain) is turned away for the
+// same reason.
+func endRealtimeOnDrain(app core.App) {
+	var draining atomic.Bool
+	drainhooks.OnBegin("realtime", func() {
+		draining.Store(true)
+		broker := app.SubscriptionsBroker()
+		for id := range broker.Clients() {
+			broker.Unregister(id)
+		}
+	})
+	app.OnRealtimeConnectRequest().BindFunc(func(e *core.RealtimeConnectRequestEvent) error {
+		if draining.Load() {
+			return e.Error(http.StatusServiceUnavailable, "The server is restarting; reconnect.", nil)
+		}
+		return e.Next()
+	})
 }
 
 // registerSupervised makes a server started by a supervisor serve on the
@@ -99,6 +153,7 @@ func registerSupervised(app core.App) {
 	ctl := openControl()
 	setControl(ctl)
 	d := &drain{}
+	endRealtimeOnDrain(app)
 	// The reader starts now, not at ready: a rebuild can ask for a restart
 	// before this process is ready, and its ack must be read.
 	if ctl != nil {
@@ -110,6 +165,7 @@ func registerSupervised(app core.App) {
 		Priority: supervisedServePriority,
 		Func: func(e *core.ServeEvent) error {
 			useInheritedListeners(e)
+			apis.SetRedirectServerHook(e.App, d.redirectListener)
 			// The drainer must see every connection from the first one, so
 			// it wraps the listener before PocketBase starts serving on it.
 			dr := supervise.NewDrainer(e.Server)
