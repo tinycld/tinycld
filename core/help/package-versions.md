@@ -60,8 +60,9 @@ for any package.
    once, or **Clear** to drop your staged changes.
 4. The staged set is checked for compatibility as you go (see below). When it's
    clean, the footer reads **Compatible · N staged**; press **Apply N changes**.
-5. A progress window streams each step. When it finishes the app restarts briefly
-   and comes back on the new versions.
+5. A progress window streams each step. When it finishes, the server starts the
+   new versions. When the new server answers, click **Reload** (in a browser) to
+   load them. See *Installing packages* for what the progress window shows.
 
 ## Downgrading drops data
 
