@@ -98,6 +98,18 @@ type options struct {
 	drainBound time.Duration
 	// stopBound is how long a stopped child has after SIGTERM before
 	// SIGKILL.
+	//
+	// A child's terminate chain waits in sequence, each wait bounded on its
+	// own: a backup run (coreserver backupStopBound, 8 s), tail writes
+	// (readonly tailStopBound, 5 s), the boot notices (coreserver
+	// bootNoticeStopBound, 2 s) and the automation worker (automation
+	// shutdownDrainWait, 5 s). Their worst cases add up to about 20 s, more
+	// than this bound and more than what drainBound leaves after a full
+	// drain. Each worst case is stuck work, and they seldom coincide; when
+	// they do, SIGKILL ends the child with the database open, which SQLite's
+	// journal survives, and only the cut-off wait's warning and its
+	// unfinished write are lost. A new wait in that chain must fit in what
+	// is left, not add to the sum.
 	stopBound time.Duration
 	// childUser is who children run as when the supervisor runs as root:
 	// the user the entrypoint's gosu dropped to.

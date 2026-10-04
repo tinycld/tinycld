@@ -93,6 +93,9 @@ func runOnEnter(fn func()) {
 // Enter/Leave/Enter can start two runs that overlap — fn must re-check
 // Active() itself and be safe to run more than once or concurrently with
 // itself.
+//
+// No writer calls it yet: it is kept for the collaborative-document writers,
+// which hold long-lived connections that the request middleware never sees.
 func OnEnter(fn func()) {
 	mu.Lock()
 	defer mu.Unlock()

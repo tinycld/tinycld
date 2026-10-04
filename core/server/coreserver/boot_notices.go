@@ -13,7 +13,8 @@ type bootMailFn func(ctx context.Context, app core.App, n notice) error
 // bootNoticeStopBound is how long a terminating app waits for the boot
 // notices after it cancels them. The cancel ends every send; what is left is
 // a few database writes. It must be short: the supervisor gives a stopping
-// process 10 s in all, and the backup stop waits in the same chain.
+// process 10 s in all, and the other terminate waits run in the same chain
+// (the sum is set out at supervise's options.stopBound).
 const bootNoticeStopBound = 2 * time.Second
 
 // startBootNotices tells administrators what the last boot found (a backup a
