@@ -333,18 +333,18 @@ async function wipeMailboxes(pb: PocketBase, userId: string): Promise<number> {
     return deleted
 }
 
-// wipeOrphanedRealtimeJournal clears realtime_doc_updates rows whose room is
-// gone. The journal has no owner FK and nothing cascades into it (it outlives
-// its room by design so a crashed room can replay), so the per-collection
-// wipe above never touches it and rows for deleted rooms accumulate forever.
-// Rooms are drive_items; keying on room existence rather than this run's
-// deletions also drains rows leaked by resets that ran before this cleanup
-// existed. Must run AFTER the drive_items wipe so those rooms read as gone.
-async function wipeOrphanedRealtimeJournal(pb: PocketBase): Promise<number> {
-    if (!(await hasCollection(pb, 'realtime_doc_updates'))) return 0
+// wipeOrphanedRealtimeCheckpoints clears realtime_doc_checkpoints rows whose
+// room is gone. The row has no owner FK, so the per-collection wipe above
+// never touches it; the server's own delete hook drops it, but a reset that
+// bypasses that hook leaves rows for deleted rooms behind. Rooms are
+// drive_items; keying on room existence rather than this run's deletions
+// also drains rows leaked by earlier resets. Must run AFTER the drive_items
+// wipe so those rooms read as gone.
+async function wipeOrphanedRealtimeCheckpoints(pb: PocketBase): Promise<number> {
+    if (!(await hasCollection(pb, 'realtime_doc_checkpoints'))) return 0
 
     const rows = await pb
-        .collection('realtime_doc_updates')
+        .collection('realtime_doc_checkpoints')
         .getFullList<{ id: string; room_id: string }>({ fields: 'id,room_id' })
     if (rows.length === 0) return 0
 
@@ -362,7 +362,7 @@ async function wipeOrphanedRealtimeJournal(pb: PocketBase): Promise<number> {
     for (const row of rows) {
         if (row.room_id && liveRooms.has(row.room_id)) continue
         try {
-            await pb.collection('realtime_doc_updates').delete(row.id)
+            await pb.collection('realtime_doc_checkpoints').delete(row.id)
             deleted++
         } catch (err) {
             if (!isNotFound(err)) throw err
@@ -400,9 +400,9 @@ async function main() {
 
     // After BOTH users' drive_items are gone, so every room deleted in either
     // pass reads as orphaned. Running it inside wipeOwnedData would leave the
-    // companion's journal rows behind whenever their items outlived the pass.
-    const journalRows = await wipeOrphanedRealtimeJournal(pb)
-    if (journalRows > 0) log(`Wiped ${journalRows} orphaned realtime_doc_updates record(s)`)
+    // companion's rows behind whenever their items outlived the pass.
+    const checkpointRows = await wipeOrphanedRealtimeCheckpoints(pb)
+    if (checkpointRows > 0) log(`Wiped ${checkpointRows} orphaned realtime_doc_checkpoints record(s)`)
 
     // seedForUser handles the find-or-create dance for the user and runs every
     // linked package's seed() against the demo workspace.
