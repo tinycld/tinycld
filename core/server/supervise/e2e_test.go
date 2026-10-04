@@ -506,9 +506,11 @@ func (p *supervisorProc) revert(token, build string) {
 }
 
 type installLogRow struct {
+	ID      string `json:"id"`
 	Status  string `json:"status"`
 	Error   string `json:"error"`
 	BuildID string `json:"build_id"`
+	Trigger string `json:"trigger"`
 }
 
 // revertLog returns the newest revert row of the install log.
@@ -711,6 +713,202 @@ func TestE2EBrokenBuildRollsBack(t *testing.T) {
 			row.Status, row.Error, row.BuildID, e2eBuildB)
 	}
 	assertExists(t, s.rollbackRecordPath(), false)
+}
+
+// e2eAutoRowHook makes the install-log row of a revert the row an automatic
+// upgrade writes: trigger auto and the version set it applied. A real
+// automatic upgrade needs a package registry to fetch from, which the test
+// does not have; the rollback, the reconciler and the block that follows are
+// the same for both jobs.
+const e2eAutoRowHook = `onRecordCreate((e) => {
+    if (e.record.get('action') === 'revert') {
+        e.record.set('trigger', 'auto')
+        e.record.set('changes', [{ slug: 'acme-e2e', targetVersion: '2.0.0' }])
+    }
+    e.next()
+}, 'pkg_install_log')
+`
+
+// e2eRollBack serves build A (its mark route plus hookA) with the supervisor
+// environment env returns, runs before on it with a superuser token, then
+// reverts to a build B that fails while it loads its hooks, and waits until A
+// serves again after the rollback.
+func e2eRollBack(t *testing.T, env func(r *testRoot) []string, hookA string, before func(p *supervisorProc, token string)) (*testRoot, *supervisorProc, string) {
+	t.Helper()
+	bin := serverBinary(t)
+	r := newServerRoot(t)
+	r.serverBuild(e2eBuildA, bin, markHook("A")+hookA)
+	r.serverBuild(e2eBuildB, bin, "throw new Error('this build does not start')\n")
+	r.point(e2eBuildA)
+	r.createSuperuser(e2eBuildA)
+	readyTimeout := 20 * time.Second
+	p := r.startSupervisor(append(env(r), "SUPERVISE_TEST_READY_TIMEOUT="+readyTimeout.String()), r.serveArgs())
+	mark := "http://" + p.addr + e2eMarkPath
+
+	waitURLBody(t, 60*time.Second, mark, "A")
+	a := p.mustChild(e2eBuildA, 1)
+	token := p.superuserToken()
+	if before != nil {
+		before(p, token)
+	}
+	p.revert(token, e2eBuildB)
+	waitFor(t, readyTimeout+60*time.Second, "the previous build to serve again", func() bool {
+		if _, ok := p.child(e2eBuildA, 2); !ok || alive(a.pid) {
+			return false
+		}
+		got, err := fetch(mark)
+		return err == nil && got == "A"
+	})
+	p.mustChild(e2eBuildB, 1)
+	s := r.state()
+	if got, want := readLink(t, s.currentLinkPath()), filepath.Join(s.buildsDir(), e2eBuildA, "tinycld"); got != want {
+		t.Fatalf("current -> %q, want %q", got, want)
+	}
+	// The restarted server consumes the record when it marks the rows.
+	waitFor(t, 10*time.Second, "the rollback record to be consumed", func() bool {
+		_, err := os.Stat(s.rollbackRecordPath())
+		return os.IsNotExist(err)
+	})
+	return r, p, p.superuserToken()
+}
+
+type autoUpgradeStateRow struct {
+	Kind       string            `json:"kind"`
+	InstallLog string            `json:"install_log"`
+	Target     map[string]string `json:"target"`
+	Reason     string            `json:"reason"`
+	Cleared    bool              `json:"cleared"`
+}
+
+func (p *supervisorProc) blockedSets(token string) []autoUpgradeStateRow {
+	p.t.Helper()
+	q := url.Values{"filter": {"kind='blocked'"}}
+	out := p.api(http.MethodGet, "/api/collections/autoupgrade_state/records?"+q.Encode(), token, nil, http.StatusOK)
+	var list struct {
+		Items []autoUpgradeStateRow `json:"items"`
+	}
+	if err := json.Unmarshal(out, &list); err != nil {
+		p.t.Fatalf("autoupgrade_state: %v: %s", err, out)
+	}
+	return list.Items
+}
+
+// A rolled-back build's install-log row names that build, so the restarted
+// server marks it rolled_back. When the row is an automatic upgrade's, its
+// version set is then blocked, and no later tick tries it again.
+func TestE2EFailedBuildBlocksItsAutomaticUpgrade(t *testing.T) {
+	r, p, token := e2eRollBack(t, (*testRoot).serverEnv, e2eAutoRowHook, nil)
+	s := r.state()
+
+	row := p.revertLog(token)
+	if row.Status != "rolled_back" || row.BuildID != e2eBuildB || row.Trigger != "auto" ||
+		row.Error != "the build failed its health check and was rolled back" {
+		t.Fatalf("the install log row is %q (%q, build %q, trigger %q), want an auto row rolled_back for %s",
+			row.Status, row.Error, row.BuildID, row.Trigger, e2eBuildB)
+	}
+	// The block is written by the boot notices, after the server is ready.
+	var blocked []autoUpgradeStateRow
+	waitFor(t, 30*time.Second, "the automatic upgrade's set to be blocked", func() bool {
+		blocked = p.blockedSets(token)
+		return len(blocked) > 0
+	})
+	if len(blocked) != 1 {
+		t.Fatalf("blocked sets = %+v, want one", blocked)
+	}
+	b := blocked[0]
+	if b.InstallLog != row.ID || b.Cleared || b.Reason == "" ||
+		len(b.Target) != 1 || b.Target["acme-e2e"] != "2.0.0" {
+		t.Fatalf("blocked set = %+v, want acme-e2e 2.0.0 from install log row %s", b, row.ID)
+	}
+	// The backup was restored, so nothing is kept aside.
+	assertExists(t, s.dbArmedMarkerPath(), false)
+	assertExists(t, s.dbBackupPath(), false)
+	assertExists(t, s.unrestoredDir(), false)
+}
+
+// unrestorableEnv makes the supervisor fail to put a backup back, logs the
+// server's email to tmp/emails.jsonl, and leaves automatic upgrades on, so
+// their status shows the hold. Nothing ticks in the test: the first tick is
+// an hour after boot.
+func unrestorableEnv(r *testRoot) []string {
+	var env []string
+	for _, kv := range r.serverEnv() {
+		if !strings.HasPrefix(kv, "TINYCLD_AUTOUPGRADE_DISABLED=") {
+			env = append(env, kv)
+		}
+	}
+	return append(env,
+		"SUPERVISE_TEST_FAIL_RESTORE=1",
+		"TINYCLD_EMAIL_LOG="+filepath.Join(r.dir, "tmp", "emails.jsonl"),
+	)
+}
+
+// When the backup cannot be put back, the rollback keeps it aside in
+// unrestored/<build>, disarmed, and the server that starts again tells the
+// administrators and holds automatic upgrades.
+func TestE2EUnrestorableBackupIsKeptAndReported(t *testing.T) {
+	const ownerEmail = "owner@example.test"
+	r, p, token := e2eRollBack(t, unrestorableEnv, "", func(p *supervisorProc, token string) {
+		p.api(http.MethodPost, "/api/collections/users/records", token, map[string]any{
+			"email":           ownerEmail,
+			"password":        e2eSuperuserPassword,
+			"passwordConfirm": e2eSuperuserPassword,
+			"name":            "E2E Owner",
+			"username":        "e2e-owner",
+			"role":            "owner",
+		}, http.StatusOK)
+	})
+	s := r.state()
+
+	if _, armed := s.BackupArmed(); armed {
+		t.Fatal("the backup the rollback could not restore is still armed")
+	}
+	assertExists(t, s.dbBackupPath(), false)
+	kept := filepath.Join(s.unrestoredDir(), e2eBuildB)
+	var note UnrestoredNote
+	if err := json.Unmarshal([]byte(mustRead(t, filepath.Join(kept, unrestoredNoteName))), &note); err != nil {
+		t.Fatal(err)
+	}
+	if note.Build != e2eBuildB || note.RolledTo != e2eBuildA || note.Size == 0 ||
+		!strings.Contains(note.RestoreError, syscall.ENOSPC.Error()) {
+		t.Fatalf("note = %+v, want %s rolled to %s with the restore's ENOSPC", note, e2eBuildB, e2eBuildA)
+	}
+	// The kept copy is the backup: a database with the superuser in it.
+	if got := sqlite(t, filepath.Join(kept, "data.db"), "SELECT count(*) FROM _superusers;"); got != "1" {
+		t.Fatalf("superusers in the kept copy = %q, want 1", got)
+	}
+
+	// The notices are sent after the server is ready.
+	q := url.Values{"filter": {"type='core.backup.unrestored'"}}
+	waitFor(t, 30*time.Second, "the in-app notice to the owner", func() bool {
+		out := p.api(http.MethodGet, "/api/collections/notifications/records?"+q.Encode(), token, nil, http.StatusOK)
+		var list struct {
+			TotalItems int `json:"totalItems"`
+		}
+		return json.Unmarshal(out, &list) == nil && list.TotalItems == 1
+	})
+	waitFor(t, 30*time.Second, "both channels to be marked as told", func() bool {
+		_, appErr := os.Stat(filepath.Join(kept, "notified-app"))
+		_, mailErr := os.Stat(filepath.Join(kept, "notified-email"))
+		return appErr == nil && mailErr == nil
+	})
+	if log := mustRead(t, filepath.Join(r.dir, "tmp", "emails.jsonl")); !strings.Contains(log, ownerEmail) ||
+		!strings.Contains(log, "A database backup needs attention") {
+		t.Fatalf("the email log has no notice to %s:\n%s", ownerEmail, log)
+	}
+
+	out := p.api(http.MethodGet, "/api/admin/packages/auto-upgrade/status", token, nil, http.StatusOK)
+	var status struct {
+		Status struct {
+			LastResult string `json:"lastResult"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil {
+		t.Fatalf("auto-upgrade status: %v: %s", err, out)
+	}
+	if status.Status.LastResult != "paused: a database backup needs attention" {
+		t.Fatalf("auto-upgrade status = %s, want it paused for the backup", out)
+	}
 }
 
 // A package port declared in a build's ports.json is held by the
