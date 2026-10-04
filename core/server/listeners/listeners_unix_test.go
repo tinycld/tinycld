@@ -112,6 +112,18 @@ func extraChildMain() {
 	os.Stdout.WriteString("ok\n")
 }
 
+// closeDups closes, at cleanup, every file set holds: AddListener keeps a
+// dup of each listener, which the listener's own close does not reach.
+// Files a test passed in are closed twice, which is harmless.
+func closeDups(t *testing.T, set *Set) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, f := range set.files {
+			f.Close()
+		}
+	})
+}
+
 func startChild(t *testing.T, names ...string) (*exec.Cmd, *Set) {
 	t.Helper()
 	set := &Set{}
@@ -125,6 +137,7 @@ func startChild(t *testing.T, names ...string) (*exec.Cmd, *Set) {
 			t.Fatal(err)
 		}
 	}
+	closeDups(t, set)
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	cmd.Env = append(os.Environ(), "LISTENERS_TEST_CHILD=1", "LISTENERS_TEST_NAMES="+strings.Join(names, ","))
 	set.Apply(cmd)
@@ -178,6 +191,7 @@ func TestSocketpairEndIsAnExtraFDNotAListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	set.AddFile("control", childEnd)
+	closeDups(t, set)
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	cmd.Env = append(os.Environ(), "LISTENERS_TEST_CONTROL=1")
 	set.Apply(cmd)
@@ -299,7 +313,7 @@ func TestSetApplyKeepsFilesAndNamesInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	set.AddFile("acme-spare", last)
-	t.Cleanup(func() { set.files[1].Close() })
+	closeDups(t, set)
 	cmd := exec.Command("true")
 	cmd.Env = []string{"KEEP=1"}
 	set.Apply(cmd)
@@ -337,6 +351,7 @@ func TestExtraFDCarriesTheFileItWasGiven(t *testing.T) {
 		t.Fatal(err)
 	}
 	set.AddFile("control", childEnd)
+	closeDups(t, set)
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	cmd.Env = append(os.Environ(), "LISTENERS_TEST_EXTRA=1")
 	set.Apply(cmd)

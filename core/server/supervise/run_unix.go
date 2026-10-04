@@ -341,6 +341,10 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 	if err := s.state.RestoreBackup(); err != nil {
 		log.Warn("could not restore the database backup; rolling the build back anyway (the schema may be ahead of the previous build)", "err", err)
 	}
+	// A backup still armed here is one RestoreBackup could not restore. It
+	// is the only copy of the database from before the migration, so
+	// nothing below may drop it.
+	_, keptArmed := s.state.BackupArmed()
 	if err := s.state.RollbackCurrent(); err != nil {
 		log.Error("could not roll the build back; starting the current build again", "err", err)
 	}
@@ -362,29 +366,33 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 	if err := s.state.PromoteReleaseIfNewer(c.dir); err != nil {
 		log.Error("could not promote the rolled-back build's web bundle; serving the previous one", "err", err)
 	}
-	s.dropStaleBackup(failedBuild, c)
+	if !keptArmed {
+		s.dropReturnedBackup(failedBuild, c)
+	}
 	s.ports.retain(c.ports)
 	return c, nil
 }
 
-// dropStaleBackup removes a backup armed for the build just rolled back
-// from, once the build rolled back to is ready. Such a backup can only have
-// come back with the data that child's boot put back: a restore swapped in
-// by the failed build's boot moves pb_data aside with the armed backup in
-// it, so RestoreBackup found nothing, and undoing the swap returns both.
-// The child serves that data now. Left armed, the backup would be restored
-// over every write since by the next rollback or interrupted-rebuild check.
+// dropReturnedBackup removes a backup armed for the build just rolled back
+// from that the rolled-back child's boot brought back. The caller calls it
+// only when no backup was armed once the rollback's restore step ran, so a
+// backup armed now appeared during that boot: a restore swapped in by the
+// failed build's boot moved pb_data aside with the armed backup in it, so
+// the restore step found nothing, and the child's boot undid the swap and
+// returned both. The child serves that data now. Left armed, the backup
+// would be restored over every write since by the next rollback or
+// interrupted-rebuild check.
 //
 // A child that asked for its own replacement before it was ready armed a
-// backup for its next build, which is not stale.
-func (s *supervisor) dropStaleBackup(failedBuild string, c *child) {
+// backup for its next build, which must be kept.
+func (s *supervisor) dropReturnedBackup(failedBuild string, c *child) {
 	armedFor, armed := s.state.BackupArmed()
 	if !armed || failedBuild == "" || armedFor != failedBuild || c.pendingRestart != nil {
 		return
 	}
-	log.Warn("the rolled-back build's boot brought back a database backup armed for the failed build; dropping it", "build", failedBuild)
+	log.Warn("the rolled-back build's boot put back data that carries a backup armed for the failed build; dropping it", "build", failedBuild)
 	if err := s.state.CommitBackup(); err != nil {
-		log.Error("could not drop the stale database backup", "err", err)
+		log.Error("could not drop the backup the rolled-back build's boot put back", "err", err)
 	}
 }
 

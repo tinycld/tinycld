@@ -281,7 +281,7 @@ func TestSupervisedDrainStopsAcceptingAndFinishes(t *testing.T) {
 	select {
 	case <-terminated:
 		t.Fatal("the drain finished with a request still in flight")
-	default:
+	case <-time.After(pocketBaseShutdownWindow):
 	}
 
 	release()
@@ -373,7 +373,9 @@ func TestSupervisedFixtureClosesTheControlConn(t *testing.T) {
 }
 
 // logSeen returns a channel that closes once a record with message msg is
-// logged.
+// logged. It swaps the global default logger, so it relies on this
+// package's tests not running in parallel; the previous logger is restored
+// at cleanup.
 func logSeen(t *testing.T, msg string) <-chan struct{} {
 	t.Helper()
 	seen := make(chan struct{})

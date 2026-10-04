@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -966,6 +967,123 @@ func TestRunColdRestoreFailingAfterTheSwapRollsBack(t *testing.T) {
 		return !armed
 	})
 	assertExists(t, s.dbBackupPath(), false)
+}
+
+// A backup the rollback could not restore (a full disk, an I/O error) is the
+// only copy of the database from before the migration. The rollback goes on
+// without it, and must leave it armed for an operator or a later rollback,
+// although the build it names is the one rolled back from.
+func TestRunRollbackKeepsABackupItCouldNotRestore(t *testing.T) {
+	r := newTestRoot(t)
+	s := r.state()
+	prev := renameFile
+	renameFile = func(from, to string) error {
+		if to == s.dbPath() {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.ENOSPC}
+		}
+		return prev(from, to)
+	}
+	// Registered before the supervisor's own cleanup, so it runs after the
+	// supervisor has stopped reading it.
+	t.Cleanup(func() { renameFile = prev })
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "b"})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_BOOT_EXIT": "1"})
+	r.point("a")
+	h := r.supervise(testOptions())
+
+	readies := readyLogs(t)
+	r.trigger(r.waitEvent("A", "ready", 1))
+	again := r.waitEvent("A", "ready", 2)
+	waitBody(t, h.addr, "A")
+	// The rollback ends with its backup step once it has taken this ready,
+	// and reads no stop signal until then; a stop sent after the ready is
+	// taken is answered only once the rollback is over.
+	waitClosed(t, readies.of(again.pid), 5*time.Second, "the supervisor to take the rolled-back child's ready")
+	h.sigs <- syscall.SIGTERM
+	if code := h.wait(20 * time.Second); code != 0 {
+		t.Fatalf("supervisor exit code = %d, want 0", code)
+	}
+	if got, armed := s.BackupArmed(); !armed || got != "b" {
+		t.Fatalf("armed backup = %q %v, want the unrestored one kept armed for b", got, armed)
+	}
+	if got := mustRead(t, s.dbBackupPath()); got != "live" {
+		t.Fatalf("data.db.backup = %q, want the pre-migration bytes", got)
+	}
+}
+
+// readyLog follows the supervisor's "the server is ready" records by pid.
+type readyLog struct {
+	slog.Handler
+	mu   *sync.Mutex
+	seen map[int]chan struct{}
+}
+
+// readyLogs makes the supervisor's log report each ready it takes. The
+// default logger is global, so this relies on the package's tests not
+// running in parallel; the previous one is restored at cleanup.
+func readyLogs(t *testing.T) *readyLog {
+	t.Helper()
+	prev := slog.Default()
+	// Not prev's handler: wrapping slog's built-in default handler in a new
+	// default deadlocks, because that handler writes through the log package,
+	// which SetDefault points back at the new default.
+	h := &readyLog{Handler: slog.NewTextHandler(os.Stderr, nil), mu: &sync.Mutex{}, seen: map[int]chan struct{}{}}
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return h
+}
+
+// of returns a channel that closes once the supervisor took pid's ready.
+func (h *readyLog) of(pid int) <-chan struct{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.chanLocked(pid)
+}
+
+func (h *readyLog) chanLocked(pid int) chan struct{} {
+	ch, ok := h.seen[pid]
+	if !ok {
+		ch = make(chan struct{})
+		h.seen[pid] = ch
+	}
+	return ch
+}
+
+func (h *readyLog) Handle(ctx context.Context, rec slog.Record) error {
+	if rec.Message == "the server is ready" {
+		rec.Attrs(func(a slog.Attr) bool {
+			if a.Key != "pid" {
+				return true
+			}
+			h.mu.Lock()
+			ch := h.chanLocked(int(a.Value.Int64()))
+			select {
+			case <-ch:
+			default:
+				close(ch)
+			}
+			h.mu.Unlock()
+			return false
+		})
+	}
+	return h.Handler.Handle(ctx, rec)
+}
+
+func (h *readyLog) WithAttrs(as []slog.Attr) slog.Handler {
+	return &readyLog{Handler: h.Handler.WithAttrs(as), mu: h.mu, seen: h.seen}
+}
+
+func (h *readyLog) WithGroup(name string) slog.Handler {
+	return &readyLog{Handler: h.Handler.WithGroup(name), mu: h.mu, seen: h.seen}
+}
+
+func waitClosed(t *testing.T, ch <-chan struct{}, limit time.Duration, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(limit):
+		t.Fatalf("timed out after %s waiting for %s", limit, what)
+	}
 }
 
 // A new child can ask for its own replacement before it is ready (its boot
