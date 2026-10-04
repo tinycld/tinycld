@@ -495,8 +495,9 @@ func (p *supervisorProc) revert(token, build string) {
 }
 
 type installLogRow struct {
-	Status string `json:"status"`
-	Error  string `json:"error"`
+	Status  string `json:"status"`
+	Error   string `json:"error"`
+	BuildID string `json:"build_id"`
 }
 
 // revertLog returns the newest revert row of the install log.
@@ -688,15 +689,15 @@ func TestE2EBrokenBuildRollsBack(t *testing.T) {
 	}
 	assertExists(t, s.dbArmedMarkerPath(), false)
 	assertExists(t, s.dbBackupPath(), false)
-	// The backup was taken while the revert's install log row was still
-	// running; the live database had it as success when the server asked
-	// for the restart. So the row is the backup's only if the database was
-	// restored, and the restarted server marks it rolled back, naming the
-	// failed build, only from the .rollback-pending file the rollback
-	// writes (which it then removes).
+	// The revert tagged its install log row with build B before the
+	// backup, so the restored row still names B. The restarted server marks
+	// it rolled back only from the .rollback-pending record the rollback
+	// writes (which it then removes), matching the row by that build.
 	row := p.revertLog(p.superuserToken())
-	if row.Status != "rolled_back" || !strings.Contains(row.Error, "(build "+e2eBuildB+")") {
-		t.Fatalf("the revert's install log row is %q (%q), want rolled_back naming %s", row.Status, row.Error, e2eBuildB)
+	if row.Status != "rolled_back" || row.BuildID != e2eBuildB ||
+		row.Error != "the build failed its health check and was rolled back" {
+		t.Fatalf("the revert's install log row is %q (%q, build %q), want rolled_back for %s",
+			row.Status, row.Error, row.BuildID, e2eBuildB)
 	}
 	assertExists(t, s.rollbackRecordPath(), false)
 }

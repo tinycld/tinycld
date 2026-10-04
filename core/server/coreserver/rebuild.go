@@ -59,10 +59,15 @@ type rebuildDeps struct {
 	// production wiring in rebuild() always sets it.
 	verifyCompat func(m RebuildManifest, buildDir string) error
 	pipeline     func(job *installjob.Job, buildDir string) (buildOutput, error)
-	backupDB     func() error
-	restoreDB    func() error
-	syncMig      func(buildDir string) (SyncResult, error)
-	activate     func(buildID string) error
+	// tagLog saves the build id on this job's pkg_install_log row. It runs
+	// before backupDB, so the snapshot a rollback restores carries it too:
+	// the boot reconciler finds the rolled-back build's rows by it whichever
+	// database (snapshot or finalized) is live. Optional (nil-safe).
+	tagLog    func(buildID string) error
+	backupDB  func() error
+	restoreDB func() error
+	syncMig   func(buildDir string) (SyncResult, error)
+	activate  func(buildID string) error
 	// recoverDB re-bootstraps the live app's DB pools after the out-of-band DB
 	// access of backupDB + syncMig, so the post-activate registry/build-record
 	// writes see the real tables. Optional (nil-safe).
@@ -124,6 +129,14 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 		jobLogf(job, "build failed — discarding build dir %s (live state untouched)", buildDir)
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "build", err)
+	}
+	// Tag before the backup: if the new build is rolled back, the boot
+	// reconciler finds this job's row by the build id in whichever database
+	// is then live. Only bookkeeping, so a failure does not stop the rebuild.
+	if d.tagLog != nil {
+		if err := d.tagLog(m.BuildID); err != nil {
+			jobLogf(job, "WARNING: could not save the build id on the install log (a rollback may not mark it): %v", err)
+		}
 	}
 	// From here the DB may change — back it up so we can roll back.
 	emitProgress(job, "Backing up your data", progBackupDB, "Creating SQLite backup")
@@ -277,6 +290,7 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installjob.Job, m Re
 		pipeline: func(j *installjob.Job, bd string) (buildOutput, error) {
 			return runBuildPipeline(j, bd, m.BuildID)
 		},
+		tagLog: func(buildID string) error { return tagInstallLog(app, logRecord, buildID) },
 		backupDB: func() error {
 			r, e := backupDatabase(filepath.Join(buildDir, "tinycld"))
 			restoreClosure = r

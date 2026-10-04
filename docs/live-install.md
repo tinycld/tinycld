@@ -332,16 +332,27 @@ probe:
   healthy swap, this one has a short outage — only on a failed upgrade, never
   on a successful one.
 
-Because the restore reverts `data.db` to a snapshot taken *before* the job wrote
-its terminal status, the rolled-back install's `pkg_install_log` row would
-otherwise be stranded at `running` forever. To surface a clean outcome, the
-rollback path writes a `pb_data/.rollback-pending` breadcrumb (the rolled-back
-build id, captured from the armed-backup marker before the restore clears it);
-on the next boot `ReconcileRolledBackInstall` (registered in the
-`registerStaticServe` OnServe hook) consumes it and marks that stranded row
-`rolled_back`. So a post-restart rollback shows terminal status
+Each rebuild and each revert saves its build id on its `pkg_install_log` row
+(`build_id`) before it takes the snapshot. When the supervisor rolls a build back, it writes
+a rollback record, `<state>/.rollback-pending` (JSON: `build`, `rolled_to`,
+`at`), beside `pb_data` so that a restore swap cannot move it away. On the next
+boot, `ReconcileRolledBackInstall` (registered in the `registerStaticServe`
+OnServe hook) reads the record and marks every row of that build's latest run
+`rolled_back` (a revert re-uses a build id, so rows older than the newest row
+of another build are left as they are), whichever database is live:
+
+- the restored snapshot, taken *before* the job wrote its terminal status,
+  holds the row at `running`;
+- a database that was not restored (a restore swap that was rolled back, or a
+  backup the supervisor could not restore) holds it at `success`.
+
+A row written before the `build_id` field has no build id; for it, the
+newest `running` row without one is marked. A record left in
+`pb_data/.rollback-pending` by an older supervisor (plain-text build id) is
+read once in the same way. So a post-restart rollback shows terminal status
 **`rolled_back`** at `GET /api/admin/packages/status/{slug}`, distinct from the
-pre-swap **`failed`**.
+pre-swap **`failed`**, and an automatic upgrade that was rolled back is
+blocked from being tried again.
 
 The supervisor renders the identical verdict on a fresh start if the whole
 process is killed (OOM, `docker kill`, host reboot) between the replace request

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/installjob"
 )
@@ -40,86 +41,100 @@ func readRollbackRecord() (build, path string, ok bool) {
 	return "", "", false
 }
 
+// rolledBackError is the error a rolled-back build's install-log rows carry.
+const rolledBackError = "the build failed its health check and was rolled back"
+
 // ReconcileRolledBackInstall runs at boot (OnServe, before serving). When the
-// supervisor rolled back the previous install, it left a rollback record
-// (readRollbackRecord); the DB it restored is the PRE-install snapshot,
-// taken (rebuild.go backupDB) while that install's pkg_install_log row was still
-// "running" — so the later finalize("success") write was discarded by the
-// restore and the row is stranded at "running" with no completed_at. There is no
-// in-process job on a fresh boot (no job holds the interlock), so nothing else will ever
-// finalize it.
+// supervisor rolled a build back, it left a rollback record
+// (readRollbackRecord) naming that build. Every install-log row the build
+// produced is then marked "rolled_back", whatever state the live database
+// holds it in:
+//   - "running" when the supervisor restored the pre-install snapshot (taken
+//     while the row was running, so the finalize was discarded);
+//   - "success" when the finalized database stayed live: a restore whose swap
+//     was rolled back, or a backup the supervisor could not restore.
 //
-// This marks the stranded row "rolled_back" so the /admin status endpoint (and
-// the integration test's waitForOpStatus / waitForRolledBack) sees a clean
-// terminal state instead of a row stuck at "running" forever.
+// A row left at "success" would tell the admin screens the install worked
+// and would let an automatic upgrade of the same set be tried again
+// (reconcileAutoUpgradeResults blocks only rolled_back rows).
 //
-// Idempotent + safe:
-//   - No marker  → no-op (the normal, healthy-boot case; the supervisor's commit
-//     path never writes the marker, so a committed build is never touched here).
-//   - Marker present but no "running" row → delete the marker, no-op (already
-//     reconciled, or the rollback predated any log write).
-//   - A concurrent in-flight job cannot exist on a fresh boot, but we guard on
-//     no job holds the interlock anyway, so a future caller can't clobber a live install.
+// Rows written before the build_id field cannot be matched by build; for
+// those the newest "running" row without a build id is the one the rollback
+// stranded, since the installer is single-flight (core/installjob).
 //
-// It only ever transitions running → rolled_back; it never touches success,
-// failed, or already-rolled_back rows.
+// The record is removed only after every write succeeded, so a failure
+// retries on the next boot. Rows already "rolled_back" or "failed" are never
+// touched, so a retry is harmless.
 func ReconcileRolledBackInstall(app core.App) {
-	rolledBackBuild, markerPath, ok := readRollbackRecord()
+	build, recordPath, ok := readRollbackRecord()
 	if !ok {
-		return // no breadcrumb → nothing was rolled back → no-op
+		return
 	}
 
-	// A fresh boot has no in-memory job. Never reconcile a row out from under a
-	// genuinely running operation (belt-and-suspenders; can't happen on boot).
-	live := installjob.Running()
-	if live {
-		srvLog.Info("rollback-pending marker present but a job is in-flight; deferring reconcile")
+	// Never mark a row out from under a running operation. A fresh boot has
+	// no job, so this only guards a later caller.
+	if installjob.Running() {
+		srvLog.Info("a rollback record is present but a job is in flight; deferring the reconcile")
 		return
 	}
 
 	if _, cErr := app.FindCollectionByNameOrId("pkg_install_log"); cErr != nil {
-		return // migration not applied yet — leave the marker for a later boot
+		return // migration not applied yet — keep the record for a later boot
 	}
 
-	// The stranded row is the single most-recent install-class row still at
-	// "running" (its finalize was discarded by the restore). There is at most one
-	// — the installer is single-flight (see core/installjob).
-	rows, fErr := app.FindRecordsByFilter(
+	rows, fErr := rolledBackInstallRows(app, build)
+	if fErr != nil {
+		srvLog.Warn("query for the rolled-back build's install-log rows failed, retrying next boot", "build", build, "err", fErr)
+		return
+	}
+
+	completed := time.Now().UTC().Format("2006-01-02 15:04:05.000Z")
+	for _, row := range rows {
+		row.Set("status", "rolled_back")
+		row.Set("error", rolledBackError)
+		row.Set("completed_at", completed)
+		if sErr := app.Save(row); sErr != nil {
+			srvLog.Warn("failed to mark install-log rolled_back, retrying next boot", "recordID", row.Id, "err", sErr)
+			return
+		}
+		srvLog.Info("marked install-log rolled_back", "recordID", row.Id, "pkgSlug", row.GetString("pkg_slug"), "build", build)
+	}
+
+	if rmErr := os.Remove(recordPath); rmErr != nil && !os.IsNotExist(rmErr) {
+		srvLog.Warn("failed to clear the rollback record", "path", recordPath, "err", rmErr)
+	}
+}
+
+// rolledBackInstallRows returns the install-log rows the rolled-back build
+// produced that are still running or success: matched by build_id, or, when
+// none match, the newest running row written before the build_id field.
+//
+// A revert re-activates a retained build, so an older row can carry the same
+// build id. Only the rows since the newest row of another build belong to
+// the run that was rolled back; the earlier ones record a run that worked.
+func rolledBackInstallRows(app core.App, build string) ([]*core.Record, error) {
+	if build != "" {
+		filter := "build_id = {:b} && (status = 'running' || status = 'success')"
+		params := dbx.Params{"b": build}
+		prior, err := app.FindRecordsByFilter("pkg_install_log",
+			"build_id != '' && build_id != {:b}", "-created", 1, 0, params)
+		if err != nil {
+			return nil, err
+		}
+		if len(prior) > 0 {
+			filter += " && created >= {:since}"
+			params["since"] = prior[0].GetDateTime("created").String()
+		}
+		rows, err := app.FindRecordsByFilter("pkg_install_log", filter, "-created", 0, 0, params)
+		if err != nil || len(rows) > 0 {
+			return rows, err
+		}
+	}
+	return app.FindRecordsByFilter(
 		"pkg_install_log",
-		"status = 'running'",
+		"status = 'running' && build_id = ''",
 		"-created",
 		1,
 		0,
 	)
-	if fErr != nil {
-		srvLog.Warn("query for stranded running install-log row failed, retrying next boot", "err", fErr)
-		return // keep the marker; retry next boot rather than lose the signal
-	}
-	if len(rows) == 0 {
-		// Nothing stranded (e.g. the rollback happened before any log write, or a
-		// prior boot already reconciled). Drop the consumed breadcrumb.
-		_ = os.Remove(markerPath)
-		return
-	}
-
-	row := rows[0]
-	msg := "package install rolled back: new build failed its post-restart health check"
-	if rolledBackBuild != "" {
-		msg = "package install rolled back (build " + rolledBackBuild +
-			"): new build failed its post-restart health check"
-	}
-	row.Set("status", "rolled_back")
-	row.Set("error", msg)
-	row.Set("completed_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
-	if sErr := app.Save(row); sErr != nil {
-		srvLog.Warn("failed to mark install-log rolled_back, retrying next boot", "recordID", row.Id, "err", sErr)
-		return // keep the marker; retry next boot
-	}
-	srvLog.Info("marked install-log rolled_back", "recordID", row.Id, "pkgSlug", row.GetString("pkg_slug"))
-
-	// Consume the breadcrumb only after a successful write so a transient failure
-	// retries on the next boot.
-	if rmErr := os.Remove(markerPath); rmErr != nil && !os.IsNotExist(rmErr) {
-		srvLog.Warn("failed to clear rollback-pending marker", "path", markerPath, "err", rmErr)
-	}
 }

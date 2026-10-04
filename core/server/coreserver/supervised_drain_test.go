@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 
@@ -66,17 +65,6 @@ func dialAccepted(t *testing.T, l *acceptSignal) net.Conn {
 			t.Fatal("the server did not accept the connection")
 		}
 	}
-}
-
-// bootstrappedApp is a real PocketBase app, so apis.Serve can run on it.
-func bootstrappedApp(t *testing.T) *pocketbase.PocketBase {
-	t.Helper()
-	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
-	if err := app.Bootstrap(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { app.ResetBootstrapState() })
-	return app
 }
 
 // terminateOnDrain makes the drain's self-terminate trigger OnTerminate, as

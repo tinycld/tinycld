@@ -2,6 +2,7 @@ package coreserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/installjob"
 )
@@ -343,6 +345,10 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 			seq = append(seq, "pipeline")
 			return buildOutput{}, nil
 		},
+		tagLog: func(buildID string) error {
+			seq = append(seq, "tag:"+buildID)
+			return nil
+		},
 		backupDB:       func() error { seq = append(seq, "backup"); return nil },
 		syncMig:        func(buildDir string) (SyncResult, error) { seq = append(seq, "sync"); return SyncResult{}, nil },
 		activate:       func(id string) error { seq = append(seq, "activate"); return nil },
@@ -357,7 +363,9 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatal(err)
 	}
-	want := "assemble,verify,pipeline,backup,sync,activate,record,commit,prune,finalize,restart"
+	// The tag precedes the backup, so the snapshot a rollback restores
+	// already names the build it rolled back from.
+	want := "assemble,verify,pipeline,tag:build-1,backup,sync,activate,record,commit,prune,finalize,restart"
 	if got := strings.Join(seq, ","); got != want {
 		t.Fatalf("sequence = %s, want %s", got, want)
 	}
@@ -738,5 +746,75 @@ func TestRebuild_ActivateFailure_RestoresAndDoesNotRestart(t *testing.T) {
 	}
 	if restarted {
 		t.Fatal("must NOT restart when activation failed")
+	}
+}
+
+// The build id on the install-log row is bookkeeping for a later rollback;
+// failing to save it must not stop a rebuild that is otherwise sound.
+func TestRebuild_TagLogFailure_StillSucceeds(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
+	var restored, restarted bool
+	deps := happyDeps(&restored, &restarted)
+	deps.tagLog = func(string) error { return errors.New("database is locked") }
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
+	m := RebuildManifest{BuildID: "build-1", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
+
+	if err := rebuildWith(job, m, deps); err != nil {
+		t.Fatalf("rebuild err = %v, want nil", err)
+	}
+	if !restarted {
+		t.Fatal("a tag failure stopped the rebuild before its restart")
+	}
+}
+
+// bootstrappedApp is a real PocketBase app, so apis.Serve and the production
+// rebuild wiring can run on it.
+func bootstrappedApp(t *testing.T) *pocketbase.PocketBase {
+	t.Helper()
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { app.ResetBootstrapState() })
+	return app
+}
+
+// withStubbedSteps keeps the production install-log steps of real and
+// replaces every build step with one that succeeds, so a test can check what
+// the production wiring writes to the row without a toolchain.
+func withStubbedSteps(real rebuildDeps) rebuildDeps {
+	var restored, restarted bool
+	deps := happyDeps(&restored, &restarted)
+	deps.tagLog = real.tagLog
+	deps.finalizeLog = real.finalizeLog
+	return deps
+}
+
+// The production rebuild saves the build id on its own install-log row, and
+// the finalize that follows keeps it: the finalize saves the same record.
+func TestProductionRebuildTagsItsInstallLogRow(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
+	app := bootstrappedApp(t)
+	addInstallLogCollection(t, app)
+	job := installjob.New("install", "todo", "")
+	logRecord := createInstallLog(app, job, "install")
+	if logRecord == nil {
+		t.Fatal("createInstallLog saved no row")
+	}
+	m := RebuildManifest{BuildID: "build-42", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
+
+	if err := rebuildWith(job, m, withStubbedSteps(productionRebuildDeps(app, job, m, logRecord))); err != nil {
+		t.Fatal(err)
+	}
+
+	row, err := app.FindRecordById("pkg_install_log", logRecord.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row.GetString("build_id"); got != "build-42" {
+		t.Fatalf("build_id = %q, want build-42", got)
+	}
+	if got := row.GetString("status"); got != "success" {
+		t.Fatalf("status = %q, want success", got)
 	}
 }

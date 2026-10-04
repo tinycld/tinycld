@@ -470,6 +470,21 @@ func updateInstallLogSlug(app core.App, record *core.Record, slug string) {
 	}
 }
 
+// tagInstallLog saves the build id on the job's install-log row. It sets it
+// on the record the rebuild holds, not on a fresh copy found by job_id: the
+// finalize saves that same record later, and a copy without the field would
+// write it back empty.
+func tagInstallLog(app core.App, record *core.Record, buildID string) error {
+	if record == nil {
+		return nil
+	}
+	record.Set("build_id", buildID)
+	if err := app.Save(record); err != nil {
+		return fmt.Errorf("coreserver: save build id on install log %s: %w", record.Id, err)
+	}
+	return nil
+}
+
 func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg string, logLines []string) {
 	if record == nil {
 		return

@@ -205,6 +205,11 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 		return
 	}
 
+	// Tag before the backup, as rebuildWith does: if the reverted-to build is
+	// rolled back, the boot reconciler finds this row by its build id.
+	if err := tagInstallLog(app, logRecord, targetID); err != nil {
+		jobLogf(job, "WARNING: could not save the build id on the install log (a rollback may not mark it): %v", err)
+	}
 	// Revert has no build pipeline (the target tree already exists), so it runs
 	// its own compressed-but-monotonic scale rather than the rebuild constants.
 	emitProgress(job, "Backing up your data", 25, "Creating SQLite backup")

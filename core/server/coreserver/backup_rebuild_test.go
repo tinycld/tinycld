@@ -94,3 +94,39 @@ func TestRestoreRebuildWithoutARestartIsNotUnderway(t *testing.T) {
 		t.Fatalf("exited %v in dev mode", *exits)
 	}
 }
+
+// The restore's rebuild tags its install-log row with its build, so a
+// rollback of the restore's build marks the row the restore finalized
+// "success" before its restart.
+func TestRestoreRebuildTagsItsInstallLogRow(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
+	t.Cleanup(resetReplacementForTest)
+	recordExit(t)
+	app := bootstrappedApp(t)
+	addInstallLogCollection(t, app)
+	prev := restoreRebuildDeps
+	var buildID string
+	restoreRebuildDeps = func(a *pocketbase.PocketBase, j *installjob.Job, m RebuildManifest, r *core.Record) rebuildDeps {
+		buildID = m.BuildID
+		return withStubbedSteps(prev(a, j, m, r))
+	}
+	t.Cleanup(func() { restoreRebuildDeps = prev })
+
+	if err := runRestoreRebuilder(t, app); err != nil {
+		t.Fatalf("rebuilder err = %v, want nil", err)
+	}
+
+	rows, err := app.FindAllRecords("pkg_install_log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("%d install-log rows, want 1", len(rows))
+	}
+	if got := rows[0].GetString("build_id"); buildID == "" || got != buildID {
+		t.Fatalf("build_id = %q, want the restore's build %q", got, buildID)
+	}
+	if got := rows[0].GetString("status"); got != "success" {
+		t.Fatalf("status = %q, want success", got)
+	}
+}
