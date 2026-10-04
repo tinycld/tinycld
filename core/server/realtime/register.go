@@ -370,18 +370,11 @@ func runConnection(broker *Broker, opts Options, ident connIdentity, conn *webso
 	// payload is empty — the routing-ID prefix IS the assignment.
 	deliver(client, makeAssignFrame(client.id))
 
-	// If this room kind registered an OnConnect handler, invoke it now
-	// and deliver MsgServerHello before the sync handshake runs.
-	if opts, lookupErr := optionsFor(kind); lookupErr == nil && opts.OnConnect != nil {
-		payload, err := opts.OnConnect(roomID, client)
-		if err != nil {
-			log.WarnContext(ctx,
-				"OnConnect failed; skipping MsgServerHello",
-				"kind", kind, "roomID", roomID, "err", err,
-			)
-		} else {
-			deliver(client, makeServerHelloFrame(client.id, payload))
-		}
+	// Deliver MsgServerHello before the sync handshake runs: the kind's
+	// own payload (OnConnect) plus, for a room with a server document, the
+	// document epoch the client compares against the one it synced under.
+	if payload, ok := buildServerHello(ctx, kind, roomID, client); ok {
+		deliver(client, makeServerHelloFrame(client.id, payload))
 	}
 
 	// Reader loop: blocks on the connection. On any error or close,
@@ -418,6 +411,38 @@ func runConnection(broker *Broker, opts Options, ident connIdentity, conn *webso
 			room.route(client, data)
 		}
 	}
+}
+
+// buildServerHello composes a client's hello. A kind without OnConnect and
+// a room without a server document get no frame, so a pure-relay kind
+// keeps its protocol shape. A failing OnConnect or a non-object payload
+// skips the frame; the connection continues and the client renders
+// without a hello.
+func buildServerHello(ctx context.Context, kind, roomID string, client *Client) ([]byte, bool) {
+	opts, err := optionsFor(kind)
+	if err != nil {
+		return nil, false
+	}
+	var payload []byte
+	if opts.OnConnect != nil {
+		payload, err = opts.OnConnect(roomID, client)
+		if err != nil {
+			log.WarnContext(ctx, "OnConnect failed; skipping MsgServerHello",
+				"kind", kind, "roomID", roomID, "err", err)
+			return nil, false
+		}
+	}
+	room := client.room
+	if room == nil || room.serverDoc == nil {
+		return payload, opts.OnConnect != nil
+	}
+	payload, err = withDocEpoch(payload, room.DocEpoch())
+	if err != nil {
+		log.WarnContext(ctx, "hello payload cannot carry the document epoch; skipping MsgServerHello",
+			"kind", kind, "roomID", roomID, "err", err)
+		return nil, false
+	}
+	return payload, true
 }
 
 // makeAssignFrame builds the initial MsgAssignID frame the server

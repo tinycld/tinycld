@@ -261,7 +261,7 @@ func TestSaveCoordinatorGivesUpAfterMaxAttempts(t *testing.T) {
 	c.maxAttempts = 3
 	c.backoff = func(int) time.Duration { return 10 * time.Millisecond }
 	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	c.SetJournal("notepads", nil)
+	c.SetKind("notepads")
 	c.captureGiveUp = func(d giveUpDetail) {
 		mu.Lock()
 		captured = d
@@ -269,7 +269,6 @@ func TestSaveCoordinatorGivesUpAfterMaxAttempts(t *testing.T) {
 		giveUps.Add(1)
 	}
 	c.OnRoomCreate("doomed-room", &stubHandle{}, nil)
-	c.NoteSeq("doomed-room", 42)
 
 	c.OnDocUpdate("doomed-room")
 
@@ -303,9 +302,6 @@ func TestSaveCoordinatorGivesUpAfterMaxAttempts(t *testing.T) {
 	}
 	if captured.Attempts != 3 {
 		t.Errorf("attempts = %d, want 3", captured.Attempts)
-	}
-	if captured.LastSeq != 42 {
-		t.Errorf("lastSeq = %d, want 42", captured.LastSeq)
 	}
 	if captured.Err == nil {
 		t.Errorf("give-up detail missing error")
@@ -427,190 +423,6 @@ func TestSaveCoordinatorIgnoresUpdateForUnknownRoom(t *testing.T) {
 	}
 }
 
-// recordingJournalForCoord captures Truncate calls.
-type recordingJournalForCoord struct {
-	mu           sync.Mutex
-	truncates    []recordedTruncate
-	truncateFail error // when non-nil, Truncate returns this error after recording the call
-}
-
-type recordedTruncate struct {
-	kind, id   string
-	throughSeq int64
-}
-
-func (j *recordingJournalForCoord) Append(string, string, int64, []byte) error { return nil }
-func (j *recordingJournalForCoord) Replay(string, string, func(int64, []byte) error) error {
-	return nil
-}
-func (j *recordingJournalForCoord) Truncate(kind, id string, throughSeq int64) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.truncates = append(j.truncates, recordedTruncate{kind: kind, id: id, throughSeq: throughSeq})
-	return j.truncateFail
-}
-
-func TestSaveCoordinatorTruncatesAfterSuccessfulFlush(t *testing.T) {
-	j := &recordingJournalForCoord{}
-	flushed := make(chan struct{}, 1)
-	fc := newFastCoordWithFlush(t, func(context.Context, string, DocHandle) error {
-		flushed <- struct{}{}
-		return nil
-	})
-	fc.c.SetJournal("test-kind", j)
-
-	handle := &stubHandle{}
-	fc.c.OnRoomCreate("room-1", handle, nil)
-	fc.c.NoteSeq("room-1", 1)
-	fc.c.NoteSeq("room-1", 2)
-	fc.c.NoteSeq("room-1", 5)
-	fc.c.OnDocUpdate("room-1")
-	<-flushed
-	// Allow the post-flush truncate goroutine to run.
-	time.Sleep(50 * time.Millisecond)
-
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if len(j.truncates) != 1 {
-		t.Fatalf("truncates = %d; want 1", len(j.truncates))
-	}
-	if j.truncates[0].throughSeq != 5 {
-		t.Fatalf("truncated through %d; want 5", j.truncates[0].throughSeq)
-	}
-}
-
-func TestSaveCoordinatorNoTruncateOnFailedFlush(t *testing.T) {
-	j := &recordingJournalForCoord{}
-	fc := newFastCoordWithFlush(t, func(context.Context, string, DocHandle) error {
-		return errors.New("flush boom")
-	})
-	fc.c.SetJournal("test-kind", j)
-	fc.c.OnRoomCreate("room-1", &stubHandle{}, nil)
-	fc.c.NoteSeq("room-1", 3)
-	fc.c.OnDocUpdate("room-1")
-	time.Sleep(200 * time.Millisecond) // let flush + retry-schedule run
-
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if len(j.truncates) != 0 {
-		t.Fatalf("truncates = %d; want 0 (no truncate on failed flush)", len(j.truncates))
-	}
-}
-
-func TestSaveCoordinatorTruncateErrorIsLoggedAndIgnored(t *testing.T) {
-	j := &recordingJournalForCoord{truncateFail: errors.New("truncate boom")}
-	flushed := make(chan struct{}, 1)
-	fc := newFastCoordWithFlush(t, func(context.Context, string, DocHandle) error {
-		flushed <- struct{}{}
-		return nil
-	})
-	fc.c.SetJournal("test-kind", j)
-	fc.c.OnRoomCreate("room-1", &stubHandle{}, nil)
-	fc.c.NoteSeq("room-1", 3)
-	fc.c.OnDocUpdate("room-1")
-	<-flushed
-	time.Sleep(50 * time.Millisecond)
-
-	// The flush succeeded, the truncate was attempted, the truncate
-	// failed — the coordinator must log+continue, NOT propagate the
-	// error or schedule a retry. Verify the truncate was attempted
-	// once (so the error path was exercised) and that no retry was
-	// scheduled (i.e., the room is no longer dirty).
-	j.mu.Lock()
-	got := len(j.truncates)
-	j.mu.Unlock()
-	if got != 1 {
-		t.Fatalf("truncates = %d; want 1 (single attempt, no retry)", got)
-	}
-}
-
-// TestSaveCoordinatorTeardownTruncates: the teardown flush must retire the
-// journal rows it covered, exactly as the timer path does. This was the
-// document-duplication bug: a session shorter than the debounce window
-// reaches teardown without any timer flush ever having truncated, so the
-// journal still covered every edit the teardown flush wrote — and the next
-// room creation seeded the flushed snapshot AND replayed those rows on top,
-// doubling the entire document (caught by boards' toolbar e2e reload case).
-func TestSaveCoordinatorTeardownTruncates(t *testing.T) {
-	j := &recordingJournalForCoord{}
-	c := NewSaveCoordinator(func(context.Context, string, DocHandle) error { return nil })
-	c.debounceEvery = 5 * time.Second // long; only the teardown flush runs
-	c.ceilingEvery = 5 * time.Second
-	c.teardownTimeout = 2 * time.Second
-	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	c.SetJournal("test-kind", j)
-
-	c.OnRoomCreate("teardown-room", &stubHandle{}, nil)
-	c.NoteSeq("teardown-room", 7)
-	c.OnDocUpdate("teardown-room")
-	c.OnRoomEmpty("teardown-room")
-
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if len(j.truncates) != 1 {
-		t.Fatalf("truncates = %d; want 1 (teardown flush must truncate)", len(j.truncates))
-	}
-	if j.truncates[0].throughSeq != 7 {
-		t.Fatalf("truncated through %d; want 7", j.truncates[0].throughSeq)
-	}
-}
-
-// TestSaveCoordinatorTeardownNoTruncateOnFailedFlush: a failed teardown
-// flush must leave the journal intact — the snapshot is stale, and the
-// untruncated rows are the only durable copy of the edits.
-func TestSaveCoordinatorTeardownNoTruncateOnFailedFlush(t *testing.T) {
-	j := &recordingJournalForCoord{}
-	c := NewSaveCoordinator(func(context.Context, string, DocHandle) error { return errors.New("boom") })
-	c.debounceEvery = 5 * time.Second
-	c.ceilingEvery = 5 * time.Second
-	c.teardownTimeout = 2 * time.Second
-	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	c.SetJournal("test-kind", j)
-
-	c.OnRoomCreate("teardown-room", &stubHandle{}, nil)
-	c.NoteSeq("teardown-room", 7)
-	c.OnDocUpdate("teardown-room")
-	c.OnRoomEmpty("teardown-room")
-
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if len(j.truncates) != 0 {
-		t.Fatalf("truncates = %d; want 0 (failed flush must not truncate)", len(j.truncates))
-	}
-}
-
-// TestSaveCoordinatorFlushNowTruncates: the forced-flush path shares the
-// same contract. Without it, a FlushNow leaves a CLEAN room (dirty=false)
-// whose journal still covers the flushed edits — and the timer path never
-// revisits a clean room, so the rows sit until a teardown that may fail.
-func TestSaveCoordinatorFlushNowTruncates(t *testing.T) {
-	j := &recordingJournalForCoord{}
-	c := NewSaveCoordinator(func(context.Context, string, DocHandle) error { return nil })
-	c.debounceEvery = 5 * time.Second
-	c.ceilingEvery = 5 * time.Second
-	c.teardownTimeout = 2 * time.Second
-	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	c.SetJournal("test-kind", j)
-
-	c.OnRoomCreate("flushnow-room", &stubHandle{}, nil)
-	c.NoteSeq("flushnow-room", 4)
-	c.OnDocUpdate("flushnow-room")
-	if err := c.FlushNow("flushnow-room"); err != nil {
-		t.Fatalf("FlushNow: %v", err)
-	}
-
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if len(j.truncates) != 1 {
-		t.Fatalf("truncates = %d; want 1 (FlushNow must truncate)", len(j.truncates))
-	}
-	if j.truncates[0].throughSeq != 4 {
-		t.Fatalf("truncated through %d; want 4", j.truncates[0].throughSeq)
-	}
-}
-
-// TestFlushNowNoRoomIsNoop: FlushNow on an unknown room returns nil
-// without invoking the flush — the durable blob is already current.
 func TestFlushNowNoRoomIsNoop(t *testing.T) {
 	fc := newFastCoord(t)
 	if err := fc.c.FlushNow("never-opened"); err != nil {

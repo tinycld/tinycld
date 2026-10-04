@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"context"
 	"errors"
 	"sync"
 
@@ -105,7 +106,7 @@ type RoomKindOptions struct {
 	OnDocUpdate func(roomID string)
 
 	// OnDocUpdateContent, if non-nil, is invoked synchronously after
-	// OnDocUpdate but before OnDocUpdateSeq, with the originating
+	// OnDocUpdate, with the originating
 	// connection and the raw inbound payload. Lets consumers inspect
 	// the bytes (e.g. to extract Yjs clientIDs) and the sender's
 	// identity (AuthID, ShareRole, IsAnonymous) without paying for a
@@ -114,12 +115,6 @@ type RoomKindOptions struct {
 	// Runs on the broker's route-path goroutine; must be cheap.
 	// Anything blocking belongs in a goroutine the callback schedules.
 	OnDocUpdateContent OnDocUpdateContentFn
-
-	// OnDocUpdateSeq, if non-nil, fires after OnDocUpdate with the
-	// per-room seq that was just journaled. Lets the SaveCoordinator
-	// (or future consumers) track WAL high-water without threading
-	// state through OnDocUpdate's roomID-only signature.
-	OnDocUpdateSeq func(roomID string, seq int64)
 
 	// UpdateContentValidator, if non-nil, is invoked synchronously with
 	// the raw bytes of each inbound MsgDocUpdate after WritePredicate
@@ -166,30 +161,48 @@ type RoomKindOptions struct {
 	// terminated.
 	OnConnect ServerHelloFn
 
-	// Journal, if non-nil, is the WAL backend the broker writes
-	// each accepted MsgDocUpdate to before applying it server-side
-	// and fanning out to peers. Append failure rejects the frame —
-	// the broker logs and drops; the sender's local Y.Doc retains
-	// the edit and a future update will re-propagate. On a fresh
-	// room (after RuntimeProvider.NewDoc), the broker calls Replay
-	// to fold any pre-existing rows into the just-bootstrapped
-	// Y.Doc before serving the first SyncReply.
-	//
-	// A nil Journal disables WAL semantics for the kind — used by
-	// pure-relay kinds with no server mirror.
-	Journal Journal
+	// Checkpoints, if non-nil, is where the broker keeps a room's full
+	// document state between incarnations of this process. With it set the
+	// broker PARKS a room's document when the last client leaves instead of
+	// closing it, reuses the parked document when the room reopens within
+	// ParkIdle, writes the state to the store when the janitor evicts the
+	// parked document and whenever Suspend runs (read-only enter, drain,
+	// terminate), and opens a room from the stored state when its
+	// fingerprint still matches the source. A nil store disables all of
+	// that: the document is closed when the room empties and re-seeded at
+	// every open, which is what a pure-relay kind or a test wants.
+	Checkpoints CheckpointStore
+
+	// Fingerprint reports the identity of the derived source a room is
+	// seeded from. Required when Checkpoints is set: it is what tells a
+	// parked document or a stored checkpoint from a stale one after the
+	// source changed outside the room. See FingerprintFn.
+	Fingerprint FingerprintFn
+
+	// FlushDirty, if non-nil, flushes every dirty room of this kind to its
+	// derived source and returns when the writes have landed or ctx ends.
+	// Suspend calls it before it checkpoints, so the stored state never
+	// trails the derived file. Wired to SaveCoordinator.FlushDirty.
+	FlushDirty func(ctx context.Context) error
+
+	// OnEvict, if non-nil, is invoked when a parked document is finally
+	// closed: by the janitor after ParkIdle, by a reopen whose fingerprint
+	// no longer matched, or by DropRoom. It is the counterpart of
+	// OnRoomCreate for state a kind keeps per document rather than per
+	// room session (boards' change baselines, text's room bookkeeping).
+	// OnEmpty still runs when the last client leaves; a kind that needs its
+	// per-document state to survive the parked window keeps it until
+	// OnEvict.
+	OnEvict func(roomID string)
 
 	// MaxUpdateBytes, if non-zero, caps the size of an inbound
 	// MsgDocUpdate payload. Frames exceeding this are dropped before
-	// the journal append + server-side apply + fan-out. Zero falls
-	// back to DefaultMaxUpdateBytes (256 KiB). The cap exists to
-	// keep one bad client from filling the journal with multi-MB
-	// updates and to provide an upper bound on per-row storage in
-	// realtime_doc_updates.
+	// the server-side apply + fan-out. Zero falls back to
+	// DefaultMaxUpdateBytes (256 KiB). The cap exists to keep one bad
+	// client from pushing multi-MB updates through every peer's buffer.
 	//
 	// The cap applies to ALL MsgDocUpdate frames, including pure-relay
-	// kinds with no server mirror or journal — it is a wire-level frame
-	// limit, not a storage limit specific to the WAL.
+	// kinds with no server mirror — it is a wire-level frame limit.
 	MaxUpdateBytes int
 }
 
@@ -280,6 +293,18 @@ func optionsFor(kind string) (RoomKindOptions, error) {
 		return RoomKindOptions{}, ErrUnknownRoomKind
 	}
 	return opts, nil
+}
+
+// registeredKinds lists every registered kind, for the broker's
+// process-wide operations (Suspend).
+func registeredKinds() []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	kinds := make([]string, 0, len(registry))
+	for k := range registry {
+		kinds = append(kinds, k)
+	}
+	return kinds
 }
 
 // resetRegistry clears all registered room kinds. Intended for tests

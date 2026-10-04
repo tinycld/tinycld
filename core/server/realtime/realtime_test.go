@@ -20,6 +20,9 @@ import (
 type dialOpts struct {
 	server *httptest.Server
 	url    string // ws://host/api/realtime/test/
+	// noHello tells dialClient not to wait for a hello frame from a kind
+	// that would normally send one (its OnConnect fails in the test).
+	noHello bool
 }
 
 // startTestServerForKind mounts a minimal HTTP handler that drives
@@ -92,6 +95,9 @@ func startTestServer(t *testing.T, broker *Broker, authFn AuthorizeFn) dialOpts 
 type testClient struct {
 	conn *websocket.Conn
 	id   [clientIDLen]byte
+	// hello is the MsgServerHello payload dialClient consumed, when the
+	// kind sends one.
+	hello []byte
 }
 
 // dialClientWithRole opens a WS as a user carrying a share role (threaded
@@ -121,7 +127,32 @@ func dialClientWithRole(t *testing.T, opts dialOpts, roomID, userID, role string
 	}
 	tc := &testClient{conn: conn}
 	copy(tc.id[:], data[:clientIDLen])
+	if kindSendsHello(opts) && !opts.noHello {
+		mt, payload := readFrame(t, tc, 2*time.Second)
+		if mt != MsgServerHello {
+			t.Fatalf("expected MsgServerHello after the assign frame, got 0x%02x", mt)
+		}
+		tc.hello = payload
+	}
 	return tc
+}
+
+// kindSendsHello reports whether the kind a dialOpts points at sends a
+// MsgServerHello: it does when it has an OnConnect handler or a server
+// document (whose hello carries the epoch). dialClient consumes that frame
+// so test bodies read only what they drive.
+func kindSendsHello(opts dialOpts) bool {
+	rest := strings.TrimPrefix(opts.url, "ws")
+	i := strings.Index(rest, "/api/realtime/")
+	if i < 0 {
+		return false
+	}
+	kind := strings.Trim(rest[i+len("/api/realtime/"):], "/")
+	ko, err := optionsFor(kind)
+	if err != nil {
+		return false
+	}
+	return ko.OnConnect != nil || ko.RuntimeProvider != nil
 }
 
 // dialClient opens a WS to the given room as the given user, then
@@ -154,6 +185,13 @@ func dialClient(t *testing.T, opts dialOpts, roomID, userID string) *testClient 
 	}
 	tc := &testClient{conn: conn}
 	copy(tc.id[:], data[:clientIDLen])
+	if kindSendsHello(opts) && !opts.noHello {
+		mt, payload := readFrame(t, tc, 2*time.Second)
+		if mt != MsgServerHello {
+			t.Fatalf("expected MsgServerHello after the assign frame, got 0x%02x", mt)
+		}
+		tc.hello = payload
+	}
 	return tc
 }
 
@@ -576,156 +614,21 @@ func TestIDMismatchClosesConnection(t *testing.T) {
 	}
 }
 
-// recordingJournal captures Append calls so tests can assert ordering
-// and content. Safe for concurrent use.
-type recordingJournal struct {
-	mu      sync.Mutex
-	appends []recordedAppend
-	fail    error
-}
-
-type recordedAppend struct {
-	kind, id string
-	seq      int64
-	payload  []byte
-}
-
-func (j *recordingJournal) Append(kind, id string, seq int64, update []byte) error {
-	if j.fail != nil {
-		return j.fail
-	}
-	cp := make([]byte, len(update))
-	copy(cp, update)
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.appends = append(j.appends, recordedAppend{kind: kind, id: id, seq: seq, payload: cp})
-	return nil
-}
-
-func (j *recordingJournal) Replay(kind, id string, apply func(int64, []byte) error) error {
-	return nil
-}
-
-func (j *recordingJournal) Truncate(kind, id string, throughSeq int64) error {
-	return nil
-}
-
-// stubDocRuntime hands out stubHandle instances. Used by tests to
-// exercise journal interplay without requiring a real Y.Doc.
+// stubDocRuntime hands out stubHandle instances. Used by tests that
+// need a server doc without a real Y.Doc.
 type stubDocRuntime struct{}
 
 func (stubDocRuntime) NewDoc(roomID string) (DocHandle, error) {
 	return &stubHandle{}, nil
 }
 
-func TestRoomRouteAppendsBeforeFanout(t *testing.T) {
-	j := &recordingJournal{}
-	kind := "test-kind-wal-append"
-	RegisterRoomKindWith(kind, RoomKindOptions{
-		Authorize:       allowAllAuth,
-		RuntimeProvider: stubDocRuntime{},
-		Journal:         j,
-	})
-	t.Cleanup(func() { unregisterRoomKindForTest(kind) })
-
-	b := NewBroker()
-	c1 := &Client{joinedAt: time.Now()}
-	c2 := &Client{joinedAt: time.Now()}
-	b.join(kind, "room-1", c1)
-	b.join(kind, "room-1", c2)
-
-	room := b.lookupRoomForTest(kind, "room-1")
-	if room == nil {
-		t.Fatalf("room not created")
-	}
-
-	payload := []byte{0xAA, 0xBB, 0xCC}
-	frame := make([]byte, frameOverhead+len(payload))
-	frame[clientIDLen] = byte(MsgDocUpdate)
-	copy(frame[frameOverhead:], payload)
-	room.route(c1, frame)
-
-	j.mu.Lock()
-	appends := append([]recordedAppend(nil), j.appends...)
-	j.mu.Unlock()
-	if len(appends) != 1 {
-		t.Fatalf("appends = %d; want 1", len(appends))
-	}
-	got := appends[0]
-	if got.kind != kind || got.id != "room-1" {
-		t.Fatalf("append kind/id = %s/%s; want %s/room-1", got.kind, got.id, kind)
-	}
-	if got.seq != 1 {
-		t.Fatalf("append seq = %d; want 1", got.seq)
-	}
-	if string(got.payload) != string(payload) {
-		t.Fatalf("append payload = %v; want %v", got.payload, payload)
-	}
-
-	// Confirm the fan-out also happened — the test name claims "before
-	// fanout", so verify both halves.
-	select {
-	case fanned := <-c2.send:
-		if len(fanned) != len(frame) || string(fanned[frameOverhead:]) != string(payload) {
-			t.Fatalf("c2 received unexpected frame: %v", fanned)
-		}
-	case <-time.After(50 * time.Millisecond):
-		t.Fatalf("c2 did not receive fanned-out frame")
-	}
-}
-
-func TestRoomRouteAppendFailureDropsFrame(t *testing.T) {
-	j := &recordingJournal{fail: errors.New("journal boom")}
-	kind := "test-kind-wal-fail"
-	RegisterRoomKindWith(kind, RoomKindOptions{
-		Authorize:       allowAllAuth,
-		RuntimeProvider: stubDocRuntime{},
-		Journal:         j,
-	})
-	t.Cleanup(func() { unregisterRoomKindForTest(kind) })
-
-	b := NewBroker()
-	c1 := &Client{joinedAt: time.Now()}
-	c2 := &Client{joinedAt: time.Now()}
-	b.join(kind, "room-1", c1)
-	b.join(kind, "room-1", c2)
-	room := b.lookupRoomForTest(kind, "room-1")
-	if room == nil {
-		t.Fatalf("room not created")
-	}
-
-	// Get the stub handle so we can check that ApplyUpdate was NOT called.
-	sh := room.serverDoc.(*stubHandle)
-
-	payload := []byte{0x01}
-	frame := make([]byte, frameOverhead+len(payload))
-	frame[clientIDLen] = byte(MsgDocUpdate)
-	copy(frame[frameOverhead:], payload)
-	room.route(c1, frame)
-
-	sh.mu.Lock()
-	applied := sh.applied
-	sh.mu.Unlock()
-	if applied != 0 {
-		t.Fatalf("ApplyUpdate called %d times after journal failure; want 0", applied)
-	}
-
-	// c2 should not have received the dropped frame.
-	select {
-	case <-c2.send:
-		t.Fatalf("c2 received fanned-out frame despite journal failure")
-	case <-time.After(20 * time.Millisecond):
-		// no frame — correct
-	}
-}
+func (stubDocRuntime) Seed(context.Context, string, DocHandle) error { return nil }
 
 func TestRoomRouteOversizeFrameDropped(t *testing.T) {
-	j := &recordingJournal{}
-	kind := "test-kind-wal-cap"
+	kind := "test-kind-cap"
 	RegisterRoomKindWith(kind, RoomKindOptions{
 		Authorize:       allowAllAuth,
 		RuntimeProvider: stubDocRuntime{},
-		Journal:         j,
 		MaxUpdateBytes:  4,
 	})
 	t.Cleanup(func() { unregisterRoomKindForTest(kind) })
@@ -739,6 +642,7 @@ func TestRoomRouteOversizeFrameDropped(t *testing.T) {
 	if room == nil {
 		t.Fatalf("room not created")
 	}
+	sh := room.serverDoc.(*stubHandle)
 
 	payload := []byte{1, 2, 3, 4, 5} // 5 bytes > 4 cap
 	frame := make([]byte, frameOverhead+len(payload))
@@ -746,23 +650,26 @@ func TestRoomRouteOversizeFrameDropped(t *testing.T) {
 	copy(frame[frameOverhead:], payload)
 	room.route(c1, frame)
 
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if len(j.appends) != 0 {
-		t.Fatalf("appends = %d; want 0 (oversize frame must not reach journal)", len(j.appends))
+	sh.mu.Lock()
+	applied := sh.applied
+	sh.mu.Unlock()
+	if applied != 0 {
+		t.Fatalf("ApplyUpdate called %d times for an oversize frame; want 0", applied)
+	}
+	select {
+	case <-c2.send:
+		t.Fatalf("c2 received an oversize frame")
+	case <-time.After(20 * time.Millisecond):
 	}
 }
 
-// TestRoomRouteAwarenessNotJournaled verifies the journal block is
-// scoped to MsgDocUpdate and never sees awareness frames. Awareness is
-// ephemeral by design.
-func TestRoomRouteAwarenessNotJournaled(t *testing.T) {
-	j := &recordingJournal{}
-	kind := "test-kind-wal-awareness"
+// TestRoomRouteAwarenessNotAppliedToDoc verifies awareness frames never
+// reach the server document. Awareness is ephemeral by design.
+func TestRoomRouteAwarenessNotAppliedToDoc(t *testing.T) {
+	kind := "test-kind-awareness"
 	RegisterRoomKindWith(kind, RoomKindOptions{
 		Authorize:       allowAllAuth,
 		RuntimeProvider: stubDocRuntime{},
-		Journal:         j,
 	})
 	t.Cleanup(func() { unregisterRoomKindForTest(kind) })
 
@@ -775,6 +682,7 @@ func TestRoomRouteAwarenessNotJournaled(t *testing.T) {
 	if room == nil {
 		t.Fatalf("room not created")
 	}
+	sh := room.serverDoc.(*stubHandle)
 
 	payload := []byte("cursor:42")
 	frame := make([]byte, frameOverhead+len(payload))
@@ -782,10 +690,10 @@ func TestRoomRouteAwarenessNotJournaled(t *testing.T) {
 	copy(frame[frameOverhead:], payload)
 	room.route(c1, frame)
 
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if len(j.appends) != 0 {
-		t.Fatalf("appends = %d; want 0 (awareness frames must not reach journal)", len(j.appends))
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	if sh.applied != 0 {
+		t.Fatalf("ApplyUpdate called %d times for an awareness frame; want 0", sh.applied)
 	}
 }
 
@@ -878,11 +786,10 @@ func TestClientReadOnlyAccessor(t *testing.T) {
 
 // TestUpdateContentValidatorRejectsUpdate verifies that a non-nil
 // UpdateContentValidator can drop an inbound MsgDocUpdate based on its
-// payload contents: the rejected frame must not reach the journal, must
-// not be applied to the server-side mirror, and must not fan out to
-// other peers. An accepted update flows through normally.
+// payload contents: the rejected frame must not be applied to the
+// server-side mirror and must not fan out to other peers. An accepted
+// update flows through normally.
 func TestUpdateContentValidatorRejectsUpdate(t *testing.T) {
-	j := &recordingJournal{}
 	validator := func(_ string, update []byte) error {
 		if bytes.Contains(update, []byte("REJECT")) {
 			return errors.New("validator rejected update")
@@ -894,7 +801,6 @@ func TestUpdateContentValidatorRejectsUpdate(t *testing.T) {
 	RegisterRoomKindWith(kind, RoomKindOptions{
 		Authorize:              allowAllAuth,
 		RuntimeProvider:        stubDocRuntime{},
-		Journal:                j,
 		UpdateContentValidator: validator,
 	})
 	t.Cleanup(func() { unregisterRoomKindForTest(kind) })
@@ -918,12 +824,7 @@ func TestUpdateContentValidatorRejectsUpdate(t *testing.T) {
 	copy(rejectedFrame[frameOverhead:], rejected)
 	room.route(c1, rejectedFrame)
 
-	// No journal append, no server apply, no fan-out.
-	j.mu.Lock()
-	if len(j.appends) != 0 {
-		t.Fatalf("rejected frame journaled: appends=%d; want 0", len(j.appends))
-	}
-	j.mu.Unlock()
+	// No server apply, no fan-out.
 	sh.mu.Lock()
 	if sh.applied != 0 {
 		t.Fatalf("rejected frame applied to server doc: applied=%d; want 0", sh.applied)
@@ -943,15 +844,6 @@ func TestUpdateContentValidatorRejectsUpdate(t *testing.T) {
 	copy(acceptedFrame[frameOverhead:], accepted)
 	room.route(c1, acceptedFrame)
 
-	j.mu.Lock()
-	appends := append([]recordedAppend(nil), j.appends...)
-	j.mu.Unlock()
-	if len(appends) != 1 {
-		t.Fatalf("appends after accepted update = %d; want 1", len(appends))
-	}
-	if string(appends[0].payload) != string(accepted) {
-		t.Fatalf("appended payload = %q; want %q", appends[0].payload, accepted)
-	}
 	sh.mu.Lock()
 	if sh.applied != 1 {
 		t.Fatalf("server-doc applied = %d; want 1", sh.applied)

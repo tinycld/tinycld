@@ -138,3 +138,5 @@ func TestPocketBaseCheckpointStateRoundTripsBinary(t *testing.T) {
 		t.Fatal("state bytes changed in the round trip")
 	}
 }
+
+func ptrFloat(v float64) *float64 { return &v }

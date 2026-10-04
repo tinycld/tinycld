@@ -1,5 +1,12 @@
 package realtime
 
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"strconv"
+)
+
 // ServerHelloFn is invoked by the broker once per inbound connection,
 // immediately after a client is admitted to a room and assigned its
 // routing ID, but before the y-protocols sync handshake runs. The
@@ -12,8 +19,9 @@ package realtime
 // (the connection continues; consumers must defensively render with no
 // hello payload).
 //
-// A nil ServerHelloFn (the default) skips the frame entirely, preserving
-// the existing protocol shape for kinds that don't need it (e.g. calc).
+// A nil ServerHelloFn (the default) contributes no payload of its own. A
+// room with a server-side document still gets a hello that carries the
+// document epoch (see withDocEpoch); a pure-relay kind gets no frame.
 type ServerHelloFn func(roomID string, conn *Client) ([]byte, error)
 
 // makeServerHelloFrame builds a MsgServerHello frame addressed to the
@@ -28,4 +36,26 @@ func makeServerHelloFrame(id [clientIDLen]byte, payload []byte) []byte {
 	frame[clientIDLen] = byte(MsgServerHello)
 	copy(frame[frameOverhead:], payload)
 	return frame
+}
+
+// DocEpochHelloKey is the field the broker adds to every hello of a room
+// that has a server-side document. Its value names the document
+// incarnation; the client discards its local document when the value it
+// synced under changes. See Checkpoint.Epoch.
+const DocEpochHelloKey = "docEpoch"
+
+// withDocEpoch merges the room's epoch into the kind's hello payload. A
+// kind without an OnConnect handler has no payload of its own, so the
+// hello becomes {"docEpoch": N}; a kind's JSON object gains the field. A
+// payload that is not a JSON object is an error: the epoch cannot be
+// carried and the hello is better skipped than sent without it.
+func withDocEpoch(payload []byte, epoch int64) ([]byte, error) {
+	fields := map[string]json.RawMessage{}
+	if len(bytes.TrimSpace(payload)) > 0 {
+		if err := json.Unmarshal(payload, &fields); err != nil {
+			return nil, fmt.Errorf("realtime: hello payload is not a JSON object: %w", err)
+		}
+	}
+	fields[DocEpochHelloKey] = json.RawMessage(strconv.FormatInt(epoch, 10))
+	return json.Marshal(fields)
 }

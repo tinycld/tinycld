@@ -69,17 +69,20 @@ func (d *stubDoc) Close() error {
 	return d.closeErr
 }
 
-// stubRuntime hands out stubDocs and records what it created.
+// stubRuntime hands out stubDocs and records what it created and seeded.
 type stubRuntime struct {
 	mu      sync.Mutex
 	created map[string]*stubDoc
+	seeds   map[string]int
 
 	// failNewDoc, if set, causes NewDoc to return this error so the
 	// broker exercises its pure-relay fallback.
 	failNewDoc error
 }
 
-func newStubRuntime() *stubRuntime { return &stubRuntime{created: map[string]*stubDoc{}} }
+func newStubRuntime() *stubRuntime {
+	return &stubRuntime{created: map[string]*stubDoc{}, seeds: map[string]int{}}
+}
 
 func (r *stubRuntime) NewDoc(roomID string) (DocHandle, error) {
 	r.mu.Lock()
@@ -90,6 +93,19 @@ func (r *stubRuntime) NewDoc(roomID string) (DocHandle, error) {
 	d := &stubDoc{roomID: roomID}
 	r.created[roomID] = d
 	return d, nil
+}
+
+func (r *stubRuntime) Seed(_ context.Context, roomID string, _ DocHandle) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.seeds[roomID]++
+	return nil
+}
+
+func (r *stubRuntime) seedCount(roomID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.seeds[roomID]
 }
 
 func (r *stubRuntime) doc(roomID string) *stubDoc {
@@ -447,6 +463,8 @@ func TestNewDocFailureFallsBackToPureRelay(t *testing.T) {
 		RuntimeProvider: rt,
 		OnDocUpdate:     func(string) { docUpdates.Add(1) },
 	})
+	// No server document, so no hello frame to consume.
+	opts.noHello = true
 
 	a := dialClient(t, opts, "fallback-room", "alice")
 	b := dialClient(t, opts, "fallback-room", "bob")
@@ -469,18 +487,18 @@ func TestNewDocFailureFallsBackToPureRelay(t *testing.T) {
 	}
 }
 
-// TestPublishDocUpdateBroadcastsAndJournals: the new server-originated
+// TestPublishDocUpdateBroadcastsAndMarksDirty: the server-originated
 // publish path delivers a MsgDocUpdate frame to every member of the room
-// and journals the payload so authorship state survives restart-replay.
-// The validator that would otherwise reject the same bytes from a client
-// must NOT fire — server writes bypass it by design.
-func TestPublishDocUpdateBroadcastsAndJournals(t *testing.T) {
+// and marks the room dirty, so the change reaches the derived file on the
+// save schedule. The validator that would otherwise reject the same bytes
+// from a client must NOT fire — server writes bypass it by design.
+func TestPublishDocUpdateBroadcastsAndMarksDirty(t *testing.T) {
 	broker := NewBroker()
 	rt := newStubRuntime()
-	j := &recordingJournal{}
+	var dirty atomic.Int32
 	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
 		RuntimeProvider: rt,
-		Journal:         j,
+		OnDocUpdate:     func(string) { dirty.Add(1) },
 		// A protected-root validator that WOULD reject this payload if
 		// it came in on the client path. PublishDocUpdate must bypass
 		// it; otherwise the test fails because the recipient never
@@ -510,38 +528,21 @@ func TestPublishDocUpdateBroadcastsAndJournals(t *testing.T) {
 	if !bytes.Equal(gotPayload, payload) {
 		t.Errorf("recipient got %q, want %q", gotPayload, payload)
 	}
-
-	// Journal recorded the payload exactly once under the right (kind, id).
-	j.mu.Lock()
-	appends := append([]recordedAppend(nil), j.appends...)
-	j.mu.Unlock()
-	if len(appends) != 1 {
-		t.Fatalf("journal recorded %d appends; want 1", len(appends))
-	}
-	got := appends[0]
-	if got.kind != "test" || got.id != "room-y" {
-		t.Errorf("journal append kind/id = %s/%s; want test/room-y", got.kind, got.id)
-	}
-	if !bytes.Equal(got.payload, payload) {
-		t.Errorf("journal payload = %q, want %q", got.payload, payload)
-	}
-	if got.seq <= 0 {
-		t.Errorf("journal seq = %d; want > 0", got.seq)
+	if got := dirty.Load(); got != 1 {
+		t.Errorf("OnDocUpdate fired %d times after PublishDocUpdate; want 1", got)
 	}
 }
 
 // TestPublishDocUpdateBypassesInboundValidator pins the validator-bypass
 // behavior so a future refactor can't silently re-introduce the call and
-// break Phase 3a's authorship writes (the validator exists to reject
-// CLIENT writes to protected roots; the server is the writer here).
+// break the authorship writes (the validator exists to reject CLIENT
+// writes to protected roots; the server is the writer here).
 func TestPublishDocUpdateBypassesInboundValidator(t *testing.T) {
 	broker := NewBroker()
 	rt := newStubRuntime()
-	j := &recordingJournal{}
 	var validatorCalls atomic.Int32
 	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
 		RuntimeProvider: rt,
-		Journal:         j,
 		UpdateContentValidator: func(string, []byte) error {
 			validatorCalls.Add(1)
 			return errors.New("would reject")
@@ -562,51 +563,5 @@ func TestPublishDocUpdateBypassesInboundValidator(t *testing.T) {
 	}
 	if got := validatorCalls.Load(); got != 0 {
 		t.Errorf("validator called %d time(s) on PublishDocUpdate path; want 0", got)
-	}
-}
-
-// TestPublishDocUpdate_ReturnsErrorOnJournalFailure pins the new error
-// return: when the configured journal's Append fails, PublishDocUpdate
-// must wrap and return that error so callers (text's stamper) can react
-// — e.g. by NOT marking authorship clientIDs as stamped when the
-// authorship entries were never journaled. The failed-journal path
-// must also NOT fan out to recipients, and the inbound-content
-// validator must remain unused (the bypass is preserved even on the
-// failure path; we never enter the validate phase for server writes).
-func TestPublishDocUpdate_ReturnsErrorOnJournalFailure(t *testing.T) {
-	broker := NewBroker()
-	rt := newStubRuntime()
-	j := &recordingJournal{fail: errors.New("synthetic journal failure")}
-	var validatorCalls atomic.Int32
-	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
-		RuntimeProvider: rt,
-		Journal:         j,
-		UpdateContentValidator: func(string, []byte) error {
-			validatorCalls.Add(1)
-			return nil
-		},
-	})
-
-	a := dialClient(t, opts, "room-fail", "alice")
-	_ = dialClient(t, opts, "room-fail", "bob")
-	room := waitForRoomMembers(t, broker, "test", "room-fail", 2, 1*time.Second)
-
-	err := room.PublishDocUpdate([]byte("server-update-that-cannot-journal"))
-	if err == nil {
-		t.Fatalf("PublishDocUpdate returned nil; want wrapped journal error")
-	}
-	if !errors.Is(err, j.fail) {
-		t.Errorf("PublishDocUpdate err = %v; want wrap of %v", err, j.fail)
-	}
-
-	// The failed-journal path must NOT fan out — the recipient should
-	// observe no frame.
-	expectNoFrame(t, a.conn, 200*time.Millisecond,
-		"recipient must not receive a fanned-out frame after journal failure")
-
-	// Server-write path bypasses UpdateContentValidator on both success
-	// and failure branches — verify it stayed unused here.
-	if got := validatorCalls.Load(); got != 0 {
-		t.Errorf("validator called %d time(s) on failed PublishDocUpdate; want 0", got)
 	}
 }

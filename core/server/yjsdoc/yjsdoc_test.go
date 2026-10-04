@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	ycrdt "github.com/skyterra/y-crdt"
 
@@ -140,7 +139,6 @@ func TestMarkdownSurvivesTheFragmentRoundTrip(t *testing.T) {
 
 func TestRuntimeRejectsDuplicateRoom(t *testing.T) {
 	rt := NewRuntime()
-	defer rt.Stop()
 	if _, err := rt.NewDoc("room"); err != nil {
 		t.Fatalf("first NewDoc: %v", err)
 	}
@@ -149,9 +147,8 @@ func TestRuntimeRejectsDuplicateRoom(t *testing.T) {
 	}
 }
 
-func TestRuntimeBootstrapRunsBeforeTheHandleIsUsable(t *testing.T) {
+func TestSeedRunsTheBootstrapOnTheDocument(t *testing.T) {
 	rt := NewRuntime()
-	defer rt.Stop()
 	rt.SetBootstrap(func(_ context.Context, roomID string, doc *Doc) error {
 		return SeedFragmentFromPMJSON(doc, "card:seeded", pmDoc(t, "from bootstrap"))
 	})
@@ -159,6 +156,9 @@ func TestRuntimeBootstrapRunsBeforeTheHandleIsUsable(t *testing.T) {
 	handle, err := rt.NewDoc("room")
 	if err != nil {
 		t.Fatalf("NewDoc: %v", err)
+	}
+	if err := rt.Seed(context.Background(), "room", handle); err != nil {
+		t.Fatalf("Seed: %v", err)
 	}
 	// The broker serves SyncReply from this; content must already be there.
 	state, err := handle.EncodeStateAsUpdate()
@@ -185,16 +185,18 @@ func TestRuntimeBootstrapRunsBeforeTheHandleIsUsable(t *testing.T) {
 	}
 }
 
-func TestBootstrapFailureStillYieldsAUsableRoom(t *testing.T) {
+func TestSeedFailureStillYieldsAUsableRoom(t *testing.T) {
 	// Refusing the room would take the feature down for everyone in it; an
 	// empty document at least lets people connect and type.
 	rt := NewRuntime()
-	defer rt.Stop()
 	rt.SetBootstrap(func(context.Context, string, *Doc) error { return errBoom })
 
 	handle, err := rt.NewDoc("room")
 	if err != nil {
-		t.Fatalf("NewDoc returned an error for a failed bootstrap: %v", err)
+		t.Fatalf("NewDoc: %v", err)
+	}
+	if err := rt.Seed(context.Background(), "room", handle); err == nil {
+		t.Fatal("Seed hid the bootstrap failure")
 	}
 	if _, err := handle.EncodeStateAsUpdate(); err != nil {
 		t.Errorf("room unusable after bootstrap failure: %v", err)
@@ -209,7 +211,6 @@ func (*boomError) Error() string { return "boom" }
 
 func TestClosedHandleRejectsWork(t *testing.T) {
 	rt := NewRuntime()
-	defer rt.Stop()
 	handle, err := rt.NewDoc("room")
 	if err != nil {
 		t.Fatalf("NewDoc: %v", err)
@@ -232,56 +233,15 @@ func TestClosedHandleRejectsWork(t *testing.T) {
 	}
 }
 
-func TestApplyUpdateRejectsOversizePayload(t *testing.T) {
-	rt := NewRuntime()
-	defer rt.Stop()
-	handle, err := rt.NewDoc("room")
-	if err != nil {
-		t.Fatalf("NewDoc: %v", err)
-	}
-	if err := handle.ApplyUpdate(make([]byte, MaxApplyUpdateBytes+1)); err == nil {
-		t.Error("oversize payload should be rejected before it is decoded")
-	}
-}
-
 func TestApplyUpdateSurvivesGarbage(t *testing.T) {
 	// Hostile input must not take down the broker goroutine.
 	rt := NewRuntime()
-	defer rt.Stop()
 	handle, err := rt.NewDoc("room")
 	if err != nil {
 		t.Fatalf("NewDoc: %v", err)
 	}
 	if err := handle.ApplyUpdate([]byte{0xff, 0xfe, 0x00, 0x42, 0x99}); err != nil {
 		t.Logf("garbage rejected with %v (acceptable)", err)
-	}
-}
-
-// The janitor must not evict a document out from under a room that is still
-// live. A board can hold presence for hours with nobody editing a description;
-// evicting there would strand the next edit against a closed handle.
-func TestJanitorSpareLiveRooms(t *testing.T) {
-	restore := now
-	defer func() { now = restore }()
-
-	rt := NewRuntime()
-	defer rt.Stop()
-	if _, err := rt.NewDoc("live"); err != nil {
-		t.Fatalf("NewDoc live: %v", err)
-	}
-	if _, err := rt.NewDoc("abandoned"); err != nil {
-		t.Fatalf("NewDoc abandoned: %v", err)
-	}
-	rt.MarkLive("live", true)
-
-	now = func() time.Time { return restore().Add(MaxIdleDuration + time.Minute) }
-	rt.evictIdleDocs()
-
-	if rt.HandleFor("live") == nil {
-		t.Error("janitor evicted a document belonging to a live room")
-	}
-	if rt.HandleFor("abandoned") != nil {
-		t.Error("janitor kept an idle document with no room")
 	}
 }
 

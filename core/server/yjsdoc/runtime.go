@@ -33,65 +33,40 @@ var log = logging.ForPackage("yjsdoc")
 // could still adopt this runtime later without rewriting its own y-crdt calls.
 type Doc = ycrdt.Doc
 
-// Janitor / TTL knobs. Vars, not consts, so tests can drop them to
-// milliseconds and observe eviction without sleeping.
-var (
-	// JanitorInterval is how often the reaper scans for idle docs.
-	JanitorInterval = 5 * time.Minute
-	// MaxIdleDuration bounds memory: a doc with no activity for this long is
-	// closed. Rooms that are still live are exempt — see evictIdleDocs.
-	MaxIdleDuration = 30 * time.Minute
-)
-
-// MaxApplyUpdateBytes bounds a single inbound update. y-crdt allocates per
-// message, so a hostile 100 MiB frame would exhaust memory before the recover
-// guard could fire. Real edits are kilobytes; 1 MiB leaves ample headroom.
-const MaxApplyUpdateBytes = 1 * 1024 * 1024
-
-// now is the clock the runtime and janitor read. Replaced in tests.
+// now is the clock the runtime reads for LastActivity. Replaced in tests.
 var now = time.Now
 
-// BootstrapFn seeds a freshly created document. It runs synchronously inside
-// NewDoc, before the broker can serve a SyncReply, so the first joiner already
-// sees populated content.
+// BootstrapFn seeds a document from the kind's derived source. The broker
+// calls Seed, and so this hook, only when it has no parked document and no
+// checkpoint that matches the source; it runs before the broker serves the
+// first SyncReply, so the first joiner already sees populated content.
 //
 // The ctx bounds the seeding work: document parsers honour it, so a
 // pathological source file is abandoned rather than stalling the first
-// joiner. NewDoc has no deadline of its own, so it passes a background ctx.
+// joiner.
 type BootstrapFn func(ctx context.Context, roomID string, doc *Doc) error
 
-// Runtime is a process-wide registry of server-side Y.Docs, one per active
-// room. It satisfies realtime.DocRuntime.
+// Runtime is a process-wide registry of server-side Y.Docs, one per
+// document the broker holds (open or parked). It satisfies
+// realtime.DocRuntime. The broker owns a document's lifetime: it parks the
+// document when its room empties, evicts it after realtime.ParkIdle, and
+// closes it through the handle, which removes it from here.
 type Runtime struct {
 	// mu guards the maps below. RWMutex because the accessors are read on
 	// every inbound frame while writers (NewDoc, closeDoc) are rare.
-	mu      sync.RWMutex
-	docs    map[string]*Doc
-	handles map[string]*Handle
-	rooms   map[string]*realtime.Room
-	// live marks rooms that still have occupants. Separate from rooms so a
-	// caller without a *realtime.Room can still express liveness.
-	live      map[string]bool
+	mu        sync.RWMutex
+	docs      map[string]*Doc
+	handles   map[string]*Handle
+	rooms     map[string]*realtime.Room
 	bootstrap BootstrapFn
-
-	stop           chan struct{}
-	stopOnce       sync.Once
-	janitorOnce    sync.Once
-	janitorDone    chan struct{}
-	janitorStartMu sync.Mutex
-	janitorStarted bool
 }
 
-// NewRuntime returns an empty registry. Call StartJanitor to enable idle
-// eviction, and Stop at shutdown.
+// NewRuntime returns an empty registry.
 func NewRuntime() *Runtime {
 	return &Runtime{
-		docs:        make(map[string]*Doc),
-		handles:     make(map[string]*Handle),
-		rooms:       make(map[string]*realtime.Room),
-		live:        make(map[string]bool),
-		stop:        make(chan struct{}),
-		janitorDone: make(chan struct{}),
+		docs:    make(map[string]*Doc),
+		handles: make(map[string]*Handle),
+		rooms:   make(map[string]*realtime.Room),
 	}
 }
 
@@ -102,35 +77,16 @@ func (r *Runtime) SetBootstrap(hook BootstrapFn) {
 	r.bootstrap = hook
 }
 
-// NoteRoom associates a broker room with a roomID. The runtime needs it for
-// two things: publishing server-originated updates, and knowing that a room is
-// still live so the janitor does not evict its document out from under it.
-//
-// Pass nil when the room goes away.
+// NoteRoom associates a broker room with a roomID, for publishing
+// server-originated updates. Pass nil when the room goes away.
 func (r *Runtime) NoteRoom(roomID string, room *realtime.Room) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if room == nil {
 		delete(r.rooms, roomID)
-		delete(r.live, roomID)
 		return
 	}
 	r.rooms[roomID] = room
-	r.live[roomID] = true
-}
-
-// MarkLive records that a room is occupied without supplying a *realtime.Room.
-// The janitor consults only this flag, so a caller that has no Room to hand
-// (and tests, which cannot construct one — Room's fields are unexported) can
-// still express liveness.
-func (r *Runtime) MarkLive(roomID string, live bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if live {
-		r.live[roomID] = true
-		return
-	}
-	delete(r.live, roomID)
 }
 
 // RoomFor returns the room registered for roomID, or nil.
@@ -149,15 +105,13 @@ func (r *Runtime) HandleFor(roomID string) *Handle {
 	return r.handles[roomID]
 }
 
-// NewDoc satisfies realtime.DocRuntime.
-//
-// A bootstrap failure is logged rather than fatal: an empty document still lets
-// clients connect and edit, whereas refusing the room takes the feature down
-// for everyone in it.
+// NewDoc satisfies realtime.DocRuntime: an empty document with the patcher
+// installed. Content arrives through Seed or through the broker applying a
+// checkpoint.
 func (r *Runtime) NewDoc(roomID string) (realtime.DocHandle, error) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, exists := r.docs[roomID]; exists {
-		r.mu.Unlock()
 		return nil, fmt.Errorf("yjsdoc: room %s already has a document", roomID)
 	}
 	doc := ycrdt.NewDoc(roomID, false, nil, nil, false)
@@ -165,85 +119,26 @@ func (r *Runtime) NewDoc(roomID string) (realtime.DocHandle, error) {
 	handle := &Handle{runtime: r, id: roomID, doc: doc, lastActivity: now()}
 	r.docs[roomID] = doc
 	r.handles[roomID] = handle
-	hook := r.bootstrap
-	r.mu.Unlock()
-
-	if hook != nil {
-		if err := hook(context.Background(), roomID, doc); err != nil {
-			log.Warn("bootstrap failed; room continues with an empty document",
-				"roomID", roomID, "err", err)
-		}
-	}
 	return handle, nil
 }
 
-// StartJanitor launches the idle-eviction goroutine. Idempotent.
-func (r *Runtime) StartJanitor() {
-	r.janitorOnce.Do(func() {
-		r.janitorStartMu.Lock()
-		r.janitorStarted = true
-		r.janitorStartMu.Unlock()
-		go r.janitorLoop()
-	})
-}
-
-// Stop halts the janitor and waits for it to exit. Safe if never started.
-func (r *Runtime) Stop() {
-	r.stopOnce.Do(func() { close(r.stop) })
-	r.janitorStartMu.Lock()
-	started := r.janitorStarted
-	r.janitorStartMu.Unlock()
-	if started {
-		<-r.janitorDone
-	}
-}
-
-func (r *Runtime) janitorLoop() {
-	defer close(r.janitorDone)
-	ticker := time.NewTicker(JanitorInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.stop:
-			return
-		case <-ticker.C:
-			r.evictIdleDocs()
-		}
-	}
-}
-
-// evictIdleDocs closes documents that have been quiet longer than
-// MaxIdleDuration AND whose room is no longer live.
-//
-// The liveness exemption is the one behavioral difference from text's janitor,
-// and it matters for a room that carries presence alongside its document: a
-// board can sit open with people connected for hours without anyone editing a
-// description, and evicting the doc under the live room would strand the next
-// edit against a closed handle.
-//
-// Lock ordering: Close takes the handle mutex and then the runtime mutex, so
-// the handle pointers are snapshotted under RLock and inspected after release.
-func (r *Runtime) evictIdleDocs() {
-	cutoff := now().Add(-MaxIdleDuration)
+// Seed satisfies realtime.DocRuntime: it runs the bootstrap hook on the
+// document. The error is returned for the broker to log; the document stays
+// usable with whatever the hook wrote, because an empty document still lets
+// clients connect and edit, whereas refusing the room takes the feature down
+// for everyone in it.
+func (r *Runtime) Seed(ctx context.Context, roomID string, handle realtime.DocHandle) error {
 	r.mu.RLock()
-	type candidate struct {
-		handle *Handle
-		live   bool
-	}
-	snapshot := make([]candidate, 0, len(r.handles))
-	for id, h := range r.handles {
-		snapshot = append(snapshot, candidate{handle: h, live: r.live[id]})
-	}
+	hook := r.bootstrap
 	r.mu.RUnlock()
-
-	for _, c := range snapshot {
-		if c.live {
-			continue
-		}
-		if c.handle.LastActivity().Before(cutoff) {
-			_ = c.handle.Close()
-		}
+	if hook == nil {
+		return nil
 	}
+	h, ok := handle.(*Handle)
+	if !ok {
+		return fmt.Errorf("yjsdoc: seed of a handle this runtime did not create for room %s", roomID)
+	}
+	return h.WithDoc(func(doc *Doc) error { return hook(ctx, roomID, doc) })
 }
 
 // closeDoc drops a room's entries. Reports whether the room was registered.
@@ -254,7 +149,6 @@ func (r *Runtime) closeDoc(roomID string) bool {
 	delete(r.docs, roomID)
 	delete(r.handles, roomID)
 	delete(r.rooms, roomID)
-	delete(r.live, roomID)
 	return existed
 }
 
@@ -274,23 +168,21 @@ type Handle struct {
 func (h *Handle) RoomID() string { return h.id }
 
 // LastActivity reports the most recent ApplyUpdate / EncodeStateAsUpdate /
-// WithDoc time, for the janitor.
+// WithDoc time.
 func (h *Handle) LastActivity() time.Time {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.lastActivity
 }
 
-// ApplyUpdate folds an inbound update into the mirror.
+// ApplyUpdate folds an inbound update into the mirror. The broker caps
+// inbound client frames itself; a checkpoint it restores is a whole
+// document and may be far larger than any frame.
 //
 // y-crdt logs and returns on malformed input rather than surfacing an error;
 // the recover guard is insurance against that contract changing, so hostile
 // input cannot take down the broker goroutine.
 func (h *Handle) ApplyUpdate(payload []byte) error {
-	if len(payload) > MaxApplyUpdateBytes {
-		return fmt.Errorf("yjsdoc: update of %d bytes exceeds the %d cap for room %s",
-			len(payload), MaxApplyUpdateBytes, h.id)
-	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed || h.doc == nil {
