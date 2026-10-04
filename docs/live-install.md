@@ -586,15 +586,20 @@ to. The runtime image (`app/Dockerfile`) provides:
   sets `TimeoutStopSec=45`.
 - **TLS on a package's own ports.** The supervisor holds a package's own ports
   (for example mail's IMAP and SMTP ports) and passes them to the server as
-  plain TCP listeners. It does not terminate TLS on them. The package
-  terminates TLS itself. Thus in production, mail needs one of these:
+  plain TCP listeners. It does not terminate TLS on them. Mail terminates TLS
+  itself, for IMAP (`:993`) and for SMTP submission (`:465`). Thus in
+  production, mail needs one of these:
   - `IMAP_TLS_CERT` and `IMAP_TLS_KEY`, set to readable certificate and key
-    files. SMTP submission reads `SMTP_TLS_CERT` and `SMTP_TLS_KEY` first, and
-    uses the IMAP pair when they are not set.
+    files. IMAP reads only this pair. SMTP submission reads `SMTP_TLS_CERT`
+    and `SMTP_TLS_KEY` first, and uses the IMAP pair when they are not set.
   - Autocert: `AUTOCERT_ENABLED=true` and `PRIMARY_DOMAIN`.
 
-  If neither is set, the mail server does not start in production, and the
-  server boot fails. To run without IMAP, set `IMAP_ENABLED=false`.
+  Each of the two servers checks for TLS on its own. In production, if one of
+  them has no TLS, the server boot fails. To run mail without TLS, turn off
+  both servers: set `IMAP_ENABLED=false` and `SMTP_ENABLED=false`. The inbound
+  MX listener (`:25`, on only with `MAIL_INBOUND_SMTP_ENABLED=true`) does not
+  need TLS to start. It offers STARTTLS when `SMTP_INBOUND_TLS_CERT` /
+  `SMTP_INBOUND_TLS_KEY`, `SMTP_TLS_CERT` / `SMTP_TLS_KEY` or autocert is set.
 
 > **Note.** The runtime image ships no Go module cache, so a server-package
 > `go build` downloads its dependencies from the network. Installing a server

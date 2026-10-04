@@ -36,9 +36,13 @@ import (
 // all of that away. From the call onward the rebuilder OWNS the job and is
 // responsible for releasing it: on error it must release before returning.
 //
-// On success it returns ErrRestartUnderway when a supervisor will stop this
-// process later, and has released the job like any rebuilder that returns.
-// Without a supervisor the process exits at once, so it never returns.
+// A rebuilder that succeeds ends in one of three ways, and releases the job
+// in each one that returns:
+//   - ErrRestartUnderway: a supervisor will stop this process later.
+//   - It never returns: without a supervisor the process exits at once.
+//   - nil: it built and activated the binary, but nothing will restart this
+//     process (a dev-mode server). The staged restore is then still
+//     unapplied, and runRestore records that a restart is owed.
 type Rebuilder func(ctx context.Context, job *installjob.Job, lockfile format.Lockfile) error
 
 // ErrRestartUnderway is what a Rebuilder returns when it succeeded and the

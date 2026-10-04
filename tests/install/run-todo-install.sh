@@ -99,8 +99,11 @@ trap cleanup EXIT
 start_live_log() {
     # The container outlives every server swap, so the previous stream is still
     # running: stop it, or two streams append to the same file.
+    # Wait for it to exit before the truncate, so a last chunk it was still
+    # writing cannot land in the fresh file and duplicate a line.
     if [ -n "${TAIL_PID}" ]; then
         kill "${TAIL_PID}" >/dev/null 2>&1 || true
+        wait "${TAIL_PID}" 2>/dev/null || true
     fi
     mkdir -p "${LOG_DIR}"
     : > "${LIVE_LOG}"
