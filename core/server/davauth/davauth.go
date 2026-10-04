@@ -45,8 +45,14 @@ func authenticate(app core.App, r *http.Request) (*core.Record, error) {
 	if !ok || identifier == "" {
 		return nil, ErrUnauthorized
 	}
-	return VerifyCredentials(app, identifier, password)
+	return verifyCredentials(app, identifier, password)
 }
+
+// verifyCredentials is the credential check Authenticate runs. A variable so
+// a test can count how many times one request pays for it; the request
+// cache's whole point is "once", and a count says so where a timing ratio
+// only hints under load.
+var verifyCredentials = VerifyCredentials
 
 // VerifyCredentials is the one credential check every protocol server shares —
 // DAV Basic auth here, and mail's IMAP LOGIN / SMTP AUTH, which authenticate
