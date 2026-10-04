@@ -28,8 +28,12 @@ func writeStagingRelease(t *testing.T, stagingDir, releaseID string, modTime tim
 	if withManifest {
 		mustWrite(t, filepath.Join(dir, "manifest.json"), `{"releaseID":"`+releaseID+`"}`)
 	}
-	if err := os.Chtimes(dir, modTime, modTime); err != nil {
-		t.Fatal(err)
+	// release-id.txt keeps its mtime through every copy (cp -a, copyTree,
+	// copyFile), so it is when the release was staged.
+	for _, p := range []string{filepath.Join(dir, "release-id.txt"), dir} {
+		if err := os.Chtimes(p, modTime, modTime); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return dir
 }
@@ -48,6 +52,23 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func readLink(t *testing.T, path string) string {
+	t.Helper()
+	dest, err := os.Readlink(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dest
+}
+
+func assertExists(t *testing.T, path string, want bool) {
+	t.Helper()
+	_, err := os.Stat(path)
+	if got := err == nil; got != want {
+		t.Fatalf("%s exists = %v, want %v", path, got, want)
+	}
 }
 
 func TestState_PromoteRelease(t *testing.T) {
@@ -279,4 +300,76 @@ func TestState_PromoteRelease_ChangedPoolFileReplacedAtomically(t *testing.T) {
 	if after.Mode().Perm() != 0o640 {
 		t.Fatalf("pool bundle.js mode = %v, want 0640", after.Mode().Perm())
 	}
+}
+
+func TestState_PromoteReleaseIfNewer_NoCurrentRelease(t *testing.T) {
+	s := newTestState(t)
+	buildDir := writeBuild(t, s, "build-1")
+	writeStagingRelease(t, filepath.Join(buildDir, "release-staging"), "release-a", time.Now(), false)
+
+	if err := s.PromoteReleaseIfNewer(buildDir); err != nil {
+		t.Fatal(err)
+	}
+	if got := readLink(t, s.currentReleaseLinkPath()); got != "release-a" {
+		t.Fatalf("releases/current -> %q, want release-a", got)
+	}
+}
+
+// The build need not be the one current points at: a rollback promotes
+// the build it went back to.
+func TestState_PromoteReleaseIfNewer_NewerIsPromoted(t *testing.T) {
+	s := newTestState(t)
+	older := writeBuild(t, s, "build-1")
+	newer := writeBuild(t, s, "build-2")
+	pointCurrentAt(t, s, older)
+	writeStagingRelease(t, filepath.Join(older, "release-staging"), "release-a", time.Now().Add(-time.Hour), false)
+	if err := s.PromoteRelease(); err != nil {
+		t.Fatal(err)
+	}
+	writeStagingRelease(t, filepath.Join(newer, "release-staging"), "release-b", time.Now(), false)
+
+	if err := s.PromoteReleaseIfNewer(newer); err != nil {
+		t.Fatal(err)
+	}
+	if got := readLink(t, s.currentReleaseLinkPath()); got != "release-b" {
+		t.Fatalf("releases/current -> %q, want release-b", got)
+	}
+	if got := mustRead(t, filepath.Join(s.releaseStaticPoolDir(), "_expo", "static", "bundle.js")); got != "bundle-release-b" {
+		t.Fatalf("pool bundle.js = %q", got)
+	}
+}
+
+// Release ids do not sort by age ("2026-…-sha" from an image build,
+// "install-<ms>" from an in-app build), so age is when each was staged. A
+// build whose newest staged release is older than the one served must not
+// take the served bundle back.
+func TestState_PromoteReleaseIfNewer_OlderIsLeft(t *testing.T) {
+	s := newTestState(t)
+	build := writeBuild(t, s, "build-1")
+	pointCurrentAt(t, s, build)
+	staging := filepath.Join(build, "release-staging")
+	writeStagingRelease(t, staging, "install-1", time.Now(), false)
+	if err := s.PromoteRelease(); err != nil {
+		t.Fatal(err)
+	}
+	other := writeBuild(t, s, "build-0")
+	writeStagingRelease(t, filepath.Join(other, "release-staging"), "zz-older", time.Now().Add(-time.Hour), false)
+
+	if err := s.PromoteReleaseIfNewer(other); err != nil {
+		t.Fatal(err)
+	}
+	if got := readLink(t, s.currentReleaseLinkPath()); got != "install-1" {
+		t.Fatalf("releases/current -> %q, want install-1 left in place", got)
+	}
+	assertExists(t, filepath.Join(s.releasesDir(), "zz-older"), false)
+}
+
+func TestState_PromoteReleaseIfNewer_NoStagingDir(t *testing.T) {
+	s := newTestState(t)
+	build := writeBuild(t, s, "build-1")
+
+	if err := s.PromoteReleaseIfNewer(build); err != nil {
+		t.Fatalf("PromoteReleaseIfNewer with no staging dir = %v, want nil", err)
+	}
+	assertExists(t, s.currentReleaseLinkPath(), false)
 }

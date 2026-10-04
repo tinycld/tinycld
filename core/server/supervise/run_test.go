@@ -56,7 +56,7 @@ func TestMain(m *testing.M) {
 //	FAKE_BOOT_EXIT     exit with this code before ready (a failed boot)
 //	FAKE_SEND_JUNK     send messages the supervisor must ignore before ready
 //	FAKE_READY_VERSION send ready with this protocol version
-//	FAKE_RESTART_BEFORE_READY  activate FAKE_ACTIVATE and ask for a restart before ready, then wait for the ack
+//	FAKE_RESTART_BEFORE_READY  on this build's first start only (a boot-time rebuild runs once), activate FAKE_ACTIVATE and ask for a restart before ready, then wait for the ack
 //	FAKE_ACTIVATE      on SIGUSR1, arm the backup and point current at this build, as a rebuild does
 //	FAKE_EXIT_CODE     on SIGUSR1, exit with this code instead of asking for a restart
 //	FAKE_COLD          on SIGUSR1, ask for a cold restart
@@ -139,7 +139,7 @@ func fakeChild() int {
 		Send(ctl, Msg{Type: "bogus"})
 		Send(ctl, Msg{Type: "bogus", Version: ProtocolVersion + 1})
 	}
-	if os.Getenv("FAKE_RESTART_BEFORE_READY") == "1" {
+	if os.Getenv("FAKE_RESTART_BEFORE_READY") == "1" && startCount(root, os.Getenv("FAKE_NAME")) == 1 {
 		if to := os.Getenv("FAKE_ACTIVATE"); to != "" {
 			fakeActivate(root, os.Getenv("FAKE_BUILD"), to)
 		}
@@ -214,6 +214,22 @@ func fakeActivate(root, from, to string) {
 	os.Remove(tmp)
 	os.Symlink(filepath.Join(s.buildsDir(), to, "tinycld"), tmp)
 	os.Rename(tmp, s.currentLinkPath())
+}
+
+// startCount is how many times the fake child named name has started,
+// counting this start.
+func startCount(root, name string) int {
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	data, _ := os.ReadFile(filepath.Join(root, "events.log"))
+	n := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 3 && f[0] == name && f[2] == "start" {
+			n++
+		}
+	}
+	return n
 }
 
 func atoi(s string) int {
@@ -302,6 +318,11 @@ func (r *testRoot) point(id string) {
 func (r *testRoot) stageRelease(id, releaseID string) {
 	r.t.Helper()
 	writeStagingRelease(r.t, filepath.Join(r.dir, "builds", id, "tinycld", "release-staging"), releaseID, time.Now(), false)
+}
+
+func (r *testRoot) stageReleaseAt(id, releaseID string, at time.Time) {
+	r.t.Helper()
+	writeStagingRelease(r.t, filepath.Join(r.dir, "builds", id, "tinycld", "release-staging"), releaseID, at, false)
 }
 
 func (r *testRoot) writePorts(id string, ports []listeners.Port) {
@@ -567,23 +588,6 @@ func (l *load) end() {
 	<-l.stopped
 }
 
-func readLink(t *testing.T, path string) string {
-	t.Helper()
-	dest, err := os.Readlink(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return dest
-}
-
-func assertExists(t *testing.T, path string, want bool) {
-	t.Helper()
-	_, err := os.Stat(path)
-	if got := err == nil; got != want {
-		t.Fatalf("%s exists = %v, want %v", path, got, want)
-	}
-}
-
 // --- tests ---
 
 func TestRunSwapUnderLoad(t *testing.T) {
@@ -735,6 +739,40 @@ func TestRunRestartBeforeReadyIsKept(t *testing.T) {
 		t.Fatalf("releases/current -> %q, want rel-c", got)
 	}
 	assertExists(t, filepath.Join(s.releasesDir(), "rel-b"), false)
+}
+
+// A→B→C where B asks for its restart before it is ready: B's release is
+// never promoted at its ready, because C is the build that ready belongs to.
+// When C then fails, the rollback brings B back, and B must serve its own
+// release rather than A's.
+func TestRunRollbackPromotesTheRolledBackRelease(t *testing.T) {
+	r := newTestRoot(t)
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "b"})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_SERVE_BODY": "B", "FAKE_ACTIVATE": "c", "FAKE_RESTART_BEFORE_READY": "1"})
+	r.build("c", knobs{"FAKE_NAME": "C", "FAKE_BOOT_EXIT": "1"})
+	r.stageReleaseAt("a", "rel-a", time.Now().Add(-time.Hour))
+	r.point("a")
+	s := r.state()
+	if err := s.PromoteRelease(); err != nil {
+		t.Fatal(err)
+	}
+	r.stageRelease("b", "rel-b")
+	r.stageRelease("c", "rel-c")
+	h := r.supervise(testOptions())
+
+	r.trigger(r.waitEvent("A", "ready", 1))
+	r.waitEvent("C", "exit", 1)
+	r.waitEvent("B", "ready", 2)
+	waitBody(t, h.addr, "B")
+
+	if got := readLink(t, s.currentLinkPath()); got != filepath.Join(s.buildsDir(), "b", "tinycld") {
+		t.Fatalf("current -> %q, want build b", got)
+	}
+	waitFor(t, 5*time.Second, "releases/current to be B's release", func() bool {
+		dest, _ := os.Readlink(s.currentReleaseLinkPath())
+		return dest == "rel-b"
+	})
+	assertExists(t, filepath.Join(s.releasesDir(), "rel-c"), false)
 }
 
 func TestRunOldProtocolExit75(t *testing.T) {

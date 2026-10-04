@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // releasesDir / releaseStaticPoolDir / currentReleaseLinkPath mirror
@@ -45,24 +46,89 @@ func (s State) PromoteRelease() error {
 	if err != nil {
 		return fmt.Errorf("promote release: resolve current build: %w", err)
 	}
+	releaseID, src, found, err := stagedRelease(stagingDir)
+	if err != nil || !found {
+		return err
+	}
+	return s.promote(releaseID, src)
+}
 
+// PromoteReleaseIfNewer promotes the newest release the build at build
+// staged, but only when it was staged after the release releases/current
+// serves, or when nothing is served yet. A rollback calls it for the build
+// it went back to: that build may have been replaced before its own ready
+// promoted its bundle, while a build whose bundle is older than the one
+// served must not take it back.
+//
+// Release ids do not sort by age (an image build's "<date>-<sha>" against
+// an in-app build's "install-<ms>"), so age is release-id.txt's mtime: every
+// copy of it (the build's copyTree, cp -a, copyFile) keeps the mtime it got
+// when the release was staged.
+func (s State) PromoteReleaseIfNewer(build string) error {
+	releaseID, src, found, err := stagedRelease(filepath.Join(build, "release-staging"))
+	if err != nil || !found {
+		return err
+	}
+	newer, err := s.stagedAfterCurrent(releaseID, src)
+	if err != nil {
+		return err
+	}
+	if !newer {
+		return nil
+	}
+	return s.promote(releaseID, src)
+}
+
+// stagedAfterCurrent reports whether the staged release at src is not the
+// one releases/current serves and was staged after it.
+func (s State) stagedAfterCurrent(releaseID, src string) (bool, error) {
+	servedPath := filepath.Join(s.currentReleaseLinkPath(), "release-id.txt")
+	served, err := os.Stat(servedPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("promote release: stat %s: %w", servedPath, err)
+	}
+	servedID, err := os.ReadFile(servedPath)
+	if err != nil {
+		return false, fmt.Errorf("promote release: read %s: %w", servedPath, err)
+	}
+	if strings.TrimSpace(string(servedID)) == strings.TrimSpace(releaseID) {
+		return false, nil
+	}
+	staged, err := os.Stat(filepath.Join(src, "release-id.txt"))
+	if err != nil {
+		return false, fmt.Errorf("promote release: stat %s: %w", filepath.Join(src, "release-id.txt"), err)
+	}
+	return staged.ModTime().After(served.ModTime()), nil
+}
+
+// stagedRelease finds the newest staged release under stagingDir. A missing
+// staging dir is not an error (the shell logs a WARN and returns 0): found
+// is false and there is nothing to promote.
+func stagedRelease(stagingDir string) (releaseID, src string, found bool, err error) {
 	entries, err := os.ReadDir(stagingDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			log.Warn("release staging dir missing; skipping release promotion (SPA fallback will 404)", "dir", stagingDir)
-			return nil
+			return "", "", false, nil
 		}
-		return fmt.Errorf("promote release: read staging dir %s: %w", stagingDir, err)
+		return "", "", false, fmt.Errorf("promote release: read staging dir %s: %w", stagingDir, err)
 	}
-
-	releaseID, src, err := newestStagedRelease(stagingDir, entries)
+	releaseID, src, err = newestStagedRelease(stagingDir, entries)
 	if err != nil {
-		return err
+		return "", "", false, err
 	}
+	return releaseID, src, true, nil
+}
 
+// promote merges the staged release at src into the pool, copies it to
+// releases/<releaseID> and points releases/current at it.
+func (s State) promote(releaseID, src string) error {
 	pool := s.releaseStaticPoolDir()
 	for _, sub := range []string{"_expo/static", "assets"} {
-		if err := os.MkdirAll(filepath.Join(pool, sub), 0o755); err != nil {
+		if err := mkdirAllOwned(filepath.Join(pool, sub)); err != nil {
 			return fmt.Errorf("promote release: create pool dir %s: %w", sub, err)
 		}
 	}
@@ -154,7 +220,7 @@ func (s State) promoteReleaseDir(releaseID, src string) error {
 	if err := os.RemoveAll(tmp); err != nil {
 		return fmt.Errorf("promote release: clear stale %s: %w", tmp, err)
 	}
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
+	if err := mkdirAllOwned(tmp); err != nil {
 		return fmt.Errorf("promote release: create %s: %w", tmp, err)
 	}
 	if err := copyFile(filepath.Join(src, "app.html"), filepath.Join(tmp, "app.html")); err != nil {
@@ -198,7 +264,7 @@ func copyMerge(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
+	if err := mkdirAllOwned(dst); err != nil {
 		return err
 	}
 	for _, e := range entries {
@@ -215,6 +281,42 @@ func copyMerge(src, dst string) error {
 		}
 	}
 	return nil
+}
+
+// mkdirAllOwned is os.MkdirAll where each directory it creates takes the
+// owner of its parent. The supervisor runs as root while its children do
+// not, and a root-owned directory under releases/ is one a child cannot add
+// to.
+func mkdirAllOwned(path string) error {
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("mkdir %s: a file is in the way", path)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return err
+	}
+	if err := mkdirAllOwned(parent); err != nil {
+		return err
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		// Made by someone else since the stat: its owner is theirs to set.
+		if info, statErr := os.Stat(path); errors.Is(err, os.ErrExist) && statErr == nil && info.IsDir() {
+			return nil
+		}
+		return err
+	}
+	parentInfo, err := os.Stat(parent)
+	if err != nil {
+		return err
+	}
+	return matchOwner(path, parentInfo)
 }
 
 // copyFile puts src's bytes at dst the way a reader of dst must see them.

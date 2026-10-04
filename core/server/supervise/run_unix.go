@@ -324,6 +324,12 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 		stopChild(c, s.opts.stopBound)
 		return nil, fmt.Errorf("%w: the build rolled back to: %v", errNoHealthyBuild, err)
 	}
+	// The build rolled back to may have asked for its replacement before it
+	// was ready, so its own ready never promoted its bundle and it would
+	// serve an older build's.
+	if err := s.state.PromoteReleaseIfNewer(c.dir); err != nil {
+		log.Error("could not promote the rolled-back build's web bundle; serving the previous one", "err", err)
+	}
 	s.ports.retain(c.ports)
 	return c, nil
 }

@@ -93,3 +93,40 @@ func TestState_PromoteRelease_NewPoolFileTakesSourceOwner(t *testing.T) {
 		t.Fatalf("new pool file owner = %d:%d, want the source's %d:%d", uid, gid, otherOwner, otherOwner)
 	}
 }
+
+// The supervisor runs as root, so a directory it creates under releases/
+// would be root-owned unless it takes its parent's owner.
+func TestState_PromoteRelease_NewDirsTakeParentOwner(t *testing.T) {
+	requireRoot(t)
+	s := newTestState(t)
+	buildDir := writeBuild(t, s, "build-1")
+	pointCurrentAt(t, s, buildDir)
+	src := writeStagingRelease(t, filepath.Join(buildDir, "release-staging"), "release-a", time.Now(), false)
+	if err := os.MkdirAll(filepath.Join(src, "assets", "fonts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(src, "assets", "fonts", "body.ttf"), "font")
+	if err := os.Mkdir(s.releasesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(s.releasesDir(), otherOwner, otherOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.PromoteRelease(); err != nil {
+		t.Fatal(err)
+	}
+	pool := s.releaseStaticPoolDir()
+	for _, dir := range []string{
+		pool,
+		filepath.Join(pool, "_expo"),
+		filepath.Join(pool, "_expo", "static"),
+		filepath.Join(pool, "assets"),
+		filepath.Join(pool, "assets", "fonts"),
+		filepath.Join(s.releasesDir(), "release-a"),
+	} {
+		if uid, gid := ownerOf(t, dir); uid != otherOwner || gid != otherOwner {
+			t.Errorf("%s owner = %d:%d, want releases/'s %d:%d", dir, uid, gid, otherOwner, otherOwner)
+		}
+	}
+}
