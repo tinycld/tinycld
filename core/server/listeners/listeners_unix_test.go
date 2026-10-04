@@ -226,7 +226,7 @@ func TestEmptySetIsNotASupervisorError(t *testing.T) {
 	}
 	// childMain's own stdout is just "ok\n"; the default slog handler
 	// writes any Warn to stderr, which CombinedOutput also captures, so
-	// an unexpected "invalid TINYCLD_LISTEN_FDS" warning would show up
+	// an unexpected "invalid inherited fd count" warning would show up
 	// here even though it doesn't affect the child's exit code.
 	if strings.Contains(string(out), "invalid") {
 		t.Fatalf("EnvFDs=0 logged a warning: %q", out)

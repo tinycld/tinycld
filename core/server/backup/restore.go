@@ -25,7 +25,7 @@ import (
 )
 
 // Rebuilder turns an archive's lockfile into a binary that carries exactly that
-// package set, and ends the process so the supervisor launches the new one. A
+// package set, and asks for this process to be replaced by one running it. A
 // deployment that cannot rebuild itself registers nothing, and a restore of a
 // different package set is refused instead.
 //
@@ -34,12 +34,11 @@ import (
 // backup and staged the whole archive; releasing first left a window in which an
 // install could claim the interlock and the rebuilder would get ErrBusy, throwing
 // all of that away. From the call onward the rebuilder OWNS the job and is
-// responsible for releasing it — on success it never returns (the process ends),
-// and on error it must release before returning.
+// responsible for releasing it: on error it must release before returning.
 //
-// A rebuilder whose restart is asynchronous (it asked a supervisor, which
-// stops this process later) returns ErrRestartUnderway instead of never
-// returning, and has released the job like any rebuilder that returns.
+// On success it returns ErrRestartUnderway when a supervisor will stop this
+// process later, and has released the job like any rebuilder that returns.
+// Without a supervisor the process exits at once, so it never returns.
 type Rebuilder func(ctx context.Context, job *installjob.Job, lockfile format.Lockfile) error
 
 // ErrRestartUnderway is what a Rebuilder returns when it succeeded and the
@@ -65,12 +64,13 @@ func HasRebuilder() bool {
 	return rebuilder != nil
 }
 
-// restartFn ends the process so the supervisor relaunches it onto the staged
-// data. It is a seam rather than an os.Exit so the package's own tests can
-// observe the request instead of killing the test binary.
+// restartFn asks for this process to be replaced by one that boots onto the
+// staged data: a supervisor drains it later, or, without one, it exits at once.
+// It is a seam rather than a direct call so the package's own tests can observe
+// the request instead of killing the test binary.
 //
-// It REPORTS whether it will restart. A composition that cannot end the process
-// — a dev-mode server, which has no supervisor to relaunch it — must say so,
+// It REPORTS whether it will restart. A composition that cannot be replaced
+// — a dev-mode server, which has nothing to relaunch it — must say so,
 // because the restore's own state depends on the answer: a restore that returns
 // believing the process is on its way out leaves `restoring` set, and every
 // request after it meets the maintenance 503 with nothing coming to clear it.
@@ -80,8 +80,8 @@ var (
 	restarted bool
 )
 
-// SetRestart names the function that ends the process so the supervisor
-// relaunches it. It returns false when it will NOT restart, so the restore can
+// SetRestart names the function that asks for this process to be replaced.
+// It returns false when it will NOT restart, so the restore can
 // leave the deployment serving instead of waiting behind the 503 forever.
 func SetRestart(fn func() (restarted bool)) {
 	restartMu.Lock()
@@ -189,8 +189,9 @@ func StartRestore(app core.App, req RestoreRequest) (string, error) {
 // Restore is StartRestore without the goroutine: it returns once the archive is
 // staged and the rebuild or restart has been asked for.
 //
-// No HTTP handler may use it. Phase 6 ends the process, so a handler that ran a
-// restore synchronously would never write its response: the caller would see a
+// No HTTP handler may use it. Phase 6 can end the process at once (a restart
+// without a supervisor exits), so a handler that ran a restore synchronously
+// might never write its response: the caller would see a
 // dropped connection and no job id to poll, which is the only thing that survives
 // the restart. It is here for callers that ARE the process's last act — the
 // package's own tests, which stub the restart seam, and an embedder driving a
@@ -247,12 +248,13 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	defer release()
 
 	// The source is closed the same guarded way as the interlock, and for a
-	// harder reason: phase 6 ENDS THE PROCESS. A rebuilder that succeeds either
-	// never returns (requestRestart exits) or returns ErrRestartUnderway while a
-	// supervisor stops this process at a moment of its choosing, so a deferred
-	// close alone cannot be relied on to run. An uploaded archive's Close
-	// is what removes its spool file, so the spool leaked on every restore that
-	// worked — the whole organization, left in restore/upload, for good.
+	// harder reason: phase 6 leads to the end of the process. A rebuilder that
+	// succeeds either never returns (requestRestart exits) or returns
+	// ErrRestartUnderway while a supervisor stops this process at a moment of
+	// its choosing, so a deferred close alone cannot be relied on to run. An
+	// uploaded archive's Close is what removes its spool file, so the spool
+	// leaked on every restore that worked — the whole organization, left in
+	// restore/upload, for good.
 	//
 	// Closing early is safe because the archive has already been staged into
 	// pending/ by then. The boot swap reads the staged copy; nothing after
@@ -506,9 +508,10 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	rebuilderMu.RUnlock()
 	if fn != nil && !req.Force {
 		// The claim is handed over, NOT released: see Rebuilder. released is set
-		// first so the success path — where the rebuilder ends the process and
-		// never returns — cannot have this function's deferred release take the
-		// claim back from it.
+		// first so the success path — where the rebuilder never returns, or
+		// returns ErrRestartUnderway while this process waits to be stopped —
+		// cannot have this function's deferred release take the claim back from
+		// it.
 		released = true
 		rerr := fn(context.Background(), job, read.Lockfile)
 		if errors.Is(rerr, ErrRestartUnderway) {
@@ -522,9 +525,10 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 			installjob.Release(job)
 			return rerr
 		}
-		// A rebuilder that SUCCEEDED ends the process and never returns. Reaching
-		// this line therefore means it built the binary and then found nothing
-		// would restart — a dev-mode server, whose requestRestart is a no-op. The
+		// A rebuilder that SUCCEEDED either never returns (the process exits) or
+		// returns ErrRestartUnderway, handled above. Reaching this line therefore
+		// means it built the binary and then found nothing would restart — a
+		// dev-mode server, whose requestRestart is a no-op. The
 		// staged restore is as unapplied as on the no-rebuild path below, and for
 		// the same reason, so it is recorded the same way.
 		restartSkipped(app, row)

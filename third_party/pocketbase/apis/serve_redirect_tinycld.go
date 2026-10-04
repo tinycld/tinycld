@@ -6,6 +6,7 @@ package apis
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -73,10 +74,10 @@ func SetRedirectServerHook(app core.App, hook RedirectServerHook) {
 // Serve again — don't leak the old server's goroutine.
 func serveHTTPRedirect(app core.App, addr string, h http.Handler) {
 	app.Store().Set(redirectListenerReadStoreKey, true)
-	l, _ := app.Store().Get(redirectListenerStoreKey).(net.Listener)
-	hookFn, _ := app.Store().Get(redirectServerHookStoreKey).(RedirectServerHook)
+	l := redirectStoreValue[net.Listener](app, redirectListenerStoreKey)
+	hookFn := redirectStoreValue[RedirectServerHook](app, redirectServerHookStoreKey)
 
-	if prev, ok := app.Store().Get(redirectServerStoreKey).(*http.Server); ok {
+	if prev := redirectStoreValue[*http.Server](app, redirectServerStoreKey); prev != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		_ = prev.Shutdown(ctx)
 		cancel()
@@ -116,4 +117,19 @@ func serveHTTPRedirect(app core.App, addr string, h http.Handler) {
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		app.Logger().Error("redirect server error", "error", err)
 	}
+}
+
+// redirectStoreValue reads key from app's store as a T. A value of another
+// type is ignored, as a missing one is, but with a warning: the keys are
+// plain strings, so code outside this file can store the wrong thing, and the
+// redirect server would then quietly run without it (bind its own address,
+// skip the hook, or leave a previous server running).
+func redirectStoreValue[T any](app core.App, key string) T {
+	raw := app.Store().Get(key)
+	v, ok := raw.(T)
+	if !ok && raw != nil {
+		app.Logger().Warn("ignoring a redirect server store value of the wrong type",
+			"key", key, "type", fmt.Sprintf("%T", raw))
+	}
+	return v
 }

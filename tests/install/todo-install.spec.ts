@@ -27,8 +27,9 @@ const APP_VERSION = (
 // through the real in-app installer + Versions tab against an already-running
 // container (the runner script builds the image from the working tree so the
 // pinned-git-tag install change is present). Runs serially — every step depends
-// on prior container state, and each install-class operation restarts the
-// container.
+// on prior container state, and each install-class operation replaces the
+// server: the supervisor in the container starts the new build beside the old
+// one and drains the old one once the new one is ready.
 //
 // The scenario validates upgrade, downgrade, rollback AND delete end-to-end:
 //   1. install @tinycld/todo pinned to v1.0.0 (no tags feature)
@@ -52,7 +53,8 @@ const APP_VERSION = (
 // miss the fast early stages, making mid-stream modal-text assertions racy. The
 // modal's TERMINAL state, however, is asserted (the install test waits for
 // "Installation Complete"): it resolves via the durable job-status poll, which
-// survives the exit-75 restart, so it is reliable where the live stream isn't.
+// survives the swap to the new server, so it is reliable where the live stream
+// isn't.
 //
 // NOT a normal-CI test. It needs a purpose-built docker image (the runner
 // `tests/install/run-todo-install.sh` builds it) and drives three real,
@@ -77,11 +79,12 @@ const APP_VERSION = (
 // side commits branched off the v1.0.0 commit (NOT on `main`'s lineage, so a
 // normal clone never gets them), each version "0.0.1":
 //   - v0.0.1-pre-buggy-server    — panics in server/register.go's Register() at
-//        bootstrap (before app.Start) → new binary crashes on boot → /api/health
-//        never answers → entrypoint ROLLS BACK to the prior healthy build.
+//        bootstrap (before app.Start) → the new server exits before it reports
+//        ready → the supervisor ROLLS BACK to the prior healthy build.
 //   - v0.0.1-pre-buggy-migration — adds a new migration whose UP throws. It is
 //        pending (not run during the rebuild); the new binary applies it on its
-//        serve boot (RunAllMigrations, fatal before the HTTP bind) → ROLLS BACK.
+//        serve boot (RunAllMigrations, fatal before it reports ready) → the
+//        supervisor ROLLS BACK.
 //   - v0.0.1-pre-buggy-fe        — a non-existent import in screens/_layout.tsx
 //        fails `expo export` in the pipeline, BEFORE the symlink swap → install
 //        ends 'failed', current build untouched, NO restart/rollback.
@@ -175,8 +178,9 @@ async function loginAsSuperuser(page: Page, timeoutMs?: number) {
     )
 }
 
-// After an install-class restart the server may briefly refuse connections.
-// Retry the superuser login a few times before giving up.
+// Around an install-class swap the server may briefly refuse connections or
+// drop them (the old server drains; a rollback stops both servers). Retry the
+// superuser login a few times before giving up.
 async function loginAsSuperuserWithRetry(page: Page, attempts = 20) {
     let lastErr: unknown
     for (let i = 0; i < attempts; i++) {
@@ -206,8 +210,8 @@ async function superuserToken(page: Page): Promise<string> {
     // resilience the polling helpers apply to the mid-restart window. A genuine
     // auth failure (4xx) still throws immediately.
     //
-    // The POST is also wrapped in try/catch: an exit-75 restart (install / version
-    // change / revert) drops in-flight connections, so this auth can throw a
+    // The POST is also wrapped in try/catch: a server swap (install / version
+    // change / revert) can drop a connection, so this auth can throw a
     // network-level `read ECONNRESET` / connection-refused that is NOT an HTTP
     // response (so the status checks below never see it). superuserToken is called
     // by the polling helpers precisely during those restart windows, so a thrown
@@ -412,8 +416,9 @@ async function waitForOpStatus(
 
     // One status read. Returns the parsed body, or null on any transient
     // condition (network error / connection reset / non-ok). The job ends by
-    // restarting the server (exit 75), so ECONNRESET and refused connections are
-    // EXPECTED mid-poll and must NOT fail the test — they just mean "try again".
+    // asking the supervisor to replace the server, so ECONNRESET and refused
+    // connections are EXPECTED mid-poll (the old server drains, and a rollback
+    // stops both servers) and must NOT fail the test — they just mean "try again".
     // Re-mints the token on an auth failure (tokens expire; a restart can also
     // invalidate the session).
     async function readStatusOnce(): Promise<{
@@ -986,13 +991,14 @@ test.describe('todo version change', () => {
         // asserts a live stream at ≥10% instead of a stage-map percentage.
         await waitForProgressAdvance(page, Number(process.env.PW_PROGRESS_MIN_PCT ?? '50'), 600_000)
 
-        // The install runs server-side as a background job and ends by requesting
-        // an exit-75 restart. Judge success by the server's own pkg_install_log
-        // reaching status `success` (ground truth, independent of the SSE modal).
+        // The install runs server-side as a background job and ends by asking the
+        // supervisor to replace the server. Judge success by the server's own
+        // pkg_install_log reaching status `success` (ground truth, independent of
+        // the SSE modal).
         await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'install') // up to 40 min
 
         // The modal itself must ALSO resolve — not just the server. The SSE stream
-        // dies on the exit-75 restart (the new process has no in-memory job), so
+        // ends when the old server drains (the new process has no in-memory job), so
         // the modal relies on the durable job-status poll to learn the outcome.
         // Before that poll existed the modal hung forever on "Installing Package…";
         // this assertion is the regression guard for that hang.
@@ -1007,10 +1013,10 @@ test.describe('todo version change', () => {
 
     test('buggy-server install rolls back to the healthy build', async ({ page }) => {
         // Build + activate succeed; the new binary then PANICS in todo.Register at
-        // bootstrap (before app.Start), so its health probe never answers and the
-        // entrypoint restores the DB + flips current back to the v1.0.0 build. The
+        // bootstrap (before app.Start), so it never reports ready and the
+        // supervisor restores the DB + flips current back to the v1.0.0 build. The
         // boot reconciler marks this install's stranded log row 'rolled_back'.
-        test.setTimeout(2_700_000) // 45 min — full go build + expo export before the failed probe
+        test.setTimeout(2_700_000) // 45 min — full go build + expo export before the failed boot
 
         await loginAsSuperuserWithRetry(page)
         // Snapshot the prior todo row (the v1 install's success row) so the wait
@@ -1023,8 +1029,8 @@ test.describe('todo version change', () => {
             .fill(TODO_SPEC_BUGGY_SERVER)
         await page.getByRole('button', { name: 'Install', exact: true }).click()
 
-        // Ground truth: the install builds, activates, exit-75 restarts onto the
-        // buggy build, whose probe fails → rollback → the reconciler surfaces
+        // Ground truth: the install builds, activates, the supervisor starts the
+        // buggy build, which never reports ready → rollback → the reconciler surfaces
         // 'rolled_back' on the install-log row.
         await waitForRolledBack(page, 'todo', 2_400_000, priorId)
     })
@@ -1059,8 +1065,8 @@ test.describe('todo version change', () => {
     test('buggy-migration install rolls back to the healthy build', async ({ page }) => {
         // Build + activate succeed; the new binary then fails its `serve` boot when
         // PocketBase applies the pending UP migration (RunAllMigrations, fatal
-        // before the HTTP listener binds), so /api/health never answers and the
-        // entrypoint rolls back to v1.0.0. The reconciler marks the row 'rolled_back'.
+        // before it reports ready), so the supervisor rolls back to v1.0.0. The
+        // reconciler marks the row 'rolled_back'.
         test.setTimeout(2_700_000) // 45 min
 
         await loginAsSuperuserWithRetry(page)
@@ -1172,7 +1178,7 @@ test.describe('todo version change', () => {
 
     test('upgrade todo to v2.0.0 via the Packages version picker', async ({ page }) => {
         // Upgrade fetches v2, runs the create_tags UP migration, rebuilds, and
-        // requests an exit-75 relaunch. Same multi-minute build budget as install.
+        // asks the supervisor for a relaunch. Same multi-minute build budget as install.
         test.setTimeout(2_700_000) // 45 min
 
         await loginAsSuperuserWithRetry(page)
@@ -1233,7 +1239,7 @@ test.describe('todo version change', () => {
 
     test('downgrade todo to v1.0.0 via the Packages version picker', async ({ page }) => {
         // Downgrade fetches v1, runs the create_tags DOWN migration (drops
-        // todo_tags then tags), rebuilds, and requests an exit-75 relaunch.
+        // todo_tags then tags), rebuilds, and asks the supervisor for a relaunch.
         test.setTimeout(2_700_000) // 45 min
 
         await loginAsSuperuserWithRetry(page)

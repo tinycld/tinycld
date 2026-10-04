@@ -456,7 +456,7 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	// Inert with no materialized defs (a workspace with no
 	// automation-contributing packages), so this is a no-op call in that case.
 	automation.Register(app, automation.Options{
-		DefsPath: filepath.Join(resolveServerDir(), "automation_defs.json"),
+		DefsPath: automationDefsPath(resolveServerDir()),
 	})
 
 	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no

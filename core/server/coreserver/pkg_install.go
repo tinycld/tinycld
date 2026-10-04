@@ -578,3 +578,21 @@ func resolveServerDir() string {
 	}
 	return dir
 }
+
+// automationDefsFile is the materialized automation catalog the generator
+// writes (scripts/gen-automation.ts).
+const automationDefsFile = "automation_defs.json"
+
+// automationDefsPath is where the generator wrote automation_defs.json for
+// the binary whose dir is serverDir (resolveServerDir()). The generator
+// writes into the app's server/ dir (SERVER_DIR in scripts/paths.ts). The
+// image, bare metal and the in-app rebuild put the binary one level above
+// that dir, at <app>/tinycld; dev builds it into <app>/server/ itself. So the
+// file is in serverDir/server/ when it is there, and in serverDir otherwise.
+func automationDefsPath(serverDir string) string {
+	nested := filepath.Join(serverDir, "server", automationDefsFile)
+	if _, err := os.Stat(nested); err == nil {
+		return nested
+	}
+	return filepath.Join(serverDir, automationDefsFile)
+}

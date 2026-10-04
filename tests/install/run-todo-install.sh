@@ -97,6 +97,11 @@ trap cleanup EXIT
 # server's stdout) is captured LIVE — even if the test later hangs. A final
 # dump_logs still snapshots the complete log on failure.
 start_live_log() {
+    # The container outlives every server swap, so the previous stream is still
+    # running: stop it, or two streams append to the same file.
+    if [ -n "${TAIL_PID}" ]; then
+        kill "${TAIL_PID}" >/dev/null 2>&1 || true
+    fi
     mkdir -p "${LOG_DIR}"
     : > "${LIVE_LOG}"
     docker logs -f "${CONTAINER}" >> "${LIVE_LOG}" 2>&1 &
@@ -119,7 +124,7 @@ wait_healthy() {
     # Optional second arg: timeout in seconds (default 120). The FIRST cold boot
     # does the most work before /api/health answers — schema-type generation,
     # bundled-package seeding, and base-build archiving — so it gets a wider budget
-    # than the per-restart waits, which only re-serve an already-built tree. Under
+    # than the per-swap waits, which only re-serve an already-built tree. Under
     # a loaded host (back-to-back image builds) the cold boot can exceed 120s; that
     # is a slow-but-healthy boot, not a failure, so don't declare the container dead
     # prematurely.
@@ -136,12 +141,15 @@ wait_healthy() {
     return 1
 }
 
-# Wait for the server to go DOWN after a restart was requested. Returns as
-# soon as /api/health stops responding. If it never goes down within the
-# window (a restart faster than our poll, or one we missed), warn and return
-# 0 — the subsequent wait_healthy still gates on the server being back up, so
-# the worst case is we proceed against a server that never actually restarted,
-# which the post-restart test's own login-retry loop will still exercise.
+# Wait for the server to go DOWN after the job asked the supervisor to replace
+# it. Returns as soon as /api/health stops responding. Only a ROLLBACK takes the
+# server down: the supervisor stops both servers before it restarts the previous
+# build. A healthy swap never does — the supervisor starts the new build beside
+# the old one, waits up to 60s for it to report ready, and only then drains the
+# old one — so after a healthy swap this waits out the full 60s window, warns and
+# returns 0. By then the supervisor has given its verdict (ready, or its own 60s
+# ready timeout and a rollback), and the subsequent wait_healthy still gates on a
+# server that answers.
 wait_unhealthy() {
     local label="$1"
     for i in $(seq 1 60); do
@@ -151,7 +159,7 @@ wait_unhealthy() {
         fi
         sleep 1
     done
-    echo "[runner] WARN: ${label}: server never went down within 60s (fast or missed restart)"
+    echo "[runner] ${label}: server stayed up for 60s (expected after a healthy swap)"
     return 0
 }
 
@@ -272,45 +280,48 @@ run_phase() {
     ) || { echo "[runner] ${label} phase failed"; dump_logs; exit 1; }
 }
 
-# Asserts the armed-backup rollback protocol committed after a HEALTHY restart
+# Asserts the armed-backup rollback protocol committed after a HEALTHY swap
 # (review finding H3). On the success path the rebuild leaves data.db.backup +
-# .db-backup-armed in pb_data ARMED across the exit-75 restart; the entrypoint's
-# in-process loop must DELETE both once the new binary's health probe passes
-# ("commit"). By the time wait_healthy returns, that verdict has already run, so
-# a backup/marker still present here means the commit step never fired — the DB
-# would be left needlessly armed (and a future crash could wrongly roll it back).
-# The DB lives on the host bind-mount (${PB_DATA_DIR}), so check it directly.
+# .db-backup-armed in pb_data ARMED while the supervisor starts the new build;
+# the supervisor must DELETE both once the new build reports ready ("commit"),
+# before it drains the old server. By the time wait_unhealthy's window ends, that
+# verdict has already run, so a backup/marker still present here means the
+# commit step never fired — the DB would be left needlessly armed (and a later
+# interrupted rebuild could wrongly roll it back). The DB lives on the host
+# bind-mount (${PB_DATA_DIR}), so check it directly.
 assert_backup_committed() {
     local label="$1"
     if [ -f "${PB_DATA_DIR}/.db-backup-armed" ] || [ -f "${PB_DATA_DIR}/data.db.backup" ]; then
         echo "[runner] ERROR: ${label}: DB backup still armed after a healthy restart — commit step did not fire" >&2
-        ls -la "${PB_DATA_DIR}" 2>&1 | sed 's/^/[runner]   /' || true
+        find "${PB_DATA_DIR}" -maxdepth 1 -ls 2>&1 | sed 's/^/[runner]   /' || true
         dump_logs
         exit 1
     fi
     echo "[runner] ${label}: DB backup committed (disarmed) after healthy restart"
 }
 
-# Waits out one install-class exit-75 restart and re-attaches the live log.
-# The restart kills the `docker logs -f` stream, so re-attach after the new
-# binary is healthy again to keep capturing the post-restart boot trace.
+# Waits out one install-class server swap and refreshes the live log. The
+# container itself never restarts (the supervisor swaps servers inside it), so
+# the `docker logs -f` stream keeps running; start_live_log replaces it with a
+# fresh one so the log file holds the whole trace again.
 await_restart() {
     local label="$1"
     echo "[runner] waiting for ${label} restart"
-    wait_unhealthy "${label} restart down"   # observe the old server exit first
-    wait_healthy "${label} post-restart"     # then wait for the new binary up
+    wait_unhealthy "${label} restart down"   # a healthy swap stays up: waits out the ready window
+    wait_healthy "${label} post-restart"     # then make sure a server answers
     assert_backup_committed "${label}"        # armed backup must be committed (H3)
-    start_live_log                            # re-attach to the restarted container
+    start_live_log                            # refresh the live log
 }
 
-# Waits out an install-class exit-75 restart whose NEW build FAILS its health
-# probe and gets ROLLED BACK by the entrypoint. Differs from await_restart: the
-# OLD (rolled-back-to) binary is what comes back up, and we must NOT call
-# assert_backup_committed (whose message is about a healthy commit). After the
-# buggy build's probe boot we assert the rollback actually happened on disk:
-#   - the armed backup is GONE — restore_db_from_backup consumed it (same disarmed
-#     end-state as a commit, but reached via restore, not deletion). A LEFTOVER
-#     armed backup here would mean neither commit nor rollback fired.
+# Waits out an install-class swap whose NEW build never reports ready and gets
+# ROLLED BACK by the supervisor. Differs from await_restart: the server goes
+# down (the supervisor stops both servers, restores the DB and flips current
+# back), the OLD (rolled-back-to) build is what comes back up, and we must NOT
+# call assert_backup_committed (whose message is about a healthy commit). After
+# the buggy build's failed boot we assert the rollback actually happened on disk:
+#   - the armed backup is GONE — the supervisor's restore consumed it (same
+#     disarmed end-state as a commit, but reached via restore, not deletion). A
+#     LEFTOVER armed backup here would mean neither commit nor rollback fired.
 #   - /workspace/.previous-build exists (the symlink was flipped back to it).
 # The .rollback-pending breadcrumb is written and then consumed by the boot
 # reconciler on the SAME boot, so by the time wait_healthy returns it is already
@@ -319,11 +330,11 @@ await_restart() {
 await_rollback() {
     local label="$1"
     echo "[runner] waiting for ${label} rollback"
-    wait_unhealthy "${label} rollback down"   # the buggy build's probe boot / old server exit
+    wait_unhealthy "${label} rollback down"   # the supervisor stops both servers to roll back
     wait_healthy "${label} post-rollback"     # the OLD (rolled-back-to) binary comes back up
     if [ -f "${PB_DATA_DIR}/.db-backup-armed" ] || [ -f "${PB_DATA_DIR}/data.db.backup" ]; then
         echo "[runner] ERROR: ${label}: armed DB backup still present after rollback — restore did not disarm" >&2
-        ls -la "${PB_DATA_DIR}" 2>&1 | sed 's/^/[runner]   /' || true
+        find "${PB_DATA_DIR}" -maxdepth 1 -ls 2>&1 | sed 's/^/[runner]   /' || true
         dump_logs
         exit 1
     fi
@@ -331,7 +342,7 @@ await_rollback() {
         echo "[runner] WARN: ${label}: /workspace/.previous-build absent after rollback" >&2
     fi
     echo "[runner] ${label}: rollback landed (DB restored + disarmed, serving the prior build)"
-    start_live_log                            # re-attach to the restarted container
+    start_live_log                            # refresh the live log
 }
 
 # The flow has THREE install-class restarts (install-v1, upgrade-v2,
@@ -350,7 +361,7 @@ await_restart "post-install"
 # (verify v1.0.0, upgrade, …) are unaffected. See run-todo-install design notes.
 
 # Phase 1a — server-panic rollback fixture. The new binary panics in todo.Register
-# at bootstrap (before app.Start), so /api/health never answers and the entrypoint
+# at bootstrap (before app.Start), so it never reports ready and the supervisor
 # rolls back to v1.0.0. The boot reconciler then marks the stranded install-log row
 # 'rolled_back'.
 run_phase 'buggy-server install rolls back' 'buggy-server rollback'
@@ -361,10 +372,10 @@ await_rollback "post-buggy-server"
 # existing Phase 8 grep doesn't also select it.)
 run_phase 'buggy-server rolled back' 'verify buggy-server rollback'
 
-# Phase 1c — failing-UP-migration rollback fixture. The build activates and exits
-# 75; the new binary fails its serve boot when PocketBase applies the pending UP
-# migration (RunAllMigrations, fatal before the HTTP listener binds) → health probe
-# never answers → entrypoint rolls back to v1.0.0.
+# Phase 1c — failing-UP-migration rollback fixture. The build activates and asks
+# the supervisor for a relaunch; the new binary fails its serve boot when
+# PocketBase applies the pending UP migration (RunAllMigrations, fatal before it
+# reports ready) → the supervisor rolls back to v1.0.0.
 run_phase 'buggy-migration install rolls back' 'buggy-migration rollback'
 await_rollback "post-buggy-migration"
 
@@ -374,9 +385,9 @@ run_phase 'buggy-migration rolled back' 'verify buggy-migration rollback'
 
 # Phase 1e — fe build-failure fixture. A broken screens/_layout.tsx makes
 # `expo export --platform web` fail in the pipeline, BEFORE the symlink swap → op
-# status 'failed', current build untouched, NO restart.
+# status 'failed', current build untouched, NO relaunch.
 run_phase 'buggy-fe install fails at expo export' 'buggy-fe build-failure'
-# (no await_* — a build-time failure never swaps/restarts.)
+# (no await_* — a build-time failure never swaps servers.)
 
 # Phase 2 — verify v1.0.0 is live (no tags schema) and seed an org + a todo.
 run_phase 'v1.0.0 is live' 'verify v1.0.0'

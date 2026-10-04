@@ -2,8 +2,10 @@
 
 package listeners
 
-import "net"
-import "os"
+import (
+	"net"
+	"os"
+)
 
 // Inherited always returns false: there is no supervisor on this platform,
 // so a caller falls back to binding the port itself.

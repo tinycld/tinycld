@@ -191,3 +191,34 @@ func TestServeHTTPRedirectServesOnTheHookListener(t *testing.T) {
 		t.Fatal("the hook did not get the redirect server")
 	}
 }
+
+// A store value of the wrong type under one of the redirect keys cannot be
+// used, but it must not be dropped in silence: a caller that stored the wrong
+// thing would otherwise only see the redirect server run without it.
+func TestServeHTTPRedirectWarnsOnAWrongTypeStoreValue(t *testing.T) {
+	for _, key := range []string{redirectListenerStoreKey, redirectServerHookStoreKey, redirectServerStoreKey} {
+		t.Run(key, func(t *testing.T) {
+			app := core.NewBaseApp(core.BaseAppConfig{})
+
+			var buf bytes.Buffer
+			prevDefault := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			defer slog.SetDefault(prevDefault)
+
+			// An address already in use makes the fallback bind fail at once,
+			// so serveHTTPRedirect returns instead of serving.
+			taken, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer taken.Close()
+
+			app.Store().Set(key, "not the right type")
+			serveHTTPRedirect(app, taken.Addr().String(), handlerReturning("redirect"))
+
+			if !bytes.Contains(buf.Bytes(), []byte("wrong type")) || !bytes.Contains(buf.Bytes(), []byte(key)) {
+				t.Fatalf("expected a wrong-type warning naming %s, got log output: %s", key, buf.String())
+			}
+		})
+	}
+}

@@ -39,9 +39,9 @@ const (
 	progActivate      = 96
 	progCommit        = 98
 	// The final milestone: the new build is fully assembled and recorded, and the
-	// only thing left is the exit-75 relaunch onto it. Emitting 100 here lets the
-	// bar read "done" before the restart drops the stream; the durable job-status
-	// poll then confirms success across the relaunch.
+	// only thing left is the relaunch onto it. Emitting 100 here lets the bar
+	// read "done" before this process stops and the stream drops; the durable
+	// job-status poll then confirms success across the relaunch.
 	progRestart = 100
 )
 
@@ -197,7 +197,8 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 	}
 	job.Status = "success"
 	jobLogf(job, "rebuild succeeded in %s — restarting onto build %s", monoSince(rebuildStart), m.BuildID)
-	// Finalize the install log BEFORE restart: the process may end at once.
+	// Finalize the install log BEFORE restart: without a supervisor the
+	// process exits at once, and under one it may be drained at any moment.
 	if d.finalizeLog != nil {
 		d.finalizeLog("success", "")
 	}

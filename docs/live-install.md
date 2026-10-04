@@ -584,6 +584,17 @@ to. The runtime image (`app/Dockerfile`) provides:
   With `docker run`, pass `--stop-timeout 45`. On Dokku, run
   `dokku config:set <app> DOKKU_DOCKER_STOP_TIMEOUT=45`. The bare-metal unit
   sets `TimeoutStopSec=45`.
+- **TLS on a package's own ports.** The supervisor holds a package's own ports
+  (for example mail's IMAP and SMTP ports) and passes them to the server as
+  plain TCP listeners. It does not terminate TLS on them. The package
+  terminates TLS itself. Thus in production, mail needs one of these:
+  - `IMAP_TLS_CERT` and `IMAP_TLS_KEY`, set to readable certificate and key
+    files. SMTP submission reads `SMTP_TLS_CERT` and `SMTP_TLS_KEY` first, and
+    uses the IMAP pair when they are not set.
+  - Autocert: `AUTOCERT_ENABLED=true` and `PRIMARY_DOMAIN`.
+
+  If neither is set, the mail server does not start in production, and the
+  server boot fails. To run without IMAP, set `IMAP_ENABLED=false`.
 
 > **Note.** The runtime image ships no Go module cache, so a server-package
 > `go build` downloads its dependencies from the network. Installing a server
@@ -643,10 +654,10 @@ exists (migration applied), a `pkg_build` row + the base build are listed in
 that second relaunch — that the todo build is now `superseded`, todo's migration
 was reversed (`migrate down`), and its nav entry/route are gone.
 
-Run it from the app member (needs Docker):
+Run it from the `tinycld` member (needs Docker):
 
 ```sh
-cd app
+cd tinycld
 bash tests/install/run-todo-install.sh
 ```
 
@@ -675,9 +686,11 @@ Because the install can outlast Playwright's wait on a cold `go build`, the
 authoritative result is the container log, not the Playwright exit code:
 
 ```sh
-docker logs tinycld-todo-test | grep -E 'COMPLETE status=|Restart requested|Server started'
+docker logs tinycld-todo-test | grep -E 'COMPLETE status=|asked to be replaced|started a server|the server is ready'
 ```
 
 A successful run shows `COMPLETE status=success`, then the relaunch
-(`Restart requested` → `Health check passed` → a fresh `Server started`), with
-the container still up and `Todo` present in `pkg_registry` as `installed`.
+(`the server asked to be replaced` → `started a server` → `the server is
+ready`), with the container still up and `Todo` present in `pkg_registry` as
+`installed`. The container never restarts: the supervisor swaps the server
+inside it.

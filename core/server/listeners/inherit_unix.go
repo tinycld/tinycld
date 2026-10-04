@@ -131,9 +131,10 @@ func parseEnvOnce() {
 			fd := firstInheritedFD + i
 			name := names[i]
 
-			// Clear CLOEXEC's absence: ExtraFiles are inherited without it,
-			// so without this a grandchild (go build, pnpm, git) would also
-			// inherit the fd and keep the port open after this process exits.
+			// Set close-on-exec. The fd arrived without it (that is how it
+			// survived the exec into this process), so without this every
+			// process this one starts (go build, pnpm, git) would inherit it
+			// too and keep the port open after this process exits.
 			syscall.CloseOnExec(fd)
 
 			f := os.NewFile(uintptr(fd), name)
@@ -191,7 +192,7 @@ func parseEnv() (count int, names []string) {
 	log := logging.ForPackage("listeners")
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 0 {
-		log.Warn("invalid "+EnvFDs, "value", raw)
+		log.Warn("invalid inherited fd count", "env", EnvFDs, "value", raw)
 		return 0, nil
 	}
 	// A Set with no listeners writes EnvFDs=0; that's a valid "nothing to
@@ -202,7 +203,7 @@ func parseEnv() (count int, names []string) {
 
 	names = strings.Split(os.Getenv(EnvFDNames), ":")
 	if len(names) != n {
-		log.Warn("fd name count does not match fd count", "names", len(names), "fds", n)
+		log.Warn("fd name count does not match fd count", "env", EnvFDNames, "names", len(names), "fds", n)
 		return 0, nil
 	}
 	return n, names
