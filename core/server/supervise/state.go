@@ -4,12 +4,14 @@
 package supervise
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"tinycld.org/core/logging"
 )
@@ -40,10 +42,20 @@ func (s State) dbArmedMarkerPath() string {
 	return filepath.Join(s.pbDataDir(), ".db-backup-armed")
 }
 
-// rollbackPendingMarkerPath mirrors coreserver's pkg_rollback_reconcile.go
-// rollbackPendingMarkerPath — the breadcrumb the boot reconciler consumes.
-func (s State) rollbackPendingMarkerPath() string {
-	return filepath.Join(s.pbDataDir(), ".rollback-pending")
+// rollbackRecordPath is where a rollback leaves its RollbackRecord. It is
+// beside pb_data, not in it: a restore swap moves pb_data aside whole, and
+// would carry a record inside it away from the boot that reads it.
+func (s State) rollbackRecordPath() string {
+	return filepath.Join(s.Root, ".rollback-pending")
+}
+
+// RollbackRecord is the note a rollback leaves for the next boot's install
+// log. JSON in <Root>/.rollback-pending (outside pb_data, so a restore swap
+// cannot carry it away).
+type RollbackRecord struct {
+	Build    string    `json:"build"`     // the build that failed and was rolled back from
+	RolledTo string    `json:"rolled_to"` // the build serving after the rollback ("" if unknown)
+	At       time.Time `json:"at"`
 }
 
 // Current returns the build's tinycld dir that <Root>/current resolves to,
@@ -87,22 +99,51 @@ func (s State) CommitBackup() error {
 	return nil
 }
 
-// WriteRollbackPending drops the breadcrumb the boot reconciler reads to
-// mark a stranded install-log row 'rolled_back'. It captures the armed
-// marker's build id BEFORE RestoreBackup clears that marker — entrypoint.sh
-// calls write_rollback_pending before restore_db_from_backup for the same
-// reason. A no-op (no file written) when no marker is armed, matching the
-// shell's `cat ... 2>/dev/null || echo` fallback falling through to an empty
-// write; Go instead skips the write entirely since there is nothing to record.
-func (s State) WriteRollbackPending() error {
-	buildID, armed := s.BackupArmed()
-	if !armed {
-		return nil
+// WriteRollbackRecord writes r to <Root>/.rollback-pending, replacing any
+// earlier record. The server reads it at boot, perhaps while this write
+// runs, so the bytes go to a temp file that is renamed over the record and
+// a reader never sees half of one.
+func (s State) WriteRollbackRecord(r RollbackRecord) (err error) {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("supervise: encode the rollback record: %w", err)
 	}
-	if err := os.WriteFile(s.rollbackPendingMarkerPath(), []byte(buildID), 0o644); err != nil {
-		return err
+	rootInfo, err := os.Stat(s.Root)
+	if err != nil {
+		return fmt.Errorf("supervise: write the rollback record: %w", err)
 	}
-	log.Info("wrote rollback-pending breadcrumb for the boot reconciler", "buildID", buildID)
+	path := s.rollbackRecordPath()
+	tmp, err := os.CreateTemp(s.Root, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("supervise: write the rollback record: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+		}
+	}()
+	if _, err = tmp.Write(data); err != nil {
+		return fmt.Errorf("supervise: write the rollback record: %w", err)
+	}
+	if err = tmp.Chmod(0o644); err != nil {
+		return fmt.Errorf("supervise: write the rollback record: %w", err)
+	}
+	if err = tmp.Sync(); err != nil {
+		return fmt.Errorf("supervise: write the rollback record: %w", err)
+	}
+	if err = tmp.Close(); err != nil {
+		return fmt.Errorf("supervise: write the rollback record: %w", err)
+	}
+	// The supervisor runs as root; the server that reads and then removes
+	// the record does not.
+	if err = matchOwner(tmp.Name(), rootInfo); err != nil {
+		return fmt.Errorf("supervise: write the rollback record: %w", err)
+	}
+	if err = os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("supervise: write the rollback record: %w", err)
+	}
+	log.Info("recorded the rollback for the next boot", "build", r.Build, "rolledTo", r.RolledTo)
 	return nil
 }
 
@@ -204,11 +245,10 @@ func copyToTempAndRename(src, dst, tmp string, ref os.FileInfo, beforeRename fun
 // changing anything when there is nothing to roll back to — no
 // .previous-build file, or its build dir is missing.
 func (s State) RollbackCurrent() error {
-	data, err := os.ReadFile(s.previousBuildPath())
+	prev, err := s.PreviousBuild()
 	if err != nil {
-		return fmt.Errorf("no previous build recorded: %w", err)
+		return err
 	}
-	prev := strings.TrimSpace(string(data))
 	target := filepath.Join(s.buildsDir(), prev, "tinycld")
 	if _, err := os.Stat(target); err != nil {
 		return fmt.Errorf("previous build %s not on disk: %w", prev, err)
@@ -224,6 +264,16 @@ func (s State) RollbackCurrent() error {
 	}
 	log.Info("rolled back current symlink", "to", prev)
 	return nil
+}
+
+// PreviousBuild is the build id <Root>/.previous-build records: the build
+// RollbackCurrent would flip current back to.
+func (s State) PreviousBuild() (string, error) {
+	data, err := os.ReadFile(s.previousBuildPath())
+	if err != nil {
+		return "", fmt.Errorf("no previous build recorded: %w", err)
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 // removeIfExists removes path, treating "already gone" as success — every

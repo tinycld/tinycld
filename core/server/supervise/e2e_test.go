@@ -596,7 +596,7 @@ func TestE2ESwapUnderLoad(t *testing.T) {
 	s := r.state()
 	assertExists(t, s.dbArmedMarkerPath(), false)
 	assertExists(t, s.dbBackupPath(), false)
-	assertExists(t, s.rollbackPendingMarkerPath(), false)
+	assertExists(t, s.rollbackRecordPath(), false)
 	if got, want := readLink(t, s.currentLinkPath()), filepath.Join(s.buildsDir(), e2eBuildB, "tinycld"); got != want {
 		t.Fatalf("current -> %q, want %q", got, want)
 	}
@@ -698,7 +698,7 @@ func TestE2EBrokenBuildRollsBack(t *testing.T) {
 	if row.Status != "rolled_back" || !strings.Contains(row.Error, "(build "+e2eBuildB+")") {
 		t.Fatalf("the revert's install log row is %q (%q), want rolled_back naming %s", row.Status, row.Error, e2eBuildB)
 	}
-	assertExists(t, s.rollbackPendingMarkerPath(), false)
+	assertExists(t, s.rollbackRecordPath(), false)
 }
 
 // A package port declared in a build's ports.json is held by the

@@ -1,8 +1,10 @@
 package coreserver
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,8 +19,8 @@ import (
 func newRollbackReconcileTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
 
-	// Isolate the state dir so rollbackPendingMarkerPath() resolves under a temp
-	// pb_data we control. statePbDataDir() = <TINYCLD_STATE_DIR>/pb_data.
+	// Isolate the state dir so the rollback record and the legacy pb_data
+	// marker resolve under a temp dir we control.
 	stateDir := t.TempDir()
 	t.Setenv("TINYCLD_STATE_DIR", stateDir)
 	if err := os.MkdirAll(filepath.Join(stateDir, "pb_data"), 0o755); err != nil {
@@ -73,15 +75,21 @@ func addInstallLog(t *testing.T, app *tests.TestApp, slug, status string) string
 	return rec.Id
 }
 
+// writeRollbackMarker writes the record the supervisor leaves in the state
+// dir when it rolls buildID back.
 func writeRollbackMarker(t *testing.T, buildID string) {
 	t.Helper()
-	if err := os.WriteFile(rollbackPendingMarkerPath(), []byte(buildID), 0o644); err != nil {
-		t.Fatalf("write rollback marker: %v", err)
+	data, err := json.Marshal(map[string]any{"build": buildID, "rolled_to": "build-prev", "at": time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateRollbackRecordPath(), data, 0o644); err != nil {
+		t.Fatalf("write rollback record: %v", err)
 	}
 }
 
 func markerExists() bool {
-	_, err := os.Stat(rollbackPendingMarkerPath())
+	_, err := os.Stat(stateRollbackRecordPath())
 	return err == nil
 }
 
@@ -102,11 +110,37 @@ func TestReconcileMarksStrandedRunningRowRolledBack(t *testing.T) {
 	if rec.GetString("completed_at") == "" {
 		t.Fatalf("completed_at should be set after reconcile")
 	}
-	if rec.GetString("error") == "" {
-		t.Fatalf("error should describe the rollback")
+	if got := rec.GetString("error"); !strings.Contains(got, "(build build-123)") {
+		t.Fatalf("error = %q, want it to name the rolled-back build", got)
 	}
 	if markerExists() {
 		t.Fatalf("marker should be consumed (deleted) after a successful reconcile")
+	}
+}
+
+// A supervisor from before the state-dir record left the failed build id as
+// plain text in pb_data. A boot after the upgrade still reads it once.
+func TestReconcileReadsTheLegacyPbDataMarker(t *testing.T) {
+	app := newRollbackReconcileTestApp(t)
+	id := addInstallLog(t, app, "todo", "running")
+	if err := os.WriteFile(legacyRollbackMarkerPath(), []byte("build-77\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ReconcileRolledBackInstall(app)
+
+	rec, err := app.FindRecordById("pkg_install_log", id)
+	if err != nil {
+		t.Fatalf("reload row: %v", err)
+	}
+	if got := rec.GetString("status"); got != "rolled_back" {
+		t.Fatalf("status = %q, want rolled_back", got)
+	}
+	if got := rec.GetString("error"); !strings.Contains(got, "(build build-77)") {
+		t.Fatalf("error = %q, want it to name the legacy marker's build", got)
+	}
+	if _, err := os.Stat(legacyRollbackMarkerPath()); !os.IsNotExist(err) {
+		t.Fatalf("the legacy marker should be consumed, stat err = %v", err)
 	}
 }
 

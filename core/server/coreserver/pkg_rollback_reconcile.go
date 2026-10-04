@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,19 +11,38 @@ import (
 	"tinycld.org/core/installjob"
 )
 
-// rollbackPendingMarkerPath is the breadcrumb the entrypoint's rollback path
-// writes (config/entrypoint.sh's write_rollback_pending) and this reconciler
-// consumes. It lives under pb_data so it survives the per-build symlink swap and
-// a crash in the rollback window. Its contents are the rolled-back build id (may
-// be empty if the arm marker was unreadable). Keep this path in sync with the
-// entrypoint's $ROLLBACK_PENDING_MARKER.
-func rollbackPendingMarkerPath() string {
+// legacyRollbackMarkerPath is where a supervisor before the state-dir
+// record left its note: the failed build id as plain text, in pb_data. It is
+// still read once, so a rollback recorded just before an upgrade is not lost.
+func legacyRollbackMarkerPath() string {
 	return filepath.Join(statePbDataDir(), ".rollback-pending")
 }
 
+// readRollbackRecord returns the build the supervisor rolled back from and
+// the file that recorded it. The state-dir record wins; the legacy pb_data
+// marker is the fallback. ok is false when neither exists.
+func readRollbackRecord() (build, path string, ok bool) {
+	path = stateRollbackRecordPath()
+	if data, err := os.ReadFile(path); err == nil {
+		var r struct {
+			Build string `json:"build"`
+		}
+		if jErr := json.Unmarshal(data, &r); jErr != nil {
+			// A rollback still happened; the row is marked without a build.
+			srvLog.Warn("the rollback record does not parse; marking the install without its build", "path", path, "err", jErr)
+		}
+		return strings.TrimSpace(r.Build), path, true
+	}
+	path = legacyRollbackMarkerPath()
+	if data, err := os.ReadFile(path); err == nil {
+		return strings.TrimSpace(string(data)), path, true
+	}
+	return "", "", false
+}
+
 // ReconcileRolledBackInstall runs at boot (OnServe, before serving). When the
-// entrypoint health-check rolled back the previous install, it left a
-// .rollback-pending breadcrumb; the DB it restored is the PRE-install snapshot,
+// supervisor rolled back the previous install, it left a rollback record
+// (readRollbackRecord); the DB it restored is the PRE-install snapshot,
 // taken (rebuild.go backupDB) while that install's pkg_install_log row was still
 // "running" — so the later finalize("success") write was discarded by the
 // restore and the row is stranded at "running" with no completed_at. There is no
@@ -34,7 +54,7 @@ func rollbackPendingMarkerPath() string {
 // terminal state instead of a row stuck at "running" forever.
 //
 // Idempotent + safe:
-//   - No marker  → no-op (the normal, healthy-boot case; the entrypoint commit
+//   - No marker  → no-op (the normal, healthy-boot case; the supervisor's commit
 //     path never writes the marker, so a committed build is never touched here).
 //   - Marker present but no "running" row → delete the marker, no-op (already
 //     reconciled, or the rollback predated any log write).
@@ -44,12 +64,10 @@ func rollbackPendingMarkerPath() string {
 // It only ever transitions running → rolled_back; it never touches success,
 // failed, or already-rolled_back rows.
 func ReconcileRolledBackInstall(app core.App) {
-	markerPath := rollbackPendingMarkerPath()
-	data, err := os.ReadFile(markerPath)
-	if err != nil {
+	rolledBackBuild, markerPath, ok := readRollbackRecord()
+	if !ok {
 		return // no breadcrumb → nothing was rolled back → no-op
 	}
-	rolledBackBuild := strings.TrimSpace(string(data))
 
 	// A fresh boot has no in-memory job. Never reconcile a row out from under a
 	// genuinely running operation (belt-and-suspenders; can't happen on boot).

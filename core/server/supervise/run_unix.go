@@ -89,6 +89,10 @@ type supervisor struct {
 	// live is every child started, so a stop signal can drain all of
 	// them, including both sides of a swap.
 	live []*child
+	// lastGoodBuild is the id of the last build whose child became ready.
+	// A rollback compares the failed build with it: only a newer build
+	// failing has a previous build to go back to.
+	lastGoodBuild string
 }
 
 // newSupervisor reads the config and binds the ports the current build
@@ -177,6 +181,9 @@ func (s *supervisor) exitFor(err error) int {
 func (s *supervisor) boot() (*child, error) {
 	if buildID, armed := s.state.BackupArmed(); armed {
 		log.Warn("a rebuild was interrupted before its build was checked; checking it now", "build", buildID)
+		// The build being checked has not served yet; the one before it
+		// did, so a failure of the checked build is a new build failing.
+		s.lastGoodBuild, _ = s.state.PreviousBuild()
 		c, err := s.launch()
 		if err != nil {
 			log.Error("could not start the interrupted build; rolling back", "err", err)
@@ -189,6 +196,7 @@ func (s *supervisor) boot() (*child, error) {
 			log.Error("the interrupted build did not become ready; rolling back", "err", err)
 			return s.rollback(nil, c)
 		}
+		s.served(c)
 		if c.pendingRestart == nil {
 			if err := s.state.CommitBackup(); err != nil {
 				log.Error("could not commit the database backup", "err", err)
@@ -201,6 +209,9 @@ func (s *supervisor) boot() (*child, error) {
 	if err != nil {
 		return nil, err
 	}
+	// No rebuild is in flight, so this is the build that served before the
+	// supervisor started; its ready is taken later, in loop.
+	s.served(c)
 	s.ports.retain(c.ports)
 	return c, nil
 }
@@ -309,6 +320,7 @@ func (s *supervisor) replace() (*child, error) {
 // already moved current on and armed a backup for the next build, so the
 // bundle and the backup are that build's: they wait until it is ready.
 func (s *supervisor) promote(next *child) {
+	s.served(next)
 	if next.pendingRestart != nil {
 		log.Info("the new server already asked to be replaced; promoting waits for the next build", "pid", next.pid)
 		return
@@ -333,20 +345,33 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 		drainChild(old, s.opts.drainBound)
 	}
 	failedBuild := s.currentBuildID()
-	// The rollback record is only a note for the next boot's install log;
-	// failing to write it must not stop the rollback.
-	if err := s.state.WriteRollbackPending(); err != nil {
-		log.Error("could not record the rollback for the next boot", "err", err)
+	// The build that served failed (a cold restore with no rebuild): there
+	// is no newer build to leave, and the previous build is older than the
+	// data this one migrated, so it must not start on it.
+	sameBuildFailed := failedBuild != "" && failedBuild == s.lastGoodBuild
+	// A current that does not resolve names no build to record, but the
+	// previous build is then the only one that can start.
+	if !sameBuildFailed && failedBuild != "" {
+		s.recordRollback(failedBuild)
 	}
-	if err := s.state.RestoreBackup(); err != nil {
-		log.Warn("could not restore the database backup; rolling the build back anyway (the schema may be ahead of the previous build)", "err", err)
-	}
+	restoreErr := s.state.RestoreBackup()
 	// A backup still armed here is one RestoreBackup could not restore. It
 	// is the only copy of the database from before the migration, so
 	// nothing below may drop it.
 	_, keptArmed := s.state.BackupArmed()
-	if err := s.state.RollbackCurrent(); err != nil {
-		log.Error("could not roll the build back; starting the current build again", "err", err)
+	if sameBuildFailed {
+		// No rebuild armed a backup, so a missing one is the expected case.
+		if restoreErr != nil && !errors.Is(restoreErr, os.ErrNotExist) {
+			log.Warn("could not restore the database backup; starting the serving build again on the data it has", "err", restoreErr)
+		}
+		log.Error("the serving build failed to restart; starting it again", "build", failedBuild)
+	} else {
+		if restoreErr != nil {
+			log.Warn("could not restore the database backup; rolling the build back anyway (the schema may be ahead of the previous build)", "err", restoreErr)
+		}
+		if err := s.state.RollbackCurrent(); err != nil {
+			log.Error("could not roll the build back; starting the current build again", "err", err)
+		}
 	}
 
 	c, err := s.launch()
@@ -360,6 +385,7 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 		stopChild(c, s.opts.stopBound)
 		return nil, fmt.Errorf("%w: the build rolled back to: %v", errNoHealthyBuild, err)
 	}
+	s.served(c)
 	// The build rolled back to may have asked for its replacement before it
 	// was ready, so its own ready never promoted its bundle and it would
 	// serve an older build's.
@@ -371,6 +397,28 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 	}
 	s.ports.retain(c.ports)
 	return c, nil
+}
+
+// recordRollback leaves the next boot a note that failedBuild was rolled
+// back from. It is read before RollbackCurrent changes what the previous
+// build is. The record is only a note for the install log; failing to write
+// it must not stop the rollback.
+func (s *supervisor) recordRollback(failedBuild string) {
+	rolledTo, err := s.state.PreviousBuild()
+	if err != nil {
+		log.Warn("the rollback record names no build to roll back to", "err", err)
+	}
+	r := RollbackRecord{Build: failedBuild, RolledTo: rolledTo, At: time.Now().UTC()}
+	if err := s.state.WriteRollbackRecord(r); err != nil {
+		log.Error("could not record the rollback for the next boot", "build", failedBuild, "err", err)
+	}
+}
+
+// served notes that c's build became ready (or, at boot, is the build that
+// was serving), so a later failure of the same build is not taken for a new
+// build's.
+func (s *supervisor) served(c *child) {
+	s.lastGoodBuild = buildIDOf(c.dir)
 }
 
 // dropReturnedBackup removes a backup armed for the build just rolled back
@@ -403,7 +451,13 @@ func (s *supervisor) currentBuildID() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Base(filepath.Dir(cur))
+	return buildIDOf(cur)
+}
+
+// buildIDOf is the id of the build whose tinycld dir is dir
+// (<Root>/builds/<id>/tinycld).
+func buildIDOf(dir string) string {
+	return filepath.Base(filepath.Dir(dir))
 }
 
 // launch starts a child of the build current points at now. Ports the

@@ -1,10 +1,13 @@
 package supervise
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // newTestState builds a Root matching the real layout:
@@ -119,30 +122,76 @@ func TestState_CommitBackup_NoOpWithoutMarker(t *testing.T) {
 	}
 }
 
-func TestState_WriteRollbackPending(t *testing.T) {
+// The rollback record lives in the state root, beside pb_data: a restore
+// swap moves pb_data aside whole, and would carry a record inside it away.
+func TestState_WriteRollbackRecord(t *testing.T) {
 	s := newTestState(t)
-	armBackup(t, s, "build-9", []byte("snapshot"))
+	at := time.Date(2026, 10, 4, 12, 30, 0, 0, time.UTC)
 
-	if err := s.WriteRollbackPending(); err != nil {
+	if err := s.WriteRollbackRecord(RollbackRecord{Build: "build-9", RolledTo: "build-8", At: at}); err != nil {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(s.rollbackPendingMarkerPath())
+	if got, want := s.rollbackRecordPath(), filepath.Join(s.Root, ".rollback-pending"); got != want {
+		t.Fatalf("rollbackRecordPath() = %q, want %q", got, want)
+	}
+	got := readRollbackRecord(t, s)
+	if got.Build != "build-9" || got.RolledTo != "build-8" || !got.At.Equal(at) {
+		t.Fatalf("record = %+v", got)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(mustRead(t, s.rollbackRecordPath())), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"build", "rolled_to", "at"} {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("record JSON %v has no %q field", raw, key)
+		}
+	}
+	info, err := os.Stat(s.rollbackRecordPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "build-9" {
-		t.Fatalf("rollback-pending marker = %q, want build-9", data)
+	if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Fatalf("record mode = %o, want 644", perm)
 	}
+	assertNoTempFiles(t, s.Root)
+	assertExists(t, filepath.Join(s.pbDataDir(), ".rollback-pending"), false)
 }
 
-func TestState_WriteRollbackPending_NoOpWithoutArmedMarker(t *testing.T) {
+func TestState_WriteRollbackRecordReplacesTheLastOne(t *testing.T) {
 	s := newTestState(t)
-	if err := s.WriteRollbackPending(); err != nil {
+	if err := s.WriteRollbackRecord(RollbackRecord{Build: "b", RolledTo: "a", At: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(s.rollbackPendingMarkerPath()); !os.IsNotExist(err) {
-		t.Fatalf("rollback-pending marker should not be written, stat err = %v", err)
+	if err := s.WriteRollbackRecord(RollbackRecord{Build: "c", RolledTo: "b", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readRollbackRecord(t, s); got.Build != "c" || got.RolledTo != "b" {
+		t.Fatalf("record = %+v, want the second one", got)
+	}
+	assertNoTempFiles(t, s.Root)
+}
+
+func readRollbackRecord(t *testing.T, s State) RollbackRecord {
+	t.Helper()
+	var r RollbackRecord
+	if err := json.Unmarshal([]byte(mustRead(t, s.rollbackRecordPath())), &r); err != nil {
+		t.Fatalf("decode the rollback record: %v", err)
+	}
+	return r
+}
+
+func assertNoTempFiles(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Fatalf("a temp file was left behind: %s", e.Name())
+		}
 	}
 }
 

@@ -63,6 +63,7 @@ func TestMain(m *testing.M) {
 //	FAKE_NEVER_READY   never send ready and never serve (a hung boot)
 //	FAKE_IGNORE_TERM   ignore SIGTERM (only SIGKILL stops it)
 //	FAKE_BOOT_EXIT     exit with this code before ready (a failed boot)
+//	FAKE_BOOT_EXIT_START  exit with code 1 before ready on this start (1-based) only
 //	FAKE_SEND_JUNK     send messages the supervisor must ignore before ready
 //	FAKE_READY_VERSION send ready with this protocol version
 //	FAKE_RESTART_BEFORE_READY  on this build's first start only (a boot-time rebuild runs once), activate FAKE_ACTIVATE and ask for a restart before ready, then wait for the ack
@@ -70,6 +71,7 @@ func TestMain(m *testing.M) {
 //	FAKE_KEEP_DB       with FAKE_ACTIVATE, leave data.db as it is: a restore's rebuild runs no migration
 //	FAKE_EXIT_CODE     on SIGUSR1, exit with this code instead of asking for a restart
 //	FAKE_COLD          on SIGUSR1, ask for a cold restart
+//	FAKE_DROP_CURRENT  on SIGUSR1, record this build as the previous one and remove current, so it no longer resolves
 func fakeChild() int {
 	root := os.Getenv("TINYCLD_STATE_DIR")
 	ev := func(what string) {
@@ -104,6 +106,10 @@ func fakeChild() int {
 	if code := os.Getenv("FAKE_BOOT_EXIT"); code != "" {
 		ev("exit")
 		return atoi(code)
+	}
+	if n := os.Getenv("FAKE_BOOT_EXIT_START"); n != "" && startCount(root, os.Getenv("FAKE_NAME")) == atoi(n) {
+		ev("exit")
+		return 1
 	}
 
 	f, ok := listeners.ExtraFD(ControlFD)
@@ -196,6 +202,11 @@ func fakeChild() int {
 	for {
 		select {
 		case <-trigger:
+			if os.Getenv("FAKE_DROP_CURRENT") == "1" {
+				s := State{Root: root}
+				os.WriteFile(s.previousBuildPath(), []byte(os.Getenv("FAKE_BUILD")), 0o644)
+				os.Remove(s.currentLinkPath())
+			}
 			if to := os.Getenv("FAKE_ACTIVATE"); to != "" {
 				fakeActivate(root, os.Getenv("FAKE_BUILD"), to, os.Getenv("FAKE_KEEP_DB") == "1")
 			}
@@ -858,12 +869,26 @@ func assertColdRollback(t *testing.T, r *testRoot, h *harness) {
 	if got := mustRead(t, s.dbPath()); got != "live" {
 		t.Fatalf("data.db = %q, want the backup's bytes", got)
 	}
-	if got := mustRead(t, s.rollbackPendingMarkerPath()); got != "b" {
-		t.Fatalf(".rollback-pending = %q, want b", got)
-	}
+	assertRollbackRecord(t, s, "b", "a")
 	if got := readLink(t, s.currentLinkPath()); got != filepath.Join(s.buildsDir(), "a", "tinycld") {
 		t.Fatalf("current -> %q, want the previous build", got)
 	}
+}
+
+// assertRollbackRecord checks the record a rollback leaves for the next
+// boot: in the state root, naming the build that failed and the build
+// rolled back to, and not in pb_data, where a restore swap would carry it
+// away.
+func assertRollbackRecord(t *testing.T, s State, build, rolledTo string) {
+	t.Helper()
+	got := readRollbackRecord(t, s)
+	if got.Build != build || got.RolledTo != rolledTo {
+		t.Fatalf("rollback record = %+v, want build %q rolled to %q", got, build, rolledTo)
+	}
+	if got.At.IsZero() {
+		t.Fatal("the rollback record has no time")
+	}
+	assertExists(t, filepath.Join(s.pbDataDir(), ".rollback-pending"), false)
 }
 
 func TestRunNewChildNeverReady(t *testing.T) {
@@ -967,6 +992,63 @@ func TestRunColdRestoreFailingAfterTheSwapRollsBack(t *testing.T) {
 		return !armed
 	})
 	assertExists(t, s.dbBackupPath(), false)
+	// The swap carried the armed marker aside with pb_data, so the record
+	// must name the failed build without it.
+	assertRollbackRecord(t, s, "b", "a")
+}
+
+// A restore that needs no other build is a cold restart of the build that
+// serves. When that build then fails on the swapped-in data, no newer build
+// exists to leave: the previous build is older than the data, so it must not
+// start, and nothing is recorded as rolled back. The same build starts
+// again, and its boot undoes the swap.
+func TestRunColdRestoreWithoutARebuildFailingStartsTheSameBuild(t *testing.T) {
+	r := newTestRoot(t)
+	r.build("old", knobs{"FAKE_NAME": "OLD", "FAKE_SERVE_BODY": "OLD"})
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_DB": "1", "FAKE_APPLY_RESTORE": "1", "FAKE_COLD": "1", "FAKE_BOOT_EXIT_START": "2"})
+	r.point("a")
+	s := r.state()
+	// What an earlier rebuild onto a left behind.
+	mustWrite(t, s.previousBuildPath(), "old")
+	h := r.supervise(testOptions())
+
+	a := r.waitEvent("A", "ready", 1)
+	waitBody(t, h.addr, "live")
+	r.stageRestore("restore-1", "restored")
+	r.trigger(a)
+
+	r.waitEvent("A", "data restored", 1)
+	r.waitEvent("A", "ready", 2)
+	waitBody(t, h.addr, "live")
+	if r.index("A", "start", 3) < 0 {
+		t.Fatalf("the serving build was not started again: %v", r.events())
+	}
+	if r.index("OLD", "start", 1) >= 0 {
+		t.Fatalf("the older previous build started on the newer build's data: %v", r.events())
+	}
+	if got := readLink(t, s.currentLinkPath()); got != filepath.Join(s.buildsDir(), "a", "tinycld") {
+		t.Fatalf("current -> %q, want the build that served", got)
+	}
+	assertExists(t, s.rollbackRecordPath(), false)
+}
+
+// A current that no longer resolves names no failed build, so nothing is
+// recorded, but the previous build is the only one that can start: the
+// rollback still flips current back to it.
+func TestRunRollbackWithAnUnresolvableCurrentStartsThePreviousBuild(t *testing.T) {
+	r := newTestRoot(t)
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_DROP_CURRENT": "1", "FAKE_COLD": "1"})
+	r.point("a")
+	h := r.supervise(testOptions())
+
+	r.trigger(r.waitEvent("A", "ready", 1))
+	r.waitEvent("A", "ready", 2)
+	waitBody(t, h.addr, "A")
+	s := r.state()
+	if got := readLink(t, s.currentLinkPath()); got != filepath.Join(s.buildsDir(), "a", "tinycld") {
+		t.Fatalf("current -> %q, want the previous build", got)
+	}
+	assertExists(t, s.rollbackRecordPath(), false)
 }
 
 // A backup the rollback could not restore (a full disk, an I/O error) is the
@@ -1310,7 +1392,7 @@ func TestRunStartupRecoveryCommits(t *testing.T) {
 		_, armed := s.BackupArmed()
 		return !armed
 	})
-	assertExists(t, s.rollbackPendingMarkerPath(), false)
+	assertExists(t, s.rollbackRecordPath(), false)
 }
 
 // An interrupted rebuild whose build fails is rolled back to the previous
@@ -1329,9 +1411,7 @@ func TestRunStartupRecoveryRollsBack(t *testing.T) {
 	if got := mustRead(t, s.dbPath()); got != "live" {
 		t.Fatalf("data.db = %q, want the backup's bytes", got)
 	}
-	if got := mustRead(t, s.rollbackPendingMarkerPath()); got != "b" {
-		t.Fatalf(".rollback-pending = %q, want b", got)
-	}
+	assertRollbackRecord(t, s, "b", "a")
 }
 
 func TestRunSIGTERMDrainsAndExits0(t *testing.T) {

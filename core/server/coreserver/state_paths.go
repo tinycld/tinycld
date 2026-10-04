@@ -24,3 +24,9 @@ func resolveStateDir() string {
 func statePbDataDir() string   { return filepath.Join(resolveStateDir(), "pb_data") }
 func stateReleasesDir() string { return filepath.Join(resolveStateDir(), "releases") }
 func stateBuildsDir() string   { return filepath.Join(resolveStateDir(), "builds") }
+
+// stateRollbackRecordPath mirrors supervise's State.rollbackRecordPath: the
+// JSON record ({"build", "rolled_to", "at"}) the supervisor leaves when it
+// rolls a failed build back. It is beside pb_data, not in it, so a restore
+// swap that moves pb_data aside cannot carry it away.
+func stateRollbackRecordPath() string { return filepath.Join(resolveStateDir(), ".rollback-pending") }
