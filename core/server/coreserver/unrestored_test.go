@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/hook"
+	"github.com/pocketbase/pocketbase/tools/router"
 )
 
 // keepUnrestored lays out what the supervisor leaves when a rollback could
@@ -58,11 +60,11 @@ func TestReportUnrestoredNotifiesOnce(t *testing.T) {
 	dir := keepUnrestored(t, "build-9", true)
 
 	var sent []notice
-	mail := func(_ core.App, n notice) error {
+	mail := func(_ context.Context, _ core.App, n notice) error {
 		sent = append(sent, n)
 		return nil
 	}
-	reportUnrestored(app, mail)
+	reportUnrestored(context.Background(), app, mail)
 
 	if len(sent) != 1 {
 		t.Fatalf("sent %d emails, want 1", len(sent))
@@ -77,30 +79,48 @@ func TestReportUnrestoredNotifiesOnce(t *testing.T) {
 	if !strings.Contains(rows[0].GetString("body"), dir) {
 		t.Fatalf("in-app body %q does not name the dir", rows[0].GetString("body"))
 	}
-	if !exists(filepath.Join(dir, "notified")) {
-		t.Fatal("no notified file after a delivered notice")
+	if !exists(filepath.Join(dir, "notified-app")) || !exists(filepath.Join(dir, "notified-email")) {
+		t.Fatal("no notified markers after a delivered notice")
 	}
 
-	reportUnrestored(app, mail)
+	reportUnrestored(context.Background(), app, mail)
 	if len(sent) != 1 || len(unrestoredNotifications(t, app)) != 1 {
 		t.Fatalf("second boot sent again: %d emails, %d notifications", len(sent), len(unrestoredNotifications(t, app)))
 	}
 }
 
-// A failed send leaves no "notified" file, so the next boot tries again.
-func TestReportUnrestoredRetriesAfterASendFailure(t *testing.T) {
+// A failed email leaves no email marker, so the next boot sends the email
+// again; the in-app notice that worked is not repeated.
+func TestReportUnrestoredRetriesOnlyTheChannelThatFailed(t *testing.T) {
 	app := unrestoredTestApp(t)
 	dir := keepUnrestored(t, "build-9", true)
 
-	reportUnrestored(app, func(core.App, notice) error { return errors.New("smtp down") })
-	if exists(filepath.Join(dir, "notified")) {
-		t.Fatal("notified written although the email was not sent")
+	reportUnrestored(context.Background(), app, func(context.Context, core.App, notice) error { return errors.New("smtp down") })
+	if !exists(filepath.Join(dir, "notified-app")) || exists(filepath.Join(dir, "notified-email")) {
+		t.Fatalf("after a failed email: app marker %v, email marker %v; want true, false",
+			exists(filepath.Join(dir, "notified-app")), exists(filepath.Join(dir, "notified-email")))
 	}
 
 	var sent int
-	reportUnrestored(app, func(core.App, notice) error { sent++; return nil })
-	if sent != 1 || !exists(filepath.Join(dir, "notified")) {
-		t.Fatalf("retry sent %d emails, notified file present: %v", sent, exists(filepath.Join(dir, "notified")))
+	reportUnrestored(context.Background(), app, func(context.Context, core.App, notice) error { sent++; return nil })
+	if sent != 1 || !exists(filepath.Join(dir, "notified-email")) {
+		t.Fatalf("retry sent %d emails, email marker present: %v", sent, exists(filepath.Join(dir, "notified-email")))
+	}
+	if got := len(unrestoredNotifications(t, app)); got != 1 {
+		t.Fatalf("%d in-app notifications after the retry, want 1", got)
+	}
+}
+
+// With no administrator to tell, no in-app marker is written, so the first
+// owner created later is still told.
+func TestReportUnrestoredWithoutAdministratorsRetries(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
+	app := adminConsoleTestApp(t)
+	dir := keepUnrestored(t, "build-9", true)
+
+	reportUnrestored(context.Background(), app, func(context.Context, core.App, notice) error { return nil })
+	if exists(filepath.Join(dir, "notified-app")) {
+		t.Fatal("in-app marker written although no administrator exists")
 	}
 }
 
@@ -120,16 +140,16 @@ func TestUnrestoredCopyWithoutANoteIsReported(t *testing.T) {
 	}
 
 	var sent []notice
-	reportUnrestored(app, func(_ core.App, n notice) error { sent = append(sent, n); return nil })
+	reportUnrestored(context.Background(), app, func(_ context.Context, _ core.App, n notice) error { sent = append(sent, n); return nil })
 	if len(sent) != 1 || !strings.Contains(sent[0].BodyText, "build build-7") {
 		t.Fatalf("sent %+v, want one notice naming build-7", sent)
 	}
-	if !exists(filepath.Join(dir, "notified")) {
-		t.Fatal("no notified file")
+	if !exists(filepath.Join(dir, "notified-email")) {
+		t.Fatal("no email marker")
 	}
 }
 
-// A dir the operator emptied (only the "notified" file is left) holds nothing.
+// A dir the operator emptied (only a marker is left) holds nothing.
 func TestUnrestoredIgnoresADirWithoutACopy(t *testing.T) {
 	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
 	if hasUnrestored() {
@@ -137,7 +157,7 @@ func TestUnrestoredIgnoresADirWithoutACopy(t *testing.T) {
 	}
 	dir := filepath.Join(stateUnrestoredDir(), "build-5")
 	mustNil(t, os.MkdirAll(dir, 0o755))
-	mustNil(t, os.WriteFile(filepath.Join(dir, "notified"), nil, 0o644))
+	mustNil(t, os.WriteFile(filepath.Join(dir, "notified-app"), nil, 0o644))
 	if hasUnrestored() {
 		t.Fatal("hasUnrestored() = true for a dir with no copy and no note")
 	}
@@ -172,5 +192,58 @@ func TestTickHoldsWhileABackupIsUnrestored(t *testing.T) {
 	mustNil(t, os.RemoveAll(dir))
 	if got := s.tick(context.Background()); got != "upgrading" {
 		t.Fatalf("after the dir is removed: result %q", got)
+	}
+}
+
+// A mail server that never answers must not hold the serve chain: the
+// supervisor waits only 60 s for ready, which follows the chain. The notices
+// run beside it, and terminating the app ends them.
+func TestServeDoesNotWaitForBootNotices(t *testing.T) {
+	app := unrestoredTestApp(t)
+	keepUnrestored(t, "build-9", true)
+
+	mailing := make(chan struct{})
+	mailEnded := make(chan struct{})
+	registerStaticServeWith(app, Options{TypesDir: t.TempDir()}, func(ctx context.Context, _ core.App, _ notice) error {
+		close(mailing)
+		<-ctx.Done()
+		close(mailEnded)
+		return ctx.Err()
+	})
+	reached := make(chan struct{})
+	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
+		Priority: 1000, // after the static serve handler
+		Func: func(e *core.ServeEvent) error {
+			close(reached)
+			return e.Next()
+		},
+	})
+
+	serveErr := make(chan error, 1)
+	go func() {
+		e := new(core.ServeEvent)
+		e.App = app
+		e.Router = router.NewRouter[*core.RequestEvent](nil)
+		serveErr <- app.OnServe().Trigger(e)
+	}()
+	awaitClosed(t, reached, "the serve chain to pass the static serve handler")
+	awaitClosed(t, mailing, "the boot notice to start its email")
+	mustNil(t, <-serveErr)
+
+	mustNil(t, app.OnTerminate().Trigger(&core.TerminateEvent{App: app}))
+	select {
+	case <-mailEnded:
+	default:
+		t.Fatal("terminating the app returned before the boot notices ended")
+	}
+}
+
+// awaitClosed fails the test when ch is not closed by the deadline.
+func awaitClosed(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
 	}
 }

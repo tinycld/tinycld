@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
@@ -562,17 +561,21 @@ func registerSchemaHooks(app *pocketbase.PocketBase, typesDir string) {
 	})
 }
 
-func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
+func registerStaticServe(app core.App, opts Options) {
+	registerStaticServeWith(app, opts, mailAdmins)
+}
+
+// registerStaticServeWith takes the mail path so a test can make it block.
+func registerStaticServeWith(app core.App, opts Options, mail bootMailFn) {
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
 		Func: func(e *core.ServeEvent) error {
 			GenerateSchemas(e.App, opts.TypesDir)
 			SyncBundledPackages(e.App)
 			SeedBaseBuild(e.App)
 			ReconcileRolledBackInstall(e.App)
-			reportUnrestored(e.App, mailAdmins)
-			reconcileAutoUpgradeResults(e.App, time.Now(), func(n notice) {
-				notifyAdmins(e.App, func(name, email, subj, html, text string) error { return send(e.App, name, email, subj, html, text) }, n)
-			})
+			// The notices read what ReconcileRolledBackInstall marked, so they
+			// start after it, and never in this chain (see startBootNotices).
+			startBootNotices(e.App, mail)
 
 			// Per-route asset handlers, registered before the catch-all so
 			// the asset prefixes win. Both paths read from the cross-release

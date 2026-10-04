@@ -38,7 +38,15 @@ start again when the `unrestored/` folder is empty.
 Do this only if no data written since the failed update must be kept. All
 changes made after the backup are lost.
 
-1. Stop the server.
+Do this only while the server still runs the build named `rolled_to` in
+`unrestored.json`. **Settings → Build History** shows the current build. If a
+different build runs now (for example, packages were changed by hand after the
+failed update), do not put the backup back. The backup does not match that
+build. Ask for help instead.
+
+1. Stop the server. In the standard container, stop the container and do the
+   next steps on its `/workspace` volume. On a server without a container, stop
+   the service.
 2. Delete `pb_data/data.db-wal` and `pb_data/data.db-shm` if they exist. They
    belong to the current data and damage the backup if they stay.
 3. Copy `unrestored/<build>/data.db` over `pb_data/data.db`. Make sure that the

@@ -89,13 +89,18 @@ func sendExistingMemberEmail(app core.App, user *core.Record, role string) {
 
 // send logs a failure itself; the error is for a caller that must know.
 func send(app core.App, toName, toEmail, subject, htmlBody, textBody string) error {
+	return sendContext(context.Background(), app, toName, toEmail, subject, htmlBody, textBody)
+}
+
+// sendContext is send with the delivery bound to ctx.
+func sendContext(ctx context.Context, app core.App, toName, toEmail, subject, htmlBody, textBody string) error {
 	msg := &mailer.Message{
 		To:      []mailer.Recipient{{Name: toName, Email: toEmail}},
 		Subject: subject,
 		HTML:    htmlBody,
 		Text:    textBody,
 	}
-	if err := mailer.DefaultSender().Send(context.Background(), msg); err != nil {
+	if err := mailer.DefaultSender().Send(ctx, msg); err != nil {
 		srvLog.Error("invite lifecycle: failed to send email",
 			"to", toEmail, "subject", subject, "err", err)
 		return fmt.Errorf("coreserver: send %q to %s: %w", subject, toEmail, err)

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -29,13 +30,15 @@ type unrestoredNote struct {
 }
 
 const (
-	unrestoredNoteName     = "unrestored.json"
-	unrestoredDataName     = "data.db"
-	unrestoredNotifiedName = "notified"
-	unrestoredNotifyType   = "core.backup.unrestored"
-	unrestoredHelpTopic    = "help/core/after-a-failed-update"
-	// unrestoredNotifyTimeout bounds the push deliveries, which run before
-	// the server serves.
+	unrestoredNoteName = "unrestored.json"
+	unrestoredDataName = "data.db"
+	// One marker per channel, so a channel that worked is not repeated
+	// when the other is retried on the next boot.
+	unrestoredNotifiedAppName   = "notified-app"
+	unrestoredNotifiedEmailName = "notified-email"
+	unrestoredNotifyType        = "core.backup.unrestored"
+	unrestoredHelpTopic         = "help/core/after-a-failed-update"
+	// unrestoredNotifyTimeout bounds the push deliveries.
 	unrestoredNotifyTimeout = 30 * time.Second
 )
 
@@ -88,13 +91,24 @@ func listUnrestored() ([]unrestoredNote, error) {
 	return notes, errors.Join(errs...)
 }
 
+// unrestoredReadErrOnce keeps a read failure to one Error per process: the
+// status route and the hourly tick read the dir too, and each Error goes to
+// Sentry.
+var unrestoredReadErrOnce sync.Once
+
+func logUnrestoredReadErr(err error) {
+	unrestoredReadErrOnce.Do(func() {
+		srvLog.Error("could not read every kept unrestored backup; treating them as present", "err", err)
+	})
+}
+
 // hasUnrestored reports whether any backup a rollback could not restore is
 // kept. A dir that cannot be read counts as one: holding an upgrade is the
 // safe side of not knowing.
 func hasUnrestored() bool {
 	notes, err := listUnrestored()
 	if err != nil {
-		srvLog.Error("could not read every kept unrestored backup; treating them as present", "err", err)
+		logUnrestoredReadErr(err)
 		return true
 	}
 	return len(notes) > 0
@@ -105,7 +119,7 @@ func unrestoredNotice(n unrestoredNote) notice {
 	body := fmt.Sprintf("A database backup could not be restored after a failed update. "+
 		"The server is running on data migrated by build %s. "+
 		"The backup from before that update is kept in %s. "+
-		"See Settings → Help: 'After a failed update'.\n\n"+
+		"See Help → After a failed update.\n\n"+
 		"Automatic updates are paused until the backup is put back or deleted.",
 		n.Build, n.dir)
 	return notice{
@@ -116,39 +130,43 @@ func unrestoredNotice(n unrestoredNote) notice {
 	}
 }
 
-// reportUnrestored runs at boot (OnServe). For each kept backup no one has
-// been told about, it notifies every administrator in the app and by email,
-// then writes the "notified" file beside the note. When either delivery
-// fails, the file is not written, so the next boot tries again.
-func reportUnrestored(app core.App, mail func(core.App, notice) error) {
+// reportUnrestored runs once per boot, off the serve path (startBootNotices).
+// For each kept backup, it notifies every administrator in the app and by
+// email, and writes a marker per channel (notified-app, notified-email) when
+// that channel worked. A channel that failed logs at Error and has no marker,
+// so the next boot sends only that channel again.
+func reportUnrestored(ctx context.Context, app core.App, mail bootMailFn) {
 	notes, err := listUnrestored()
 	if err != nil {
-		srvLog.Error("could not read every kept unrestored backup", "err", err)
+		logUnrestoredReadErr(err)
 	}
 	for _, n := range notes {
-		marker := filepath.Join(n.dir, unrestoredNotifiedName)
-		if _, err := os.Stat(marker); err == nil {
-			continue
-		}
 		msg := unrestoredNotice(n)
-		if err := tellAdminsInApp(app, msg); err != nil {
-			srvLog.Error("could not tell the administrators about an unrestored backup", "build", n.Build, "dir", n.dir, "err", err)
-			continue
-		}
-		if err := mail(app, msg); err != nil {
-			srvLog.Error("could not email the administrators about an unrestored backup", "build", n.Build, "dir", n.dir, "err", err)
-			continue
-		}
-		if err := os.WriteFile(marker, nil, 0o644); err != nil {
-			srvLog.Error("could not record that the administrators were told about an unrestored backup", "build", n.Build, "path", marker, "err", err)
-		}
+		deliverOnce(n, unrestoredNotifiedAppName, "in the app", func() error { return tellAdminsInApp(ctx, app, msg) })
+		deliverOnce(n, unrestoredNotifiedEmailName, "by email", func() error { return mail(ctx, app, msg) })
+	}
+}
+
+// deliverOnce runs deliver unless n's dir has the marker, and writes the
+// marker when deliver succeeds.
+func deliverOnce(n unrestoredNote, markerName, channel string, deliver func() error) {
+	marker := filepath.Join(n.dir, markerName)
+	if _, err := os.Stat(marker); err == nil {
+		return
+	}
+	if err := deliver(); err != nil {
+		srvLog.Error("could not tell the administrators about an unrestored backup "+channel, "build", n.Build, "dir", n.dir, "err", err)
+		return
+	}
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		srvLog.Error("could not record that the administrators were told about an unrestored backup", "build", n.Build, "path", marker, "err", err)
 	}
 }
 
 // tellAdminsInApp fails when no administrator got the notification, so a
 // boot before the first owner exists does not count as having told anyone.
-func tellAdminsInApp(app core.App, msg notice) error {
-	ctx, cancel := context.WithTimeout(context.Background(), unrestoredNotifyTimeout)
+func tellAdminsInApp(ctx context.Context, app core.App, msg notice) error {
+	ctx, cancel := context.WithTimeout(ctx, unrestoredNotifyTimeout)
 	defer cancel()
 	delivered, err := notify.AdministratorsContext(ctx, app, notify.NotifyParams{
 		Type:    unrestoredNotifyType,
@@ -164,11 +182,4 @@ func tellAdminsInApp(app core.App, msg notice) error {
 		return errors.New("coreserver: notify the administrators: no administrator received it")
 	}
 	return nil
-}
-
-// mailAdmins is reportUnrestored's production email path.
-func mailAdmins(app core.App, n notice) error {
-	return notifyAdmins(app, func(name, email, subj, html, text string) error {
-		return send(app, name, email, subj, html, text)
-	}, n)
 }

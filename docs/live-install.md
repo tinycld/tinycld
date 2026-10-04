@@ -371,11 +371,17 @@ logs at Error on every start while it is there. `<build>` is the failed build.
 Nothing removes or restores it automatically: a later rebuild, commit or
 rollback never touches `unrestored/`.
 
-- On boot, `reportUnrestored` (OnServe, beside `ReconcileRolledBackInstall`)
-  tells every owner and admin once, in the app and by email, then writes an
-  empty `notified` file beside the note. If a delivery fails, no `notified`
-  file is written and the next boot tries again. A dir with `data.db` but no
-  note (a crash between the supervisor's two renames) is reported too.
+- On boot, `reportUnrestored` tells every owner and admin once, in the app
+  and by email, and writes an empty marker per channel beside the note
+  (`notified-app`, `notified-email`). A channel that fails gets no marker,
+  and the next boot sends only that channel again. A dir with `data.db` but
+  no note (a crash between the supervisor's two renames) is reported too.
+  It runs in a goroutine that `startBootNotices` starts from OnServe, after
+  `ReconcileRolledBackInstall`, together with the emails of
+  `reconcileAutoUpgradeResults`: a mail server or push service that does not
+  answer must not delay `ready` past the supervisor's 60 s. Terminating the
+  app cancels the goroutine and waits up to 2 s for it, so it never writes
+  to a closed database.
 - Automatic upgrades wait until `unrestored/` is empty: the tick does nothing
   and the status line shows "paused: a database backup needs attention".
   Manual version changes are not blocked.
@@ -383,10 +389,14 @@ rollback never touches `unrestored/`.
   and compare it with the live data. `unrestored.json` says when and why the
   restore failed.
 - To put it back (only if no data written since the failed update must be
-  kept): stop the service, delete `pb_data/data.db-wal` and
+  kept, and only while the server still runs the `rolled_to` build named in
+  `unrestored.json`; after a manual change to a newer build the copy no longer
+  matches it, so ask for help instead): stop the server (the standard
+  container: stop the container and work on its `/workspace` volume; bare
+  metal: stop the service), delete `pb_data/data.db-wal` and
   `pb_data/data.db-shm` if present, copy `unrestored/<build>/data.db` over
   `pb_data/data.db` (keep the server user as its owner), delete
-  `unrestored/<build>/`, start the service.
+  `unrestored/<build>/`, start the server.
 - To discard it (the current data is kept): delete `unrestored/<build>/`.
 
 The in-app help topic `core:after-a-failed-update` gives administrators the
