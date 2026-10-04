@@ -361,6 +361,37 @@ verdict never completed, so the supervisor checks the current build itself —
 commit on healthy, cold-rollback on unhealthy — before settling into its normal
 loop.
 
+**A backup the rollback could not restore.** When the restore of the armed
+snapshot fails (a full disk, for example), the supervisor still flips `current`
+back, but the server then runs on the database the failed build migrated. The
+supervisor moves the snapshot out of every automatic path, to
+`<state>/unrestored/<build>/data.db`, with a note beside it,
+`unrestored.json` (`build`, `rolled_to`, `at`, `restore_error`, `size`), and
+logs at Error on every start while it is there. `<build>` is the failed build.
+Nothing removes or restores it automatically: a later rebuild, commit or
+rollback never touches `unrestored/`.
+
+- On boot, `reportUnrestored` (OnServe, beside `ReconcileRolledBackInstall`)
+  tells every owner and admin once, in the app and by email, then writes an
+  empty `notified` file beside the note. If a delivery fails, no `notified`
+  file is written and the next boot tries again. A dir with `data.db` but no
+  note (a crash between the supervisor's two renames) is reported too.
+- Automatic upgrades wait until `unrestored/` is empty: the tick does nothing
+  and the status line shows "paused: a database backup needs attention".
+  Manual version changes are not blocked.
+- To inspect it: open a *copy* of `unrestored/<build>/data.db` with `sqlite3`
+  and compare it with the live data. `unrestored.json` says when and why the
+  restore failed.
+- To put it back (only if no data written since the failed update must be
+  kept): stop the service, delete `pb_data/data.db-wal` and
+  `pb_data/data.db-shm` if present, copy `unrestored/<build>/data.db` over
+  `pb_data/data.db` (keep the server user as its owner), delete
+  `unrestored/<build>/`, start the service.
+- To discard it (the current data is kept): delete `unrestored/<build>/`.
+
+The in-app help topic `core:after-a-failed-update` gives administrators the
+same steps.
+
 **Error reporting.** The supervisor sends its warnings and errors (a rollback,
 or no build becoming ready) to Sentry when `SENTRY_DSN` is set in its own
 environment, and flushes them before it exits. The server takes its DSN from

@@ -15,6 +15,10 @@ const reminderEvery = 7 * 24 * time.Hour
 type notice struct {
 	Subject  string
 	BodyText string
+	// CTALabel and CTAPath name the button; empty means the Packages screen,
+	// where the automatic-update notices are acted on.
+	CTALabel string
+	CTAPath  string // an app route for approutes.Href
 }
 
 func notifyDue(lastNotified time.Time, sameFingerprint bool, now time.Time) bool {

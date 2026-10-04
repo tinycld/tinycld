@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -9,7 +10,7 @@ import (
 	"tinycld.org/core/mailer"
 )
 
-type mailFn func(toName, toEmail, subject, htmlBody, textBody string)
+type mailFn func(toName, toEmail, subject, htmlBody, textBody string) error
 
 func pauseNotice(wanted map[string]string, reason string, reminder bool) notice {
 	subject := "Automatic updates are paused"
@@ -31,23 +32,33 @@ func blockedNotice(target map[string]string, reason string, reminder bool) notic
 	return notice{Subject: subject, BodyText: body}
 }
 
-func notifyAdmins(app core.App, send mailFn, n notice) {
+// notifyAdmins emails n to every owner and admin. The error joins the
+// failures; a caller that only informs may drop it, since send logs each one.
+func notifyAdmins(app core.App, send mailFn, n notice) error {
 	users, err := app.FindRecordsByFilter("users",
 		"(role = 'owner' || role = 'admin') && disabled != true", "", 0, 0)
 	if err != nil {
 		srvLog.Warn("auto-upgrade: cannot list recipients", "err", err)
-		return
+		return fmt.Errorf("coreserver: list the administrators: %w", err)
 	}
-	link := strings.TrimRight(app.Settings().Meta.AppURL, "/") + approutes.Href("settings/packages")
+	ctaLabel, ctaPath := n.CTALabel, n.CTAPath
+	if ctaLabel == "" {
+		ctaLabel, ctaPath = "Open Packages", "settings/packages"
+	}
+	link := strings.TrimRight(app.Settings().Meta.AppURL, "/") + approutes.Href(ctaPath)
+	var errs []error
 	for _, u := range users {
 		html, text := mailer.RenderTransactionalEmail(mailer.TransactionalEmail{
 			Eyebrow:  "Automatic updates",
 			Greeting: mailer.Greeting(u.GetString("name")),
 			BodyHTML: strings.ReplaceAll(mailer.EscapeHTML(n.BodyText), "\n", "<br>"),
 			BodyText: n.BodyText,
-			CTALabel: "Open Packages",
+			CTALabel: ctaLabel,
 			CTALink:  link,
 		})
-		send(u.GetString("name"), u.Email(), n.Subject, html, text)
+		if err := send(u.GetString("name"), u.Email(), n.Subject, html, text); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }

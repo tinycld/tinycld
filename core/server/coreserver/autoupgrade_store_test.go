@@ -144,7 +144,7 @@ func TestNotifyAdminsRecipients(t *testing.T) {
 	newUser(t, app, "member@x.test", "member", false)
 	newUser(t, app, "gone@x.test", "admin", true)
 	var to []string
-	notifyAdmins(app, func(_, email, _, _, _ string) { to = append(to, email) }, pauseNotice(map[string]string{"mail": "0.6.0"}, "r", false))
+	notifyAdmins(app, func(_, email, _, _, _ string) error { to = append(to, email); return nil }, pauseNotice(map[string]string{"mail": "0.6.0"}, "r", false))
 	if len(to) != 2 {
 		t.Fatalf("sent to %v, want owner + admin", to)
 	}

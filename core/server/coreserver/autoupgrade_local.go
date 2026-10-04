@@ -22,6 +22,7 @@ const (
 	resultDisabledPrefix = "checks disabled: "
 	resultOff            = "off"
 	resultReadOnly       = "read-only"
+	resultUnrestored     = "paused: a database backup needs attention"
 )
 
 // localScheduler is the Delegate for a deployment that can rebuild itself. It
@@ -61,7 +62,7 @@ func newLocalScheduler(app *pocketbase.PocketBase) *localScheduler {
 			return err
 		},
 		notify: func(n notice) {
-			notifyAdmins(app, func(name, email, subj, html, text string) { send(app, name, email, subj, html, text) }, n)
+			notifyAdmins(app, func(name, email, subj, html, text string) error { return send(app, name, email, subj, html, text) }, n)
 		},
 	}
 	switch {
@@ -129,6 +130,12 @@ func (s *localScheduler) Status(context.Context) (autoupgrade.Status, error) {
 	if lastRun.IsZero() {
 		lastRun, lastResult = lastAutoJob(s.app)
 	}
+	// Said from boot on, not only after the next tick. No next check is
+	// given: none will upgrade until an operator deals with the backup, and
+	// without one the status line shows this result alone.
+	if hasUnrestored() {
+		return autoupgrade.Status{Available: true, LastRun: lastRun, LastResult: resultUnrestored}, nil
+	}
 	w, err := s.window()
 	if err != nil {
 		return autoupgrade.Status{}, err
@@ -185,6 +192,13 @@ func (s *localScheduler) tick(_ context.Context) string {
 	// up; the next one runs an hour later.
 	if readonly.Active() {
 		return resultReadOnly
+	}
+	// A backup a rollback could not restore means the database was migrated
+	// by a build that is not serving. Another upgrade would migrate it further
+	// and take a new backup from it, so nothing runs until an operator puts
+	// the backup back or deletes it.
+	if hasUnrestored() {
+		return s.record(resultUnrestored)
 	}
 	enabled, err := readSystemSetting(s.app, autoupgrade.KeyEnabled)
 	if err != nil {

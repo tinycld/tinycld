@@ -30,3 +30,8 @@ func stateBuildsDir() string   { return filepath.Join(resolveStateDir(), "builds
 // rolls a failed build back. It is beside pb_data, not in it, so a restore
 // swap that moves pb_data aside cannot carry it away.
 func stateRollbackRecordPath() string { return filepath.Join(resolveStateDir(), ".rollback-pending") }
+
+// stateUnrestoredDir mirrors supervise's State.unrestoredDir: one dir per
+// build whose backup a rollback could not restore,
+// <build>/{data.db,unrestored.json}. Only an operator removes it.
+func stateUnrestoredDir() string { return filepath.Join(resolveStateDir(), "unrestored") }
