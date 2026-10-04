@@ -104,14 +104,14 @@ test.describe('Settings · role access', () => {
         }
     })
 
-    // The two settings route trees must not shadow each other. A package may
-    // declare the SAME slug in both `settings` (org-scoped) and
-    // `systemSettings` (deployment-wide) — mail ships exactly that, where
+    // The settings route trees must not shadow each other. A package may
+    // declare the SAME slug in `settings` (org-scoped), `accountSettings`
+    // (per-user) and `systemSettings` (deployment-wide) — mail ships exactly that, where
     // 'provider' is both a domains screen and the provider picker. App-shell CI
     // installs no feature package, so shortcut-stub carries the collision
     // instead (see tests/scripts/scaffold-shortcut-stub.ts) and this proves the
     // routing without depending on mail being present.
-    test('one slug in both registries resolves to two different screens', async ({ page }) => {
+    test('one slug in each registry resolves to a different screen', async ({ page }) => {
         await login(page)
         await navigateToPackage(page, 'settings')
 
@@ -127,6 +127,14 @@ test.describe('Settings · role access', () => {
         await clickSidebarItem(page, 'Stub Org Panel')
         await expect(page).toHaveURL(/settings\/shortcut-stub\/panel/, { timeout: 20_000 })
         await expect(page.getByTestId('stub-org-panel')).toBeVisible({ timeout: 20_000 })
+        await page.goBack()
+
+        // Per-user: the same slug again, under settings/account/.
+        await clickSidebarItem(page, 'Stub Account Panel')
+        await expect(page).toHaveURL(/settings\/account\/shortcut-stub\/panel/, {
+            timeout: 20_000,
+        })
+        await expect(page.getByTestId('stub-account-panel')).toBeVisible({ timeout: 20_000 })
     })
 
     test('a member sees no Organization settings', async ({ page }) => {
@@ -136,12 +144,19 @@ test.describe('Settings · role access', () => {
             // AdminSettings self-gates on isAdmin, so the whole Organization
             // group — and every owner-only entry inside it — must not render.
             await navigateToPackage(inviteePage, 'settings')
-            await expect(inviteePage.getByText('Personal', { exact: true })).toBeVisible({
+            await expect(inviteePage.getByText('Profile', { exact: true })).toBeVisible({
                 timeout: 15_000,
             })
             await expect(inviteePage.getByText('Members', { exact: true })).toHaveCount(0)
             await expect(inviteePage.getByText('Build History', { exact: true })).toHaveCount(0)
             await expect(inviteePage.getByText('System', { exact: true })).toHaveCount(0)
+            await expect(inviteePage.getByText('Stub Org Panel', { exact: true })).toHaveCount(0)
+
+            // Per-user package panels are open to every role.
+            await clickSidebarItem(inviteePage, 'Stub Account Panel')
+            await expect(inviteePage.getByTestId('stub-account-panel')).toBeVisible({
+                timeout: 20_000,
+            })
         } finally {
             await close()
         }

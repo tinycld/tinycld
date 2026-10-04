@@ -35,7 +35,7 @@ export function GuestEmptyState() {
                 style={{ paddingVertical: 8, paddingHorizontal: 14, marginTop: 4 }}
             >
                 <Text className="text-foreground" style={{ fontSize: 13, fontWeight: '600' }}>
-                    Personal settings
+                    Settings
                 </Text>
             </Pressable>
         </View>

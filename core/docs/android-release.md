@@ -100,7 +100,7 @@ in 1Password, entry "App Review demo password"). Provide these instructions verb
 Play Console → App content → Data deletion. Google requires a deletion path for any app with
 accounts. Declare both:
 
-- **In-app:** Settings → Personal → Delete my account — type the account email to confirm. This
+- **In-app:** Settings → Account access → Delete my account — type the account email to confirm. This
   anonymizes the user record and removes the user from every org (same flow as iOS).
 - **Public URL:** the web deletion-request page (confirm it is published before submitting).
 
@@ -189,8 +189,8 @@ Build a `preview` APK for device testing (an AAB can't be `adb install`ed direct
 - Sign in with demo account → primary org loads.
 - Browse mail, calendar, contacts, drive — all populated.
 - Toggle system dark mode → app follows.
-- Settings → Personal → About shows version, commit, server.
-- Settings → Personal → Disconnect server → returns to `/connect`, credentials cleared.
+- Settings → About shows version, commit, server.
+- Settings → Servers → Disconnect → returns to `/connect`, credentials cleared.
 - Sign back in → Delete account → type email → confirm → returns to `/connect` and old email can
   no longer sign in.
 - **Deep link:** opening `https://tinycld.org/demo` launches the app directly (not a chooser).

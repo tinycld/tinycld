@@ -16,6 +16,7 @@ export interface PackageManifest {
     sidebar?: { component: string }
     provider?: { component: string }
     settings?: { slug: string; component: string; label: string }[]
+    accountSettings?: { slug: string; component: string; label: string }[]
     systemSettings?: { slug: string; component: string; label: string; keyPrefix?: string }[]
     slots?: string[]
     sidebarContributions?: {

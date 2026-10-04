@@ -1,9 +1,10 @@
 // Resolves a /settings URL's (pkgSlug, panelSlug) segments to a contributed
-// panel. Shared by the two settings route trees, which deliberately resolve
+// panel. Shared by the three settings route trees, which deliberately resolve
 // against DIFFERENT registries:
 //
-//   settings/[...section]         → packageSettings       (org-scoped)
-//   settings/system/[...section]  → packageSystemSettings (deployment-wide)
+//   settings/[...section]          → packageSettings        (org-scoped)
+//   settings/account/[...section]  → packageAccountSettings (per-user)
+//   settings/system/[...section]   → packageSystemSettings  (deployment-wide)
 //
 // They must stay separate because one package may declare the same slug in
 // both: mail declares `provider` as an org panel (mail domains) AND as a system

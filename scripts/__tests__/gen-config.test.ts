@@ -10,6 +10,7 @@ const doodads: ConfigPkg = {
     hasProvider: false,
     hasSeed: true,
     settings: [],
+    accountSettings: [],
     systemSettings: [],
     slots: [],
     sidebarContributions: [],
@@ -27,6 +28,7 @@ const takeout: ConfigPkg = {
     hasProvider: false,
     hasSeed: false,
     settings: [{ slug: 'gizmo-import', label: 'Import', component: 'settings/takeout' }],
+    accountSettings: [],
     systemSettings: [],
     slots: [],
     sidebarContributions: [],
@@ -51,6 +53,7 @@ function emptyPkg(packageName: string, slug: string): ConfigPkg {
         hasProvider: false,
         hasSeed: false,
         settings: [],
+        accountSettings: [],
         systemSettings: [],
         slots: [],
         sidebarContributions: [],
@@ -148,6 +151,29 @@ describe('buildConfigSource', () => {
         )
     })
 
+    it('emits accountSettings as a lazy-loaded array (per-user panels)', () => {
+        const withAccount: ConfigPkg = {
+            ...takeout,
+            settings: [],
+            accountSettings: [
+                { slug: 'gizmo-import', label: 'Import', component: 'settings/takeout' },
+            ],
+        }
+        const src = buildConfigSource([withAccount])
+        expect(src).toContain('accountSettings: [')
+        expect(src).not.toMatch(/^\s+settings: \[/m)
+        expect(src).toContain("import { lazy } from 'react'")
+        expect(src).toContain("lazy(() => import('@tinycld/gizmo-import/settings/takeout'))")
+    })
+
+    it('rejects an unsafe accountSettings component path', () => {
+        const unsafe: ConfigPkg = {
+            ...takeout,
+            accountSettings: [{ slug: 'x', label: 'X', component: "x'); evil('" }],
+        }
+        expect(() => buildConfigSource([unsafe])).toThrow(/accountSettings/)
+    })
+
     it('camelCases slugs for identifiers', () => {
         const src = buildConfigSource([
             {
@@ -177,6 +203,7 @@ describe('buildConfigSource', () => {
             hasProvider: true,
             hasSeed: false,
             settings: [],
+            accountSettings: [],
             systemSettings: [],
             slots: [],
             sidebarContributions: [],
@@ -201,6 +228,7 @@ describe('buildConfigSource', () => {
             hasProvider: false,
             hasSeed: false,
             settings: [],
+            accountSettings: [],
             systemSettings: [],
             slots: [],
             sidebarContributions: [],

@@ -260,7 +260,7 @@ export function moveAction<T>(list: T[], from: number, to: number): T[] {
 
 /**
  * Orders the builder's package groups to match the order the user dragged their
- * apps into (Settings → Personal → Navigation), so the trigger and action menus
+ * apps into (Settings → Appearance → Navigation), so the trigger and action menus
  * read the same way as the sidebar and tab bar rather than alphabetically.
  *
  * Two kinds of slug are deliberately NOT in `orderedSlugs`:

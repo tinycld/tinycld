@@ -1,6 +1,7 @@
 import { CORE_SLOT_TARGET } from '@tinycld/core/lib/setup/core-slots'
 import { describe, expect, it } from 'vitest'
 import {
+    deriveAccountSettings,
     deriveProviders,
     deriveSettings,
     deriveSidebarContributions,
@@ -45,6 +46,23 @@ describe('derive-components', () => {
         expect(g[0].pkgSlug).toBe('gizmos')
         expect(g[0].packageName).toBe('Gizmos')
         expect(g[0].panels[0].slug).toBe('provider')
+    })
+
+    it('groups account panels by package, ignoring org-scoped settings', () => {
+        const g = deriveAccountSettings([
+            {
+                manifest: { name: 'Gizmos', slug: 'gizmos', nav: { icon: 'mail' } },
+                accountSettings: [{ slug: 'import', label: 'Import', Component: A }],
+            },
+            {
+                manifest: { name: 'Cogs', slug: 'cogs' },
+                settings: [{ slug: 'x', label: 'X', Component: P }],
+            },
+        ] as never)
+        expect(g).toHaveLength(1)
+        expect(g[0].pkgSlug).toBe('gizmos')
+        expect(g[0].icon).toBe('mail')
+        expect(g[0].panels[0].Component).toBe(A)
     })
 
     it('groups system-settings panels by package, skipping packages with none', () => {

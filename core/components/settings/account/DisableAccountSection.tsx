@@ -6,7 +6,7 @@ import { Pressable, Text, View } from 'react-native'
 import { DisableAccountFlow } from './DisableAccountFlow'
 
 // Reversible suspension, offered alongside (and above) the irreversible
-// DeleteAccountSection in personal settings.
+// DeleteAccountSection on the Account access screen.
 //
 // Single-org: this replaces LeaveOrgSection. "Leave the organization" is
 // meaningless when the deployment IS the org, so the softer option is to
@@ -19,7 +19,6 @@ export function DisableAccountSection() {
 
     return (
         <View className="gap-3">
-            <Text className="text-xl font-bold text-foreground">Account access</Text>
             <View className="rounded-xl border border-border bg-surface-secondary p-4 gap-2">
                 <Text className="text-base font-semibold text-foreground">Disable account</Text>
                 <Text className="text-[13px] text-muted-foreground">

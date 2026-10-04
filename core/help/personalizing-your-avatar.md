@@ -1,7 +1,7 @@
 ---
 title: Personalizing your avatar
 summary: Upload a photo, pick an emoji, or choose a color for the circle that represents you.
-tags: [avatar, profile, "personal settings"]
+tags: [avatar, profile, photo]
 order: 20
 ---
 
@@ -10,7 +10,7 @@ cards you are assigned, in comment threads, in shared files, and in member
 lists. Until you set one, it shows your initials on a color picked from your
 account.
 
-To change it, open **Settings → Personal**.
+To change it, open **Settings → Profile**.
 
 ## Upload a photo
 

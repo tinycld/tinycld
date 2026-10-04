@@ -4,7 +4,7 @@ import { login } from './helpers'
 
 // User avatars, end to end: an emoji chosen through the picker persists across
 // a reload, and an uploaded photo replaces the initials circle. Both drive the
-// real Personal Settings UI — no raw PocketBase writes — so the proof covers
+// real Profile settings UI — no raw PocketBase writes — so the proof covers
 // the whole feature: the mutation, the stored fields, and useAvatarUrl
 // resolving them back into a rendered circle.
 
@@ -14,15 +14,14 @@ const PNG_BASE64 =
 
 // Via the user menu, matching change-password.spec.ts's proven route: the
 // rail's Settings link lands on the hub with the PREVIOUS package's screen
-// (e.g. Mail's inbox, whose rows carry a "Personal" folder label) still
-// mounted underneath. A plain getByText('Personal') is therefore ambiguous —
-// it matches the settings link AND every mail row tagged "Personal" — so this
-// scopes to the "Account" settings group, which only the real link is in.
-async function openPersonalSettings(page: Page): Promise<void> {
+// (e.g. Mail's inbox) still mounted underneath, so a plain getByText can
+// match text in that screen too. This scopes to the "Account" settings group,
+// which only the real link is in.
+async function openProfileSettings(page: Page): Promise<void> {
     await page.getByLabel('User menu').click()
     await page.getByText('Settings', { exact: true }).click()
     const accountGroup = page.getByText('Account', { exact: true }).locator('..')
-    await accountGroup.getByText('Personal', { exact: true }).click()
+    await accountGroup.getByText('Profile', { exact: true }).click()
     await expect(page.getByTestId('avatar-preview')).toBeVisible()
 }
 
@@ -55,7 +54,7 @@ async function attachAvatar(
 
 test('an emoji avatar set through the UI persists across a reload', async ({ page }) => {
     await login(page)
-    await openPersonalSettings(page)
+    await openProfileSettings(page)
 
     await page.getByTestId('avatar-choose-emoji').click()
     await page.getByTestId('emoji-search').fill('dinosaur')
@@ -70,7 +69,7 @@ test('an emoji avatar set through the UI persists across a reload', async ({ pag
 
 test('an uploaded photo replaces the initials circle', async ({ page }) => {
     await login(page)
-    await openPersonalSettings(page)
+    await openProfileSettings(page)
 
     await attachAvatar(page, {
         name: 'avatar.png',
@@ -104,7 +103,7 @@ test('reposition reopens the cropper on the original photo, not the display thum
     page,
 }) => {
     await login(page)
-    await openPersonalSettings(page)
+    await openProfileSettings(page)
 
     // A solid-color 512x512 PNG — larger than the 256x256 AVATAR_THUMB, so
     // natural dimensions alone prove which URL the cropper loaded.

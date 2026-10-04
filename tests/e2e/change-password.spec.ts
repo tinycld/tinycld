@@ -25,15 +25,16 @@ test.describe('change password', () => {
         await closeInvitee()
     })
 
-    // Open Settings → Personal via the user menu (SPA nav, not page.goto).
+    // Open Settings → Profile via the user menu (SPA nav, not page.goto).
     // The menu's generic "Settings" lands on the settings HUB — a section list —
-    // so this clicks through to Personal from there. It used to jump straight to
-    // the personal page, which is exactly what left Rules (and every other
+    // so this clicks through to Profile from there. It used to jump straight to
+    // the profile page, which is exactly what left Rules (and every other
     // section) unreachable wherever that menu is the only Settings affordance.
-    async function openPersonalSettings(page: Page) {
+    async function openProfileSettings(page: Page) {
         await page.getByLabel('User menu').click()
         await page.getByText('Settings', { exact: true }).click()
-        await page.getByText('Personal', { exact: true }).first().click()
+        const accountGroup = page.getByText('Account', { exact: true }).locator('..')
+        await accountGroup.getByText('Profile', { exact: true }).click()
         // Gate on the control the callers use, not the URL: the route changes
         // as soon as the router accepts the push, while the screen is still
         // mounting, so a URL wait can return before 'Change password' exists.
@@ -48,7 +49,7 @@ test.describe('change password', () => {
     }
 
     test('validates the form before submitting', async () => {
-        await openPersonalSettings(inviteePage)
+        await openProfileSettings(inviteePage)
 
         // Mismatched confirmation is caught client-side (deterministic copy).
         await fillPasswordForm(inviteePage, invited.password, NEW_PASSWORD, 'Mismatch9999!')
@@ -59,7 +60,7 @@ test.describe('change password', () => {
     })
 
     test('changes the password, then signs in with it', async () => {
-        await openPersonalSettings(inviteePage)
+        await openProfileSettings(inviteePage)
 
         await fillPasswordForm(inviteePage, invited.password, NEW_PASSWORD, NEW_PASSWORD)
         await inviteePage.getByText('Save', { exact: true }).click()
@@ -67,7 +68,7 @@ test.describe('change password', () => {
         // Success toast confirms the server accepted the change, and the user
         // stays signed in (no redirect to the connect/login screen).
         await expect(inviteePage.getByText('Password changed')).toBeVisible()
-        await expect(inviteePage).toHaveURL(/\/settings\/personal/)
+        await expect(inviteePage).toHaveURL(/\/settings\/profile/)
 
         // The new password actually authenticates: sign out and back in with it.
         await inviteePage.evaluate(() => {
