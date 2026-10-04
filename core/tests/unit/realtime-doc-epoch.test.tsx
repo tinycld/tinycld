@@ -16,13 +16,16 @@ import type * as Y from 'yjs'
  * seen. Merging converges — correctly, and on BOTH copies — which is what put a
  * card's description on screen doubled, then tripled.
  *
- * `docEpochOf` is how a room opts into discarding local state instead. These
- * tests pin the two halves of that: an unchanged epoch must NOT disturb a live
- * session, and a changed one must rebuild the doc.
+ * The broker puts a `docEpoch` in every hello of a room that has a server
+ * document, for every room kind. These tests pin the two halves of the
+ * client's answer: an unchanged epoch must NOT disturb a live session, and a
+ * changed one must rebuild the doc.
  */
 
 const CLIENT_ID_LEN = 16
 const FRAME_OVERHEAD = CLIENT_ID_LEN + 1
+const MSG_DOC_UPDATE = 0x01
+const MSG_SYNC_REPLY = 0x04
 const MSG_ASSIGN_ID = 0x05
 const MSG_SERVER_HELLO = 0x06
 
@@ -54,6 +57,11 @@ class FakeSocket {
     deliverHello(payload: unknown) {
         this.deliver(MSG_SERVER_HELLO, new TextEncoder().encode(JSON.stringify(payload)))
     }
+    docUpdates(): Uint8Array[] {
+        return this.sent
+            .filter(f => f[CLIENT_ID_LEN] === MSG_DOC_UPDATE)
+            .map(f => f.subarray(FRAME_OVERHEAD))
+    }
 }
 
 let sockets: FakeSocket[] = []
@@ -83,10 +91,6 @@ function Harness({ captured }: { captured: Captured }) {
         roomKind: 'gadgets',
         roomID: 'board-1',
         initialAwareness: null,
-        docEpochOf: hello =>
-            typeof (hello as { docEpoch?: unknown })?.docEpoch === 'number'
-                ? (hello as { docEpoch: number }).docEpoch
-                : null,
     })
     captured.doc = room?.doc ?? null
     return null
@@ -147,6 +151,36 @@ describe('useRealtimeRoom — document epoch', () => {
         // The discard is a reconnect: the old socket is torn down and a fresh
         // one resyncs from the server.
         expect(sockets.length).toBeGreaterThan(1)
+    })
+
+    it('never sends a pending local edit to a replaced document', async () => {
+        const captured: Captured = { doc: null }
+        render(<Harness captured={captured} />)
+        await waitFor(() => expect(captured.doc).not.toBeNull())
+
+        act(() => {
+            open(sockets[0])
+            sockets[0].deliverHello({ docEpoch: 1 })
+            sockets[0].deliver(MSG_SYNC_REPLY, new Uint8Array(0))
+        })
+        const first = captured.doc
+        act(() => {
+            sockets[0].onclose?.()
+            first?.getText('body').insert(0, 'typed into the old document')
+        })
+
+        // The reconnect lands on a rebuilt document. Its hello precedes its
+        // sync reply, and the reply must find this client already gone.
+        await waitFor(() => expect(sockets.length).toBeGreaterThan(1))
+        const next = sockets[sockets.length - 1]
+        act(() => {
+            open(next)
+            next.deliverHello({ docEpoch: 2 })
+            next.deliver(MSG_SYNC_REPLY, new Uint8Array(0))
+        })
+
+        await waitFor(() => expect(captured.doc).not.toBe(first))
+        expect(next.docUpdates()).toHaveLength(0)
     })
 
     it('leaves a room that reports no epoch alone', async () => {

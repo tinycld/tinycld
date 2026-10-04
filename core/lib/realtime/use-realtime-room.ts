@@ -54,26 +54,6 @@ export interface UseRealtimeRoomOptions {
     // the room kind's AuthorizeShare. When unset, the PB auth token is
     // used as before.
     shareSession?: string
-
-    // docEpochOf reads this room kind's document epoch out of the server
-    // hello, or returns null when the payload carries none.
-    //
-    // A server may DISCARD an idle document and rebuild it from storage —
-    // boards' janitor evicts a quiet board, and the next joiner's connect
-    // re-seeds the fragments from the cards table. The rebuilt document is a
-    // different incarnation: y-crdt mints a fresh clientID for it, so the
-    // inserts our surviving Y.Doc still holds are, to the CRDT, edits nobody
-    // has seen rather than the same text arriving twice.
-    //
-    // Merging across that boundary therefore CONVERGES on both copies. That is
-    // the CRDT working correctly — there is no merge that could recover the
-    // intent, because the two insert sets are genuinely independent — so the
-    // only correct move is to throw our state away and resync from scratch.
-    // Supplying this opts a room kind into that, and the doc is rebuilt
-    // whenever the epoch changes from the one we synced under.
-    //
-    // Rooms that leave it undefined keep the previous behavior exactly.
-    docEpochOf?: (serverHello: unknown) => number | null
 }
 
 export interface RealtimeRoomHandle {
@@ -119,12 +99,21 @@ export function useRealtimeRoom({
     onFirstJoinerBootstrap,
     isEmpty = defaultIsEmpty,
     shareSession,
-    docEpochOf,
 }: UseRealtimeRoomOptions): RealtimeRoomHandle | null {
     const [isReady, setIsReady] = useState(false)
     const [isConnected, setIsConnected] = useState(false)
     const [serverHello, setServerHello] = useState<unknown>(null)
     // How many times the server's document has been REPLACED under us.
+    //
+    // A server rebuilds a document from storage when it has neither the
+    // document in memory nor a stored checkpoint for it (a crash, or a source
+    // file replaced outside the room). The rebuilt document is a different
+    // incarnation: y-crdt mints a fresh clientID for it, so the inserts our
+    // surviving Y.Doc still holds are, to the CRDT, edits nobody has seen
+    // rather than the same text arriving twice. Merging across that boundary
+    // converges on BOTH copies, so the only correct move is to throw our
+    // state away and resync. The broker puts the incarnation's epoch in every
+    // hello, and a change from the epoch we synced under is the signal.
     //
     // The effect below keys on this rather than on the epoch value, because
     // learning the epoch for the first time must not rebuild anything: a fresh
@@ -138,11 +127,6 @@ export function useRealtimeRoom({
     // the comparison must see the value the CURRENT doc was created under, not
     // one a pending render has yet to commit.
     const docEpochRef = useRef<number | null>(null)
-    // Read through a ref for the same reason the other callbacks are: the
-    // caller passes an inline closure, and depending on its identity would
-    // reopen the socket on every render.
-    const docEpochOfRef = useRef(docEpochOf)
-    docEpochOfRef.current = docEpochOf
     const [serverSlot, setServerSlot] = useState<unknown>(null)
     const handleRef = useRef<{ doc: Y.Doc; awareness: Awareness; client: RealtimeClient } | null>(
         null
@@ -192,7 +176,7 @@ export function useRealtimeRoom({
                     // precedes the sync reply. That ordering is what makes
                     // discarding cheap: we drop a doc that has not yet been
                     // contaminated, rather than trying to unpick a merge.
-                    const epoch = docEpochOfRef.current?.(parsed) ?? null
+                    const epoch = readDocEpoch(parsed)
                     if (epoch != null) {
                         const previous = docEpochRef.current
                         docEpochRef.current = epoch
@@ -207,6 +191,12 @@ export function useRealtimeRoom({
                                 'server document was rebuilt; discarding local state',
                                 { roomKind, roomID, previous, epoch }
                             )
+                            // Destroyed NOW, not at the effect cleanup: the
+                            // sync reply follows the hello on this same
+                            // socket, and a live client would answer it with
+                            // this doc's edits, into a document they do not
+                            // belong to.
+                            client.destroy()
                             setDocGeneration(n => n + 1)
                         }
                     }
@@ -387,6 +377,14 @@ function useLeaveOnBlur(
         window.addEventListener('pagehide', leave)
         return () => window.removeEventListener('pagehide', leave)
     }, [leave])
+}
+
+// readDocEpoch picks the document epoch out of a hello. Every room with a
+// server-side document carries one; a pure-relay room does not.
+function readDocEpoch(hello: unknown): number | null {
+    if (hello == null || typeof hello !== 'object') return null
+    const epoch = (hello as { docEpoch?: unknown }).docEpoch
+    return typeof epoch === 'number' ? epoch : null
 }
 
 // defaultIsEmpty considers a Y.Doc empty when no top-level shared
