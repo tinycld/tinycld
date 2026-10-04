@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"tinycld.org/core/logging"
+	"tinycld.org/core/readonly"
 )
 
 var log = logging.ForPackage("realtime")
@@ -113,6 +114,19 @@ func newRoom(b *Broker, key roomKey, opts RoomKindOptions) *Room {
 		}
 	}
 	return r
+}
+
+// replayedSeq returns the highest journal seq the room replayed when it was
+// built, or 0 when it replayed none. Meaningful only inside OnRoomCreate,
+// which runs before any append; later it is the latest appended seq.
+// Nil-safe: tests hand OnRoomCreate a nil room.
+func (r *Room) replayedSeq() int64 {
+	if r == nil {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.nextSeq
 }
 
 // add admits a client, reporting whether the room accepted it. A false
@@ -245,6 +259,19 @@ func (r *Room) route(from *Client, frame []byte) {
 	msgType := MessageType(frame[clientIDLen])
 	switch msgType {
 	case MsgDocUpdate:
+		// The journal append below is a database write, and frames reach
+		// here without passing the read-only middleware. Only a frame sent
+		// in the moment between Enter and the close of every connection
+		// (closeAllRealtimeConns) gets here. It is dropped and logged, and
+		// its sender is closed so that it stops sending: the client queues
+		// later edits and sends them after it reconnects, but it does not
+		// send this one again, so the server copy misses it.
+		if readonly.Active() {
+			log.Info("doc update dropped: read-only; closing the sender's connection",
+				"kind", r.key.kind, "roomID", r.key.id, "authID", from.authID)
+			closeClientForReadOnly(from)
+			return
+		}
 		// Server-side write gate: drop mutations from connections the
 		// room kind deems read-only. Without this, "read-only" is only a
 		// client-side UI flag a crafted client could ignore. Silent drop

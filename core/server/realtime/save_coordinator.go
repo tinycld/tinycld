@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"tinycld.org/core/readonly"
 )
 
 // Default trigger-policy intervals. Tests construct a coordinator
@@ -130,6 +131,12 @@ type roomSaver struct {
 	resaveQueued bool
 	failures     int
 
+	// readOnlyDeferrals counts the flushes deferred in a row because the
+	// server is read-only. It picks the next deferral's backoff and is kept
+	// apart from failures: a deferral is expected, not a failed save, and
+	// must not move the room toward giving up.
+	readOnlyDeferrals int
+
 	// lastSeq is the highest seq observed via NoteSeq since the last
 	// successful truncate. Captured atomically into snapshotSeq when
 	// a flush starts; on success, the coordinator truncates the
@@ -204,9 +211,21 @@ func (c *SaveCoordinator) NoteSeq(driveItemID string, seq int64) {
 
 // OnRoomCreate is the realtime.RoomKindOptions.OnRoomCreate hook.
 // Records the room's DocHandle so we can pass it to flush later.
-// The room argument is unused here — SaveCoordinator only needs the
-// handle — but it's part of the hook signature.
-func (c *SaveCoordinator) OnRoomCreate(driveItemID string, handle DocHandle, _ *Room) {
+//
+// A room whose construction replayed journal rows holds edits that no
+// snapshot has yet: the flush that should have saved them was skipped (a
+// teardown during read-only mode) or failed. The room is therefore dirty
+// from the start, so those edits are saved and the rows truncated without
+// waiting for a new edit that may never come.
+func (c *SaveCoordinator) OnRoomCreate(driveItemID string, handle DocHandle, room *Room) {
+	c.register(driveItemID, handle)
+	if replayedSeq := room.replayedSeq(); replayedSeq > 0 {
+		c.NoteSeq(driveItemID, replayedSeq)
+		c.OnDocUpdate(driveItemID)
+	}
+}
+
+func (c *SaveCoordinator) register(driveItemID string, handle DocHandle) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if existing, ok := c.rooms[driveItemID]; ok {
@@ -243,19 +262,23 @@ func (c *SaveCoordinator) OnDocUpdate(driveItemID string) {
 	}
 
 	now := time.Now()
-	if !rs.dirty {
-		rs.dirty = true
-		rs.firstDirtyAt = now
-		// Arm the ceiling timer on the first edit of a clean
-		// cycle. The debounce timer is reset on every edit; the
-		// ceiling fires unconditionally after ceilingEvery so a
-		// constant typist still gets a save.
+	// Arm the ceiling timer on the first edit of a clean cycle. The
+	// debounce timer is reset on every edit; the ceiling fires
+	// unconditionally after ceilingEvery so a constant typist still gets
+	// a save. Also armed when a room is dirty with no ceiling: a room left
+	// dirty by a failed or deferred save has none, and without one a
+	// constant typist would keep resetting the debounce and never save.
+	if !rs.dirty || rs.ceilingTimer == nil {
 		if rs.ceilingTimer != nil {
 			rs.ceilingTimer.Stop()
 		}
 		rs.ceilingTimer = time.AfterFunc(c.ceilingEvery, func() {
 			c.triggerSave(driveItemID, "ceiling")
 		})
+	}
+	if !rs.dirty {
+		rs.dirty = true
+		rs.firstDirtyAt = now
 	}
 	// Reset debounce on every edit.
 	if rs.debounceTimer != nil {
@@ -323,6 +346,15 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	handle := rs.handle
 	snapshotSeq := rs.lastSeq
 	rs.mu.Unlock()
+
+	if wasDirty && readonly.Active() {
+		// The flush and the truncation both write. The journal rows
+		// still hold every edit, and the next room open replays them and
+		// saves them (see OnRoomCreate).
+		c.logger.Info("realtime: teardown save skipped: read-only; the journal keeps the edits",
+			"driveItemID", driveItemID, "journaledThrough", snapshotSeq)
+		wasDirty = false
+	}
 
 	if !wasDirty {
 		// Nothing to save; mark closed and return immediately.
@@ -416,6 +448,12 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 		rs.mu.Unlock()
 		return
 	}
+	if readonly.Active() {
+		c.deferForReadOnly(driveItemID, rs)
+		rs.mu.Unlock()
+		return
+	}
+	rs.readOnlyDeferrals = 0
 	rs.saveInFlight = true
 	rs.dirty = false
 	rs.snapshotSeq = rs.lastSeq
@@ -505,6 +543,30 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 		// re-fire so they don't sit until the next debounce.
 		go c.triggerSave(driveItemID, "coalesced")
 	}
+}
+
+// deferForReadOnly re-arms the room's save for later, without flushing or
+// truncating, because both write. The room stays dirty and the journal keeps
+// the edits, so nothing is lost while the save waits. Logged once per pause
+// at Info: a deferral is expected, so it is neither a failure nor a warning.
+// Caller holds rs.mu.
+func (c *SaveCoordinator) deferForReadOnly(driveItemID string, rs *roomSaver) {
+	backoff := c.backoff(rs.readOnlyDeferrals)
+	if rs.readOnlyDeferrals == 0 {
+		c.logger.Info("realtime: save deferred: read-only",
+			"driveItemID", driveItemID, "retryIn", backoff)
+	}
+	rs.readOnlyDeferrals++
+	if rs.debounceTimer != nil {
+		rs.debounceTimer.Stop()
+	}
+	if rs.ceilingTimer != nil {
+		rs.ceilingTimer.Stop()
+		rs.ceilingTimer = nil
+	}
+	rs.debounceTimer = time.AfterFunc(backoff, func() {
+		c.triggerSave(driveItemID, "read-only retry")
+	})
 }
 
 // FlushNow runs a synchronous flush for the room identified by

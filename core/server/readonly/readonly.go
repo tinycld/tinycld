@@ -183,6 +183,13 @@ func Middleware(re *core.RequestEvent) error {
 	if re.Request.URL.Path == "/api/realtime" {
 		return re.Next()
 	}
+	return Refuse(re)
+}
+
+// Refuse answers re with the read-only response: 503, Retry-After and the
+// read_only code. For a handler that writes on a request the middleware lets
+// through, such as a websocket upgrade, which is a GET.
+func Refuse(re *core.RequestEvent) error {
 	re.Response.Header().Set("Retry-After", strconv.Itoa(RetryAfterSeconds))
 	return re.JSON(http.StatusServiceUnavailable, map[string]string{"code": Code, "message": message})
 }

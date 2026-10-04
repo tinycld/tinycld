@@ -9,6 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"tinycld.org/core/readonly"
+	"tinycld.org/core/readonly/readonlytest"
 )
 
 // stubHandle is a minimal DocHandle that records calls.
@@ -645,5 +648,187 @@ func TestFlushNowPropagatesError(t *testing.T) {
 	c.OnRoomCreate("flaky-room", &stubHandle{}, nil)
 	if err := c.FlushNow("flaky-room"); err == nil {
 		t.Fatal("FlushNow = nil; want the flush error")
+	}
+}
+
+// waitUntil polls cond until it holds or the deadline passes.
+func waitUntil(t *testing.T, timeout time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: not within %s", what, timeout)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A flush writes the document and then truncates the journal, so a flush
+// that comes due during read-only mode must wait: it is deferred with the
+// retry backoff, is not a failure, and runs once the mode is left.
+func TestSaveCoordinatorDefersFlushWhileReadOnly(t *testing.T) {
+	logs := readonlytest.CaptureLogs(t)
+	t.Cleanup(readonly.Leave)
+
+	j := &recordingJournalForCoord{}
+	flushed := make(chan struct{}, 1)
+	fc := newFastCoordWithFlush(t, func(context.Context, string, DocHandle) error {
+		flushed <- struct{}{}
+		return nil
+	})
+	fc.c.SetLogger(slog.Default())
+	fc.c.SetJournal("test-kind", j)
+	var deferrals atomic.Int32
+	fc.c.backoff = func(int) time.Duration {
+		deferrals.Add(1)
+		return 10 * time.Millisecond
+	}
+
+	fc.c.OnRoomCreate("room-1", &stubHandle{}, nil)
+	fc.c.NoteSeq("room-1", 3)
+	readonly.Enter()
+	fc.c.OnDocUpdate("room-1")
+
+	waitUntil(t, 2*time.Second, "two deferred flushes", func() bool { return deferrals.Load() >= 2 })
+	select {
+	case <-flushed:
+		t.Fatal("flushed during read-only mode")
+	default:
+	}
+	j.mu.Lock()
+	truncates := len(j.truncates)
+	j.mu.Unlock()
+	if truncates != 0 {
+		t.Fatalf("truncates during read-only mode = %d, want 0", truncates)
+	}
+
+	readonly.Leave()
+	select {
+	case <-flushed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no flush within 2s of Leave")
+	}
+	waitUntil(t, 2*time.Second, "truncate after the flush", func() bool {
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		return len(j.truncates) == 1 && j.truncates[0].throughSeq == 3
+	})
+
+	fc.c.mu.Lock()
+	rs := fc.c.rooms["room-1"]
+	fc.c.mu.Unlock()
+	rs.mu.Lock()
+	failures := rs.failures
+	rs.mu.Unlock()
+	if failures != 0 {
+		t.Fatalf("failures = %d, want 0: a deferral is not a failed save", failures)
+	}
+	for _, r := range logs() {
+		if r.Level >= slog.LevelWarn {
+			t.Fatalf("logged %q at %v; a deferral during read-only mode is expected", r.Msg, r.Level)
+		}
+	}
+}
+
+// The teardown flush is skipped during read-only mode with its truncation:
+// the journal rows are then the only durable copy of the edits, and the next
+// room open replays them.
+func TestSaveCoordinatorTeardownSkipsFlushWhileReadOnly(t *testing.T) {
+	t.Cleanup(readonly.Leave)
+
+	j := &recordingJournalForCoord{}
+	var calls atomic.Int32
+	c := NewSaveCoordinator(func(context.Context, string, DocHandle) error {
+		calls.Add(1)
+		return nil
+	})
+	c.debounceEvery = 5 * time.Second
+	c.ceilingEvery = 5 * time.Second
+	c.teardownTimeout = 2 * time.Second
+	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.SetJournal("test-kind", j)
+
+	c.OnRoomCreate("teardown-room", &stubHandle{}, nil)
+	c.NoteSeq("teardown-room", 4)
+	c.OnDocUpdate("teardown-room")
+	readonly.Enter()
+	c.OnRoomEmpty("teardown-room")
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("teardown flushes during read-only mode = %d, want 0", got)
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if len(j.truncates) != 0 {
+		t.Fatalf("truncates during read-only mode = %d, want 0", len(j.truncates))
+	}
+}
+
+// A room that replays journal rows holds edits no snapshot has: the teardown
+// flush that should have saved them was skipped (read-only mode) or failed.
+// The room must save them on its own, not wait for a new edit that may never
+// come.
+func TestSaveCoordinatorFlushesReplayedJournal(t *testing.T) {
+	j := &recordingJournalForCoord{}
+	flushed := make(chan struct{}, 1)
+	fc := newFastCoordWithFlush(t, func(context.Context, string, DocHandle) error {
+		flushed <- struct{}{}
+		return nil
+	})
+	fc.c.SetJournal("test-kind", j)
+
+	fc.c.OnRoomCreate("room-1", &stubHandle{}, &Room{nextSeq: 5})
+
+	select {
+	case <-flushed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a room with replayed journal rows was never flushed")
+	}
+	waitUntil(t, 2*time.Second, "truncate through the replayed seq", func() bool {
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		return len(j.truncates) == 1 && j.truncates[0].throughSeq == 5
+	})
+}
+
+// A deferral leaves the room dirty with no ceiling timer. Edits after Leave
+// must still get a ceiling save: otherwise each edit resets the debounce and
+// a constant typist is never saved.
+func TestSaveCoordinatorCeilingAfterReadOnlyDeferral(t *testing.T) {
+	t.Cleanup(readonly.Leave)
+
+	flushed := make(chan struct{}, 1)
+	fc := newFastCoordWithFlush(t, func(context.Context, string, DocHandle) error {
+		select {
+		case flushed <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+	var deferrals atomic.Int32
+	fc.c.backoff = func(int) time.Duration {
+		deferrals.Add(1)
+		// Long, so only the ceiling can produce the save below.
+		return time.Hour
+	}
+
+	fc.c.OnRoomCreate("room-1", &stubHandle{}, nil)
+	readonly.Enter()
+	fc.c.OnDocUpdate("room-1")
+	waitUntil(t, 2*time.Second, "a deferred flush", func() bool { return deferrals.Load() >= 1 })
+	readonly.Leave()
+
+	deadline := time.After(2 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-flushed:
+			return
+		case <-deadline:
+			t.Fatal("constant edits after a read-only deferral were never saved")
+		case <-tick.C:
+			fc.c.OnDocUpdate("room-1")
+		}
 	}
 }

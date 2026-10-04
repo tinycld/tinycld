@@ -23,6 +23,8 @@ import type * as Y from 'yjs'
 
 const CLIENT_ID_LEN = 16
 const FRAME_OVERHEAD = CLIENT_ID_LEN + 1
+const MSG_DOC_UPDATE = 0x01
+const MSG_SYNC_REPLY = 0x04
 const MSG_ASSIGN_ID = 0x05
 const MSG_SERVER_HELLO = 0x06
 
@@ -147,6 +149,30 @@ describe('useRealtimeRoom — document epoch', () => {
         // The discard is a reconnect: the old socket is torn down and a fresh
         // one resyncs from the server.
         expect(sockets.length).toBeGreaterThan(1)
+    })
+
+    it('never sends a pending local edit to a replaced document', async () => {
+        const captured: Captured = { doc: null }
+        render(<Harness captured={captured} />)
+        await waitFor(() => expect(captured.doc).not.toBeNull())
+
+        act(() => {
+            open(sockets[0])
+            sockets[0].deliverHello({ readOnly: false, docEpoch: 1 })
+        })
+        // Made before the resync, so it waits to be sent until the sync reply.
+        act(() => {
+            captured.doc?.getText('probe').insert(0, 'stale')
+        })
+        act(() => {
+            sockets[0].deliverHello({ readOnly: false, docEpoch: 2 })
+            // The reply that would release the pending edit arrives on the
+            // same socket before the hook has rebuilt the doc.
+            sockets[0].deliver(MSG_SYNC_REPLY, new Uint8Array(0))
+        })
+
+        const docUpdates = sockets[0].sent.filter(f => f[CLIENT_ID_LEN] === MSG_DOC_UPDATE)
+        expect(docUpdates).toHaveLength(0)
     })
 
     it('leaves a room that reports no epoch alone', async () => {

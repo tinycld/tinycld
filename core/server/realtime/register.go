@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/readonly"
 )
 
 // Options configures the broker. All fields have sane defaults.
@@ -91,7 +91,10 @@ func sharedBroker() *Broker {
 // Authentication is via the standard PB session cookie or Bearer token;
 // unauthenticated requests are rejected with 401. Authorization is
 // delegated to the per-room-kind handler registered via RegisterRoomKind.
-func Register(app *pocketbase.PocketBase, opts Options) {
+//
+// While the server is read-only, upgrades are refused and open connections
+// are closed (see readonly.go in this package).
+func Register(app core.App, opts Options) {
 	if opts.IdleTimeout == 0 {
 		opts.IdleTimeout = defaultIdleTimeout
 	}
@@ -103,6 +106,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	}
 
 	broker := sharedBroker()
+	registerReadOnlyHooks()
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/api/realtime/{roomKind}/{roomID}", func(re *core.RequestEvent) error {
@@ -151,6 +155,11 @@ func handleForceFlush(re *core.RequestEvent) error {
 }
 
 func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
+	// The read-only middleware passes every GET, and this upgrade is one.
+	if readonly.Active() {
+		return readonly.Refuse(re)
+	}
+
 	// PocketBase's loadAuthToken middleware reads `Authorization: Bearer
 	// <token>` from headers, but browsers can't set custom headers on a
 	// WebSocket upgrade (`new WebSocket(url)` exposes only URL +
@@ -313,6 +322,16 @@ func runConnection(broker *Broker, opts Options, ident connIdentity, conn *webso
 		// crypto/rand failure is essentially impossible on supported
 		// platforms; bail rather than admit an unidentifiable client.
 		_ = conn.Close(websocket.StatusInternalError, "id allocation failed")
+		return
+	}
+
+	// Tracked before the mode check so a pause that starts between the
+	// upgrade handler's check and here cannot miss this connection: either
+	// the check below sees the mode, or closeAllRealtimeConns sees the conn.
+	untrack := trackConn(client, conn)
+	defer untrack()
+	if readonly.Active() {
+		_ = conn.Close(websocket.StatusGoingAway, readOnlyCloseReason)
 		return
 	}
 

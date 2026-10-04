@@ -213,30 +213,48 @@ process then keeps serving, read-only, until the supervisor drains it. With no
 ack within 10 s it exits 75 instead, and the supervisor handles that as a cold
 restart. In dev mode (`go run`) it only logs; you restart manually.
 
-Read-only mode (`core/server/readonly`) refuses unsafe requests to `/api/`
-with `503` and `Retry-After`. It stops only some of the writes that do not
-come from a request:
+Read-only mode (`core/server/readonly`) stops the writes of this process while
+it keeps serving reads. These writes are refused or paused:
 
-- The cron scheduler skips every due job while the mode is on (core's,
-  PocketBase's, a package's and a JS hook's alike). A skipped run is not made
-  up.
+- Every unsafe request (any method except `GET`, `HEAD`, `OPTIONS`,
+  `PROPFIND` and `REPORT`) on every path gets `503` with `Retry-After`. This
+  includes DAV writes (`/caldav`, `/carddav`, `/dav/drive`, a package's own DAV
+  prefix). `POST /api/realtime` is let through: it only sets the topics of an
+  open SSE stream.
+- Realtime document websockets (`GET /api/realtime/{roomKind}/{roomID}`): the
+  upgrade gets the same `503`, and the connections that were open when the mode
+  started are closed with a going-away code. The client reconnects with backoff
+  and, after the mode ends, resyncs and sends the edits it queued while it was
+  disconnected (`core/lib/realtime/client.ts`). A document update that arrives
+  between the start of the mode and the close is dropped and logged.
+- Collaborative-document (Yjs) saves (`core/server/realtime`): a save that comes
+  due is deferred with the retry backoff, and the room stays dirty. A room
+  that empties skips its final save, and its journal rows stay; the next open
+  of the room replays them and saves them. No journal row is truncated.
+- The cron scheduler skips every due job (core's, PocketBase's, a package's
+  and a JS hook's alike). A skipped run is not made up.
 - The auto-upgrade tick (`coreserver/autoupgrade_local.go`) does nothing.
+- The automation engine's worker (`core/server/automation`) waits before each
+  dispatch until the mode ends.
+- The writes that follow a request already accepted (audit rows, comment-mention
+  notifications, invite emails and notifications) wait until the mode ends,
+  for a limited time.
+- A running backup skips its progress updates, and a running restore skips its
+  status updates (`core/server/backup`). The next update after the mode ends
+  writes the current value.
 - A package's background workers check `readonly.Active()` or call
   `readonly.WaitInactive(ctx)` before each write cycle.
 
-These core writers run in their own goroutines and do **not** stop in
-read-only mode yet:
+These writes continue on purpose:
 
-- a backup or restore job that is already running, and its progress updates
-  (`core/server/backup`)
-- the automation engine's worker and the notifications it sends
-  (`core/server/automation`)
-- collaborative-document (Yjs) saves of the realtime save coordinator
-  (`core/server/realtime`, `core/server/yjsdoc`)
-- comment-mention notifications (`core/server/notify`)
-
-Writes that arrive over a protocol other than the HTTP API (DAV, a package's
-own client protocol) are not covered either.
+- The backup hold lease (`backup/hold/hold.go`). If it stops, the lease expires
+  and the deletes it holds back for a running backup go through.
+- Package rebuild jobs and their own writes (`recordBuild`, `commitRegistry`,
+  the install log). A rebuild is what puts the process in read-only mode.
+- Request and app logs to `_logs` in `auxiliary.db`. This is not the main
+  database.
+- Thumbnails that PocketBase makes for a `?thumb=` `GET`. These are files in
+  storage, not records.
 
 The control messages (`ready`, `restart`, `drain`, `restart-ack`) are permanent:
 both sides act on them whatever protocol version the sender states, because
