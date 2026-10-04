@@ -4,6 +4,7 @@ import * as path from 'node:path'
 import { getPackages } from '../../tinycld.packages'
 import {
     manifestToConfigPkg,
+    type PortsFeature,
     validateEventSources,
     validateNavShortcuts,
     validatePorts,
@@ -520,7 +521,11 @@ async function main() {
     validateSidebarContributions(configPkgs)
     validateEventSources(configPkgs)
     validateNavShortcuts(configPkgs)
-    validatePorts(features.map(f => ({ slug: f.manifest.slug, ports: f.manifest.ports })))
+    const portsFeatures: PortsFeature[] = features.map(f => ({
+        slug: f.manifest.slug,
+        ports: f.manifest.ports,
+    }))
+    validatePorts(portsFeatures)
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.config.ts'), buildConfigSource(configPkgs))
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.seeds.ts'), buildSeedsSource(configPkgs))
 
@@ -624,10 +629,7 @@ async function main() {
             })),
         ])
     )
-    fs.writeFileSync(
-        path.join(SERVER_DIR, 'ports.json'),
-        buildPortsJson(features.map(f => ({ slug: f.manifest.slug, ports: f.manifest.ports })))
-    )
+    fs.writeFileSync(path.join(SERVER_DIR, 'ports.json'), buildPortsJson(portsFeatures))
 
     writeWorkspaceRoot()
 

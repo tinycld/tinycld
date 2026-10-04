@@ -419,4 +419,22 @@ describe('validatePorts', () => {
             validatePorts([feature('acme', [{ name: 'http-redirect', port: 1234 }])])
         ).toThrow(/reserved/)
     })
+
+    it('rejects port 80, which the supervisor binds for its own redirect listener', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'acme-sync', port: 80 }])])).toThrow(
+            /80.*supervisor|supervisor.*80/
+        )
+    })
+
+    it('rejects port 443, which the supervisor binds for its own HTTPS listener', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'acme-sync', port: 443 }])])).toThrow(
+            /443.*supervisor|supervisor.*443/
+        )
+    })
+
+    it('rejects port 7090, which the supervisor binds for its own default HTTP listener', () => {
+        expect(() => validatePorts([feature('acme', [{ name: 'acme-sync', port: 7090 }])])).toThrow(
+            /7090.*supervisor|supervisor.*7090/
+        )
+    })
 })

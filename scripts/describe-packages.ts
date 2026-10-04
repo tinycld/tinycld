@@ -7,6 +7,13 @@ import type { PackageManifest, PackagePort } from './load-manifest'
 // itself — a package cannot claim one of these as a port name.
 const RESERVED_PORT_NAMES = new Set(['http', 'https', 'http-redirect'])
 
+// Ports the supervisor itself binds — :80/:443 for the autocert HTTP-01 /
+// HTTPS listeners (core/server/supervise/config.go autocertHTTPAddr /
+// autocertHTTPSAddr), :7090 for its default plain-HTTP listener
+// (defaultHTTPAddr). A package claiming one of these would make the
+// supervisor's own bind collide with — or silently lose to — a package's.
+const RESERVED_SUPERVISOR_PORTS = new Set([80, 443, 7090])
+
 export interface PortsFeature {
     slug: string
     ports?: PackagePort[]
@@ -203,6 +210,11 @@ export function validatePorts(features: PortsFeature[]): void {
             if (RESERVED_PORT_NAMES.has(p.name)) {
                 throw new Error(
                     `[generate] ${f.slug}: port name '${p.name}' is reserved for the supervisor's own listener`
+                )
+            }
+            if (RESERVED_SUPERVISOR_PORTS.has(p.port)) {
+                throw new Error(
+                    `[generate] ${f.slug}: port ${p.port} is reserved — the supervisor binds it itself`
                 )
             }
             const portOwner = slugByPort.get(p.port)
