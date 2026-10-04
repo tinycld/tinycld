@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strings"
 	"testing"
@@ -113,5 +114,24 @@ func TestSentryHandlerSendsErrorsAsText(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("log context = %s, want it to contain %s", data, want)
 		}
+	}
+}
+
+// A typed-nil pointer in an error interface is not a nil error, and its
+// Error method dereferences the pointer. The handler runs on every warn+
+// record, so a panic here would take down the logging caller.
+func TestSentryHandlerSendsATypedNilErrorWithoutPanicking(t *testing.T) {
+	hub, tr := newTestHub(t)
+	ctx := sentry.SetHubOnContext(context.Background(), hub)
+
+	var typedNil error = (*fs.PathError)(nil)
+	logger := slog.New(NewSentryHandler(slog.LevelWarn))
+	logger.ErrorContext(ctx, "open failed", "err", typedNil)
+
+	if len(tr.events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(tr.events))
+	}
+	if got := tr.events[0].Contexts["log"]["err"]; got != "<nil>" {
+		t.Errorf("err = %v, want <nil>", got)
 	}
 }
