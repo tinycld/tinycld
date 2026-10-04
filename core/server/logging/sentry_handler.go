@@ -45,10 +45,10 @@ func (h *sentryHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	extra := make(map[string]any, len(h.attrs)+r.NumAttrs())
 	for _, a := range h.attrs {
-		extra[a.Key] = a.Value.Any()
+		extra[a.Key] = sentryValue(a.Value)
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		extra[a.Key] = a.Value.Any()
+		extra[a.Key] = sentryValue(a.Value)
 		return true
 	})
 
@@ -62,6 +62,17 @@ func (h *sentryHandler) Handle(ctx context.Context, r slog.Record) error {
 		hub.CaptureMessage(r.Message)
 	})
 	return nil
+}
+
+// sentryValue is v as the event's JSON should carry it. An error goes as
+// its text: most error values have no exported fields, so they would
+// serialize to {}.
+func sentryValue(v slog.Value) any {
+	a := v.Resolve().Any()
+	if err, ok := a.(error); ok {
+		return err.Error()
+	}
+	return a
 }
 
 func (h *sentryHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

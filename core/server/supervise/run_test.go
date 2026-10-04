@@ -4,12 +4,15 @@ package supervise
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -1023,13 +1026,66 @@ func TestRunPackagePortRemovedIsClosed(t *testing.T) {
 	r.trigger(r.waitEvent("A", "ready", 1))
 	r.waitEvent("A", "exit", 1)
 	waitBody(t, h.addr, "B")
-	waitFor(t, 5*time.Second, "the undeclared port to close", func() bool {
-		c, err := net.DialTimeout("tcp", extra, time.Second)
-		if err == nil {
-			c.Close()
-		}
-		return errors.Is(err, syscall.ECONNREFUSED)
-	})
+	waitFor(t, 5*time.Second, "the undeclared port to close", func() bool { return dialRefused(extra) })
+}
+
+func dialRefused(addr string) bool {
+	c, err := net.DialTimeout("tcp", addr, time.Second)
+	if err == nil {
+		c.Close()
+	}
+	return errors.Is(err, syscall.ECONNREFUSED)
+}
+
+// A build that moves a package port to a new address gets it on the swap,
+// while the old child keeps its old address until it has drained.
+func TestRunPackagePortMoved(t *testing.T) {
+	r := newTestRoot(t)
+	oldAddr, newAddr := freeAddr(t), freeAddr(t)
+	t.Setenv("ACME_ENABLED", "true")
+	t.Setenv("ACME_OLD_ADDR", oldAddr)
+	t.Setenv("ACME_NEW_ADDR", newAddr)
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "b"})
+	r.writePorts("a", []listeners.Port{acmePort("ACME_OLD_ADDR")})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_SERVE_BODY": "B"})
+	r.writePorts("b", []listeners.Port{acmePort("ACME_NEW_ADDR")})
+	r.point("a")
+	h := r.supervise(testOptions())
+
+	waitBody(t, oldAddr, "A")
+	r.trigger(r.waitEvent("A", "ready", 1))
+	r.waitEvent("A", "exit", 1)
+	if got := r.eventWith("B", "listeners", 1); got != "listeners http,acme-extra" {
+		t.Fatalf("B got %q", got)
+	}
+	waitBody(t, newAddr, "B")
+	waitBody(t, h.addr, "B")
+	waitFor(t, 5*time.Second, "the old address to close", func() bool { return dialRefused(oldAddr) })
+}
+
+// A port moved by a build that then fails moves back with the rollback: the
+// rolled-back build gets its old address again, and the failed build's
+// address closes.
+func TestRunPackagePortMovedThenRolledBack(t *testing.T) {
+	r := newTestRoot(t)
+	oldAddr, newAddr := freeAddr(t), freeAddr(t)
+	t.Setenv("ACME_ENABLED", "true")
+	t.Setenv("ACME_OLD_ADDR", oldAddr)
+	t.Setenv("ACME_NEW_ADDR", newAddr)
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "b"})
+	r.writePorts("a", []listeners.Port{acmePort("ACME_OLD_ADDR")})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_BOOT_EXIT": "1"})
+	r.writePorts("b", []listeners.Port{acmePort("ACME_NEW_ADDR")})
+	r.point("a")
+	h := r.supervise(testOptions())
+
+	r.trigger(r.waitEvent("A", "ready", 1))
+	assertColdRollback(t, r, h)
+	if got := r.eventWith("A", "listeners", 2); got != "listeners http,acme-extra" {
+		t.Fatalf("the rolled-back A got %q", got)
+	}
+	waitBody(t, oldAddr, "A")
+	waitFor(t, 5*time.Second, "the failed build's address to close", func() bool { return dialRefused(newAddr) })
 }
 
 func TestRunOtherExitCode(t *testing.T) {
@@ -1087,50 +1143,14 @@ func TestRunSIGTERMDrainsAndExits0(t *testing.T) {
 	r := newTestRoot(t)
 	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A"})
 	r.point("a")
-	bin, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(bin, "-test.run=^$")
-	cmd.Env = append(os.Environ(),
-		"SUPERVISE_TEST_ROLE=supervisor",
-		"TINYCLD_STATE_DIR="+r.dir,
-		"HTTP_ADDR="+freeAddr(t),
-		"AUTOCERT_ENABLED=",
-	)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	var waitErr error
-	exited := make(chan struct{})
-	go func() {
-		waitErr = cmd.Wait()
-		close(exited)
-	}()
-	t.Cleanup(func() {
-		select {
-		case <-exited:
-		default:
-			cmd.Process.Kill()
-			<-exited
-		}
-		if a := r.index("A", "start", 1); a >= 0 && r.index("A", "exit", 1) < 0 {
-			syscall.Kill(-r.events()[a].pid, syscall.SIGKILL)
-		}
-	})
+	p := r.startFakeSupervisor(freeAddr(t))
 
 	r.waitEvent("A", "ready", 1)
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-exited:
-		if waitErr != nil {
-			t.Fatalf("supervisor exited with %v, want 0", waitErr)
-		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("the supervisor did not exit after SIGTERM")
+	if code := p.wait(t, 20*time.Second); code != 0 {
+		t.Fatalf("supervisor exit code = %d, want 0", code)
 	}
 	if r.index("A", "drain", 1) < 0 || r.index("A", "exit", 1) < 0 {
 		t.Fatalf("the child was not drained: %v", r.events())
@@ -1203,5 +1223,164 @@ func TestRunBindErrorNamesTheAddress(t *testing.T) {
 	_, err = newSupervisor(nil, os.Getenv, testOptions(), make(chan os.Signal))
 	if err == nil || !strings.Contains(err.Error(), taken.Addr().String()) {
 		t.Fatalf("newSupervisor on a taken port = %v, want an error naming %s", err, taken.Addr())
+	}
+}
+
+// fakeSupervisor is the supervisor running in its own process over fake
+// children: the real Run path, with its signal handling, Sentry setup and
+// exit. (supervisorProc in e2e_test.go runs it over the real server.)
+type fakeSupervisor struct {
+	cmd    *exec.Cmd
+	exited chan struct{}
+	err    error
+}
+
+// startFakeSupervisor runs the supervisor role on the root, in plain mode
+// on addr, with env added to the test's own. Cleanup kills it and every
+// child it started.
+func (r *testRoot) startFakeSupervisor(addr string, env ...string) *fakeSupervisor {
+	r.t.Helper()
+	bin, err := os.Executable()
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "-test.run=^$")
+	cmd.Env = append(os.Environ(),
+		"SUPERVISE_TEST_ROLE=supervisor",
+		"TINYCLD_STATE_DIR="+r.dir,
+		"HTTP_ADDR="+addr,
+		"AUTOCERT_ENABLED=",
+	)
+	cmd.Env = append(cmd.Env, env...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Start(); err != nil {
+		r.t.Fatal(err)
+	}
+	p := &fakeSupervisor{cmd: cmd, exited: make(chan struct{})}
+	go func() {
+		p.err = cmd.Wait()
+		close(p.exited)
+	}()
+	r.t.Cleanup(func() {
+		select {
+		case <-p.exited:
+		default:
+			cmd.Process.Kill()
+			<-p.exited
+		}
+		for _, e := range r.events() {
+			if e.what == "start" {
+				syscall.Kill(-e.pid, syscall.SIGKILL)
+			}
+		}
+	})
+	return p
+}
+
+// wait returns the supervisor's exit code once it has exited.
+func (p *fakeSupervisor) wait(t *testing.T, limit time.Duration) int {
+	t.Helper()
+	select {
+	case <-p.exited:
+		return p.cmd.ProcessState.ExitCode()
+	case <-time.After(limit):
+		t.Fatalf("the supervisor did not exit within %s", limit)
+		return -1
+	}
+}
+
+// sentrySink is a Sentry endpoint that keeps every event it receives.
+type sentrySink struct {
+	srv    *httptest.Server
+	mu     sync.Mutex
+	events []sentryEvent
+}
+
+type sentryEvent struct {
+	Message  string         `json:"message"`
+	Level    string         `json:"level"`
+	Contexts map[string]any `json:"contexts"`
+}
+
+func newSentrySink(t *testing.T) *sentrySink {
+	t.Helper()
+	s := &sentrySink{}
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// An envelope is JSON lines: its header, then each item's header and
+		// payload. Only an event payload carries a message.
+		for _, line := range bytes.Split(body, []byte("\n")) {
+			var ev sentryEvent
+			if json.Unmarshal(line, &ev) == nil && ev.Message != "" {
+				s.mu.Lock()
+				s.events = append(s.events, ev)
+				s.mu.Unlock()
+			}
+		}
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+func (s *sentrySink) dsn() string {
+	return "http://public@" + strings.TrimPrefix(s.srv.URL, "http://") + "/1"
+}
+
+func (s *sentrySink) with(message string) []sentryEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []sentryEvent
+	for _, ev := range s.events {
+		if ev.Message == message {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// A rollback is reported to Sentry, from the DSN in the supervisor's
+// environment, and reaches it before the supervisor exits.
+func TestRunRollbackReachesSentry(t *testing.T) {
+	r := newTestRoot(t)
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "b"})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_BOOT_EXIT": "1"})
+	r.point("a")
+	sink := newSentrySink(t)
+	p := r.startFakeSupervisor(freeAddr(t), "SENTRY_DSN="+sink.dsn())
+
+	r.trigger(r.waitEvent("A", "ready", 1))
+	r.waitEvent("A", "ready", 2)
+	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if code := p.wait(t, 20*time.Second); code != 0 {
+		t.Fatalf("supervisor exit code = %d, want 0", code)
+	}
+	got := sink.with("the new build did not become ready; rolling back")
+	if len(got) != 1 || got[0].Level != "error" {
+		t.Fatalf("rollback events = %+v, want one error", got)
+	}
+}
+
+// No build becoming ready ends the supervisor; the report must reach Sentry
+// before the process exits.
+func TestRunNoHealthyBuildReachesSentry(t *testing.T) {
+	r := newTestRoot(t)
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_BOOT_EXIT": "1"})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_BOOT_EXIT": "1"})
+	r.point("a")
+	fakeActivate(r.dir, "a", "b")
+	sink := newSentrySink(t)
+	p := r.startFakeSupervisor(freeAddr(t), "SENTRY_DSN="+sink.dsn())
+
+	if code := p.wait(t, 20*time.Second); code != 1 {
+		t.Fatalf("supervisor exit code = %d, want 1", code)
+	}
+	got := sink.with("the supervisor is exiting")
+	if len(got) != 1 {
+		t.Fatalf("exit events = %+v, want one", got)
+	}
+	if detail := fmt.Sprint(got[0].Contexts["log"]); !strings.Contains(detail, errNoHealthyBuild.Error()) {
+		t.Fatalf("exit event context = %s, want it to name %q", detail, errNoHealthyBuild)
 	}
 }

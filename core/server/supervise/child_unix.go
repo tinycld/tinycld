@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,9 +87,19 @@ func startChild(spec childSpec) (*child, error) {
 	cmd.Env = append([]string(nil), spec.env...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Credential: spec.cred}
+	setDeathSignal(cmd.SysProcAttr)
 	set.Apply(cmd)
 
-	err = cmd.Start()
+	c := &child{
+		dir:   spec.dir,
+		ports: passed,
+		ctl:   ctl,
+		msgs:  make(chan Msg, 8),
+		done:  make(chan struct{}),
+	}
+	started := make(chan error, 1)
+	go c.run(cmd, started)
+	err = <-started
 	// The child has its own copies now, or never started. The supervisor
 	// keeps only its listeners and its end of the control socket; a copy
 	// left open here would keep the control socket from reporting EOF.
@@ -99,23 +110,29 @@ func startChild(spec childSpec) (*child, error) {
 		ctl.Close()
 		return nil, err
 	}
-
-	c := &child{
-		dir:   spec.dir,
-		pid:   cmd.Process.Pid,
-		ports: passed,
-		ctl:   ctl,
-		msgs:  make(chan Msg, 8),
-		done:  make(chan struct{}),
-	}
+	c.pid = cmd.Process.Pid
 	go c.readControl()
-	go func() {
-		err := cmd.Wait()
-		c.code = exitCode(cmd.ProcessState, err)
-		close(c.done)
-		c.ctl.Close()
-	}()
 	return c, nil
+}
+
+// run starts cmd, reports the start on started, and reaps the child. It
+// holds one OS thread for the child's whole life: Linux sends the child's
+// death signal when the thread that started it exits, not when the
+// supervisor does, and the Go runtime ends a thread when a goroutine
+// locked to it exits. A locked thread runs nothing else, so nothing can
+// end it before the child is reaped.
+func (c *child) run(cmd *exec.Cmd, started chan<- error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := cmd.Start(); err != nil {
+		started <- err
+		return
+	}
+	started <- nil
+	err := cmd.Wait()
+	c.code = exitCode(cmd.ProcessState, err)
+	close(c.done)
+	c.ctl.Close()
 }
 
 // controlPair returns the supervisor's end of a new control socket and the
@@ -296,59 +313,165 @@ func drainChild(c *child, bound time.Duration) {
 	}
 }
 
-// portPool is every listener the supervisor holds, keyed by name and the
-// address asked for. Two children run side by side during a swap, so a
-// listener stays held until no running child needs it.
+// portPool is every listener the supervisor holds, keyed by name. Two
+// children run side by side during a swap, so a listener stays held until
+// no running child needs it.
 type portPool struct {
-	held map[string]*net.TCPListener
+	held map[string]heldPort
+	// retiring are listeners whose name a newer build moved to another
+	// address. A running child still serves on them, so they close only
+	// when retain finds no child that uses them.
+	retiring []heldPort
 }
 
-func portKey(w portWant) string { return w.name + " " + w.addr }
+func newPortPool() portPool { return portPool{held: map[string]heldPort{}} }
+
+// count is how many listeners the pool holds.
+func (p *portPool) count() int { return len(p.held) + len(p.retiring) }
 
 // prepare returns the listeners for want, reusing the ones already held and
-// binding the rest. A port that fails to bind is left out and reported; the
-// rest are still returned.
-func (p *portPool) prepare(want []portWant) ([]heldPort, error) {
+// binding the rest. inUse reports whether a running child serves on a
+// listener. A port that fails to bind is left out and reported; the rest
+// are still returned.
+func (p *portPool) prepare(want []portWant, inUse func(*net.TCPListener) bool) ([]heldPort, error) {
 	var out []heldPort
 	var errs []error
 	for _, w := range want {
-		l, ok := p.held[portKey(w)]
-		if !ok {
-			var err error
-			l, err = bindTCP(w.addr)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("bind %s on %s: %w", w.name, w.addr, err))
-				continue
-			}
-			p.held[portKey(w)] = l
+		hp, err := p.take(w, inUse)
+		if err != nil {
+			errs = append(errs, err)
+			continue
 		}
-		out = append(out, heldPort{name: w.name, addr: w.addr, l: l})
+		out = append(out, hp)
 	}
 	return out, errors.Join(errs...)
 }
 
-// retain closes every held listener that keep does not use: the ports a
-// build no longer declares.
-func (p *portPool) retain(keep []heldPort) {
-	used := map[string]bool{}
-	for _, k := range keep {
-		used[portKey(portWant{k.name, k.addr})] = true
+// take returns the listener for w. A name whose address changed gets a
+// listener on the new address, and the old one closes as soon as no
+// running child serves on it.
+func (p *portPool) take(w portWant, inUse func(*net.TCPListener) bool) (heldPort, error) {
+	cur, held := p.held[w.name]
+	if held && sameAddr(cur.addr, w.addr) {
+		return cur, nil
 	}
-	for key, l := range p.held {
-		if used[key] {
+	next, found := p.unretire(w)
+	if !found {
+		if held && !inUse(cur.l) {
+			// Close first: nothing serves on the old address now, and the
+			// two addresses can overlap (a wildcard and a specific address
+			// on one port), so binding first could fail.
+			log.Info("moving a port to a new address", "name", w.name, "from", cur.addr, "to", w.addr)
+			cur.l.Close()
+			delete(p.held, w.name)
+			held = false
+		}
+		l, err := bindTCP(w.addr)
+		if err != nil {
+			if held {
+				log.Warn("could not bind a port's new address while a server serves on the old one; keeping the old address until a restart",
+					"name", w.name, "from", cur.addr, "to", w.addr, "err", err)
+				return cur, nil
+			}
+			return heldPort{}, fmt.Errorf("bind %s on %s: %w", w.name, w.addr, err)
+		}
+		next = heldPort{name: w.name, addr: w.addr, l: l}
+	}
+	if held {
+		p.retire(cur, inUse)
+	}
+	p.held[w.name] = next
+	return next, nil
+}
+
+// unretire takes back a retiring listener on w's address: a rollback asks
+// again for the address a failed build moved its port off.
+func (p *portPool) unretire(w portWant) (heldPort, bool) {
+	for i, r := range p.retiring {
+		if r.name == w.name && sameAddr(r.addr, w.addr) {
+			p.retiring = append(p.retiring[:i], p.retiring[i+1:]...)
+			return r, true
+		}
+	}
+	return heldPort{}, false
+}
+
+func (p *portPool) retire(h heldPort, inUse func(*net.TCPListener) bool) {
+	if inUse(h.l) {
+		p.retiring = append(p.retiring, h)
+		return
+	}
+	h.l.Close()
+}
+
+// retain closes every held listener that keep does not use: the ports a
+// build no longer declares, and the old addresses of ports it moved.
+func (p *portPool) retain(keep []heldPort) {
+	used := map[*net.TCPListener]bool{}
+	for _, k := range keep {
+		used[k.l] = true
+	}
+	for name, h := range p.held {
+		if used[h.l] {
 			continue
 		}
-		log.Info("closing a port the running build does not declare", "port", key)
-		l.Close()
-		delete(p.held, key)
+		log.Info("closing a port the running build does not declare", "name", name, "addr", h.addr)
+		h.l.Close()
+		delete(p.held, name)
 	}
+	var still []heldPort
+	for _, h := range p.retiring {
+		if used[h.l] {
+			still = append(still, h)
+			continue
+		}
+		log.Info("closing a port's old address", "name", h.name, "addr", h.addr)
+		h.l.Close()
+	}
+	p.retiring = still
 }
 
 func (p *portPool) closeAll() {
-	for key, l := range p.held {
-		l.Close()
-		delete(p.held, key)
+	for name, h := range p.held {
+		h.l.Close()
+		delete(p.held, name)
 	}
+	for _, h := range p.retiring {
+		h.l.Close()
+	}
+	p.retiring = nil
+}
+
+// sameAddr reports whether two spellings of a bind address name the same
+// socket, so a build that only respells one (":993" for "0.0.0.0:993")
+// keeps the listener it has. The wildcard spellings differ only in whether
+// IPv6 is served too, which is not worth a rebind.
+func sameAddr(a, b string) bool {
+	if a == b {
+		return true
+	}
+	hostA, portA, errA := net.SplitHostPort(a)
+	hostB, portB, errB := net.SplitHostPort(b)
+	if errA != nil || errB != nil || portA != portB {
+		return false
+	}
+	if anyHost(hostA) && anyHost(hostB) {
+		return true
+	}
+	ipA, ipB := net.ParseIP(hostA), net.ParseIP(hostB)
+	if ipA != nil && ipB != nil {
+		return ipA.Equal(ipB)
+	}
+	return strings.EqualFold(hostA, hostB)
+}
+
+// anyHost reports whether host binds every interface.
+func anyHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsUnspecified()
 }
 
 func bindTCP(addr string) (*net.TCPListener, error) {

@@ -64,7 +64,7 @@ All via environment variables passed to `install.sh`:
 | `ADDITIONAL_DOMAINS` | — | Comma-separated extra cert domains. |
 | `TINYCLD_VERSION` | `main` | Git ref/tag to build (the shell + every feature). |
 | `TINYCLD_FEATURES` | full set | Space-separated feature members to include. |
-| `SENTRY_DSN` | — | Enables Sentry on **both** the Go server (runtime) and the web bundle (inlined at build time). |
+| `SENTRY_DSN` | — | Enables Sentry on the Go server (runtime), its update supervisor, and the web bundle (inlined at build time). The supervisor reads only this variable, never the DSN in the settings screen, so keep it set. |
 | `ENV_EXTRA` | — | Newline-separated `KEY=VALUE` lines appended to the service env file — e.g. `MAIL_PROVIDER`, `POSTMARK_SERVER_TOKEN`. |
 
 Example with mail + Sentry:

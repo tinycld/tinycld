@@ -325,6 +325,15 @@ verdict never completed, so the supervisor checks the current build itself —
 commit on healthy, cold-rollback on unhealthy — before settling into its normal
 loop.
 
+**Error reporting.** The supervisor sends its warnings and errors (a rollback,
+or no build becoming ready) to Sentry when `SENTRY_DSN` is set in its own
+environment, and flushes them before it exits. The server takes its DSN from
+**Settings → Error Reporting** (the `system_settings` collection), which the
+supervisor never reads because it never opens the database. A DSN entered only
+in the settings screen therefore does not reach the supervisor: set
+`SENTRY_DSN` in the container or unit environment as well. Without it, the
+supervisor logs once at start that it reports to stderr only.
+
 ### A build older than the supervisor cannot run under it
 
 `tinycld supervise` binds the main port itself and hands each child its

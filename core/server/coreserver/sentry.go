@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/pocketbase/pocketbase/tools/router"
+	"tinycld.org/core/logging"
 	"tinycld.org/core/syscfg"
 )
 
@@ -25,20 +25,7 @@ import (
 // operator owns error reporting, the DSN is theirs and never reaches this
 // deployment's own collection.
 func initSentryFromConfig() {
-	if err := sentry.Init(sentry.ClientOptions{
-		Dsn:              syscfg.Get("sentry.dsn"),
-		Environment:      GetEnvironment(),
-		TracesSampleRate: 0.2,
-		AttachStacktrace: true,
-	}); err != nil {
-		// Deliberately stdlib log, not srvLog: this reports that Sentry
-		// itself failed to initialize, and srvLog's warn+ path publishes to
-		// Sentry. Routing this failure through that path is circular — if
-		// Sentry is broken, the report that Sentry is broken can never
-		// arrive. Mirrors the console.* exemption in the client's sentry.ts
-		// for the same reason.
-		log.Printf("Sentry initialization failed: %v", err)
-	}
+	logging.InitSentry(syscfg.Get("sentry.dsn"))
 }
 
 // registerSentryMiddlewareCore binds the per-request capture logic. Takes

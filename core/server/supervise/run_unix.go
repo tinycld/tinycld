@@ -9,9 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/getsentry/sentry-go"
 
 	"tinycld.org/core/listeners"
 	"tinycld.org/core/logging"
@@ -40,6 +43,10 @@ func Run(args []string, getenv func(string) string) int {
 // supervisor in its own process with shorter bounds or another child user.
 func runWith(args []string, getenv func(string) string, opts options) int {
 	logging.Install(nil)
+	initSentry(getenv)
+	// Every exit path returns through here, so a report logged just before
+	// the supervisor exits (no build became ready) still reaches Sentry.
+	defer sentry.Flush(sentryFlushTimeout)
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(sigs)
@@ -50,6 +57,24 @@ func runWith(args []string, getenv func(string) string, opts options) int {
 		return 1
 	}
 	return s.run()
+}
+
+// sentryFlushTimeout bounds how long an exiting supervisor waits for its
+// reports to reach Sentry.
+const sentryFlushTimeout = 5 * time.Second
+
+// initSentry sends the supervisor's warnings and errors (a rollback, no
+// build becoming ready) to Sentry. The server reads its DSN from its
+// database, which the supervisor never opens, so the supervisor reads
+// SENTRY_DSN from its environment instead: a DSN set only in the admin
+// settings does not reach it.
+func initSentry(getenv func(string) string) {
+	dsn := strings.TrimSpace(getenv("SENTRY_DSN"))
+	if dsn == "" {
+		log.Info("SENTRY_DSN is not set; the supervisor reports to stderr only")
+		return
+	}
+	logging.InitSentry(dsn)
 }
 
 type supervisor struct {
@@ -86,13 +111,13 @@ func newSupervisor(args []string, getenv func(string) string, opts options, sigs
 		sigs:   sigs,
 		cred:   cred,
 		env:    childEnv(os.Environ(), home),
-		ports:  portPool{held: map[string]*net.TCPListener{}},
+		ports:  newPortPool(),
 	}
 	current, err := s.state.Current()
 	if err != nil {
 		return nil, fmt.Errorf("resolve the current build: %w", err)
 	}
-	if _, err := s.ports.prepare(s.wantPorts(current)); err != nil {
+	if _, err := s.ports.prepare(s.wantPorts(current), s.inUse); err != nil {
 		s.ports.closeAll()
 		return nil, err
 	}
@@ -348,7 +373,7 @@ func (s *supervisor) launch() (*child, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve the current build: %w", err)
 	}
-	ports, err := s.ports.prepare(s.wantPorts(current))
+	ports, err := s.ports.prepare(s.wantPorts(current), s.inUse)
 	if err != nil {
 		log.Error("could not bind a port the build declares", "err", err)
 	}
@@ -359,6 +384,21 @@ func (s *supervisor) launch() (*child, error) {
 	s.track(c)
 	log.Info("started a server", "build", current, "pid", c.pid)
 	return c, nil
+}
+
+// inUse reports whether a running child serves on l.
+func (s *supervisor) inUse(l *net.TCPListener) bool {
+	for _, c := range s.live {
+		if c.exited() {
+			continue
+		}
+		for _, p := range c.ports {
+			if p.l == l {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *supervisor) track(c *child) {

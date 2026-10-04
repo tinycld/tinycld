@@ -51,7 +51,8 @@ services:
       # setup URL — "https" (default) if your proxy terminates TLS, else "http".
       # PUBLIC_SCHEME: "https"
 
-      # Optional: error reporting
+      # Optional: error reporting. The update supervisor reads its DSN only
+      # from here; a DSN entered in the settings screen does not reach it.
       # SENTRY_DSN: ""
 
       # Optional: mail delivery (choose one)

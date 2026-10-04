@@ -2,7 +2,11 @@ package logging
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,5 +88,30 @@ func TestSentryHandlerAttachesAttrsAsContext(t *testing.T) {
 	}
 	if logCtx["widgetID"] != "w1" {
 		t.Errorf("expected widgetID=w1 in log context, got %v", logCtx["widgetID"])
+	}
+}
+
+// An error attr must reach Sentry as its text. Most error values have no
+// exported fields, so sent as they are they serialize to {} and the event
+// loses the one detail that explains it.
+func TestSentryHandlerSendsErrorsAsText(t *testing.T) {
+	hub, tr := newTestHub(t)
+	ctx := sentry.SetHubOnContext(context.Background(), hub)
+
+	base := errors.New("disk full")
+	logger := slog.New(NewSentryHandler(slog.LevelWarn)).With("cause", base)
+	logger.ErrorContext(ctx, "save failed", "err", fmt.Errorf("save: %w", base))
+
+	if len(tr.events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(tr.events))
+	}
+	data, err := json.Marshal(tr.events[0].Contexts["log"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"err":"save: disk full"`, `"cause":"disk full"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("log context = %s, want it to contain %s", data, want)
+		}
 	}
 }

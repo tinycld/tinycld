@@ -153,16 +153,16 @@ func TestChildStopKillsAChildThatIgnoresTerm(t *testing.T) {
 }
 
 func TestChildPortsReuseAndRetire(t *testing.T) {
-	p := &portPool{held: map[string]*net.TCPListener{}}
+	p := newPortPool()
 	t.Cleanup(p.closeAll)
 	keep := portWant{"http", "127.0.0.1:0"}
-	first, err := p.prepare([]portWant{keep})
+	first, err := p.prepare([]portWant{keep}, notInUse)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("prepare = %v %v", first, err)
 	}
 	// A port bound to :0 gets a new port each bind, so reuse is keyed by
 	// the address asked for, not the one bound.
-	second, err := p.prepare([]portWant{keep, {"acme-extra", "127.0.0.1:0"}})
+	second, err := p.prepare([]portWant{keep, {"acme-extra", "127.0.0.1:0"}}, allInUse)
 	if err != nil || len(second) != 2 {
 		t.Fatalf("prepare = %v %v", second, err)
 	}
@@ -173,7 +173,132 @@ func TestChildPortsReuseAndRetire(t *testing.T) {
 	if _, err := second[1].l.Accept(); err == nil {
 		t.Fatal("retain left an unused listener open")
 	}
-	if len(p.held) != 1 {
-		t.Fatalf("held %d listeners after retain, want 1", len(p.held))
+	if n := p.count(); n != 1 {
+		t.Fatalf("held %d listeners after retain, want 1", n)
+	}
+}
+
+func notInUse(*net.TCPListener) bool { return false }
+func allInUse(*net.TCPListener) bool { return true }
+
+func freePort(t *testing.T) string {
+	t.Helper()
+	_, port, err := net.SplitHostPort(freeAddr(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+func assertClosed(t *testing.T, l *net.TCPListener) {
+	t.Helper()
+	if err := l.SetDeadline(time.Now()); err == nil {
+		t.Fatalf("the listener on %s is still open", l.Addr())
+	}
+}
+
+// A build that only respells a port's address (":P" for "0.0.0.0:P") gets
+// the listener already held. Binding the port again would fail while the
+// running child serves on it, or hold the port twice.
+func TestChildPortsRespelledAddressKeepsOneListener(t *testing.T) {
+	port := freePort(t)
+	p := newPortPool()
+	t.Cleanup(p.closeAll)
+	first, err := p.prepare([]portWant{{"acme-extra", ":" + port}}, notInUse)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("prepare = %v %v", first, err)
+	}
+	second, err := p.prepare([]portWant{{"acme-extra", "0.0.0.0:" + port}}, allInUse)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("prepare after the respelling = %v %v", second, err)
+	}
+	if second[0].l != first[0].l {
+		t.Fatal("a respelled address got a second listener")
+	}
+	if n := p.count(); n != 1 {
+		t.Fatalf("held %d listeners, want 1", n)
+	}
+}
+
+// A port that moves while the old child serves on it gets the new address
+// at once; the old address stays open for the old child until retain.
+func TestChildPortsMovedWhileServedRetiresTheOld(t *testing.T) {
+	p := newPortPool()
+	t.Cleanup(p.closeAll)
+	first, err := p.prepare([]portWant{{"acme-extra", freeAddr(t)}}, notInUse)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("prepare = %v %v", first, err)
+	}
+	moved := freeAddr(t)
+	second, err := p.prepare([]portWant{{"acme-extra", moved}}, allInUse)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("prepare after the move = %v %v", second, err)
+	}
+	if second[0].l == first[0].l || second[0].l.Addr().String() != moved {
+		t.Fatalf("the moved port is on %s, want %s", second[0].l.Addr(), moved)
+	}
+	if err := first[0].l.SetDeadline(time.Time{}); err != nil {
+		t.Fatal("the old address closed while a child still serves on it")
+	}
+	p.retain(second)
+	assertClosed(t, first[0].l)
+	if n := p.count(); n != 1 {
+		t.Fatalf("held %d listeners after retain, want 1", n)
+	}
+}
+
+// Once no child serves on a port's old address, the old listener closes
+// before the new address is bound: the two can overlap (a wildcard and a
+// specific address on one port), so binding first could fail.
+func TestChildPortsMovedWhenUnusedClosesTheOldFirst(t *testing.T) {
+	port := freePort(t)
+	p := newPortPool()
+	t.Cleanup(p.closeAll)
+	first, err := p.prepare([]portWant{{"acme-extra", ":" + port}}, notInUse)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("prepare = %v %v", first, err)
+	}
+	second, err := p.prepare([]portWant{{"acme-extra", "127.0.0.1:" + port}}, notInUse)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("prepare after the move = %v %v", second, err)
+	}
+	assertClosed(t, first[0].l)
+	if n := p.count(); n != 1 {
+		t.Fatalf("held %d listeners, want 1", n)
+	}
+}
+
+// When the new address cannot be bound while the old child serves on the
+// old one, the new child keeps the old address rather than lose the port.
+func TestChildPortsMoveThatCannotBindKeepsTheOld(t *testing.T) {
+	p := newPortPool()
+	t.Cleanup(p.closeAll)
+	first, err := p.prepare([]portWant{{"acme-extra", freeAddr(t)}}, notInUse)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("prepare = %v %v", first, err)
+	}
+	taken := bindLoopback(t)
+	second, err := p.prepare([]portWant{{"acme-extra", taken.Addr().String()}}, allInUse)
+	if err != nil || len(second) != 1 || second[0].l != first[0].l {
+		t.Fatalf("prepare onto a taken address = %v %v, want the old listener", second, err)
+	}
+}
+
+func TestSameAddr(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		same bool
+	}{
+		{":993", "0.0.0.0:993", true},
+		{"[::]:993", ":993", true},
+		{"127.0.0.1:993", "127.0.0.1:993", true},
+		{"LOCALHOST:993", "localhost:993", true},
+		{":993", "127.0.0.1:993", false},
+		{":993", ":994", false},
+		{"127.0.0.1:993", "[::1]:993", false},
+	} {
+		if got := sameAddr(c.a, c.b); got != c.same {
+			t.Errorf("sameAddr(%q, %q) = %v, want %v", c.a, c.b, got, c.same)
+		}
 	}
 }
