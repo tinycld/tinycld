@@ -57,9 +57,15 @@ export interface RealtimeClientOptions {
     onClose?: () => void
 }
 
-// QueuedFrame is a frame the client wanted to send before the server
-// assigned its ID. The connect-time queue is flushed in order once
-// MSG_ASSIGN_ID arrives.
+// y-protocols/sync message tags inside a SYNC_REPLY payload.
+const SYNC_STEP2 = 1
+const SYNC_UPDATE = 2
+
+// QueuedFrame is an awareness frame the client wanted to send before the
+// server assigned its ID. The connect-time queue is flushed in order once
+// MSG_ASSIGN_ID arrives. Document updates are never queued: an edit made
+// before the sync reply is carried by the diff the client sends after it
+// (see sendMissing).
 interface QueuedFrame {
     msgType: number
     payload: Uint8Array
@@ -103,7 +109,12 @@ export class RealtimeClient {
         this.docUpdateHandler = (update, origin) => {
             if (this.destroyed) return
             if (origin === REMOTE_ORIGIN || origin === SYNC_ORIGIN) return
-            this.send(MSG_DOC_UPDATE, update)
+            // Before the sync reply there is nothing to send to: the doc may
+            // be about to be replaced (a hello reporting a new epoch destroys
+            // this client first), and whatever survives is in the diff the
+            // reply triggers. After it, every local edit goes out at once.
+            if (!this.syncReplyReceived) return
+            this.sendNow(MSG_DOC_UPDATE, update)
         }
         opts.doc.on('update', this.docUpdateHandler)
 
@@ -217,6 +228,9 @@ export class RealtimeClient {
     }
 
     private onFrame(frame: Uint8Array): void {
+        // A frame can still arrive after destroy; acting on it could send
+        // this doc's edits into a document the room discarded it from.
+        if (this.destroyed) return
         if (frame.length < FRAME_OVERHEAD) return
         const senderID = frame.subarray(0, CLIENT_ID_LEN)
         const msgType = frame[CLIENT_ID_LEN]
@@ -318,18 +332,7 @@ export class RealtimeClient {
 
             case MSG_SYNC_REPLY: {
                 const hadPeer = payload.length > 0
-                if (hadPeer) {
-                    // Apply the peer's doc state under SYNC_ORIGIN so
-                    // the doc-update listener doesn't bounce these
-                    // updates back over the wire (they came FROM the
-                    // wire) and so the undo manager doesn't capture
-                    // remote handshake state as a local undo step.
-                    const decoder = decoding.createDecoder(payload)
-                    const replyEnc = encoding.createEncoder()
-                    readSyncMessage(decoder, replyEnc, this.opts.doc, SYNC_ORIGIN)
-                    // SyncStep2's response (a SyncStep2 of our own) is
-                    // typically empty; we ignore it.
-                }
+                if (hadPeer) this.applySyncReply(payload)
                 if (!this.syncReplyReceived) {
                     this.syncReplyReceived = true
                     this.opts.onSyncReply?.(hadPeer)
@@ -337,6 +340,43 @@ export class RealtimeClient {
                 break
             }
         }
+    }
+
+    // applySyncReply folds the server's (or a peer's) state into the doc
+    // under SYNC_ORIGIN, so the doc-update listener doesn't bounce it back
+    // over the wire and the undo manager doesn't capture it as a local
+    // step, then sends back what the doc holds that the reply did not.
+    private applySyncReply(payload: Uint8Array): void {
+        const decoder = decoding.createDecoder(payload)
+        const messageType = decoding.readVarUint(decoder)
+        if (messageType !== SYNC_STEP2 && messageType !== SYNC_UPDATE) {
+            // Not a state transfer. Let y-protocols handle it as before.
+            const replyEnc = encoding.createEncoder()
+            readSyncMessage(decoding.createDecoder(payload), replyEnc, this.opts.doc, SYNC_ORIGIN)
+            return
+        }
+        const state = decoding.readVarUint8Array(decoder)
+        Y.applyUpdate(this.opts.doc, state, SYNC_ORIGIN)
+        this.sendMissing(state)
+    }
+
+    // sendMissing sends the diff between this doc and the state the server
+    // just sent. The server only ever sends ITS state; nothing asks for
+    // ours. So an edit made while disconnected, or during a pause that
+    // closed the connection, exists only here until this runs. The server's
+    // state vector comes from the state itself, and a doc the server
+    // already matches sends nothing: new structs are the usual sign of a
+    // local edit, and an equal delete set rules out an offline deletion.
+    private sendMissing(serverState: Uint8Array): void {
+        const doc = this.opts.doc
+        const serverVector = Y.encodeStateVectorFromUpdate(serverState)
+        const missing = Y.encodeStateAsUpdate(doc, serverVector)
+        const hasNewStructs = Y.decodeUpdate(missing).structs.length > 0
+        if (!hasNewStructs) {
+            const localDeletes = Y.createDeleteSetFromStructStore(doc.store)
+            if (Y.equalDeleteSets(localDeletes, Y.decodeUpdate(serverState).ds)) return
+        }
+        this.sendNow(MSG_DOC_UPDATE, missing)
     }
 }
 

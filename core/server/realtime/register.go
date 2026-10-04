@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -91,7 +90,11 @@ func sharedBroker() *Broker {
 // Authentication is via the standard PB session cookie or Bearer token;
 // unauthenticated requests are rejected with 401. Authorization is
 // delegated to the per-room-kind handler registered via RegisterRoomKind.
-func Register(app *pocketbase.PocketBase, opts Options) {
+//
+// Register also binds the broker to the server's lifecycle: documents are
+// stored when read-only begins, at drain and at terminate, and open
+// connections are closed at drain (see lifecycle.go).
+func Register(app core.App, opts Options) {
 	if opts.IdleTimeout == 0 {
 		opts.IdleTimeout = defaultIdleTimeout
 	}
@@ -103,6 +106,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	}
 
 	broker := sharedBroker()
+	registerLifecycle(app)
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/api/realtime/{roomKind}/{roomID}", func(re *core.RequestEvent) error {
@@ -151,6 +155,13 @@ func handleForceFlush(re *core.RequestEvent) error {
 }
 
 func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
+	// Accepting stopped when the drain began; a request that still arrives
+	// came in on a connection accepted before that, and belongs to the
+	// next server.
+	if draining.Load() {
+		return refuseWhileDraining(re)
+	}
+
 	// PocketBase's loadAuthToken middleware reads `Authorization: Bearer
 	// <token>` from headers, but browsers can't set custom headers on a
 	// WebSocket upgrade (`new WebSocket(url)` exposes only URL +
@@ -316,6 +327,16 @@ func runConnection(broker *Broker, opts Options, ident connIdentity, conn *webso
 		return
 	}
 
+	// Tracked before the drain check so a drain that begins between the
+	// upgrade handler's check and here cannot miss this connection: either
+	// the check below sees the flag, or closeAllConns sees the conn.
+	untrack := trackConn(client, conn)
+	defer untrack()
+	if draining.Load() {
+		_ = conn.Close(websocket.StatusGoingAway, drainCloseReason)
+		return
+	}
+
 	broker.join(kind, roomID, client)
 	defer func() {
 		room := client.room
@@ -370,18 +391,11 @@ func runConnection(broker *Broker, opts Options, ident connIdentity, conn *webso
 	// payload is empty — the routing-ID prefix IS the assignment.
 	deliver(client, makeAssignFrame(client.id))
 
-	// If this room kind registered an OnConnect handler, invoke it now
-	// and deliver MsgServerHello before the sync handshake runs.
-	if opts, lookupErr := optionsFor(kind); lookupErr == nil && opts.OnConnect != nil {
-		payload, err := opts.OnConnect(roomID, client)
-		if err != nil {
-			log.WarnContext(ctx,
-				"OnConnect failed; skipping MsgServerHello",
-				"kind", kind, "roomID", roomID, "err", err,
-			)
-		} else {
-			deliver(client, makeServerHelloFrame(client.id, payload))
-		}
+	// Deliver MsgServerHello before the sync handshake runs: the kind's
+	// own payload (OnConnect) plus, for a room with a server document, the
+	// document epoch the client compares against the one it synced under.
+	if payload, ok := buildServerHello(ctx, kind, roomID, client); ok {
+		deliver(client, makeServerHelloFrame(client.id, payload))
 	}
 
 	// Reader loop: blocks on the connection. On any error or close,
@@ -418,6 +432,38 @@ func runConnection(broker *Broker, opts Options, ident connIdentity, conn *webso
 			room.route(client, data)
 		}
 	}
+}
+
+// buildServerHello composes a client's hello. A kind without OnConnect and
+// a room without a server document get no frame, so a pure-relay kind
+// keeps its protocol shape. A failing OnConnect or a non-object payload
+// skips the frame; the connection continues and the client renders
+// without a hello.
+func buildServerHello(ctx context.Context, kind, roomID string, client *Client) ([]byte, bool) {
+	opts, err := optionsFor(kind)
+	if err != nil {
+		return nil, false
+	}
+	var payload []byte
+	if opts.OnConnect != nil {
+		payload, err = opts.OnConnect(roomID, client)
+		if err != nil {
+			log.WarnContext(ctx, "OnConnect failed; skipping MsgServerHello",
+				"kind", kind, "roomID", roomID, "err", err)
+			return nil, false
+		}
+	}
+	room := client.room
+	if room == nil || room.serverDoc == nil {
+		return payload, opts.OnConnect != nil
+	}
+	payload, err = withDocEpoch(payload, room.DocEpoch())
+	if err != nil {
+		log.WarnContext(ctx, "hello payload cannot carry the document epoch; skipping MsgServerHello",
+			"kind", kind, "roomID", roomID, "err", err)
+		return nil, false
+	}
+	return payload, true
 }
 
 // makeAssignFrame builds the initial MsgAssignID frame the server

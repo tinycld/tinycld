@@ -32,12 +32,8 @@ func TestServerHello_DeliveredAfterAssignID(t *testing.T) {
 
 	a := dialClient(t, opts, "hello-room", "alice")
 
-	mt, payload := readFrame(t, a, 1*time.Second)
-	if mt != MsgServerHello {
-		t.Fatalf("expected MsgServerHello (0x%02x), got 0x%02x", MsgServerHello, mt)
-	}
-	if !bytes.Equal(payload, wantPayload) {
-		t.Fatalf("hello payload mismatch: got %q want %q", payload, wantPayload)
+	if !bytes.Equal(a.hello, wantPayload) {
+		t.Fatalf("hello payload mismatch: got %q want %q", a.hello, wantPayload)
 	}
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("OnConnect invoked %d times; expected exactly 1", got)
@@ -76,6 +72,7 @@ func TestServerHello_OnConnectErrorSkipsFrameButContinues(t *testing.T) {
 			return nil, errors.New("synthetic OnConnect failure")
 		},
 	})
+	opts.noHello = true
 
 	a := dialClient(t, opts, "err-room", "alice")
 	time.Sleep(50 * time.Millisecond)

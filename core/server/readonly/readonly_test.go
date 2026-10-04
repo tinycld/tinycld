@@ -210,35 +210,6 @@ func TestOnEnterRunsOnEachTransitionToActive(t *testing.T) {
 	}
 }
 
-// OnEnter must not block Enter: a slow or blocked fn runs in its own
-// goroutine, so Enter returns immediately regardless.
-func TestOnEnterDoesNotBlockEnter(t *testing.T) {
-	t.Cleanup(resetOnEnterForTest)
-	t.Cleanup(Leave)
-	Leave()
-
-	started := make(chan struct{})
-	release := make(chan struct{})
-	OnEnter(func() {
-		close(started)
-		<-release
-	})
-
-	enterDone := make(chan struct{})
-	go func() {
-		Enter()
-		close(enterDone)
-	}()
-
-	select {
-	case <-enterDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Enter blocked on a slow OnEnter fn")
-	}
-	waitOrFatal(t, started, "OnEnter fn never started")
-	close(release)
-}
-
 // A panicking OnEnter fn must not crash the process — this happens exactly
 // while an upgrade has the server read-only — and must not stop other
 // registered fns from running. It must still be logged, so the panic is not

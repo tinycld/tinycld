@@ -231,15 +231,18 @@ come from a request:
 - A package's background workers check `readonly.Active()` or call
   `readonly.WaitInactive(ctx)` before each write cycle.
 
-Collaborative-document (Yjs) journal appends and saves of the realtime save
-coordinator (`core/server/realtime`, `core/server/yjsdoc`) are **not** paused
-yet: they keep writing through a read-only window. This is a known gap,
-tracked for a follow-up.
+Collaborative documents (Yjs rooms, `core/server/realtime`) are handled
+when the mode starts: every dirty room is flushed to its file and every
+open or parked document's full state is stored in
+`realtime_doc_checkpoints`, before `Enter` returns. The rooms stay open and
+their sockets stay up, so people keep seeing each other's edits; the file
+saves wait until the mode is left. If this process is replaced instead,
+the next one opens each room from the stored state under the same document
+epoch, and each client resends the edits it made during the pause.
 
 Writes that do not arrive as an HTTP request are not covered either: a
-package's own client protocol, and websocket messages (the
-collaborative-document saves above). DAV requests are HTTP requests to the
-same server, so read-only mode refuses their unsafe methods like any other
+package's own client protocol. DAV requests are HTTP requests to the same
+server, so read-only mode refuses their unsafe methods like any other
 request.
 
 The control messages (`ready`, `restart`, `drain`, `restart-ack`) are permanent:
@@ -279,7 +282,10 @@ handlers (`tinycld.org/core/drainhooks`). Core's own handler ends every
 realtime (SSE) stream, so its client reconnects at once, to the new child,
 instead of hearing nothing of the new child's events for the length of the
 drain; a realtime connect that still reaches the draining child is answered
-`503`. A package serving its own port (such as IMAP and SMTP) stops
+`503`. The collaborative-document broker does the same for its websockets:
+it stores every document's state (unless read-only mode already did), then
+closes each connection with a going-away code, and refuses an upgrade that
+still arrives. A package serving its own port (such as IMAP and SMTP) stops
 accepting there at the same point. The child then waits (up to 30s,
 `ChildDrainTimeout`) for in-flight requests on both HTTP servers to finish,
 including a connection accepted in the instant before accepting stopped, then

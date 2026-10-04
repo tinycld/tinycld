@@ -2,13 +2,21 @@ package realtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/getsentry/sentry-go"
+
+	"tinycld.org/core/readonly"
 )
+
+// ErrReadOnly is what FlushNow returns while the server is read-only: the
+// flush writes, and a caller that needs the stored file current (a copy, an
+// export) must not read a file the pause will not let us update.
+var ErrReadOnly = errors.New("realtime: server is read-only")
 
 // Default trigger-policy intervals. Tests construct a coordinator
 // with shorter values to keep their wall-clock cost down.
@@ -104,15 +112,9 @@ type SaveCoordinator struct {
 	mu    sync.Mutex
 	rooms map[string]*roomSaver
 
-	// kind names the room kind this coordinator drives. Used as the
-	// (kind, id) tuple key when journal-truncating after a successful
-	// flush. Set via SetJournal.
+	// kind names the room kind this coordinator drives, for logs and the
+	// Sentry report of a give-up. Set via SetKind.
 	kind string
-
-	// journal is the WAL backend whose rows describe edits accepted
-	// since the last successful snapshot. nil disables truncation —
-	// useful for tests and pure-relay kinds.
-	journal Journal
 }
 
 // roomSaver is the per-room state. All access is guarded by mu.
@@ -130,12 +132,11 @@ type roomSaver struct {
 	resaveQueued bool
 	failures     int
 
-	// lastSeq is the highest seq observed via NoteSeq since the last
-	// successful truncate. Captured atomically into snapshotSeq when
-	// a flush starts; on success, the coordinator truncates the
-	// journal through snapshotSeq.
-	lastSeq     int64
-	snapshotSeq int64
+	// readOnlyDeferrals counts the flushes deferred in a row because the
+	// server is read-only. It picks the next deferral's backoff and is kept
+	// apart from failures: a deferral is expected, not a failed save, and
+	// must not move the room toward giving up.
+	readOnlyDeferrals int
 
 	// closed flips true the moment OnRoomEmpty's synchronous flush
 	// returns. After that, no more save attempts may be scheduled
@@ -172,34 +173,12 @@ func (c *SaveCoordinator) SetLogger(l *slog.Logger) {
 	c.logger = l
 }
 
-// SetJournal installs a WAL backend on the coordinator. On every
-// successful flush, the coordinator calls journal.Truncate(kind, id,
-// snapshotSeq) where snapshotSeq is the highest seq observed via
-// NoteSeq at the moment the flush kicked off. Pass an empty kind and
-// nil journal to disable truncation entirely.
-func (c *SaveCoordinator) SetJournal(kind string, journal Journal) {
+// SetKind names the room kind this coordinator drives, so a give-up
+// report and the logs say which kind's flush failed.
+func (c *SaveCoordinator) SetKind(kind string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.kind = kind
-	c.journal = journal
-}
-
-// NoteSeq records the highest seq the broker has minted for the room.
-// Called from the broker's route path after each successful journal
-// Append. Idempotent: a NoteSeq with a value below the current lastSeq
-// is a no-op.
-func (c *SaveCoordinator) NoteSeq(driveItemID string, seq int64) {
-	c.mu.Lock()
-	rs := c.rooms[driveItemID]
-	c.mu.Unlock()
-	if rs == nil {
-		return
-	}
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	if seq > rs.lastSeq {
-		rs.lastSeq = seq
-	}
 }
 
 // OnRoomCreate is the realtime.RoomKindOptions.OnRoomCreate hook.
@@ -243,19 +222,23 @@ func (c *SaveCoordinator) OnDocUpdate(driveItemID string) {
 	}
 
 	now := time.Now()
-	if !rs.dirty {
-		rs.dirty = true
-		rs.firstDirtyAt = now
-		// Arm the ceiling timer on the first edit of a clean
-		// cycle. The debounce timer is reset on every edit; the
-		// ceiling fires unconditionally after ceilingEvery so a
-		// constant typist still gets a save.
+	// Arm the ceiling timer on the first edit of a clean cycle. The
+	// debounce timer is reset on every edit; the ceiling fires
+	// unconditionally after ceilingEvery so a constant typist still gets
+	// a save. Also armed when a room is dirty with no ceiling: a room left
+	// dirty by a failed or deferred save has none, and without one a
+	// constant typist would keep resetting the debounce and never save.
+	if !rs.dirty || rs.ceilingTimer == nil {
 		if rs.ceilingTimer != nil {
 			rs.ceilingTimer.Stop()
 		}
 		rs.ceilingTimer = time.AfterFunc(c.ceilingEvery, func() {
 			c.triggerSave(driveItemID, "ceiling")
 		})
+	}
+	if !rs.dirty {
+		rs.dirty = true
+		rs.firstDirtyAt = now
 	}
 	// Reset debounce on every edit.
 	if rs.debounceTimer != nil {
@@ -321,8 +304,16 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	wasDirty := rs.dirty
 	rs.dirty = false
 	handle := rs.handle
-	snapshotSeq := rs.lastSeq
 	rs.mu.Unlock()
+
+	if wasDirty && readonly.Active() {
+		// The flush writes. The broker parks the document with these
+		// edits in it, and Suspend has already stored its state for the
+		// case where this process is replaced.
+		c.logger.Info("realtime: teardown save skipped: read-only; the parked document keeps the edits",
+			"driveItemID", driveItemID)
+		wasDirty = false
+	}
 
 	if !wasDirty {
 		// Nothing to save; mark closed and return immediately.
@@ -342,17 +333,6 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	case err := <-done:
 		if err != nil {
 			c.logger.Error("realtime: teardown save failed", "driveItemID", driveItemID, "err", err)
-		} else {
-			// EVERY successful flush must truncate, this one most of all:
-			// the room is about to be recreated from scratch on the next
-			// join, where bootstrap re-seeds from the snapshot the flush
-			// just wrote and Replay applies whatever the journal still
-			// holds ON TOP of it. A journal left covering flushed edits
-			// therefore duplicates the entire document on reopen — and a
-			// short edit-then-close session (under the debounce window)
-			// reaches here without any timer-driven flush ever having
-			// truncated, so this was the common path, not the edge.
-			c.truncateJournal(driveItemID, snapshotSeq)
 		}
 	case <-time.After(time.Until(deadline)):
 		// The deadline is shared with the in-flight wait above, so a
@@ -364,25 +344,6 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	rs.mu.Lock()
 	rs.closed = true
 	rs.mu.Unlock()
-}
-
-// truncateJournal drops journal rows covered by a successful flush. The
-// snapshot/WAL contract (see the bootstrap+Replay ordering in room
-// construction) only holds if every flush that wrote the snapshot also
-// retires the WAL rows it covered — a flush path without this call
-// re-applies those rows onto the re-seeded document at the next room
-// creation, duplicating content.
-func (c *SaveCoordinator) truncateJournal(driveItemID string, throughSeq int64) {
-	c.mu.Lock()
-	journal, kind := c.journal, c.kind
-	c.mu.Unlock()
-	if throughSeq <= 0 || journal == nil || kind == "" {
-		return
-	}
-	if err := journal.Truncate(kind, driveItemID, throughSeq); err != nil {
-		c.logger.Warn("realtime: journal truncate failed after flush",
-			"driveItemID", driveItemID, "through", throughSeq, "err", err)
-	}
 }
 
 // triggerSave is the central save scheduler. Runs on a timer
@@ -416,9 +377,14 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 		rs.mu.Unlock()
 		return
 	}
+	if readonly.Active() {
+		c.deferForReadOnly(driveItemID, rs)
+		rs.mu.Unlock()
+		return
+	}
+	rs.readOnlyDeferrals = 0
 	rs.saveInFlight = true
 	rs.dirty = false
-	rs.snapshotSeq = rs.lastSeq
 	if rs.debounceTimer != nil {
 		rs.debounceTimer.Stop()
 		rs.debounceTimer = nil
@@ -452,8 +418,6 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 				Kind:        c.kind,
 				Reason:      reason,
 				Attempts:    rs.failures,
-				LastSeq:     rs.lastSeq,
-				SnapshotSeq: rs.snapshotSeq,
 				Err:         err,
 			}
 			if rs.debounceTimer != nil {
@@ -463,8 +427,7 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 			rs.mu.Unlock()
 			c.logger.Error("realtime: save failed; giving up after max attempts",
 				"driveItemID", driveItemID, "kind", c.kind, "reason", reason,
-				"attempts", detail.Attempts, "lastSeq", detail.LastSeq,
-				"snapshotSeq", detail.SnapshotSeq, "err", err)
+				"attempts", detail.Attempts, "err", err)
 			if c.captureGiveUp != nil {
 				c.captureGiveUp(detail)
 			}
@@ -495,16 +458,37 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 	rs.failures = 0
 	resave := rs.resaveQueued
 	rs.resaveQueued = false
-	snapshotSeq := rs.snapshotSeq
 	rs.mu.Unlock()
-
-	c.truncateJournal(driveItemID, snapshotSeq)
 
 	if resave {
 		// Edits arrived during the in-flight save; immediately
 		// re-fire so they don't sit until the next debounce.
 		go c.triggerSave(driveItemID, "coalesced")
 	}
+}
+
+// deferForReadOnly re-arms the room's save for later, without flushing,
+// because the flush writes. The room stays dirty and the document keeps
+// the edits, so nothing is lost while the save waits. Logged once per
+// pause at Info: a deferral is expected, so it is neither a failure nor a
+// warning. Caller holds rs.mu.
+func (c *SaveCoordinator) deferForReadOnly(driveItemID string, rs *roomSaver) {
+	backoff := c.backoff(rs.readOnlyDeferrals)
+	if rs.readOnlyDeferrals == 0 {
+		c.logger.Info("realtime: save deferred: read-only",
+			"driveItemID", driveItemID, "retryIn", backoff)
+	}
+	rs.readOnlyDeferrals++
+	if rs.debounceTimer != nil {
+		rs.debounceTimer.Stop()
+	}
+	if rs.ceilingTimer != nil {
+		rs.ceilingTimer.Stop()
+		rs.ceilingTimer = nil
+	}
+	rs.debounceTimer = time.AfterFunc(backoff, func() {
+		c.triggerSave(driveItemID, "read-only retry")
+	})
 }
 
 // FlushNow runs a synchronous flush for the room identified by
@@ -515,11 +499,50 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 // and "Make a copy", which copy the stored drive_items.file).
 //
 // If the room is not open (no live editor since the last flush), the
-// stored blob is already current, so this is a no-op success. If a
-// timer-driven save is already in flight for the room, FlushNow waits
+// stored blob is already current, so this is a no-op success. While the
+// server is read-only it returns ErrReadOnly without flushing.
+func (c *SaveCoordinator) FlushNow(driveItemID string) error {
+	if readonly.Active() {
+		return ErrReadOnly
+	}
+	return c.flushRoom(context.Background(), driveItemID, false)
+}
+
+// FlushDirty flushes every dirty room now and returns the errors joined.
+// It ignores read-only mode: the broker's Suspend calls it from inside the
+// pause's own entry, so the stored file is current before the state is
+// checkpointed. Rooms flush concurrently, bounded by ctx.
+func (c *SaveCoordinator) FlushDirty(ctx context.Context) error {
+	c.mu.Lock()
+	ids := make([]string, 0, len(c.rooms))
+	for id := range c.rooms {
+		ids = append(ids, id)
+	}
+	c.mu.Unlock()
+
+	errs := make([]error, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = c.flushRoom(ctx, id, true)
+		}()
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+// flushRoom claims the room's in-flight slot and runs one flush. With
+// onlyIfDirty set, a room that is clean once the slot is claimed (a save
+// in flight just cleaned it) is left alone.
+//
+// If a timer-driven save is already in flight for the room, this waits
 // for it to finish rather than running a second concurrent flush — the
 // coordinator never invokes FlushFn for the same room twice in parallel.
-func (c *SaveCoordinator) FlushNow(driveItemID string) error {
+// It spins with a short sleep rather than a condition variable to keep
+// the existing lock discipline; flushes are infrequent and brief.
+func (c *SaveCoordinator) flushRoom(ctx context.Context, driveItemID string, onlyIfDirty bool) error {
 	c.mu.Lock()
 	rs := c.rooms[driveItemID]
 	c.mu.Unlock()
@@ -528,12 +551,6 @@ func (c *SaveCoordinator) FlushNow(driveItemID string) error {
 		// current state to durable storage. Nothing to do.
 		return nil
 	}
-
-	// Wait out any in-flight timer-driven save, then claim the in-flight
-	// slot ourselves so a concurrent triggerSave coalesces behind us
-	// instead of racing the same FlushFn. Spin with a short sleep rather
-	// than a condition variable to keep the existing lock discipline —
-	// flushes are infrequent and brief.
 	for {
 		rs.mu.Lock()
 		if rs.closed {
@@ -542,34 +559,32 @@ func (c *SaveCoordinator) FlushNow(driveItemID string) error {
 		}
 		if rs.saveInFlight {
 			rs.mu.Unlock()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			time.Sleep(5 * time.Millisecond)
 			continue
+		}
+		if onlyIfDirty && !rs.dirty {
+			rs.mu.Unlock()
+			return nil
 		}
 		rs.saveInFlight = true
 		rs.dirty = false
 		handle := rs.handle
-		snapshotSeq := rs.lastSeq
 		rs.mu.Unlock()
 
-		err := c.flush(context.Background(), driveItemID, handle)
+		err := c.flush(ctx, driveItemID, handle)
 
 		rs.mu.Lock()
 		rs.saveInFlight = false
 		if err != nil {
 			// Leave the room marked dirty so the normal retry path picks
-			// it up; FlushNow itself doesn't retry — it reports the error
-			// to its caller, who decides whether to proceed.
+			// it up; this path doesn't retry — it reports the error to its
+			// caller, who decides whether to proceed.
 			rs.dirty = true
 		}
 		rs.mu.Unlock()
-		if err == nil {
-			// Same contract as every other flush path — see truncateJournal.
-			// Skipping it here would leave a clean room (dirty=false) whose
-			// journal still covers flushed edits, and the timer path never
-			// revisits a clean room, so the rows would sit until teardown
-			// and duplicate the document if that teardown flush failed.
-			c.truncateJournal(driveItemID, snapshotSeq)
-		}
 		return err
 	}
 }
@@ -583,8 +598,6 @@ type giveUpDetail struct {
 	Kind        string
 	Reason      string
 	Attempts    int
-	LastSeq     int64
-	SnapshotSeq int64
 	Err         error
 }
 
@@ -606,8 +619,6 @@ func captureGiveUpToSentry(d giveUpDetail) {
 			"kind":        d.Kind,
 			"reason":      d.Reason,
 			"attempts":    d.Attempts,
-			"lastSeq":     d.LastSeq,
-			"snapshotSeq": d.SnapshotSeq,
 			"error":       fmt.Sprintf("%v", d.Err),
 		})
 		if d.Err != nil {

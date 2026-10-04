@@ -9,10 +9,15 @@
 // consumer; other packages (mail, calendar, drive) can use the same
 // primitive for their own collaboration features.
 //
-// State is fully in-memory: when the last client of a room disconnects,
-// the room is gone. There is no durability layer here — that is by
-// design. Consumers who need persistent collaborative state must layer
-// it on top (e.g. by exporting periodic snapshots to durable storage).
+// Rooms live in memory. A room kind with a RuntimeProvider also gets a
+// server-side document, and the broker owns that document's lifetime: it
+// seeds it from the kind's derived source (or from a stored checkpoint),
+// parks it when the last client leaves, reuses it when the room reopens
+// within ParkIdle, and stores its full state at lifecycle events (janitor
+// eviction, read-only enter, drain, terminate) so the next process opens
+// the SAME document. The kind persists content to its own derived form on
+// the SaveCoordinator's schedule; the checkpoint keeps the document
+// identities that form cannot.
 //
 // Authorization invariant: the only server-enforced gate is the
 // per-room-kind Authorize callback at connection time. Once admitted,
@@ -98,8 +103,12 @@ const frameOverhead = clientIDLen + 1
 // is the expected deployment. New rooms spring into existence on first
 // joiner and disappear when their last client leaves.
 type Broker struct {
-	mu    sync.Mutex
-	rooms map[roomKey]*Room
+	mu     sync.Mutex
+	rooms  map[roomKey]*Room
+	parked map[roomKey]*parkedDoc
+
+	janitorOnce sync.Once
+	stop        chan struct{}
 }
 
 type roomKey struct {
@@ -109,7 +118,21 @@ type roomKey struct {
 
 // NewBroker returns a freshly initialized Broker.
 func NewBroker() *Broker {
-	return &Broker{rooms: map[roomKey]*Room{}}
+	return &Broker{
+		rooms:  map[roomKey]*Room{},
+		parked: map[roomKey]*parkedDoc{},
+		stop:   make(chan struct{}),
+	}
+}
+
+// Close stops the janitor. Tests call it; a production broker lives as
+// long as the process.
+func (b *Broker) Close() {
+	select {
+	case <-b.stop:
+	default:
+		close(b.stop)
+	}
 }
 
 // join admits a Client to the named room, creating the room if necessary.
@@ -134,7 +157,7 @@ func (b *Broker) join(kind, id string, c *Client) {
 			// fall back to a zero-options room — no server doc, no
 			// hooks — which is the safest behavior.
 			opts, _ := optionsFor(kind)
-			room = newRoom(b, key, opts)
+			room = newRoom(b, key, opts, b.takeParked(key))
 			b.rooms[key] = room
 		}
 		admitted := room.add(c)
@@ -147,9 +170,9 @@ func (b *Broker) join(kind, id string, c *Client) {
 		// put this client in a room whose save hooks are already
 		// deregistered and whose server doc is about to close, silently
 		// discarding every edit. Wait for removeRoom to free the key,
-		// then construct a fresh room that bootstraps from the state the
-		// flush wrote. b.mu is NOT held while waiting: removeRoom needs
-		// it to make progress.
+		// then construct a fresh room, which adopts the document the
+		// teardown parked. b.mu is NOT held while waiting: removeRoom
+		// needs it to make progress.
 		time.Sleep(2 * time.Millisecond)
 	}
 }
@@ -317,7 +340,7 @@ func NewAnonClientForTest(shareRole, displayName string) *Client {
 // route() pipeline as if it had arrived over the WebSocket transport,
 // using whatever options the kind has registered. Joins `from` into
 // (kind, roomID) — creating the room if needed, applying the same
-// RuntimeProvider / Journal / OnRoomCreate / etc. bootstrap as a real
+// RuntimeProvider / Checkpoints / OnRoomCreate / etc. bootstrap as a real
 // connection — then routes the frame.
 //
 // Returns the Room so consumer test packages can call PublishServerSlot
@@ -349,4 +372,29 @@ func (b *Broker) RouteFrameForTest(kind, roomID string, from *Client, frame []by
 func (b *Broker) JoinForTest(kind, roomID string, c *Client) *Room {
 	b.join(kind, roomID, c)
 	return b.lookupRoomForTest(kind, roomID)
+}
+
+// LeaveForTest removes c from its room the way a closed connection does,
+// so a consumer package's test can drive the empty-room path (the final
+// flush, the park). Production code must not call this.
+func (b *Broker) LeaveForTest(c *Client) {
+	if room := c.room; room != nil {
+		room.remove(c)
+	}
+}
+
+// EvictIdleForTest runs the parking janitor's pass as of now. Production
+// code must not call this.
+func (b *Broker) EvictIdleForTest(now time.Time) {
+	b.evictIdle(now)
+}
+
+// OpenedFromForTest reports where the room's document came from
+// ("parked", "checkpoint", "seed", "relay"), or "" for no such room.
+func (b *Broker) OpenedFromForTest(kind, id string) string {
+	room := b.lookupRoomForTest(kind, id)
+	if room == nil {
+		return ""
+	}
+	return room.openedFrom
 }

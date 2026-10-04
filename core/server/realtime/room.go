@@ -2,8 +2,9 @@ package realtime
 
 import (
 	"bytes"
-	"fmt"
+	"context"
 	"sync"
+	"time"
 
 	"tinycld.org/core/logging"
 )
@@ -42,77 +43,180 @@ type Room struct {
 	// edit silently unpersisted and sync served from nothing. Broker.join
 	// retries until removeRoom frees the key, then builds a fresh room.
 	draining bool
-	// nextSeq is the per-room monotonic seq counter for journal
-	// Append calls. After construction it is mutated only by route
-	// while holding r.mu. During newRoom it is written without the
-	// lock — safe because the Room pointer has not yet been published
-	// to the broker map. Starts at 0 and is incremented before each
-	// append; the first appended seq is 1. After a successful Replay
-	// on room bootstrap, nextSeq becomes max(replayedSeq) so
-	// subsequent appends continue past what's already in the journal.
-	nextSeq int64
-	members map[*Client]struct{}
+	// epoch names the document incarnation serverDoc holds. Minted when the
+	// document was seeded from the derived source and carried across every
+	// park, reopen and checkpoint of that same document; sent to each client
+	// in its hello so a client can tell a rebuilt document from a reopened
+	// one. Written once in newRoom, read afterwards.
+	epoch int64
+	// openedFrom records where serverDoc's content came from, for logs and
+	// tests: "parked", "checkpoint", "seed" or "relay".
+	openedFrom string
+	members    map[*Client]struct{}
 }
 
-func newRoom(b *Broker, key roomKey, opts RoomKindOptions) *Room {
+func newRoom(b *Broker, key roomKey, opts RoomKindOptions, parked *parkedDoc) *Room {
 	r := &Room{
-		broker:  b,
-		key:     key,
-		opts:    opts,
-		members: map[*Client]struct{}{},
+		broker:     b,
+		key:        key,
+		opts:       opts,
+		members:    map[*Client]struct{}{},
+		openedFrom: "relay",
 	}
-	if opts.RuntimeProvider != nil {
-		handle, err := opts.RuntimeProvider.NewDoc(key.id)
-		if err != nil {
-			// Construction failure falls back to pure-relay
-			// behavior: clients can still join and fan out frames
-			// among themselves; only the server-side mirror (and
-			// therefore persistence) is disabled for this room.
-			log.Error(
-				"DocRuntime.NewDoc failed; falling back to pure relay",
-				"kind", key.kind, "roomID", key.id, "err", err,
-			)
-		} else {
-			r.serverDoc = handle
-			if opts.Journal != nil {
-				// Fold any previously-journaled updates into the
-				// freshly-bootstrapped Y.Doc. The bootstrap hook
-				// (e.g. text's makeDocxBootstrap) has already seeded
-				// the doc from the durable snapshot; Replay then
-				// applies edits the server accepted but never
-				// snapshotted. Order matters: snapshot first, WAL
-				// second. If Replay fails partway, we keep the
-				// room as-is (partial state) and log — better than
-				// refusing the connection on a transient PB error.
-				//
-				// The closure advances nextSeq BEFORE attempting
-				// ApplyUpdate so the in-memory counter always
-				// reflects the durable journal's high-water mark,
-				// not the doc's last-successful-apply. An apply
-				// failure leaves a gap in the Y.Doc but preserves
-				// the unique-seq invariant for subsequent appends.
-				replayErr := opts.Journal.Replay(key.kind, key.id, func(seq int64, update []byte) error {
-					if seq > r.nextSeq {
-						r.nextSeq = seq
-					}
-					if applyErr := r.serverDoc.ApplyUpdate(update); applyErr != nil {
-						return applyErr
-					}
-					return nil
-				})
-				if replayErr != nil {
-					log.Error(
-						"journal replay failed; room continues with partial state",
-						"kind", key.kind, "roomID", key.id, "err", replayErr,
-					)
-				}
-			}
+	if opts.RuntimeProvider == nil {
+		if parked != nil {
+			// The kind lost its runtime between park and reopen (a test
+			// re-registered it). Nothing can use the document now.
+			parked.close(key)
+		}
+		return r
+	}
+	var floor int64
+	if parked != nil {
+		if r.adoptParked(parked) {
 			if opts.OnRoomCreate != nil {
-				opts.OnRoomCreate(key.id, handle, r)
+				opts.OnRoomCreate(key.id, r.serverDoc, r)
+			}
+			return r
+		}
+		// A client may still hold the parked incarnation; the new epoch
+		// must differ from it even inside the same millisecond.
+		floor = parked.epoch
+	}
+	handle, err := opts.RuntimeProvider.NewDoc(key.id)
+	if err != nil {
+		// Construction failure falls back to pure-relay
+		// behavior: clients can still join and fan out frames
+		// among themselves; only the server-side mirror (and
+		// therefore persistence) is disabled for this room.
+		log.Error(
+			"DocRuntime.NewDoc failed; falling back to pure relay",
+			"kind", key.kind, "roomID", key.id, "err", err,
+		)
+		return r
+	}
+	handle, restored := r.openDoc(handle, floor)
+	if handle == nil {
+		return r
+	}
+	r.serverDoc = handle
+	if opts.OnRoomCreate != nil {
+		opts.OnRoomCreate(key.id, handle, r)
+	}
+	if restored && opts.OnDocUpdate != nil {
+		// A checkpoint may hold edits a failed flush never wrote to the
+		// derived file. Marking the room dirty gets them there on the
+		// normal save schedule; for a checkpoint that matched the file it
+		// costs one export.
+		opts.OnDocUpdate(key.id)
+	}
+	return r
+}
+
+// adoptParked reuses a parked document when the derived source still has
+// the fingerprint the document was parked under. Reports false when the
+// parked document was stale and has been closed, so the caller builds and
+// seeds a fresh one.
+func (r *Room) adoptParked(p *parkedDoc) bool {
+	fp, err := r.opts.Fingerprint(r.key.id)
+	if err == nil && fp == p.fingerprint {
+		r.serverDoc = p.handle
+		r.epoch = p.epoch
+		r.openedFrom = "parked"
+		log.Info("room reopened from its parked document",
+			"kind", r.key.kind, "roomID", r.key.id, "epoch", r.epoch)
+		return true
+	}
+	if err != nil {
+		log.Warn("fingerprint failed; dropping the parked document",
+			"kind", r.key.kind, "roomID", r.key.id, "err", err)
+	} else {
+		log.Info("source changed while the document was parked; re-seeding",
+			"kind", r.key.kind, "roomID", r.key.id)
+	}
+	p.close(r.key)
+	if r.opts.Checkpoints != nil {
+		if err := r.opts.Checkpoints.Delete(r.key.kind, r.key.id); err != nil {
+			log.Warn("checkpoint delete failed", "kind", r.key.kind, "roomID", r.key.id, "err", err)
+		}
+	}
+	return false
+}
+
+// openDoc gives a fresh handle its content: the stored checkpoint when its
+// fingerprint still matches the derived source, else a seed from that
+// source under a new epoch above floor and above any stored one. Returns
+// the handle to use (a replacement when a failed checkpoint apply tainted
+// the first one; nil when even that failed) and whether the content came
+// from a checkpoint.
+func (r *Room) openDoc(handle DocHandle, floor int64) (DocHandle, bool) {
+	var (
+		previous = floor
+		found    bool
+		cp       Checkpoint
+		fp       string
+	)
+	if r.opts.Checkpoints != nil && r.opts.Fingerprint != nil {
+		var err error
+		fp, err = r.opts.Fingerprint(r.key.id)
+		if err != nil {
+			log.Warn("fingerprint failed; the room will be seeded",
+				"kind", r.key.kind, "roomID", r.key.id, "err", err)
+		} else {
+			cp, found, err = r.opts.Checkpoints.Load(r.key.kind, r.key.id)
+			if err != nil {
+				log.Error("checkpoint load failed; the room will be seeded",
+					"kind", r.key.kind, "roomID", r.key.id, "err", err)
+				found = false
+			}
+		}
+		if found {
+			previous = max(previous, cp.Epoch)
+			if cp.Fingerprint == fp {
+				if restoreCheckpoint(handle, cp.State) {
+					r.epoch = cp.Epoch
+					r.openedFrom = "checkpoint"
+					log.Info("room opened from its checkpoint",
+						"kind", r.key.kind, "roomID", r.key.id, "epoch", r.epoch, "bytes", len(cp.State))
+					return handle, true
+				}
+				// The apply may have left part of the state behind; a
+				// seed on top of it would duplicate content.
+				log.Error("checkpoint did not apply cleanly; re-seeding on a fresh document",
+					"kind", r.key.kind, "roomID", r.key.id)
+				closeHandle(r.key, handle)
+				var err error
+				handle, err = r.opts.RuntimeProvider.NewDoc(r.key.id)
+				if err != nil {
+					log.Error("DocRuntime.NewDoc failed after a bad checkpoint; falling back to pure relay",
+						"kind", r.key.kind, "roomID", r.key.id, "err", err)
+					return nil, false
+				}
+			} else {
+				log.Info("source changed since the checkpoint; re-seeding",
+					"kind", r.key.kind, "roomID", r.key.id)
+			}
+			if err := r.opts.Checkpoints.Delete(r.key.kind, r.key.id); err != nil {
+				log.Warn("checkpoint delete failed", "kind", r.key.kind, "roomID", r.key.id, "err", err)
 			}
 		}
 	}
-	return r
+	if err := r.opts.RuntimeProvider.Seed(context.Background(), r.key.id, handle); err != nil {
+		log.Warn("seed failed; room continues with what the seed wrote",
+			"kind", r.key.kind, "roomID", r.key.id, "err", err)
+	}
+	r.epoch = MintEpoch(previous)
+	r.openedFrom = "seed"
+	return handle, false
+}
+
+// DocEpoch names the incarnation of this room's server-side document, or
+// 0 for a pure-relay room.
+func (r *Room) DocEpoch() int64 {
+	if r.serverDoc == nil {
+		return 0
+	}
+	return r.epoch
 }
 
 // add admits a client, reporting whether the room accepted it. A false
@@ -175,15 +279,40 @@ func (r *Room) remove(c *Client) {
 			r.opts.OnEmpty(r.key.id)
 		}
 		if r.serverDoc != nil {
-			if err := r.serverDoc.Close(); err != nil {
-				log.Warn(
-					"DocHandle.Close failed",
-					"kind", r.key.kind, "roomID", r.key.id, "err", err,
-				)
-			}
+			r.releaseDoc()
 			r.serverDoc = nil
 		}
 		r.broker.removeRoom(r.key)
+	}
+}
+
+// releaseDoc parks the server document for a later reopen when the kind
+// keeps checkpoints, and closes it otherwise. The fingerprint is read now,
+// after OnEmpty's final flush, so it names the file that flush wrote.
+func (r *Room) releaseDoc() {
+	if r.opts.Checkpoints != nil && r.opts.Fingerprint != nil {
+		fp, err := r.opts.Fingerprint(r.key.id)
+		if err == nil {
+			r.broker.park(r.key, &parkedDoc{
+				handle:      r.serverDoc,
+				epoch:       r.epoch,
+				fingerprint: fp,
+				parkedAt:    time.Now(),
+				opts:        r.opts,
+			})
+			return
+		}
+		log.Warn("fingerprint failed; closing the document instead of parking it",
+			"kind", r.key.kind, "roomID", r.key.id, "err", err)
+	}
+	closeHandle(r.key, r.serverDoc)
+}
+
+// closeHandle closes a server document and logs a failure; the broker has
+// nothing better to do with one.
+func closeHandle(key roomKey, handle DocHandle) {
+	if err := handle.Close(); err != nil {
+		log.Warn("DocHandle.Close failed", "kind", key.kind, "roomID", key.id, "err", err)
 	}
 }
 
@@ -284,45 +413,6 @@ func (r *Room) route(from *Client, frame []byte) {
 				return
 			}
 		}
-		// appendedSeq holds the seq that was minted and durably
-		// appended for THIS frame, captured at append-time. It stays
-		// 0 when no append occurred (Journal nil, serverDoc nil, or
-		// the append failed and was rolled back). The OnDocUpdateSeq
-		// hook below gates on appendedSeq > 0 so we never report a
-		// seq that wasn't actually journaled by this call.
-		var appendedSeq int64
-		// Journal first: durably record the update before applying
-		// it server-side or fanning out. A failed append rejects
-		// the frame entirely — the sender's local Y.Doc retains
-		// the edit, and a successful future update re-propagates.
-		// This is the SIGKILL-survives invariant.
-		//
-		// Note on ordering: only seq minting is serialized under r.mu.
-		// Append, ApplyUpdate, and fanOut run outside the lock, so under
-		// concurrent route calls peers may observe updates fanned out in
-		// non-seq order. This is correct: Yjs updates are CRDT-commutative,
-		// and Replay sorts by seq, so the durable state and the in-memory
-		// Y.Doc converge regardless of inter-goroutine interleaving.
-		if r.opts.Journal != nil && r.serverDoc != nil {
-			r.mu.Lock()
-			r.nextSeq++
-			seq := r.nextSeq
-			r.mu.Unlock()
-			if err := r.opts.Journal.Append(r.key.kind, r.key.id, seq, payload); err != nil {
-				log.Warn(
-					"journal append failed; dropping MsgDocUpdate",
-					"kind", r.key.kind, "roomID", r.key.id, "seq", seq, "err", err,
-				)
-				// Roll back the seq so the next attempt reuses it.
-				r.mu.Lock()
-				if r.nextSeq == seq {
-					r.nextSeq--
-				}
-				r.mu.Unlock()
-				return
-			}
-			appendedSeq = seq
-		}
 		// Apply to the server-side mirror first so a malformed update
 		// fails fast and we don't fan out a corrupt frame to peers.
 		// If no server mirror is configured, the broker is in pure-
@@ -342,9 +432,6 @@ func (r *Room) route(from *Client, frame []byte) {
 		}
 		if r.opts.OnDocUpdateContent != nil {
 			r.opts.OnDocUpdateContent(r.key.id, from, payload)
-		}
-		if r.opts.OnDocUpdateSeq != nil && appendedSeq > 0 {
-			r.opts.OnDocUpdateSeq(r.key.id, appendedSeq)
 		}
 	case MsgAwarenessUpdate:
 		r.fanOut(from, frame)
@@ -758,10 +845,10 @@ func (r *Room) PublishServerSlot(payload []byte) {
 }
 
 // PublishDocUpdate broadcasts a server-originated Yjs update to every
-// member of the room and journals it (so it survives restart-replay).
-// The frame uses serverSlotID as its sender prefix and MsgDocUpdate as
-// its type, so clients integrate it into their Y.Doc the same way they
-// integrate any other update.
+// member of the room and marks the room dirty, so the save schedule
+// carries the change to the derived file. The frame uses serverSlotID as
+// its sender prefix and MsgDocUpdate as its type, so clients integrate it
+// into their Y.Doc the same way they integrate any other update.
 //
 // Skips:
 //   - UpdateContentValidator — the validator's purpose is to reject
@@ -772,41 +859,13 @@ func (r *Room) PublishServerSlot(payload []byte) {
 //     of that mutation); re-applying would be a no-op via Yjs's
 //     idempotency, but skipping saves the cycle.
 //
-// Journal append happens BEFORE fan-out, mirroring the inbound
-// MsgDocUpdate path: if Append fails we log and DROP the broadcast so
-// the in-memory and durable views stay consistent. Same fail-fast
-// contract as the inbound branch.
-//
-// Used by consumers (text Phase 3a) that need to write authorship /
-// activity metadata into the live Y.Doc and have peers converge to
-// the same state.
-//
-// Returns nil on success or empty payload; returns wrapped journal-
-// append error so the caller can react to broadcast failures (e.g.
-// avoid marking state as "committed" when it wasn't).
+// Used by consumers (text's authorship stamper and edit events) that
+// write metadata into the live Y.Doc and need peers to converge on it.
+// Returns nil; the error result stays so a caller's handling of a
+// broadcast failure keeps compiling should one become possible again.
 func (r *Room) PublishDocUpdate(payload []byte) error {
 	if len(payload) == 0 {
 		return nil
-	}
-	if r.opts.Journal != nil {
-		r.mu.Lock()
-		r.nextSeq++
-		seq := r.nextSeq
-		r.mu.Unlock()
-		if err := r.opts.Journal.Append(r.key.kind, r.key.id, seq, payload); err != nil {
-			// Roll back the seq so the next attempt reuses it —
-			// matches the inbound MsgDocUpdate rollback pattern.
-			r.mu.Lock()
-			if r.nextSeq == seq {
-				r.nextSeq--
-			}
-			r.mu.Unlock()
-			log.Warn(
-				"PublishDocUpdate journal append failed; dropping",
-				"kind", r.key.kind, "roomID", r.key.id, "seq", seq, "err", err,
-			)
-			return fmt.Errorf("realtime: PublishDocUpdate journal append failed: %w", err)
-		}
 	}
 	frame := make([]byte, frameOverhead+len(payload))
 	copy(frame[:clientIDLen], serverSlotID[:])
@@ -815,5 +874,8 @@ func (r *Room) PublishDocUpdate(payload []byte) error {
 	// fanOut(nil, frame) — passing nil as `from` excludes nobody;
 	// every member receives the frame.
 	r.fanOut(nil, frame)
+	if r.opts.OnDocUpdate != nil {
+		r.opts.OnDocUpdate(r.key.id)
+	}
 	return nil
 }

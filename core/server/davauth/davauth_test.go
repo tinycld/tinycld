@@ -3,6 +3,7 @@ package davauth
 import (
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -174,39 +175,47 @@ func TestAuthenticate_DisabledCostsTheSameAsWrongPassword(t *testing.T) {
 // KDF cost repeatedly. An unauthenticated client could make the server do
 // arbitrary bcrypt work just by sending a request that fans out.
 //
-// WithRequestCache settles the answer once per request. Measured rather than
-// asserted structurally: the point is the COST, so the test times it.
+// WithRequestCache settles the answer once per request. Counted rather than
+// timed: a timing ratio under a loaded test run says more about the scheduler
+// than about the cache.
+func countVerifications(t *testing.T) *atomic.Int32 {
+	t.Helper()
+	var calls atomic.Int32
+	previous := verifyCredentials
+	verifyCredentials = func(app core.App, identifier, password string) (*core.Record, error) {
+		calls.Add(1)
+		return previous(app, identifier, password)
+	}
+	t.Cleanup(func() { verifyCredentials = previous })
+	return &calls
+}
+
 func TestWithRequestCache_VerifiesOncePerRequest(t *testing.T) {
 	app := newAuthApp(t)
 	newAuthUser(t, app, "alice@example.com", "Password123!", false)
+	calls := countVerifications(t)
 
-	const calls = 8
+	const n = 8
 
 	uncachedReq := basicAuthRequest(t, "alice@example.com", "Password123!")
-	start := time.Now()
-	for i := 0; i < calls; i++ {
+	for i := 0; i < n; i++ {
 		if _, err := Authenticate(app, uncachedReq); err != nil {
 			t.Fatal(err)
 		}
 	}
-	uncached := time.Since(start)
+	if got := calls.Load(); got != n {
+		t.Fatalf("%d uncached calls verified %d times; want one each", n, got)
+	}
 
+	calls.Store(0)
 	cachedReq := WithRequestCache(basicAuthRequest(t, "alice@example.com", "Password123!"))
-	start = time.Now()
-	for i := 0; i < calls; i++ {
+	for i := 0; i < n; i++ {
 		if _, err := Authenticate(app, cachedReq); err != nil {
 			t.Fatal(err)
 		}
 	}
-	cached := time.Since(start)
-
-	if cached <= 0 || uncached <= 0 {
-		t.Skip("timer resolution too coarse to measure")
-	}
-	// N calls should cost about one verification, not N.
-	if ratio := float64(uncached) / float64(cached); ratio < float64(calls)/2 {
-		t.Fatalf("%d cached calls cost %v vs %v uncached (%.1fx): "+
-			"the request cache is not preventing repeated bcrypt", calls, cached, uncached, ratio)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("%d cached calls verified %d times; want 1", n, got)
 	}
 }
 
@@ -215,44 +224,17 @@ func TestWithRequestCache_VerifiesOncePerRequest(t *testing.T) {
 func TestWithRequestCache_CachesFailuresToo(t *testing.T) {
 	app := newAuthApp(t)
 	newAuthUser(t, app, "alice@example.com", "Password123!", false)
+	calls := countVerifications(t)
 
-	const calls = 8
-
-	// Measured as a RATIO against the same calls uncached, never as an
-	// absolute duration. bcrypt's cost is a property of the build, not of
-	// this code: under -race a single verification runs several times
-	// slower and blows through any fixed millisecond bound, failing a
-	// cache that is working perfectly. Dividing by an uncached baseline
-	// measured on the same machine cancels that out, and it is what the
-	// success-path test above already does.
+	const n = 8
 	req := WithRequestCache(basicAuthRequest(t, "alice@example.com", "wrong-password"))
-	start := time.Now()
-	for i := range calls {
+	for i := range n {
 		if _, err := Authenticate(app, req); !errors.Is(err, ErrUnauthorized) {
 			t.Fatalf("cached call %d: err = %v, want ErrUnauthorized", i, err)
 		}
 	}
-	cached := time.Since(start)
-
-	// A fresh request per call, so each one must pay its own verification.
-	start = time.Now()
-	for i := range calls {
-		fresh := WithRequestCache(basicAuthRequest(t, "alice@example.com", "wrong-password"))
-		if _, err := Authenticate(app, fresh); !errors.Is(err, ErrUnauthorized) {
-			t.Fatalf("uncached call %d: err = %v, want ErrUnauthorized", i, err)
-		}
-	}
-	uncached := time.Since(start)
-
-	if cached <= 0 || uncached <= 0 {
-		t.Skip("timer resolution too coarse to measure")
-	}
-	// N cached calls should cost about ONE verification, not N. Half the
-	// ideal ratio leaves room for scheduling noise while still failing
-	// decisively if every call is paying its own bcrypt.
-	if ratio := float64(uncached) / float64(cached); ratio < float64(calls)/2 {
-		t.Fatalf("%d failed cached calls cost %v vs %v uncached (%.1fx): "+
-			"failures are not being cached", calls, cached, uncached, ratio)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("%d failed cached calls verified %d times; want 1", n, got)
 	}
 }
 

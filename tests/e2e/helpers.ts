@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 // Route shapes come from the app's own helper so the specs can't drift from it.
 // org-routes has no runtime dependency (its only import is `import type`), so
 // it is safe to pull into Playwright's plain-Node context.
@@ -418,4 +418,43 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
 
 export async function clickSidebarItem(page: Page, label: string) {
     await page.getByText(label, { exact: true }).click()
+}
+
+/**
+ * A collaborative-document outage: the room's websocket drops and every
+ * reconnect is refused until `end()`. Drives the path a flaky network or a
+ * server restart drives, without taking the browser offline — the offline
+ * overlay would cover the editor, and the edits typed DURING the outage are
+ * the point.
+ *
+ * Install before the page opens the document. `begin()` closes the live
+ * connection with a going-away code and refuses later upgrades; `end()` lets
+ * the next reconnect through to the real server.
+ */
+export async function realtimeOutage(page: Page): Promise<{
+    begin: () => Promise<void>
+    end: () => Promise<void>
+}> {
+    let blocked = false
+    let live: { page: WebSocketRoute; server: WebSocketRoute } | null = null
+    await page.routeWebSocket(/\/api\/realtime\//, ws => {
+        if (blocked) {
+            ws.close({ code: 1001, reason: 'outage' })
+            return
+        }
+        live = { page: ws, server: ws.connectToServer() }
+    })
+    return {
+        async begin() {
+            blocked = true
+            // Both sides: an explicit close of the server route alone does not
+            // reach the page's WebSocket.
+            live?.server.close({ code: 1001, reason: 'outage' })
+            live?.page.close({ code: 1001, reason: 'outage' })
+            live = null
+        },
+        async end() {
+            blocked = false
+        },
+    }
 }

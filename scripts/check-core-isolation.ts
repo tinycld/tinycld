@@ -76,10 +76,6 @@ const ALLOWLIST: { file: string; reason: string }[] = [
         reason: 'smoke test names package scopes; should read scopes_supported from discovery',
     },
     {
-        file: 'scripts/write-workspace-root.ts',
-        reason: 'ALL_FEATURES seeds pnpm-workspace.yaml; discoverPresentMembers already finds every present member',
-    },
-    {
         file: 'core/lib/anon-identity.ts',
         reason: 'anonymous share sessions post to a drive route; the share package should register its session endpoint',
     },
@@ -88,20 +84,8 @@ const ALLOWLIST: { file: string; reason: string }[] = [
         reason: 'comment mentions target drive_items; the target collection should be registered by the package',
     },
     {
-        file: 'core/lib/contacts/use-contact-suggestions.tsx',
-        reason: 'address suggestions read the contacts collection when linked; should be a suggestion-source registry',
-    },
-    {
         file: 'core/lib/editor/use-share-visitor-role.tsx',
         reason: 'visitor roles resolve through drive_shares; same document-access registry as driveshare',
-    },
-    {
-        file: 'core/lib/proxy-image-urls.ts',
-        reason: 'remote images proxy through a mail route; the package should register the proxy',
-    },
-    {
-        file: 'core/lib/stores/takeout-import-store.ts',
-        reason: "import services are the takeout importer's targets; the store belongs to that package",
     },
     {
         file: 'core/server/blankfile/blankfile.go',
