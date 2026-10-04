@@ -207,11 +207,6 @@ export function useRealtimeRoom({
                                 'server document was rebuilt; discarding local state',
                                 { roomKind, roomID, previous, epoch }
                             )
-                            // Destroyed now, not at the rebuild's effect
-                            // cleanup: the sync reply that follows on this
-                            // socket would otherwise release edits queued
-                            // against the old document into the new one.
-                            client.destroy()
                             setDocGeneration(n => n + 1)
                         }
                     }

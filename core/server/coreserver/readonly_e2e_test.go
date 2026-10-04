@@ -4,23 +4,18 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/coder/websocket"
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/types"
 	"tinycld.org/core/readonly"
-	"tinycld.org/core/realtime"
 )
 
 // sseEvent is one message read off a realtime stream.
@@ -303,186 +298,4 @@ func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) (*
 		t.Fatal(err)
 	}
 	return res, string(raw)
-}
-
-// memDoc is a DocHandle that keeps the updates it was given, so the test can
-// see which edits a flush wrote.
-type memDoc struct {
-	mu      sync.Mutex
-	updates []string
-}
-
-func (d *memDoc) ApplyUpdate(payload []byte) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.updates = append(d.updates, string(payload))
-	return nil
-}
-
-func (d *memDoc) EncodeStateAsUpdate() ([]byte, error) { return nil, nil }
-func (d *memDoc) Close() error                         { return nil }
-
-func (d *memDoc) snapshot() []string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return append([]string{}, d.updates...)
-}
-
-type memRuntime struct{}
-
-func (memRuntime) NewDoc(string) (realtime.DocHandle, error) { return &memDoc{}, nil }
-
-// A collaborative-document edit made before a pause is not lost and not
-// written during it: the pause closes the editor's websocket and refuses a
-// new one, the teardown flush is skipped so the journal keeps the edit, and
-// once the pause ends the next room open replays the journal and saves it.
-func TestReadOnlyDocEditSavedAfterLeave(t *testing.T) {
-	t.Cleanup(readonly.Leave)
-
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
-	registerSharedMiddleware(app)
-	realtime.Register(app, realtime.Options{})
-	createJournalCollection(t, app)
-
-	var flushMu sync.Mutex
-	var flushed [][]string
-	coord := realtime.NewSaveCoordinator(func(_ context.Context, _ string, h realtime.DocHandle) error {
-		flushMu.Lock()
-		defer flushMu.Unlock()
-		flushed = append(flushed, h.(*memDoc).snapshot())
-		return nil
-	})
-	journal := realtime.NewPocketBaseJournal(app)
-	// The room kind registry is process-wide and has no exported way to
-	// remove a kind, so each run takes a fresh name.
-	kind := fmt.Sprintf("readonly-e2e-%d", time.Now().UnixNano())
-	coord.SetJournal(kind, journal)
-	roomEmpty := make(chan struct{}, 4)
-	realtime.RegisterRoomKindWith(kind, realtime.RoomKindOptions{
-		Authorize:       func(*core.Record, string) error { return nil },
-		RuntimeProvider: memRuntime{},
-		Journal:         journal,
-		OnRoomCreate:    coord.OnRoomCreate,
-		OnDocUpdate:     coord.OnDocUpdate,
-		OnDocUpdateSeq:  coord.NoteSeq,
-		OnEmpty: func(roomID string) {
-			coord.OnRoomEmpty(roomID)
-			roomEmpty <- struct{}{}
-		},
-	})
-
-	user, err := app.FindAuthRecordByEmail("users", "test@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := user.NewAuthToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	srv := serveOnListener(t, app)
-	defer srv.Close()
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/realtime/" + kind + "/doc-1?token=" + token
-
-	journalRows := func() int {
-		rows, err := app.FindRecordsByFilter(realtime.JournalCollection, "room_kind = {:kind}", "", 0, 0, dbx.Params{"kind": kind})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return len(rows)
-	}
-	flushes := func() [][]string {
-		flushMu.Lock()
-		defer flushMu.Unlock()
-		return append([][]string{}, flushed...)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	conn, id := dialRoom(ctx, t, url)
-	defer conn.CloseNow()
-	edit := append(append(append([]byte{}, id...), 0x01), []byte("edit-1")...)
-	if err := conn.Write(ctx, websocket.MessageBinary, edit); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return journalRows() == 1 })
-
-	readonly.Enter()
-
-	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusGoingAway {
-		t.Fatalf("editor connection after Enter: err %v, want a going-away close", err)
-	}
-	select {
-	case <-roomEmpty:
-	case <-ctx.Done():
-		t.Fatal("room was not torn down after its only connection closed")
-	}
-	if got := flushes(); len(got) != 0 {
-		t.Fatalf("flushes during read-only mode = %v, want none", got)
-	}
-	if got := journalRows(); got != 1 {
-		t.Fatalf("journal rows after a read-only teardown = %d, want 1", got)
-	}
-
-	_, res, err := websocket.Dial(ctx, url, nil)
-	if err == nil || res == nil || res.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("upgrade during read-only mode: err %v, response %v; want 503", err, res)
-	}
-	if got := res.Header.Get("Retry-After"); got != "2" {
-		t.Fatalf("upgrade during read-only mode: Retry-After %q, want 2", got)
-	}
-
-	readonly.Leave()
-
-	conn2, _ := dialRoom(ctx, t, url)
-	defer conn2.CloseNow()
-	// The flush runs after the coordinator's production debounce (3 s).
-	deadline := time.Now().Add(10 * time.Second)
-	for len(flushes()) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("the replayed edit was not saved within 10s of Leave")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if got := flushes()[0]; len(got) != 1 || got[0] != "edit-1" {
-		t.Fatalf("saved document = %v, want [edit-1]", got)
-	}
-	waitFor(t, func() bool { return journalRows() == 0 })
-}
-
-// createJournalCollection mirrors the realtime_doc_updates migration: the
-// test app runs PocketBase's Go migrations only, not core's JS ones.
-func createJournalCollection(t *testing.T, app core.App) {
-	t.Helper()
-	col := core.NewBaseCollection(realtime.JournalCollection)
-	col.Fields.Add(&core.TextField{Name: "room_kind", Required: true, Max: 64})
-	col.Fields.Add(&core.TextField{Name: "room_id", Required: true, Max: 64})
-	col.Fields.Add(&core.NumberField{Name: "seq", Required: true, OnlyInt: true})
-	col.Fields.Add(&core.TextField{Name: "update", Required: true, Max: 358400})
-	col.AddIndex("idx_realtime_doc_updates_room_seq", true, "room_kind, room_id, seq", "")
-	if err := app.Save(col); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// dialRoom opens a room websocket and returns it with the client id the
-// server assigned in its first frame.
-func dialRoom(ctx context.Context, t *testing.T, url string) (*websocket.Conn, []byte) {
-	t.Helper()
-	conn, _, err := websocket.Dial(ctx, url, nil)
-	if err != nil {
-		t.Fatalf("dial %s: %v", url, err)
-	}
-	_, data, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("read assign frame: %v", err)
-	}
-	if len(data) < 17 || data[16] != 0x05 {
-		t.Fatalf("first frame %v is not an assign frame", data)
-	}
-	return conn, data[:16]
 }

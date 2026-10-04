@@ -57,10 +57,9 @@ export interface RealtimeClientOptions {
     onClose?: () => void
 }
 
-// QueuedFrame is a frame the client wanted to send before it could. Most
-// frames wait only for the server-assigned ID (MSG_ASSIGN_ID); document
-// updates wait for the sync reply too, and survive a closed connection — see
-// send.
+// QueuedFrame is a frame the client wanted to send before the server
+// assigned its ID. The connect-time queue is flushed in order once
+// MSG_ASSIGN_ID arrives.
 interface QueuedFrame {
     msgType: number
     payload: Uint8Array
@@ -153,12 +152,7 @@ export class RealtimeClient {
             // a new one on the next MSG_ASSIGN_ID.
             this.clientID = null
             this.syncReplyReceived = false
-            // Queued document updates are edits the server has never seen,
-            // and the resync only sends the server's state to us, so they
-            // must outlive this connection and any refused reconnects (a
-            // server in read-only mode refuses them for a while). Queued
-            // awareness is a stale snapshot and is dropped.
-            this.pendingFrames = this.pendingFrames.filter(q => q.msgType === MSG_DOC_UPDATE)
+            this.pendingFrames = []
             this.opts.onClose?.()
             if (this.destroyed) return
             this.scheduleReconnect()
@@ -203,26 +197,11 @@ export class RealtimeClient {
         // drained the moment MSG_ASSIGN_ID arrives. Without queueing,
         // any awareness/doc update fired between WS-open and
         // ID-assignment would be silently lost.
-        //
-        // Document updates also wait for the sync reply. The server's
-        // hello, which can report that it replaced the document (see
-        // useRealtimeRoom's docEpochOf), arrives before that reply, so an
-        // edit made against the old document is never sent into the new
-        // one: the room destroys this client first.
-        const waitsForSync = msgType === MSG_DOC_UPDATE && !this.syncReplyReceived
-        if (this.clientID == null || waitsForSync) {
+        if (this.clientID == null) {
             this.pendingFrames.push({ msgType, payload })
             return
         }
         this.sendNow(msgType, payload)
-    }
-
-    private flushQueuedDocUpdates(): void {
-        const queued = this.pendingFrames
-        this.pendingFrames = queued.filter(q => q.msgType !== MSG_DOC_UPDATE)
-        for (const q of queued) {
-            if (q.msgType === MSG_DOC_UPDATE) this.sendNow(q.msgType, q.payload)
-        }
     }
 
     private sendNow(msgType: number, payload: Uint8Array): void {
@@ -238,9 +217,6 @@ export class RealtimeClient {
     }
 
     private onFrame(frame: Uint8Array): void {
-        // A frame can still arrive after destroy; acting on it could send
-        // queued edits into a document this client was discarded from.
-        if (this.destroyed) return
         if (frame.length < FRAME_OVERHEAD) return
         const senderID = frame.subarray(0, CLIENT_ID_LEN)
         const msgType = frame[CLIENT_ID_LEN]
@@ -268,9 +244,9 @@ export class RealtimeClient {
                 this.sendNow(MSG_AWARENESS_HELLO, encodeVarUint(this.opts.awareness.clientID))
 
                 const queued = this.pendingFrames
-                this.pendingFrames = queued.filter(q => q.msgType === MSG_DOC_UPDATE)
+                this.pendingFrames = []
                 for (const q of queued) {
-                    if (q.msgType !== MSG_DOC_UPDATE) this.sendNow(q.msgType, q.payload)
+                    this.sendNow(q.msgType, q.payload)
                 }
 
                 const enc = encoding.createEncoder()
@@ -356,7 +332,6 @@ export class RealtimeClient {
                 }
                 if (!this.syncReplyReceived) {
                     this.syncReplyReceived = true
-                    this.flushQueuedDocUpdates()
                     this.opts.onSyncReply?.(hadPeer)
                 }
                 break
