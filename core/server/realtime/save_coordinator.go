@@ -2,13 +2,21 @@ package realtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/getsentry/sentry-go"
+
+	"tinycld.org/core/readonly"
 )
+
+// ErrReadOnly is what FlushNow returns while the server is read-only: the
+// flush writes, and a caller that needs the stored file current (a copy, an
+// export) must not read a file the pause will not let us update.
+var ErrReadOnly = errors.New("realtime: server is read-only")
 
 // Default trigger-policy intervals. Tests construct a coordinator
 // with shorter values to keep their wall-clock cost down.
@@ -124,6 +132,12 @@ type roomSaver struct {
 	resaveQueued bool
 	failures     int
 
+	// readOnlyDeferrals counts the flushes deferred in a row because the
+	// server is read-only. It picks the next deferral's backoff and is kept
+	// apart from failures: a deferral is expected, not a failed save, and
+	// must not move the room toward giving up.
+	readOnlyDeferrals int
+
 	// closed flips true the moment OnRoomEmpty's synchronous flush
 	// returns. After that, no more save attempts may be scheduled
 	// for this room (the broker is releasing the DocHandle).
@@ -208,19 +222,23 @@ func (c *SaveCoordinator) OnDocUpdate(driveItemID string) {
 	}
 
 	now := time.Now()
-	if !rs.dirty {
-		rs.dirty = true
-		rs.firstDirtyAt = now
-		// Arm the ceiling timer on the first edit of a clean
-		// cycle. The debounce timer is reset on every edit; the
-		// ceiling fires unconditionally after ceilingEvery so a
-		// constant typist still gets a save.
+	// Arm the ceiling timer on the first edit of a clean cycle. The
+	// debounce timer is reset on every edit; the ceiling fires
+	// unconditionally after ceilingEvery so a constant typist still gets
+	// a save. Also armed when a room is dirty with no ceiling: a room left
+	// dirty by a failed or deferred save has none, and without one a
+	// constant typist would keep resetting the debounce and never save.
+	if !rs.dirty || rs.ceilingTimer == nil {
 		if rs.ceilingTimer != nil {
 			rs.ceilingTimer.Stop()
 		}
 		rs.ceilingTimer = time.AfterFunc(c.ceilingEvery, func() {
 			c.triggerSave(driveItemID, "ceiling")
 		})
+	}
+	if !rs.dirty {
+		rs.dirty = true
+		rs.firstDirtyAt = now
 	}
 	// Reset debounce on every edit.
 	if rs.debounceTimer != nil {
@@ -288,6 +306,15 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	handle := rs.handle
 	rs.mu.Unlock()
 
+	if wasDirty && readonly.Active() {
+		// The flush writes. The broker parks the document with these
+		// edits in it, and Suspend has already stored its state for the
+		// case where this process is replaced.
+		c.logger.Info("realtime: teardown save skipped: read-only; the parked document keeps the edits",
+			"driveItemID", driveItemID)
+		wasDirty = false
+	}
+
 	if !wasDirty {
 		// Nothing to save; mark closed and return immediately.
 		rs.mu.Lock()
@@ -350,6 +377,12 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 		rs.mu.Unlock()
 		return
 	}
+	if readonly.Active() {
+		c.deferForReadOnly(driveItemID, rs)
+		rs.mu.Unlock()
+		return
+	}
+	rs.readOnlyDeferrals = 0
 	rs.saveInFlight = true
 	rs.dirty = false
 	if rs.debounceTimer != nil {
@@ -434,6 +467,30 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 	}
 }
 
+// deferForReadOnly re-arms the room's save for later, without flushing,
+// because the flush writes. The room stays dirty and the document keeps
+// the edits, so nothing is lost while the save waits. Logged once per
+// pause at Info: a deferral is expected, so it is neither a failure nor a
+// warning. Caller holds rs.mu.
+func (c *SaveCoordinator) deferForReadOnly(driveItemID string, rs *roomSaver) {
+	backoff := c.backoff(rs.readOnlyDeferrals)
+	if rs.readOnlyDeferrals == 0 {
+		c.logger.Info("realtime: save deferred: read-only",
+			"driveItemID", driveItemID, "retryIn", backoff)
+	}
+	rs.readOnlyDeferrals++
+	if rs.debounceTimer != nil {
+		rs.debounceTimer.Stop()
+	}
+	if rs.ceilingTimer != nil {
+		rs.ceilingTimer.Stop()
+		rs.ceilingTimer = nil
+	}
+	rs.debounceTimer = time.AfterFunc(backoff, func() {
+		c.triggerSave(driveItemID, "read-only retry")
+	})
+}
+
 // FlushNow runs a synchronous flush for the room identified by
 // driveItemID and returns only once the flush has completed (or failed).
 // Unlike the timer-driven triggerSave, it ignores the debounce/ceiling
@@ -442,11 +499,50 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 // and "Make a copy", which copy the stored drive_items.file).
 //
 // If the room is not open (no live editor since the last flush), the
-// stored blob is already current, so this is a no-op success. If a
-// timer-driven save is already in flight for the room, FlushNow waits
+// stored blob is already current, so this is a no-op success. While the
+// server is read-only it returns ErrReadOnly without flushing.
+func (c *SaveCoordinator) FlushNow(driveItemID string) error {
+	if readonly.Active() {
+		return ErrReadOnly
+	}
+	return c.flushRoom(context.Background(), driveItemID, false)
+}
+
+// FlushDirty flushes every dirty room now and returns the errors joined.
+// It ignores read-only mode: the broker's Suspend calls it from inside the
+// pause's own entry, so the stored file is current before the state is
+// checkpointed. Rooms flush concurrently, bounded by ctx.
+func (c *SaveCoordinator) FlushDirty(ctx context.Context) error {
+	c.mu.Lock()
+	ids := make([]string, 0, len(c.rooms))
+	for id := range c.rooms {
+		ids = append(ids, id)
+	}
+	c.mu.Unlock()
+
+	errs := make([]error, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = c.flushRoom(ctx, id, true)
+		}()
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+// flushRoom claims the room's in-flight slot and runs one flush. With
+// onlyIfDirty set, a room that is clean once the slot is claimed (a save
+// in flight just cleaned it) is left alone.
+//
+// If a timer-driven save is already in flight for the room, this waits
 // for it to finish rather than running a second concurrent flush — the
 // coordinator never invokes FlushFn for the same room twice in parallel.
-func (c *SaveCoordinator) FlushNow(driveItemID string) error {
+// It spins with a short sleep rather than a condition variable to keep
+// the existing lock discipline; flushes are infrequent and brief.
+func (c *SaveCoordinator) flushRoom(ctx context.Context, driveItemID string, onlyIfDirty bool) error {
 	c.mu.Lock()
 	rs := c.rooms[driveItemID]
 	c.mu.Unlock()
@@ -455,12 +551,6 @@ func (c *SaveCoordinator) FlushNow(driveItemID string) error {
 		// current state to durable storage. Nothing to do.
 		return nil
 	}
-
-	// Wait out any in-flight timer-driven save, then claim the in-flight
-	// slot ourselves so a concurrent triggerSave coalesces behind us
-	// instead of racing the same FlushFn. Spin with a short sleep rather
-	// than a condition variable to keep the existing lock discipline —
-	// flushes are infrequent and brief.
 	for {
 		rs.mu.Lock()
 		if rs.closed {
@@ -469,22 +559,29 @@ func (c *SaveCoordinator) FlushNow(driveItemID string) error {
 		}
 		if rs.saveInFlight {
 			rs.mu.Unlock()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			time.Sleep(5 * time.Millisecond)
 			continue
+		}
+		if onlyIfDirty && !rs.dirty {
+			rs.mu.Unlock()
+			return nil
 		}
 		rs.saveInFlight = true
 		rs.dirty = false
 		handle := rs.handle
 		rs.mu.Unlock()
 
-		err := c.flush(context.Background(), driveItemID, handle)
+		err := c.flush(ctx, driveItemID, handle)
 
 		rs.mu.Lock()
 		rs.saveInFlight = false
 		if err != nil {
 			// Leave the room marked dirty so the normal retry path picks
-			// it up; FlushNow itself doesn't retry — it reports the error
-			// to its caller, who decides whether to proceed.
+			// it up; this path doesn't retry — it reports the error to its
+			// caller, who decides whether to proceed.
 			rs.dirty = true
 		}
 		rs.mu.Unlock()
