@@ -110,6 +110,30 @@ func SetFilesForTest(fs map[string]*os.File) (restore func()) {
 	}
 }
 
+// init makes every inherited fd close-on-exec as the process starts. The fds
+// arrive without it (that is how they survived the exec into this process),
+// so until it is set every process this one starts (go build, pnpm, git)
+// inherits them too and keeps the ports open after this process exits. The
+// lookup functions parse the fds on their first call, which may come after
+// such a start, so the flag cannot wait for them.
+func init() {
+	markInheritedCloseOnExec()
+}
+
+// markInheritedCloseOnExec sets the flag on the fds the environment names,
+// checked as parseEnv checks them but without logging, because logging is
+// not set up yet when init runs. Setting the flag on an fd the process does
+// not use only keeps it from a child, so a wrong count cannot do harm.
+func markInheritedCloseOnExec() {
+	n, err := strconv.Atoi(os.Getenv(EnvFDs))
+	if err != nil || n <= 0 || len(strings.Split(os.Getenv(EnvFDNames), ":")) != n {
+		return
+	}
+	for fd := firstInheritedFD; fd < firstInheritedFD+n; fd++ {
+		syscall.CloseOnExec(fd)
+	}
+}
+
 // parseEnvOnce reads TINYCLD_LISTEN_FDS/TINYCLD_LISTEN_FDNAMES exactly once
 // per process and files each fd as a listener or an extra file.
 func parseEnvOnce() {
@@ -131,12 +155,6 @@ func parseEnvOnce() {
 			fd := firstInheritedFD + i
 			name := names[i]
 
-			// Set close-on-exec. The fd arrived without it (that is how it
-			// survived the exec into this process), so without this every
-			// process this one starts (go build, pnpm, git) would inherit it
-			// too and keep the port open after this process exits.
-			syscall.CloseOnExec(fd)
-
 			f := os.NewFile(uintptr(fd), name)
 			if f == nil {
 				log.Warn("inherited fd is not usable", "fd", fd, "name", name)
@@ -152,7 +170,12 @@ func parseEnvOnce() {
 				continue
 			}
 
+			// FileListener works on a dup of the fd, so the inherited fd is
+			// closed here. Left to the garbage collector, it would hold the
+			// socket open after the listener is closed, and the port would
+			// keep taking connections that nobody accepts.
 			l, err := net.FileListener(f)
+			_ = f.Close()
 			if err != nil {
 				log.Warn("inherited fd is a socket but not a listener", "fd", fd, "name", name, "error", err)
 				continue

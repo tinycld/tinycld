@@ -30,6 +30,14 @@ func TestMain(m *testing.M) {
 		extraChildMain()
 		return
 	}
+	if os.Getenv("LISTENERS_TEST_CLOEXEC") == "1" {
+		cloexecChildMain()
+		return
+	}
+	if os.Getenv("LISTENERS_TEST_CLOSE") == "1" {
+		closeChildMain()
+		return
+	}
 	os.Exit(m.Run())
 }
 
@@ -110,6 +118,36 @@ func extraChildMain() {
 		os.Exit(2)
 	}
 	os.Stdout.WriteString("ok\n")
+}
+
+// cloexecChildMain starts a process of its own before it looks anything up,
+// and prints which of fds 3 and 4 that process has open. An inherited fd
+// must be close-on-exec from the start: a process that runs a command before
+// its first Inherited or ExtraFD call must not pass the port on.
+func cloexecChildMain() {
+	out, err := exec.Command("sh", "-c",
+		`for fd in 3 4; do if [ -e /dev/fd/$fd ]; then echo "$fd open"; else echo "$fd closed"; fi; done`).Output()
+	if err != nil {
+		os.Stdout.WriteString("sh: " + err.Error() + "\n")
+		os.Exit(2)
+	}
+	os.Stdout.Write(out)
+}
+
+// closeChildMain closes its inherited listener, says so, and stays alive, so
+// the parent can check that the port is no longer held by this process.
+func closeChildMain() {
+	l, ok := Inherited("acme-secure")
+	if !ok {
+		os.Stdout.WriteString("no listener\n")
+		os.Exit(2)
+	}
+	if err := l.Close(); err != nil {
+		os.Stdout.WriteString("close: " + err.Error() + "\n")
+		os.Exit(2)
+	}
+	os.Stdout.WriteString("closed\n")
+	time.Sleep(10 * time.Second)
 }
 
 // closeDups closes, at cleanup, every file set holds: AddListener keeps a
@@ -367,5 +405,76 @@ func TestExtraFDCarriesTheFileItWasGiven(t *testing.T) {
 	got, err := bufio.NewReader(parentEnd).ReadString('\n')
 	if err != nil || got != "hello over control\n" {
 		t.Fatalf("read %q, err %v from the parent's end", got, err)
+	}
+}
+
+func TestInheritedFDsAreCloseOnExecBeforeFirstUse(t *testing.T) {
+	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childEnd := os.NewFile(uintptr(fds[0]), "control-child")
+	parentEnd := os.NewFile(uintptr(fds[1]), "control-parent")
+	t.Cleanup(func() { childEnd.Close(); parentEnd.Close() })
+
+	set := &Set{}
+	if err := set.AddListener("acme-secure", l); err != nil {
+		t.Fatal(err)
+	}
+	set.AddFile("control", childEnd)
+	closeDups(t, set)
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "LISTENERS_TEST_CLOEXEC=1")
+	set.Apply(cmd)
+
+	out, err := cmd.Output()
+	if err != nil || string(out) != "3 closed\n4 closed\n" {
+		t.Fatalf("child's own child had inherited fds: %q, err %v", out, err)
+	}
+}
+
+// Closing an inherited listener must release the socket in this process at
+// once. The inherited fd itself must not stay open behind the listener
+// (until a garbage collection closes it), or the port keeps listening with
+// nobody to accept and clients wait in its backlog.
+func TestClosingAnInheritedListenerReleasesTheSocket(t *testing.T) {
+	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	set := &Set{}
+	if err := set.AddListener("acme-secure", l); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "LISTENERS_TEST_CLOSE=1")
+	set.Apply(cmd)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	// The parent's own handles go now: only the child can hold the port.
+	l.Close()
+	for _, f := range set.files {
+		f.Close()
+	}
+
+	line, _ := bufio.NewReader(out).ReadString('\n')
+	if line != "closed\n" {
+		t.Fatalf("child said %q", line)
+	}
+	if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+		c.Close()
+		t.Fatalf("%s still accepts connections after the child closed its inherited listener", addr)
 	}
 }
