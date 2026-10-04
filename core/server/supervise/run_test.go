@@ -1051,13 +1051,11 @@ func TestRunRollbackWithAnUnresolvableCurrentStartsThePreviousBuild(t *testing.T
 	assertExists(t, s.rollbackRecordPath(), false)
 }
 
-// A backup the rollback could not restore (a full disk, an I/O error) is the
-// only copy of the database from before the migration. The rollback goes on
-// without it, and must leave it armed for an operator or a later rollback,
-// although the build it names is the one rolled back from.
-func TestRunRollbackKeepsABackupItCouldNotRestore(t *testing.T) {
-	r := newTestRoot(t)
-	s := r.state()
+// failRestoreRename makes the restore step's rename over data.db fail with a
+// full disk, so RestoreBackup cannot put the backup back. The seam is put
+// back by the caller once no supervisor reads it, and at cleanup.
+func failRestoreRename(t *testing.T, s State) (undo func()) {
+	t.Helper()
 	prev := renameFile
 	renameFile = func(from, to string) error {
 		if to == s.dbPath() {
@@ -1065,9 +1063,20 @@ func TestRunRollbackKeepsABackupItCouldNotRestore(t *testing.T) {
 		}
 		return prev(from, to)
 	}
+	undo = func() { renameFile = prev }
 	// Registered before the supervisor's own cleanup, so it runs after the
 	// supervisor has stopped reading it.
-	t.Cleanup(func() { renameFile = prev })
+	t.Cleanup(undo)
+	return undo
+}
+
+// rollBackOverAnUnrestorableBackup runs a rebuild from a to b whose build b
+// fails and whose backup the rollback cannot restore, then stops the
+// supervisor.
+func (r *testRoot) rollBackOverAnUnrestorableBackup() {
+	t := r.t
+	t.Helper()
+	undo := failRestoreRename(t, r.state())
 	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "b"})
 	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_BOOT_EXIT": "1"})
 	r.point("a")
@@ -1085,12 +1094,85 @@ func TestRunRollbackKeepsABackupItCouldNotRestore(t *testing.T) {
 	if code := h.wait(20 * time.Second); code != 0 {
 		t.Fatalf("supervisor exit code = %d, want 0", code)
 	}
-	if got, armed := s.BackupArmed(); !armed || got != "b" {
-		t.Fatalf("armed backup = %q %v, want the unrestored one kept armed for b", got, armed)
+	undo()
+}
+
+// A backup the rollback could not restore (a full disk, an I/O error) is the
+// only copy of the database from before the migration. Left armed for the
+// failed build, the next rebuild would delete it, a healthy restart would
+// commit it and an unhealthy one would restore it over every newer write. So
+// the rollback moves it out of every armed path, to unrestored/<build>/,
+// with a note naming the builds.
+func TestRunRollbackKeepsABackupItCouldNotRestore(t *testing.T) {
+	r := newTestRoot(t)
+	r.rollBackOverAnUnrestorableBackup()
+
+	s := r.state()
+	if got, armed := s.BackupArmed(); armed {
+		t.Fatalf("the unrestored backup is still armed for %q", got)
 	}
-	if got := mustRead(t, s.dbBackupPath()); got != "live" {
-		t.Fatalf("data.db.backup = %q, want the pre-migration bytes", got)
+	assertExists(t, s.dbBackupPath(), false)
+	assertUnrestored(t, s, "b", "a", "live")
+	if got := mustRead(t, s.dbPath()); got != "migrated-by-b" {
+		t.Fatalf("data.db = %q, want the failed build's data, which nothing could restore", got)
 	}
+	assertRollbackRecord(t, s, "b", "a")
+}
+
+// assertUnrestored checks the copy kept in unrestored/<build>/ and its note.
+func assertUnrestored(t *testing.T, s State, build, rolledTo, data string) {
+	t.Helper()
+	if got := mustRead(t, filepath.Join(s.unrestoredDir(), build, "data.db")); got != data {
+		t.Fatalf("unrestored/%s/data.db = %q, want %q", build, got, data)
+	}
+	notes, err := s.Unrestored()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("unrestored notes = %+v, want one", notes)
+	}
+	n := notes[0]
+	if n.Build != build || n.RolledTo != rolledTo || n.At.IsZero() || n.Size != int64(len(data)) {
+		t.Fatalf("unrestored note = %+v, want build %q rolled to %q, %d bytes", n, build, rolledTo, len(data))
+	}
+	if !strings.Contains(n.RestoreError, syscall.ENOSPC.Error()) {
+		t.Fatalf("unrestored note restore error = %q, want the restore's error", n.RestoreError)
+	}
+}
+
+// A kept copy is in no armed path, so a later supervisor start neither
+// commits nor restores it, and a later successful swap commits only its own
+// backup. Each start reminds the operator that it is there.
+func TestRunUnrestoredBackupSurvivesARestartAndASwap(t *testing.T) {
+	r := newTestRoot(t)
+	r.rollBackOverAnUnrestorableBackup()
+	s := r.state()
+
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "c"})
+	r.build("c", knobs{"FAKE_NAME": "C", "FAKE_SERVE_BODY": "C"})
+	logs := readyLogs(t)
+	h := r.supervise(testOptions())
+
+	a := r.waitEvent("A", "ready", 3)
+	waitBody(t, h.addr, "A")
+	if got := mustRead(t, s.dbPath()); got != "migrated-by-b" {
+		t.Fatalf("data.db = %q after a restart, want it untouched", got)
+	}
+	assertUnrestored(t, s, "b", "a", "live")
+	reminders := logs.find(slog.LevelError, unrestoredReminder)
+	if len(reminders) != 1 || !strings.Contains(reminders[0].attrs, filepath.Join(s.unrestoredDir(), "b")) {
+		t.Fatalf("start reminders = %+v, want one error naming unrestored/b", reminders)
+	}
+
+	r.trigger(a)
+	r.waitEvent("C", "ready", 1)
+	waitBody(t, h.addr, "C")
+	waitFor(t, 5*time.Second, "the swap's backup to be committed", func() bool {
+		_, armed := s.BackupArmed()
+		return !armed
+	})
+	assertUnrestored(t, s, "b", "a", "live")
 }
 
 // readyLog follows the supervisor's "the server is ready" records by pid.
@@ -1098,6 +1180,14 @@ type readyLog struct {
 	slog.Handler
 	mu   *sync.Mutex
 	seen map[int]chan struct{}
+	recs *[]loggedRecord
+}
+
+// loggedRecord is one record the supervisor logged, its attrs as text.
+type loggedRecord struct {
+	level slog.Level
+	msg   string
+	attrs string
 }
 
 // readyLogs makes the supervisor's log report each ready it takes. The
@@ -1109,7 +1199,7 @@ func readyLogs(t *testing.T) *readyLog {
 	// Not prev's handler: wrapping slog's built-in default handler in a new
 	// default deadlocks, because that handler writes through the log package,
 	// which SetDefault points back at the new default.
-	h := &readyLog{Handler: slog.NewTextHandler(os.Stderr, nil), mu: &sync.Mutex{}, seen: map[int]chan struct{}{}}
+	h := &readyLog{Handler: slog.NewTextHandler(os.Stderr, nil), mu: &sync.Mutex{}, seen: map[int]chan struct{}{}, recs: &[]loggedRecord{}}
 	slog.SetDefault(slog.New(h))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	return h
@@ -1131,7 +1221,28 @@ func (h *readyLog) chanLocked(pid int) chan struct{} {
 	return ch
 }
 
+// find returns the records logged at level with message msg.
+func (h *readyLog) find(level slog.Level, msg string) []loggedRecord {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []loggedRecord
+	for _, r := range *h.recs {
+		if r.level == level && r.msg == msg {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func (h *readyLog) Handle(ctx context.Context, rec slog.Record) error {
+	var attrs strings.Builder
+	rec.Attrs(func(a slog.Attr) bool {
+		fmt.Fprintf(&attrs, "%s=%v ", a.Key, a.Value)
+		return true
+	})
+	h.mu.Lock()
+	*h.recs = append(*h.recs, loggedRecord{level: rec.Level, msg: rec.Message, attrs: attrs.String()})
+	h.mu.Unlock()
 	if rec.Message == "the server is ready" {
 		rec.Attrs(func(a slog.Attr) bool {
 			if a.Key != "pid" {
@@ -1152,11 +1263,11 @@ func (h *readyLog) Handle(ctx context.Context, rec slog.Record) error {
 }
 
 func (h *readyLog) WithAttrs(as []slog.Attr) slog.Handler {
-	return &readyLog{Handler: h.Handler.WithAttrs(as), mu: h.mu, seen: h.seen}
+	return &readyLog{Handler: h.Handler.WithAttrs(as), mu: h.mu, seen: h.seen, recs: h.recs}
 }
 
 func (h *readyLog) WithGroup(name string) slog.Handler {
-	return &readyLog{Handler: h.Handler.WithGroup(name), mu: h.mu, seen: h.seen}
+	return &readyLog{Handler: h.Handler.WithGroup(name), mu: h.mu, seen: h.seen, recs: h.recs}
 }
 
 func waitClosed(t *testing.T, ch <-chan struct{}, limit time.Duration, what string) {
@@ -1634,6 +1745,32 @@ func TestRunRollbackReachesSentry(t *testing.T) {
 	got := sink.with("the new build did not become ready; rolling back")
 	if len(got) != 1 || got[0].Level != "error" {
 		t.Fatalf("rollback events = %+v, want one error", got)
+	}
+}
+
+// Setting aside a backup the rollback could not restore leaves the data
+// served migrated by the failed build: an operator must hear of it.
+func TestRunUnrestoredBackupReachesSentry(t *testing.T) {
+	r := newTestRoot(t)
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "b"})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_BOOT_EXIT": "1"})
+	r.point("a")
+	sink := newSentrySink(t)
+	p := r.startFakeSupervisor(freeAddr(t), "SENTRY_DSN="+sink.dsn(), "SUPERVISE_TEST_FAIL_RESTORE=1")
+
+	r.trigger(r.waitEvent("A", "ready", 1))
+	r.waitEvent("A", "ready", 2)
+	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if code := p.wait(t, 20*time.Second); code != 0 {
+		t.Fatalf("supervisor exit code = %d, want 0", code)
+	}
+	dir := filepath.Join(r.state().unrestoredDir(), "b")
+	want := "the database backup from before build b could not be restored; it is kept in " + dir + " — the data now served was migrated by the failed build"
+	got := sink.with(want)
+	if len(got) != 1 || got[0].Level != "error" {
+		t.Fatalf("set-aside events = %+v, want one error", got)
 	}
 }
 

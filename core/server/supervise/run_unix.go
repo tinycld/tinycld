@@ -179,6 +179,7 @@ func (s *supervisor) exitFor(err error) int {
 // whether its build works, so that build must prove itself first, as the
 // entrypoint's recover_interrupted_rebuild did.
 func (s *supervisor) boot() (*child, error) {
+	s.remindUnrestored()
 	if buildID, armed := s.state.BackupArmed(); armed {
 		log.Warn("a rebuild was interrupted before its build was checked; checking it now", "build", buildID)
 		// The build being checked has not served yet; the one before it
@@ -349,16 +350,14 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 	// is no newer build to leave, and the previous build is older than the
 	// data this one migrated, so it must not start on it.
 	sameBuildFailed := failedBuild != "" && failedBuild == s.lastGoodBuild
+	// Read before RollbackCurrent changes what the previous build is.
+	rolledTo, prevErr := s.state.PreviousBuild()
 	// A current that does not resolve names no build to record, but the
 	// previous build is then the only one that can start.
 	if !sameBuildFailed && failedBuild != "" {
-		s.recordRollback(failedBuild)
+		s.recordRollback(failedBuild, rolledTo, prevErr)
 	}
 	restoreErr := s.state.RestoreBackup()
-	// A backup still armed here is one RestoreBackup could not restore. It
-	// is the only copy of the database from before the migration, so
-	// nothing below may drop it.
-	_, keptArmed := s.state.BackupArmed()
 	if sameBuildFailed {
 		// No rebuild armed a backup, so a missing one is the expected case.
 		if restoreErr != nil && !errors.Is(restoreErr, os.ErrNotExist) {
@@ -367,12 +366,16 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 		log.Error("the serving build failed to restart; starting it again", "build", failedBuild)
 	} else {
 		if restoreErr != nil {
-			log.Warn("could not restore the database backup; rolling the build back anyway (the schema may be ahead of the previous build)", "err", restoreErr)
+			s.setAsideUnrestored(rolledTo, restoreErr)
 		}
 		if err := s.state.RollbackCurrent(); err != nil {
 			log.Error("could not roll the build back; starting the current build again", "err", err)
 		}
 	}
+	// A backup still armed here is one RestoreBackup could not restore and
+	// the set-aside could not move. It is the only copy of the database from
+	// before the migration, so nothing below may drop it.
+	_, keptArmed := s.state.BackupArmed()
 
 	c, err := s.launch()
 	if err != nil {
@@ -400,18 +403,61 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 }
 
 // recordRollback leaves the next boot a note that failedBuild was rolled
-// back from. It is read before RollbackCurrent changes what the previous
-// build is. The record is only a note for the install log; failing to write
-// it must not stop the rollback.
-func (s *supervisor) recordRollback(failedBuild string) {
-	rolledTo, err := s.state.PreviousBuild()
-	if err != nil {
-		log.Warn("the rollback record names no build to roll back to", "err", err)
+// back to rolledTo (prevErr is why there is none). The record is only a
+// note for the install log; failing to write it must not stop the rollback.
+func (s *supervisor) recordRollback(failedBuild, rolledTo string, prevErr error) {
+	if prevErr != nil {
+		log.Warn("the rollback record names no build to roll back to", "err", prevErr)
 	}
 	r := RollbackRecord{Build: failedBuild, RolledTo: rolledTo, At: time.Now().UTC()}
 	if err := s.state.WriteRollbackRecord(r); err != nil {
 		log.Error("could not record the rollback for the next boot", "build", failedBuild, "err", err)
 	}
+}
+
+// setAsideUnrestored moves a backup RestoreBackup could not restore out of
+// every armed path. Left armed for the failed build, the next rebuild would
+// replace it, a healthy restart would commit it and an unhealthy one would
+// restore it over every write made since; set aside, only an operator
+// restores or removes it. A set-aside that fails leaves it armed.
+func (s *supervisor) setAsideUnrestored(rolledTo string, restoreErr error) {
+	build, armed := s.state.BackupArmed()
+	if !armed {
+		log.Warn("could not restore the database backup; rolling the build back anyway (the schema may be ahead of the previous build)", "err", restoreErr)
+		return
+	}
+	note := UnrestoredNote{Build: build, RolledTo: rolledTo, At: time.Now().UTC(), RestoreError: restoreErr.Error()}
+	if err := s.state.SetAsideUnrestored(note); err != nil {
+		log.Error("could not restore the database backup or set it aside; it stays armed for the failed build (the schema may be ahead of the previous build)", "build", build, "restoreErr", restoreErr, "err", err)
+		return
+	}
+	dir := filepath.Join(s.state.unrestoredDir(), build)
+	// The build and dir are in the message: it is what an operator reads,
+	// and the event is rare enough that a Sentry issue per build is wanted.
+	log.Error(fmt.Sprintf("the database backup from before build %s could not be restored; it is kept in %s — the data now served was migrated by the failed build", build, dir), "build", build, "rolledTo", rolledTo, "err", restoreErr)
+}
+
+// unrestoredReminder is the message each supervisor start logs while a
+// backup a rollback could not restore is kept.
+const unrestoredReminder = "a database backup a rollback could not restore is kept; only an operator restores or removes it"
+
+// remindUnrestored logs, once per start, every backup a rollback set aside,
+// so the reminder reaches Sentry until an operator deals with them.
+func (s *supervisor) remindUnrestored() {
+	notes, err := s.state.Unrestored()
+	if err != nil {
+		log.Error("could not read every kept unrestored backup", "err", err)
+	}
+	if len(notes) == 0 {
+		return
+	}
+	builds := make([]string, 0, len(notes))
+	dirs := make([]string, 0, len(notes))
+	for _, n := range notes {
+		builds = append(builds, n.Build)
+		dirs = append(dirs, filepath.Join(s.state.unrestoredDir(), n.Build))
+	}
+	log.Error(unrestoredReminder, "builds", builds, "dirs", dirs)
 }
 
 // served notes that c's build became ready (or, at boot, is the build that

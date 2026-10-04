@@ -61,6 +61,17 @@ func supervisorRole() int {
 		}
 		opts.readyTimeout = readyTimeout
 	}
+	// The restore seam lives in this process, so a test in another one
+	// asks for it by env.
+	if os.Getenv("SUPERVISE_TEST_FAIL_RESTORE") == "1" {
+		dbPath := State{Root: os.Getenv("TINYCLD_STATE_DIR")}.dbPath()
+		renameFile = func(from, to string) error {
+			if to == dbPath {
+				return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.ENOSPC}
+			}
+			return os.Rename(from, to)
+		}
+	}
 	return runWith(args, os.Getenv, opts)
 }
 

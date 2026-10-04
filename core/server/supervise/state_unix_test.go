@@ -130,3 +130,27 @@ func TestState_PromoteRelease_NewDirsTakeParentOwner(t *testing.T) {
 		}
 	}
 }
+
+// The server, which does not run as root, writes beside an unrestored note,
+// so the dirs the root supervisor makes for it and the note take the state
+// root's owner, and the copy keeps the backup's.
+func TestState_SetAsideUnrestored_TakesTheStateRootsOwner(t *testing.T) {
+	requireRoot(t)
+	s := newTestState(t)
+	armBackup(t, s, "build-9", []byte("pre-migration"))
+	for _, p := range []string{s.Root, s.dbBackupPath()} {
+		if err := os.Chown(p, otherOwner, otherOwner); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := s.SetAsideUnrestored(UnrestoredNote{Build: "build-9", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(s.unrestoredDir(), "build-9")
+	for _, p := range []string{s.unrestoredDir(), dir, filepath.Join(dir, "unrestored.json"), filepath.Join(dir, "data.db")} {
+		if uid, gid := ownerOf(t, p); uid != otherOwner || gid != otherOwner {
+			t.Fatalf("%s owner = %d:%d, want %d:%d", p, uid, gid, otherOwner, otherOwner)
+		}
+	}
+}

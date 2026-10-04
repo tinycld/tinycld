@@ -2,6 +2,7 @@ package supervise
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -442,5 +443,145 @@ func TestState_RestoreBackup_RemovesWALBeforeRename(t *testing.T) {
 	}
 	if len(leftAtRename) != 0 {
 		t.Fatalf("%v still existed when the restored file was renamed over data.db", leftAtRename)
+	}
+}
+
+// A backup the rollback could not restore leaves every armed path: it moves
+// to <Root>/unrestored/<build>/ with a note, and the marker goes, so no
+// commit, restore or rebuild finds it.
+func TestState_SetAsideUnrestored(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-9", []byte("pre-migration"))
+	mustWrite(t, s.dbPath(), "migrated-by-build-9")
+	at := time.Date(2026, 10, 4, 12, 30, 0, 0, time.UTC)
+
+	err := s.SetAsideUnrestored(UnrestoredNote{Build: "build-9", RolledTo: "build-8", At: at, RestoreError: "no space left on device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := s.unrestoredDir(), filepath.Join(s.Root, "unrestored"); got != want {
+		t.Fatalf("unrestoredDir() = %q, want %q", got, want)
+	}
+	dir := filepath.Join(s.unrestoredDir(), "build-9")
+	if got := mustRead(t, filepath.Join(dir, "data.db")); got != "pre-migration" {
+		t.Fatalf("set-aside data.db = %q, want the backup's bytes", got)
+	}
+	assertExists(t, s.dbBackupPath(), false)
+	if _, armed := s.BackupArmed(); armed {
+		t.Fatal("the backup is still armed after the set-aside")
+	}
+	if got := mustRead(t, s.dbPath()); got != "migrated-by-build-9" {
+		t.Fatalf("data.db = %q, want it untouched", got)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(mustRead(t, filepath.Join(dir, "unrestored.json"))), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"build", "rolled_to", "at", "restore_error", "size"} {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("note JSON %v has no %q field", raw, key)
+		}
+	}
+	assertNoTempFiles(t, dir)
+
+	notes, err := s.Unrestored()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := UnrestoredNote{Build: "build-9", RolledTo: "build-8", At: at, RestoreError: "no space left on device", Size: int64(len("pre-migration"))}
+	if len(notes) != 1 || notes[0] != want {
+		t.Fatalf("Unrestored() = %+v, want [%+v]", notes, want)
+	}
+}
+
+func TestState_UnrestoredNoneAndSorted(t *testing.T) {
+	s := newTestState(t)
+	notes, err := s.Unrestored()
+	if err != nil || len(notes) != 0 {
+		t.Fatalf("Unrestored() on a clean state = %+v, %v; want none", notes, err)
+	}
+
+	later := time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC)
+	earlier := later.Add(-time.Hour)
+	armBackup(t, s, "build-a", []byte("one"))
+	if err := s.SetAsideUnrestored(UnrestoredNote{Build: "build-a", At: later}); err != nil {
+		t.Fatal(err)
+	}
+	armBackup(t, s, "build-b", []byte("two"))
+	if err := s.SetAsideUnrestored(UnrestoredNote{Build: "build-b", At: earlier}); err != nil {
+		t.Fatal(err)
+	}
+	notes, err = s.Unrestored()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 2 || notes[0].Build != "build-b" || notes[1].Build != "build-a" {
+		t.Fatalf("Unrestored() = %+v, want build-b then build-a", notes)
+	}
+}
+
+// A rename that fails (another filesystem, a full disk) leaves the backup
+// armed, as it was before the set-aside existed, and writes no note.
+func TestState_SetAsideUnrestoredRenameFailureKeepsItArmed(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-9", []byte("pre-migration"))
+	prev := renameFile
+	renameFile = func(from, to string) error {
+		if from == s.dbBackupPath() {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: errors.New("invalid cross-device link")}
+		}
+		return prev(from, to)
+	}
+	t.Cleanup(func() { renameFile = prev })
+
+	if err := s.SetAsideUnrestored(UnrestoredNote{Build: "build-9", At: time.Now()}); err == nil {
+		t.Fatal("SetAsideUnrestored() should return the rename's error")
+	}
+
+	if got, armed := s.BackupArmed(); !armed || got != "build-9" {
+		t.Fatalf("armed backup = %q %v, want it kept armed for build-9", got, armed)
+	}
+	if got := mustRead(t, s.dbBackupPath()); got != "pre-migration" {
+		t.Fatalf("data.db.backup = %q, want it untouched", got)
+	}
+	notes, err := s.Unrestored()
+	if err != nil || len(notes) != 0 {
+		t.Fatalf("Unrestored() = %+v, %v; want no note for a set-aside that did not happen", notes, err)
+	}
+}
+
+// An earlier copy kept for the same build (a revert can arm a build again)
+// is never replaced: the new one stays armed instead.
+func TestState_SetAsideUnrestoredKeepsAnEarlierCopy(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-9", []byte("first"))
+	if err := s.SetAsideUnrestored(UnrestoredNote{Build: "build-9", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	armBackup(t, s, "build-9", []byte("second"))
+
+	if err := s.SetAsideUnrestored(UnrestoredNote{Build: "build-9", At: time.Now()}); err == nil {
+		t.Fatal("SetAsideUnrestored() should refuse to replace an earlier copy")
+	}
+
+	if got := mustRead(t, filepath.Join(s.unrestoredDir(), "build-9", "data.db")); got != "first" {
+		t.Fatalf("set-aside data.db = %q, want the earlier copy", got)
+	}
+	if got, armed := s.BackupArmed(); !armed || got != "build-9" {
+		t.Fatalf("armed backup = %q %v, want the second kept armed", got, armed)
+	}
+}
+
+func TestState_SetAsideUnrestoredRefusesAPathAsBuild(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "../x", []byte("pre-migration"))
+	for _, build := range []string{"", ".", "..", "../x", "a/b"} {
+		if err := s.SetAsideUnrestored(UnrestoredNote{Build: build, At: time.Now()}); err == nil {
+			t.Fatalf("SetAsideUnrestored(%q) should refuse a build that is not one path element", build)
+		}
+	}
+	if _, armed := s.BackupArmed(); !armed {
+		t.Fatal("a refused set-aside dropped the armed backup")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -56,6 +57,25 @@ type RollbackRecord struct {
 	Build    string    `json:"build"`     // the build that failed and was rolled back from
 	RolledTo string    `json:"rolled_to"` // the build serving after the rollback ("" if unknown)
 	At       time.Time `json:"at"`
+}
+
+// unrestoredDir holds the backups a rollback could not restore, one dir per
+// build: <Root>/unrestored/<build>/{data.db,unrestored.json}. It is beside
+// pb_data for the reason the rollback record is, and no armed path (commit,
+// restore, a rebuild's snapshot) names it, so nothing removes or restores a
+// copy in it automatically.
+func (s State) unrestoredDir() string { return filepath.Join(s.Root, "unrestored") }
+
+// unrestoredNoteName is the note beside each kept data.db.
+const unrestoredNoteName = "unrestored.json"
+
+// UnrestoredNote is <state>/unrestored/<build>/unrestored.json.
+type UnrestoredNote struct {
+	Build        string    `json:"build"` // the failed build the backup was armed for
+	RolledTo     string    `json:"rolled_to"`
+	At           time.Time `json:"at"`
+	RestoreError string    `json:"restore_error"`
+	Size         int64     `json:"size"` // bytes of data.db
 }
 
 // Current returns the build's tinycld dir that <Root>/current resolves to,
@@ -145,6 +165,141 @@ func (s State) WriteRollbackRecord(r RollbackRecord) (err error) {
 	}
 	log.Info("recorded the rollback for the next boot", "build", r.Build, "rolledTo", r.RolledTo)
 	return nil
+}
+
+// SetAsideUnrestored moves the armed backup to <Root>/unrestored/<build>/data.db,
+// writes the note, and removes the armed marker. note.Size is set from the
+// backup. A rename that fails leaves the backup armed (the behaviour before
+// the set-aside existed) and returns the error, and so does a copy already
+// kept for the build: an earlier copy is never replaced.
+//
+// The dir takes its parent's owner (the supervisor runs as root, the server
+// does not), so the server can write beside the note.
+func (s State) SetAsideUnrestored(note UnrestoredNote) (err error) {
+	if note.Build == "" || note.Build == "." || note.Build == ".." || filepath.Base(note.Build) != note.Build {
+		return fmt.Errorf("supervise: set aside the unrestored backup: build %q is not a build id", note.Build)
+	}
+	backupPath := s.dbBackupPath()
+	backupInfo, err := os.Stat(backupPath)
+	if err != nil {
+		return fmt.Errorf("supervise: set aside the unrestored backup: %w", err)
+	}
+	note.Size = backupInfo.Size()
+	dir := filepath.Join(s.unrestoredDir(), note.Build)
+	if err := mkdirAllOwned(dir); err != nil {
+		return fmt.Errorf("supervise: set aside the unrestored backup: %w", err)
+	}
+	dataPath := filepath.Join(dir, "data.db")
+	notePath := filepath.Join(dir, unrestoredNoteName)
+	for _, p := range []string{dataPath, notePath} {
+		_, err := os.Lstat(p)
+		if err == nil {
+			return fmt.Errorf("supervise: set aside the unrestored backup: %s is already kept", p)
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("supervise: set aside the unrestored backup: %w", err)
+		}
+	}
+	// The note is written to a temp file first, so the copy and its note
+	// appear together: a copy without a note is one no reminder names.
+	tmp, err := s.writeUnrestoredNoteTemp(dir, note)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(tmp)
+		}
+	}()
+	if err = renameFile(backupPath, dataPath); err != nil {
+		return fmt.Errorf("supervise: set aside the unrestored backup: %w", err)
+	}
+	if err = os.Rename(tmp, notePath); err != nil {
+		// Put the copy back where the armed marker says it is.
+		if backErr := renameFile(dataPath, backupPath); backErr != nil {
+			return fmt.Errorf("supervise: set aside the unrestored backup: write the note: %w (the copy is at %s and could not go back: %v)", err, dataPath, backErr)
+		}
+		return fmt.Errorf("supervise: set aside the unrestored backup: write the note: %w", err)
+	}
+	if err := removeIfExists(s.dbArmedMarkerPath()); err != nil {
+		return fmt.Errorf("supervise: set aside the unrestored backup: disarm: %w", err)
+	}
+	return nil
+}
+
+// writeUnrestoredNoteTemp writes note to a synced temp file in dir, owned
+// like dir, and returns its path.
+func (s State) writeUnrestoredNoteTemp(dir string, note UnrestoredNote) (path string, err error) {
+	data, err := json.Marshal(note)
+	if err != nil {
+		return "", fmt.Errorf("supervise: encode the unrestored note: %w", err)
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		return "", fmt.Errorf("supervise: write the unrestored note: %w", err)
+	}
+	f, err := os.CreateTemp(dir, unrestoredNoteName+".tmp-*")
+	if err != nil {
+		return "", fmt.Errorf("supervise: write the unrestored note: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			f.Close()
+			os.Remove(f.Name())
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		return "", fmt.Errorf("supervise: write the unrestored note: %w", err)
+	}
+	if err = f.Chmod(0o644); err != nil {
+		return "", fmt.Errorf("supervise: write the unrestored note: %w", err)
+	}
+	if err = f.Sync(); err != nil {
+		return "", fmt.Errorf("supervise: write the unrestored note: %w", err)
+	}
+	if err = f.Close(); err != nil {
+		return "", fmt.Errorf("supervise: write the unrestored note: %w", err)
+	}
+	if err = matchOwner(f.Name(), dirInfo); err != nil {
+		return "", fmt.Errorf("supervise: write the unrestored note: %w", err)
+	}
+	return f.Name(), nil
+}
+
+// Unrestored lists the notes present, oldest first. A dir without a note
+// is skipped; a note that cannot be read is reported in the error, beside
+// the notes that could.
+func (s State) Unrestored() ([]UnrestoredNote, error) {
+	entries, err := os.ReadDir(s.unrestoredDir())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("supervise: list the unrestored backups: %w", err)
+	}
+	var notes []UnrestoredNote
+	var errs []error
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.unrestoredDir(), e.Name(), unrestoredNoteName))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("supervise: read the unrestored note of %s: %w", e.Name(), err))
+			continue
+		}
+		var n UnrestoredNote
+		if err := json.Unmarshal(data, &n); err != nil {
+			errs = append(errs, fmt.Errorf("supervise: decode the unrestored note of %s: %w", e.Name(), err))
+			continue
+		}
+		notes = append(notes, n)
+	}
+	slices.SortFunc(notes, func(a, b UnrestoredNote) int { return a.At.Compare(b.At) })
+	return notes, errors.Join(errs...)
 }
 
 // RestoreBackup puts the armed VACUUM-INTO snapshot back as data.db and
