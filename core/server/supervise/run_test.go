@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -461,7 +462,17 @@ func waitBody(t *testing.T, addr, want string) {
 }
 
 func testOptions() options {
-	return options{readyTimeout: 20 * time.Second, drainBound: 15 * time.Second, stopBound: 3 * time.Second}
+	return options{readyTimeout: 20 * time.Second, drainBound: 15 * time.Second, stopBound: 3 * time.Second, childUser: testChildUser()}
+}
+
+// testChildUser is the user running the tests. As root, children then run
+// as root too, so a root test run needs no "tinycld" user on the host.
+func testChildUser() string {
+	u, err := user.Current()
+	if err != nil {
+		panic(fmt.Sprintf("look up the user running the tests: %v", err))
+	}
+	return u.Username
 }
 
 type harness struct {

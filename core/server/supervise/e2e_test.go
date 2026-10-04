@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -23,7 +22,6 @@ import (
 	"time"
 
 	"tinycld.org/core/listeners"
-	"tinycld.org/core/logging"
 )
 
 // The E2E tests run the supervisor in its own process, as `tinycld
@@ -46,33 +44,24 @@ const (
 )
 
 // supervisorRole is the test binary's supervisor role. It is Run, except
-// that a test may shorten the ready timeout, which Run always takes from
-// defaultOptions.
+// that children run as the user running the tests (so a root run needs no
+// "tinycld" user) and a test may shorten the ready timeout.
 func supervisorRole() int {
 	var args []string
 	if a := os.Getenv("SUPERVISE_TEST_ARGS"); a != "" {
 		args = strings.Split(a, "\n")
 	}
-	d := os.Getenv("SUPERVISE_TEST_READY_TIMEOUT")
-	if d == "" {
-		return Run(args, os.Getenv)
-	}
-	readyTimeout, err := time.ParseDuration(d)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "bad SUPERVISE_TEST_READY_TIMEOUT:", err)
-		return 2
-	}
-	logging.Install(nil)
-	sigs := make(chan os.Signal, 2)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 	opts := defaultOptions()
-	opts.readyTimeout = readyTimeout
-	s, err := newSupervisor(args, os.Getenv, opts, sigs)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "the supervisor could not start:", err)
-		return 1
+	opts.childUser = testChildUser()
+	if d := os.Getenv("SUPERVISE_TEST_READY_TIMEOUT"); d != "" {
+		readyTimeout, err := time.ParseDuration(d)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "bad SUPERVISE_TEST_READY_TIMEOUT:", err)
+			return 2
+		}
+		opts.readyTimeout = readyTimeout
 	}
-	return s.run()
+	return runWith(args, os.Getenv, opts)
 }
 
 var serverBuild struct {

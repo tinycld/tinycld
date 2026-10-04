@@ -47,8 +47,12 @@ func (s State) PromoteRelease() error {
 		return fmt.Errorf("promote release: resolve current build: %w", err)
 	}
 	releaseID, src, found, err := stagedRelease(stagingDir)
-	if err != nil || !found {
+	if err != nil {
 		return err
+	}
+	if !found {
+		log.Warn("release staging dir missing; skipping release promotion (SPA fallback will 404)", "dir", stagingDir)
+		return nil
 	}
 	return s.promote(releaseID, src)
 }
@@ -65,9 +69,14 @@ func (s State) PromoteRelease() error {
 // copy of it (the build's copyTree, cp -a, copyFile) keeps the mtime it got
 // when the release was staged.
 func (s State) PromoteReleaseIfNewer(build string) error {
-	releaseID, src, found, err := stagedRelease(filepath.Join(build, "release-staging"))
-	if err != nil || !found {
+	stagingDir := filepath.Join(build, "release-staging")
+	releaseID, src, found, err := stagedRelease(stagingDir)
+	if err != nil {
 		return err
+	}
+	if !found {
+		log.Info("the build staged no web bundle; the served one stays", "dir", stagingDir)
+		return nil
 	}
 	newer, err := s.stagedAfterCurrent(releaseID, src)
 	if err != nil {
@@ -105,13 +114,12 @@ func (s State) stagedAfterCurrent(releaseID, src string) (bool, error) {
 }
 
 // stagedRelease finds the newest staged release under stagingDir. A missing
-// staging dir is not an error (the shell logs a WARN and returns 0): found
-// is false and there is nothing to promote.
+// staging dir is not an error: found is false and there is nothing to
+// promote. Each caller logs it, since only it knows what it means.
 func stagedRelease(stagingDir string) (releaseID, src string, found bool, err error) {
 	entries, err := os.ReadDir(stagingDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Warn("release staging dir missing; skipping release promotion (SPA fallback will 404)", "dir", stagingDir)
 			return "", "", false, nil
 		}
 		return "", "", false, fmt.Errorf("promote release: read staging dir %s: %w", stagingDir, err)

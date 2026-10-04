@@ -33,12 +33,18 @@ var errNoHealthyBuild = errors.New("supervise: no build became ready")
 // `tinycld serve` child, so a new build can start beside the old one and
 // take over without a refused connection. It never opens the database.
 func Run(args []string, getenv func(string) string) int {
+	return runWith(args, getenv, defaultOptions())
+}
+
+// runWith is Run with the given options, so a test can run the whole
+// supervisor in its own process with shorter bounds or another child user.
+func runWith(args []string, getenv func(string) string, opts options) int {
 	logging.Install(nil)
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(sigs)
 
-	s, err := newSupervisor(args, getenv, defaultOptions(), sigs)
+	s, err := newSupervisor(args, getenv, opts, sigs)
 	if err != nil {
 		log.Error("the supervisor could not start", "err", err)
 		return 1
@@ -68,7 +74,7 @@ func newSupervisor(args []string, getenv func(string) string, opts options, sigs
 	if err != nil {
 		return nil, err
 	}
-	cred, home, err := childCredential()
+	cred, home, err := childCredential(opts.childUser)
 	if err != nil {
 		return nil, err
 	}

@@ -86,8 +86,8 @@ func autocertOn(v string) bool {
 	return false
 }
 
-// options are the supervisor's time bounds. They are fields rather than
-// constants so tests can shorten them.
+// options are the supervisor's time bounds and the user its children run
+// as. They are fields rather than constants so tests can change them.
 type options struct {
 	// readyTimeout is how long a new child has to send ready: the same 60 s
 	// the entrypoint's health probe allowed a cold boot that runs
@@ -99,6 +99,9 @@ type options struct {
 	// stopBound is how long a stopped child has after SIGTERM before
 	// SIGKILL.
 	stopBound time.Duration
+	// childUser is who children run as when the supervisor runs as root:
+	// the user the entrypoint's gosu dropped to.
+	childUser string
 }
 
 func defaultOptions() options {
@@ -106,5 +109,6 @@ func defaultOptions() options {
 		readyTimeout: 60 * time.Second,
 		drainBound:   ChildDrainTimeout + 10*time.Second,
 		stopBound:    10 * time.Second,
+		childUser:    "tinycld",
 	}
 }

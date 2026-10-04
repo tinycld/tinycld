@@ -21,10 +21,6 @@ import (
 	"tinycld.org/core/listeners"
 )
 
-// childUser is who children run as when the supervisor runs as root, the
-// user the entrypoint's gosu dropped to.
-const childUser = "tinycld"
-
 // controlSendTimeout bounds a write to a child's control socket, so a child
 // that stopped reading cannot stall the supervisor.
 const controlSendTimeout = 5 * time.Second
@@ -366,7 +362,7 @@ func bindTCP(addr string) (*net.TCPListener, error) {
 // childCredential returns the user children run as. As root, that is
 // childUser with its groups and home, as gosu set them; otherwise children
 // run as the supervisor's own user.
-func childCredential() (cred *syscall.Credential, home string, err error) {
+func childCredential(childUser string) (cred *syscall.Credential, home string, err error) {
 	if os.Geteuid() != 0 {
 		return nil, "", nil
 	}
