@@ -1,9 +1,12 @@
 package coreserver
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -277,6 +280,86 @@ func TestReconcileMarkerButOnlySuccessRowDeletesMarker(t *testing.T) {
 	if markerExists() {
 		t.Fatalf("marker should be deleted even when there is nothing to reconcile")
 	}
+}
+
+// A record whose build matches no row (a rollback before the installer
+// wrote one, or rows already marked) is still removed, but with a warning
+// that names the build, so a row that should have been marked can be traced.
+func TestReconcileWarnsWhenTheRecordedBuildHasNoRow(t *testing.T) {
+	app := newRollbackReconcileTestApp(t)
+	addBuildInstallLog(t, app, "todo", "success", "build-a")
+	writeRollbackMarker(t, "build-gone")
+	logs := recordLogs(t)
+
+	ReconcileRolledBackInstall(app)
+
+	if markerExists() {
+		t.Fatal("the record should be removed when nothing matches")
+	}
+	warned := logs.find(slog.LevelWarn, rolledBackNoRowsMessage)
+	if len(warned) != 1 || warned[0]["build"] != "build-gone" {
+		t.Fatalf("warnings = %+v, want one naming build-gone", warned)
+	}
+}
+
+// loggedRecords keeps every record logged through the default logger, with
+// its attrs as text.
+type loggedRecords struct {
+	slog.Handler
+	mu    *sync.Mutex
+	recs  *[]slog.Record
+	attrs []slog.Attr
+}
+
+// recordLogs swaps the global default logger, so it relies on this
+// package's tests not running in parallel; the previous one is restored at
+// cleanup.
+func recordLogs(t *testing.T) *loggedRecords {
+	t.Helper()
+	prev := slog.Default()
+	// Not prev's handler: wrapping slog's built-in default handler in a new
+	// default deadlocks, because that handler writes through the log package,
+	// which SetDefault points back at the new default.
+	h := &loggedRecords{Handler: slog.NewTextHandler(os.Stderr, nil), mu: &sync.Mutex{}, recs: &[]slog.Record{}}
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return h
+}
+
+func (h *loggedRecords) Handle(ctx context.Context, r slog.Record) error {
+	r = r.Clone()
+	r.AddAttrs(h.attrs...)
+	h.mu.Lock()
+	*h.recs = append(*h.recs, r)
+	h.mu.Unlock()
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h *loggedRecords) WithAttrs(as []slog.Attr) slog.Handler {
+	return &loggedRecords{Handler: h.Handler, mu: h.mu, recs: h.recs, attrs: append(append([]slog.Attr(nil), h.attrs...), as...)}
+}
+
+func (h *loggedRecords) WithGroup(name string) slog.Handler {
+	return &loggedRecords{Handler: h.Handler.WithGroup(name), mu: h.mu, recs: h.recs, attrs: h.attrs}
+}
+
+// find returns the attrs of each record logged at level with message msg.
+func (h *loggedRecords) find(level slog.Level, msg string) []map[string]string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []map[string]string
+	for _, r := range *h.recs {
+		if r.Level != level || r.Message != msg {
+			continue
+		}
+		attrs := map[string]string{}
+		r.Attrs(func(a slog.Attr) bool {
+			attrs[a.Key] = a.Value.String()
+			return true
+		})
+		out = append(out, attrs)
+	}
+	return out
 }
 
 func TestReconcileDefersWhenJobInFlight(t *testing.T) {

@@ -41,6 +41,10 @@ func readRollbackRecord() (build, path string, ok bool) {
 	return "", "", false
 }
 
+// rolledBackNoRowsMessage is logged when the rollback record names a build
+// that has no install-log row left to mark.
+const rolledBackNoRowsMessage = "the rollback record names a build with no install-log row to mark; removing the record"
+
 // rolledBackError is the error a rolled-back build's install-log rows carry.
 const rolledBackError = "the build failed its health check and was rolled back"
 
@@ -86,6 +90,13 @@ func ReconcileRolledBackInstall(app core.App) {
 	if fErr != nil {
 		srvLog.Warn("query for the rolled-back build's install-log rows failed, retrying next boot", "build", build, "err", fErr)
 		return
+	}
+
+	if build != "" && len(rows) == 0 {
+		// The record is removed below all the same: no later boot would find
+		// a row either. The build in the log is what traces a row that
+		// should have been marked.
+		srvLog.Warn(rolledBackNoRowsMessage, "build", build)
 	}
 
 	completed := time.Now().UTC().Format("2006-01-02 15:04:05.000Z")
