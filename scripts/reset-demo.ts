@@ -402,7 +402,8 @@ async function main() {
     // pass reads as orphaned. Running it inside wipeOwnedData would leave the
     // companion's rows behind whenever their items outlived the pass.
     const checkpointRows = await wipeOrphanedRealtimeCheckpoints(pb)
-    if (checkpointRows > 0) log(`Wiped ${checkpointRows} orphaned realtime_doc_checkpoints record(s)`)
+    if (checkpointRows > 0)
+        log(`Wiped ${checkpointRows} orphaned realtime_doc_checkpoints record(s)`)
 
     // seedForUser handles the find-or-create dance for the user and runs every
     // linked package's seed() against the demo workspace.
