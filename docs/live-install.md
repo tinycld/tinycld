@@ -213,6 +213,15 @@ process then keeps serving, read-only, until the supervisor drains it. With no
 ack within 10 s it exits 75 instead, and the supervisor handles that as a cold
 restart. In dev mode (`go run`) it only logs; you restart manually.
 
+Read-only mode (`core/server/readonly`) refuses unsafe requests to `/api/`
+with `503` and `Retry-After`. It also stops writes that do not come from a
+request: the cron scheduler skips every due job while the mode is on (core's,
+PocketBase's, a package's and a JS hook's alike; a skipped run is not made
+up), and a package's background workers check `readonly.Active()` or call
+`readonly.WaitInactive(ctx)` before each write cycle. Writes that arrive over
+a protocol other than the HTTP API (DAV, collaborative-document saves on a
+realtime connection, a package's own client protocol) are not covered yet.
+
 The control messages (`ready`, `restart`, `drain`, `restart-ack`) are permanent:
 both sides act on them whatever protocol version the sender states, because
 the supervisor is the image's own binary and its children can be newer. A

@@ -56,6 +56,7 @@ The goal is that an upstream merge touches as few of our lines as possible.
 | Cross-instance notify events are not lost on kqueue (macOS/BSD) | `core/notify_watcher_tinycld.go` | `core/notify_watcher.go`; `core/notify_watcher_test.go` fixes a race in the test |
 | `core.OnFilesystemDelete`: the storage delete hook, exported so a backup can hold deletes | `core/filesystem_hooks_tinycld.go` | — |
 | `apis.SetRedirectListener`: Serve's HTTP->HTTPS redirect server uses an injected listener instead of binding `config.HttpAddr` itself. `apis.SetRedirectServerHook`: a hook gets the redirect server and its listener before it serves, and returns the listener to serve on | `apis/serve_redirect_tinycld.go` | `apis/serve.go` (one call) |
+| `cron.Cron.SetSkip`: a function the scheduler asks before it starts each due job; it can hold the job back for that tick (core uses it to pause every cron job while the server is read-only) | `tools/cron/cron_tinycld.go` | `tools/cron/cron.go` (a `skip` field at the end of the struct; one call in `runDue`) |
 
 ### Why `core/db.go` sets `event.App = app`
 
