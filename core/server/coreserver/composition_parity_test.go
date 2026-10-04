@@ -32,7 +32,7 @@ import (
 // the divergence in the embedder's parity allowlist with a reason.
 var hostHookCounts = map[string]int{
 	"OnBootstrap":                     7,
-	"OnBootstrapClear":                1, // PocketBase's own __pbCronStop__
+	"OnBootstrapClear":                2, // PocketBase's own __pbCronStop__ and the fork's notify reload guard
 	"OnCollectionAfterCreateError":    1,
 	"OnCollectionAfterCreateSuccess":  1,
 	"OnCollectionAfterDeleteError":    1,

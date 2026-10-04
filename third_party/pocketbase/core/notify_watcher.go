@@ -48,6 +48,8 @@ func (app *BaseApp) registerNotifyWatcherHooks() {
 		Priority: -998,
 	})
 
+	app.bindNotifyClearGuard() // fork: a reload waits out, or skips, ClearBootstrap
+
 	// cleanup
 	app.OnTerminate().Bind(&hook.Handler[*TerminateEvent]{
 		Id: systemHookIdNotifyWatcher,
@@ -169,6 +171,13 @@ func createNotifyDirWatcher(app App, instanceId string, localNotifyDirPath strin
 				stopDebounceTimer()
 
 				debounceTimer = time.AfterFunc(50*time.Millisecond, func() {
+					// fork: no reload after ClearBootstrap, and none under it
+					release, ok := enterNotifyReload(app)
+					if !ok {
+						return
+					}
+					defer release()
+
 					filename := filepath.Base(event.Name)
 
 					// settings changed
