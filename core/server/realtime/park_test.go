@@ -221,8 +221,6 @@ func TestSuspendFlushesThenCheckpointsOpenAndParkedRooms(t *testing.T) {
 	parkedEpoch := parkedRoom.DocEpoch()
 	parkedRoom.remove(c)
 
-	readonly.Enter()
-	t.Cleanup(readonly.Leave)
 	f.broker.Suspend(context.Background(), "test")
 
 	if flushes.Load() != 1 || savesAtFlush.Load() != 0 {
