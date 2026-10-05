@@ -331,14 +331,12 @@ COPY --from=web-builder /ws/text/ ./text/
 COPY --from=web-builder /ws/google-takeout-import/ ./google-takeout-import/
 
 WORKDIR /ws/tinycld/server
-# Reconcile go.sum across the workspace after the full source lands. The
-# web-builder generated package_extensions.go and go.work but had no Go
-# toolchain to populate go.sum entries; `go work sync` does that now, offline
-# (module cache is warm from `go mod download` above) and only costs cycles
-# when go.work or any sibling go.mod changed. Same module-cache mount as above so
-# any new go.sum entries it fetches persist.
-RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
-    if [ -f go.work ]; then go work sync; fi
+# No `go work sync` here. The workspace build below records any checksum a
+# member go.sum lacks in go.work.sum on its own, and sync cannot run in this
+# tree: it re-enters each feature module alone, where `tinycld.org/core v0.0.0`
+# has no replace (that lives in the member's gitignored go.work) and core's
+# forked-dependency replaces do not apply, so the first feature whose go.mod
+# lags core's requirements fails with "unrecognized import path tinycld.org/core".
 
 # Build the server binary. Mount both the module cache (read) and the compiled-
 # object build cache (/root/.cache/go-build) so an unchanged-source rebuild is a
@@ -446,9 +444,9 @@ ENV CGO_ENABLED=0
 
 # The installer's `pnpm install` postinstall regenerates the schema and payload
 # types. Without these binaries it falls back to `go run` inside core/server,
-# which builds outside the go.work — and after the go-builder's `go work sync`
-# core's go.mod names versions its own go.sum lacks hashes for, so the build
-# fails with "missing go.sum entry". Same binaries web-builder uses.
+# which builds outside the go.work, where core's go.mod can name versions its
+# own go.sum lacks hashes for, so the build fails with "missing go.sum entry".
+# Same binaries web-builder uses.
 COPY --from=types-binary-builder /out/export-types /usr/local/bin/export-types
 COPY --from=types-binary-builder /out/export-payload-types /usr/local/bin/export-payload-types
 ENV TINYCLD_EXPORT_TYPES_BIN=/usr/local/bin/export-types
