@@ -37,58 +37,100 @@ import { APP_DIR, memberDir } from './paths'
 // package as fixture data is not coupling.
 //
 // The allowlist below is a debt register, not an escape hatch. Every entry
-// must still match something (the script fails when one goes stale, so the
-// list only shrinks), and every entry names the registry that should replace
-// it. Do not add to it to make a new change pass — give the package a way to
-// register whatever core needs to know instead. The oauth registry
-// (core/server/oauth/registry.go) is the pattern.
-const ALLOWLIST: { file: string; reason: string }[] = [
+// names the registry that should replace it, and the packages whose names the
+// file still carries. An entry is stale — and the script fails — when every
+// one of those packages is installed and the file no longer matches anything,
+// so the list only shrinks. Staleness is judged only against a workspace that
+// holds the packages, because a workspace without them matches nothing and
+// cannot tell cleared debt from an absent package. Do not add to this list to
+// make a new change pass — give the package a way to register whatever core
+// needs to know instead. The oauth registry (core/server/oauth/registry.go) is
+// the pattern.
+interface AllowlistEntry {
+    file: string
+    packages: string[]
+    reason: string
+}
+
+const ALLOWLIST: AllowlistEntry[] = [
     {
         file: 'core/server/driveshare/driveshare.go',
+        packages: ['drive'],
         reason: 'drive-item authorization shared by drive, text and calc; needs a core document-access registry',
     },
     {
         file: 'core/server/sharelink/sharelink.go',
+        packages: ['drive'],
         reason: 'public share links are drive-shaped; same registry as driveshare',
     },
     {
         file: 'core/server/notify/comment_mentions.go',
+        packages: ['drive'],
         reason: 'mention targets resolve through drive_items; the target collection should be registered by the package',
     },
     {
         file: 'core/lib/account.ts',
+        packages: ['calc', 'calendar', 'drive', 'text'],
         reason: 'offboarding labels per package collection; should come from offboard.RegisterReassignable',
     },
     {
         file: 'app/a/(app)/settings/audit-log.tsx',
+        packages: ['calendar', 'contacts', 'drive', 'mail'],
         reason: 'the audit filter lists package collections; should come from audit.RegisterCollection',
     },
     {
         file: 'core/file-viewer/fetch-rendered-html.ts',
+        packages: ['calc', 'text'],
         reason: 'render routes per document package; the file viewer should resolve a renderer through the package registry',
     },
     {
         file: 'scripts/reset-demo.ts',
+        packages: ['boards', 'calc', 'calendar', 'contacts', 'drive', 'mail', 'text'],
         reason: 'demo reset lists package collections; should walk the schema by the <slug>_ convention',
     },
     {
         file: 'scripts/cli-smoke.ts',
+        packages: ['boards', 'calc', 'calendar', 'contacts', 'drive', 'mail', 'text'],
         reason: 'smoke test names package scopes; should read scopes_supported from discovery',
     },
     {
+        file: 'scripts/write-workspace-root.ts',
+        packages: ['contacts'],
+        reason: 'ALL_FEATURES seeds pnpm-workspace.yaml; discoverPresentMembers already finds every present member',
+    },
+    {
         file: 'core/lib/anon-identity.ts',
+        packages: ['drive'],
         reason: 'anonymous share sessions post to a drive route; the share package should register its session endpoint',
     },
     {
         file: 'core/lib/comments/mutations.ts',
+        packages: ['drive'],
         reason: 'comment mentions target drive_items; the target collection should be registered by the package',
     },
     {
+        file: 'core/lib/contacts/use-contact-suggestions.tsx',
+        packages: ['contacts'],
+        reason: 'address suggestions read the contacts collection when linked; should be a suggestion-source registry',
+    },
+    {
         file: 'core/lib/editor/use-share-visitor-role.tsx',
+        packages: ['drive'],
         reason: 'visitor roles resolve through drive_shares; same document-access registry as driveshare',
     },
     {
+        file: 'core/lib/proxy-image-urls.ts',
+        packages: ['mail'],
+        reason: 'remote images proxy through a mail route; the package should register the proxy',
+    },
+    {
+        file: 'core/lib/stores/takeout-import-store.ts',
+        packages: ['contacts'],
+        reason: "import services are the takeout importer's targets; the store belongs to that package",
+    },
+    {
         file: 'core/server/blankfile/blankfile.go',
+        packages: ['drive'],
         reason: 'blank files attach to drive_items; same document-access registry as driveshare',
     },
 ]
@@ -206,10 +248,13 @@ async function main() {
 
     const allowed = new Map(ALLOWLIST.map(a => [a.file, a]))
     const violations = hits.filter(h => !allowed.has(h.file))
-    const stale = ALLOWLIST.filter(a => !hits.some(h => h.file === a.file))
+    const installed = new Set(slugs)
+    const stale = ALLOWLIST.filter(
+        a => a.packages.every(p => installed.has(p)) && !hits.some(h => h.file === a.file)
+    )
 
     console.log(
-        `check-core-isolation: ${slugs.length} package(s) [${slugs.join(', ')}], ${collections.length} package collection(s), ${hits.length} reference(s) in ${new Set(hits.map(h => h.file)).size} file(s), ${ALLOWLIST.length - stale.length} allowlisted`
+        `check-core-isolation: ${slugs.length} package(s) [${slugs.join(', ')}], ${collections.length} package collection(s), ${hits.length} reference(s) in ${new Set(hits.map(h => h.file)).size} file(s), ${hits.length - violations.length} allowlisted`
     )
     for (const v of violations) {
         console.error(`${v.file}:${v.line}: ${v.text}`)
