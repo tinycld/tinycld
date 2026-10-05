@@ -8,8 +8,9 @@ A self-hosted workspace alternative — Expo Router on the front, PocketBase on 
 back, every feature shipped as a separately-installable package. See
 [tinycld.org](https://tinycld.org) for the full story.
 
-This repo (`tinycld`) is the runnable **app shell**: branding,
-Expo native projects, deployment configs, the package generator, and all the heavy
+This repo (`tinycld`) is the runnable **app shell**: branding, Expo app config
+and local native modules (`expo prebuild` generates the `ios/` and `android/`
+projects), deployment configs, the package generator, and all the heavy
 runtime dependencies. It is the entrypoint for `pnpm run dev` and
 `docker pull ghcr.io/tinycld/tinycld`.
 
