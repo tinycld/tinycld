@@ -40,9 +40,13 @@ jobs:
                   path: ws/.pnpm-store
                   key: pnpm-store-${{ runner.os }}-${{ hashFiles('ws/package.json', 'ws/pnpm-workspace.yaml') }}
                   restore-keys: pnpm-store-${{ runner.os }}-
+            # pnpm 12 ships only bin/pnpm.mjs (no pnpm.cjs), and the corepack
+            # bundled with this runner's Node (0.34.2) looks for pnpm.cjs and
+            # cannot launch it. Install the corepack version that supports
+            # pnpm.mjs before enabling it.
             - name: Install (workspace root)
               working-directory: ws
-              run: corepack enable && pnpm install --no-frozen-lockfile --store-dir=.pnpm-store
+              run: npm i -g corepack@0.36.0 && corepack enable && pnpm install --no-frozen-lockfile --store-dir=.pnpm-store
             # The same action every package consumes, so core and the packages
             # cannot drift apart on audit policy.
             - name: Audit dependencies
@@ -129,5 +133,9 @@ jobs:
                   node-version-file: .node-version
             # Reads only committed files (go.mod replaces and
             # core/package-versions.json), so it needs no workspace assembly.
+            # pnpm 12 ships only bin/pnpm.mjs (no pnpm.cjs), and the corepack
+            # bundled with this runner's Node (0.34.2) looks for pnpm.cjs and
+            # cannot launch it. Install the corepack version that supports
+            # pnpm.mjs before enabling it.
             - name: Check fork review windows
-              run: corepack enable && pnpm dlx tsx scripts/check-fork-drift.ts
+              run: npm i -g corepack@0.36.0 && corepack enable && pnpm dlx tsx scripts/check-fork-drift.ts

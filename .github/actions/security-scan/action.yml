@@ -33,7 +33,7 @@ runs:
           run: |
               set -o pipefail
               pnpm audit --json --prod > /tmp/tinycld-audit-prod.json || true
-              tsx "$GITHUB_ACTION_PATH/../../../scripts/security-gate.ts" \
+              pnpm exec tsx "$GITHUB_ACTION_PATH/../../../scripts/security-gate.ts" \
                   '${{ inputs.severity }}' < /tmp/tinycld-audit-prod.json
         # A devDependency reaches neither the bundle nor the image, so blocking
         # on one produces failures that are correctly ignored — and a check
@@ -45,5 +45,5 @@ runs:
           working-directory: ${{ inputs.working-directory }}
           run: |
               pnpm audit --json --dev > /tmp/tinycld-audit-dev.json || true
-              tsx "$GITHUB_ACTION_PATH/../../../scripts/security-gate.ts" \
+              pnpm exec tsx "$GITHUB_ACTION_PATH/../../../scripts/security-gate.ts" \
                   critical < /tmp/tinycld-audit-dev.json || true
