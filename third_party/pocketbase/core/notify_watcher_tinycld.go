@@ -73,22 +73,17 @@ func enterNotifyReload(app App) (release func(), ok bool) {
 	return g.mu.RUnlock, true
 }
 
-// bindNotifyClearGuard keeps the guard's live flag in step with the app's
-// bootstrap: set once Bootstrap has opened the DB handles, cleared before
-// ClearBootstrap closes them. ClearBootstrap also waits for a notify reload in
-// progress before it closes the DB handles (see enterNotifyReload).
+// markNotifyLive is called by Bootstrap once it has opened the DB handles:
+// from then on the watcher may reload. A plain call rather than an
+// OnBootstrap handler, so the fork adds nothing to an app's hook chain.
+func markNotifyLive(app App) {
+	notifyGuardOf(app).live.Store(true)
+}
+
+// bindNotifyClearGuard makes ClearBootstrap clear the live flag and wait for a
+// notify reload in progress before it closes the DB handles (see
+// enterNotifyReload).
 func (app *BaseApp) bindNotifyClearGuard() {
-	app.OnBootstrap().Bind(&hook.Handler[*BootstrapEvent]{
-		Id: "__tinycldNotifyLive__",
-		Func: func(e *BootstrapEvent) error {
-			if err := e.Next(); err != nil {
-				return err
-			}
-			notifyGuardOf(app).live.Store(true)
-			return nil
-		},
-		Priority: -998,
-	})
 	app.OnBootstrapClear().Bind(&hook.Handler[*BootstrapEvent]{
 		Id: systemHookIdNotifyWatcher,
 		Func: func(e *BootstrapEvent) error {

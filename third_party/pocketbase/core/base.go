@@ -453,6 +453,8 @@ func (app *BaseApp) Bootstrap() error {
 		// try to cleanup the pb_data temp directory (if any)
 		_ = os.RemoveAll(filepath.Join(app.DataDir(), LocalTempDirName))
 
+		markNotifyLive(app) // fork: the notify watcher may reload from now on (notify_watcher_tinycld.go)
+
 		return nil
 	})
 
@@ -478,6 +480,8 @@ func (app *BaseApp) ClearBootstrap() error {
 	if !app.IsBootstrapped() {
 		return nil
 	}
+
+	app.waitFileDeletes() // fork: no background storage delete outlives the bootstrap (files_delete_tinycld.go)
 
 	event := &BootstrapEvent{}
 	event.App = app
@@ -1384,7 +1388,7 @@ func supportFiles(m Model) bool {
 }
 
 func (app *BaseApp) registerBaseHooks() {
-	app.bindFileDeletesDrain() // fork: ClearBootstrap waits for the background storage deletes
+	app.fileDeletes = &fileDeleteGroup{} // fork: the background storage deletes ClearBootstrap waits for (files_delete_tinycld.go)
 
 	deletePrefix := func(prefix string) error {
 		fs, err := app.NewFilesystem()
