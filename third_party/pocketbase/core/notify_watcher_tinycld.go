@@ -3,6 +3,7 @@ package core
 import (
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pocketbase/pocketbase/tools/hook"
 )
@@ -31,13 +32,28 @@ func touchNotifyFile(path string) error {
 	return os.WriteFile(path, nil, 0644)
 }
 
-// notifyGuards holds, per app, the lock that orders the notify watcher's
-// delayed reloads with ClearBootstrap (see enterNotifyReload).
-var notifyGuards sync.Map // App -> *sync.RWMutex
+// notifyGuard orders the notify watcher with the app's bootstrap. live says
+// whether the app is bootstrapped, for the watcher's goroutines: they must
+// not call app.IsBootstrapped(), which reads the DB handles that Bootstrap
+// and ClearBootstrap write with no lock. mu orders a delayed reload with
+// ClearBootstrap (see enterNotifyReload).
+type notifyGuard struct {
+	mu   sync.RWMutex
+	live atomic.Bool
+}
 
-func notifyGuardOf(app App) *sync.RWMutex {
-	g, _ := notifyGuards.LoadOrStore(app, &sync.RWMutex{})
-	return g.(*sync.RWMutex)
+// notifyGuards holds the notifyGuard of each app.
+var notifyGuards sync.Map // App -> *notifyGuard
+
+func notifyGuardOf(app App) *notifyGuard {
+	g, _ := notifyGuards.LoadOrStore(app, &notifyGuard{})
+	return g.(*notifyGuard)
+}
+
+// notifyLive reports whether app is bootstrapped. Unlike app.IsBootstrapped,
+// it is safe to call from the watcher's goroutines.
+func notifyLive(app App) bool {
+	return notifyGuardOf(app).live.Load()
 }
 
 // enterNotifyReload starts a delayed notify reload. A notify event schedules
@@ -49,23 +65,37 @@ func notifyGuardOf(app App) *sync.RWMutex {
 // ClearBootstrap waits (bindNotifyClearGuard).
 func enterNotifyReload(app App) (release func(), ok bool) {
 	g := notifyGuardOf(app)
-	g.RLock()
-	if !app.IsBootstrapped() {
-		g.RUnlock()
+	g.mu.RLock()
+	if !g.live.Load() {
+		g.mu.RUnlock()
 		return nil, false
 	}
-	return g.RUnlock, true
+	return g.mu.RUnlock, true
 }
 
-// bindNotifyClearGuard makes ClearBootstrap wait for a notify reload in
+// bindNotifyClearGuard keeps the guard's live flag in step with the app's
+// bootstrap: set once Bootstrap has opened the DB handles, cleared before
+// ClearBootstrap closes them. ClearBootstrap also waits for a notify reload in
 // progress before it closes the DB handles (see enterNotifyReload).
 func (app *BaseApp) bindNotifyClearGuard() {
+	app.OnBootstrap().Bind(&hook.Handler[*BootstrapEvent]{
+		Id: "__tinycldNotifyLive__",
+		Func: func(e *BootstrapEvent) error {
+			if err := e.Next(); err != nil {
+				return err
+			}
+			notifyGuardOf(app).live.Store(true)
+			return nil
+		},
+		Priority: -998,
+	})
 	app.OnBootstrapClear().Bind(&hook.Handler[*BootstrapEvent]{
 		Id: systemHookIdNotifyWatcher,
 		Func: func(e *BootstrapEvent) error {
 			g := notifyGuardOf(app)
-			g.Lock()
-			defer g.Unlock()
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			g.live.Store(false)
 			return e.Next()
 		},
 		Priority: -998,

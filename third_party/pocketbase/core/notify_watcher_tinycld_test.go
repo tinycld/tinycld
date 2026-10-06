@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -60,5 +61,38 @@ func TestNotifyReload_ClearBootstrapWaitsForAReloadInProgress(t *testing.T) {
 	}
 	if app.IsBootstrapped() {
 		t.Fatal("still bootstrapped after ClearBootstrap")
+	}
+}
+
+// Another instance's change reaches the watcher at any time, also while this
+// app clears its bootstrap and starts it again. The watcher must not read the
+// app's DB handles while ClearBootstrap and Bootstrap write them. Run with
+// -race: the failure is a reported data race.
+func TestNotifyWatcher_EventsDuringClearBootstrapAreRaceFree(t *testing.T) {
+	dir := t.TempDir()
+	app := NewBaseApp(BaseAppConfig{DataDir: dir})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	other := NewBaseApp(BaseAppConfig{DataDir: dir})
+	if err := other.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = other.ClearBootstrap()
+		_ = app.ClearBootstrap()
+	})
+
+	for i := range 20 {
+		col := NewBaseCollection(fmt.Sprintf("notify_race_%d", i))
+		if err := other.Save(col); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.ClearBootstrap(); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.Bootstrap(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
