@@ -6,7 +6,7 @@ import { usePickFiles } from '@tinycld/core/file-viewer/use-pick-files'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { AVATAR_COLORS, type CropRect, parseCrop, serializeCrop } from '@tinycld/core/lib/avatar'
 import {
-    avatarImageToBlob,
+    avatarUploadFile,
     type PreparedAvatarImage,
     prepareAvatarImage,
 } from '@tinycld/core/lib/avatar-upload'
@@ -82,9 +82,8 @@ function useAvatarEditor() {
 
     const uploadPhotoBytes = useMutation({
         mutationFn: async (params: PreparedAvatarImage & { crop: CropRect }) => {
-            const blob = await avatarImageToBlob(params)
             const formData = new FormData()
-            formData.append('avatar', blob, `avatar.${params.mimeType.split('/')[1] ?? 'jpg'}`)
+            formData.append('avatar', await avatarUploadFile(params, 'avatar'))
             // The user row already exists, so this must PATCH it rather than
             // create a new one — uploadRecordWithFile POSTs to the collection
             // and would create a duplicate row.

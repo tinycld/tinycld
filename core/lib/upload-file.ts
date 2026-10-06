@@ -14,3 +14,17 @@ export function uploadFileFromUri(_uri: string, _name: string, _type: string): U
 export function uploadFileUri(file: UploadFile): string {
     return URL.createObjectURL(file)
 }
+
+/**
+ * An upload part for a local URI the app made itself — e.g. a downscaled
+ * avatar's `blob:` URI — read back into a `File`. The global fetch is right
+ * here: the URI is local, never our server, so serverFetch's retry is moot.
+ */
+export async function uploadFileFromLocalUri(
+    uri: string,
+    name: string,
+    type: string
+): Promise<UploadFile> {
+    const blob = await (await fetch(uri)).blob()
+    return new File([blob], name, { type })
+}

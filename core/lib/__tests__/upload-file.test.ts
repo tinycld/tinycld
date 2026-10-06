@@ -67,3 +67,24 @@ describe('upload-file (web)', () => {
         URL.revokeObjectURL(uri)
     })
 })
+
+describe('uploadFileFromLocalUri', () => {
+    it('reads a blob: URI back into a named File on web', async () => {
+        const uri = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
+        const file = await webUploadFile.uploadFileFromLocalUri(uri, 'avatar.png', 'image/png')
+        URL.revokeObjectURL(uri)
+        expect(file.name).toBe('avatar.png')
+        expect(file.type).toBe('image/png')
+        expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes)
+    })
+
+    it('uploads the file on disk on native', async () => {
+        const file = await nativeUploadFile.uploadFileFromLocalUri(
+            'file:///cache/ImagePicker/7F3A.jpg',
+            'avatar.jpg',
+            'image/jpeg'
+        )
+        expect(file).toBeInstanceOf(ExpoFile)
+        expect(file.name).toBe('avatar.jpg')
+    })
+})

@@ -8,7 +8,7 @@ import {
 import { usePickFiles } from '@tinycld/core/file-viewer/use-pick-files'
 import { type CropRect, parseCrop, serializeCrop } from '@tinycld/core/lib/avatar'
 import {
-    avatarImageToBlob,
+    avatarUploadFile,
     type PreparedAvatarImage,
     prepareAvatarImage,
 } from '@tinycld/core/lib/avatar-upload'
@@ -89,9 +89,7 @@ function useOrgBrandingEditor() {
 
     const uploadLogoBytes = useMutation({
         mutationFn: async (params: PreparedAvatarImage & { crop: CropRect }) => {
-            const blob = await avatarImageToBlob(params)
-            const ext = params.mimeType.split('/')[1] ?? 'png'
-            const file = new File([blob], `logo.${ext}`, { type: params.mimeType })
+            const file = await avatarUploadFile(params, 'logo')
             const crop = serializeCrop(params.crop)
 
             if (branding) {

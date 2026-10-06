@@ -6,87 +6,26 @@ import {
 } from '@tinycld/core/lib/read-only-retry'
 import { pb } from '../lib/pocketbase'
 import type { PickedFile } from './picked-file'
-import { toXhrFormData } from './xhr-form-data'
-
-interface XHRUploadResult {
-    status: number
-    body: unknown
-    retryAfter: string | null
-}
-
-/** One upload attempt. Rejects only on transport failure or abort; an HTTP
- * error status resolves normally so the caller can inspect it (e.g. to
- * detect a read-only pause) before deciding whether to retry. */
-function sendFormDataOnce(params: {
-    url: string
-    formData: FormData
-    authToken: string
-    method: string
-    onProgress?: (loaded: number, total: number) => void
-    signal?: AbortSignal
-}): Promise<XHRUploadResult> {
-    const { url, formData, authToken, method, onProgress, signal } = params
-
-    return new Promise((resolve, reject) => {
-        if (signal?.aborted) {
-            reject(new DOMException('Aborted', 'AbortError'))
-            return
-        }
-
-        const xhr = new XMLHttpRequest()
-        xhr.open(method, url, true)
-        if (authToken) {
-            xhr.setRequestHeader('Authorization', authToken)
-        }
-
-        if (onProgress) {
-            xhr.upload.onprogress = e => {
-                if (e.lengthComputable) onProgress(e.loaded, e.total)
-            }
-        }
-
-        xhr.onload = () => {
-            const text = typeof xhr.response === 'string' ? xhr.response : xhr.responseText
-            let parsed: unknown = null
-            try {
-                parsed = text ? JSON.parse(text) : null
-            } catch {
-                // Non-JSON response — treat as an empty success body.
-                parsed = null
-            }
-            resolve({
-                status: xhr.status,
-                body: parsed,
-                retryAfter: xhr.getResponseHeader('Retry-After'),
-            })
-        }
-        xhr.onerror = () => reject(new TypeError('Network request failed'))
-        xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'))
-
-        signal?.addEventListener('abort', () => xhr.abort(), { once: true })
-
-        xhr.send(toXhrFormData(formData))
-    })
-}
+import { sendFormDataOnce } from './send-form-data'
 
 /**
  * Multipart upload with progress, for callers that need a progress bar.
  *
- * This is deliberately XMLHttpRequest rather than `fetch`: only XHR exposes
- * `upload.onprogress`, and the PocketBase SDK is built on fetch — so a
- * `collection.create()` with a file field cannot report how far a large upload
- * has got. React Native's XHR polyfill supports upload progress too, so the
- * one code path serves web and native.
+ * The PocketBase SDK is built on fetch, which cannot report upload progress,
+ * so a `collection.create()` with a file field cannot say how far a large
+ * upload has got. Web sends with XMLHttpRequest (`upload.onprogress`); native
+ * sends with expo-file-system's upload task, which streams the file from disk
+ * and reports progress (send-form-data.native.ts).
  *
  * Bypassing the SDK for file BYTES is the sanctioned exception to the
  * never-bypass-pbtsdb rule; every other read and write stays on pbtsdb. Drive
  * established the exception, and boards and mail now share this implementation
  * rather than each keeping a copy.
  *
- * This path never touches `fetch`, so it sits outside `pb.beforeSend`'s retry
- * wrapper (read-only-retry.ts) and must retry a briefly-unavailable server
- * itself, using the same predicate and retry budget so an upload pauses and
- * resumes the same way every other write does.
+ * This path never touches serverFetch, so it sits outside `pb.beforeSend`'s
+ * retry wrapper (read-only-retry.ts) and must retry a briefly-unavailable
+ * server itself, using the same predicate and retry budget so an upload pauses
+ * and resumes the same way every other write does.
  */
 export async function uploadFormDataWithProgress(params: {
     url: string

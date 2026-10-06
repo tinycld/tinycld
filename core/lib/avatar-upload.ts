@@ -1,6 +1,10 @@
 import type { PickedFile } from '@tinycld/core/file-viewer/picked-file'
 import { downscaleImage } from '@tinycld/core/lib/downscale-image'
-import { uploadFileUri } from '@tinycld/core/lib/upload-file'
+import {
+    type UploadFile,
+    uploadFileFromLocalUri,
+    uploadFileUri,
+} from '@tinycld/core/lib/upload-file'
 
 /**
  * A downscaled image ready to hand to `AvatarCropper` (as `imageUri`) and,
@@ -22,11 +26,13 @@ export async function prepareAvatarImage(picked: PickedFile): Promise<PreparedAv
 }
 
 /**
- * Turn a prepared image's URI back into bytes for FormData. `fetch` reads a
- * `blob:` URI on web and a local `file://` URI on native (expo/fetch), so the
- * same call works on both platforms.
+ * The prepared image as an upload part named `<baseName>.<ext>`: read back from
+ * its `blob:` URI on web, uploaded from its file on disk on native.
  */
-export async function avatarImageToBlob(image: PreparedAvatarImage): Promise<Blob> {
-    const response = await fetch(image.uri)
-    return response.blob()
+export function avatarUploadFile(
+    image: PreparedAvatarImage,
+    baseName: string
+): Promise<UploadFile> {
+    const name = `${baseName}.${image.mimeType.split('/')[1] ?? 'jpg'}`
+    return uploadFileFromLocalUri(image.uri, name, image.mimeType)
 }

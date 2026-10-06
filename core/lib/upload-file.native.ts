@@ -22,3 +22,15 @@ export function uploadFileUri(file: UploadFile): string {
     if (file instanceof File) return file.uri
     throw new Error('uploadFileUri: expected an expo-file-system File on native')
 }
+
+/**
+ * An upload part for a local URI the app made itself — e.g. a downscaled
+ * avatar. On native that URI is a file on disk, which is uploaded from there.
+ */
+export async function uploadFileFromLocalUri(
+    uri: string,
+    name: string,
+    type: string
+): Promise<UploadFile> {
+    return uploadFileFromUri(uri, name, type)
+}
