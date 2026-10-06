@@ -8,13 +8,14 @@ import { type Fetch, withReadOnlyRetry } from '@tinycld/core/lib/read-only-retry
 // `fetch` call sees the 503 once and fails where a pbtsdb-backed read or
 // write would have quietly recovered.
 //
-// On native it also encodes React Native `{ uri, name, type }` file parts
-// itself, because the native global fetch (expo/fetch) rejects them; see
-// multipart-body.ts. The encoding runs once, outside the retry, so a retried
-// upload resends the same bytes instead of reading the file again.
+// On native it also sends a one-file multipart upload through
+// expo-file-system's native uploader, which streams the file from disk; the
+// native global fetch (expo/fetch) would hold the whole body in JS memory. See
+// streamed-upload.ts. That happens inside the retry, so a retried upload
+// streams the file again.
 //
 // `globalThis.fetch` is read per call, not captured at module load, so a test
 // or polyfill that replaces it later still takes effect.
-export const serverFetch: Fetch = withNativeUploadBodies(
-    withReadOnlyRetry((url, config) => fetch(url, config))
+export const serverFetch: Fetch = withReadOnlyRetry(
+    withNativeUploadBodies((url, config) => fetch(url, config))
 )

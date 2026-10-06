@@ -101,15 +101,11 @@ afterEach(() => {
 })
 
 function pickedFile(name = 'photo.png', size = 2048): PickedFile {
-    // A real Blob, because jsdom's FormData rejects anything else. On a device
-    // `PickedFile.file` is instead an opaque `{ uri, name, type, size }` that
-    // RN's FormData polyfill accepts — the uploader never inspects it either
-    // way, so a Blob here exercises the same code path.
     return {
         name,
         type: 'image/png',
         size,
-        file: new Blob(['x'.repeat(size)], { type: 'image/png' }) as unknown as File,
+        file: new File(['x'.repeat(size)], name, { type: 'image/png' }),
     }
 }
 

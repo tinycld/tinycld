@@ -170,6 +170,13 @@ export default defineConfig({
                 find: /^expo-image-picker$/,
                 replacement: path.join(APP_DIR, 'tests', 'expo-image-picker-stub.cjs'),
             },
+            // expo-file-system is a native module that cannot load in Node. The
+            // stub keeps files in memory and records uploads, so the native
+            // upload helpers (upload-file.native.ts and friends) can be tested.
+            {
+                find: /^expo-file-system$/,
+                replacement: path.join(APP_DIR, 'tests', 'expo-file-system-stub.ts'),
+            },
             // ~/* — package source. Resolved relative to the package's own dir
             // at invocation time via the test root, so we map it dynamically below.
         ],

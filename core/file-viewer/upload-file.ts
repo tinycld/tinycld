@@ -6,6 +6,7 @@ import {
 } from '@tinycld/core/lib/read-only-retry'
 import { pb } from '../lib/pocketbase'
 import type { PickedFile } from './picked-file'
+import { toXhrFormData } from './xhr-form-data'
 
 interface XHRUploadResult {
     status: number
@@ -64,7 +65,7 @@ function sendFormDataOnce(params: {
 
         signal?.addEventListener('abort', () => xhr.abort(), { once: true })
 
-        xhr.send(formData)
+        xhr.send(toXhrFormData(formData))
     })
 }
 
@@ -135,11 +136,8 @@ export interface UploadRecordParams {
 }
 
 /**
- * Creates one record carrying one file.
- *
- * `PickedFile.file` is only a real `File` on web — on native it is a
- * `{ uri, name, type, size }` shape that RN's FormData polyfill understands.
- * It is therefore appended straight into FormData and never inspected.
+ * Creates one record carrying one file: the browser `File` on web, an
+ * expo-file-system `File` on native (see core/lib/upload-file).
  */
 export function uploadRecordWithFile(params: UploadRecordParams): Promise<unknown> {
     const { collection, fields, file, fileField = 'file', onProgress, signal } = params
