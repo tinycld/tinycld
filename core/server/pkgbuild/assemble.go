@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -369,10 +370,44 @@ func readOverrides(buildDir string) (map[string]string, error) {
 	return m, nil
 }
 
+// plainSafeYamlKey mirrors scripts/write-workspace-root.ts's
+// isPlainSafeYamlKey — the two MUST stay in sync, since this Go path and the
+// TS path must emit byte-identical overrides blocks. A YAML plain scalar
+// can't open with an indicator character (@ ` " ' | > % & * ! # , [ ] { })
+// or a `-`/`?`/`:` that reads as block syntax, must contain only word
+// characters plus `. / @ -`, and must not be a reserved word a parser would
+// coerce (true/false/null/yes/no/on/off/~) or a bare number. Quoting more
+// than strictly necessary is fine and safer; emitting an unquoted reserved
+// character is not.
+var plainSafeYamlKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_][\w./@-]*$`)
+
+var yamlReservedWords = map[string]bool{
+	"true": true, "false": true, "null": true,
+	"yes": true, "no": true, "on": true, "off": true, "~": true,
+}
+
+var yamlBareNumberPattern = regexp.MustCompile(`^-?\d+(\.\d+)?$`)
+
+func plainSafeYamlKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	if !plainSafeYamlKeyPattern.MatchString(key) {
+		return false
+	}
+	if yamlReservedWords[strings.ToLower(key)] {
+		return false
+	}
+	if yamlBareNumberPattern.MatchString(key) {
+		return false
+	}
+	return true
+}
+
 // renderOverridesBlock formats the pins as a pnpm `overrides:` YAML block,
-// sorted for a stable, diff-friendly output. A package name containing a
-// character YAML would otherwise interpret (the leading @ of a scope) is single-
-// quoted; plain names are emitted bare, matching the hand-written committed root.
+// sorted for a stable, diff-friendly output. Any key that is not a
+// plain-safe YAML scalar (see plainSafeYamlKey) is single-quoted; everything
+// else is emitted bare, matching the hand-written committed root.
 func renderOverridesBlock(overrides map[string]string) string {
 	names := make([]string, 0, len(overrides))
 	for name := range overrides {
@@ -383,8 +418,8 @@ func renderOverridesBlock(overrides map[string]string) string {
 	sb.WriteString("\noverrides:\n")
 	for _, name := range names {
 		key := name
-		if strings.HasPrefix(name, "@") {
-			key = "'" + name + "'"
+		if !plainSafeYamlKey(name) {
+			key = "'" + strings.ReplaceAll(name, "'", "''") + "'"
 		}
 		sb.WriteString(fmt.Sprintf("  %s: %s\n", key, overrides[name]))
 	}

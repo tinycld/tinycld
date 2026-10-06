@@ -214,8 +214,10 @@ message prefixes — the `pkg` attribute replaces them.
 - `pnpm run db:reset` wipes `tinycld/server/pb_data`, re-runs migrations, and seeds a test user + org. **Run this once on a fresh checkout to get something to log in with.** It prints a boxed login summary at the end (see "Logging in for local dev" below).
 - `pnpm run db:seed` seeds into the current database without wiping it; also prints the login summary.
 - `pnpm run typecheck` runs `tinycld-pkg typecheck` (tsc for this member).
-- `pnpm run checks` runs lint and typechecks (ecosystem-wide biome + app tsc).
+- `pnpm run checks` runs `lint`, `typecheck`, `check:core-isolation`, and `check:fork-drift` in sequence (ecosystem-wide biome + app tsc + the two isolation/drift guards below).
 - `pnpm run lint` (or `pnpm run lint:fix`) runs a single Biome pass over the app and every present member from the curated argument list (run it from `tinycld/`). Biome is **3-tier** (see the **Biome configuration** section below): `tinycld/biome.json` is the canonical config (`root: false`, all the rules), a minimal `root: true` config at the workspace root extends it (gitignored, written by bootstrap/generator), and a member adds its own `biome.json` only to override a rule. `pnpm run lint` walks the member dirs at their real workspace-root filesystem paths.
+- `pnpm run check:core-isolation` verifies core names no package (see "Cross-package coupling" in the root `CLAUDE.md`).
+- `pnpm run check:fork-drift` runs the fork review-window check described in **Dependency security scanning** below.
 - `pnpm run pkg:check`, `pnpm run pkg:test:unit`, `pnpm run pkg:test:e2e` run the corresponding `tinycld-pkg` command across every present member.
 - `pnpm run test:e2e` and `pnpm run test:server` cover the Playwright suite and supporting services.
    - never start or kill servers when running Playwright. It will manage it's own service and test data. If you see network errors or other issues, stop and ask for advice
@@ -374,6 +376,46 @@ Biome runs in **three tiers**, because Biome only searches *upward* for its conf
 The canonical config excludes generated artifacts — `server`, `lib/generated`, route re-exports, `core/types/pb*Schema.ts`, `pb-migrations`, `pb-hooks`, `dist`, `test-results`, and so on. **Keep that exclude list current whenever you add a new kind of generated file**, or Biome will start linting machine-owned output.
 
 **The Biome version in `tinycld/package.json` is pinned exactly (`"2.5.1"`, no `~` or `^`) — leave it that way.** CI installs with `--no-frozen-lockfile`, and it has to: bootstrap assembles a fresh workspace whose member set the lockfile cannot match. A range therefore floats to whatever patch is newest at run time, while a developer keeps whatever the lockfile pinned. Biome patches change formatting, so the two disagree — and the failure is maddening: `tinycld-pkg check` passes locally and fails in CI, on files the PR never touched, with no version stated anywhere in the error. It is not fixable by reformatting either, since the versions disagree in both directions. Upgrading Biome is fine; do it deliberately, in one commit, with the reformat it implies.
+
+## Dependency security scanning
+
+`.github/workflows/security.yml` runs on every pull request, on push to `main`, and on a weekly schedule (an advisory can be published against code that has not changed). It has four jobs, each using the one tool that can actually see its ecosystem:
+
+- **`npm-audit`** — `pnpm audit` on production npm dependencies, against a lockfile generated in CI. No lockfile is committed anywhere in the ecosystem (the workspace root is bootstrap-assembled per developer), so the job assembles `tinycld` + `core`, installs, and audits the tree that install produced.
+- **`go-vuln`** — `govulncheck` per Go module. It does reachability analysis: it reports a vulnerability only if our code can actually reach the affected symbol, not every advisory in the module graph. This is what makes it safe to block on.
+- **`image-scan`** — Trivy in `image` mode against the *runtime* stage's base image, resolved from the Dockerfile's `FROM ... AS runtime` line. `scan-type: config` was tried and rejected: it scans the Dockerfile text for misconfigurations and reports zero CVEs, because it never looks at what the base image contains.
+- **`fork-drift`** — checks review windows on the forked dependencies no scanner above can see at all. See below.
+
+### Adopting the scan in a package
+
+The shared logic is a composite action, `.github/actions/security-scan`. A package adopts it by adding one step to its own `ci.yml`, **after** `pnpm install`:
+
+```yaml
+- uses: ./ws/tinycld/.github/actions/security-scan
+  with:
+      severity: high
+      working-directory: ws
+```
+
+This matters because exposure is concentrated in the packages, not core. Measured high/critical dependency paths by member: `calc` 2738, `search-alpha` 1946, `text` 120, versus `tinycld` 118 and `core` 36. A core-only scan would miss most of the ecosystem's real exposure — each package that adopts the action audits its own tree.
+
+### Scope limits
+
+- Core's own `npm-audit` run covers only app + core production dependencies. A vulnerability reachable only from a feature package is that package's CI to find, once it adopts the action.
+- `devDependency` findings are reported (a separate, `always()` step) but never block. A dev dependency reaches neither the shipped bundle nor the runtime image.
+- `go-vuln` scans all four Go modules — `server`, `cli`, `core/server` and `core/server/backup/format`. It assembles and installs the workspace first, because `cli` and `server` cannot compile without it: `cli/cli_extensions.go` and `server/go.work` are generated by the install. `govulncheck` exits non-zero both for a reachable vulnerability and for a module it could not load, so the log is worth reading — a module that failed to build is not a module that was found clean.
+
+### Adding an ignore entry
+
+Suppress an advisory in `.github/security-ignores.yml`, under `ignores:`. Every entry needs three fields: `id` (the GHSA id), `reason`, and `expires`. CI fails the entry if it is expired, has no reason, or has no expiry — a suppression cannot quietly become permanent. Renewing one is a new pull request with a fresh reason.
+
+The file currently holds 4 real entries: `node-forge` and `braces` have no published fix at all (the advisory's `patched_versions` is null); `image-size` has a fix, but it cannot be applied while Metro's asset pipeline still calls the vulnerable, pre-2.x synchronous API.
+
+### The fork blind spot
+
+Four dependencies are invisible to every scanner above, and this is the part most likely to be missed: a Go `replace` directive removes the upstream version from the module graph entirely, and an npm dependency pinned to a bare git SHA resolves to no published version. Neither `pnpm audit` nor `govulncheck` reports these as safe — they do not report them at all. If upstream ships a security fix for one of these forks, nothing else in this workflow says so.
+
+That is what `fork-drift` exists for, and why a fully green scan is not full coverage. It cannot match an upstream advisory onto code that has since diverged, so instead of a CVE count it checks a review window: `forkReviews:` in `.github/security-ignores.yml` records who last compared a fork to upstream, and how many days that review is good for. The job fails when a window lapses, or when a new fork appears with no entry — never on vulnerability content it has no way to evaluate.
 
 ## In-app help
 - Packages contribute help via a `help/` directory of `<id>.md` files. Each file is a markdown document with a YAML frontmatter block (`title`, `summary` required; `tags: [..]` and `order: N` optional). The filename (without `.md`) is the topic ID. Declare it in `manifest.ts` with `help: { directory: 'help' }`. The generator writes `tinycld/lib/generated/package-help.ts`; topics surface in the global hub at `/a/help`, the per-package help screen, and the right-slide drawer.

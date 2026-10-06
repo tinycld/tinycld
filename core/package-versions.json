@@ -1,5 +1,5 @@
 {
-    "//": "SOURCE OF TRUTH for the ecosystem's pinned vendor versions: the framework/native/styling stack, plus EVERY native module compiled into the EAS binary even when only one feature uses it (e.g. @shopify/flash-list, the react-native-drax fork). scripts/write-workspace-root.ts transcribes these into the workspace root's pnpm `overrides:` block and package-versions.json; the Go OTA rebuild (core/server/pkgbuild) re-renders the same block from the root copy. Bump in lockstep with each native (EAS) build. Feature-specific pure-JS libraries do NOT belong here — a feature declares those itself.",
+    "//": "SOURCE OF TRUTH for the ecosystem's pinned vendor versions: the framework/native/styling stack, plus EVERY native module compiled into the EAS binary even when only one feature uses it (e.g. @shopify/flash-list, the react-native-drax fork). scripts/write-workspace-root.ts transcribes these into the workspace root's pnpm `overrides:` block and package-versions.json; the Go OTA rebuild (core/server/pkgbuild) re-renders the same block from the root copy. Bump in lockstep with each native (EAS) build. Feature-specific pure-JS libraries do NOT belong here — a feature declares those itself. A SECOND class of entry also lives here: advisory-driven floors on transitive dependencies (e.g. postcss, js-yaml) pulled in deep under expo/@expo/cli/metro/react-native-community-cli. No feature or member declares these directly, so a feature cannot 'declare it itself' — the overrides block is the only place that can express a floor on a package nothing in the tree depends on by name. These are bumped when a security advisory requires it, not in lockstep with a native build; do not read them as EAS-binary pins.",
     "expo": "55.0.26",
     "react": "19.2.0",
     "react-dom": "19.2.0",
@@ -28,5 +28,17 @@
     "@tanstack/react-db": "0.3.8",
     "@tanstack/query-db-collection": "1.2.13",
     "@tanstack/react-query": "5.101.0",
-    "react-native-drax": "github:nathanstitt/react-native-drax#bc83061aceb7eae462cecc4756b3a4c81dcd1d30"
+    "react-native-drax": "github:nathanstitt/react-native-drax#bc83061aceb7eae462cecc4756b3a4c81dcd1d30",
+    "@xmldom/xmldom": "0.9.12",
+    "browserslist": "4.28.7",
+    "minimatch@3>brace-expansion": "1.1.21",
+    "minimatch@10>brace-expansion": "5.0.12",
+    "compression": "1.8.2",
+    "joi": "17.13.7",
+    "js-yaml": "3.15.2",
+    "linkify-it": "5.0.2",
+    "nanoid": "3.3.18",
+    "postcss": "8.5.18",
+    "shell-quote": "1.11.0",
+    "source-map-js": "1.2.2"
 }

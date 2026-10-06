@@ -1,0 +1,49 @@
+name: 'tinycld dependency audit'
+description: >-
+  Audits the assembled workspace's production npm dependencies and fails on an
+  advisory at or above `severity`, unless it carries an unexpired, justified
+  entry in tinycld's .github/security-ignores.yml.
+
+  Run this AFTER `pnpm install`: no lockfile is committed anywhere in the
+  ecosystem (the workspace root is bootstrap-generated), so the resolved tree
+  this audits only exists once the install has produced it.
+
+  Every package's CI assembles `tinycld` + itself, so a package that adds this
+  step audits its OWN dependency tree. That is where the exposure is: the real
+  audit found far more high/critical paths in feature packages than in core.
+inputs:
+    severity:
+        description: 'Lowest blocking severity: moderate, high or critical.'
+        required: false
+        default: 'high'
+    working-directory:
+        description: 'The assembled workspace root, relative to the job cwd.'
+        required: false
+        default: '.'
+runs:
+    using: 'composite'
+    steps:
+        # pnpm audit exits non-zero on ANY finding at any severity, so its exit
+        # code cannot be the gate — it would make a low-severity advisory
+        # blocking. `|| true` hands the decision to security-gate.ts, whose
+        # own exit code is what fails this step.
+        - name: Audit production dependencies
+          shell: bash
+          working-directory: ${{ inputs.working-directory }}
+          run: |
+              set -o pipefail
+              pnpm audit --json --prod > /tmp/tinycld-audit-prod.json || true
+              pnpm exec tsx "$GITHUB_ACTION_PATH/../../../scripts/security-gate.ts" \
+                  '${{ inputs.severity }}' < /tmp/tinycld-audit-prod.json
+        # A devDependency reaches neither the bundle nor the image, so blocking
+        # on one produces failures that are correctly ignored — and a check
+        # that is correctly ignored teaches everyone to reach for the ignore
+        # file. Reported, never blocking.
+        - name: Report development dependencies (non-blocking)
+          if: always()
+          shell: bash
+          working-directory: ${{ inputs.working-directory }}
+          run: |
+              pnpm audit --json --dev > /tmp/tinycld-audit-dev.json || true
+              pnpm exec tsx "$GITHUB_ACTION_PATH/../../../scripts/security-gate.ts" \
+                  critical < /tmp/tinycld-audit-dev.json || true

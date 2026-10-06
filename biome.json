@@ -61,7 +61,8 @@
             "!**/test-results",
             "!**/test-results/**/*",
             "!**/webview-editor/build",
-            "!**/webview-editor/build/**/*"
+            "!**/webview-editor/build/**/*",
+            "!**/scripts/__fixtures__"
         ]
     },
     "plugins": [
