@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/pocketbase/pocketbase/tools/hook"
 )
 
@@ -40,6 +41,42 @@ func touchNotifyFile(path string) error {
 type notifyGuard struct {
 	mu   sync.RWMutex
 	live atomic.Bool
+
+	// watcher is the current bootstrap's notify watcher and loop counts its
+	// event loop, so ClearBootstrap can stop both (see stopNotifyWatcher).
+	watchMu sync.Mutex
+	watcher *fsnotify.Watcher
+	loop    *sync.WaitGroup
+}
+
+// trackNotifyWatcher records the watcher a bootstrap just started and
+// returns the WaitGroup its event loop runs under.
+func trackNotifyWatcher(app App, w *fsnotify.Watcher) *sync.WaitGroup {
+	g := notifyGuardOf(app)
+	g.watchMu.Lock()
+	defer g.watchMu.Unlock()
+	g.watcher = w
+	g.loop = &sync.WaitGroup{}
+	return g.loop
+}
+
+// stopNotifyWatcher closes the bootstrap's notify watcher and waits for its
+// event loop to return. Upstream closes a watcher only at the next Bootstrap
+// or at terminate, so every app that was bootstrapped and then cleared kept
+// a goroutine and an fsnotify descriptor for the rest of the process.
+// Closing twice is harmless: the next Bootstrap and OnTerminate still close
+// the same watcher.
+func stopNotifyWatcher(app App) {
+	g := notifyGuardOf(app)
+	g.watchMu.Lock()
+	w, loop := g.watcher, g.loop
+	g.watcher, g.loop = nil, nil
+	g.watchMu.Unlock()
+	if w == nil {
+		return
+	}
+	_ = w.Close()
+	loop.Wait()
 }
 
 // notifyGuards holds the notifyGuard of each app.
@@ -80,13 +117,16 @@ func markNotifyLive(app App) {
 	notifyGuardOf(app).live.Store(true)
 }
 
-// bindNotifyClearGuard makes ClearBootstrap clear the live flag and wait for a
-// notify reload in progress before it closes the DB handles (see
-// enterNotifyReload).
+// bindNotifyClearGuard makes ClearBootstrap stop the notify watcher, clear the
+// live flag, and wait for a notify reload in progress before it closes the DB
+// handles (see enterNotifyReload).
 func (app *BaseApp) bindNotifyClearGuard() {
 	app.OnBootstrapClear().Bind(&hook.Handler[*BootstrapEvent]{
 		Id: systemHookIdNotifyWatcher,
 		Func: func(e *BootstrapEvent) error {
+			// Before the lock: a reload the loop scheduled may be waiting on
+			// it, and the loop does not wait for that reload.
+			stopNotifyWatcher(app)
 			g := notifyGuardOf(app)
 			g.mu.Lock()
 			defer g.mu.Unlock()

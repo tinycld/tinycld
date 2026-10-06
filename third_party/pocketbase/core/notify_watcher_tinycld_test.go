@@ -2,6 +2,8 @@ package core
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -93,6 +95,58 @@ func TestNotifyWatcher_EventsDuringClearBootstrapAreRaceFree(t *testing.T) {
 		}
 		if err := app.Bootstrap(); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+// openFDs counts this process's open file descriptors, or -1 where the
+// platform does not list them.
+func openFDs() int {
+	if runtime.GOOS == "windows" {
+		return -1
+	}
+	entries, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		return -1
+	}
+	return len(entries)
+}
+
+// Each bootstrap starts a notify watcher: a goroutine and an fsnotify
+// descriptor. ClearBootstrap ends the app's bootstrap, so it must end the
+// watcher too. Otherwise every app that is bootstrapped and cleared (each
+// test's app, each tenant a router tears down) leaks both for the rest of the
+// process.
+func TestClearBootstrap_StopsTheNotifyWatcher(t *testing.T) {
+	const apps = 20
+	// Settle the runtime's own goroutines first.
+	warm := NewBaseApp(BaseAppConfig{DataDir: t.TempDir()})
+	if err := warm.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := warm.ClearBootstrap(); err != nil {
+		t.Fatal(err)
+	}
+
+	goroutinesBefore, fdsBefore := runtime.NumGoroutine(), openFDs()
+	for range apps {
+		app := NewBaseApp(BaseAppConfig{DataDir: t.TempDir()})
+		if err := app.Bootstrap(); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.ClearBootstrap(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// ClearBootstrap waits for the watcher's loop, so the counts are back on
+	// its return. The slack absorbs a goroutine another test left ending.
+	if got := runtime.NumGoroutine(); got > goroutinesBefore+apps/2 {
+		t.Fatalf("goroutines = %d after %d bootstrap/clear cycles, was %d: the notify watchers outlive ClearBootstrap", got, apps, goroutinesBefore)
+	}
+	if fdsBefore >= 0 {
+		if got := openFDs(); got > fdsBefore+apps/2 {
+			t.Fatalf("open fds = %d after %d bootstrap/clear cycles, was %d: the notify watchers outlive ClearBootstrap", got, apps, fdsBefore)
 		}
 	}
 }

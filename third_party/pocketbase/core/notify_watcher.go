@@ -212,7 +212,7 @@ func createNotifyDirWatcher(app App, instanceId string, localNotifyDirPath strin
 				}
 			}
 		}
-	})
+	}, trackNotifyWatcher(app, watcher)) // fork: ClearBootstrap stops the watcher (notify_watcher_tinycld.go)
 
 	return watcher, err
 }
