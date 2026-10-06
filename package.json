@@ -182,7 +182,7 @@
         "tailwind-merge": "^3.7.0",
         "tailwind-variants": "^0.1.20",
         "tinykeys": "^3.0.0",
-        "typescript": "~5.9.2",
+        "typescript": "~6.0.3",
         "uniwind": "^1.12.2",
         "y-protocols": "^1.0.7",
         "yjs": "^13.6.30",
