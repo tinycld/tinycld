@@ -202,6 +202,7 @@
         "local-ssl-proxy": "^2.0.5",
         "tailwindcss": "^4.2.2",
         "tsx": "^4.21.0",
-        "vitest": "^3.0.0"
+        "vitest": "^3.0.0",
+        "yaml": "^2.9.0"
     }
 }

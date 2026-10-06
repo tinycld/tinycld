@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { gate, parseAuditJson, parseIgnores } from '../security-gate'
+import { AuditInputError, gate, parseAuditJson, parseIgnores } from '../security-gate'
 
 const fixture = (name: string) =>
     fs.readFileSync(path.join(__dirname, '..', '__fixtures__', name), 'utf8')
@@ -74,6 +74,12 @@ describe('parseIgnores', () => {
         expect(valid).toEqual([])
         expect(errors).toEqual([])
     })
+
+    it('reports an error instead of throwing on malformed YAML', () => {
+        const { valid, errors } = parseIgnores('ignores: [a: b: c\n', TODAY)
+        expect(valid).toEqual([])
+        expect(errors.length).toBeGreaterThan(0)
+    })
 })
 
 describe('parseAuditJson', () => {
@@ -90,6 +96,31 @@ describe('parseAuditJson', () => {
     it('prefers the GitHub advisory id, because that is what an ignore entry names', () => {
         const findings = parseAuditJson(fixture('pnpm-audit-findings.json'))
         expect(findings.map(f => f.id)).toContain('GHSA-aaaa-aaaa-aaaa')
+    })
+
+    it('throws on empty input instead of silently reporting zero findings', () => {
+        expect(() => parseAuditJson('')).toThrow(AuditInputError)
+        expect(() => parseAuditJson('   \n')).toThrow(AuditInputError)
+    })
+
+    it('throws on non-JSON input instead of an uncaught SyntaxError', () => {
+        expect(() => parseAuditJson('not json')).toThrow(AuditInputError)
+    })
+
+    it('recognises a severity regardless of case', () => {
+        const raw = JSON.stringify({
+            advisories: {
+                1: {
+                    id: 1,
+                    github_advisory_id: 'GHSA-x',
+                    severity: 'Critical',
+                    module_name: 'm',
+                    title: 't',
+                    url: 'u',
+                },
+            },
+        })
+        expect(parseAuditJson(raw)[0].severity).toBe('critical')
     })
 })
 
@@ -115,5 +146,23 @@ describe('gate', () => {
     it('does not block anything when the audit is clean', () => {
         const result = gate(parseAuditJson(fixture('pnpm-audit-clean.json')), [], 'high')
         expect(result.blocking).toEqual([])
+    })
+
+    it('blocks an unrecognised severity rather than treating it as below every threshold', () => {
+        const raw = JSON.stringify({
+            advisories: {
+                1: {
+                    id: 1,
+                    github_advisory_id: 'GHSA-x',
+                    severity: 'catastrophic',
+                    module_name: 'm',
+                    title: 't',
+                    url: 'u',
+                },
+            },
+        })
+        const result = gate(parseAuditJson(raw), [], 'critical')
+        expect(result.blocking.map(f => f.id)).toEqual(['GHSA-x'])
+        expect(result.below).toEqual([])
     })
 })
