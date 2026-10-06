@@ -69,6 +69,7 @@ export const findGoForks = (
 
     for (const [file, contents] of Object.entries(goModContents)) {
         let inBlock = false
+        let blockOpenedAtLine = -1
         const lines = contents.split('\n')
 
         for (const [index, rawLine] of lines.entries()) {
@@ -92,6 +93,7 @@ export const findGoForks = (
 
             if (REPLACE_BLOCK_START.test(line)) {
                 inBlock = true
+                blockOpenedAtLine = lineNo
                 continue
             }
 
@@ -103,6 +105,13 @@ export const findGoForks = (
                 continue
             }
             addFork(byName, match[1], stripComment(match[2]))
+        }
+
+        // A go.mod this malformed would not compile, so this is belt-and-
+        // braces — but a parser that notices nothing when a block never
+        // closes is exactly the silent-miss shape this script exists to rule out.
+        if (inBlock) {
+            errors.push(`${file}:${blockOpenedAtLine}: replace ( block is never closed with )`)
         }
     }
 
@@ -122,9 +131,23 @@ const SEMVER_RANGE = /^[\^~]?\d|^>=|^<=|^>|^<|^\*$/
 // them resolves to a published, advisory-matchable version.
 const GITHUB_SHORTHAND = /^github:([^#]+)(?:#(.*))?$/
 const GIT_URL = /^git(?:\+https|\+ssh)?:\/\/.+$/
-const BARE_SHORTHAND = /^[\w.-]+\/[\w.-]+(?:#.*)?$/
+// A GitHub shorthand is `owner/repo` optionally followed by `#ref`: no second
+// slash, and the repo segment carries no file extension. The extension
+// exclusion is what keeps a path-like value such as `dist/index.js` from
+// being misread as `owner=dist, repo=index.js` — a false "fork" that would
+// fail the job forever until someone loosened this regex.
+const BARE_SHORTHAND = /^[\w.-]+\/[\w-]+(?:#.*)?$/
 const LOCAL_SOURCE = /^(file|link):(.+)$/
 const NPM_ALIAS = /^npm:(.+)$/
+// pnpm-internal protocols that are not forks and resolve to nothing a
+// registry scanner would miss:
+//   - workspace: / catalog: point at another workspace member or the
+//     catalog's own pin, which is itself scanned wherever it is declared.
+//   - a plain dist-tag (`latest`, `next`) still resolves to a real published
+//     version on the registry, so it is advisory-matchable — same reasoning
+//     as the npm: alias case below.
+const WORKSPACE_OR_CATALOG_PROTOCOL = /^(workspace|catalog):/
+const DIST_TAG = /^(latest|next)$/
 
 export const findNpmForks = (packageVersionsJson: string): { forks: Fork[]; errors: string[] } => {
     const pins: unknown = JSON.parse(packageVersionsJson)
@@ -141,6 +164,8 @@ export const findNpmForks = (packageVersionsJson: string): { forks: Fork[]; erro
         }
 
         if (SEMVER_RANGE.test(pin)) continue // ordinary registry pin, not a fork
+        if (WORKSPACE_OR_CATALOG_PROTOCOL.test(pin)) continue // resolved and scanned elsewhere
+        if (DIST_TAG.test(pin)) continue // resolves to a published, advisory-matchable version
 
         const githubMatch = GITHUB_SHORTHAND.exec(pin)
         if (githubMatch) {

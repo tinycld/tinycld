@@ -88,6 +88,18 @@ describe('findGoForks', () => {
         expect(errors).toHaveLength(1)
         expect(errors[0]).toContain('server/go.mod')
     })
+
+    it('reports an error when a replace ( block is never closed with )', () => {
+        const { forks, errors } = findGoForks({
+            'server/go.mod': 'replace (\n\tgithub.com/a => github.com/b v1.0.0\n',
+        })
+        // The fork inside the block is still found...
+        expect(forks.map(f => f.name)).toEqual(['github.com/a'])
+        // ...but the missing close paren must not go unreported.
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toContain('server/go.mod')
+        expect(errors[0]).toMatch(/never closed/i)
+    })
 })
 
 describe('findNpmForks', () => {
@@ -133,6 +145,49 @@ describe('findNpmForks', () => {
         expect(forks).toEqual([])
         expect(errors).toHaveLength(1)
         expect(errors[0]).toContain('weird')
+    })
+
+    it('still recognises the real drax fork pin', () => {
+        const { forks, errors } = findNpmForks(
+            JSON.stringify({
+                'react-native-drax': 'github:nathanstitt/react-native-drax#bc83061',
+            })
+        )
+        expect(errors).toEqual([])
+        expect(forks).toEqual([
+            {
+                name: 'react-native-drax',
+                upstream: 'nathanstitt/react-native-drax',
+                pinnedAt: 'bc83061',
+                kind: 'npm',
+            },
+        ])
+    })
+
+    it('does not mistake a path-like value for a bare owner/repo shorthand', () => {
+        const { forks, errors } = findNpmForks(JSON.stringify({ someDep: 'dist/index.js' }))
+        expect(forks).toEqual([])
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toContain('someDep')
+    })
+
+    it('silently ignores workspace:, catalog:, and plain dist-tags', () => {
+        const { forks, errors } = findNpmForks(
+            JSON.stringify({
+                a: 'workspace:*',
+                b: 'catalog:',
+                c: 'latest',
+                d: 'next',
+            })
+        )
+        expect(forks).toEqual([])
+        expect(errors).toEqual([])
+    })
+
+    it('still errors on an unknown bare shorthand-shaped form outside those exceptions', () => {
+        const { forks, errors } = findNpmForks(JSON.stringify({ weird: 'not@valid#anything' }))
+        expect(forks).toEqual([])
+        expect(errors).toHaveLength(1)
     })
 })
 
