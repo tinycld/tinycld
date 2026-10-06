@@ -10,14 +10,19 @@ ignores:
           release exists upstream (latest published version is 1.4.0, the
           vulnerable one); patched_versions is null in the advisory. Pulled in
           transitively under expo/@expo/cli tooling, not used by our own code.
-      expires: 2026-11-15
+          Nothing short of an upstream fix unblocks this, so the horizon is
+          longer than the image-size entries below, which are waiting on a
+          dependency bump we control the timing of.
+      expires: 2027-01-15
     - id: GHSA-vfj7-8cjw-p6xm
       reason: >-
           braces stack-exhaustion DoS. No patched release exists upstream
           (latest published version is 3.0.3, the vulnerable one);
           patched_versions is null in the advisory. Pulled in transitively
-          under expo/metro build tooling.
-      expires: 2026-11-15
+          under expo/metro build tooling. Nothing short of an upstream fix
+          unblocks this, so the horizon is longer than the image-size entries
+          below, which are waiting on a dependency bump we control the timing of.
+      expires: 2027-01-15
     - id: GHSA-5p2g-fcmc-qvqq
       reason: &image-size-reason >-
           image-size denial-of-service (infinite-loop parsers), fixed in
