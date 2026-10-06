@@ -11,8 +11,8 @@ public final class EditorWebViewModule: Module {
     // Native is tearing down is dropped. Each payload names its instance.
     Events("onMessage", "onLoad", "onProcessGone")
 
-    OnCreate {
-      EditorWebViewPool.shared.emit = { [weak self] name, body in
+    OnCreate { [weak self] in
+      EditorWebViewPool.shared.emit = { name, body in
         self?.sendEvent(name, body)
       }
     }
