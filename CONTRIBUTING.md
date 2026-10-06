@@ -403,7 +403,7 @@ This matters because exposure is concentrated in the packages, not core. Measure
 
 - Core's own `npm-audit` run covers only app + core production dependencies. A vulnerability reachable only from a feature package is that package's CI to find, once it adopts the action.
 - `devDependency` findings are reported (a separate, `always()` step) but never block. A dev dependency reaches neither the shipped bundle nor the runtime image.
-- `go-vuln` scans `cli`, `core/server`, and `core/server/backup/format`. `server/` is covered by `core/server`, which carries the same `replace` directives; `server/`'s own build needs the generated `go.work`, which only exists after a workspace install.
+- `go-vuln` scans `cli`, `core/server`, and `core/server/backup/format`. **`server/` is not scanned**, because its build needs the generated `go.work`, which only exists after a workspace install. Most of its tree is shared with `core/server`, which is scanned and carries the same `replace` directives — but not all of it: `server/go.mod` pulls in `goja`, `goja_nodejs`, `regexp2` and `ozzo-validation` that `core/server` does not, and `goja` is a JavaScript engine. Treat that as a known gap, not as coverage.
 
 ### Adding an ignore entry
 
