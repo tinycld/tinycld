@@ -129,10 +129,10 @@ verification section). **Never submit a `review` build to Play.**
 
 ## Local build prerequisites (this machine)
 
-The Android scripts mirror iOS and build **locally** (`--local`). Two RN-0.83-on-this-machine
+The Android scripts mirror iOS and build **locally** (`--local`). Two RN-0.86-on-this-machine
 hazards are already handled so you don't have to think about them:
 
-- **JDK 17 (handled by the script).** RN 0.83's native (CMake/NDK) build requires JDK 17; the
+- **JDK 17 (handled by the script).** RN 0.86's native (CMake/NDK) build requires JDK 17; the
   machine default `java` is JDK 24, under which the native configure step fails with
   `WARNING: A restricted method in java.lang.System has been called`. The `build:android` script
   therefore self-pins `JAVA_HOME` to JDK 17 (`/usr/libexec/java_home -v 17`) for the EAS
@@ -205,7 +205,7 @@ Build a `preview` APK for device testing (an AAB can't be `adb install`ed direct
 - **Login wall / self-hosted misread as broken.** Mitigation: App access demo credentials above +
   the "Use tinycld.org" default-server button eliminate friction.
 - **Target API level floor.** Google enforces a minimum `targetSdkVersion` for new submissions
-  (confirm the current floor in Play Console at submission time). Expo SDK 55 / compileSdk 35
+  (confirm the current floor in Play Console at submission time). Expo SDK 57 / compileSdk 36 and targetSdk 36
   should satisfy it; verify the generated `android/app/build.gradle` `targetSdkVersion` after
   prebuild.
 - **Data safety mismatch.** The form must match Sentry's actual behavior — keep it in sync.
