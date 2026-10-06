@@ -413,7 +413,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # `pnpm install` at the workspace root (step 7 of the install pipeline). Node
 # ships corepack; `corepack enable` only creates a SHIM that lazily downloads
 # pnpm on first use AND prompts for confirmation — which fails non-interactively
-# inside the installer ("! Corepack is about to download …pnpm-11.3.0.tgz",
+# inside the installer ("! Corepack is about to download …pnpm-11.28.2.tgz",
 # exit 1). So we `corepack prepare … --activate` here to actually fetch + cache
 # the pinned pnpm into the image at build time.
 #
@@ -428,7 +428,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 ENV COREPACK_HOME=/opt/corepack
 RUN corepack enable \
-    && corepack prepare pnpm@11.3.0 --activate \
+    && corepack prepare pnpm@11.28.2 --activate \
     && chmod -R a+rX /opt/corepack
 
 # Copy Go toolchain from build stage (needed for the in-app package installer's
