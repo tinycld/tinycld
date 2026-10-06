@@ -165,7 +165,14 @@ jobs:
               with:
                   node-version-file: .node-version
                   package-manager-cache: false
-            # Reads only committed files (go.mod replaces and
-            # core/package-versions.json), so it needs no workspace assembly.
+            # The script only reads committed files (go.mod replaces and
+            # core/package-versions.json), so it needs no workspace assembly —
+            # but it still imports `yaml` from this repo's own package.json,
+            # and `pnpm dlx` runs in an ephemeral store with no visibility into
+            # that dependency at all ("Cannot find package 'yaml'"). A real
+            # install, scoped to this repo alone, is what puts `yaml` and
+            # `tsx` on disk for `pnpm exec` to find.
+            - name: Install (tinycld only)
+              run: corepack enable && pnpm install --no-frozen-lockfile
             - name: Check fork review windows
-              run: corepack enable && pnpm dlx tsx scripts/check-fork-drift.ts
+              run: pnpm exec tsx scripts/check-fork-drift.ts
