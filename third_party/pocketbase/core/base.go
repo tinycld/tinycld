@@ -206,6 +206,8 @@ type BaseApp struct {
 	onCollectionsImportRequest *hook.Hook[*CollectionsImportRequestEvent]
 
 	onBatchRequest *hook.Hook[*BatchRequestEvent]
+
+	fileDeletes *fileDeleteGroup // fork: the background storage deletes ClearBootstrap waits for (files_delete_tinycld.go)
 }
 
 // NewBaseApp creates and returns a new BaseApp instance
@@ -1382,6 +1384,8 @@ func supportFiles(m Model) bool {
 }
 
 func (app *BaseApp) registerBaseHooks() {
+	app.bindFileDeletesDrain() // fork: ClearBootstrap waits for the background storage deletes
+
 	deletePrefix := func(prefix string) error {
 		fs, err := app.NewFilesystem()
 		if err != nil {
@@ -1433,7 +1437,7 @@ func (app *BaseApp) registerBaseHooks() {
 								slog.String("error", err.Error()),
 							)
 						}
-					})
+					}, app.fileDeletes) // fork: ClearBootstrap waits for it (files_delete_tinycld.go)
 				}
 			}
 
