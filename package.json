@@ -4,7 +4,7 @@
     "private": true,
     "type": "module",
     "main": "index.js",
-    "packageManager": "pnpm@11.28.2+sha512.755ce2fe3c05bfd7bb412b42aff3c5c55cd38c529c6eca810475497ae36746c571e4b6e1814e6e7e4b97d7ee864b8a0e44673c3b297a50e0ac28771c5ce15d27",
+    "packageManager": "pnpm@12.9.1+sha512.06b055fff5cd20dc12781de173ced3310ce0951bf2ec620211a16045d5444d5c93a663210764ef29a653a610459ba0368f0e74f84d80c54723cf95aae7bc0d6d",
     "scripts": {
         "packages:generate": "tsx scripts/generate.ts && tsx scripts/export-types.ts",
         "stage:embed": "tsx scripts/stage-embed-assets.ts",

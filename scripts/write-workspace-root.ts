@@ -44,7 +44,7 @@ const NON_MEMBER_DIRS = ['bootstrap', 'utils', 'web']
 
 // pnpm version pinned via package.json "packageManager" so corepack resolves
 // the same pnpm everywhere (local, CI, EAS).
-const PNPM_VERSION = '11.28.2'
+const PNPM_VERSION = '12.9.1'
 
 const POSTINSTALL =
     'tsx scripts/link-members.ts && cd tinycld && pnpm run packages:generate && cd .. && tsx scripts/link-members.ts && cd tinycld && pnpm run assets:copy-pdfjs'
@@ -187,7 +187,7 @@ function pnpmWorkspaceYaml(wsRoot: string, pins: Record<string, string>): string
         'strictPeerDependencies: false',
         'enablePrePostScripts: true',
         '',
-        '# pnpm 11 ships a default minimumReleaseAge supply-chain gate (~24h) that',
+        '# pnpm 11+ ships a default minimumReleaseAge supply-chain gate (~24h) that',
         '# rejects very freshly-published versions. The @tinycld/* libraries are',
         '# first-party and released in lockstep with these members, so a same-day',
         '# pbtsdb (or other @tinycld dep) bump must install immediately rather than',

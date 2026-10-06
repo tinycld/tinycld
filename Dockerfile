@@ -413,7 +413,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # `pnpm install` at the workspace root (step 7 of the install pipeline). Node
 # ships corepack; `corepack enable` only creates a SHIM that lazily downloads
 # pnpm on first use AND prompts for confirmation — which fails non-interactively
-# inside the installer ("! Corepack is about to download …pnpm-11.28.2.tgz",
+# inside the installer ("! Corepack is about to download …pnpm-12.9.1.tgz",
 # exit 1). So we `corepack prepare … --activate` here to actually fetch + cache
 # the pinned pnpm into the image at build time.
 #
@@ -425,10 +425,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # process resolves the same cache. COREPACK_ENABLE_DOWNLOAD_PROMPT=0 belt-and-
 # suspenders against any later fetch blocking on a prompt. Version matches the
 # root package.json `packageManager` pin.
+#
+# pnpm 12 is a native binary: the npm tarball corepack prepares is only a
+# launcher that downloads the binary into $COREPACK_HOME on its FIRST run. Run
+# it once here, as root, so the binary is baked into the image. Otherwise the
+# first in-app install would try that download as the tinycld user, which
+# cannot write /opt/corepack.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 ENV COREPACK_HOME=/opt/corepack
 RUN corepack enable \
-    && corepack prepare pnpm@11.28.2 --activate \
+    && corepack prepare pnpm@12.9.1 --activate \
+    && pnpm --version \
     && chmod -R a+rX /opt/corepack
 
 # Copy Go toolchain from build stage (needed for the in-app package installer's

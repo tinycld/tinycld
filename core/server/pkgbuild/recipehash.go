@@ -31,7 +31,7 @@ import (
 //	tinycld-recipe/v2
 //	go go1.27.1
 //	node v22.12.0
-//	pnpm pnpm@11.28.2+sha512…
+//	pnpm pnpm@12.9.1+sha512…
 //	override <name> <version>     (sorted by name; the "//" doc key never appears)
 //	member <name>@<version> <integrity>   (sorted; third-party undistinguished)
 //	extra <name> <integrity>              (sorted; source a host links beyond the member set)

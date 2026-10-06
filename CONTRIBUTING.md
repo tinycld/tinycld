@@ -311,6 +311,8 @@ pnpm install                     # links members + runs the generator (postinsta
 cd tinycld && pnpm run dev       # boots Expo + PocketBase
 ```
 
+`pnpm` comes from corepack, which runs the version the root `package.json` pins in `packageManager`. pnpm 12 needs corepack 0.34.5 or later. Node 25 does not bundle corepack, so install it with `npm install -g corepack@latest`. An older corepack fails with `Cannot find module …/bin/pnpm.cjs`. That failed run leaves a broken cache entry, so after you upgrade corepack, delete `~/.cache/node/corepack/v1/pnpm/12.9.1` (or `$COREPACK_HOME/v1/pnpm/12.9.1`).
+
 Add a feature later with `npx @tinycld/bootstrap@latest --assemble-only --with <slug>` (it skips members already present), then `pnpm install`. Remove one by deleting its sibling dir and running `pnpm install` again. pnpm silently ignores absent member dirs, so a partial assembly installs and runs cleanly — the app boots as a lean shell with whatever feature set happens to be present.
 
 ### Pinning members to a branch or tag (and why CI does)

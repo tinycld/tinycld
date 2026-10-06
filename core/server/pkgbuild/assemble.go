@@ -22,7 +22,7 @@ const DefaultPnpmStoreDir = "/workspace/.pnpm-store"
 // field. Kept in sync with the canonical workspace-root package.json. It is
 // also a RecipeHash input: two builds installed by different pnpm versions
 // are different artifacts.
-const PackageManagerSpec = "pnpm@11.28.2+sha512.755ce2fe3c05bfd7bb412b42aff3c5c55cd38c529c6eca810475497ae36746c571e4b6e1814e6e7e4b97d7ee864b8a0e44673c3b297a50e0ac28771c5ce15d27"
+const PackageManagerSpec = "pnpm@12.9.1+sha512.06b055fff5cd20dc12781de173ced3310ce0951bf2ec620211a16045d5444d5c93a663210764ef29a653a610459ba0368f0e74f84d80c54723cf95aae7bc0d6d"
 
 const postinstallScript = "tsx scripts/link-members.ts && cd tinycld && pnpm run packages:generate && cd .. && tsx scripts/link-members.ts && cd tinycld && pnpm run assets:copy-pdfjs"
 

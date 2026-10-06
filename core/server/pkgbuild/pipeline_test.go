@@ -130,7 +130,7 @@ func TestPnpmLineProgress(t *testing.T) {
 		{"Progress: resolved 1, reused 0, downloaded 0, added 0", 49},
 		{"Progress: resolved 3, reused 1, downloaded 2, added 3, done", 49},
 		{"Packages: +3", 54},
-		{"Done in 807ms using pnpm v11.3.0", 58},
+		{"Done in 807ms using pnpm v12.9.1", 58},
 		{"+ lodash 4.18.1", 0}, // dependency listing — no milestone
 		{"", 0},                // blank
 		{"some postinstall noise", 0},
@@ -194,7 +194,7 @@ func TestReportPnpmProgress_Throttled(t *testing.T) {
 	// Non-"Progress:" milestones are NOT throttled — they forward even though the
 	// Progress window opened above is still wide open.
 	p.reportPnpmProgress(sink, "Packages: +42", throttle)
-	p.reportPnpmProgress(sink, "Done in 807ms using pnpm v11.3.0", throttle)
+	p.reportPnpmProgress(sink, "Done in 807ms using pnpm v12.9.1", throttle)
 	if got := len(sink.milestones); got != 3 {
 		t.Fatalf("non-Progress milestones were throttled; total = %d, want 3", got)
 	}

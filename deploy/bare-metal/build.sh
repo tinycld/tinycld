@@ -36,7 +36,7 @@
 #   BAKED_DIR          where the pristine workspace is baked (default: /opt/tinycld-baked)
 #   STATE_DIR          runtime state root (pb_data/builds/...)    (default: /workspace)
 #   BUILD_DIR          scratch assembly dir            (default: /opt/tinycld-build)
-#   PNPM_VERSION       pnpm to activate via corepack             (default: 11.28.2)
+#   PNPM_VERSION       pnpm to activate via corepack             (default: 12.9.1)
 #   EXPO_PUBLIC_SENTRY_DSN   optional; inlined into the web bundle at export time
 #
 set -euo pipefail
@@ -48,7 +48,7 @@ RUN_USER="${RUN_USER:-tinycld}"
 BAKED_DIR="${BAKED_DIR:-/opt/tinycld-baked}"
 STATE_DIR="${STATE_DIR:-/workspace}"
 BUILD_DIR="${BUILD_DIR:-/opt/tinycld-build}"
-PNPM_VERSION="${PNPM_VERSION:-11.28.2}"
+PNPM_VERSION="${PNPM_VERSION:-12.9.1}"
 EXPO_PUBLIC_SENTRY_DSN="${EXPO_PUBLIC_SENTRY_DSN:-}"
 
 log() { echo "[tinycld-build] $*"; }
