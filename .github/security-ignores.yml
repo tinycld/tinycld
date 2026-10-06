@@ -1,0 +1,10 @@
+# Vulnerabilities that may wait, each with a reason and a deadline.
+#
+# An entry needs all three fields. CI fails when an entry is expired, has no
+# reason, or has no expires date — so a suppression cannot quietly become
+# permanent. Renewing one means a new pull request with a fresh reason.
+ignores: []
+# ignores:
+#     - id: GHSA-xxxx-xxxx-xxxx
+#       reason: Reachable only from the CLI --debug path, which the server excludes.
+#       expires: 2026-01-15
