@@ -1,0 +1,34 @@
+{
+    "advisories": {
+        "1001": {
+            "id": 1001,
+            "github_advisory_id": "GHSA-aaaa-aaaa-aaaa",
+            "severity": "critical",
+            "module_name": "pkg-critical",
+            "vulnerable_versions": "<1.0.0",
+            "title": "Remote code execution",
+            "url": "https://github.com/advisories/GHSA-aaaa-aaaa-aaaa"
+        },
+        "1002": {
+            "id": 1002,
+            "github_advisory_id": "GHSA-bbbb-bbbb-bbbb",
+            "severity": "high",
+            "module_name": "pkg-high",
+            "vulnerable_versions": "<2.0.0",
+            "title": "Prototype pollution",
+            "url": "https://github.com/advisories/GHSA-bbbb-bbbb-bbbb"
+        },
+        "1003": {
+            "id": 1003,
+            "github_advisory_id": "GHSA-cccc-cccc-cccc",
+            "severity": "moderate",
+            "module_name": "pkg-moderate",
+            "vulnerable_versions": "<3.0.0",
+            "title": "Regular expression denial of service",
+            "url": "https://github.com/advisories/GHSA-cccc-cccc-cccc"
+        }
+    },
+    "metadata": {
+        "vulnerabilities": { "info": 0, "low": 0, "moderate": 1, "high": 1, "critical": 1 }
+    }
+}
