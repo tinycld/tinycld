@@ -80,6 +80,47 @@ describe('parseIgnores', () => {
         expect(valid).toEqual([])
         expect(errors.length).toBeGreaterThan(0)
     })
+
+    it('rejects a top-level list instead of silently finding nothing', () => {
+        const { valid, errors } = parseIgnores(
+            '- id: GHSA-aaaa-aaaa-aaaa\n  reason: Oops.\n  expires: 2026-12-01\n',
+            TODAY
+        )
+        expect(valid).toEqual([])
+        expect(errors.join(' ')).toMatch(/mapping/i)
+    })
+
+    it('rejects an unknown top-level key instead of silently finding nothing', () => {
+        const { valid, errors } = parseIgnores(
+            'ignorse:\n  - id: GHSA-aaaa-aaaa-aaaa\n    reason: Typo.\n    expires: 2026-12-01\n',
+            TODAY
+        )
+        expect(valid).toEqual([])
+        expect(errors.join(' ')).toMatch(/ignorse/)
+    })
+
+    it('rejects a bare string top level', () => {
+        const { valid, errors } = parseIgnores('just a string\n', TODAY)
+        expect(valid).toEqual([])
+        expect(errors.length).toBeGreaterThan(0)
+    })
+
+    it('returns nothing for an empty string', () => {
+        const { valid, errors } = parseIgnores('', TODAY)
+        expect(valid).toEqual([])
+        expect(errors).toEqual([])
+    })
+
+    it('accepts a file with both ignores and forkReviews at the top level', () => {
+        const { valid, errors } = parseIgnores(
+            'ignores:\n  - id: GHSA-aaaa-aaaa-aaaa\n    reason: Fine.\n    expires: 2026-12-01\n' +
+                'forkReviews:\n  - fork: example/fork\n    reviewed: 2026-10-01\n    days: 30\n',
+            TODAY
+        )
+        expect(errors).toEqual([])
+        expect(valid).toHaveLength(1)
+        expect(valid[0].id).toBe('GHSA-aaaa-aaaa-aaaa')
+    })
 })
 
 describe('parseAuditJson', () => {

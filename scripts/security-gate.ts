@@ -53,12 +53,15 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 // wrote, not an instant, so a timezone must not decide whether CI passes.
 const isExpired = (expires: string, today: Date) => expires < today.toISOString().slice(0, 10)
 
+// security-ignores.yml is shared by two scripts: this gate owns `ignores`,
+// check-fork-drift.ts owns `forkReviews`. Any other top-level key is a typo
+// (e.g. `ignorse:`) that would otherwise silently suppress nothing.
+const ALLOWED_TOP_LEVEL_KEYS = new Set(['ignores', 'forkReviews'])
+
 export const parseIgnores = (
     raw: string,
     today: Date
 ): { valid: IgnoreEntry[]; errors: string[] } => {
-    // The file is a mapping, not a list: check-fork-drift.ts owns a second
-    // top-level key (forkReviews) in this same file.
     let parsed: unknown
     try {
         parsed = parseYaml(raw)
@@ -68,7 +71,21 @@ export const parseIgnores = (
         const message = err instanceof Error ? err.message : String(err)
         return { valid: [], errors: [`security-ignores.yml: could not parse YAML — ${message}`] }
     }
-    if (typeof parsed !== 'object' || parsed === null) return { valid: [], errors: [] }
+    // `parseYaml('')` and a comment-only file both yield null/undefined —
+    // that is the normal "nothing suppressed yet" case and must stay silent.
+    if (parsed === null || parsed === undefined) return { valid: [], errors: [] }
+    if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { valid: [], errors: ['security-ignores.yml: must be a mapping'] }
+    }
+    const unknownKeys = Object.keys(parsed).filter(key => !ALLOWED_TOP_LEVEL_KEYS.has(key))
+    if (unknownKeys.length > 0) {
+        return {
+            valid: [],
+            errors: unknownKeys.map(
+                key => `security-ignores.yml: unknown top-level key \`${key}\``
+            ),
+        }
+    }
     const entries = (parsed as { ignores?: unknown }).ignores
     if (entries === null || entries === undefined) return { valid: [], errors: [] }
     if (!Array.isArray(entries)) {
