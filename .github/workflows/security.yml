@@ -167,12 +167,22 @@ jobs:
                   package-manager-cache: false
             # The script only reads committed files (go.mod replaces and
             # core/package-versions.json), so it needs no workspace assembly —
-            # but it still imports `yaml` from this repo's own package.json,
-            # and `pnpm dlx` runs in an ephemeral store with no visibility into
-            # that dependency at all ("Cannot find package 'yaml'"). A real
-            # install, scoped to this repo alone, is what puts `yaml` and
-            # `tsx` on disk for `pnpm exec` to find.
-            - name: Install (tinycld only)
-              run: corepack enable && pnpm install --no-frozen-lockfile
+            # and a real `pnpm install` of this repo is not an option either:
+            # `tinycld`'s own package.json depends on workspace-only siblings
+            # (`@tinycld/package-scripts": "*"`) that only resolve inside the
+            # assembled workspace's pnpm-workspace.yaml; installed standalone,
+            # pnpm looks for that name on the public npm registry and 404s.
+            #
+            # The script's only real dependency is `yaml`, a plain published
+            # package with no workspace ties, so install just that into a
+            # scratch directory and point node at it with NODE_PATH — no
+            # package.json in the loop at all.
+            - name: Install the script's one dependency (yaml)
+              run: |
+                  corepack enable
+                  mkdir -p /tmp/fork-drift-deps
+                  npm install --prefix /tmp/fork-drift-deps --no-save yaml
             - name: Check fork review windows
-              run: pnpm exec tsx scripts/check-fork-drift.ts
+              env:
+                  NODE_PATH: /tmp/fork-drift-deps/node_modules
+              run: pnpm dlx tsx scripts/check-fork-drift.ts
