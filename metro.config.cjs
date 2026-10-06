@@ -2,16 +2,6 @@ const path = require('node:path')
 const { getDefaultConfig } = require('expo/metro-config')
 const { withUniwindConfig } = require('uniwind/metro')
 
-// Since SDK 56, Expo installs `expo/fetch` as the native global `fetch` unless
-// this flag is set. expo/fetch rejects React Native's `{ uri, name, type }`
-// FormData file parts ("Unsupported FormDataPart implementation"), and the
-// PocketBase SDK sends every native upload through `fetch` with exactly those
-// parts (drive save/copy/create, board import). EXPO_PUBLIC_* values are inlined
-// at bundle time, so it is set here: every bundle — dev server, `expo export`,
-// EAS and the server's OTA rebuild — loads this config before transforming.
-// An explicit value in the environment still wins.
-process.env.EXPO_PUBLIC_USE_RN_FETCH ??= '1'
-
 const config = getDefaultConfig(__dirname)
 
 // The workspace root is one level up (app/.. ). Watch it so Metro bundles
