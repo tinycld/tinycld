@@ -1,0 +1,128 @@
+name: Security
+
+on:
+    push:
+        branches: [main]
+    # Every PR, whatever it targets — matching ci.yml. Core work stacks, so a
+    # `branches: [main]` filter would silently skip a stacked PR, which reads as
+    # passing rather than never-run.
+    pull_request:
+    # An advisory is published against code that has not changed, so the scan
+    # has to run on a clock as well as on a diff.
+    schedule:
+        - cron: '17 6 * * 1'
+
+jobs:
+    npm-audit:
+        name: npm audit (production deps)
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  path: ws/tinycld
+            - uses: actions/setup-node@v5
+              with:
+                  node-version-file: ws/tinycld/.node-version
+            - name: Assemble workspace (app + core)
+              working-directory: ws
+              run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
+            - uses: actions/setup-go@v6
+              with:
+                  go-version-file: ws/tinycld/core/server/go.mod
+                  cache-dependency-path: |
+                      ws/tinycld/server/go.sum
+                      ws/tinycld/core/server/go.sum
+                      ws/tinycld/cli/go.sum
+            - name: Cache pnpm store
+              uses: actions/cache@v6
+              with:
+                  path: ws/.pnpm-store
+                  key: pnpm-store-${{ runner.os }}-${{ hashFiles('ws/package.json', 'ws/pnpm-workspace.yaml') }}
+                  restore-keys: pnpm-store-${{ runner.os }}-
+            - name: Install (workspace root)
+              working-directory: ws
+              run: corepack enable && pnpm install --no-frozen-lockfile --store-dir=.pnpm-store
+            # The same action every package consumes, so core and the packages
+            # cannot drift apart on audit policy.
+            - name: Audit dependencies
+              uses: ./ws/tinycld/.github/actions/security-scan
+              with:
+                  severity: high
+                  working-directory: ws
+
+    # govulncheck does reachability analysis: it reports a vulnerability only
+    # when our code can reach the affected symbol. That is what makes a blocking
+    # check possible — a tree-matching scanner reports every advisory in the
+    # module graph, most of which nothing calls.
+    go-vuln:
+        name: govulncheck
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@v5
+            - uses: actions/setup-go@v6
+              with:
+                  go-version-file: core/server/go.mod
+                  cache-dependency-path: |
+                      server/go.sum
+                      core/server/go.sum
+                      cli/go.sum
+            - name: Install govulncheck
+              run: go install golang.org/x/vuln/cmd/govulncheck@latest
+            # Each directory is a separate Go module, so a run in one never
+            # reaches another — the same reason ci.yml runs go test separately in
+            # core/server. server/ is skipped: its build needs the generated
+            # go.work, which only exists after an install, and core/server
+            # carries the same replace directives.
+            - name: Scan each module
+              run: |
+                  status=0
+                  for module in cli core/server core/server/backup/format; do
+                      echo "=== $module"
+                      (cd "$module" && govulncheck ./...) || status=1
+                  done
+                  exit $status
+
+    image-scan:
+        name: Trivy (image base layers)
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@v5
+            # `scan-type: config` reads the Dockerfile for misconfigurations —
+            # it never looks at what the base image actually contains, so it
+            # would report nothing, forever, while showing green. The runtime
+            # stage is what ships, so resolve ITS base image from the
+            # Dockerfile and scan that image's OS packages for CVEs.
+            - name: Resolve runtime base image
+              id: base
+              run: |
+                  image="$(awk '/^FROM/ && /AS runtime/ {print $2}' Dockerfile)"
+                  if [ -z "$image" ]; then
+                      echo "::error::Could not find a 'FROM ... AS runtime' line in Dockerfile"
+                      exit 1
+                  fi
+                  echo "Runtime base image: $image"
+                  echo "image=$image" >> "$GITHUB_OUTPUT"
+            - name: Scan runtime base image
+              uses: aquasecurity/trivy-action@v0.36.0
+              with:
+                  scan-type: image
+                  image-ref: ${{ steps.base.outputs.image }}
+                  severity: HIGH,CRITICAL
+                  exit-code: '1'
+
+    fork-drift:
+        name: Fork drift
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        steps:
+            - uses: actions/checkout@v5
+            - uses: actions/setup-node@v5
+              with:
+                  node-version-file: .node-version
+            # Reads only committed files (go.mod replaces and
+            # core/package-versions.json), so it needs no workspace assembly.
+            - name: Check fork review windows
+              run: corepack enable && pnpm dlx tsx scripts/check-fork-drift.ts
