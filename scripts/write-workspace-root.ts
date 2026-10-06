@@ -44,7 +44,7 @@ const NON_MEMBER_DIRS = ['bootstrap', 'utils', 'web']
 
 // pnpm version pinned via package.json "packageManager" so corepack resolves
 // the same pnpm everywhere (local, CI, EAS).
-const PNPM_VERSION = '11.28.2'
+const PNPM_VERSION = '12.9.1'
 
 const POSTINSTALL =
     'tsx scripts/link-members.ts && cd tinycld && pnpm run packages:generate && cd .. && tsx scripts/link-members.ts && cd tinycld && pnpm run assets:copy-pdfjs'
