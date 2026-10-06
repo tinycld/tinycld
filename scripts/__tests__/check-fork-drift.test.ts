@@ -5,10 +5,11 @@ const TODAY = new Date('2026-10-06T00:00:00Z')
 
 describe('findGoForks', () => {
     it('finds a replace that points at another module path', () => {
-        const forks = findGoForks({
+        const { forks, errors } = findGoForks({
             'core/server/go.mod':
                 'module tinycld.org/core\n\nreplace github.com/emersion/go-webdav => github.com/nathanstitt/go-webdav v0.7.1\n',
         })
+        expect(errors).toEqual([])
         expect(forks).toEqual([
             {
                 name: 'github.com/emersion/go-webdav',
@@ -20,7 +21,7 @@ describe('findGoForks', () => {
     })
 
     it('finds a replace that points at a vendored local directory', () => {
-        const forks = findGoForks({
+        const { forks } = findGoForks({
             'server/go.mod':
                 'replace github.com/pocketbase/pocketbase => ../third_party/pocketbase\n',
         })
@@ -29,14 +30,15 @@ describe('findGoForks', () => {
     })
 
     it('ignores a replace between our own modules, which has no upstream', () => {
-        const forks = findGoForks({
+        const { forks, errors } = findGoForks({
             'server/go.mod': 'replace tinycld.org/core => ../core/server\n',
         })
         expect(forks).toEqual([])
+        expect(errors).toEqual([])
     })
 
     it('reports a fork once even when several modules replace it', () => {
-        const forks = findGoForks({
+        const { forks } = findGoForks({
             'server/go.mod':
                 'replace github.com/osshield/gopbs => github.com/nathanstitt/gopbs v1.0.0\n',
             'core/server/go.mod':
@@ -44,17 +46,60 @@ describe('findGoForks', () => {
         })
         expect(forks).toHaveLength(1)
     })
+
+    it('finds a replace written in block form', () => {
+        const { forks, errors } = findGoForks({
+            'server/go.mod':
+                'replace (\n\tgithub.com/a/b => github.com/c/d v1.0.0\n\tgithub.com/e/f => github.com/g/h v2.0.0\n)\n',
+        })
+        expect(errors).toEqual([])
+        expect(forks.map(f => f.name).sort()).toEqual(['github.com/a/b', 'github.com/e/f'])
+        expect(forks.find(f => f.name === 'github.com/a/b')?.pinnedAt).toBe('github.com/c/d v1.0.0')
+    })
+
+    it('finds a replace with the version on the left-hand side', () => {
+        const { forks, errors } = findGoForks({
+            'server/go.mod': 'replace github.com/a/b v1.0.0 => github.com/c/d v2.0.0\n',
+        })
+        expect(errors).toEqual([])
+        expect(forks).toEqual([
+            {
+                name: 'github.com/a/b',
+                upstream: 'github.com/a/b',
+                pinnedAt: 'github.com/c/d v2.0.0',
+                kind: 'go',
+            },
+        ])
+    })
+
+    it('strips a trailing comment from the replace target', () => {
+        const { forks } = findGoForks({
+            'server/go.mod':
+                'replace github.com/a/b => github.com/c/d v1.0.0 // fork, see HANDOFF\n',
+        })
+        expect(forks[0].pinnedAt).toBe('github.com/c/d v1.0.0')
+    })
+
+    it('reports an unparseable replace line as an error instead of skipping it', () => {
+        const { forks, errors } = findGoForks({
+            'server/go.mod': 'replace this is not valid go.mod syntax\n',
+        })
+        expect(forks).toEqual([])
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toContain('server/go.mod')
+    })
 })
 
 describe('findNpmForks', () => {
     it('finds a github: pin and ignores ordinary semver pins', () => {
-        const forks = findNpmForks(
+        const { forks, errors } = findNpmForks(
             JSON.stringify({
                 '//': 'a comment field',
                 react: '19.2.0',
                 'react-native-drax': 'github:nathanstitt/react-native-drax#bc83061',
             })
         )
+        expect(errors).toEqual([])
         expect(forks).toEqual([
             {
                 name: 'react-native-drax',
@@ -66,7 +111,28 @@ describe('findNpmForks', () => {
     })
 
     it('returns nothing when every pin is ordinary semver', () => {
-        expect(findNpmForks(JSON.stringify({ react: '19.2.0', expo: '55.0.26' }))).toEqual([])
+        const { forks, errors } = findNpmForks(JSON.stringify({ react: '19.2.0', expo: '55.0.26' }))
+        expect(forks).toEqual([])
+        expect(errors).toEqual([])
+    })
+
+    it('finds git+https, git+ssh and bare owner/repo shorthand pins', () => {
+        const { forks, errors } = findNpmForks(
+            JSON.stringify({
+                a: 'git+https://github.com/x/y.git#abc123',
+                b: 'git+ssh://git@github.com/x/z.git#def456',
+                c: 'owner/repo#ghi789',
+            })
+        )
+        expect(errors).toEqual([])
+        expect(forks.map(f => f.name).sort()).toEqual(['a', 'b', 'c'])
+    })
+
+    it('reports an unrecognised pin as an error instead of dropping it', () => {
+        const { forks, errors } = findNpmForks(JSON.stringify({ weird: 'not-a-known-pin-form!!' }))
+        expect(forks).toEqual([])
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toContain('weird')
     })
 })
 
