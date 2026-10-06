@@ -59,6 +59,16 @@ const LUCIDE_PKG_ROOT = (() => {
 const LUCIDE_ICONS_DIR = path.join(LUCIDE_PKG_ROOT, 'dist', 'esm', 'icons')
 const LUCIDE_ICON_PREFIX = 'lucide-react-native/icons/'
 
+// babel-plugin-lucide-deep-imports bakes each icon's file name into the
+// transformed module, and lucide renames files between releases (1.52 moved
+// `History` off history.mjs). Metro's transform cache does not see plugin
+// inputs, so a warm cache from the previous lucide keeps importing files that
+// no longer exist. Keying the cache on lucide's version invalidates it on a bump.
+const LUCIDE_VERSION = JSON.parse(
+    require('node:fs').readFileSync(path.join(LUCIDE_PKG_ROOT, 'package.json'), 'utf8')
+).version
+config.cacheVersion = [config.cacheVersion, `lucide-${LUCIDE_VERSION}`].filter(Boolean).join(':')
+
 // Canonicalize every resolved module to its realpath. In this symlinked
 // workspace, `@tinycld/core/*` is reachable by two routes — the app's own
 // `tinycld/node_modules/@tinycld/core` (→ ../../core) and the workspace-root
