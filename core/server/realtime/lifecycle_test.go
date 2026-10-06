@@ -74,12 +74,15 @@ func TestDrainBeginSuspendsThenClosesGoingAway(t *testing.T) {
 	f := newLifecycleFixture(t, broker)
 	a := dialClient(t, f.opts, "room-d", "alice")
 	room := waitForRoomMembers(t, broker, "test", "room-d", 1, time.Second)
+	// Read before the drain: the close empties the room, and its teardown
+	// releases the document, after which DocEpoch is 0.
+	epoch := room.DocEpoch()
 
 	drainhooks.RunBegin()
 
 	expectClose(t, a.conn, websocket.StatusGoingAway)
 	cp, found, _ := f.store.Load("test", "room-d")
-	if !found || cp.Epoch != room.DocEpoch() {
+	if !found || cp.Epoch != epoch {
 		t.Fatalf("checkpoint = %+v found=%v; want the room's state stored before the close", cp, found)
 	}
 }
