@@ -187,7 +187,7 @@ function pnpmWorkspaceYaml(wsRoot: string, pins: Record<string, string>): string
         'strictPeerDependencies: false',
         'enablePrePostScripts: true',
         '',
-        '# pnpm 11 ships a default minimumReleaseAge supply-chain gate (~24h) that',
+        '# pnpm 11+ ships a default minimumReleaseAge supply-chain gate (~24h) that',
         '# rejects very freshly-published versions. The @tinycld/* libraries are',
         '# first-party and released in lockstep with these members, so a same-day',
         '# pbtsdb (or other @tinycld dep) bump must install immediately rather than',
