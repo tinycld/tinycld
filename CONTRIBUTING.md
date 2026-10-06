@@ -388,16 +388,30 @@ The canonical config excludes generated artifacts — `server`, `lib/generated`,
 
 ### Adopting the scan in a package
 
-The shared logic is a composite action, `.github/actions/security-scan`. A package adopts it by adding one step to its own `ci.yml`, **after** `pnpm install`:
+The shared logic is a composite action, `.github/actions/security-scan`. A package adopts it as **its own job** in its `ci.yml` — the same assembly its other jobs do, then the audit step after `pnpm install`:
 
 ```yaml
-- uses: ./ws/tinycld/.github/actions/security-scan
-  with:
-      severity: high
-      working-directory: ws
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # ... the same checkout / sibling-refs / assemble / setup-node /
+      # setup-go / install steps this repo's other jobs already use ...
+      - name: Audit dependencies
+        uses: ./ws/tinycld/.github/actions/security-scan
+        with:
+          severity: high
+          working-directory: ws
 ```
 
-This matters because exposure is concentrated in the packages, not core. Measured high/critical dependency paths by member: `calc` 2738, `search-alpha` 1946, `text` 120, versus `tinycld` 118 and `core` 36. A core-only scan would miss most of the ecosystem's real exposure — each package that adopts the action audits its own tree.
+`calc/.github/workflows/ci.yml` is the reference adoption.
+
+**Make it a job, not a step inside an existing one.** GitHub's checks list shows one entry per job, so an audit added as a step to a typecheck job runs correctly but is invisible on the pull request — the PR reports its usual checks with no sign a scan happened. It also cannot then be a required status check in branch protection, and a real finding surfaces under the host job's name ("Typecheck & Unit failed") rather than its own. The extra assembly and install costs a couple of minutes and buys a check you can see, require, and read a failure from. calc was adopted the wrong way first; this is what that cost.
+
+This matters because a package's dependencies are its own. Core's workflow assembles app + core, so it never sees a dependency that reaches the tree through a feature — calc's `hyperformula`, `numfmt`, `expo-print`, `expo-sharing` and the `expo-file-system` path behind native CSV export are invisible to it. A package's CI assembles `tinycld` + that package, so adopting the action audits exactly the surface core cannot reach.
+
+Note a package adopting through its `ci.yml` gets the audit on its own pull requests and pushes, but not core's weekly `schedule` run — an advisory published against unchanged package code surfaces on that package's next PR rather than within the week.
 
 ### Scope limits
 
