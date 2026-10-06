@@ -258,3 +258,63 @@ func TestDrainServesAConnectionInTheAcceptWindow(t *testing.T) {
 		t.Fatalf("Drain = %v", err)
 	}
 }
+
+// onCloseListener runs fn when the listener under a Drainer listener is
+// closed, which is the moment a client starts being refused.
+type onCloseListener struct {
+	net.Listener
+	fn func()
+}
+
+func (l *onCloseListener) Close() error {
+	l.fn()
+	return l.Listener.Close()
+}
+
+// Keep-alives are off before any listener stops accepting. A client that is
+// refused must not get a keep-alive answer on a connection it already holds:
+// it would send its next request there and land on the old server again.
+func TestStopAcceptingTurnsKeepAlivesOffBeforeRefusing(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: okHandler()}
+	d := NewDrainer(srv)
+	var conn net.Conn
+	var closeAtStop bool
+	var probeErr error
+	probe := &onCloseListener{Listener: l, fn: func() {
+		// The request runs to completion inside the stop, before the
+		// listener under the Drainer's is closed.
+		if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: test\r\n\r\n"); err != nil {
+			probeErr = err
+			return
+		}
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			probeErr = err
+			return
+		}
+		_, _ = io.ReadAll(resp.Body)
+		closeAtStop = resp.Close
+	}}
+	go func() { _ = srv.Serve(d.Listener(probe)) }()
+	t.Cleanup(func() { srv.Close() })
+
+	conn, err = net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	waitFor(t, 5*time.Second, "the connection to be accepted", func() bool { return d.tracked() == 1 })
+
+	d.StopAccepting()
+	if probeErr != nil {
+		t.Fatalf("request at the stop: %v", probeErr)
+	}
+	if !closeAtStop {
+		t.Fatal("a request answered as the listener stopped kept its connection alive")
+	}
+}

@@ -3,7 +3,9 @@ package core
 import (
 	"os"
 	"sync"
+	"sync/atomic"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/pocketbase/pocketbase/tools/hook"
 )
 
@@ -31,13 +33,64 @@ func touchNotifyFile(path string) error {
 	return os.WriteFile(path, nil, 0644)
 }
 
-// notifyGuards holds, per app, the lock that orders the notify watcher's
-// delayed reloads with ClearBootstrap (see enterNotifyReload).
-var notifyGuards sync.Map // App -> *sync.RWMutex
+// notifyGuard orders the notify watcher with the app's bootstrap. live says
+// whether the app is bootstrapped, for the watcher's goroutines: they must
+// not call app.IsBootstrapped(), which reads the DB handles that Bootstrap
+// and ClearBootstrap write with no lock. mu orders a delayed reload with
+// ClearBootstrap (see enterNotifyReload).
+type notifyGuard struct {
+	mu   sync.RWMutex
+	live atomic.Bool
 
-func notifyGuardOf(app App) *sync.RWMutex {
-	g, _ := notifyGuards.LoadOrStore(app, &sync.RWMutex{})
-	return g.(*sync.RWMutex)
+	// watcher is the current bootstrap's notify watcher and loop counts its
+	// event loop, so ClearBootstrap can stop both (see stopNotifyWatcher).
+	watchMu sync.Mutex
+	watcher *fsnotify.Watcher
+	loop    *sync.WaitGroup
+}
+
+// trackNotifyWatcher records the watcher a bootstrap just started and
+// returns the WaitGroup its event loop runs under.
+func trackNotifyWatcher(app App, w *fsnotify.Watcher) *sync.WaitGroup {
+	g := notifyGuardOf(app)
+	g.watchMu.Lock()
+	defer g.watchMu.Unlock()
+	g.watcher = w
+	g.loop = &sync.WaitGroup{}
+	return g.loop
+}
+
+// stopNotifyWatcher closes the bootstrap's notify watcher and waits for its
+// event loop to return. Upstream closes a watcher only at the next Bootstrap
+// or at terminate, so every app that was bootstrapped and then cleared kept
+// a goroutine and an fsnotify descriptor for the rest of the process.
+// Closing twice is harmless: the next Bootstrap and OnTerminate still close
+// the same watcher.
+func stopNotifyWatcher(app App) {
+	g := notifyGuardOf(app)
+	g.watchMu.Lock()
+	w, loop := g.watcher, g.loop
+	g.watcher, g.loop = nil, nil
+	g.watchMu.Unlock()
+	if w == nil {
+		return
+	}
+	_ = w.Close()
+	loop.Wait()
+}
+
+// notifyGuards holds the notifyGuard of each app.
+var notifyGuards sync.Map // App -> *notifyGuard
+
+func notifyGuardOf(app App) *notifyGuard {
+	g, _ := notifyGuards.LoadOrStore(app, &notifyGuard{})
+	return g.(*notifyGuard)
+}
+
+// notifyLive reports whether app is bootstrapped. Unlike app.IsBootstrapped,
+// it is safe to call from the watcher's goroutines.
+func notifyLive(app App) bool {
+	return notifyGuardOf(app).live.Load()
 }
 
 // enterNotifyReload starts a delayed notify reload. A notify event schedules
@@ -49,23 +102,35 @@ func notifyGuardOf(app App) *sync.RWMutex {
 // ClearBootstrap waits (bindNotifyClearGuard).
 func enterNotifyReload(app App) (release func(), ok bool) {
 	g := notifyGuardOf(app)
-	g.RLock()
-	if !app.IsBootstrapped() {
-		g.RUnlock()
+	g.mu.RLock()
+	if !g.live.Load() {
+		g.mu.RUnlock()
 		return nil, false
 	}
-	return g.RUnlock, true
+	return g.mu.RUnlock, true
 }
 
-// bindNotifyClearGuard makes ClearBootstrap wait for a notify reload in
-// progress before it closes the DB handles (see enterNotifyReload).
+// markNotifyLive is called by Bootstrap once it has opened the DB handles:
+// from then on the watcher may reload. A plain call rather than an
+// OnBootstrap handler, so the fork adds nothing to an app's hook chain.
+func markNotifyLive(app App) {
+	notifyGuardOf(app).live.Store(true)
+}
+
+// bindNotifyClearGuard makes ClearBootstrap stop the notify watcher, clear the
+// live flag, and wait for a notify reload in progress before it closes the DB
+// handles (see enterNotifyReload).
 func (app *BaseApp) bindNotifyClearGuard() {
 	app.OnBootstrapClear().Bind(&hook.Handler[*BootstrapEvent]{
 		Id: systemHookIdNotifyWatcher,
 		Func: func(e *BootstrapEvent) error {
+			// Before the lock: a reload the loop scheduled may be waiting on
+			// it, and the loop does not wait for that reload.
+			stopNotifyWatcher(app)
 			g := notifyGuardOf(app)
-			g.Lock()
-			defer g.Unlock()
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			g.live.Store(false)
 			return e.Next()
 		},
 		Priority: -998,

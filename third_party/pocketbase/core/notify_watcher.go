@@ -164,7 +164,7 @@ func createNotifyDirWatcher(app App, instanceId string, localNotifyDirPath strin
 				}
 
 				// modified from within the current app instance or cleanup event
-				if strings.HasSuffix(event.Name, instanceId) || event.Has(fsnotify.Remove) || !app.IsBootstrapped() {
+				if strings.HasSuffix(event.Name, instanceId) || event.Has(fsnotify.Remove) || !notifyLive(app) { // fork: IsBootstrapped races ClearBootstrap (notify_watcher_tinycld.go)
 					continue
 				}
 
@@ -212,7 +212,7 @@ func createNotifyDirWatcher(app App, instanceId string, localNotifyDirPath strin
 				}
 			}
 		}
-	})
+	}, trackNotifyWatcher(app, watcher)) // fork: ClearBootstrap stops the watcher (notify_watcher_tinycld.go)
 
 	return watcher, err
 }

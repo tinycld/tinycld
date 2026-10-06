@@ -76,13 +76,15 @@ func (d *Drainer) Listener(l net.Listener) net.Listener {
 // reconnect at once: with keep-alives on, a client could send its reconnect
 // on the same connection and land on this server again.
 func (d *Drainer) StopAccepting() {
+	// Keep-alives go off first: once a listener refuses, a client must not
+	// get a keep-alive answer on a connection it already holds.
+	d.srv.SetKeepAlivesEnabled(false)
 	d.mu.Lock()
 	ls := d.ls
 	d.mu.Unlock()
 	for _, l := range ls {
 		l.stop()
 	}
-	d.srv.SetKeepAlivesEnabled(false)
 }
 
 // Drain stops accepting, waits (within ctx) for every HTTP/1 connection
