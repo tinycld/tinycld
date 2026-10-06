@@ -95,6 +95,30 @@ jobs:
               run: corepack enable && pnpm install --no-frozen-lockfile --store-dir=.pnpm-store
             - name: Install govulncheck
               run: go install golang.org/x/vuln/cmd/govulncheck@latest
+            # Modules are discovered, not hardcoded, the same way
+            # scripts/check-fork-drift.ts discovers go.mod files — so a fifth
+            # Go module gets scanned automatically instead of silently
+            # skipped. Scoped to this repo's own checkout (ws/tinycld) so
+            # discovery never wanders into the assembled feature packages'
+            # own Go modules, which have their own CI. third_party is the
+            # vendored PocketBase fork, a replace TARGET, not a module we scan.
+            - name: Discover Go modules
+              working-directory: ws/tinycld
+              run: |
+                  mapfile -t modules < <(
+                      find . \
+                          \( -name node_modules -o -name .worktrees -o -name third_party -o -name .git \) -prune -o \
+                          -type f -name go.mod -print \
+                      | sed 's#^\./##;s#/go\.mod$##' \
+                      | sort
+                  )
+                  if [ "${#modules[@]}" -eq 0 ]; then
+                      echo "::error::No Go modules discovered under ws/tinycld — discovery is broken, this is not a clean scan"
+                      exit 1
+                  fi
+                  echo "Discovered modules:"
+                  printf '  %s\n' "${modules[@]}"
+                  printf '%s\n' "${modules[@]}" > /tmp/go-modules.txt
             # Each directory is its own Go module, so a run in one never reaches
             # another — the same reason ci.yml runs `go test` separately in
             # core/server. The loop keeps going after a failure so one bad
@@ -108,10 +132,10 @@ jobs:
               working-directory: ws/tinycld
               run: |
                   status=0
-                  for module in server cli core/server core/server/backup/format; do
+                  while IFS= read -r module; do
                       echo "=== $module"
                       (cd "$module" && govulncheck ./...) || status=1
-                  done
+                  done < /tmp/go-modules.txt
                   exit $status
 
     image-scan:
