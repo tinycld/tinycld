@@ -24,6 +24,18 @@
             ],
             "expo-sharing",
             [
+                "expo-splash-screen",
+                {
+                    "image": "./assets/app-splash.png",
+                    "resizeMode": "contain",
+                    "backgroundColor": "#445E82",
+                    "imageWidth": 200,
+                    "ios": {
+                        "enableFullScreenImage_legacy": true
+                    }
+                }
+            ],
+            [
                 "@sentry/react-native/expo",
                 {
                     "organization": "argosity",
@@ -45,11 +57,6 @@
             "./plugins/with-app-updater.cjs"
         ],
         "icon": "./assets/app-icon.png",
-        "splash": {
-            "image": "./assets/app-splash.png",
-            "resizeMode": "contain",
-            "backgroundColor": "#445E82"
-        },
         "ios": {
             "bundleIdentifier": "org.tinycld.app",
             "supportsTablet": true,

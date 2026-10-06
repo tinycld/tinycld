@@ -1,10 +1,10 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useThemePreference } from '@tinycld/core/lib/use-theme-preference'
+import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router/react-navigation'
 import type { ReactNode } from 'react'
 
-// React Navigation paints every navigator scene with its theme's
-// `colors.background`, and Expo Router mounts navigators under the built-in
+// Expo Router's navigators (its fork of React Navigation) paint every scene
+// with the theme's `colors.background`, and they mount under the built-in
 // `DefaultTheme` — whose background is grey95 (rgb 242,242,242). That light
 // grey never switches with our dark mode, so it bleeds through any scene that
 // leaves its own background transparent (most visibly the "read" mail rows,

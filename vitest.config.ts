@@ -163,6 +163,13 @@ export default defineConfig({
                 find: /^expo-image$/,
                 replacement: path.join(APP_DIR, '..', 'tests', 'expo-image-stub.tsx'),
             },
+            // expo-image-picker imports `expo`, whose entry installs the winter
+            // runtime and require()s TypeScript files Node cannot load. Reached
+            // through core's file picker (use-pick-files).
+            {
+                find: /^expo-image-picker$/,
+                replacement: path.join(APP_DIR, 'tests', 'expo-image-picker-stub.cjs'),
+            },
             // ~/* — package source. Resolved relative to the package's own dir
             // at invocation time via the test root, so we map it dynamically below.
         ],
