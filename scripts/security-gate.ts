@@ -45,6 +45,11 @@ export interface Finding {
     module: string
     title: string
     url: string
+    // Set when the advisory omitted github_advisory_id and `id` fell back to
+    // the numeric id instead. No GHSA-shaped ignore entry can ever match a
+    // bare number, so a finding in this state can never be suppressed — the
+    // caller surfaces that as a warning rather than leaving it a silent dead end.
+    numericIdFallback?: boolean
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
@@ -177,18 +182,27 @@ export const parseAuditJson = (raw: string): Finding[] => {
     const advisories = (report as { advisories?: unknown }).advisories
     if (typeof advisories !== 'object' || advisories === null) return []
 
-    return Object.values(advisories as Record<string, RawAdvisory>).map(advisory => ({
+    return Object.values(advisories as Record<string, RawAdvisory>).map(advisory => {
+        const module = typeof advisory.module_name === 'string' ? advisory.module_name : 'unknown'
         // An ignore entry names the GHSA id, so that is the identity we key on.
-        // The numeric id is only a fallback for a report that omits it.
-        id:
-            typeof advisory.github_advisory_id === 'string'
-                ? advisory.github_advisory_id
-                : String(advisory.id ?? 'unknown'),
-        severity: normalizeSeverity(advisory.severity),
-        module: typeof advisory.module_name === 'string' ? advisory.module_name : 'unknown',
-        title: typeof advisory.title === 'string' ? advisory.title : '',
-        url: typeof advisory.url === 'string' ? advisory.url : '',
-    }))
+        // The numeric id is only a fallback for a report that omits it — and no
+        // GHSA-shaped ignore entry can ever match a bare number, so a finding
+        // that falls back here can never be suppressed via an ignore. The
+        // caller warns on numericIdFallback rather than this collapsing
+        // several such advisories onto the id 'unknown' unremarked.
+        const hasGhsaId = typeof advisory.github_advisory_id === 'string'
+        const id = hasGhsaId
+            ? (advisory.github_advisory_id as string)
+            : String(advisory.id ?? 'unknown')
+        return {
+            id,
+            severity: normalizeSeverity(advisory.severity),
+            module,
+            title: typeof advisory.title === 'string' ? advisory.title : '',
+            url: typeof advisory.url === 'string' ? advisory.url : '',
+            ...(hasGhsaId ? {} : { numericIdFallback: true }),
+        }
+    })
 }
 
 export const gate = (
@@ -257,6 +271,24 @@ const main = () => {
 
     const { blocking, ignored, below } = gate(findings, valid, minSeverity)
 
+    // Ignore-file errors print FIRST and go to stderr: they explain why a
+    // suppression that should apply might not be, so in a long CI log they
+    // need to be the most visible thing, not the last line anyone reads.
+    // BLOCK lines join them on stderr for the same reason — a CI log's
+    // stdout tab can be scrolled past, but the problems that fail the job
+    // belong where a glance finds them.
+    for (const error of errors) {
+        process.stderr.write(`IGNORE FILE ${error}\n`)
+    }
+
+    for (const finding of findings) {
+        if (finding.numericIdFallback) {
+            process.stdout.write(
+                `WARN    ${finding.module} has no github_advisory_id — falling back to id "${finding.id}", which no GHSA ignore entry can ever match\n`
+            )
+        }
+    }
+
     for (const finding of below) {
         process.stdout.write(`note    ${finding.severity} ${finding.module} — ${finding.title}\n`)
     }
@@ -271,12 +303,9 @@ const main = () => {
         const severityLabel = isKnownSeverity(finding.severity)
             ? finding.severity
             : `UNRECOGNISED SEVERITY "${finding.severity}"`
-        process.stdout.write(
+        process.stderr.write(
             `BLOCK   ${severityLabel} ${finding.module} ${finding.id} — ${finding.title}\n${finding.url}\n`
         )
-    }
-    for (const error of errors) {
-        process.stdout.write(`IGNORE FILE ${error}\n`)
     }
 
     if (errors.length > 0 || blocking.length > 0) {

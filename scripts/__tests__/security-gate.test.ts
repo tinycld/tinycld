@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -163,6 +164,28 @@ describe('parseAuditJson', () => {
         })
         expect(parseAuditJson(raw)[0].severity).toBe('critical')
     })
+
+    it('flags a finding that falls back to the numeric id, which no GHSA ignore can match', () => {
+        const raw = JSON.stringify({
+            advisories: {
+                77: {
+                    id: 77,
+                    severity: 'high',
+                    module_name: 'some-module',
+                    title: 't',
+                    url: 'u',
+                },
+            },
+        })
+        const [finding] = parseAuditJson(raw)
+        expect(finding.id).toBe('77')
+        expect(finding.numericIdFallback).toBe(true)
+    })
+
+    it('does not set numericIdFallback when github_advisory_id is present', () => {
+        const [finding] = parseAuditJson(fixture('pnpm-audit-findings.json'))
+        expect(finding.numericIdFallback).toBeUndefined()
+    })
 })
 
 describe('gate', () => {
@@ -189,6 +212,20 @@ describe('gate', () => {
         expect(result.blocking).toEqual([])
     })
 
+    it('leaves a numeric-id finding blocking even with a GHSA ignore present — a dead end, but still safe', () => {
+        const raw = JSON.stringify({
+            advisories: {
+                77: { id: 77, severity: 'high', module_name: 'm', title: 't', url: 'u' },
+            },
+        })
+        const ignores = [
+            { id: 'GHSA-aaaa-aaaa-aaaa', reason: 'Not reachable.', expires: '2026-12-01' },
+        ]
+        const result = gate(parseAuditJson(raw), ignores, 'high')
+        expect(result.blocking.map(f => f.id)).toEqual(['77'])
+        expect(result.ignored).toEqual([])
+    })
+
     it('blocks an unrecognised severity rather than treating it as below every threshold', () => {
         const raw = JSON.stringify({
             advisories: {
@@ -205,5 +242,37 @@ describe('gate', () => {
         const result = gate(parseAuditJson(raw), [], 'critical')
         expect(result.blocking.map(f => f.id)).toEqual(['GHSA-x'])
         expect(result.below).toEqual([])
+    })
+})
+
+describe('CLI stdout/stderr separation', () => {
+    const scriptPath = path.join(__dirname, '..', 'security-gate.ts')
+    // tsx is hoisted to the workspace root's node_modules, not this member's.
+    const tsxBin = path.join(__dirname, '..', '..', '..', 'node_modules', '.bin', 'tsx')
+
+    const runGate = (input: string): { status: number; stdout: string; stderr: string } => {
+        try {
+            const stdout = execFileSync(tsxBin, [scriptPath, 'high'], {
+                input,
+                stdio: ['pipe', 'pipe', 'pipe'],
+            }).toString()
+            return { status: 0, stdout, stderr: '' }
+        } catch (err) {
+            const e = err as { status: number; stdout: Buffer; stderr: Buffer }
+            return { status: e.status, stdout: e.stdout.toString(), stderr: e.stderr.toString() }
+        }
+    }
+
+    it('sends BLOCK lines to stderr, not stdout, and exits 1', () => {
+        const result = runGate(fixture('pnpm-audit-findings.json'))
+        expect(result.status).toBe(1)
+        expect(result.stderr).toMatch(/BLOCK/)
+        expect(result.stdout).not.toMatch(/BLOCK/)
+    })
+
+    it('keeps note/ignored/the summary on stdout', () => {
+        const result = runGate(fixture('pnpm-audit-clean.json'))
+        expect(result.status).toBe(0)
+        expect(result.stdout).toMatch(/No blocking vulnerabilities/)
     })
 })
