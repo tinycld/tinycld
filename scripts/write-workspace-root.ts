@@ -80,14 +80,35 @@ export function readCoreVersions(appDir: string): Record<string, string> {
     return pins
 }
 
+// A YAML plain scalar can't open with an indicator character (@ ` " ' | > %
+// & * ! # , [ ] { }) or a `-`/`?`/`:` that reads as block syntax, and must
+// not contain `: ` or ` #` or be a reserved word a parser would coerce (true/
+// false/null/yes/no/~, or a bare number). `@tanstack/db` and
+// `minimatch@3>brace-expansion` both pass today only because the sole
+// special character they carry (`@`) isn't in LEADING position for the
+// latter — the leading-character check is what actually matters; this is
+// intentionally broader so any future key with a reserved character ANYWHERE
+// gets quoted rather than relying on that coincidence.
+const PLAIN_SAFE_SCALAR = /^[A-Za-z0-9_][\w./@-]*$/
+const RESERVED_WORDS = new Set(['true', 'false', 'null', 'yes', 'no', 'on', 'off', '~'])
+
+export function isPlainSafeYamlKey(key: string): boolean {
+    if (key === '') return false
+    if (!PLAIN_SAFE_SCALAR.test(key)) return false
+    if (RESERVED_WORDS.has(key.toLowerCase())) return false
+    if (/^-?\d+(\.\d+)?$/.test(key)) return false
+    return true
+}
+
 // Mirrors the Go renderOverridesBlock (core/server/pkgbuild/assemble.go) so
-// both generators emit byte-identical blocks: sorted for a stable diff,
-// scoped names (leading @) single-quoted so YAML doesn't read them as
-// anchors, plain names bare.
+// both generators emit byte-identical blocks: sorted for a stable diff, any
+// key that is not a plain-safe YAML scalar single-quoted, everything else
+// bare. Quoting more than strictly necessary is fine and safer; emitting an
+// unquoted reserved character is not.
 export function renderOverridesBlock(overrides: Record<string, string>): string {
     const lines = ['overrides:']
     for (const name of Object.keys(overrides).sort()) {
-        const key = name.startsWith('@') ? `'${name}'` : name
+        const key = isPlainSafeYamlKey(name) ? name : `'${name.replace(/'/g, "''")}'`
         lines.push(`  ${key}: ${overrides[name]}`)
     }
     return lines.join('\n')

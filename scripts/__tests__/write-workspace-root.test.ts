@@ -2,7 +2,12 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readCoreVersions, renderOverridesBlock, writeWorkspaceRoot } from '../write-workspace-root'
+import {
+    isPlainSafeYamlKey,
+    readCoreVersions,
+    renderOverridesBlock,
+    writeWorkspaceRoot,
+} from '../write-workspace-root'
 
 const PINS = {
     '//': 'doc',
@@ -39,6 +44,34 @@ describe('renderOverridesBlock', () => {
                 '\n'
             )
         )
+    })
+
+    it('quotes a parent-scoped key containing a reserved character anywhere, not just leading', () => {
+        const block = renderOverridesBlock({ 'minimatch@3>brace-expansion': '1.1.21' })
+        expect(block).toBe("overrides:\n  'minimatch@3>brace-expansion': 1.1.21")
+    })
+
+    it('leaves ordinary and parent-scoped-safe keys bare', () => {
+        const block = renderOverridesBlock({ expo: '55.0.26', react: '19.2.0' })
+        expect(block).toBe('overrides:\n  expo: 55.0.26\n  react: 19.2.0')
+    })
+})
+
+describe('isPlainSafeYamlKey', () => {
+    it.each([
+        ['expo', true],
+        ['react', true],
+        ['@tanstack/db', false],
+        ['minimatch@3>brace-expansion', false],
+        ['true', false],
+        ['null', false],
+        ['123', false],
+        ['*foo', false],
+        ['&anchor', false],
+        ['#comment', false],
+        ['', false],
+    ])('isPlainSafeYamlKey(%j) === %j', (key, expected) => {
+        expect(isPlainSafeYamlKey(key)).toBe(expected)
     })
 })
 
