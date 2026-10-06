@@ -174,15 +174,21 @@ jobs:
             # pnpm looks for that name on the public npm registry and 404s.
             #
             # The script's only real dependency is `yaml`, a plain published
-            # package with no workspace ties, so install just that into a
-            # scratch directory and point node at it with NODE_PATH — no
-            # package.json in the loop at all.
+            # package with no workspace ties — but `npm install` has nowhere
+            # safe to run from: `--no-save` still loads THIS package.json to
+            # compute the tree, and this package.json has its own
+            # workspace-only deps (`@tinycld/core": "*"` too), so it 404s
+            # exactly like the workspace install attempt above. Installing
+            # into an unrelated, manifest-free directory with --prefix avoids
+            # that; NODE_PATH does not then make it visible, because Node's
+            # ESM resolver (unlike CJS require) ignores NODE_PATH for
+            # bare-specifier lookups. Symlinking that directory's
+            # node_modules/ into this (gitignored, currently absent) checkout
+            # root is what the normal upward node_modules walk actually finds.
             - name: Install the script's one dependency (yaml)
               run: |
                   corepack enable
-                  mkdir -p /tmp/fork-drift-deps
                   npm install --prefix /tmp/fork-drift-deps --no-save yaml
+                  ln -s /tmp/fork-drift-deps/node_modules node_modules
             - name: Check fork review windows
-              env:
-                  NODE_PATH: /tmp/fork-drift-deps/node_modules
               run: pnpm dlx tsx scripts/check-fork-drift.ts
