@@ -85,7 +85,7 @@ jobs:
                   exit $status
 
     image-scan:
-        name: Trivy (image base layers)
+        name: Trivy (runtime base image)
         runs-on: ubuntu-latest
         timeout-minutes: 20
         steps:
@@ -111,6 +111,11 @@ jobs:
                   scan-type: image
                   image-ref: ${{ steps.base.outputs.image }}
                   severity: HIGH,CRITICAL
+                  # A Debian CVE with no fixed package available cannot be
+                  # actioned from this repo: there is no version to move to.
+                  # Blocking every PR on one is how a check stops being a
+                  # signal and becomes something people route around.
+                  ignore-unfixed: true
                   exit-code: '1'
 
     fork-drift:
