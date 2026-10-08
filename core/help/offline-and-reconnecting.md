@@ -12,9 +12,11 @@ appears at the top of the screen. You can keep using the app while it shows.
 
 - **Offline — waiting for a connection** means your device has no network
   connection. Lists show what was already loaded.
-- **Reconnecting…** means your device is online but the server is not
-  answering yet, for example while the server restarts or your network
-  changes. Lists that are still loading keep trying on their own.
+- **Reconnecting…** means your device is online but the app has lost its
+  live connection to the server, or some lists cannot load yet, for example
+  while the server restarts or your network changes. Lists keep trying on
+  their own, and changes other people make appear again once the connection
+  is back.
 
 The notice goes away as soon as the connection is back.
 

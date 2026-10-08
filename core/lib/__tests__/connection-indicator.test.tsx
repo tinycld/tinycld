@@ -6,25 +6,58 @@ import {
     connectionIndicatorState,
 } from '@tinycld/core/lib/connection-indicator'
 import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
+import type { SyncStatus } from 'pbtsdb'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const h = vi.hoisted(() => ({ user: { id: 'u1' } as { id: string } | null }))
+const connected: SyncStatus = {
+    realtime: { state: 'connected' },
+    loads: { retrying: 0, failed: 0 },
+}
+const reconnecting: SyncStatus = {
+    realtime: { state: 'reconnecting', attempt: 1, nextRetryAt: 2000, since: 1000 },
+    loads: { retrying: 0, failed: 0 },
+}
+
+const h = vi.hoisted(() => ({
+    user: { id: 'u1' } as { id: string } | null,
+    status: null as SyncStatus | null,
+    listeners: new Set<() => void>(),
+}))
 
 vi.mock('@tinycld/core/lib/auth', () => ({
     useAuth: () => ({ user: h.user }),
 }))
 
-// realtime-enabled.ts reaches pbtsdb's realtime client through `pb`; the hook
-// only reads the page's switch, which a plain module stands in for here.
 vi.mock('@tinycld/core/lib/pocketbase', () => ({ pb: {} }))
-vi.mock('pbtsdb', () => ({ disconnectRealtime: vi.fn(), resetRealtime: vi.fn() }))
+
+// pbtsdb's status for the hook: a store the test sets, read through
+// useSyncExternalStore the way pbtsdb's own useSyncStatus reads its client.
+vi.mock('pbtsdb', async () => {
+    const { useSyncExternalStore } = await import('react')
+    return {
+        disconnectRealtime: vi.fn(),
+        resetRealtime: vi.fn(),
+        useSyncStatus: () =>
+            useSyncExternalStore(
+                listener => {
+                    h.listeners.add(listener)
+                    return () => h.listeners.delete(listener)
+                },
+                () => h.status
+            ),
+    }
+})
+
+function setStatus(status: SyncStatus) {
+    h.status = status
+    for (const listener of h.listeners) listener()
+}
 
 const healthy: ConnectionSignals = {
     isOnline: true,
-    isServerReachable: true,
-    isRequestFailing: false,
     isSignedIn: true,
     isRealtimeEnabled: true,
+    sync: connected,
 }
 
 describe('connectionIndicatorState', () => {
@@ -33,18 +66,34 @@ describe('connectionIndicatorState', () => {
     })
 
     it('says offline without a network, before anything else', () => {
-        expect(
-            connectionIndicatorState({ ...healthy, isOnline: false, isRequestFailing: true })
-        ).toBe('offline')
+        expect(connectionIndicatorState({ ...healthy, isOnline: false, sync: reconnecting })).toBe(
+            'offline'
+        )
     })
 
-    it('says reconnecting while requests fail or the server is unreachable', () => {
-        expect(connectionIndicatorState({ ...healthy, isRequestFailing: true })).toBe(
-            'reconnecting'
-        )
-        expect(connectionIndicatorState({ ...healthy, isServerReachable: false })).toBe(
-            'reconnecting'
-        )
+    it('says reconnecting while live updates reconnect or loads retry', () => {
+        expect(connectionIndicatorState({ ...healthy, sync: reconnecting })).toBe('reconnecting')
+        expect(
+            connectionIndicatorState({
+                ...healthy,
+                sync: { ...connected, loads: { retrying: 2, failingSince: 1, failed: 0 } },
+            })
+        ).toBe('reconnecting')
+    })
+
+    it('does not treat a refused load or a disabled stream as an outage', () => {
+        expect(
+            connectionIndicatorState({
+                ...healthy,
+                sync: { ...connected, loads: { retrying: 0, failed: 3 } },
+            })
+        ).toBe('hidden')
+        expect(
+            connectionIndicatorState({
+                ...healthy,
+                sync: { ...connected, realtime: { state: 'disabled' } },
+            })
+        ).toBe('hidden')
     })
 
     it('stays hidden when signed out or on a page with realtime turned off', () => {
@@ -61,11 +110,8 @@ describe('useConnectionIndicator', () => {
     beforeEach(() => {
         vi.useFakeTimers()
         h.user = { id: 'u1' }
-        useConnectivityStore.setState({
-            isOnline: true,
-            isServerReachable: true,
-            isRequestFailing: false,
-        })
+        h.status = connected
+        useConnectivityStore.setState({ isOnline: true, isServerReachable: true })
     })
     afterEach(() => {
         vi.useRealTimers()
@@ -78,9 +124,9 @@ describe('useConnectionIndicator', () => {
         return renderHook(() => useConnectionIndicator())
     }
 
-    it('shows a problem only once it has lasted the delay', async () => {
+    it('shows reconnecting only once it has lasted the delay', async () => {
         const { result } = await mount()
-        act(() => useConnectivityStore.setState({ isRequestFailing: true }))
+        act(() => setStatus(reconnecting))
         expect(result.current).toBe('hidden')
 
         act(() => vi.advanceTimersByTime(CONNECTION_INDICATOR_DELAY_MS - 1))
@@ -100,11 +146,11 @@ describe('useConnectionIndicator', () => {
 
     it('hides at once on recovery', async () => {
         const { result } = await mount()
-        act(() => useConnectivityStore.setState({ isOnline: false }))
+        act(() => setStatus(reconnecting))
         act(() => vi.advanceTimersByTime(CONNECTION_INDICATOR_DELAY_MS))
-        expect(result.current).toBe('offline')
+        expect(result.current).toBe('reconnecting')
 
-        act(() => useConnectivityStore.setState({ isOnline: true }))
+        act(() => setStatus(connected))
         expect(result.current).toBe('hidden')
     })
 

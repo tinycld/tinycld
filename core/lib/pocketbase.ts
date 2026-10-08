@@ -2,19 +2,28 @@ import { createLiveQueryCollection, eq } from '@tanstack/db'
 import { QueryCache, QueryClient } from '@tanstack/react-query'
 import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import { captureException } from '@tinycld/core/lib/errors'
+import { log } from '@tinycld/core/lib/logger'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
 import { ACTIVE_PKG_STATUSES, isActivePkg } from '@tinycld/core/lib/packages/registry-predicates'
 import { reloadLoadedStores } from '@tinycld/core/lib/reload-loaded-stores'
 import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { acceptServerRow } from '@tinycld/core/lib/server-rows'
+import { syncBreadcrumbs } from '@tinycld/core/lib/sync-status-breadcrumbs'
 import type { Schema, Users } from '@tinycld/core/types/pbSchema'
-import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
+import {
+    BasicIndex,
+    createCollection,
+    createReactProvider,
+    getSyncStatus,
+    setLogger,
+    subscribeSyncStatus,
+} from 'pbtsdb'
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
 import { Platform } from 'react-native'
 import { clearAuthBlob, parseAuthBlob, readAuthBlob, writeAuthBlob } from './auth-storage'
 import { PB_SERVER_ADDR } from './config'
 import { getResolvedAddress, subscribeResolvedAddress } from './server-address'
-import { createReachabilityTracker, isServerDownFailure } from './server-reachability'
+import { createReachabilityTracker } from './server-reachability'
 import { shareTokenHeaders } from './share-token'
 import { useConnectivityStore } from './stores/connectivity-store'
 import type { UserSession } from './types'
@@ -148,6 +157,17 @@ pb.beforeSend = (url, options) => {
     return { url, options }
 }
 
+// Sync-status changes as Sentry breadcrumbs (debug level: breadcrumbs only in
+// release builds), so a crash report shows whether live updates were down or
+// lists were retrying just before it.
+let lastSyncStatus = getSyncStatus(pb)
+subscribeSyncStatus(pb, status => {
+    for (const crumb of syncBreadcrumbs(lastSyncStatus, status)) {
+        log.debug('sync.status', crumb.message, crumb.extra)
+    }
+    lastSyncStatus = status
+})
+
 // The server-unreachable signal (which drives the offline overlay) is
 // derived from pb.send outcomes via a rolling sustained-failure tracker.
 // See server-reachability.ts for the rationale — in short, a single blip,
@@ -163,17 +183,13 @@ pb.send = (async <T>(path: string, options: Parameters<typeof origSend>[1]) => {
         // Any successful request proves the server is reachable — recover the
         // signal regardless of tracker streak state (the health-probe poll or
         // another path may have flipped it).
-        const connectivity = useConnectivityStore.getState()
-        if (!connectivity.isServerReachable) connectivity.setServerReachable(true)
-        if (connectivity.isRequestFailing) connectivity.setRequestFailing(false)
+        if (!useConnectivityStore.getState().isServerReachable) {
+            useConnectivityStore.getState().setServerReachable(true)
+        }
         return result
     } catch (err) {
-        const connectivity = useConnectivityStore.getState()
-        if (isServerDownFailure(err) && !connectivity.isRequestFailing) {
-            connectivity.setRequestFailing(true)
-        }
         if (reachability.record(path, false, err, Date.now()) === 'down') {
-            connectivity.setServerReachable(false)
+            useConnectivityStore.getState().setServerReachable(false)
         }
         throw err
     }
