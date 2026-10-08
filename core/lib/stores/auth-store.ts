@@ -12,6 +12,7 @@ import {
     resetSessionState,
     seedUser,
 } from '@tinycld/core/lib/pocketbase'
+import { restartRealtime, stopRealtime } from '@tinycld/core/lib/realtime-enabled'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { create } from '@tinycld/core/lib/store'
@@ -27,6 +28,14 @@ type AuthenticatedUser = UserSession
 type LoginResult = {
     user: AuthenticatedUser | null
     error: string | null
+}
+
+// Every sign-in path's first step once `pb.authStore` holds the new session:
+// reopen the realtime connection logout closed (pbtsdb keeps it closed until
+// told), then land the user's own record before any query asks for it.
+async function beginSession(record: Users): Promise<void> {
+    restartRealtime()
+    await seedUser(record)
 }
 
 // Tear down the device's push subscription on logout: remove the browser/device
@@ -167,7 +176,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 isBetaTester: !!metadata?.isBetaTester,
             }
 
-            await seedUser(authData.record)
+            await beginSession(authData.record)
             set({ user: authenticatedUser })
             await preloadStores()
 
@@ -190,7 +199,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         // requests dispatch after this synchronous block, by which point the
         // active server may have moved.
         const origin = getResolvedAddress()
-        pb.realtime.unsubscribe()
+        stopRealtime()
         // Fire-and-forget push teardown: unsubscribe the device and delete the
         // server push_subscriptions row, then reset the module-lifetime
         // registration guard so a second user on this same session re-registers.
@@ -280,7 +289,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 isBetaTester: false,
             }
 
-            await seedUser(data.record)
+            await beginSession(data.record)
             set({ user: authenticatedUser })
             await preloadStores()
 
@@ -320,7 +329,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 isBetaTester: false,
             }
 
-            await seedUser(data.record)
+            await beginSession(data.record)
             set({ user: authenticatedUser })
             await preloadStores()
 
@@ -341,12 +350,12 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         try {
             // The saved record is partial; authRefresh replaces it with the
             // full one. Then refetch what the signed-out screens synced as
-            // nobody (see refetchLoadedStores), exactly as login does.
+            // nobody (see reloadLoadedStores), exactly as login does.
             await refreshAuth()
             const user = getUserFromAuthStore()
             const record = pb.authStore.record as Users | null
             if (!user || !record) return { user: null, error: 'The new session was not accepted.' }
-            await seedUser(record)
+            await beginSession(record)
             set({ user })
             await preloadStores()
             return { user, error: null }
