@@ -5,7 +5,10 @@ import {
     useMutation as useTanStackMutation,
 } from '@tanstack/react-query'
 import { captureException, errorToString } from '@tinycld/core/lib/errors'
+import { log } from '@tinycld/core/lib/logger'
 import { notify } from '@tinycld/core/lib/notify/dispatcher'
+import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
+import { writesAvailability } from '@tinycld/core/lib/writes-available'
 
 /**
  * Awaits each yielded Transaction sequentially, or an array of Transactions in parallel.
@@ -124,6 +127,19 @@ function reportUnhandledMutationError(mutationKey: readonly unknown[] | undefine
     return (error: unknown) => {
         const operation = mutationKey ? mutationKey.join('.') : 'unhandled'
         const message = errorToString(error)
+        // Offline, a failed save is expected rather than a bug: say why in
+        // words instead of the raw network error, and keep it out of Sentry.
+        const writes = writesAvailability(useConnectivityStore.getState())
+        if (!writes.available) {
+            log.info('mutation.offline', message, { operation })
+            notify.emit({
+                event: 'mutation.error',
+                title: "Your change wasn't saved",
+                body: writes.reason,
+                data: { operation, error: message },
+            })
+            return
+        }
         captureException('mutation.error', error, { operation })
         notify.emit({
             event: 'mutation.error',

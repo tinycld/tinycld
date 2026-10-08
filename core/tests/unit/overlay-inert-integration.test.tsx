@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest'
  * while it is open: every overlay host (including the `sheet` host, which is
  * deliberately nested deep inside the app content so a bottom sheet rests on
  * the mobile tab bar), and every always-on-top surface that renders in place
- * rather than through a host — the toast renderer and the offline overlay.
+ * rather than through a host — the toast renderer and the connection notice.
  *
  * A toast raised by a dialog's own save is the case that motivated this: it
  * had a dead Dismiss and Undo and was invisible to a screen reader, at exactly
@@ -64,7 +64,7 @@ function ModalLayer({ host, testID }: { host: 'root' | 'sheet'; testID: string }
     )
 }
 
-// Stands in for ToastRenderer / OfflineOverlay: renders in place, exempt.
+// Stands in for ToastRenderer / ConnectionIndicator: renders in place, exempt.
 function InPlaceSurface({ testID }: { testID: string }) {
     const ref = useInertExempt()
     return (

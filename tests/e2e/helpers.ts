@@ -43,7 +43,7 @@ export function isPackageLinked(slug: string): boolean {
     return fs.existsSync(manifest)
 }
 
-// The keyboard-shortcut and offline-overlay specs drive a minimal stub package
+// The keyboard-shortcut and connection-indicator specs drive a minimal stub package
 // (shortcut-stub) scaffolded by tests/scripts/scaffold-shortcut-stub.ts. The scaffold
 // writes the package at <workspaceRoot>/shortcut-stub (sibling of tinycld/).
 export function shortcutStubInstalled(): boolean {

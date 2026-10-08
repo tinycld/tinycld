@@ -1,5 +1,6 @@
 import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useWritesAvailable } from '@tinycld/core/lib/use-writes-available'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import {
     LayerEscape,
@@ -333,6 +334,11 @@ interface DialogActionButtonProps {
     onPress: () => void
     isDisabled?: boolean
     isDestructive?: boolean
+    /**
+     * The action saves to the server, so it is disabled — with the reason
+     * beside it — while a change cannot reach the server (useWritesAvailable).
+     */
+    requiresServer?: boolean
     testID?: string
 }
 
@@ -341,19 +347,31 @@ function DialogActionButton({
     onPress,
     isDisabled = false,
     isDestructive = false,
+    requiresServer = false,
     testID,
 }: DialogActionButtonProps) {
+    const writes = useWritesAvailable()
+    const isBlocked = requiresServer && !writes.available
     return (
-        <Button
-            onPress={onPress}
-            isDisabled={isDisabled}
-            size="sm"
-            variant={isDestructive ? 'destructive' : 'default'}
-            testID={testID}
-        >
-            <ButtonText>{label}</ButtonText>
-        </Button>
+        <>
+            <WritesUnavailableHint isVisible={isBlocked} reason={writes.reason} />
+            <Button
+                onPress={onPress}
+                isDisabled={isDisabled || isBlocked}
+                size="sm"
+                variant={isDestructive ? 'destructive' : 'default'}
+                accessibilityHint={isBlocked ? writes.reason : undefined}
+                testID={testID}
+            >
+                <ButtonText>{label}</ButtonText>
+            </Button>
+        </>
     )
+}
+
+function WritesUnavailableHint({ isVisible, reason }: { isVisible: boolean; reason: string }) {
+    if (!isVisible) return null
+    return <Text className="flex-1 text-xs text-muted-foreground">{reason}</Text>
 }
 
 const Dialog = Object.assign(DialogRoot, {

@@ -11,6 +11,12 @@ export type ConfirmDialogProps = {
     cancelLabel?: string
     isDestructive?: boolean
     isSubmitting?: boolean
+    /**
+     * The confirmed action saves to the server (the default: a confirm guards a
+     * delete, archive or revoke), so it is disabled while changes cannot be
+     * saved. Pass false for a confirm whose action stays on the device.
+     */
+    requiresServer?: boolean
 }
 
 export function ConfirmDialog({
@@ -23,6 +29,7 @@ export function ConfirmDialog({
     cancelLabel = 'Cancel',
     isDestructive = false,
     isSubmitting = false,
+    requiresServer = true,
 }: ConfirmDialogProps) {
     return (
         // No close button: a confirm is answered, and the two answers are the
@@ -40,6 +47,7 @@ export function ConfirmDialog({
                     onPress={onConfirm}
                     isDisabled={isSubmitting}
                     isDestructive={isDestructive}
+                    requiresServer={requiresServer}
                 />
             </Dialog.Footer>
         </Dialog>

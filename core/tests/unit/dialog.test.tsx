@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 
 import { cleanup, fireEvent, render as renderBare } from '@testing-library/react'
+import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { OverlayProvider } from '@tinycld/core/ui/overlay'
 import type { ReactElement } from 'react'
 import { Text } from 'react-native'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Every surface renders through the overlay host, which the app mounts once.
 const render = (ui: ReactElement) => renderBare(<OverlayProvider>{ui}</OverlayProvider>)
@@ -88,5 +89,58 @@ describe('Dialog', () => {
         )
         fireEvent.click(getByText('Save'))
         expect(onSave).not.toHaveBeenCalled()
+    })
+})
+
+describe('Dialog.ActionButton with requiresServer', () => {
+    beforeEach(() => useConnectivityStore.setState({ isOnline: true, isServerReachable: true }))
+    afterEach(cleanup)
+
+    function renderSave(onSave: () => void, requiresServer: boolean) {
+        return render(
+            <Dialog isOpen onClose={() => {}} title="Form">
+                <Dialog.Footer>
+                    <Dialog.ActionButton
+                        label="Save"
+                        onPress={onSave}
+                        requiresServer={requiresServer}
+                    />
+                </Dialog.Footer>
+            </Dialog>
+        )
+    }
+
+    it('saves while the server is reachable', () => {
+        const onSave = vi.fn()
+        const { getByText, queryByText } = renderSave(onSave, true)
+        fireEvent.click(getByText('Save'))
+        expect(onSave).toHaveBeenCalledTimes(1)
+        expect(queryByText(/can't be saved/)).toBeNull()
+    })
+
+    it('blocks the save and says why while offline', () => {
+        useConnectivityStore.setState({ isOnline: false })
+        const onSave = vi.fn()
+        const { getByText } = renderSave(onSave, true)
+        expect(getByText("You're offline — changes can't be saved right now")).not.toBeNull()
+        fireEvent.click(getByText('Save'))
+        expect(onSave).not.toHaveBeenCalled()
+    })
+
+    it('blocks the save while the server is unreachable', () => {
+        useConnectivityStore.setState({ isServerReachable: false })
+        const onSave = vi.fn()
+        const { getByText } = renderSave(onSave, true)
+        fireEvent.click(getByText('Save'))
+        expect(onSave).not.toHaveBeenCalled()
+    })
+
+    it('leaves an action that does not need the server alone', () => {
+        useConnectivityStore.setState({ isOnline: false })
+        const onSave = vi.fn()
+        const { getByText, queryByText } = renderSave(onSave, false)
+        fireEvent.click(getByText('Save'))
+        expect(onSave).toHaveBeenCalledTimes(1)
+        expect(queryByText(/can't be saved/)).toBeNull()
     })
 })

@@ -168,7 +168,8 @@ subscribeSyncStatus(pb, status => {
     lastSyncStatus = status
 })
 
-// The server-unreachable signal (which drives the offline overlay) is
+// The server-unreachable signal (which escalates the connection notice and
+// disables saves, see useWritesAvailable) is
 // derived from pb.send outcomes via a rolling sustained-failure tracker.
 // See server-reachability.ts for the rationale — in short, a single blip,
 // an aborted request, or a failed auth-refresh must NOT flip the badge;

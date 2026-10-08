@@ -1,5 +1,5 @@
 // Decides whether a failed `pb.send` request should flip the global
-// "server unreachable" signal that drives the offline overlay.
+// "server unreachable" signal that escalates the connection notice and blocks saves.
 //
 // The badge over-triggered because the previous logic flipped on a SINGLE
 // network-level failure at any point after a 10s boot window, and counted

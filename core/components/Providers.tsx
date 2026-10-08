@@ -4,7 +4,6 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { ConnectionIndicator } from '@tinycld/core/components/ConnectionIndicator'
 import { CoreShortcuts } from '@tinycld/core/components/CoreShortcuts'
 import { NavigationThemeProvider } from '@tinycld/core/components/NavigationThemeProvider'
-import { OfflineOverlay } from '@tinycld/core/components/OfflineOverlay'
 import { ToastRenderer } from '@tinycld/core/components/Toast'
 import { AuthProvider } from '@tinycld/core/lib/auth'
 import { PBTSDBProvider, queryClient } from '@tinycld/core/lib/pocketbase'
@@ -29,7 +28,6 @@ function ThemeAwareGluestackProvider({ children }: { children: ReactNode }) {
             <NavigationThemeProvider>{children}</NavigationThemeProvider>
             <ToastRenderer />
             <ConnectionIndicator />
-            <OfflineOverlay />
             <ShortcutHelp />
             <CoreShortcuts />
         </GluestackUIProvider>

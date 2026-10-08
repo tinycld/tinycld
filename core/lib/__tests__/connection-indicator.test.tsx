@@ -1,22 +1,30 @@
 // @vitest-environment happy-dom
 import { act, renderHook } from '@testing-library/react'
 import {
+    CONNECTION_ESCALATE_AFTER_MS,
     CONNECTION_INDICATOR_DELAY_MS,
     type ConnectionSignals,
-    connectionIndicatorState,
+    connectionNotice,
+    noticeLabel,
+    serverHostLabel,
 } from '@tinycld/core/lib/connection-indicator'
 import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
 import type { SyncStatus } from 'pbtsdb'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const T0 = 1_000_000
+
 const connected: SyncStatus = {
     realtime: { state: 'connected' },
     loads: { retrying: 0, failed: 0 },
 }
-const reconnecting: SyncStatus = {
-    realtime: { state: 'reconnecting', attempt: 1, nextRetryAt: 2000, since: 1000 },
-    loads: { retrying: 0, failed: 0 },
+function reconnectingSince(since: number): SyncStatus {
+    return {
+        realtime: { state: 'reconnecting', attempt: 1, nextRetryAt: since + 1000, since },
+        loads: { retrying: 0, failed: 0 },
+    }
 }
+const reconnecting = reconnectingSince(T0)
 
 const h = vi.hoisted(() => ({
     user: { id: 'u1' } as { id: string } | null,
@@ -55,60 +63,106 @@ function setStatus(status: SyncStatus) {
 
 const healthy: ConnectionSignals = {
     isOnline: true,
+    isServerReachable: true,
     isSignedIn: true,
     isRealtimeEnabled: true,
     sync: connected,
 }
 
-describe('connectionIndicatorState', () => {
+function stateAt(signals: ConnectionSignals, now = T0) {
+    return connectionNotice(signals, now).state
+}
+
+describe('connectionNotice', () => {
     it('is hidden when all is well', () => {
-        expect(connectionIndicatorState(healthy)).toBe('hidden')
+        expect(connectionNotice(healthy, T0)).toEqual({ state: 'hidden', escalatesAt: null })
     })
 
-    it('says offline without a network, before anything else', () => {
-        expect(connectionIndicatorState({ ...healthy, isOnline: false, sync: reconnecting })).toBe(
-            'offline'
-        )
+    it('says offline without a network, and never escalates it', () => {
+        const signals = {
+            ...healthy,
+            isOnline: false,
+            isServerReachable: false,
+            sync: reconnecting,
+        }
+        expect(connectionNotice(signals, T0 + CONNECTION_ESCALATE_AFTER_MS * 10)).toEqual({
+            state: 'offline',
+            escalatesAt: null,
+        })
     })
 
-    it('says reconnecting while live updates reconnect or loads retry', () => {
-        expect(connectionIndicatorState({ ...healthy, sync: reconnecting })).toBe('reconnecting')
+    it('says reconnecting for a short outage and names when it escalates', () => {
+        expect(connectionNotice({ ...healthy, sync: reconnecting }, T0 + 1000)).toEqual({
+            state: 'reconnecting',
+            escalatesAt: T0 + CONNECTION_ESCALATE_AFTER_MS,
+        })
         expect(
-            connectionIndicatorState({
+            stateAt({
                 ...healthy,
-                sync: { ...connected, loads: { retrying: 2, failingSince: 1, failed: 0 } },
+                sync: { ...connected, loads: { retrying: 2, failingSince: T0, failed: 0 } },
             })
         ).toBe('reconnecting')
     })
 
+    it('escalates once the outage passes the threshold', () => {
+        const signals = { ...healthy, sync: reconnecting }
+        expect(stateAt(signals, T0 + CONNECTION_ESCALATE_AFTER_MS - 1)).toBe('reconnecting')
+        expect(stateAt(signals, T0 + CONNECTION_ESCALATE_AFTER_MS)).toBe('unreachable')
+    })
+
+    it('measures the outage from its oldest signal', () => {
+        const sync: SyncStatus = {
+            realtime: { state: 'reconnecting', attempt: 3, nextRetryAt: T0, since: T0 },
+            loads: { retrying: 1, failingSince: T0 - 5000, failed: 0 },
+        }
+        expect(connectionNotice({ ...healthy, sync }, T0).escalatesAt).toBe(
+            T0 - 5000 + CONNECTION_ESCALATE_AFTER_MS
+        )
+    })
+
+    it('escalates at once when the health check says the server is down', () => {
+        expect(connectionNotice({ ...healthy, isServerReachable: false }, T0)).toEqual({
+            state: 'unreachable',
+            escalatesAt: null,
+        })
+    })
+
     it('does not treat a refused load or a disabled stream as an outage', () => {
         expect(
-            connectionIndicatorState({
-                ...healthy,
-                sync: { ...connected, loads: { retrying: 0, failed: 3 } },
-            })
+            stateAt({ ...healthy, sync: { ...connected, loads: { retrying: 0, failed: 3 } } })
         ).toBe('hidden')
         expect(
-            connectionIndicatorState({
-                ...healthy,
-                sync: { ...connected, realtime: { state: 'disabled' } },
-            })
+            stateAt({ ...healthy, sync: { ...connected, realtime: { state: 'disabled' } } })
         ).toBe('hidden')
     })
 
     it('stays hidden when signed out or on a page with realtime turned off', () => {
-        expect(connectionIndicatorState({ ...healthy, isOnline: false, isSignedIn: false })).toBe(
-            'hidden'
+        const down = { ...healthy, isOnline: false, isServerReachable: false }
+        expect(stateAt({ ...down, isSignedIn: false })).toBe('hidden')
+        expect(stateAt({ ...down, isRealtimeEnabled: false })).toBe('hidden')
+    })
+})
+
+describe('noticeLabel', () => {
+    it('names the server host when there is one', () => {
+        expect(noticeLabel('unreachable', 'cloud.example.org')).toBe(
+            "Can't reach cloud.example.org. Tap for options"
         )
-        expect(
-            connectionIndicatorState({ ...healthy, isOnline: false, isRealtimeEnabled: false })
-        ).toBe('hidden')
+        expect(noticeLabel('unreachable', null)).toBe("Can't reach the server. Tap for options")
+        expect(noticeLabel('reconnecting', 'cloud.example.org')).toBe('Reconnecting…')
+    })
+
+    it('reads the host from a server address', () => {
+        expect(serverHostLabel('https://cloud.example.org:8443/')).toBe('cloud.example.org:8443')
+        expect(serverHostLabel('not a url')).toBeNull()
+        expect(serverHostLabel(null)).toBeNull()
     })
 })
 
 describe('useConnectionIndicator', () => {
     beforeEach(() => {
         vi.useFakeTimers()
+        vi.setSystemTime(T0)
         h.user = { id: 'u1' }
         h.status = connected
         useConnectivityStore.setState({ isOnline: true, isServerReachable: true })
@@ -159,6 +213,28 @@ describe('useConnectionIndicator', () => {
         const { result } = await mount()
         act(() => useConnectivityStore.setState({ isOnline: false }))
         act(() => vi.advanceTimersByTime(CONNECTION_INDICATOR_DELAY_MS * 2))
+        expect(result.current).toBe('hidden')
+    })
+
+    it('escalates a reconnect that outlasts the threshold, without a render to prompt it', async () => {
+        const { result } = await mount()
+        act(() => setStatus(reconnecting))
+        act(() => vi.advanceTimersByTime(CONNECTION_INDICATOR_DELAY_MS))
+        expect(result.current).toBe('reconnecting')
+
+        act(() =>
+            vi.advanceTimersByTime(CONNECTION_ESCALATE_AFTER_MS - CONNECTION_INDICATOR_DELAY_MS)
+        )
+        expect(result.current).toBe('unreachable')
+    })
+
+    it('escalates when the health check fails while the network is up', async () => {
+        const { result } = await mount()
+        act(() => useConnectivityStore.setState({ isServerReachable: false }))
+        act(() => vi.advanceTimersByTime(CONNECTION_INDICATOR_DELAY_MS))
+        expect(result.current).toBe('unreachable')
+
+        act(() => useConnectivityStore.setState({ isServerReachable: true }))
         expect(result.current).toBe('hidden')
     })
 })

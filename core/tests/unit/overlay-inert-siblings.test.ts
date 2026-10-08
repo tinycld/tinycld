@@ -139,7 +139,7 @@ describe('applyInertSiblings', () => {
         expect(isInert(t.appRoot)).toBe(false)
     })
 
-    // An exempt LEAF surface — the toast strip, the offline overlay — renders
+    // An exempt LEAF surface — the toast strip, the connection notice — renders
     // in place rather than through a host, so nothing on a host path protects
     // it. It must stay usable: a toast raised by the dialog's own save has
     // Dismiss and Undo on it.

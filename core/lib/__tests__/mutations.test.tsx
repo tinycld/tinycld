@@ -11,6 +11,7 @@
 import type { Transaction } from '@tanstack/react-db'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
+import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -140,7 +141,35 @@ describe('useMutation generator detection', () => {
 describe('useMutation default onError', () => {
     beforeEach(() => {
         useToastStore.setState({ toasts: [] })
+        useConnectivityStore.setState({ isOnline: true, isServerReachable: true })
         vi.clearAllMocks()
+    })
+
+    it('says why a save failed offline, and keeps it out of Sentry', async () => {
+        const { captureExceptionToSentry } = await import('@tinycld/core/lib/sentry')
+        useConnectivityStore.setState({ isOnline: false })
+
+        const { result } = renderHook(
+            () =>
+                useMutation({
+                    mutationFn: async () => {
+                        throw new TypeError('Failed to fetch')
+                    },
+                }),
+            { wrapper: wrapper() }
+        )
+
+        result.current.mutate()
+        await waitFor(() => expect(result.current.isError).toBe(true))
+
+        const toasts = useToastStore.getState().toasts
+        expect(toasts).toHaveLength(1)
+        expect(toasts[0]).toMatchObject({
+            title: "Your change wasn't saved",
+            body: "You're offline — changes can't be saved right now",
+            variant: 'error',
+        })
+        expect(captureExceptionToSentry).not.toHaveBeenCalled()
     })
 
     it('surfaces a failed mutation as an error toast and captures it', async () => {
