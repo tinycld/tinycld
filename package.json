@@ -142,7 +142,7 @@
         "lucide-react-native": "^1.52.0",
         "markdown-it": "^14.1.1",
         "numfmt": "^3.2.6",
-        "pbtsdb": "^2.0.0",
+        "pbtsdb": "^2.0.1",
         "pocketbase": "^0.26.8",
         "prosemirror-commands": "^1.7.1",
         "prosemirror-dropcursor": "^1.8.2",
