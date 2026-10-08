@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { refetchLoadedStores } from '../refetch-loaded-stores'
+import { reloadLoadedStores } from '../reload-loaded-stores'
 
 function store(status: string) {
-    return { status, utils: { refetch: vi.fn(() => Promise.resolve()) } }
+    return { status, reload: vi.fn(() => Promise.resolve()) }
 }
 
-describe('refetchLoadedStores', () => {
-    it('fetches syncing stores again and leaves idle and torn-down ones alone', async () => {
+describe('reloadLoadedStores', () => {
+    it('reloads syncing stores and leaves idle and torn-down ones alone', async () => {
         const stores = {
             ready: store('ready'),
             loading: store('loading'),
@@ -14,30 +14,28 @@ describe('refetchLoadedStores', () => {
             cleanedUp: store('cleaned-up'),
         }
 
-        await refetchLoadedStores(Object.values(stores))
+        await reloadLoadedStores(Object.values(stores))
 
-        expect(stores.ready.utils.refetch).toHaveBeenCalledOnce()
-        expect(stores.loading.utils.refetch).toHaveBeenCalledOnce()
-        expect(stores.idle.utils.refetch).not.toHaveBeenCalled()
-        expect(stores.cleanedUp.utils.refetch).not.toHaveBeenCalled()
+        expect(stores.ready.reload).toHaveBeenCalledOnce()
+        expect(stores.loading.reload).toHaveBeenCalledOnce()
+        expect(stores.idle.reload).not.toHaveBeenCalled()
+        expect(stores.cleanedUp.reload).not.toHaveBeenCalled()
     })
 
-    it('resolves once every refetch has settled', async () => {
+    it('resolves once every reload has settled', async () => {
         let settled = false
         const slow = {
             status: 'ready',
-            utils: {
-                refetch: () =>
-                    new Promise<void>(resolve =>
-                        setTimeout(() => {
-                            settled = true
-                            resolve()
-                        }, 5)
-                    ),
-            },
+            reload: () =>
+                new Promise<void>(resolve =>
+                    setTimeout(() => {
+                        settled = true
+                        resolve()
+                    }, 5)
+                ),
         }
 
-        await refetchLoadedStores([slow])
+        await reloadLoadedStores([slow])
 
         expect(settled).toBe(true)
     })

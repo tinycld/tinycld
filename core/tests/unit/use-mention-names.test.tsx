@@ -34,7 +34,9 @@ vi.mock('@tinycld/core/lib/pocketbase', async () => {
     const users = createCollection({
         ...localOnlyCollectionOptions({
             id: 'mention-name-users',
-            getKey: (r: { id: string }) => r.id,
+            // Typed as string | number: TanStack DB 0.12's BasicIndex constructor is
+            // invariant in the key type and is declared for string | number keys.
+            getKey: (r: { id: string }): string | number => r.id,
             initialData: h.users,
         }),
         autoIndex: 'eager',

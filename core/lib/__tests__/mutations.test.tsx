@@ -18,7 +18,7 @@ import { useMutation } from '../mutations'
 
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     notificationsCollection: {
-        insert: vi.fn(() => ({ isPersisted: { promise: Promise.resolve() } })),
+        insert: vi.fn(() => ({ when: () => Promise.resolve() })),
     },
 }))
 vi.mock('@tinycld/core/lib/notifications', () => ({
@@ -40,15 +40,15 @@ function wrapper() {
 
 type FakeTransaction = Transaction<Record<string, unknown>>
 
-// A stand-in for a pbtsdb Transaction: the mutation machinery only touches
-// `isPersisted.promise`, so we stub that and cast to Transaction to satisfy the
+// A stand-in for a pbtsdb Transaction: the mutation machinery only calls
+// `when('settled')`, so we stub that and cast to Transaction to satisfy the
 // GeneratorMutationFn yield type (the generators below must typecheck).
 function fakeTransaction() {
     let resolvePersist!: () => void
     const promise = new Promise<void>(resolve => {
         resolvePersist = resolve
     })
-    const tx = { isPersisted: { promise } } as unknown as FakeTransaction
+    const tx = { when: () => promise } as unknown as FakeTransaction
     return { tx, resolvePersist }
 }
 
@@ -206,10 +206,10 @@ describe('useMutation default onError', () => {
     it('applies the default when a yielded transaction fails to persist', async () => {
         // The exact silent-revert scenario from the review: the optimistic
         // write is rejected server-side (e.g. by a collection rule), the
-        // transaction's isPersisted promise rejects, and the local update
+        // transaction's when('settled') promise rejects, and the local update
         // rolls back. Without the default onError nothing tells the user.
         const rejected = {
-            isPersisted: { promise: Promise.reject(new Error('generator failed')) },
+            when: () => Promise.reject(new Error('generator failed')),
         } as unknown as FakeTransaction
 
         const { result } = renderHook(

@@ -34,9 +34,9 @@ async function drainTransactions<TResult>(
     while (!result.done) {
         const value = result.value
         if (Array.isArray(value)) {
-            await Promise.all(value.map(tx => tx.isPersisted.promise))
+            await Promise.all(value.map(tx => tx.when('settled')))
         } else {
-            await value.isPersisted.promise
+            await value.when('settled')
         }
         result = gen.next()
     }

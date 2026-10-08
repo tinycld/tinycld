@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@tinycld/core/lib/sentry', () => ({ captureExceptionToSentry: vi.fn() }))
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     notificationsCollection: {
-        insert: vi.fn(() => ({ isPersisted: { promise: Promise.resolve() } })),
+        insert: vi.fn(() => ({ when: () => Promise.resolve() })),
     },
 }))
 vi.mock('@tinycld/core/lib/notifications', () => ({

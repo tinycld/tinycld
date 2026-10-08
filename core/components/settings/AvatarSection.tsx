@@ -96,9 +96,11 @@ function useAvatarEditor() {
             // Bytes land via the raw PATCH above (the sanctioned bypass for file
             // BYTES); the crop rect is an ordinary field and still goes through
             // pbtsdb so optimistic UI and realtime sync see it consistently.
-            await usersCollection.update(user.id, draft => {
-                draft.avatar_crop = serializeCrop(params.crop)
-            }).isPersisted.promise
+            await usersCollection
+                .update(user.id, draft => {
+                    draft.avatar_crop = serializeCrop(params.crop)
+                })
+                .when('settled')
         },
         onError: err => {
             captureException('settings.avatar_upload', err)
