@@ -10,6 +10,7 @@ import { PBTSDBProvider, queryClient } from '@tinycld/core/lib/pocketbase'
 import { ShortcutHelp, ShortcutsProvider } from '@tinycld/core/lib/shortcuts'
 import { useColorTheme } from '@tinycld/core/lib/use-color-theme'
 import { useConnectivityDetector } from '@tinycld/core/lib/use-connectivity-detector'
+import { useReloadOnResume } from '@tinycld/core/lib/use-reload-on-resume'
 import { useThemePreference } from '@tinycld/core/lib/use-theme-preference'
 import { GluestackUIProvider } from '@tinycld/core/ui/gluestack-ui-provider'
 import type { ReactNode } from 'react'
@@ -21,6 +22,7 @@ function ThemeAwareGluestackProvider({ children }: { children: ReactNode }) {
     const { preference } = useThemePreference()
     const { colorTheme } = useColorTheme()
     useConnectivityDetector()
+    useReloadOnResume()
     return (
         <GluestackUIProvider mode={preference} colorTheme={colorTheme}>
             <NavigationThemeProvider>{children}</NavigationThemeProvider>
