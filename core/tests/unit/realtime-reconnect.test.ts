@@ -67,11 +67,14 @@ class FakeSocket {
 }
 
 let sockets: FakeSocket[] = []
+let connects: { url: string; protocols: string[] }[] = []
 
 beforeEach(() => {
     vi.useFakeTimers()
     sockets = []
-    const WebSocketStub = function WebSocketStub() {
+    connects = []
+    const WebSocketStub = function WebSocketStub(url: string, protocols: string[]) {
+        connects.push({ url, protocols })
         const socket = new FakeSocket()
         sockets.push(socket)
         return socket
@@ -106,6 +109,28 @@ function serverTextAfter(server: Y.Doc, socket: FakeSocket) {
 }
 
 describe('RealtimeClient — reconnect', () => {
+    it('reads the credential afresh on every connect and keeps it out of the URL', () => {
+        let token = 'first'
+        const doc = new Y.Doc()
+        const client = new RealtimeClient({
+            url: 'ws://test/room',
+            protocols: () => ['tinycld.realtime', `tinycld.auth.${token}`],
+            doc,
+            awareness: new Awareness(doc),
+        })
+        client.connect()
+
+        token = 'refreshed'
+        sockets[0].refuse()
+        vi.advanceTimersByTime(500)
+
+        expect(connects).toEqual([
+            { url: 'ws://test/room', protocols: ['tinycld.realtime', 'tinycld.auth.first'] },
+            { url: 'ws://test/room', protocols: ['tinycld.realtime', 'tinycld.auth.refreshed'] },
+        ])
+        client.destroy()
+    })
+
     it('retries a refused upgrade with a growing backoff', () => {
         const { client } = newClient()
 

@@ -32,6 +32,10 @@ const RECONNECT_MAX_MS = 30_000
 
 export interface RealtimeClientOptions {
     url: string
+    // The WebSocket subprotocols, which carry the credential. Called on
+    // every connect, so a reconnect sends the current auth token rather
+    // than the one that was valid when the room opened.
+    protocols?: () => string[]
     doc: Y.Doc
     awareness: Awareness
     // onSyncReply fires once when the server returns the initial
@@ -138,7 +142,7 @@ export class RealtimeClient {
 
     connect(): void {
         if (this.destroyed) return
-        const ws = new WebSocket(this.opts.url)
+        const ws = new WebSocket(this.opts.url, this.opts.protocols?.() ?? [])
         ws.binaryType = 'arraybuffer'
         this.ws = ws
 

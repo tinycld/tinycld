@@ -7,6 +7,7 @@ import { captureException } from '../errors'
 import { log } from '../logger'
 import { pb } from '../pocketbase'
 import { RealtimeClient } from './client'
+import { realtimeProtocols } from './protocols'
 
 export interface UseRealtimeRoomOptions {
     // The roomKind name registered on the server side (matches the
@@ -49,10 +50,10 @@ export interface UseRealtimeRoomOptions {
     isEmpty?: (doc: Y.Doc) => boolean
 
     // shareSession, when set, authorizes the connection as an anonymous
-    // share-link visitor (no PB auth). The token is attached as
-    // ?share_session=; the server's handleConnect verifies it and runs
-    // the room kind's AuthorizeShare. When unset, the PB auth token is
-    // used as before.
+    // share-link visitor (no PB auth). The token travels as a WebSocket
+    // subprotocol (see ./protocols); the server's handleConnect verifies
+    // it and runs the room kind's AuthorizeShare. When unset, the PB auth
+    // token is used.
     shareSession?: string
 }
 
@@ -140,7 +141,7 @@ export function useRealtimeRoom({
     useEffect(() => {
         if (!roomKind || !roomID) return
 
-        const wsURL = buildRealtimeURL(roomKind, roomID, shareSession)
+        const wsURL = buildRealtimeURL(roomKind, roomID)
 
         const doc = new Y.Doc()
         const awareness = new Awareness(doc)
@@ -152,6 +153,7 @@ export function useRealtimeRoom({
 
         const client = new RealtimeClient({
             url: wsURL,
+            protocols: () => realtimeProtocols({ authToken: pb.authStore.token, shareSession }),
             doc,
             awareness,
             onOpen: () => {
@@ -410,19 +412,7 @@ function defaultIsEmpty(doc: Y.Doc): boolean {
 // (from the EXPO_PUBLIC_ENV → serverShortcuts mapping in coreConfig).
 // Using it here keeps the realtime WS pointed at the same server as
 // every other API call, on every platform.
-function buildRealtimeURL(roomKind: string, roomID: string, shareSession?: string): string {
+function buildRealtimeURL(roomKind: string, roomID: string): string {
     const httpURL = `${PB_SERVER_ADDR}/api/realtime/${encodeURIComponent(roomKind)}/${encodeURIComponent(roomID)}`
-    const wsURL = httpURL.replace(/^http/i, 'ws')
-    // Browsers can't set custom headers on a WebSocket upgrade, so we
-    // attach the credential as a query param. The server's handleConnect
-    // reads ?token= via FindAuthRecordByToken (authenticated user) or
-    // ?share_session= via the share-session resolver (anonymous link
-    // visitor). React Native's WebSocket has the same header limitation,
-    // so the same query approach works on every platform.
-    if (shareSession) {
-        return `${wsURL}?share_session=${encodeURIComponent(shareSession)}`
-    }
-    const token = pb.authStore.token
-    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
-    return `${wsURL}${tokenQuery}`
+    return httpURL.replace(/^http/i, 'ws')
 }
