@@ -14,7 +14,7 @@ import { Platform } from 'react-native'
 import { clearAuthBlob, parseAuthBlob, readAuthBlob, writeAuthBlob } from './auth-storage'
 import { PB_SERVER_ADDR } from './config'
 import { getResolvedAddress, subscribeResolvedAddress } from './server-address'
-import { createReachabilityTracker } from './server-reachability'
+import { createReachabilityTracker, isServerDownFailure } from './server-reachability'
 import { shareTokenHeaders } from './share-token'
 import { useConnectivityStore } from './stores/connectivity-store'
 import type { UserSession } from './types'
@@ -163,13 +163,17 @@ pb.send = (async <T>(path: string, options: Parameters<typeof origSend>[1]) => {
         // Any successful request proves the server is reachable — recover the
         // signal regardless of tracker streak state (the health-probe poll or
         // another path may have flipped it).
-        if (!useConnectivityStore.getState().isServerReachable) {
-            useConnectivityStore.getState().setServerReachable(true)
-        }
+        const connectivity = useConnectivityStore.getState()
+        if (!connectivity.isServerReachable) connectivity.setServerReachable(true)
+        if (connectivity.isRequestFailing) connectivity.setRequestFailing(false)
         return result
     } catch (err) {
+        const connectivity = useConnectivityStore.getState()
+        if (isServerDownFailure(err) && !connectivity.isRequestFailing) {
+            connectivity.setRequestFailing(true)
+        }
         if (reachability.record(path, false, err, Date.now()) === 'down') {
-            useConnectivityStore.getState().setServerReachable(false)
+            connectivity.setServerReachable(false)
         }
         throw err
     }

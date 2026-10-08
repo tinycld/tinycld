@@ -50,3 +50,8 @@ export function stopRealtime() {
 export function restartRealtime() {
     if (realtimeEnabled) resetRealtime(pb)
 }
+
+/** False on a page that turned realtime off on purpose, such as an embed. */
+export function isRealtimeEnabled(): boolean {
+    return realtimeEnabled
+}
