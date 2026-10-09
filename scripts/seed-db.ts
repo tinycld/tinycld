@@ -92,6 +92,8 @@ const TEST_USER_DEFAULT_PASSWORD = 'TestUser1234!'
 const TEST_DEFAULTS = {
     userEmail: process.env.TEST_USER_LOGIN || 'user@tinycld.org',
     userUsername: process.env.TEST_USER_USERNAME || 'tester',
+    // TEST_USER_NAME in tests/e2e/helpers.ts must match: IMAP names the
+    // user's own mailbox after it.
     userName: 'Test User',
 }
 
