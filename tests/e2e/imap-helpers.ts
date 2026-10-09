@@ -1,5 +1,5 @@
 import { ImapFlow } from 'imapflow'
-import { TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
+import { TEST_USER_EMAIL, TEST_USER_NAME, TEST_USER_PASSWORD } from './helpers'
 
 const IMAP_PORT = 1193
 
@@ -57,15 +57,20 @@ export async function listMailboxes(
 /**
  * Finds the personal INBOX path — handles both single-mailbox ("INBOX")
  * and multi-mailbox ("Test User/INBOX") layouts. Throws if not found.
+ *
+ * A multi-mailbox session prefixes each mailbox's folders with the mailbox's
+ * name, and the user's own mailbox is named after the user, so it is matched
+ * by that name. "The first prefixed INBOX that is not Support" was wrong:
+ * imapflow sorts LIST by name, and specs that run in parallel create shared
+ * mailboxes ("liveone-…") that sort ahead of "Test User", so a spec read and
+ * deleted in another mailbox's INBOX.
  */
 export function findPersonalInbox(mailboxes: { name: string; specialUse: string }[]): string {
     const bare = mailboxes.find(mb => mb.name === 'INBOX')
     if (bare) return bare.name
 
-    const prefixed = mailboxes.find(
-        mb => mb.name.endsWith('/INBOX') && !mb.name.startsWith('Support')
-    )
-    if (prefixed) return prefixed.name
+    const own = mailboxes.find(mb => mb.name === `${TEST_USER_NAME}/INBOX`)
+    if (own) return own.name
 
     throw new Error(`No personal INBOX found in: ${mailboxes.map(m => m.name).join(', ')}`)
 }

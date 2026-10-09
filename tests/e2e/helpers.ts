@@ -25,6 +25,9 @@ const APP_SECTIONS = 'contacts|settings|help|mail|drive|calendar|calc|text|short
 export const LANDED_URL = new RegExp(`/(?:${APP_SECTIONS})(?:/|$|\\?)`)
 export const TEST_USER_PASSWORD = process.env.TEST_USER_PW || 'TestUser1234!'
 export const TEST_USER_USERNAME = process.env.TEST_USER_USERNAME ?? 'tester'
+// The seeded user's display name. It MUST match TEST_DEFAULTS.userName in
+// scripts/seed-db.ts, which has no env override either.
+export const TEST_USER_NAME = 'Test User'
 
 // isPackageLinked checks whether a given feature package is present in this
 // workspace. Tests that depend on package-contributed routes or collections
