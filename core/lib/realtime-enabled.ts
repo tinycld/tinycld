@@ -1,7 +1,9 @@
+import { disconnectRealtime, resetRealtime } from 'pbtsdb'
 import { pb } from './pocketbase'
-import { REALTIME_DISABLED_MESSAGE } from './realtime-disabled-message'
 
-// Whether this DOCUMENT may hold realtime subscriptions.
+// pbtsdb runs its own realtime connection, separate from `pb.realtime`; every
+// collection subscribes through it. This module is the one place the app opens
+// and closes that connection.
 //
 // Realtime is normally on and needs no switch: pbtsdb subscribes a collection
 // the first time something reads it, and the share token rides along via
@@ -11,74 +13,45 @@ import { REALTIME_DISABLED_MESSAGE } from './realtime-disabled-message'
 // An EMBED is the case where "for free" is the wrong default. A board framed on
 // someone else's page would hold an open socket per viewer, on traffic its
 // owner does not control and cannot see, so an embed subscribes only when the
-// link says to (`embed_live`).
+// link says to (`embed_live`). The switch is document-wide: an embed renders
+// nothing but a read-only board, and keeping its data path identical to a
+// member's is what the share-link design exists to preserve.
 //
-// WHY A DOCUMENT-WIDE SWITCH RATHER THAN A PER-COLLECTION ONE. pbtsdb has no
-// "don't subscribe" option. Its `realtime` option (0.10) only chooses WHICH rows
-// a collection covers — 'collection' or 'query' — never whether it subscribes at
-// all; the subscription is still intrinsic to a collection. So the alternatives
-// were to fork the board's data path or to turn realtime off for the whole page.
-// An embed document renders nothing but a read-only board, so the page-wide
-// switch is both safe and the one that leaves the board's rendering identical to
-// a member's. That identity is the property the whole share-link design exists
-// to preserve; a second data path would spend it.
-//
-// One consequence of `realtime: 'query'`: a rejected subscribe is now reported
-// once per distinct query filter rather than once per collection, so
-// pocketbase.ts's pbtsdb logger drops these rejections by message rather than
-// shipping a burst of them to Sentry.
+// `disconnectRealtime(pb)` closes the connection and keeps it closed until
+// `resetRealtime(pb)`; collections keep working over REST and keep their topics
+// registered, so reopening resumes every topic and reloads every ready
+// collection.
 //
 // A module-level variable, not a store, for the same reason share-token.ts
-// gives: the reader is not a hook. It runs inside the PocketBase client, at
-// subscribe time.
+// gives: the readers are not hooks.
 
 let realtimeEnabled = true
 
 /**
- * Turn realtime subscriptions on or off for this document.
- *
- * Disabling also tears down anything already subscribed, because a collection
- * read during the first render may have subscribed before this was called.
+ * Turn realtime on or off for this document. Safe to call before anything has
+ * subscribed: a disconnected client stays closed until realtime is turned on.
  */
 export function setRealtimeEnabled(enabled: boolean) {
     if (realtimeEnabled === enabled) return
     realtimeEnabled = enabled
-    if (!enabled) {
-        // Fire-and-forget: this closes the socket, and a failure to close one
-        // that may not even be open is not worth failing a render over. The
-        // guard below is what actually keeps it closed.
-        void pb.realtime.unsubscribe().catch(() => {})
-    }
+    if (enabled) resetRealtime(pb)
+    else disconnectRealtime(pb)
 }
 
-export function isRealtimeEnabled(): boolean {
-    return realtimeEnabled
+/** Sign-out, or a server switch: close the connection and keep it closed. */
+export function stopRealtime() {
+    disconnectRealtime(pb)
 }
 
 /**
- * Refuse new subscriptions while realtime is disabled.
- *
- * Installed over `pb.realtime.subscribe`, which every per-collection
- * `subscribe()` funnels through, so one wrap covers every collection — present
- * and future — without pbtsdb or any caller knowing about it.
- *
- * REJECTS rather than resolving with a no-op unsubscribe: pbtsdb logs the
- * failure and leaves the collection unsubscribed, which is exactly the intent.
- * Resolving would let it record the collection as subscribed and never retry,
- * so re-enabling realtime later would silently do nothing.
+ * Sign-in, or a refused server switch: reopen the connection under `pb`'s
+ * current auth and address — unless this document has realtime turned off.
  */
-export function installRealtimeGuard() {
-    const realtime = pb.realtime as unknown as {
-        subscribe: (...args: unknown[]) => Promise<unknown>
-        __tinycldGuarded?: boolean
-    }
-    if (realtime.__tinycldGuarded) return
-    const original = realtime.subscribe.bind(realtime)
-    realtime.subscribe = (...args: unknown[]) => {
-        if (!realtimeEnabled) {
-            return Promise.reject(new Error(REALTIME_DISABLED_MESSAGE))
-        }
-        return original(...args)
-    }
-    realtime.__tinycldGuarded = true
+export function restartRealtime() {
+    if (realtimeEnabled) resetRealtime(pb)
+}
+
+/** False on a page that turned realtime off on purpose, such as an embed. */
+export function isRealtimeEnabled(): boolean {
+    return realtimeEnabled
 }

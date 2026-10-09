@@ -16,11 +16,10 @@ import { pathToFileURL } from 'node:url'
 // Version pins come from core/package-versions.json (the SOURCE OF TRUTH,
 // committed with core). Notable pin constraints preserved from the old
 // bootstrap FRAMEWORK_OVERRIDES table:
-//   - @tanstack/db / react-db / query-db-collection move in LOCKSTEP:
-//     react-db and query-db-collection call internals of a specific db
+//   - pbtsdb / @tanstack/db / react-db move in LOCKSTEP: pbtsdb builds on
+//     db's core sync API and react-db calls internals of a specific db
 //     version; letting one float produces a workspace that installs clean
-//     and dies at import ("isCollection is not a function" /
-//     "getLoadSubsetDemandKey").
+//     and dies at import ("isCollection is not a function").
 //   - react-native-drax is a git FORK ref, not a semver: upstream lacks
 //     fixes the kanban board drag depends on.
 //

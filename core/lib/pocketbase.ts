@@ -2,17 +2,26 @@ import { createLiveQueryCollection, eq } from '@tanstack/db'
 import { QueryCache, QueryClient } from '@tanstack/react-query'
 import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import { captureException } from '@tinycld/core/lib/errors'
+import { log } from '@tinycld/core/lib/logger'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
 import { ACTIVE_PKG_STATUSES, isActivePkg } from '@tinycld/core/lib/packages/registry-predicates'
-import { refetchLoadedStores } from '@tinycld/core/lib/refetch-loaded-stores'
+import { reloadLoadedStores } from '@tinycld/core/lib/reload-loaded-stores'
 import { serverFetch } from '@tinycld/core/lib/server-fetch'
+import { acceptServerRow } from '@tinycld/core/lib/server-rows'
+import { syncBreadcrumbs } from '@tinycld/core/lib/sync-status-breadcrumbs'
 import type { Schema, Users } from '@tinycld/core/types/pbSchema'
-import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
+import {
+    BasicIndex,
+    createCollection,
+    createReactProvider,
+    getSyncStatus,
+    setLogger,
+    subscribeSyncStatus,
+} from 'pbtsdb'
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
 import { Platform } from 'react-native'
 import { clearAuthBlob, parseAuthBlob, readAuthBlob, writeAuthBlob } from './auth-storage'
 import { PB_SERVER_ADDR } from './config'
-import { REALTIME_DISABLED_MESSAGE } from './realtime-disabled-message'
 import { getResolvedAddress, subscribeResolvedAddress } from './server-address'
 import { createReachabilityTracker } from './server-reachability'
 import { shareTokenHeaders } from './share-token'
@@ -148,7 +157,19 @@ pb.beforeSend = (url, options) => {
     return { url, options }
 }
 
-// The server-unreachable signal (which drives the offline overlay) is
+// Sync-status changes as Sentry breadcrumbs (debug level: breadcrumbs only in
+// release builds), so a crash report shows whether live updates were down or
+// lists were retrying just before it.
+let lastSyncStatus = getSyncStatus(pb)
+subscribeSyncStatus(pb, status => {
+    for (const crumb of syncBreadcrumbs(lastSyncStatus, status)) {
+        log.debug('sync.status', crumb.message, crumb.extra)
+    }
+    lastSyncStatus = status
+})
+
+// The server-unreachable signal (which escalates the connection notice and
+// disables saves, see useWritesAvailable) is
 // derived from pb.send outcomes via a rolling sustained-failure tracker.
 // See server-reachability.ts for the rationale — in short, a single blip,
 // an aborted request, or a failed auth-refresh must NOT flip the badge;
@@ -180,12 +201,11 @@ export function usePocketBase() {
 }
 
 // Tear down the live PB session, then drop the resolved address so the
-// next gate pass routes to the picker. Order matters: PB's RealtimeService
-// auto-reconnects on EventSource error, and reconnect reads PB_SERVER_ADDR
-// — clearing the address before disconnecting realtime trips the "address
-// not resolved" guard. The auth-store's logout already does the realtime
-// teardown + auth clear + resetSessionState (stores + query cache); we
-// just need to add the address clear.
+// next gate pass routes to the picker. Order matters: the realtime
+// connection reconnects on error and reads PB_SERVER_ADDR, so it must be
+// closed before the address is cleared. The auth-store's logout already does
+// the realtime teardown + auth clear + resetSessionState (stores + query
+// cache); we just need to add the address clear.
 export async function disconnectServer() {
     const { useAuthStore } = await import('./stores/auth-store')
     useAuthStore.getState().logout()
@@ -206,13 +226,6 @@ setLogger({
     info: () => {},
     warn: () => {},
     error: (msg, context) => {
-        // A realtime-disabled document (an embed without `embed_live` — see
-        // realtime-enabled.ts) rejects every subscribe BY DESIGN, and since
-        // pbtsdb 0.10 subscribes once per distinct query filter, that is one
-        // reported error per filter per screen. Matched on the message string
-        // because importing isRealtimeEnabled from here would be circular.
-        const err = (context as { error?: { message?: string } } | undefined)?.error
-        if (err?.message === REALTIME_DISABLED_MESSAGE) return
         // Stable grouping key; the varying message rides in the Error and the
         // pbtsdb context object rides in `extra`.
         captureException('pbtsdb.error', new Error(msg), context as Record<string, unknown>)
@@ -236,7 +249,7 @@ const queryClient = new QueryClient({
 // collection's subscriber count rises from zero, so a captured value would go
 // stale exactly when it matters — most sharply at OTP sign-in, where the token
 // stops being sent and the membership half of the rule takes over.
-const newCollection = createCollection<MergedSchema>(pb, queryClient, {
+const newCollection = createCollection<MergedSchema>(pb, {
     subscribeOptions: () => {
         const headers = shareTokenHeaders()
         return headers ? { headers } : undefined
@@ -528,10 +541,12 @@ function isAuthRejection(err: unknown): boolean {
 export async function seedUser(userRecord: Users) {
     // startSyncImmediate, not preload(): preload() on an on-demand collection
     // fetches nothing (there is no query to derive a filter from) and warns.
-    // All this needs is a store in a writable state for the upsert below, which
-    // seeds the freshly authenticated record before any query asks for it.
+    // All this needs is a syncing store for accept() below, which lands the
+    // freshly authenticated record before any query asks for it.
     stores.users.startSyncImmediate()
-    stores.users.utils?.writeUpsert(userRecord)
+    // Only a head start: the user's own live queries fetch the record anyway,
+    // so a failed seed is reported and never fails the sign-in.
+    await acceptServerRow(stores.users, userRecord, 'pbtsdb.seedUser')
 }
 
 // Live queries built by preloadStores, kept so clearStores can tear them down.
@@ -542,9 +557,9 @@ const preloadedQueries: { cleanup: () => Promise<void> }[] = []
 
 export async function preloadStores() {
     // Whatever synced before sign-in was fetched as nobody — see
-    // refetchLoadedStores. Done before the preloads so a store that is already
-    // syncing is not preloaded (a no-op) and then refetched.
-    await refetchLoadedStores(Object.values(stores))
+    // reloadLoadedStores. Done before the preloads so a store that is already
+    // syncing is not preloaded (a no-op) and then reloaded.
+    await reloadLoadedStores(Object.values(stores))
 
     // Every collection is on-demand now (see `onDemand`), so `preload()` has
     // nothing to fetch — an on-demand store loads rows per live query, keyed by
@@ -616,6 +631,20 @@ export async function clearStores() {
 export async function resetSessionState() {
     await clearStores()
     queryClient.clear()
+}
+
+/** Refetch every live pbtsdb query — see useReloadOnResume. */
+export function reloadLiveStores(): Promise<void> {
+    return reloadLoadedStores(Object.values(stores))
+}
+
+/**
+ * Pull-to-refresh: refetch every live query, the pbtsdb stores' and React
+ * Query's alike. pbtsdb collections do not live in the React Query cache, so
+ * invalidating it alone no longer reaches them.
+ */
+export async function refreshAllData(): Promise<void> {
+    await Promise.all([reloadLiveStores(), queryClient.invalidateQueries()])
 }
 
 export { PBTSDBProvider, queryClient, stores, useStore }

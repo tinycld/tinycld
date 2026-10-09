@@ -13,8 +13,10 @@ import (
 // are system-critical operations (every package install / upgrade / downgrade /
 // rollback / delete / core-swap). They build on emitProgress's durability: a line
 // appended to job.LogLines is persisted to pkg_install_log.log on finalize and so
-// SURVIVES the exit-75 restart, unlike the SSE stream. Every helper also writes to
-// the process log (docker logs) with the shared [pkg_install] prefix.
+// SURVIVES the exit-75 restart — as does the row's own `steps`/`current_step`
+// progress a client watches live, throttle-saved onto the same row by
+// emitProgress (install_progress_rows.go). Every helper also writes to the
+// process log (docker logs) with the shared [pkg_install] prefix.
 //
 // Use jobLogf for detail lines that aren't a progress milestone (they keep the
 // current %), emitProgress for milestones (which move the bar), and timeStep to

@@ -8,7 +8,7 @@ import { useStore } from '@tinycld/core/lib/pocketbase'
 import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { enabledStatusFor } from '@tinycld/core/lib/setup/set-package-enabled'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
+import { Button, ButtonIcon, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { Divider } from '@tinycld/core/ui/divider'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
@@ -145,10 +145,11 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     // A job already RUNNING when this screen is opened — started by another
     // admin, or by this one before a page reload — is adopted from the install
     // log, so the panel shows it rather than leaving the screen looking idle
-    // while the deployment is mid-rebuild. The SSE stream backfills the steps
-    // so far, so a late subscriber sees the same bar. The row's status flips
-    // off `running` when the job ends; the panel keeps the job in local state
-    // so it can still show the terminal result until it is closed.
+    // while the deployment is mid-rebuild. useInstallProgress's own live query
+    // on the row already carries its `steps` history, so a late subscriber
+    // sees the same bar with no separate backfill. The row's status flips off
+    // `running` when the job ends; the panel keeps the job in local state so
+    // it can still show the terminal result until it is closed.
     const { data: runningLogs = [] } = useLiveQuery({
         query: query =>
             query
@@ -225,7 +226,6 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                 isVisible={activeProgress !== null}
                 jobId={activeProgress?.jobId ?? null}
                 action={activeProgress?.action ?? 'install'}
-                authToken={pb.authStore.token}
                 onClose={() => activeProgress?.onClose()}
                 onComplete={() => activeProgress?.onComplete()}
             />
@@ -974,9 +974,9 @@ function EditPackageForm({
             <View className="flex-row items-center">
                 {confirmRemove ? (
                     <View className="flex-row gap-1.5 items-center">
-                        <Button onPress={handleRemove} size="sm" variant="destructive">
+                        <ServerActionButton onPress={handleRemove} size="sm" variant="destructive">
                             <ButtonText>Confirm remove</ButtonText>
-                        </Button>
+                        </ServerActionButton>
                         <Pressable onPress={() => setConfirmRemove(false)} className="p-1.5">
                             <X size={14} color={mutedColor} />
                         </Pressable>
@@ -1002,9 +1002,9 @@ function EditPackageForm({
                             Cancel
                         </Text>
                     </Pressable>
-                    <Button onPress={onSave} isDisabled={!saveEnabled} size="sm">
+                    <ServerActionButton onPress={onSave} isDisabled={!saveEnabled} size="sm">
                         <ButtonText>{save.isPending ? 'Saving…' : 'Save'}</ButtonText>
-                    </Button>
+                    </ServerActionButton>
                 </View>
             </View>
         </View>

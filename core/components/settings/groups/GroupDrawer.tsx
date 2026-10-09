@@ -2,6 +2,8 @@ import { Avatar } from '@tinycld/core/components/Avatar'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { useGroupMembersAdmin, useGroupsAdmin } from '@tinycld/core/lib/groups/use-groups-admin'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useServerActionState } from '@tinycld/core/lib/use-writes-available'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
 import {
     Drawer,
@@ -310,6 +312,9 @@ function MemberRow({
     onRemove: () => void
 }) {
     const dangerColor = useThemeColor('danger')
+    const removeState = useServerActionState({
+        accessibilityHint: `Removes ${name || email} from the group`,
+    })
     return (
         <View
             testID={`group-member-row-${email}`}
@@ -327,9 +332,12 @@ function MemberRow({
             <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${name || email} from group`}
+                accessibilityHint={removeState.accessibilityHint}
+                disabled={removeState.isDisabled}
                 onPress={onRemove}
                 hitSlop={8}
                 className="p-1.5 rounded-md"
+                style={{ opacity: removeState.isDisabled ? 0.4 : 1 }}
             >
                 <X size={16} color={dangerColor} strokeWidth={2.2} />
             </Pressable>
@@ -357,7 +365,6 @@ function CandidateRows({
     isPending: boolean
     onAdd: (userId: string) => void
 }) {
-    const primaryFgColor = useThemeColor('primary-foreground')
     if (!isVisible) return null
     if (candidates.length === 0)
         return <Text className="text-[12px] text-muted px-1">No matching people</Text>
@@ -380,30 +387,51 @@ function CandidateRows({
                                 {candidate.email}
                             </Text>
                         </View>
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Add ${candidate.name || candidate.email}`}
-                            disabled={isPending}
+                        <AddCandidateButton
+                            name={candidate.name || candidate.email}
+                            isPending={isPending}
                             onPress={() => onAdd(candidate.userId)}
-                            className="flex-row items-center gap-1.5 rounded-md bg-primary"
-                            style={{
-                                paddingVertical: 6,
-                                paddingHorizontal: 10,
-                                opacity: isPending ? 0.5 : 1,
-                            }}
-                        >
-                            <UserPlus size={13} color={primaryFgColor} />
-                            <Text
-                                className="text-primary-foreground"
-                                style={{ fontSize: 12, fontWeight: '700' }}
-                            >
-                                Add
-                            </Text>
-                        </Pressable>
+                        />
                     </View>
                 </View>
             ))}
         </View>
+    )
+}
+
+function AddCandidateButton({
+    name,
+    isPending,
+    onPress,
+}: {
+    name: string
+    isPending: boolean
+    onPress: () => void
+}) {
+    const primaryFgColor = useThemeColor('primary-foreground')
+    const addState = useServerActionState({
+        isDisabled: isPending,
+        accessibilityHint: `Adds ${name} to the group`,
+    })
+    return (
+        <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Add ${name}`}
+            accessibilityHint={addState.accessibilityHint}
+            disabled={addState.isDisabled}
+            onPress={onPress}
+            className="flex-row items-center gap-1.5 rounded-md bg-primary"
+            style={{
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                opacity: addState.isDisabled ? 0.5 : 1,
+            }}
+        >
+            <UserPlus size={13} color={primaryFgColor} />
+            <Text className="text-primary-foreground" style={{ fontSize: 12, fontWeight: '700' }}>
+                Add
+            </Text>
+        </Pressable>
     )
 }
 
@@ -472,16 +500,8 @@ function PrimaryButton({
     onPress: () => void
 }) {
     return (
-        <Pressable
-            testID={testID}
-            onPress={onPress}
-            disabled={isDisabled}
-            className="rounded-md bg-primary"
-            style={{ paddingVertical: 8, paddingHorizontal: 14, opacity: isDisabled ? 0.5 : 1 }}
-        >
-            <Text className="text-primary-foreground" style={{ fontSize: 13, fontWeight: '700' }}>
-                {label}
-            </Text>
-        </Pressable>
+        <ServerActionButton testID={testID} size="sm" onPress={onPress} isDisabled={isDisabled}>
+            <ButtonText>{label}</ButtonText>
+        </ServerActionButton>
     )
 }

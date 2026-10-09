@@ -173,7 +173,7 @@ export default function TeamStep({ next }: SetupStepProps) {
                 People in this organization
             </Text>
             <View className="mb-6 mt-1">{rows}</View>
-            <SetupContinueButton onPress={next} isDisabled={!hasTeammate} />
+            <SetupContinueButton onPress={next} requiresServer={false} isDisabled={!hasTeammate} />
         </View>
     )
 }

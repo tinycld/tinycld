@@ -7,6 +7,7 @@ import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { notify } from '@tinycld/core/lib/notify'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
@@ -173,24 +174,16 @@ function ChangePasswordForm({ onDone }: { onDone: () => void }) {
                 />
 
                 <View className="flex-row gap-3 mt-1">
-                    <Pressable
-                        onPress={submit}
-                        disabled={change.isPending}
-                        className={`rounded-lg px-4 py-2.5 bg-primary ${change.isPending ? 'opacity-50' : 'opacity-100'}`}
-                    >
+                    <ServerActionButton onPress={submit} isDisabled={change.isPending}>
                         {change.isPending ? (
                             <ActivityIndicator size="small" color={primaryFg} />
                         ) : (
-                            <Text className="text-primary-foreground font-semibold">Save</Text>
+                            <ButtonText>Save</ButtonText>
                         )}
-                    </Pressable>
-                    <Pressable
-                        onPress={handleCancel}
-                        disabled={change.isPending}
-                        className="rounded-lg px-4 py-2.5 border border-border"
-                    >
-                        <Text className="text-foreground font-semibold">Cancel</Text>
-                    </Pressable>
+                    </ServerActionButton>
+                    <Button variant="outline" onPress={handleCancel} isDisabled={change.isPending}>
+                        <ButtonText>Cancel</ButtonText>
+                    </Button>
                 </View>
             </View>
         </SectionCard>

@@ -11,6 +11,7 @@
 import type { Transaction } from '@tanstack/react-db'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
+import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,7 +19,7 @@ import { useMutation } from '../mutations'
 
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     notificationsCollection: {
-        insert: vi.fn(() => ({ isPersisted: { promise: Promise.resolve() } })),
+        insert: vi.fn(() => ({ when: () => Promise.resolve() })),
     },
 }))
 vi.mock('@tinycld/core/lib/notifications', () => ({
@@ -40,15 +41,15 @@ function wrapper() {
 
 type FakeTransaction = Transaction<Record<string, unknown>>
 
-// A stand-in for a pbtsdb Transaction: the mutation machinery only touches
-// `isPersisted.promise`, so we stub that and cast to Transaction to satisfy the
+// A stand-in for a pbtsdb Transaction: the mutation machinery only calls
+// `when('settled')`, so we stub that and cast to Transaction to satisfy the
 // GeneratorMutationFn yield type (the generators below must typecheck).
 function fakeTransaction() {
     let resolvePersist!: () => void
     const promise = new Promise<void>(resolve => {
         resolvePersist = resolve
     })
-    const tx = { isPersisted: { promise } } as unknown as FakeTransaction
+    const tx = { when: () => promise } as unknown as FakeTransaction
     return { tx, resolvePersist }
 }
 
@@ -140,7 +141,35 @@ describe('useMutation generator detection', () => {
 describe('useMutation default onError', () => {
     beforeEach(() => {
         useToastStore.setState({ toasts: [] })
+        useConnectivityStore.setState({ isOnline: true, isServerReachable: true })
         vi.clearAllMocks()
+    })
+
+    it('says why a save failed offline, and keeps it out of Sentry', async () => {
+        const { captureExceptionToSentry } = await import('@tinycld/core/lib/sentry')
+        useConnectivityStore.setState({ isOnline: false })
+
+        const { result } = renderHook(
+            () =>
+                useMutation({
+                    mutationFn: async () => {
+                        throw new TypeError('Failed to fetch')
+                    },
+                }),
+            { wrapper: wrapper() }
+        )
+
+        result.current.mutate()
+        await waitFor(() => expect(result.current.isError).toBe(true))
+
+        const toasts = useToastStore.getState().toasts
+        expect(toasts).toHaveLength(1)
+        expect(toasts[0]).toMatchObject({
+            title: "Your change wasn't saved",
+            body: "You're offline — changes can't be saved right now",
+            variant: 'error',
+        })
+        expect(captureExceptionToSentry).not.toHaveBeenCalled()
     })
 
     it('surfaces a failed mutation as an error toast and captures it', async () => {
@@ -206,10 +235,10 @@ describe('useMutation default onError', () => {
     it('applies the default when a yielded transaction fails to persist', async () => {
         // The exact silent-revert scenario from the review: the optimistic
         // write is rejected server-side (e.g. by a collection rule), the
-        // transaction's isPersisted promise rejects, and the local update
+        // transaction's when('settled') promise rejects, and the local update
         // rolls back. Without the default onError nothing tells the user.
         const rejected = {
-            isPersisted: { promise: Promise.reject(new Error('generator failed')) },
+            when: () => Promise.reject(new Error('generator failed')),
         } as unknown as FakeTransaction
 
         const { result } = renderHook(

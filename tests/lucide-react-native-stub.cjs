@@ -110,7 +110,7 @@ const handler = {
         }
         if (prop === 'useLucideContext') {
             return function useLucideContext() {
-                return { size: 24, color: 'currentColor', strokeWidth: 2, absoluteStrokeWidth: false }
+                return { size: 24, color: 'currentColor', strokeWidth: 2, nonScalingStroke: false }
             }
         }
         if (prop === 'createLucideIcon') {

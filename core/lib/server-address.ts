@@ -69,7 +69,7 @@ export function normalizeAddress(input: string): string {
 }
 
 // probe is a LIVENESS check: "is the server I already connected to answering?"
-// It is polled on a timer by OfflineOverlay and the native connectivity
+// It is polled on a timer by useServerRecoveryProbe and the native connectivity
 // detector, so it stays the cheapest possible request and deliberately does not
 // inspect the body. Use probeServer() to ADMIT a new address — liveness is the
 // wrong question there, because a host that is not a TinyCld server at all can

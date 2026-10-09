@@ -1,15 +1,31 @@
+const fs = require('node:fs')
 const path = require('node:path')
 const { getDefaultConfig } = require('expo/metro-config')
 const { withUniwindConfig } = require('uniwind/metro')
 
 const config = getDefaultConfig(__dirname)
 
-// The workspace root is one level up (app/.. ). Watch it so Metro bundles
-// member source (core/, the feature siblings) reached through the
-// node_modules/@tinycld/* symlinks AND resolves their deps from the
-// workspace-root node_modules (members have no node_modules of their own).
+// The workspace root is one level up (app/.. ). Metro must see member source
+// (the feature siblings) reached through the node_modules/@tinycld/* symlinks
+// AND resolve their deps from the workspace-root node_modules (members have no
+// node_modules of their own).
+//
+// Watch each directory in the workspace root, not the root itself. Metro
+// always adds this project to its roots and then drops a root nested in
+// another, so watching the root leaves the workspace root as the only crawl
+// root — and @expo/metro-file-map's node crawler mis-files every file under
+// the project's direct parent (it stores app/_layout.tsx as
+// ../tinycld/app/_layout.tsx, a path no lookup asks for). The result is a
+// route tree holding only files written after Metro started: expo-router
+// shows "Unmatched Route" at `/`, and an export ships no core routes. Watching
+// the siblings keeps this project its own root, which the crawler files
+// correctly.
 const workspaceRoot = path.resolve(__dirname, '..')
-config.watchFolders = [workspaceRoot]
+config.watchFolders = fs
+    .readdirSync(workspaceRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+    .map(entry => path.join(workspaceRoot, entry.name))
+    .filter(dir => dir !== __dirname)
 
 // `@tinycld/app-generated/*` — package-generator output written to
 // lib/generated/. This is a build-time contract (not a symlink artifact):
@@ -58,6 +74,16 @@ const LUCIDE_PKG_ROOT = (() => {
 })()
 const LUCIDE_ICONS_DIR = path.join(LUCIDE_PKG_ROOT, 'dist', 'esm', 'icons')
 const LUCIDE_ICON_PREFIX = 'lucide-react-native/icons/'
+
+// babel-plugin-lucide-deep-imports bakes each icon's file name into the
+// transformed module, and lucide renames files between releases (1.52 moved
+// `History` off history.mjs). Metro's transform cache does not see plugin
+// inputs, so a warm cache from the previous lucide keeps importing files that
+// no longer exist. Keying the cache on lucide's version invalidates it on a bump.
+const LUCIDE_VERSION = JSON.parse(
+    require('node:fs').readFileSync(path.join(LUCIDE_PKG_ROOT, 'package.json'), 'utf8')
+).version
+config.cacheVersion = [config.cacheVersion, `lucide-${LUCIDE_VERSION}`].filter(Boolean).join(':')
 
 // Canonicalize every resolved module to its realpath. In this symlinked
 // workspace, `@tinycld/core/*` is reachable by two routes — the app's own

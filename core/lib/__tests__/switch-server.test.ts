@@ -5,10 +5,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // graph, none of which this module's behaviour depends on — it only needs
 // realtime teardown to be callable.
 vi.mock('../pocketbase', () => ({
-    pb: {
-        realtime: { unsubscribe: vi.fn() },
-        cancelAllRequests: vi.fn(),
-    },
+    pb: { cancelAllRequests: vi.fn() },
+}))
+
+// pbtsdb's realtime client binds to the real PocketBase client's auth store;
+// the switch only needs its connection controls to be callable and observable.
+vi.mock('pbtsdb', () => ({
+    disconnectRealtime: vi.fn(),
+    resetRealtime: vi.fn(),
 }))
 
 beforeEach(async () => {
@@ -58,14 +62,29 @@ describe('switchToServer', () => {
 
     it('tears down the old servers realtime stream before repointing', async () => {
         const { pb } = await import('../pocketbase')
+        const { disconnectRealtime } = await import('pbtsdb')
         const { setResolvedAddress } = await import('../server-address')
         const { switchToServer } = await import('../switch-server')
 
         setResolvedAddress('https://a.example.com')
         await expect(switchToServer('https://b.example.com')).rejects.toThrow()
 
-        expect(pb.realtime.unsubscribe).toHaveBeenCalled()
+        expect(disconnectRealtime).toHaveBeenCalledWith(pb)
         expect(pb.cancelAllRequests).toHaveBeenCalled()
+    })
+
+    // Refused, the app stays on the previous server, which still needs its
+    // live updates.
+    it('reopens realtime on the previous server when the reload refuses', async () => {
+        const { pb } = await import('../pocketbase')
+        const { resetRealtime } = await import('pbtsdb')
+        const { setResolvedAddress } = await import('../server-address')
+        const { switchToServer } = await import('../switch-server')
+
+        setResolvedAddress('https://a.example.com')
+        await expect(switchToServer('https://b.example.com')).rejects.toThrow()
+
+        expect(resetRealtime).toHaveBeenCalledWith(pb)
     })
 
     describe('per-server state', () => {

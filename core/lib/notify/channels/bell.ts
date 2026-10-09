@@ -33,6 +33,6 @@ export const bellChannel: NotifyChannel = {
             read: false,
             dismissed: false,
         })
-        await tx.isPersisted.promise
+        await tx.when('settled')
     },
 }

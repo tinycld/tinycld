@@ -4,6 +4,7 @@ import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useAvatarUrl } from '@tinycld/core/lib/use-avatar-url'
+import { ButtonIcon, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import {
     Drawer,
     DrawerBackdrop,
@@ -649,24 +650,16 @@ function InviteView({ onDone }: { onDone: () => void }) {
                             Cancel
                         </Text>
                     </Pressable>
-                    <Pressable
+                    <ServerActionButton
+                        size="sm"
                         onPress={onSubmit}
-                        disabled={invite.isPending || !isValid}
-                        className="flex-row items-center gap-1.5 rounded-md bg-primary"
-                        style={{
-                            paddingVertical: 8,
-                            paddingHorizontal: 14,
-                            opacity: invite.isPending || !isValid ? 0.5 : 1,
-                        }}
+                        isDisabled={invite.isPending || !isValid}
                     >
-                        <Send size={13} color={primaryFgColor} />
-                        <Text
-                            className="text-primary-foreground"
-                            style={{ fontSize: 13, fontWeight: '700' }}
-                        >
+                        <ButtonIcon as={Send} />
+                        <ButtonText>
                             {invite.isPending ? 'Adding…' : 'Add user and invite'}
-                        </Text>
-                    </Pressable>
+                        </ButtonText>
+                    </ServerActionButton>
                 </View>
             </DrawerFooter>
         </>

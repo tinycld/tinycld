@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
   s.license        = { type: 'MIT' }
   s.author         = 'TinyCld'
   s.homepage       = 'https://tinycld.org'
-  s.platforms      = { :ios => '15.1' }
+  s.platforms      = { :ios => '16.4' }
   s.swift_version  = '5.9'
   s.source         = { git: 'https://github.com/tinycld/tinycld.git' }
   s.static_framework = true

@@ -1,7 +1,8 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { Lock } from 'lucide-react-native'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 const loginSchema = z.object({
     email: z.string().email(),
@@ -68,16 +69,9 @@ export function SuperuserLoginForm({ login, error, isLoading }: SuperuserLoginFo
                 secureTextEntry
             />
 
-            <Pressable
-                onPress={onSubmit}
-                disabled={isLoading}
-                accessibilityRole="button"
-                className={`px-4 py-3 rounded-lg items-center bg-primary ${isLoading ? 'opacity-60' : 'opacity-100'}`}
-            >
-                <Text className="font-semibold text-primary-foreground">
-                    {isLoading ? 'Signing in...' : 'Sign in'}
-                </Text>
-            </Pressable>
+            <ServerActionButton onPress={onSubmit} isDisabled={isLoading} className="w-full">
+                <ButtonText>{isLoading ? 'Signing in...' : 'Sign in'}</ButtonText>
+            </ServerActionButton>
         </View>
     )
 }

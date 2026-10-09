@@ -4,7 +4,7 @@
 // area, so each panel could become its own route without duplicating the parts
 // they share.
 
-import { Button, ButtonText } from '@tinycld/core/ui/button'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { TextInput } from '@tinycld/core/ui/form'
 import type { ReactNode } from 'react'
 import type { Control, FieldValues, Path } from 'react-hook-form'
@@ -79,9 +79,9 @@ export function SaveRow({
 }) {
     return (
         <View className="flex-row justify-end">
-            <Button testID={testID} onPress={onPress} size="sm" isDisabled={isDisabled}>
+            <ServerActionButton testID={testID} onPress={onPress} size="sm" isDisabled={isDisabled}>
                 <ButtonText>{isPending ? 'Saving…' : 'Save'}</ButtonText>
-            </Button>
+            </ServerActionButton>
         </View>
     )
 }

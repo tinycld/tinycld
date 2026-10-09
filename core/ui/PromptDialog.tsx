@@ -1,3 +1,4 @@
+import { useWritesAvailable } from '@tinycld/core/lib/use-writes-available'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { useEffect, useRef, useState } from 'react'
@@ -16,6 +17,13 @@ export type PromptDialogProps = {
     maxLength?: number
     required?: boolean
     isSubmitting?: boolean
+    /**
+     * The submitted value is saved to the server (the default: a rename, a
+     * copy, a version), so the submit is disabled while changes cannot be
+     * saved. Pass false for a value that stays on the device, such as a link
+     * typed into an editor.
+     */
+    requiresServer?: boolean
 }
 
 export function PromptDialog({
@@ -31,6 +39,7 @@ export function PromptDialog({
     maxLength,
     required = false,
     isSubmitting = false,
+    requiresServer = true,
 }: PromptDialogProps) {
     const [value, setValue] = useState(defaultValue)
     const inputRef = useRef<TextInput>(null)
@@ -50,7 +59,10 @@ export function PromptDialog({
     }, [isOpen])
 
     const trimmed = value.trim()
-    const canSubmit = !isSubmitting && (!required || trimmed.length > 0)
+    // The button disables itself; this also stops the Enter key.
+    const writes = useWritesAvailable()
+    const canSubmit =
+        !isSubmitting && (!required || trimmed.length > 0) && (!requiresServer || writes.available)
 
     const handleSubmit = () => {
         if (!canSubmit) return
@@ -89,6 +101,7 @@ export function PromptDialog({
                     label={confirmLabel}
                     onPress={handleSubmit}
                     isDisabled={!canSubmit}
+                    requiresServer={requiresServer}
                 />
             </Dialog.Footer>
         </Dialog>

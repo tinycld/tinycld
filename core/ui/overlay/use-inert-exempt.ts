@@ -7,7 +7,7 @@ import { exemptFromInert } from './inert-siblings'
  * inert.
  *
  * For an always-on-top surface that renders IN PLACE rather than through an
- * overlay host — the toast renderer and the offline overlay, which are
+ * overlay host — the toast renderer and the connection notice, which are
  * absolutely positioned siblings of the app. A surface that portals into a
  * host needs nothing: the host is already protected.
  *

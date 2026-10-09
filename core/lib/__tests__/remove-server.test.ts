@@ -6,8 +6,11 @@ const disconnectServer = vi.fn(async () => {})
 const resetSessionState = vi.fn(async () => {})
 
 vi.mock('../expo-push', () => ({ unregisterExpoPushToken }))
+// pbtsdb's realtime client binds to the real PocketBase client's auth store;
+// a server switch only needs its connection controls to be callable.
+vi.mock('pbtsdb', () => ({ disconnectRealtime: vi.fn(), resetRealtime: vi.fn() }))
 vi.mock('../pocketbase', () => ({
-    pb: { realtime: { unsubscribe: vi.fn() }, cancelAllRequests: vi.fn() },
+    pb: { cancelAllRequests: vi.fn() },
     disconnectServer,
     resetSessionState,
 }))

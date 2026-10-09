@@ -12,9 +12,12 @@
         "resolveJsonModule": true,
         "moduleDetection": "force",
         "noEmit": true,
+        // expo/types/global declares `*.css` modules, which TypeScript 6
+        // requires for side-effect imports such as mail's editor stylesheet.
         "types": [
             "node",
             "react",
+            "expo/types/global",
             "@tinycld/core/uniwind-types",
             "@tinycld/core/lucide-icons",
             "@tinycld/core/types/editor-webview"

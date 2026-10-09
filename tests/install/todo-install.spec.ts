@@ -47,14 +47,15 @@ const APP_VERSION = (
 // runner mounts pb_data/builds/releases so the SQLite file sits on the same
 // bind-mounted volume the operator uses (a no-mount run never reproduced it).
 //
-// Install/upgrade/downgrade progress streams to a modal over SSE, but the test
-// judges per-step success by polling the server's pkg_install_log status (ground
-// truth) rather than the live bar — an EventSource that connects a hair late can
-// miss the fast early stages, making mid-stream modal-text assertions racy. The
+// Install/upgrade/downgrade progress reaches the modal via a pbtsdb live query
+// on the pkg_install_log row, but the test judges per-step success by polling
+// the server's pkg_install_log status directly (ground truth) rather than the
+// live bar — the row's throttled writes (~1/sec) can leave a fast early stage
+// unobserved between polls, making mid-stream modal-text assertions racy. The
 // modal's TERMINAL state, however, is asserted (the install test waits for
-// "Installation Complete"): it resolves via the durable job-status poll, which
-// survives the swap to the new server, so it is reliable where the live stream
-// isn't.
+// "Installation Complete"): pbtsdb reconnects and reloads the query once the
+// new server answers after the restart, so the row carries the modal through
+// the seam with no separate fallback to keep in sync.
 //
 // NOT a normal-CI test. It needs a purpose-built docker image (the runner
 // `tests/install/run-todo-install.sh` builds it) and drives three real,
@@ -358,7 +359,9 @@ async function latestOpId(page: Page, slug: string): Promise<string | null> {
 
 // Polls the admin package-status endpoint (backed by pkg_install_log) until the
 // slug's operation reaches `wantStatus`, throwing on a terminal failure. This is
-// the SSE-independent ground truth for "did the background operation finish?".
+// the live-query-independent ground truth for "did the background operation
+// finish?" — it reads the row straight from the server rather than through the
+// app's pbtsdb subscription the modal uses.
 // Uses page.request so it shares the browser's network context (same origin,
 // so PB_SERVER_ADDR resolution is irrelevant — we hit the same host as the app).
 // `wantAction` (e.g. 'install' / 'version_change') ignores stale rows for a
@@ -370,14 +373,16 @@ async function latestOpId(page: Page, slug: string): Promise<string | null> {
 // `version_change` row is still the PRIOR version-change's `success` row — which
 // would falsely satisfy the wait. Pass the prior row's id (snapshot via
 // latestOpId before the click) so a matching id is treated as "not yet started".
-// waitForProgressAdvance asserts the install progress modal's bar actually moves
-// — i.e. SSE progress events are reaching the browser. Reads the numeric value
-// off the progress fill (accessibilityValue → aria-valuenow) and waits until it
-// climbs to at least `minPct`. This is the end-to-end guard for the events-stream
-// auth: a 403 on /api/admin/packages/events (the token-type bug) leaves the bar
-// frozen at 0% even though the server-side install runs fine, so a stuck bar here
-// catches that regression — distinctly from waitForOpStatus, which reads the
-// install log directly and would pass even with a dead stream.
+// waitForProgressAdvance asserts the install progress modal's bar actually
+// moves — i.e. the app's live query on the pkg_install_log row is picking up
+// the server's throttled progress writes. Reads the numeric value off the
+// progress fill (accessibilityValue → aria-valuenow) and waits until it climbs
+// to at least `minPct`. This is the end-to-end guard for that path: a stuck
+// subscription (realtime not reconnecting, or the row not resolving by job_id)
+// leaves the bar frozen at 0% even though the server-side install runs fine,
+// so a stuck bar here catches that regression — distinctly from
+// waitForOpStatus, which reads the install log directly and would pass even
+// with a dead subscription.
 async function waitForProgressAdvance(page: Page, minPct: number, timeoutMs: number) {
     const fill = page.getByTestId('install-progress-fill')
     // The modal mounts as soon as the install POST returns a jobId.
@@ -396,8 +401,8 @@ async function waitForProgressAdvance(page: Page, minPct: number, timeoutMs: num
     }
     throw new Error(
         `install progress bar did not advance to ${minPct}% within ${Math.round(timeoutMs / 1000)}s ` +
-            `(highest observed: ${lastSeen}%). The SSE progress stream likely never reached the browser ` +
-            `— check /api/admin/packages/events auth (a 403 freezes the bar at 0%).`
+            `(highest observed: ${lastSeen}%). The live query on pkg_install_log likely never picked up ` +
+            `the server's progress writes — check realtime connectivity and the row's job_id.`
     )
 }
 
@@ -589,7 +594,8 @@ async function registryVersion(page: Page, slug: string): Promise<string | null>
 
 // Polls registryVersion until the slug reports `wantVersion`. After a version
 // change the registry row is rewritten to the swapped package.json version, so
-// this is the SSE-independent confirmation that a version change took effect.
+// this is a confirmation that a version change took effect independent of the
+// progress modal's own live query.
 async function waitForRegistryVersion(
     page: Page,
     slug: string,
@@ -976,12 +982,13 @@ test.describe('todo version change', () => {
         await page.getByRole('textbox', { name: 'Package source', exact: true }).fill(TODO_SPEC_V1)
         await page.getByRole('button', { name: 'Install', exact: true }).click()
 
-        // The SSE progress modal must actually advance — proves the events stream
-        // authenticates and reaches the browser. The early stages (validate, npm
-        // pack, manifest, copy, pnpm) carry the bar well past 50% before the long
-        // go-build/expo-export stages, so requiring ≥50% within 10 min confirms a
-        // live stream without coupling to a specific percentage. (A frozen 0% bar
-        // here is the signature of the events-endpoint 403 regression.)
+        // The progress modal must actually advance — proves the live query on
+        // pkg_install_log is picking up the server's throttled writes. The early
+        // stages (validate, npm pack, manifest, copy, pnpm) carry the bar well
+        // past 50% before the long go-build/expo-export stages, so requiring
+        // ≥50% within 10 min confirms live progress without coupling to a
+        // specific percentage. (A frozen 0% bar here means the subscription
+        // isn't picking up the row's updates.)
         //
         // PW_PROGRESS_MIN_PCT overrides the threshold (cross-repo contract —
         // see the PW_TODO_SPEC_V1 note above): the HOSTED pipeline's
@@ -994,14 +1001,17 @@ test.describe('todo version change', () => {
         // The install runs server-side as a background job and ends by asking the
         // supervisor to replace the server. Judge success by the server's own
         // pkg_install_log reaching status `success` (ground truth, independent of
-        // the SSE modal).
+        // the modal's own subscription).
         await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'install') // up to 40 min
 
-        // The modal itself must ALSO resolve — not just the server. The SSE stream
-        // ends when the old server drains (the new process has no in-memory job), so
-        // the modal relies on the durable job-status poll to learn the outcome.
-        // Before that poll existed the modal hung forever on "Installing Package…";
-        // this assertion is the regression guard for that hang.
+        // The modal itself must ALSO resolve — not just the server. pbtsdb
+        // reconnects and reloads this live query once the new server answers
+        // after the restart (the old process's in-memory job is gone, but the
+        // row persists straight through), so the modal learns the outcome from
+        // the SAME row the whole way, with no separate fallback to keep in sync.
+        // Before the row carried progress the modal could hang forever on
+        // "Installing Package…" across that seam; this assertion is the
+        // regression guard for that hang.
         await expect(page.getByText('Installation Complete')).toBeVisible({ timeout: 120_000 })
     })
 

@@ -15,7 +15,9 @@ vi.mock('@tinycld/core/lib/pocketbase', async () => {
         createCollection({
             ...localOnlyCollectionOptions({
                 id: `${id}-${Math.random()}`,
-                getKey: (r: T) => r.id,
+                // Typed as string | number: TanStack DB 0.12's BasicIndex constructor is
+                // invariant in the key type and is declared for string | number keys.
+                getKey: (r: T): string | number => r.id,
                 initialData,
             }),
             autoIndex: 'eager',

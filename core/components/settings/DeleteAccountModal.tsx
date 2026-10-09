@@ -4,9 +4,10 @@ import { errorToString } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { router } from 'expo-router'
 import { useState } from 'react'
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, Text, TextInput, View } from 'react-native'
 import { ContentPlanPicker, usePeers } from './account/OffboardDialog'
 
 interface DeleteAccountModalProps {
@@ -156,27 +157,27 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
                     />
                 </View>
 
-                <Pressable
-                    className={`rounded-lg items-center p-3.5 mb-3 bg-danger ${canSubmit ? 'opacity-100' : 'opacity-50'}`}
+                <ServerActionButton
+                    variant="destructive"
+                    className="mb-3 w-full"
                     onPress={handleSubmit}
-                    disabled={!canSubmit}
+                    isDisabled={!canSubmit}
                 >
                     {isPending ? (
                         <ActivityIndicator color={dangerFg} size="small" />
                     ) : (
-                        <Text className="text-base font-semibold text-danger-foreground">
-                            Delete account
-                        </Text>
+                        <ButtonText>Delete account</ButtonText>
                     )}
-                </Pressable>
+                </ServerActionButton>
 
-                <Pressable
-                    className={`rounded-lg items-center p-3.5 border border-border ${isPending ? 'opacity-50' : 'opacity-100'}`}
+                <Button
+                    variant="outline"
+                    className="w-full"
                     onPress={handleCancel}
-                    disabled={isPending}
+                    isDisabled={isPending}
                 >
-                    <Text className="text-base font-semibold text-foreground">Cancel</Text>
-                </Pressable>
+                    <ButtonText>Cancel</ButtonText>
+                </Button>
             </View>
         </View>
     )

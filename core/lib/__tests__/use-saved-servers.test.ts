@@ -4,8 +4,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// pbtsdb's realtime client binds to the real PocketBase client's auth store;
+// a server switch only needs its connection controls to be callable.
+vi.mock('pbtsdb', () => ({ disconnectRealtime: vi.fn(), resetRealtime: vi.fn() }))
 vi.mock('../pocketbase', () => ({
-    pb: { realtime: { unsubscribe: vi.fn() }, cancelAllRequests: vi.fn() },
+    pb: { cancelAllRequests: vi.fn() },
     disconnectServer: vi.fn(),
     resetSessionState: vi.fn(),
 }))

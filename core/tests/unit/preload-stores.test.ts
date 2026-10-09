@@ -79,11 +79,12 @@ vi.mock('pbtsdb', async () => {
                 h.cleanupOrder.push(name)
                 return cleanup()
             }
-            // pbtsdb's query-backed collections expose a refetch; the
-            // local-only options do not, and refetchLoadedStores calls it.
+            // pbtsdb's collections expose reload() and accept(); the
+            // local-only options do not, and preloadStores and seedUser call them.
             return Object.assign(collection, {
                 collectionName: name,
-                utils: { ...collection.utils, refetch: async () => {} },
+                reload: async () => {},
+                accept: async () => {},
             })
         },
     }

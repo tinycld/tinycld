@@ -185,7 +185,7 @@
             }
         },
         {
-            "includes": ["**/core/lib/server-fetch.ts", "**/core/lib/avatar-upload.ts"],
+            "includes": ["**/core/lib/server-fetch.ts", "**/core/lib/upload-file.ts"],
             "linter": {
                 "rules": {
                     "style": {

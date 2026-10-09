@@ -1,5 +1,5 @@
 import { Panel, PanelIntro, SaveRow } from '@tinycld/core/components/settings/system/panel-chrome'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { Switch } from '@tinycld/core/ui/switch'
 import type PocketBase from 'pocketbase'
@@ -89,14 +89,14 @@ function BlockedRow({
                 </Text>
                 <Text className="text-xs text-muted-foreground">{row.reason}</Text>
             </View>
-            <Button
+            <ServerActionButton
                 testID={`autoupgrade-clear-${row.id}`}
                 size="sm"
                 variant="outline"
                 onPress={() => onClear(row.id)}
             >
                 <ButtonText>Clear</ButtonText>
-            </Button>
+            </ServerActionButton>
         </View>
     )
 }

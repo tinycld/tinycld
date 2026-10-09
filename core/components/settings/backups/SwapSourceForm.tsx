@@ -1,5 +1,6 @@
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { TextInput } from '@tinycld/core/ui/form'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 import { useSwapSource } from './useBackups'
 
 type Props = { isVisible: boolean; jobId: string }
@@ -25,16 +26,14 @@ export function SwapSourceForm({ isVisible, jobId }: Props) {
                 autoCapitalize="none"
                 autoCorrect={false}
             />
-            <Pressable
+            <ServerActionButton
+                variant="link"
                 onPress={onSubmit}
-                disabled={isDisabled}
+                isDisabled={isDisabled}
                 testID={`backup-swap-${jobId}`}
-                className={isDisabled ? 'opacity-50' : ''}
             >
-                <Text className="text-primary font-medium">
-                    {swap.isPending ? 'Sending…' : 'Continue restore'}
-                </Text>
-            </Pressable>
+                <ButtonText>{swap.isPending ? 'Sending…' : 'Continue restore'}</ButtonText>
+            </ServerActionButton>
         </View>
     )
 }

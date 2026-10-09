@@ -12,6 +12,7 @@ import {
     resetSessionState,
     seedUser,
 } from '@tinycld/core/lib/pocketbase'
+import { restartRealtime, stopRealtime } from '@tinycld/core/lib/realtime-enabled'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { create } from '@tinycld/core/lib/store'
@@ -27,6 +28,24 @@ type AuthenticatedUser = UserSession
 type LoginResult = {
     user: AuthenticatedUser | null
     error: string | null
+}
+
+// Every sign-in path's first step once `pb.authStore` holds the new session:
+// reopen the realtime connection logout closed (pbtsdb keeps it closed until
+// told), then land the user's own record before any query asks for it.
+async function beginSession(record: Users): Promise<void> {
+    restartRealtime()
+    await seedUser(record)
+}
+
+// Every sign-in path's last step, after the user is set. Setting the user
+// opens the auth gate, and the caller navigates to its post-sign-in route when
+// the sign-in resolves, so the sign-in must not wait for this warm-up: a
+// navigation that lands after it would pull back a user who has already moved
+// on in the open app. The warm-up only fills what the first screens' live
+// queries load anyway, so a failure is reported and does not fail the sign-in.
+function warmStores(): void {
+    preloadStores().catch(err => captureException('auth-store.preloadStores', err))
 }
 
 // Tear down the device's push subscription on logout: remove the browser/device
@@ -167,9 +186,9 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 isBetaTester: !!metadata?.isBetaTester,
             }
 
-            await seedUser(authData.record)
+            await beginSession(authData.record)
             set({ user: authenticatedUser })
-            await preloadStores()
+            warmStores()
 
             return { user: authenticatedUser, error: null }
         } catch (error) {
@@ -190,7 +209,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         // requests dispatch after this synchronous block, by which point the
         // active server may have moved.
         const origin = getResolvedAddress()
-        pb.realtime.unsubscribe()
+        stopRealtime()
         // Fire-and-forget push teardown: unsubscribe the device and delete the
         // server push_subscriptions row, then reset the module-lifetime
         // registration guard so a second user on this same session re-registers.
@@ -280,9 +299,9 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 isBetaTester: false,
             }
 
-            await seedUser(data.record)
+            await beginSession(data.record)
             set({ user: authenticatedUser })
-            await preloadStores()
+            warmStores()
 
             return { user: authenticatedUser, error: null }
         } catch (error) {
@@ -320,9 +339,9 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 isBetaTester: false,
             }
 
-            await seedUser(data.record)
+            await beginSession(data.record)
             set({ user: authenticatedUser })
-            await preloadStores()
+            warmStores()
 
             return { user: authenticatedUser, error: null }
         } catch (error) {
@@ -341,14 +360,14 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         try {
             // The saved record is partial; authRefresh replaces it with the
             // full one. Then refetch what the signed-out screens synced as
-            // nobody (see refetchLoadedStores), exactly as login does.
+            // nobody (see reloadLoadedStores), exactly as login does.
             await refreshAuth()
             const user = getUserFromAuthStore()
             const record = pb.authStore.record as Users | null
             if (!user || !record) return { user: null, error: 'The new session was not accepted.' }
-            await seedUser(record)
+            await beginSession(record)
             set({ user })
-            await preloadStores()
+            warmStores()
             return { user, error: null }
         } catch (error) {
             // The owner already exists, so the caller sends the person to sign

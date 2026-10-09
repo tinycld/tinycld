@@ -66,8 +66,8 @@ func copyMemberFromCurrent(ms MemberSpec, buildDir string) (string, error) {
 
 // assembleBuild materializes the desired member set into buildDir. Kept as the
 // host-side wrapper so the production wiring reads at one glance: the job's
-// SSE/install-log sink, the host MemberSource, and the active root as the
-// scaffold source.
+// progress sink (install-log row + durable log), the host MemberSource, and
+// the active root as the scaffold source.
 func assembleBuild(job *installjob.Job, m RebuildManifest, buildDir string) error {
 	return pkgbuild.AssembleBuild(installJobSink{job}, m, buildDir,
 		hostMemberSource{}, currentWorkspaceRoot(), pkgbuild.ScaffoldOptions{})

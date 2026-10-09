@@ -107,7 +107,6 @@ export function ShortcutsProvider({ children }: ShortcutsProviderProps) {
     return (
         <KeyboardExtendedView
             onKeyDownPress={handleKeyDown}
-            canBeFocused={true}
             autoFocus={true}
             haloEffect={false}
             focusable={false}

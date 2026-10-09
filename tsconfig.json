@@ -19,7 +19,11 @@
         "skipLibCheck": true,
         "jsx": "react-jsx",
         "noImplicitAny": false,
-        "types": ["node", "react"],
+        // expo/types/global declares `*.css` modules: TypeScript 6 checks
+        // side-effect imports, so app/_layout.tsx's `import '~/global.css'`
+        // needs it. expo-env.d.ts would supply it, but only `expo start`
+        // writes that file and it is gitignored.
+        "types": ["node", "react", "expo/types/global"],
         "lib": ["dom", "esnext"],
         "paths": {
             "~/*": ["./*"],

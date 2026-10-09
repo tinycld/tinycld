@@ -6,7 +6,7 @@ import { usePickFiles } from '@tinycld/core/file-viewer/use-pick-files'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { AVATAR_COLORS, type CropRect, parseCrop, serializeCrop } from '@tinycld/core/lib/avatar'
 import {
-    avatarImageToBlob,
+    avatarUploadFile,
     type PreparedAvatarImage,
     prepareAvatarImage,
 } from '@tinycld/core/lib/avatar-upload'
@@ -17,6 +17,7 @@ import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useAvatarUrl } from '@tinycld/core/lib/use-avatar-url'
 import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
+import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { EmojiPicker } from '@tinycld/core/ui/emoji-picker'
 import { Check } from 'lucide-react-native'
@@ -82,9 +83,8 @@ function useAvatarEditor() {
 
     const uploadPhotoBytes = useMutation({
         mutationFn: async (params: PreparedAvatarImage & { crop: CropRect }) => {
-            const blob = await avatarImageToBlob(params)
             const formData = new FormData()
-            formData.append('avatar', blob, `avatar.${params.mimeType.split('/')[1] ?? 'jpg'}`)
+            formData.append('avatar', await avatarUploadFile(params, 'avatar'))
             // The user row already exists, so this must PATCH it rather than
             // create a new one — uploadRecordWithFile POSTs to the collection
             // and would create a duplicate row.
@@ -97,9 +97,11 @@ function useAvatarEditor() {
             // Bytes land via the raw PATCH above (the sanctioned bypass for file
             // BYTES); the crop rect is an ordinary field and still goes through
             // pbtsdb so optimistic UI and realtime sync see it consistently.
-            await usersCollection.update(user.id, draft => {
-                draft.avatar_crop = serializeCrop(params.crop)
-            }).isPersisted.promise
+            await usersCollection
+                .update(user.id, draft => {
+                    draft.avatar_crop = serializeCrop(params.crop)
+                })
+                .when('settled')
         },
         onError: err => {
             captureException('settings.avatar_upload', err)
@@ -222,7 +224,7 @@ function RepositionButton({ isVisible, onPress }: { isVisible: boolean; onPress:
 
 function RemoveButton({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
     if (!isVisible) return null
-    return <SmallButton testID="avatar-remove" label="Remove" onPress={onPress} />
+    return <SmallButton testID="avatar-remove" label="Remove" onPress={onPress} requiresServer />
 }
 
 function EmojiTrigger({ onPick }: { onPick: (glyph: string) => void }) {
@@ -257,19 +259,18 @@ function SmallButton({
     testID,
     label,
     onPress,
+    requiresServer = false,
 }: {
     testID: string
     label: string
     onPress: () => void
+    requiresServer?: boolean
 }) {
+    const ButtonComponent = requiresServer ? ServerActionButton : Button
     return (
-        <Pressable
-            testID={testID}
-            onPress={onPress}
-            className="rounded-lg px-3 py-2 border border-border"
-        >
-            <Text className="text-foreground font-semibold">{label}</Text>
-        </Pressable>
+        <ButtonComponent testID={testID} variant="outline" size="sm" onPress={onPress}>
+            <ButtonText>{label}</ButtonText>
+        </ButtonComponent>
     )
 }
 

@@ -1,5 +1,6 @@
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { FormErrorSummary, TextInput, Toggle } from '@tinycld/core/ui/form'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 import { useBackupRepository } from './useBackupRepository'
 
 type Props = { isVisible: boolean; isBusy: boolean }
@@ -88,9 +89,13 @@ export function RepositoryCard({ isVisible, isBusy }: Props) {
                 autoCapitalize="none"
                 autoCorrect={false}
             />
-            <Pressable onPress={() => generateKey.mutate()} testID="repository-generate-key">
-                <Text className="text-primary font-medium">Generate a key</Text>
-            </Pressable>
+            <ServerActionButton
+                variant="link"
+                onPress={() => generateKey.mutate()}
+                testID="repository-generate-key"
+            >
+                <ButtonText>Generate a key</ButtonText>
+            </ServerActionButton>
             <TextInput
                 control={control}
                 name="schedule"
@@ -100,20 +105,20 @@ export function RepositoryCard({ isVisible, isBusy }: Props) {
             />
             <Toggle control={control} name="enabled" label="Back up on this schedule" />
             <View className="flex-row gap-4">
-                <Pressable onPress={onTest} testID="repository-test">
-                    <Text className="text-primary font-medium">Test connection</Text>
-                </Pressable>
-                <Pressable onPress={onSave} testID="repository-save">
-                    <Text className="text-primary font-medium">Save</Text>
-                </Pressable>
-                <Pressable
+                <ServerActionButton variant="link" onPress={onTest} testID="repository-test">
+                    <ButtonText>Test connection</ButtonText>
+                </ServerActionButton>
+                <ServerActionButton variant="link" onPress={onSave} testID="repository-save">
+                    <ButtonText>Save</ButtonText>
+                </ServerActionButton>
+                <ServerActionButton
+                    variant="link"
                     onPress={() => backupNow.mutate()}
-                    disabled={isBackupDisabled}
-                    className={isBackupDisabled ? 'opacity-50' : ''}
+                    isDisabled={isBackupDisabled}
                     testID="repository-backup-now"
                 >
-                    <Text className="text-primary font-medium">Back up now</Text>
-                </Pressable>
+                    <ButtonText>Back up now</ButtonText>
+                </ServerActionButton>
             </View>
             <TestResult message={testMessage} />
         </View>

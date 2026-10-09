@@ -1,4 +1,5 @@
 import { notify } from '@tinycld/core/lib/notify'
+import { uploadFileFromUri } from '@tinycld/core/lib/upload-file'
 import * as DocumentPicker from 'expo-document-picker'
 import * as ImagePicker from 'expo-image-picker'
 import { useCallback } from 'react'
@@ -7,7 +8,7 @@ import {
     documentAssetToPickedFile,
     imageAssetToPickedFile,
     type PickedFile,
-    webFileToPickedFile,
+    uploadFileToPickedFile,
 } from './picked-file'
 import { type PickerSource, usePickerSheetStore } from './picker-sheet-store'
 
@@ -86,7 +87,7 @@ function openWebFileInput(options: {
             resolve(files)
         }
         input.onchange = () => {
-            const files = input.files ? Array.from(input.files).map(webFileToPickedFile) : []
+            const files = input.files ? Array.from(input.files).map(uploadFileToPickedFile) : []
             settle(files)
         }
         // Dismissal fires 'cancel' in every supported browser (Chromium 113+,
@@ -109,7 +110,7 @@ async function launchSource(
             type: options.mimeTypes,
         })
         if (result.canceled) return []
-        return result.assets.map(documentAssetToPickedFile)
+        return result.assets.map(asset => documentAssetToPickedFile(asset, uploadFileFromUri))
     }
     if (source === 'photoLibrary') {
         const result = await ImagePicker.launchImageLibraryAsync({
@@ -119,7 +120,7 @@ async function launchSource(
             exif: false,
         })
         if (result.canceled) return []
-        return result.assets.map(imageAssetToPickedFile)
+        return result.assets.map(asset => imageAssetToPickedFile(asset, uploadFileFromUri))
     }
     if (source === 'camera') {
         const permission = await ImagePicker.requestCameraPermissionsAsync()
@@ -139,7 +140,7 @@ async function launchSource(
             exif: false,
         })
         if (result.canceled) return []
-        return result.assets.map(imageAssetToPickedFile)
+        return result.assets.map(asset => imageAssetToPickedFile(asset, uploadFileFromUri))
     }
     return []
 }

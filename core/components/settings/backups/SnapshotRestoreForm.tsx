@@ -1,6 +1,7 @@
 import { formatBytes, formatTimeAgo } from '@tinycld/core/lib/format-utils'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { FormErrorSummary, RadioInput, Toggle } from '@tinycld/core/ui/form'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 import { useSnapshotRestore, useSnapshots } from './useBackupRepository'
 
 type Props = { isVisible: boolean; isBusy: boolean }
@@ -34,16 +35,16 @@ export function SnapshotRestoreForm({ isVisible, isBusy }: Props) {
                 name="acknowledged"
                 label="I understand that all current data is replaced"
             />
-            <Pressable
+            <ServerActionButton
+                variant="link"
                 onPress={onSubmit}
-                disabled={isDisabled}
+                isDisabled={isDisabled}
                 testID="snapshot-restore-start"
-                className={isDisabled ? 'opacity-50' : ''}
             >
-                <Text className="text-danger font-medium">
+                <ButtonText className="text-danger">
                     {isBusy ? 'A job is running…' : 'Restore'}
-                </Text>
-            </Pressable>
+                </ButtonText>
+            </ServerActionButton>
         </View>
     )
 }

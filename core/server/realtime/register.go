@@ -87,8 +87,9 @@ func sharedBroker() *Broker {
 //
 // Route: GET /api/realtime/{roomKind}/{roomID}
 //
-// Authentication is via the standard PB session cookie or Bearer token;
-// unauthenticated requests are rejected with 401. Authorization is
+// Authentication is via a PB auth token or a share-session token, sent as
+// a WebSocket subprotocol (credentials.go); unauthenticated requests are
+// rejected with 401. Authorization is
 // delegated to the per-room-kind handler registered via RegisterRoomKind.
 //
 // Register also binds the broker to the server's lifecycle: documents are
@@ -155,6 +156,10 @@ func handleForceFlush(re *core.RequestEvent) error {
 }
 
 func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
+	// First, so that no answer below (not even the drain refusal) logs a
+	// URL that still carries a credential.
+	creds := takeCredentials(re.Request)
+
 	// Accepting stopped when the drain began; a request that still arrives
 	// came in on a connection accepted before that, and belongs to the
 	// next server.
@@ -163,19 +168,11 @@ func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
 	}
 
 	// PocketBase's loadAuthToken middleware reads `Authorization: Bearer
-	// <token>` from headers, but browsers can't set custom headers on a
-	// WebSocket upgrade (`new WebSocket(url)` exposes only URL +
-	// subprotocol). Fall back to `?token=<jwt>` in the query string.
-	// The query-string token isn't ideal — it can show up in access
-	// logs — but it's the standard pattern for browser WS auth and we
-	// can revisit with Sec-WebSocket-Protocol if logging becomes a
-	// concern in production.
-	if re.Auth == nil {
-		token := re.Request.URL.Query().Get("token")
-		if token != "" {
-			if record, err := re.App.FindAuthRecordByToken(token, core.TokenTypeAuth); err == nil && record != nil {
-				re.Auth = record
-			}
+	// <token>`, which a browser cannot set on a WebSocket upgrade, so the
+	// client sends the token as a subprotocol (see credentials.go).
+	if re.Auth == nil && creds.authToken != "" {
+		if record, err := re.App.FindAuthRecordByToken(creds.authToken, core.TokenTypeAuth); err == nil && record != nil {
+			re.Auth = record
 		}
 	}
 
@@ -205,7 +202,7 @@ func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
 	} else {
 		// Anonymous share-session path. Only kinds that registered
 		// AuthorizeShare accept these; everyone else rejects.
-		claims, shareErr := resolveShareConnect(re, opts2, kind, roomID)
+		claims, shareErr := resolveShareConnect(re, opts2, kind, roomID, creds.shareSession)
 		if shareErr != nil {
 			return shareErr
 		}
@@ -216,6 +213,7 @@ func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
 
 	conn, err := websocket.Accept(re.Response, re.Request, &websocket.AcceptOptions{
 		InsecureSkipVerify: shouldSkipOriginCheck(re.Request.Header.Get("Origin")),
+		Subprotocols:       []string{Protocol},
 	})
 	if err != nil {
 		return fmt.Errorf("websocket accept: %w", err)
@@ -236,15 +234,14 @@ func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
 }
 
 // resolveShareConnect handles the anonymous share-session branch of the
-// WS upgrade: verify the ?share_session token, confirm the kind opted
+// WS upgrade: verify the share-session token, confirm the kind opted
 // into anonymous visitors, confirm the session is for THIS room (item),
 // and run the kind's ShareAuthorizeFn. Returns the verified claims or an
 // HTTP error to reject the upgrade.
-func resolveShareConnect(re *core.RequestEvent, opts RoomKindOptions, kind, roomID string) (ShareClaims, error) {
+func resolveShareConnect(re *core.RequestEvent, opts RoomKindOptions, kind, roomID, sessionToken string) (ShareClaims, error) {
 	if opts.AuthorizeShare == nil {
 		return ShareClaims{}, re.UnauthorizedError("Authentication required", nil)
 	}
-	sessionToken := re.Request.URL.Query().Get("share_session")
 	if sessionToken == "" {
 		return ShareClaims{}, re.UnauthorizedError("Authentication required", nil)
 	}

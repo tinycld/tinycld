@@ -23,8 +23,8 @@ export function useConnectivityDetector(): void {
         // returns false on networks that can't reach it even when OUR server
         // can — a captive/filtered LAN, or the iOS simulator (whose reachability
         // probe is unreliable and routinely reports offline while localhost:7100
-        // answers fine). Treating that as offline pops the full-screen blocking
-        // OfflineOverlay over a perfectly usable app. So before flipping offline,
+        // answers fine). Treating that as offline pops the
+        // offline notice over a perfectly usable app. So before flipping offline,
         // confirm against the server we actually depend on: if /api/health still
         // answers, we're online regardless of what NetInfo thinks of the wider
         // internet. Only when the server probe ALSO fails do we go offline.

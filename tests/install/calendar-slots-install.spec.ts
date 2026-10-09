@@ -112,9 +112,9 @@ async function superuserToken(page: Page): Promise<string> {
     throw new Error(`superuser auth failed after retries: ${lastStatus} ${lastBody}`)
 }
 
-// The SSE progress bar must actually advance — proof the events stream
-// authenticates and reaches the browser (a frozen 0% bar is the signature of the
-// events-endpoint 403 regression).
+// The progress bar must actually advance — proof the app's live query on the
+// pkg_install_log row is picking up the server's throttled progress writes (a
+// frozen 0% bar means the subscription isn't picking up the row's updates).
 async function waitForProgressAdvance(page: Page, minPct: number, timeoutMs: number) {
     const fill = page.getByTestId('install-progress-fill')
     await expect(fill).toBeVisible({ timeout: 30_000 })
@@ -132,8 +132,8 @@ async function waitForProgressAdvance(page: Page, minPct: number, timeoutMs: num
     }
     throw new Error(
         `install progress bar did not advance to ${minPct}% within ${Math.round(timeoutMs / 1000)}s ` +
-            `(highest observed: ${lastSeen}%). The SSE progress stream likely never reached the browser ` +
-            `— check /api/admin/packages/events auth (a 403 freezes the bar at 0%).`
+            `(highest observed: ${lastSeen}%). The live query on pkg_install_log likely never picked up ` +
+            `the server's progress writes — check realtime connectivity and the row's job_id.`
     )
 }
 
@@ -503,15 +503,18 @@ test.describe('calendar-slots install', () => {
         await page.getByRole('textbox', { name: 'Package source', exact: true }).fill(PKG_SPEC)
         await page.getByRole('button', { name: 'Install', exact: true }).click()
 
-        // The SSE bar must advance past 50% within 10 min (live stream proof).
+        // The bar must advance past 50% within 10 min (live progress proof).
         await waitForProgressAdvance(page, 50, 600_000)
 
         // Ground truth: the server's own install log reaching status `success`,
-        // independent of the SSE modal (the stream dies on the exit-75 restart).
+        // independent of the modal's own live query.
         await waitForOpStatus(page, 'calendar-slots', 'success', 2_400_000, 'install', failedId) // up to 40 min
 
-        // The modal must ALSO resolve (it relies on the durable job-status poll once
-        // the SSE stream dies on restart) — the regression guard for the old hang.
+        // The modal must ALSO resolve — pbtsdb reconnects and reloads this live
+        // query once the new server answers after the restart, so the modal
+        // learns the outcome from the same row the whole way through the seam.
+        // The regression guard for the old hang, from before the row carried
+        // progress straight through the restart.
         await expect(page.getByText('Installation Complete')).toBeVisible({ timeout: 120_000 })
 
         // CRUX: a `success` install is necessary but NOT sufficient — the create

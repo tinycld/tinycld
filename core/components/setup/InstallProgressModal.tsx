@@ -20,7 +20,6 @@ interface InstallProgressModalProps {
     isVisible: boolean
     jobId: string | null
     action: ProgressAction
-    authToken: string
     onClose: () => void
     onComplete: () => void
 }
@@ -29,7 +28,6 @@ export function InstallProgressModal({
     isVisible,
     jobId,
     action,
-    authToken,
     onClose,
     onComplete,
 }: InstallProgressModalProps) {
@@ -38,7 +36,7 @@ export function InstallProgressModal({
     const successColor = useThemeColor('success')
     const dangerColor = useThemeColor('danger')
 
-    const { steps, status, error } = useInstallProgress(isVisible, jobId, authToken, onComplete)
+    const { steps, status, error } = useInstallProgress(isVisible, jobId, onComplete)
     const rows = collapseSteps(steps, status)
     const serverSwitch = useServerSwitch(isVisible, jobId, status)
     // The raw command output means nothing to most users, so it stays hidden
@@ -196,7 +194,8 @@ function ProgressBar({
                 testID={testID}
                 // The numeric progress is exposed as ARIA value attributes so e2e can
                 // read it directly off `aria-valuenow` (the visual width is an inline %
-                // style that's awkward to assert on). Proves the SSE stream is advancing.
+                // style that's awkward to assert on). Proves the install-log row's
+                // progress is actually advancing.
                 // NOTE: react-native-web 0.21 dropped support for the object form
                 // `accessibilityValue={{ now, min, max }}` — it only forwards the
                 // flattened `aria-value*` props (with a `progressbar` role), so the

@@ -5,6 +5,11 @@ interface SetupContinueButtonProps {
     onPress: () => void
     isDisabled?: boolean
     label?: string
+    /**
+     * Pressing it sends a change to the server (the default: most steps save
+     * a form). Pass false for a step whose Continue only moves on.
+     */
+    requiresServer?: boolean
 }
 
 /**
@@ -17,6 +22,7 @@ export function SetupContinueButton({
     onPress,
     isDisabled = false,
     label = 'Continue',
+    requiresServer = true,
 }: SetupContinueButtonProps) {
     const publish = useSetupContinueStore(s => s.publish)
     // Steps pass a new onPress closure on every render. The footer gets one
@@ -28,8 +34,8 @@ export function SetupContinueButton({
     })
     const press = useCallback(() => latest.current(), [])
     useEffect(() => {
-        publish({ label, onPress: press, isDisabled })
+        publish({ label, onPress: press, isDisabled, requiresServer })
         return () => publish(null)
-    }, [publish, label, press, isDisabled])
+    }, [publish, label, press, isDisabled, requiresServer])
     return null
 }

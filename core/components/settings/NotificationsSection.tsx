@@ -6,6 +6,7 @@ import {
     useNotificationPreferences,
 } from '@tinycld/core/lib/use-notification-preferences'
 import { usePushSubscription } from '@tinycld/core/lib/use-push-subscription'
+import { useServerActionState } from '@tinycld/core/lib/use-writes-available'
 import { Switch } from '@tinycld/core/ui/switch'
 import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native'
 
@@ -51,6 +52,8 @@ function PushToggle({
     isPending: boolean
     onToggle: () => void
 }) {
+    const writeState = useServerActionState({ isDisabled: isPending })
+
     if (isNative) {
         return (
             <SectionCard>
@@ -86,7 +89,11 @@ function PushToggle({
 
     return (
         <SectionCard>
-            <Pressable onPress={onToggle} disabled={isPending}>
+            <Pressable
+                onPress={onToggle}
+                disabled={writeState.isDisabled}
+                accessibilityHint={writeState.accessibilityHint}
+            >
                 <View className="flex-row items-center gap-3">
                     <View className="flex-1 gap-0.5">
                         <Text className="text-foreground text-base font-semibold">
@@ -99,7 +106,11 @@ function PushToggle({
                     {isPending ? (
                         <ActivityIndicator size="small" />
                     ) : (
-                        <Switch value={isSubscribed} onValueChange={onToggle} />
+                        <Switch
+                            value={isSubscribed}
+                            onValueChange={onToggle}
+                            disabled={writeState.isDisabled}
+                        />
                     )}
                 </View>
             </Pressable>

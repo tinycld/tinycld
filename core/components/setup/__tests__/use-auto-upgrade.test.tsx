@@ -20,7 +20,7 @@ const update = vi.fn((_id: string, _fn: unknown) => {
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     useStore: () => [{ update, insert: vi.fn() }],
     notificationsCollection: {
-        insert: vi.fn(() => ({ isPersisted: { promise: Promise.resolve() } })),
+        insert: vi.fn(() => ({ when: () => Promise.resolve() })),
     },
 }))
 vi.mock('@tanstack/react-db', () => ({

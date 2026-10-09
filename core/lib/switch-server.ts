@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { captureException } from './errors'
 import { pb } from './pocketbase'
+import { restartRealtime, stopRealtime } from './realtime-enabled'
 import { reloadJsContext } from './reload-js-context'
 import { getResolvedAddress, setResolvedAddress } from './server-address'
 import { setActiveServer } from './servers'
@@ -62,7 +63,7 @@ async function clearPerServerState(): Promise<void> {
 //
 // Deliberately does NOT call disconnectServer(). That would sign the user out of
 // the server they are leaving — the entire point is that its session survives —
-// and it carries an ordering hazard (PB's RealtimeService auto-reconnects and
+// and it carries an ordering hazard (the realtime connection reconnects and
 // reconnect reads PB_SERVER_ADDR, so clearing the address first trips the
 // "not resolved" guard). We never null the address, so that hazard cannot arise.
 //
@@ -80,9 +81,10 @@ export async function switchToServer(origin: string): Promise<void> {
     await clearPerServerState()
 
     // Stop the old server's realtime stream and in-flight requests BEFORE
-    // repointing, so its EventSource cannot retry against the new host.
+    // repointing, so its EventSource cannot retry against the new host. The
+    // reload below starts a fresh connection against the new server.
     try {
-        pb.realtime.unsubscribe()
+        stopRealtime()
         pb.cancelAllRequests()
     } catch (err) {
         captureException('switch-server.teardownRealtime', err)
@@ -101,6 +103,8 @@ export async function switchToServer(origin: string): Promise<void> {
         // and every collection still bound to the old one — a half-switch that
         // presents as success.
         if (previous) setResolvedAddress(previous)
+        // Back on the previous server, which still needs its live updates.
+        restartRealtime()
         throw err
     }
 }
