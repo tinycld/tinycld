@@ -342,16 +342,16 @@ func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg
 		return
 	}
 
-	// Flush any throttled-away progress BEFORE setting the terminal fields on
-	// the same record, so the save below carries the last step too — not just
-	// whatever the throttle had already written — and so no later flush can
-	// race this save and overwrite the terminal status back to "running".
-	// flushBlocking (not flush) waits out a read-only pause, up to
-	// readonly.TailWait, so a step recorded during the pause still lands
-	// before unregister stops the saver's own retry schedule for good.
+	// The terminal save also carries the last milestone. The throttle may
+	// have deferred it — read-only mode is on from the backup until the
+	// supervisor drains this process, so a progress save during that window
+	// never lands on its own. Unregistering stops the saver before the save
+	// below, so no progress save can race it and write the status back to
+	// "running".
 	if jobID := record.GetString("job_id"); jobID != "" {
-		progressSaverFor(jobID).flushBlocking()
-		unregisterProgressSaver(jobID)
+		if steps := unregisterProgressSaver(jobID); len(steps) > 0 {
+			setProgressFields(record, steps)
+		}
 	}
 
 	record.Set("status", status)
