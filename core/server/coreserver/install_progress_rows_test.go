@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 	"testing"
@@ -443,6 +444,16 @@ func TestRecordStep_RetrySavesPendingStateOnceReadOnlyModeLifts(t *testing.T) {
 }
 
 // Once read-only mode lifts, the NEXT tick also still saves normally.
+//
+// recordStep/flush are deliberately fire-and-forget (see their own docs):
+// the "skipped" tick's own read-only deferral armed a REAL timer that is
+// still in flight when Leave() returns, so asserting on the row immediately
+// after the "resumed" tick races that leftover timer with no synchronization
+// at all — not a saver bug, a test-timing one. waitSaved (same package)
+// blocks until the saver's own bookkeeping confirms the "resumed" tick's
+// dataVersion has actually been written, which is what this test needs to
+// assert against a settled row rather than guessing how long two real,
+// concurrent timers take.
 func TestRecordStep_ResumesAfterReadOnlyModeLifts(t *testing.T) {
 	app := newProgressRowsTestApp(t)
 	saver, id := newProgressSaverTestRecord(t, app)
@@ -452,6 +463,13 @@ func TestRecordStep_ResumesAfterReadOnlyModeLifts(t *testing.T) {
 	readonly.Leave()
 
 	saver.recordStep(ProgressStep{Step: "resumed", Progress: 2, Message: "after pause"})
+
+	saver.mu.Lock()
+	version := saver.dataVersion
+	saver.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	saver.waitSaved(ctx, version)
 
 	rec := fetchProgressRow(t, app, id)
 	if rec.GetString("current_step") != "resumed" {
@@ -496,10 +514,110 @@ func TestFlushBlocking_LandsPendingStepOnceReadOnlyModeLifts(t *testing.T) {
 	}
 }
 
-// Defect 3: concurrent recordStep calls (the job goroutine, a hosted relay on
-// its own goroutine, and the saver's own trailing-save timer) must never
-// race on the record, and the row must end up with the single latest state
-// rather than a torn mix. Run with -race to catch any unsynchronized access.
+// Deterministic reproduction of a real bug: when read-only mode lifts, the
+// retry timer armed by the earlier read-only deferral and flushBlocking's
+// own resumed save can both reach save() around the same moment. Before the
+// fix, whichever call coalesced (saveRunning already true -> set saveAgain,
+// return) returned immediately, so flushBlocking could report success
+// before the winning doSave's app.Save had actually run — observed as
+// finalizeInstallLog's terminal save landing without the last milestone.
+//
+// beforeSave pauses the FIRST doSave right before its app.Save, which lets
+// the test force the exact interleaving (flushBlocking's save() call
+// arriving and coalescing) instead of relying on real scheduling luck — this
+// is what TestFlushBlocking_LandsPendingStepOnceReadOnlyModeLifts could only
+// hit by chance (~1 run in 200).
+func TestFlushBlocking_WaitsForATrailingSaveThatCoalescedConcurrently(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, timers, id := newProgressSaverWithFakeTimer(t, app)
+
+	readonly.Enter()
+	saver.recordStep(ProgressStep{Step: "lastStep", Progress: 99, Message: "almost done"})
+	// The throttle's own flush() call (inside recordStep, since this is the
+	// saver's first ever tick and so immediately "due") sees read-only and
+	// arms the fake trailing-save timer rather than saving — exactly
+	// recordStep's normal read-only deferral path.
+	if got := timers.scheduledCount(); got != 1 {
+		t.Fatalf("scheduled %d timers, want 1 (the read-only deferral)", got)
+	}
+
+	enteredSave := make(chan struct{})
+	releaseSave := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseSave) }) }
+	// A t.Fatal from the main goroutine below runs this test's deferred
+	// cleanup via runtime.Goexit, but does NOT stop the background
+	// goroutines still waiting on releaseSave (the paused doSave, and
+	// saver.stop's inflight.Wait registered by newProgressSaverTestRecord's
+	// own t.Cleanup) — without this, a failed assertion here would hang the
+	// whole test binary instead of reporting FAIL.
+	t.Cleanup(release)
+
+	var pauseOnce sync.Once
+	saver.beforeSave = func() {
+		// Only the FIRST doSave call pauses — once release fires, let every
+		// later call (there should be none here) through immediately rather
+		// than deadlocking a re-entrant beforeSave.
+		pauseOnce.Do(func() {
+			close(enteredSave)
+			<-releaseSave
+		})
+	}
+
+	readonly.Leave()
+
+	// Fire the retry timer on its own goroutine — this is the saver's
+	// genuine retry path (armed above), just driven by the test instead of
+	// a real clock, and it is what starts the doSave that beforeSave pauses.
+	timerDone := make(chan struct{})
+	go func() {
+		timers.fire()
+		close(timerDone)
+	}()
+	<-enteredSave // the timer's doSave is now paused right before app.Save
+
+	// flushBlocking starts concurrently with the paused doSave. Its own
+	// save() call MUST coalesce (saveRunning is already true) rather than
+	// racing app.Save directly — proving save()'s single-flight still holds
+	// — and then it must BLOCK, not return, until the paused save (which it
+	// coalesced into) actually finishes writing.
+	flushDone := make(chan struct{})
+	go func() {
+		saver.flushBlocking()
+		close(flushDone)
+	}()
+
+	select {
+	case <-flushDone:
+		t.Fatal("flushBlocking returned before the trailing save it coalesced into had written the row")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release() // let the paused doSave finally call app.Save
+
+	select {
+	case <-timerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the trailing timer's save never finished")
+	}
+	select {
+	case <-flushDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("flushBlocking did not return once the save it coalesced into finished")
+	}
+
+	rec := fetchProgressRow(t, app, id)
+	if rec.GetString("current_step") != "lastStep" {
+		t.Errorf("current_step = %q, want %q — flushBlocking returned without its state having landed",
+			rec.GetString("current_step"), "lastStep")
+	}
+}
+
+// Defect 3: concurrent recordStep calls (the job goroutine, a caller relaying
+// milestones from another goroutine, and the saver's own trailing-save
+// timer) must never race on the record, and the row must end up with the
+// single latest state rather than a torn mix. Run with -race to catch any
+// unsynchronized access.
 func TestRecordStep_ConcurrentCallsAreSerializedAndRaceFree(t *testing.T) {
 	app := newProgressRowsTestApp(t)
 	saver, id := newProgressSaverTestRecord(t, app)

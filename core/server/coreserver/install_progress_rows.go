@@ -52,12 +52,35 @@ type installLogProgressSaver struct {
 	// newTimer defaults to time.AfterFunc; overridden in tests.
 	newTimer afterFunc
 
+	// beforeSave, when set, runs synchronously right before each app.Save —
+	// test-only, so a test can force two callers of save() to genuinely
+	// overlap around a single doSave rather than merely racing to acquire
+	// saveMu first (which real timing rarely reproduces reliably).
+	beforeSave func()
+
 	mu        sync.Mutex
 	steps     []ProgressStep
 	lastSave  time.Time
 	pending   bool // a step arrived since the last save and was dropped by the throttle
 	timer     *time.Timer
 	finalized bool // finalize/unregister happened; no further saves are scheduled
+
+	// dataVersion counts every mergeStep call (a new or updated-in-place
+	// step). savedVersion is the dataVersion that was current when doSave
+	// last started writing. A caller that needs to know ITS state landed —
+	// not merely that some save ran, which may have started before its data
+	// existed — captures dataVersion when it reads s.steps, then waits
+	// (waitSaved) for savedVersion to reach at least that number rather than
+	// waiting on the save it happened to trigger or coalesce into: the
+	// actual save that lands a given version can keep being deferred by
+	// read-only mode and handed off to a retry several times, with no fixed
+	// single call whose return would mean "done". changed is replaced (a
+	// fresh channel, old one closed) every time savedVersion or finalized
+	// changes, so a waiter blocked on it wakes to recheck rather than
+	// polling — see waitSaved.
+	dataVersion  int64
+	savedVersion int64
+	changed      chan struct{}
 
 	saveMu      sync.Mutex // serializes the actual app.Save call
 	saveRunning bool
@@ -127,6 +150,11 @@ func (s *installLogProgressSaver) stop() {
 		s.timer.Stop()
 		s.timer = nil
 	}
+	// Wake any waitSaved waiter (e.g. flushBlocking, if it ever raced a
+	// stop() concurrent with its own wait) rather than leaving it blocked
+	// until its own ctx timeout: finalized=true is itself a terminal
+	// condition waitSaved checks for.
+	s.notifyChanged()
 	s.mu.Unlock()
 	s.inflight.Wait()
 }
@@ -173,9 +201,31 @@ func (s *installLogProgressSaver) recordStep(step ProgressStep) {
 func (s *installLogProgressSaver) mergeStep(step ProgressStep) {
 	if n := len(s.steps); n > 0 && s.steps[n-1].Step == step.Step {
 		s.steps[n-1] = step
-		return
+	} else {
+		s.steps = append(s.steps, step)
 	}
-	s.steps = append(s.steps, step)
+	s.dataVersion++
+}
+
+// notifyChanged closes the current changed channel (waking every blocked
+// waitSaved) and replaces it with a fresh one for the next wait. Caller
+// holds mu. Safe to call whether or not changedChan has ever been read —
+// changedChan lazily creates the channel on first use, so a saver that
+// never has a waiter never allocates one.
+func (s *installLogProgressSaver) notifyChanged() {
+	if s.changed != nil {
+		close(s.changed)
+	}
+	s.changed = make(chan struct{})
+}
+
+// changedChan returns the channel a waiter should select on to be woken by
+// the next notifyChanged. Caller holds mu.
+func (s *installLogProgressSaver) changedChan() chan struct{} {
+	if s.changed == nil {
+		s.changed = make(chan struct{})
+	}
+	return s.changed
 }
 
 // scheduleTrailingSave arms exactly one timer to fire at the end of the
@@ -235,29 +285,26 @@ func (s *installLogProgressSaver) flush() {
 	}
 
 	s.mu.Lock()
-	if s.finalized {
+	if s.finalized || len(s.steps) == 0 {
 		s.mu.Unlock()
 		return
 	}
-	steps := append([]ProgressStep{}, s.steps...)
 	s.pending = false
 	s.mu.Unlock()
 
-	if len(steps) == 0 {
-		return
-	}
-	s.save(steps)
+	s.save()
 }
 
 // flushBlocking is flush's finalize-time counterpart: finalizeInstallLog
 // calls it right before unregistering the saver, so a last step recorded
 // while read-only mode happened to be on still lands on the row — otherwise
 // unregister's timer-stop would cut off the retry flush schedules for itself
-// and the pending step would never get saved. It waits out read-only mode
-// (bounded by readonly.TailWait, the same bound the audit log's tail writes
-// use for a write that follows a request already accepted) rather than
-// re-arming a timer, since this call site can afford to block briefly and
-// the caller is about to unregister the saver anyway.
+// and the pending step would never get saved. Unlike flush, it does not
+// return once a save has merely been requested: it waits (waitSaved) until
+// a save has actually written AT LEAST its own snapshot's dataVersion,
+// because a save it triggers or coalesces into can itself be deferred by
+// read-only mode and handed off to a retry timer that runs after this
+// function would otherwise have already returned — see waitSaved.
 func (s *installLogProgressSaver) flushBlocking() {
 	if s == nil || s.record == nil {
 		return
@@ -267,28 +314,52 @@ func (s *installLogProgressSaver) flushBlocking() {
 	_ = readonly.WaitInactive(ctx)
 
 	s.mu.Lock()
-	if s.finalized {
+	if s.finalized || len(s.steps) == 0 {
 		s.mu.Unlock()
 		return
 	}
-	steps := append([]ProgressStep{}, s.steps...)
+	version := s.dataVersion
 	s.pending = false
 	s.mu.Unlock()
 
-	if len(steps) == 0 {
-		return
+	s.save()
+	s.waitSaved(ctx, version)
+}
+
+// waitSaved blocks until savedVersion has reached version, the saver is
+// finalized, or ctx ends — whichever comes first. It never triggers a save
+// itself: save() (or whatever re-arms the retry timer on read-only) is
+// always what's actually driving progress toward version; this only waits
+// for that progress to arrive, waking on notifyChanged instead of polling.
+func (s *installLogProgressSaver) waitSaved(ctx context.Context, version int64) {
+	for {
+		s.mu.Lock()
+		if s.finalized || s.savedVersion >= version {
+			s.mu.Unlock()
+			return
+		}
+		woken := s.changedChan()
+		s.mu.Unlock()
+
+		select {
+		case <-woken:
+		case <-ctx.Done():
+			return
+		}
 	}
-	s.save(steps)
 }
 
 // save serializes the actual app.Save call per saver: at most one save is in
 // flight at a time. A save request that arrives while one is already running
-// is coalesced into a single follow-up save (using whatever the latest state
-// is by the time that follow-up runs) rather than queued — a burst of
+// is coalesced into a single follow-up save rather than queued — a burst of
 // concurrent callers (the job goroutine, a caller relaying milestones from
 // another goroutine, the trailing-save timer) never results in more than one
-// save running at once and never piles up a backlog of saves.
-func (s *installLogProgressSaver) save(steps []ProgressStep) {
+// save running at once and never piles up a backlog of saves. Every doSave
+// call (the first and any coalesced follow-up) reads s.steps itself at the
+// moment it writes, so "coalesced" here only means "don't bother running
+// doSave again right this instant, it's about to read the latest state
+// anyway" — it is not save() carrying a stale snapshot forward.
+func (s *installLogProgressSaver) save() {
 	s.saveMu.Lock()
 	if s.saveRunning {
 		s.saveAgain = true
@@ -298,7 +369,7 @@ func (s *installLogProgressSaver) save(steps []ProgressStep) {
 	s.saveRunning = true
 	s.saveMu.Unlock()
 
-	s.doSave(steps)
+	s.doSave()
 
 	for {
 		s.saveMu.Lock()
@@ -310,18 +381,6 @@ func (s *installLogProgressSaver) save(steps []ProgressStep) {
 		s.saveAgain = false
 		s.saveMu.Unlock()
 
-		// Re-read the latest state rather than the stale steps this loop
-		// iteration started with: the whole point of coalescing is that the
-		// follow-up save reflects whatever is current by the time it runs.
-		s.mu.Lock()
-		if s.finalized {
-			s.mu.Unlock()
-			continue
-		}
-		latestSteps := append([]ProgressStep{}, s.steps...)
-		s.pending = false
-		s.mu.Unlock()
-
 		if readonly.Active() {
 			s.mu.Lock()
 			if !s.finalized {
@@ -331,9 +390,7 @@ func (s *installLogProgressSaver) save(steps []ProgressStep) {
 			s.mu.Unlock()
 			continue
 		}
-		if len(latestSteps) > 0 {
-			s.doSave(latestSteps)
-		}
+		s.doSave()
 	}
 }
 
@@ -341,6 +398,18 @@ func (s *installLogProgressSaver) save(steps []ProgressStep) {
 // with s.saveRunning held true by save(), so no two calls to doSave for the
 // same saver run concurrently — the record itself is never mutated/saved
 // from two goroutines at once.
+//
+// It takes NO steps/version argument and re-reads s.steps/s.dataVersion
+// itself, fresh, under mu, right before writing — it never writes a snapshot
+// a caller captured earlier. Two independent (non-coalesced) save() calls
+// are still serialized by saveMu, but with no ordering guarantee on which
+// one's EARLIER-captured snapshot is newer: recordStep's own inline flush
+// racing a trailing timer's deferred retry (both triggered by the read-only
+// episode ending) could have the retry's older snapshot win saveMu and land
+// AFTER recordStep's newer one — reverting the row to a stale step. Reading
+// fresh at write time removes the snapshot entirely, so whichever doSave
+// call runs always writes the CURRENT state, and writes are therefore
+// monotonic by construction, not by also getting the lock order right.
 //
 // Re-checks finalized immediately before the write, under the SAME lock
 // acquisition that registers the call with s.inflight. Every caller (flush,
@@ -361,25 +430,47 @@ func (s *installLogProgressSaver) save(steps []ProgressStep) {
 // wait for it, or see finalized already true and never incur the wait at
 // all — there is no gap between the check and the registration for stop() to
 // land in.
-func (s *installLogProgressSaver) doSave(steps []ProgressStep) {
+func (s *installLogProgressSaver) doSave() {
 	s.mu.Lock()
 	if s.finalized {
 		s.mu.Unlock()
 		return
 	}
+	steps := append([]ProgressStep{}, s.steps...)
+	version := s.dataVersion
 	s.inflight.Add(1)
 	s.lastSave = time.Now()
+	s.pending = false
 	s.mu.Unlock()
 	defer s.inflight.Done()
 
-	latest := steps[len(steps)-1]
-	s.record.Set("steps", steps)
-	s.record.Set("current_step", latest.Step)
-	s.record.Set("current_message", latest.Message)
+	if len(steps) > 0 {
+		latest := steps[len(steps)-1]
+		s.record.Set("steps", steps)
+		s.record.Set("current_step", latest.Step)
+		s.record.Set("current_message", latest.Message)
 
-	if err := s.app.Save(s.record); err != nil {
-		// Best-effort: progress is a convenience, not the job's outcome. Log
-		// and move on rather than failing the install over a UI nicety.
-		srvLog.Warn("failed to save install progress", "recordID", s.record.Id, "err", err)
+		if s.beforeSave != nil {
+			s.beforeSave()
+		}
+		if err := s.app.Save(s.record); err != nil {
+			// Best-effort: progress is a convenience, not the job's outcome.
+			// Log and move on rather than failing the install over a UI
+			// nicety.
+			srvLog.Warn("failed to save install progress", "recordID", s.record.Id, "err", err)
+		}
 	}
+
+	// Advance savedVersion (and wake any waitSaved waiter) even on a failed
+	// app.Save, or when there was nothing to save: a retry isn't scheduled
+	// for a plain save failure (only for a read-only deferral), so a waiter
+	// blocked for THIS version would otherwise wait out its full ctx timeout
+	// for a save that already ran (or had nothing to do) and is never going
+	// to be retried.
+	s.mu.Lock()
+	if version > s.savedVersion {
+		s.savedVersion = version
+	}
+	s.notifyChanged()
+	s.mu.Unlock()
 }
