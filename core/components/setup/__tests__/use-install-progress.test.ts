@@ -1,76 +1,123 @@
 // @vitest-environment happy-dom
 
-// Drives useInstallProgress through its DURABLE POLL path: a stubbed EventSource
-// reports the stream gone immediately (the restart killed it), which arms the
-// job-status poll; a mocked fetch then returns the terminal pkg_install_log row.
-// This is the post-restart seam the poll exists to cover — including the
-// 'rolled_back' outcome the server writes after a health-check rollback.
+// useInstallProgress now watches the pkg_install_log row directly (a pbtsdb
+// live query by job_id) instead of an EventSource + durable-poll fallback, so
+// these tests drive it by varying what the mocked `pkg_install_log` collection
+// holds for a job id — the same shape a real server write to the row takes —
+// rather than faking SSE events or HTTP responses.
 
-import { renderHook, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { setResolvedAddress } from '../../../lib/server-address'
+import { createCollection, localOnlyCollectionOptions } from '@tanstack/db'
+import { cleanup, renderHook, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+interface InstallLogRow {
+    id: string
+    job_id: string
+    status: 'running' | 'success' | 'failed' | 'rolled_back'
+    error: string
+    steps: { step: string; progress: number; message: string }[]
+}
+
+function rowCollection(rows: InstallLogRow[]) {
+    return createCollection(
+        localOnlyCollectionOptions({
+            id: `pkg-install-log-${Math.random()}`,
+            getKey: (r: InstallLogRow) => r.id,
+            initialData: rows,
+        })
+    )
+}
+
+const h = vi.hoisted(() => ({ collection: null as unknown }))
+
+vi.mock('@tinycld/core/lib/pocketbase', () => ({
+    useStore: () => [h.collection],
+}))
+
 import { useInstallProgress } from '../use-install-progress'
 
-// A minimal EventSource stub that is "CLOSED before any terminal event" — i.e.
-// the restart dropped it — so the hook's error handler fires onStreamGone and
-// arms the poll. It never emits a 'complete' event.
-class ClosedEventSource {
-    static CLOSED = 2
-    static CONNECTING = 0
-    static OPEN = 1
-    readyState = ClosedEventSource.CLOSED
-    private listeners: Record<string, ((ev: MessageEvent) => void)[]> = {}
-    constructor(public url: string) {
-        // Fire 'error' on the next tick so the hook subscribes first.
-        setTimeout(() => {
-            for (const cb of this.listeners.error ?? []) cb(new MessageEvent('error'))
-        }, 0)
-    }
-    addEventListener(type: string, cb: (ev: MessageEvent) => void) {
-        if (!this.listeners[type]) this.listeners[type] = []
-        this.listeners[type].push(cb)
-    }
-    close() {}
-}
+afterEach(cleanup)
 
-function mockJobStatus(status: string, error = '') {
-    return vi.fn(async () => ({
-        ok: true,
-        json: async () => ({ status, error }),
-    })) as unknown as typeof fetch
-}
-
-describe('useInstallProgress durable poll', () => {
-    beforeEach(() => {
-        vi.stubGlobal('EventSource', ClosedEventSource)
-        // The hook builds its URLs from PB_SERVER_ADDR, a lazy proxy that throws
-        // until the _layout.tsx gate resolves the address — satisfy that gate.
-        setResolvedAddress('http://localhost:8090')
-    })
-    afterEach(() => {
-        setResolvedAddress(null)
-        vi.unstubAllGlobals()
-        vi.restoreAllMocks()
-    })
-
-    it('resolves to failed when the job rolled back', async () => {
-        vi.stubGlobal('fetch', mockJobStatus('rolled_back'))
+describe('useInstallProgress', () => {
+    it('reports running with the accumulated steps while the row is unfinished', async () => {
+        h.collection = rowCollection([
+            {
+                id: 'log1',
+                job_id: 'job_1',
+                status: 'running',
+                error: '',
+                steps: [
+                    { step: 'Checking the package', progress: 1, message: 'Checking' },
+                    { step: 'Downloading the package', progress: 2, message: 'npm pack' },
+                ],
+            },
+        ])
         const onSuccess = vi.fn()
 
-        const { result } = renderHook(() => useInstallProgress(true, 'job_1', 'tok', onSuccess))
+        const { result } = renderHook(() => useInstallProgress(true, 'job_1', onSuccess))
 
-        await waitFor(() => expect(result.current.status).toBe('failed'))
+        await waitFor(() => expect(result.current.steps.length).toBe(2))
+        expect(result.current.status).toBe('running')
+        expect(result.current.error).toBeNull()
         expect(onSuccess).not.toHaveBeenCalled()
-        expect(result.current.error).toMatch(/roll(ed)? back/i)
     })
 
-    it('resolves to success on a success outcome', async () => {
-        vi.stubGlobal('fetch', mockJobStatus('success'))
+    it('resolves to success and fires onSuccess once the row finishes', async () => {
+        h.collection = rowCollection([
+            { id: 'log2', job_id: 'job_2', status: 'success', error: '', steps: [] },
+        ])
         const onSuccess = vi.fn()
 
-        const { result } = renderHook(() => useInstallProgress(true, 'job_2', 'tok', onSuccess))
+        const { result } = renderHook(() => useInstallProgress(true, 'job_2', onSuccess))
 
         await waitFor(() => expect(result.current.status).toBe('success'))
         expect(onSuccess).toHaveBeenCalledTimes(1)
+    })
+
+    it('surfaces the row error when the job fails', async () => {
+        h.collection = rowCollection([
+            {
+                id: 'log3',
+                job_id: 'job_3',
+                status: 'failed',
+                error: 'npm pack: exit 1',
+                steps: [],
+            },
+        ])
+        const onSuccess = vi.fn()
+
+        const { result } = renderHook(() => useInstallProgress(true, 'job_3', onSuccess))
+
+        await waitFor(() => expect(result.current.status).toBe('failed'))
+        expect(result.current.error).toBe('npm pack: exit 1')
+        expect(onSuccess).not.toHaveBeenCalled()
+    })
+
+    // 'rolled_back' is the server's terminal status after a post-activation
+    // health-check rollback. It carries no error string of its own (the row's
+    // `error` field is empty), so the hook supplies the explanatory message —
+    // the UI would otherwise show a blank failure.
+    it('maps a rolled-back row to failed with an explanatory message', async () => {
+        h.collection = rowCollection([
+            { id: 'log4', job_id: 'job_4', status: 'rolled_back', error: '', steps: [] },
+        ])
+        const onSuccess = vi.fn()
+
+        const { result } = renderHook(() => useInstallProgress(true, 'job_4', onSuccess))
+
+        await waitFor(() => expect(result.current.status).toBe('failed'))
+        expect(result.current.error).toMatch(/roll(ed)? back/i)
+        expect(onSuccess).not.toHaveBeenCalled()
+    })
+
+    it('stays idle with no steps while inactive or without a job id', () => {
+        h.collection = rowCollection([])
+        const onSuccess = vi.fn()
+
+        const { result } = renderHook(() => useInstallProgress(false, null, onSuccess))
+
+        expect(result.current.steps).toEqual([])
+        expect(result.current.status).toBe('running')
+        expect(onSuccess).not.toHaveBeenCalled()
     })
 })

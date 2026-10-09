@@ -17,8 +17,8 @@ func newBuildID() string {
 }
 
 // finishJob is the deferred cleanup every rebuild-based pipeline shares: clear
-// the single-flight slot and close the job's Done channel so SSE listeners and
-// the handler's caller unblock.
+// the single-flight slot and close the job's Done channel so any caller
+// awaiting it unblocks.
 func finishJob(job *installjob.Job) {
 	// Release compares before clearing, so a late unwind cannot evict whoever
 	// holds the interlock now.

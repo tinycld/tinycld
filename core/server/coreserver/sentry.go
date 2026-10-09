@@ -189,8 +189,8 @@ func (w *errorBodySniffer) Unwrap() http.ResponseWriter {
 
 // Flush, Hijack, and Push forward to the underlying ResponseWriter when it
 // implements the corresponding optional interface. PB's own ResponseWriter
-// supports all three; without these passthroughs, handlers like the SSE
-// event stream would silently lose flush/hijack capability.
+// supports all three; without these passthroughs, a streaming handler (e.g.
+// backup_api.go's download) would silently lose flush/hijack capability.
 func (w *errorBodySniffer) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

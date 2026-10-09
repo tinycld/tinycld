@@ -28,12 +28,6 @@ func TestRejectBaseUninstall(t *testing.T) {
 //     install/uninstall/version-apply sit behind it, because they rebuild what
 //     the whole deployment runs. An ADMIN must be rejected here — that split is
 //     the point of the tier, so it's asserted explicitly below.
-//   - requireOwnerOrToken adds a ?token= query-param path for the SSE progress
-//     stream (EventSource can't send headers). The token's auth-record lookup
-//     must use the token TYPE, not a collection id — an earlier version passed
-//     the superusers collection id, which matched no valid type and 403'd every
-//     install's progress stream. The security inverse (a non-owner's token must
-//     NOT authorize the endpoint) is guarded too.
 
 // newSuperuserRecord creates a PB superuser and returns the record, for tests
 // that need to set re.Auth to a superuser identity (whose id lives in the
@@ -53,14 +47,6 @@ func newSuperuserRecord(t *testing.T, app core.App, email string) *core.Record {
 	return su
 }
 
-func newAuthGuardEvent(app core.App, token string) *core.RequestEvent {
-	req := httptest.NewRequest("GET", "/api/admin/packages/events/job_1?token="+token, nil)
-	re := &core.RequestEvent{App: app}
-	re.Request = req
-	re.Response = httptest.NewRecorder()
-	return re
-}
-
 // newHeaderAuthEvent builds a request event with re.Auth set, modeling the
 // normal Authorization-header path (the install/versions/etc. endpoints).
 func newHeaderAuthEvent(app core.App, auth *core.Record) *core.RequestEvent {
@@ -70,16 +56,6 @@ func newHeaderAuthEvent(app core.App, auth *core.Record) *core.RequestEvent {
 	re.Response = httptest.NewRecorder()
 	re.Auth = auth
 	return re
-}
-
-func newGuardSuperuserToken(t *testing.T, app core.App) string {
-	t.Helper()
-	rec := newSuperuserRecord(t, app, "ssetoken@test.local")
-	tok, err := rec.NewAuthToken()
-	if err != nil {
-		t.Fatalf("new auth token: %v", err)
-	}
-	return tok
 }
 
 // ---------- requireAdmin / requireOwner (header-auth path) ----------
@@ -142,60 +118,5 @@ func TestAdminAndOwnerGuards_SuperuserBypasses(t *testing.T) {
 	}
 	if err := requireOwner(newHeaderAuthEvent(app, su)); err != nil {
 		t.Errorf("a PB superuser should pass requireOwner, got: %v", err)
-	}
-}
-
-// ---------- requireOwnerOrToken (SSE token path) ----------
-
-func TestRequireOwnerOrToken_ValidSuperuserToken(t *testing.T) {
-	app := setupGuardTestApp(t)
-
-	token := newGuardSuperuserToken(t, app)
-	if err := requireOwnerOrToken(app, newAuthGuardEvent(app, token)); err != nil {
-		t.Fatalf("valid superuser token should be authorized, got: %v", err)
-	}
-}
-
-func TestRequireOwnerOrToken_ValidOwnerToken(t *testing.T) {
-	app := setupGuardTestApp(t)
-
-	user := makeUserWithRole(t, app, "sse-owner@test.local", "owner")
-	tok, err := user.NewAuthToken()
-	if err != nil {
-		t.Fatalf("new auth token: %v", err)
-	}
-
-	if err := requireOwnerOrToken(app, newAuthGuardEvent(app, tok)); err != nil {
-		t.Fatalf("owner's token should be authorized, got: %v", err)
-	}
-}
-
-func TestRequireOwnerOrToken_RejectsEmptyAndGarbage(t *testing.T) {
-	app := setupGuardTestApp(t)
-
-	for _, tok := range []string{"", "not-a-jwt", "a.b.c"} {
-		if err := requireOwnerOrToken(app, newAuthGuardEvent(app, tok)); err == nil {
-			t.Fatalf("token %q should be rejected", tok)
-		}
-	}
-}
-
-// The SSE stream reports an owner-only operation's progress, so a non-owner's
-// token must not open it — including an admin's, who can reach the rest of the
-// console.
-func TestRequireOwnerOrToken_RejectsNonOwnerTokens(t *testing.T) {
-	app := setupGuardTestApp(t)
-
-	for _, role := range []string{"admin", "member", "guest"} {
-		t.Run(role, func(t *testing.T) {
-			user := makeUserWithRole(t, app, "sse-"+role+"@test.local", role)
-			tok, err := user.NewAuthToken()
-			if err != nil {
-				t.Fatalf("new auth token: %v", err)
-			}
-			if err := requireOwnerOrToken(app, newAuthGuardEvent(app, tok)); err == nil {
-				t.Fatalf("a %s's token must NOT authorize the owner-only progress stream", role)
-			}
-		})
 	}
 }

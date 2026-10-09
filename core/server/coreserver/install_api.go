@@ -30,11 +30,6 @@ import (
 // operations rebuild the artifact and change what every user runs.
 func RequireOwner(re *core.RequestEvent) error { return requireOwner(re) }
 
-// RequireOwnerOrToken accepts the owner OR a valid deploy token.
-func RequireOwnerOrToken(app core.App, re *core.RequestEvent) error {
-	return requireOwnerOrToken(app, re)
-}
-
 // ---------- validation and compat gates ----------
 
 // ValidatePackageSpec rejects a malformed install spec before anything runs.
@@ -85,7 +80,8 @@ func FinalizeInstallLog(app core.App, record *core.Record, status, errMsg string
 
 // ---------- progress reporting ----------
 
-// EmitProgress advances a job and fans the update out to its SSE listeners.
+// EmitProgress advances a job and throttle-saves the milestone onto its
+// pkg_install_log row, which a client watches with a live query.
 func EmitProgress(job *installjob.Job, step string, progress int, message string) {
 	emitProgress(job, step, progress, message)
 }
@@ -107,21 +103,13 @@ func FailJob(job *installjob.Job, step string, err error) error { return failJob
 
 // ---------- shared HTTP handlers ----------
 //
-// These four are IDENTICAL in every composition — they read the job the
-// interlock is holding, or the durable log, neither of which depends on how the
-// deploy is carried out. A second copy would be a place for the API to drift.
-
-// HandleEvents streams a running job's progress as server-sent events.
-func HandleEvents(re *core.RequestEvent) error { return handleEvents(re) }
+// These are IDENTICAL in every composition — they read the job the interlock
+// is holding, or the durable log, neither of which depends on how the deploy
+// is carried out. A second copy would be a place for the API to drift.
 
 // HandleStatus reports the installed package set.
 func HandleStatus(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	return handleStatus(app, re)
-}
-
-// HandleJobStatus reports one job's state, live or from the durable log.
-func HandleJobStatus(app *pocketbase.PocketBase, re *core.RequestEvent) error {
-	return handleJobStatus(app, re)
 }
 
 // HandleVersionsCheck runs the compatibility pre-flight for a proposed set.

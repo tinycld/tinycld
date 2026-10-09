@@ -151,8 +151,9 @@ func stageRelease(appDir string) (string, error) { return pkgbuild.StageRelease(
 func checkGoBuildPrereqs() error { return pkgbuild.CheckBuildPrereqs() }
 
 // installJobSink adapts an *installjob.Job onto pkgbuild's ProgressSink: milestones
-// go through emitProgress (SSE + durable log line), detail lines through
-// jobLogf. A nil job degrades exactly like the underlying helpers do.
+// go through emitProgress (throttle-saved onto the job's pkg_install_log row,
+// plus the durable log line), detail lines through jobLogf. A nil job degrades
+// exactly like the underlying helpers do.
 type installJobSink struct{ job *installjob.Job }
 
 var (

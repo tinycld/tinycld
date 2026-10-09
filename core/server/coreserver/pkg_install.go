@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -60,18 +59,8 @@ func RegisterPackageInstallEndpoints(app *pocketbase.PocketBase) {
 			return handleDeleteBuild(app, re)
 		}).BindFunc(ownerGuard)
 
-		g.GET("/events/{jobId}", func(re *core.RequestEvent) error {
-			return handleEvents(re)
-		}).BindFunc(func(re *core.RequestEvent) error {
-			return requireOwnerOrToken(app, re)
-		})
-
 		g.GET("/status/{slug}", func(re *core.RequestEvent) error {
 			return handleStatus(app, re)
-		}).BindFunc(ownerGuard)
-
-		g.GET("/job-status/{jobId}", func(re *core.RequestEvent) error {
-			return handleJobStatus(app, re)
 		}).BindFunc(ownerGuard)
 
 		g.GET("/versions", func(re *core.RequestEvent) error {
@@ -134,36 +123,6 @@ func requireAdmin(re *core.RequestEvent) error {
 		return re.Next()
 	}
 	return re.ForbiddenError("Admin access required", nil)
-}
-
-// requireOwnerOrToken allows SSE connections to authenticate via query param
-// since browser EventSource does not support custom headers. Takes core.App (not
-// *pocketbase.PocketBase) so it's unit-testable against tests.TestApp — it only
-// needs FindAuthRecordByToken, a core.App method.
-func requireOwnerOrToken(app core.App, re *core.RequestEvent) error {
-	// Try standard auth first — a PB superuser or an owner.
-	if re.HasSuperuserAuth() {
-		return re.Next()
-	}
-	if isOwner(re.Auth) {
-		return re.Next()
-	}
-
-	// Fall back to query param token for SSE. FindAuthRecordByToken's variadic
-	// arg is the token TYPE (core.TokenTypeAuth), not a collection id — passing a
-	// collection id makes it match no valid type and reject every token (the 403
-	// the install progress stream hit). Validate as an auth token, then accept it
-	// only if the record is a superuser or an owner — this streams the progress
-	// of an owner-only operation, so a plain user's token must not pass.
-	token := re.Request.URL.Query().Get("token")
-	if token != "" {
-		record, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth)
-		if err == nil && record != nil && (record.IsSuperuser() || isOwner(record)) {
-			return re.Next()
-		}
-	}
-
-	return re.ForbiddenError("Owner access required", nil)
 }
 
 // ---------- handlers ----------
@@ -234,85 +193,6 @@ func handleUninstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	return re.JSON(http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
-func handleEvents(re *core.RequestEvent) error {
-	jobId := re.Request.PathValue("jobId")
-
-	job := installjob.Current()
-
-	if job == nil || job.ID != jobId {
-		return re.NotFoundError("Job not found", nil)
-	}
-
-	// Set up SSE
-	w := re.Response
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		return re.InternalServerError("Streaming not supported", nil)
-	}
-
-	// Backfill the FULL progress history to a late-connecting client, not just
-	// the latest step. The pipeline can blow through several fast early stages
-	// (npm pack, manifest parse, file copy) in well under a second; a client
-	// whose EventSource connects after that would otherwise never see those
-	// messages, since only live events flow afterward. Replaying every recorded
-	// LogLine (each is "[N%] Step: message") makes the stream's history complete
-	// regardless of connect timing.
-	//
-	// Subscribing and snapshotting happen under ONE lock, so no event can land
-	// in the gap between them — arriving in neither the backlog nor the stream.
-	// The backlog is written straight to the response rather than through the
-	// bounded channel, which a long history could overflow.
-	ch, history, jobStatus, jobErr := job.SubscribeWithHistory(64)
-	backfill := make([]installjob.ProgressData, 0, len(history))
-	for _, line := range history {
-		if pct, step, msg, ok := parseLogLine(line); ok {
-			backfill = append(backfill, installjob.ProgressData{Step: step, Progress: pct, Message: msg})
-		}
-	}
-	jobDone := jobStatus == "success" || jobStatus == "failed" || jobStatus == "rolled_back"
-
-	for _, pd := range backfill {
-		data, _ := json.Marshal(pd)
-		fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
-	}
-	// If the job already finished before this client connected, emit the
-	// terminal event now so the modal resolves instead of hanging on the
-	// (never-arriving) live complete event.
-	if jobDone {
-		status := "success"
-		if jobStatus != "success" {
-			status = "failed"
-		}
-		data, _ := json.Marshal(installjob.CompleteData{Status: status, Error: jobErr})
-		fmt.Fprintf(w, "event: complete\ndata: %s\n\n", data)
-		flusher.Flush()
-		return nil
-	}
-	flusher.Flush()
-
-	ctx := re.Request.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case evt, ok := <-ch:
-			if !ok {
-				return nil
-			}
-			data, _ := json.Marshal(evt.Data)
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Event, data)
-			flusher.Flush()
-			if evt.Event == "complete" {
-				return nil
-			}
-		}
-	}
-}
-
 func handleStatus(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	slug := re.Request.PathValue("slug")
 
@@ -335,27 +215,8 @@ func handleStatus(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	return re.JSON(http.StatusOK, installLogStatusJSON(record))
 }
 
-// handleJobStatus returns the durable outcome of one operation keyed by its
-// unique job id. The /admin progress modal polls this to learn an operation's
-// terminal state, because the live SSE stream dies when a successful apply
-// restarts the server (the new process has no in-memory job). Unlike the
-// slug-keyed status, a job id is unique per operation, so a re-run for the same
-// package can't return a stale prior row.
-func handleJobStatus(app *pocketbase.PocketBase, re *core.RequestEvent) error {
-	jobID := re.Request.PathValue("jobId")
-	record, err := app.FindFirstRecordByFilter(
-		"pkg_install_log",
-		"job_id = {:jobId}",
-		map[string]any{"jobId": jobID},
-	)
-	if err != nil || record == nil {
-		return re.NotFoundError("No install log found for this job", err)
-	}
-	return re.JSON(http.StatusOK, installLogStatusJSON(record))
-}
-
-// installLogStatusJSON is the shared status payload for the slug- and
-// job-keyed status endpoints.
+// installLogStatusJSON is the status payload for the slug-keyed status
+// endpoint.
 func installLogStatusJSON(record *core.Record) map[string]any {
 	return map[string]any{
 		"id":          record.Id,
@@ -367,12 +228,19 @@ func installLogStatusJSON(record *core.Record) map[string]any {
 	}
 }
 
+// emitProgress and emitStepProgress are a job's one path to report a
+// milestone: they move the in-memory job's bar (RecordProgress, still read by
+// Sentry capture and the busy-interlock Info()) AND throttle-save the same
+// milestone onto the job's pkg_install_log row via its registered
+// installLogProgressSaver, which is how a client now learns progress — see
+// install_progress_rows.go.
 func emitProgress(job *installjob.Job, step string, progress int, message string) {
 	if job == nil {
 		return
 	}
 	job.RecordProgress(step, progress, message)
 	srvLog.Info("package install progress", "jobID", job.ID, "percent", progress, "step", step, "message", message)
+	progressSaverFor(job.ID).recordStep(ProgressStep{Step: step, Progress: progress, Message: message})
 }
 
 func emitStepProgress(job *installjob.Job, step string, progress, stepProgress int, message string) {
@@ -381,29 +249,8 @@ func emitStepProgress(job *installjob.Job, step string, progress, stepProgress i
 	}
 	job.RecordStepProgress(step, progress, stepProgress, message)
 	srvLog.Info("package install progress", "jobID", job.ID, "percent", progress, "step", step, "stepPercent", stepProgress, "message", message)
-}
-
-// parseLogLine reverses emitProgress's "[N%] Step: message" formatting back into
-// its parts, for replaying recorded history to a late-connecting SSE client.
-// Returns ok=false for any line that doesn't match the shape.
-func parseLogLine(line string) (pct int, step, msg string, ok bool) {
-	if !strings.HasPrefix(line, "[") {
-		return 0, "", "", false
-	}
-	closeIdx := strings.Index(line, "%] ")
-	if closeIdx < 1 {
-		return 0, "", "", false
-	}
-	n, err := strconv.Atoi(line[1:closeIdx])
-	if err != nil {
-		return 0, "", "", false
-	}
-	rest := line[closeIdx+3:]
-	colon := strings.Index(rest, ": ")
-	if colon < 0 {
-		return n, rest, "", true
-	}
-	return n, rest[:colon], rest[colon+2:], true
+	sp := stepProgress
+	progressSaverFor(job.ID).recordStep(ProgressStep{Step: step, Progress: progress, Message: message, StepProgress: &sp})
 }
 
 func emitComplete(job *installjob.Job, status string, errMsg string) {
@@ -455,6 +302,11 @@ func createInstallLog(app core.App, job *installjob.Job, action string) *core.Re
 		return nil
 	}
 
+	// Wire this job's progress onto its own row: emitProgress/emitStepProgress
+	// only have the job (threading app + the record through their ~15 call
+	// sites would be far more invasive), so they look the saver up by job id.
+	registerProgressSaver(app, job.ID, record)
+
 	return record
 }
 
@@ -488,6 +340,15 @@ func tagInstallLog(app core.App, record *core.Record, buildID string) error {
 func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg string, logLines []string) {
 	if record == nil {
 		return
+	}
+
+	// Flush any throttled-away progress BEFORE setting the terminal fields on
+	// the same record, so the save below carries the last step too — not just
+	// whatever the throttle had already written — and so no later flush can
+	// race this save and overwrite the terminal status back to "running".
+	if jobID := record.GetString("job_id"); jobID != "" {
+		progressSaverFor(jobID).flush()
+		unregisterProgressSaver(jobID)
 	}
 
 	record.Set("status", status)
