@@ -18,9 +18,10 @@ import { notify } from '@tinycld/core/lib/notify'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { useOrgBranding } from '@tinycld/core/lib/use-org-branding'
 import { ORG_INFO_QUERY_KEY, useOrgInfo } from '@tinycld/core/lib/use-org-info'
+import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 // There is one branding row, but its id is PocketBase's own: the released
 // migration (2020000001_create_org_branding.js) kept the default id field,
@@ -262,26 +263,25 @@ function RepositionButton({ isVisible, onPress }: { isVisible: boolean; onPress:
 
 function RemoveButton({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
     if (!isVisible) return null
-    return <SmallButton testID="avatar-remove" label="Remove" onPress={onPress} />
+    return <SmallButton testID="avatar-remove" label="Remove" onPress={onPress} requiresServer />
 }
 
 function SmallButton({
     testID,
     label,
     onPress,
+    requiresServer = false,
 }: {
     testID: string
     label: string
     onPress: () => void
+    requiresServer?: boolean
 }) {
+    const ButtonComponent = requiresServer ? ServerActionButton : Button
     return (
-        <Pressable
-            testID={testID}
-            onPress={onPress}
-            className="rounded-lg px-3 py-2 border border-border"
-        >
-            <Text className="text-foreground font-semibold">{label}</Text>
-        </Pressable>
+        <ButtonComponent testID={testID} variant="outline" size="sm" onPress={onPress}>
+            <ButtonText>{label}</ButtonText>
+        </ButtonComponent>
     )
 }
 

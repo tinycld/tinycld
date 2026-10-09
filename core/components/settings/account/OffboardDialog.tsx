@@ -3,6 +3,7 @@ import { useLiveQuery } from '@tanstack/react-db'
 import { labelForCount, type OffboardPlan } from '@tinycld/core/lib/account'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native'
 
 // Shared presentation for the two destructive account flows (self-delete and
@@ -90,18 +91,15 @@ export function DangerButton({
     testID?: string
 }) {
     return (
-        <Pressable
+        <ServerActionButton
             testID={testID}
+            variant="destructive"
+            className="w-full"
             onPress={onPress}
-            disabled={disabled}
-            className={`rounded-lg px-4 py-3 items-center ${disabled ? 'bg-danger/50' : 'bg-danger'}`}
+            isDisabled={disabled}
         >
-            {isPending ? (
-                <ActivityIndicator />
-            ) : (
-                <Text className="text-danger-foreground font-semibold">{label}</Text>
-            )}
-        </Pressable>
+            {isPending ? <ActivityIndicator /> : <ButtonText>{label}</ButtonText>}
+        </ServerActionButton>
     )
 }
 

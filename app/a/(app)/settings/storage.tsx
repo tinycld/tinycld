@@ -10,6 +10,7 @@ import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { Divider } from '@tinycld/core/ui/divider'
 import { FormErrorSummary, NumberInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { ArrowLeft } from 'lucide-react-native'
@@ -168,15 +169,13 @@ function StorageSection() {
                     <View className="flex-1">
                         <NumberInput control={form.control} name="limitGb" label="Limit (GB)" />
                     </View>
-                    <Pressable
+                    <ServerActionButton
+                        className="self-start"
                         onPress={onSaveLimit}
-                        disabled={!canSave}
-                        className={`px-4 py-2 rounded-lg self-start bg-primary ${canSave ? 'opacity-100' : 'opacity-50'}`}
+                        isDisabled={!canSave}
                     >
-                        <Text className="text-primary-foreground" style={{ fontWeight: '600' }}>
-                            {saveLimit.isPending ? 'Saving...' : 'Save Limit'}
-                        </Text>
-                    </Pressable>
+                        <ButtonText>{saveLimit.isPending ? 'Saving...' : 'Save Limit'}</ButtonText>
+                    </ServerActionButton>
                 </View>
             </View>
 

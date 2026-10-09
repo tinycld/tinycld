@@ -1,5 +1,6 @@
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { FormErrorSummary, TextInput } from '@tinycld/core/ui/form'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 import { useBackupNow } from './useBackups'
 
 type Props = { isBusy: boolean }
@@ -36,16 +37,14 @@ export function BackupNowForm({ isBusy }: Props) {
                 label="Confirm passphrase"
                 secureTextEntry
             />
-            <Pressable
+            <ServerActionButton
+                variant="link"
                 onPress={onSubmit}
-                disabled={isDisabled}
+                isDisabled={isDisabled}
                 testID="backup-start"
-                className={isDisabled ? 'opacity-50' : ''}
             >
-                <Text className="text-primary font-medium">
-                    {isBusy ? 'A job is running…' : 'Start backup'}
-                </Text>
-            </Pressable>
+                <ButtonText>{isBusy ? 'A job is running…' : 'Start backup'}</ButtonText>
+            </ServerActionButton>
         </View>
     )
 }

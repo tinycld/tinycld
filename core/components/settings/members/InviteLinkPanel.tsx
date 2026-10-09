@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { pb } from '@tinycld/core/lib/pocketbase'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import * as Clipboard from 'expo-clipboard'
 import { useState } from 'react'
 import { Pressable, Text, TextInput, View } from 'react-native'
@@ -93,11 +94,14 @@ function ExpiredView({ onRotate, pending }: { onRotate: () => void; pending: boo
     return (
         <View testID="invite-link-panel-expired" className="gap-2">
             <Text className="text-foreground">This invite has expired.</Text>
-            <Pressable testID="invite-link-rotate" onPress={onRotate} disabled={pending}>
-                <Text className="text-primary">
-                    {pending ? 'Generating…' : 'Generate new link'}
-                </Text>
-            </Pressable>
+            <ServerActionButton
+                variant="link"
+                testID="invite-link-rotate"
+                onPress={onRotate}
+                isDisabled={pending}
+            >
+                <ButtonText>{pending ? 'Generating…' : 'Generate new link'}</ButtonText>
+            </ServerActionButton>
         </View>
     )
 }
@@ -140,11 +144,16 @@ function ReadyView({ url, userId, emailedTo, onRotate, rotatePending }: ReadyVie
             <Pressable testID="invite-link-copy" onPress={copy}>
                 <Text className="text-primary">{copied ? 'Copied!' : 'Copy link'}</Text>
             </Pressable>
-            <Pressable testID="invite-link-rotate" onPress={onRotate} disabled={rotatePending}>
-                <Text className="text-muted-foreground">
+            <ServerActionButton
+                variant="link"
+                testID="invite-link-rotate"
+                onPress={onRotate}
+                isDisabled={rotatePending}
+            >
+                <ButtonText className="text-muted-foreground">
                     {rotatePending ? 'Generating…' : 'Generate new link'}
-                </Text>
-            </Pressable>
+                </ButtonText>
+            </ServerActionButton>
 
             <Pressable testID="invite-link-send-toggle" onPress={() => setShowSend(s => !s)}>
                 <Text className="text-foreground">{sendToggleLabel(showSend, emailedTo)}</Text>
@@ -193,15 +202,16 @@ function SendForm({ isVisible, altEmail, setAltEmail, send }: SendFormProps) {
                 keyboardType="email-address"
                 className="text-foreground border-border border rounded p-2"
             />
-            <Pressable
+            <ServerActionButton
+                variant="link"
                 testID="invite-link-send"
                 onPress={() => send.mutate()}
-                disabled={send.isPending || !altEmail}
+                isDisabled={send.isPending || !altEmail}
             >
-                <Text className="text-primary">
+                <ButtonText>
                     {send.isPending ? 'Sending…' : send.isSuccess ? 'Sent' : 'Send'}
-                </Text>
-            </Pressable>
+                </ButtonText>
+            </ServerActionButton>
             {send.isError && (
                 <Text testID="invite-link-send-error" className="text-destructive">
                     {extractSendError(send.error)}

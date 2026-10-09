@@ -17,6 +17,7 @@ import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useAvatarUrl } from '@tinycld/core/lib/use-avatar-url'
 import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
+import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { EmojiPicker } from '@tinycld/core/ui/emoji-picker'
 import { Check } from 'lucide-react-native'
@@ -223,7 +224,7 @@ function RepositionButton({ isVisible, onPress }: { isVisible: boolean; onPress:
 
 function RemoveButton({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
     if (!isVisible) return null
-    return <SmallButton testID="avatar-remove" label="Remove" onPress={onPress} />
+    return <SmallButton testID="avatar-remove" label="Remove" onPress={onPress} requiresServer />
 }
 
 function EmojiTrigger({ onPick }: { onPick: (glyph: string) => void }) {
@@ -258,19 +259,18 @@ function SmallButton({
     testID,
     label,
     onPress,
+    requiresServer = false,
 }: {
     testID: string
     label: string
     onPress: () => void
+    requiresServer?: boolean
 }) {
+    const ButtonComponent = requiresServer ? ServerActionButton : Button
     return (
-        <Pressable
-            testID={testID}
-            onPress={onPress}
-            className="rounded-lg px-3 py-2 border border-border"
-        >
-            <Text className="text-foreground font-semibold">{label}</Text>
-        </Pressable>
+        <ButtonComponent testID={testID} variant="outline" size="sm" onPress={onPress}>
+            <ButtonText>{label}</ButtonText>
+        </ButtonComponent>
     )
 }
 

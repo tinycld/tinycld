@@ -12,6 +12,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import type { OrgBranding as OrgBrandingInfo } from '@tinycld/core/lib/use-org-info'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { router } from 'expo-router'
 import { useState } from 'react'
 import {
@@ -169,19 +170,18 @@ function LoginForm({
                 />
             </View>
 
-            <Pressable
+            <ServerActionButton
                 testID="login-submit"
-                accessibilityRole="button"
-                className={`rounded-lg items-center mt-4 p-3.5 bg-primary ${canSubmit ? 'opacity-100' : 'opacity-50'}`}
+                className="mt-4 w-full"
                 onPress={handleSubmit}
-                disabled={!canSubmit}
+                isDisabled={!canSubmit}
             >
                 {isSubmitting ? (
                     <ActivityIndicator color={primaryFg} size="small" />
                 ) : (
-                    <Text className="text-base font-semibold text-primary-foreground">Sign in</Text>
+                    <ButtonText>Sign in</ButtonText>
                 )}
-            </Pressable>
+            </ServerActionButton>
 
             <ReviewModeHints
                 onPrefill={(id, password) => {
@@ -296,20 +296,18 @@ function ResetForm({ isVisible, onBack }: { isVisible: boolean; onBack: () => vo
             )}
 
             {!isSent && (
-                <Pressable
+                <ServerActionButton
                     testID="reset-submit"
-                    className={`rounded-lg items-center mt-2 p-3.5 bg-primary ${canSubmit ? 'opacity-100' : 'opacity-50'}`}
+                    className="mt-2 w-full"
                     onPress={handleSubmit}
-                    disabled={!canSubmit}
+                    isDisabled={!canSubmit}
                 >
                     {isSubmitting ? (
                         <ActivityIndicator color={primaryFg} size="small" />
                     ) : (
-                        <Text className="text-base font-semibold text-primary-foreground">
-                            Send reset link
-                        </Text>
+                        <ButtonText>Send reset link</ButtonText>
                     )}
-                </Pressable>
+                </ServerActionButton>
             )}
 
             <Pressable
