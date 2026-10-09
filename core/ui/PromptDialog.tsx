@@ -18,9 +18,10 @@ export type PromptDialogProps = {
     required?: boolean
     isSubmitting?: boolean
     /**
-     * The submitted value is saved to the server, so the submit is disabled
-     * while changes cannot be saved. Off by default: a prompt also collects
-     * values that stay on the device, such as a link in an editor.
+     * The submitted value is saved to the server (the default: a rename, a
+     * copy, a version), so the submit is disabled while changes cannot be
+     * saved. Pass false for a value that stays on the device, such as a link
+     * typed into an editor.
      */
     requiresServer?: boolean
 }
@@ -38,7 +39,7 @@ export function PromptDialog({
     maxLength,
     required = false,
     isSubmitting = false,
-    requiresServer = false,
+    requiresServer = true,
 }: PromptDialogProps) {
     const [value, setValue] = useState(defaultValue)
     const inputRef = useRef<TextInput>(null)
@@ -58,6 +59,7 @@ export function PromptDialog({
     }, [isOpen])
 
     const trimmed = value.trim()
+    // The button disables itself; this also stops the Enter key.
     const writes = useWritesAvailable()
     const canSubmit =
         !isSubmitting && (!required || trimmed.length > 0) && (!requiresServer || writes.available)

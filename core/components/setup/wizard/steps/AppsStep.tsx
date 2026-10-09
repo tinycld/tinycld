@@ -159,7 +159,7 @@ export default function AppsStep({ next }: SetupStepProps) {
             />
             <View className="mb-6 flex-row flex-wrap gap-3">{cards}</View>
             <AutoUpdateChoice />
-            <SetupContinueButton onPress={next} />
+            <SetupContinueButton onPress={next} requiresServer={false} />
         </View>
     )
 }

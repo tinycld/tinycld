@@ -2,7 +2,7 @@ import { useMutation } from '@tinycld/core/lib/mutations'
 import { appHref } from '@tinycld/core/lib/org-routes'
 import { SETUP_DONE_OPEN_TEST_ID, SETUP_DONE_TEST_ID } from '@tinycld/core/lib/setup/step-ids'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { useRouter } from 'expo-router'
 import { Check } from 'lucide-react-native'
 import { Text, View } from 'react-native'
@@ -39,7 +39,7 @@ export function DoneStep({ complete }: { complete: () => Promise<void> }) {
                 </Text>
                 <Text className="text-center text-[15px] text-muted-foreground">{summary}</Text>
             </View>
-            <Button
+            <ServerActionButton
                 size="lg"
                 className="min-h-11"
                 onPress={onOpen}
@@ -47,7 +47,7 @@ export function DoneStep({ complete }: { complete: () => Promise<void> }) {
                 testID={SETUP_DONE_OPEN_TEST_ID}
             >
                 <ButtonText className="text-[15px] font-semibold">{buttonLabel}</ButtonText>
-            </Button>
+            </ServerActionButton>
         </View>
     )
 }

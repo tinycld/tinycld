@@ -98,6 +98,7 @@ function ConnectionOptionsDialog() {
                     label={retryLabel}
                     onPress={options.retry}
                     isDisabled={options.isRetrying}
+                    requiresServer={false}
                     testID="connection-options-retry"
                 />
             </Dialog.Footer>

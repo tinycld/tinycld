@@ -1,7 +1,7 @@
 import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useWritesAvailable } from '@tinycld/core/lib/use-writes-available'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
+import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import {
     LayerEscape,
     OverlayPortal,
@@ -335,8 +335,10 @@ interface DialogActionButtonProps {
     isDisabled?: boolean
     isDestructive?: boolean
     /**
-     * The action saves to the server, so it is disabled — with the reason
-     * beside it — while a change cannot reach the server (useWritesAvailable).
+     * The action sends a change to the server (the default: a dialog's
+     * primary action is almost always a save), so it is a ServerActionButton,
+     * with the reason beside it while a change cannot reach the server. Pass
+     * false for an action that stays on the device (Done, Print, Open).
      */
     requiresServer?: boolean
     testID?: string
@@ -347,24 +349,26 @@ function DialogActionButton({
     onPress,
     isDisabled = false,
     isDestructive = false,
-    requiresServer = false,
+    requiresServer = true,
     testID,
 }: DialogActionButtonProps) {
     const writes = useWritesAvailable()
-    const isBlocked = requiresServer && !writes.available
+    const ActionButton = requiresServer ? ServerActionButton : Button
     return (
         <>
-            <WritesUnavailableHint isVisible={isBlocked} reason={writes.reason} />
-            <Button
+            <WritesUnavailableHint
+                isVisible={requiresServer && !writes.available}
+                reason={writes.reason}
+            />
+            <ActionButton
                 onPress={onPress}
-                isDisabled={isDisabled || isBlocked}
+                isDisabled={isDisabled}
                 size="sm"
                 variant={isDestructive ? 'destructive' : 'default'}
-                accessibilityHint={isBlocked ? writes.reason : undefined}
                 testID={testID}
             >
                 <ButtonText>{label}</ButtonText>
-            </Button>
+            </ActionButton>
         </>
     )
 }

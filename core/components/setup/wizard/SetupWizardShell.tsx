@@ -6,7 +6,7 @@ import {
 } from '@tinycld/core/lib/setup/step-ids'
 import type { WizardSummary } from '@tinycld/core/lib/setup/wizard-logic'
 import { useSetupContinueStore } from '@tinycld/core/lib/stores/setup-continue-store'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
+import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
 import { ScrollView, Text, View } from 'react-native'
 import { StepList } from './StepList'
@@ -110,8 +110,9 @@ function SkipButton({ onPress }: { onPress: (() => void) | null }) {
 function ContinueButton() {
     const action = useSetupContinueStore(s => s.action)
     if (!action) return null
+    const ContinueAction = action.requiresServer ? ServerActionButton : Button
     return (
-        <Button
+        <ContinueAction
             size="lg"
             className="min-h-11"
             onPress={action.onPress}
@@ -119,7 +120,7 @@ function ContinueButton() {
             testID={SETUP_CONTINUE_TEST_ID}
         >
             <ButtonText className="text-[15px] font-semibold">{action.label}</ButtonText>
-        </Button>
+        </ContinueAction>
     )
 }
 

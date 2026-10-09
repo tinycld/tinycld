@@ -5,6 +5,8 @@ export interface SetupContinueAction {
     label: string
     onPress: () => void
     isDisabled: boolean
+    /** Pressing it sends a change to the server, so it waits out an outage. */
+    requiresServer: boolean
 }
 
 interface SetupContinueState {

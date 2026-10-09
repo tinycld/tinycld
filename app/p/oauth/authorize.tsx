@@ -6,7 +6,7 @@ import { useAuth } from '@tinycld/core/lib/auth'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
+import { ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { useLocalSearchParams } from 'expo-router'
 import { useState } from 'react'
 import { ActivityIndicator, Text, TextInput, View } from 'react-native'
@@ -252,17 +252,21 @@ function GrantDetails({
             </View>
 
             <View className="flex-row gap-3">
-                <Button onPress={onApprove} disabled={isApproving || isDenying} className="flex-1">
+                <ServerActionButton
+                    onPress={onApprove}
+                    isDisabled={isApproving || isDenying}
+                    className="flex-1"
+                >
                     {isApproving ? <ActivityIndicator /> : <ButtonText>Connect</ButtonText>}
-                </Button>
-                <Button
+                </ServerActionButton>
+                <ServerActionButton
                     variant="outline"
                     onPress={onDeny}
-                    disabled={isApproving || isDenying}
+                    isDisabled={isApproving || isDenying}
                     className="flex-1"
                 >
                     {isDenying ? <ActivityIndicator /> : <ButtonText>Deny</ButtonText>}
-                </Button>
+                </ServerActionButton>
             </View>
         </View>
     )

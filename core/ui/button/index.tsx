@@ -7,6 +7,7 @@ import {
     type VariantProps,
     withStyleContext,
 } from '@gluestack-ui/utils/nativewind-utils'
+import { useWritesAvailable } from '@tinycld/core/lib/use-writes-available'
 import React from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { withUniwind } from 'uniwind'
@@ -134,6 +135,29 @@ const Button = React.forwardRef<React.ElementRef<typeof UIButton>, IButtonProps>
         )
     }
 )
+/**
+ * The button for an action that sends a change to the server: Save, Send,
+ * Create, Delete, Invite. While a change cannot reach the server (offline,
+ * or the server is unreachable — useWritesAvailable) it is disabled and its
+ * accessibilityHint says why; the connection notice at the top of the app
+ * says the same on screen. Same props as Button.
+ *
+ * Use plain Button for anything that stays on the device: open a dialog,
+ * cancel, navigate, toggle local state.
+ */
+const ServerActionButton = React.forwardRef<React.ElementRef<typeof UIButton>, IButtonProps>(
+    ({ isDisabled, accessibilityHint, ...props }, ref) => {
+        const writes = useWritesAvailable()
+        return (
+            <Button
+                ref={ref}
+                {...props}
+                isDisabled={isDisabled || !writes.available}
+                accessibilityHint={writes.available ? accessibilityHint : writes.reason}
+            />
+        )
+    }
+)
 type IButtonTextProps = React.ComponentPropsWithoutRef<typeof UIButton.Text> &
     VariantProps<typeof buttonTextStyle> & { className?: string }
 const ButtonText = React.forwardRef<React.ElementRef<typeof UIButton.Text>, IButtonTextProps>(
@@ -237,9 +261,10 @@ const ButtonGroup = React.forwardRef<React.ElementRef<typeof UIButton.Group>, IB
     }
 )
 Button.displayName = 'Button'
+ServerActionButton.displayName = 'ServerActionButton'
 ButtonText.displayName = 'ButtonText'
 ButtonSpinner.displayName = 'ButtonSpinner'
 ButtonIcon.displayName = 'ButtonIcon'
 ButtonGroup.displayName = 'ButtonGroup'
 
-export { Button, ButtonGroup, ButtonIcon, ButtonSpinner, ButtonText }
+export { Button, ButtonGroup, ButtonIcon, ButtonSpinner, ButtonText, ServerActionButton }
