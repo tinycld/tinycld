@@ -458,7 +458,7 @@ function spawnPbBinary(pbPort: number, publicUrl: string, dataDir: string | null
     if (dataDir) args.push('--dir', dataDir)
     args.push('--typesDir', path.join(ROOT, 'core', 'types'), 'serve')
     // The mail package's IMAP server defaults to :1143 in dev. The Playwright
-    // IMAP suite (app/tests/e2e/imap-helpers.ts) connects on :1193 — a port
+    // IMAP suite (mail's tests/imap-helpers.ts) connects on :1193 — a port
     // distinct from the normal dev one so an e2e run never collides with a
     // developer's running dev IMAP listener. Only the test invocation passes a
     // dedicated --pb-data-dir, so key the override off that: point the test

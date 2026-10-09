@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { getPackages } from '../../tinycld.packages'
 import { loadManifest } from './load-manifest'
 import { APP_DIR, memberDir } from './paths'
@@ -160,7 +161,7 @@ function packageCollections(slugs: string[]): string[] {
     return names.filter(n => prefixes.some(p => n === p || n.startsWith(`${p}_`)))
 }
 
-function buildPattern(slugs: string[], collections: string[]): RegExp {
+export function buildPattern(slugs: string[], collections: string[]): RegExp {
     const slug = slugs.map(escapeRegExp).join('|')
     const alternatives = [`/api/(?:${slug})/`, `["'\`](?:${slug}):[a-z]`, `@tinycld/(?:${slug})\\b`]
     if (collections.length > 0) {
@@ -169,7 +170,22 @@ function buildPattern(slugs: string[], collections: string[]): RegExp {
     return new RegExp(alternatives.join('|'))
 }
 
-function isTestFile(rel: string): boolean {
+// A shared e2e helper — a non-spec file that a `tests/e2e/*.spec.ts` imports
+// for app-shell-wide fixtures (login, a protocol client, test-user
+// constants) — is NOT a test file for isolation purposes even though it
+// lives under a SKIP_DIRS path: it is library code other repos' specs import,
+// and is exactly the kind of file that smuggled a package's mailbox layout
+// into core as `tests/e2e/imap-helpers.ts` (re-exported via
+// core/e2e-imap-helpers.ts) without ever being scanned. `core/e2e-*.ts` names
+// the matching re-export wrappers, which already live outside SKIP_DIRS but
+// are called out here for clarity.
+export function isSharedE2EHelper(rel: string): boolean {
+    if (/^core\/e2e-[^/]+\.ts$/.test(rel)) return true
+    return /^tests\/e2e\/[^/]+\.ts$/.test(rel) && !/\.spec\.ts$/.test(rel)
+}
+
+export function isTestFile(rel: string): boolean {
+    if (isSharedE2EHelper(rel)) return false
     if (SKIP_DIRS.some(d => rel.split('/').includes(d))) return true
     return /_test\.go$|\.test\.tsx?$|\.spec\.tsx?$|\.type-test\.ts$/.test(rel)
 }
@@ -274,7 +290,14 @@ async function main() {
     if (violations.length > 0 || stale.length > 0) process.exit(1)
 }
 
-main().catch(err => {
-    console.error(err)
-    process.exit(1)
-})
+// Run only as a CLI, so importing this module for its unit tests does not
+// walk the real workspace / exit the test process.
+const invokedAsScript =
+    process.argv[1] !== undefined &&
+    import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+if (invokedAsScript) {
+    main().catch(err => {
+        console.error(err)
+        process.exit(1)
+    })
+}
