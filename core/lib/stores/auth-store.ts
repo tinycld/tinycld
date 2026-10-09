@@ -38,6 +38,16 @@ async function beginSession(record: Users): Promise<void> {
     await seedUser(record)
 }
 
+// Every sign-in path's last step, after the user is set. Setting the user
+// opens the auth gate, and the caller navigates to its post-sign-in route when
+// the sign-in resolves, so the sign-in must not wait for this warm-up: a
+// navigation that lands after it would pull back a user who has already moved
+// on in the open app. The warm-up only fills what the first screens' live
+// queries load anyway, so a failure is reported and does not fail the sign-in.
+function warmStores(): void {
+    preloadStores().catch(err => captureException('auth-store.preloadStores', err))
+}
+
 // Tear down the device's push subscription on logout: remove the browser/device
 // push registration AND delete the matching server push_subscriptions row, so a
 // signed-out device stops receiving pushes. Resetting resetExpoPushRegistration()
@@ -178,7 +188,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
 
             await beginSession(authData.record)
             set({ user: authenticatedUser })
-            await preloadStores()
+            warmStores()
 
             return { user: authenticatedUser, error: null }
         } catch (error) {
@@ -291,7 +301,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
 
             await beginSession(data.record)
             set({ user: authenticatedUser })
-            await preloadStores()
+            warmStores()
 
             return { user: authenticatedUser, error: null }
         } catch (error) {
@@ -331,7 +341,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
 
             await beginSession(data.record)
             set({ user: authenticatedUser })
-            await preloadStores()
+            warmStores()
 
             return { user: authenticatedUser, error: null }
         } catch (error) {
@@ -357,7 +367,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
             if (!user || !record) return { user: null, error: 'The new session was not accepted.' }
             await beginSession(record)
             set({ user })
-            await preloadStores()
+            warmStores()
             return { user, error: null }
         } catch (error) {
             // The owner already exists, so the caller sends the person to sign
