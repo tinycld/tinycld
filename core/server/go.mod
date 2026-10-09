@@ -1,6 +1,6 @@
 module tinycld.org/core
 
-go 1.27.1
+go 1.27.2
 
 // Build against the PocketBase fork, vendored at
 // tinycld/third_party/pocketbase: core's jsvm registration uses the fork-only
