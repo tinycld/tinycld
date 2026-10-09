@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -34,6 +35,11 @@ type ProgressStep struct {
 // second (the fast early assemble steps) doesn't turn into dozens of writes.
 const progressThrottle = time.Second
 
+// afterFunc is the subset of time.AfterFunc the saver needs, indirected so
+// tests can inject a deterministic, non-sleeping fake instead of waiting out
+// real throttle windows.
+type afterFunc func(d time.Duration, f func()) *time.Timer
+
 // installLogProgressSaver throttles a running job's progress writes onto its
 // pkg_install_log row. One instance per job, registered at createInstallLog
 // and looked up by emitProgress/emitStepProgress, which only have the job —
@@ -43,10 +49,19 @@ type installLogProgressSaver struct {
 	app    core.App
 	record *core.Record
 
-	mu       sync.Mutex
-	steps    []ProgressStep
-	lastSave time.Time
-	pending  bool // a step arrived since the last save and was dropped by the throttle
+	// newTimer defaults to time.AfterFunc; overridden in tests.
+	newTimer afterFunc
+
+	mu        sync.Mutex
+	steps     []ProgressStep
+	lastSave  time.Time
+	pending   bool // a step arrived since the last save and was dropped by the throttle
+	timer     *time.Timer
+	finalized bool // finalize/unregister happened; no further saves are scheduled
+
+	saveMu      sync.Mutex // serializes the actual app.Save call
+	saveRunning bool
+	saveAgain   bool // a request arrived while a save was in flight; re-save after
 }
 
 var (
@@ -60,16 +75,22 @@ var (
 func registerProgressSaver(app core.App, jobID string, record *core.Record) {
 	saversMu.Lock()
 	defer saversMu.Unlock()
-	savers[jobID] = &installLogProgressSaver{app: app, record: record}
+	savers[jobID] = &installLogProgressSaver{app: app, record: record, newTimer: time.AfterFunc}
 }
 
 // unregisterProgressSaver drops a finished job's saver. Called from
 // finalizeInstallLog's caller via finishJob so the map does not grow for the
-// life of the process.
+// life of the process. Also stops any pending throttle/retry timer so it
+// cannot fire a save after the job (and its record) are done being written.
 func unregisterProgressSaver(jobID string) {
 	saversMu.Lock()
-	defer saversMu.Unlock()
+	saver := savers[jobID]
 	delete(savers, jobID)
+	saversMu.Unlock()
+
+	if saver != nil {
+		saver.stop()
+	}
 }
 
 func progressSaverFor(jobID string) *installLogProgressSaver {
@@ -78,57 +99,242 @@ func progressSaverFor(jobID string) *installLogProgressSaver {
 	return savers[jobID]
 }
 
-// recordStep appends step to the saver's in-memory history and persists it to
-// the row, throttled to roughly one write per second. The LAST step of a burst
-// within the throttle window is saved on the NEXT tick (flushPending), so a
-// client never sees progress freeze at a stale percentage between ticks.
+// stop cancels any pending timer and marks the saver finalized so no later
+// callback (already fired and waiting on mu, or racing in) schedules another
+// one or saves again.
+func (s *installLogProgressSaver) stop() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.finalized = true
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
+	s.mu.Unlock()
+}
+
+// recordStep merges step into the saver's in-memory history and persists it
+// to the row, throttled to roughly one write per second.
 //
-// Never blocks and never fails the job: a save is skipped outright while
-// read-only mode is on (a second process is about to migrate this database —
-// see package readonly) rather than queued or retried, because the row's
-// schema itself may be mid-migration. The next tick after the mode lifts
-// picks up wherever progress is by then; a few seconds of missed live rows
-// cost nothing, since `log` still carries the full history at finalize and
-// the final status always lands on the row synchronously once writes resume.
+// A step with the same Step name as the last recorded entry updates that
+// entry in place instead of appending — a step that reports percent ticks
+// (Metro's bundling output, pnpm's resolve counter) would otherwise append a
+// new array entry per tick and bloat the row without bound. A step that
+// returns later under the same name after a different step ran in between
+// still gets its own new entry, because only the LAST entry is checked.
+//
+// A save due right now runs inline. Otherwise the tick is marked pending and
+// exactly one trailing save is scheduled for the end of the throttle window,
+// so a client never sees progress freeze at a stale percentage for longer
+// than the window — not just "until the next step arrives", which could be
+// minutes into a long-running step.
 func (s *installLogProgressSaver) recordStep(step ProgressStep) {
 	if s == nil || s.record == nil {
 		return
 	}
 	s.mu.Lock()
-	s.steps = append(s.steps, step)
-	due := time.Since(s.lastSave) >= progressThrottle
-	s.mu.Unlock()
-
-	if !due {
-		s.mu.Lock()
-		s.pending = true
+	if s.finalized {
 		s.mu.Unlock()
 		return
 	}
+	s.mergeStep(step)
+	due := time.Since(s.lastSave) >= progressThrottle
+	if due {
+		s.mu.Unlock()
+		s.flush()
+		return
+	}
+	s.pending = true
+	s.scheduleTrailingSave()
+	s.mu.Unlock()
+}
+
+// mergeStep appends step, or — when it shares the last entry's Step name —
+// updates that entry's progress/message/stepProgress in place. Caller holds
+// mu.
+func (s *installLogProgressSaver) mergeStep(step ProgressStep) {
+	if n := len(s.steps); n > 0 && s.steps[n-1].Step == step.Step {
+		s.steps[n-1] = step
+		return
+	}
+	s.steps = append(s.steps, step)
+}
+
+// scheduleTrailingSave arms exactly one timer to fire at the end of the
+// current throttle window, replacing any timer already armed so a burst of
+// ticks inside the window never results in more than one trailing save.
+// Caller holds mu.
+func (s *installLogProgressSaver) scheduleTrailingSave() {
+	if s.finalized {
+		return
+	}
+	wait := progressThrottle - time.Since(s.lastSave)
+	if wait < 0 {
+		wait = 0
+	}
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+	s.timer = s.newTimer(wait, s.onTrailingTimer)
+}
+
+// onTrailingTimer is the timer callback: it flushes whatever is pending. If
+// the save is skipped because read-only mode is still on, flush re-arms the
+// timer itself so the state keeps retrying on the throttle schedule until
+// writes resume — see flush.
+func (s *installLogProgressSaver) onTrailingTimer() {
+	s.mu.Lock()
+	if s.finalized {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
 	s.flush()
 }
 
 // flush saves the current step history + latest headline to the row right
-// now, bypassing the throttle. The install pipeline calls it once after the
-// last emitProgress of a run so the terminal row the client sees reflects the
-// very last milestone, not a throttled-away one.
+// now, bypassing the throttle. The install pipeline also calls it once after
+// the last emitProgress of a run so the terminal row the client sees
+// reflects the very last milestone, not a throttled-away one.
+//
+// While read-only mode is on, the row's schema itself may be mid-migration
+// under a second process, so the save is skipped — but the pending state is
+// kept (not cleared) and a retry is re-armed on the normal throttle schedule,
+// so progress recorded during the pause lands as soon as writes resume
+// rather than waiting for the next distinct step or finalize.
 func (s *installLogProgressSaver) flush() {
-	if s == nil || s.record == nil || readonly.Active() {
+	if s == nil || s.record == nil {
 		return
 	}
+	if readonly.Active() {
+		s.mu.Lock()
+		if !s.finalized {
+			s.pending = true
+			s.scheduleTrailingSave()
+		}
+		s.mu.Unlock()
+		return
+	}
+
 	s.mu.Lock()
+	if s.finalized {
+		s.mu.Unlock()
+		return
+	}
 	steps := append([]ProgressStep{}, s.steps...)
-	s.lastSave = time.Now()
 	s.pending = false
 	s.mu.Unlock()
 
 	if len(steps) == 0 {
 		return
 	}
+	s.save(steps)
+}
+
+// flushBlocking is flush's finalize-time counterpart: finalizeInstallLog
+// calls it right before unregistering the saver, so a last step recorded
+// while read-only mode happened to be on still lands on the row — otherwise
+// unregister's timer-stop would cut off the retry flush schedules for itself
+// and the pending step would never get saved. It waits out read-only mode
+// (bounded by readonly.TailWait, the same bound the audit log's tail writes
+// use for a write that follows a request already accepted) rather than
+// re-arming a timer, since this call site can afford to block briefly and
+// the caller is about to unregister the saver anyway.
+func (s *installLogProgressSaver) flushBlocking() {
+	if s == nil || s.record == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), readonly.TailWait)
+	defer cancel()
+	_ = readonly.WaitInactive(ctx)
+
+	s.mu.Lock()
+	if s.finalized {
+		s.mu.Unlock()
+		return
+	}
+	steps := append([]ProgressStep{}, s.steps...)
+	s.pending = false
+	s.mu.Unlock()
+
+	if len(steps) == 0 {
+		return
+	}
+	s.save(steps)
+}
+
+// save serializes the actual app.Save call per saver: at most one save is in
+// flight at a time. A save request that arrives while one is already running
+// is coalesced into a single follow-up save (using whatever the latest state
+// is by the time that follow-up runs) rather than queued — a burst of
+// concurrent callers (the job goroutine, a hosted relay on another
+// goroutine, the trailing-save timer) never results in more than one save
+// running at once and never piles up a backlog of saves.
+func (s *installLogProgressSaver) save(steps []ProgressStep) {
+	s.saveMu.Lock()
+	if s.saveRunning {
+		s.saveAgain = true
+		s.saveMu.Unlock()
+		return
+	}
+	s.saveRunning = true
+	s.saveMu.Unlock()
+
+	s.doSave(steps)
+
+	for {
+		s.saveMu.Lock()
+		if !s.saveAgain {
+			s.saveRunning = false
+			s.saveMu.Unlock()
+			return
+		}
+		s.saveAgain = false
+		s.saveMu.Unlock()
+
+		// Re-read the latest state rather than the stale steps this loop
+		// iteration started with: the whole point of coalescing is that the
+		// follow-up save reflects whatever is current by the time it runs.
+		s.mu.Lock()
+		if s.finalized {
+			s.mu.Unlock()
+			continue
+		}
+		latestSteps := append([]ProgressStep{}, s.steps...)
+		s.pending = false
+		s.mu.Unlock()
+
+		if readonly.Active() {
+			s.mu.Lock()
+			if !s.finalized {
+				s.pending = true
+				s.scheduleTrailingSave()
+			}
+			s.mu.Unlock()
+			continue
+		}
+		if len(latestSteps) > 0 {
+			s.doSave(latestSteps)
+		}
+	}
+}
+
+// doSave performs the actual record mutation + app.Save. Only ever called
+// with s.saveRunning held true by save(), so no two calls to doSave for the
+// same saver run concurrently — the record itself is never mutated/saved
+// from two goroutines at once.
+func (s *installLogProgressSaver) doSave(steps []ProgressStep) {
 	latest := steps[len(steps)-1]
 	s.record.Set("steps", steps)
 	s.record.Set("current_step", latest.Step)
 	s.record.Set("current_message", latest.Message)
+
+	s.mu.Lock()
+	s.lastSave = time.Now()
+	s.mu.Unlock()
+
 	if err := s.app.Save(s.record); err != nil {
 		// Best-effort: progress is a convenience, not the job's outcome. Log
 		// and move on rather than failing the install over a UI nicety.

@@ -2,9 +2,11 @@ package coreserver
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/types"
 	"tinycld.org/core/readonly"
@@ -21,6 +23,12 @@ func newProgressRowsTestApp(t *testing.T) *tests.TestApp {
 	return app
 }
 
+// newProgressSaverTestRecord's saver uses a REAL time.AfterFunc, so a test
+// using it that leaves a trailing save pending must not return while that
+// timer could still fire — t.Cleanup(saver.stop) guarantees the timer is
+// cancelled before the test's app is torn down. Without it, a pending
+// timer fires after cleanup and calls app.Save on a closed test database,
+// a process crash unrelated to anything the saver itself got wrong.
 func newProgressSaverTestRecord(t *testing.T, app *tests.TestApp) (*installLogProgressSaver, string) {
 	t.Helper()
 	id := addInstallLog(t, app, "gizmos", "running")
@@ -32,7 +40,86 @@ func newProgressSaverTestRecord(t *testing.T, app *tests.TestApp) (*installLogPr
 	if err != nil {
 		t.Fatalf("find record: %v", err)
 	}
-	return &installLogProgressSaver{app: app, record: record}, id
+	saver := &installLogProgressSaver{app: app, record: record, newTimer: time.AfterFunc}
+	t.Cleanup(saver.stop)
+	return saver, id
+}
+
+// newProgressSaverWithFakeTimer is newProgressSaverTestRecord but with the
+// saver's timer indirected through a fakeTimers, so a test can fire the
+// trailing save deterministically instead of sleeping out the real window.
+func newProgressSaverWithFakeTimer(t *testing.T, app *tests.TestApp) (*installLogProgressSaver, *fakeTimers, string) {
+	t.Helper()
+	saver, id := newProgressSaverTestRecord(t, app)
+	timers := &fakeTimers{}
+	saver.newTimer = timers.newTimer
+	return saver, timers, id
+}
+
+func fetchProgressRow(t *testing.T, app *tests.TestApp, id string) *core.Record {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("pkg_install_log")
+	if err != nil {
+		t.Fatalf("find pkg_install_log: %v", err)
+	}
+	rec, err := app.FindRecordById(col, id)
+	if err != nil {
+		t.Fatalf("find record: %v", err)
+	}
+	return rec
+}
+
+func decodeSteps(t *testing.T, rec *core.Record) []ProgressStep {
+	t.Helper()
+	raw, ok := rec.Get("steps").(types.JSONRaw)
+	if !ok {
+		t.Fatalf("steps field is %T, want types.JSONRaw", rec.Get("steps"))
+	}
+	var steps []ProgressStep
+	if err := json.Unmarshal(raw, &steps); err != nil {
+		t.Fatalf("unmarshal steps: %v", err)
+	}
+	return steps
+}
+
+// fakeTimers lets a test fire a saver's trailing-save timer deterministically
+// instead of sleeping out the real 1s throttle window. newTimer returns a
+// *time.Timer (the saver's stop() calls Stop() on it), but the returned timer
+// is never actually armed — fire() below calls the captured callback
+// directly, synchronously, on the test's own goroutine.
+type fakeTimers struct {
+	mu    sync.Mutex
+	calls []func()
+}
+
+func (f *fakeTimers) newTimer(_ time.Duration, cb func()) *time.Timer {
+	f.mu.Lock()
+	f.calls = append(f.calls, cb)
+	f.mu.Unlock()
+	// A real, never-fired timer: stop() can call Stop() on it harmlessly.
+	return time.AfterFunc(time.Hour, func() {})
+}
+
+// fire runs the most recently scheduled callback, as if its window had
+// elapsed. It runs synchronously so the test can assert on the row
+// immediately after, with no sleep and no flakiness.
+func (f *fakeTimers) fire() {
+	f.mu.Lock()
+	n := len(f.calls)
+	var cb func()
+	if n > 0 {
+		cb = f.calls[n-1]
+	}
+	f.mu.Unlock()
+	if cb != nil {
+		cb()
+	}
+}
+
+func (f *fakeTimers) scheduledCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
 }
 
 // A single recordStep saves immediately: the FIRST tick of a run has nothing
@@ -62,22 +149,153 @@ func TestRecordStep_SavesImmediatelyOnFirstTick(t *testing.T) {
 // the whole point of throttling a chatty build down to ~1 write/sec.
 func TestRecordStep_ThrottlesBurstsWithinTheWindow(t *testing.T) {
 	app := newProgressRowsTestApp(t)
-	saver, id := newProgressSaverTestRecord(t, app)
+	saver, _, id := newProgressSaverWithFakeTimer(t, app)
 
 	saver.recordStep(ProgressStep{Step: "A", Progress: 1, Message: "first"})
 	saver.recordStep(ProgressStep{Step: "B", Progress: 2, Message: "second"})
 	saver.recordStep(ProgressStep{Step: "C", Progress: 3, Message: "third"})
 
-	col, _ := app.FindCollectionByNameOrId("pkg_install_log")
-	rec, err := app.FindRecordById(col, id)
-	if err != nil {
-		t.Fatalf("find record: %v", err)
-	}
+	rec := fetchProgressRow(t, app, id)
 	// The row still reflects the FIRST saved tick — B and C arrived inside the
 	// throttle window and were recorded in memory (pending) but not yet saved.
 	if rec.GetString("current_step") != "A" {
 		t.Errorf("current_step = %q, want %q (burst must not have saved past the first tick)",
 			rec.GetString("current_step"), "A")
+	}
+}
+
+// Defect 1: during a long step, nothing else ever arrives to trigger the
+// "next step" save, so without a trailing save the UI would show a stale
+// step for as long as the step runs. recordStep must schedule exactly one
+// save for the end of the throttle window, and firing that timer must save
+// the LATEST pending state — not the first tick that started the window.
+func TestRecordStep_SchedulesExactlyOneTrailingSaveForTheWindow(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, timers, id := newProgressSaverWithFakeTimer(t, app)
+
+	saver.recordStep(ProgressStep{Step: "A", Progress: 1, Message: "first"})      // saves immediately, no timer
+	saver.recordStep(ProgressStep{Step: "B", Progress: 2, Message: "second"})     // pending, schedules timer #1
+	saver.recordStep(ProgressStep{Step: "B", Progress: 3, Message: "still B"})    // pending, REPLACES timer #1
+
+	if got := timers.scheduledCount(); got != 2 {
+		t.Fatalf("scheduled %d timers, want 2 (one replaced by the next)", got)
+	}
+
+	timers.fire()
+
+	rec := fetchProgressRow(t, app, id)
+	if rec.GetString("current_step") != "B" {
+		t.Errorf("current_step = %q, want %q after the trailing save fires", rec.GetString("current_step"), "B")
+	}
+	if rec.GetString("current_message") != "still B" {
+		t.Errorf("current_message = %q, want the LATEST pending message %q",
+			rec.GetString("current_message"), "still B")
+	}
+}
+
+// The trailing save must fire only once: a timer that is replaced (because a
+// later tick arrived before it fired) must not ALSO fire and double-save.
+// fakeTimers.fire only ever invokes the latest scheduled callback, so this
+// exercises the saver's own replacement (Stop + reassign), not the test
+// double standing in for it.
+func TestRecordStep_TrailingSaveDoesNotDoubleFire(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, timers, id := newProgressSaverWithFakeTimer(t, app)
+
+	saver.recordStep(ProgressStep{Step: "A", Progress: 1, Message: "first"})
+	saver.recordStep(ProgressStep{Step: "B", Progress: 2, Message: "second"})
+
+	timers.fire()
+	rec := fetchProgressRow(t, app, id)
+	if rec.GetString("current_step") != "B" {
+		t.Fatalf("current_step = %q, want %q", rec.GetString("current_step"), "B")
+	}
+
+	// No further ticks and no further fires: the row must stay exactly as the
+	// one trailing save left it.
+	rec2 := fetchProgressRow(t, app, id)
+	if rec2.GetString("current_message") != "second" {
+		t.Errorf("current_message = %q, want unchanged %q", rec2.GetString("current_message"), "second")
+	}
+}
+
+// No save after finalize/unregister: a timer that was armed before the job
+// finalized must not go on to save once the saver has been stopped — the
+// record may already be mid-save for the terminal status by then.
+func TestStop_PreventsTrailingSaveAfterFinalize(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, timers, id := newProgressSaverWithFakeTimer(t, app)
+
+	saver.recordStep(ProgressStep{Step: "A", Progress: 1, Message: "first"})
+	saver.recordStep(ProgressStep{Step: "B", Progress: 2, Message: "second"}) // schedules the trailing save
+
+	saver.stop() // simulates finalize/unregister before the window elapses
+	timers.fire()
+
+	rec := fetchProgressRow(t, app, id)
+	if rec.GetString("current_step") != "A" {
+		t.Errorf("current_step = %q, want unchanged %q — stop must prevent the trailing save", rec.GetString("current_step"), "A")
+	}
+
+	// A recordStep arriving after stop must also no-op rather than scheduling
+	// a new timer or saving.
+	saver.recordStep(ProgressStep{Step: "C", Progress: 3, Message: "third"})
+	rec2 := fetchProgressRow(t, app, id)
+	if rec2.GetString("current_step") != "A" {
+		t.Errorf("current_step = %q, want unchanged %q — recordStep after stop must no-op", rec2.GetString("current_step"), "A")
+	}
+}
+
+// Defect 2: a step reporting percent ticks (Metro's bundler output, pnpm's
+// resolve counter) must update the last row entry in place rather than
+// appending — otherwise the row grows by one entry per percent tick and the
+// "bounded row size" requirement is violated.
+func TestRecordStep_SameStepTicksUpdateInPlace(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, id := newProgressSaverTestRecord(t, app)
+
+	sp := func(v int) *int { return &v }
+	saver.recordStep(ProgressStep{Step: "Bundling", Progress: 10, Message: "0%", StepProgress: sp(0)})
+	saver.flush()
+	saver.recordStep(ProgressStep{Step: "Bundling", Progress: 10, Message: "40%", StepProgress: sp(40)})
+	saver.flush()
+	saver.recordStep(ProgressStep{Step: "Bundling", Progress: 10, Message: "80%", StepProgress: sp(80)})
+	saver.flush()
+	saver.recordStep(ProgressStep{Step: "Packaging", Progress: 20, Message: "starting"})
+	saver.flush()
+
+	rec := fetchProgressRow(t, app, id)
+	steps := decodeSteps(t, rec)
+	if len(steps) != 2 {
+		t.Fatalf("steps has %d entries, want 2 (Bundling collapsed to one entry, then Packaging)", len(steps))
+	}
+	if steps[0].Step != "Bundling" || steps[0].Message != "80%" || steps[0].StepProgress == nil || *steps[0].StepProgress != 80 {
+		t.Errorf("steps[0] = %+v, want the LATEST Bundling tick merged in place", steps[0])
+	}
+	if steps[1].Step != "Packaging" {
+		t.Errorf("steps[1].Step = %q, want %q (a different step always gets its own entry)", steps[1].Step, "Packaging")
+	}
+}
+
+// A step name that recurs non-consecutively (it ran, a different step ran,
+// then the first step's name comes back — e.g. a reported failure attributed
+// back to an earlier step) gets its own new entry: only the immediately
+// preceding entry is checked for an in-place merge.
+func TestRecordStep_NonConsecutiveRepeatGetsNewEntry(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, id := newProgressSaverTestRecord(t, app)
+
+	saver.recordStep(ProgressStep{Step: "A", Progress: 1, Message: "first"})
+	saver.flush()
+	saver.recordStep(ProgressStep{Step: "B", Progress: 2, Message: "second"})
+	saver.flush()
+	saver.recordStep(ProgressStep{Step: "A", Progress: 3, Message: "FAILED: retried"})
+	saver.flush()
+
+	rec := fetchProgressRow(t, app, id)
+	steps := decodeSteps(t, rec)
+	if len(steps) != 3 {
+		t.Fatalf("steps has %d entries, want 3 (A, B, A again)", len(steps))
 	}
 }
 
@@ -118,10 +336,11 @@ func TestFlush_SavesThePendingBurstsLastStep(t *testing.T) {
 
 // The throttled save must never block the job or fail it outright while
 // read-only mode is on — the row's own schema may be mid-migration under a
-// second process. recordStep/flush degrade to a silent no-op instead.
+// second process. recordStep/flush must not save, but defect 4 means the
+// state stays pending and a retry is scheduled rather than dropped.
 func TestRecordStep_SkipsSilentlyDuringReadOnlyMode(t *testing.T) {
 	app := newProgressRowsTestApp(t)
-	saver, id := newProgressSaverTestRecord(t, app)
+	saver, timers, id := newProgressSaverWithFakeTimer(t, app)
 
 	readonly.Enter()
 	defer readonly.Leave()
@@ -138,19 +357,41 @@ func TestRecordStep_SkipsSilentlyDuringReadOnlyMode(t *testing.T) {
 		t.Fatal("recordStep/flush blocked during read-only mode instead of skipping")
 	}
 
-	col, _ := app.FindCollectionByNameOrId("pkg_install_log")
-	rec, err := app.FindRecordById(col, id)
-	if err != nil {
-		t.Fatalf("find record: %v", err)
-	}
+	rec := fetchProgressRow(t, app, id)
 	if rec.GetString("current_step") != "" {
 		t.Errorf("current_step = %q, want empty — a save during read-only mode must be skipped, not applied",
 			rec.GetString("current_step"))
 	}
+	// Defect 4: the state must not be dropped — a retry must be armed so it
+	// is not stuck until some unrelated later step arrives.
+	if got := timers.scheduledCount(); got == 0 {
+		t.Error("no retry was scheduled while read-only mode was active")
+	}
 }
 
-// Once read-only mode lifts, the NEXT tick saves normally — a missed tick
-// during the pause is not made up, but progress is not stuck either.
+// Once read-only mode lifts, the pending state saves as soon as the ALREADY
+// SCHEDULED retry fires — not only when some unrelated next step arrives.
+// This is defect 4: before the fix, a step recorded during read-only mode
+// was only ever picked up by the next distinct recordStep/flush call.
+func TestRecordStep_RetrySavesPendingStateOnceReadOnlyModeLifts(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, timers, id := newProgressSaverWithFakeTimer(t, app)
+
+	readonly.Enter()
+	saver.recordStep(ProgressStep{Step: "duringPause", Progress: 1, Message: "during pause"})
+	saver.flush() // the throttle's own flush call during read-only: schedules a retry
+	readonly.Leave()
+
+	timers.fire() // the retry the read-only period itself armed
+
+	rec := fetchProgressRow(t, app, id)
+	if rec.GetString("current_step") != "duringPause" {
+		t.Errorf("current_step = %q, want %q saved by the retry alone, no new step required",
+			rec.GetString("current_step"), "duringPause")
+	}
+}
+
+// Once read-only mode lifts, the NEXT tick also still saves normally.
 func TestRecordStep_ResumesAfterReadOnlyModeLifts(t *testing.T) {
 	app := newProgressRowsTestApp(t)
 	saver, id := newProgressSaverTestRecord(t, app)
@@ -161,13 +402,77 @@ func TestRecordStep_ResumesAfterReadOnlyModeLifts(t *testing.T) {
 
 	saver.recordStep(ProgressStep{Step: "resumed", Progress: 2, Message: "after pause"})
 
-	col, _ := app.FindCollectionByNameOrId("pkg_install_log")
-	rec, err := app.FindRecordById(col, id)
-	if err != nil {
-		t.Fatalf("find record: %v", err)
-	}
+	rec := fetchProgressRow(t, app, id)
 	if rec.GetString("current_step") != "resumed" {
 		t.Errorf("current_step = %q, want %q after the mode lifts", rec.GetString("current_step"), "resumed")
+	}
+}
+
+// flushBlocking is finalize's call site: it must wait out a read-only pause
+// (bounded) and land the pending step before returning, so the terminal
+// save that follows in finalizeInstallLog isn't missing the last milestone.
+func TestFlushBlocking_LandsPendingStepOnceReadOnlyModeLifts(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, id := newProgressSaverTestRecord(t, app)
+
+	readonly.Enter()
+	saver.recordStep(ProgressStep{Step: "lastStep", Progress: 99, Message: "almost done"})
+
+	done := make(chan struct{})
+	go func() {
+		saver.flushBlocking()
+		close(done)
+	}()
+
+	// flushBlocking must be waiting on read-only mode, not returning early.
+	select {
+	case <-done:
+		t.Fatal("flushBlocking returned while read-only mode was still active")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	readonly.Leave()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("flushBlocking did not return once read-only mode lifted")
+	}
+
+	rec := fetchProgressRow(t, app, id)
+	if rec.GetString("current_step") != "lastStep" {
+		t.Errorf("current_step = %q, want %q", rec.GetString("current_step"), "lastStep")
+	}
+}
+
+// Defect 3: concurrent recordStep calls (the job goroutine, a hosted relay on
+// its own goroutine, and the saver's own trailing-save timer) must never
+// race on the record, and the row must end up with the single latest state
+// rather than a torn mix. Run with -race to catch any unsynchronized access.
+func TestRecordStep_ConcurrentCallsAreSerializedAndRaceFree(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, id := newProgressSaverTestRecord(t, app)
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(i int) {
+			defer wg.Done()
+			saver.recordStep(ProgressStep{Step: "concurrent", Progress: i, Message: "tick"})
+			saver.flush()
+		}(i)
+	}
+	wg.Wait()
+
+	rec := fetchProgressRow(t, app, id)
+	if rec.GetString("current_step") != "concurrent" {
+		t.Errorf("current_step = %q, want %q", rec.GetString("current_step"), "concurrent")
+	}
+	steps := decodeSteps(t, rec)
+	if len(steps) != 1 {
+		t.Errorf("steps has %d entries, want 1 — concurrent ticks of the same step must merge in place, not append",
+			len(steps))
 	}
 }
 

@@ -346,8 +346,11 @@ func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg
 	// the same record, so the save below carries the last step too — not just
 	// whatever the throttle had already written — and so no later flush can
 	// race this save and overwrite the terminal status back to "running".
+	// flushBlocking (not flush) waits out a read-only pause, up to
+	// readonly.TailWait, so a step recorded during the pause still lands
+	// before unregister stops the saver's own retry schedule for good.
 	if jobID := record.GetString("job_id"); jobID != "" {
-		progressSaverFor(jobID).flush()
+		progressSaverFor(jobID).flushBlocking()
 		unregisterProgressSaver(jobID)
 	}
 
