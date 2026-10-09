@@ -425,7 +425,7 @@ Note a package adopting through its `ci.yml` gets the audit on its own pull requ
 
 Suppress an advisory in `.github/security-ignores.yml`, under `ignores:`. Every entry needs three fields: `id` (the GHSA id), `reason`, and `expires`. CI fails the entry if it is expired, has no reason, or has no expiry — a suppression cannot quietly become permanent. Renewing one is a new pull request with a fresh reason.
 
-The file currently holds 4 real entries: `node-forge` and `braces` have no published fix at all (the advisory's `patched_versions` is null); `image-size` has a fix, but it cannot be applied while Metro's asset pipeline still calls the vulnerable, pre-2.x synchronous API.
+The file currently holds 2 real entries: `node-forge` and `braces` have no published fix at all (the advisory's `patched_versions` is null).
 
 ### The fork blind spot
 

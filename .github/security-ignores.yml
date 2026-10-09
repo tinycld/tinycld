@@ -10,9 +10,7 @@ ignores:
           release exists upstream (latest published version is 1.4.0, the
           vulnerable one); patched_versions is null in the advisory. Pulled in
           transitively under expo/@expo/cli tooling, not used by our own code.
-          Nothing short of an upstream fix unblocks this, so the horizon is
-          longer than the image-size entries below, which are waiting on a
-          dependency bump we control the timing of.
+          Nothing short of an upstream fix unblocks this.
       expires: 2027-01-15
     - id: GHSA-vfj7-8cjw-p6xm
       reason: >-
@@ -20,25 +18,8 @@ ignores:
           (latest published version is 3.0.3, the vulnerable one);
           patched_versions is null in the advisory. Pulled in transitively
           under expo/metro build tooling. Nothing short of an upstream fix
-          unblocks this, so the horizon is longer than the image-size entries
-          below, which are waiting on a dependency bump we control the timing of.
+          unblocks this.
       expires: 2027-01-15
-    - id: GHSA-5p2g-fcmc-qvqq
-      reason: &image-size-reason >-
-          image-size denial-of-service (infinite-loop parsers), fixed in
-          2.0.3+, but metro@0.83.7 (current expo/react-native SDK's bundler)
-          calls image-size synchronously (node_modules/metro/src/Assets.js)
-          and 2.0.0 dropped the sync API entirely in favour of
-          async/Promise-based calls. Forcing 2.x via pnpm override would
-          silently break Metro's asset dimension resolution (a Promise
-          destructured as {width, height}), with no typecheck to catch it.
-          Fixing requires an expo/react-native SDK bump that brings a metro
-          release depending on image-size 2.x, which is out of scope for a
-          dependency-version-only fix.
-      expires: 2026-11-15
-    - id: GHSA-w3rx-r6r6-pgpr
-      reason: *image-size-reason
-      expires: 2026-11-15
 # ignores:
 #     - id: GHSA-xxxx-xxxx-xxxx
 #       reason: Reachable only from the CLI --debug path, which the server excludes.
