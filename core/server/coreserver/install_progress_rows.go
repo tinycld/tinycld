@@ -62,6 +62,15 @@ type installLogProgressSaver struct {
 	saveMu      sync.Mutex // serializes the actual app.Save call
 	saveRunning bool
 	saveAgain   bool // a request arrived while a save was in flight; re-save after
+
+	// inflight counts doSave calls that passed their finalized check and are
+	// between here and their app.Save returning. stop() waits on it to zero
+	// before returning, so a caller that unregisters the saver and moves on —
+	// finalizeInstallLog does, right before closing out the record on its own
+	// — never races a save this saver kicked off a moment earlier (see doSave's
+	// doc for why the finalized check alone, without this wait, still leaves a
+	// window).
+	inflight sync.WaitGroup
 }
 
 var (
@@ -99,9 +108,15 @@ func progressSaverFor(jobID string) *installLogProgressSaver {
 	return savers[jobID]
 }
 
-// stop cancels any pending timer and marks the saver finalized so no later
+// stop cancels any pending timer, marks the saver finalized so no later
 // callback (already fired and waiting on mu, or racing in) schedules another
-// one or saves again.
+// one or saves again, and waits for any doSave already past its own
+// finalized check to finish its app.Save. That wait is what makes finalized
+// airtight: Timer.Stop() only stops a timer that has not fired yet, and
+// flush()/save() both drop s.mu well before reaching doSave, so setting
+// finalized here can otherwise still race a save already past its check and
+// into app.Save — exactly the window that let a trailing save land on a
+// record whose owning app had moved on.
 func (s *installLogProgressSaver) stop() {
 	if s == nil {
 		return
@@ -113,6 +128,7 @@ func (s *installLogProgressSaver) stop() {
 		s.timer = nil
 	}
 	s.mu.Unlock()
+	s.inflight.Wait()
 }
 
 // recordStep merges step into the saver's in-memory history and persists it
@@ -269,9 +285,9 @@ func (s *installLogProgressSaver) flushBlocking() {
 // flight at a time. A save request that arrives while one is already running
 // is coalesced into a single follow-up save (using whatever the latest state
 // is by the time that follow-up runs) rather than queued — a burst of
-// concurrent callers (the job goroutine, a hosted relay on another
-// goroutine, the trailing-save timer) never results in more than one save
-// running at once and never piles up a backlog of saves.
+// concurrent callers (the job goroutine, a caller relaying milestones from
+// another goroutine, the trailing-save timer) never results in more than one
+// save running at once and never piles up a backlog of saves.
 func (s *installLogProgressSaver) save(steps []ProgressStep) {
 	s.saveMu.Lock()
 	if s.saveRunning {
@@ -325,15 +341,41 @@ func (s *installLogProgressSaver) save(steps []ProgressStep) {
 // with s.saveRunning held true by save(), so no two calls to doSave for the
 // same saver run concurrently — the record itself is never mutated/saved
 // from two goroutines at once.
+//
+// Re-checks finalized immediately before the write, under the SAME lock
+// acquisition that registers the call with s.inflight. Every caller (flush,
+// save's coalesced retry) already checked finalized earlier in its own call
+// chain, but each of them drops s.mu between that check and reaching here —
+// flush in particular copies s.steps and unlocks before calling save(), which
+// calls doSave() outside any lock on s.mu at all. Without the inflight
+// handshake, stop() could run in that window: Timer.Stop() only prevents a
+// timer that has not yet fired from firing, it does not interrupt
+// onTrailingTimer once its goroutine has already started, so a trailing save
+// could otherwise still reach app.Save after finalizeInstallLog's
+// unregisterProgressSaver (and the record/app it was handed) are done being
+// used — observed as the install pipeline's test harness tearing down its
+// app while a 1s-throttled trailing timer from an earlier job was still in
+// flight, panicking inside PocketBase's hook chain on the torn-down app.
+// Registering with inflight BEFORE releasing s.mu is what lets stop() (which
+// takes the same lock to set finalized) either see this call registered and
+// wait for it, or see finalized already true and never incur the wait at
+// all — there is no gap between the check and the registration for stop() to
+// land in.
 func (s *installLogProgressSaver) doSave(steps []ProgressStep) {
+	s.mu.Lock()
+	if s.finalized {
+		s.mu.Unlock()
+		return
+	}
+	s.inflight.Add(1)
+	s.lastSave = time.Now()
+	s.mu.Unlock()
+	defer s.inflight.Done()
+
 	latest := steps[len(steps)-1]
 	s.record.Set("steps", steps)
 	s.record.Set("current_step", latest.Step)
 	s.record.Set("current_message", latest.Message)
-
-	s.mu.Lock()
-	s.lastSave = time.Now()
-	s.mu.Unlock()
 
 	if err := s.app.Save(s.record); err != nil {
 		// Best-effort: progress is a convenience, not the job's outcome. Log

@@ -173,9 +173,9 @@ func TestRecordStep_SchedulesExactlyOneTrailingSaveForTheWindow(t *testing.T) {
 	app := newProgressRowsTestApp(t)
 	saver, timers, id := newProgressSaverWithFakeTimer(t, app)
 
-	saver.recordStep(ProgressStep{Step: "A", Progress: 1, Message: "first"})      // saves immediately, no timer
-	saver.recordStep(ProgressStep{Step: "B", Progress: 2, Message: "second"})     // pending, schedules timer #1
-	saver.recordStep(ProgressStep{Step: "B", Progress: 3, Message: "still B"})    // pending, REPLACES timer #1
+	saver.recordStep(ProgressStep{Step: "A", Progress: 1, Message: "first"})   // saves immediately, no timer
+	saver.recordStep(ProgressStep{Step: "B", Progress: 2, Message: "second"})  // pending, schedules timer #1
+	saver.recordStep(ProgressStep{Step: "B", Progress: 3, Message: "still B"}) // pending, REPLACES timer #1
 
 	if got := timers.scheduledCount(); got != 2 {
 		t.Fatalf("scheduled %d timers, want 2 (one replaced by the next)", got)
@@ -243,6 +243,57 @@ func TestStop_PreventsTrailingSaveAfterFinalize(t *testing.T) {
 	rec2 := fetchProgressRow(t, app, id)
 	if rec2.GetString("current_step") != "A" {
 		t.Errorf("current_step = %q, want unchanged %q — recordStep after stop must no-op", rec2.GetString("current_step"), "A")
+	}
+}
+
+// stop() must not return while a save it did not see in time to cancel is
+// still writing — otherwise a caller that stops a saver and immediately
+// moves on (closing the app, reusing the record for something else) can
+// still have that save land afterwards. Timer.Stop() only prevents a timer
+// that has not fired yet from firing; it cannot recall a callback whose
+// goroutine already started, and flush()/save() both drop s.mu well before
+// reaching doSave() — so a naive "stop sets finalized" has a window where a
+// save already past its own finalized check is not yet registered as
+// something stop() needs to wait for.
+//
+// Reproducing that exact goroutine interleaving through the real timer/flush
+// path is inherently racy to assert on (whether doSave wins s.mu before
+// stop() is a scheduling accident either way). This test instead drives the
+// invariant stop() relies on directly and deterministically: s.inflight is
+// the handshake — anything that got past the finalized check registers with
+// it BEFORE doing its write, and stop() must block on it draining. Simulate
+// "a save already past its check" by registering with s.inflight directly,
+// confirm stop() blocks for exactly as long as that registration is held,
+// and confirm it unblocks the instant it's released — with no sleep and no
+// dependence on which goroutine wins a lock.
+func TestStop_WaitsForInflightSaveToFinish(t *testing.T) {
+	app := newProgressRowsTestApp(t)
+	saver, _ := newProgressSaverTestRecord(t, app)
+
+	// Stand in for doSave having just passed its own finalized check and
+	// registered, about to call app.Save.
+	saver.inflight.Add(1)
+
+	stopDone := make(chan struct{})
+	go func() {
+		saver.stop()
+		close(stopDone)
+	}()
+
+	select {
+	case <-stopDone:
+		t.Fatal("stop() returned while a registered save was still in flight")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: stop() is blocked on s.inflight.Wait().
+	}
+
+	saver.inflight.Done() // the simulated save "finishes"
+
+	select {
+	case <-stopDone:
+		// stop() unblocked once the in-flight save released it.
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop() never returned after the in-flight save finished")
 	}
 }
 
