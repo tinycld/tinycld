@@ -1,4 +1,4 @@
-import { disconnectRealtime, resetRealtime } from 'pbtsdb'
+import { disconnectRealtime, reconnectRealtime, resetRealtime } from 'pbtsdb'
 import { pb } from './pocketbase'
 
 // pbtsdb runs its own realtime connection, separate from `pb.realtime`; every
@@ -49,6 +49,14 @@ export function stopRealtime() {
  */
 export function restartRealtime() {
     if (realtimeEnabled) resetRealtime(pb)
+}
+
+/**
+ * The app is back in touch: run a waiting reconnect now instead of after its
+ * backoff. It keeps the session, so the server can replay what was missed.
+ */
+export function reconnectRealtimeNow() {
+    if (realtimeEnabled) reconnectRealtime(pb)
 }
 
 /** False on a page that turned realtime off on purpose, such as an embed. */
