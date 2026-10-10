@@ -412,9 +412,25 @@ func (r *testRoot) index(name, what string, nth int) int {
 
 func (r *testRoot) waitEvent(name, what string, nth int) event {
 	r.t.Helper()
-	waitFor(r.t, 20*time.Second, fmt.Sprintf("event %d of %q %q", nth, name, what), func() bool {
-		return r.index(name, what, nth) >= 0
-	})
+	const limit = 20 * time.Second
+	deadline := time.Now().Add(limit)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for r.index(name, what, nth) < 0 {
+		if time.Now().After(deadline) {
+			// On CI, where a failure cannot be rerun locally, what every child
+			// did is the evidence a missing event needs.
+			var log strings.Builder
+			if os.Getenv("CI") != "" {
+				log.WriteString("; events:")
+				for _, e := range r.events() {
+					fmt.Fprintf(&log, "\n  %s %d %s", e.name, e.pid, e.what)
+				}
+			}
+			r.t.Fatalf("timed out after %s waiting for event %d of %q %q%s", limit, nth, name, what, log.String())
+		}
+		<-tick.C
+	}
 	return r.events()[r.index(name, what, nth)]
 }
 
