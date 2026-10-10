@@ -68,16 +68,16 @@ func realtimeConnect(e *core.RequestEvent) error {
 	connectEvent.RequestEvent = e
 	connectEvent.IdleTimeout = 5 * time.Minute
 	connectEvent.MaxTimeout = 30 * time.Minute
-	connectEvent.Client = subscriptions.NewDefaultClient()
+	connectEvent.Client = realtimeConnectClient(e) // fork: see realtime_resume.go
 
 	// could be used as an optional cross-reference check in other API endpoints
 	connectEvent.Client.Set(RealtimeClientIPKey, e.RealIP())
 
 	return e.App.OnRealtimeConnectRequest().Trigger(connectEvent, func(ce *core.RealtimeConnectRequestEvent) error {
 		// register new subscription client
-		ce.App.SubscriptionsBroker().Register(ce.Client)
+		realtimeRegisterClient(ce) // fork: see realtime_resume.go
 		defer func() {
-			e.App.SubscriptionsBroker().Unregister(ce.Client.Id())
+			realtimeReleaseClient(e.App, ce.Client) // fork: see realtime_resume.go
 		}()
 
 		ce.App.Logger().Debug("Realtime connection established", slog.String("clientId", ce.Client.Id()))
@@ -88,7 +88,7 @@ func realtimeConnect(e *core.RequestEvent) error {
 		connectMsgEvent.Client = ce.Client
 		connectMsgEvent.Message = &subscriptions.Message{
 			Name: "PB_CONNECT",
-			Data: []byte(`{"clientId":"` + ce.Client.Id() + `"}`),
+			Data: realtimeConnectData(ce), // fork: see realtime_resume.go
 		}
 		connectMsgErr := ce.App.OnRealtimeMessageSend().Trigger(connectMsgEvent, func(me *core.RealtimeMessageEvent) error {
 			err := me.Message.WriteSSE(me.Response, me.Client.Id())
@@ -457,6 +457,8 @@ func bindRealtimeEvents(app core.App) {
 	})
 
 	bindRealtimeLeaveEvents(app) // fork: see realtime_leave.go
+
+	bindRealtimeResumeEvents(app) // fork: see realtime_resume.go
 
 	// delete: dry cache
 	app.OnModelDelete().Bind(&hook.Handler[*core.ModelEvent]{

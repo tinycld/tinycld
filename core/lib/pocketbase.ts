@@ -5,6 +5,7 @@ import { captureException } from '@tinycld/core/lib/errors'
 import { log } from '@tinycld/core/lib/logger'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
 import { ACTIVE_PKG_STATUSES, isActivePkg } from '@tinycld/core/lib/packages/registry-predicates'
+import { realtimeEventSourceFactory } from '@tinycld/core/lib/realtime-event-source'
 import { reloadLoadedStores } from '@tinycld/core/lib/reload-loaded-stores'
 import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { acceptServerRow } from '@tinycld/core/lib/server-rows'
@@ -16,10 +17,10 @@ import {
     createReactProvider,
     getSyncStatus,
     setLogger,
+    setRealtimeEventSource,
     subscribeSyncStatus,
 } from 'pbtsdb'
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
-import { Platform } from 'react-native'
 import { clearAuthBlob, parseAuthBlob, readAuthBlob, writeAuthBlob } from './auth-storage'
 import { PB_SERVER_ADDR } from './config'
 import { getResolvedAddress, subscribeResolvedAddress } from './server-address'
@@ -36,13 +37,6 @@ export { eq }
 // reference through coreStores. buildPackageStores wires stores from the config
 // values at runtime.
 type MergedSchema = Schema & MergedPackageSchema
-
-if (Platform.OS !== 'web') {
-    // Only polyfill EventSource on native — the browser has its own
-    import('react-native-sse').then(mod => {
-        global.EventSource = mod.default as unknown as typeof global.EventSource
-    })
-}
 
 export { PB_SERVER_ADDR }
 
@@ -137,6 +131,11 @@ export const authStoreReady = whenAddressResolved().then(async address => {
 export const pb = new PocketBase(PB_SERVER_ADDR, store)
 
 pb.autoCancellation(false)
+
+// pbtsdb's realtime stream carries the session's Authorization, so the server
+// can resume a dropped connection instead of making every collection reload.
+// See realtime-event-source.ts.
+setRealtimeEventSource(pb, realtimeEventSourceFactory(pb, serverFetch))
 
 // A share-link visitor is unauthenticated, so every row they may read is
 // authorized by a token rather than by `@request.auth.id`. Attaching it here
