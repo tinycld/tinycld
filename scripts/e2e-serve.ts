@@ -219,7 +219,7 @@ function serve(opts: { port: number; dataDir: string; releasesDir: string }): Ch
     // would collide with the first (PB logs "address already in use" and
     // carries on, but the noise is misleading). Offset them alongside the
     // HTTP port; the IMAP e2e suite talks to the primary, whose :1193 matches
-    // dev.ts and imap-helpers.ts.
+    // dev.ts and mail's tests/imap-helpers.ts.
     const mailEnv = mirrorReleasesFrom
         ? {
               IMAP_ADDR: ':1293',
