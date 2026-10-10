@@ -214,7 +214,8 @@ const drawerFooterStyle = tva({
 
 // An inline Drawer sits in the layout, so it is only as big as its panel. The
 // panel keeps a fixed width rather than the overlay's 80%: it shares the row
-// with the content, which takes what is left.
+// with the content, which takes what is left — so it is narrower on a window
+// with little room to spare.
 const inlineDrawerStyle = tva({
     base: 'relative',
     variants: {
@@ -231,8 +232,8 @@ const inlineDrawerContentStyle = tva({
     base: 'bg-background',
     variants: {
         anchor: {
-            left: 'h-full w-96 border-r border-border/80',
-            right: 'h-full w-96 border-l border-border/80',
+            left: 'h-full w-80 xl:w-96 border-r border-border/80',
+            right: 'h-full w-80 xl:w-96 border-l border-border/80',
             top: 'w-full border-b border-border/80',
             bottom: 'w-full border-t border-border/80',
         },
