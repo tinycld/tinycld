@@ -56,18 +56,27 @@ export function buildAuthedThumbnailURL(
     return `${url}${url.includes('?') ? '&' : '?'}thumb=${size}`
 }
 
+// A URL built before the token arrives has no `?token=`, and an <img> fetches
+// it at once: a 403 for every protected file, then a second fetch when the
+// token lands. A signed-in viewer waits for the token instead. A signed-out
+// viewer (a /p/* share route) never gets one, and a failed token fetch never
+// will, so both take the bare URL.
+export function useReadyFileToken() {
+    const { data: token, isError } = useFileToken()
+    const isWaiting = pb.authStore.isValid && !token && !isError
+    return { token, isWaiting }
+}
+
 export function useAuthedFileURL(source: FilePreviewSource | undefined) {
-    const enabled = !!source?.fileName && pb.authStore.isValid
-    const { data: token, isLoading } = useFileToken()
-    const url = buildAuthedFileURL(source, token)
-    return { url, isLoading: enabled && isLoading && !token }
+    const { token, isWaiting } = useReadyFileToken()
+    const url = isWaiting ? '' : buildAuthedFileURL(source, token)
+    return { url, isLoading: isWaiting && !!source?.fileName }
 }
 
 export function useAuthedThumbnailURL(source: FilePreviewSource | undefined, size: string) {
-    const enabled = !!source && !!pickThumbnailBase(source) && pb.authStore.isValid
-    const { data: token, isLoading } = useFileToken()
-    const url = buildAuthedThumbnailURL(source, size, token)
-    return { url, isLoading: enabled && isLoading && !token }
+    const { token, isWaiting } = useReadyFileToken()
+    const url = isWaiting ? '' : buildAuthedThumbnailURL(source, size, token)
+    return { url, isLoading: isWaiting && !!source && !!pickThumbnailBase(source) }
 }
 
 /**
