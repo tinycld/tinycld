@@ -1,5 +1,5 @@
 import type { AvatarImage } from '@tinycld/core/components/Avatar'
-import { useFileToken } from '@tinycld/core/file-viewer/use-authed-file-url'
+import { useReadyFileToken } from '@tinycld/core/file-viewer/use-authed-file-url'
 import { parseCrop } from '@tinycld/core/lib/avatar'
 import { pb } from '@tinycld/core/lib/pocketbase'
 
@@ -35,13 +35,15 @@ export interface ResolvedAvatar extends AvatarImage {
  */
 export function useAvatarUrl(user: AvatarUser | null | undefined): ResolvedAvatar | undefined {
     // Called unconditionally: hooks can't sit behind the early return below.
-    const { data: token } = useFileToken()
+    const { token, isWaiting } = useReadyFileToken()
 
-    if (!user?.avatar) return undefined
+    if (!user?.avatar || isWaiting) return undefined
 
-    const url = pb.files.getURL({ collectionId: 'users', id: user.id }, user.avatar, {
-        token: token ?? '',
-    })
+    const url = pb.files.getURL(
+        { collectionId: 'users', id: user.id },
+        user.avatar,
+        token ? { token } : undefined
+    )
 
     return {
         fileUrl: `${url}${url.includes('?') ? '&' : '?'}thumb=${AVATAR_THUMB}`,
