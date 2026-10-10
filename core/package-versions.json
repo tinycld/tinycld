@@ -33,7 +33,7 @@
     "@tanstack/db": "0.12.1",
     "@tanstack/react-db": "0.5.5",
     "@tanstack/react-query": "5.104.1",
-    "react-native-drax": "github:nathanstitt/react-native-drax#bc83061aceb7eae462cecc4756b3a4c81dcd1d30",
+    "react-native-drax": "github:nathanstitt/react-native-drax#08b48413d4e4d21e35471a2468531122a1b805ad",
     "@xmldom/xmldom": "0.9.12",
     "browserslist": "4.28.7",
     "minimatch@3>brace-expansion": "1.1.21",
