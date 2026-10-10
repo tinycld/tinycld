@@ -32,6 +32,18 @@ const SCOPE = 'MODAL'
 // keeps carrying handleClose across a version bump.
 const DrawerCloseContext = React.createContext<(() => void) | undefined>(undefined)
 
+// How a Drawer appears. `overlay` (the default) is a modal panel over the
+// screen, with a backdrop that dismisses it. `inline` is a non-modal panel that
+// takes its place in the layout beside the content, so the content behind it
+// stays usable: the caller renders the Drawer where the panel belongs (e.g. as
+// the last child of a flex row). An inline Drawer has no backdrop, no portal,
+// no Escape handling and no swipe to dismiss; only its close button and the
+// caller close it. The sub-components are the same in both, so one screen can
+// switch between them (inline on a wide screen, overlay on a phone).
+export type DrawerPresentation = 'overlay' | 'inline'
+
+const DrawerPresentationContext = React.createContext<DrawerPresentation>('overlay')
+
 // A Drawer is always given onClose in practice; the fallback only keeps the
 // gesture hook's contract total, since a drag that cannot dismiss still has to
 // spring back rather than throw.
@@ -185,15 +197,54 @@ const drawerHeaderStyle = tva({
 })
 
 const drawerBodyStyle = tva({
-    base: 'mt-4 mb-6 shrink-0',
+    base: 'mt-4 mb-6',
+    variants: {
+        // An inline panel is as tall as the row it sits in, so its body takes
+        // the rest of the panel and scrolls inside it.
+        presentation: {
+            overlay: 'shrink-0',
+            inline: 'flex-1',
+        },
+    },
 })
 
 const drawerFooterStyle = tva({
     base: 'flex-col-reverse gap-2 sm:flex-row sm:justify-end pt-4',
 })
 
+// An inline Drawer sits in the layout, so it is only as big as its panel. The
+// panel keeps a fixed width rather than the overlay's 80%: it shares the row
+// with the content, which takes what is left — so it is narrower on a window
+// with little room to spare.
+const inlineDrawerStyle = tva({
+    base: 'relative',
+    variants: {
+        anchor: {
+            left: 'h-full',
+            right: 'h-full',
+            top: 'w-full',
+            bottom: 'w-full',
+        },
+    },
+})
+
+const inlineDrawerContentStyle = tva({
+    base: 'bg-background',
+    variants: {
+        anchor: {
+            left: 'h-full w-80 xl:w-96 border-r border-border/80',
+            right: 'h-full w-80 xl:w-96 border-l border-border/80',
+            top: 'w-full border-b border-border/80',
+            bottom: 'w-full border-t border-border/80',
+        },
+    },
+})
+
 type IDrawerProps = React.ComponentProps<typeof UIDrawer> &
-    VariantProps<typeof drawerStyle> & { className?: string }
+    VariantProps<typeof drawerStyle> & {
+        className?: string
+        presentation?: DrawerPresentation
+    }
 
 type IDrawerBackdropProps = React.ComponentProps<typeof UIDrawer.Backdrop> &
     VariantProps<typeof drawerBackdropStyle> & { className?: string }
@@ -242,10 +293,13 @@ function useDrawerEscape(isOpen: boolean | undefined, onClose?: () => void) {
 }
 
 const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProps>(function Drawer(
-    { className, size = 'md', anchor = 'left', ...props },
+    { className, size = 'md', anchor = 'left', presentation = 'overlay', ...props },
     ref
 ) {
-    useDrawerEscape(props.isOpen, props.onClose)
+    const isInline = presentation === 'inline'
+    // Escape belongs to whatever has focus beside an inline panel, which is
+    // not modal; only an overlay claims it.
+    useDrawerEscape(props.isOpen && !isInline, props.onClose)
     useCloseOnNavigate(props.isOpen, props.onClose)
 
     // Don't mount the gluestack Modal at all while closed. GlueStack's exit
@@ -264,6 +318,21 @@ const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProp
     // broken no-op on web).
     if (!props.isOpen) return null
 
+    if (isInline) {
+        return (
+            <DrawerCloseContext.Provider value={props.onClose}>
+                <DrawerPresentationContext.Provider value="inline">
+                    <RootComponent
+                        className={inlineDrawerStyle({ anchor, class: className })}
+                        context={{ size, anchor }}
+                    >
+                        {props.children}
+                    </RootComponent>
+                </DrawerPresentationContext.Provider>
+            </DrawerCloseContext.Provider>
+        )
+    }
+
     return (
         <DrawerCloseContext.Provider value={props.onClose}>
             <UIDrawer
@@ -281,6 +350,8 @@ const DrawerBackdrop = React.forwardRef<
     React.ComponentRef<typeof UIDrawer.Backdrop>,
     IDrawerBackdropProps
 >(function DrawerBackdrop({ className, ...props }, ref) {
+    const presentation = React.useContext(DrawerPresentationContext)
+    if (presentation === 'inline') return null
     return (
         <UIDrawer.Backdrop
             ref={ref}
@@ -301,6 +372,7 @@ const DrawerContent = React.forwardRef<
     const { size: parentSize, anchor: parentAnchor } = useStyleContext(SCOPE)
     const insets = useDeviceInsets()
     const onClose = React.useContext(DrawerCloseContext)
+    const presentation = React.useContext(DrawerPresentationContext)
 
     // How far the panel must travel to clear the screen. Measured rather than
     // constant: a side drawer's width is `w-[80%] max-w-[32rem]`, so it depends
@@ -328,6 +400,18 @@ const DrawerContent = React.forwardRef<
         paddingBottom: BASE + (parentAnchor !== 'top' ? insets.bottom : 0),
         paddingLeft: BASE + (parentAnchor === 'left' ? insets.left : 0),
         paddingRight: BASE + (parentAnchor === 'right' ? insets.right : 0),
+    }
+
+    if (presentation === 'inline') {
+        // No ref here: gluestack types the content ref as its own props rather
+        // than a view, which no plain view satisfies, and no caller sets one.
+        return (
+            <AnimatedView
+                {...props}
+                className={inlineDrawerContentStyle({ anchor: parentAnchor, class: className })}
+                style={[{ padding: BASE }, style]}
+            />
+        )
     }
 
     const customClass =
@@ -401,11 +485,13 @@ const DrawerHeader = React.forwardRef<
 
 const DrawerBody = React.forwardRef<React.ComponentRef<typeof UIDrawer.Body>, IDrawerBodyProps>(
     function DrawerBody({ className, ...props }, ref) {
+        const presentation = React.useContext(DrawerPresentationContext)
         return (
             <UIDrawer.Body
                 ref={ref}
                 {...props}
                 className={drawerBodyStyle({
+                    presentation,
                     class: className,
                 })}
             />
@@ -432,10 +518,17 @@ const DrawerCloseButton = React.forwardRef<
     React.ComponentRef<typeof UIDrawer.CloseButton>,
     IDrawerCloseButtonProps
 >(function DrawerCloseButton({ className, ...props }, ref) {
+    const onClose = React.useContext(DrawerCloseContext)
+    const presentation = React.useContext(DrawerPresentationContext)
+    // An overlay's button closes through gluestack's modal context, which an
+    // inline Drawer does not mount. Gluestack spreads these props over its own
+    // close handler, so an overlay must not receive an onPress key at all.
+    const inlineClose = presentation === 'inline' && !props.onPress ? { onPress: onClose } : {}
     return (
         <UIDrawer.CloseButton
             ref={ref}
             {...props}
+            {...inlineClose}
             className={drawerCloseButtonStyle({
                 class: className,
             })}

@@ -201,19 +201,21 @@ interface SlotProps {
 }
 
 /**
- * One measured box around an item. A pinned item may shrink once the row is
- * fitted — a title with `numberOfLines={1}` truncates rather than pushing the
- * More button off the edge — but while measuring every slot keeps its
- * intrinsic width, or there would be nothing true to measure.
+ * One measured box around an item. An item with a `minWidth` may shrink to it
+ * once the row is fitted — a title with `numberOfLines={1}` truncates rather
+ * than pushing the More button off the edge — but while measuring every slot
+ * keeps its intrinsic width, or there would be nothing true to measure.
+ *
+ * Nothing else shrinks: the fit charges every other item its full width, and a
+ * button squeezed below that draws over its neighbours instead of truncating.
  */
 function Slot({ entry, isFitted, onWidth }: SlotProps) {
     const { key, item } = entry
     if (item.type === 'spacer') {
         return <View testID={`toolbar-item-${key}`} style={{ flex: 1 }} />
     }
-    const isPinned = item.type === 'custom' && item.overflow === undefined
     const floor = item.type === 'custom' ? item.minWidth : undefined
-    const canShrink = isFitted && (isPinned || floor !== undefined)
+    const canShrink = isFitted && floor !== undefined
     return (
         <View
             testID={`toolbar-item-${key}`}
