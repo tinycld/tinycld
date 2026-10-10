@@ -69,7 +69,13 @@ const FadeOut = animationBuilder()
 const ZoomIn = animationBuilder()
 const ZoomOut = animationBuilder()
 const SlideInUp = animationBuilder()
+const SlideInDown = animationBuilder()
+const SlideInLeft = animationBuilder()
+const SlideInRight = animationBuilder()
+const SlideOutUp = animationBuilder()
 const SlideOutDown = animationBuilder()
+const SlideOutLeft = animationBuilder()
+const SlideOutRight = animationBuilder()
 const Easing = {
     linear: (t) => t,
     ease: (t) => t,
@@ -112,7 +118,13 @@ module.exports = {
     ZoomIn,
     ZoomOut,
     SlideInUp,
+    SlideInDown,
+    SlideInLeft,
+    SlideInRight,
+    SlideOutUp,
     SlideOutDown,
+    SlideOutLeft,
+    SlideOutRight,
     Easing,
     runOnJS,
     runOnUI,
