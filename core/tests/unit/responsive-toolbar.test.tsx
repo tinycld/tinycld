@@ -89,6 +89,26 @@ describe('ResponsiveToolbar', () => {
         expect(rows(container)).toEqual(['A', 'B'])
     })
 
+    // Only a declared floor lets a slot shrink. A pinned button the fit charged
+    // in full, squeezed below its width, draws over its neighbours.
+    it('shrinks a slot only to its declared minWidth', () => {
+        const items: ToolbarItem[] = [
+            { type: 'custom', key: 'title', element: <Text>Title</Text>, minWidth: 80 },
+            { type: 'custom', key: 'upload', element: <Text>Upload</Text> },
+        ]
+        const { container } = render(<ResponsiveToolbar items={items} />)
+        fireLayout(q(container, 'toolbar-item-title'), 120)
+        fireLayout(q(container, 'toolbar-item-upload'), 36)
+        fireLayout(q(container, 'toolbar-more'), 34)
+        fireLayout(q(container, 'toolbar-row'), 100)
+
+        const title = q(container, 'toolbar-item-title') as HTMLElement
+        const upload = q(container, 'toolbar-item-upload') as HTMLElement
+        expect(title.style.flexShrink).toBe('1')
+        expect(title.style.minWidth).toBe('80px')
+        expect(upload.style.flexShrink).toBe('0')
+    })
+
     it('always shows More with a permanent menu, overflow above its rows', () => {
         const items = [button('a'), button('b')]
         const menu = <Menu.Item label="Archive" onSelect={() => {}} />
