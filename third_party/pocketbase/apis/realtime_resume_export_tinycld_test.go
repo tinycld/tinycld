@@ -12,3 +12,14 @@ func SetRealtimeResumeLimits(grace time.Duration, maxMessages int) func() {
 		realtimeResumeGrace, realtimeResumeMaxMessages = oldGrace, oldMax
 	}
 }
+
+// SetRealtimeResumeMaxDetached overrides how many detached clients one auth
+// record keeps, and returns the function that restores it.
+func SetRealtimeResumeMaxDetached(max int) func() {
+	old := realtimeResumeMaxDetachedPerAuth
+	realtimeResumeMaxDetachedPerAuth = max
+
+	return func() {
+		realtimeResumeMaxDetachedPerAuth = old
+	}
+}

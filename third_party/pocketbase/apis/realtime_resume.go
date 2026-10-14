@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"sort"
 	"strconv"
 	"time"
 
@@ -38,6 +39,19 @@ var (
 	// client's queue; past either the client cannot replay everything.
 	realtimeResumeMaxMessages = 1000
 	realtimeResumeMaxBytes    = 1 << 20
+
+	// realtimeResumeMaxDetachedPerAuth bounds how many detached clients one
+	// auth record keeps. Past it, the client that detached first is
+	// unregistered.
+	//
+	// Every broadcast rule-checks every subscription of every detached
+	// client, inside the write request that caused it, so each detached
+	// client adds to the latency of every write. Most never come back: a
+	// reload or a closed tab starts a new client, because the subscriber
+	// keeps its client id in memory only. Without a bound, a user who
+	// reloads often makes every write slower for an hour, and an e2e suite
+	// (a new browser context per test) made writes take seconds by its end.
+	realtimeResumeMaxDetachedPerAuth = 4
 )
 
 const (
@@ -52,6 +66,10 @@ const (
 
 	realtimeResumeBudgetStoreKey = "tinycld.realtimeResumeBudget"
 	realtimeResumeRequestKey     = "tinycld.realtimeResume"
+
+	// realtimeDetachedAtKey records when a client last detached, so that
+	// the bound above can unregister the oldest first.
+	realtimeDetachedAtKey = "tinycld.realtimeDetachedAt"
 )
 
 // realtimeResumeState is what a connect request knows about its resume.
@@ -181,18 +199,66 @@ func realtimeReleaseClient(app core.App, client subscriptions.Client) {
 	}
 
 	if conn.Detach() {
+		conn.Set(realtimeDetachedAtKey, time.Now())
 		gen := conn.Gen()
 		time.AfterFunc(realtimeResumeGrace, func() {
 			if conn.Detached(gen) {
 				app.SubscriptionsBroker().Unregister(conn.Id())
 			}
 		})
+		realtimeEvictDetached(app, conn)
 		return
 	}
 
 	// another connection attached since: it owns the client now
 	if conn.IsDiscarded() {
 		app.SubscriptionsBroker().Unregister(conn.Id())
+	}
+}
+
+// realtimeEvictDetached unregisters the clients of conn's auth record that
+// detached first, until no more than realtimeResumeMaxDetachedPerAuth stay
+// detached. A client that a resume attached since is not counted; one that
+// an evicted client's subscriber tries to resume falls back to a new client,
+// as after the grace period.
+func realtimeEvictDetached(app core.App, conn *subscriptions.ResumableConn) {
+	auth, _ := conn.Get(RealtimeClientAuthKey).(*core.Record)
+	if auth == nil {
+		return
+	}
+
+	type detachedClient struct {
+		id string
+		at time.Time
+	}
+
+	var detached []detachedClient
+	for _, client := range app.SubscriptionsBroker().Clients() {
+		resumable, ok := client.(*subscriptions.ResumableClient)
+		if !ok || resumable.Attached() || resumable.IsDiscarded() {
+			continue
+		}
+
+		clientAuth, _ := resumable.Get(RealtimeClientAuthKey).(*core.Record)
+		if !isSameAuth(clientAuth, auth) {
+			continue
+		}
+
+		at, _ := resumable.Get(realtimeDetachedAtKey).(time.Time)
+		detached = append(detached, detachedClient{id: resumable.Id(), at: at})
+	}
+
+	excess := len(detached) - realtimeResumeMaxDetachedPerAuth
+	if excess <= 0 {
+		return
+	}
+
+	sort.Slice(detached, func(i, j int) bool {
+		return detached[i].at.Before(detached[j].at)
+	})
+
+	for _, client := range detached[:excess] {
+		app.SubscriptionsBroker().Unregister(client.id)
 	}
 }
 

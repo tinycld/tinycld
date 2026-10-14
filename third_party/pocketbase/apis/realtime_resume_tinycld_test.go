@@ -519,6 +519,39 @@ func TestRealtimeResumeOverflow(t *testing.T) {
 	expectNotResumed(t, data, clientId)
 }
 
+// Every detached client costs a rule check per subscription on every write,
+// so one auth record keeps only its newest few. Another auth record's
+// detached clients are not counted against it.
+func TestRealtimeResumeKeepsNewestDetachedPerAuth(t *testing.T) {
+	restore := apis.SetRealtimeResumeMaxDetached(2)
+	defer restore()
+
+	env := newResumeEnv(t)
+
+	otherToken := userToken(t, env.app, "test2@example.com")
+	otherStream, other := env.connect("", otherToken, resumeIP)
+	env.subscribe(other.ClientId, otherToken, "test_resume")
+	otherStream.cancel()
+	env.waitDetached(other.ClientId)
+
+	oldest := env.detachedClient()
+	middle := env.detachedClient()
+	newest := env.detachedClient()
+	env.waitUnregistered(oldest)
+
+	for _, clientId := range []string{middle, newest, other.ClientId} {
+		if env.resumable(clientId) == nil {
+			t.Fatalf("expected client %q to stay detached", clientId)
+		}
+	}
+
+	_, data := env.connect(resumeQuery(oldest, "1"), env.token, resumeIP)
+	expectNotResumed(t, data, oldest)
+
+	_, data = env.connect(resumeQuery(newest, "1"), env.token, resumeIP)
+	expectResumed(t, data, newest)
+}
+
 func TestRealtimeResumeAfterUnregister(t *testing.T) {
 	env := newResumeEnv(t)
 	clientId := env.detachedClient()
