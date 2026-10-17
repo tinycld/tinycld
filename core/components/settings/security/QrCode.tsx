@@ -7,13 +7,21 @@ import Svg, { Path } from 'react-native-svg'
 // and white, not theme colors.
 const QUIET_ZONE = 4
 
-export function QrCode({ value, size = 184 }: { value: string; size?: number }) {
+export function QrCode({
+    value,
+    size = 184,
+    accessibilityLabel = 'QR code for your authenticator app',
+}: {
+    value: string
+    size?: number
+    accessibilityLabel?: string
+}) {
     const { path, size: modules } = qrPath(value)
     const box = modules + QUIET_ZONE * 2
     return (
         <View
             className="self-center rounded-lg bg-white p-1"
-            accessibilityLabel="QR code for your authenticator app"
+            accessibilityLabel={accessibilityLabel}
         >
             <Svg width={size} height={size} viewBox={`${-QUIET_ZONE} ${-QUIET_ZONE} ${box} ${box}`}>
                 <Path d={path} fill="black" />
