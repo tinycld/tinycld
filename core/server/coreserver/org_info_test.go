@@ -3,6 +3,7 @@ package coreserver
 import (
 	"net/http"
 	"testing"
+	"tinycld.org/core/mailhost"
 	"tinycld.org/core/syscfg"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -179,4 +180,42 @@ func TestOrgInfoManagedSettingsEmptyWhenStandalone(t *testing.T) {
 	}
 	scenario.DisableTestAppCleanup = true
 	scenario.Test(t)
+}
+
+// The mail host is the configured value only: the client falls back to the
+// host it talks to, which an unset AppURL cannot get wrong.
+func TestOrgInfo_PublishesTheConfiguredMailHost(t *testing.T) {
+	for _, tc := range []struct{ name, setting, want string }{
+		{"configured", "Mail.Example.com", `"mailHost":"mail.example.com"`},
+		{"unset", "", `"mailHost":""`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			syscfg.ResetForTesting()
+			t.Cleanup(syscfg.ResetForTesting)
+			syscfg.SetResolver(func(key string) string {
+				if key == mailhost.Key {
+					return tc.setting
+				}
+				return ""
+			})
+			app, err := tests.NewTestApp()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(app.Cleanup)
+			app.Settings().Meta.AppURL = "https://web.example.com"
+			RegisterOrgInfoEndpoint(app)
+
+			scenario := &tests.ApiScenario{
+				Name:            "org-info mail host",
+				Method:          http.MethodGet,
+				URL:             "/api/org-info",
+				ExpectedStatus:  http.StatusOK,
+				ExpectedContent: []string{tc.want},
+				TestAppFactory:  func(_ testing.TB) *tests.TestApp { return app },
+			}
+			scenario.DisableTestAppCleanup = true
+			scenario.Test(t)
+		})
+	}
 }

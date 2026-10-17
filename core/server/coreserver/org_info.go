@@ -5,6 +5,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/mailhost"
 	"tinycld.org/core/syscfg"
 )
 
@@ -16,7 +17,8 @@ import (
 // come from org_branding, whose viewRule is deliberately public for the same
 // pre-login reason. Nothing else from settings is exposed: PB's own
 // /api/settings is superuser-only, and this endpoint publishes only these
-// deliberately-public fields.
+// deliberately-public fields. The mail host is one of them: every mail app is
+// told it, so it is public by nature.
 func RegisterOrgInfoEndpoint(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/api/org-info", func(re *core.RequestEvent) error {
@@ -38,6 +40,10 @@ func RegisterOrgInfoEndpoint(app core.App) {
 				"logoUrl":         logoURL,
 				"logoCrop":        logoCrop,
 				"managedSettings": managed,
+				// The host mail apps connect to, when the deployment names
+				// one. Empty means "the web host": the client then uses the
+				// host it talks to, which is right even where AppURL is not.
+				"mailHost": mailhost.Configured(),
 			})
 		})
 		return e.Next()
