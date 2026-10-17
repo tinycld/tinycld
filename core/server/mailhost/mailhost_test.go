@@ -92,6 +92,7 @@ func (s *recordSink) count() int {
 	return len(s.records)
 }
 
+// Tests that use this must not run in parallel: they swap the global slog.Default.
 func captureWarnings(t *testing.T) *recordSink {
 	t.Helper()
 	sink := &recordSink{}
