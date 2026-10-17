@@ -1,6 +1,9 @@
 package mailhost
 
 import (
+	"context"
+	"log/slog"
+	"sync"
 	"testing"
 
 	"tinycld.org/core/syscfg"
@@ -65,5 +68,83 @@ func TestHostIgnoresAnInvalidSetting(t *testing.T) {
 	configure(t, "mail example.com")
 	if got := Host("https://web.example.com"); got != "web.example.com" {
 		t.Fatalf("Host = %q, want web.example.com", got)
+	}
+}
+
+type recordSink struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (s *recordSink) Enabled(context.Context, slog.Level) bool { return true }
+func (s *recordSink) Handle(_ context.Context, r slog.Record) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.records = append(s.records, r)
+	return nil
+}
+func (s *recordSink) WithAttrs([]slog.Attr) slog.Handler { return s }
+func (s *recordSink) WithGroup(string) slog.Handler      { return s }
+
+func (s *recordSink) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.records)
+}
+
+func captureWarnings(t *testing.T) *recordSink {
+	t.Helper()
+	sink := &recordSink{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(sink))
+	resetWarned()
+	t.Cleanup(func() {
+		slog.SetDefault(prev)
+		resetWarned()
+	})
+	return sink
+}
+
+func TestConfiguredWarnsOncePerInvalidValue(t *testing.T) {
+	sink := captureWarnings(t)
+
+	configure(t, "mail.example.com/")
+	Configured()
+	if got := sink.count(); got != 1 {
+		t.Fatalf("invalid value: %d warnings, want 1", got)
+	}
+	Configured()
+	if got := sink.count(); got != 1 {
+		t.Fatalf("same invalid value again: %d warnings, want 1", got)
+	}
+
+	configure(t, "mail example.com")
+	Configured()
+	if got := sink.count(); got != 2 {
+		t.Fatalf("different invalid value: %d warnings, want 2", got)
+	}
+
+	sink.mu.Lock()
+	rec := sink.records[0]
+	sink.mu.Unlock()
+	if rec.Level != slog.LevelWarn || rec.Message != "ignoring a mail host setting that is not a host name; mail apps get the web host" {
+		t.Errorf("unexpected record: %v %q", rec.Level, rec.Message)
+	}
+	attrs := map[string]string{}
+	rec.Attrs(func(a slog.Attr) bool { attrs[a.Key] = a.Value.String(); return true })
+	if attrs["key"] != Key || attrs["value"] != "mail.example.com/" {
+		t.Errorf("unexpected attrs: %v", attrs)
+	}
+}
+
+func TestConfiguredNeverWarnsForValidOrBlank(t *testing.T) {
+	sink := captureWarnings(t)
+	for _, v := range []string{"", "   ", "mail.example.com", "https://mail.example.com:443/"} {
+		configure(t, v)
+		Configured()
+		Host("https://app.example.com")
+	}
+	if got := sink.count(); got != 0 {
+		t.Fatalf("%d warnings, want 0", got)
 	}
 }

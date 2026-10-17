@@ -9,9 +9,32 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 
+	"tinycld.org/core/logging"
 	"tinycld.org/core/syscfg"
 )
+
+var log = logging.ForPackage("mailhost")
+
+// warned holds the raw values already reported, so a request path that calls
+// Configured() logs each bad value once per process.
+var warned sync.Map
+
+func warnOnce(value string) {
+	if _, seen := warned.LoadOrStore(value, struct{}{}); seen {
+		return
+	}
+	log.Warn("ignoring a mail host setting that is not a host name; mail apps get the web host",
+		"key", Key, "value", value)
+}
+
+func resetWarned() {
+	warned.Range(func(k, _ any) bool {
+		warned.Delete(k)
+		return true
+	})
+}
 
 // Key is the system setting that names the host mail apps connect to.
 const Key = "mail.client_host"
@@ -19,7 +42,12 @@ const Key = "mail.client_host"
 // Configured returns the host the deployment set for mail apps, or "" when it
 // set none or the value is not a host name.
 func Configured() string {
-	return normalize(syscfg.Get(Key))
+	raw := syscfg.Get(Key)
+	host := normalize(raw)
+	if host == "" && strings.TrimSpace(raw) != "" {
+		warnOnce(raw)
+	}
+	return host
 }
 
 // Host returns the host mail apps connect to: the configured host, else the
