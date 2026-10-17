@@ -32,4 +32,24 @@ describe('substituteHelpTokens', () => {
         const body = 'No tokens here, not even {{other}}.'
         expect(substituteHelpTokens(body)).toBe(body)
     })
+
+    it('replaces {{mail-host}} with the given mail host', () => {
+        setResolvedAddress('https://acme.tinycld.org')
+        expect(
+            substituteHelpTokens('imaps://{{mail-host}}:993', { mailHost: 'mx.acme.example' })
+        ).toBe('imaps://mx.acme.example:993')
+    })
+
+    it('uses the web host for {{mail-host}} when no mail host is given', () => {
+        setResolvedAddress('https://acme.tinycld.org')
+        expect(substituteHelpTokens('{{mail-host}} {{server-host}}')).toBe(
+            'acme.tinycld.org acme.tinycld.org'
+        )
+        expect(substituteHelpTokens('{{mail-host}}', { mailHost: null })).toBe('acme.tinycld.org')
+    })
+
+    it('falls back to the placeholder for {{mail-host}} when nothing is known', () => {
+        setResolvedAddress(null)
+        expect(substituteHelpTokens('{{mail-host}}')).toBe('your-tinycld-hostname')
+    })
 })

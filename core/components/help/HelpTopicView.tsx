@@ -1,6 +1,7 @@
 import { Text, View } from 'react-native'
 import { substituteHelpTokens } from '../../lib/help/tokens'
 import type { HelpTopic } from '../../lib/help/types'
+import { useMailHost } from '../../lib/use-mail-host'
 import { MarkdownRenderer, openHelpLink } from './MarkdownRenderer'
 
 interface Props {
@@ -9,6 +10,8 @@ interface Props {
 }
 
 export function HelpTopicView({ topic, showTitle = true }: Props) {
+    const mailHost = useMailHost()
+    const body = substituteHelpTokens(topic.body, { mailHost })
     return (
         <View>
             {showTitle && (
@@ -20,7 +23,7 @@ export function HelpTopicView({ topic, showTitle = true }: Props) {
             {/* The help-specific behaviors are now opt-in; a help topic opts
                 into all of them. `openHelpLink` is module-level, so the
                 renderer cache keys to a single stable slot. */}
-            <MarkdownRenderer body={substituteHelpTokens(topic.body)} onLinkPress={openHelpLink} />
+            <MarkdownRenderer body={body} onLinkPress={openHelpLink} />
         </View>
     )
 }

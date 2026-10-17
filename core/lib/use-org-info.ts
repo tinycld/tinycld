@@ -31,16 +31,18 @@ export async function fetchOrgInfo(): Promise<{
     logoUrl: string
     logoCrop: string
     managedSettings: string[]
+    mailHost: string
 }> {
     const addr = getResolvedAddress()
-    if (!addr) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [] }
+    if (!addr) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [], mailHost: '' }
     const res = await serverFetch(`${addr}/api/org-info`, { cache: 'no-store' })
-    if (!res.ok) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [] }
+    if (!res.ok) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [], mailHost: '' }
     const body = (await res.json()) as Partial<{
         name: string
         logoUrl: string
         logoCrop: string
         managedSettings: string[]
+        mailHost: unknown
     }>
     return {
         name: body.name ?? '',
@@ -51,6 +53,8 @@ export async function fetchOrgInfo(): Promise<{
         // Failing open is right here — hiding a settings screen because a fetch
         // blipped would be a worse outcome than showing one that saves nothing.
         managedSettings: Array.isArray(body.managedSettings) ? body.managedSettings : [],
+        // A server that predates this field sends nothing: that is "use the web host".
+        mailHost: typeof body.mailHost === 'string' ? body.mailHost : '',
     }
 }
 
@@ -94,5 +98,6 @@ export function useOrgInfo() {
     // arrives; callers that gate on it wait instead.
     const managedSettings = data?.managedSettings ?? NO_MANAGED_SETTINGS
     // isPending tells "no name yet" apart from "not loaded yet".
-    return { org, managedSettings, isManagedSettingsPending: isPending, isPending }
+    const mailHost = data?.mailHost ?? ''
+    return { org, managedSettings, mailHost, isManagedSettingsPending: isPending, isPending }
 }
