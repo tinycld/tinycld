@@ -109,7 +109,11 @@ export function RadioInput<T extends FieldValues = Record<string, unknown>>({
     return (
         <View className="mb-3 gap-1.5" {...wrapperProps}>
             <Text className="text-sm font-semibold text-foreground">{label}</Text>
-            <View accessibilityRole="radiogroup" className={isSegmented ? 'flex-row gap-1.5' : ''}>
+            <View
+                accessibilityRole="radiogroup"
+                accessibilityLabel={label}
+                className={isSegmented ? 'flex-row gap-1.5' : ''}
+            >
                 {rows}
             </View>
             {hint && !hasError ? <Text className="text-xs text-muted">{hint}</Text> : null}
