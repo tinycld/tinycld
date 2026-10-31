@@ -42,8 +42,10 @@ func NewCommand(app *pocketbase.PocketBase) *cobra.Command {
 // validateSaved checks the sources, then every saved report, and writes
 // what it found to out.
 func validateSaved(app core.App, out io.Writer) error {
+	refusedCount := 0
 	if err := CheckSources(app); err != nil {
 		refused := Refused()
+		refusedCount = len(refused)
 		for _, key := range sortedKeys(refused) {
 			fmt.Fprintf(out, "source %s is refused: %s\n", key, refused[key])
 		}
@@ -53,7 +55,12 @@ func validateSaved(app core.App, out io.Writer) error {
 		return err
 	}
 	writeBrokenReports(out, res)
-	if len(res.Broken) > 0 {
+	switch {
+	case refusedCount > 0 && len(res.Broken) > 0:
+		return fmt.Errorf("%d report sources are refused and %d of %d saved reports are broken", refusedCount, len(res.Broken), res.Checked)
+	case refusedCount > 0:
+		return fmt.Errorf("%d report sources are refused", refusedCount)
+	case len(res.Broken) > 0:
 		return fmt.Errorf("%d of %d saved reports are broken", len(res.Broken), res.Checked)
 	}
 	return nil

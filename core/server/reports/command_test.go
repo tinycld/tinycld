@@ -82,7 +82,10 @@ func TestReportsValidateListsBrokenReportsWithTheirOwner(t *testing.T) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
 		}
 	}
-	stored, _ := app.FindRecordById(reportsCollection, r.Id)
+	stored, err := app.FindRecordById(reportsCollection, r.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(stored.GetString("broken"), `"unknown_source"`) {
 		t.Fatalf("the command did not store the mark: %s", stored.GetString("broken"))
 	}
@@ -92,5 +95,17 @@ func TestReportsValidateTakesNoArguments(t *testing.T) {
 	app := commandApp(t)
 	if _, err := runValidate(t, app, "extra"); err == nil {
 		t.Fatal("validate accepted an argument")
+	}
+}
+
+func TestReportsValidateFailsOnARefusedSource(t *testing.T) {
+	app := commandApp(t)
+	RegisterSource(Source{Key: "zoo.ghosts", Collection: "zoo_ghosts", Label: "Ghosts"})
+	out, err := runValidate(t, app)
+	if err == nil || err.Error() != "1 report sources are refused" {
+		t.Fatalf("err = %v", err)
+	}
+	if want := `source zoo.ghosts is refused: collection "zoo_ghosts" does not exist`; !strings.Contains(out, want) {
+		t.Fatalf("output lacks %q:\n%s", want, out)
 	}
 }
