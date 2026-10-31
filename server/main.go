@@ -19,6 +19,7 @@ import (
 
 	"tinycld.org/core/coreserver"
 	"tinycld.org/core/listeners"
+	"tinycld.org/core/reports"
 	"tinycld.org/core/supervise"
 )
 
@@ -131,6 +132,11 @@ func main() {
 	// install, a restored backup, or an automated provisioner), which would
 	// otherwise serve correctly but have no user who can log in.
 	app.RootCmd.AddCommand(coreserver.NewCreateOwnerCommand(app))
+
+	// `reports validate` lists the saved reports that name a source, link or
+	// field the installed packages no longer register, with their owners, and
+	// exits non-zero when there is one.
+	app.RootCmd.AddCommand(reports.NewCommand(app))
 
 	if err := app.Start(); err != nil {
 		log.Fatal(err)

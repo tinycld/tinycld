@@ -30,6 +30,15 @@ func RegisterAuditHooks(app *pocketbase.PocketBase) {
 	})
 	audit.RegisterCollections(app, []string{"group_members"}, nil)
 
+	// A report share or a publish changes who sees a report's design. The
+	// spec and the server's broken mark stay out of the diffs: a spec can
+	// hold a megabyte, so the log says that it changed, not what it holds.
+	audit.RegisterCollection(app, "reports", &audit.CollectionConfig{
+		ExtractLabel: audit.LabelFromField("title"),
+		Redact:       []string{"spec", "broken"},
+	})
+	audit.RegisterCollections(app, []string{"report_shares"}, nil)
+
 	// An owner or admin removing a member's authenticator app (a recovery
 	// reset) is a collection delete. Passkeys and app passwords register
 	// with their own packages.
