@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // Spec limits. A spec past one of them is refused before it is compiled.
@@ -28,6 +29,10 @@ var buckets = []string{"day", "month", "quarter", "year", "fiscalYear"}
 // plan is a spec bound to the registry: every path resolved to its links
 // and field, every column reference to its column.
 type plan struct {
+	// app is the app the spec was bound for: a later path bind refuses what
+	// CheckSources refused for it. Set even for a dry compile, where the
+	// compiler has no app.
+	app    core.App
 	spec   *Spec
 	base   *Source
 	cols   []*colPlan
@@ -103,6 +108,8 @@ type nestLevel struct {
 // once. Unknown references win: a report that names something missing
 // opens in an error state that names it.
 type binder struct {
+	// app's refused sources are unknown to this bind.
+	app     core.App
 	invalid map[string]validation.Error
 	unknown map[string]validation.Error
 }
@@ -143,25 +150,25 @@ func (b *binder) merge(err *SpecError) {
 // Validate checks a loaded spec against the registry without running it.
 // It returns nil, or a *SpecError: 422 when the spec names a source, link,
 // field or column that does not exist, else 400 listing what is invalid.
-func Validate(spec *Spec) error {
-	p, err := bind(spec)
+func Validate(app core.App, spec *Spec) error {
+	p, err := bind(app, spec)
 	if err != nil {
 		return err
 	}
 	return compileDry(p)
 }
 
-func bind(spec *Spec) (*plan, *SpecError) {
-	b := &binder{invalid: map[string]validation.Error{}, unknown: map[string]validation.Error{}}
+func bind(app core.App, spec *Spec) (*plan, *SpecError) {
+	b := &binder{app: app, invalid: map[string]validation.Error{}, unknown: map[string]validation.Error{}}
 	if spec.Version != CurrentVersion {
 		b.bad("version", fmt.Sprintf("version must be %d; load the spec first", CurrentVersion))
 	}
-	base := lookupSource(spec.Source)
+	base := lookupSource(app, spec.Source)
 	if base == nil {
 		b.missing("source", "unknown_source", fmt.Sprintf("the source %q does not exist", spec.Source))
 		return nil, b.err()
 	}
-	p := &plan{spec: spec, base: base, byID: map[string]*colPlan{}}
+	p := &plan{app: app, spec: spec, base: base, byID: map[string]*colPlan{}}
 	b.merge(checkParamDefs(spec.Params))
 	b.columns(p)
 	b.formulaSizes(p)
@@ -372,7 +379,7 @@ func (b *binder) path(src *Source, path Path, at string, kind pathKind, agg Aggr
 			b.missing(hat+".link", "unknown_link", fmt.Sprintf("the source %q has no link %q", src.Key, hop.Link))
 			return nil
 		}
-		target := lookupSource(link.Target)
+		target := lookupSource(b.app, link.Target)
 		if target == nil {
 			b.missing(hat+".link", "unknown_source", fmt.Sprintf("the link %q leads to the source %q, which does not exist", hop.Link, link.Target))
 			return nil

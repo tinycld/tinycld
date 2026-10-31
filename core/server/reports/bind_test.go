@@ -18,14 +18,14 @@ func loadSpec(t *testing.T, raw string) *Spec {
 }
 
 func TestValidateAcceptsTheDesignExample(t *testing.T) {
-	withZooRegistry(t)
-	if err := Validate(loadSpec(t, designExample)); err != nil {
+	app := withZooRegistry(t)
+	if err := Validate(app, loadSpec(t, designExample)); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
 
 func TestValidateNamesEveryUnknownReference(t *testing.T) {
-	withZooRegistry(t)
+	app := withZooRegistry(t)
 	RegisterSource(Source{
 		Key: "zoo.pens", Collection: "zoo_pens", Label: "Pens",
 		Links: []Link{{Key: "yard", Label: "Yard", Target: "zoo.yards", Cardinality: ToOne, Field: "yard"}},
@@ -47,7 +47,7 @@ func TestValidateNamesEveryUnknownReference(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			err := Validate(loadSpec(t, c.spec))
+			err := Validate(app, loadSpec(t, c.spec))
 			requireSpecError(t, err, 422, c.at, "")
 			if code := err.(*SpecError).Problems[c.at].Code(); code != c.code {
 				t.Fatalf("code = %q, want %q", code, c.code)
@@ -57,7 +57,7 @@ func TestValidateNamesEveryUnknownReference(t *testing.T) {
 }
 
 func TestValidateRefusesAnInvalidSpec(t *testing.T) {
-	withZooRegistry(t)
+	app := withZooRegistry(t)
 	cols := func(c string) string {
 		return `{"version":1,"source":"zoo.feedings","columns":[` + c + `]}`
 	}
@@ -122,7 +122,7 @@ func TestValidateRefusesAnInvalidSpec(t *testing.T) {
 			if err := json.Unmarshal([]byte(c.spec), &spec); err != nil {
 				t.Fatalf("decode: %v", err)
 			}
-			requireSpecError(t, Validate(&spec), 400, c.at, c.want)
+			requireSpecError(t, Validate(app, &spec), 400, c.at, c.want)
 		})
 	}
 }
@@ -145,9 +145,9 @@ const doubling = `{"op":"add","args":[{"col":"PREV"},{"col":"PREV"}]}`
 // the columns' sizes, before anything compiles. With 99 columns the last one
 // has 2^100 nodes: the count must not overflow into a small number.
 func TestValidateRefusesAFormulaChainThatDoubles(t *testing.T) {
-	withZooRegistry(t)
+	app := withZooRegistry(t)
 	for _, n := range []int{27, 99} {
-		err := Validate(loadSpec(t, chainSpec(n, doubling)))
+		err := Validate(app, loadSpec(t, chainSpec(n, doubling)))
 		requireSpecError(t, err, 400, "columns.9", "with the formula columns it reads")
 		requireSpecError(t, err, 400, fmt.Sprintf("columns.%d", n), "with the formula columns it reads")
 		if _, ok := err.(*SpecError).Problems["columns.8"]; ok {
@@ -159,8 +159,8 @@ func TestValidateRefusesAFormulaChainThatDoubles(t *testing.T) {
 // Each column adds one level to the one before, so c33 is 33 levels deep
 // once inlined; SQLite would refuse the statement at run time.
 func TestValidateRefusesADeepFormulaChain(t *testing.T) {
-	withZooRegistry(t)
-	err := Validate(loadSpec(t, chainSpec(40, `{"op":"add","args":[{"col":"PREV"},{"value":1}]}`)))
+	app := withZooRegistry(t)
+	err := Validate(app, loadSpec(t, chainSpec(40, `{"op":"add","args":[{"col":"PREV"},{"value":1}]}`)))
 	requireSpecError(t, err, 400, "columns.33", "with the formula columns it reads")
 	if _, ok := err.(*SpecError).Problems["columns.32"]; ok {
 		t.Fatalf("c32 (32 levels) was refused: %v", err)
@@ -169,10 +169,10 @@ func TestValidateRefusesADeepFormulaChain(t *testing.T) {
 
 // A filter is compiled with the columns it reads inlined too.
 func TestValidateRefusesAFilterTooLargeWithTheColumnsItReads(t *testing.T) {
-	withZooRegistry(t)
+	app := withZooRegistry(t)
 	raw := strings.TrimSuffix(chainSpec(8, doubling), "}") + `,"filter":{"op":"and","args":[
 		{"op":"gt","args":[{"col":"c8"},{"value":0}]},{"op":"gt","args":[{"col":"c8"},{"value":0}]}]}}`
-	requireSpecError(t, Validate(loadSpec(t, raw)), 400, "filter", "with the formula columns it reads")
+	requireSpecError(t, Validate(app, loadSpec(t, raw)), 400, "filter", "with the formula columns it reads")
 }
 
 // Run binds the spec the same way: the doubling chain is a 400, not a
@@ -184,13 +184,13 @@ func TestRunRefusesAFormulaChainThatDoubles(t *testing.T) {
 }
 
 func TestBindRecordsTheNestChain(t *testing.T) {
-	withZooRegistry(t)
+	app := withZooRegistry(t)
 	spec := loadSpec(t, `{"version":1,"source":"zoo.sites","columns":[
 		{"id":"site","path":[{"field":"name"}]},
 		{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"name"}]},
 		{"id":"fed","path":[{"link":"animals","mode":"nest"},{"link":"feedings","mode":"nest"},{"field":"fed"}]},
 		{"id":"owner","path":[{"link":"animals","mode":"nest"},{"link":"owner"},{"field":"name"}]}]}`)
-	p, err := bind(spec)
+	p, err := bind(app, spec)
 	if err != nil {
 		t.Fatal(err)
 	}

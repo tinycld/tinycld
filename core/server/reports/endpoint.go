@@ -35,7 +35,7 @@ const maxRunBody = 1 << 20
 func Register(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		if err := CheckSources(e.App); err != nil {
-			refused := Refused()
+			refused := Refused(e.App)
 			keys := make([]string, 0, len(refused))
 			for key := range refused {
 				keys = append(keys, key)

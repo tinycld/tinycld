@@ -291,13 +291,13 @@ func TestColumnTypesDoNotDependOnWhetherRowsLoaded(t *testing.T) {
 }
 
 func TestValidateCompilesTheSpec(t *testing.T) {
-	newZoo(t)
+	z := newZoo(t)
 	validate := func(raw string) error {
 		spec, _, err := Load([]byte(raw))
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		return Validate(spec)
+		return Validate(z.app, spec)
 	}
 	const col = `{"id":"n","path":[{"field":"note"}]}`
 	// An unknown field or link inside a filter or a formula names it (422).

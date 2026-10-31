@@ -250,7 +250,7 @@ func TestAFormulaRefusesToCombineCurrencies(t *testing.T) {
 		{"id":"x","formula":{"op":"add","args":[{"col":"cost"},{"path":[{"link":"animal"},{"field":"price"}]}]}}]}`
 	_, err := z.try(t, "ann", mixed, Options{}, nil)
 	requireSpecError(t, err, 400, "columns.1.formula", "amounts in different currencies cannot be combined")
-	requireSpecError(t, Validate(loadSpec(t, mixed)), 400, "columns.1.formula", "amounts in different currencies cannot be combined")
+	requireSpecError(t, Validate(z.app, loadSpec(t, mixed)), 400, "columns.1.formula", "amounts in different currencies cannot be combined")
 	for name, op := range map[string]string{
 		"min":      `{"op":"min","args":[{"col":"cost"},{"path":[{"link":"animal"},{"field":"price"}]}]}`,
 		"if":       `{"op":"if","args":[{"value":true},{"col":"cost"},{"path":[{"link":"animal"},{"field":"price"}]}]}`,
@@ -259,7 +259,7 @@ func TestAFormulaRefusesToCombineCurrencies(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := `{"version":1,"source":"zoo.feedings","columns":[{"id":"cost","path":[{"field":"cost"}]},{"id":"x","formula":` + op + `}]}`
-			requireSpecError(t, Validate(loadSpec(t, raw)), 400, "columns.1.formula", "amounts in different currencies")
+			requireSpecError(t, Validate(z.app, loadSpec(t, raw)), 400, "columns.1.formula", "amounts in different currencies")
 		})
 	}
 	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[

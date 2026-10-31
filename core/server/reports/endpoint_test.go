@@ -150,7 +150,7 @@ func TestServeRefusesABrokenSourceBeforeAnyRun(t *testing.T) {
 	Register(z.app)
 	z.post(t, "a refused source", z.token(t, "ann"), runBodyOf(`{"version":1,"source":"zoo.ghosts","columns":[{"id":"a","path":[{"field":"name"}]}]}`),
 		http.StatusUnprocessableEntity, `"source":{"code":"unknown_source"`)
-	if _, bad := Refused()["zoo.ghosts"]; !bad {
+	if _, bad := Refused(z.app)["zoo.ghosts"]; !bad {
 		t.Fatal("serve did not refuse zoo.ghosts")
 	}
 }

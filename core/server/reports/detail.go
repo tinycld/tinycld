@@ -50,7 +50,7 @@ func (rc *rowsCtx) col(id, at string) (expr, error) {
 }
 
 func (rc *rowsCtx) path(p Path, at string) (expr, error) {
-	bound, err := bindValuePath(rc.r.c.p.base, p, at, pathValue)
+	bound, err := bindValuePath(rc.r.c.p.app, rc.r.c.p.base, p, at, pathValue)
 	if err != nil {
 		return expr{}, err
 	}

@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // Every unknown reference is one shape: a 422 naming the part and a code.
@@ -17,11 +19,21 @@ func TestUnknownRefIsA422AtThePart(t *testing.T) {
 	}
 }
 
-func withZooRegistry(t *testing.T) {
+// withZooRegistry registers the zoo's sources and returns an app to bind
+// specs for. It has no database: nothing checked it, so it refuses nothing.
+func withZooRegistry(t *testing.T) core.App {
 	t.Helper()
 	ResetForTesting()
 	t.Cleanup(ResetForTesting)
 	registerZooSources()
+	return bareApp(t)
+}
+
+// bareApp is an app that is never bootstrapped. bind reads only its store,
+// where CheckSources leaves the app's refusals.
+func bareApp(t *testing.T) core.App {
+	t.Helper()
+	return core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()})
 }
 
 func requireSpecError(t *testing.T, err error, status int, at, contains string) {
