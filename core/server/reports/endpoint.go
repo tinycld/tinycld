@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 
@@ -22,6 +23,12 @@ var log = logging.ForPackage("reports")
 
 // maxRunBody bounds a run request: a spec, its params and options.
 const maxRunBody = 1 << 20
+
+// sortedKeys lists the keys of a refused-source map in a stable order, so
+// the log and the validate command name the sources the same way each run.
+func sortedKeys(refused map[string]string) []string {
+	return slices.Sorted(maps.Keys(refused))
+}
 
 // Register binds the report engine. When the server starts (after
 // migrations) it checks every registered source and logs each one it
@@ -41,12 +48,7 @@ func Register(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		if err := CheckSources(e.App); err != nil {
 			refused := Refused()
-			keys := make([]string, 0, len(refused))
-			for key := range refused {
-				keys = append(keys, key)
-			}
-			slices.Sort(keys)
-			for _, key := range keys {
+			for _, key := range sortedKeys(refused) {
 				log.Error("report source refused", "source", key, "reason", refused[key])
 			}
 		}
