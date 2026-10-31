@@ -61,7 +61,7 @@ func newZooApp(t *testing.T) *tests.TestApp {
 	}
 
 	RegisterGrantTable(GrantTable{Collection: "zoo_keepers", ResourceField: "zoo"})
-	registerCore(a)
+	BindHooks(a)
 	return a
 }
 
