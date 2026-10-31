@@ -25,9 +25,10 @@ const maxRunBody = 1 << 20
 
 // Register binds the report engine. When the server starts (after
 // migrations) it checks every registered source and logs each one it
-// refuses, so a broken source never reaches a user. It serves
-// POST /api/reports/run to signed-in users: a draft spec, or a saved report
-// the caller can view. Saved reports and their shares are bound by
+// refuses, so a broken source never reaches a user; then it marks every
+// saved report that cannot run (checkSavedAtStart). It serves POST
+// /api/reports/run to signed-in users: a draft spec, or a saved report the
+// caller can view. Saved reports and their shares are bound by
 // RegisterSharing.
 //
 // The run endpoint is a read endpoint by POST because a draft spec does not
@@ -49,10 +50,38 @@ func Register(app core.App) {
 				log.Error("report source refused", "source", key, "reason", refused[key])
 			}
 		}
+		checkSavedAtStart(e.App)
 		e.Router.POST("/api/reports/run", handleRun).
 			Bind(apis.RequireAuth("users"), apis.BodyLimit(maxRunBody))
 		return e.Next()
 	})
+}
+
+// checkSavedAtStart refreshes every saved report's broken mark when the
+// server starts, after the sources are checked: a package install or
+// upgrade restarts the server, and that is when a source, link or field can
+// disappear. In dev it also logs each broken report with its owner; in
+// production one line says how many and names the command that lists them.
+func checkSavedAtStart(app core.App) {
+	res, err := CheckSaved(app)
+	if err != nil {
+		log.Error("saved reports not checked", "err", err)
+		return
+	}
+	logBrokenAtStart(res, app.IsDev())
+}
+
+func logBrokenAtStart(res *CheckResult, dev bool) {
+	if len(res.Broken) == 0 {
+		return
+	}
+	if !dev {
+		log.Info("saved reports are broken; run `tinycld reports validate` to list them", "broken", len(res.Broken), "checked", res.Checked)
+		return
+	}
+	for _, b := range res.Broken {
+		log.Warn("saved report is broken", "report", b.ID, "title", b.Title, "owner", ownerLabel(b.Owner), "problems", b.Broken.Problems)
+	}
 }
 
 // runBody is one report run: a draft spec, or the id of a saved report the
