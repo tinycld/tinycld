@@ -4,6 +4,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/groups"
+	"tinycld.org/core/offboard"
 )
 
 // The saved-report collections (core migration 2090000008_create_reports.js).
@@ -31,4 +32,5 @@ func RegisterSharing(app core.App) {
 	app.OnRecordDeleteRequest(sharesCollection).BindFunc(onShareDelete)
 	app.OnRecordAfterCreateSuccess("users").BindFunc(shipForAdmin)
 	app.OnRecordAfterUpdateSuccess("users").BindFunc(shipForAdmin)
+	offboard.RegisterHandler("reports", offboardReports)
 }
