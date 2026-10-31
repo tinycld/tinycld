@@ -243,3 +243,57 @@ func TestNoAttachDBConnect_SurvivesAppPoolConfiguration(t *testing.T) {
 		}
 	}
 }
+
+// Priming must keep the cap each pool was given. It used to set every pool to
+// noAttachMaxConns, so the single-writer pools that initDataDB and initAuxDB
+// pin to 1 connection became 24-connection pools, and a small
+// DataMaxOpenConns was ignored. The ATTACH restriction must still hold on
+// every connection: each pool's full width is held at once and probed.
+func TestNoAttachDBConnect_KeepsEachPoolsCap(t *testing.T) {
+	app := NewBaseApp(BaseAppConfig{
+		DataDir:          t.TempDir(),
+		DBConnect:        NoAttachDBConnect,
+		DataMaxOpenConns: 4,
+		DataMaxIdleConns: 2,
+		AuxMaxOpenConns:  2,
+		AuxMaxIdleConns:  1,
+	})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	defer app.ResetBootstrapState()
+
+	pools := []struct {
+		name string
+		db   *sql.DB
+		want int
+	}{
+		{"concurrentDB", app.ConcurrentDB().(interface{ DB() *sql.DB }).DB(), 4},
+		{"nonconcurrentDB", app.NonconcurrentDB().(interface{ DB() *sql.DB }).DB(), 1},
+		{"auxConcurrentDB", app.AuxConcurrentDB().(interface{ DB() *sql.DB }).DB(), 2},
+		{"auxNonconcurrentDB", app.AuxNonconcurrentDB().(interface{ DB() *sql.DB }).DB(), 1},
+	}
+	for _, p := range pools {
+		if got := p.db.Stats().MaxOpenConnections; got != p.want {
+			t.Errorf("%s: MaxOpenConnections = %d, want %d", p.name, got, p.want)
+			continue
+		}
+		held := make([]*sql.Conn, 0, p.want)
+		for i := 0; i < p.want; i++ {
+			c, err := p.db.Conn(t.Context())
+			if err != nil {
+				t.Fatalf("%s: conn %d: %v", p.name, i, err)
+			}
+			held = append(held, c)
+		}
+		for i, c := range held {
+			if _, err := c.ExecContext(t.Context(), "ATTACH DATABASE ':memory:' AS probe"); err == nil {
+				_, _ = c.ExecContext(t.Context(), "DETACH DATABASE probe")
+				t.Errorf("%s: connection %d permits ATTACH", p.name, i)
+			}
+		}
+		for _, c := range held {
+			c.Close()
+		}
+	}
+}
