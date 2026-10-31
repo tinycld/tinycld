@@ -2,9 +2,14 @@ package reports
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/hook"
 )
 
 func shareBody(report, user, group, role string) string {
@@ -89,4 +94,43 @@ func TestTheShareCapAnswers400(t *testing.T) {
 	s.expect(t, "ann", http.MethodPost, sharesURL, shareBody(s.id("R"), s.id("ot"), "", "viewer"), http.StatusOK)
 	s.expect(t, "ann", http.MethodPost, sharesURL, shareBody(s.id("R"), s.id("cy"), "", "viewer"),
 		http.StatusBadRequest, `"report":{"code":"too_many_shares"`)
+}
+
+// A database fault while a share is checked answers 500 and is logged, not
+// a 400 that reads as a refusal. The fault is a table renamed away after the
+// create rule passed: reports for the report read, report_shares for the
+// count.
+func TestAShareCheckFaultAnswers500(t *testing.T) {
+	for table, step := range map[string]string{reportsCollection: "read the shared report", sharesCollection: "count the report's shares"} {
+		t.Run(table, func(t *testing.T) {
+			s := newSavedZoo(t)
+			var records []slog.Record
+			silenced := log
+			log = slog.New(messagesHandler{&records})
+			t.Cleanup(func() { log = silenced })
+			s.app.OnRecordCreateRequest(sharesCollection).Bind(&hook.Handler[*core.RecordRequestEvent]{
+				Priority: -1,
+				Func: func(e *core.RecordRequestEvent) error {
+					if _, err := e.App.DB().NewQuery("ALTER TABLE " + table + " RENAME TO gone_" + table).Execute(); err != nil {
+						return err
+					}
+					return e.Next()
+				},
+			})
+			s.expect(t, "ann", http.MethodPost, sharesURL, shareBody(s.id("R"), s.id("ot"), "", "viewer"),
+				http.StatusInternalServerError, "The share could not be saved.")
+			if len(records) != 1 || records[0].Level != slog.LevelError || !strings.Contains(fmt.Sprint(attrs(records[0])), step) {
+				t.Fatalf("logged %v, want one error at %q", records, step)
+			}
+		})
+	}
+}
+
+func attrs(r slog.Record) []slog.Attr {
+	var out []slog.Attr
+	r.Attrs(func(a slog.Attr) bool {
+		out = append(out, a)
+		return true
+	})
+	return out
 }

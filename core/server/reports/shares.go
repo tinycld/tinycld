@@ -33,7 +33,7 @@ func onShareCreate(e *core.RecordRequestEvent) error {
 	// The create rule passed, so the report exists and the caller manages it.
 	report, err := e.App.FindRecordById(reportsCollection, e.Record.GetString("report"))
 	if err != nil {
-		return err
+		return shareFault(e, "read the shared report", err)
 	}
 	if user == report.GetString("owner") {
 		const msg = "The owner already has this report."
@@ -42,13 +42,20 @@ func onShareCreate(e *core.RecordRequestEvent) error {
 	n, err := e.App.CountRecords(sharesCollection, dbx.NewExp(
 		"[[report]] = {:report} AND ([[user]] = '' OR [[group]] = '')", dbx.Params{"report": report.Id}))
 	if err != nil {
-		return err
+		return shareFault(e, "count the report's shares", err)
 	}
 	if n >= int64(shareCap) {
 		msg := fmt.Sprintf("A report can be shared at most %d times.", shareCap)
 		return e.BadRequestError(msg, fieldError("report", "too_many_shares", msg))
 	}
 	return e.Next()
+}
+
+// shareFault answers a database fault while a share is checked: 500, not
+// the 400 PocketBase gives a hook's plain error, which reads as a refusal.
+func shareFault(e *core.RecordRequestEvent, what string, err error) error {
+	log.ErrorContext(e.Request.Context(), "report share check failed", "step", what, "err", err)
+	return e.InternalServerError("The share could not be saved.", nil)
 }
 
 func onShareUpdate(e *core.RecordRequestEvent) error {

@@ -165,15 +165,15 @@ func hasShipped() bool {
 }
 
 // onReportDelete refuses to delete a shipped report while its package
-// ships it: the next start would make it again. Its owner can unpublish it,
-// which hides it from everyone else. Once the package is gone, the report
-// can be deleted.
+// ships it: the next start would make it again. An admin who owns or edits
+// it can unpublish it, which hides it from all but its owner and the people
+// it is shared with. Once the package is gone, the report can be deleted.
 func onReportDelete(e *core.RecordRequestEvent) error {
 	if e.HasSuperuserAuth() {
 		return e.Next()
 	}
 	if key := e.Record.GetString("shipped_key"); key != "" && isShipped(key) {
-		const msg = "This report ships with a package. Its owner can unpublish it instead."
+		const msg = "This report ships with a package. An admin who owns or edits it can unpublish it instead."
 		return e.BadRequestError(msg, fieldError("shipped_key", "shipped", msg))
 	}
 	return e.Next()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/core"
@@ -89,7 +90,8 @@ func onReportUpdate(e *core.RecordRequestEvent) error {
 // a spec is "saved upgraded on its next save". source becomes the spec's
 // base source. A new spec, or a changed one, must pass Validate, and then
 // the report is no longer broken. An update that leaves the spec as it was
-// is not checked, valid or not, so a broken report can still be renamed.
+// (the same JSON value, sent or not) is not checked, valid or not, so a
+// broken report can still be renamed.
 func prepareSpec(e *core.RecordRequestEvent, original *core.Record) error {
 	raw := specBytes(e.Record)
 	if len(raw) > maxSpecBytes {
@@ -98,7 +100,8 @@ func prepareSpec(e *core.RecordRequestEvent, original *core.Record) error {
 	}
 	spec, stored, err := loadStored(raw)
 	if err != nil {
-		if original != nil && bytes.Equal(raw, specBytes(original)) {
+		if original != nil && sameJSON(raw, specBytes(original)) {
+			e.Record.Set("spec", original.Get("spec"))
 			return nil
 		}
 		return specRefusal(e, err)
@@ -133,6 +136,17 @@ func loadStored(raw []byte) (*Spec, []byte, error) {
 func specBytes(r *core.Record) []byte {
 	raw, _ := r.Get("spec").(types.JSONRaw)
 	return raw
+}
+
+// sameJSON reports whether a and b hold the same JSON value. PocketBase
+// re-encodes a spec posted in a JSON body (keys sorted, numbers as float64),
+// so a resent stored spec rarely has the stored bytes.
+func sameJSON(a, b []byte) bool {
+	var va, vb any
+	if json.Unmarshal(a, &va) != nil || json.Unmarshal(b, &vb) != nil {
+		return false
+	}
+	return reflect.DeepEqual(va, vb)
 }
 
 // sameSpec reports whether the stored spec, loaded, is the loaded spec

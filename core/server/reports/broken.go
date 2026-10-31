@@ -9,6 +9,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"unicode/utf8"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -34,8 +35,49 @@ type Problem struct {
 	Message string `json:"message"`
 }
 
-// maxBrokenProblems bounds the broken column (64 KB in the migration).
+// maxBrokenProblems bounds the problems a mark lists; markJSON bounds its
+// bytes.
 const maxBrokenProblems = 50
+
+// maxBrokenBytes is the broken column's json maxSize in the migration.
+const maxBrokenBytes = 65536
+
+// maxProblemMessage bounds one problem's message in bytes. A message can
+// quote the spec: a decoder error names an unknown key of any length.
+const maxProblemMessage = 500
+
+// touch is changesignal.Touch; a test replaces it to count the signals.
+var touch = changesignal.Touch
+
+// cutMessage cuts msg to at most maxProblemMessage bytes on a rune
+// boundary, with "…" at the end when it cut.
+func cutMessage(msg string) string {
+	if len(msg) <= maxProblemMessage {
+		return msg
+	}
+	const ellipsis = "…"
+	end := maxProblemMessage - len(ellipsis)
+	for end > 0 && !utf8.RuneStart(msg[end]) {
+		end--
+	}
+	return msg[:end] + ellipsis
+}
+
+// markJSON is the stored form of a mark. A mark past the column's maxSize
+// (long spec paths can pass it even with every message cut) is stored as
+// one problem that counts them, because PocketBase refuses every save of a
+// row whose json field is past its maxSize: a rename, an offboard move.
+func markJSON(b *Broken) ([]byte, error) {
+	raw, err := json.Marshal(b)
+	if err != nil || len(raw) <= maxBrokenBytes {
+		return raw, err
+	}
+	n := len(b.Problems) + b.More
+	return json.Marshal(Broken{Status: b.Status, Problems: map[string]Problem{"spec": {
+		Code:    "too_many_problems",
+		Message: fmt.Sprintf("the spec has %d problems, too many to store; run the report to see them", n),
+	}}})
+}
 
 // BrokenReport is one saved report that cannot run, with its owner (nil
 // when the owner row cannot be read).
@@ -57,18 +99,26 @@ type CheckResult struct {
 }
 
 // checkBatch is how many saved reports one read loads. A spec has at most
-// maxSpecBytes, so one read holds at most checkBatch of them in memory.
+// maxSpecBytes, so one read holds at most checkBatch specs in memory.
 var checkBatch = 50
 
 // CheckSaved loads and validates every saved report as a run would, against
 // the sources registered and checked now, and stores the outcome in each
 // report's broken column when it changed. It reads checkBatch reports at a
-// time in id order, so memory and statement size stay the same however many
-// reports exist. The column is written with SQL, not a record save: it is
-// the server's note, not an edit, so `updated` and the audit log stay as
-// the people who edit the report left them. Broken comes back in id order.
+// time in id order, so the specs in memory and the size of each statement
+// stay the same however many reports exist; res.Broken grows with the
+// number of broken reports. The column is written with SQL, not a record
+// save: it is the server's note, not an edit, so `updated` and the audit
+// log stay as the people who edit the report left them. The reports
+// collection is signaled whenever a mark was written, also when an error
+// stops the check later. Broken comes back in id order.
 func CheckSaved(app core.App) (*CheckResult, error) {
 	res := &CheckResult{}
+	defer func() {
+		if res.Written > 0 {
+			touch(app, reportsCollection)
+		}
+	}()
 	if _, err := app.FindCachedCollectionByNameOrId(reportsCollection); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return res, nil // an app without core's report migration saves no reports
@@ -100,9 +150,6 @@ func CheckSaved(app core.App) (*CheckResult, error) {
 			break
 		}
 		after = batch[len(batch)-1].Id
-	}
-	if res.Written > 0 {
-		changesignal.Touch(app, reportsCollection)
 	}
 	for i := range res.Broken {
 		owner, err := app.FindRecordById("users", res.Broken[i].OwnerID)
@@ -140,7 +187,7 @@ func checkSpec(raw []byte) *Broken {
 			break
 		}
 		p := specErr.Problems[k]
-		b.Problems[k] = Problem{Code: p.Code(), Message: p.Message()}
+		b.Problems[k] = Problem{Code: p.Code(), Message: cutMessage(p.Message())}
 	}
 	return b
 }
@@ -151,7 +198,7 @@ func writeBroken(app core.App, rec *core.Record, broken *Broken) (bool, error) {
 	var want []byte
 	if broken != nil {
 		var err error
-		if want, err = json.Marshal(broken); err != nil {
+		if want, err = markJSON(broken); err != nil {
 			return false, err
 		}
 	}

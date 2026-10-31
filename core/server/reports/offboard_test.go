@@ -2,6 +2,7 @@ package reports
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"tinycld.org/core/offboard"
@@ -88,8 +89,8 @@ func TestOffboardWithNoHeirIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := offboard.OffboardUser(s.app, s.id("ann"), offboard.Plan{Mode: offboard.ModeDeleteMyData}, s.id("ann"))
-	if !errors.Is(err, offboard.ErrInvalidPlan) {
-		t.Fatalf("err = %v, want ErrInvalidPlan", err)
+	if !errors.Is(err, offboard.ErrInvalidPlan) || !strings.Contains(err.Error(), "owns published or shipped reports") {
+		t.Fatalf("err = %v, want ErrInvalidPlan naming published or shipped reports", err)
 	}
 	if s.ownerOf(t, "R") != s.id("ann") || s.ownerOf(t, "P") != s.id("ann") {
 		t.Fatal("a refused offboard changed reports")

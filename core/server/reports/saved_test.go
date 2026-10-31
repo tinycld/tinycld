@@ -98,6 +98,26 @@ func TestAnUnloadableStoredSpecCanBeRenamed(t *testing.T) {
 	s.expect(t, "ann", http.MethodPatch, reportURL(b.Id), `{"spec":{"version":99,"x":1}}`, http.StatusBadRequest)
 }
 
+// PocketBase re-encodes a spec posted in a JSON body (keys sorted, numbers
+// as float64), so a client that resends the stored spec of an unloadable
+// report sends other bytes. The same JSON value is the same spec: the rename
+// passes and the stored bytes stay as they were.
+func TestAnUnloadableStoredSpecCanBeRenamedWithItsSpec(t *testing.T) {
+	s := newSavedZoo(t)
+	stored := `{"version":99,"source":"zoo.feedings","rows":[{"n":1.0,"a":"x"}]}`
+	b := s.saved(t, "V", "ann", "V", stored, false)
+	resent := `{ "rows" : [ { "a" : "x", "n" : 1 } ],
+		"source" : "zoo.feedings", "version" : 99 }`
+	s.expect(t, "ann", http.MethodPatch, reportURL(b.Id), `{"title":"V renamed","spec":`+resent+`}`, http.StatusOK, `"title":"V renamed"`)
+	got, err := s.app.FindRecordById(reportsCollection, b.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(specBytes(got)) != stored {
+		t.Fatalf("stored spec = %s, want %s", specBytes(got), stored)
+	}
+}
+
 // Every input that grows a saved report is capped, and a value past a cap
 // answers 400, not 500.
 func TestSavedReportCaps(t *testing.T) {

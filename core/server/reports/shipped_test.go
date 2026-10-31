@@ -146,7 +146,7 @@ func TestAShippedReportIsUnpublishedNotDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := shippedRow(t, s, "zoo.feed_costs")
-	s.expect(t, "ad", http.MethodDelete, reportURL(row.Id), "", http.StatusBadRequest, `"shipped_key":{"code":"shipped"`, "Its owner can unpublish it instead")
+	s.expect(t, "ad", http.MethodDelete, reportURL(row.Id), "", http.StatusBadRequest, `"shipped_key":{"code":"shipped"`, "An admin who owns or edits it can unpublish it instead.")
 	shippedMu.Lock()
 	delete(shipped, "zoo.feed_costs")
 	shippedMu.Unlock()

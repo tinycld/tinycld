@@ -106,7 +106,7 @@ func reportHeir(txApp core.App, leaverID string, plan offboard.Plan, actorUserID
 		return "", err
 	}
 	if admin == nil {
-		return "", fmt.Errorf("%w: this user owns published reports and no other admin can take them; make another user an admin first", offboard.ErrInvalidPlan)
+		return "", fmt.Errorf("%w: this user owns published or shipped reports and no other admin can take them; make another user an admin first", offboard.ErrInvalidPlan)
 	}
 	return admin.Id, nil
 }
