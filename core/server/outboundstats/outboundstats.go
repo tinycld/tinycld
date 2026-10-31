@@ -37,36 +37,49 @@ type registration struct {
 	counter Counter
 }
 
-var (
+// Registry holds counters. The package-level functions use one shared default
+// for the whole process; a caller that must not share it (a test, or code
+// composing several apps in one process) builds its own with NewRegistry.
+type Registry struct {
 	mu       sync.RWMutex
 	counters []registration
-	bySlug   = map[string]bool{}
-)
+	bySlug   map[string]bool
+}
+
+// NewRegistry returns an empty registry.
+func NewRegistry() *Registry {
+	return &Registry{bySlug: map[string]bool{}}
+}
+
+var defaultRegistry = NewRegistry()
+
+// Default returns the process-wide registry the package-level functions use.
+func Default() *Registry { return defaultRegistry }
 
 // Register adds a counter. Called from a package's own Register at startup.
 //
 // Idempotent per slug: registering twice keeps the first, so a package
 // registered by two compositions does not have its sends counted twice.
-func Register(slug string, c Counter) {
+func (r *Registry) Register(slug string, c Counter) {
 	if slug == "" || c == nil {
 		return
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if bySlug[slug] {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.bySlug[slug] {
 		return
 	}
-	bySlug[slug] = true
-	counters = append(counters, registration{slug: slug, counter: c})
+	r.bySlug[slug] = true
+	r.counters = append(r.counters, registration{slug: slug, counter: c})
 }
 
 // Registered reports which packages have registered a counter.
-func Registered() []string {
-	mu.RLock()
-	defer mu.RUnlock()
-	out := make([]string, 0, len(counters))
-	for _, r := range counters {
-		out = append(out, r.slug)
+func (r *Registry) Registered() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, 0, len(r.counters))
+	for _, reg := range r.counters {
+		out = append(out, reg.slug)
 	}
 	return out
 }
@@ -79,14 +92,14 @@ func Registered() []string {
 // rate of zero and no rate at all — and a caller that cannot tell them apart
 // will compute a rate of infinity from a numerator over a denominator that
 // was never really zero.
-func Total(app core.App, since time.Time) (total int, partial bool, errs []error) {
-	mu.RLock()
-	snapshot := make([]registration, len(counters))
-	copy(snapshot, counters)
-	mu.RUnlock()
+func (r *Registry) Total(app core.App, since time.Time) (total int, partial bool, errs []error) {
+	r.mu.RLock()
+	snapshot := make([]registration, len(r.counters))
+	copy(snapshot, r.counters)
+	r.mu.RUnlock()
 
-	for _, r := range snapshot {
-		n, err := r.counter(app, since)
+	for _, reg := range snapshot {
+		n, err := reg.counter(app, since)
 		if err != nil {
 			partial = true
 			errs = append(errs, err)
@@ -97,10 +110,22 @@ func Total(app core.App, since time.Time) (total int, partial bool, errs []error
 	return total, partial, errs
 }
 
-// ResetForTesting clears the registry. A test that registers a counter must
-// call it (t.Cleanup) so the registration does not leak into the next test.
+// Register adds a counter to the default registry.
+func Register(slug string, c Counter) { defaultRegistry.Register(slug, c) }
+
+// Registered reports which packages registered on the default registry.
+func Registered() []string { return defaultRegistry.Registered() }
+
+// Total sums every counter on the default registry over the window.
+func Total(app core.App, since time.Time) (total int, partial bool, errs []error) {
+	return defaultRegistry.Total(app, since)
+}
+
+// ResetForTesting clears the default registry. A test that registers a counter
+// on it must call it (t.Cleanup) so the registration does not leak into the
+// next test.
 func ResetForTesting() {
-	mu.Lock()
-	counters, bySlug = nil, map[string]bool{}
-	mu.Unlock()
+	defaultRegistry.mu.Lock()
+	defaultRegistry.counters, defaultRegistry.bySlug = nil, map[string]bool{}
+	defaultRegistry.mu.Unlock()
 }
