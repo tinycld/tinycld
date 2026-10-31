@@ -2,6 +2,7 @@ package reports
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/inflector"
 
+	"tinycld.org/core/changesignal"
 	"tinycld.org/core/logging"
 )
 
@@ -24,7 +26,9 @@ const maxRunBody = 1 << 20
 // Register binds the report engine. When the server starts (after
 // migrations) it checks every registered source and logs each one it
 // refuses, so a broken source never reaches a user. It serves
-// POST /api/reports/run to signed-in users.
+// POST /api/reports/run to signed-in users: a draft spec, or a saved report
+// the caller can view. Saved reports and their shares are bound by
+// RegisterSharing.
 //
 // The run endpoint is a read endpoint by POST because a draft spec does not
 // fit in a URL. It reads only rows the caller's list rules allow and
@@ -51,11 +55,13 @@ func Register(app core.App) {
 	})
 }
 
-// runBody is a draft report run: a spec, never SQL.
+// runBody is one report run: a draft spec, or the id of a saved report the
+// caller can view. Never SQL.
 type runBody struct {
-	Spec    json.RawMessage            `json:"spec"`
-	Params  map[string]json.RawMessage `json:"params"`
-	Options Options                    `json:"options"`
+	Spec     json.RawMessage            `json:"spec"`
+	ReportID string                     `json:"reportId"`
+	Params   map[string]json.RawMessage `json:"params"`
+	Options  Options                    `json:"options"`
 }
 
 func handleRun(re *core.RequestEvent) error {
@@ -68,10 +74,20 @@ func handleRun(re *core.RequestEvent) error {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return re.BadRequestError("The request is not a report run: it has data after the first object.", nil)
 	}
-	if body.Spec == nil {
-		return re.BadRequestError("The request has no spec.", nil)
+	raw := []byte(body.Spec)
+	saved := body.ReportID != ""
+	switch {
+	case saved && body.Spec != nil:
+		return re.BadRequestError("The request has a spec or a reportId, not both.", nil)
+	case saved:
+		var err error
+		if raw, err = viewableSpec(re, body.ReportID); err != nil {
+			return err
+		}
+	case body.Spec == nil:
+		return re.BadRequestError("The request has no spec and no reportId.", nil)
 	}
-	spec, loaded, err := Load(body.Spec)
+	spec, loaded, err := Load(raw)
 	if err != nil {
 		return runError(re, err)
 	}
@@ -82,7 +98,57 @@ func handleRun(re *core.RequestEvent) error {
 	if err != nil {
 		return runError(re, err)
 	}
+	if saved {
+		res.Topics = withSavedTopics(res.Topics)
+	}
 	return re.JSON(http.StatusOK, res)
+}
+
+const noAccess = "You cannot view this report."
+
+// viewableSpec reads a saved report's spec for the caller, through the
+// reports view rule as PocketBase's view API applies it. A report that does
+// not exist answers as one the caller cannot view, so an id tells nobody
+// whether a report exists. Any other failure, such as a database error or a
+// rule that cannot be built, is a server fault: it is logged and answered
+// 500, never as a refusal.
+func viewableSpec(re *core.RequestEvent, id string) ([]byte, error) {
+	ctx := re.Request.Context()
+	col, err := re.App.FindCachedCollectionByNameOrId(reportsCollection)
+	if err != nil {
+		log.ErrorContext(ctx, "saved report run: collection lookup failed", "err", err)
+		return nil, re.InternalServerError("The report could not run.", nil)
+	}
+	rec, err := re.App.FindRecordById(col, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, re.ForbiddenError(noAccess, fieldError("reportId", "no_access", noAccess))
+	}
+	if err != nil {
+		log.ErrorContext(ctx, "saved report run: report lookup failed", "reportId", id, "err", err)
+		return nil, re.InternalServerError("The report could not run.", nil)
+	}
+	ok, err := re.App.CanAccessRecord(rec, listRequestInfo(re.Auth, ruleHeaders(re.Request.Header)), col.ViewRule)
+	if err != nil {
+		log.ErrorContext(ctx, "saved report run: view rule failed", "reportId", id, "err", err)
+		return nil, re.InternalServerError("The report could not run.", nil)
+	}
+	if !ok {
+		return nil, re.ForbiddenError(noAccess, fieldError("reportId", "no_access", noAccess))
+	}
+	return specBytes(rec), nil
+}
+
+// withSavedTopics adds the saved-report collections to a run's topics, so
+// the open report runs again when someone edits it or changes its shares,
+// and learns when the reader loses access.
+func withSavedTopics(topics []string) []string {
+	for _, c := range []string{reportsCollection, sharesCollection} {
+		if t := changesignal.Topic(c); !slices.Contains(topics, t) {
+			topics = append(topics, t)
+		}
+	}
+	slices.Sort(topics)
+	return topics
 }
 
 // ruleHeaders are the headers as a rule's @request.headers reads them:
