@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,13 +33,12 @@ const (
 	fileStorage  = "storage.tar"
 )
 
-// Register adds the pbs kind unless it is already there. It checks the
-// registry rather than using sync.Once, so a test that resets the registry
-// can register it again.
+// Register adds the pbs kind unless it is already there. Every app composed in
+// the process calls it, possibly at the same time. It checks the registry
+// rather than using sync.Once, so a test that resets the registry can register
+// it again.
 func Register() {
-	if !slices.Contains(repo.Kinds(), Kind) {
-		repo.Register(Kind, Open)
-	}
+	repo.RegisterIfAbsent(Kind, Open)
 }
 
 // putState is the progress state for one in-flight Put. It is swapped in
