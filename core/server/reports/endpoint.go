@@ -32,11 +32,11 @@ func sortedKeys(refused map[string]string) []string {
 
 // Register binds the report engine. When the server starts (after
 // migrations) it checks every registered source and logs each one it
-// refuses, so a broken source never reaches a user; then it marks every
-// saved report that cannot run (checkSavedAtStart). It serves POST
-// /api/reports/run to signed-in users: a draft spec, or a saved report the
-// caller can view. Saved reports and their shares are bound by
-// RegisterSharing.
+// refuses, so a broken source never reaches a user; then it ships the
+// packages' reports (ReconcileShipped) and marks every saved report that
+// cannot run (checkSavedAtStart). It serves POST /api/reports/run to
+// signed-in users: a draft spec, or a saved report the caller can view.
+// Saved reports and their shares are bound by RegisterSharing.
 //
 // The run endpoint is a read endpoint by POST because a draft spec does not
 // fit in a URL. It reads only rows the caller's list rules allow and
@@ -51,6 +51,9 @@ func Register(app core.App) {
 			for _, key := range sortedKeys(refused) {
 				log.Error("report source refused", "source", key, "reason", refused[key])
 			}
+		}
+		if err := ReconcileShipped(e.App); err != nil {
+			log.Error("shipped reports not reconciled", "err", err)
 		}
 		checkSavedAtStart(e.App)
 		e.Router.POST("/api/reports/run", handleRun).

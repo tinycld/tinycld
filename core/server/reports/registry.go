@@ -323,10 +323,14 @@ func (f *Field) allows(a Aggregate) bool {
 	return slices.Contains(f.Aggregates, a)
 }
 
-// ResetForTesting empties the registry. Tests register their own sources.
+// ResetForTesting empties the registry and the shipped reports. Tests
+// register their own.
 func ResetForTesting() {
 	mu.Lock()
-	defer mu.Unlock()
 	sources = map[string]*Source{}
 	refused = map[string]string{}
+	mu.Unlock()
+	shippedMu.Lock()
+	shipped = map[string]Shipped{}
+	shippedMu.Unlock()
 }

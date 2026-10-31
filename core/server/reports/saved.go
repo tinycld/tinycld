@@ -96,16 +96,12 @@ func prepareSpec(e *core.RecordRequestEvent, original *core.Record) error {
 		msg := fmt.Sprintf("A report spec has at most %d bytes.", maxSpecBytes)
 		return e.BadRequestError(msg, fieldError("spec", "too_large", msg))
 	}
-	spec, _, err := Load(raw)
+	spec, stored, err := loadStored(raw)
 	if err != nil {
 		if original != nil && bytes.Equal(raw, specBytes(original)) {
 			return nil
 		}
 		return specRefusal(e, err)
-	}
-	stored, err := json.Marshal(spec)
-	if err != nil {
-		return err
 	}
 	if original == nil || !sameSpec(specBytes(original), stored) {
 		if err := Validate(spec); err != nil {
@@ -118,6 +114,21 @@ func prepareSpec(e *core.RecordRequestEvent, original *core.Record) error {
 	return nil
 }
 
+// loadStored reads a spec as a run reads it and returns it with the bytes
+// that are stored for it: upgraded, aliases resolved. A client save and a
+// shipped report both store this form.
+func loadStored(raw []byte) (*Spec, []byte, error) {
+	spec, _, err := Load(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	stored, err := json.Marshal(spec)
+	if err != nil {
+		return nil, nil, err
+	}
+	return spec, stored, nil
+}
+
 // specBytes is a report's stored or posted spec.
 func specBytes(r *core.Record) []byte {
 	raw, _ := r.Get("spec").(types.JSONRaw)
@@ -127,11 +138,7 @@ func specBytes(r *core.Record) []byte {
 // sameSpec reports whether the stored spec, loaded, is the loaded spec
 // about to be stored.
 func sameSpec(raw, stored []byte) bool {
-	spec, _, err := Load(raw)
-	if err != nil {
-		return false
-	}
-	before, err := json.Marshal(spec)
+	_, before, err := loadStored(raw)
 	return err == nil && bytes.Equal(before, stored)
 }
 

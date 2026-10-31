@@ -25,7 +25,10 @@ func RegisterSharing(app core.App) {
 	groups.RegisterGrantTable(groups.GrantTable{Collection: sharesCollection, ResourceField: "report"})
 	app.OnRecordCreateRequest(reportsCollection).BindFunc(onReportCreate)
 	app.OnRecordUpdateRequest(reportsCollection).BindFunc(onReportUpdate)
+	app.OnRecordDeleteRequest(reportsCollection).BindFunc(onReportDelete)
 	app.OnRecordCreateRequest(sharesCollection).BindFunc(onShareCreate)
 	app.OnRecordUpdateRequest(sharesCollection).BindFunc(onShareUpdate)
 	app.OnRecordDeleteRequest(sharesCollection).BindFunc(onShareDelete)
+	app.OnRecordAfterCreateSuccess("users").BindFunc(shipForAdmin)
+	app.OnRecordAfterUpdateSuccess("users").BindFunc(shipForAdmin)
 }
