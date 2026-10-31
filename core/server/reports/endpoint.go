@@ -105,6 +105,15 @@ func ruleHeaders(h http.Header) map[string]string {
 // and it is not a server error.
 const statusClientClosed = 499
 
+// specStatus is how a refused spec is answered, by a run and by a save: 422
+// when it names something that does not exist, else 400.
+func specStatus(err *SpecError) (int, string) {
+	if err.Status == http.StatusUnprocessableEntity {
+		return http.StatusUnprocessableEntity, "The report names something that does not exist."
+	}
+	return http.StatusBadRequest, "The report is not valid."
+}
+
 // runError answers a failed run: 400 with each invalid part of the spec,
 // 422 naming each unknown source, link, field or column (and an amount too
 // large to total), 408 at the time limit, 499 when the client went away. Any
@@ -113,10 +122,9 @@ const statusClientClosed = 499
 func runError(re *core.RequestEvent, err error) error {
 	var specErr *SpecError
 	switch {
-	case errors.As(err, &specErr) && specErr.Status == http.StatusUnprocessableEntity:
-		return re.Error(http.StatusUnprocessableEntity, "The report names something that does not exist.", specErr.Problems)
 	case errors.As(err, &specErr):
-		return re.Error(http.StatusBadRequest, "The report is not valid.", specErr.Problems)
+		status, message := specStatus(specErr)
+		return re.Error(status, message, specErr.Problems)
 	case errors.Is(err, ErrTimeout):
 		return re.Error(http.StatusRequestTimeout, "The report took too long to run.", nil)
 	case errors.Is(err, ErrAmountTooLarge):
