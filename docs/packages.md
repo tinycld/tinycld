@@ -1213,9 +1213,9 @@ reports.RegisterShipped(reports.Shipped{
   skipped. Pin the spec in the package's tests: call `reports.CheckSources`,
   then `reports.Load` and `reports.Validate`.
 - A shipped report cannot be deleted while the package ships it. The
-  server answers "This report ships with a package. Its owner can unpublish
-  it instead." The report's owner (the first admin, unless someone moved it)
-  can unpublish it.
+  server answers "This report ships with a package. An admin who owns or
+  edits it can unpublish it instead." Only an admin with update access (the
+  report's owner or an editor) can change `published`.
 
 A source, link or field can disappear when a package is upgraded or removed.
 Saved reports then cannot run: a run answers 422 and names the missing part.
@@ -1230,10 +1230,16 @@ It exits non-zero when a saved report is broken or a report source is
 refused. Keep an alias for every renamed field or link (see "Report sources"
 above), so saved reports keep working.
 
-When a user is offboarded, their reports go to the successor, or are deleted
-with their shares. A published or shipped report is never deleted, in any
-mode: it goes to the successor, the admin who offboards the user, or the first
-admin.
+When a user is offboarded, each offboard mode settles their reports:
+
+- Reassign: every report goes to the successor.
+- Delete: each unpublished report is deleted with its shares.
+- Keep: each unpublished report stays with the anonymized account.
+
+In every mode, a published or shipped report goes to the heir and is never
+deleted. The heir is the successor, else the admin who offboards the user,
+else the first admin. When no heir exists, the offboard is refused and
+nothing changes.
 
 ### Test build tag
 
