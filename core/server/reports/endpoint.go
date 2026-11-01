@@ -35,7 +35,8 @@ func sortedKeys(refused map[string]string) []string {
 // refuses, so a broken source never reaches a user; then it ships the
 // packages' reports (ReconcileShipped) and marks every saved report that
 // cannot run (checkSavedAtStart). It serves POST /api/reports/run to
-// signed-in users: a draft spec, or a saved report the caller can view.
+// signed-in users: a draft spec, or a saved report the caller can view; and
+// GET /api/reports/sources, the catalog the builder offers (Catalog).
 // Saved reports and their shares are bound by RegisterSharing.
 //
 // The run endpoint is a read endpoint by POST because a draft spec does not
@@ -58,6 +59,8 @@ func Register(app core.App) {
 		checkSavedAtStart(e.App)
 		e.Router.POST("/api/reports/run", handleRun).
 			Bind(apis.RequireAuth("users"), apis.BodyLimit(maxRunBody))
+		e.Router.GET("/api/reports/sources", handleSources).
+			Bind(apis.RequireAuth("users"))
 		return e.Next()
 	})
 }
