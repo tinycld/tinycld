@@ -145,7 +145,7 @@ func (r *rowsCTE) formulaCurrencies(n *Node) {
 		return
 	}
 	if n.Path != nil {
-		if bound, err := bindValuePath(r.c.p.base, n.Path, "", pathValue); err == nil {
+		if bound, err := bindValuePath(r.c.p.app, r.c.p.base, n.Path, "", pathValue); err == nil {
 			r.pathCurrency(bound)
 		}
 	}

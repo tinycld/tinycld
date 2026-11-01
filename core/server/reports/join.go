@@ -4,12 +4,13 @@ import (
 	"fmt"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // bindValuePath binds a filter's or formula's path: to-one links, then a
-// field.
-func bindValuePath(src *Source, path Path, at string, kind pathKind) (*pathPlan, error) {
-	b := &binder{invalid: map[string]validation.Error{}, unknown: map[string]validation.Error{}}
+// field. A link to a source CheckSources refused for app is unknown.
+func bindValuePath(app core.App, src *Source, path Path, at string, kind pathKind) (*pathPlan, error) {
+	b := &binder{app: app, invalid: map[string]validation.Error{}, unknown: map[string]validation.Error{}}
 	p := b.path(src, path, at, kind, "")
 	if err := b.err(); err != nil {
 		return nil, err
@@ -69,7 +70,7 @@ func (j *joinCtx) col(id, at string) (expr, error) {
 }
 
 func (j *joinCtx) path(p Path, at string) (expr, error) {
-	bound, err := bindValuePath(j.src, p, at, pathValue)
+	bound, err := bindValuePath(j.r.c.p.app, j.src, p, at, pathValue)
 	if err != nil {
 		return expr{}, err
 	}
@@ -97,7 +98,7 @@ func (j *joinCtx) exists(n *Node, at string) (expr, error) {
 	if !j.isFilter {
 		return expr{}, invalid(at, n.Op+" belongs in the filter")
 	}
-	link, err := bindValuePath(j.src, n.Link, at+".link", pathLinks)
+	link, err := bindValuePath(j.r.c.p.app, j.src, n.Link, at+".link", pathLinks)
 	if err != nil {
 		return expr{}, err
 	}

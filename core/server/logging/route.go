@@ -4,9 +4,12 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/appstate"
 )
 
 // appContextKey carries the app a record belongs to.
@@ -36,9 +39,22 @@ func AppFrom(ctx context.Context) (core.App, bool) {
 }
 
 // defaultAppHolder wraps the app so an atomic.Pointer can hold an interface.
-type defaultAppHolder struct{ app core.App }
+// id is the app's appstate.ID, which is the same for an app reopened on the
+// same data dir.
+type defaultAppHolder struct {
+	app core.App
+	id  string
+}
 
-var defaultApp atomic.Pointer[defaultAppHolder]
+var (
+	defaultApp atomic.Pointer[defaultAppHolder]
+	// defaultAppMu orders SetDefaultApp calls, so the check for a different
+	// app and the store that follows it are one step. DefaultApp does not
+	// take it.
+	defaultAppMu sync.Mutex
+)
+
+var defaultAppLog = ForPackage("logging")
 
 // SetDefaultApp names the app that owns records with no app in their context,
 // and makes the process Sentry hub that app's hub. Only a process that runs
@@ -46,13 +62,32 @@ var defaultApp atomic.Pointer[defaultAppHolder]
 // how a standalone server kept writing startup and ticker records to its
 // _logs table before apps could share a process. Call it before anything
 // asks for the app's hub. Nil clears it.
+//
+// While one app is the default, a call with a different app (another data
+// dir) logs an error and changes nothing: records with no app must not move
+// to whichever app was set last, and a second app must not take the process
+// hub. A call with the same app, or with an app reopened on the same data
+// dir, replaces it.
 func SetDefaultApp(app core.App) {
 	if app == nil {
+		defaultAppMu.Lock()
 		defaultApp.Store(nil)
+		defaultAppMu.Unlock()
+		return
+	}
+	next := &defaultAppHolder{app: app, id: appstate.ID(app)}
+
+	defaultAppMu.Lock()
+	cur := defaultApp.Load()
+	if cur != nil && cur.id != next.id {
+		defaultAppMu.Unlock()
+		defaultAppLog.Error("a second app cannot be the default log app; keeping the first",
+			"defaultDataDir", cur.app.DataDir(), "refusedDataDir", app.DataDir())
 		return
 	}
 	hubKey.Set(app, processHub())
-	defaultApp.Store(&defaultAppHolder{app: app})
+	defaultApp.Store(next)
+	defaultAppMu.Unlock()
 }
 
 // DefaultApp returns the app SetDefaultApp named, or nil.

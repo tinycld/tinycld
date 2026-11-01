@@ -17,6 +17,8 @@ import (
 	"sync"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/appstate"
 )
 
 // FieldType sets which formats and aggregates a field offers.
@@ -128,15 +130,22 @@ var idField = Field{Key: "id", Column: "id", Label: "ID", Type: Relation, Aggreg
 var (
 	mu      sync.RWMutex
 	sources = map[string]*Source{}
-	refused = map[string]string{}
 )
+
+// refusedKey holds, for one app, the sources CheckSources refused on that
+// app's database, each with its reason. Sources are registered once for the
+// process, but two apps can differ in a collection, a column or a rule, so a
+// refusal belongs to the app that was checked. CheckSources stores a new map
+// each time and never changes a stored one, so a reader needs no lock.
+var refusedKey = appstate.NewKey[map[string]string]("reports.refused")
 
 // RegisterSource adds a package's source. Call it from the package's
 // Register(app). Registering a key again replaces the source, so a dev
 // reload does not duplicate it. A malformed source panics at boot: it is a
 // wiring mistake in the package's code. What needs the database (the
-// collection, its columns, its list rule) is checked when the server starts;
-// see CheckSources.
+// collection, its columns, its list rule) is checked for each app when it
+// starts; see CheckSources. A source an app refused stays refused there until
+// CheckSources runs on that app again.
 func RegisterSource(src Source) {
 	// The registry keeps its own copies: validation fills in default columns.
 	src.Fields = slices.Clone(src.Fields)
@@ -151,7 +160,6 @@ func RegisterSource(src Source) {
 	mu.Lock()
 	defer mu.Unlock()
 	sources[src.Key] = &src
-	delete(refused, src.Key)
 }
 
 func validateSource(src *Source) error {
@@ -265,9 +273,10 @@ func validateLink(l Link) error {
 	return nil
 }
 
-// Sources returns the sources a report may use, sorted by key: every
-// registered source CheckSources has not refused.
-func Sources() []Source {
+// Sources returns the sources a report on app may use, sorted by key: every
+// registered source CheckSources has not refused for app.
+func Sources(app core.App) []Source {
+	refused := refusedKey.Get(app)
 	mu.RLock()
 	defer mu.RUnlock()
 	out := make([]Source, 0, len(sources))
@@ -280,20 +289,26 @@ func Sources() []Source {
 	return out
 }
 
-// Refused returns the sources CheckSources refused, each with its reason.
-func Refused() map[string]string {
-	mu.RLock()
-	defer mu.RUnlock()
-	return maps.Clone(refused)
+// Refused returns the sources CheckSources refused for app, each with its
+// reason.
+func Refused(app core.App) map[string]string {
+	return maps.Clone(refusedKey.Get(app))
 }
 
-// lookupSource returns a usable source, or nil for an unknown or refused key.
-func lookupSource(key string) *Source {
-	mu.RLock()
-	defer mu.RUnlock()
-	if _, bad := refused[key]; bad {
+// lookupSource returns a source a report on app may use, or nil for an
+// unknown key or a source CheckSources refused for app.
+func lookupSource(app core.App, key string) *Source {
+	if _, bad := refusedKey.Get(app)[key]; bad {
 		return nil
 	}
+	return lookupRegistered(key)
+}
+
+// lookupRegistered returns a registered source, refused or not. Load uses it
+// to resolve aliases, which needs no app; bind refuses what the app refused.
+func lookupRegistered(key string) *Source {
+	mu.RLock()
+	defer mu.RUnlock()
 	return sources[key]
 }
 
@@ -324,11 +339,11 @@ func (f *Field) allows(a Aggregate) bool {
 }
 
 // ResetForTesting empties the registry and the shipped reports. Tests
-// register their own.
+// register their own. Refusals live on each app, so a test's new app starts
+// with none.
 func ResetForTesting() {
 	mu.Lock()
 	sources = map[string]*Source{}
-	refused = map[string]string{}
 	mu.Unlock()
 	shippedMu.Lock()
 	shipped = map[string]Shipped{}

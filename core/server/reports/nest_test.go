@@ -141,7 +141,7 @@ func TestNestedParentsAboveTheLimitAreRefusedClearly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, specErr := bind(spec)
+	p, specErr := bind(z.app, spec)
 	if specErr != nil {
 		t.Fatal(specErr)
 	}

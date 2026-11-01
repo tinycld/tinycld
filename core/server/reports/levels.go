@@ -346,7 +346,7 @@ func (lv *level) readsRowValue(n *Node, inAggregate bool, seen map[string]bool) 
 // aggregate is: the rows of a group have no single value. The path is still
 // bound, so an unknown field or link is an error.
 func (lc *levelCtx) path(p Path, at string) (expr, error) {
-	bound, err := bindValuePath(lc.lv.c.p.base, p, at, pathValue)
+	bound, err := bindValuePath(lc.lv.c.p.app, lc.lv.c.p.base, p, at, pathValue)
 	if err != nil {
 		return expr{}, err
 	}

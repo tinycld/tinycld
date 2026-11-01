@@ -107,7 +107,7 @@ func prepareSpec(e *core.RecordRequestEvent, original *core.Record) error {
 		return specRefusal(e, err)
 	}
 	if original == nil || !sameSpec(specBytes(original), stored) {
-		if err := Validate(spec); err != nil {
+		if err := Validate(e.App, spec); err != nil {
 			return specRefusal(e, err)
 		}
 		e.Record.Set("broken", nil)

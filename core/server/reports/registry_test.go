@@ -28,7 +28,7 @@ func TestRegisterSourceAddsTheIDFieldAndDefaultColumns(t *testing.T) {
 	t.Cleanup(ResetForTesting)
 	src := validZooSource()
 	RegisterSource(src)
-	got := lookupSource("zoo.feedings")
+	got := lookupSource(bareApp(t), "zoo.feedings")
 	if got == nil {
 		t.Fatal("source not registered")
 	}
@@ -53,7 +53,7 @@ func TestRegisterSourceReplacesTheSameKey(t *testing.T) {
 	again := validZooSource()
 	again.Label = "Meals"
 	RegisterSource(again)
-	all := Sources()
+	all := Sources(bareApp(t))
 	if len(all) != 1 || all[0].Label != "Meals" {
 		t.Fatalf("Sources = %+v", all)
 	}
@@ -106,7 +106,7 @@ func TestRegisterSourceRefusesMalformedSources(t *testing.T) {
 
 // Core itself registers no source: every source belongs to a package.
 func TestCoreRegistersNoSources(t *testing.T) {
-	if got := Sources(); len(got) != 0 {
+	if got := Sources(bareApp(t)); len(got) != 0 {
 		t.Fatalf("core registered sources: %v", got)
 	}
 }

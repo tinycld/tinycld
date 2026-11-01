@@ -166,7 +166,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	if req.Auth == nil || req.Auth.IsSuperuser() {
 		return nil, ErrNoReader
 	}
-	p, specErr := bind(req.Spec)
+	p, specErr := bind(app, req.Spec)
 	if specErr != nil {
 		return nil, specErr
 	}

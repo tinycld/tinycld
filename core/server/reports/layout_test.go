@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // A statement in the zoo: sections pick first-level groups by key, computed
@@ -72,7 +74,7 @@ func TestLayoutErrors(t *testing.T) {
 			_, err := z.try(t, "ann", fmt.Sprintf(base, c.row), Options{}, nil)
 			requireSpecError(t, err, c.status, c.at, c.want)
 			spec, _, _ := Load([]byte(fmt.Sprintf(base, c.row)))
-			requireSpecError(t, Validate(spec), c.status, c.at, c.want)
+			requireSpecError(t, Validate(z.app, spec), c.status, c.at, c.want)
 		})
 	}
 }
@@ -138,13 +140,13 @@ func TestLayoutRefusesBadSectionKeys(t *testing.T) {
 	_, err := z.try(t, "ann", object, Options{}, nil)
 	requireSpecError(t, err, 400, "layout.0.key", "a section key is")
 	spec, _, _ := Load([]byte(object))
-	requireSpecError(t, Validate(spec), 400, "layout.0.key", "a section key is")
+	requireSpecError(t, Validate(z.app, spec), 400, "layout.0.key", "a section key is")
 
 	twice := layoutOf(lions + `,{"section":"again","title":"Again","key":"lion"}`)
 	_, err = z.try(t, "ann", twice, Options{}, nil)
 	requireSpecError(t, err, 400, "layout.1.key", "same group")
 	spec, _, _ = Load([]byte(twice))
-	requireSpecError(t, Validate(spec), 400, "layout.1.key", "same group")
+	requireSpecError(t, Validate(z.app, spec), 400, "layout.1.key", "same group")
 }
 
 func TestLayoutComputedRowsWithNothingVisible(t *testing.T) {
@@ -231,7 +233,7 @@ func TestLayoutRefusesAWideExpansion(t *testing.T) {
 		_, err := z.try(t, "ann", raw, Options{}, nil)
 		requireTooLarge(t, err)
 		spec, _, _ := Load([]byte(raw))
-		requireTooLarge(t, Validate(spec))
+		requireTooLarge(t, Validate(z.app, spec))
 		if time.Since(start) > 2*time.Second {
 			t.Fatalf("n=%d took %v", n, time.Since(start))
 		}
@@ -292,9 +294,9 @@ func manySections(sections, rows int) string {
 
 // layoutStatement compiles a spec's group statement as Validate does, with
 // three pivot values.
-func layoutStatement(t *testing.T, raw string) string {
+func layoutStatement(t *testing.T, app core.App, raw string) string {
 	t.Helper()
-	p, specErr := bind(loadSpec(t, raw))
+	p, specErr := bind(app, loadSpec(t, raw))
 	if specErr != nil {
 		t.Fatal(specErr)
 	}
@@ -316,9 +318,9 @@ func layoutStatement(t *testing.T, raw string) string {
 // read. A statement that re-read the sections per leaf would grow with the
 // leaves and pass the time limit.
 func TestLayoutManySectionsReadsEachSectionOnce(t *testing.T) {
-	withZooRegistry(t)
+	app := withZooRegistry(t)
 	for _, rows := range []int{29, 58} {
-		sql := layoutStatement(t, manySections(142, rows))
+		sql := layoutStatement(t, app, manySections(142, rows))
 		// 142 sections, each with 4 cells: cost and three pivot cells.
 		if n := strings.Count(sql, "MAX(CASE WHEN k0 IS"); n != 142*4 {
 			t.Fatalf("%d rows: %d section cell reads, want %d", rows, n, 142*4)
@@ -360,7 +362,7 @@ func TestLayoutSectionIdsThatDifferInCase(t *testing.T) {
 }
 
 func TestLayoutValidateCountsTheWidestPivot(t *testing.T) {
-	newZoo(t)
+	z := newZoo(t)
 	doubling := lions + `,{"row":"r0","label":"R","formula":{"subtotal":"cats"}}`
 	for i := 1; i <= 6; i++ {
 		doubling += fmt.Sprintf(`,{"row":"r%d","label":"R","formula":{"op":"add","args":[{"subtotal":"r%d"},{"subtotal":"r%d"}]}}`, i, i-1, i-1)
@@ -369,9 +371,9 @@ func TestLayoutValidateCountsTheWidestPivot(t *testing.T) {
 		return strings.Replace(layoutOf(doubling), `"groups"`, fmt.Sprintf(`"pivot":{"path":[{"field":"fed"}],"bucket":"month","cell":"cost","maxColumns":%d},"groups"`, maxColumns), 1)
 	}
 	narrow, _, _ := Load([]byte(with(1)))
-	if err := Validate(narrow); err != nil {
+	if err := Validate(z.app, narrow); err != nil {
 		t.Fatalf("one pivot column: %v", err)
 	}
 	wide, _, _ := Load([]byte(with(100)))
-	requireTooLarge(t, Validate(wide))
+	requireTooLarge(t, Validate(z.app, wide))
 }

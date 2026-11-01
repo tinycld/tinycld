@@ -134,7 +134,7 @@ func CheckSaved(app core.App) (*CheckResult, error) {
 		}
 		for _, rec := range batch {
 			res.Checked++
-			broken := checkSpec(specBytes(rec))
+			broken := checkSpec(app, specBytes(rec))
 			if broken != nil {
 				res.Broken = append(res.Broken, BrokenReport{ID: rec.Id, Title: rec.GetString("title"), OwnerID: rec.GetString("owner"), Broken: *broken})
 			}
@@ -163,11 +163,12 @@ func CheckSaved(app core.App) (*CheckResult, error) {
 	return res, nil
 }
 
-// checkSpec is nil for a spec that loads and validates, else why it fails.
-func checkSpec(raw []byte) *Broken {
+// checkSpec is nil for a spec that loads and validates on app, else why it
+// fails.
+func checkSpec(app core.App, raw []byte) *Broken {
 	spec, _, err := Load(raw)
 	if err == nil {
-		err = Validate(spec)
+		err = Validate(app, spec)
 	}
 	if err == nil {
 		return nil

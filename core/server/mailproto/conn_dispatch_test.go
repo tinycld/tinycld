@@ -154,6 +154,28 @@ func TestServeIMAPConn_RefusedOnceTheServerStops(t *testing.T) {
 	}
 }
 
+// A process that holds many apps opens and closes them at any time, so a stop
+// can come before the server's serve loop has started. go-imap's Close waits
+// for the serve loops it counts, and Serve counts itself after it registers
+// its listener, with no lock between them: closing the server before the loop
+// has returned races (run with -race).
+func TestStartIMAP_StopRightAfterStart(t *testing.T) {
+	app := newTestApp(t)
+	for range 50 {
+		shutdown, err := StartIMAP(app, nil, IMAPOptions{
+			NewSession: func(app core.App, _ *imapserver.Conn) imapserver.Session {
+				return &loginSession{app: app}
+			},
+			Listen:      Dispatched,
+			ExternalTLS: true,
+		})
+		if err != nil {
+			t.Fatalf("StartIMAP: %v", err)
+		}
+		shutdown()
+	}
+}
+
 // namedBackend refuses every session with its own name, so a reply tells
 // which server answered.
 type namedBackend string

@@ -10,20 +10,22 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// CheckSources checks every registered source against the database: its
+// CheckSources checks every registered source against app's database: its
 // collection and columns exist with matching types, no column is hidden from
 // the API, each link follows a single relation to its target, and the
 // collection's list rule can be built for a reader. A source that fails, or
-// links to one that fails, is refused: Sources leaves it out and a report
-// that names it gets an unknown-source error. The result names every refused
-// source and why.
+// links to one that fails, is refused for app: Sources(app) leaves it out and
+// a report on app that names it gets an unknown-source error. Each call
+// replaces app's refusals and changes no other app's. The result names every
+// refused source and why.
 //
-// The server runs it once at start, after migrations. A package calls it in
-// its tests after its migrations apply, so a broken source fails there.
+// The server runs it once for each app at start, after migrations. A package
+// calls it in its tests after its migrations apply, so a broken source fails
+// there.
 func CheckSources(app core.App) error {
-	mu.Lock()
-	defer mu.Unlock()
-	refused = map[string]string{}
+	mu.RLock()
+	defer mu.RUnlock()
+	refused := map[string]string{}
 	keys := make([]string, 0, len(sources))
 	for key := range sources {
 		keys = append(keys, key)
@@ -50,6 +52,7 @@ func CheckSources(app core.App) error {
 			}
 		}
 	}
+	refusedKey.Set(app, refused)
 	if len(refused) == 0 {
 		return nil
 	}
@@ -62,7 +65,7 @@ func CheckSources(app core.App) error {
 	return errors.New("reports: " + strings.Join(lines, "; "))
 }
 
-// checkSource runs under mu.
+// checkSource runs under mu (read).
 func checkSource(app core.App, src *Source) []string {
 	col, err := app.FindCollectionByNameOrId(src.Collection)
 	if err != nil {

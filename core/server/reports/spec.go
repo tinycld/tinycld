@@ -230,10 +230,12 @@ func upgrade(raw []byte, steps map[int]upgradeStep, target int) ([]byte, int, er
 }
 
 // resolveAliases replaces an aliased link or field key on every path with
-// its current key. A key it cannot place (an unknown source, a link that
-// does not exist) is left for Validate to report.
+// its current key. It reads every registered source, refused or not: Load
+// has no app, and bind refuses a source the app refused. A key it cannot
+// place (an unknown source, a link that does not exist) is left for Validate
+// to report.
 func resolveAliases(spec *Spec) []Alias {
-	base := lookupSource(spec.Source)
+	base := lookupRegistered(spec.Source)
 	if base == nil {
 		return nil
 	}
@@ -263,7 +265,7 @@ func aliasPath(src *Source, path Path, out *[]Alias) *Source {
 			if l == nil {
 				return nil
 			}
-			src = lookupSource(l.Target)
+			src = lookupRegistered(l.Target)
 			if src == nil {
 				return nil
 			}

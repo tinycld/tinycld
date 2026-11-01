@@ -169,7 +169,11 @@ func TestVacuumInto_FailedRestoreLeavesNoPermissiveConnection(t *testing.T) {
 			_ = c.Close()
 		}
 	}()
-	for i := 0; i < noAttachPoolWidth; i++ {
+	width := sqlDB.Stats().MaxOpenConnections
+	if width < 1 {
+		t.Fatalf("the writer pool has no cap (MaxOpenConnections %d); the probe cannot hold every connection", width)
+	}
+	for i := 0; i < width; i++ {
 		conn, cerr := sqlDB.Conn(context.Background())
 		if cerr != nil {
 			t.Fatalf("checking out connection %d: %v", i, cerr)
@@ -181,7 +185,3 @@ func TestVacuumInto_FailedRestoreLeavesNoPermissiveConnection(t *testing.T) {
 		}
 	}
 }
-
-// noAttachPoolWidth mirrors core.NoAttachDBConnect's SetMaxOpenConns: holding
-// this many connections at once is what makes the probe above exhaustive.
-const noAttachPoolWidth = 24
