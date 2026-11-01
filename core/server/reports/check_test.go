@@ -12,7 +12,7 @@ func TestCheckSourcesPassesTheZoo(t *testing.T) {
 	if err := CheckSources(z.app); err != nil {
 		t.Fatalf("CheckSources: %v", err)
 	}
-	if got := len(Sources()); got != 6 {
+	if got := len(Sources(z.app)); got != 6 {
 		t.Fatalf("%d sources, want 6", got)
 	}
 }
@@ -72,13 +72,13 @@ func TestCheckSourcesRefusesASourceThatDoesNotMatchTheSchema(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("CheckSources = %v, want it to contain %q", err, c.want)
 			}
-			if _, bad := Refused()[c.src.Key]; !bad {
+			if _, bad := Refused(z.app)[c.src.Key]; !bad {
 				t.Fatalf("%s not refused", c.src.Key)
 			}
-			if lookupSource(c.src.Key) != nil {
+			if lookupSource(z.app, c.src.Key) != nil {
 				t.Fatal("a refused source is still usable")
 			}
-			if lookupSource("zoo.animals") == nil {
+			if lookupSource(z.app, "zoo.animals") == nil {
 				t.Fatal("a sound source was refused")
 			}
 		})
@@ -99,7 +99,7 @@ func TestCheckSourcesRefusesARuleThatCannotBeBuiltAndEveryLinkToIt(t *testing.T)
 	if err == nil || !strings.Contains(err.Error(), `the list rule of "zoo_sites" cannot be built`) {
 		t.Fatalf("CheckSources = %v", err)
 	}
-	refusedNow := Refused()
+	refusedNow := Refused(z.app)
 	for _, key := range []string{"zoo.sites", "zoo.animals", "zoo.feedings", "zoo.keepers", "zoo.vault"} {
 		if _, bad := refusedNow[key]; !bad {
 			t.Errorf("%s is not refused", key)

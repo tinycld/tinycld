@@ -44,7 +44,7 @@ func NewCommand(app *pocketbase.PocketBase) *cobra.Command {
 func validateSaved(app core.App, out io.Writer) error {
 	refusedCount := 0
 	if err := CheckSources(app); err != nil {
-		refused := Refused()
+		refused := Refused(app)
 		refusedCount = len(refused)
 		for _, key := range sortedKeys(refused) {
 			fmt.Fprintf(out, "source %s is refused: %s\n", key, refused[key])

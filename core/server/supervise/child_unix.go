@@ -1,4 +1,4 @@
-//go:build unix
+//go:build linux || darwin
 
 package supervise
 
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"tinycld.org/core/listeners"
+	"tinycld.org/core/procgroup"
 )
 
 // controlSendTimeout bounds a write to a child's control socket, so a child
@@ -54,6 +55,8 @@ type child struct {
 	// kept until the supervisor can act on it. Only the supervisor's own
 	// goroutine touches it.
 	pendingRestart *Msg
+	// group signals the child's process group until the child is reaped.
+	group *procgroup.Leader
 	// done is closed once the child has exited and code is set.
 	done  chan struct{}
 	code  int
@@ -95,6 +98,7 @@ func startChild(spec childSpec) (*child, error) {
 		ports: passed,
 		ctl:   ctl,
 		msgs:  make(chan Msg, 8),
+		group: procgroup.New(cmd),
 		done:  make(chan struct{}),
 	}
 	started := make(chan error, 1)
@@ -129,7 +133,7 @@ func (c *child) run(cmd *exec.Cmd, started chan<- error) {
 		return
 	}
 	started <- nil
-	err := cmd.Wait()
+	err := c.group.Wait()
 	c.code = exitCode(cmd.ProcessState, err)
 	close(c.done)
 	c.ctl.Close()
@@ -250,12 +254,11 @@ func (c *child) send(m Msg) error {
 }
 
 // signalGroup signals the child's whole process group. It does nothing once
-// the child has been reaped, so a reused process group id is never hit.
+// the reap has begun (see procgroup), so a reused process group id is never
+// hit. done is no guard for that: run closes it only after the reap.
 func (c *child) signalGroup(sig syscall.Signal) {
-	if c.exited() {
-		return
-	}
-	if err := syscall.Kill(-c.pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+	err := c.group.Signal(sig)
+	if err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
 		log.Warn("could not signal a server", "pid", c.pid, "signal", sig, "err", err)
 	}
 }

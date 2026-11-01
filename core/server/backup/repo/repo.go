@@ -60,6 +60,17 @@ func Register(kind string, open Opener) {
 	openers[kind] = open
 }
 
+// RegisterIfAbsent adds kind unless it is already registered. The check and
+// the add happen under one lock, so apps composed at the same time in one
+// process cannot both see the kind absent.
+func RegisterIfAbsent(kind string, open Opener) {
+	mu.Lock()
+	defer mu.Unlock()
+	if _, ok := openers[kind]; !ok {
+		openers[kind] = open
+	}
+}
+
 func Open(kind string, cfg json.RawMessage) (Repository, error) {
 	mu.RLock()
 	open, ok := openers[kind]

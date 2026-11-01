@@ -478,7 +478,7 @@ func (app *BaseApp) ResetBootstrapState() error {
 // This method is no-op if the application is not bootstrapped yet.
 func (app *BaseApp) ClearBootstrap() error {
 	if !app.IsBootstrapped() {
-		return nil
+		return app.closePartialBootstrap() // fork: a failed Bootstrap may have stored some pools (bootstrap_partial_tinycld.go)
 	}
 
 	app.waitFileDeletes() // fork: no background storage delete outlives the bootstrap (files_delete_tinycld.go)
@@ -1272,18 +1272,18 @@ func (app *BaseApp) initDataDB() error {
 	concurrentDB.DB().SetMaxIdleConns(app.config.DataMaxIdleConns)
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
 	if err := ReapplyNoAttachLimits(concurrentDB.DB()); err != nil { // fork: see db_noattach.go
-		return err
+		return closeOpened(err, concurrentDB) // fork: bootstrap_partial_tinycld.go
 	}
 
 	nonconcurrentDB, err := app.config.DBConnect(dbPath)
 	if err != nil {
-		return err
+		return closeOpened(err, concurrentDB) // fork: bootstrap_partial_tinycld.go
 	}
 	nonconcurrentDB.DB().SetMaxOpenConns(1)
 	nonconcurrentDB.DB().SetMaxIdleConns(1)
 	nonconcurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
 	if err := ReapplyNoAttachLimits(nonconcurrentDB.DB()); err != nil { // fork: see db_noattach.go
-		return err
+		return closeOpened(err, concurrentDB, nonconcurrentDB) // fork: bootstrap_partial_tinycld.go
 	}
 
 	if app.IsDev() {
@@ -1340,18 +1340,18 @@ func (app *BaseApp) initAuxDB() error {
 	concurrentDB.DB().SetMaxIdleConns(app.config.AuxMaxIdleConns)
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
 	if err := ReapplyNoAttachLimits(concurrentDB.DB()); err != nil { // fork: see db_noattach.go
-		return err
+		return closeOpened(err, concurrentDB) // fork: bootstrap_partial_tinycld.go
 	}
 
 	nonconcurrentDB, err := app.config.DBConnect(dbPath)
 	if err != nil {
-		return err
+		return closeOpened(err, concurrentDB) // fork: bootstrap_partial_tinycld.go
 	}
 	nonconcurrentDB.DB().SetMaxOpenConns(1)
 	nonconcurrentDB.DB().SetMaxIdleConns(1)
 	nonconcurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
 	if err := ReapplyNoAttachLimits(nonconcurrentDB.DB()); err != nil { // fork: see db_noattach.go
-		return err
+		return closeOpened(err, concurrentDB, nonconcurrentDB) // fork: bootstrap_partial_tinycld.go
 	}
 
 	app.auxConcurrentDB = concurrentDB

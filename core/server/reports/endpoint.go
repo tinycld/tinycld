@@ -48,7 +48,7 @@ func sortedKeys(refused map[string]string) []string {
 func Register(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		if err := CheckSources(e.App); err != nil {
-			refused := Refused()
+			refused := Refused(e.App)
 			for _, key := range sortedKeys(refused) {
 				log.Error("report source refused", "source", key, "reason", refused[key])
 			}

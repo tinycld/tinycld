@@ -126,8 +126,8 @@ func TestABrokenMarkIsBounded(t *testing.T) {
 	for i := range 60 {
 		cols = append(cols, fmt.Sprintf(`{"id":"c%d","path":[{"field":"nope%d"}]}`, i, i))
 	}
-	newZoo(t) // registers the zoo sources
-	b := checkSpec([]byte(`{"version":1,"source":"zoo.feedings","columns":[` + strings.Join(cols, ",") + `]}`))
+	z := newZoo(t)
+	b := checkSpec(z.app, []byte(`{"version":1,"source":"zoo.feedings","columns":[` + strings.Join(cols, ",") + `]}`))
 	if b == nil {
 		t.Fatal("a spec with 60 bad columns has no mark")
 	}

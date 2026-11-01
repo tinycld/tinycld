@@ -6,7 +6,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"runtime"
 	"sync"
+	"weak"
 
 	"github.com/pocketbase/dbx"
 	sqlite "modernc.org/sqlite"
@@ -18,14 +20,18 @@ import (
 // https://www.sqlite.org/c3ref/c_limit_attached.html
 const sqliteLimitAttached = 7
 
-// noAttachMaxConns bounds the connection pool so every connection can be
-// primed up front. SQLITE_LIMIT_ATTACHED is a property of a connection, not of
-// a database, and database/sql opens connections lazily — so the only way to
-// guarantee no unrestricted connection is ever handed out is to cap the pool
-// and prime the whole cap before the pool is used.
+// noAttachMaxConns is the most connections a restricted pool may have, so
+// every connection can be primed up front. SQLITE_LIMIT_ATTACHED is a property
+// of a connection, not of a database, and database/sql opens connections
+// lazily — so the only way to guarantee no unrestricted connection is ever
+// handed out is to cap the pool and prime the whole cap before the pool is
+// used.
 //
-// PocketBase already runs its non-concurrent DB at 1 connection and its
-// concurrent DB at a small multiple; this cap sits above one org's normal load.
+// A pool that already has a smaller cap keeps it: PocketBase runs its
+// non-concurrent pools at 1 connection (a single writer), and an embedder may
+// give the concurrent pools a small DataMaxOpenConns/AuxMaxOpenConns. A pool
+// with no cap, or a larger one, is capped here. This sits above one org's
+// normal load.
 const noAttachMaxConns = 24
 
 // restrictedPools records every pool NoAttachDBConnect has primed, so the pool
@@ -36,7 +42,25 @@ const noAttachMaxConns = 24
 // legitimately open the same file with different policies — the router's
 // control plane and an org that runs in its own process, in the deployment
 // this exists for.
-var restrictedPools sync.Map // *sql.DB -> struct{}
+//
+// The key is a weak pointer, so a record does not keep a closed pool alive: a
+// process that opens and closes many apps opens new pools for its whole life,
+// and each closed pool kept about 3.6 KiB. A cleanup deletes the record when
+// the pool is collected.
+var restrictedPools sync.Map // weak.Pointer[sql.DB] -> struct{}
+
+// markRestricted records sqlDB as primed by NoAttachDBConnect.
+func markRestricted(sqlDB *sql.DB) {
+	key := weak.Make(sqlDB)
+	restrictedPools.Store(key, struct{}{})
+	runtime.AddCleanup(sqlDB, func(k weak.Pointer[sql.DB]) { restrictedPools.Delete(k) }, key)
+}
+
+// isRestricted reports whether NoAttachDBConnect primed sqlDB.
+func isRestricted(sqlDB *sql.DB) bool {
+	_, ok := restrictedPools.Load(weak.Make(sqlDB))
+	return ok
+}
 
 // NoAttachDBConnect opens a database whose connections cannot ATTACH another
 // file. Use it for any app that executes untrusted JS.
@@ -68,13 +92,16 @@ func NoAttachDBConnect(dbPath string) (*dbx.DB, error) {
 		db.Close()
 		return nil, err
 	}
-	restrictedPools.Store(db.DB(), struct{}{})
+	markRestricted(db.DB())
 	return db, nil
 }
 
 // ReapplyNoAttachLimits re-establishes the ATTACH restriction on a pool that
 // NoAttachDBConnect opened, and is a no-op for any other pool. Call it after
 // changing a pool's connection limits.
+//
+// It keeps the pool's own cap when that is set and below noAttachMaxConns
+// (see poolWidth), so set the cap first and call this after.
 //
 // This exists because the restriction is only as durable as the pool settings
 // it rests on. SQLITE_LIMIT_ATTACHED is per connection and database/sql opens
@@ -85,14 +112,15 @@ func NoAttachDBConnect(dbPath string) (*dbx.DB, error) {
 // without touching this file, which is why the re-priming lives next to the
 // original rather than at the call site.
 func ReapplyNoAttachLimits(sqlDB *sql.DB) error {
-	if _, ok := restrictedPools.Load(sqlDB); !ok {
+	if !isRestricted(sqlDB) {
 		return nil
 	}
 	return restrictAttach(sqlDB)
 }
 
 // restrictAttach caps the pool and sets SQLITE_LIMIT_ATTACHED to 0 on every
-// connection in it.
+// connection in it. The cap is the pool's own MaxOpenConns when that is set and
+// below noAttachMaxConns, else noAttachMaxConns (see poolWidth).
 //
 // Two pool properties make this sound, and both are load-bearing:
 //
@@ -100,30 +128,31 @@ func ReapplyNoAttachLimits(sqlDB *sql.DB) error {
 //     each before opening the next would let database/sql hand the same
 //     connection back repeatedly, priming one connection N times and leaving
 //     the rest untouched.
-//   - The idle pool is pinned so a primed connection is never discarded.
-//     database/sql closes idle connections on its own schedule and opens fresh,
-//     unprimed ones on demand; with the defaults, priming N connections and
-//     releasing them leaves only some primed, and the pool serves an
-//     unrestricted connection a few acquisitions later. Pinning is what makes
-//     "primed once at open" mean "primed for the life of the pool".
+//   - The idle pool is pinned to the cap so a primed connection is never
+//     discarded. database/sql closes idle connections on its own schedule and
+//     opens fresh, unprimed ones on demand; with the defaults, priming N
+//     connections and releasing them leaves only some primed, and the pool
+//     serves an unrestricted connection a few acquisitions later. Pinning is
+//     what makes "primed once at open" mean "primed for the life of the pool".
 //
 // The limit itself persists across a connection's return to and reuse from the
 // pool, so no re-priming is needed for as long as these hold.
 func restrictAttach(sqlDB *sql.DB) error {
-	sqlDB.SetMaxOpenConns(noAttachMaxConns)
-	sqlDB.SetMaxIdleConns(noAttachMaxConns)
+	width := poolWidth(sqlDB)
+	sqlDB.SetMaxOpenConns(width)
+	sqlDB.SetMaxIdleConns(width)
 	sqlDB.SetConnMaxIdleTime(0)
 	sqlDB.SetConnMaxLifetime(0)
 
 	ctx := context.Background()
-	conns := make([]*sql.Conn, 0, noAttachMaxConns)
+	conns := make([]*sql.Conn, 0, width)
 	defer func() {
 		for _, c := range conns {
 			c.Close()
 		}
 	}()
 
-	for i := 0; i < noAttachMaxConns; i++ {
+	for i := 0; i < width; i++ {
 		c, err := sqlDB.Conn(ctx)
 		if err != nil {
 			return fmt.Errorf("open connection %d to restrict ATTACH: %w", i, err)
@@ -141,6 +170,18 @@ func restrictAttach(sqlDB *sql.DB) error {
 		return err
 	}
 	return nil
+}
+
+// poolWidth is the number of connections restrictAttach keeps and primes: the
+// pool's own cap when it has one below noAttachMaxConns, else noAttachMaxConns.
+// A fresh pool has no cap (MaxOpenConnections 0), so NoAttachDBConnect primes
+// noAttachMaxConns; initDataDB and initAuxDB then set each pool's cap and call
+// ReapplyNoAttachLimits, which keeps that cap.
+func poolWidth(sqlDB *sql.DB) int {
+	if n := sqlDB.Stats().MaxOpenConnections; n > 0 && n < noAttachMaxConns {
+		return n
+	}
+	return noAttachMaxConns
 }
 
 // assertAttachBlocked verifies the restriction on a live connection. It targets

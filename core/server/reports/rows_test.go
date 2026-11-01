@@ -18,7 +18,7 @@ func (z *zoo) wRows(t *testing.T, user, raw string, params map[string]string) ([
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	p, specErr := bind(spec)
+	p, specErr := bind(z.app, spec)
 	if specErr != nil {
 		return nil, specErr
 	}
@@ -269,24 +269,24 @@ func TestAnUnsetParamUnderNotOrNotExistsMatchesEveryRow(t *testing.T) {
 // Validate checks a condition on a param as Run does: the param being unset
 // in a dry compile does not skip the argument count or the types.
 func TestValidateChecksAConditionOnAnUnsetParam(t *testing.T) {
-	withZooRegistry(t)
+	app := withZooRegistry(t)
 	spec := func(filter string) string {
 		return `{"version":1,"source":"zoo.feedings","params":[{"id":"n","type":"number"}],
 			"columns":[{"id":"note","path":[{"field":"note"}]}],"filter":` + filter + `}`
 	}
-	err := Validate(loadSpec(t, spec(`{"op":"gt","args":[{"path":[{"field":"note"}]},{"param":"n"}]}`)))
+	err := Validate(app, loadSpec(t, spec(`{"op":"gt","args":[{"path":[{"field":"note"}]},{"param":"n"}]}`)))
 	requireSpecError(t, err, 400, "filter", "compares numbers, dates or text")
-	err = Validate(loadSpec(t, spec(`{"op":"eq","args":[{"param":"n"}]}`)))
+	err = Validate(app, loadSpec(t, spec(`{"op":"eq","args":[{"param":"n"}]}`)))
 	requireSpecError(t, err, 400, "filter", "takes 2 values")
-	err = Validate(loadSpec(t, spec(`{"op":"not","args":[{"op":"between","args":[{"path":[{"field":"note"}]},{"param":"n"},{"value":true},{"value":1}]}]}`)))
+	err = Validate(app, loadSpec(t, spec(`{"op":"not","args":[{"op":"between","args":[{"path":[{"field":"note"}]},{"param":"n"},{"value":true},{"value":1}]}]}`)))
 	requireSpecError(t, err, 400, "filter.args.0", "between takes")
 }
 
 // A dry compile gives a param its default: Validate compiles what a run with
 // no posted value compiles.
 func TestValidateCompilesAParamWithItsDefault(t *testing.T) {
-	withZooRegistry(t)
-	p, err := bind(loadSpec(t, `{"version":1,"source":"zoo.feedings",
+	app := withZooRegistry(t)
+	p, err := bind(app, loadSpec(t, `{"version":1,"source":"zoo.feedings",
 		"params":[{"id":"n","type":"number","default":5},{"id":"t","type":"text"}],
 		"columns":[{"id":"note","path":[{"field":"note"}]}]}`))
 	if err != nil {
@@ -382,7 +382,7 @@ func TestAFormulaColumnIsAGroupKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, specErr := bind(spec)
+	p, specErr := bind(z.app, spec)
 	if specErr != nil {
 		t.Fatal(specErr)
 	}

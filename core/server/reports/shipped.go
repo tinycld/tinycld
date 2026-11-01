@@ -96,7 +96,7 @@ func ReconcileShipped(app core.App) error {
 		if rec != nil && rec.GetInt("shipped_revision") >= s.Revision {
 			continue
 		}
-		stored, source, err := shippedSpec(s)
+		stored, source, err := shippedSpec(app, s)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("shipped report %q: %w", key, err))
 			continue
@@ -133,13 +133,14 @@ func ReconcileShipped(app core.App) error {
 	return errors.Join(errs...)
 }
 
-// shippedSpec loads and validates a shipped spec, as a client save does.
-func shippedSpec(s Shipped) (types.JSONRaw, string, error) {
+// shippedSpec loads and validates a shipped spec on app, as a client save
+// does.
+func shippedSpec(app core.App, s Shipped) (types.JSONRaw, string, error) {
 	spec, stored, err := loadStored(s.Spec)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := Validate(spec); err != nil {
+	if err := Validate(app, spec); err != nil {
 		return nil, "", err
 	}
 	return stored, spec.Source, nil

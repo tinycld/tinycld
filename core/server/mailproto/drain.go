@@ -375,10 +375,15 @@ func (d *drain) shutdown(end context.Context) {
 			"server", d.label, "writes", writes, "cause", context.Cause(end))
 		return
 	}
+	// The listeners closed at the start, so every serve loop has returned or
+	// is returning. Wait for them before the server's Close: go-imap's Serve
+	// counts itself in a WaitGroup that its Close waits on, outside any lock,
+	// so a Close that can run before Serve has counted itself races (a stop
+	// right after the start).
+	d.served.Wait()
 	if d.closeServer != nil {
 		d.closeServer()
 	}
-	d.served.Wait()
 	d.byes.Wait()
 }
 
