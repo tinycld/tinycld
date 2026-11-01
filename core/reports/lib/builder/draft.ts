@@ -23,6 +23,7 @@ import {
     MAX_GROUP_LEVELS,
     MAX_HOPS,
     MAX_LABEL,
+    MAX_LAYOUT_ITEMS,
     MAX_PARAMS,
     MAX_PIVOT_COLUMNS,
     MAX_SORT_KEYS,
@@ -128,7 +129,7 @@ const draftShape = z.object({
         cell: z.string(),
         maxColumns: z.number().int().min(1).max(MAX_PIVOT_COLUMNS),
     }),
-    layout: z.array(layoutItemSchema).max(200),
+    layout: z.array(layoutItemSchema).max(MAX_LAYOUT_ITEMS),
 })
 export type BuilderDraft = z.infer<typeof draftShape>
 

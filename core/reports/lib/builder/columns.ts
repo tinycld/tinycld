@@ -13,6 +13,7 @@ export const MAX_PIVOT_COLUMNS = 200
 export const MAX_PARAMS = 20
 export const MAX_GROUP_LEVELS = 6
 export const MAX_SORT_KEYS = 10
+export const MAX_LAYOUT_ITEMS = 200
 // A formula reads columns by id, and the forms formula editor reads only its own
 // keys (lowercase snake_case, at most 40 characters), so the builder makes ids of
 // that shape.

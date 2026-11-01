@@ -1,8 +1,8 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { type Control, SelectInput } from '@tinycld/core/ui/form'
-import type { LucideIcon } from 'lucide-react-native'
-import { Pressable } from 'react-native'
-import type { BuilderDraft } from '../../lib/builder/draft'
+import { type LucideIcon, Trash2 } from 'lucide-react-native'
+import { Pressable, Text, View } from 'react-native'
+import type { BuilderDraft, FormulaDraft } from '../../lib/builder/draft'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 
 // Small parts every builder section shares.
@@ -30,6 +30,38 @@ export function IconButton({ label, testID, isVisible, icon: Icon, onPress }: Ic
         >
             <Icon size={16} color={color} />
         </Pressable>
+    )
+}
+
+/** A new formula column or computed row starts at 0, which the engine reads as a number. */
+export const NEW_FORMULA: FormulaDraft = { kind: 'editable', expr: 0 }
+
+interface FixedFormulaProps {
+    testID: string
+    onRemove: () => void
+}
+
+/**
+ * A stored formula with parts the formula editor cannot show (R15): read-only and
+ * saved unchanged, or removed to start a new formula.
+ */
+export function FixedFormula({ testID, onRemove }: FixedFormulaProps) {
+    return (
+        <View
+            testID={testID}
+            className="flex-row items-center gap-2 rounded-md border border-border p-2"
+        >
+            <Text className="flex-1 text-xs text-muted-foreground">
+                This formula uses parts the builder cannot edit. It is kept as it is.
+            </Text>
+            <IconButton
+                label="Remove formula"
+                testID={`${testID}-remove`}
+                isVisible
+                icon={Trash2}
+                onPress={onRemove}
+            />
+        </View>
     )
 }
 

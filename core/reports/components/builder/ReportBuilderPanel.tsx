@@ -30,6 +30,7 @@ import { ColumnsSection } from './ColumnsSection'
 import { DetailsSection } from './DetailsSection'
 import { FilterSection } from './FilterSection'
 import { GroupSortSection } from './GroupSortSection'
+import { LayoutSection } from './LayoutSection'
 import { PivotSection } from './PivotSection'
 
 const DISCARD = {
@@ -61,7 +62,7 @@ function PanelTitle({ builder }: { builder: ReportBuilder }) {
     )
 }
 
-// The sections, in the order a report is designed; the later sections join them here.
+// The sections, in the order a report is designed.
 function Sections({ builder, problems }: { builder: ReportBuilder; problems: Problem[] }) {
     return (
         <View>
@@ -70,6 +71,7 @@ function Sections({ builder, problems }: { builder: ReportBuilder; problems: Pro
             <FilterSection builder={builder} problems={problems} />
             <GroupSortSection builder={builder} problems={problems} />
             <PivotSection builder={builder} problems={problems} />
+            <LayoutSection builder={builder} problems={problems} />
         </View>
     )
 }

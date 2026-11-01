@@ -1,3 +1,5 @@
+import { FormulaEditor } from '@tinycld/core/components/forms-builder/FormulaEditor'
+import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { SelectInput, TextInput, useWatch } from '@tinycld/core/ui/form'
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react-native'
 import { Text, View } from 'react-native'
@@ -11,12 +13,13 @@ import {
     nextColumnId,
     pathLabel,
 } from '../../lib/builder/columns'
-import type { ColumnDraft } from '../../lib/builder/draft'
+import { type ColumnDraft, columnChoices, type FormulaDraft } from '../../lib/builder/draft'
+import { formulaOperands } from '../../lib/builder/formula'
 import type { SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnPicker } from './ColumnPicker'
-import { IconButton } from './parts'
+import { FixedFormula, IconButton, NEW_FORMULA } from './parts'
 
 const FORMAT_OPTIONS = [
     { value: '', label: 'Number' },
@@ -139,9 +142,31 @@ function FormatField({
     )
 }
 
-// A formula column's editor is drawn here once the builder edits formulas.
-function ColumnFormula(_props: ColumnRowProps) {
-    return null
+// The forms engine's formula editor (spec §4): parts picked from menus, reading the
+// other numeric columns (R15). Child rows have no single value on the row to read.
+function ColumnFormula({ builder, columns, index }: ColumnRowProps) {
+    const column = columns[index]
+    if (column?.kind !== 'formula') return null
+    const testID = `report-builder-column-${index}-formula`
+    const setFormula = (formula: FormulaDraft) =>
+        builder.setColumns(
+            columns.map((c, i) => (i === index && c.kind === 'formula' ? { ...c, formula } : c))
+        )
+    if (column.formula.kind === 'fixed') {
+        return <FixedFormula testID={`${testID}-fixed`} onRemove={() => setFormula(NEW_FORMULA)} />
+    }
+    const choices = columnChoices({ source: builder.base.key, columns }, builder.catalog).filter(
+        choice => !choice.isNested
+    )
+    return (
+        <FormulaEditor
+            value={column.formula.expr}
+            onChange={expr => setFormula({ kind: 'editable', expr })}
+            operands={formulaOperands(choices, column.id)}
+            valueNoun="Column"
+            testID={testID}
+        />
+    )
 }
 
 export function ColumnsSection({
@@ -169,6 +194,22 @@ export function ColumnsSection({
         }
         builder.setColumns([...columns, column])
     }
+    const onAddFormula = () =>
+        builder.setColumns([
+            ...columns,
+            {
+                kind: 'formula',
+                id: nextColumnId(
+                    columns.map(c => c.id),
+                    'formula'
+                ),
+                label: 'Formula',
+                formula: NEW_FORMULA,
+                aggregate: '',
+                scale: null,
+                format: '',
+            },
+        ])
     const rows = columns.map((column, index) => (
         <ColumnRow key={column.id} builder={builder} columns={columns} index={index} />
     ))
@@ -183,6 +224,14 @@ export function ColumnsSection({
                     label="Add column"
                     testID="report-builder-add-column"
                 />
+                <Button
+                    testID="report-builder-add-formula"
+                    variant="outline"
+                    size="sm"
+                    onPress={onAddFormula}
+                >
+                    <ButtonText>Add formula</ButtonText>
+                </Button>
             </View>
         </BuilderSection>
     )
