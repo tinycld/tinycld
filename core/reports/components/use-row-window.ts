@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 // Mounts only the rows near the scroll position; two spacers stand in for the rest,
 // so the scroll bar still spans the whole report. Near the end it asks for the next
@@ -47,6 +47,18 @@ export function useRowWindow(input: {
 }) {
     // The row index, not the pixel offset, so scrolling within one row causes no render.
     const [firstVisible, setFirstVisible] = useState(0)
+    // The last scroll position and sizes, read when the content or the scroller resizes.
+    // A page that does not fill the scroller never scrolls, so no scroll event would
+    // ever ask for the next one; a resize asks instead.
+    const metrics = useRef<ScrollMetrics>({
+        contentOffset: { y: 0 },
+        layoutMeasurement: { height: 0 },
+        contentSize: { height: 0 },
+    })
+    const askIfNearEnd = () => {
+        const isMeasured = metrics.current.layoutMeasurement.height > 0
+        if (input.onNearEnd && isMeasured && isNearEnd(metrics.current)) input.onNearEnd()
+    }
     return {
         ...rowWindowBounds({
             firstVisible,
@@ -55,8 +67,18 @@ export function useRowWindow(input: {
             viewHeight: input.viewHeight,
         }),
         onScroll: (event: { nativeEvent: ScrollMetrics }) => {
+            metrics.current = event.nativeEvent
             setFirstVisible(Math.floor(event.nativeEvent.contentOffset.y / input.rowHeight))
-            if (input.onNearEnd && isNearEnd(event.nativeEvent)) input.onNearEnd()
+            askIfNearEnd()
+        },
+        onLayout: (event: { nativeEvent: { layout: { height: number } } }) => {
+            const { height } = event.nativeEvent.layout
+            metrics.current = { ...metrics.current, layoutMeasurement: { height } }
+            askIfNearEnd()
+        },
+        onContentSizeChange: (_width: number, height: number) => {
+            metrics.current = { ...metrics.current, contentSize: { height } }
+            askIfNearEnd()
         },
     }
 }

@@ -15,7 +15,7 @@ export type VisibleRow = {
 const NO_CELLS: Record<string, CellValue> = {}
 
 // A group row that its own subtotal row follows shows no figures, so a figure is
-// never shown twice (the Books shell's rule). A closed group with no subtotal row
+// never shown twice (the report shell's rule). A closed group with no subtotal row
 // keeps its figures.
 export function visibleRows(rows: readonly ResultRow[]): VisibleRow[] {
     const withSubtotal = new Set(

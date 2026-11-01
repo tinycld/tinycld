@@ -3,7 +3,7 @@ import type { ParamDef } from './spec'
 import type { ResolvedParam } from './types'
 
 // A report's params as the shell edits them: the period chip and the filter chips.
-// Presets carry the engine's names (core/server/reports/params.go) and the Books
+// Presets carry the engine's names (core/server/reports/params.go) and the report
 // shell's labels. The server resolves a preset against the reader's day and the
 // source's fiscal year; the client only names it.
 

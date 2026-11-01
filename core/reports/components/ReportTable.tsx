@@ -158,6 +158,8 @@ export function ReportTable({
             <ScrollView
                 className="flex-1 web:[scrollbar-gutter:stable]"
                 onScroll={rowWindow.onScroll}
+                onLayout={rowWindow.onLayout}
+                onContentSizeChange={rowWindow.onContentSizeChange}
                 scrollEventThrottle={16}
             >
                 <View className="flex-row">

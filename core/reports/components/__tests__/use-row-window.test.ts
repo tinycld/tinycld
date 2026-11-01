@@ -39,4 +39,14 @@ describe('isNearEnd', () => {
         expect(isNearEnd(metrics(2000 - 400 - NEAR_END_PX))).toBe(true)
         expect(isNearEnd(metrics(2000 - 400 - NEAR_END_PX - 1))).toBe(false)
     })
+
+    it('is true for a page that does not fill the scroller, which never scrolls', () => {
+        expect(
+            isNearEnd({
+                contentOffset: { y: 0 },
+                layoutMeasurement: { height: 400 },
+                contentSize: { height: 300 },
+            })
+        ).toBe(true)
+    })
 })
