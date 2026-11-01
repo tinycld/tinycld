@@ -163,7 +163,7 @@ test.describe('sharing reports', () => {
         const copy = hubRow(page, `Copy of ${title}`)
         await rowMenu(page, `Copy of ${title}`).click()
         await page.getByTestId('reports-hub-action-delete').click()
-        await page.getByText('Delete', { exact: true }).last().click()
+        await page.getByTestId('reports-hub-delete-confirm').click()
         await expect(copy).toHaveCount(0)
         await expect(hubRow(page, title)).toHaveCount(1)
     })
@@ -178,6 +178,10 @@ test.describe('sharing reports', () => {
 
         // The row menu is a sheet titled with the report; Share opens the dialog as a sheet.
         await rowMenu(page, title).click()
+        const actions = page.getByTestId('reports-hub-row-actions')
+        await expect(actions.getByTestId('sheet-handle')).toBeVisible()
+        await expect(actions.getByText(title, { exact: true })).toBeVisible()
+        await expect.poll(async () => (await actions.boundingBox())?.width).toBe(390)
         const share = page.getByTestId('reports-hub-action-share')
         await expect(share).toBeVisible()
         await expect(page.getByTestId('reports-hub-action-publish')).toBeVisible()
@@ -197,7 +201,7 @@ test.describe('sharing reports', () => {
         const copy = hubRow(page, `Copy of ${title}`)
         await rowMenu(page, `Copy of ${title}`).click()
         await page.getByTestId('reports-hub-action-delete').click()
-        await page.getByText('Delete', { exact: true }).last().click()
+        await page.getByTestId('reports-hub-delete-confirm').click()
         await expect(copy).toHaveCount(0)
         await expect(hubRow(page, title)).toHaveCount(1)
     })
@@ -234,10 +238,22 @@ test.describe('sharing reports', () => {
             await openReportsHub(page)
             const row = hubRow(page, title)
             await expect(row.locator('[data-testid^="reports-hub-broken-"]')).toHaveText('Broken')
-            await row.click()
+            // The server refuses a copy of a report that cannot run, so none is offered.
+            await rowMenu(page, title).click()
+            await expect(page.getByTestId('reports-hub-action-open')).toBeVisible()
+            await expect(page.getByTestId('reports-hub-action-duplicate')).toHaveCount(0)
+            await page.getByTestId('reports-hub-action-open').click()
             await expect(page.getByTestId('report-missing')).toContainText(
                 'the source "salesstub.gone" does not exist'
             )
+            // Its owner cannot design it either: the builder needs the source.
+            await expect(page.getByTestId('report-missing-note')).toHaveText(
+                'This kind of report is not installed'
+            )
+            await expect(page.getByTestId('report-missing-edit')).toHaveCount(0)
+            // The toolbar's last action is in view, so none is folded into More actions.
+            await expect(page.getByTestId('report-copy-link')).toBeVisible()
+            await expect(page.getByTestId('report-edit-open')).toHaveCount(0)
         } finally {
             await pb.collection('reports').delete(seeded.id)
         }

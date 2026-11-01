@@ -25,6 +25,7 @@ const saleSchema = z.object({
     customer: z.string().trim().min(1).max(200),
     amount: z.number().int(),
     cost: z.number().int(),
+    quantity: z.number().int(),
     day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date as YYYY-MM-DD'),
     status: z.enum(['open', 'paid']),
 })
@@ -93,7 +94,15 @@ function SaleForm() {
     const form = useForm<SaleValues>({
         resolver: zodResolver(saleSchema),
         mode: 'onChange',
-        defaultValues: { team: '', customer: '', amount: 0, cost: 0, day: '', status: 'open' },
+        defaultValues: {
+            team: '',
+            customer: '',
+            amount: 0,
+            cost: 0,
+            quantity: 0,
+            day: '',
+            status: 'open',
+        },
     })
     const create = useMutation({
         mutationFn: function* (values: SaleValues) {
@@ -104,6 +113,7 @@ function SaleForm() {
                 customer: values.customer,
                 amount: values.amount,
                 cost: values.cost,
+                quantity: values.quantity,
                 currency: 'USD',
                 day: `${values.day} 00:00:00.000Z`,
                 status: values.status,
@@ -111,7 +121,7 @@ function SaleForm() {
         },
         onSuccess: (_data, values) => {
             setSaved(`Saved ${values.customer}`)
-            form.reset({ ...values, customer: '', amount: 0, cost: 0 })
+            form.reset({ ...values, customer: '', amount: 0, cost: 0, quantity: 0 })
         },
     })
     const onCreate = () => {
@@ -144,6 +154,12 @@ function SaleForm() {
                 control={form.control}
                 label="Cost (cents)"
                 testID="salesstub-sale-cost"
+            />
+            <NumberInput
+                name="quantity"
+                control={form.control}
+                label="Quantity"
+                testID="salesstub-sale-quantity"
             />
             <TextInput
                 name="day"

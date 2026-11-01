@@ -19,9 +19,10 @@ device.
      **Add as total** (a count or a sum on each row) or **Show as child rows**.
      Rename a column, choose its **Total**, and move it up or down.
    - **Filter**: select **Add condition** to add a condition, or **Add group** for a
-     nested group, and choose **All of**, **Any of** or **None of**. **Add related rows** keeps rows that have (or have
-     no) linked records that match their own conditions. Turn on **Ask when the
-     report runs** to let each reader set the value from a chip above the report.
+     nested group, and choose **All of**, **Any of** or **None of**. **Add related
+     rows** keeps rows that have (or have no) linked records that match their own
+     conditions. Turn on **Ask when the report runs** to let each reader set the
+     value from a chip above the report.
    - **Group and sort**: add group levels, each with or without subtotals, and the
      order of the rows.
    - **Pivot**: spread a column with a total across one column per value, such as
@@ -58,6 +59,9 @@ member then finds it under **Published**; guests do not.
 ## A report marked Broken
 
 A report is marked **Broken** when something it uses is no longer installed, for
-example after a package was removed. Open it to see what is missing; its owner or an
-editor can fix it with **Edit report**. A person who lost access to a report sees
-"You no longer have access to this report".
+example after a package was removed. Open it to see what is missing. When only a
+part of it is gone, such as a field, its owner or an editor can fix it with **Edit
+report**. When the kind of report itself is gone, the report says "This kind of
+report is not installed" and cannot be edited until that package is installed
+again. A person who lost access to a report sees "You no longer have access to
+this report".

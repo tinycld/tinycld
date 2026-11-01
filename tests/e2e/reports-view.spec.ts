@@ -121,6 +121,9 @@ test.describe('the report view', () => {
             await pressToolbar(p, 'report-copy-link', 'Copy link')
             await expect(p.getByText('Link copied', { exact: true })).toBeVisible()
             const link = await p.evaluate(() => navigator.clipboard.readText())
+            // On web the server address is the page's own origin.
+            const origin = new URL(p.url()).origin
+            expect(link.slice(0, origin.length + 1)).toBe(`${origin}/`)
             expect(link).toContain(`/reports/`)
             expect(link).toContain(`p-day=${YEAR}-02-01..${YEAR}-02-28`)
             const other = await browser.newContext()
@@ -240,6 +243,44 @@ test.describe('the report view', () => {
             await expect(p.getByTestId('report-param-status')).toHaveText('Status: Paid')
             await expect(table.getByText('Alpha', { exact: true })).toHaveCount(0)
             await expect(table.getByText('Gamma', { exact: true })).toBeVisible()
+        } finally {
+            await close()
+        }
+    })
+
+    test('an asked number starts empty and applies the typed value', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptnumber')
+        try {
+            const team = uniqueName('Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            const sale = { team, amount: 100, cost: 0, day: `${YEAR}-01-10` }
+            await addSale(p, { ...sale, customer: 'Few', quantity: 1 })
+            await addSale(p, { ...sale, customer: 'Many', quantity: 5 })
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await p.getByTestId('report-builder-section-filter').click()
+            await p.getByTestId('report-builder-filter-add-condition').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-quantity')
+                .click()
+            await chooseOption(p, 'report-builder-filter-0-op', 'gte')
+            await p.getByTestId('report-builder-filter-0-ask').click()
+            await saveNewReport(p, uniqueName('Quantity'))
+            const table = p.getByTestId('report-table')
+            await expect(table.getByText('Few', { exact: true })).toBeVisible()
+
+            await p.getByTestId('report-add-filter').click()
+            await p.getByTestId('report-add-filter-quantity').click()
+            const value = p.getByTestId('report-filter-value')
+            await expect(value).toHaveValue('')
+            await expect(p.getByTestId('report-filter-apply')).toBeDisabled()
+            await value.fill('3')
+            await p.getByTestId('report-filter-apply').click()
+            await expect(p.getByTestId('report-param-quantity')).toHaveText('Quantity: 3')
+            await expect(table.getByText('Many', { exact: true })).toBeVisible()
+            await expect(table.getByText('Few', { exact: true })).toHaveCount(0)
         } finally {
             await close()
         }

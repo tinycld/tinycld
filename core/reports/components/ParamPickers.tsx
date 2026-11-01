@@ -5,7 +5,12 @@ import { Popover } from '@tinycld/core/ui/popover'
 import { Check } from 'lucide-react-native'
 import type { ReactElement } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
-import { choicesSchema, numberValueSchema, textValueSchema } from '../lib/param-forms'
+import {
+    choicesSchema,
+    type NumberValue,
+    numberValueSchema,
+    textValueSchema,
+} from '../lib/param-forms'
 import type { ParamValue } from '../lib/params'
 import type { ParamDef } from '../lib/spec'
 import { REPORT_TAP_TARGET } from './ReportHeader'
@@ -152,10 +157,11 @@ function TextBody({ def, value, onApply }: BodyProps) {
 }
 
 function NumberBody({ def, value, onApply }: BodyProps) {
-    const form = useForm({
+    const form = useForm<NumberValue>({
         resolver: zodResolver(numberValueSchema),
         mode: 'onChange',
-        defaultValues: { number: value?.kind === 'number' ? value.number : 0 },
+        // Empty until a number is typed, so Apply never applies a number nobody chose.
+        defaultValues: { number: value?.kind === 'number' ? value.number : undefined },
     })
     const apply = () =>
         void form.handleSubmit(submitted => onApply({ kind: 'number', number: submitted.number }))()

@@ -60,11 +60,29 @@ interface ProblemsBodyProps {
     testID: string
     message: string
     problems: Problem[]
+    /** A line under the problems, its test id `<testID>-note`. */
+    note: string | null
     action: StateAction | null
 }
 
+function NoteLine({ testID, note }: { testID: string; note: string | null }) {
+    if (!note) return null
+    return (
+        <Text testID={testID} className="text-center text-sm font-medium text-foreground">
+            {note}
+        </Text>
+    )
+}
+
 // A report that cannot run names each missing or invalid part.
-export function ProblemsBody({ isVisible, testID, message, problems, action }: ProblemsBodyProps) {
+export function ProblemsBody({
+    isVisible,
+    testID,
+    message,
+    problems,
+    note,
+    action,
+}: ProblemsBodyProps) {
     if (!isVisible) return null
     const lines = problems.map((problem, i) => (
         <Text
@@ -84,6 +102,7 @@ export function ProblemsBody({ isVisible, testID, message, problems, action }: P
                 {message}
             </Text>
             {lines}
+            <NoteLine testID={`${testID}-note`} note={note} />
             <ActionButton action={action} />
         </View>
     )

@@ -8,6 +8,7 @@ import {
     chooseOption,
     openReportStub,
     openReportsHub,
+    rowOf,
     SALES_SOURCE,
     startReport,
     TEAMS_SOURCE,
@@ -145,12 +146,13 @@ test.describe('formulas, related rows and layouts', () => {
             await expect(p.getByTestId('report-builder-column-1-aggregate')).toContainText('Count')
             await expect(await cellOf(p, 'sales_id', team)).toHaveText('2')
 
-            // A child row is labelled by its first value, here the customer.
+            // A child row is labelled by its first value, here the customer, and that
+            // value is not drawn a second time in its own column.
             await addColumn(p, ['sales', 'customer'], 'nest')
-            await expect(await cellOf(p, 'sales_customer', 'First buyer')).toHaveText('First buyer')
-            await expect(await cellOf(p, 'sales_customer', 'Second buyer')).toHaveText(
-                'Second buyer'
-            )
+            for (const customer of ['First buyer', 'Second buyer']) {
+                await expect(rowOf(p, customer)).toHaveText(customer)
+                await expect(await cellOf(p, 'sales_customer', customer)).toBeEmpty()
+            }
         } finally {
             await close()
         }

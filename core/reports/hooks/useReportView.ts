@@ -101,6 +101,8 @@ export interface ReportViewInput {
     isEditing: boolean
     onBack(): void
     onEdit?(): void
+    /** Why a report that cannot run cannot be fixed here either (its source is gone). */
+    missingNote?: string | null
     onShare?(): void
     onSaveAs?(): void
 }
@@ -128,6 +130,7 @@ export function useReportView(input: ReportViewInput) {
     const closeCustomize = useReportUIStore(s => s.closeCustomize)
     const closeShare = useReportUIStore(s => s.closeShare)
     const rows = run.result?.rows ?? NO_ROWS
+    const allColumns = run.result?.columns ?? NO_COLUMNS
     const resolved: Record<string, ResolvedParam> = Object.fromEntries(
         (run.result?.params ?? []).map(p => [p.id, p])
     )
@@ -200,6 +203,7 @@ export function useReportView(input: ReportViewInput) {
         isEditing,
         onBack: input.onBack,
         onEdit: input.onEdit ?? null,
+        missingNote: input.missingNote ?? null,
         onShare: input.onShare ?? null,
         onSaveAs: input.onSaveAs ?? null,
         options,
@@ -210,9 +214,9 @@ export function useReportView(input: ReportViewInput) {
         isBodyShown: !(isEditing && breakpoint === 'mobile'),
         problems: broken && !isEditing ? brokenProblems(broken) : run.problems,
         run,
-        rows: visibleRows(rows),
-        columns: shownColumns(run.result?.columns ?? NO_COLUMNS, options.display.hidden),
-        allColumns: run.result?.columns ?? NO_COLUMNS,
+        rows: visibleRows(rows, allColumns),
+        columns: shownColumns(allColumns, options.display.hidden),
+        allColumns,
         notices: run.result?.notices ?? NO_NOTICES,
         isUpdating: run.isUpdating,
         breakpoint,

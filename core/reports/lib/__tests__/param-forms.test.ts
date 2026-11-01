@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
     DATE_FORMAT_MESSAGE,
     FROM_AFTER_TO_MESSAGE,
+    numberValueSchema,
     periodDefaults,
     periodSchema,
     periodValueOf,
@@ -66,5 +67,14 @@ describe('the period form', () => {
             to: '2026-06-30',
         })
         expect(periodDefaults(null, undefined)).toEqual({ preset: 'custom', from: null, to: null })
+    })
+})
+
+describe('the number filter form', () => {
+    it('needs a typed number: an empty field does not apply', () => {
+        expect(numberValueSchema.safeParse({ number: undefined }).success).toBe(false)
+        expect(numberValueSchema.safeParse({ number: '12a' }).success).toBe(false)
+        expect(numberValueSchema.safeParse({ number: 0 }).success).toBe(true)
+        expect(numberValueSchema.safeParse({ number: 12.5 }).success).toBe(true)
     })
 })

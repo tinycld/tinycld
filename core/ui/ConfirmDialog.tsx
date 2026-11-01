@@ -20,6 +20,8 @@ export type ConfirmDialogProps = {
      * saved. Pass false for a confirm whose action stays on the device.
      */
     requiresServer?: boolean
+    /** The confirm button's test id. */
+    confirmTestID?: string
 }
 
 export function ConfirmDialog({
@@ -34,6 +36,7 @@ export function ConfirmDialog({
     isDestructive = false,
     isSubmitting = false,
     requiresServer = true,
+    confirmTestID,
 }: ConfirmDialogProps) {
     return (
         // No close button: a confirm is answered, and the two answers are the
@@ -52,6 +55,7 @@ export function ConfirmDialog({
                     isDisabled={isSubmitting}
                     isDestructive={isDestructive}
                     requiresServer={requiresServer}
+                    testID={confirmTestID}
                 />
             </Dialog.Footer>
         </Dialog>

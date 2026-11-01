@@ -4,10 +4,21 @@ import { navigateToPackage } from './helpers'
 
 // Helpers for the reports specs. Fixture names come from the salesstub package
 // (tests/scripts/scaffold-reports-stub.ts): sources salesstub.sales ("Stub sales":
-// customer, amount, cost, currency, day, status; link team) and salesstub.teams
-// ("Stub teams": name; to-many link sales).
+// customer, amount, cost, quantity, currency, day, status; link team) and
+// salesstub.teams ("Stub teams": name; to-many link sales), and the shipped report
+// "Stub larger side" over sales (reports-stub/server/register.go.txt).
 export const SALES_SOURCE = 'salesstub.sales'
 export const TEAMS_SOURCE = 'salesstub.teams'
+export const SHIPPED_TITLE = 'Stub larger side'
+/** The shipped report's formula column (index 3, id `larger`), as register.go.txt has it. */
+export const SHIPPED_FORMULA = {
+    op: 'if',
+    args: [
+        { op: 'gt', args: [{ col: 'amount' }, { col: 'cost' }] },
+        { col: 'amount' },
+        { col: 'cost' },
+    ],
+}
 
 let counter = 0
 
@@ -33,6 +44,7 @@ export interface StubSale {
     /** Cents. */
     amount: number
     cost: number
+    quantity?: number
     day: string
     status?: 'open' | 'paid'
 }
@@ -43,6 +55,7 @@ export async function addSale(page: Page, sale: StubSale) {
     await page.getByTestId('salesstub-sale-customer').fill(sale.customer)
     await page.getByTestId('salesstub-sale-amount').fill(String(sale.amount))
     await page.getByTestId('salesstub-sale-cost').fill(String(sale.cost))
+    await page.getByTestId('salesstub-sale-quantity').fill(String(sale.quantity ?? 0))
     await page.getByTestId('salesstub-sale-day').fill(sale.day)
     await page
         .getByRole('radio', { name: sale.status === 'paid' ? 'Paid' : 'Open', exact: true })
@@ -98,12 +111,18 @@ export async function saveNewReport(page: Page, title: string) {
     await expect(page.getByTestId('report-title')).toHaveText(title)
 }
 
-/** A toolbar action, folded into "More actions" when the row is narrow. */
+/**
+ * A toolbar action, folded into "More actions" when the row is narrow. The toolbar
+ * draws after the report loads, so wait for the button or the More button before
+ * choosing a branch.
+ */
 export async function pressToolbar(page: Page, testId: string, label: string) {
     const button = page.getByTestId(testId)
+    const more = page.getByTestId('toolbar-more-button')
+    await expect(button.or(more).first()).toBeVisible()
     if (await button.isVisible()) await button.click()
     else {
-        await page.getByTestId('toolbar-more-button').click()
+        await more.click()
         await page.getByRole('menuitem', { name: label }).click()
     }
 }

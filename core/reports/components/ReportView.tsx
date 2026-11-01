@@ -100,6 +100,7 @@ export function ReportBody({ model }: { model: ReportViewModel }) {
                 testID="report-missing"
                 message="This report names something that no longer exists"
                 problems={model.problems}
+                note={model.missingNote}
                 action={edit}
             />
             <ProblemsBody
@@ -107,6 +108,7 @@ export function ReportBody({ model }: { model: ReportViewModel }) {
                 testID="report-invalid"
                 message="This report cannot run"
                 problems={model.problems}
+                note={model.missingNote}
                 action={edit}
             />
             <EmptyBody

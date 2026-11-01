@@ -6,6 +6,7 @@ import { type ReactNode, useState } from 'react'
 import { type GestureResponderEvent, Pressable } from 'react-native'
 import type { HubActions } from '../../hooks/useHubActions'
 import type { HubRow } from '../../hooks/useReportsHub'
+import { canCopyReport } from '../../lib/spec'
 import { useReportUIStore } from '../../stores/report-ui-store'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 
@@ -27,6 +28,8 @@ interface MenuItemSpec {
     id: string
     label: string
     isVisible: boolean
+    /** A write: held while another write is pending, so a second press adds no copy. */
+    isWrite?: boolean
     isDestructive?: boolean
     onSelect: () => void
 }
@@ -50,7 +53,8 @@ export function HubRowMenu({ row, actions, onOpen }: HubRowMenuProps) {
         {
             id: 'duplicate',
             label: 'Duplicate',
-            isVisible: true,
+            isVisible: canCopyReport(report),
+            isWrite: true,
             onSelect: () => actions.duplicate(report),
         },
         {
@@ -63,18 +67,21 @@ export function HubRowMenu({ row, actions, onOpen }: HubRowMenuProps) {
             id: 'publish',
             label: 'Publish to everyone',
             isVisible: access.canPublish && !report.published,
+            isWrite: true,
             onSelect: () => actions.setPublished(report, true),
         },
         {
             id: 'unpublish',
             label: 'Unpublish',
             isVisible: access.canPublish && report.published,
+            isWrite: true,
             onSelect: () => actions.setPublished(report, false),
         },
         {
             id: 'delete',
             label: 'Delete',
             isVisible: access.canDelete,
+            isWrite: true,
             isDestructive: true,
             onSelect: () => setConfirmingDelete(true),
         },
@@ -87,6 +94,7 @@ export function HubRowMenu({ row, actions, onOpen }: HubRowMenuProps) {
                 testID={`reports-hub-action-${spec.id}`}
                 label={spec.label}
                 isDestructive={spec.isDestructive}
+                isDisabled={spec.isWrite === true && actions.isPending}
                 onSelect={spec.onSelect}
             />
         ))
@@ -108,7 +116,13 @@ export function HubRowMenu({ row, actions, onOpen }: HubRowMenuProps) {
     }
     return (
         <PressBoundary>
-            <Menu title={report.title} placement="bottom-end" sheetSide="bottom" trigger={trigger}>
+            <Menu
+                title={report.title}
+                placement="bottom-end"
+                sheetSide="bottom"
+                trigger={trigger}
+                testID="reports-hub-row-actions"
+            >
                 {items}
             </Menu>
             <ConfirmDialog
@@ -118,6 +132,8 @@ export function HubRowMenu({ row, actions, onOpen }: HubRowMenuProps) {
                 title={`Delete “${report.title}”?`}
                 message="Everyone it is shared with loses it. This cannot be undone."
                 confirmLabel="Delete"
+                confirmTestID="reports-hub-delete-confirm"
+                isSubmitting={actions.isPending}
                 isDestructive
             />
         </PressBoundary>

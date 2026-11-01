@@ -47,6 +47,7 @@ migrate(
                 { id: 'salesstub_sales_customer', name: 'customer', type: 'text', max: 200 },
                 { id: 'salesstub_sales_amount', name: 'amount', type: 'number', onlyInt: true },
                 { id: 'salesstub_sales_cost', name: 'cost', type: 'number', onlyInt: true },
+                { id: 'salesstub_sales_quantity', name: 'quantity', type: 'number', onlyInt: true },
                 { id: 'salesstub_sales_currency', name: 'currency', type: 'text', max: 3 },
                 { id: 'salesstub_sales_day', name: 'day', type: 'date' },
                 { id: 'salesstub_sales_status', name: 'status', type: 'select', values: ['open', 'paid'], maxSelect: 1 },

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import { createInvitedUser, login, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
     addSale,
@@ -177,5 +177,28 @@ test.describe('creating a report', () => {
         } finally {
             await close()
         }
+    })
+
+    test('when the kinds of report cannot load, the hub says so and Retry brings New report back', async ({
+        page,
+    }) => {
+        // A refusal (4xx) is not retried, so the error shows at once.
+        await page.route('**/api/reports/sources', route =>
+            route.fulfill({
+                status: 400,
+                contentType: 'application/json',
+                body: JSON.stringify({ status: 400, message: 'Refused.', data: {} }),
+            })
+        )
+        await login(page)
+        await openReportsHub(page)
+        await expect(page.getByTestId('reports-hub-catalog-error-message')).toHaveText(
+            'Could not load the kinds of report, so New report is not available'
+        )
+        await expect(page.getByTestId('reports-hub-new')).toBeDisabled()
+        await page.unrouteAll({ behavior: 'wait' })
+        await page.getByTestId('reports-hub-catalog-retry').click()
+        await expect(page.getByTestId('reports-hub-catalog-error')).toHaveCount(0)
+        await expect(page.getByTestId('reports-hub-new')).toBeEnabled()
     })
 })

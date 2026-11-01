@@ -1,4 +1,4 @@
-import type { CellValue, Notice, ResultRow, RunResult } from './types'
+import type { CellValue, Notice, ResultColumn, ResultRow, RunResult } from './types'
 
 // The rows of a run as the table draws them. Groups load lazily on the server
 // (options.expand), so a closed group's children are simply not in the result:
@@ -14,18 +14,36 @@ export type VisibleRow = {
 
 const NO_CELLS: Record<string, CellValue> = {}
 
-// A group row that its own subtotal row follows shows no figures, so a figure is
-// never shown twice (the report shell's rule). A closed group with no subtotal row
-// keeps its figures.
-export function visibleRows(rows: readonly ResultRow[]): VisibleRow[] {
+// The engine labels a nested child row with its nest level's first column: the first
+// result column the row has a cell for. That cell would repeat the label, so it is
+// left out. Every result column counts, hidden or not, as it does for the engine.
+function childCells(row: ResultRow, columns: readonly ResultColumn[]) {
+    const labelColumn = columns.find(column => column.id in row.cells)
+    if (!labelColumn) return row.cells
+    return Object.fromEntries(Object.entries(row.cells).filter(([id]) => id !== labelColumn.id))
+}
+
+function rowCells(row: ResultRow, columns: readonly ResultColumn[], withSubtotal: Set<string>) {
+    if (row.kind === 'group' && withSubtotal.has(row.id)) return NO_CELLS
+    if (row.parent !== undefined) return childCells(row, columns)
+    return row.cells
+}
+
+// A figure is never shown twice (the report shell's rule): a group row that its own
+// subtotal row follows shows no figures (a closed group with no subtotal row keeps
+// its figures), and a child row shows its label once, not again in a cell.
+export function visibleRows(
+    rows: readonly ResultRow[],
+    columns: readonly ResultColumn[]
+): VisibleRow[] {
     const withSubtotal = new Set(
-        rows.filter(row => row.kind === 'subtotal' && row.section).map(row => row.section)
+        rows.flatMap(row => (row.kind === 'subtotal' && row.section ? [row.section] : []))
     )
     return rows.map(row => {
         const isGroup = row.kind === 'group'
         return {
             row,
-            cells: isGroup && withSubtotal.has(row.id) ? NO_CELLS : row.cells,
+            cells: rowCells(row, columns, withSubtotal),
             isToggle: isGroup && row.canExpand === true,
             isOpen: isGroup && row.expanded === true,
         }

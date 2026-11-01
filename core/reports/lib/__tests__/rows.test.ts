@@ -10,7 +10,14 @@ import {
     toggleGroup,
     visibleRows,
 } from '../rows'
-import type { ResultRow, RunResult } from '../types'
+import type { ResultColumn, ResultRow, RunResult } from '../types'
+
+const COLUMNS: ResultColumn[] = [
+    { id: 'name', label: 'Name', type: 'text' },
+    { id: 'cost', label: 'Cost', type: 'money', currency: 'USD' },
+    { id: 'customer', label: 'Customer', type: 'text' },
+    { id: 'amount', label: 'Amount', type: 'money', currencyCell: 'amount@currency' },
+]
 
 const group = (id: string, key: unknown[], extra: Partial<ResultRow> = {}): ResultRow => ({
     id,
@@ -55,7 +62,7 @@ describe('visibleRows', () => {
             group('g:b', ['b']),
             total,
         ]
-        const shown = visibleRows(rows)
+        const shown = visibleRows(rows, COLUMNS)
         expect(shown[0].cells).toEqual({})
         expect(shown[0]).toMatchObject({ isToggle: true, isOpen: true })
         expect(shown[3].cells).toEqual({ cost: 100 })
@@ -64,7 +71,35 @@ describe('visibleRows', () => {
     })
 
     it('does not offer a toggle on a group that cannot open', () => {
-        expect(visibleRows([group('g:a', ['a'], { canExpand: false })])[0].isToggle).toBe(false)
+        const shown = visibleRows([group('g:a', ['a'], { canExpand: false })], COLUMNS)
+        expect(shown[0].isToggle).toBe(false)
+    })
+
+    it('leaves out the cell that labels a child row, and only for a child row', () => {
+        const parent = { ...detail('d:1'), cells: { name: 'Team A', customer: null, cost: 50 } }
+        const child: ResultRow = {
+            id: 'd:1/s1',
+            kind: 'detail',
+            depth: 2,
+            label: 'First buyer',
+            parent: 'd:1',
+            cells: { customer: 'First buyer', amount: 100, 'amount@currency': 'USD' },
+        }
+        const shown = visibleRows([parent, child], COLUMNS)
+        expect(shown[0].cells).toEqual(parent.cells)
+        expect(shown[1].cells).toEqual({ amount: 100, 'amount@currency': 'USD' })
+    })
+
+    it('leaves out a blank labelling cell too (the label reads "(none)")', () => {
+        const child: ResultRow = {
+            id: 'd:1/s1',
+            kind: 'detail',
+            depth: 2,
+            label: '(none)',
+            parent: 'd:1',
+            cells: { customer: null, amount: 100 },
+        }
+        expect(visibleRows([child], COLUMNS)[0].cells).toEqual({ amount: 100 })
     })
 })
 

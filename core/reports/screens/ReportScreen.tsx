@@ -14,7 +14,7 @@ import { useReportCatalog } from '../hooks/useReportCatalog'
 import { useReportRecord } from '../hooks/useReportRecord'
 import { useReportView } from '../hooks/useReportView'
 import type { Catalog } from '../lib/builder/columns'
-import type { BrokenMark } from '../lib/spec'
+import { type BrokenMark, canCopyReport } from '../lib/spec'
 import type { CatalogSource } from '../lib/types'
 import { EDIT_KEY } from '../lib/view-url'
 import { useReportUIStore } from '../stores/report-ui-store'
@@ -31,6 +31,8 @@ const UNREADABLE: BrokenMark = {
         },
     },
 }
+
+const NOT_INSTALLED = 'This kind of report is not installed'
 
 interface FrameProps {
     title: string
@@ -65,20 +67,32 @@ export function ReportFrame({ title, state, onBack, onRetry }: FrameProps) {
             <MessageBody
                 isVisible={state === 'unknown-source'}
                 testID="report-unknown-source"
-                message="This kind of report is not installed"
+                message={NOT_INSTALLED}
             />
         </View>
     )
+}
+
+// The builder designs only a report it can read over an installed source, so Edit
+// report is offered only then; a report whose source is gone says so instead.
+function useDesignability(record: RecordModel) {
+    const catalog = useReportCatalog()
+    const source = record.spec?.source
+    const isInstalled = source !== undefined && catalog.byKey.has(source)
+    return {
+        canDesign: isInstalled,
+        missingNote: catalog.isReady && source !== undefined && !isInstalled ? NOT_INSTALLED : null,
+    }
 }
 
 function SavedReportView({ record, onBack }: { record: RecordModel; onBack: () => void }) {
     const report = record.record
     const openShare = useReportUIStore(s => s.openShare)
     const actions = useHubActions()
+    const { canDesign, missingNote } = useDesignability(record)
     // The Save as prompt is a modal toggle: local UI state.
     const [isSavingAs, setSavingAs] = useState(false)
-    // A copy of a report that cannot run would be refused by the server, so it is not offered.
-    const canCopy = report !== undefined && record.spec !== null && record.broken === null
+    const canCopy = report !== undefined && canCopyReport(report)
     const model = useReportView({
         reportKey: report?.id ?? '',
         title: report?.title ?? '',
@@ -88,7 +102,8 @@ function SavedReportView({ record, onBack }: { record: RecordModel; onBack: () =
         broken: record.broken ?? (record.spec ? null : UNREADABLE),
         isEditing: false,
         onBack,
-        onEdit: () => router.setParams({ [EDIT_KEY]: '1' }),
+        onEdit: canDesign ? () => router.setParams({ [EDIT_KEY]: '1' }) : undefined,
+        missingNote,
         onShare: report ? () => openShare(report.id) : undefined,
         onSaveAs: canCopy ? () => setSavingAs(true) : undefined,
     })

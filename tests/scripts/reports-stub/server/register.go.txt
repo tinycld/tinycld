@@ -1,10 +1,12 @@
 // Package stub is an E2E fixture: two report sources over its own collections,
 // so the app shell's reports e2e has a to-one link, a to-many link, money, a
-// date and a select with no real feature package installed. See
-// tinycld/tests/scripts/scaffold-reports-stub.ts for why.
+// number, a date and a select with no real feature package installed, and one
+// shipped report. See tinycld/tests/scripts/scaffold-reports-stub.ts for why.
 package stub
 
 import (
+	"encoding/json"
+
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/reports"
@@ -18,6 +20,7 @@ func Register(_ core.App) error {
 			{Key: "customer", Label: "Customer", Type: reports.Text, Aggregates: reports.CountOnly},
 			{Key: "amount", Label: "Amount", Type: reports.Money, Aggregates: reports.SumAll, Currency: "currency"},
 			{Key: "cost", Label: "Cost", Type: reports.Money, Aggregates: reports.SumAll, Currency: "currency"},
+			{Key: "quantity", Label: "Quantity", Type: reports.Number, Aggregates: reports.SumAll},
 			{Key: "currency", Label: "Currency", Type: reports.Text},
 			{Key: "day", Label: "Day", Type: reports.Date, Aggregates: reports.MinMax},
 			{Key: "status", Label: "Status", Type: reports.Select, Options: []reports.Option{
@@ -34,6 +37,27 @@ func Register(_ core.App) error {
 		Links: []reports.Link{
 			{Key: "sales", Label: "Sales", Target: "salesstub.sales", Cardinality: reports.ToMany, BackField: "team"},
 		},
+	})
+	// A shipped report whose formula uses `if`, which the builder cannot edit, so the
+	// e2e covers a published template, its read-only formula and a copy saved
+	// unchanged (tests/e2e/reports-shipped.spec.ts asserts this formula).
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.larger_side", Title: "Stub larger side", Revision: 1,
+		Description: "Each sale's amount or cost, whichever is larger.",
+		Spec: json.RawMessage(`{
+			"version": 1,
+			"source": "salesstub.sales",
+			"columns": [
+				{"id": "customer", "path": [{"field": "customer"}]},
+				{"id": "amount", "path": [{"field": "amount"}]},
+				{"id": "cost", "path": [{"field": "cost"}]},
+				{"id": "larger", "label": "Larger", "formula": {"op": "if", "args": [
+					{"op": "gt", "args": [{"col": "amount"}, {"col": "cost"}]},
+					{"col": "amount"},
+					{"col": "cost"}
+				]}}
+			]
+		}`),
 	})
 	return nil
 }

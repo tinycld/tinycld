@@ -87,6 +87,11 @@ export function ReportsHubView({ hub, menuFor, banner }: ReportsHubViewProps) {
     const [isChoosing, setChoosing] = useState(false)
     const isEmpty = hub.state === 'ready' && hub.rows.length === 0
     const retry = { label: 'Retry', testID: 'reports-hub-retry', onPress: hub.retry }
+    const retryCatalog = {
+        label: 'Retry',
+        testID: 'reports-hub-catalog-retry',
+        onPress: hub.retryCatalog,
+    }
     const onPick = (key: string) => {
         setChoosing(false)
         hub.onNew(key)
@@ -116,6 +121,12 @@ export function ReportsHubView({ hub, menuFor, banner }: ReportsHubViewProps) {
                 </Button>
             </View>
             {banner}
+            <MessageBody
+                isVisible={hub.isCatalogError}
+                testID="reports-hub-catalog-error"
+                message="Could not load the kinds of report, so New report is not available"
+                action={retryCatalog}
+            />
             <Tabs tab={hub.tab} onChange={hub.setTab} />
             <Loading isVisible={hub.state === 'loading'} />
             <MessageBody

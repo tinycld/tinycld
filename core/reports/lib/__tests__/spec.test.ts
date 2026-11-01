@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { brokenProblems, parseBroken, parseSpec } from '../spec'
+import {
+    brokenProblems,
+    CURRENT_SPEC_VERSION,
+    canCopyReport,
+    parseBroken,
+    parseSpec,
+} from '../spec'
 
 const FEEDINGS = {
     version: 1,
@@ -59,6 +65,25 @@ describe('parseSpec', () => {
                 columns: [{ id: 'a', path: [{ field: 'x', mode: 'sideways' }] }],
             })
         ).toBeNull()
+    })
+
+    it('refuses a spec from a newer version of the app as unreadable', () => {
+        expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION })).not.toBeNull()
+        expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION + 1 })).toBeNull()
+    })
+})
+
+describe('canCopyReport', () => {
+    const mark = { status: 422, problems: { source: { code: 'unknown_source', message: 'x' } } }
+
+    it('offers a copy of a readable report with no broken mark', () => {
+        expect(canCopyReport({ spec: FEEDINGS, broken: null })).toBe(true)
+    })
+
+    it('does not offer a copy of a broken or unreadable report', () => {
+        expect(canCopyReport({ spec: FEEDINGS, broken: mark })).toBe(false)
+        expect(canCopyReport({ spec: { ...FEEDINGS, version: 99 }, broken: null })).toBe(false)
+        expect(canCopyReport({ spec: null, broken: null })).toBe(false)
     })
 })
 

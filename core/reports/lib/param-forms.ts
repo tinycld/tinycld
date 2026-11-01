@@ -61,6 +61,7 @@ export const numberValueSchema = z.object({
     // The number field holds its text while a typed value is not a number yet.
     number: z.number({ error: 'Enter a number' }).refine(Number.isFinite, 'Enter a number'),
 })
+export type NumberValue = z.infer<typeof numberValueSchema>
 export const choicesSchema = z.object({
     values: z.array(z.string()).min(1, 'Choose at least one'),
 })

@@ -80,7 +80,8 @@ const layoutItemSchema = z.strictObject({
 })
 
 export const reportSpecSchema = z.strictObject({
-    version: z.number().int().min(1),
+    // A newer app's spec may mean something this app would read wrongly: unreadable.
+    version: z.number().int().min(1).max(CURRENT_SPEC_VERSION),
     source: z.string().min(1),
     params: z.array(paramDefSchema).nullish(),
     columns: z.array(specColumnSchema),
@@ -126,6 +127,12 @@ export type BrokenMark = z.infer<typeof brokenSchema>
 export function parseBroken(value: unknown): BrokenMark | null {
     const parsed = brokenSchema.safeParse(value)
     return parsed.success ? parsed.data : null
+}
+
+// The server refuses to copy a report that cannot run, so a copy is offered only for a
+// report with no broken mark and a spec this app can read.
+export function canCopyReport(report: { spec: unknown; broken: unknown }): boolean {
+    return parseBroken(report.broken) === null && parseSpec(report.spec) !== null
 }
 
 export function brokenProblems(mark: BrokenMark): Problem[] {

@@ -49,6 +49,10 @@ function useMineQuery(tab: HubTab) {
 /** A saved report as the hub's queries read it. */
 export type HubReport = NonNullable<ReturnType<typeof useMineQuery>['data']>[number]
 
+function byNewestChange(a: HubReport, b: HubReport): number {
+    return b.updated.localeCompare(a.updated) || a.id.localeCompare(b.id)
+}
+
 export interface HubRow {
     report: HubReport
     access: ReportAccess
@@ -130,9 +134,11 @@ export function useReportsHub() {
             const roles = rolesByReport(
                 sharedRows.map(row => ({ report: row.report.id, role: row.role }))
             )
+            // Newest change first, as Mine; the report is a related row, so the order is
+            // set here, after the query.
             const reports = [
                 ...new Map(sharedRows.map(row => [row.report.id, row.report])).values(),
-            ]
+            ].sort(byNewestChange)
             return reports.map(report => ({
                 report,
                 access: accessOf(report, roles.get(report.id) ?? []),
@@ -173,6 +179,8 @@ export function useReportsHub() {
             ? catalog.sources.filter(source => source.key.startsWith(prefix))
             : catalog.sources,
         isCatalogReady: catalog.isReady,
+        isCatalogError: catalog.isError,
+        retryCatalog: catalog.retry,
         sourceLabel: (key: string) => catalog.byKey.get(key)?.label ?? key,
         packageSlug,
         packageLabel: packages.find(p => p.slug === packageSlug)?.name ?? packageSlug ?? '',
