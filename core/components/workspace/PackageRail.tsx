@@ -9,6 +9,7 @@ import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { type Href, Link } from 'expo-router'
 import {
+    BarChart3,
     Building2,
     HelpCircle,
     type LucideIcon,
@@ -108,6 +109,16 @@ export function PackageRail({
                 <SidebarToggle color={railText} activePkgSlug={activePkgSlug} />
                 <ImportIndicator />
                 <NotificationBell color={railText} />
+
+                <Link href={orgHref('reports')} asChild>
+                    <Pressable
+                        testID="nav-reports"
+                        className="w-11 h-11 rounded-xl justify-center items-center"
+                        accessibilityLabel="Reports"
+                    >
+                        <BarChart3 size={22} color={railText} />
+                    </Pressable>
+                </Link>
 
                 <Link href={orgHref('help')} asChild>
                     <Pressable

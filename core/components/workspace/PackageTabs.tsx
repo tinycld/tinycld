@@ -6,7 +6,7 @@ import { PackageAccessDenied } from './PackageAccessDenied'
 // The routes app/a/(app)/ holds: the app-owned ones, plus one directory per bundled
 // package with `routes`, which the generator writes. expo-router 58 renders only the
 // screens a layout declares, so each one gets a <Tabs.Screen>.
-const APP_ROUTES = ['index', 'help', 'settings']
+const APP_ROUTES = ['index', 'help', 'reports', 'settings']
 const PACKAGE_ROUTES = packageRegistry.filter(p => p.routes?.directory).map(p => p.slug)
 const SCREENS = [...APP_ROUTES, ...PACKAGE_ROUTES].map(name => (
     <Tabs.Screen key={name} name={name} />
@@ -14,7 +14,7 @@ const SCREENS = [...APP_ROUTES, ...PACKAGE_ROUTES].map(name => (
 
 /**
  * Org-level package switcher — the navigator that swaps between packages
- * (mail, drive, calendar, …) and the app-owned admin/help/settings routes.
+ * (mail, drive, calendar, …) and the app-owned admin/help/reports/settings routes.
  *
  * Replaces the earlier FrozenStack (an expo-router <Stack>). Under React
  * Navigation 7 a Stack's NAVIGATE only reuses the *currently-focused* route, so

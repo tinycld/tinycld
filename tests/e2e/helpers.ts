@@ -457,12 +457,21 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     // Playwright reports it visible. Trusting it skips the navigation and the
     // caller then finds the wrong screen on top. So the target also has to be
     // what the user would hit at its own position.
-    const alreadyThere = await onTarget
-        .waitFor({ state: 'visible', timeout: redirectMayBeInFlight ? 2000 : 1 })
-        .then(
-            () => isOnTop(onTarget),
-            () => false
-        )
+    //
+    // A chrome heading is plain text that a package screen can show too (a
+    // package's own "Settings" or "Reports" sidebar item), so for chrome the
+    // URL must also be inside the area. No post-login redirect ever lands on a
+    // chrome area, so this check does not race a landing.
+    const isInsideChrome =
+        landingPathname === appHref(pkg) || landingPathname.startsWith(`${appHref(pkg)}/`)
+    const alreadyThere =
+        (!chromeHeading || isInsideChrome) &&
+        (await onTarget
+            .waitFor({ state: 'visible', timeout: redirectMayBeInFlight ? 2000 : 1 })
+            .then(
+                () => isOnTop(onTarget),
+                () => false
+            ))
 
     if (!alreadyThere) {
         // Match the package root or a path under it, not a bare prefix: some
