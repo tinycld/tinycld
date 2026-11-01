@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { ReportSpec } from '../../spec'
-import { builderSchema, draftFromSpec, emptyDraft, specFromDraft } from '../draft'
+import {
+    builderSchema,
+    type ColumnDraft,
+    draftFromSpec,
+    emptyDraft,
+    type FormulaDraft,
+    specFromDraft,
+} from '../draft'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
 const RICH: ReportSpec = {
@@ -95,24 +102,99 @@ describe('draftFromSpec and specFromDraft', () => {
         }
         expect(specFromDraft(unasked, CATALOG).params).toBeUndefined()
     })
+})
 
-    it('keeps a param a fixed layout row asks for', () => {
-        const spec: ReportSpec = {
-            ...RICH,
-            filter: undefined,
-            layout: [
-                { section: 'open', title: 'Open', key: 'open' },
-                {
-                    row: 'share',
-                    label: 'Share',
-                    formula: { op: 'mul', args: [{ subtotal: 'open' }, { param: 'period' }] },
-                },
-            ],
+// The engine keeps whole cents when an amount is divided by a number: such a
+// division must say scale 0 (formula.go), so the builder must know which
+// columns and subtotals hold amounts.
+describe('the scale of a division and an average', () => {
+    const META = { title: 'Sales', description: '' }
+    const amountCols: ReportSpec['columns'] = [
+        { id: 'status', label: 'Status', path: [{ field: 'status' }] },
+        { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+        { id: 'cost', label: 'Cost', path: [{ field: 'cost' }], aggregate: 'sum' },
+        {
+            id: 'profit',
+            label: 'Profit',
+            formula: { op: 'sub', args: [{ col: 'amount' }, { col: 'cost' }] },
+        },
+    ]
+
+    it('divides an amount formula by a number in whole cents', () => {
+        const draft = draftFromSpec(
+            { version: 1, source: SALES_KEY, columns: amountCols },
+            META,
+            CATALOG
+        )
+        const half: ColumnDraft = {
+            kind: 'formula',
+            id: 'half',
+            label: 'Half',
+            aggregate: '',
+            scale: null,
+            format: '',
+            formula: { kind: 'editable', expr: { div: [{ var: 'profit' }, 2] } },
         }
-        const { filter: _, ...expected } = spec
-        const draft = draftFromSpec(spec, { title: 'Sales', description: '' }, CATALOG)
-        expect(draft.layout[1]).toMatchObject({ kind: 'row', formula: { kind: 'fixed' } })
-        expect(specFromDraft(draft, CATALOG)).toEqual(expected)
+        const spec = specFromDraft({ ...draft, columns: [...draft.columns, half] }, CATALOG)
+        expect(spec.columns[4]?.formula).toEqual({
+            op: 'div',
+            args: [{ col: 'profit' }, { value: 2 }],
+            scale: 0,
+        })
+    })
+
+    it('averages an amount formula in whole cents', () => {
+        const draft = draftFromSpec(
+            { version: 1, source: SALES_KEY, columns: amountCols },
+            META,
+            CATALOG
+        )
+        const columns = draft.columns.map(column =>
+            column.id === 'profit' ? { ...column, aggregate: 'avg' as const } : column
+        )
+        expect(specFromDraft({ ...draft, columns }, CATALOG).columns[3]).toMatchObject({
+            aggregate: 'avg',
+            scale: 0,
+        })
+    })
+
+    const layoutSpec = (columns: ReportSpec['columns']): ReportSpec => ({
+        version: 1,
+        source: SALES_KEY,
+        columns,
+        groups: [{ id: 'byStatus', col: 'status', subtotals: true }],
+        layout: [
+            { section: 'open', title: 'Open', key: 'open' },
+            { row: 'third', label: 'A third', formula: { value: 0 } },
+        ],
+    })
+    const third: FormulaDraft = { kind: 'editable', expr: { div: [{ var: 'open' }, 3] } }
+    const thirdOfOpen = (spec: ReportSpec) => {
+        const draft = draftFromSpec(spec, META, CATALOG)
+        const layout = draft.layout.map(item =>
+            item.kind === 'row' ? { ...item, formula: third } : item
+        )
+        return specFromDraft({ ...draft, layout }, CATALOG).layout?.[1]?.formula
+    }
+
+    it('divides a layout subtotal of counts at the ratio scale', () => {
+        const counts: ReportSpec['columns'] = [
+            { id: 'status', label: 'Status', path: [{ field: 'status' }] },
+            { id: 'sales', label: 'Sales', path: [{ field: 'id' }], aggregate: 'count' },
+        ]
+        expect(thirdOfOpen(layoutSpec(counts))).toEqual({
+            op: 'div',
+            args: [{ subtotal: 'open' }, { value: 3 }],
+            scale: 4,
+        })
+    })
+
+    it('divides a layout subtotal of amounts in whole cents', () => {
+        expect(thirdOfOpen(layoutSpec(amountCols))).toEqual({
+            op: 'div',
+            args: [{ subtotal: 'open' }, { value: 3 }],
+            scale: 0,
+        })
     })
 })
 

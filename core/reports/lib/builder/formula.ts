@@ -70,7 +70,8 @@ export function toComputeExpr(node: SpecNode, leaf: FormulaLeaf): ComputeExpr | 
     return null
 }
 
-function isAmountExpr(expr: ComputeExpr, isAmount: (key: string) => boolean): boolean {
+/** The formula's result is an amount, as the engine types it (amount ÷ number stays an amount). */
+export function isAmountExpr(expr: ComputeExpr, isAmount: (key: string) => boolean): boolean {
     const amount = (e: ComputeExpr) => isAmountExpr(e, isAmount)
     if (typeof expr === 'number') return false
     if ('var' in expr) return isAmount(expr.var)
