@@ -44,8 +44,8 @@ func catalogLink(t *testing.T, s CatalogSource, key string) CatalogLink {
 }
 
 func TestCatalogListsUsableSourcesWithTheirFieldsAndLinks(t *testing.T) {
-	newZoo(t)
-	cat := Catalog()
+	z := newZoo(t)
+	cat := Catalog(z.app)
 	keys := make([]string, len(cat))
 	for i, s := range cat {
 		keys[i] = s.Key
@@ -77,10 +77,10 @@ func TestCatalogListsUsableSourcesWithTheirFieldsAndLinks(t *testing.T) {
 
 // The catalog hands out copies: a caller that edits one cannot change the registry.
 func TestCatalogCopiesTheRegistry(t *testing.T) {
-	newZoo(t)
-	first := catalogField(t, catalogSource(t, Catalog(), "zoo.animals"), "weight")
+	z := newZoo(t)
+	first := catalogField(t, catalogSource(t, Catalog(z.app), "zoo.animals"), "weight")
 	first.Aggregates[0] = Count
-	if f := catalogField(t, catalogSource(t, Catalog(), "zoo.animals"), "weight"); f.Aggregates[0] != Sum {
+	if f := catalogField(t, catalogSource(t, Catalog(z.app), "zoo.animals"), "weight"); f.Aggregates[0] != Sum {
 		t.Fatalf("the registry changed: %+v", f)
 	}
 }
@@ -91,7 +91,7 @@ func TestCatalogLeavesOutARefusedSource(t *testing.T) {
 	if err := CheckSources(z.app); err == nil {
 		t.Fatal("CheckSources accepted zoo.ghosts, which has no collection")
 	}
-	for _, s := range Catalog() {
+	for _, s := range Catalog(z.app) {
 		if s.Key == "zoo.ghosts" {
 			t.Fatal("the catalog offers a refused source")
 		}

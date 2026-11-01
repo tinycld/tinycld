@@ -36,10 +36,10 @@ type CatalogLink struct {
 	Cardinality Cardinality `json:"cardinality"`
 }
 
-// Catalog lists the sources a report may use, sorted by key, as copies. A
-// field registered with no aggregates offers CountOnly, as the engine reads it.
-func Catalog() []CatalogSource {
-	all := Sources()
+// Catalog lists the sources a report on app may use, sorted by key, as copies.
+// A field registered with no aggregates offers CountOnly, as the engine reads it.
+func Catalog(app core.App) []CatalogSource {
+	all := Sources(app)
 	out := make([]CatalogSource, 0, len(all))
 	for _, src := range all {
 		cs := CatalogSource{
@@ -69,5 +69,5 @@ func Catalog() []CatalogSource {
 // handleSources answers GET /api/reports/sources with the catalog. It reads
 // the registry in memory and no collection, so it shows no record data.
 func handleSources(re *core.RequestEvent) error {
-	return re.JSON(http.StatusOK, map[string]any{"sources": Catalog()})
+	return re.JSON(http.StatusOK, map[string]any{"sources": Catalog(re.App)})
 }
