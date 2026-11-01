@@ -465,11 +465,14 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
         )
 
     if (!alreadyThere) {
-        // Match by URL prefix rather than exact href: some packages (calc,
-        // text, …) rewrite their rail link to deep-link the user's last visited
-        // file (e.g. /a/calc/<id>), so the anchor no longer matches the bare
-        // package root.
-        const railLink = page.locator(`a[href^="${appHref(pkg)}"]`).first()
+        // Match the package root or a path under it, not a bare prefix: some
+        // packages (calc, text, …) rewrite their rail link to deep-link the
+        // user's last visited file (e.g. /a/calc/<id>), so the anchor no longer
+        // equals the package root; a bare prefix would also match another slug
+        // that starts with this one.
+        const railLink = page
+            .locator(`a[href="${appHref(pkg)}"], a[href^="${appHref(pkg)}/"]`)
+            .first()
         await railLink.waitFor({ state: 'visible' })
         await railLink.click()
         await onTarget.waitFor({ state: 'visible' })
