@@ -117,6 +117,33 @@ func resolveParams(defs []ParamDef, given map[string]json.RawMessage, pc periodC
 	return out, nil
 }
 
+// ResolvedParam is one param as a run resolved it: the posted value, else its
+// default, else unset. A preset is given as its days, so the shell shows the
+// period the server ran without repeating the fiscal-year rules.
+type ResolvedParam struct {
+	ID    string   `json:"id"`
+	Type  string   `json:"type"`
+	Unset bool     `json:"unset,omitempty"`
+	Value any      `json:"value,omitempty"`
+	List  []string `json:"list,omitempty"`
+	From  string   `json:"from,omitempty"`
+	To    string   `json:"to,omitempty"`
+}
+
+// resolvedParams lists defs in order with the values a run resolved for them.
+func resolvedParams(defs []ParamDef, values map[string]paramValue) []ResolvedParam {
+	out := make([]ResolvedParam, 0, len(defs))
+	for _, d := range defs {
+		v := values[d.ID]
+		rp := ResolvedParam{ID: d.ID, Type: d.Type, Unset: v.unset}
+		if !v.unset {
+			rp.Value, rp.List, rp.From, rp.To = v.value, v.list, v.from, v.to
+		}
+		out = append(out, rp)
+	}
+	return out
+}
+
 func parseParam(d ParamDef, raw json.RawMessage, pc periodContext, at string) (paramValue, *SpecError) {
 	out := paramValue{typ: d.Type, multiple: d.Multiple}
 	if raw == nil || string(bytes.TrimSpace(raw)) == "null" {

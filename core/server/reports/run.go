@@ -55,6 +55,9 @@ type Result struct {
 	Notices []Notice       `json:"notices"`
 	Topics  []string       `json:"topics"`
 	Page    *Page          `json:"page"`
+	// Params are the report's params as this run resolved them, in spec
+	// order, so the shell shows the period the server ran.
+	Params []ResolvedParam `json:"params"`
 }
 
 type ResultColumn struct {
@@ -99,10 +102,13 @@ type Row struct {
 	// Section is the group row this row belongs to.
 	Section string `json:"section,omitempty"`
 	// Parent is the row a nested child row hangs under.
-	Parent   string         `json:"parent,omitempty"`
-	GroupKey []any          `json:"groupKey,omitempty"`
-	Expanded bool           `json:"expanded,omitempty"`
-	Cells    map[string]any `json:"cells"`
+	Parent   string `json:"parent,omitempty"`
+	GroupKey []any  `json:"groupKey,omitempty"`
+	Expanded bool   `json:"expanded,omitempty"`
+	// CanExpand says a group row has rows to open (false for a pivot's
+	// innermost group), so the client never repeats that rule.
+	CanExpand bool           `json:"canExpand,omitempty"`
+	Cells     map[string]any `json:"cells"`
 }
 
 type Notice struct {
@@ -194,6 +200,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	if err := rn.run(); err != nil {
 		return nil, err
 	}
+	rn.res.Params = resolvedParams(p.spec.Params, params)
 	return rn.res, nil
 }
 

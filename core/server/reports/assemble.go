@@ -213,7 +213,7 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 	p := rn.c.p
 	canOpen := n < len(p.groups) || p.pivot == nil
 	expanded := canOpen && rn.expand.has(key)
-	rn.push(Row{ID: id, Kind: KindGroup, Depth: n - 1, Label: label, Section: section, GroupKey: key, Expanded: expanded, Cells: rn.cells(row)})
+	rn.push(Row{ID: id, Kind: KindGroup, Depth: n - 1, Label: label, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row)})
 	if expanded {
 		if n < len(p.groups) {
 			for _, child := range t.children[keyString(key)] {
