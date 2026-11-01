@@ -102,10 +102,12 @@ func LoadIncomingMigrations(migrationsDir string, sandboxed bool, onInit func(vm
 	// (OnServe, the hooks watcher) onto whatever app it is given, and doing
 	// that to the serving app mid-deploy would attach a second set of handlers
 	// to a process that is about to hand over. This loader app is used only to
-	// evaluate the migration files and is then dropped — it is never
-	// bootstrapped and never opens a database. The Up/Down closures the load
-	// produces act on the txApp the migration runner passes them at call time,
-	// not on this app.
+	// evaluate the migration files — it is never bootstrapped and never opens a
+	// database. It is not dropped after the load: each registered Up/Down
+	// builds a fresh runtime through the loader's jsvm plugin when it is called
+	// (migrationRuntimes.p in the fork), so the loader lives as long as the
+	// returned IncomingMigrations. The Up/Down closures act on the txApp the
+	// migration runner passes them at call time, not on this app.
 	loader := pocketbase.New()
 	if err := jsvm.Register(loader, jsvm.Config{
 		MigrationsDir:  migrationsDir,
