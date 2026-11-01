@@ -160,11 +160,11 @@ jobs:
         working-directory: ws/tinycld/core/server
         run: go test ./...
       # The PocketBase fork is its own Go module, so neither step above runs
-      # its tests. Run the fork's realtime tests: the realtime extensions
-      # (leave events, resume) live there and nothing else covers them.
-      - name: Go test (PocketBase fork realtime)
+      # its tests. The fork's changes (realtime, jsvm, the database pools,
+      # Bootstrap) are tested only here; the whole suite takes under a minute.
+      - name: Go vet and test (PocketBase fork)
         working-directory: ws/tinycld/third_party/pocketbase
-        run: go test ./tools/subscriptions/ ./apis/ -run 'Realtime|Resumable|Client|Broker|Message'
+        run: go vet ./... && go test ./...
       # The CLI is a second Go module, and its go.work + cli_extensions.go are
       # emitted by the generator during the install above. With no --with
       # features in this assembly the generated extension file is the valid
