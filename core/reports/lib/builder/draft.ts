@@ -22,6 +22,7 @@ import {
     MAX_COLUMNS,
     MAX_HOPS,
     MAX_LABEL,
+    MAX_PARAMS,
     MAX_PIVOT_COLUMNS,
     nextColumnId,
     pathLabel,
@@ -100,7 +101,7 @@ const draftShape = z.object({
     title: z.string().trim().min(1, 'Enter a title').max(200),
     description: z.string().max(2000),
     source: z.string().min(1),
-    params: z.array(paramDefSchema).max(20),
+    params: z.array(paramDefSchema).max(MAX_PARAMS),
     columns: z.array(columnDraftSchema).min(1, 'Add a column').max(MAX_COLUMNS),
     filter: filterGroupSchema,
     groups: z

@@ -101,6 +101,12 @@ export function opsFor(type: FieldType): ConditionOp[] {
     return OPS_BY_TYPE[type]
 }
 
+/** The operators a condition's picker lists: a read-back operator stays listed first. */
+export function opsShownFor(type: FieldType, current: ConditionOp): ConditionOp[] {
+    const offered = opsFor(type)
+    return offered.includes(current) ? offered : [current, ...offered]
+}
+
 const isDayType = (type: FieldType) => type === 'date' || type === 'datetime'
 const isAmountType = (type: FieldType) => type === 'money'
 const isNumberType = (type: FieldType) =>
@@ -481,4 +487,110 @@ export function conditionProblems(group: GroupDraft, catalog: Catalog, baseKey: 
         if (problem) out.push(`${info.field.label}: ${problem}`)
     }
     return out
+}
+
+/** An item's place in the tree: indexes from the root; a related item's children are its conditions. */
+export type FilterPath = readonly number[]
+
+function childItems(item: FilterItem): FilterItem[] | null {
+    if (item.kind === 'group') return item.items
+    if (item.kind === 'related') return item.where.items
+    return null
+}
+
+function withChildItems(item: FilterItem, items: FilterItem[]): FilterItem {
+    if (item.kind === 'group') return { ...item, items }
+    if (item.kind === 'related') return { ...item, where: { ...item.where, items } }
+    return item
+}
+
+// Replaces the item at `path` with fn's answer; null removes it. A path that names
+// no item leaves the tree as it is.
+function mapAt(
+    item: FilterItem,
+    path: FilterPath,
+    fn: (item: FilterItem) => FilterItem | null
+): FilterItem | null {
+    if (path.length === 0) return fn(item)
+    const [head, ...rest] = path
+    const items = childItems(item)
+    const child = head === undefined ? undefined : items?.[head]
+    if (!items || child === undefined) return item
+    const next = mapAt(child, rest, fn)
+    const changed =
+        next === null
+            ? items.filter((_, i) => i !== head)
+            : items.map((c, i) => (i === head ? next : c))
+    return withChildItems(item, changed)
+}
+
+function asGroup(item: FilterItem | null, fallback: GroupDraft): GroupDraft {
+    return item?.kind === 'group' ? item : fallback
+}
+
+export function updateFilterItem(
+    root: GroupDraft,
+    path: FilterPath,
+    fn: (item: FilterItem) => FilterItem
+): GroupDraft {
+    return asGroup(mapAt(root, path, fn), root)
+}
+
+export function removeFilterItem(root: GroupDraft, path: FilterPath): GroupDraft {
+    if (path.length === 0) return root
+    return asGroup(
+        mapAt(root, path, () => null),
+        root
+    )
+}
+
+/** Adds an item to the group, or the related item's conditions, at `path`. */
+export function addFilterItem(root: GroupDraft, path: FilterPath, added: FilterItem): GroupDraft {
+    return asGroup(
+        mapAt(root, path, item => withChildItems(item, [...(childItems(item) ?? []), added])),
+        root
+    )
+}
+
+export function setMatchAt(
+    root: GroupDraft,
+    path: FilterPath,
+    match: GroupDraft['match']
+): GroupDraft {
+    return asGroup(
+        mapAt(root, path, item => {
+            if (item.kind === 'group') return { ...item, match }
+            if (item.kind === 'related') return { ...item, where: { ...item.where, match } }
+            return item
+        }),
+        root
+    )
+}
+
+function itemSignature(item: FilterItem): string {
+    switch (item.kind) {
+        case 'condition':
+            return `condition:${JSON.stringify(item.path)}`
+        case 'related':
+            return `related:${JSON.stringify(item.link)}`
+        case 'group':
+            return 'group'
+        case 'fixed':
+            return `fixed:${JSON.stringify(item.node)}`
+    }
+}
+
+/**
+ * A key per item for the editor's rows: what the item filters on, and how many
+ * earlier siblings filter on the same. Typing a value keeps a row's key, and
+ * removing a row does not hand its key to the next one on another field.
+ */
+export function filterItemKeys(items: readonly FilterItem[]): string[] {
+    const seen = new Map<string, number>()
+    return items.map(item => {
+        const signature = itemSignature(item)
+        const n = seen.get(signature) ?? 0
+        seen.set(signature, n + 1)
+        return `${signature}#${n}`
+    })
 }

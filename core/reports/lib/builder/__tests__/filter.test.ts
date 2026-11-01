@@ -9,6 +9,7 @@ import {
     type GroupDraft,
     nodeToFilter,
     opsFor,
+    opsShownFor,
     paramsInGroup,
     textFromCents,
 } from '../filter'
@@ -181,5 +182,12 @@ describe('client checks', () => {
         expect(opsFor('bool')).toEqual(['isTrue', 'isFalse'])
         expect(opsFor('select')).toEqual(['eq', 'ne', 'in', 'isEmpty', 'notEmpty'])
         expect(opsFor('date')).toContain('between')
+    })
+
+    it('keeps a read-back operator the field type does not offer in the picker', () => {
+        expect(opsShownFor('date', 'gte')).toEqual(opsFor('date'))
+        expect(opsShownFor('date', 'ne')).toEqual(['ne', ...opsFor('date')])
+        expect(opsShownFor('text', 'lt')[0]).toBe('lt')
+        expect(opsShownFor('bool', 'eq')).toEqual(['eq', 'isTrue', 'isFalse'])
     })
 })

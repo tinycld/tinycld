@@ -28,6 +28,7 @@ import { REPORT_TAP_TARGET } from '../ReportHeader'
 import { ReportBody } from '../ReportView'
 import { ColumnsSection } from './ColumnsSection'
 import { DetailsSection } from './DetailsSection'
+import { FilterSection } from './FilterSection'
 
 const DISCARD = {
     title: 'Discard changes?',
@@ -64,6 +65,7 @@ function Sections({ builder, problems }: { builder: ReportBuilder; problems: Pro
         <View>
             <DetailsSection builder={builder} problems={problems} />
             <ColumnsSection builder={builder} problems={problems} />
+            <FilterSection builder={builder} problems={problems} />
         </View>
     )
 }
