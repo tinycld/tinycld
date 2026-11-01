@@ -1,3 +1,4 @@
+import { HelpIcon } from '@tinycld/core/components/help/HelpIcon'
 import { LoadingState } from '@tinycld/core/components/LoadingState'
 import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
@@ -97,12 +98,15 @@ export function ReportsHubView({ hub, menuFor, banner }: ReportsHubViewProps) {
             contentContainerClassName="w-full gap-4 p-4"
         >
             <View className="flex-row items-center justify-between gap-2">
-                <Text
-                    testID="reports-hub-heading"
-                    className="text-2xl font-semibold text-foreground"
-                >
-                    Reports
-                </Text>
+                <View className="flex-row items-center gap-2">
+                    <Text
+                        testID="reports-hub-heading"
+                        className="text-2xl font-semibold text-foreground"
+                    >
+                        Reports
+                    </Text>
+                    <HelpIcon topic="core:reports" />
+                </View>
                 <Button
                     testID="reports-hub-new"
                     onPress={() => setChoosing(true)}

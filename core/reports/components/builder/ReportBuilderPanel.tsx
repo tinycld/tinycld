@@ -1,4 +1,5 @@
 import { useLeaveGuard } from '@tinycld/core/components/forms-builder/use-leave-guard'
+import { HelpIcon } from '@tinycld/core/components/help/HelpIcon'
 import {
     type Breakpoint,
     useBreakpoint,
@@ -59,7 +60,12 @@ const PANEL_TITLES = { new: 'New report', edit: 'Edit report' } as const
 
 function PanelTitle({ builder }: { builder: ReportBuilder }) {
     return (
-        <Text className="text-lg font-semibold text-foreground">{PANEL_TITLES[builder.mode]}</Text>
+        <View className="flex-row items-center gap-2">
+            <Text className="text-lg font-semibold text-foreground">
+                {PANEL_TITLES[builder.mode]}
+            </Text>
+            <HelpIcon topic="core:reports" />
+        </View>
     )
 }
 
