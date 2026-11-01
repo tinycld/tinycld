@@ -37,7 +37,7 @@ test.describe('admin sign-in help', () => {
 
     async function enrollAuthenticator(page: Page) {
         await page.getByLabel('User menu').click()
-        await page.getByText('Settings', { exact: true }).click()
+        await page.getByRole('menu').getByText('Settings', { exact: true }).click()
         const accountGroup = page.getByText('Account', { exact: true }).locator('..')
         await accountGroup.getByText('Security', { exact: true }).click()
         await page.getByTestId('totp-start').click()
@@ -121,7 +121,7 @@ test.describe('admin sign-in help', () => {
             },
         })
         await inviteePage.getByLabel('User menu').click()
-        await inviteePage.getByText('Settings', { exact: true }).click()
+        await inviteePage.getByRole('menu').getByText('Settings', { exact: true }).click()
         const accountGroup = inviteePage.getByText('Account', { exact: true }).locator('..')
         await accountGroup.getByText('Security', { exact: true }).click()
         await inviteePage.getByTestId('passkey-add').click()

@@ -19,7 +19,7 @@ const PNG_BASE64 =
 // which only the real link is in.
 async function openProfileSettings(page: Page): Promise<void> {
     await page.getByLabel('User menu').click()
-    await page.getByText('Settings', { exact: true }).click()
+    await page.getByRole('menu').getByText('Settings', { exact: true }).click()
     const accountGroup = page.getByText('Account', { exact: true }).locator('..')
     await accountGroup.getByText('Profile', { exact: true }).click()
     await expect(page.getByTestId('avatar-preview')).toBeVisible()
