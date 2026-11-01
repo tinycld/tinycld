@@ -49,6 +49,12 @@ function toolbarItems(model: ReportViewModel): ToolbarItem[] {
     if (model.onEdit && model.access.canEdit && !model.isEditing) {
         items.push(toolbarButton('edit', 'Edit report', 'report-edit-open', model.onEdit))
     }
+    if (model.onShare && model.access.canShare) {
+        items.push(toolbarButton('share', 'Share', 'report-share-open', model.onShare))
+    }
+    if (model.onSaveAs && !model.isEditing) {
+        items.push(toolbarButton('save-as', 'Save as…', 'report-save-as', model.onSaveAs))
+    }
     if (model.onCopyLink) {
         items.push(toolbarButton('copy-link', 'Copy link', 'report-copy-link', model.onCopyLink))
     }

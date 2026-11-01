@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test'
+import PocketBase from 'pocketbase'
 import { navigateToPackage } from './helpers'
 
 // Helpers for the reports specs. Fixture names come from the salesstub package
@@ -123,4 +124,19 @@ export async function cellOf(page: Page, columnId: string, label: string): Promi
     const testId = await labelCell.getAttribute('data-testid')
     if (!testId) throw new Error(`no row labelled ${label}`)
     return page.getByTestId(`report-cell-${columnId}-${testId.replace('report-row-', '')}`)
+}
+
+// A PocketBase client signed in as the e2e server's superuser, for the one fixture
+// reports-share.spec.ts seeds (its header says why). scripts/e2e-serve.ts creates
+// this superuser from the same variables and defaults.
+export async function superuserClient(): Promise<PocketBase> {
+    const pb = new PocketBase(`http://127.0.0.1:${process.env.E2E_PORT ?? 7200}`)
+    pb.autoCancellation(false)
+    await pb
+        .collection('_superusers')
+        .authWithPassword(
+            process.env.ADMIN_USER_LOGIN || 'admin@tinycld.org',
+            process.env.ADMIN_USER_PW || 'AdminPass1234!'
+        )
+    return pb
 }

@@ -1,11 +1,15 @@
+import { PromptDialog } from '@tinycld/core/ui/PromptDialog'
 import { router, useLocalSearchParams } from 'expo-router'
+import { useState } from 'react'
 import { View } from 'react-native'
 import { ReportBuilderPanel } from '../components/builder/ReportBuilderPanel'
 import { ReportHeader } from '../components/ReportHeader'
 import { LoadingBody, MessageBody } from '../components/ReportStates'
 import { ReportView } from '../components/ReportView'
+import { ReportShareDialog } from '../components/share/ReportShareDialog'
 import { useBackToReports } from '../hooks/useBackToReports'
-import { useReportBuilder } from '../hooks/useReportBuilder'
+import { useHubActions } from '../hooks/useHubActions'
+import { copyTitle, MAX_TITLE, useReportBuilder } from '../hooks/useReportBuilder'
 import { useReportCatalog } from '../hooks/useReportCatalog'
 import { useReportRecord } from '../hooks/useReportRecord'
 import { useReportView } from '../hooks/useReportView'
@@ -13,6 +17,7 @@ import type { Catalog } from '../lib/builder/columns'
 import type { BrokenMark } from '../lib/spec'
 import type { CatalogSource } from '../lib/types'
 import { EDIT_KEY } from '../lib/view-url'
+import { useReportUIStore } from '../stores/report-ui-store'
 
 type RecordModel = ReturnType<typeof useReportRecord>
 
@@ -68,6 +73,12 @@ export function ReportFrame({ title, state, onBack, onRetry }: FrameProps) {
 
 function SavedReportView({ record, onBack }: { record: RecordModel; onBack: () => void }) {
     const report = record.record
+    const openShare = useReportUIStore(s => s.openShare)
+    const actions = useHubActions()
+    // The Save as prompt is a modal toggle: local UI state.
+    const [isSavingAs, setSavingAs] = useState(false)
+    // A copy of a report that cannot run would be refused by the server, so it is not offered.
+    const canCopy = report !== undefined && record.spec !== null && record.broken === null
     const model = useReportView({
         reportKey: report?.id ?? '',
         title: report?.title ?? '',
@@ -78,8 +89,30 @@ function SavedReportView({ record, onBack }: { record: RecordModel; onBack: () =
         isEditing: false,
         onBack,
         onEdit: () => router.setParams({ [EDIT_KEY]: '1' }),
+        onShare: report ? () => openShare(report.id) : undefined,
+        onSaveAs: canCopy ? () => setSavingAs(true) : undefined,
     })
-    return <ReportView model={model} />
+    const onSaveCopy = (title: string) => {
+        setSavingAs(false)
+        if (report) actions.saveCopy(report, title)
+    }
+    return (
+        <>
+            <ReportView model={model} />
+            <ReportShareDialog />
+            <PromptDialog
+                isOpen={isSavingAs}
+                onClose={() => setSavingAs(false)}
+                onSubmit={onSaveCopy}
+                title="Save as"
+                placeholder="Report title"
+                confirmLabel="Save copy"
+                defaultValue={copyTitle(report?.title ?? '')}
+                maxLength={MAX_TITLE}
+                required
+            />
+        </>
+    )
 }
 
 function EditingBody({ record, onBack }: { record: RecordModel; onBack: () => void }) {

@@ -3,6 +3,7 @@ import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { type ReactNode, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
+import { useHubActions } from '../../hooks/useHubActions'
 import {
     HUB_TABS,
     type HubRow,
@@ -12,7 +13,9 @@ import {
 } from '../../hooks/useReportsHub'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 import { MessageBody } from '../ReportStates'
+import { ReportShareDialog } from '../share/ReportShareDialog'
 import { HubList } from './HubList'
+import { HubRowMenu } from './HubRowMenu'
 import { NewReportDialog } from './NewReportDialog'
 
 const EMPTY: Record<HubTab, string> = {
@@ -134,10 +137,36 @@ export function ReportsHubView({ hub, menuFor, banner }: ReportsHubViewProps) {
     )
 }
 
-const NO_MENU = () => null
+function PackageBanner({ hub }: { hub: ReportsHubModel }) {
+    if (!hub.packageSlug) return null
+    return (
+        <View
+            testID="reports-hub-filter"
+            className="flex-row flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-secondary px-3 py-2"
+        >
+            <Text className="text-sm text-foreground">{`Showing reports from ${hub.packageLabel}`}</Text>
+            <Button
+                testID="reports-hub-show-all"
+                variant="outline"
+                size="sm"
+                onPress={hub.onShowAll}
+            >
+                <ButtonText>Show all reports</ButtonText>
+            </Button>
+        </View>
+    )
+}
 
 export function ReportsHub() {
     const hub = useReportsHub()
-    // Each row's menu and the package banner join later.
-    return <ReportsHubView hub={hub} menuFor={NO_MENU} banner={null} />
+    const actions = useHubActions()
+    const menuFor = (row: HubRow) => (
+        <HubRowMenu row={row} actions={actions} onOpen={() => hub.onOpen(row.report)} />
+    )
+    return (
+        <>
+            <ReportsHubView hub={hub} menuFor={menuFor} banner={<PackageBanner hub={hub} />} />
+            <ReportShareDialog />
+        </>
+    )
 }

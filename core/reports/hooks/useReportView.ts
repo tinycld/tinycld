@@ -101,6 +101,8 @@ export interface ReportViewInput {
     isEditing: boolean
     onBack(): void
     onEdit?(): void
+    onShare?(): void
+    onSaveAs?(): void
 }
 
 export function useReportView(input: ReportViewInput) {
@@ -124,6 +126,7 @@ export function useReportView(input: ReportViewInput) {
     const isCustomizeOpen = useReportUIStore(s => s.isCustomizeOpen) && isFocused
     const openCustomize = useReportUIStore(s => s.openCustomize)
     const closeCustomize = useReportUIStore(s => s.closeCustomize)
+    const closeShare = useReportUIStore(s => s.closeShare)
     const rows = run.result?.rows ?? NO_ROWS
     const resolved: Record<string, ResolvedParam> = Object.fromEntries(
         (run.result?.params ?? []).map(p => [p.id, p])
@@ -187,6 +190,7 @@ export function useReportView(input: ReportViewInput) {
     const closeOnBlur = useEffectEvent(() => {
         closeSurface()
         closeCustomize()
+        closeShare()
     })
     useFocusEffect(useCallback(() => () => closeOnBlur(), []))
 
@@ -196,6 +200,8 @@ export function useReportView(input: ReportViewInput) {
         isEditing,
         onBack: input.onBack,
         onEdit: input.onEdit ?? null,
+        onShare: input.onShare ?? null,
+        onSaveAs: input.onSaveAs ?? null,
         options,
         display: options.display,
         state: viewState({ source, broken, isEditing, run }),

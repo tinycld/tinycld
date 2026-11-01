@@ -25,7 +25,7 @@ import { EDIT_KEY } from '../lib/view-url'
 import type { SavedReport } from './useReportRecord'
 
 const PREVIEW_DELAY_MS = 400
-const MAX_TITLE = 200
+export const MAX_TITLE = 200
 
 export function copyTitle(title: string): string {
     return `Copy of ${title}`.slice(0, MAX_TITLE)
