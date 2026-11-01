@@ -2,7 +2,9 @@ package pkgbuild
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -84,14 +86,56 @@ const cmdWaitDelay = 2 * time.Second
 //
 // A ctx that can never end (context.Background) keeps the plain command in
 // this process's group, so a terminal's Ctrl-C still reaches it.
-func commandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+func commandContext(ctx context.Context, name string, args ...string) *command {
 	if ctx.Done() == nil {
-		return exec.Command(name, args...)
+		cmd := exec.Command(name, args...)
+		return &command{Cmd: cmd, wait: cmd.Wait}
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
-	killGroupOnCancel(cmd)
 	cmd.WaitDelay = cmdWaitDelay
-	return cmd
+	return &command{Cmd: cmd, wait: killGroupOnCancel(cmd)}
+}
+
+// command is a build command from commandContext. Its Wait is the one
+// killGroupOnCancel pairs with the cancel, so Run, Output and
+// CombinedOutput are redefined here to wait through it; exec.Cmd's own
+// would bypass it.
+type command struct {
+	*exec.Cmd
+	wait func() error
+}
+
+func (c *command) Wait() error { return c.wait() }
+
+func (c *command) Run() error {
+	if err := c.Start(); err != nil {
+		return err
+	}
+	return c.Wait()
+}
+
+func (c *command) CombinedOutput() ([]byte, error) {
+	var b bytes.Buffer
+	c.Stdout, c.Stderr = &b, &b
+	err := c.Run()
+	return b.Bytes(), err
+}
+
+// Output is exec.Cmd.Output: when Stderr is unset, stderr is kept in the
+// *exec.ExitError a failure returns.
+func (c *command) Output() ([]byte, error) {
+	var stdout, stderr bytes.Buffer
+	c.Stdout = &stdout
+	keepStderr := c.Stderr == nil
+	if keepStderr {
+		c.Stderr = &stderr
+	}
+	err := c.Run()
+	var exitErr *exec.ExitError
+	if keepStderr && errors.As(err, &exitErr) {
+		exitErr.Stderr = stderr.Bytes()
+	}
+	return stdout.Bytes(), err
 }
 
 // RunCmdEnv is RunCmd with extra environment entries ("KEY=VALUE") appended to

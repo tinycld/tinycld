@@ -451,7 +451,7 @@ func TestUnmarshalRequestDataUnexportedFields(t *testing.T) {
 
 		unexported string
 		// to ensure that the reflection doesn't take tags with higher priority than the exported state
-		unexportedWithTag string `form:"unexportedWithTag"` // fork: no json tag; go vet refuses one on an unexported field
+		unexportedWithTag string `form:"unexportedWithTag"` // fork: no json tag; go vet rejects one on an unexported field, and this test reads only form tags
 	}
 
 	dst := &TestStruct{}

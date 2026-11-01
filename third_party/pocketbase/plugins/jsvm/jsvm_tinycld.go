@@ -127,31 +127,14 @@ func (p *plugin) runScript(vm *sobek.Runtime, content string) (sobek.Value, erro
 	return res, err
 }
 
-// migrateFunc returns the JS `migrate(up, down)` binding for one migration
-// file. It registers into Config.MigrationsList when set, and into the app's
-// own list (core.OwnAppMigrations) otherwise. The up/down callbacks execute
-// LATER (RunAllMigrations, against the org's DB) on this same vm, so they
-// carry the budget with them — bounding only the file's top level would leave
-// the actual migration run free to spin.
-func (p *plugin) migrateFunc(vm *sobek.Runtime, file string) func(up, down func(txApp core.App) error) {
-	budget := p.execTimeout()
-	wrap := func(fn func(txApp core.App) error) func(core.App) error {
-		if fn == nil || budget <= 0 {
-			return fn
-		}
-		return func(txApp core.App) error {
-			return runBudgeted(vm, budget, func() error { return fn(txApp) })
-		}
+// migrationsTarget is the list a migration file registers into:
+// Config.MigrationsList when set, the app's own list (core.OwnAppMigrations)
+// otherwise.
+func (p *plugin) migrationsTarget() *core.MigrationsList {
+	if p.config.MigrationsList != nil {
+		return p.config.MigrationsList
 	}
-
-	target := p.config.MigrationsList
-	if target == nil {
-		target = core.OwnAppMigrations(p.app)
-	}
-
-	return func(up, down func(txApp core.App) error) {
-		target.Register(wrap(up), wrap(down), file)
-	}
+	return core.OwnAppMigrations(p.app)
 }
 
 // migrationFiles loads the migration sources from MigrationsFS or

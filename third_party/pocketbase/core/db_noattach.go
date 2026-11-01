@@ -6,7 +6,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"runtime"
 	"sync"
+	"weak"
 
 	"github.com/pocketbase/dbx"
 	sqlite "modernc.org/sqlite"
@@ -40,7 +42,25 @@ const noAttachMaxConns = 24
 // legitimately open the same file with different policies — the router's
 // control plane and an org that runs in its own process, in the deployment
 // this exists for.
-var restrictedPools sync.Map // *sql.DB -> struct{}
+//
+// The key is a weak pointer, so a record does not keep a closed pool alive: a
+// process that opens and closes many apps opens new pools for its whole life,
+// and each closed pool kept about 3.6 KiB. A cleanup deletes the record when
+// the pool is collected.
+var restrictedPools sync.Map // weak.Pointer[sql.DB] -> struct{}
+
+// markRestricted records sqlDB as primed by NoAttachDBConnect.
+func markRestricted(sqlDB *sql.DB) {
+	key := weak.Make(sqlDB)
+	restrictedPools.Store(key, struct{}{})
+	runtime.AddCleanup(sqlDB, func(k weak.Pointer[sql.DB]) { restrictedPools.Delete(k) }, key)
+}
+
+// isRestricted reports whether NoAttachDBConnect primed sqlDB.
+func isRestricted(sqlDB *sql.DB) bool {
+	_, ok := restrictedPools.Load(weak.Make(sqlDB))
+	return ok
+}
 
 // NoAttachDBConnect opens a database whose connections cannot ATTACH another
 // file. Use it for any app that executes untrusted JS.
@@ -72,7 +92,7 @@ func NoAttachDBConnect(dbPath string) (*dbx.DB, error) {
 		db.Close()
 		return nil, err
 	}
-	restrictedPools.Store(db.DB(), struct{}{})
+	markRestricted(db.DB())
 	return db, nil
 }
 
@@ -92,7 +112,7 @@ func NoAttachDBConnect(dbPath string) (*dbx.DB, error) {
 // without touching this file, which is why the re-priming lives next to the
 // original rather than at the call site.
 func ReapplyNoAttachLimits(sqlDB *sql.DB) error {
-	if _, ok := restrictedPools.Load(sqlDB); !ok {
+	if !isRestricted(sqlDB) {
 		return nil
 	}
 	return restrictAttach(sqlDB)

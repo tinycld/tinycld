@@ -266,33 +266,10 @@ func (p *plugin) registerMigrations() error {
 	registry := p.newRequireRegistry(absHooksDir) // this can be shared by multiple runtimes
 	templateRegistry := template.NewRegistry()
 
+	runtimes := &migrationRuntimes{p: p, registry: registry, templates: templateRegistry, absHooksDir: absHooksDir} // fork: see migrations_runtime_tinycld.go
 	for file, content := range files {
-		vm := goja.New()
-
-		registry.Enable(vm)
-		console.Enable(vm)
-		process.Enable(vm)
-		buffer.Enable(vm)
-
-		BindCore(vm)
-		BindDbx(vm)
-		BindSecurity(vm)
-		p.bindHostAccess(vm)
-		BindForms(vm)
-		BindMails(vm)
-
-		p.setTemplate(vm, templateRegistry)
-		vm.Set("__hooks", absHooksDir)
-
-		vm.Set("migrate", p.migrateFunc(vm, file))
-
-		if p.config.OnInit != nil {
-			p.config.OnInit(vm)
-		}
-
-		_, err := p.runScript(vm, string(content))
-		if err != nil {
-			return fmt.Errorf("failed to run migration %s: %w", file, err)
+		if err := runtimes.register(file, content); err != nil { // fork: no runtime outlives its file's top level (migrations_runtime_tinycld.go)
+			return err
 		}
 	}
 

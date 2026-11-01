@@ -1,11 +1,14 @@
-//go:build unix
+//go:build linux || darwin
 
 package pkgbuild
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -77,6 +80,40 @@ func TestRunCmdContext_CancelKillsTheProcessGroup(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if after := size(heartbeat); after != before {
 		t.Fatalf("the command's child still runs after the cancel (heartbeat %d -> %d bytes)", before, after)
+	}
+}
+
+// Once the command has been reaped, another process can take its pid,
+// which is its process group id, so a cancel then must signal nothing. The
+// group here is kept alive by a member that outlives the command: it stands
+// in for a new group that took the number.
+func TestCommandContext_CancelAfterTheReapSendsNothing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts real processes")
+	}
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := commandContext(ctx, "sh", "-c", `sleep 30 & echo $! > "$1"`, "sh", pidFile)
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(member, syscall.SIGKILL) })
+
+	if err := cmd.Cancel(); !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("cancel after the reap = %v, want os.ErrProcessDone", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if syscall.Kill(member, 0) != nil {
+		t.Fatal("a cancel after the reap reached the process group")
 	}
 }
 

@@ -1,13 +1,19 @@
-//go:build unix
+//go:build linux || darwin
 
 package supervise
 
 import (
 	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"tinycld.org/core/procgroup"
 )
 
 func bindLoopback(t *testing.T) *net.TCPListener {
@@ -300,5 +306,43 @@ func TestSameAddr(t *testing.T) {
 		if got := sameAddr(c.a, c.b); got != c.same {
 			t.Errorf("sameAddr(%q, %q) = %v, want %v", c.a, c.b, got, c.same)
 		}
+	}
+}
+
+// run reaps the child before it closes done, and another process can take
+// the pid, which is the group id, from the reap on. So signalGroup must send
+// nothing once the reap has begun, with done still open. The group here is
+// kept alive by a member that outlives the child: it stands in for a new
+// group that took the number.
+func TestChildNoSignalAfterTheReap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts real processes")
+	}
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	cmd := exec.Command("sh", "-c", `sleep 30 & echo $! > "$1"`, "sh", pidFile)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c := &child{group: procgroup.New(cmd), done: make(chan struct{})}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	c.pid = cmd.Process.Pid
+	if err := c.group.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(member, syscall.SIGKILL) })
+
+	c.signalGroup(syscall.SIGKILL)
+	// A killed member is gone once init has reaped it.
+	time.Sleep(200 * time.Millisecond)
+	if syscall.Kill(member, 0) != nil {
+		t.Fatal("signalGroup reached the process group after the reap")
 	}
 }
