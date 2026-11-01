@@ -1,0 +1,62 @@
+/// <reference path="../../tinycld/server/pb_data/types.d.ts" />
+// E2E fixture: the collections behind the salesstub report sources.
+// Teams are shared by every signed-in user; a sale belongs to its owner alone,
+// so a report over sales shows each reader only their own rows.
+const SIGNED_IN = '@request.auth.id != ""'
+const OWN = '@request.auth.id != "" && owner = @request.auth.id'
+
+function stamps(prefix) {
+    return [
+        { id: `${prefix}_created`, name: 'created', type: 'autodate', onCreate: true, onUpdate: false },
+        { id: `${prefix}_updated`, name: 'updated', type: 'autodate', onCreate: true, onUpdate: true },
+    ]
+}
+
+migrate(
+    app => {
+        const users = app.findCollectionByNameOrId('users')
+        const teams = new Collection({
+            id: 'pbc_salesstub_teams',
+            name: 'salesstub_teams',
+            type: 'base',
+            system: false,
+            listRule: SIGNED_IN,
+            viewRule: SIGNED_IN,
+            createRule: SIGNED_IN,
+            updateRule: SIGNED_IN,
+            deleteRule: SIGNED_IN,
+            fields: [
+                { id: 'salesstub_teams_name', name: 'name', type: 'text', required: true, max: 200 },
+                ...stamps('salesstub_teams'),
+            ],
+        })
+        app.save(teams)
+        const sales = new Collection({
+            id: 'pbc_salesstub_sales',
+            name: 'salesstub_sales',
+            type: 'base',
+            system: false,
+            listRule: OWN,
+            viewRule: OWN,
+            createRule: OWN,
+            updateRule: OWN,
+            deleteRule: OWN,
+            fields: [
+                { id: 'salesstub_sales_owner', name: 'owner', type: 'relation', collectionId: users.id, required: true, maxSelect: 1, cascadeDelete: false },
+                { id: 'salesstub_sales_team', name: 'team', type: 'relation', collectionId: teams.id, maxSelect: 1, cascadeDelete: false },
+                { id: 'salesstub_sales_customer', name: 'customer', type: 'text', max: 200 },
+                { id: 'salesstub_sales_amount', name: 'amount', type: 'number', onlyInt: true },
+                { id: 'salesstub_sales_cost', name: 'cost', type: 'number', onlyInt: true },
+                { id: 'salesstub_sales_currency', name: 'currency', type: 'text', max: 3 },
+                { id: 'salesstub_sales_day', name: 'day', type: 'date' },
+                { id: 'salesstub_sales_status', name: 'status', type: 'select', values: ['open', 'paid'], maxSelect: 1 },
+                ...stamps('salesstub_sales'),
+            ],
+        })
+        app.save(sales)
+    },
+    app => {
+        app.delete(app.findCollectionByNameOrId('salesstub_sales'))
+        app.delete(app.findCollectionByNameOrId('salesstub_teams'))
+    }
+)

@@ -1,0 +1,39 @@
+// Package stub is an E2E fixture: two report sources over its own collections,
+// so the app shell's reports e2e has a to-one link, a to-many link, money, a
+// date and a select with no real feature package installed. See
+// tinycld/tests/scripts/scaffold-reports-stub.ts for why.
+package stub
+
+import (
+	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/reports"
+)
+
+// Register is the entry point the generated package_extensions.go calls.
+func Register(_ core.App) error {
+	reports.RegisterSource(reports.Source{
+		Key: "salesstub.sales", Collection: "salesstub_sales", Label: "Stub sales",
+		Fields: []reports.Field{
+			{Key: "customer", Label: "Customer", Type: reports.Text, Aggregates: reports.CountOnly},
+			{Key: "amount", Label: "Amount", Type: reports.Money, Aggregates: reports.SumAll, Currency: "currency"},
+			{Key: "cost", Label: "Cost", Type: reports.Money, Aggregates: reports.SumAll, Currency: "currency"},
+			{Key: "currency", Label: "Currency", Type: reports.Text},
+			{Key: "day", Label: "Day", Type: reports.Date, Aggregates: reports.MinMax},
+			{Key: "status", Label: "Status", Type: reports.Select, Options: []reports.Option{
+				{Value: "open", Label: "Open"}, {Value: "paid", Label: "Paid"},
+			}},
+		},
+		Links: []reports.Link{
+			{Key: "team", Label: "Team", Target: "salesstub.teams", Cardinality: reports.ToOne, Field: "team"},
+		},
+	})
+	reports.RegisterSource(reports.Source{
+		Key: "salesstub.teams", Collection: "salesstub_teams", Label: "Stub teams",
+		Fields: []reports.Field{{Key: "name", Label: "Name", Type: reports.Text, Aggregates: reports.MinMax}},
+		Links: []reports.Link{
+			{Key: "sales", Label: "Sales", Target: "salesstub.sales", Cardinality: reports.ToMany, BackField: "team"},
+		},
+	})
+	return nil
+}

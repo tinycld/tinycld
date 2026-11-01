@@ -87,6 +87,20 @@ export function skipWithoutFormsStub(): boolean {
     return true
 }
 
+// The reports specs drive the salesstub package (tests/scripts/scaffold-reports-stub.ts),
+// whose report sources and rows exist only there. Same rule as skipWithoutFormsStub:
+// skip in a dev workspace without it, fail loudly on CI, where the scaffold step runs.
+export function skipWithoutReportsStub(): boolean {
+    const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', 'salesstub')
+    if (fs.existsSync(stubDir)) return false
+    if (process.env.CI) {
+        throw new Error(
+            'salesstub is not scaffolded but CI is set — the reports stub scaffold step must run before e2e.'
+        )
+    }
+    return true
+}
+
 // The sign-in POST occasionally returns a transient 400 under parallel CI
 // load (PocketBase auto-cancels an overlapping auth request, or the expand
 // query races), surfacing as an inline "Failed to authenticate." with the
@@ -402,11 +416,15 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     // is still loading, which is why the URL-based version needed
     // `waitUntil: 'commit'` everywhere and still raced.
     //
-    // settings/help are app chrome, not packages: app/(app)/_layout maps them
+    // settings/help/reports are app chrome, not packages: app/(app)/_layout maps them
     // to activePkgSlug=null on purpose (they leave the rail highlight where it
     // was), so no `pkg-active-*` marker ever appears for them. Gate those on
     // their own heading instead — waiting for the marker would hang forever.
-    const CHROME_HEADINGS: Record<string, string> = { settings: 'Settings', help: 'Help' }
+    const CHROME_HEADINGS: Record<string, string> = {
+        settings: 'Settings',
+        help: 'Help',
+        reports: 'Reports',
+    }
     const chromeHeading = CHROME_HEADINGS[pkg]
     const onTarget = chromeHeading
         ? page.getByText(chromeHeading, { exact: true }).first()
