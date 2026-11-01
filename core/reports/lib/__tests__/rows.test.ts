@@ -154,4 +154,26 @@ describe('mergePages', () => {
             cap,
         ])
     })
+
+    it('takes computed and total rows from the newest page only', () => {
+        const withFigures = (ids: string[], net: number, cost: number): RunResult => ({
+            ...page(ids, cost),
+            rows: [
+                ...ids.map(id => detail(id)),
+                { id: 'c:net', kind: 'computed', depth: 0, label: 'Net', cells: { cost: net } },
+                { ...total, cells: { cost } },
+            ],
+        })
+        const merged = mergePages([
+            withFigures(['d:1', 'd:2'], 10, 300),
+            withFigures(['d:3'], 20, 350),
+        ])
+        expect(merged.rows.map(r => r.id)).toEqual(['d:1', 'd:2', 'd:3', 'c:net', 'total'])
+        expect(merged.rows[3].cells.cost).toBe(20)
+        expect(merged.rows[4].cells.cost).toBe(350)
+    })
+
+    it('returns an empty result for no pages', () => {
+        expect(mergePages([])).toMatchObject({ rows: [], notices: [], page: null })
+    })
 })

@@ -106,16 +106,26 @@ function uniqueNotices(notices: readonly Notice[]): Notice[] {
     })
 }
 
-// Every detail page ends in the total of every row (core/server/reports paging), so
-// the merged rows keep each page's detail rows and the newest page's total rows.
+const EMPTY_RESULT: RunResult = {
+    columns: [],
+    rows: [],
+    notices: [],
+    topics: [],
+    page: null,
+    params: [],
+}
+
+// Only ungrouped reports page (core/server/reports). Each page repeats the whole-report
+// rows (total, computed), and only the newest page's figures are current, so the merge
+// keeps every page's detail rows and takes every other row from the newest page.
 export function mergePages(pages: readonly RunResult[]): RunResult {
     const last = pages[pages.length - 1]
-    if (!last) throw new Error('mergePages: no page')
+    if (!last) return EMPTY_RESULT
     return {
         ...last,
         rows: [
-            ...pages.flatMap(page => page.rows.filter(row => row.kind !== 'total')),
-            ...last.rows.filter(row => row.kind === 'total'),
+            ...pages.flatMap(page => page.rows.filter(row => row.kind === 'detail')),
+            ...last.rows.filter(row => row.kind !== 'detail'),
         ],
         notices: uniqueNotices(pages.flatMap(page => page.notices)),
     }
