@@ -14,7 +14,7 @@ var log = logging.ForPackage("groups")
 // RegisterGrantTable before this runs, which RegisterSharedCore's position
 // after RegisterExtras guarantees.
 func Register(app *pocketbase.PocketBase) {
-	registerCore(app)
+	BindHooks(app)
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		if err := Reconcile(e.App); err != nil {
 			log.Error("boot reconcile failed", "err", err)
@@ -23,8 +23,13 @@ func Register(app *pocketbase.PocketBase) {
 	})
 }
 
-// registerCore is the core.App-typed body so tests can bind it on a
-// *tests.TestApp. The REST save path (apis/record_crud.go,
+// BindHooks binds the expansion hooks for group_members, users and every
+// grant table registered so far, without the boot reconcile. It is the
+// core.App-typed body of Register, so a test of a grant table outside this
+// package binds it on a *tests.TestApp, after RegisterGrantTable, to drive
+// real expansion.
+//
+// The REST save path (apis/record_crud.go,
 // forms/record_upsert.go) calls SaveWithContext on the plain app with no
 // wrapping transaction, and core.App's onRecordSaveExecute opens none either.
 // So every handler below that writes derived rows after e.Next() runs both in
@@ -35,7 +40,7 @@ func Register(app *pocketbase.PocketBase) {
 // A handler opens that transaction ONLY when it has derived work to do. A
 // direct membership row, or a user update that is not a demotion to guest,
 // has nothing to expand and must not pay for a write transaction.
-func registerCore(app core.App) {
+func BindHooks(app core.App) {
 	app.OnRecordCreate("group_members").BindFunc(func(e *core.RecordEvent) error {
 		return nextInTx(e, func(txApp core.App) error {
 			return deriveForMember(txApp, e.Record.GetString("group"), e.Record.GetString("user"))

@@ -467,6 +467,11 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	passkey.Register(app)
 	nativeauth.Register(app)
 	pkgaccess.Register(app)
+	// Saved reports and their shares. Before groups.Register: report_shares is
+	// a group grant table, and groups binds the expansion of every grant
+	// table registered by then. Shared: a share reaches its readers wherever
+	// the report runs.
+	reports.RegisterSharing(app)
 	groups.Register(app)
 
 	// OAuth 2.1 authorization server: the device grant the tinycld CLI logs in

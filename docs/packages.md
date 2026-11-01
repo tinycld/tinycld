@@ -914,6 +914,7 @@ runtime. The registries that exist:
 | which collections to audit-log | `audit.RegisterCollection` |
 | which view collections stay live, and the collections their SQL reads | `changesignal.RegisterView` |
 | which of its collections reports may read, with their fields and links (see "Report sources" below) | `reports.RegisterSource` |
+| the reports it ships, published to every user (see "Shipped and saved reports" below) | `reports.RegisterShipped` |
 | a package membership table that carries group grants | `groups.RegisterGrantTable` |
 | join and leave events for group membership, sent after the change commits. Every listener runs, in registration order. Errors are logged, not retried; one listener's error does not stop the others. Boot sends no events, so a package reconciles its own state at boot. The event carries the app that saved the change; the registry is process global, so a listener works through `e.App`, not an app it captured | `groups.OnMembershipChange` |
 | its full-text index | `fts.Register` / `fts.RegisterSync` |
@@ -1194,6 +1195,66 @@ away before the run ends.
   and `or` leave that condition out. A `not`, or an `exists` whose `where` is
   only such conditions, also matches every row. A parameter with a default
   takes the default when nothing is posted.
+
+### Shipped and saved reports
+
+People save reports in core's `reports` collection and share them through
+`report_shares`, with users or groups, as viewer or editor. A share gives the
+design only: each reader runs the report with their own rights. An admin can
+publish a report to every user except guests.
+
+A package ships its own reports as published reports. Register them from the
+package's `Register(app)`:
+
+```go
+reports.RegisterShipped(reports.Shipped{
+    Key:         "zoo.feed_costs", // "<slug>.<name>", stable
+    Title:       "Feed costs",
+    Description: "Every feeding's cost",
+    Spec:        json.RawMessage(feedCostsSpec),
+    Revision:    1,
+})
+```
+
+- When the server starts, and when an admin is saved, core creates each
+  shipped report that is missing. The first admin (the oldest owner, else
+  the oldest admin) owns and publishes it. A fresh install gets its shipped
+  reports when the setup wizard creates the first owner.
+- Raise `Revision` whenever `Spec`, `Title` or `Description` changes. At the
+  next start, core replaces the stored report's spec, title and description.
+  It keeps the owner, and keeps the report unpublished if its owner
+  unpublished it.
+- A shipped spec that does not validate against the sources is logged and
+  skipped. Pin the spec in the package's tests: call `reports.CheckSources`,
+  then `reports.Load` and `reports.Validate`.
+- A shipped report cannot be deleted while the package ships it. The
+  server answers "This report ships with a package. An admin who owns or
+  edits it can unpublish it instead." Only an admin with update access (the
+  report's owner or an editor) can change `published`.
+
+A source, link or field can disappear when a package is upgraded or removed.
+Saved reports then cannot run: a run answers 422 and names the missing part.
+At every start, core marks each such report (`reports.broken`); in dev it
+logs each one with its owner. To list them with their owners:
+
+```sh
+tinycld reports validate
+```
+
+It exits non-zero when a saved report is broken or a report source is
+refused. Keep an alias for every renamed field or link (see "Report sources"
+above), so saved reports keep working.
+
+When a user is offboarded, each offboard mode settles their reports:
+
+- Reassign: every report goes to the successor.
+- Delete: each unpublished report is deleted with its shares.
+- Keep: each unpublished report stays with the anonymized account.
+
+In every mode, a published or shipped report goes to the heir and is never
+deleted. The heir is the successor, else the admin who offboards the user,
+else the first admin. When no heir exists, the offboard is refused and
+nothing changes.
 
 ### Test build tag
 
