@@ -96,11 +96,18 @@ export function useReportRun({
     const results = pages.flatMap(page => (page.kind === 'ok' ? [page.result] : []))
     const result = results.length > 0 ? mergePages(results) : undefined
     useLiveTopics(result?.topics ?? NO_TOPICS, () => query.refetch().then(() => undefined))
+    // Placeholder pages are the previous body's answer: its figures stay in view while
+    // the new run loads, but its refusal does not belong to this body.
+    const isStaleRefusal = query.isPlaceholderData && refusal !== undefined
+    const state = isStaleRefusal
+        ? 'loading'
+        : runState(body !== null, query.isPending, query.isError, refusal)
     return {
-        state: runState(body !== null, query.isPending, query.isError, refusal),
+        state,
         result: refusal ? undefined : result,
-        problems: refusal && 'problems' in refusal ? refusal.problems : NO_PROBLEMS,
-        isUpdating: query.isPlaceholderData,
+        problems:
+            !isStaleRefusal && refusal && 'problems' in refusal ? refusal.problems : NO_PROBLEMS,
+        isUpdating: query.isPlaceholderData && !refusal,
         hasMore: query.hasNextPage,
         isLoadingMore: query.isFetchingNextPage,
         loadMore: () => {

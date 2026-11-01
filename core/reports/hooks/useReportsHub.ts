@@ -178,7 +178,7 @@ export function useReportsHub() {
         packageLabel: packages.find(p => p.slug === packageSlug)?.name ?? packageSlug ?? '',
         onShowAll: () => router.setParams({ package: undefined }),
         onOpen: (report: HubReport) => {
-            startVisit(report.id)
+            startVisit()
             router.push(orgHref('reports/[id]', { id: report.id }))
         },
         onNew: (sourceKey: string) => router.push(orgHref('reports/new', { source: sourceKey })),

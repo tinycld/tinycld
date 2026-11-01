@@ -3,8 +3,11 @@ import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
 import type { ReportViewModel } from '../hooks/useReportView'
+import { ReportControls } from './ReportControls'
+import { ReportCustomizePanel } from './ReportCustomizePanel'
 import { ReportDocumentHeader } from './ReportDocumentHeader'
 import { REPORT_TAP_TARGET, ReportHeader } from './ReportHeader'
+import { ReportNotices } from './ReportNotices'
 import { EmptyBody, LoadingBody, MessageBody, ProblemsBody } from './ReportStates'
 import { ReportTable } from './ReportTable'
 
@@ -38,8 +41,16 @@ function toolbarItems(model: ReportViewModel): ToolbarItem[] {
     if (model.foldAllLabel) {
         items.push(toolbarButton('fold', model.foldAllLabel, 'report-fold-all', model.onFoldAll))
     }
+    if (!model.isEditing) {
+        items.push(
+            toolbarButton('customize', 'Customize', 'report-customize-open', model.onOpenCustomize)
+        )
+    }
     if (model.onEdit && model.access.canEdit && !model.isEditing) {
         items.push(toolbarButton('edit', 'Edit report', 'report-edit-open', model.onEdit))
+    }
+    if (model.onCopyLink) {
+        items.push(toolbarButton('copy-link', 'Copy link', 'report-copy-link', model.onCopyLink))
     }
     return items
 }
@@ -129,6 +140,8 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
         <View testID="report-screen" className="flex-1 flex-row bg-background">
             <View className="min-w-0 flex-1">
                 <ReportHeader title={model.title} onBack={model.onBack} toolbar={toolbar} />
+                <ReportControls model={model} />
+                <ReportNotices notices={model.notices} isUpdating={model.isUpdating} />
                 <ReportDocumentHeader
                     orgName={model.orgName}
                     title={model.title}
@@ -137,6 +150,7 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
                 />
                 <ViewBody model={model} />
             </View>
+            <ReportCustomizePanel model={model} />
             {side}
         </View>
     )

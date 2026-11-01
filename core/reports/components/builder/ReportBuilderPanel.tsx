@@ -25,6 +25,7 @@ import { copyTitle, type ReportBuilder } from '../../hooks/useReportBuilder'
 import type { ReportViewModel } from '../../hooks/useReportView'
 import type { Problem } from '../../lib/types'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
+import { ReportNotices } from '../ReportNotices'
 import { ReportBody } from '../ReportView'
 import { ColumnsSection } from './ColumnsSection'
 import { DetailsSection } from './DetailsSection'
@@ -229,6 +230,7 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
                     </ScrollView>
                 </ModeBody>
                 <ModeBody isVisible={mode === 'preview'}>
+                    <ReportNotices notices={preview.notices} isUpdating={preview.isUpdating} />
                     <ReportBody model={preview} />
                 </ModeBody>
                 <Footer builder={builder} onSaveAs={onSaveAs} />

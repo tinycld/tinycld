@@ -1,5 +1,5 @@
 import { create } from '@tinycld/core/lib/store'
-import { type Expansion, NO_EXPANSION } from '../lib/rows'
+import type { Expansion } from '../lib/rows'
 
 // Shared UI state of the reports screens. One chip popover or sheet is open at a
 // time; open groups last for the session per report (not persisted, not in the
@@ -25,7 +25,8 @@ interface ReportUIState {
     closeCustomize: () => void
     openShare: (reportId: string) => void
     closeShare: () => void
-    startVisit: (reportKey: string) => void
+    // A visit opened from the hub starts with no surface open; its open groups stay.
+    startVisit: () => void
 }
 
 export const useReportUIStore = create<ReportUIState>()(set => ({
@@ -42,10 +43,5 @@ export const useReportUIStore = create<ReportUIState>()(set => ({
     closeCustomize: () => set({ isCustomizeOpen: false }),
     openShare: reportId => set({ shareReportId: reportId }),
     closeShare: () => set({ shareReportId: null }),
-    startVisit: reportKey =>
-        set(state => ({
-            expansion: { ...state.expansion, [reportKey]: NO_EXPANSION },
-            surface: null,
-            isCustomizeOpen: false,
-        })),
+    startVisit: () => set({ surface: null, isCustomizeOpen: false }),
 }))

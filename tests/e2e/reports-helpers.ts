@@ -65,13 +65,17 @@ export async function startReport(page: Page, sourceKey: string) {
     await expect(page.getByTestId('report-builder')).toBeVisible()
 }
 
-/** Adds a column through the picker: link keys, then a field key; `mode` for a to-many hop. */
+/**
+ * Adds a column through the picker: link keys, then a field key. `mode` answers the
+ * to-many choice of the last link; the links before it must be to-one.
+ */
 export async function addColumn(page: Page, keys: string[], mode?: 'total' | 'nest') {
     await page.getByTestId('report-builder-add-column').click()
     const picker = page.getByTestId('report-builder-picker')
-    for (const key of keys.slice(0, -1)) {
+    const links = keys.slice(0, -1)
+    for (const [i, key] of links.entries()) {
         await picker.getByTestId(`report-builder-pick-link-${key}`).click()
-        if (mode && (await picker.getByTestId(`report-builder-pick-${mode}`).isVisible())) {
+        if (mode && i === links.length - 1) {
             await picker.getByTestId(`report-builder-pick-${mode}`).click()
         }
     }
