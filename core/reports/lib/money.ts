@@ -40,6 +40,21 @@ function formatCents(format: Intl.NumberFormat, cents: number): string {
         .join('')
 }
 
+const formats = new Map<string, Intl.NumberFormat>()
+
+// One formatter per currency: building one per cell is slow on a large report.
+function numberFormat(currency: string): Intl.NumberFormat {
+    const cached = formats.get(currency)
+    if (cached) return cached
+    const digits = { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+    const format =
+        currency === ''
+            ? new Intl.NumberFormat('en-US', digits)
+            : new Intl.NumberFormat('en-US', { style: 'currency', currency, ...digits })
+    formats.set(currency, format)
+    return format
+}
+
 export function formatMoney(cents: number, currency: string): string {
     if (!Number.isFinite(cents)) {
         warnOnce('non-finite', 'non-finite amount', { cents })
@@ -47,19 +62,13 @@ export function formatMoney(cents: number, currency: string): string {
     }
     // A value that rounds to zero would otherwise read "-$0.00".
     const amount = Math.abs(cents) < 0.5 ? 0 : cents
-    const digits = { minimumFractionDigits: 2, maximumFractionDigits: 2 }
     if (currency !== '') {
         try {
-            const currencyFormat = new Intl.NumberFormat('en-US', {
-                style: 'currency',
-                currency,
-                ...digits,
-            })
-            return formatCents(currencyFormat, amount)
+            return formatCents(numberFormat(currency), amount)
         } catch (err) {
             warnOnce(`currency:${currency}`, 'invalid currency code', { currency, err })
         }
     }
-    const plain = formatCents(new Intl.NumberFormat('en-US', digits), amount)
+    const plain = formatCents(numberFormat(''), amount)
     return currency === '' ? plain : `${plain} ${currency}`
 }

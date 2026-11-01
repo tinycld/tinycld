@@ -94,6 +94,27 @@ describe('formatReportAmount', () => {
     })
 })
 
+describe('formatReportAmount edge cases', () => {
+    it('never shows a sign or parentheses for an amount that rounds to zero', () => {
+        expect(plain(-49, WITHOUT_CENTS)).toBe('0')
+        expect(plain(-0.4, PARENS)).toBe('0.00')
+        expect(plain(-499, THOUSANDS)).toBe('0.00')
+    })
+
+    it('combines the symbol with no cents and parentheses', () => {
+        const symbol = { withSymbol: true }
+        expect(formatReportAmount(1234550, 'USD', WITHOUT_CENTS, symbol)).toBe('$12,346')
+        expect(
+            formatReportAmount(-1234550, 'USD', { ...WITHOUT_CENTS, negative: 'parens' }, symbol)
+        ).toBe('($12,346)')
+    })
+
+    it('is exact at the negative stored limit', () => {
+        expect(plain(-MAX_STORED_AMOUNT)).toBe('-90,071,992,547,409.91')
+        expect(plain(-MAX_STORED_AMOUNT - 1)).toBe(REPORT_AMOUNT_ERROR)
+    })
+})
+
 describe('formatReportPercent', () => {
     it('shows one decimal and nothing for no figure', () => {
         expect(formatReportPercent(12.345)).toBe('12.3%')
@@ -122,6 +143,13 @@ describe('cellDisplay', () => {
             isRed: true,
             isError: false,
         })
+    })
+
+    it('shows each row in its own currency within one column', () => {
+        const usd = row('subtotal', { cost: 1500, 'cost@currency': 'USD' })
+        const eur = row('subtotal', { cost: 1500, 'cost@currency': 'EUR' })
+        expect(cellDisplay(MONEY, usd, 1500, PLAIN).text).toBe('$15.00')
+        expect(cellDisplay(MONEY, eur, 1500, PLAIN).text).toBe('€15.00')
     })
 
     it('marks an amount past the limit as an error cell', () => {
