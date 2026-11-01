@@ -5,6 +5,7 @@ import {
     DEFAULT_DISPLAY,
     formatReportAmount,
     formatReportPercent,
+    mergeHidden,
     type NumberFormat,
     REPORT_AMOUNT_ERROR,
     shownColumns,
@@ -225,5 +226,16 @@ describe('shownColumns', () => {
             'cost',
             'cost.p0',
         ])
+    })
+})
+
+describe('mergeHidden', () => {
+    it('keeps a hidden id the listed columns do not have, and follows the listed ones', () => {
+        const listed = [
+            { id: 'cost', isShown: false },
+            { id: 'amount', isShown: true },
+        ]
+        expect(mergeHidden(['cost.p9', 'amount'], listed)).toEqual(['cost.p9', 'cost'])
+        expect(mergeHidden([], listed)).toEqual(['cost'])
     })
 })

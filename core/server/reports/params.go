@@ -121,9 +121,10 @@ func resolveParams(defs []ParamDef, given map[string]json.RawMessage, pc periodC
 // default, else unset. A preset is given as its days, so the shell shows the
 // period the server ran without repeating the fiscal-year rules.
 type ResolvedParam struct {
-	ID    string   `json:"id"`
-	Type  string   `json:"type"`
-	Unset bool     `json:"unset,omitempty"`
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Unset bool   `json:"unset,omitempty"`
+	// omitempty leaves out only a nil interface: a resolved 0 or "" is kept.
 	Value any      `json:"value,omitempty"`
 	List  []string `json:"list,omitempty"`
 	From  string   `json:"from,omitempty"`

@@ -164,6 +164,22 @@ export function cellDisplay(
     return plainDisplay(value, align)
 }
 
+/**
+ * The hidden list after Customize changes the columns it lists. A hidden id that the
+ * current result does not have (a pivot value not in this run, a column of an earlier
+ * design) stays hidden, so it does not come back on the next run.
+ */
+export function mergeHidden(
+    hidden: readonly string[],
+    listed: readonly { id: string; isShown: boolean }[]
+): string[] {
+    const listedIds = new Set(listed.map(column => column.id))
+    return [
+        ...hidden.filter(id => !listedIds.has(id)),
+        ...listed.filter(column => !column.isShown).map(column => column.id),
+    ]
+}
+
 export function shownColumns(
     columns: readonly ResultColumn[],
     hidden: readonly string[]

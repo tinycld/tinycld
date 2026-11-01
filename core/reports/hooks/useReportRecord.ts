@@ -6,6 +6,7 @@ import { useStore } from '@tinycld/core/lib/pocketbase'
 import { recoverLiveQueries } from '@tinycld/core/lib/recover-live-queries'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
+import { useMemo } from 'react'
 import { NO_ACCESS, reportAccess } from '../lib/access'
 import { parseBroken, parseSpec } from '../lib/spec'
 
@@ -67,10 +68,16 @@ export function useReportRecord(reportId: string) {
             onError: error => log.error('reports.record', error),
         })
     }
+    // Parsed once per stored value, so the builder's defaults keep their identity
+    // across renders.
+    const storedSpec = record?.spec
+    const storedBroken = record?.broken
+    const spec = useMemo(() => parseSpec(storedSpec), [storedSpec])
+    const broken = useMemo(() => parseBroken(storedBroken), [storedBroken])
     return {
         record,
-        spec: record ? parseSpec(record.spec) : null,
-        broken: record ? parseBroken(record.broken) : null,
+        spec,
+        broken,
         access,
         state,
         retry,

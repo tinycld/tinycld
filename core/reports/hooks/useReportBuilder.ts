@@ -42,6 +42,15 @@ export interface BuilderInput {
 type SaveInput = { draft: BuilderDraft; asCopy: boolean; title: string }
 const LIST_CHANGE = { shouldDirty: true, shouldValidate: true } as const
 
+// The draft as the preview runs it: the spec text of the last valid draft, so a
+// draft that is invalid for a moment keeps the last valid preview in view. It is
+// "information from a previous render", kept by setting state during render.
+function useLastValidSpecText(specText: string): string {
+    const [lastValid, setLastValid] = useState(specText)
+    if (specText && specText !== lastValid) setLastValid(specText)
+    return specText || lastValid
+}
+
 // The builder's form and its save. The preview runs the draft as it would be
 // saved, 400 ms after the last valid change; a title is not needed to preview.
 // Only a draft the schema accepts reaches specFromDraft, which reads it as valid.
@@ -52,10 +61,17 @@ export function useReportBuilder(input: BuilderInput) {
     const queryClient = useQueryClient()
     const [reportsCollection] = useStore('reports')
     const schema = useMemo(() => builderSchema(catalog), [catalog])
-    const defaults =
-        record && spec
-            ? draftFromSpec(spec, { title: record.title, description: record.description }, catalog)
-            : emptyDraft(base)
+    const defaults = useMemo(
+        () =>
+            record && spec
+                ? draftFromSpec(
+                      spec,
+                      { title: record.title, description: record.description },
+                      catalog
+                  )
+                : emptyDraft(base),
+        [record, spec, catalog, base]
+    )
     const form = useForm<BuilderDraft>({
         resolver: zodResolver(schema),
         mode: 'onChange',
@@ -64,7 +80,7 @@ export function useReportBuilder(input: BuilderInput) {
     const values = useWatch({ control: form.control })
     const parsed = schema.safeParse({ ...values, title: 'Preview' })
     const specText = parsed.success ? JSON.stringify(specFromDraft(parsed.data, catalog)) : ''
-    const debounced = useDebouncedValue(specText, PREVIEW_DELAY_MS)
+    const debounced = useDebouncedValue(useLastValidSpecText(specText), PREVIEW_DELAY_MS)
     const previewSpec = useMemo(
         () => (debounced ? parseSpec(JSON.parse(debounced)) : null),
         [debounced]

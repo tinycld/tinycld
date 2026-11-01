@@ -30,6 +30,20 @@ func TestARunEchoesEachParamAsItResolved(t *testing.T) {
 	}
 }
 
+// A number param resolved to 0 is a value, not an absent one: the result JSON
+// keeps "value":0, so the shell does not read it as unset.
+func TestANumberParamResolvedToZeroKeepsItsValue(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", threeParams, Options{Today: "2026-02-15"}, map[string]string{"n": `0`})
+	b, err := json.Marshal(res.Params[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(b), `{"id":"n","type":"number","value":0}`; got != want {
+		t.Fatalf("n = %s, want %s", got, want)
+	}
+}
+
 func TestAParamWithNoValueAndNoDefaultIsEchoedUnset(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", threeParams, Options{Today: "2026-02-15"}, nil)

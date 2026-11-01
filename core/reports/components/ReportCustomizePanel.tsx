@@ -13,6 +13,7 @@ import { ChevronDown, ChevronRight, X } from 'lucide-react-native'
 import { type ReactNode, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import type { ReportViewModel } from '../hooks/useReportView'
+import { mergeHidden } from '../lib/format'
 import { REPORT_TAP_TARGET } from './ReportHeader'
 
 const NEGATIVE_OPTIONS = [
@@ -54,7 +55,7 @@ function useDisplayForm(model: ReportViewModel) {
                 withoutCents: next.withoutCents,
                 negative: next.negative,
                 negativeRed: next.negativeRed,
-                hidden: next.columns.filter(column => !column.isShown).map(column => column.id),
+                hidden: mergeHidden(model.display.hidden, next.columns),
             })
         )()
     return { control: form.control, columns: values.columns, write }

@@ -5,12 +5,15 @@ import { useGroupGrants } from '@tinycld/core/lib/groups/use-group-grants'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
+import { useDebouncedValue } from '@tinycld/core/lib/use-debounced-value'
 import { newRecordId } from 'pbtsdb'
 import { useState } from 'react'
 import { SHARE_ROLES, type ShareRole } from '../lib/access'
 import { useReportRecord } from './useReportRecord'
 
 const CANDIDATE_LIMIT = 20
+// Typing a name runs one search when the reader pauses, not one per keystroke.
+const SEARCH_DELAY_MS = 250
 
 function toastError(error: unknown) {
     useToastStore.getState().addToast({
@@ -27,7 +30,7 @@ function useShareCandidates(search: string, exclude: ReadonlySet<string>) {
     const [usersCollection] = useStore('users')
     // pbtsdb escapes `"` but not `\`, so a backslash would break PocketBase's filter
     // literal; it means nothing in a name search.
-    const term = search.trim().replace(/\\/g, '')
+    const term = useDebouncedValue(search.trim().replace(/\\/g, ''), SEARCH_DELAY_MS)
     const { data } = useLiveQuery({
         queryKey: ['reports.share-candidates', term],
         query: q =>
