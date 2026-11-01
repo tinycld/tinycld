@@ -594,3 +594,19 @@ export function filterItemKeys(items: readonly FilterItem[]): string[] {
         return `${signature}#${n}`
     })
 }
+
+/**
+ * The params after a filter change: those the new filter asks for or something
+ * else reads (`readElsewhere`, e.g. a fixed column formula), plus a newly asked
+ * one. A removed condition, group or related row takes its asked values with it.
+ */
+export function filterParams(
+    params: readonly ParamDef[],
+    filter: GroupDraft,
+    readElsewhere: ReadonlySet<string>,
+    added?: ParamDef
+): ParamDef[] {
+    const asked = paramsInGroup(filter, new Set(readElsewhere))
+    const kept = params.filter(p => asked.has(p.id))
+    return added ? [...kept, added] : kept
+}

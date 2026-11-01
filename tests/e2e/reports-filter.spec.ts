@@ -198,4 +198,110 @@ test.describe('filtering a report', () => {
             await close()
         }
     })
+
+    test('none of a group, and a new operator stops asking', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptnone')
+        try {
+            const team = uniqueName('Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            await addSale(p, {
+                team,
+                customer: 'Open one',
+                amount: 100,
+                cost: 0,
+                day: '2026-01-10',
+            })
+            await addSale(p, {
+                team,
+                customer: 'Paid one',
+                amount: 200,
+                cost: 0,
+                day: '2026-01-20',
+                status: 'paid',
+            })
+
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await p.getByTestId('report-builder-section-filter').click()
+            // None of: status is Paid, inside an added group.
+            await p.getByTestId('report-builder-filter-add-group').click()
+            await p.getByTestId('report-builder-filter-0-match').click()
+            await p.getByTestId('report-builder-filter-0-match-none').click()
+            await p.getByTestId('report-builder-filter-0-add-condition').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-status')
+                .click()
+            await p.getByTestId('report-builder-filter-0-0-value').click()
+            await p.getByTestId('report-builder-filter-0-0-value-paid').click()
+            const table = p.getByTestId('report-table')
+            await expect(table.getByText('Open one', { exact: true })).toBeVisible()
+            await expect(table.getByText('Paid one', { exact: true })).toHaveCount(0)
+
+            // An asked day; a new operator drops the asked value and shows the value again.
+            await p.getByTestId('report-builder-filter-add-condition').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-day')
+                .click()
+            const ask = p.getByTestId('report-builder-filter-1-ask')
+            await ask.click()
+            await expect(ask).toHaveAttribute('aria-checked', 'true')
+            await expect(p.getByTestId('report-builder-filter-1-value')).toBeHidden()
+            await p.getByTestId('report-builder-filter-1-op').click()
+            await p.getByTestId('report-builder-filter-1-op-lte').click()
+            await expect(ask).toHaveAttribute('aria-checked', 'false')
+            await p.getByTestId('report-builder-filter-1-value').fill('2026-01-05')
+            await expect(p.getByTestId('report-empty')).toBeVisible()
+        } finally {
+            await close()
+        }
+    })
+
+    test('on a phone a condition is added in the builder sheet and shows in Preview', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptphonef')
+        try {
+            const team = uniqueName('Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            await addSale(p, {
+                team,
+                customer: 'Kept sale',
+                amount: 100,
+                cost: 0,
+                day: '2026-01-10',
+            })
+            await addSale(p, {
+                team,
+                customer: 'Other sale',
+                amount: 200,
+                cost: 0,
+                day: '2026-01-20',
+            })
+
+            await openReportsHub(p)
+            await p.setViewportSize({ width: 390, height: 844 })
+            await startReport(p, SALES_SOURCE)
+            await expect(p.getByTestId('report-builder-mode-design')).toBeVisible()
+            await p.getByTestId('report-builder-section-filter').click()
+            await p.getByTestId('report-builder-filter-add-condition').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-customer')
+                .click()
+            await p.getByTestId('report-builder-filter-0-op').click()
+            await p.getByTestId('report-builder-filter-0-op-startsWith').click()
+            await p.getByTestId('report-builder-filter-0-value').fill('Kept')
+
+            await p.getByTestId('report-builder-mode-preview').click()
+            const table = p.getByTestId('report-table')
+            await expect(table.getByText('Kept sale', { exact: true })).toBeVisible()
+            await expect(table.getByText('Other sale', { exact: true })).toHaveCount(0)
+        } finally {
+            await close()
+        }
+    })
 })

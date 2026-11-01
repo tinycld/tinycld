@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import type { ParamDef } from '../../spec'
 import {
     addFilterItem,
     emptyCondition,
     emptyGroup,
     filterItemKeys,
+    filterParams,
     type GroupDraft,
     removeFilterItem,
     setMatchAt,
@@ -74,6 +76,50 @@ describe('filter tree edits', () => {
         expect(filterItemKeys(removeFilterItem(tree, [0]).items)).toEqual(keys.slice(1))
         const twice = filterItemKeys([condition('day'), condition('day')])
         expect(twice[0]).not.toBe(twice[1])
+    })
+
+    it('keeps only the params a filter or a column still asks for', () => {
+        const asked = (field: string, param: string) => ({ ...condition(field), param })
+        const before: GroupDraft = {
+            kind: 'group',
+            match: 'all',
+            items: [
+                asked('day', 'day'),
+                {
+                    kind: 'related',
+                    has: true,
+                    link: [{ link: 'sales' }],
+                    where: { kind: 'group', match: 'all', items: [asked('status', 'status')] },
+                },
+                { kind: 'group', match: 'any', items: [asked('customer', 'customer')] },
+            ],
+        }
+        const params: ParamDef[] = [
+            { id: 'day', type: 'date' },
+            { id: 'status', type: 'choice' },
+            { id: 'customer', type: 'text' },
+            { id: 'rate', type: 'number' },
+        ]
+        const ids = (list: ParamDef[]) => list.map(p => p.id)
+        // A related row or a nested group takes its asked values with it; a param a
+        // column formula reads stays.
+        const noRelated = removeFilterItem(before, [1])
+        expect(ids(filterParams(params, noRelated, new Set(['rate'])))).toEqual([
+            'day',
+            'customer',
+            'rate',
+        ])
+        const noGroup = removeFilterItem(before, [2])
+        expect(ids(filterParams(params, noGroup, new Set()))).toEqual(['day', 'status'])
+        // A new asked value joins the list.
+        const added: ParamDef = { id: 'day2', type: 'asOf' }
+        const withAdded = addFilterItem(before, [], asked('day', 'day2'))
+        expect(ids(filterParams(params, withAdded, new Set(), added))).toEqual([
+            'day',
+            'status',
+            'customer',
+            'day2',
+        ])
     })
 
     it('sets how a group or a related item’s conditions are joined', () => {

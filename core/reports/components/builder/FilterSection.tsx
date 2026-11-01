@@ -17,6 +17,7 @@ import {
     pathLabel,
     sourceAtLinks,
 } from '../../lib/builder/columns'
+import { paramsReadByColumns } from '../../lib/builder/draft'
 import {
     addFilterItem,
     askParamFor,
@@ -26,6 +27,7 @@ import {
     type FilterItem,
     type FilterPath,
     filterItemKeys,
+    filterParams,
     type GroupDraft,
     needsValue,
     opLabel,
@@ -55,26 +57,29 @@ function filterTestId(path: FilterPath): string {
 }
 
 // What every part of the filter editor needs: the tree, the asked params, and how
-// to change them. Every change replaces the whole filter in the form (one edit).
+// to change them. Every change replaces the whole filter and its params in the form
+// in one edit: a param no condition asks for any more leaves with it, and `added`
+// is a newly asked one.
 interface FilterContext {
     builder: ReportBuilder
     catalog: Catalog
     root: GroupDraft
     params: ParamDef[]
-    change(next: GroupDraft): void
+    change(next: GroupDraft, added?: ParamDef): void
 }
 
-function setCondition(ctx: FilterContext, path: FilterPath, patch: Partial<ConditionDraft>) {
+function setCondition(
+    ctx: FilterContext,
+    path: FilterPath,
+    patch: Partial<ConditionDraft>,
+    added?: ParamDef
+) {
     ctx.change(
         updateFilterItem(ctx.root, path, item =>
             item.kind === 'condition' ? { ...item, ...patch } : item
-        )
+        ),
+        added
     )
-}
-
-// An asked value's param goes with the condition that asks for it.
-function dropParam(ctx: FilterContext, id: string) {
-    if (id) ctx.builder.setParams(ctx.params.filter(p => p.id !== id))
 }
 
 /** A new condition on a field starts with the field type's first operator. */
@@ -260,7 +265,6 @@ function AskToggle(props: ValueProps) {
     const isFull = !isAsking && ctx.params.length >= MAX_PARAMS
     const onChange = (on: boolean) => {
         if (!on) {
-            dropParam(ctx, item.param)
             setCondition(ctx, path, { param: '' })
             return
         }
@@ -269,9 +273,7 @@ function AskToggle(props: ValueProps) {
             columnHint(item.path)
         )
         const def = askParamFor(info.field, item.op, id)
-        if (!def) return
-        ctx.builder.setParams([...ctx.params, def])
-        setCondition(ctx, path, { param: def.id })
+        if (def) setCondition(ctx, path, { param: def.id }, def)
     }
     return (
         <View className="flex-row flex-wrap items-center gap-2">
@@ -295,38 +297,48 @@ interface RowProps<T> {
     baseKey: string
 }
 
-interface RemoveButtonProps {
+// A removed item takes the values its conditions asked for with it (ctx.change).
+function RemoveButton({
+    ctx,
+    path,
+    label,
+}: {
     ctx: FilterContext
     path: FilterPath
     label: string
-    /** Runs before the item leaves the tree. */
-    onRemove?: () => void
-}
-
-function RemoveButton({ ctx, path, label, onRemove }: RemoveButtonProps) {
-    const remove = () => {
-        onRemove?.()
-        ctx.change(removeFilterItem(ctx.root, path))
-    }
+}) {
     return (
         <IconButton
             label={label}
             testID={`${filterTestId(path)}-remove`}
             isVisible
             icon={Trash2}
-            onPress={remove}
+            onPress={() => ctx.change(removeFilterItem(ctx.root, path))}
         />
     )
 }
 
-function MissingFieldRow({ ctx, path }: { ctx: FilterContext; path: FilterPath }) {
+const MISSING_MESSAGES = {
+    field: 'A condition names a field that is no longer offered.',
+    link: 'A related-rows condition names a link that is no longer offered.',
+}
+
+function MissingRow({
+    ctx,
+    path,
+    missing,
+}: {
+    ctx: FilterContext
+    path: FilterPath
+    missing: keyof typeof MISSING_MESSAGES
+}) {
     return (
         <View
             testID={filterTestId(path)}
             className="flex-row items-center gap-2 rounded-md border border-border p-2"
         >
             <Text className="flex-1 text-sm text-muted-foreground">
-                A condition names a field that is no longer offered.
+                {MISSING_MESSAGES[missing]}
             </Text>
             <RemoveButton ctx={ctx} path={path} label="Remove condition" />
         </View>
@@ -336,7 +348,7 @@ function MissingFieldRow({ ctx, path }: { ctx: FilterContext; path: FilterPath }
 function ConditionRow({ ctx, item, path, baseKey }: RowProps<ConditionDraft>) {
     const id = filterTestId(path)
     const info = describePath(ctx.catalog, baseKey, item.path)
-    if (!info) return <MissingFieldRow ctx={ctx} path={path} />
+    if (!info) return <MissingRow ctx={ctx} path={path} missing="field" />
     const type = info.field.type
     // A new operator starts without an asked value: the param's kind follows the operator.
     const opItems: PickItem[] = opsShownFor(type, item.op).map(op => ({
@@ -344,15 +356,11 @@ function ConditionRow({ ctx, item, path, baseKey }: RowProps<ConditionDraft>) {
         label: opLabel(op, type),
         isSelected: op === item.op,
         onSelect: () => {
-            if (op === item.op) return
-            dropParam(ctx, item.param)
-            setCondition(ctx, path, { op, param: '' })
+            if (op !== item.op) setCondition(ctx, path, { op, param: '' })
         },
     }))
-    const onField = (next: SpecHop[]) => {
-        dropParam(ctx, item.param)
+    const onField = (next: SpecHop[]) =>
         ctx.change(updateFilterItem(ctx.root, path, () => newCondition(ctx, baseKey, next)))
-    }
     return (
         <View testID={id} className="gap-1.5 rounded-md border border-border p-2">
             <View className="flex-row flex-wrap items-center gap-1.5">
@@ -370,12 +378,7 @@ function ConditionRow({ ctx, item, path, baseKey }: RowProps<ConditionDraft>) {
                     items={opItems}
                     testID={`${id}-op`}
                 />
-                <RemoveButton
-                    ctx={ctx}
-                    path={path}
-                    label="Remove condition"
-                    onRemove={() => dropParam(ctx, item.param)}
-                />
+                <RemoveButton ctx={ctx} path={path} label="Remove condition" />
             </View>
             <ConditionValue ctx={ctx} item={item} path={path} info={info} />
             <AskToggle ctx={ctx} item={item} path={path} info={info} />
@@ -396,6 +399,7 @@ function setHas(ctx: FilterContext, path: FilterPath, has: boolean) {
 function RelatedRow({ ctx, item, path, baseKey }: RowProps<RelatedDraft>) {
     const id = filterTestId(path)
     const target = sourceAtLinks(ctx.catalog, baseKey, item.link)
+    if (!target) return <MissingRow ctx={ctx} path={path} missing="link" />
     const link = ctx.catalog.get(baseKey)?.links.find(l => l.key === item.link[0]?.link)
     const hasItems: PickItem[] = [
         { id: 'yes', label: 'Has', isSelected: item.has, onSelect: () => setHas(ctx, path, true) },
@@ -421,7 +425,7 @@ function RelatedRow({ ctx, item, path, baseKey }: RowProps<RelatedDraft>) {
                 </Text>
                 <RemoveButton ctx={ctx} path={path} label="Remove related rows" />
             </View>
-            <GroupBody ctx={ctx} group={item.where} path={path} baseKey={target?.key ?? baseKey} />
+            <GroupBody ctx={ctx} group={item.where} path={path} baseKey={target.key} />
         </View>
     )
 }
@@ -571,13 +575,18 @@ export function FilterSection({
     const { control } = builder.form
     const root = useWatch({ control, name: 'filter' })
     const params = useWatch({ control, name: 'params' })
+    const columns = useWatch({ control, name: 'columns' })
     const error = builder.form.getFieldState('filter', builder.form.formState).error?.message
     const ctx: FilterContext = {
         builder,
         catalog: builder.catalog,
         root,
         params,
-        change: builder.setFilter,
+        change: (next, added) =>
+            builder.setFilter(
+                next,
+                filterParams(params, next, paramsReadByColumns(columns), added)
+            ),
     }
     return (
         <BuilderSection title="Filter" section="filter" problems={problems}>

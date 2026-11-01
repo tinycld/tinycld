@@ -164,7 +164,11 @@ export function useReportBuilder(input: BuilderInput) {
         setGroups: (items: BuilderDraft['groups']) => form.setValue('groups', items, LIST_CHANGE),
         setSort: (items: BuilderDraft['sort']) => form.setValue('sort', items, LIST_CHANGE),
         setLayout: (items: BuilderDraft['layout']) => form.setValue('layout', items, LIST_CHANGE),
-        setFilter: (filter: BuilderDraft['filter']) => form.setValue('filter', filter, LIST_CHANGE),
+        // A filter change carries the params it asks for: one edit, validated once.
+        setFilter: (filter: BuilderDraft['filter'], params: BuilderDraft['params']) => {
+            form.setValue('params', params, { shouldDirty: true })
+            form.setValue('filter', filter, LIST_CHANGE)
+        },
         setParams: (params: BuilderDraft['params']) => form.setValue('params', params, LIST_CHANGE),
         setPivotPath: (path: BuilderDraft['pivot']['path']) =>
             form.setValue('pivot.path', path, LIST_CHANGE),

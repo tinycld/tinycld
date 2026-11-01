@@ -31,9 +31,9 @@ import {
     conditionProblems,
     emptyGroup,
     filterGroupSchema,
+    filterParams,
     filterToNode,
     nodeToFilter,
-    paramsInGroup,
     paramsInNode,
 } from './filter'
 import { type FormulaLeaf, fromComputeExpr, isAmountExpr, toComputeExpr } from './formula'
@@ -426,16 +426,20 @@ function specColumns(draft: BuilderDraft, types: Types): SpecColumn[] {
     })
 }
 
-// A param stays only while something asks for it: a filter condition, or a fixed
-// column formula (an editable one cannot read a param, nor can a layout row).
-function askedParams(draft: BuilderDraft): ParamDef[] {
-    const asked = paramsInGroup(draft.filter, new Set<string>())
-    for (const column of draft.columns) {
+/** The params the columns read: only a fixed formula can (an editable one cannot, nor can a layout row). */
+export function paramsReadByColumns(columns: readonly ColumnDraft[]): Set<string> {
+    const read = new Set<string>()
+    for (const column of columns) {
         if (column.kind === 'formula' && column.formula.kind === 'fixed') {
-            paramsInNode(column.formula.node, asked)
+            paramsInNode(column.formula.node, read)
         }
     }
-    return draft.params.filter(param => asked.has(param.id))
+    return read
+}
+
+// A param stays only while something asks for it: a filter condition or a column.
+function askedParams(draft: BuilderDraft): ParamDef[] {
+    return filterParams(draft.params, draft.filter, paramsReadByColumns(draft.columns))
 }
 
 function specLayout(draft: BuilderDraft, types: Types): NonNullable<ReportSpec['layout']> {
