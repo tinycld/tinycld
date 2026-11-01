@@ -478,6 +478,32 @@ const passkeys = newCollection('passkeys', {
     ...indexing,
 })
 
+// Saved reports (core/server/reports). The server owns source, published_by,
+// broken and the shipped fields and replaces any client value, so an insert
+// never carries them. A share row is written by the owner or an editor; a
+// derived row (user and group set) is the server's copy of a group grant.
+const reports = newCollection('reports', {
+    omitOnInsert: [
+        'created',
+        'updated',
+        'source',
+        'published_by',
+        'broken',
+        'shipped_key',
+        'shipped_revision',
+    ],
+    ...onDemand,
+    relations: { owner: users, published_by: users },
+    ...indexing,
+})
+
+const report_shares = newCollection('report_shares', {
+    omitOnInsert: ['created', 'updated'],
+    ...onDemand,
+    relations: { report: reports, user: users, group: groups },
+    ...indexing,
+})
+
 const coreStores = {
     users,
     groups,
@@ -505,6 +531,8 @@ const coreStores = {
     app_passwords,
     mfa_totp,
     passkeys,
+    reports,
+    report_shares,
 }
 export type CoreStores = typeof coreStores
 

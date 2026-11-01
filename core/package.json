@@ -36,6 +36,12 @@
             "./file-viewer/*/index.ts",
             "./file-viewer/*/index.tsx"
         ],
+        "./reports/*": [
+            "./reports/*.ts",
+            "./reports/*.tsx",
+            "./reports/*/index.ts",
+            "./reports/*/index.tsx"
+        ],
         "./Providers": "./components/Providers.tsx",
         "./tsconfig.package-base.json": "./tsconfig.package-base.json",
         "./uniwind-types": "./uniwind-types.d.ts",

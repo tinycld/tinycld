@@ -5,7 +5,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { Sheet } from '@tinycld/core/ui/sheet'
 import { useRouter } from 'expo-router'
-import { Bell, LogOut, Settings, User, X } from 'lucide-react-native'
+import { BarChart3, Bell, LogOut, Settings, User, X } from 'lucide-react-native'
 import { useCallback } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { MAX_VISIBLE_TABS } from './MobileTabBar'
@@ -87,6 +87,18 @@ export function MoreDrawer() {
                     <Bell size={20} color={textColor} />
                     <Text className="text-base font-medium" style={{ color: textColor }}>
                         Notifications
+                    </Text>
+                </Pressable>
+
+                {/* Reports is an app area with no tab of its own on a phone. */}
+                <Pressable
+                    testID="more-reports"
+                    className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
+                    onPress={() => handleNav(() => router.push(orgHref('reports')))}
+                >
+                    <BarChart3 size={20} color={textColor} />
+                    <Text className="text-base font-medium" style={{ color: textColor }}>
+                        Reports
                     </Text>
                 </Pressable>
 

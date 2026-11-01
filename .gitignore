@@ -74,6 +74,7 @@ server/builds/
 !/app/a/\(app\)/settings/
 !/app/a/\(app\)/help/
 !/app/a/\(app\)/admin/
+!/app/a/\(app\)/reports/
 # Public package routes — one subtree per package with publicRoutes in its
 # manifest. Fully generator-owned; the hand-written _layout.tsx sits one level
 # up at app/p/_layout.tsx and stays tracked.

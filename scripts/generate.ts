@@ -37,7 +37,13 @@ import {
 import { buildPackageIconsSource } from './gen-icons'
 import { checkNotifyEventsModule } from './gen-notify'
 import { orphanPayloadFiles, planPayloadEmits, runPayloadEmits } from './gen-payload-types'
-import { emitPublicRoutes, emitRoutes, pruneOrphanRouteDirs } from './gen-routes'
+import {
+    APP_OWNED_ORG_ROUTE_DIRS,
+    assertSlugNotAppOwned,
+    emitPublicRoutes,
+    emitRoutes,
+    pruneOrphanRouteDirs,
+} from './gen-routes'
 import {
     buildBundledPackages,
     buildGoWork,
@@ -122,14 +128,14 @@ type Feature = { name: string; dir: string; manifest: PackageManifest }
 // The prune is dir-only and allowlist-guarded so app-owned entries are never
 // touched (see APP_OWNED_ORG_ROUTE_DIRS / APP_OWNED_PUBLIC_ROUTE_DIRS).
 
-// Direct children of ROUTES_BASE the app owns — NOT package route slugs, never
-// pruned. (Files like _layout.tsx/index.tsx are already safe since prune only
-// touches directories; this guards the app-owned DIRS.)
-const APP_OWNED_ORG_ROUTE_DIRS = new Set(['help', 'settings'])
-// app/p/oauth/ is app-shell/core functionality (the device-consent screen for
-// the OAuth authorization server), not a per-package public-route dir — it has
-// no manifest and must survive a generate run even when no package happens to
-// declare publicRoutes.
+// The app-owned direct children of ROUTES_BASE are listed in gen-routes.ts
+// (APP_OWNED_ORG_ROUTE_DIRS). Files there such as _layout.tsx and index.tsx need
+// no list, because the prune touches only directories.
+//
+// The app-owned direct children of PUBLIC_ROUTES_BASE: app/p/oauth/ is app-shell
+// and core functionality (the device-consent screen for the OAuth authorization
+// server), not a per-package public-route dir. It has no manifest and must
+// survive a generate run even when no package declares publicRoutes.
 const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>(['oauth'])
 
 function emitFeatureRoutes(features: Feature[]) {
@@ -166,6 +172,7 @@ function emitFeatureRoutes(features: Feature[]) {
 function emitOrgRoutes(f: Feature) {
     const slug = f.manifest.slug
     assertSafeSlug(slug)
+    assertSlugNotAppOwned(slug)
     const slugDir = path.join(ROUTES_BASE, slug)
     if (fs.existsSync(slugDir)) fs.rmSync(slugDir, { recursive: true, force: true })
     const routesDir = resolveExportDir(f.dir, f.manifest.routes!.directory)

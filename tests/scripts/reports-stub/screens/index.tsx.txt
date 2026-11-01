@@ -1,0 +1,196 @@
+import { useLiveQuery } from '@tanstack/react-db'
+import { useAuth } from '@tinycld/core/lib/auth'
+import { useMutation } from '@tinycld/core/lib/mutations'
+import { useStore } from '@tinycld/core/lib/pocketbase'
+import { Button, ButtonText } from '@tinycld/core/ui/button'
+import {
+    ButtonGroup,
+    NumberInput,
+    SelectInput,
+    TextInput,
+    useForm,
+    z,
+    zodResolver,
+} from '@tinycld/core/ui/form'
+import { newRecordId } from 'pbtsdb/core'
+import { useState } from 'react'
+import { ScrollView, Text, View } from 'react-native'
+
+// E2E fixture screen: adds teams and sales through the UI, as the reports specs
+// must set their data up.
+
+const teamSchema = z.object({ name: z.string().trim().min(1).max(200) })
+const saleSchema = z.object({
+    team: z.string().min(1, 'Choose a team'),
+    customer: z.string().trim().min(1).max(200),
+    amount: z.number().int(),
+    cost: z.number().int(),
+    quantity: z.number().int(),
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date as YYYY-MM-DD'),
+    status: z.enum(['open', 'paid']),
+})
+type SaleValues = z.infer<typeof saleSchema>
+
+const STATUS_OPTIONS = [
+    { value: 'open', label: 'Open' },
+    { value: 'paid', label: 'Paid' },
+]
+
+function SavedNote({ text, testID }: { text: string; testID: string }) {
+    if (!text) return null
+    return (
+        <Text testID={testID} className="text-sm text-muted-foreground">
+            {text}
+        </Text>
+    )
+}
+
+function TeamForm() {
+    const [teams] = useStore('salesstub_teams')
+    const [saved, setSaved] = useState('')
+    const form = useForm({
+        resolver: zodResolver(teamSchema),
+        mode: 'onChange',
+        defaultValues: { name: '' },
+    })
+    const create = useMutation({
+        mutationFn: function* (values: z.infer<typeof teamSchema>) {
+            yield teams.insert({ id: newRecordId(), name: values.name })
+        },
+        onSuccess: (_data, values) => {
+            setSaved(`Saved ${values.name}`)
+            form.reset({ name: '' })
+        },
+    })
+    const onCreate = () => {
+        void form.handleSubmit(values => create.mutate(values))()
+    }
+    return (
+        <View className="gap-2">
+            <Text className="text-base font-semibold text-foreground">New team</Text>
+            <TextInput
+                name="name"
+                control={form.control}
+                label="Team name"
+                testID="salesstub-team-name"
+            />
+            <Button onPress={onCreate} isDisabled={create.isPending} testID="salesstub-team-create">
+                <ButtonText>Add team</ButtonText>
+            </Button>
+            <SavedNote text={saved} testID="salesstub-team-saved" />
+        </View>
+    )
+}
+
+function SaleForm() {
+    const { user } = useAuth()
+    const [teams, sales] = useStore('salesstub_teams', 'salesstub_sales')
+    const [saved, setSaved] = useState('')
+    const { data: teamRows } = useLiveQuery({
+        queryKey: ['salesstub.teams'],
+        query: q => q.from({ team: teams }).orderBy(({ team }) => team.name),
+    })
+    const teamOptions = (teamRows ?? []).map(team => ({ value: team.id, label: team.name }))
+    const form = useForm<SaleValues>({
+        resolver: zodResolver(saleSchema),
+        mode: 'onChange',
+        defaultValues: {
+            team: '',
+            customer: '',
+            amount: 0,
+            cost: 0,
+            quantity: 0,
+            day: '',
+            status: 'open',
+        },
+    })
+    const create = useMutation({
+        mutationFn: function* (values: SaleValues) {
+            yield sales.insert({
+                id: newRecordId(),
+                owner: user.id,
+                team: values.team,
+                customer: values.customer,
+                amount: values.amount,
+                cost: values.cost,
+                quantity: values.quantity,
+                currency: 'USD',
+                day: `${values.day} 00:00:00.000Z`,
+                status: values.status,
+            })
+        },
+        onSuccess: (_data, values) => {
+            setSaved(`Saved ${values.customer}`)
+            form.reset({ ...values, customer: '', amount: 0, cost: 0, quantity: 0 })
+        },
+    })
+    const onCreate = () => {
+        void form.handleSubmit(values => create.mutate(values))()
+    }
+    return (
+        <View className="gap-2">
+            <Text className="text-base font-semibold text-foreground">New sale</Text>
+            <SelectInput
+                name="team"
+                control={form.control}
+                label="Team"
+                options={teamOptions}
+                testID="salesstub-sale-team"
+            />
+            <TextInput
+                name="customer"
+                control={form.control}
+                label="Customer"
+                testID="salesstub-sale-customer"
+            />
+            <NumberInput
+                name="amount"
+                control={form.control}
+                label="Amount (cents)"
+                testID="salesstub-sale-amount"
+            />
+            <NumberInput
+                name="cost"
+                control={form.control}
+                label="Cost (cents)"
+                testID="salesstub-sale-cost"
+            />
+            <NumberInput
+                name="quantity"
+                control={form.control}
+                label="Quantity"
+                testID="salesstub-sale-quantity"
+            />
+            <TextInput
+                name="day"
+                control={form.control}
+                label="Day"
+                placeholder="YYYY-MM-DD"
+                testID="salesstub-sale-day"
+            />
+            <ButtonGroup
+                name="status"
+                control={form.control}
+                label="Status"
+                horizontal
+                options={STATUS_OPTIONS}
+            />
+            <Button onPress={onCreate} isDisabled={create.isPending} testID="salesstub-sale-create">
+                <ButtonText>Add sale</ButtonText>
+            </Button>
+            <SavedNote text={saved} testID="salesstub-sale-saved" />
+        </View>
+    )
+}
+
+export default function ReportStubIndex() {
+    return (
+        <ScrollView className="flex-1 bg-background" contentContainerClassName="gap-6 p-4">
+            <Text testID="salesstub-landing" className="text-lg font-semibold text-foreground">
+                Sales stub
+            </Text>
+            <TeamForm />
+            <SaleForm />
+        </ScrollView>
+    )
+}

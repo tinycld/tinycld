@@ -2,7 +2,12 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { emitPublicRoutes, emitRoutes, pruneOrphanRouteDirs } from '../gen-routes'
+import {
+    APP_OWNED_ORG_ROUTE_DIRS,
+    emitPublicRoutes,
+    emitRoutes,
+    pruneOrphanRouteDirs,
+} from '../gen-routes'
 
 describe('emitRoutes', () => {
     let tmp: string
@@ -126,5 +131,35 @@ describe('pruneOrphanRouteDirs', () => {
             []
         )
         expect(fs.existsSync(path.join(base, 'todo'))).toBe(true)
+    })
+})
+
+describe('app-owned org route dirs', () => {
+    let base: string
+    beforeEach(() => {
+        base = fs.mkdtempSync(path.join(os.tmpdir(), 'tcld-owned-'))
+        for (const dir of ['help', 'reports', 'settings', 'gone'])
+            fs.mkdirSync(path.join(base, dir))
+    })
+    afterEach(() => fs.rmSync(base, { recursive: true, force: true }))
+
+    it('keeps the reports, help and settings areas when pruning', () => {
+        const pruned = pruneOrphanRouteDirs(base, new Set(), APP_OWNED_ORG_ROUTE_DIRS)
+        expect(pruned).toEqual(['gone'])
+        for (const dir of ['help', 'reports', 'settings'])
+            expect(fs.existsSync(path.join(base, dir))).toBe(true)
+    })
+
+    it('refuses a package whose slug is an app route', () => {
+        expect(() =>
+            emitRoutes({
+                packageName: '@tinycld/reports',
+                slug: 'reports',
+                packageDir: base,
+                routesDir: 'screens',
+                importSubpath: 'screens',
+                routesBase: base,
+            })
+        ).toThrow("package slug 'reports' is an app route")
     })
 })

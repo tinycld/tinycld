@@ -49,6 +49,8 @@ const CORE_COLLECTIONS = [
     'notifications',
     'rules',
     'rule_runs',
+    'reports',
+    'report_shares',
     'automation_catalog',
     'comment_mentions',
     'forms',

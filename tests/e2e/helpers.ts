@@ -87,6 +87,20 @@ export function skipWithoutFormsStub(): boolean {
     return true
 }
 
+// The reports specs drive the salesstub package (tests/scripts/scaffold-reports-stub.ts),
+// whose report sources and rows exist only there. Same rule as skipWithoutFormsStub:
+// skip in a dev workspace without it, fail loudly on CI, where the scaffold step runs.
+export function skipWithoutReportsStub(): boolean {
+    const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', 'salesstub')
+    if (fs.existsSync(stubDir)) return false
+    if (process.env.CI) {
+        throw new Error(
+            'salesstub is not scaffolded but CI is set — the reports stub scaffold step must run before e2e.'
+        )
+    }
+    return true
+}
+
 // The sign-in POST occasionally returns a transient 400 under parallel CI
 // load (PocketBase auto-cancels an overlapping auth request, or the expand
 // query races), surfacing as an inline "Failed to authenticate." with the
@@ -402,15 +416,19 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     // is still loading, which is why the URL-based version needed
     // `waitUntil: 'commit'` everywhere and still raced.
     //
-    // settings/help are app chrome, not packages: app/(app)/_layout maps them
+    // settings/help/reports are app chrome, not packages: app/(app)/_layout maps them
     // to activePkgSlug=null on purpose (they leave the rail highlight where it
     // was), so no `pkg-active-*` marker ever appears for them. Gate those on
     // their own heading instead — waiting for the marker would hang forever.
-    const CHROME_HEADINGS: Record<string, string> = { settings: 'Settings', help: 'Help' }
+    // Reports has a hub-only heading id: its report screens show a "Reports"
+    // back link, which a text match would take for the hub.
+    const CHROME_HEADINGS: Record<string, (p: Page) => Locator> = {
+        settings: p => p.getByText('Settings', { exact: true }).first(),
+        help: p => p.getByText('Help', { exact: true }).first(),
+        reports: p => p.getByTestId('reports-hub-heading'),
+    }
     const chromeHeading = CHROME_HEADINGS[pkg]
-    const onTarget = chromeHeading
-        ? page.getByText(chromeHeading, { exact: true }).first()
-        : packageScreen(page, pkg)
+    const onTarget = chromeHeading ? chromeHeading(page) : packageScreen(page, pkg)
 
     // Don't navigate if we're already there, or if we're about to be. login()
     // returns as soon as the shell mounts, but the index then <Redirect>s to
@@ -439,19 +457,31 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     // Playwright reports it visible. Trusting it skips the navigation and the
     // caller then finds the wrong screen on top. So the target also has to be
     // what the user would hit at its own position.
-    const alreadyThere = await onTarget
-        .waitFor({ state: 'visible', timeout: redirectMayBeInFlight ? 2000 : 1 })
-        .then(
-            () => isOnTop(onTarget),
-            () => false
-        )
+    //
+    // A chrome heading is plain text that a package screen can show too (a
+    // package's own "Settings" or "Reports" sidebar item), so for chrome the
+    // URL must also be inside the area. No post-login redirect ever lands on a
+    // chrome area, so this check does not race a landing.
+    const isInsideChrome =
+        landingPathname === appHref(pkg) || landingPathname.startsWith(`${appHref(pkg)}/`)
+    const alreadyThere =
+        (!chromeHeading || isInsideChrome) &&
+        (await onTarget
+            .waitFor({ state: 'visible', timeout: redirectMayBeInFlight ? 2000 : 1 })
+            .then(
+                () => isOnTop(onTarget),
+                () => false
+            ))
 
     if (!alreadyThere) {
-        // Match by URL prefix rather than exact href: some packages (calc,
-        // text, …) rewrite their rail link to deep-link the user's last visited
-        // file (e.g. /a/calc/<id>), so the anchor no longer matches the bare
-        // package root.
-        const railLink = page.locator(`a[href^="${appHref(pkg)}"]`).first()
+        // Match the package root or a path under it, not a bare prefix: some
+        // packages (calc, text, …) rewrite their rail link to deep-link the
+        // user's last visited file (e.g. /a/calc/<id>), so the anchor no longer
+        // equals the package root; a bare prefix would also match another slug
+        // that starts with this one.
+        const railLink = page
+            .locator(`a[href="${appHref(pkg)}"], a[href^="${appHref(pkg)}/"]`)
+            .first()
         await railLink.waitFor({ state: 'visible' })
         await railLink.click()
         await onTarget.waitFor({ state: 'visible' })

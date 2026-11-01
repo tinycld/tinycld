@@ -32,7 +32,7 @@ test.describe('change password', () => {
     // section) unreachable wherever that menu is the only Settings affordance.
     async function openSecuritySettings(page: Page) {
         await page.getByLabel('User menu').click()
-        await page.getByText('Settings', { exact: true }).click()
+        await page.getByRole('menu').getByText('Settings', { exact: true }).click()
         const accountGroup = page.getByText('Account', { exact: true }).locator('..')
         await accountGroup.getByText('Security', { exact: true }).click()
         // Gate on the control the callers use, not the URL: the route changes

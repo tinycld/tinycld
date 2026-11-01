@@ -74,7 +74,7 @@ export default function OrgLayout() {
 
 // App-owned areas whose rail entries always link to their root — we never
 // record a lastPackageHref for these.
-const NON_RESTORABLE_SLUGS = new Set(['settings', 'help'])
+const NON_RESTORABLE_SLUGS = new Set(['settings', 'help', 'reports'])
 
 function ActivePkgSync() {
     // The href includes the query (?folder=sent, ?label=…) — the pathname alone
@@ -83,9 +83,9 @@ function ActivePkgSync() {
 
     useEffect(() => {
         const slug = activeSlugFromPathname(pathname)
-        // settings/help are chrome, not a "current package" — they leave the
+        // settings/help/reports are chrome, not a "current package" — they leave the
         // active-package highlight where it was.
-        const nextSlug = slug === 'settings' || slug === 'help' ? null : slug
+        const nextSlug = slug !== null && NON_RESTORABLE_SLUGS.has(slug) ? null : slug
         if (nextSlug) markNavMilestone(nextSlug, 'route-committed')
 
         const state = useWorkspaceStore.getState()
@@ -98,7 +98,7 @@ function ActivePkgSync() {
         // list. The full href (path + query) is captured at any depth; a
         // package root (e.g. /mail) is itself a valid href, so leaving a
         // package on its list still restores to the list. Skipped for app-owned
-        // areas (settings/help/admin), which the rail always links to their root.
+        // areas (settings/help/reports), which the rail always links to their root.
         if (
             nextSlug &&
             !NON_RESTORABLE_SLUGS.has(nextSlug) &&

@@ -23,7 +23,7 @@ test.describe('security: two-step verification', () => {
 
     async function openSecurity(page: Page) {
         await page.getByLabel('User menu').click()
-        await page.getByText('Settings', { exact: true }).click()
+        await page.getByRole('menu').getByText('Settings', { exact: true }).click()
         const accountGroup = page.getByText('Account', { exact: true }).locator('..')
         await accountGroup.getByText('Security', { exact: true }).click()
         await page.getByTestId('totp-section').waitFor({ state: 'visible' })

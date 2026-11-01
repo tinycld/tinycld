@@ -1256,6 +1256,21 @@ deleted. The heir is the successor, else the admin who offboards the user,
 else the first admin. When no heir exists, the offboard is refused and
 nothing changes.
 
+#### Linking to a package's reports
+
+Core's Reports hub is at `/a/reports`. To show only your package's reports and
+report sources (for a sidebar "Reports" entry), link to it with your slug:
+
+```ts
+router.push(orgHref('reports', { package: '<slug>' }))
+```
+
+The hub then lists the saved reports and offers the sources whose key starts with
+`<slug>.` — so give every source a key that starts with your slug. The builder reads
+the sources from `GET /api/reports/sources` (signed-in users, not API tokens): each
+source's fields with their types and aggregates, and its links. It shows no record
+data.
+
 ### Test build tag
 
 `pnpm run test:server` builds with the `no_ui` tag so PocketBase's admin UI route
