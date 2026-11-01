@@ -591,6 +591,21 @@ schema types: `tinycld/core/types/pbSchema.ts` and `pbZodSchema.ts` are
 files — regenerate by re-running the install/generate. (Likewise the per-package
 `core/types/pb*Schema.ts` are generated, not authored.)
 
+#### Rules for a migration file's top level
+
+A migration file's top level runs at every boot, and again for each `up` or
+`down` call. The server does not keep a migration's JS runtime after the file
+registers its migrations: each call builds a new runtime and runs the top level
+again to get its function (see `third_party/pocketbase/FORK.md`). So:
+
+- The top level may only declare values and functions and call `migrate()`.
+- Put every side effect (a save, a delete, a query) inside `up` or `down`.
+- `up` and `down` share no runtime state. A value that `up` sets is gone when
+  `down` runs.
+- The number and order of the `migrate()` calls must not depend on time, the
+  environment or data. A call whose re-run makes a different number of
+  `migrate()` calls fails with an error.
+
 ### G. Go server wiring → `server/package_extensions.go` + `server/go.work`
 
 See [the Go server section](#the-go-pocketbase-server-side).

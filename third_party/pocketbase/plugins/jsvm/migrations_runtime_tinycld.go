@@ -71,15 +71,20 @@ func (r *migrationRuntimes) newVM(migrate migrateBinding) *sobek.Runtime {
 func (r *migrationRuntimes) register(file string, content []byte) error {
 	// Interned: every app that loads the same file shares one copy.
 	src := unique.Make(string(content))
-	target := r.p.migrationsTarget()
-	calls := 0
+	type sides struct{ up, down bool }
+	var seen []sides
 	vm := r.newVM(func(up, down func(txApp core.App) error) {
-		call := migrationCall{runtimes: r, file: file, src: src, index: calls}
-		calls++
-		target.Register(call.fn(up != nil, false), call.fn(down != nil, true), file)
+		seen = append(seen, sides{up: up != nil, down: down != nil})
 	})
 	if _, err := r.p.runScript(vm, src.Value()); err != nil {
 		return fmt.Errorf("failed to run migration %s: %w", file, err)
+	}
+	// Registered after the run, so each call knows how many calls the file
+	// makes in all.
+	target := r.p.migrationsTarget()
+	for i, s := range seen {
+		call := migrationCall{runtimes: r, file: file, src: src, index: i, total: len(seen)}
+		target.Register(call.fn(s.up, false), call.fn(s.down, true), file)
 	}
 	return nil
 }
@@ -89,7 +94,8 @@ type migrationCall struct {
 	runtimes *migrationRuntimes
 	file     string
 	src      unique.Handle[string]
-	index    int
+	index    int // position of this call among the file's migrate() calls
+	total    int // migrate() calls the file made when it was registered
 }
 
 // fn returns the function to register for the up (down false) or down side
@@ -103,7 +109,9 @@ func (c migrationCall) fn(present, down bool) func(txApp core.App) error {
 
 // run builds a new runtime, runs the file's top level again to get the
 // function its migrate() call passes, and calls that function within the
-// execution budget.
+// execution budget. The call is found by its index, so a re-run that makes a
+// different number of migrate() calls is refused: its index could name
+// another call's function.
 func (c migrationCall) run(txApp core.App, down bool) error {
 	var fn func(txApp core.App) error
 	calls := 0
@@ -118,6 +126,9 @@ func (c migrationCall) run(txApp core.App, down bool) error {
 	})
 	if _, err := c.runtimes.p.runScript(vm, c.src.Value()); err != nil {
 		return fmt.Errorf("failed to run migration %s: %w", c.file, err)
+	}
+	if calls != c.total {
+		return fmt.Errorf("migration %s: the top level made %d migrate() calls when it was registered and %d on a second run; the number of calls must not change", c.file, c.total, calls)
 	}
 	if fn == nil {
 		return fmt.Errorf("migration %s: migrate() call %d passed no function on a second run", c.file, c.index)

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"weak"
@@ -174,5 +175,56 @@ migrate((app) => { app.save(new Collection({ type: "base", name: "second_call" }
 	}
 	if _, err := app.FindCollectionByNameOrId("first_call"); err != nil {
 		t.Fatalf("second call's down removed the first call's collection: %v", err)
+	}
+}
+
+// A call finds its function by its index among the file's migrate() calls,
+// so a re-run that makes a different number of calls would hand it another
+// call's function. The call refuses instead and names the file and the counts.
+func TestMigrationRuntimes_RefusesARerunWithADifferentCallCount(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+
+	const file = "1700000040_call_count.js"
+	dir := t.TempDir()
+	writeMigration(t, dir, file, `
+if (__rerun) {
+	migrate((app) => { app.save(new Collection({ type: "base", name: "extra_call" })) })
+}
+migrate((app) => { app.save(new Collection({ type: "base", name: "counted_call" })) })`)
+
+	// The first runtime is the register run; every later one is a re-run.
+	built := 0
+	if err := Register(app, Config{
+		MigrationsDir: dir,
+		HooksDir:      filepath.Join(dir, ".no-hooks"),
+		OnInit: func(vm *sobek.Runtime) {
+			vm.Set("__rerun", built > 0)
+			built++
+		},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	items := core.OwnAppMigrations(app).Items()
+	if len(items) != 1 {
+		t.Fatalf("registered %d migrations, want 1", len(items))
+	}
+
+	err = items[0].Up(app)
+	if err == nil {
+		t.Fatal("up ran although the re-run made 2 migrate() calls and the register run made 1")
+	}
+	for _, want := range []string{file, "1", "2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not name %q", err, want)
+		}
+	}
+	for _, name := range []string{"extra_call", "counted_call"} {
+		if _, ferr := app.FindCollectionByNameOrId(name); ferr == nil {
+			t.Fatalf("a refused up still ran a function: %s exists", name)
+		}
 	}
 }
