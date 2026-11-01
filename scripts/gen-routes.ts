@@ -16,6 +16,23 @@ function walkFiles(dir: string, prefix = ''): string[] {
 
 const ROUTE_EXTS = new Set(['.tsx', '.ts', '.jsx', '.js'])
 
+// Direct children of the org routes dir (app/a/(app)) that the app owns. They are
+// never pruned, and no package may take one as its slug: emitting that package's
+// routes would first delete the app's own route files.
+export const APP_OWNED_ORG_ROUTE_DIRS: ReadonlySet<string> = new Set([
+    'help',
+    'reports',
+    'settings',
+])
+
+export function assertSlugNotAppOwned(slug: string): void {
+    if (APP_OWNED_ORG_ROUTE_DIRS.has(slug)) {
+        throw new Error(
+            `[generate] package slug '${slug}' is an app route (/a/${slug}); choose another slug`
+        )
+    }
+}
+
 export interface EmitRoutesOpts {
     packageName: string
     slug: string
@@ -28,6 +45,7 @@ export interface EmitRoutesOpts {
 // Emit one `export { default } from '<pkg>/<subpath>/<file>'` per screen file,
 // preserving directory structure, under routesBase/<slug>/.
 export function emitRoutes(opts: EmitRoutesOpts): string[] {
+    assertSlugNotAppOwned(opts.slug)
     assertSafeImportField('packageName', opts.packageName)
     assertSafeImportField('routes.importSubpath', opts.importSubpath)
     const screensDir = path.join(opts.packageDir, opts.routesDir)
@@ -77,7 +95,7 @@ function isPrunableSlug(name: string): boolean {
 export function pruneOrphanRouteDirs(
     base: string,
     presentSlugs: Set<string>,
-    appOwnedEntries: Set<string>
+    appOwnedEntries: ReadonlySet<string>
 ): string[] {
     if (!fs.existsSync(base)) return []
     const pruned: string[] = []
