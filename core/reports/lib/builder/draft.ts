@@ -20,10 +20,12 @@ import {
     DEFAULT_PIVOT_COLUMNS,
     describePath,
     MAX_COLUMNS,
+    MAX_GROUP_LEVELS,
     MAX_HOPS,
     MAX_LABEL,
     MAX_PARAMS,
     MAX_PIVOT_COLUMNS,
+    MAX_SORT_KEYS,
     nextColumnId,
     pathLabel,
 } from './columns'
@@ -113,12 +115,12 @@ const draftShape = z.object({
                 subtotals: z.boolean(),
             })
         )
-        .max(6),
+        .max(MAX_GROUP_LEVELS),
     sort: z
         .array(
             z.object({ col: z.string().min(1, 'Choose a column'), dir: z.enum(['asc', 'desc']) })
         )
-        .max(10),
+        .max(MAX_SORT_KEYS),
     pivot: z.object({
         on: z.boolean(),
         path: z.array(specHopSchema),

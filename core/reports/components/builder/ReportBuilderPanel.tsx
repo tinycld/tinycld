@@ -29,6 +29,8 @@ import { ReportBody } from '../ReportView'
 import { ColumnsSection } from './ColumnsSection'
 import { DetailsSection } from './DetailsSection'
 import { FilterSection } from './FilterSection'
+import { GroupSortSection } from './GroupSortSection'
+import { PivotSection } from './PivotSection'
 
 const DISCARD = {
     title: 'Discard changes?',
@@ -66,6 +68,8 @@ function Sections({ builder, problems }: { builder: ReportBuilder; problems: Pro
             <DetailsSection builder={builder} problems={problems} />
             <ColumnsSection builder={builder} problems={problems} />
             <FilterSection builder={builder} problems={problems} />
+            <GroupSortSection builder={builder} problems={problems} />
+            <PivotSection builder={builder} problems={problems} />
         </View>
     )
 }

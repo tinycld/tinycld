@@ -115,17 +115,18 @@ const EMPTY_RESULT: RunResult = {
     params: [],
 }
 
-// Only ungrouped reports page (core/server/reports). Each page repeats the whole-report
-// rows (total, computed), and only the newest page's figures are current, so the merge
-// keeps every page's detail rows and takes every other row from the newest page.
+// Only ungrouped reports page (core/server/reports); a grouped run is one page whose
+// rows are in tree order. Each page repeats the whole-report rows (total, computed),
+// which follow its detail rows, and only the newest page's figures are current, so the
+// earlier pages' detail rows go before the newest page's rows, kept as sent.
 export function mergePages(pages: readonly RunResult[]): RunResult {
     const last = pages[pages.length - 1]
     if (!last) return EMPTY_RESULT
     return {
         ...last,
         rows: [
-            ...pages.flatMap(page => page.rows.filter(row => row.kind === 'detail')),
-            ...last.rows.filter(row => row.kind !== 'detail'),
+            ...pages.slice(0, -1).flatMap(page => page.rows.filter(row => row.kind === 'detail')),
+            ...last.rows,
         ],
         notices: uniqueNotices(pages.flatMap(page => page.notices)),
     }

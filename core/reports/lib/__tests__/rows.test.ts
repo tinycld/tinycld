@@ -173,6 +173,29 @@ describe('mergePages', () => {
         expect(merged.rows[4].cells.cost).toBe(350)
     })
 
+    it('keeps a grouped run’s rows in the order the server sent them', () => {
+        const grouped: RunResult = {
+            ...page([], 300),
+            rows: [
+                group('g:paid', ['paid'], { expanded: false }),
+                group('g:open', ['open'], { expanded: true }),
+                detail('d:1', 'g:open'),
+                detail('d:2', 'g:open'),
+                subtotal('s:open', 'g:open'),
+                total,
+            ],
+            page: null,
+        }
+        expect(mergePages([grouped]).rows.map(r => r.id)).toEqual([
+            'g:paid',
+            'g:open',
+            'd:1',
+            'd:2',
+            's:open',
+            'total',
+        ])
+    })
+
     it('returns an empty result for no pages', () => {
         expect(mergePages([])).toMatchObject({ rows: [], notices: [], page: null })
     })
