@@ -131,6 +131,8 @@ None new. Every control is a core component that runs on web and native (Popover
 
 ### Open questions (recommended answer first)
 
+**Answered by the human, 2026-11-01: plan approved; every recommended answer accepted (Q1 yes, Q2 per device, Q3 yes, Q4 above Help, Q5 spec filter, Q6 the switch).** The Q3 CLAUDE.md fixture-exception entry is the human's to add (workspace-root CLAUDE.md, outside this repo); the driver lists it at the phase end.
+
 - **Q1. Catalog endpoint (R2).** Approve `GET /api/reports/sources` as part of the reports exception? **Recommended: yes** — the builder cannot offer fields without it, and it serves no collection data.
 - **Q2. "Last run" (R12).** Keep it per device, or record it on the server (a new `report_runs` collection written by the client after a run, with a migration and rules)? **Recommended: per device now**; a server record is a separate change if people ask for "last run anywhere".
 - **Q3. Superuser seed in `reports-share.spec.ts` (R22).** Approve it as a CLAUDE.md fixture exception (the workspace-root CLAUDE.md list is yours to update)? **Recommended: yes**; the alternative is no e2e for the broken state.
@@ -1350,6 +1352,16 @@ git commit -m "test(app): reports stub package for the reports e2e"
 ```
 
 ---
+
+### Task 4a: navigateToPackage matches the package's own href (retro check, approved 2026-11-01)
+
+**Why:** `tests/e2e/helpers.ts` `navigateToPackage` finds the rail link with `a[href^="${appHref(pkg)}"]`, so a slug that is a prefix of another route (`reports` vs a package `reportsx`, or the reverse) clicks the wrong link.
+
+**Files:** Modify `tests/e2e/helpers.ts` (the `railLink` locator in `navigateToPackage`).
+
+- [ ] Change the locator to match the exact package root or a path under it: ``page.locator(`a[href="${appHref(pkg)}"], a[href^="${appHref(pkg)}/"]`).first()``. Keep the comment's reason (deep-linked rail hrefs such as `/a/calc/<id>`) and add that a bare prefix also matches other slugs.
+- [ ] Proof: after Task 13 adds the Reports rail button, the `salesstub` specs and one existing spec of a deep-linking package's pattern still pass (`E2E_PORT=7210 E2E_PORT_2=7211 … tinycld-pkg test:e2e -- reports-create.spec.ts`); run biome and tsc on the file.
+- [ ] Commit: `test(e2e): navigateToPackage matches the package's own href, not any prefix`.
 
 ### Task 5: Collections, result types, the spec schema and report access
 
