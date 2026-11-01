@@ -18,8 +18,8 @@ device.
      sale's team) opens in place. Where each row has many linked records, choose
      **Add as total** (a count or a sum on each row) or **Show as child rows**.
      Rename a column, choose its **Total**, and move it up or down.
-   - **Filter**: select **Add filter** to add conditions and choose **All of**,
-     **Any of** or **None of**. **Add related rows** keeps rows that have (or have
+   - **Filter**: select **Add condition** to add a condition, or **Add group** for a
+     nested group, and choose **All of**, **Any of** or **None of**. **Add related rows** keeps rows that have (or have
      no) linked records that match their own conditions. Turn on **Ask when the
      report runs** to let each reader set the value from a chip above the report.
    - **Group and sort**: add group levels, each with or without subtotals, and the
@@ -36,7 +36,8 @@ copy of any report you can see, select **Save as…**.
 
 ## Run a report
 
-- The chips above the report set its period and filters. A link copied with
+- The chips above the report set its period and filters; **Add filter** adds a chip
+  for a filter you can set while you read. A link copied with
   **Copy link** opens the report with the same choices.
 - **Customize** changes how numbers look (thousands, cents, negatives) and which
   columns show. It never changes the figures.
