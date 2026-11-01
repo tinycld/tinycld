@@ -40,7 +40,8 @@ copy of any report you can see, select **Save as…**.
   **Copy link** opens the report with the same choices.
 - **Customize** changes how numbers look (thousands, cents, negatives) and which
   columns show. It never changes the figures.
-- Select a group row to open or close it.
+- Select a group row to open or close it. **Expand all** opens every group; when any
+  group is open, the same button reads **Collapse all**.
 - A report that is open stays current: when someone changes the data it reads, it
   runs again.
 
