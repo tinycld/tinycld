@@ -118,3 +118,35 @@ func TestLeader_WaitForAChildThatAlreadyExited(t *testing.T) {
 		t.Fatalf("Wait = %v, want exit status 3", err)
 	}
 }
+
+// Only the first Wait waits for the exit. After it the pid can name another
+// process, possibly another child of this one, and a second wait for that
+// pid would block on it. A later Wait returns exec's error at once.
+func TestLeader_SecondWaitDoesNotWaitAgain(t *testing.T) {
+	cmd, l, _ := startGroup(t, `exit 0`)
+	if err := l.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	// Stand in for the pid's reuse: the process the command names is now
+	// another running child.
+	other := exec.Command("sleep", "30")
+	if err := other.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = other.Process.Kill()
+		_ = other.Wait()
+	})
+	cmd.Process = other.Process
+
+	done := make(chan error, 1)
+	go func() { done <- l.Wait() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a second Wait reported success")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a second Wait waited for the process that now has the pid")
+	}
+}

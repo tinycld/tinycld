@@ -27,9 +27,11 @@ var log = logging.ForPackage("procgroup")
 
 // Leader is a command that leads its own process group.
 type Leader struct {
-	cmd    *exec.Cmd
-	mu     sync.Mutex
-	reaped bool
+	cmd *exec.Cmd
+	mu  sync.Mutex
+	// waited is set by the first Wait; reaped once the child has exited and
+	// is about to be reaped.
+	waited, reaped bool
 }
 
 // New returns the Leader for cmd. The command must start with Setpgid in
@@ -49,12 +51,21 @@ func (l *Leader) Signal(sig syscall.Signal) error {
 }
 
 // Wait waits for the started command to exit and reaps it, as
-// exec.Cmd.Wait does.
+// exec.Cmd.Wait does. Only the first call waits; a later one returns
+// exec.Cmd.Wait's error at once, since by then the pid can name another
+// process.
 //
-// When the wait for the exit fails, the command is marked reaped at once:
-// a group signal that does not happen is less harmful than one that can
-// reach some other group.
+// When the wait for the exit fails (it cannot on darwin), the command is
+// marked reaped at once: a group signal that does not happen is less
+// harmful than one that can reach some other group.
 func (l *Leader) Wait() error {
+	l.mu.Lock()
+	first := !l.waited
+	l.waited = true
+	l.mu.Unlock()
+	if !first {
+		return l.cmd.Wait()
+	}
 	if err := waitExit(l.cmd.Process.Pid); err != nil {
 		log.Error("could not wait for a command to exit; its process group gets no more signals",
 			"pid", l.cmd.Process.Pid, "err", err)
