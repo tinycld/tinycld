@@ -31,6 +31,14 @@ func TestARefusalBelongsToTheAppThatWasChecked(t *testing.T) {
 	_, err := bare.try(t, "ann", sites, Options{}, nil)
 	requireSpecError(t, err, 422, "source", "does not exist")
 
+	// A saved report is marked broken by the refusals of its own app.
+	if b := checkSpec(withZoo.app, []byte(sites)); b != nil {
+		t.Errorf("a report on zoo.sites is broken on the app with the zoo: %+v", b)
+	}
+	if b := checkSpec(bare.app, []byte(sites)); b == nil || b.Status != 422 {
+		t.Errorf("a report on zoo.sites on the app without the zoo: %+v, want a 422 mark", b)
+	}
+
 	if _, bad := Refused(withZoo.app)["zoo.sites"]; bad {
 		t.Error("Refused(app with the zoo) names zoo.sites")
 	}
