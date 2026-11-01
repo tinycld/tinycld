@@ -420,15 +420,15 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     // to activePkgSlug=null on purpose (they leave the rail highlight where it
     // was), so no `pkg-active-*` marker ever appears for them. Gate those on
     // their own heading instead — waiting for the marker would hang forever.
-    const CHROME_HEADINGS: Record<string, string> = {
-        settings: 'Settings',
-        help: 'Help',
-        reports: 'Reports',
+    // Reports has a hub-only heading id: its report screens show a "Reports"
+    // back link, which a text match would take for the hub.
+    const CHROME_HEADINGS: Record<string, (p: Page) => Locator> = {
+        settings: p => p.getByText('Settings', { exact: true }).first(),
+        help: p => p.getByText('Help', { exact: true }).first(),
+        reports: p => p.getByTestId('reports-hub-heading'),
     }
     const chromeHeading = CHROME_HEADINGS[pkg]
-    const onTarget = chromeHeading
-        ? page.getByText(chromeHeading, { exact: true }).first()
-        : packageScreen(page, pkg)
+    const onTarget = chromeHeading ? chromeHeading(page) : packageScreen(page, pkg)
 
     // Don't navigate if we're already there, or if we're about to be. login()
     // returns as soon as the shell mounts, but the index then <Redirect>s to

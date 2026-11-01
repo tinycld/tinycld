@@ -128,7 +128,10 @@ function OwnerHeading({ isVisible }: { isVisible: boolean }) {
 function HeadingRow({ isVisible, showOwner }: { isVisible: boolean; showOwner: boolean }) {
     if (!isVisible) return null
     return (
-        <View className="flex-row gap-3 border-b border-border px-4 py-2">
+        <View
+            testID="reports-hub-heading-row"
+            className="flex-row gap-3 border-b border-border px-4 py-2"
+        >
             <Text className="flex-1 text-xs font-semibold uppercase text-muted-foreground">
                 Title
             </Text>
@@ -153,6 +156,7 @@ interface HubListProps {
 
 // Rows with a heading on a wide screen; cards on a phone.
 export function HubList({ hub, isPhone, showOwner, menuFor }: HubListProps) {
+    if (hub.rows.length === 0) return null
     const Row = isPhone ? PhoneCard : WideRow
     const items = hub.rows.map(row => (
         <Row key={row.report.id} row={row} hub={hub} showOwner={showOwner} menu={menuFor(row)} />

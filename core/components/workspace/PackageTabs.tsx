@@ -14,7 +14,7 @@ const SCREENS = [...APP_ROUTES, ...PACKAGE_ROUTES].map(name => (
 
 /**
  * Org-level package switcher — the navigator that swaps between packages
- * (mail, drive, calendar, …) and the app-owned admin/help/reports/settings routes.
+ * and the app-owned admin/help/reports/settings routes.
  *
  * Replaces the earlier FrozenStack (an expo-router <Stack>). Under React
  * Navigation 7 a Stack's NAVIGATE only reuses the *currently-focused* route, so

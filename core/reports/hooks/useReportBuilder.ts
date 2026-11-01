@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
@@ -17,6 +18,7 @@ import {
     specFromDraft,
 } from '../lib/builder/draft'
 import { problemsFromError } from '../lib/builder/errors'
+import { forgetSavedRuns } from '../lib/run-client'
 import { parseSpec, type ReportSpec } from '../lib/spec'
 import type { CatalogSource } from '../lib/types'
 import { EDIT_KEY } from '../lib/view-url'
@@ -47,6 +49,7 @@ export function useReportBuilder(input: BuilderInput) {
     const { mode, catalog, base, record, spec } = input
     const { user } = useAuth()
     const orgHref = useOrgHref()
+    const queryClient = useQueryClient()
     const [reportsCollection] = useStore('reports')
     const schema = useMemo(() => builderSchema(catalog), [catalog])
     const defaults =
@@ -99,8 +102,11 @@ export function useReportBuilder(input: BuilderInput) {
         },
         onSuccess: (id, { asCopy }) => {
             form.reset(form.getValues())
-            if (mode === 'edit' && !asCopy) router.setParams({ [EDIT_KEY]: undefined })
-            else router.replace(orgHref('reports/[id]', { id }))
+            if (mode === 'edit' && !asCopy) {
+                // The view comes back on the same run key; its cached run is the old spec's.
+                forgetSavedRuns(queryClient, id)
+                router.setParams({ [EDIT_KEY]: undefined })
+            } else router.replace(orgHref('reports/[id]', { id }))
         },
         onError: (error: unknown) => {
             const problems = problemsFromError(error)
@@ -139,6 +145,8 @@ export function useReportBuilder(input: BuilderInput) {
         onSaveAs: (title: string) => {
             void form.handleSubmit(draft => save.mutate({ draft, asCopy: true, title }))()
         },
+        // An edit closes by a param change, which no leave guard sees, so it asks here.
+        // A new report closes by leaving its route, where the panel's leave guard asks.
         onClose: () => {
             if (mode === 'edit' && form.formState.isDirty) setConfirmingDiscard(true)
             else exit()

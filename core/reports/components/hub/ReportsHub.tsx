@@ -94,7 +94,12 @@ export function ReportsHubView({ hub, menuFor, banner }: ReportsHubViewProps) {
             contentContainerClassName="w-full gap-4 p-4"
         >
             <View className="flex-row items-center justify-between gap-2">
-                <Text className="text-2xl font-semibold text-foreground">Reports</Text>
+                <Text
+                    testID="reports-hub-heading"
+                    className="text-2xl font-semibold text-foreground"
+                >
+                    Reports
+                </Text>
                 <Button
                     testID="reports-hub-new"
                     onPress={() => setChoosing(true)}

@@ -56,7 +56,9 @@ export function useRowWindow(input: {
         contentSize: { height: 0 },
     })
     const askIfNearEnd = () => {
-        const isMeasured = metrics.current.layoutMeasurement.height > 0
+        const { layoutMeasurement, contentSize } = metrics.current
+        // Both sizes, or a layout seen before its content reads as an empty page.
+        const isMeasured = layoutMeasurement.height > 0 && contentSize.height > 0
         if (input.onNearEnd && isMeasured && isNearEnd(metrics.current)) input.onNearEnd()
     }
     return {

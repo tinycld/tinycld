@@ -1,3 +1,4 @@
+import type { QueryClient } from '@tanstack/react-query'
 import { isRecord } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { ClientResponseError } from 'pocketbase'
@@ -95,4 +96,28 @@ export async function fetchCatalog(signal?: AbortSignal): Promise<CatalogSource[
         requestKey: null,
     })
     return res.sources
+}
+
+/** The react-query key every report run sits under; the run body follows it. */
+export const RUN_QUERY_KEY = ['reports', 'run'] as const
+
+function isRunOf(queryKey: readonly unknown[], reportId: string): boolean {
+    const body = queryKey[RUN_QUERY_KEY.length]
+    return (
+        typeof body === 'object' &&
+        body !== null &&
+        'reportId' in body &&
+        body.reportId === reportId
+    )
+}
+
+/**
+ * Drops every cached run of a saved report. After its spec changes, a cached run
+ * would show the old figures as current until the next run answered.
+ */
+export function forgetSavedRuns(queryClient: QueryClient, reportId: string) {
+    queryClient.removeQueries({
+        queryKey: RUN_QUERY_KEY,
+        predicate: query => isRunOf(query.queryKey, reportId),
+    })
 }

@@ -59,6 +59,11 @@ test.describe('creating a report', () => {
             // The preview behind the panel runs the draft.
             await expect(p.getByTestId('report-heading-team_name')).toHaveText('Team › Name')
             await expect(await cellOf(p, 'amount', 'Acme')).toHaveText('1,500.00')
+            // Closing a changed draft asks first.
+            await p.getByTestId('report-builder-close').click()
+            await expect(p.getByText('Discard changes?', { exact: true })).toBeVisible()
+            await p.getByText('Keep editing', { exact: true }).click()
+            await expect(p.getByTestId('report-builder')).toBeVisible()
 
             const title = uniqueName('Sales by customer')
             await saveNewReport(p, title)
@@ -95,6 +100,14 @@ test.describe('creating a report', () => {
                 day: '2026-03-01',
             })
             await openReportsHub(p)
+            // Discard on a changed new report leaves it for the hub, unsaved.
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await p.getByTestId('report-builder-close').click()
+            await p.getByText('Discard', { exact: true }).click()
+            await expect(p.getByTestId('reports-hub')).toBeVisible()
+            await expect(p.getByTestId('report-builder')).toBeHidden()
+
             await startReport(p, SALES_SOURCE)
             const title = uniqueName('Edit me')
             await saveNewReport(p, title)
@@ -106,8 +119,22 @@ test.describe('creating a report', () => {
             await expect(p.getByText('Discard changes?', { exact: true })).toBeVisible()
             await p.getByText('Keep editing', { exact: true }).click()
             await expect(p.getByTestId('report-builder')).toBeVisible()
+            // Hold every run while saving: the saved view must wait for the new
+            // spec's run, never show the old spec's cached run as current.
+            let release = () => {}
+            const held = new Promise<void>(resolve => {
+                release = resolve
+            })
+            await p.route('**/api/reports/run', async route => {
+                await held
+                await route.continue()
+            })
             await p.getByTestId('report-builder-save').click()
             await expect(p.getByTestId('report-builder')).toBeHidden()
+            await expect(p.getByTestId('report-loading')).toBeVisible()
+            await expect(p.getByTestId('report-heading-customer')).toHaveCount(0)
+            release()
+            await p.unrouteAll({ behavior: 'wait' })
             await expect(p.getByTestId('report-heading-customer')).toHaveText('Client')
         } finally {
             await close()
@@ -129,8 +156,11 @@ test.describe('creating a report', () => {
                 cost: 1000,
                 day: '2026-04-01',
             })
-            await openReportsHub(p)
             await p.setViewportSize({ width: 390, height: 844 })
+            // A phone has no rail: Reports is a row of the More sheet.
+            await p.getByTestId('nav-more').click()
+            await p.getByTestId('more-reports').click()
+            await expect(p.getByTestId('reports-hub')).toBeVisible()
             await startReport(p, SALES_SOURCE)
             await expect(p.getByTestId('report-builder-mode-design')).toBeVisible()
             await p.getByTestId('report-builder-mode-preview').click()
@@ -142,6 +172,8 @@ test.describe('creating a report', () => {
             await saveNewReport(p, title)
             await p.getByTestId('report-back').click()
             await expect(hubRow(p, title)).toContainText('Stub sales')
+            // Cards, not rows under a heading.
+            await expect(p.getByTestId('reports-hub-heading-row')).toHaveCount(0)
         } finally {
             await close()
         }

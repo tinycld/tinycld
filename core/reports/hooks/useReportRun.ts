@@ -2,6 +2,7 @@ import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { mergePages } from '../lib/rows'
 import {
     isTransientRunError,
+    RUN_QUERY_KEY,
     type RunBody,
     type RunOutcome,
     type RunRefusal,
@@ -71,7 +72,7 @@ export function useReportRun({
     userId: string
 }): ReportRun {
     const query = useInfiniteQuery({
-        queryKey: ['reports', 'run', body],
+        queryKey: [...RUN_QUERY_KEY, body],
         enabled: body !== null,
         initialPageParam: '',
         queryFn: async ({ pageParam, signal }) => {

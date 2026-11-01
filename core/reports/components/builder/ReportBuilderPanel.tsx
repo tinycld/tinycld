@@ -99,7 +99,9 @@ interface SurfaceProps {
     onSaveAs: () => void
 }
 
-// Beside the report on a desktop; over it, from the right, on a tablet.
+// Beside the report on a desktop; over it, from the right, on a tablet. The panel
+// belongs to its route, so it does not close on a URL change: its close navigates,
+// and a close fired by the next push would undo that push.
 function DrawerSurface({
     builder,
     problems,
@@ -114,6 +116,7 @@ function DrawerSurface({
             isOpen
             onClose={builder.onClose}
             presentation={presentation}
+            closesOnNavigate={false}
             anchor="right"
             size="md"
         >

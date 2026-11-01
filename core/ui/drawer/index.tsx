@@ -244,6 +244,12 @@ type IDrawerProps = React.ComponentProps<typeof UIDrawer> &
     VariantProps<typeof drawerStyle> & {
         className?: string
         presentation?: DrawerPresentation
+        /**
+         * Close when the route changes (the default). A drawer its route owns
+         * passes false: it leaves with its route, and its onClose may navigate,
+         * so a close on the URL change would navigate a second time.
+         */
+        closesOnNavigate?: boolean
     }
 
 type IDrawerBackdropProps = React.ComponentProps<typeof UIDrawer.Backdrop> &
@@ -293,14 +299,21 @@ function useDrawerEscape(isOpen: boolean | undefined, onClose?: () => void) {
 }
 
 const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProps>(function Drawer(
-    { className, size = 'md', anchor = 'left', presentation = 'overlay', ...props },
+    {
+        className,
+        size = 'md',
+        anchor = 'left',
+        presentation = 'overlay',
+        closesOnNavigate = true,
+        ...props
+    },
     ref
 ) {
     const isInline = presentation === 'inline'
     // Escape belongs to whatever has focus beside an inline panel, which is
     // not modal; only an overlay claims it.
     useDrawerEscape(props.isOpen && !isInline, props.onClose)
-    useCloseOnNavigate(props.isOpen, props.onClose)
+    useCloseOnNavigate(props.isOpen && closesOnNavigate, props.onClose)
 
     // Don't mount the gluestack Modal at all while closed. GlueStack's exit
     // handshake runs through RN Animated with useNativeDriver:true, whose
