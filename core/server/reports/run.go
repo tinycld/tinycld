@@ -218,12 +218,15 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 		return nil, err
 	}
 	// No expansion state at all (expand absent, no expandAll): the levels
-	// marked open expand. expand: [] is a choice to open nothing.
+	// marked open expand, down to the first level that is not open: a level
+	// under a closed ancestor shows nothing, so it is not fetched.
+	// expand: [] is a choice to open nothing.
 	if req.Options.Expand == nil && !req.Options.ExpandAll {
 		for i, g := range p.groups {
-			if g.group.Open {
-				expand.open[i+1] = true
+			if !g.group.Open {
+				break
 			}
+			expand.open[i+1] = true
 		}
 	}
 	rn := &runner{
