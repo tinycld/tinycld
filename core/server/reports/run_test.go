@@ -402,7 +402,7 @@ func TestGroupKeysCompareByType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !text.has([]any{"1"}) || text.has([]any{int64(1)}) {
+	if !text.has([]any{"1"}, 1) || text.has([]any{int64(1)}, 1) {
 		t.Fatal("the text \"1\" and the number 1 are different group keys")
 	}
 }

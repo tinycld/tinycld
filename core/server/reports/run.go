@@ -217,6 +217,15 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	// No expansion state at all (expand absent, no expandAll): the levels
+	// marked open expand. expand: [] is a choice to open nothing.
+	if req.Options.Expand == nil && !req.Options.ExpandAll {
+		for i, g := range p.groups {
+			if g.group.Open {
+				expand.open[i+1] = true
+			}
+		}
+	}
 	rn := &runner{
 		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
@@ -277,7 +286,7 @@ func (rn *runner) run() error {
 		return err
 	}
 	var details []map[string]any
-	if rn.c.p.pivot == nil && (len(rn.c.p.groups) == 0 || len(rn.expand.keys) > 0 || rn.expand.all) {
+	if rn.c.p.pivot == nil && (len(rn.c.p.groups) == 0 || len(rn.expand.keys) > 0 || rn.expand.all || rn.expand.open[len(rn.c.p.groups)]) {
 		details, err = rn.detailPass()
 		if err != nil {
 			return err
@@ -734,6 +743,9 @@ type expansion struct {
 	// set holds each key as keyString gives it, which keeps the type: the
 	// text "1" is not the number 1.
 	set map[string]bool
+	// open holds the levels (1 for the first group) that open because the
+	// run said nothing.
+	open map[int]bool
 }
 
 // maxExpandValues bounds the values options.expand binds into one statement
@@ -744,7 +756,7 @@ const maxExpandValues = 30000
 // parseExpansion reads options.expand: at most rowCap keys, since a run
 // shows no more group rows than that, and at most maxExpandValues values.
 func parseExpansion(opts Options) (*expansion, error) {
-	e := &expansion{all: opts.ExpandAll, set: map[string]bool{}}
+	e := &expansion{all: opts.ExpandAll, set: map[string]bool{}, open: map[int]bool{}}
 	if len(opts.Expand) > runLimits.rowCap {
 		return nil, invalid("options.expand", fmt.Sprintf("a run expands at most %d groups", runLimits.rowCap))
 	}
@@ -788,7 +800,7 @@ func parseExpansion(opts Options) (*expansion, error) {
 // refuses past 1,000) and plan in time that grows with the square of the
 // keys.
 func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string {
-	if e.all {
+	if e.all || e.open[depth] {
 		return "1"
 	}
 	cols := make([]string, 0, depth+len(c.currencies))
@@ -821,11 +833,9 @@ func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM (VALUES %s) ek WHERE %s)", strings.Join(rows, ", "), strings.Join(match, " AND "))
 }
 
-func (e *expansion) has(key []any) bool {
-	if e.all {
-		return true
-	}
-	return e.set[keyString(key)]
+// has is true when the level-n group with key opens.
+func (e *expansion) has(key []any, n int) bool {
+	return e.all || e.open[n] || e.set[keyString(key)]
 }
 
 // compileDry compiles every statement of a plan without a database, so a

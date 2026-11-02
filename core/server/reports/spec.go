@@ -130,6 +130,8 @@ type Group struct {
 	Col       string `json:"col"`
 	Bucket    string `json:"bucket,omitempty"` // a date column's bucket
 	Subtotals bool   `json:"subtotals,omitempty"`
+	// Open opens the level when a run has no expansion state.
+	Open bool `json:"open,omitempty"`
 	// Label is a formula on the group's level that labels its rows (a
 	// record's label when its value points at one). Without it a record
 	// group is labelled as its column shows the record (labelFieldOf), any
