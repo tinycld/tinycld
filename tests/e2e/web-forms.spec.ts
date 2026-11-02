@@ -193,13 +193,12 @@ async function frameFormAt(hostOrigin: string, formUrl: string) {
     return { page, browser, frame: page.frameLocator('#f'), failure: () => failure }
 }
 
-test('an allowed site frames, sizes and hears the submission; another site is refused', async ({
-    page,
-}) => {
+// One framing browser for each test: closing a manually launched browser
+// flushes its recorded trace, which costs seconds, so each test pays it once.
+test('an allowed site frames the form, sizes it and hears the submission', async ({ page }) => {
     const url = await buildAndPublish(page, `Embed ${Date.now()}`, {
         domains: 'https://client.example',
     })
-
     const allowed = await frameFormAt('https://client.example', url)
     try {
         await fillAndSend(allowed.frame, allowed.page, 'Embedded Visitor')
@@ -212,7 +211,12 @@ test('an allowed site frames, sizes and hears the submission; another site is re
     } finally {
         await allowed.browser.close()
     }
+})
 
+test('a site not on the list cannot frame the form', async ({ page }) => {
+    const url = await buildAndPublish(page, `Blocked ${Date.now()}`, {
+        domains: 'https://client.example',
+    })
     const blocked = await frameFormAt('https://evil.example', url)
     try {
         await expect.poll(blocked.failure).toContain('ERR_BLOCKED_BY_RESPONSE')
