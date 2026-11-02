@@ -448,11 +448,82 @@ func TestParamOptionGroupsOfTypedFields(t *testing.T) {
 	}{
 		{`[{"field":"active"}]`, "bob", []OptionGroup{{Value: "0", Label: "No"}, {Value: "1", Label: "Yes"}}},
 		{`[{"field":"weight"}]`, "ann", []OptionGroup{{Value: "4", Label: "4", Type: Number}, {Value: "190", Label: "190", Type: Number}, {Value: "300", Label: "300", Type: Number}}},
-		{`[{"field":"price"}]`, "ann", []OptionGroup{{Value: "5000", Label: "5000", Type: Money}, {Value: "120000", Label: "120000", Type: Money}, {Value: "500000", Label: "500000", Type: Money}}},
+		// The animals' prices are in their source's fixed currency.
+		{`[{"field":"price"}]`, "ann", []OptionGroup{{Value: "5000 USD", Label: "5000", Type: Money, Currency: "USD"}, {Value: "120000 USD", Label: "120000", Type: Money, Currency: "USD"}, {Value: "500000 USD", Label: "500000", Type: Money, Currency: "USD"}}},
 		{`[{"field":"born"}]`, "ann", []OptionGroup{{Value: "", Label: "(none)"}, {Value: "2019-02-10", Label: "2019-02-10", Type: Date}, {Value: "2020-05-01", Label: "2020-05-01", Type: Date}}},
 	} {
 		if got := groupsOf(z.options(t, c.user, withGroup(c.group), OptionsRequest{Param: "animals"})); !slices.Equal(got, c.want) {
 			t.Fatalf("%s groups = %+v, want %+v", c.group, got, c.want)
 		}
+	}
+}
+
+// An amount group with a currency field groups by amount and currency: 300
+// USD and 300 EUR are two groups, and a group filter names both.
+func TestParamOptionAmountGroupsKeepTheirCurrency(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "otto", "zoo_animals", map[string]any{"name": "Otto", "species": "otter", "owner": z.id("ann"), "fee": 300, "fee_currency": "EUR"})
+	byFee := withGroup(`[{"field":"fee"}]`)
+	res := z.options(t, "ann", byFee, OptionsRequest{Param: "animals"})
+	want := []OptionGroup{
+		{Value: "50 USD", Label: "50", Type: Money, Currency: "USD"},
+		{Value: "300 EUR", Label: "300", Type: Money, Currency: "EUR"},
+		{Value: "300 USD", Label: "300", Type: Money, Currency: "USD"},
+		{Value: "700 EUR", Label: "700", Type: Money, Currency: "EUR"},
+	}
+	if !slices.Equal(res.Groups, want) {
+		t.Fatalf("fee groups = %+v, want %+v", res.Groups, want)
+	}
+	eur := "300 EUR"
+	if got := optionLabels(z.options(t, "ann", byFee, OptionsRequest{Param: "animals", Group: &eur})); !slices.Equal(got, []string{"Otto"}) {
+		t.Fatalf("300 EUR = %v", got)
+	}
+}
+
+// An option label read from a yes/no, number, amount or date is typed as a
+// group label is: Yes or No, or a typed value (an amount with its currency)
+// the client formats; numbers order and page by value.
+func TestParamOptionLabelsOfTypedFields(t *testing.T) {
+	z := newZoo(t)
+	labelled := func(label string) string {
+		return strings.Replace(animalsParam, `"label":[{"field":"name"}]`, `"label":`+label, 1)
+	}
+	strip := func(res *ParamOptions) []ParamOption {
+		out := []ParamOption{}
+		for _, o := range res.Options {
+			out = append(out, ParamOption{Label: o.Label, Type: o.Type, Currency: o.Currency})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		label, user string
+		want        []ParamOption
+	}{
+		{`[{"field":"active"}]`, "bob", []ParamOption{{Label: "No"}, {Label: "Yes"}}},
+		{`[{"field":"weight"}]`, "ann", []ParamOption{{Label: "4", Type: Number}, {Label: "190", Type: Number}, {Label: "300", Type: Number}}},
+		{`[{"field":"fee"}]`, "ann", []ParamOption{{Label: "50", Type: Money, Currency: "USD"}, {Label: "300", Type: Money, Currency: "USD"}, {Label: "700", Type: Money, Currency: "EUR"}}},
+		{`[{"field":"born"}]`, "ann", []ParamOption{{Label: "(none)"}, {Label: "2019-02-10", Type: Date}, {Label: "2020-05-01", Type: Date}}},
+	} {
+		if got := strip(z.options(t, c.user, labelled(c.label), OptionsRequest{Param: "animals"})); !slices.Equal(got, c.want) {
+			t.Fatalf("%s options = %+v, want %+v", c.label, got, c.want)
+		}
+	}
+	// A yes/no is searched as it is shown.
+	if got := optionLabels(z.options(t, "bob", labelled(`[{"field":"active"}]`), OptionsRequest{Param: "animals", Search: "yes"})); !slices.Equal(got, []string{"Yes"}) {
+		t.Fatalf("search yes = %v", got)
+	}
+	// Pages of numbers follow the number order.
+	var pages []string
+	req := OptionsRequest{Param: "animals", Limit: 1}
+	for range 5 {
+		res := z.options(t, "ann", labelled(`[{"field":"weight"}]`), req)
+		pages = append(pages, optionLabels(res)...)
+		if res.Next == "" {
+			break
+		}
+		req.After = res.Next
+	}
+	if !slices.Equal(pages, []string{"4", "190", "300"}) {
+		t.Fatalf("weight pages = %v", pages)
 	}
 }

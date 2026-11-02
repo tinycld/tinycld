@@ -19,15 +19,23 @@ import (
 // no group value make one blank group. A link to a record the reader cannot
 // see reads blank (the hop joins through the target's rule CTE), so it joins
 // that blank group. Where a value's rows differ, a set label or group wins
-// over a blank one. A where on another param reads that param's value for
-// the request.
+// over a blank one. A yes/no label reads Yes or No, so a search and the
+// order read what the picker shows; an amount label's currency is lc. An
+// amount group with a currency is "<amount> <currency>" (amountGroupSQL). A
+// where on another param reads that param's value for the request.
 func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 	sc := newScope(s, op.src)
 	value := "CAST(" + sc.value(op.value).sql + " AS TEXT)"
-	label := "COALESCE(min(NULLIF(CAST(" + optionLabelOf(s, sc.value(op.label)) + " AS TEXT), '')), '')"
+	lv := sc.value(op.label)
+	label := optionLabelOf(s, lv)
+	if shownType(op.label) == Bool {
+		label = fmt.Sprintf("(CASE WHEN %[1]s IS NULL OR %[1]s = %[2]s THEN %[1]s WHEN %[1]s THEN 'Yes' ELSE 'No' END)", label, s.bind(noName))
+	}
+	label = "COALESCE(min(NULLIF(CAST(" + label + " AS TEXT), '')), '')"
+	labelCur := "min(" + c.shownCurrencySQL(s, sc, op.label, lv) + ")"
 	group := "NULL"
 	if op.group != nil {
-		group = "COALESCE(min(NULLIF(CAST(" + sc.value(op.group).sql + " AS TEXT), '')), '')"
+		group = "COALESCE(min(NULLIF(" + c.amountGroupSQL(s, sc, op.group) + ", '')), '')"
 	}
 	where := "1"
 	if w := op.def.OptionsFrom.Where; w != nil {
@@ -42,8 +50,50 @@ func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 			where = "COALESCE(" + e.sql + ", 0)"
 		}
 	}
-	return fmt.Sprintf("SELECT %s AS v, %s AS l, %s AS g\n%s\nWHERE %s AND %s IS NOT NULL\nGROUP BY 1",
-		value, label, group, sc.render(), where, value), nil
+	return fmt.Sprintf("SELECT %s AS v, %s AS l, %s AS lc, %s AS g\n%s\nWHERE %s AND %s IS NOT NULL\nGROUP BY 1",
+		value, label, labelCur, group, sc.render(), where, value), nil
+}
+
+// amountGroupSQL is a group's value as text. An amount with a currency is
+// "<amount> <currency>" (one space; a currency code has none), so 300 USD
+// and 300 EUR are two groups and a posted group value (a group filter, a
+// group reference) names both; an amount whose currency is blank keeps the
+// amount alone. Any other group is its stored value.
+func (c *compiler) amountGroupSQL(s *stmt, sc *scope, p *pathPlan) string {
+	text := "CAST(" + sc.value(p).sql + " AS TEXT)"
+	if p.field.Type != Money {
+		return text
+	}
+	cur := c.shownCurrencySQL(s, sc, p, sc.value(p))
+	if cur == "NULL" {
+		return text
+	}
+	return text + " || COALESCE(' ' || NULLIF(" + cur + ", ''), '')"
+}
+
+// shownCurrencySQL is the currency of what a path shows when that is an
+// amount: a linked record's label's, the amount's currency field read
+// beside it, or its source's fixed currency; NULL for anything else.
+func (c *compiler) shownCurrencySQL(s *stmt, sc *scope, p *pathPlan, e expr) string {
+	if e.target != nil && p.field.Type == Relation {
+		return labelCurrencySQL(s, e.target, labelFieldOf(e.target, ""), e.sql)
+	}
+	sql, fixed := amountCurrencyOf(sc, p.hops, p)
+	switch {
+	case sql != "":
+		return sql
+	case fixed != nil && c.app != nil:
+		return s.bind(fixed.Currency(c.app))
+	}
+	return "NULL"
+}
+
+// splitAmountGroup reads an amount group's value: its amount and currency.
+func splitAmountGroup(value string) (string, string) {
+	if amount, cur, ok := strings.Cut(value, " "); ok {
+		return amount, cur
+	}
+	return value, ""
 }
 
 // optionLabelOf is an option's label as the picker shows it (R31): a value
@@ -90,22 +140,29 @@ type OptionsRequest struct {
 	Headers map[string]string
 }
 
-// ParamOption is one option: the value a run takes, its shown label and its
-// group's value ("" for no group, which is also the blank group's value).
+// ParamOption is one option: the value a run takes, its shown label (a
+// record's label, a select's option label, Yes or No) and its group's value
+// ("" for no group, which is also the blank group's value). A number,
+// amount, percent, date or date-time label also has its type, and an amount
+// its currency, so the client formats it as it formats a cell (R9).
 type ParamOption struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
-	Group string `json:"group,omitempty"`
+	Value    string    `json:"value"`
+	Label    string    `json:"label"`
+	Type     FieldType `json:"type,omitempty"`
+	Currency string    `json:"currency,omitempty"`
+	Group    string    `json:"group,omitempty"`
 }
 
 // OptionGroup is one group of a param's options: the value its options
-// carry and its shown label (a record's label, a select's option label, Yes
-// or No). A number, amount, percent, date or date-time label also has its
-// type, so the client formats it as it formats a cell (R9).
+// carry and its shown label, typed as an option's label is. The value of a
+// group read from an amount with a currency is "<amount> <currency>" (one
+// space, e.g. "300 EUR"), so 300 USD and 300 EUR are two groups; a group
+// filter and a group reference (R30) post that value as it is.
 type OptionGroup struct {
-	Value string    `json:"value"`
-	Label string    `json:"label"`
-	Type  FieldType `json:"type,omitempty"`
+	Value    string    `json:"value"`
+	Label    string    `json:"label"`
+	Type     FieldType `json:"type,omitempty"`
+	Currency string    `json:"currency,omitempty"`
 }
 
 // ParamOptions is one page of options, ordered by label then value. Groups
@@ -183,6 +240,7 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 	if err != nil {
 		return err
 	}
+	typ := shownType(op.label)
 	conds := optionConds(s, req.Search, req.Group)
 	switch {
 	case len(req.Values) > 0:
@@ -197,10 +255,10 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 			return err
 		}
 		l := s.bind(label)
-		conds = append(conds, fmt.Sprintf("(o.l > %s OR (o.l = %s AND o.v > %s))", l, l, s.bind(value)))
+		conds = append(conds, fmt.Sprintf("(o.l <> '', %s, o.v) > (%s <> '', %s, %s)", orderKey(typ, "o.l"), l, orderKey(typ, l), s.bind(value)))
 	}
-	body := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.g AS g FROM (%s) o\nWHERE %s\nORDER BY o.l, o.v LIMIT %s",
-		inner, strings.Join(conds, " AND "), s.bind(int64(limit+1)))
+	body := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g FROM (%s) o\nWHERE %s\nORDER BY o.l <> '', %s, o.v LIMIT %s",
+		inner, strings.Join(conds, " AND "), orderKey(typ, "o.l"), s.bind(int64(limit+1)))
 	rows, _, err := readRows(ctx, c.app, s, nil, body, false)
 	if err != nil {
 		return err
@@ -210,7 +268,8 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 		rows = rows[:limit]
 	}
 	for _, row := range rows {
-		res.Options = append(res.Options, ParamOption{Value: textOf(row["v"]), Label: shownText(row["l"]), Group: textOf(row["g"])})
+		label, t, cur := pickerLabel(textOf(row["l"]), textOf(row["lc"]), typ)
+		res.Options = append(res.Options, ParamOption{Value: textOf(row["v"]), Label: label, Type: t, Currency: cur, Group: textOf(row["g"])})
 	}
 	if more {
 		last := rows[len(rows)-1]
@@ -229,15 +288,18 @@ func (c *compiler) optionGroups(ctx context.Context, op *optionsPlan, search str
 		return err
 	}
 	typ := shownType(op.group)
-	label := "COALESCE(" + optionLabelOf(s, pathExpr("o.g", op.group)) + ", '')"
-	// A number orders by its value, not its text ("4" before "190"); the
-	// blank group comes first, as a blank text label does.
-	order := "2, 1"
-	if typ == Number || typ == Money || typ == Percent {
-		order = "o.g <> '', CAST(o.g AS REAL), 1"
+	key := pathExpr("o.g", op.group)
+	label, cur := "COALESCE("+optionLabelOf(s, key)+", '')", "NULL"
+	if key.target != nil {
+		// A link's group shows the record's label, and its currency when the
+		// label is an amount; an amount's own group carries its currency in
+		// its value (amountGroupSQL).
+		cur = labelCurrencySQL(s, key.target, labelFieldOf(key.target, ""), "o.g")
 	}
-	body := fmt.Sprintf("SELECT o.g AS g, %s AS gl FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY %s LIMIT %s",
-		label, inner, strings.Join(optionConds(s, search, nil), " AND "), order, s.bind(int64(maxOptionGroups+1)))
+	// The blank group comes first; a number orders by its value, not its
+	// text ("4" before "190").
+	body := fmt.Sprintf("SELECT o.g AS g, %s AS gl, %s AS glc FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY o.g <> '', %s, 1 LIMIT %s",
+		label, cur, inner, strings.Join(optionConds(s, search, nil), " AND "), orderKey(typ, "gl"), s.bind(int64(maxOptionGroups+1)))
 	rows, _, err := readRows(ctx, c.app, s, nil, body, false)
 	if err != nil {
 		return err
@@ -246,9 +308,26 @@ func (c *compiler) optionGroups(ctx context.Context, op *optionsPlan, search str
 		rows, res.GroupsCut = rows[:maxOptionGroups], true
 	}
 	for _, row := range rows {
-		res.Groups = append(res.Groups, groupOf(textOf(row["g"]), textOf(row["gl"]), typ))
+		text, groupCur := textOf(row["gl"]), textOf(row["glc"])
+		if key.target == nil && typ == Money {
+			text, groupCur = splitAmountGroup(text)
+		}
+		if typ == Bool {
+			text = yesNo(text)
+		}
+		label, t, cur := pickerLabel(text, groupCur, typ)
+		res.Groups = append(res.Groups, OptionGroup{Value: textOf(row["g"]), Label: label, Type: t, Currency: cur})
 	}
 	return nil
+}
+
+// orderKey is a label's sort key: a number's value, so "4" sorts before
+// "190"; any other label's text.
+func orderKey(typ FieldType, label string) string {
+	if typ == Number || typ == Money || typ == Percent {
+		return "CAST(" + label + " AS REAL)"
+	}
+	return label
 }
 
 // shownType is the type of what a path shows: a linked record's label
@@ -260,22 +339,31 @@ func shownType(p *pathPlan) FieldType {
 	return labelTypeOf(p.field)
 }
 
-// groupOf is a group shown as a run shows a group label of its type: (none)
-// for a blank, Yes or No for a yes/no, a typed text for a number, amount,
-// percent or date, which the client formats.
-func groupOf(value, label string, typ FieldType) OptionGroup {
-	g := OptionGroup{Value: value, Label: shownText(label)}
-	switch {
-	case label == "" || label == noName:
-	case typ == Bool:
-		g.Label = "No"
-		if label != "0" && label != "false" {
-			g.Label = "Yes"
-		}
-	case typ == Number || typ == Money || typ == Percent || typ == Date || typ == DateTime:
-		g.Type = typ
+// yesNo is a stored yes/no as the picker shows it.
+func yesNo(text string) string {
+	switch text {
+	case "", noName:
+		return text
+	case "0", "false":
+		return "No"
 	}
-	return g
+	return "Yes"
+}
+
+// pickerLabel is a label of type typ as the picker shows it, as a run shows
+// a group label of that type: (none) for a blank, and a number, amount,
+// percent, date or date-time typed (an amount with its currency), which the
+// client formats. A yes/no label already reads Yes or No.
+func pickerLabel(text, cur string, typ FieldType) (string, FieldType, string) {
+	switch {
+	case text == "" || text == noName:
+		return shownText(text), "", ""
+	case typ == Money:
+		return text, typ, cur
+	case typ == Number || typ == Percent || typ == Date || typ == DateTime:
+		return text, typ, ""
+	}
+	return text, "", ""
 }
 
 // optionConds are the search and group conditions on the options select (o).
