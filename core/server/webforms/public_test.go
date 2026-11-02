@@ -15,7 +15,7 @@ func TestPublicForm(t *testing.T) {
 	for _, sc := range []tests.ApiScenario{
 		{Name: "live form", Method: http.MethodGet, URL: "/api/forms/public/" + f.token, ExpectedStatus: 200,
 			ExpectedContent: []string{`"name":"Contact"`, `"confirmation":"Thank you.`, `"slug":"contact"`, `"stamp":"`, `"minDelayMs":3000`, `"requirePow":false`, `"maxUploadMb":25`, `"key":"name"`},
-			TestAppFactory: factory, DisableTestAppCleanup: true},
+			TestAppFactory:  factory, DisableTestAppCleanup: true},
 		{Name: "unknown token", Method: http.MethodGet, URL: "/api/forms/public/nope", ExpectedStatus: 404, ExpectedContent: []string{`"status":404`}, TestAppFactory: factory, DisableTestAppCleanup: true},
 		{Name: "no challenge when pow is off", Method: http.MethodGet, URL: "/api/forms/public/" + f.token + "/challenge", ExpectedStatus: 404, ExpectedContent: []string{`"status":404`}, TestAppFactory: factory, DisableTestAppCleanup: true},
 	} {
