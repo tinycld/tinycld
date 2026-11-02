@@ -20,9 +20,12 @@ export type FormulaPlace =
     | { kind: 'level' }
     | { kind: 'detail' }
 
-/** The columns; with the groups and params, a formula reading a record or a param is typed too. */
-type ColumnsOf = Pick<BuilderDraft, 'source' | 'columns'> &
-    Partial<Pick<BuilderDraft, 'groups' | 'params'>>
+/**
+ * What a column's type is read from: the columns, and the groups and params a
+ * formula reading a record or a param is typed by. Every caller passes all four,
+ * so a column has one type in every section and in the saved spec.
+ */
+export type ColumnsOf = Pick<BuilderDraft, 'source' | 'columns' | 'groups' | 'params'>
 
 /**
  * The type of each column's cells, by id, for formula operands, division and
@@ -51,8 +54,8 @@ export function columnTypes(draft: ColumnsOf, catalog: Catalog): ReadonlyMap<str
             const read = byId.get(key)
             return read ? typeOf(read) : undefined
         },
-        records: draft.groups ? recordGroups({ ...draft, groups: draft.groups }, catalog) : [],
-        params: draft.params ?? [],
+        records: recordGroups(draft, catalog),
+        params: draft.params,
     }
     const cellType = (column: ColumnDraft): FieldType => {
         if (column.kind === 'path') {
@@ -65,6 +68,10 @@ export function columnTypes(draft: ColumnsOf, catalog: Catalog): ReadonlyMap<str
     return types
 }
 
+/** Cells of this type are numbers: a formula column giving one is shown as a number or a percent. */
+export const isNumericType = (type: FieldType) =>
+    type === 'number' || type === 'money' || type === 'percent'
+
 /** The columns a formula, a group or a pivot cell can name. */
 export function columnChoices(draft: ColumnsOf, catalog: Catalog) {
     const types = columnTypes(draft, catalog)
@@ -76,7 +83,7 @@ export function columnChoices(draft: ColumnsOf, catalog: Catalog) {
             key: column.id,
             label: column.label,
             type,
-            isNumeric: type === 'number' || type === 'money' || type === 'percent',
+            isNumeric: isNumericType(type),
             hasAggregate: column.aggregate !== '',
             isDate: type === 'date' || type === 'datetime',
             isNested: info?.mode === 'nest',
@@ -84,6 +91,8 @@ export function columnChoices(draft: ColumnsOf, catalog: Catalog) {
         }
     })
 }
+
+export type ColumnChoice = ReturnType<typeof columnChoices>[number]
 
 /** The group levels whose column is a link to one record: they carry that record. */
 export function recordGroups(

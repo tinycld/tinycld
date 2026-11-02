@@ -13,13 +13,12 @@ import {
     pathLabel,
 } from '../../lib/builder/columns'
 import type { ColumnDraft, FormulaDraft } from '../../lib/builder/draft'
-import { columnChoices } from '../../lib/builder/formula-context'
 import type { SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnPicker } from './ColumnPicker'
 import { IconButton, NEW_FORMULA } from './parts'
-import { ReportFormula } from './report-formula'
+import { ReportFormula, useColumnChoices } from './report-formula'
 
 const FORMAT_OPTIONS = [
     { value: '', label: 'Number' },
@@ -180,11 +179,8 @@ export function ColumnsSection({
     problems: Problem[]
 }) {
     const columns = useWatch({ control: builder.form.control, name: 'columns' })
-    const numericIds = new Set(
-        columnChoices({ source: builder.base.key, columns }, builder.catalog)
-            .filter(choice => choice.isNumeric)
-            .map(choice => choice.key)
-    )
+    const choices = useColumnChoices(builder)
+    const numericIds = new Set(choices.filter(choice => choice.isNumeric).map(choice => choice.key))
     const onPick = (path: SpecHop[]) => {
         const info = describePath(builder.catalog, builder.base.key, path)
         if (!info) return

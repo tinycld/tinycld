@@ -2,23 +2,23 @@ import { NumberInput, SelectInput, Toggle, useWatch } from '@tinycld/core/ui/for
 import { View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { describePath, MAX_PIVOT_COLUMNS, pathLabel } from '../../lib/builder/columns'
-import { columnChoices } from '../../lib/builder/formula-context'
 import type { SpecHop } from '../../lib/spec'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnPicker } from './ColumnPicker'
 import { BucketSelect } from './parts'
+import { useColumnChoices } from './report-formula'
 
 function usePivotFields(builder: ReportBuilder) {
     const { catalog, base, form } = builder
     const pivot = useWatch({ control: form.control, name: 'pivot' })
-    const columns = useWatch({ control: form.control, name: 'columns' })
+    const choices = useColumnChoices(builder)
     const isDatePath = (path: readonly SpecHop[]) => {
         const type = describePath(catalog, base.key, path)?.field.type
         return type === 'date' || type === 'datetime'
     }
     const info = describePath(catalog, base.key, pivot.path)
-    const cells = columnChoices({ source: base.key, columns }, catalog)
+    const cells = choices
         .filter(choice => choice.hasAggregate)
         .map(choice => ({ value: choice.key, label: choice.label }))
     // A bucket left from a date field would reach the engine on a field that has none.

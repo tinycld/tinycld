@@ -175,6 +175,77 @@ describe('draftFromSpec and specFromDraft', () => {
         expect(specFromDraft(draft, CATALOG).params).toEqual(spec.params)
     })
 
+    it('saves a lookup with no where, and paths whose links keep only rows with them, as read', () => {
+        const spec: ReportSpec = {
+            version: CURRENT_SPEC_VERSION,
+            source: SALES_KEY,
+            columns: [
+                { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+                {
+                    id: 'first_team',
+                    label: 'First team',
+                    formula: {
+                        op: 'lookup',
+                        source: TEAMS_KEY,
+                        value: { path: [{ field: 'name' }] },
+                    },
+                },
+                {
+                    id: 'team_name',
+                    label: 'Team name',
+                    formula: { path: [{ link: 'team', with: 'required' }, { field: 'name' }] },
+                },
+                {
+                    id: 'group_team',
+                    label: 'Group team',
+                    formula: {
+                        record: 'byTeam',
+                        path: [{ field: 'name' }],
+                    },
+                },
+                {
+                    id: 'kept',
+                    label: 'Kept',
+                    formula: { path: [{ link: 'team', with: 'optional' }] },
+                },
+            ],
+            groups: [{ id: 'byTeam', col: 'team' }],
+        }
+        const draft = draftFromSpec(spec, { title: 'T', description: '' }, CATALOG)
+        for (const column of draft.columns.slice(1)) {
+            expect(column).toMatchObject({ kind: 'formula', formula: { kind: 'editable' } })
+        }
+        expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+    })
+
+    it('saves no format a formula column no longer shows', () => {
+        const spec: ReportSpec = {
+            version: CURRENT_SPEC_VERSION,
+            source: SALES_KEY,
+            columns: [
+                { id: 'customer', label: 'Customer', path: [{ field: 'customer' }] },
+                {
+                    id: 'ratio',
+                    label: 'Ratio',
+                    formula: { op: 'div', args: [{ value: 1 }, { value: 4 }], scale: 4 },
+                    format: 'percent',
+                },
+            ],
+        }
+        const draft = draftFromSpec(spec, { title: 'T', description: '' }, CATALOG)
+        expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+        const columns = draft.columns.map(column =>
+            column.kind === 'formula'
+                ? { ...column, formula: { kind: 'editable' as const, node: { value: 'text' } } }
+                : column
+        )
+        expect(specFromDraft({ ...draft, columns }, CATALOG).columns[1]).toEqual({
+            id: 'ratio',
+            label: 'Ratio',
+            formula: { value: 'text' },
+        })
+    })
+
     it('drops a param no filter or formula asks for', () => {
         const draft = draftFromSpec(RICH, { title: 'Sales', description: '' }, CATALOG)
         const unasked = {

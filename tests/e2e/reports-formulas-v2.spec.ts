@@ -44,9 +44,11 @@ async function buildTeamLookup(p: Page, team: string) {
     await p.getByTestId(`${f}-0-1-text`).fill(team)
     await chooseOption(p, `${f}-1-part`, 'path')
     await pickPath(p, `${f}-1-path`, ['name'])
-    await expect(p.getByTestId(`${f}-summary`)).toHaveText(
-        `= look up Name in Stub teams where Name = "${team}" (smallest)`
-    )
+    const summary = `= look up Name in Stub teams where Name = "${team}" (smallest)`
+    await expect(p.getByTestId(`${f}-summary`)).toHaveText(summary)
+    // Picking the same source again keeps its where and value.
+    await chooseOption(p, `${f}-root-source`, TEAMS_SOURCE)
+    await expect(p.getByTestId(`${f}-summary`)).toHaveText(summary)
 }
 
 async function seedOneSale(page: Page, label: string) {

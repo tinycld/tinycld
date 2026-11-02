@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ParamDef } from '../../spec'
 import { type BuilderDraft, emptyDraft } from '../draft'
-import { formulaContext, recordGroups } from '../formula-context'
+import { columnChoices, formulaContext, recordGroups } from '../formula-context'
 import { contextAt } from '../formula-ops'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
@@ -110,5 +110,37 @@ describe('what a formula reads where it is edited', () => {
         const inside = contextAt(ctx, lookup, [0])
         expect(inside.source).toBe(TEAMS_KEY)
         expect(inside.params.map(p => p.id)).toEqual(['period'])
+    })
+})
+
+describe('the type of a column', () => {
+    // Every section reads columnChoices with the groups and params, so a formula
+    // reading a param or a group record has one type everywhere.
+    it('types a formula by the param and the group record it reads', () => {
+        const base = draft()
+        const formula = (id: string, node: object) => ({
+            kind: 'formula' as const,
+            id,
+            label: id,
+            aggregate: '' as const,
+            scale: null,
+            format: '',
+            formula: { kind: 'editable' as const, node },
+        })
+        const typed: BuilderDraft = {
+            ...base,
+            params: [...base.params, { id: 'least', type: 'amount', label: 'Least' }],
+            columns: [
+                ...base.columns,
+                formula('asked', { param: 'least' }),
+                formula('team_id', { record: 'byTeam', path: [{ field: 'id' }] }),
+            ],
+        }
+        const choices = columnChoices(typed, CATALOG)
+        expect(choices.find(c => c.key === 'asked')).toMatchObject({
+            type: 'money',
+            isNumeric: true,
+        })
+        expect(choices.find(c => c.key === 'team_id')?.type).toBe('relation')
     })
 })

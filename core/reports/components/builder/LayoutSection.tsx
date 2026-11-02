@@ -5,12 +5,11 @@ import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { MAX_LAYOUT_ITEMS, nextColumnId } from '../../lib/builder/columns'
 import type { FormulaDraft, LayoutItemDraft } from '../../lib/builder/draft'
-import { columnChoices } from '../../lib/builder/formula-context'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { moved } from './ColumnsSection'
 import { IconButton, NEW_FORMULA } from './parts'
-import { ReportFormula } from './report-formula'
+import { ReportFormula, useColumnChoices } from './report-formula'
 
 const KIND_LABELS = { section: 'Section', row: 'Computed row' } as const
 
@@ -153,10 +152,7 @@ function useLayout(builder: ReportBuilder) {
     const { control } = builder.form
     const items = useWatch({ control, name: 'layout' })
     const groups = useWatch({ control, name: 'groups' })
-    const columns = useWatch({ control, name: 'columns' })
-    const firstGroup = columnChoices({ source: builder.base.key, columns }, builder.catalog).find(
-        choice => choice.key === groups[0]?.col
-    )
+    const firstGroup = useColumnChoices(builder).find(choice => choice.key === groups[0]?.col)
     const ids = items.map(item => item.id)
     return {
         items,

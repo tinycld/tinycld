@@ -1,6 +1,5 @@
 import {
     FormulaEditor,
-    type FormulaLeafProps,
     FormulaNumberInput,
     type FormulaOperators,
     FormulaPlacesPick,
@@ -16,9 +15,8 @@ import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
 import { useState } from 'react'
 import { Text } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
-import { type Catalog, describePath, pathLabel } from '../../lib/builder/columns'
 import type { FormulaDraft } from '../../lib/builder/draft'
-import { type FormulaPlace, formulaContext } from '../../lib/builder/formula-context'
+import { columnChoices, type FormulaPlace, formulaContext } from '../../lib/builder/formula-context'
 import { describeNode, linkLabel } from '../../lib/builder/formula-describe'
 import {
     addOperandNode,
@@ -46,17 +44,18 @@ import {
     type ReportFormulaContext,
     SCALED_PARTS,
 } from '../../lib/builder/formula-parts'
-import { type SpecHop, type SpecNode, specNodeSchema } from '../../lib/spec'
-import { ColumnPicker } from './ColumnPicker'
+import { type SpecNode, specNodeSchema } from '../../lib/spec'
 import { FixedFormula, NEW_FORMULA } from './parts'
+import { PathLeaf, RecordLeaf, type ReportLeafProps } from './report-formula-paths'
 
 // The report builder's formula parts (OQ2): the operator set the FormulaEditor
 // draws for a column, a layout computed row, a group level or a row label, with
 // the controls beside each part. The parts and their editing rules are in
 // lib/builder/formula-*.ts; the number, value and places views are the forms
-// editor's own (F15).
+// editor's own (F15). The leaves that read a field by a path are in
+// report-formula-paths.tsx.
 
-type LeafProps = FormulaLeafProps<SpecNode> & { ctx: ReportFormulaContext }
+type LeafProps = ReportLeafProps
 
 function NumberLeaf({ expr, set, id, where }: LeafProps) {
     if (partOf(expr) !== 'number') return null
@@ -186,178 +185,6 @@ function ValueLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
     )
 }
 
-/** The link hops of a path, with each link's label, walked from `baseKey`. */
-function linkHops(catalog: Catalog, baseKey: string, hops: readonly SpecHop[]) {
-    let source = catalog.get(baseKey)
-    return hops.flatMap((hop, index) => {
-        if (hop.link === undefined) return []
-        const link = source?.links.find(l => l.key === hop.link)
-        source = link ? catalog.get(link.target) : undefined
-        return [{ index, label: link?.label ?? hop.link }]
-    })
-}
-
-interface HopJoinsProps {
-    catalog: Catalog
-    baseKey: string
-    hops: readonly SpecHop[]
-    onChange: (hops: SpecHop[]) => void
-    id: string
-    where: string
-}
-
-// Each link of a value path keeps the rows that have no linked record, or keeps
-// only the rows that have one (`with: required`, bind.go hopPlan.required).
-function HopJoins({ catalog, baseKey, hops, onChange, id, where }: HopJoinsProps) {
-    const joins = linkHops(catalog, baseKey, hops).map(({ index, label }) => {
-        const isRequired = hops[index]?.with === 'required'
-        const choose = (required: boolean) =>
-            onChange(
-                hops.map((hop, i) => {
-                    if (i !== index || hop.link === undefined) return hop
-                    return required
-                        ? { link: hop.link, with: 'required' as const }
-                        : { link: hop.link }
-                })
-            )
-        const items: PickItem[] = [
-            {
-                id: 'keep',
-                label: `Keep rows without ${label}`,
-                isSelected: !isRequired,
-                onSelect: () => choose(false),
-            },
-            {
-                id: 'required',
-                label: `Only rows with ${label}`,
-                isSelected: isRequired,
-                onSelect: () => choose(true),
-            },
-        ]
-        const shown = isRequired ? items[1] : items[0]
-        return (
-            <PickMenu
-                key={index}
-                label={shown?.label ?? ''}
-                purpose={`Rows without ${label}${where}`}
-                items={items}
-                testID={`${id}-join-${index}`}
-            />
-        )
-    })
-    return <>{joins}</>
-}
-
-function PathLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
-    if (partOf(expr) !== 'path') return null
-    const here = contextAt(ctx, root, path)
-    if (!here.source) return null
-    const hops = expr.path ?? []
-    const info = describePath(here.catalog, here.source, hops)
-    const setPath = (next: SpecHop[]) => set({ path: next })
-    const label = info ? pathLabel(info) : 'Choose a field'
-    return (
-        <>
-            <ColumnPicker
-                catalog={here.catalog}
-                baseKey={here.source}
-                onPick={setPath}
-                label={label}
-                testID={`${id}-path`}
-                toOneOnly
-            />
-            <HopJoins
-                catalog={here.catalog}
-                baseKey={here.source}
-                hops={hops}
-                onChange={setPath}
-                id={id}
-                where={where}
-            />
-        </>
-    )
-}
-
-interface RecordFieldProps {
-    isVisible: boolean
-    catalog: Catalog
-    source: string
-    hops: readonly SpecHop[]
-    label: string
-    onPick: (path: SpecHop[]) => void
-    id: string
-    where: string
-}
-
-function RecordField({
-    isVisible,
-    catalog,
-    source,
-    hops,
-    label,
-    onPick,
-    id,
-    where,
-}: RecordFieldProps) {
-    if (!isVisible) return null
-    return (
-        <>
-            <ColumnPicker
-                catalog={catalog}
-                baseKey={source}
-                onPick={onPick}
-                label={label}
-                testID={`${id}-record-field`}
-                toOneOnly
-            />
-            <HopJoins
-                catalog={catalog}
-                baseKey={source}
-                hops={hops}
-                onChange={onPick}
-                id={id}
-                where={where}
-            />
-        </>
-    )
-}
-
-// A field of the record a group level carries (a group by a link to one record).
-function RecordLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
-    if (partOf(expr) !== 'record') return null
-    const here = contextAt(ctx, root, path)
-    const record = here.records.find(r => r.group === expr.record)
-    const hops = expr.path ?? []
-    const groups: PickItem[] = here.records.map(r => ({
-        id: r.group,
-        label: r.label,
-        isSelected: r.group === expr.record,
-        onSelect: () => set({ record: r.group, path: hops }),
-    }))
-    const info = record ? describePath(here.catalog, record.source, hops) : null
-    const fieldLabel = info ? pathLabel(info) : 'Choose a field'
-    return (
-        <>
-            <PickMenu
-                label={record?.label ?? `${expr.record} (missing)`}
-                purpose={`Group${where}`}
-                items={groups}
-                testID={`${id}-record-group`}
-            />
-            <RecordField
-                isVisible={record !== undefined}
-                catalog={here.catalog}
-                source={record?.source ?? ''}
-                hops={hops}
-                label={fieldLabel}
-                onPick={next => set({ record: expr.record, path: next })}
-                id={id}
-                where={where}
-            />
-        </>
-    )
-}
-
 // The asked values that fit the slot: a Period takes a date range, Is any of a
 // multiple choice, any other slot a single value (params.go paramExpr).
 function ParamLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
@@ -410,7 +237,7 @@ function PlacesLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
     const forced = forcedScaleAt(ctx, root, path)
     return (
         <>
-            <WholeCents isVisible={forced !== undefined} testID={`${id}-places-cents`} />
+            <WholeCents isVisible={forced !== undefined} testID={`${id}-cents`} />
             <PlacesChoice
                 isVisible={forced === undefined}
                 places={expr.scale ?? 0}
@@ -425,14 +252,19 @@ function PlacesLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
 function LookupLeaf({ ctx, expr, set, id, where }: LeafProps) {
     if (partOf(expr) !== 'lookup') return null
     const pick = expr.pick ?? 'min'
-    const sources: PickItem[] = [...ctx.catalog.values()].map(s => ({
-        id: s.key,
-        label: s.label,
-        isSelected: s.key === expr.source,
-        // Another source reads other fields: its where and value start again.
-        onSelect: () =>
-            set({ op: 'lookup', source: s.key, value: { path: [{ field: 'id' }] }, pick }),
-    }))
+    const sources: PickItem[] = [...ctx.catalog.values()].map(s => {
+        const isSelected = s.key === expr.source
+        return {
+            id: s.key,
+            label: s.label,
+            isSelected,
+            // Another source reads other fields: its where and value start again.
+            onSelect: () => {
+                if (isSelected) return
+                set({ op: 'lookup', source: s.key, value: { path: [{ field: 'id' }] }, pick })
+            },
+        }
+    })
     const picks: PickItem[] = (['min', 'max'] as const).map(p => ({
         id: p,
         label: p === 'min' ? 'Smallest' : 'Largest',
@@ -574,6 +406,19 @@ export function useFormulaContext(
     const params = useWatch({ control, name: 'params' })
     const layout = useWatch({ control, name: 'layout' })
     return formulaContext({ source, columns, groups, params, layout }, builder.catalog, place)
+}
+
+/**
+ * The columns with their types, read with useWatch (F27). Every section reads them
+ * here, so a formula column has the type its formula menus and the saved spec give
+ * it (records and params included).
+ */
+export function useColumnChoices(builder: ReportBuilder) {
+    const control = builder.form.control
+    const columns = useWatch({ control, name: 'columns' })
+    const groups = useWatch({ control, name: 'groups' })
+    const params = useWatch({ control, name: 'params' })
+    return columnChoices({ source: builder.base.key, columns, groups, params }, builder.catalog)
 }
 
 /** The report builder's formula parts for the FormulaEditor's operators prop (OQ2). */

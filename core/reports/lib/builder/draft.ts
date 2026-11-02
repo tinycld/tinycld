@@ -37,7 +37,7 @@ import {
     nodeToFilter,
     paramsInNode,
 } from './filter'
-import { columnTypes, formulaContext } from './formula-context'
+import { columnTypes, formulaContext, isNumericType } from './formula-context'
 import { isEditableNode, settleScales } from './formula-ops'
 import type { ReportFormulaContext } from './formula-parts'
 
@@ -365,9 +365,17 @@ function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecC
         if (column.aggregate === 'avg') {
             out.scale = column.scale ?? avgScaleFor(types.get(column.id) ?? 'number')
         }
-        if (column.format !== '') out.format = column.format
+        if (column.format !== '' && showsFormat(column, types)) out.format = column.format
         return out
     })
+}
+
+// "Show as" is offered on a formula column only while it gives a number; one that
+// now gives text or a date saves no format it no longer shows. A fixed formula is
+// kept as it was read (R17).
+function showsFormat(column: ColumnDraft, types: Types): boolean {
+    if (column.kind === 'path' || column.formula.kind === 'fixed') return true
+    return isNumericType(types.get(column.id) ?? 'text')
 }
 
 /** The params the formulas read, in columns and layout rows. */

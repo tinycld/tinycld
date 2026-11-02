@@ -5,23 +5,17 @@ import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { MAX_GROUP_LEVELS, MAX_SORT_KEYS, nextColumnId } from '../../lib/builder/columns'
 import type { BuilderDraft } from '../../lib/builder/draft'
-import { columnChoices } from '../../lib/builder/formula-context'
+import type { ColumnChoice as Choice } from '../../lib/builder/formula-context'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { moved } from './ColumnsSection'
 import { BucketSelect, IconButton } from './parts'
+import { useColumnChoices } from './report-formula'
 
 const DIR_OPTIONS = [
     { value: 'asc', label: 'A to Z' },
     { value: 'desc', label: 'Z to A' },
 ]
-
-type Choice = ReturnType<typeof columnChoices>[number]
-
-function useChoices(builder: ReportBuilder) {
-    const columns = useWatch({ control: builder.form.control, name: 'columns' })
-    return columnChoices({ source: builder.base.key, columns }, builder.catalog)
-}
 
 const asOption = (choice: Choice) => ({ value: choice.key, label: choice.label })
 
@@ -120,7 +114,7 @@ function GroupRow({ builder, groups, index, choices }: GroupRowProps) {
 
 function GroupRows({ builder }: { builder: ReportBuilder }) {
     const groups = useWatch({ control: builder.form.control, name: 'groups' })
-    const choices = useChoices(builder)
+    const choices = useColumnChoices(builder)
     const rows = groups.map((group, index) => (
         <GroupRow
             key={group.id}
@@ -210,7 +204,7 @@ function sortRowKeys(sort: BuilderDraft['sort']): string[] {
 
 function SortRows({ builder }: { builder: ReportBuilder }) {
     const sort = useWatch({ control: builder.form.control, name: 'sort' })
-    const options = useChoices(builder).map(asOption)
+    const options = useColumnChoices(builder).map(asOption)
     const rows = sortRowKeys(sort).map((rowKey, index) => (
         <SortRow key={rowKey} builder={builder} sort={sort} index={index} options={options} />
     ))
