@@ -139,7 +139,7 @@ Core `help/reports.md` gains sections: Totals (recompute or add the rows shown),
 - **R6. Fill** is allowed on the first group level only (a fill row has no base rows, so no outer key); a fill record appears under every currency the report shows, or under the no-currency total when the report has no rows.
 - **R7. Having on a layout's first group is refused:** layout sections are fixed rows; hide rows on a deeper group.
 - **R8. `total: "rows"`** is allowed on a column whose level cell is a number or amount and is not a running value or percent; with no groups it adds the detail cells.
-- **R9. Group labels** apply to any group (default: today's key text; for a record group the target's first text field, else the id).
+- **R9. Group labels** apply to any group (default: today's key text; for a record group the target's first text field; a record group whose target has no text field needs a label formula, else its rows read "(none)", never a raw id).
 - **R10. `options.expand`:** absent → the levels marked `open` expand; `[]` → nothing expands; a list → those groups. The client's first run sends no `expand`; Collapse all sends `[]`.
 - **R11. `Row.labelColumn`** names the column whose cell a row's label repeats (detail rows without `detail.label`, nested child rows); `lib/rows.ts` drops exactly that cell from child rows.
 - **R12. param-options** as described under "API": page 50, `limit` ≤ 1000, search ≤ 200 characters, `values` ≤ 1000, groups capped at 200, label/group of a select field shown by its option label.
