@@ -70,8 +70,8 @@ describe('mergeFormHosts', () => {
     })
     it('rejects an invalid host', () => {
         expect(() =>
-            mergeFormHosts([{ slug: 'gizmos', hosts: [{ ...widget, builtin: [] }] }])
-        ).toThrow(/builtin/)
+            mergeFormHosts([{ slug: 'gizmos', hosts: [{ ...widget, kinds: ['nope'] }] }])
+        ).toThrow(/kinds/)
     })
     it('keeps a host layout, so server/form_hosts.json carries it to Go', () => {
         const layout = {

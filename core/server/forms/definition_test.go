@@ -102,3 +102,28 @@ func TestFormsHook_ValidatesTheDefinitionOnUpdate(t *testing.T) {
 		t.Fatalf("an invalid definition update must be refused, got %v", err)
 	}
 }
+
+func TestValidateDefinition_HostKinds(t *testing.T) {
+	host := &Host{Key: "gizmos:note", Label: "Note", Kinds: []string{"text", "file"}}
+	def, err := ParseDefinition([]byte(`{"version":1,"pages":[{"key":"main","title":"Main"}],` +
+		`"fields":[{"key":"who","page":"main","label":"Who","kind":"user"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := ValidateDefinition(def, host)
+	if errs == nil || !strings.Contains(errs.Error(), "not allowed") {
+		t.Fatalf("want kind rejection, got %v", errs)
+	}
+}
+
+func TestParseDefinition_FileLimits(t *testing.T) {
+	def, err := ParseDefinition([]byte(`{"version":1,"pages":[{"key":"main","title":"Main"}],` +
+		`"fields":[{"key":"cv","page":"main","label":"CV","kind":"file","accept":["application/pdf"],"maxSizeMb":5}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := def.Field("cv")
+	if len(f.Accept) != 1 || f.Accept[0] != "application/pdf" || f.MaxSizeMb == nil || *f.MaxSizeMb != 5 {
+		t.Fatalf("file limits not decoded: %+v", f)
+	}
+}

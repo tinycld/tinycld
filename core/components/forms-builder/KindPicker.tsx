@@ -45,6 +45,8 @@ const GROUPS: KindGroup[] = [
 
 export interface KindPickerProps {
     onPick: (kind: CustomKind) => void
+    /** The kinds the host allows; absent offers every kind. */
+    kinds?: readonly CustomKind[]
     testID?: string
 }
 
@@ -60,13 +62,22 @@ function KindSection({ group, onPick }: { group: KindGroup; onPick: KindPickerPr
     return <Menu.Section label={group.label}>{items}</Menu.Section>
 }
 
-export function KindPicker({ onPick, testID = 'form-add-field' }: KindPickerProps) {
+function allowedGroups(kinds: readonly CustomKind[] | undefined): KindGroup[] {
+    if (!kinds) return GROUPS
+    return GROUPS.map(g => ({ ...g, kinds: g.kinds.filter(k => kinds.includes(k.kind)) })).filter(
+        g => g.kinds.length > 0
+    )
+}
+
+export function KindPicker({ onPick, kinds, testID = 'form-add-field' }: KindPickerProps) {
     const trigger = (
         <Button variant="outline" size="sm" className="self-start mt-2" testID={testID}>
             <ButtonText>Add field</ButtonText>
         </Button>
     )
-    const sections = GROUPS.map(g => <KindSection key={g.label} group={g} onPick={onPick} />)
+    const sections = allowedGroups(kinds).map(g => (
+        <KindSection key={g.label} group={g} onPick={onPick} />
+    ))
     return (
         <Menu presentation="auto" title="Add a field" trigger={trigger}>
             {sections}

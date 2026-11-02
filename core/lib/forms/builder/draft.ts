@@ -65,7 +65,7 @@ export function newCustomField(
         case 'date':
             return { ...base, kind, time: false }
         case 'file':
-            return { ...base, kind, multiple: false, accept: [] }
+            return { ...base, kind, multiple: false, accept: [], maxSizeMb: 10 }
         case 'computed':
             return { ...base, kind, expression: 0, decimals: 0 }
         case 'table':

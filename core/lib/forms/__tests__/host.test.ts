@@ -179,3 +179,23 @@ describe('resolveFragment', () => {
         )
     })
 })
+
+describe('host kinds and built-ins', () => {
+    const base = {
+        key: 'gizmos:note',
+        label: 'Note',
+        collection: 'gizmos_notes',
+        formColumn: 'form',
+        fieldsColumn: 'values',
+        columns: ['id', 'form', 'values'],
+    }
+
+    it('accepts a host with no built-ins', () => {
+        expect(hostDefSchema.safeParse({ ...base, builtin: [] }).success).toBe(true)
+    })
+
+    it('rejects a kinds entry that is not a custom kind', () => {
+        const r = hostDefSchema.safeParse({ ...base, builtin: [], kinds: ['text', 'nope'] })
+        expect(r.success).toBe(false)
+    })
+})

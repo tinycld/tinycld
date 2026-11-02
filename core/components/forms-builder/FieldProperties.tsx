@@ -162,6 +162,14 @@ function KindSection({ editor, index, fieldKey, kind, operands, isVisible }: Kin
                         label="Accepted types"
                         hint="Comma separated, e.g. image/*, application/pdf"
                     />
+                    <NumberInput
+                        control={control}
+                        name={`fields.${index}.maxSizeMb`}
+                        label="Largest file (MB)"
+                        isCompact
+                        min={1}
+                        max={100}
+                    />
                 </>
             )
         case 'user':
