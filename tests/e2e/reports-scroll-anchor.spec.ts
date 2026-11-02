@@ -33,9 +33,10 @@ import {
  *   Expand all opens every group above it, and a sale added in another browser
  *   adds a day above it; on every frame that row keeps its place (the run's
  *   "Updating…" note once took a line above the table while the run loaded).
- * - Phone, the list scrolling at wheel speed while Expand all lands: the rows
- *   wrap there, so the opened rows are taller than first estimated. From each
- *   frame to the next the row first in view moves by the scrolled amount only.
+ * - Phone, the list scrolled at wheel speed until the next row is first in view,
+ *   and Expand all landing right after: the rows wrap there, so the opened rows
+ *   are taller than first estimated. From each frame to the next the row first in
+ *   view moves by the scrolled amount only.
  *   The list holds the row first in view at the scroll offset; it once held the
  *   row first in view when the scroll started, and the rows opened between the
  *   two moved the content down.
@@ -75,17 +76,25 @@ async function groupedByDay(p: Page) {
     return team
 }
 
-// Scrolls the row to the list's top edge and checks it got there (the list can
-// scroll only so far, and then the row above would still be in view).
-async function toTop(row: Locator) {
-    await scrollRowTo(row)
+// Scrolls the row's top edge to `below` px under the list's top edge and checks it
+// got there (the list can scroll only so far, and then the row above would still
+// be in view).
+async function toTop(row: Locator, below = 0) {
+    await scrollRowTo(row, below)
     const list = await listScroller(row)
     const gap = await row.evaluate(
         (element, scroller) =>
             element.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
         list
     )
-    expect(Math.abs(gap), 'the row is at the list top').toBeLessThanOrEqual(1)
+    expect(Math.abs(gap - below), `the row is ${below} px under the list top`).toBeLessThanOrEqual(
+        1
+    )
+}
+
+/** How tall the list's content is: it grows when rows arrive. */
+async function contentHeight(row: Locator): Promise<number> {
+    return (await listScroller(row)).evaluate(scroller => scroller.scrollHeight)
 }
 
 /** Records the row's top edge on every frame until the returned stop is called. */
@@ -110,11 +119,18 @@ async function watchTop(p: Page, testId: string): Promise<() => Promise<number[]
         p.evaluate(() => (window as unknown as { stopWatchingTop(): number[] }).stopWatchingTop())
 }
 
-// Runs `change`, then checks the row stayed where it was on every frame meanwhile.
-async function expectHeldWhile(p: Page, row: Locator, change: () => Promise<void>) {
+// Runs `change` and waits until `landed` sees the new rows in the list, then checks
+// the row stayed where it was on every frame meanwhile.
+async function expectHeldWhile(
+    p: Page,
+    row: Locator,
+    change: () => Promise<void>,
+    landed: () => Promise<void>
+) {
     const before = (await row.boundingBox())?.y ?? -1
     const stop = await watchTop(p, (await row.getAttribute('data-testid')) ?? '')
     await change()
+    await landed()
     await expect
         .poll(async () => Math.abs(((await row.boundingBox())?.y ?? -999) - before))
         .toBeLessThanOrEqual(2)
@@ -183,76 +199,107 @@ async function addSaleElsewhere(
 }
 
 interface Frame {
-    /** The list rows in view: test id → top edge. */
+    /** The rows drawn above the list's bottom edge: test id → top edge of its label. */
     tops: Record<string, number>
-    /** The row whose box holds the list's top edge. */
+    /**
+     * The row first in view: the last one whose top is at or above the list's top
+     * edge (a wrapped row's label holds only its first line, so the edge may fall
+     * on a later line of that row).
+     */
     first: string
     /** How many group rows are open. */
     open: number
+    /** How far the list scrolls after this frame. */
+    step: number
+    /** How far the list could still scroll down before this frame's step. */
+    room: number
 }
 
 /**
- * Scrolls the list down `step` px on every frame, the way a wheel does, and
- * records each frame. It runs until groups have been open for 30 frames (or 600
- * frames have passed), so the change lands while the list is moving.
+ * Scrolls the list down `step` px on every frame, the way a wheel does, until the
+ * row first in view has scrolled away, and stops there, as a flick that just
+ * ended; records each frame, until groups have been open for 30 frames (or 600
+ * frames have passed). At the row change it calls `onCrossed` once (the page's
+ * `reportRowCrossed`), so a held change lands in the moments after it, while the
+ * list still counts the scroll as going on (until 100 ms without a scroll event).
  */
-async function scrollAndRecord(p: Page, list: ElementHandle<HTMLElement>, step: number) {
+async function scrollAndRecord(
+    p: Page,
+    list: ElementHandle<HTMLElement>,
+    step: number,
+    onCrossed: () => void
+): Promise<() => Promise<Frame[]>> {
+    await p.exposeFunction('reportRowCrossed', onCrossed)
     await p.evaluate(
         ({ scroller, by }) => {
             const frames: Frame[] = []
             let openFor = 0
-            const done = new Promise<Frame[]>(resolve => {
+            let startFirst = ''
+            const state = { crossed: false, done: Promise.resolve(frames) }
+            const crossed = (window as unknown as { reportRowCrossed(): void }).reportRowCrossed
+            state.done = new Promise<Frame[]>(resolve => {
                 const frame = () => {
                     const box = scroller.getBoundingClientRect()
                     const tops: Record<string, number> = {}
                     let first = ''
-                    let firstTop = Number.POSITIVE_INFINITY
+                    let firstTop = Number.NEGATIVE_INFINITY
                     for (const row of scroller.querySelectorAll('[data-testid^="report-row-"]')) {
                         const r = row.getBoundingClientRect()
-                        if (r.bottom <= box.top || r.top >= box.bottom) continue
+                        if (r.top >= box.bottom) continue
                         const id = row.getAttribute('data-testid') ?? ''
                         tops[id] = r.top
-                        if (r.top <= box.top && r.bottom > box.top && r.top < firstTop) {
+                        if (r.top <= box.top + 0.5 && r.top > firstTop) {
                             first = id
                             firstTop = r.top
                         }
                     }
+                    if (frames.length === 0) startFirst = first
+                    if (!state.crossed && first !== startFirst) {
+                        state.crossed = true
+                        crossed()
+                    }
                     const open = scroller.querySelectorAll('[aria-expanded="true"]').length
-                    frames.push({ tops, first, open })
+                    const room = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+                    const next = state.crossed ? 0 : by
+                    frames.push({ tops, first, open, step: next, room })
                     if (open > 0) openFor += 1
                     if (openFor >= 30 || frames.length >= 600) {
                         resolve(frames)
                         return
                     }
-                    scroller.scrollTop += by
+                    scroller.scrollTop += next
                     requestAnimationFrame(frame)
                 }
                 requestAnimationFrame(frame)
             })
-            Object.assign(window, { scrollRecording: done })
+            Object.assign(window, { scrollRecording: state })
         },
         { scroller: list, by: step }
     )
-    return {
-        frames: () =>
-            p.evaluate(
-                () => (window as unknown as { scrollRecording: Promise<Frame[]> }).scrollRecording
-            ),
-    }
+    type Shared = { scrollRecording: { done: Promise<Frame[]> } }
+    return () => p.evaluate(() => (window as unknown as Shared).scrollRecording.done)
 }
 
-// The largest amount the row first in view moved beyond the scrolled step from
-// one frame to the next. A row's label holds only its first line on a phone, so
-// a frame whose top edge falls on a later line has no first row and is skipped.
-function largestJump(frames: Frame[], step: number): number {
-    let largest = 0
+interface Jumps {
+    /** The largest amount the row first in view moved beyond the list's own step. */
+    largest: number
+    /** The frames compared with the frame before them. */
+    compared: number[]
+    /** Compared frames whose step the list could not take in full (its end). */
+    clamped: number[]
+}
+
+function jumps(frames: Frame[]): Jumps {
+    const result: Jumps = { largest: 0, compared: [], clamped: [] }
     for (let i = 1; i < frames.length; i++) {
-        const { first, tops } = frames[i - 1]
+        const { first, tops, step, room } = frames[i - 1]
         const now = frames[i].tops[first]
         if (!first || now === undefined) continue
-        largest = Math.max(largest, Math.abs(now - (tops[first] - step)))
+        result.compared.push(i)
+        if (room < step) result.clamped.push(i)
+        result.largest = Math.max(result.largest, Math.abs(now - (tops[first] - step)))
     }
-    return largest
+    return result
 }
 
 test.describe('scroll position on web', () => {
@@ -268,20 +315,30 @@ test.describe('scroll position on web', () => {
             const target = rowOf(p, dayOf(25))
             await expect(target).toHaveAttribute('aria-expanded', 'false')
             await toTop(target)
-            await expectHeldWhile(p, target, async () => {
-                await pressToolbar(p, 'report-fold-all', 'Expand all')
-                await expect(target).toHaveAttribute('aria-expanded', 'true')
-                await expect(rowOf(p, 'Anchor 25')).toBeInViewport()
-            })
+            await expectHeldWhile(
+                p,
+                target,
+                () => pressToolbar(p, 'report-fold-all', 'Expand all'),
+                async () => {
+                    await expect(target).toHaveAttribute('aria-expanded', 'true')
+                    await expect(rowOf(p, 'Anchor 25')).toBeInViewport()
+                }
+            )
 
             // A sale added in another browser makes a new day at the top; the report
-            // re-runs live.
+            // re-runs live, and the new day's rows make the list taller.
             await toTop(target)
-            await expectHeldWhile(p, target, async () => {
-                const rerun = p.waitForResponse('**/api/reports/run')
-                await addSaleElsewhere(browser, user, team)
-                await rerun
-            })
+            const height = await contentHeight(target)
+            await expectHeldWhile(
+                p,
+                target,
+                async () => {
+                    const rerun = p.waitForResponse('**/api/reports/run')
+                    await addSaleElsewhere(browser, user, team)
+                    await rerun
+                },
+                () => expect.poll(() => contentHeight(target)).toBeGreaterThan(height)
+            )
         } finally {
             await close()
         }
@@ -297,7 +354,7 @@ test.describe('scroll position on web', () => {
             // The row above the target is still 2 px in view, so it is the first row
             // in view while Expand all runs. A 4 px move then makes the target first,
             // and the list keeps moving a pixel each frame until the groups open.
-            await scrollRowTo(target, 2)
+            await toTop(target, 2)
             const before = (await target.boundingBox())?.y ?? -1
             const release = await holdRuns(p)
             await pressToolbar(p, 'report-fold-all', 'Expand all')
@@ -316,13 +373,17 @@ test.describe('scroll position on web', () => {
         }
     })
 
-    test('on a phone, rows opening above while the list scrolls move nothing in view', async ({
+    test('on a phone, rows opening above right after a wheel scroll move nothing in view', async ({
         page,
     }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptanchorph')
         try {
             await groupedByDay(p)
-            await p.setViewportSize({ width: 390, height: 844 })
+            // At 844 px high the far end of the rows the list draws ahead crosses a row
+            // edge on the same scroll step as the top of the view does; the list then
+            // renders and takes the new first row anyway. At 800 px the two happen
+            // apart, so the step that changes the first row renders nothing.
+            await p.setViewportSize({ width: 390, height: 800 })
             // The rows are drawn wrapped (by other code) before the list is used.
             const start = rowOf(p, dayOf(10))
             const startId = ((await start.getAttribute('data-testid')) ?? '').replace(
@@ -337,18 +398,37 @@ test.describe('scroll position on web', () => {
                     return label && amount ? amount.y >= label.y + label.height - 1 : false
                 })
                 .toBe(true)
-            await toTop(start)
-            const recording = await scrollAndRecord(p, await listScroller(start), WHEEL_STEP)
+            // Start so that the wheel steps take the next row exactly 2 px past the list
+            // top: the row change is then clear-cut (rows level with the edge are
+            // ambiguous), and it happens on a step of its own.
+            const next = rowOf(p, dayOf(11))
+            const height =
+                ((await next.boundingBox())?.y ?? 0) - ((await start.boundingBox())?.y ?? 0)
+            expect(height, 'a phone row is taller than a wheel step').toBeGreaterThan(WHEEL_STEP)
+            await toTop(start, -((height % WHEEL_STEP) + 2))
+            // Expand all is held while the list scrolls; it is let go as the row first
+            // in view scrolls away, so it lands just after that.
+            const release = await holdRuns(p)
             await pressToolbar(p, 'report-fold-all', 'Expand all')
-            const frames = await recording.frames()
+            await expect(p.getByTestId('report-updating')).toBeVisible()
+            const recorded = await scrollAndRecord(
+                p,
+                await listScroller(start),
+                WHEEL_STEP,
+                release
+            )
+            const frames = await recorded()
+            await p.unrouteAll({ behavior: 'wait' })
             const opened = frames.findIndex(frame => frame.open > 0)
             // The groups opened while the list was moving, not before or after.
             expect(opened).toBeGreaterThan(0)
             expect(frames.length - opened).toBeGreaterThanOrEqual(30)
-            expect(
-                largestJump(frames, WHEEL_STEP),
-                'largest jump beyond the scroll'
-            ).toBeLessThanOrEqual(2)
+            const found = jumps(frames)
+            // The frame the groups opened on was compared with the one before it, and
+            // no compared step met the end of the list.
+            expect(found.compared).toContain(opened)
+            expect(found.clamped).toEqual([])
+            expect(found.largest, 'largest jump beyond the scroll').toBeLessThanOrEqual(2)
         } finally {
             await close()
         }

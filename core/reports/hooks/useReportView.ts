@@ -259,6 +259,10 @@ export function useReportView(input: ReportViewInput) {
         allColumns,
         notices: run.result?.notices ?? NO_NOTICES,
         isUpdating: run.isUpdating,
+        // While the builder lies over the view (a sheet on a phone, a drawer on a
+        // tablet) it shows "Updating…" in its own header; the view's slot then
+        // stays, empty and silent, so one live region speaks.
+        isUpdatingInBuilder: isEditing && breakpoint !== 'desktop',
         breakpoint,
         layouts: input.layouts ?? NO_LAYOUTS,
         heading: headingOf(run.result, org?.name),

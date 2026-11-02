@@ -46,13 +46,16 @@ function isInFittedRow(locator: Locator): Promise<boolean> {
 export async function pressToolbar(page: Page, testId: string, label: string) {
     const button = page.getByTestId(testId)
     const more = page.getByTestId('toolbar-more-button')
+    // The branch is the one the poll accepted: asking again could see a refit.
+    const found: { branch: 'button' | 'more' | null } = { branch: null }
     const fitted = async () => {
-        if (await isInFittedRow(button)) return 'button'
-        if ((await button.count()) === 0 && (await isInFittedRow(more))) return 'more'
-        return null
+        if (await isInFittedRow(button)) found.branch = 'button'
+        else if ((await button.count()) === 0 && (await isInFittedRow(more))) found.branch = 'more'
+        else found.branch = null
+        return found.branch
     }
     await expect.poll(fitted).not.toBeNull()
-    if ((await fitted()) === 'button') await button.click()
+    if (found.branch === 'button') await button.click()
     else {
         await more.click()
         await page.getByRole('menuitem', { name: label }).click()

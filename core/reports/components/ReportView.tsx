@@ -153,9 +153,10 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
                     onBack={model.onBack}
                     toolbar={toolbar}
                     isUpdating={model.isUpdating}
+                    isUpdatingLive={!model.isUpdatingInBuilder}
                 />
                 <ReportControls model={model} />
-                <ReportNotices notices={model.notices} />
+                <ReportNotices notices={model.notices} isLive={model.isBodyShown} />
                 <ReportDocumentHeader
                     heading={model.heading}
                     title={model.title}

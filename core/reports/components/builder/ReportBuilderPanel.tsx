@@ -107,9 +107,11 @@ function SaveAsButton({ isVisible, onPress }: { isVisible: boolean; onPress: () 
     )
 }
 
+// Full width, so its top rule spans the panel in the drawer's footer too (that
+// footer is a row that would size it to its buttons).
 function Footer({ builder, onSaveAs }: { builder: ReportBuilder; onSaveAs: () => void }) {
     return (
-        <View className="flex-row justify-end gap-2 border-t border-border p-3">
+        <View className="w-full flex-row justify-end gap-2 border-t border-border p-3">
             <SaveAsButton isVisible={builder.mode === 'edit'} onPress={onSaveAs} />
             <ServerActionButton
                 testID="report-builder-save"
@@ -127,6 +129,14 @@ interface SurfaceProps {
     preview: ReportViewModel
     problems: Problem[]
     onSaveAs: () => void
+}
+
+// Over the report (a tablet's drawer) the panel covers the report header's
+// "Updating…" slot, so it shows its own beside Close (the report's goes silent).
+// Beside the report (a desktop) the report's slot stays in view.
+function OverlayUpdating({ isVisible, isUpdating }: { isVisible: boolean; isUpdating: boolean }) {
+    if (!isVisible) return null
+    return <ReportUpdating isUpdating={isUpdating} />
 }
 
 // Beside the report on a desktop; over it, from the right, on a tablet. The panel
@@ -160,7 +170,10 @@ function DrawerSurface({
             >
                 <DrawerHeader className="border-b border-border">
                     <PanelTitle builder={builder} />
-                    <CloseButton onPress={builder.onClose} />
+                    <View className="flex-row items-center gap-1">
+                        <OverlayUpdating isVisible={!isInline} isUpdating={preview.isUpdating} />
+                        <CloseButton onPress={builder.onClose} />
+                    </View>
                 </DrawerHeader>
                 <DrawerBody style={{ flexShrink: 1 }}>
                     <Sections builder={builder} problems={problems} preview={preview} />

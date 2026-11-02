@@ -303,6 +303,8 @@ export async function createInvitedUser(
         email: `${label}-${stamp}@example.com`,
         password: 'InvitedPass1!',
     }
+    // A longer one is refused by the invite form, and the test then fails far from here.
+    expect(user.username.length, `username ${user.username}`).toBeLessThanOrEqual(32)
 
     // --- Owner sends the invite (username + email) from Settings → Members ---
     await login(page)

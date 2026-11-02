@@ -411,6 +411,10 @@ test.describe('the report view', () => {
             await p.getByTestId('report-builder-group-0-subtotals').click()
             const sheetSlot = sheet.getByTestId('report-updating-slot')
             await expect(sheetSlot).toHaveAttribute('role', 'status')
+            // The report's own slot, under the sheet, is silent: one live region speaks.
+            await expect(
+                p.locator('[data-testid="report-updating-slot"][role="status"]')
+            ).toHaveCount(1)
             await expect(sheetSlot.getByTestId('report-updating')).toHaveText('Updating…')
             const closeBox = await p.getByTestId('report-builder-close').boundingBox()
             expect(overlaps(await sheetSlot.boundingBox(), closeBox)).toBe(false)
@@ -450,6 +454,12 @@ test.describe('the report view', () => {
             await p.getByTestId('report-builder-section-group').click()
             await p.getByTestId('report-builder-group-add').click()
             await chooseOption(p, 'report-builder-group-0-col', 'status')
+            // The notices' live region is there, empty, before any notice, so the
+            // notice that appears in it is announced.
+            const region = p.getByTestId('report-notices-region')
+            await expect(region).toHaveAttribute('role', 'status')
+            await expect(region).toHaveAttribute('aria-live', 'polite')
+            await expect(region).toHaveText('')
             await p.getByTestId('report-builder-section-pivot').click()
             await p.getByTestId('report-builder-pivot-on').click()
             await p.getByTestId('report-builder-pivot-field').click()
@@ -460,7 +470,7 @@ test.describe('the report view', () => {
             await chooseOption(p, 'report-builder-pivot-bucket', 'month')
             await chooseOption(p, 'report-builder-pivot-cell', 'amount')
             await p.getByTestId('report-builder-pivot-max').fill('1')
-            await expect(p.getByTestId('report-notice-pivotCap')).toHaveText(
+            await expect(region.getByTestId('report-notice-pivotCap')).toHaveText(
                 'The pivot shows its first 1 columns; 1 more are left out.'
             )
         } finally {

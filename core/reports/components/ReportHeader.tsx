@@ -27,17 +27,20 @@ export function ReportHeader({
     onBack,
     toolbar,
     isUpdating = false,
+    isUpdatingLive = true,
 }: {
     title: string
     onBack: () => void
     toolbar: ReactNode
     isUpdating?: boolean
+    /** False while another surface (the builder over the view) shows "Updating…". */
+    isUpdatingLive?: boolean
 }) {
     return (
         <View className="gap-1 px-4 pt-2">
             <View className="flex-row items-center justify-between gap-2">
                 <ReportBackLink onBack={onBack} />
-                <ReportUpdating isUpdating={isUpdating} />
+                <ReportUpdating isUpdating={isUpdating} isLive={isUpdatingLive} />
             </View>
             <View className="flex-row items-center justify-between gap-2">
                 <Text
