@@ -34,7 +34,7 @@ export function IconButton({ label, testID, isVisible, icon: Icon, onPress }: Ic
 }
 
 /** A new formula column or computed row starts at 0, which the engine reads as a number. */
-export const NEW_FORMULA: FormulaDraft = { kind: 'editable', expr: 0 }
+export const NEW_FORMULA: FormulaDraft = { kind: 'editable', node: { value: 0 } }
 
 interface FixedFormulaProps {
     testID: string
@@ -42,7 +42,7 @@ interface FixedFormulaProps {
 }
 
 /**
- * A stored formula with parts the formula editor cannot show (R15): read-only and
+ * A stored formula with parts the formula editor cannot show (R17): read-only and
  * saved unchanged, or removed to start a new formula.
  */
 export function FixedFormula({ testID, onRemove }: FixedFormulaProps) {

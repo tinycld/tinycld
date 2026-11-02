@@ -6,8 +6,11 @@ import {
     addOtherwise,
     canRemoveNode,
     contextAt,
+    forcedScaleAt,
     hasOtherwise,
     isEditableNode,
+    isNumberList,
+    paramsAt,
     partsAt,
     removeOperandNode,
     removeOtherwise,
@@ -79,9 +82,15 @@ describe('which formulas the editor shows', () => {
         expect(isEditableNode(asOf, PARAMS)).toBe(false)
         expect(isEditableNode(IN_PERIOD, CTX.params)).toBe(false)
     })
-    it('keeps read-only a path hop key it does not write', () => {
+    // A link's `with` keeps or drops rows without the link (bind.go hopPlan.required);
+    // `mode` belongs to a column's to-many link, which a value path refuses.
+    it('edits a link that keeps only rows with it, and keeps read-only a hop key it does not write', () => {
         const required = { path: [{ link: 'team', with: 'required' as const }, { field: 'name' }] }
-        expect(isEditableNode(required, PARAMS)).toBe(false)
+        expect(isEditableNode(required, PARAMS)).toBe(true)
+        const record = { record: 'byTeam', path: [{ link: 'team', with: 'optional' as const }] }
+        expect(isEditableNode(record, PARAMS)).toBe(true)
+        const mode = { path: [{ link: 'sales', mode: 'aggregate' as const }, { field: 'amount' }] }
+        expect(isEditableNode(mode, PARAMS)).toBe(false)
         expect(isEditableNode({ path: [{ link: 'team', field: 'name' }] }, PARAMS)).toBe(false)
         expect(isEditableNode({ path: [{ link: 'team' }] }, PARAMS)).toBe(true)
     })
@@ -343,11 +352,13 @@ describe('scales follow the operands', () => {
 })
 
 describe('what a part offers where it sits', () => {
-    it('offers no path, record, param, total or lookup in a layout row', () => {
+    it('offers no path, record, param or total in a layout row, but a lookup that reads params', () => {
         const parts = partsAt(LAYOUT, { value: 0 }, [])
-        for (const p of ['path', 'record', 'param', 'sum', 'lookup', 'runningSum'])
+        for (const p of ['path', 'record', 'param', 'sum', 'runningSum'])
             expect(parts).not.toContain(p)
-        expect(parts).toContain('field')
+        expect(parts).toEqual(expect.arrayContaining(['field', 'lookup']))
+        const where = partsAt(LAYOUT, LOOKUP, [0, 1])
+        expect(where).toEqual(expect.arrayContaining(['path', 'param', 'field']))
     })
     it('offers every report operator but exists and a list in a column', () => {
         const parts = partsAt(CTX, { value: 0 }, [])
@@ -395,5 +406,36 @@ describe('what a part offers where it sits', () => {
     })
     it('reads the linked rows inside an exists', () => {
         expect(contextAt(CTX, TEAM_WITH_SALES, [0, 0]).source).toBe(SALES_KEY)
+    })
+})
+
+describe('what a leaf offers', () => {
+    it('lists only date ranges for a Period, multiple choices for a list, and the rest elsewhere', () => {
+        const ids = (root: SpecNode, path: number[]) =>
+            paramsAt(WITH_PERIOD, root, path).map(p => p.id)
+        expect(ids(IN_PERIOD, [1])).toEqual(['period'])
+        expect(ids({ op: 'in', args: [{ col: 'qty' }, { value: [] }] }, [1])).toEqual(['statuses'])
+        expect(ids({ op: 'eq', args: [{ col: 'qty' }, { value: 0 }] }, [1])).toEqual(['asOf'])
+    })
+    it('reads a list as numbers when it is tested against a number', () => {
+        const of = (tested: SpecNode, list: unknown[]) =>
+            isNumberList(CTX, { op: 'in', args: [tested, { value: list }] }, [1])
+        expect(of({ col: 'qty' }, [])).toBe(true)
+        expect(of({ col: 'amount' }, [])).toBe(true)
+        expect(of({ path: [{ field: 'customer' }] }, [])).toBe(false)
+        // An untyped value keeps the list's own kind.
+        expect(of({ value: null }, [1, 2])).toBe(true)
+        expect(of({ value: null }, ['a'])).toBe(false)
+    })
+    it('says when the engine fixes the places of a part', () => {
+        const half: SpecNode = { op: 'div', args: [{ col: 'amount' }, { value: 2 }], scale: 0 }
+        expect(forcedScaleAt(CTX, half, [])).toBe(0)
+        const ratio: SpecNode = { op: 'div', args: [{ col: 'qty' }, { value: 2 }], scale: 4 }
+        expect(forcedScaleAt(CTX, ratio, [])).toBeUndefined()
+        const avg: SpecNode = {
+            op: 'add',
+            args: [{ op: 'avg', args: [{ col: 'amount' }], scale: 0 }, { value: 1 }],
+        }
+        expect(forcedScaleAt(CTX, avg, [0])).toBe(0)
     })
 })

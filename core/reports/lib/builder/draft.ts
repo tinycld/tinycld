@@ -1,4 +1,3 @@
-import { type ComputeExpr, computeExprSchema } from '@tinycld/core/lib/forms/expression'
 import { z } from '@tinycld/core/ui/form'
 import {
     BUCKETS,
@@ -13,7 +12,6 @@ import {
 } from '../spec'
 import { AGGREGATES, type CatalogSource, type FieldType } from '../types'
 import {
-    aggregateResultType,
     aggregatesFor,
     avgScaleFor,
     type Catalog,
@@ -39,7 +37,9 @@ import {
     nodeToFilter,
     paramsInNode,
 } from './filter'
-import { type FormulaLeaf, fromComputeExpr, isAmountExpr, toComputeExpr } from './formula'
+import { columnTypes, formulaContext } from './formula-context'
+import { isEditableNode, settleScales } from './formula-ops'
+import type { ReportFormulaContext } from './formula-parts'
 
 // The builder's form value. specFromDraft and draftFromSpec turn it into the
 // engine's spec and back; the form's zod schema (builderSchema) checks what a
@@ -50,17 +50,22 @@ const idSchema = z.string().regex(ID_RE, 'Use letters, digits and _, starting wi
 const labelSchema = z.string().trim().min(1, 'Enter a label').max(MAX_LABEL)
 const AGGREGATE_CHOICES = ['', ...AGGREGATES] as const
 const BUCKET_CHOICES = ['', ...BUCKETS] as const
-// computeExprSchema reads unknown input; the form needs one type in and out.
-const exprSchema = z.custom<ComputeExpr>(
-    value => computeExprSchema.safeParse(value).success,
-    'This formula is not valid'
-)
 
-export const formulaDraftSchema = z.union([
-    z.object({ kind: z.literal('editable'), expr: exprSchema }),
-    z.object({ kind: z.literal('fixed'), node: specNodeSchema }),
-])
+/** A formula is the spec's own tree (R17); `kind` says whether the formula editor shows it. */
+export const formulaDraftSchema = z.object({
+    kind: z.enum(['editable', 'fixed']),
+    node: specNodeSchema,
+})
 export type FormulaDraft = z.infer<typeof formulaDraftSchema>
+
+/**
+ * A stored formula: editable when the report formula editor can show it, else kept
+ * as it is (R17). `params` are the report's, which tell a date range from other
+ * asked values.
+ */
+export function formulaDraft(node: SpecNode, params: readonly ParamDef[]): FormulaDraft {
+    return { kind: isEditableNode(node, params) ? 'editable' : 'fixed', node }
+}
 
 const columnFields = {
     id: idSchema,
@@ -246,12 +251,12 @@ export function emptyDraft(source: CatalogSource): BuilderDraft {
     }
 }
 
-function formulaDraft(node: SpecNode, leaf: FormulaLeaf): FormulaDraft {
-    const expr = toComputeExpr(node, leaf)
-    return expr === null ? { kind: 'fixed', node } : { kind: 'editable', expr }
-}
-
-function columnDraft(column: SpecColumn, catalog: Catalog, baseKey: string): ColumnDraft {
+function columnDraft(
+    column: SpecColumn,
+    catalog: Catalog,
+    baseKey: string,
+    params: readonly ParamDef[]
+): ColumnDraft {
     const common = {
         id: column.id,
         aggregate: column.aggregate ?? '',
@@ -263,7 +268,7 @@ function columnDraft(column: SpecColumn, catalog: Catalog, baseKey: string): Col
             kind: 'formula',
             ...common,
             label: column.label ?? column.id,
-            formula: formulaDraft(column.formula, 'col'),
+            formula: formulaDraft(column.formula, params),
         }
     }
     const path = column.path ?? []
@@ -278,13 +283,13 @@ function columnDraft(column: SpecColumn, catalog: Catalog, baseKey: string): Col
 
 type SpecLayoutItem = NonNullable<ReportSpec['layout']>[number]
 
-function layoutItemDraft(item: SpecLayoutItem): LayoutItemDraft {
+function layoutItemDraft(item: SpecLayoutItem, params: readonly ParamDef[]): LayoutItemDraft {
     if (item.row) {
         return {
             kind: 'row',
             id: item.row,
             label: item.label ?? item.row,
-            formula: formulaDraft(item.formula ?? { value: 0 }, 'subtotal'),
+            formula: formulaDraft(item.formula ?? { value: 0 }, params),
         }
     }
     return {
@@ -309,12 +314,13 @@ export function draftFromSpec(
               maxColumns: spec.pivot.maxColumns ?? DEFAULT_PIVOT_COLUMNS,
           }
         : { on: false, path: [], bucket: '', cell: '', maxColumns: DEFAULT_PIVOT_COLUMNS }
+    const params = spec.params ?? []
     return {
         title: meta.title,
         description: meta.description,
         source: spec.source,
-        params: spec.params ?? [],
-        columns: spec.columns.map(column => columnDraft(column, catalog, spec.source)),
+        params,
+        columns: spec.columns.map(column => columnDraft(column, catalog, spec.source, params)),
         filter: nodeToFilter(spec.filter, catalog, spec.source),
         groups: (spec.groups ?? []).map(g => ({
             id: g.id,
@@ -324,80 +330,8 @@ export function draftFromSpec(
         })),
         sort: (spec.sort ?? []).map(s => ({ col: s.col ?? '', dir: s.dir ?? 'asc' })),
         pivot,
-        layout: (spec.layout ?? []).map(layoutItemDraft),
+        layout: (spec.layout ?? []).map(item => layoutItemDraft(item, params)),
     }
-}
-
-type ColumnsOf = Pick<BuilderDraft, 'source' | 'columns'>
-
-/**
- * The type of each column's cells, by id, for formula operands, division and
- * average scales, pivot cells and layout keys. An editable formula is an amount
- * when the engine would type it so from the columns it reads; a fixed formula
- * reads as a number.
- */
-function columnTypes(draft: ColumnsOf, catalog: Catalog): ReadonlyMap<string, FieldType> {
-    const byId = new Map(draft.columns.map(column => [column.id, column]))
-    const types = new Map<string, FieldType>()
-    const visiting = new Set<string>()
-    const typeOf = (column: ColumnDraft): FieldType => {
-        const known = types.get(column.id)
-        if (known) return known
-        // The engine refuses a formula that reads itself; read it as a number.
-        if (visiting.has(column.id)) return 'number'
-        visiting.add(column.id)
-        const type = cellType(column)
-        visiting.delete(column.id)
-        types.set(column.id, type)
-        return type
-    }
-    const readsAmount = (key: string) => {
-        const read = byId.get(key)
-        return read ? typeOf(read) === 'money' : false
-    }
-    const cellType = (column: ColumnDraft): FieldType => {
-        if (column.kind === 'path') {
-            const info = describePath(catalog, draft.source, column.path)
-            return info ? aggregateResultType(column.aggregate, info.field.type) : 'text'
-        }
-        if (column.formula.kind === 'fixed') return 'number'
-        const type = isAmountExpr(column.formula.expr, readsAmount) ? 'money' : 'number'
-        return aggregateResultType(column.aggregate, type)
-    }
-    for (const column of draft.columns) typeOf(column)
-    return types
-}
-
-export function columnIsAmount(column: ColumnDraft, draft: ColumnsOf, catalog: Catalog): boolean {
-    return columnTypes(draft, catalog).get(column.id) === 'money'
-}
-
-/** The columns a formula, a group or a pivot cell can name. */
-export function columnChoices(draft: ColumnsOf, catalog: Catalog) {
-    const types = columnTypes(draft, catalog)
-    return draft.columns.map(column => {
-        const type = types.get(column.id) ?? 'text'
-        const info =
-            column.kind === 'path' ? describePath(catalog, draft.source, column.path) : null
-        return {
-            key: column.id,
-            label: column.label,
-            type,
-            isNumeric: type === 'number' || type === 'money' || type === 'percent',
-            hasAggregate: column.aggregate !== '',
-            isDate: type === 'date' || type === 'datetime',
-            isNested: info?.mode === 'nest',
-            options: info?.field.options ?? [],
-        }
-    })
-}
-
-function formulaNode(
-    formula: FormulaDraft,
-    leaf: FormulaLeaf,
-    isAmount: (key: string) => boolean
-): SpecNode {
-    return formula.kind === 'fixed' ? formula.node : fromComputeExpr(formula.expr, leaf, isAmount)
 }
 
 function sectionKey(text: string, type: FieldType): unknown {
@@ -414,12 +348,19 @@ function sectionKey(text: string, type: FieldType): unknown {
 
 type Types = ReadonlyMap<string, FieldType>
 
-function specColumns(draft: BuilderDraft, types: Types): SpecColumn[] {
-    const isAmount = (key: string) => types.get(key) === 'money'
+// The editor settles scales on every edit; a change elsewhere (a column read becomes
+// an amount) can make the engine require another, so the spec settles them again.
+// A fixed formula is saved as it was read (R17).
+function specFormula(formula: FormulaDraft, ctx: ReportFormulaContext): SpecNode {
+    return formula.kind === 'fixed' ? formula.node : settleScales(ctx, formula.node)
+}
+
+function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecColumn[] {
+    const ctx = formulaContext(draft, catalog, { kind: 'column', selfKey: '' })
     return draft.columns.map(column => {
         const out: SpecColumn = { id: column.id, label: column.label }
         if (column.kind === 'path') out.path = column.path
-        else out.formula = formulaNode(column.formula, 'col', isAmount)
+        else out.formula = specFormula(column.formula, ctx)
         if (column.aggregate !== '') out.aggregate = column.aggregate
         if (column.aggregate === 'avg') {
             out.scale = column.scale ?? avgScaleFor(types.get(column.id) ?? 'number')
@@ -429,36 +370,33 @@ function specColumns(draft: BuilderDraft, types: Types): SpecColumn[] {
     })
 }
 
-/** The params the columns read: only a fixed formula can (an editable one cannot, nor can a layout row). */
-export function paramsReadByColumns(columns: readonly ColumnDraft[]): Set<string> {
+/** The params the formulas read, in columns and layout rows. */
+export function paramsReadByFormulas(draft: Pick<BuilderDraft, 'columns' | 'layout'>): Set<string> {
     const read = new Set<string>()
-    for (const column of columns) {
-        if (column.kind === 'formula' && column.formula.kind === 'fixed') {
-            paramsInNode(column.formula.node, read)
-        }
+    for (const column of draft.columns) {
+        if (column.kind === 'formula') paramsInNode(column.formula.node, read)
+    }
+    for (const item of draft.layout) {
+        if (item.kind === 'row') paramsInNode(item.formula.node, read)
     }
     return read
 }
 
-// A param stays only while something asks for it: a filter condition or a column.
+// A param stays only while something asks for it: a filter condition or a formula.
 function askedParams(draft: BuilderDraft): ParamDef[] {
-    return filterParams(draft.params, draft.filter, paramsReadByColumns(draft.columns))
+    return filterParams(draft.params, draft.filter, paramsReadByFormulas(draft))
 }
 
-function specLayout(draft: BuilderDraft, types: Types): NonNullable<ReportSpec['layout']> {
+function specLayout(
+    draft: BuilderDraft,
+    catalog: Catalog,
+    types: Types
+): NonNullable<ReportSpec['layout']> {
     const keyType = types.get(draft.groups[0]?.col ?? '') ?? 'text'
-    // The engine computes a layout row once for every number column and pivot
-    // cell (layout.go), each subtotal taking that column's type; one money
-    // column makes a division need whole cents.
-    const hasAmounts = draft.columns.some(column => types.get(column.id) === 'money')
-    const isAmount = () => hasAmounts
+    const ctx = formulaContext(draft, catalog, { kind: 'layout', index: draft.layout.length })
     return draft.layout.map(item =>
         item.kind === 'row'
-            ? {
-                  row: item.id,
-                  label: item.label,
-                  formula: formulaNode(item.formula, 'subtotal', isAmount),
-              }
+            ? { row: item.id, label: item.label, formula: specFormula(item.formula, ctx) }
             : { section: item.id, title: item.title, key: sectionKey(item.key, keyType) }
     )
 }
@@ -468,7 +406,7 @@ export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec
     const spec: ReportSpec = {
         version: CURRENT_SPEC_VERSION,
         source: draft.source,
-        columns: specColumns(draft, types),
+        columns: specColumns(draft, catalog, types),
     }
     const params = askedParams(draft)
     if (params.length > 0) spec.params = params
@@ -495,6 +433,6 @@ export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec
             maxColumns: draft.pivot.maxColumns,
         }
     }
-    if (draft.layout.length > 0) spec.layout = specLayout(draft, types)
+    if (draft.layout.length > 0) spec.layout = specLayout(draft, catalog, types)
     return spec
 }

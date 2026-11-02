@@ -2,7 +2,7 @@ import { NumberInput, SelectInput, Toggle, useWatch } from '@tinycld/core/ui/for
 import { View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { describePath, MAX_PIVOT_COLUMNS, pathLabel } from '../../lib/builder/columns'
-import { columnChoices } from '../../lib/builder/draft'
+import { columnChoices } from '../../lib/builder/formula-context'
 import type { SpecHop } from '../../lib/spec'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'

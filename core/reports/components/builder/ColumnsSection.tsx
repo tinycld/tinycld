@@ -1,4 +1,3 @@
-import { FormulaEditor } from '@tinycld/core/components/forms-builder/FormulaEditor'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { SelectInput, TextInput, useWatch } from '@tinycld/core/ui/form'
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react-native'
@@ -13,13 +12,14 @@ import {
     nextColumnId,
     pathLabel,
 } from '../../lib/builder/columns'
-import { type ColumnDraft, columnChoices, type FormulaDraft } from '../../lib/builder/draft'
-import { formulaOperands } from '../../lib/builder/formula'
+import type { ColumnDraft, FormulaDraft } from '../../lib/builder/draft'
+import { columnChoices } from '../../lib/builder/formula-context'
 import type { SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnPicker } from './ColumnPicker'
-import { FixedFormula, IconButton, NEW_FORMULA } from './parts'
+import { IconButton, NEW_FORMULA } from './parts'
+import { ReportFormula } from './report-formula'
 
 const FORMAT_OPTIONS = [
     { value: '', label: 'Number' },
@@ -56,8 +56,14 @@ function columnSummary(builder: ReportBuilder, column: ColumnDraft): string {
     return info.mode === 'aggregate' ? `${pathLabel(info)} · total` : pathLabel(info)
 }
 
-function isNumberColumn(builder: ReportBuilder, column: ColumnDraft): boolean {
-    if (column.kind === 'formula') return true
+// A formula column is shown as a number or a percent when it gives a number; a
+// formula giving text or a date has no such choice.
+function isNumberColumn(
+    builder: ReportBuilder,
+    column: ColumnDraft,
+    numericIds: ReadonlySet<string>
+): boolean {
+    if (column.kind === 'formula') return numericIds.has(column.id)
     return describePath(builder.catalog, builder.base.key, column.path)?.field.type === 'number'
 }
 
@@ -65,9 +71,11 @@ interface ColumnRowProps {
     builder: ReportBuilder
     columns: ColumnDraft[]
     index: number
+    /** The columns whose cells are numbers, amounts or percents. */
+    numericIds: ReadonlySet<string>
 }
 
-function ColumnRow({ builder, columns, index }: ColumnRowProps) {
+function ColumnRow({ builder, columns, index, numericIds }: ColumnRowProps) {
     const column = columns[index]
     if (!column) return null
     const { control } = builder.form
@@ -115,7 +123,7 @@ function ColumnRow({ builder, columns, index }: ColumnRowProps) {
                 options={aggregateOptions(builder, column)}
                 testID={`${testID}-aggregate`}
             />
-            <FormatField builder={builder} column={column} index={index} />
+            <FormatField builder={builder} column={column} index={index} numericIds={numericIds} />
             <ColumnFormula builder={builder} columns={columns} index={index} />
         </View>
     )
@@ -125,12 +133,14 @@ function FormatField({
     builder,
     column,
     index,
+    numericIds,
 }: {
     builder: ReportBuilder
     column: ColumnDraft
     index: number
+    numericIds: ReadonlySet<string>
 }) {
-    if (!isNumberColumn(builder, column)) return null
+    if (!isNumberColumn(builder, column, numericIds)) return null
     return (
         <SelectInput
             name={`columns.${index}.format`}
@@ -142,29 +152,22 @@ function FormatField({
     )
 }
 
-// The forms engine's formula editor (spec §4): parts picked from menus, reading the
-// other numeric columns (R15). Child rows have no single value on the row to read.
-function ColumnFormula({ builder, columns, index }: ColumnRowProps) {
+// The report formula editor (OQ2): every operator the engine has, its parts
+// picked from menus, reading the other columns, fields, group records and params.
+function ColumnFormula({ builder, columns, index }: Omit<ColumnRowProps, 'numericIds'>) {
     const column = columns[index]
     if (column?.kind !== 'formula') return null
-    const testID = `report-builder-column-${index}-formula`
     const setFormula = (formula: FormulaDraft) =>
         builder.setColumns(
             columns.map((c, i) => (i === index && c.kind === 'formula' ? { ...c, formula } : c))
         )
-    if (column.formula.kind === 'fixed') {
-        return <FixedFormula testID={`${testID}-fixed`} onRemove={() => setFormula(NEW_FORMULA)} />
-    }
-    const choices = columnChoices({ source: builder.base.key, columns }, builder.catalog).filter(
-        choice => !choice.isNested
-    )
     return (
-        <FormulaEditor
-            value={column.formula.expr}
-            onChange={expr => setFormula({ kind: 'editable', expr })}
-            operands={formulaOperands(choices, column.id)}
-            valueNoun="Column"
-            testID={testID}
+        <ReportFormula
+            builder={builder}
+            place={{ kind: 'column', selfKey: column.id }}
+            formula={column.formula}
+            onChange={setFormula}
+            testID={`report-builder-column-${index}-formula`}
         />
     )
 }
@@ -177,6 +180,11 @@ export function ColumnsSection({
     problems: Problem[]
 }) {
     const columns = useWatch({ control: builder.form.control, name: 'columns' })
+    const numericIds = new Set(
+        columnChoices({ source: builder.base.key, columns }, builder.catalog)
+            .filter(choice => choice.isNumeric)
+            .map(choice => choice.key)
+    )
     const onPick = (path: SpecHop[]) => {
         const info = describePath(builder.catalog, builder.base.key, path)
         if (!info) return
@@ -211,7 +219,13 @@ export function ColumnsSection({
             },
         ])
     const rows = columns.map((column, index) => (
-        <ColumnRow key={column.id} builder={builder} columns={columns} index={index} />
+        <ColumnRow
+            key={column.id}
+            builder={builder}
+            columns={columns}
+            index={index}
+            numericIds={numericIds}
+        />
     ))
     return (
         <BuilderSection title="Columns" section="columns" problems={problems} isOpenAtStart>

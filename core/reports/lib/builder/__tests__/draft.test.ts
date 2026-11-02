@@ -54,17 +54,11 @@ describe('draftFromSpec and specFromDraft', () => {
             source: SALES_KEY,
             columns: [
                 { id: 'customer', label: 'Customer', path: [{ field: 'customer' }] },
+                // Outside a lookup an exists belongs to the filter (formula.go ctxBase.exists).
                 {
                     id: 'flag',
-                    label: 'Big',
-                    formula: {
-                        op: 'if',
-                        args: [
-                            { op: 'gt', args: [{ col: 'amount' }, { value: 100 }] },
-                            { value: 1 },
-                            { value: 0 },
-                        ],
-                    },
+                    label: 'Has a team',
+                    formula: { op: 'exists', link: [{ link: 'team' }] },
                 },
                 { id: 'amount', label: 'Amount', path: [{ field: 'amount' }] },
             ],
@@ -76,7 +70,7 @@ describe('draftFromSpec and specFromDraft', () => {
         expect(specFromDraft(renamed, CATALOG)).toEqual(shipped)
     })
 
-    it('keeps a formula over a column id the editor cannot read', () => {
+    it('edits a formula over any column id', () => {
         const shipped: ReportSpec = {
             version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
@@ -90,8 +84,95 @@ describe('draftFromSpec and specFromDraft', () => {
             ],
         }
         const draft = draftFromSpec(shipped, { title: 'Shipped', description: '' }, CATALOG)
-        expect(draft.columns[1]).toMatchObject({ kind: 'formula', formula: { kind: 'fixed' } })
+        expect(draft.columns[1]).toMatchObject({ kind: 'formula', formula: { kind: 'editable' } })
         expect(specFromDraft(draft, CATALOG)).toEqual(shipped)
+    })
+
+    it('edits an if, a lookup and a group record, and saves them as they were read', () => {
+        const spec: ReportSpec = {
+            version: CURRENT_SPEC_VERSION,
+            source: SALES_KEY,
+            columns: [
+                { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+                { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+                { id: 'cost', label: 'Cost', path: [{ field: 'cost' }], aggregate: 'sum' },
+                {
+                    id: 'larger',
+                    label: 'Larger',
+                    formula: {
+                        op: 'if',
+                        args: [
+                            { op: 'gt', args: [{ col: 'amount' }, { col: 'cost' }] },
+                            { col: 'amount' },
+                            { col: 'cost' },
+                        ],
+                    },
+                },
+                {
+                    id: 'north',
+                    label: 'North',
+                    formula: {
+                        op: 'lookup',
+                        source: TEAMS_KEY,
+                        where: {
+                            op: 'eq',
+                            args: [{ path: [{ field: 'name' }] }, { value: 'North' }],
+                        },
+                        value: { path: [{ field: 'name' }] },
+                        pick: 'min',
+                    },
+                },
+                {
+                    id: 'name',
+                    label: 'Name',
+                    formula: { record: 'byTeam', path: [{ field: 'name' }] },
+                },
+            ],
+            groups: [{ id: 'byTeam', col: 'team' }],
+        }
+        const draft = draftFromSpec(spec, { title: 'T', description: '' }, CATALOG)
+        for (const column of draft.columns.slice(3)) {
+            expect(column).toMatchObject({ kind: 'formula', formula: { kind: 'editable' } })
+        }
+        expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+    })
+
+    it('keeps a param a formula reads, in a column or a layout row lookup', () => {
+        const spec: ReportSpec = {
+            version: CURRENT_SPEC_VERSION,
+            source: SALES_KEY,
+            params: [
+                { id: 'min', type: 'number', label: 'Least' },
+                { id: 'team', type: 'text', label: 'Team' },
+            ],
+            columns: [
+                { id: 'status', label: 'Status', path: [{ field: 'status' }] },
+                {
+                    id: 'over',
+                    label: 'Over',
+                    formula: { op: 'gt', args: [{ col: 'status' }, { param: 'min' }] },
+                },
+            ],
+            groups: [{ id: 'byStatus', col: 'status' }],
+            layout: [
+                { section: 'open', title: 'Open', key: 'open' },
+                {
+                    row: 'named',
+                    label: 'Named',
+                    formula: {
+                        op: 'lookup',
+                        source: TEAMS_KEY,
+                        where: {
+                            op: 'eq',
+                            args: [{ path: [{ field: 'name' }] }, { param: 'team' }],
+                        },
+                        value: { op: 'count', args: [{ path: [{ field: 'id' }] }] },
+                    },
+                },
+            ],
+        }
+        const draft = draftFromSpec(spec, { title: 'T', description: '' }, CATALOG)
+        expect(specFromDraft(draft, CATALOG).params).toEqual(spec.params)
     })
 
     it('drops a param no filter or formula asks for', () => {
@@ -106,7 +187,8 @@ describe('draftFromSpec and specFromDraft', () => {
 
 // The engine keeps whole cents when an amount is divided by a number: such a
 // division must say scale 0 (formula.go), so the builder must know which
-// columns and subtotals hold amounts.
+// columns and subtotals hold amounts. The editor settles scales as it edits; the
+// spec settles them again, since a column read can become an amount elsewhere.
 describe('the scale of a division and an average', () => {
     const META = { title: 'Sales', description: '' }
     const amountCols: ReportSpec['columns'] = [
@@ -133,7 +215,10 @@ describe('the scale of a division and an average', () => {
             aggregate: '',
             scale: null,
             format: '',
-            formula: { kind: 'editable', expr: { div: [{ var: 'profit' }, 2] } },
+            formula: {
+                kind: 'editable',
+                node: { op: 'div', args: [{ col: 'profit' }, { value: 2 }] },
+            },
         }
         const spec = specFromDraft({ ...draft, columns: [...draft.columns, half] }, CATALOG)
         expect(spec.columns[4]?.formula).toEqual({
@@ -168,7 +253,10 @@ describe('the scale of a division and an average', () => {
             { row: 'third', label: 'A third', formula: { value: 0 } },
         ],
     })
-    const third: FormulaDraft = { kind: 'editable', expr: { div: [{ var: 'open' }, 3] } }
+    const third: FormulaDraft = {
+        kind: 'editable',
+        node: { op: 'div', args: [{ subtotal: 'open' }, { value: 3 }] },
+    }
     const thirdOfOpen = (spec: ReportSpec) => {
         const draft = draftFromSpec(spec, META, CATALOG)
         const layout = draft.layout.map(item =>

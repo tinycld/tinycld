@@ -223,6 +223,11 @@ export interface ReportFormulaContext {
     source: string | null
     records: readonly FormulaRecord[]
     params: readonly FormulaParam[]
+    /**
+     * The params a lookup inside reads, where the formula itself reads none: a layout
+     * computed row (layout.go param refuses one; lookup.go lookupCtx.param reads it).
+     */
+    lookupParams?: readonly FormulaParam[]
     totals: boolean
     windows: boolean
     lookups: boolean

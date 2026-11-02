@@ -14,9 +14,8 @@ export const MAX_PARAMS = 20
 export const MAX_GROUP_LEVELS = 6
 export const MAX_SORT_KEYS = 10
 export const MAX_LAYOUT_ITEMS = 200
-// A formula reads columns by id, and the forms formula editor reads only its own
-// keys (lowercase snake_case, at most 40 characters), so the builder makes ids of
-// that shape.
+// A formula reads columns by id; the builder makes ids of the forms key shape
+// (lowercase snake_case, at most 40 characters, F2).
 const MAX_ID = 40
 
 export type Catalog = ReadonlyMap<string, CatalogSource>
@@ -129,8 +128,17 @@ export function defaultAggregate(field: CatalogField, viaToMany: boolean): Aggre
     return offered.includes('count') ? 'count' : (offered[0] ?? '')
 }
 
-export function aggregateResultType(aggregate: Aggregate | '', fieldType: FieldType): FieldType {
-    return aggregate === 'count' || aggregate === 'countDistinct' ? 'number' : fieldType
+/**
+ * The type of a column's cells: a count is a number, any other total keeps the
+ * value's type. A formula that is always empty has no type ('', formula-type.ts):
+ * its cells read as text.
+ */
+export function aggregateResultType(
+    aggregate: Aggregate | '',
+    fieldType: FieldType | ''
+): FieldType {
+    if (aggregate === 'count' || aggregate === 'countDistinct') return 'number'
+    return fieldType === '' ? 'text' : fieldType
 }
 
 /** An average needs a scale: whole cents for amounts, two places for numbers. */

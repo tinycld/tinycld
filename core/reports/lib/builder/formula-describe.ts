@@ -44,7 +44,11 @@ const WORDS: Partial<Record<string, string>> = {
 }
 
 /** The labels of an exists link's hops: "Sales", "Team › Sales". */
-function linkLabel(catalog: Catalog, sourceKey: string | null, links: readonly SpecHop[]): string {
+export function linkLabel(
+    catalog: Catalog,
+    sourceKey: string | null,
+    links: readonly SpecHop[]
+): string {
     const labels: string[] = []
     let source = sourceKey ? catalog.get(sourceKey) : undefined
     for (const hop of links) {

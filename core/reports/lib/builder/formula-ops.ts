@@ -39,12 +39,16 @@ const hopIs = (hop: SpecHop, key: keyof SpecHop) => {
     return keys.length === 1 && keys[0]?.[0] === key
 }
 
-// A value path the editor writes: links by key, ending at a field or a link
-// (bind.go path, pathValue). A hop with any other key (with, mode) stays as it is,
-// read-only.
+// A link hop of a value path: its key, and whether rows without the link are kept
+// (bind.go hopPlan.required). `mode` belongs to a column's to-many link.
+const isValueLink = (hop: SpecHop) =>
+    hop.link !== undefined && hop.field === undefined && hop.mode === undefined
+
+// A value path the editor writes: links, ending at a field or a link (bind.go path,
+// pathValue).
 const isFieldPath = (path: readonly SpecHop[]) =>
     path.length > 0 &&
-    path.every((hop, i) => hopIs(hop, 'link') || (i === path.length - 1 && hopIs(hop, 'field')))
+    path.every((hop, i) => isValueLink(hop) || (i === path.length - 1 && hopIs(hop, 'field')))
 
 // An exists link: links only (bind.go path, pathLinks; `with` is refused there).
 const isLinkPath = (path: readonly SpecHop[] | undefined) =>
@@ -130,7 +134,8 @@ function childContext(
     const part = partOf(node)
     if (part === 'lookup') {
         const source = node.source ?? here.source
-        return { ...here, source, totals: false, windows: false, inLookup: true }
+        const params = here.lookupParams ?? here.params
+        return { ...here, source, params, totals: false, windows: false, inLookup: true }
     }
     if (RELATED_SET.has(part) && index === 0) {
         const target = here.source
@@ -189,7 +194,34 @@ function paramsFor(here: ReportFormulaContext, slot: Slot): FormulaParam[] {
     return here.params.filter(p => !isRangeParam(p) && !isListParam(p))
 }
 
-function linksOf(here: ReportFormulaContext) {
+/** The params the part at `path` may read: a Period only date ranges, a list only multiple choices. */
+export function paramsAt(
+    ctx: ReportFormulaContext,
+    root: SpecNode,
+    path: FormulaPath
+): FormulaParam[] {
+    return paramsFor(contextAt(ctx, root, path), slotAt(root, path))
+}
+
+const NUMBER_TYPES: ReadonlySet<string> = new Set(['number', 'money', 'percent'])
+
+/**
+ * The list at `path` holds numbers: the value Is any of tests is a number (an
+ * untyped value keeps the list's own kind), as `in` compares like with like
+ * (formula.go literal).
+ */
+export function isNumberList(ctx: ReportFormulaContext, root: SpecNode, path: FormulaPath) {
+    const list = treeAt(REPORT_TREE, root, path)
+    const testedPath = [...path.slice(0, -1), 0]
+    const tested = path.length > 0 ? treeAt(REPORT_TREE, root, testedPath) : undefined
+    const type = tested ? formulaType(tested, typesOf(contextAt(ctx, root, testedPath))) : ''
+    if (type !== '') return NUMBER_TYPES.has(type)
+    const items = Array.isArray(list?.value) ? list.value : []
+    return typeof items[0] === 'number'
+}
+
+/** The links of the source the part reads: an exists follows one of them. */
+export function linksOf(here: ReportFormulaContext) {
     return (here.source ? here.catalog.get(here.source)?.links : undefined) ?? []
 }
 
@@ -375,6 +407,16 @@ function forcedScale(here: ReportFormulaContext, node: SpecNode): number | undef
     if (part === 'div' && isAmount(here, first) && !isAmount(here, second)) return 0
     if (part === 'avg' && isAmount(here, first)) return 0
     return undefined
+}
+
+/** The places the engine requires of the part at `path` (whole cents), or undefined when the author picks. */
+export function forcedScaleAt(
+    ctx: ReportFormulaContext,
+    root: SpecNode,
+    path: FormulaPath
+): number | undefined {
+    const node = treeAt(REPORT_TREE, root, path)
+    return node ? forcedScale(contextAt(ctx, root, path), node) : undefined
 }
 
 // A scale the engine forces wins. Any other scale is the author's and stays, unless

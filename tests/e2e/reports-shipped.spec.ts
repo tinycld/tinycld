@@ -14,15 +14,15 @@ import {
  * A shipped report, against the salesstub package: the stub registers one with
  * reports.RegisterShipped, and the server creates it, published and owned by the
  * first admin, when it starts or when that admin is saved. Its formula uses `if`,
- * which the builder cannot edit. The seeded owner (an admin) reads it: Delete is
- * not offered for it, and Save as keeps a copy the reader owns whose formula the
- * builder shows read-only and saves unchanged. The saved formula is read back with
- * a read-only superuser request; nothing is written outside the UI.
+ * which the builder edits (OQ2); a rename saves it unchanged. The seeded owner (an
+ * admin) reads it: Delete is not offered for it, and Save as keeps a copy the
+ * reader owns. The saved formula is read back with a read-only superuser request;
+ * nothing is written outside the UI.
  */
 test.describe('a shipped report', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
-    test('is published, cannot be deleted, and a copy keeps a formula the builder cannot edit', async ({
+    test('is published, cannot be deleted, and a copy edits its formula and saves it unchanged', async ({
         page,
     }) => {
         await login(page)
@@ -48,12 +48,20 @@ test.describe('a shipped report', () => {
         await saveAs.press('Enter')
         await expect(page.getByTestId('report-title')).toHaveText(title)
 
-        // The copy's builder shows the formula read-only, with Remove.
+        // A version 1 shipped report runs with no "upgraded" notice (R1, F25): once the
+        // run has drawn its table or its empty state, no notice says so.
+        await expect(
+            page.getByTestId('report-table').or(page.getByTestId('report-empty'))
+        ).toBeVisible()
+        await expect(page.getByTestId('report-notice-upgraded')).toHaveCount(0)
+        // The copy's builder edits the if formula (OQ2): its parts are menus.
         await pressToolbar(page, 'report-edit-open', 'Edit report')
         await expect(page.getByTestId('report-builder')).toBeVisible()
-        const fixed = page.getByTestId('report-builder-column-3-formula-fixed')
-        await expect(fixed).toContainText('This formula uses parts the builder cannot edit')
-        await expect(page.getByTestId('report-builder-column-3-formula-fixed-remove')).toBeVisible()
+        const formula = 'report-builder-column-3-formula'
+        await expect(page.getByTestId(`${formula}-root-part`)).toHaveText('If')
+        await expect(page.getByTestId(`${formula}-summary`)).toHaveText(
+            '= if Amount > Cost then Amount else Cost'
+        )
 
         // A rename saves the formula exactly as it was.
         const renamed = `${title} renamed`

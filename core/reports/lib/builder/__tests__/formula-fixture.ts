@@ -19,15 +19,17 @@ export const CTX: ReportFormulaContext = {
     windows: true,
     lookups: true,
 }
+// A computed row looks values up (F16); only its lookups read params.
 export const LAYOUT: ReportFormulaContext = {
     ...CTX,
     leaf: 'subtotal',
     source: null,
     records: [],
     params: [],
+    lookupParams: CTX.params,
     totals: false,
     windows: false,
-    lookups: false,
+    lookups: true,
 }
 export const WITH_PERIOD: ReportFormulaContext = {
     ...CTX,

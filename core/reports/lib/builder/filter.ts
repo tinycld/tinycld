@@ -5,6 +5,7 @@ import { type ParamDef, type SpecHop, type SpecNode, specHopSchema, specNodeSche
 import type { CatalogField, FieldType } from '../types'
 import { type Catalog, describePath, sourceAtLinks } from './columns'
 import { onlyKeys } from './formula'
+import { lookupValueNode } from './formula-parts'
 
 // The builder's filter: groups of conditions joined by All of / Any of / None of,
 // "has / has no related" rows over a link, and fixed parts it cannot edit. Only
@@ -422,6 +423,7 @@ export function paramsInNode(node: SpecNode | undefined, into: Set<string>): Set
     if (node.param) into.add(node.param)
     for (const arg of node.args ?? []) paramsInNode(arg, into)
     paramsInNode(node.where, into)
+    if (node.op === 'lookup') paramsInNode(lookupValueNode(node), into)
     return into
 }
 

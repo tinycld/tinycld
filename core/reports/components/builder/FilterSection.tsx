@@ -17,7 +17,7 @@ import {
     pathLabel,
     sourceAtLinks,
 } from '../../lib/builder/columns'
-import { paramsReadByColumns } from '../../lib/builder/draft'
+import { paramsReadByFormulas } from '../../lib/builder/draft'
 import {
     addFilterItem,
     askParamFor,
@@ -576,6 +576,7 @@ export function FilterSection({
     const root = useWatch({ control, name: 'filter' })
     const params = useWatch({ control, name: 'params' })
     const columns = useWatch({ control, name: 'columns' })
+    const layout = useWatch({ control, name: 'layout' })
     const error = builder.form.getFieldState('filter', builder.form.formState).error?.message
     const ctx: FilterContext = {
         builder,
@@ -585,7 +586,7 @@ export function FilterSection({
         change: (next, added) =>
             builder.setFilter(
                 next,
-                filterParams(params, next, paramsReadByColumns(columns), added)
+                filterParams(params, next, paramsReadByFormulas({ columns, layout }), added)
             ),
     }
     return (
