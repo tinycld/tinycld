@@ -10,6 +10,7 @@ import (
 // level L the groups of the first L group columns. Each level groups by its
 // keys and by the currency keys, so a total never adds two currencies.
 //
+//	f<L>  a fill's keyset: the level's base keys and its fill records
 //	a<L>  aggregates w by the level's keys, then adds a fill's records with
 //	      no rows (fillRows)
 //	d<L>_<idx>  a to-many total, once per parent row (aggregate locality)
@@ -25,7 +26,7 @@ type level struct {
 	tms      []string // d<L> CTEs
 	tmCols   []tmCol  // g<L> values taken from d<L>
 	// fill is the level's keyset when its group fills in the records with no
-	// rows (fillKeys), "" otherwise.
+	// rows (fillKeys), "" otherwise; render emits it as the CTE f<L>.
 	fill  string
 	frame *windowFrame
 	// labels computes the record labels the level's rows read once per row.
@@ -42,19 +43,19 @@ type level struct {
 
 // level prepares level n: its keys, its parent partition, and the order of
 // its sibling rows, which running values read.
-func (c *compiler) level(r *rowsCTE, n int) (*level, error) {
+func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
 	lv := &level{c: c, r: r, n: n, aggNames: map[string]bool{}, visiting: map[string]bool{}, reads: map[string]bool{}}
 	for i := range n {
 		lv.keys = append(lv.keys, fmt.Sprintf("k%d", i))
 	}
 	lv.keys = append(lv.keys, c.currencies...)
 	if n >= 1 && c.p.groups[n-1].group.Fill != nil {
-		fill, err := c.fillKeys(r, n, c.p.groups[n-1].at+".fill")
+		fill, err := c.fillKeys(r, n, expand, c.p.groups[n-1].at+".fill")
 		if err != nil {
 			return nil, err
 		}
 		lv.fill = fill
-		c.fillSets[n] = fill
+		c.fillSets[n] = fmt.Sprintf("f%d", n)
 	}
 	parent := slices.Clone(c.currencies)
 	for i := range max(n-1, 0) {
@@ -235,10 +236,13 @@ func (lv *level) render(cells []string, own string) []string {
 	// __n counts the base rows of the group; it also keeps the select of a
 	// level with no aggregate valid.
 	rows := fmt.Sprintf("SELECT %s FROM w%s", strings.Join(append(append(keyCols, lv.aggs...), "count(*) AS __n"), ", "), groupBy(lv.keys))
+	var ctes []string
 	if lv.fill != "" {
+		// The keyset is one CTE, which the level below reads by name.
+		ctes = append(ctes, fmt.Sprintf("%s AS (%s)", lv.c.fillSets[lv.n], lv.fill))
 		rows += "\nUNION ALL\n" + lv.fillRows()
 	}
-	ctes := []string{fmt.Sprintf("%s AS (%s)", a, rows)}
+	ctes = append(ctes, fmt.Sprintf("%s AS (%s)", a, rows))
 	ctes = append(ctes, lv.tms...)
 	g := a
 	if len(lv.tmCols) > 0 {
@@ -276,152 +280,6 @@ func (lv *level) render(cells []string, own string) []string {
 	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, strings.Join(out, ", "), lv.frame.from(g, "a")))
 	return ctes
 }
-
-// fillRows are a<L>'s rows for the keys of the level's keyset that have no
-// base row (fill records). Their totals are those of no rows (a sum and a
-// count 0, a min blank): the level's aggregates over an empty select of w,
-// which returns one row, whatever an aggregate reads.
-func (lv *level) fillRows() string {
-	match := make([]string, len(lv.keys))
-	for i, k := range lv.keys {
-		match[i] = "w." + k + " IS kx." + k
-	}
-	empty := fmt.Sprintf("SELECT %s FROM w WHERE 0", strings.Join(append(slices.Clone(lv.aggs), "count(*) AS __n"), ", "))
-	return fmt.Sprintf("SELECT %s, e.* FROM (%s) kx CROSS JOIN (%s) e\nWHERE NOT EXISTS (SELECT 1 FROM w WHERE %s)",
-		strings.Join(prefixed("kx.", lv.keys), ", "), lv.fill, empty, strings.Join(match, " AND "))
-}
-
-// parentKeys selects the parent rows of level n: the currencies for level 1
-// (or one no-currency row when there are no rows); for a deeper level the
-// keyset of level n-1, its fill rows included.
-func (c *compiler) parentKeys(n int) string {
-	if n == 1 {
-		if len(c.currencies) == 0 {
-			return "SELECT 1 AS __one"
-		}
-		cks := strings.Join(c.currencies, ", ")
-		nulls := strings.TrimSuffix(strings.Repeat("NULL, ", len(c.currencies)), ", ")
-		return fmt.Sprintf("SELECT DISTINCT %s FROM w UNION ALL SELECT %s WHERE NOT EXISTS (SELECT 1 FROM w)", cks, nulls)
-	}
-	if set, ok := c.fillSets[n-1]; ok {
-		return set
-	}
-	keys := make([]string, 0, n-1+len(c.currencies))
-	for i := range n - 1 {
-		keys = append(keys, fmt.Sprintf("k%d", i))
-	}
-	return "SELECT DISTINCT " + strings.Join(append(keys, c.currencies...), ", ") + " FROM w"
-}
-
-// fillKeys selects level n's keys: those of its base rows, and each parent row
-// crossed with the target's records that match the fill's where (R6). The
-// target's records are read through its rule CTE, so a record the reader
-// cannot list never fills in.
-func (c *compiler) fillKeys(r *rowsCTE, n int, at string) (string, error) {
-	target := c.groupTargets[n-1]
-	if target == nil {
-		return "", invalid(at, "only a group by a link to one record shows records with no rows")
-	}
-	sc := newScope(r.s, target)
-	where := "1"
-	if w := c.p.groups[n-1].group.Fill.Where; w != nil {
-		j := &joinCtx{r: r, sc: sc, src: target, isFilter: true, visiting: map[string]bool{}}
-		e, err := compileWhere(&fillCtx{joinCtx: j, n: n}, w, at)
-		if err != nil {
-			return "", err
-		}
-		if !e.unset {
-			where = "COALESCE(" + e.sql + ", 0)"
-		}
-	}
-	keys := make([]string, 0, n+len(c.currencies))
-	picked := make([]string, 0, n+len(c.currencies))
-	for i := range n - 1 {
-		keys = append(keys, fmt.Sprintf("k%d", i))
-		picked = append(picked, fmt.Sprintf("p.k%d AS k%d", i, i))
-	}
-	keys = append(keys, fmt.Sprintf("k%d", n-1))
-	picked = append(picked, q(sc.alias, "id")+fmt.Sprintf(" AS k%d", n-1))
-	for _, ck := range c.currencies {
-		keys = append(keys, ck)
-		picked = append(picked, "p."+ck+" AS "+ck)
-	}
-	from := strings.TrimPrefix(sc.render(), "FROM ")
-	return fmt.Sprintf("SELECT %s FROM w UNION SELECT %s\nFROM (%s) p\nCROSS JOIN %s\nWHERE %s",
-		strings.Join(keys, ", "), strings.Join(picked, ", "), c.parentKeys(n), from, where), nil
-}
-
-// deeperFill is true when a group below level n fills in its records, so a
-// level-n row with no base rows still has rows to open onto.
-func (c *compiler) deeperFill(n int) bool {
-	for _, g := range c.p.groups[min(n, len(c.p.groups)):] {
-		if g.group.Fill != nil {
-			return true
-		}
-	}
-	return false
-}
-
-// fillCtx compiles a fill's where: the target's paths (joinCtx on its scope),
-// and the parent row p: {col} naming an enclosing group's column reads that
-// parent's key, {record} naming an enclosing record group reads its record.
-type fillCtx struct {
-	*joinCtx
-	n int
-}
-
-func (f *fillCtx) col(id, at string) (expr, error) {
-	c := f.r.c
-	for i := range f.n - 1 {
-		g := c.p.groups[i]
-		if g.col.col.ID != id {
-			continue
-		}
-		key := fmt.Sprintf("p.k%d", i)
-		// A bucketed group's key is its bucket's text (2026-01), not a day.
-		if g.group.Bucket != "" {
-			return expr{sql: key, typ: Text}, nil
-		}
-		e, err := f.r.rowValue(g.col, at, map[string]bool{})
-		if err != nil {
-			return expr{}, err
-		}
-		e.sql = key
-		// A carried currency was read inside w; the parent row holds it as
-		// the currency key the group splits by.
-		if e.cur.sql != "" {
-			ck, ok := c.valueCur[e.cur.id]
-			if !ok {
-				return expr{}, invalid(at, "this amount's currency is read per row, and the group has no currency key to group it by")
-			}
-			e.cur = currency{key: ck, id: e.cur.id}
-		}
-		return e, nil
-	}
-	return expr{}, invalid(at, "a fill's where reads its records' fields, params, and the keys of the groups above it")
-}
-
-func (f *fillCtx) record(group string, p Path, at string) (expr, error) {
-	c := f.r.c
-	gi, target, err := c.recordOf(group, at)
-	if err != nil {
-		return expr{}, err
-	}
-	if gi >= f.n-1 {
-		return expr{}, invalid(at, "a fill's where reads the records of the groups above it")
-	}
-	bound, err := bindRecordPath(c.p.app, target, p, at)
-	if err != nil {
-		return expr{}, err
-	}
-	key := fmt.Sprintf("p.k%d", gi)
-	e := recordExpr(bound)
-	e.sql = recordSQL(f.r.s, target, bound, key)
-	e.cur = recordCurrency(f.r.s, target, bound, key, recordCurrencyID(group, p))
-	return e, nil
-}
-
-func (f *fillCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(f, f.r, n, at) }
 
 // labelSQL sets the label of the level's rows: the group's label formula
 // (the record's label when its value points at one), a record group's

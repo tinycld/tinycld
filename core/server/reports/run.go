@@ -410,7 +410,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 	var ctes, legs []string
 	c.levelTypes, c.sectionCur, c.fillSets = map[string]FieldType{}, map[string]currency{}, map[int]string{}
 	for n := 0; n <= len(c.p.groups); n++ {
-		lv, err := c.level(r, n)
+		lv, err := c.level(r, n, expand)
 		if err != nil {
 			return nil, "", err
 		}
