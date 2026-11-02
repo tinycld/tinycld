@@ -2,6 +2,7 @@ import { type ComputeExpr, computeExprSchema } from '../expression'
 import { type FormHostDef, findBuiltin } from '../host'
 import { kindOf } from './catalog'
 import type { DraftDefinition } from './draft'
+import { type FormulaTree, replaceTreeAt, treeAt } from './formula-tree'
 
 /**
  * The builder's structured formula editor works on these pure helpers: a
@@ -49,6 +50,12 @@ const PART_ORDER: FormulaPart[] = [
     'sumOf',
     'count',
 ]
+
+export const FORMULA_PARTS: readonly FormulaPart[] = PART_ORDER
+
+export function isFormulaPart(part: string): part is FormulaPart {
+    return (PART_ORDER as readonly string[]).includes(part)
+}
 
 type OperatorPart = 'add' | 'sub' | 'mul' | 'div' | 'min' | 'max'
 const OPERATORS = new Set<FormulaPart>(['add', 'sub', 'mul', 'div', 'min', 'max'])
@@ -127,7 +134,7 @@ function operatorNode(part: OperatorPart, parts: ComputeExpr[]): ComputeExpr {
     }
 }
 
-function withChildren(expr: ComputeExpr, parts: ComputeExpr[]): ComputeExpr {
+export function withChildren(expr: ComputeExpr, parts: ComputeExpr[]): ComputeExpr {
     const part = partOf(expr)
     if (isOperatorPart(part)) return operatorNode(part, parts)
     if (typeof expr === 'object' && 'round' in expr)
@@ -135,25 +142,13 @@ function withChildren(expr: ComputeExpr, parts: ComputeExpr[]): ComputeExpr {
     return expr
 }
 
-export function exprAt(expr: ComputeExpr, path: FormulaPath): ComputeExpr | undefined {
-    if (path.length === 0) return expr
-    const [head, ...rest] = path
-    const child = childrenOf(expr)[head]
-    return child === undefined ? undefined : exprAt(child, rest)
-}
+const COMPUTE_TREE: FormulaTree<ComputeExpr> = { childrenOf, withChildren }
+
+export const exprAt = (expr: ComputeExpr, path: FormulaPath) => treeAt(COMPUTE_TREE, expr, path)
 
 /** The formula with the part at `path` replaced; an unknown path changes nothing. */
-export function replaceAt(expr: ComputeExpr, path: FormulaPath, next: ComputeExpr): ComputeExpr {
-    if (path.length === 0) return next
-    const [head, ...rest] = path
-    const parts = childrenOf(expr)
-    const child = parts[head]
-    if (child === undefined) return expr
-    return withChildren(
-        expr,
-        parts.map((p, i) => (i === head ? replaceAt(child, rest, next) : p))
-    )
-}
+export const replaceAt = (expr: ComputeExpr, path: FormulaPath, next: ComputeExpr) =>
+    replaceTreeAt(COMPUTE_TREE, expr, path, next)
 
 const padTo = (parts: ComputeExpr[], n: number): ComputeExpr[] => [
     ...parts,
