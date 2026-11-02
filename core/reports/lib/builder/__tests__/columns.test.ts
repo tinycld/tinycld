@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
+import type { SpecHop } from '../../spec'
+import type { Aggregate } from '../../types'
 import {
     aggregatesFor,
     columnHint,
     defaultAggregate,
     describePath,
     firstTextField,
+    linkTarget,
     nextColumnId,
     pathLabel,
     sourceAtLinks,
+    switchableModeHop,
+    withHopJoin,
+    withHopMode,
 } from '../columns'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
@@ -70,6 +76,69 @@ describe('describePath', () => {
             SALES_KEY
         )
         expect(sourceAtLinks(CATALOG, SALES_KEY, [{ link: 'nope' }])).toBeNull()
+    })
+})
+
+describe('linkTarget', () => {
+    const column = (path: SpecHop[], aggregate: Aggregate | '' = '') => ({
+        kind: 'path' as const,
+        path,
+        aggregate,
+    })
+
+    it('reads the source a link column points at', () => {
+        expect(linkTarget(CATALOG, SALES_KEY, column([{ link: 'team' }]))?.key).toBe(TEAMS_KEY)
+        expect(linkTarget(CATALOG, SALES_KEY, column([{ field: 'id' }]))?.key).toBe(SALES_KEY)
+    })
+
+    it('reads no target for a field, a total or a formula', () => {
+        expect(linkTarget(CATALOG, SALES_KEY, column([{ field: 'customer' }]))).toBeUndefined()
+        expect(linkTarget(CATALOG, SALES_KEY, column([{ link: 'team' }], 'count'))).toBeUndefined()
+        expect(linkTarget(CATALOG, SALES_KEY, { kind: 'formula', aggregate: '' })).toBeUndefined()
+    })
+})
+
+describe('hop joins and modes', () => {
+    it('requires a link, and keeps rows without it again, keeping the mode', () => {
+        const hops: SpecHop[] = [{ link: 'sales', mode: 'aggregate' }, { field: 'quantity' }]
+        const required = withHopJoin(hops, 0, true)
+        expect(required).toEqual([
+            { link: 'sales', mode: 'aggregate', with: 'required' },
+            { field: 'quantity' },
+        ])
+        expect(withHopJoin(required, 0, false)).toEqual(hops)
+        // A field step has no join.
+        expect(withHopJoin(hops, 1, true)).toEqual(hops)
+        expect(hops[0]).toEqual({ link: 'sales', mode: 'aggregate' })
+    })
+
+    it('turns a total into child rows, which have no join', () => {
+        const hops: SpecHop[] = [
+            { link: 'sales', mode: 'aggregate', with: 'required' },
+            { field: 'quantity' },
+        ]
+        expect(withHopMode(hops, 0, 'nest')).toEqual([
+            { link: 'sales', mode: 'nest' },
+            { field: 'quantity' },
+        ])
+        expect(withHopMode([{ link: 'sales', mode: 'nest' }], 0, 'aggregate')).toEqual([
+            { link: 'sales', mode: 'aggregate' },
+        ])
+    })
+
+    it('lets the mode switch only on a path that crosses one to-many link', () => {
+        const once = [{ link: 'sales', mode: 'aggregate' as const }, { field: 'quantity' }]
+        expect(switchableModeHop(CATALOG, TEAMS_KEY, once)).toBe(0)
+        expect(switchableModeHop(CATALOG, SALES_KEY, [{ link: 'team' }, { field: 'name' }])).toBe(
+            null
+        )
+        const twice = [
+            { link: 'sales', mode: 'nest' as const },
+            { link: 'team' },
+            { link: 'sales', mode: 'nest' as const },
+            { field: 'quantity' },
+        ]
+        expect(switchableModeHop(CATALOG, TEAMS_KEY, twice)).toBeNull()
     })
 })
 

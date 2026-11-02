@@ -9,7 +9,15 @@ import {
     type CatalogSource,
     type FieldType,
 } from '../types'
-import { avgScaleFor, type Catalog, describePath, firstTextField, sourceAtLinks } from './columns'
+import {
+    AGGREGATE_LABELS,
+    avgScaleFor,
+    type Catalog,
+    describePath,
+    firstTextField,
+    pathLabel,
+    sourceAtLinks,
+} from './columns'
 import { hasScale, onlyKeys } from './formula'
 import { type FormulaRecord, lookupValueNode } from './formula-parts'
 
@@ -76,11 +84,25 @@ export type GroupDraft = { kind: 'group'; match: 'all' | 'any' | 'none'; items: 
 export type RelatedDraft = { kind: 'related'; has: boolean; link: SpecHop[]; where: GroupDraft }
 export type FilterItem = ConditionDraft | RelatedDraft | GroupDraft | FixedDraft
 
+/**
+ * A column a group level's condition can read: its label, and its cells as a field
+ * (type and options), with the source a relation column points at.
+ */
+export type LevelColumn = {
+    key: string
+    label: string
+    field: CatalogField
+    target?: CatalogSource
+}
+
 /** A group level's conditions read its columns and its group records. */
 export type LevelScope = {
-    colType: (key: string) => FieldType | undefined
+    columns: readonly LevelColumn[]
     records: readonly FormulaRecord[]
 }
+
+const levelColumn = (level: LevelScope | undefined, key: string) =>
+    level?.columns.find(c => c.key === key)
 
 /** A group that encloses a level: a fill condition there can read its key ({col}). */
 export type AboveGroup = { id: string; col: string; label: string }
@@ -341,7 +363,7 @@ function subjectNode(c: ConditionDraft, scope: Scope): SpecNode {
 function subjectType(c: ConditionDraft, scope: Scope): FieldType | null {
     switch (c.subject) {
         case 'column':
-            return scope.level?.colType(c.col) ?? null
+            return levelColumn(scope.level, c.col)?.field.type ?? null
         case 'record': {
             const record = scope.level?.records.find(r => r.group === c.record)
             return record ? fieldType(scope.catalog, record.source, c.path) : null
@@ -604,7 +626,7 @@ function totalParts(
 // Columns, totals and group records are read only on a group level (R18).
 function levelSubject(node: SpecNode, scope: Scope, level: LevelScope): Subject | null {
     if (node.col !== undefined && onlyKeys(node, ['col'])) {
-        const type = level.colType(node.col)
+        const type = levelColumn(level, node.col)?.field.type
         return type ? subject('column', [], type, { col: node.col }) : null
     }
     if (node.record !== undefined && onlyKeys(node, ['record', 'path'])) {
@@ -775,12 +797,16 @@ const MISSING_SUBJECT: Record<ConditionSubject, string> = {
     record: 'A condition names a group that no longer links to a record',
 }
 
+// A problem names what the person sees: a column by its label, never its id.
 function subjectLabel(c: ConditionDraft, scope: Scope): string {
-    if (c.subject === 'column') return c.col
+    if (c.subject === 'column') return levelColumn(scope.level, c.col)?.label ?? c.col
     const record =
         c.subject === 'record' ? scope.level?.records.find(r => r.group === c.record) : undefined
     const info = describePath(scope.catalog, record?.source ?? scope.baseKey, c.path)
-    return info?.field.label ?? ''
+    if (!info) return ''
+    if (c.subject === 'total')
+        return `${AGGREGATE_LABELS[c.aggregate || 'count']} of ${pathLabel(info)}`
+    return record ? `${record.label} › ${pathLabel(info)}` : info.field.label
 }
 
 function problemsIn(group: GroupDraft, scope: Scope): string[] {

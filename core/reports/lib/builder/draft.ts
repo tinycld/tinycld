@@ -46,6 +46,7 @@ import {
 } from './filter'
 import {
     type ColumnsOf,
+    columnChoices,
     columnTypes,
     formulaContext,
     isNumericType,
@@ -524,10 +525,27 @@ export function groupTarget(
         : undefined
 }
 
-/** What a group level's conditions read: the columns' types and the record groups. */
+/**
+ * What a group level's conditions read: the columns (child rows have no one value
+ * on a group row) and the record groups.
+ */
 export function levelScope(draft: ColumnsOf, catalog: Catalog): LevelScope {
-    const types = columnTypes(draft, catalog)
-    return { colType: key => types.get(key), records: recordGroups(draft, catalog) }
+    const columns = columnChoices(draft, catalog)
+        .filter(choice => !choice.isNested)
+        .map(choice => {
+            const column = draft.columns.find(c => c.id === choice.key)
+            const info =
+                column?.kind === 'path' ? describePath(catalog, draft.source, column.path) : null
+            const field = {
+                key: choice.key,
+                label: choice.label,
+                type: choice.type,
+                aggregates: [],
+                options: choice.options,
+            }
+            return { key: choice.key, label: choice.label, field, target: info?.target }
+        })
+    return { columns, records: recordGroups(draft, catalog) }
 }
 
 /**

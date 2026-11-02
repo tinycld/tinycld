@@ -89,6 +89,20 @@ export function describePath(
     return null
 }
 
+/**
+ * The source a link column's cells point at (R31): a path column that ends at a
+ * to-one link or at id and is not totalled; else undefined. Its cells show the
+ * record's label field.
+ */
+export function linkTarget(
+    catalog: Catalog,
+    baseKey: string,
+    column: { kind: 'path' | 'formula'; path?: readonly SpecHop[]; aggregate: Aggregate | '' }
+): CatalogSource | undefined {
+    if (column.kind !== 'path' || !column.path || column.aggregate !== '') return undefined
+    return describePath(catalog, baseKey, column.path)?.target
+}
+
 /** The field a record is named by: its first text field other than id. */
 export function firstTextField(source: CatalogSource): CatalogField | undefined {
     return source.fields.find(f => f.type === 'text' && f.key !== 'id')
@@ -96,6 +110,56 @@ export function firstTextField(source: CatalogSource): CatalogField | undefined 
 
 export function pathLabel(info: PathInfo): string {
     return info.labels.join(' › ')
+}
+
+/**
+ * A link hop that keeps the rows without its linked record (the default), or keeps
+ * only the rows that have one (`with: required`, an inner join). Other hops and the
+ * hop's mode are kept.
+ */
+export function withHopJoin(hops: readonly SpecHop[], index: number, required: boolean): SpecHop[] {
+    return hops.map((hop, i) => {
+        if (i !== index || hop.link === undefined) return hop
+        const kept: SpecHop = hop.mode ? { link: hop.link, mode: hop.mode } : { link: hop.link }
+        return required ? { ...kept, with: 'required' } : kept
+    })
+}
+
+/**
+ * A column's to-many hop read as a total per row, or as child rows. Child rows show
+ * the linked rows there are, so a nest hop has no join (bind.go hopProblem).
+ */
+export function withHopMode(
+    hops: readonly SpecHop[],
+    index: number,
+    mode: 'aggregate' | 'nest'
+): SpecHop[] {
+    return hops.map((hop, i) => {
+        if (i !== index || hop.link === undefined) return hop
+        if (mode === 'nest') return { link: hop.link, mode }
+        return hop.with ? { link: hop.link, mode, with: hop.with } : { link: hop.link, mode }
+    })
+}
+
+/**
+ * The index of the one to-many hop a column path crosses, whose mode may switch; null
+ * when it crosses none, or more than one (then every one nests: a total crosses one
+ * to-many link, bind.go hopProblem).
+ */
+export function switchableModeHop(
+    catalog: Catalog,
+    baseKey: string,
+    hops: readonly SpecHop[]
+): number | null {
+    let source = catalog.get(baseKey)
+    const many: number[] = []
+    hops.forEach((hop, index) => {
+        if (hop.link === undefined) return
+        const link = source?.links.find(l => l.key === hop.link)
+        if (link?.cardinality === 'toMany') many.push(index)
+        source = link ? catalog.get(link.target) : undefined
+    })
+    return many.length === 1 ? (many[0] ?? null) : null
 }
 
 /** The source a list of link hops reaches (an exists filter's target), or null. */

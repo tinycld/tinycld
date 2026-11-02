@@ -251,8 +251,9 @@ describe('relation conditions', () => {
 })
 
 describe('conditions on a group level', () => {
+    const sold = { key: 'quantity', label: 'Qty sold', type: 'number' as const, aggregates: [] }
     const level: LevelScope = {
-        colType: key => (key === 'quantity' ? 'number' : undefined),
+        columns: [{ key: 'quantity', label: 'Qty sold', field: sold }],
         records: [{ group: 'byTeam', label: 'Team', source: TEAMS_KEY }],
     }
     const levelTrip = (node: SpecNode) =>
@@ -318,6 +319,7 @@ describe('conditions on a group level', () => {
         expect(nodeToFilter(unknown, CATALOG, SALES_KEY, level).items[0]?.kind).toBe('fixed')
     })
 
+    // A problem names a column by its label and a total by its aggregate, never an id.
     it('names a level condition with a missing column or value', () => {
         const group: GroupDraft = {
             kind: 'group',
@@ -332,12 +334,20 @@ describe('conditions on a group level', () => {
                     op: 'gt',
                     value: '',
                 },
+                {
+                    ...emptyCondition([{ field: 'region' }]),
+                    subject: 'record',
+                    record: 'byTeam',
+                    op: 'eq',
+                    value: '',
+                },
             ],
         }
         expect(conditionProblems(group, CATALOG, SALES_KEY, level)).toEqual([
             'A condition names a column that is no longer in the report',
-            'quantity: enter a number',
-            'Amount: enter a value',
+            'Qty sold: enter a number',
+            'Sum of Amount: enter a value',
+            'Team › Region: enter a value',
         ])
     })
 })
@@ -444,7 +454,7 @@ describe('a fill condition that matches the group above', () => {
 })
 
 describe('an average on a group level', () => {
-    const level: LevelScope = { colType: () => undefined, records: [] }
+    const level: LevelScope = { columns: [], records: [] }
     const avg = (field: string, scale?: number): SpecNode => ({
         op: 'avg',
         args: [{ path: [{ field }] }],

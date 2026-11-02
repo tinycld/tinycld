@@ -81,6 +81,7 @@ interface OpenPickerProps {
     catalog: Catalog
     baseKey: string
     toOneOnly: boolean
+    allowLinkEnd: boolean
     onPick(path: SpecHop[]): void
 }
 
@@ -90,7 +91,7 @@ function linkHint(link: CatalogLink): string {
 
 // The links walked so far and a to-many link waiting for its choice are this open
 // picker's own state; a new open starts at the source.
-function OpenPicker({ catalog, baseKey, toOneOnly, onPick }: OpenPickerProps) {
+function OpenPicker({ catalog, baseKey, toOneOnly, allowLinkEnd, onPick }: OpenPickerProps) {
     const [hops, setHops] = useState<SpecHop[]>([])
     const [pending, setPending] = useState<CatalogLink | null>(null)
     const source = sourceAtLinks(catalog, baseKey, hops)
@@ -128,6 +129,18 @@ function OpenPicker({ catalog, baseKey, toOneOnly, onPick }: OpenPickerProps) {
             onPress={() => follow(link)}
         />
     ))
+    // A link to one record can be a value of its own: the record (E4), which a
+    // group level labels by the record's fields.
+    const recordLinks =
+        allowLinkEnd && !pending ? offered.filter(link => link.cardinality === 'toOne') : []
+    const records = recordLinks.map(link => (
+        <PickRow
+            key={`record-${link.key}`}
+            label={`${link.label} (record)`}
+            testID={`report-builder-pick-record-${link.key}`}
+            onPress={() => onPick([...hops, { link: link.key }])}
+        />
+    ))
     return (
         <View className="gap-1">
             <BackRow isVisible={hops.length > 0 || pending !== null} onPress={back} />
@@ -141,6 +154,7 @@ function OpenPicker({ catalog, baseKey, toOneOnly, onPick }: OpenPickerProps) {
             />
             <ScrollView style={{ maxHeight: LIST_MAX_HEIGHT }} nestedScrollEnabled>
                 {fields}
+                {records}
                 {links}
             </ScrollView>
         </View>
@@ -160,6 +174,8 @@ export interface ColumnPickerProps {
     testID: string
     /** For a filter field or a pivot: one value per row, so no to-many link. */
     toOneOnly?: boolean
+    /** Offers a link to one record as a value itself: "<Link> (record)". */
+    allowLinkEnd?: boolean
 }
 
 // A tree of the source's fields and links: a to-one link opens in place, a to-many
@@ -172,6 +188,7 @@ export function ColumnPicker({
     label,
     testID,
     toOneOnly = false,
+    allowLinkEnd = false,
 }: ColumnPickerProps) {
     const [isOpen, setIsOpen] = useState(false)
     const trigger = (
@@ -198,6 +215,7 @@ export function ColumnPicker({
                 catalog={catalog}
                 baseKey={baseKey}
                 toOneOnly={toOneOnly}
+                allowLinkEnd={allowLinkEnd}
                 onPick={pick}
             />
         </Popover>

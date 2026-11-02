@@ -111,7 +111,7 @@ test.describe('grouping and pivoting a report', () => {
             await addColumn(p, ['amount'])
             await chooseOption(p, 'report-builder-column-2-aggregate', 'sum')
             await p.getByTestId('report-builder-section-group').click()
-            await p.getByTestId('report-builder-sort-add').click()
+            await chooseOption(p, 'report-builder-sort-add-menu', 'customer')
             await chooseOption(p, 'report-builder-sort-0-col', 'amount')
             await p
                 .getByTestId('report-builder-sort-0')

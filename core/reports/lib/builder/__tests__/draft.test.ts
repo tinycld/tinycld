@@ -722,8 +722,12 @@ describe('spec version 2 in the builder', () => {
         expect(groupTarget(draft, CATALOG, { col: 'team' })?.key).toBe(TEAMS_KEY)
         expect(groupTarget(draft, CATALOG, { col: 'amount' })).toBeUndefined()
         const level = levelScope(draft, CATALOG)
-        expect(level.colType('quantity')).toBe('number')
-        expect(level.colType('gone')).toBeUndefined()
+        const column = (key: string) => level.columns.find(c => c.key === key)
+        expect(column('quantity')?.field.type).toBe('number')
+        expect(column('gone')).toBeUndefined()
+        // A link column is a relation to its target, so a condition asks for a record.
+        expect(column('team')).toMatchObject({ label: 'Team', field: { type: 'relation' } })
+        expect(column('team')?.target?.key).toBe(TEAMS_KEY)
         expect(level.records).toEqual([{ group: 'byTeam', label: 'Team', source: TEAMS_KEY }])
     })
 

@@ -1,6 +1,14 @@
 import type { FormulaLeafProps } from '@tinycld/core/components/forms-builder/FormulaEditor'
 import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
-import { type Catalog, describePath, pathLabel } from '../../lib/builder/columns'
+import { Fragment } from 'react'
+import {
+    type Catalog,
+    describePath,
+    pathLabel,
+    switchableModeHop,
+    withHopJoin,
+    withHopMode,
+} from '../../lib/builder/columns'
 import { contextAt } from '../../lib/builder/formula-ops'
 import { partOf, type ReportFormulaContext } from '../../lib/builder/formula-parts'
 import type { SpecHop, SpecNode } from '../../lib/spec'
@@ -24,6 +32,78 @@ function linkHops(catalog: Catalog, baseKey: string, hops: readonly SpecHop[]) {
     })
 }
 
+interface HopJoinProps {
+    hop: SpecHop
+    index: number
+    label: string
+    hops: readonly SpecHop[]
+    onChange: (hops: SpecHop[]) => void
+    id: string
+    where: string
+}
+
+// A link keeps the rows that have no linked record, or keeps only the rows that have
+// one (`with: required`, bind.go hopPlan.required). Child rows show the linked rows
+// there are, so a nest hop has none (bind.go hopProblem).
+function HopJoin({ hop, index, label, hops, onChange, id, where }: HopJoinProps) {
+    if (hop.mode === 'nest') return null
+    const isRequired = hop.with === 'required'
+    const choose = (required: boolean) => {
+        if (required !== isRequired) onChange(withHopJoin(hops, index, required))
+    }
+    const items: PickItem[] = [
+        {
+            id: 'keep',
+            label: `Keep rows without ${label}`,
+            isSelected: !isRequired,
+            onSelect: () => choose(false),
+        },
+        {
+            id: 'required',
+            label: `Only rows with ${label}`,
+            isSelected: isRequired,
+            onSelect: () => choose(true),
+        },
+    ]
+    const shown = isRequired ? items[1] : items[0]
+    return (
+        <PickMenu
+            label={shown?.label ?? ''}
+            purpose={`Rows without ${label}${where}`}
+            items={items}
+            testID={`${id}-join-${index}`}
+        />
+    )
+}
+
+const MODE_LABELS = { aggregate: 'Total per row', nest: 'Child rows' } as const
+
+// A column's one to-many link is a total per row, or child rows (R1).
+function HopMode({ hop, index, label, hops, onChange, id, where }: HopJoinProps) {
+    const current = hop.mode ?? 'aggregate'
+    const items: PickItem[] = (['aggregate', 'nest'] as const).map(mode => ({
+        id: mode,
+        label: MODE_LABELS[mode],
+        isSelected: mode === current,
+        onSelect: () => {
+            if (mode !== current) onChange(withHopMode(hops, index, mode))
+        },
+    }))
+    return (
+        <PickMenu
+            label={`${label}: ${MODE_LABELS[current]}`}
+            purpose={`${label} shown as${where}`}
+            items={items}
+            testID={`${id}-mode-${index}`}
+        />
+    )
+}
+
+function HopModeChoice({ isVisible, ...props }: HopJoinProps & { isVisible: boolean }) {
+    if (!isVisible) return null
+    return <HopMode {...props} />
+}
+
 interface HopJoinsProps {
     catalog: Catalog
     baseKey: string
@@ -33,46 +113,24 @@ interface HopJoinsProps {
     where: string
 }
 
-// Each link of a value path keeps the rows that have no linked record, or keeps
-// only the rows that have one (`with: required`, bind.go hopPlan.required).
-function HopJoins({ catalog, baseKey, hops, onChange, id, where }: HopJoinsProps) {
-    const joins = linkHops(catalog, baseKey, hops).map(({ index, label }) => {
-        const isRequired = hops[index]?.with === 'required'
-        const choose = (required: boolean) =>
-            onChange(
-                hops.map((hop, i) => {
-                    if (i !== index || hop.link === undefined) return hop
-                    return required
-                        ? { link: hop.link, with: 'required' as const }
-                        : { link: hop.link }
-                })
-            )
-        const items: PickItem[] = [
-            {
-                id: 'keep',
-                label: `Keep rows without ${label}`,
-                isSelected: !isRequired,
-                onSelect: () => choose(false),
-            },
-            {
-                id: 'required',
-                label: `Only rows with ${label}`,
-                isSelected: isRequired,
-                onSelect: () => choose(true),
-            },
-        ]
-        const shown = isRequired ? items[1] : items[0]
+/**
+ * Each link of a path: whether rows without it are kept and, for a column's one
+ * to-many link, whether it is a total or child rows (no-limits ruling: every path
+ * the builder writes is editable).
+ */
+export function HopJoins({ catalog, baseKey, hops, onChange, id, where }: HopJoinsProps) {
+    const switchable = switchableModeHop(catalog, baseKey, hops)
+    const controls = linkHops(catalog, baseKey, hops).map(({ index, label }) => {
+        const hop = hops[index] ?? {}
+        const props = { hop, index, label, hops, onChange, id, where }
         return (
-            <PickMenu
-                key={index}
-                label={shown?.label ?? ''}
-                purpose={`Rows without ${label}${where}`}
-                items={items}
-                testID={`${id}-join-${index}`}
-            />
+            <Fragment key={index}>
+                <HopModeChoice {...props} isVisible={index === switchable} />
+                <HopJoin {...props} />
+            </Fragment>
         )
     })
-    return <>{joins}</>
+    return <>{controls}</>
 }
 
 export function PathLeaf({ ctx, root, path, expr, set, id, where }: ReportLeafProps) {
