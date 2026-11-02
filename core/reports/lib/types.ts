@@ -68,6 +68,8 @@ export interface ResultRow {
     kind: RowKind
     depth: number
     label: string
+    /** The column whose cell the label repeats (a child row leaves that cell out). */
+    labelColumn?: string
     /** The group row this row belongs to. */
     section?: string
     /** The row a nested child row hangs under. */

@@ -44,6 +44,9 @@ type compiler struct {
 	// amount, its currency. It outlives a statement (assembly reads it after
 	// every pass), so rows() leaves it.
 	labels []labelPlan
+	// detailLabel is what the report's detail label compiled to (the detail
+	// select's __label); nil when the first column labels detail rows.
+	detailLabel *labelPlan
 	// labelTypes holds the type of the record label of each column whose
 	// values point at a record (vl<idx>, the cell <id>@label).
 	labelTypes map[string]FieldType
@@ -162,6 +165,9 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	for _, s := range c.p.sort {
 		r.formulaCurrencies(s.formula)
 	}
+	if d := c.p.spec.Detail; d != nil {
+		r.formulaCurrencies(d.Label)
+	}
 	r.valueCurrencies()
 	r.pivotKey()
 	return r, nil
@@ -206,7 +212,9 @@ func (r *rowsCTE) valueCurrencies() {
 	for _, s := range r.c.p.sort {
 		walk(s.formula, s.at, false)
 	}
-	// Task 10 adds the detail label.
+	if d := r.c.p.spec.Detail; d != nil {
+		walk(d.Label, "detail.label", false)
+	}
 }
 
 // windowOp is true for an operator that sums the rows a report shows.

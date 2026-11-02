@@ -236,6 +236,33 @@ func (c *compiler) chosenLabel(e expr) string {
 	return ""
 }
 
+// compileDetailLabel compiles the formula that labels each detail row and
+// keeps what it compiled to (c.detailLabel): a value that points at a record
+// is shown by the record's label, by the label field of the column it reads;
+// any other value keeps its type, and an amount its currency (a carried one
+// beside it), so the client formats the label as a cell (R9).
+func (c *compiler) compileDetailLabel(rc *rowsCtx, labels *labelRefs, n *Node) (labelRef, error) {
+	e, err := compileFormula(rc, n, "detail.label")
+	if err != nil {
+		return labelRef{}, err
+	}
+	if e.target == nil {
+		lp := labelPlan{typ: e.typ, cur: e.cur}
+		ref := labelRef{value: e.sql, currency: "NULL"}
+		if e.typ == Money && e.cur.sql != "" {
+			ref.currency, lp.recordCurrency = e.cur.sql, true
+		}
+		c.detailLabel = &lp
+		return ref, nil
+	}
+	f := labelFieldOf(e.target, c.chosenLabel(e))
+	c.detailLabel = &labelPlan{typ: labelTypeOf(f), recordCurrency: labelTypeOf(f) == Money}
+	if e.sql == "NULL" {
+		return labelRef{value: "NULL", currency: "NULL"}, nil
+	}
+	return labels.of(e.target, f, e.sql), nil
+}
+
 // textOf is a relation value read as text, by a text operator: the stored
 // value of the record's label field (a select's option label), by the label
 // field of the column it reads, and empty text for a blank link or a record

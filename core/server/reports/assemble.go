@@ -231,9 +231,9 @@ type rowLabel struct {
 	currency string
 }
 
-// groupLabel is the label a group's __label holds. A label formula or a
-// record label that is not text keeps its type, so the client formats it as
-// a cell (R9).
+// groupLabel is the label a row's __label holds: a group's, or a detail row's
+// label formula. A label formula or a record label that is not text keeps its
+// type, so the client formats it as a cell (R9).
 func (rn *runner) groupLabel(row map[string]any, lp labelPlan) rowLabel {
 	cur := ""
 	if lp.typ == Money {
@@ -321,9 +321,12 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 // detail emits a detail row and the child rows nested under it.
 func (rn *runner) detail(t *tree, row map[string]any, section string, depth int) {
 	id := fmt.Sprintf("d:%v", row["__id"])
-	label := rn.firstLabel(rn.c.p.cols, row)
+	label, labelColumn := rn.firstLabel(rn.c.p.cols, row), rn.c.p.cols[0].col.ID
+	if lp := rn.c.detailLabel; lp != nil {
+		label, labelColumn = rn.groupLabel(row, *lp), ""
+	}
 	rn.push(Row{
-		ID: id, Kind: KindDetail, Depth: depth, Label: label.text, Section: section, Cells: rn.cells(row),
+		ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: labelColumn, Section: section, Cells: rn.cells(row),
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
 	})
 	if len(t.nested) > 0 {

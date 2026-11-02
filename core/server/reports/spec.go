@@ -41,6 +41,13 @@ type Spec struct {
 	Groups  []Group      `json:"groups,omitempty"`
 	Pivot   *Pivot       `json:"pivot,omitempty"`
 	Layout  []LayoutItem `json:"layout,omitempty"`
+	Detail  *Detail      `json:"detail,omitempty"`
+}
+
+// Detail shapes detail rows: Label is a formula on a detail row that labels
+// it (the first column's value without it).
+type Detail struct {
+	Label *Node `json:"label,omitempty"`
 }
 
 // Hop is one step of a path: a link to follow, or the field to read last.

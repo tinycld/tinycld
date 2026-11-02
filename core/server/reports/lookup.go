@@ -78,6 +78,9 @@ func (b *binder) lookups(p *plan) {
 	for i, item := range p.spec.Layout {
 		walk(item.Formula, fmt.Sprintf("layout.%d.formula", i))
 	}
+	if d := p.spec.Detail; d != nil {
+		walk(d.Label, "detail.label")
+	}
 }
 
 // lookupIn compiles a lookup in a context whose rows CTE is r: the smallest

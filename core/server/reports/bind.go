@@ -188,6 +188,9 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	b.sorts(p)
 	b.groupsAndPivot(p)
 	b.layout(p)
+	if d := spec.Detail; d != nil && d.Label == nil {
+		b.bad("detail", "detail has a label")
+	}
 	if err := b.err(); err != nil {
 		return nil, err
 	}
@@ -302,6 +305,9 @@ func (b *binder) formulaSizes(p *plan) {
 		if s.Formula != nil {
 			check(fmt.Sprintf("sort.%d.formula", i), p.nodeSize(s.Formula, memo, map[string]bool{}, true))
 		}
+	}
+	if d := p.spec.Detail; d != nil && d.Label != nil {
+		check("detail.label", p.nodeSize(d.Label, memo, map[string]bool{}, true))
 	}
 }
 

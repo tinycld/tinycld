@@ -113,6 +113,9 @@ type Row struct {
 	Kind  string `json:"kind"`
 	Depth int    `json:"depth"`
 	Label string `json:"label"`
+	// LabelColumn names the column whose cell the label repeats, so the
+	// client can leave that cell out; "" when the label is no cell's value.
+	LabelColumn string `json:"labelColumn,omitempty"`
 	// Section is the group row this row belongs to.
 	Section string `json:"section,omitempty"`
 	// Parent is the row a nested child row hangs under.
@@ -124,8 +127,8 @@ type Row struct {
 	CanExpand bool           `json:"canExpand,omitempty"`
 	Cells     map[string]any `json:"cells"`
 	// LabelType is set when a group row's label (and its subtotal's), or a
-	// detail row's record label, is a value that is not text: an amount, a
-	// number, a percent, a date or a yes/no. LabelValue is that value as a cell of the type holds it (an
+	// detail row's record label or label formula, is a value that is not
+	// text: an amount, a number, a percent, a date or a yes/no. LabelValue is that value as a cell of the type holds it (an
 	// amount in integer cents, a yes/no as true or false) and LabelCurrency
 	// is an amount's currency, so the client formats the label as it formats
 	// a cell; Label is its plain text (a subtotal's is "Total " + it).
@@ -665,6 +668,13 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			// A formula's amount has the currency of the amounts it reads.
 			c.currencyOf[cp.col.ID] = e.cur
 		}
+	}
+	if d := c.p.spec.Detail; d != nil && d.Label != nil {
+		ref, err := c.compileDetailLabel(&rowsCtx{r: r, visiting: visiting, detail: frame}, labels, d.Label)
+		if err != nil {
+			return "", nil, err
+		}
+		sel = append(sel, ref.value+" AS __label", ref.currency+" AS __labelcur")
 	}
 	if len(c.p.nest) > 0 {
 		sel = append(sel, r.nestParent()+" AS __n0")
