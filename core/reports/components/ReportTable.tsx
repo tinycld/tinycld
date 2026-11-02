@@ -9,7 +9,7 @@ import {
     Text,
     View,
 } from 'react-native'
-import type { NumberFormat } from '../lib/format'
+import { headingText, type NumberFormat } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import type { ResultColumn, ResultRow } from '../lib/types'
 import { ReportRowAmounts, ReportRowLabel } from './ReportRow'
@@ -32,12 +32,15 @@ function HeadingCell({
     column,
     index,
     width,
+    format,
 }: {
     column: ResultColumn
     index: number
     width?: number
+    format: NumberFormat
 }) {
     const align = columnAlign(column, index) === 'right' ? 'text-right' : 'text-left'
+    const text = headingText(column, format)
     return (
         <View
             testID={`report-heading-${column.id}`}
@@ -48,7 +51,7 @@ function HeadingCell({
                 numberOfLines={1}
                 className={`text-xs font-semibold uppercase text-muted-foreground ${align}`}
             >
-                {column.label}
+                {text}
             </Text>
         </View>
     )
@@ -58,14 +61,21 @@ interface HeadingRowProps {
     labelColumn: ResultColumn
     amountColumns: ResultColumn[]
     layout: ReportTableLayout
+    format: NumberFormat
     scrollRef: RefObject<ScrollViewInstance | null>
 }
 
 // Outside the rows' vertical scroller, so it stays visible; its amount labels sit in a
 // scroller the body drives, so they move sideways in step with the amount columns.
-function HeadingRow({ labelColumn, amountColumns, layout, scrollRef }: HeadingRowProps) {
+function HeadingRow({ labelColumn, amountColumns, layout, format, scrollRef }: HeadingRowProps) {
     const amounts = amountColumns.map((column, i) => (
-        <HeadingCell key={column.id} column={column} index={i + 1} width={layout.amountWidth} />
+        <HeadingCell
+            key={column.id}
+            column={column}
+            index={i + 1}
+            width={layout.amountWidth}
+            format={format}
+        />
     ))
     return (
         <View
@@ -73,7 +83,7 @@ function HeadingRow({ labelColumn, amountColumns, layout, scrollRef }: HeadingRo
             className="flex-row border-b border-border bg-background web:overflow-y-hidden web:[scrollbar-gutter:stable]"
         >
             <View className="pl-1" style={layout.labelStyle}>
-                <HeadingCell column={labelColumn} index={0} />
+                <HeadingCell column={labelColumn} index={0} format={format} />
             </View>
             <ScrollView
                 ref={scrollRef}
@@ -131,7 +141,12 @@ export function ReportTable({
     if (!labelColumn) return null
     const shown = rows.slice(rowWindow.first, rowWindow.last)
     const labels = shown.map(item => (
-        <ReportRowLabel key={item.row.id} item={item} onToggleGroup={onToggleGroup} />
+        <ReportRowLabel
+            key={item.row.id}
+            item={item}
+            format={format}
+            onToggleGroup={onToggleGroup}
+        />
     ))
     const amounts = shown.map(item => (
         <ReportRowAmounts
@@ -153,6 +168,7 @@ export function ReportTable({
                 labelColumn={labelColumn}
                 amountColumns={amountColumns}
                 layout={layout}
+                format={format}
                 scrollRef={headingRef}
             />
             <ScrollView

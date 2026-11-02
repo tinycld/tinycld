@@ -47,6 +47,7 @@ export const PRESET_LABELS: Record<Preset, string> = {
     endOfLastFiscalYear: 'End of last fiscal year',
 }
 export const CUSTOM_LABEL = 'Custom'
+/** The most UTF-8 bytes a text param, a choice id or a group value holds (params.go maxParamText). */
 export const MAX_TEXT_PARAM = 500
 /** The most values a multiple choice holds (params.go maxChoiceValues). */
 export const MAX_CHOICE_VALUES = 1000
@@ -64,6 +65,24 @@ export type ParamValue =
     | { kind: 'number'; number: number }
     // Whole cents in a currency; currency '' is an amount in any currency.
     | { kind: 'amount'; cents: number; currency: string }
+
+/**
+ * The length of text in UTF-8 bytes, as the engine counts it (Go's len). A lone
+ * surrogate counts 3, as the U+FFFD that JSON decoding puts in its place.
+ */
+export function utf8Length(text: string): number {
+    let bytes = 0
+    for (const char of text) {
+        const code = char.codePointAt(0) ?? 0
+        if (code < 0x80) bytes += 1
+        else if (code < 0x800) bytes += 2
+        else if (code < 0x10000) bytes += 3
+        else bytes += 4
+    }
+    return bytes
+}
+
+const fitsTextParam = (text: string) => utf8Length(text) <= MAX_TEXT_PARAM
 
 /** The values the reader set; a param that is not here takes its default, or is unset. */
 export type ParamValues = Readonly<Record<string, ParamValue>>
@@ -113,7 +132,7 @@ export function rangeValue(from: string, to: string): ParamValue | null {
 }
 
 const isSourceId = (item: unknown): item is string =>
-    typeof item === 'string' && item.length > 0 && item.length <= MAX_TEXT_PARAM
+    typeof item === 'string' && item.length > 0 && fitsTextParam(item)
 
 // A whole group is posted as {"group": "<group value>"}; '' is the blank group.
 function isGroupRef(item: unknown): item is { group: string } {
@@ -121,7 +140,7 @@ function isGroupRef(item: unknown): item is { group: string } {
         isRecord(item) &&
         Object.keys(item).length === 1 &&
         typeof item.group === 'string' &&
-        item.group.length <= MAX_TEXT_PARAM
+        fitsTextParam(item.group)
     )
 }
 
@@ -173,7 +192,7 @@ export function valueFromJson(def: ParamDef, raw: unknown): ParamValue | null {
         case 'choice':
             return choiceValue(def, def.multiple ? raw : [raw])
         case 'text':
-            return typeof raw === 'string' && raw.length <= MAX_TEXT_PARAM
+            return typeof raw === 'string' && fitsTextParam(raw)
                 ? { kind: 'text', text: raw }
                 : null
         case 'number':

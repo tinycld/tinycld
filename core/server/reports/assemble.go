@@ -3,6 +3,7 @@ package reports
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -330,7 +331,7 @@ func (rn *runner) detail(t *tree, row map[string]any, section string, depth int)
 	id := fmt.Sprintf("d:%v", row["__id"])
 	label, labelColumn := rn.firstLabel(rn.c.p.cols, row), rn.c.p.cols[0].col.ID
 	if lp := rn.c.detailLabel; lp != nil {
-		label, labelColumn = rn.groupLabel(row, *lp), ""
+		label, labelColumn = rn.groupLabel(row, *lp), repeatedColumn(rn.c.p.spec.Detail.Label)
 	}
 	rn.push(Row{
 		ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: labelColumn, Section: section, Cells: rn.cells(row),
@@ -339,6 +340,16 @@ func (rn *runner) detail(t *tree, row map[string]any, section string, depth int)
 	if len(t.nested) > 0 {
 		rn.nestedRows(t, 0, row["__n0"], id, section, depth+1)
 	}
+}
+
+// repeatedColumn is the column a detail label of exactly {col} repeats: the
+// row's label is that cell, shown as the column shows it. Any other label is
+// no cell's value, so it repeats none.
+func repeatedColumn(n *Node) string {
+	if n == nil || !reflect.DeepEqual(*n, Node{Col: n.Col}) {
+		return ""
+	}
+	return n.Col
 }
 
 // cells maps a statement row's v<idx> and pv<j> values to column ids, with each

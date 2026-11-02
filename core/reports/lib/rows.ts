@@ -14,10 +14,12 @@ export type VisibleRow = {
 
 const NO_CELLS: Record<string, CellValue> = {}
 
-// The engine names the column whose cell a row's label repeats (labelColumn); a
-// child row's label is drawn as its label, so that cell is left out. A label that
-// repeats no cell (a detail label formula) leaves every cell.
-function childCells(row: ResultRow) {
+// The engine names the column whose cell a detail row's label repeats
+// (labelColumn): the first column, a child row's level's first column, or the
+// column a detail label of exactly {col} reads. The label already shows it, so
+// that cell is left out. A label that repeats no cell (any other detail label
+// formula) leaves every cell.
+function unlabelledCells(row: ResultRow) {
     const { labelColumn } = row
     if (!labelColumn) return row.cells
     return Object.fromEntries(Object.entries(row.cells).filter(([id]) => id !== labelColumn))
@@ -25,13 +27,13 @@ function childCells(row: ResultRow) {
 
 function rowCells(row: ResultRow, withSubtotal: Set<string>) {
     if (row.kind === 'group' && withSubtotal.has(row.id)) return NO_CELLS
-    if (row.parent !== undefined) return childCells(row)
+    if (row.kind === 'detail') return unlabelledCells(row)
     return row.cells
 }
 
 // A figure is never shown twice (the report shell's rule): a group row that its own
 // subtotal row follows shows no figures (a closed group with no subtotal row keeps
-// its figures), and a child row shows its label once, not again in a cell.
+// its figures), and a detail row shows its label once, not again in a cell.
 export function visibleRows(rows: readonly ResultRow[]): VisibleRow[] {
     const withSubtotal = new Set(
         rows.flatMap(row => (row.kind === 'subtotal' && row.section ? [row.section] : []))

@@ -6,9 +6,11 @@ import {
     DEFAULT_DISPLAY,
     formatReportAmount,
     formatReportPercent,
+    headingText,
     mergeHidden,
     type NumberFormat,
     REPORT_AMOUNT_ERROR,
+    rowLabelText,
     shownColumns,
 } from '../format'
 import { MAX_STORED_AMOUNT } from '../money'
@@ -271,6 +273,72 @@ describe('cellDisplay', () => {
     it('shows nothing for a blank cell', () => {
         expect(cellDisplay(MONEY, row('detail'), null, PLAIN).text).toBe('')
         expect(cellDisplay(MONEY, row('detail'), undefined, PLAIN).text).toBe('')
+    })
+})
+
+describe('typed labels', () => {
+    const labelled = (extra: Partial<ResultRow>): ResultRow => ({ ...row('group'), ...extra })
+
+    it('shows a money label in its currency, so 300 EUR and 300 USD differ', () => {
+        const eur = labelled({
+            label: '30000',
+            labelType: 'money',
+            labelValue: 30000,
+            labelCurrency: 'EUR',
+        })
+        const usd = { ...eur, labelCurrency: 'USD' }
+        expect(rowLabelText(eur, PLAIN)).toBe('€300.00')
+        expect(rowLabelText(usd, PLAIN)).toBe('$300.00')
+        expect(rowLabelText({ ...eur, kind: 'detail' }, PLAIN)).toBe('€300.00')
+        expect(rowLabelText(eur, WITHOUT_CENTS)).toBe('€300')
+    })
+
+    it('shows a date and a yes/no label as a cell of that type', () => {
+        const born = labelled({ label: '2019-02-10', labelType: 'date', labelValue: '2019-02-10' })
+        expect(rowLabelText(born, PLAIN)).toBe('Feb 10, 2019')
+        const no = labelled({ label: 'false', labelType: 'bool', labelValue: false })
+        expect(rowLabelText(no, PLAIN)).toBe('No')
+    })
+
+    it('keeps "Total" before a subtotal row’s typed label', () => {
+        const subtotal = labelled({
+            kind: 'subtotal',
+            label: 'Total 30000',
+            labelType: 'money',
+            labelValue: 30000,
+            labelCurrency: 'EUR',
+        })
+        expect(rowLabelText(subtotal, PLAIN)).toBe('Total €300.00')
+    })
+
+    it('shows a text label, or a blank typed one, as the engine wrote it', () => {
+        expect(rowLabelText(labelled({ label: 'Leo' }), PLAIN)).toBe('Leo')
+        const blank = labelled({ label: '(none)', labelType: 'money', labelValue: null })
+        expect(rowLabelText(blank, PLAIN)).toBe('(none)')
+    })
+
+    it('shows a pivot column over amounts by its typed heading', () => {
+        const pivot = (currency: string): ResultColumn => ({
+            id: 'cost.p0',
+            label: '30000',
+            type: 'money',
+            pivot: {
+                cell: 'cost',
+                key: 'k',
+                labelType: 'money',
+                labelValue: 30000,
+                labelCurrency: currency,
+            },
+        })
+        expect(headingText(pivot('EUR'), PLAIN)).toBe('€300.00')
+        expect(headingText(pivot('USD'), PLAIN)).toBe('$300.00')
+        expect(headingText(MONEY, PLAIN)).toBe('Cost')
+        const month: ResultColumn = {
+            ...MONEY,
+            label: '2026-01',
+            pivot: { cell: 'cost', key: '2026-01' },
+        }
+        expect(headingText(month, PLAIN)).toBe('2026-01')
     })
 })
 

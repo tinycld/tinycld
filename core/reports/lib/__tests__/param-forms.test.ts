@@ -6,6 +6,8 @@ import {
     periodDefaults,
     periodSchema,
     periodValueOf,
+    TEXT_TOO_LONG_MESSAGE,
+    textValueSchema,
 } from '../param-forms'
 import type { ParamDef } from '../spec'
 
@@ -67,6 +69,17 @@ describe('the period form', () => {
             to: '2026-06-30',
         })
         expect(periodDefaults(null, undefined)).toEqual({ preset: 'custom', from: null, to: null })
+    })
+})
+
+describe('the text filter form', () => {
+    it('counts the text in UTF-8 bytes, as the engine does', () => {
+        expect(textValueSchema.safeParse({ text: 'x'.repeat(500) }).success).toBe(true)
+        // 250 two-byte letters are 500 bytes; one more is too long.
+        expect(textValueSchema.safeParse({ text: 'é'.repeat(250) }).success).toBe(true)
+        const long = textValueSchema.safeParse({ text: 'é'.repeat(251) })
+        expect(long.success).toBe(false)
+        expect(long.error?.issues[0]?.message).toBe(TEXT_TOO_LONG_MESSAGE)
     })
 })
 

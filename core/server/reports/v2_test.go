@@ -185,6 +185,8 @@ func TestDisplayLayoutsAreChecked(t *testing.T) {
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"start":3}]}`, "display.layouts.0.cells.0", "does not fit its line", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"start":2,"span":2}]}`, "display.layouts.0.cells.0", "does not fit its line", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":8,"lines":2}]}`, "display.layouts.0.cells.0", "a cell ends by line 8", 400},
+		{`{"width":"mobile","tracks":2,"cells":[]}`, "display.layouts.0.cells", "at least one column", 400},
+		{`{"width":"tablet","tracks":2}`, "display.layouts.0.cells", "at least one column", 400},
 	} {
 		spec, _, err := Load([]byte(fmt.Sprintf(base, c.layout)))
 		if err != nil {

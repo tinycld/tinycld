@@ -69,7 +69,7 @@ describe('visibleRows', () => {
         expect(shown[0].isToggle).toBe(false)
     })
 
-    it('leaves out the cell that labels a child row, and only for a child row', () => {
+    it('leaves out the cell a detail row’s label repeats, a child row’s too', () => {
         const parent: ResultRow = {
             ...detail('d:1'),
             labelColumn: 'name',
@@ -85,8 +85,21 @@ describe('visibleRows', () => {
             cells: { customer: 'First buyer', amount: 100, 'amount@currency': 'USD' },
         }
         const shown = visibleRows([parent, child])
-        expect(shown[0].cells).toEqual(parent.cells)
+        expect(shown[0].cells).toEqual({ customer: null, cost: 50 })
         expect(shown[1].cells).toEqual({ amount: 100, 'amount@currency': 'USD' })
+    })
+
+    it('leaves out the column a detail label of exactly {col} repeats', () => {
+        // The engine names it (detail.label {col: 'cost'}); any other label names none.
+        const byCost: ResultRow = {
+            ...detail('d:1'),
+            label: '50',
+            labelColumn: 'cost',
+            cells: { name: 'Team A', cost: 50 },
+        }
+        const byFormula: ResultRow = { ...byCost, labelColumn: undefined }
+        expect(visibleRows([byCost])[0].cells).toEqual({ name: 'Team A' })
+        expect(visibleRows([byFormula])[0].cells).toEqual({ name: 'Team A', cost: 50 })
     })
 
     it('leaves out a blank labelling cell too (the label reads "(none)")', () => {

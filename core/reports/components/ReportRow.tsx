@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
-import { type CellDisplay, cellDisplay, type NumberFormat } from '../lib/format'
+import { type CellDisplay, cellDisplay, type NumberFormat, rowLabelText } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import type { ResultColumn, ResultRow, RowKind } from '../lib/types'
 import { columnAlign, INDENT, type ReportTableLayout, ROW_HEIGHT } from './report-table-layout'
@@ -35,51 +35,56 @@ function GroupCaret({ isOpen }: { isOpen: boolean }) {
     return <Icon size={CARET_SIZE} color={color} />
 }
 
-function LabelText({ row }: { row: ResultRow }) {
+function LabelText({ row, text }: { row: ResultRow; text: string }) {
     return (
         <Text
             numberOfLines={1}
             className={`min-w-0 flex-1 text-sm text-foreground ${ROW_WEIGHT[row.kind]}`}
         >
-            {row.label}
+            {text}
         </Text>
     )
 }
 
 interface ReportRowLabelProps {
     item: VisibleRow
+    format: NumberFormat
     onToggleGroup(row: ResultRow): void
 }
 
 // A role-button Pressable takes a click, Enter and Space on web and a tap on native.
-function GroupToggleLabel({ item, onToggleGroup }: ReportRowLabelProps) {
+function GroupToggleLabel({ item, format, onToggleGroup }: ReportRowLabelProps) {
     const { row } = item
+    const text = rowLabelText(row, format)
     return (
         <Pressable
             testID={`report-row-${row.id}`}
             accessibilityRole="button"
-            accessibilityLabel={row.label}
+            accessibilityLabel={text}
             aria-expanded={item.isOpen}
             onPress={() => onToggleGroup(row)}
             className="flex-row items-center gap-1 pr-3"
             style={labelRowStyle(row)}
         >
             <GroupCaret isOpen={item.isOpen} />
-            <LabelText row={row} />
+            <LabelText row={row} text={text} />
         </Pressable>
     )
 }
 
-export function ReportRowLabel({ item, onToggleGroup }: ReportRowLabelProps) {
-    if (item.isToggle) return <GroupToggleLabel item={item} onToggleGroup={onToggleGroup} />
+export function ReportRowLabel({ item, format, onToggleGroup }: ReportRowLabelProps) {
+    if (item.isToggle) {
+        return <GroupToggleLabel item={item} format={format} onToggleGroup={onToggleGroup} />
+    }
     const { row } = item
+    const text = rowLabelText(row, format)
     return (
         <View
             testID={`report-row-${row.id}`}
             className={`flex-row items-center pr-3 ${ROW_RULE[row.kind]}`}
             style={labelRowStyle(row)}
         >
-            <LabelText row={row} />
+            <LabelText row={row} text={text} />
         </View>
     )
 }

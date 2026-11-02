@@ -1,6 +1,6 @@
 import { z } from '@tinycld/core/ui/form'
 import { isIsoDay } from './dates'
-import { MAX_TEXT_PARAM, type ParamValue, presetsFor, rangeValue } from './params'
+import { MAX_TEXT_PARAM, type ParamValue, presetsFor, rangeValue, utf8Length } from './params'
 import type { ParamDef } from './spec'
 import type { ResolvedParam } from './types'
 
@@ -54,8 +54,15 @@ export function periodValueOf(def: ParamDef, values: PeriodValues): ParamValue |
     return isDay(values.to) ? { kind: 'day', day: values.to } : null
 }
 
+export const TEXT_TOO_LONG_MESSAGE = 'This text is too long.'
+
 export const textValueSchema = z.object({
-    text: z.string().trim().min(1, 'Enter some text').max(MAX_TEXT_PARAM),
+    // The engine counts UTF-8 bytes, so a letter outside ASCII counts more than one.
+    text: z
+        .string()
+        .trim()
+        .min(1, 'Enter some text')
+        .refine(text => utf8Length(text) <= MAX_TEXT_PARAM, TEXT_TOO_LONG_MESSAGE),
 })
 export const numberValueSchema = z.object({
     // The number field holds its text while a typed value is not a number yet.

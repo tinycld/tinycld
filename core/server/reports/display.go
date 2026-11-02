@@ -38,6 +38,12 @@ func (b *binder) display(p *plan) {
 			b.bad(at+".tracks", fmt.Sprintf("tracks is 1 to %d", maxDisplayTracks))
 			continue
 		}
+		// A layout with no cells would show nothing at its width, and a stored
+		// one would read back as "cells": null.
+		if len(l.Cells) == 0 {
+			b.bad(at+".cells", "a layout places at least one column")
+			continue
+		}
 		if len(l.Cells) > maxColumns {
 			b.bad(at+".cells", fmt.Sprintf("a layout places at most %d columns", maxColumns))
 			continue

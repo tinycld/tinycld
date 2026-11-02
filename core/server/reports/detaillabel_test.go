@@ -21,6 +21,22 @@ func TestADetailLabelIsAFormula(t *testing.T) {
 	}
 }
 
+// A label that is exactly a column repeats that column's cell, so the row
+// names it; a formula over the column repeats no cell.
+func TestADetailLabelThatIsAColumnNamesIt(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", withDetailLabel(`{"col":"animal"}`), Options{}, nil)
+	requireRows(t, res, "label", "Leo", "Leo", "Zed", "Zed", "Total")
+	if res.Rows[0].LabelColumn != "animal" {
+		t.Fatalf("labelColumn = %q, want animal", res.Rows[0].LabelColumn)
+	}
+	wrapped := z.run(t, "ann", withDetailLabel(`{"op":"concat","args":[{"col":"note"},{"value":"!"}]}`), Options{}, nil)
+	requireRows(t, wrapped, "label", "f1!", "f2!", "f3!", "f4!", "Total")
+	if wrapped.Rows[0].LabelColumn != "" {
+		t.Fatalf("a formula over a column names none: %q", wrapped.Rows[0].LabelColumn)
+	}
+}
+
 func TestADetailNeedsItsLabel(t *testing.T) {
 	app := withZooRegistry(t)
 	spec, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"detail":{}}`))

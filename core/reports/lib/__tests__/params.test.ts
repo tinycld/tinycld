@@ -13,6 +13,7 @@ import {
     type ParamValues,
     periodWords,
     postedParams,
+    utf8Length,
     valueFromJson,
     valueToJson,
 } from '../params'
@@ -235,6 +236,40 @@ describe('a whole group of options from a source', () => {
             'Teams: N1, All North'
         )
         expect(chipText({ ...def, label: 'Teams' }, picked, undefined)).toBe('Teams: a1, All north')
+    })
+})
+
+describe('text limits count UTF-8 bytes, as the engine does', () => {
+    const accounts: ParamDef = {
+        id: 'accounts',
+        type: 'choice',
+        multiple: true,
+        optionsFrom: {
+            source: 's',
+            value: [{ field: 'id' }],
+            label: [{ field: 'name' }],
+            group: [{ field: 'region' }],
+        },
+    }
+    // 250 two-byte letters are 500 bytes; one more is 502.
+    const atLimit = 'é'.repeat(250)
+    const overLimit = 'é'.repeat(251)
+
+    it('counts bytes', () => {
+        expect(utf8Length('abc')).toBe(3)
+        expect(utf8Length('é')).toBe(2)
+        expect(utf8Length('€')).toBe(3)
+        expect(utf8Length('😀')).toBe(4)
+        expect(utf8Length(atLimit)).toBe(MAX_TEXT_PARAM)
+    })
+
+    it('refuses a text param, an id or a group over 500 bytes', () => {
+        expect(valueFromJson(NAME, atLimit)).toEqual({ kind: 'text', text: atLimit })
+        expect(valueFromJson(NAME, overLimit)).toBeNull()
+        expect(valueFromJson(accounts, [atLimit])).not.toBeNull()
+        expect(valueFromJson(accounts, [overLimit])).toBeNull()
+        expect(valueFromJson(accounts, [{ group: atLimit }])).not.toBeNull()
+        expect(valueFromJson(accounts, [{ group: overLimit }])).toBeNull()
     })
 })
 

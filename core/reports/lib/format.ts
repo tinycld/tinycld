@@ -194,6 +194,43 @@ export function cellDisplay(
     return plainDisplay(value, align)
 }
 
+const LABEL_ROW: ResultRow = { id: '', kind: 'detail', depth: 0, label: '', cells: {} }
+
+// A typed label (a row's, a pivot heading's) formatted as a cell of its type. An
+// amount always shows its currency, so 300 EUR and 300 USD read apart.
+function typedLabelText(
+    type: FieldType,
+    value: CellValue,
+    currency: string,
+    format: NumberFormat
+): string {
+    if (type === 'money' && typeof value === 'number') {
+        return formatReportAmount(value, currency, format, { withSymbol: true })
+    }
+    return cellDisplay({ id: '', label: '', type, currency }, LABEL_ROW, value, format).text
+}
+
+/**
+ * A row's label as the table shows it. The engine types a label that is not text
+ * (an amount, a date, a yes/no) and writes `label` as its plain text; a subtotal's
+ * label is "Total " and its group's label.
+ */
+export function rowLabelText(row: ResultRow, format: NumberFormat): string {
+    const { labelType, labelValue } = row
+    if (!labelType || labelValue === undefined || labelValue === null) return row.label
+    const text = typedLabelText(labelType, labelValue, row.labelCurrency ?? '', format)
+    return row.kind === 'subtotal' ? `Total ${text}` : text
+}
+
+/** A column's heading: a pivot column over typed values by its typed label. */
+export function headingText(column: ResultColumn, format: NumberFormat): string {
+    const pivot = column.pivot
+    if (!pivot?.labelType || pivot.labelValue === undefined || pivot.labelValue === null) {
+        return column.label
+    }
+    return typedLabelText(pivot.labelType, pivot.labelValue, pivot.labelCurrency ?? '', format)
+}
+
 /**
  * The hidden list after Customize changes the columns it lists. A hidden id that the
  * current result does not have (a pivot value not in this run, a column of an earlier
