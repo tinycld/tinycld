@@ -55,8 +55,10 @@ type Host struct {
 	FieldsColumn string    `json:"fieldsColumn"`
 	Columns      []string  `json:"columns"`
 	Builtins     []Builtin `json:"builtin"`
-	Files        *Files    `json:"files,omitempty"`
-	Collab       *Collab   `json:"collaborative,omitempty"`
+	// Kinds lists the custom field kinds the host allows; empty allows all.
+	Kinds  []string `json:"kinds,omitempty"`
+	Files  *Files   `json:"files,omitempty"`
+	Collab *Collab  `json:"collaborative,omitempty"`
 
 	InsertCustomBefore string `json:"insertCustomBefore,omitempty"`
 	// Layout is the layout of the host's default form: the first seeded

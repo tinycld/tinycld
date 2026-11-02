@@ -73,7 +73,8 @@ export interface FormRendererProps {
     readOnly?: boolean
     collab?: CollabDoc | null
     /** Wizard: called after the last page validates. */
-    onSubmit?: () => void
+    /** Wizard: called after the last page validates; Send stays off until a returned promise settles. */
+    onSubmit?: () => unknown
     submitLabel?: string
     design?: DesignOptions
     /** Sections only: the renderer owns a ScrollView whose direct children are the rows, so pinned rows can stick. */
@@ -87,6 +88,8 @@ export interface FormRendererProps {
      * submit. See submitSummary.
      */
     summary?: SubmitSummaryKind
+    /** Create mode with no session (a public form): file fields hold picked files until submit. */
+    pendingFiles?: boolean
     testID?: string
 }
 
@@ -166,6 +169,7 @@ function Cell(props: CellProps) {
                 onSubmitEditing={props.onSubmitEditing}
                 containerWidth={containerWidth}
                 computed={props.computed}
+                pendingFiles={props.pendingFiles}
             />
         </FieldCell>
     )

@@ -422,6 +422,13 @@ const forms = newCollection('forms', {
     ...indexing,
 })
 
+const form_publications = newCollection('form_publications', {
+    omitOnInsert: ['created', 'updated'],
+    ...onDemand,
+    relations: { form: forms },
+    ...indexing,
+})
+
 const rule_runs = newCollection('rule_runs', {
     omitOnInsert: ['created', 'updated'],
     ...onDemand,
@@ -522,6 +529,7 @@ const coreStores = {
     rules,
     rule_runs,
     forms,
+    form_publications,
     automation_catalog,
     system_settings,
     autoupgrade_state,

@@ -133,7 +133,14 @@ describe('FieldInput', () => {
     it('asks to add files after creating when a file field has no record', () => {
         const { getByText } = render(
             <Harness
-                field={{ ...base, key: 'f', kind: 'file', multiple: true, accept: [] }}
+                field={{
+                    ...base,
+                    key: 'f',
+                    kind: 'file',
+                    multiple: true,
+                    accept: [],
+                    maxSizeMb: 10,
+                }}
                 mode="create"
             />
         )
@@ -223,6 +230,7 @@ describe('FieldInput', () => {
             kind: 'file',
             multiple: true,
             accept: [],
+            maxSizeMb: 10,
         }
         const client = new QueryClient()
         const { container } = render(

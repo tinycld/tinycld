@@ -1,5 +1,5 @@
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
-import { packageFormHosts } from '@tinycld/core/lib/forms/use-form-hosts'
+import { formHosts } from '@tinycld/core/lib/forms/use-form-hosts'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import {
     packageAccountSettings,
@@ -159,7 +159,7 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
                     icon={<Tag size={20} color={foregroundColor} />}
                 />
                 <FormsLink
-                    isVisible={packageFormHosts.length > 0}
+                    isVisible={formHosts.length > 0}
                     onPress={() => router.push(orgHref('settings/forms'))}
                     color={foregroundColor}
                 />

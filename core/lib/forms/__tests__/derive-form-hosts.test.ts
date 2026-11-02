@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deriveFormHosts } from '../../packages/derive-form-hosts'
+import { CORE_FORM_HOST_ENTRY, deriveFormHosts } from '../../packages/derive-form-hosts'
 import { widgetHost } from './fixtures'
 
 describe('deriveFormHosts', () => {
@@ -46,5 +46,16 @@ describe('deriveFormHosts', () => {
             multiple: false,
             collaborative: false,
         })
+    })
+})
+
+describe('core form hosts', () => {
+    it('derives the web form host as a core host with an empty ui', async () => {
+        const hosts = deriveFormHosts([CORE_FORM_HOST_ENTRY])
+        expect(hosts.map(h => [h.key, h.pkgSlug, h.pkgName])).toEqual([
+            ['core:web_form', 'core', 'Core'],
+        ])
+        expect(hosts[0].kinds).not.toContain('user')
+        await expect(hosts[0].ui()).resolves.toEqual({ components: {} })
     })
 })

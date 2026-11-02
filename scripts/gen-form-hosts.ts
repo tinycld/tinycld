@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { CORE_FORM_HOST_SLUG, CORE_FORM_HOSTS } from '../core/lib/forms/core-hosts'
 import { type FormHostDef, hostDefListSchema } from '../core/lib/forms/host'
 import { SERVER_DIR } from './paths'
 
@@ -69,6 +70,16 @@ export function mergeFormHosts(features: { slug: string; hosts: unknown }[]): Me
     }
     out.hosts.sort((a, b) => a.key.localeCompare(b.key))
     return out
+}
+
+/** The package hosts plus the hosts core owns; a package may not claim core's slug. */
+export function mergeAllFormHosts(features: { slug: string; hosts: unknown }[]): MergedFormHosts {
+    for (const f of features)
+        if (f.slug === CORE_FORM_HOST_SLUG)
+            throw new Error(
+                `[generate] the form host slug ${CORE_FORM_HOST_SLUG} is reserved for core`
+            )
+    return mergeFormHosts([{ slug: CORE_FORM_HOST_SLUG, hosts: CORE_FORM_HOSTS }, ...features])
 }
 
 export function emitFormHosts(merged: MergedFormHosts): void {

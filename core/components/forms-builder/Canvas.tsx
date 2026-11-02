@@ -149,6 +149,7 @@ function designOptionsFor(inputs: DesignInputs): DesignOptions {
         renderPageFooter: page => (
             <KindPicker
                 onPick={kind => onPickKind({ page: page.key, kind })}
+                kinds={editor.host.kinds}
                 testID={`form-add-field-${page.key}`}
             />
         ),

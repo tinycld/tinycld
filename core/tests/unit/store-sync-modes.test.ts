@@ -53,6 +53,7 @@ const CORE_COLLECTIONS = [
     'report_shares',
     'automation_catalog',
     'comment_mentions',
+    'form_publications',
     'forms',
     'app_passwords',
     'mfa_totp',

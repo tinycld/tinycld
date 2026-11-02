@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { definitionSchema, validateDefinitionForHost } from '../definition'
-import { defaultDefinitionFor } from '../host'
+import { defaultDefinitionFor, hostDefSchema } from '../host'
 import { bugDefinition, widgetHost } from './fixtures'
 
 describe('definitionSchema', () => {
@@ -256,5 +256,38 @@ describe('validateDefinitionForHost, rules that hide', () => {
         expect(
             validateDefinitionForHost(hiding({ action: 'hide', field: 'owner' }), widgetHost)
         ).toEqual([])
+    })
+})
+
+describe('host kinds allowlist', () => {
+    const host = hostDefSchema.parse({
+        key: 'gizmos:note',
+        label: 'Note',
+        collection: 'gizmos_notes',
+        formColumn: 'form',
+        fieldsColumn: 'values',
+        columns: ['id', 'form', 'values'],
+        builtin: [],
+        kinds: ['text', 'file'],
+    })
+
+    it('rejects a field whose kind the host does not allow', () => {
+        const def = definitionSchema.parse({
+            version: 1,
+            pages: [{ key: 'main', title: 'Main' }],
+            fields: [{ key: 'who', page: 'main', label: 'Who', kind: 'user' }],
+        })
+        expect(validateDefinitionForHost(def, host)).toEqual([
+            { path: ['fields', 0, 'kind'], message: 'Person fields are not allowed in Note' },
+        ])
+    })
+
+    it('defaults a file field to 10 MB', () => {
+        const def = definitionSchema.parse({
+            version: 1,
+            pages: [{ key: 'main', title: 'Main' }],
+            fields: [{ key: 'cv', page: 'main', label: 'CV', kind: 'file' }],
+        })
+        expect(def.fields[0]).toMatchObject({ kind: 'file', maxSizeMb: 10, accept: [] })
     })
 })

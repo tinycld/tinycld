@@ -38,6 +38,7 @@ import (
 	"tinycld.org/core/search"
 	"tinycld.org/core/sharelink"
 	"tinycld.org/core/sharequota"
+	"tinycld.org/core/webforms"
 	"tinycld.org/core/webhookin"
 )
 
@@ -513,6 +514,7 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 		HostsPath: formHostsPath(resolveServerDir()),
 		HostsJSON: embeddedFormHosts,
 	})
+	webforms.Register(app)
 
 	// Registered by core even though core serves no protocol handler itself: a
 	// package's own Go server mounts its tree via OnServe (contacts /carddav,

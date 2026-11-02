@@ -544,6 +544,18 @@ test.describe('Forms builder', () => {
         expect(movedBox.y).toBeCloseTo(otherBox.y, 0)
     })
 
+    test('a file field outside web forms offers no size limit it cannot enforce', async ({
+        page,
+    }) => {
+        await login(page)
+        await openFormsSettings(page)
+        await createForm(page, `Files ${Date.now()}`)
+        const [firstPage] = await pageKeys(page)
+        await addField(page, firstPage, 'file', 'Photo')
+        await expect(properties(page).getByText('Accepted types')).toBeVisible()
+        await expect(properties(page).locator('[data-testid$=".maxSizeMb"]')).toHaveCount(0)
+    })
+
     test('renames, makes default and deletes forms from the list', async ({ page }) => {
         await expect(formRow(page, HOST_LABEL)).toContainText('Default')
 

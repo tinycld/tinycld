@@ -23,6 +23,22 @@ export const CUSTOM_KINDS = [
     'table',
 ] as const
 export type CustomKind = (typeof CUSTOM_KINDS)[number]
+
+export const KIND_NAMES: Record<CustomKind, string> = {
+    text: 'Text',
+    textarea: 'Long text',
+    number: 'Number',
+    date: 'Date',
+    toggle: 'Toggle',
+    select: 'Choice list',
+    user: 'Person',
+    checklist: 'Checklist',
+    richtext: 'Rich text',
+    markdown: 'Markdown',
+    file: 'File',
+    computed: 'Calculated value',
+    table: 'Table',
+}
 export const FIELD_KINDS = [...CUSTOM_KINDS, 'builtin'] as const
 export type FieldKind = (typeof FIELD_KINDS)[number]
 
@@ -178,6 +194,7 @@ const customFieldSchema = z.discriminatedUnion('kind', [
         kind: z.literal('file'),
         multiple: z.boolean().default(false),
         accept: z.array(z.string()).default([]),
+        maxSizeMb: z.number().positive().max(100).default(10),
     }),
     z.object({
         ...base,
@@ -435,6 +452,11 @@ export function validateDefinitionForHost(
             seen.add(f.key)
             return
         }
+        if (host.kinds && !host.kinds.includes(f.kind))
+            issues.push({
+                path: ['fields', i, 'kind'],
+                message: `${KIND_NAMES[f.kind]} fields are not allowed in ${host.label}`,
+            })
         if (builtins.has(f.key))
             issues.push({
                 path: ['fields', i, 'key'],

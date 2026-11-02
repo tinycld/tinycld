@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
@@ -34,6 +35,8 @@ type Field struct {
 	Expression    any      `json:"expression,omitempty"`
 	Decimals      int      `json:"decimals,omitempty"`
 	Columns       []Column `json:"columns,omitempty"`
+	Accept        []string `json:"accept,omitempty"`
+	MaxSizeMb     *float64 `json:"maxSizeMb,omitempty"`
 }
 
 // Column is a table field's column; a mirror of columnSchema in
@@ -210,6 +213,9 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 		}
 		if !pages[f.Page] {
 			return defErr("unknown page "+f.Page, "fields", i, "page")
+		}
+		if f.Kind != "builtin" && len(host.Kinds) > 0 && !slices.Contains(host.Kinds, f.Kind) {
+			return defErr(f.Kind+" fields are not allowed in "+host.Label, "fields", i, "kind")
 		}
 		if f.Kind == "builtin" {
 			b := host.Builtin(f.Key)
