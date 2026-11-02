@@ -164,6 +164,9 @@ func (rc *rowsCtx) fiscalStart() string                     { return rc.bind(int
 func (rc *rowsCtx) filter() bool                            { return false }
 func (rc *rowsCtx) label(e expr) string                     { return rc.r.c.textOf(rc.r.s, e) }
 func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(rc, rc.r, n, at) }
+func (rc *rowsCtx) currencySQL(cur currency) string {
+	return currencyCode(rc, rc.r.c.app, cur, func(key string) string { return "w." + key })
+}
 
 // hoist computes a running value a lookup reads below the detail select.
 // Only a detail row has one (inside a total a running value is refused).

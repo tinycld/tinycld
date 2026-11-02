@@ -1,7 +1,9 @@
 import { appHref } from '@tinycld/core/lib/org-routes'
 import { isIsoDay } from './dates'
 import { DEFAULT_DISPLAY, type DisplayOptions } from './format'
+import { centsFromText, textFromCents } from './money'
 import {
+    amountValue,
     defaultValueOf,
     isDateParam,
     type ParamValue,
@@ -54,7 +56,20 @@ export function encodeParamValue(def: ParamDef, value: ParamValue): string {
             return value.text
         case 'number':
             return String(value.number)
+        case 'amount':
+            return value.currency === ''
+                ? textFromCents(value.cents)
+                : `${textFromCents(value.cents)} ${value.currency}`
     }
+}
+
+// An amount is written "1500.00 USD", or "1500.00" in any currency.
+const AMOUNT_TEXT = /^(\S+)(?: ([A-Z]{3}))?$/
+
+function decodeAmount(raw: string): ParamValue | null {
+    const match = AMOUNT_TEXT.exec(raw)
+    const cents = match ? centsFromText(match[1]) : null
+    return match && cents !== null ? amountValue(cents, match[2] ?? '') : null
 }
 
 function jsonList(raw: string): unknown {
@@ -77,6 +92,7 @@ export function decodeParamValue(def: ParamDef, raw: string): ParamValue | null 
     }
     if (def.type === 'choice') return valueFromJson(def, def.multiple ? jsonList(raw) : raw)
     if (def.type === 'number') return raw.trim() === '' ? null : valueFromJson(def, Number(raw))
+    if (def.type === 'amount') return decodeAmount(raw)
     return valueFromJson(def, raw)
 }
 

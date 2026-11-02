@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import type { SpecNode } from '../../spec'
 import {
     askParamFor,
-    centsFromText,
     conditionProblems,
     emptyCondition,
     filterToNode,
@@ -11,7 +10,6 @@ import {
     opsFor,
     opsShownFor,
     paramsInGroup,
-    textFromCents,
 } from '../filter'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
@@ -47,10 +45,6 @@ describe('conditions', () => {
         )
         const condition = group.items[0]
         expect(condition?.kind === 'condition' && condition.value).toBe('1234.56')
-        expect(centsFromText('1234.5')).toBe(123450)
-        expect(centsFromText('-0.07')).toBe(-7)
-        expect(centsFromText('12.345')).toBeNull()
-        expect(textFromCents(-7)).toBe('-0.07')
     })
 
     it('keeps a date comparison of another shape as a fixed part', () => {

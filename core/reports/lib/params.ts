@@ -1,4 +1,5 @@
 import { dayWords, isIsoDay, rangeChipText, rangeWords, shortDay } from './dates'
+import { formatMoney } from './money'
 import type { ParamDef } from './spec'
 import type { ResolvedParam } from './types'
 
@@ -55,6 +56,8 @@ export type ParamValue =
     | { kind: 'choice'; values: string[] }
     | { kind: 'text'; text: string }
     | { kind: 'number'; number: number }
+    // Whole cents in a currency; currency '' is an amount in any currency.
+    | { kind: 'amount'; cents: number; currency: string }
 
 /** The values the reader set; a param that is not here takes its default, or is unset. */
 export type ParamValues = Readonly<Record<string, ParamValue>>
@@ -77,6 +80,26 @@ function presetValue(def: ParamDef, raw: unknown): ParamValue | null {
     if (!isRecord(raw) || Object.keys(raw).length !== 1) return null
     const preset = presetsFor(def).find(p => p === raw.preset)
     return preset ? { kind: 'preset', preset } : null
+}
+
+const CURRENCY_CODE = /^[A-Z]{3}$/
+
+/** An amount in a currency, or with currency '' in any: null for cents that are not whole. */
+export function amountValue(cents: number, currency: string): ParamValue | null {
+    if (!Number.isSafeInteger(cents)) return null
+    if (currency !== '' && !CURRENCY_CODE.test(currency)) return null
+    return { kind: 'amount', cents, currency }
+}
+
+// The engine's amount JSON (params.go amountValue): whole cents, or
+// { amount, currency } with the currency optional.
+function amountFromJson(raw: unknown): ParamValue | null {
+    if (typeof raw === 'number') return amountValue(raw, '')
+    if (!isRecord(raw) || typeof raw.amount !== 'number') return null
+    const keys = Object.keys(raw)
+    if (keys.length === 1) return amountValue(raw.amount, '')
+    if (keys.length !== 2 || typeof raw.currency !== 'string' || raw.currency === '') return null
+    return amountValue(raw.amount, raw.currency)
 }
 
 export function rangeValue(from: string, to: string): ParamValue | null {
@@ -119,6 +142,8 @@ export function valueFromJson(def: ParamDef, raw: unknown): ParamValue | null {
             return typeof raw === 'number' && Number.isFinite(raw)
                 ? { kind: 'number', number: raw }
                 : null
+        case 'amount':
+            return amountFromJson(raw)
     }
 }
 
@@ -137,6 +162,10 @@ export function valueToJson(def: ParamDef, value: ParamValue): unknown {
             return value.text
         case 'number':
             return value.number
+        case 'amount':
+            return value.currency === ''
+                ? value.cents
+                : { amount: value.cents, currency: value.currency }
     }
 }
 
@@ -234,7 +263,15 @@ export function valueText(
             return `“${value.text}”`
         case 'number':
             return String(value.number)
+        case 'amount':
+            return amountText(value.cents, value.currency)
     }
+}
+
+// The amount with its currency code before it ("USD 1,500.00"), the amount alone in any currency.
+function amountText(cents: number, currency: string): string {
+    const amount = formatMoney(cents, '')
+    return currency === '' ? amount : `${currency} ${amount}`
 }
 
 export function chipText(

@@ -77,6 +77,27 @@ describe('the view URL', () => {
         expect(parseViewOptions(DEFS, { 'p-period': '2026-03-31..2026-01-01' }).params).toEqual({})
     })
 
+    it('writes an amount as the amount and its currency', () => {
+        const BUDGET: ParamDef = { id: 'b', type: 'amount' }
+        const budget = { kind: 'amount', cents: 150000, currency: 'USD' } as const
+        const parsed = parseViewOptions([BUDGET], { 'p-b': '1500.00 USD' })
+        expect(parsed.params.b).toEqual(budget)
+        expect(serializeViewOptions([BUDGET], parsed)['p-b']).toBe('1500.00 USD')
+        expect(parseViewOptions([BUDGET], { 'p-b': '12' }).params.b).toEqual({
+            kind: 'amount',
+            cents: 1200,
+            currency: '',
+        })
+        expect(
+            serializeViewOptions([BUDGET], {
+                params: { b: { kind: 'amount', cents: 1200, currency: '' } },
+                display: DEFAULT_DISPLAY,
+            })['p-b']
+        ).toBe('12.00')
+        for (const bad of ['12 usd', '12.345 USD', 'USD', '1 2 USD', ''])
+            expect(parseViewOptions([BUDGET], { 'p-b': bad }).params).toEqual({})
+    })
+
     it('builds a full link the reader can copy', () => {
         const link = reportLink('https://acme.example', 'r1', DEFS, {
             params: { name: { kind: 'text', text: 'Acme' } },

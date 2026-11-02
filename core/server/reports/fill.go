@@ -156,3 +156,8 @@ func (f *fillCtx) record(group string, p Path, at string) (expr, error) {
 }
 
 func (f *fillCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(f, f.r, n, at) }
+
+// currencySQL reads a currency key on the parent row p, as col reads its keys.
+func (f *fillCtx) currencySQL(cur currency) string {
+	return currencyCode(f, f.r.c.app, cur, func(key string) string { return "p." + key })
+}

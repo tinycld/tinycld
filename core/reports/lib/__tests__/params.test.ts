@@ -134,6 +134,40 @@ describe('chip text', () => {
     })
 })
 
+describe('amount params', () => {
+    const BUDGET: ParamDef = { id: 'b', type: 'amount', label: 'Budget' }
+    const budget = { kind: 'amount', cents: 150000, currency: 'USD' } as const
+
+    it('reads cents in a currency, or in any currency', () => {
+        expect(valueFromJson(BUDGET, { amount: 150000, currency: 'USD' })).toEqual(budget)
+        expect(valueFromJson(BUDGET, 1200)).toEqual({ kind: 'amount', cents: 1200, currency: '' })
+        expect(valueFromJson(BUDGET, { amount: 1200 })).toEqual({
+            kind: 'amount',
+            cents: 1200,
+            currency: '',
+        })
+    })
+
+    it('refuses what the engine refuses', () => {
+        expect(valueFromJson(BUDGET, '12')).toBeNull()
+        expect(valueFromJson(BUDGET, { amount: 1.5, currency: 'USD' })).toBeNull()
+        expect(valueFromJson(BUDGET, { amount: 100, currency: 'usd' })).toBeNull()
+        expect(valueFromJson(BUDGET, { amount: 100, rate: 2 })).toBeNull()
+    })
+
+    it('writes the JSON the run endpoint reads', () => {
+        expect(valueToJson(BUDGET, budget)).toEqual({ amount: 150000, currency: 'USD' })
+        expect(valueToJson(BUDGET, { kind: 'amount', cents: 1200, currency: '' })).toBe(1200)
+    })
+
+    it('shows the currency and the amount on the chip', () => {
+        expect(chipText(BUDGET, budget, undefined)).toBe('Budget: USD 1,500.00')
+        expect(chipText(BUDGET, { kind: 'amount', cents: -1200, currency: '' }, undefined)).toBe(
+            'Budget: -12.00'
+        )
+    })
+})
+
 describe('empty state', () => {
     const range = { id: 'period', type: 'dateRange' as const, from: '2026-10-01', to: '2026-10-31' }
 

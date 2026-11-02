@@ -117,16 +117,6 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	c.currencies, c.currencyOf, c.valueCur, c.valueCurErr = nil, map[string]currency{}, map[string]string{}, map[string]error{}
 	r := &rowsCTE{c: c, s: s, root: newScope(s, c.p.base), raw: map[string]string{}, byExpr: map[string]string{}}
 	r.add("__id", q(r.root.alias, "id"))
-	if f := c.p.spec.Filter; f != nil {
-		e, err := compileFormula(r.join(true), f, "filter")
-		if err != nil {
-			return nil, err
-		}
-		if e.typ != Bool {
-			return nil, invalid("filter", "the filter is a condition")
-		}
-		r.filter = e.sql
-	}
 	c.groupTargets = make([]*Source, len(c.p.groups))
 	c.groupOptions, c.groupShown = make([][]Option, len(c.p.groups)), make([]bool, len(c.p.groups))
 	for i, g := range c.p.groups {
@@ -183,6 +173,18 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	}
 	if d := c.p.spec.Detail; d != nil {
 		r.formulaCurrencies(d.Label)
+	}
+	// The filter compiles once the currency keys are known, so an amount it
+	// reads by path has the key a column of it has (joinCtx.amountCurrency).
+	if f := c.p.spec.Filter; f != nil {
+		e, err := compileFormula(r.join(true), f, "filter")
+		if err != nil {
+			return nil, err
+		}
+		if e.typ != Bool {
+			return nil, invalid("filter", "the filter is a condition")
+		}
+		r.filter = e.sql
 	}
 	r.valueCurrencies()
 	r.pivotKey()

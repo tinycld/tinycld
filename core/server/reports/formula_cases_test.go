@@ -98,6 +98,11 @@ func (c *tableCtx) filter() bool { return false }
 // label: the formula table reads no records.
 func (c *tableCtx) label(e expr) string { return e.sql }
 
+// currencySQL: the table has no currency keys.
+func (c *tableCtx) currencySQL(cur currency) string {
+	return currencyCode(c, nil, cur, func(string) string { return "NULL" })
+}
+
 // record reads a field of the case's record, whichever group it names.
 func (c *tableCtx) record(_ string, p Path, at string) (expr, error) {
 	if len(p) != 1 || p[0].Field == "" {
@@ -216,6 +221,9 @@ func (l *tableLookupCtx) bind(v any) string   { return l.outer.bind(v) }
 func (l *tableLookupCtx) fiscalStart() string { return l.outer.fiscalStart() }
 func (l *tableLookupCtx) filter() bool        { return false }
 func (l *tableLookupCtx) label(e expr) string { return l.outer.label(e) }
+func (l *tableLookupCtx) currencySQL(cur currency) string {
+	return l.outer.currencySQL(cur)
+}
 
 // jsonValue turns a decoded case value into what SQLite binds: a whole
 // number binds as an integer.

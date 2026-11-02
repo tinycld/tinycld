@@ -11,7 +11,8 @@ import (
 
 // Param types. date and asOf hold one day (asOf offers as-of presets),
 // dateRange a from and a to day, choice one option (or several with
-// Multiple), text a string, number a number.
+// Multiple), text a string, number a number, amount a whole number of cents
+// in a currency (or in any currency).
 const (
 	ParamDate      = "date"
 	ParamAsOf      = "asOf"
@@ -19,6 +20,7 @@ const (
 	ParamChoice    = "choice"
 	ParamText      = "text"
 	ParamNumber    = "number"
+	ParamAmount    = "amount"
 )
 
 const (
@@ -45,10 +47,12 @@ type paramValue struct {
 	typ      string
 	multiple bool
 	unset    bool
-	value    any      // a day, a text, a number or one choice
+	value    any      // a day, a text, a number, an amount's cents or one choice
 	list     []string // a multiple choice
 	from     string   // a date range
 	to       string
+	// currency is an amount's currency code; "" is an amount in any currency.
+	currency string
 }
 
 // periodContext is what a preset is resolved against.
@@ -73,7 +77,7 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 		}
 		seen[d.ID] = true
 		switch d.Type {
-		case ParamDate, ParamAsOf, ParamDateRange, ParamText, ParamNumber:
+		case ParamDate, ParamAsOf, ParamDateRange, ParamText, ParamNumber, ParamAmount:
 			if len(d.Options) > 0 || d.OptionsFrom != nil || d.Multiple {
 				return invalid(at, "only a choice param has options")
 			}
@@ -139,7 +143,11 @@ func resolvedParams(defs []ParamDef, values map[string]paramValue) []ResolvedPar
 	for _, d := range defs {
 		v := values[d.ID]
 		rp := ResolvedParam{ID: d.ID, Type: d.Type, Unset: v.unset}
-		if !v.unset {
+		switch {
+		case v.unset:
+		case v.typ == ParamAmount:
+			rp.Value = map[string]any{"amount": v.value, "currency": v.currency}
+		default:
 			rp.Value, rp.List, rp.From, rp.To = v.value, v.list, v.from, v.to
 		}
 		out = append(out, rp)
@@ -184,10 +192,44 @@ func parseParam(d ParamDef, raw json.RawMessage, pc periodContext, at string) (p
 			return out, invalid(at, "the value is a number")
 		}
 		out.value = numberValue(n)
+	case ParamAmount:
+		cents, cur, ok := amountValue(v)
+		if !ok {
+			return out, invalid(at, `an amount is a whole number of cents, or {"amount": cents, "currency": "USD"}`)
+		}
+		out.value, out.currency = cents, cur
 	case ParamChoice:
 		return choiceValue(d, v, at)
 	}
 	return out, nil
+}
+
+var currencyCodeRe = regexp.MustCompile(`^[A-Z]{3}$`)
+
+// amountValue reads an amount param's value: whole cents in any currency, or
+// {"amount": cents, "currency": code} (the amount alone is in any currency).
+func amountValue(v any) (int64, string, bool) {
+	whole := func(n any) (int64, bool) {
+		num, ok := n.(json.Number)
+		if !ok {
+			return 0, false
+		}
+		i, err := num.Int64()
+		return i, err == nil
+	}
+	if i, ok := whole(v); ok {
+		return i, "", true
+	}
+	m, ok := v.(map[string]any)
+	if !ok || len(m) > 2 {
+		return 0, "", false
+	}
+	i, ok := whole(m["amount"])
+	cur, _ := m["currency"].(string)
+	if !ok || (len(m) == 2 && !currencyCodeRe.MatchString(cur)) {
+		return 0, "", false
+	}
+	return i, cur, true
 }
 
 func choiceValue(d ParamDef, v any, at string) (paramValue, *SpecError) {
@@ -366,6 +408,16 @@ func paramExpr(c fctx, v paramValue) expr {
 			}
 			return expr{sql: bindList(c, parts), typ: Text, list: true, unset: v.unset}
 		}
+	case ParamAmount:
+		if v.unset {
+			return expr{sql: "NULL", typ: Money, unset: true}
+		}
+		e := expr{sql: c.bind(v.value), typ: Money}
+		// An amount in any currency has none, as a plain number has none.
+		if v.currency != "" {
+			e.cur = currency{param: v.currency, id: "param:" + v.currency}
+		}
+		return e
 	}
 	typ := map[string]FieldType{ParamDate: Date, ParamAsOf: Date, ParamText: Text, ParamNumber: Number, ParamChoice: Text}[v.typ]
 	if v.unset {

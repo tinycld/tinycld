@@ -54,6 +54,11 @@ type joinCtx struct {
 	// records reads a group's record by its group key, which w holds once its
 	// group keys are in: a carried currency's key is read so (valueCurrencies).
 	records bool
+	// conditions is compiling a filter's, an exists' or a fill's where, or a
+	// column one of them reads: an amount there carries its currency, which an
+	// amount param is compared in (currencyGuard). A group key's amount does
+	// not, so it groups by no currency of its own.
+	conditions bool
 }
 
 func (j *joinCtx) col(id, at string) (expr, error) {
@@ -69,13 +74,16 @@ func (j *joinCtx) col(id, at string) (expr, error) {
 		return expr{}, err
 	}
 	defer done()
-	if j.records && cp.path == nil && cp.nest == 0 && cp.col.Aggregate == "" {
+	if (j.records || j.carries()) && cp.path == nil && cp.nest == 0 && cp.col.Aggregate == "" {
 		inner := j.r.join(false)
-		inner.visiting, inner.records = j.visiting, true
+		inner.visiting, inner.records, inner.conditions = j.visiting, j.records, j.carries()
 		return compileFormula(inner, cp.col.Formula, cp.at+".formula")
 	}
 	return j.r.rowValue(cp, at, j.visiting)
 }
+
+// carries is true where an amount carries its currency (conditions).
+func (j *joinCtx) carries() bool { return j.isFilter || j.conditions }
 
 func (j *joinCtx) path(p Path, at string) (expr, error) {
 	bound, err := bindValuePath(j.r.c.p.app, j.src, p, at, pathValue)
@@ -83,7 +91,32 @@ func (j *joinCtx) path(p Path, at string) (expr, error) {
 		return expr{}, err
 	}
 	hops := append(append([]hopPlan{}, j.prefix...), bound.hops...)
-	return j.sc.value(&pathPlan{hops: hops, field: bound.field, target: bound.target}), nil
+	e := j.sc.value(&pathPlan{hops: hops, field: bound.field, target: bound.target})
+	if j.carries() {
+		e = withCurrency(e, j.amountCurrency(hops, bound))
+	}
+	return e, nil
+}
+
+// amountCurrency is the currency of a money path read in a condition: its
+// currency field, by the currency key w keeps for it when a column reads it
+// too (so the two combine), else read beside it; or its source's fixed
+// currency.
+func (j *joinCtx) amountCurrency(hops []hopPlan, bound *pathPlan) currency {
+	f := bound.field
+	switch {
+	case f.Type != Money:
+		return currency{}
+	case f.Currency != "":
+		sql := j.sc.value(&pathPlan{hops: hops, field: bound.src.field(f.Currency), src: bound.src}).sql
+		if name, ok := j.r.byExpr[sql]; ok && j.sc == j.r.root {
+			return currency{key: name}
+		}
+		return currency{sql: sql, id: "row:" + sql}
+	case bound.src.Currency != nil:
+		return currency{fixed: bound.src}
+	}
+	return currency{}
 }
 
 // record is refused: the filter, a group key and a fill read base rows
@@ -148,3 +181,9 @@ func (j *joinCtx) fiscalStart() string                     { return j.bind(int64
 func (j *joinCtx) filter() bool                            { return j.isFilter }
 func (j *joinCtx) label(e expr) string                     { return j.r.c.textOf(j.sc.s, e) }
 func (j *joinCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(j, j.r, n, at) }
+
+// currencySQL reads a currency key by its expression: the context compiles
+// inside w's own select.
+func (j *joinCtx) currencySQL(cur currency) string {
+	return currencyCode(j, j.r.c.app, cur, func(key string) string { return j.r.inner("w." + key) })
+}

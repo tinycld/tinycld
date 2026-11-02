@@ -22,7 +22,15 @@ export type RowKind = 'detail' | 'group' | 'subtotal' | 'computed' | 'total'
 
 export type CellValue = number | string | boolean | null
 
-export const PARAM_TYPES = ['date', 'asOf', 'dateRange', 'choice', 'text', 'number'] as const
+export const PARAM_TYPES = [
+    'date',
+    'asOf',
+    'dateRange',
+    'choice',
+    'text',
+    'number',
+    'amount',
+] as const
 export type ParamType = (typeof PARAM_TYPES)[number]
 
 export interface SelectOption {
@@ -104,7 +112,7 @@ export interface ResolvedParam {
     id: string
     type: ParamType
     unset?: boolean
-    value?: string | number
+    value?: string | number | { amount: number; currency: string }
     list?: string[]
     from?: string
     to?: string

@@ -307,3 +307,7 @@ func (l *lookupCtx) bind(v any) string   { return l.r.s.bind(v) }
 func (l *lookupCtx) fiscalStart() string { return l.bind(int64(l.r.c.fiscal)) }
 func (l *lookupCtx) filter() bool        { return l.inWhere }
 func (l *lookupCtx) label(e expr) string { return l.r.c.textOf(l.r.s, e) }
+
+// currencySQL reads a currency key on the report's row, as a column does:
+// through outer.
+func (l *lookupCtx) currencySQL(cur currency) string { return l.outer.currencySQL(cur) }

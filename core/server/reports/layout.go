@@ -271,7 +271,7 @@ func (lc *layoutCtx) sectionCurrency(id string, slot sectionSlot) currency {
 func (lc *layoutCtx) carriedCell(cp *colPlan, e expr, idx int) string {
 	fixed := e.cur.fixed
 	if fixed == nil || lc.c.sectionCur[cp.col.ID].same(e.cur) || lc.c.app == nil {
-		return lc.c.carriedCell(cp, e, idx)
+		return lc.c.carriedCell(lc.s, cp, e, idx)
 	}
 	lc.c.carried[cp.col.ID] = true
 	return fmt.Sprintf("%s AS vcur%d", lc.s.bind(fixed.Currency(lc.c.app)), idx)
@@ -357,6 +357,11 @@ func (lc *layoutCtx) bind(v any) string   { return lc.s.bind(v) }
 func (lc *layoutCtx) fiscalStart() string { return lc.bind(int64(lc.c.fiscal)) }
 func (lc *layoutCtx) filter() bool        { return false }
 func (lc *layoutCtx) label(e expr) string { return lc.c.textOf(lc.s, e) }
+
+// currencySQL reads a currency key from the computed row's currency (cur).
+func (lc *layoutCtx) currencySQL(cur currency) string {
+	return currencyCode(lc, lc.c.app, cur, func(key string) string { return "cur." + key })
+}
 
 // layoutRows emits the rows for one currency: each section's group row
 // (titled, always with its subtotal) and each computed row, in the layout's

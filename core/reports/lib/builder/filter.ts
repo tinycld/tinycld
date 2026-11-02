@@ -1,5 +1,6 @@
 import { z } from '@tinycld/core/ui/form'
 import { isIsoDay } from '../dates'
+import { centsFromText, textFromCents } from '../money'
 import { type ParamDef, type SpecHop, type SpecNode, specHopSchema, specNodeSchema } from '../spec'
 import type { CatalogField, FieldType } from '../types'
 import { type Catalog, describePath, sourceAtLinks } from './columns'
@@ -147,19 +148,6 @@ export function opLabel(op: ConditionOp, type: FieldType): string {
 
 export function needsValue(op: ConditionOp): boolean {
     return !['isEmpty', 'notEmpty', 'isTrue', 'isFalse'].includes(op)
-}
-
-export function centsFromText(text: string): number | null {
-    const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(text.trim())
-    if (!match) return null
-    const cents = Number(match[2]) * 100 + Number((match[3] ?? '').padEnd(2, '0'))
-    return match[1] ? -cents : cents
-}
-
-export function textFromCents(cents: number): string {
-    const magnitude = Math.abs(cents)
-    const text = `${Math.floor(magnitude / 100)}.${String(magnitude % 100).padStart(2, '0')}`
-    return cents < 0 ? `-${text}` : text
 }
 
 /** The param an asked value becomes, or null when the field cannot be asked (R16). */

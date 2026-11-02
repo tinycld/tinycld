@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { formatMoney, MAX_STORED_AMOUNT, roundHalfAwayFromZero } from '../money'
+import {
+    centsFromText,
+    formatMoney,
+    MAX_STORED_AMOUNT,
+    roundHalfAwayFromZero,
+    textFromCents,
+} from '../money'
+
+describe('amount text', () => {
+    it('reads and writes whole cents exactly', () => {
+        expect(centsFromText('1234.5')).toBe(123450)
+        expect(centsFromText('-0.07')).toBe(-7)
+        expect(centsFromText('12.345')).toBeNull()
+        expect(textFromCents(-7)).toBe('-0.07')
+    })
+})
 
 describe('formatMoney', () => {
     it('formats whole cents with the currency layout', () => {

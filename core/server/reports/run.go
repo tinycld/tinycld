@@ -443,7 +443,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			cells = append(cells, fmt.Sprintf("%s AS v%d", cellSQL(e), idx))
 			ref, _ := c.columnLabel(lv.labels, cp, e)
 			labels = append(labels, ref.cells(idx)...)
-			carried = append(carried, c.carriedCell(cp, e, idx))
+			carried = append(carried, c.carriedCell(s, cp, e, idx))
 			c.levelTypes[cp.col.ID] = e.typ
 			if n == 1 {
 				c.sectionCur[cp.col.ID] = e.cur
@@ -673,7 +673,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			return "", nil, err
 		}
 		ref, _ := c.columnLabel(labels, cp, e)
-		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(cp, e, idx))
+		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(r.s, cp, e, idx))
 		sel = append(sel, ref.cells(idx)...)
 		c.detailTypes[cp.col.ID] = e.typ
 		if cp.path == nil {
@@ -696,14 +696,19 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 }
 
 // carriedCell is the currency a column's value e carries on a row (a record's
-// or a looked-up row's own, vcur<idx>), NULL when it carries none. A column
-// that carries one has the cell <id>@currency.
-func (c *compiler) carriedCell(cp *colPlan, e expr, idx int) string {
-	if e.cur.sql == "" {
+// or a looked-up row's own, or an amount param's code: vcur<idx>), NULL when
+// it carries none. A column that carries one has the cell <id>@currency.
+func (c *compiler) carriedCell(s *stmt, cp *colPlan, e expr, idx int) string {
+	cur := e.cur.sql
+	if e.cur.param != "" {
+		// An amount param's currency is its own posted code.
+		cur = s.bind(e.cur.param)
+	}
+	if cur == "" {
 		return noCarriedCell(idx)
 	}
 	c.carried[cp.col.ID] = true
-	return fmt.Sprintf("%s AS vcur%d", e.cur.sql, idx)
+	return fmt.Sprintf("%s AS vcur%d", cur, idx)
 }
 
 func noCarriedCell(idx int) string { return fmt.Sprintf("NULL AS vcur%d", idx) }

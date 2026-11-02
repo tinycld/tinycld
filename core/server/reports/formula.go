@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // expr is one compiled formula node: its SQL and what the compiler knows
@@ -52,15 +54,18 @@ type expr struct {
 // A carried currency read inside a total is a currency key that keeps its id,
 // so it still combines with the same value read outside one. The zero value is
 // a value that is not money, or a section subtotal, which a layout reads in one
-// currency at a time.
+// currency at a time. param is an amount param's own currency code (R29): it
+// holds against another amount only where that amount's currency is the same
+// (currencyGuard).
 type currency struct {
 	key   string
 	fixed *Source
 	sql   string
 	id    string
+	param string
 }
 
-func (a currency) none() bool { return a.key == "" && a.fixed == nil && a.sql == "" }
+func (a currency) none() bool { return a.key == "" && a.fixed == nil && a.sql == "" && a.param == "" }
 
 // same is true for one currency source: one carried value, a key equals
 // itself, a fixed currency the same source's.
@@ -85,11 +90,20 @@ func withCurrency(e expr, cur currency) expr {
 }
 
 // combined is the currency of an amount made of values: refused when two of
-// them have different currencies, which would add EUR to USD cents.
+// them have different currencies, which would add EUR to USD cents. An amount
+// param's currency is known only when the report runs, so it is not refused
+// here: currencyGuard blanks the amount where it differs. It is the amount's
+// currency only when no other value has one.
 func combined(values []expr, at string) (currency, error) {
-	var out currency
+	var out, param currency
 	for _, v := range values {
-		if v.cur.none() {
+		switch {
+		case v.cur.param != "":
+			if param.none() {
+				param = v.cur
+			}
+			continue
+		case v.cur.none():
 			continue
 		}
 		if !out.none() && !out.same(v.cur) {
@@ -97,7 +111,64 @@ func combined(values []expr, at string) (currency, error) {
 		}
 		out = v.cur
 	}
+	if out.none() {
+		return param, nil
+	}
 	return out, nil
+}
+
+// currencyGuard is the condition under which an operation on values holds
+// when an amount param with a currency is among them (R29): the other
+// amounts' currency, or with none, the first param's, is each param's. ""
+// when no param with a currency meets another currency.
+func currencyGuard(c fctx, values []expr) string {
+	var codes []string
+	var other currency
+	for _, v := range values {
+		switch {
+		case v.cur.param != "":
+			if !slices.Contains(codes, v.cur.param) {
+				codes = append(codes, v.cur.param)
+			}
+		case !v.cur.none():
+			other = v.cur
+		}
+	}
+	var against string
+	switch {
+	case len(codes) == 0:
+		return ""
+	case !other.none():
+		against = c.currencySQL(other)
+	case len(codes) > 1:
+		against, codes = c.bind(codes[0]), codes[1:]
+	default:
+		return ""
+	}
+	conds := make([]string, len(codes))
+	for i, code := range codes {
+		conds[i] = against + " IS " + c.bind(code)
+	}
+	return strings.Join(conds, " AND ")
+}
+
+// currencyCode is the SQL of a money value's currency code where c compiles,
+// with key the SQL of a currency key there: a fixed currency's code ("" when
+// dry), a carried currency's subquery, an amount param's own code.
+func currencyCode(c fctx, app core.App, cur currency, key func(string) string) string {
+	switch {
+	case cur.key != "":
+		return key(cur.key)
+	case cur.fixed != nil && app == nil:
+		return c.bind("")
+	case cur.fixed != nil:
+		return c.bind(cur.fixed.Currency(app))
+	case cur.sql != "":
+		return cur.sql
+	case cur.param != "":
+		return c.bind(cur.param)
+	}
+	return "NULL"
 }
 
 // fctx says what a formula's leaves and context-bound operators mean where
@@ -127,6 +198,9 @@ type fctx interface {
 	// points at, empty text for a blank link or a record the reader cannot
 	// see.
 	label(e expr) string
+	// currencySQL is the SQL of a money value's currency code on the row
+	// being compiled (currencyCode).
+	currencySQL(cur currency) string
 }
 
 // aggregate and window receive the operator node's path; the value they
@@ -348,6 +422,12 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if e.cur, err = combined(args, at); err != nil {
 			return expr{}, err
 		}
+	}
+	// An amount param holds only against amounts of its currency (R29): a
+	// condition is blank (false) and an amount or a ratio blank where they
+	// differ, so a USD budget never compares with EUR cents.
+	if guard := currencyGuard(c, args); guard != "" {
+		e.sql = "(CASE WHEN " + guard + " THEN " + e.sql + " END)"
 	}
 	if c.filter() && conditionOps[n.Op] && slices.ContainsFunc(args, func(a expr) bool { return a.unset }) {
 		return unsetCondition, nil
