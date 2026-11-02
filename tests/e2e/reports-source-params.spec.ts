@@ -13,6 +13,7 @@ import {
     pressToolbar,
     rowOf,
     SALES_SOURCE,
+    SHIPPED_TITLE,
     STUB_HEADING,
     startReport,
     TEAM_TOTALS_TITLE,
@@ -51,6 +52,16 @@ async function openTeamTotals(p: Page) {
     await expect(p.getByTestId('report-title')).toHaveText(TEAM_TOTALS_TITLE)
 }
 
+// The Published tab lists the stub's published shipped report and not the
+// unpublished one. The published row is waited for first, so the count of the
+// unpublished one is read from a loaded list, not from one still loading.
+async function expectNotPublished(p: Page) {
+    await openReportsHub(p)
+    await p.getByTestId('reports-hub-tab-published').click()
+    await expect(hubRow(p, SHIPPED_TITLE)).toBeVisible()
+    await expect(hubRow(p, TEAM_TOTALS_TITLE)).toHaveCount(0)
+}
+
 test.describe('params from a source, headings and unpublished shipped reports', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
@@ -66,23 +77,11 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         })
         try {
             await loginAsShippedOwner(page)
-            await openReportsHub(page)
-            await page.getByTestId('reports-hub-tab-published').click()
-            await expect(page.getByTestId('reports-hub-tab-published')).toHaveAttribute(
-                'aria-selected',
-                'true'
-            )
-            await expect(hubRow(page, TEAM_TOTALS_TITLE)).toHaveCount(0)
+            await expectNotPublished(page)
             await openTeamTotals(page)
             await expect(page.getByTestId('report-business-name')).toHaveText(STUB_HEADING)
 
-            await openReportsHub(c)
-            await c.getByTestId('reports-hub-tab-published').click()
-            await expect(c.getByTestId('reports-hub-tab-published')).toHaveAttribute(
-                'aria-selected',
-                'true'
-            )
-            await expect(hubRow(c, TEAM_TOTALS_TITLE)).toHaveCount(0)
+            await expectNotPublished(c)
 
             await pressToolbar(page, 'report-share-open', 'Share')
             await page.getByTestId('report-share-search').fill(readerName)
@@ -149,6 +148,60 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         await expect
             .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
             .toBeLessThanOrEqual(390)
+    })
+
+    test('scrolling to the end of the options loads the next page once, with no repeats', async ({
+        page,
+    }) => {
+        await loginAsShippedOwner(page)
+        const stem = uniqueName('Page')
+        const names = Array.from(
+            { length: 12 },
+            (_, i) => `${stem} T${String(i + 1).padStart(2, '0')}`
+        )
+        await openReportStub(page)
+        for (const name of names) await addTeam(page, name, 'north')
+        await openTeamTotals(page)
+
+        // The server pages by 50; the searched list asks for pages of 10 instead
+        // (the request's `limit`, which the server takes from 1 to 1000), so 12
+        // teams make two real pages joined by the server's `after` cursor. The
+        // next page is held until its spinner has been seen.
+        let release = () => {}
+        const held = new Promise<void>(resolve => {
+            release = resolve
+        })
+        const afters: string[] = []
+        await page.route('**/api/reports/param-options', async route => {
+            const body = route.request().postDataJSON()
+            if (body.search !== stem || body.values || body.limit) return route.continue()
+            if (body.after) {
+                afters.push(body.after)
+                await held
+            }
+            await route.continue({ postData: JSON.stringify({ ...body, limit: 10 }) })
+        })
+        await page.getByTestId('report-add-filter').click()
+        await page.getByTestId('report-add-filter-teams').click()
+        const picker = page.getByTestId('report-filter-picker')
+        await picker.getByTestId('report-filter-search').fill(stem)
+        const options = picker.locator('[data-testid^="report-filter-option-"]')
+        await expect(options).toHaveText(names.slice(0, 10))
+        expect(afters).toEqual([])
+
+        await picker.getByTestId('report-filter-options').hover()
+        await page.mouse.wheel(0, 2000)
+        await expect(picker.getByTestId('report-filter-more')).toBeVisible()
+        release()
+        await expect(options).toHaveText(names)
+        await expect(picker.getByTestId('report-filter-more')).toHaveCount(0)
+        expect(afters).toHaveLength(1)
+
+        // A team from the second page is picked like any other.
+        const last = names[names.length - 1] ?? ''
+        await picker.getByRole('checkbox', { name: last, exact: true }).click()
+        await picker.getByTestId('report-filter-apply').click()
+        await expect(page.getByTestId('report-param-teams')).toHaveText(`Teams: ${last}`)
     })
 
     test('a condition on a linked team picks a record, and Ask when run lists the teams', async ({

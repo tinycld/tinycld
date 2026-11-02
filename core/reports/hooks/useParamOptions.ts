@@ -74,13 +74,14 @@ function labelQueries(asks: readonly LabelAsk[]): LabelQuery[] {
 
 /**
  * The shown labels of chosen records and whole groups, per param, read under the
- * reader's rules: a record the reader cannot list gets no label.
+ * reader's rules: a record the reader cannot list gets no label. A param's labels
+ * are null while they are read (and while there is no source to read them from).
  */
 export function useParamOptionLabels(
     source: OptionsSource | null,
     asks: readonly LabelAsk[],
     params: Record<string, unknown>
-): ReadonlyMap<string, ChoiceLabels> {
+): ReadonlyMap<string, ChoiceLabels | null> {
     const queries = labelQueries(asks)
     const results = useQueries({
         queries: queries.map(q => ({
@@ -99,12 +100,17 @@ export function useParamOptionLabels(
         })),
     })
     const pagesByParam = new Map<string, ParamOptionsPage[]>()
+    const loading = new Set<string>()
     queries.forEach((q, i) => {
-        const page = results[i]?.data
-        if (page) pagesByParam.set(q.param, [...(pagesByParam.get(q.param) ?? []), page])
+        const result = results[i]
+        if (!result || result.isPending) loading.add(q.param)
+        if (result?.data) {
+            pagesByParam.set(q.param, [...(pagesByParam.get(q.param) ?? []), result.data])
+        }
     })
     return new Map(
         asks.map(ask => {
+            if (loading.has(ask.param)) return [ask.param, null] as const
             const pages = pagesByParam.get(ask.param)
             return [ask.param, pages ? labelsOfPages(pages) : NO_LABELS] as const
         })

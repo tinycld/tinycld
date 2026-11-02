@@ -1,9 +1,11 @@
 import { FormulaPlacesPick } from '@tinycld/core/components/forms-builder/FormulaEditor'
+import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { DateField } from '@tinycld/core/ui/forms/fields/DateField'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
 import { Switch } from '@tinycld/core/ui/switch'
+import { X } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
 import { useParamOptionLabels } from '../../hooks/useParamOptions'
 import { avgScaleFor, columnHint, MAX_PARAMS, nextColumnId } from '../../lib/builder/columns'
@@ -138,6 +140,44 @@ function chosenRecords(item: ConditionDraft): string[] {
     return item.value ? [item.value] : []
 }
 
+const LOADING_LABEL = 'Loading…'
+
+/**
+ * A picked record's shown label: "Loading…" while labels are read (null), the
+ * record's label, or (none) for a record the author can no longer list.
+ */
+function recordLabel(id: string, labels: ChoiceLabels | null | undefined): string {
+    if (!labels) return LOADING_LABEL
+    return labels.get(id) ?? BLANK_LINK_LABEL
+}
+
+function RecordChip({
+    label,
+    testID,
+    onPress,
+}: {
+    label: string
+    testID: string
+    onPress: () => void
+}) {
+    const color = useThemeColor('primary-foreground')
+    return (
+        <Pressable
+            testID={testID}
+            accessibilityRole="button"
+            accessibilityHint={`Removes ${label}`}
+            onPress={onPress}
+            className="flex-row items-center gap-1 rounded-full border border-primary bg-primary px-3"
+            style={TARGET_STYLE}
+        >
+            <Text numberOfLines={1} className="text-sm text-primary-foreground">
+                {label}
+            </Text>
+            <X size={14} color={color} />
+        </Pressable>
+    )
+}
+
 function RecordChips({
     isVisible,
     ids,
@@ -147,40 +187,30 @@ function RecordChips({
 }: {
     isVisible: boolean
     ids: readonly string[]
-    labels: ChoiceLabels | undefined
+    labels: ChoiceLabels | null | undefined
     testID: string
     onRemove: (id: string) => void
 }) {
     if (!isVisible) return null
-    const chips = ids.map(id => {
-        const label = labels?.get(id) ?? BLANK_LINK_LABEL
-        return (
-            <Pressable
-                key={id}
-                testID={`${testID}-${id}`}
-                accessibilityRole="button"
-                accessibilityHint={`Removes ${label}`}
-                onPress={() => onRemove(id)}
-                className="flex-row items-center gap-1 rounded-full border border-primary bg-primary px-3"
-                style={{ minHeight: REPORT_TAP_TARGET }}
-            >
-                <Text numberOfLines={1} className="text-sm text-primary-foreground">
-                    {label}
-                </Text>
-            </Pressable>
-        )
-    })
+    const chips = ids.map(id => (
+        <RecordChip
+            key={id}
+            label={recordLabel(id, labels)}
+            testID={`${testID}-${id}`}
+            onPress={() => onRemove(id)}
+        />
+    ))
     return <View className="flex-row flex-wrap gap-1.5">{chips}</View>
 }
 
 function triggerText(
     isMultiple: boolean,
     chosen: readonly string[],
-    labels: ChoiceLabels | undefined,
+    labels: ChoiceLabels | null | undefined,
     noun: string
 ): string {
     if (isMultiple || chosen.length === 0) return `Choose ${noun}`
-    return labels?.get(chosen[0] ?? '') ?? BLANK_LINK_LABEL
+    return recordLabel(chosen[0] ?? '', labels)
 }
 
 // A record on a link is picked from the linked source's records the reader may list

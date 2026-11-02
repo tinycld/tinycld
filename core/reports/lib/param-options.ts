@@ -12,7 +12,13 @@ import type { ParamOption, ParamOptionGroup, ParamOptionsPage } from './types'
 // The options of a choice param read from a source (POST /api/reports/param-options),
 // as the picker and the chips show them.
 
-export type OptionSection = { group: ParamOptionGroup | null; options: ParamOption[] }
+export type OptionSection = {
+    /** The group whose head the section has; null with no head, or for Other. */
+    group: ParamOptionGroup | null
+    /** The options of groups the server did not list. */
+    isOther?: true
+    options: ParamOption[]
+}
 
 const NUMERIC_LABELS = new Set(['number', 'money', 'percent'])
 
@@ -29,28 +35,38 @@ export function optionText(option: ParamOption | ParamOptionGroup): string {
     return typedLabelText(type, value, option.currency ?? '', DEFAULT_DISPLAY)
 }
 
-/** The loaded options in sections: ungrouped first, then each group in the server's order. */
-export function optionSections(pages: readonly ParamOptionsPage[]): OptionSection[] {
+/**
+ * The loaded options in sections. An ungrouped param's options are one section with
+ * no head. A grouped param's options sit under their groups in the server's order;
+ * an option with no group is in the blank group ("" value, which the server lists
+ * first). The options of a group the server did not list (past the 200 it lists,
+ * `groupsCut`) have no label to head them, so they share one Other section.
+ */
+export function optionSections(
+    pages: readonly ParamOptionsPage[],
+    isGrouped: boolean
+): OptionSection[] {
     const options = pages.flatMap(page => page.options)
-    // Groups come with the first page; a group seen twice is one head (F9). An
-    // option of a group no page listed (past the 200 the server lists) gets a head
-    // of its own, named by its value.
+    if (!isGrouped) return options.length > 0 ? [{ group: null, options }] : []
+    // Groups come with the first page; a group seen twice is one head (F9).
     const groups = new Map<string, ParamOptionGroup>()
     for (const group of pages.flatMap(page => page.groups)) {
         if (!groups.has(group.value)) groups.set(group.value, group)
     }
-    for (const option of options) {
-        if (option.group && !groups.has(option.group)) {
-            groups.set(option.group, { value: option.group, label: option.group })
-        }
-    }
-    const loose = options.filter(o => !o.group)
-    const sections: OptionSection[] = loose.length > 0 ? [{ group: null, options: loose }] : []
+    const groupOf = (option: ParamOption) => option.group ?? ''
+    const sections: OptionSection[] = []
     for (const group of groups.values()) {
-        const inGroup = options.filter(o => o.group === group.value)
+        const inGroup = options.filter(o => groupOf(o) === group.value)
         if (inGroup.length > 0) sections.push({ group, options: inGroup })
     }
+    const other = options.filter(o => !groups.has(groupOf(o)))
+    if (other.length > 0) sections.push({ group: null, isOther: true, options: other })
     return sections
+}
+
+/** Whether a choice from a source has option groups (optionsFrom.group). */
+export function hasOptionGroups(def: ParamDef): boolean {
+    return (def.optionsFrom?.group?.length ?? 0) > 0
 }
 
 /** A group picked whole (or unpicked): the server expands it at run time (R30). */

@@ -33,7 +33,7 @@ import {
 } from '../lib/rows'
 import type { RunBody } from '../lib/run-client'
 import { type BrokenMark, brokenProblems, type ParamDef, type ReportSpec } from '../lib/spec'
-import type { Notice, ResolvedParam, ResultColumn, ResultRow } from '../lib/types'
+import type { Notice, ResolvedParam, ResultColumn, ResultRow, RunResult } from '../lib/types'
 import {
     parseViewOptions,
     reportLink,
@@ -90,6 +90,14 @@ function runBody(
     return source.kind === 'saved'
         ? { reportId: source.reportId, ...common }
         : { spec: source.spec, ...common }
+}
+
+// The source's heading (E9), else the organization's name. Which one is known only
+// once a run answers, so the line stays empty until then rather than showing the
+// organization's name and then changing.
+function headingOf(result: RunResult | undefined, orgName: string | undefined): string {
+    if (!result) return ''
+    return result.heading || orgName || ''
 }
 
 // A param's options are read against what the view runs: the saved report, or the draft.
@@ -235,8 +243,7 @@ export function useReportView(input: ReportViewInput) {
         notices: run.result?.notices ?? NO_NOTICES,
         isUpdating: run.isUpdating,
         breakpoint,
-        // The source's heading (E9), else the organization's name.
-        heading: run.result?.heading || org?.name || '',
+        heading: headingOf(run.result, org?.name),
         optionsSource,
         postedParams: posted,
         optionLabels,

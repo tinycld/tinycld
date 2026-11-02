@@ -72,7 +72,12 @@ function ParamControl({ model, def, value, isRemovable }: ParamControlProps) {
     const chip = (
         <ParamChip
             paramId={def.id}
-            text={chipText(def, value, model.resolved[def.id], model.optionLabels.get(def.id))}
+            text={chipText(
+                def,
+                value,
+                model.resolved[def.id],
+                model.optionLabels.get(def.id) ?? undefined
+            )}
             label={def.label ?? def.id}
             isDate={isDateParam(def)}
             isRemovable={isRemovable}

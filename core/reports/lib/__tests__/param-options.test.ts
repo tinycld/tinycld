@@ -9,7 +9,9 @@ import {
 import type { ParamDef } from '../spec'
 
 describe('options from a source', () => {
-    it('sections the loaded pages by group, in the groups order', () => {
+    it('sections the loaded pages by group, in the groups order, the blank group first', () => {
+        // The server lists the blank group ("" value, "(none)") first and sends its
+        // options with no group (options.go: Group is omitted when empty).
         const pages = [
             {
                 options: [
@@ -17,6 +19,7 @@ describe('options from a source', () => {
                     { value: 'b', label: 'Sales', group: 'income' },
                 ],
                 groups: [
+                    { value: '', label: '(none)' },
                     { value: 'asset', label: 'Asset' },
                     { value: 'income', label: 'Income' },
                 ],
@@ -30,8 +33,8 @@ describe('options from a source', () => {
                 groups: [],
             },
         ]
-        expect(optionSections(pages)).toEqual([
-            { group: null, options: [{ value: 'd', label: 'Misc' }] },
+        expect(optionSections(pages, true)).toEqual([
+            { group: { value: '', label: '(none)' }, options: [{ value: 'd', label: 'Misc' }] },
             {
                 group: { value: 'asset', label: 'Asset' },
                 options: [
@@ -46,24 +49,52 @@ describe('options from a source', () => {
         ])
     })
 
-    it('keeps one head per group when a later page repeats the groups, and heads a group no page listed', () => {
+    it('keeps one head per group when a later page repeats the groups', () => {
         const groups = [{ value: 'asset', label: 'Asset' }]
         const pages = [
             { options: [{ value: 'a', label: 'Bank', group: 'asset' }], groups, next: 'x' },
-            {
-                options: [
-                    { value: 'c', label: 'Cash', group: 'asset' },
-                    { value: 'e', label: 'Gear', group: 'equipment' },
-                ],
-                groups,
-            },
+            { options: [{ value: 'c', label: 'Cash', group: 'asset' }], groups },
         ]
         expect(
-            optionSections(pages).map(s => [s.group?.value, s.options.map(o => o.value)])
-        ).toEqual([
-            ['asset', ['a', 'c']],
-            ['equipment', ['e']],
+            optionSections(pages, true).map(s => [s.group?.value, s.options.map(o => o.value)])
+        ).toEqual([['asset', ['a', 'c']]])
+    })
+
+    it('files the options of groups past the listed ones under Other, never under a raw value', () => {
+        // Past the 200 groups the server lists (groupsCut), a group has no label.
+        const pages = [
+            {
+                options: [
+                    { value: 'a', label: 'Bank', group: 'asset' },
+                    { value: 'e', label: 'Gear', group: 'r7k2' },
+                    { value: 'f', label: 'Loose' },
+                ],
+                groups: [{ value: 'asset', label: 'Asset' }],
+                groupsCut: true,
+            },
+        ]
+        expect(optionSections(pages, true)).toEqual([
+            {
+                group: { value: 'asset', label: 'Asset' },
+                options: [{ value: 'a', label: 'Bank', group: 'asset' }],
+            },
+            {
+                group: null,
+                isOther: true,
+                options: [
+                    { value: 'e', label: 'Gear', group: 'r7k2' },
+                    { value: 'f', label: 'Loose' },
+                ],
+            },
         ])
+    })
+
+    it('lists the options of an ungrouped param in one section with no head', () => {
+        const pages = [{ options: [{ value: 'a', label: 'Bank' }], groups: [] }]
+        expect(optionSections(pages, false)).toEqual([
+            { group: null, options: [{ value: 'a', label: 'Bank' }] },
+        ])
+        expect(optionSections([{ options: [], groups: [] }], false)).toEqual([])
     })
 
     it('picks a whole group once and unpicks it', () => {

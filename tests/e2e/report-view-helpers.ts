@@ -76,7 +76,10 @@ export async function chooseParamOption(page: Page, paramId: string, pick: Param
         await picker.getByTestId('report-filter-search').fill(pick.search)
     // Only a multiple choice picks whole groups.
     let isMultiple = pick.group !== undefined
-    if (pick.group) await picker.getByTestId(`report-filter-group-${pick.group}`).click()
+    // The blank group's value is ''.
+    if (pick.group !== undefined) {
+        await picker.getByTestId(`report-filter-group-${pick.group}`).click()
+    }
     for (const label of pick.labels ?? []) {
         const option = picker
             .getByRole('checkbox', { name: label, exact: true })
