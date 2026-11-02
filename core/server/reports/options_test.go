@@ -541,6 +541,15 @@ func TestAGroupReferenceExpandsOnTheServer(t *testing.T) {
 	}
 	_, err := z.try(t, "ann", animalsParam, Options{}, map[string]string{"animals": `[{"group":7}]`})
 	requireSpecError(t, err, 400, "params.animals", "a group is")
+
+	// A group beside the most explicit values a list holds: past SQLite's 500
+	// terms of a compound select.
+	values := []string{`"` + z.id("leo") + `"`}
+	for i := 1; i < maxChoiceValues; i++ {
+		values = append(values, fmt.Sprintf("%q", fmt.Sprint("x", i)))
+	}
+	res = z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `[{"group":"zebra"},` + strings.Join(values, ",") + "]"})
+	requireRows(t, res, "note", "f1", "f2", "f3", "f4", nil)
 }
 
 // A group expands to the options the reader may list, never to a value the
@@ -615,6 +624,7 @@ func TestAGroupReferenceInEveryContext(t *testing.T) {
 		"groups":[{"id":"g","col":"animal","having":{"op":"in","args":[{"col":"animal"},{"param":"animals"}]}}],`, 1)
 	res = z.run(t, "ann", having, Options{}, zebras)
 	requireRows(t, res, "kind", "group", "total")
+	requireRows(t, res, "animal", z.id("zed"), nil)
 }
 
 // A group reference needs grouped options, at most maxOptionGroups of them,
@@ -624,6 +634,18 @@ func TestAGroupReferenceRefusals(t *testing.T) {
 	ungrouped := strings.Replace(animalsParam, `,"group":[{"field":"species"}]`, ``, 1)
 	_, err := z.try(t, "ann", ungrouped, Options{}, map[string]string{"animals": `[{"group":"zebra"}]`})
 	requireSpecError(t, err, 400, "params.animals", "have no groups")
+
+	// Options with no groups give no hint to pick a group.
+	tooMany := make([]string, maxChoiceValues+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("%q", fmt.Sprint("x", i))
+	}
+	_, err = z.try(t, "ann", ungrouped, Options{}, map[string]string{"animals": "[" + strings.Join(tooMany, ",") + "]"})
+	requireSpecError(t, err, 400, "params.animals", "at most 1000 choices")
+	var se *SpecError
+	if errors.As(err, &se) && strings.Contains(se.Problems["params.animals"].Error(), "group") {
+		t.Fatalf("ungrouped over-cap = %v", se)
+	}
 
 	many := make([]string, maxOptionGroups+1)
 	for i := range many {

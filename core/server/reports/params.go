@@ -287,7 +287,11 @@ func choiceValue(d ParamDef, v any, at string) (paramValue, *SpecError) {
 		out.list = append(out.list, s)
 	}
 	if len(out.list) > maxChoiceValues {
-		return out, invalid(at, fmt.Sprintf("the value is a list of at most %d choices; pick a whole group instead", maxChoiceValues))
+		msg := fmt.Sprintf("the value is a list of at most %d choices", maxChoiceValues)
+		if d.OptionsFrom != nil && len(d.OptionsFrom.Group) > 0 {
+			msg += "; pick a whole group instead"
+		}
+		return out, invalid(at, msg)
 	}
 	if len(out.groups) > maxOptionGroups {
 		return out, invalid(at, fmt.Sprintf("the value holds at most %d groups", maxOptionGroups))

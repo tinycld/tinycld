@@ -58,7 +58,11 @@ func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 // reader's rules: the values of the options select whose group is one of
 // groups, plus the explicit values. A group compares by the text the options
 // select gives it, the value the picker listed (an amount group's names its
-// currency too), so a group the reader cannot list matches nothing.
+// currency too), so a group the reader cannot list matches nothing. The
+// explicit values are one VALUES term, which SQLite does not count against
+// its 500 terms of a compound select (a UNION per value would). json_each
+// would bind them once, but it is a virtual table, which the change-signal
+// topic check refuses to map.
 func (c *compiler) groupListSQL(s *stmt, op *optionsPlan, values, groups []string) (string, error) {
 	inner, err := c.optionsSelect(s, op)
 	if err != nil {
@@ -69,8 +73,12 @@ func (c *compiler) groupListSQL(s *stmt, op *optionsPlan, values, groups []strin
 		marks[i] = s.bind(g)
 	}
 	sql := fmt.Sprintf("SELECT o.v FROM (%s) o WHERE o.g IN (%s)", inner, strings.Join(marks, ", "))
-	for _, v := range values {
-		sql += " UNION SELECT " + s.bind(v)
+	if len(values) > 0 {
+		rows := make([]string, len(values))
+		for i, v := range values {
+			rows[i] = "(" + s.bind(v) + ")"
+		}
+		sql += " UNION SELECT column1 FROM (VALUES " + strings.Join(rows, ", ") + ")"
 	}
 	return "(" + sql + ")", nil
 }
