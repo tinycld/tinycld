@@ -116,10 +116,19 @@ func (c *compiler) pivotCells(lv *level, values []pivotValue) ([]string, error) 
 	if err := checkAggregate(cell.col.Aggregate, typ, cell.scale, "pivot.cell"); err != nil {
 		return nil, err
 	}
+	// A "rows" cell adds the cells of the shown rows directly under it, as the
+	// column's own cell does: the next level's pivot cells, or on the
+	// innermost group its detail cells with the pivot value.
+	agg, scale := cell.col.Aggregate, cell.scale
+	if cell.col.Total == TotalRows && lv.n == len(c.p.groups) {
+		d, err := lv.detailCell(cell, cell.at+".total")
+		if err != nil {
+			return nil, err
+		}
+		arg, agg, scale = d.sql, Sum, 0
+	}
 	out := make([]string, 0, len(values))
 	for j, v := range values {
-		// A "rows" cell above the innermost group adds the cells of its
-		// shown child groups, as the column's own cell does.
 		if cell.col.Total == TotalRows && lv.n < len(c.p.groups) {
 			out = append(out, fmt.Sprintf("%s AS pv%d", lv.childSum(fmt.Sprintf("pv%d", j)), j))
 			continue
@@ -129,7 +138,7 @@ func (c *compiler) pivotCells(lv *level, values []pivotValue) ([]string, error) 
 			cond += " AND w.pkc IS " + lv.r.s.bind(v.currency)
 		}
 		match := fmt.Sprintf("CASE WHEN %s THEN %s END", cond, arg)
-		ref := lv.agg(fmt.Sprintf("q%d", j), aggregateSQL(cell.col.Aggregate, match, cell.scale))
+		ref := lv.agg(fmt.Sprintf("q%d", j), aggregateSQL(agg, match, scale))
 		out = append(out, fmt.Sprintf("%s AS pv%d", ref, j))
 	}
 	return out, nil

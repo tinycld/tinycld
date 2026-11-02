@@ -14,8 +14,9 @@ import (
 //	a<L>  aggregates w by the level's keys, then adds a fill's records with
 //	      no rows (fillRows)
 //	d<L>_<idx>  a to-many total, once per parent row (aggregate locality)
-//	rs<L>_<cell>  a "rows" cell's sum over the next level's rows (childSum)
-//	g<L>  a<L> with its to-many totals and its rows' sums
+//	rs<L>  the sums of "rows" cells over the next level's rows (childSum)
+//	g<L>  a<L> with its to-many totals and its rows' sums (g<L>_<i> before
+//	      it when they need more joins than one select may hold)
 //	rt<L>  the rows that pass their own having, with their "rows" cells
 //	s<L>  the rows a run shows (under a having)
 //	o<L>  the level's cells, and its rows' order among siblings
@@ -26,8 +27,11 @@ type level struct {
 	keys     []string // w columns the level groups by
 	aggs     []string // a<L> values, "expr AS name"
 	aggNames map[string]bool
-	tms      []string // d<L> and rs<L> CTEs
-	tmCols   []tmCol  // g<L> values taken from d<L> and rs<L>
+	tms      []string // d<L> CTEs
+	tmCols   []tmCol  // g<L> values taken from d<L>
+	// childCells are the cells of the next level whose sums the level reads
+	// (childSum), all in one CTE rs<L>.
+	childCells []string
 	// fill is the level's keyset when its group fills in the records with no
 	// rows (fillKeys), "" otherwise; render emits it as the CTE f<L>.
 	fill  string
@@ -127,9 +131,10 @@ func (lv *level) toManyTotal(cp *colPlan) string {
 	return "a." + name
 }
 
-// tmCol is a to-many total g<L> takes from its d<L> CTE, or a sum of the next
-// level's rows from its rs<L> CTE: the CTE, the value's name, and whether a
-// group with no row there reads 0 (a sum or a count) rather than blank.
+// tmCol is a value g<L> joins to a<L>: a to-many total from its d<L> CTE, or a
+// sum of the next level's rows from rs<L>: the CTE, the value's name, and
+// whether a group with no row there reads 0 (a sum or a count) rather than
+// blank.
 type tmCol struct {
 	d, name string
 	zero    bool
@@ -277,25 +282,18 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	}
 	ctes = append(ctes, fmt.Sprintf("%s AS (%s)", a, rows))
 	ctes = append(ctes, lv.tms...)
-	g := a
-	if len(lv.tmCols) > 0 {
-		g = fmt.Sprintf("g%d", lv.n)
-		sel := []string{"a.*"}
-		joins := []string{}
-		for _, tm := range lv.tmCols {
-			value := tm.d + "." + tm.name
-			if tm.zero {
-				value = "COALESCE(" + value + ", 0)"
-			}
-			sel = append(sel, value+" AS "+tm.name)
-			on := []string{"1"}
-			for _, k := range lv.keys {
-				on = append(on, fmt.Sprintf("%s.%s IS a.%s", tm.d, k, k))
-			}
-			joins = append(joins, fmt.Sprintf("LEFT JOIN %s ON %s", tm.d, strings.Join(on, " AND ")))
+	sides := slices.Clone(lv.tmCols)
+	if len(lv.childCells) > 0 {
+		rs := fmt.Sprintf("rs%d", lv.n)
+		sums := slices.Clone(lv.keys)
+		for _, cell := range lv.childCells {
+			sums = append(sums, fmt.Sprintf("COALESCE(sum(%s), 0) AS ch_%s", cell, cell))
+			sides = append(sides, tmCol{d: rs, name: "ch_" + cell, zero: true})
 		}
-		ctes = append(ctes, fmt.Sprintf("%s AS (SELECT %s FROM %s a %s)", g, strings.Join(sel, ", "), a, strings.Join(joins, " ")))
+		ctes = append(ctes, fmt.Sprintf("%s AS (SELECT %s FROM rt%d%s)", rs, strings.Join(sums, ", "), lv.n+1, groupBy(lv.keys)))
 	}
+	joined, g := lv.joinSides(a, sides)
+	ctes = append(ctes, joined...)
 	if len(totals) > 0 {
 		sel := make([]string, 0, len(lv.keys)+len(totals))
 		for _, k := range lv.keys {
@@ -317,6 +315,56 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 		g = s
 	}
 	return ctes, g
+}
+
+// maxSideJoins keeps each select that joins a level's side CTEs under
+// SQLite's limit of 64 tables in a join.
+const maxSideJoins = 60
+
+// joinSides joins the side CTEs (to-many totals, rs<L>) to a<L>, each once on
+// the level's keys, and returns the CTEs and the one that holds the result:
+// g<L>, or a<L> when there are none. More sides than one select may join are
+// joined maxSideJoins at a time, each select reading the one before.
+func (lv *level) joinSides(a string, sides []tmCol) ([]string, string) {
+	var ds []string
+	for _, tm := range sides {
+		if !slices.Contains(ds, tm.d) {
+			ds = append(ds, tm.d)
+		}
+	}
+	var ctes []string
+	from := a
+	for i := 0; i < len(ds); i += maxSideJoins {
+		chunk := ds[i:min(i+maxSideJoins, len(ds))]
+		name, as := fmt.Sprintf("g%d", lv.n), "AS"
+		if i+maxSideJoins < len(ds) {
+			// Materialized, or SQLite would flatten the chunks back into one
+			// join past the limit.
+			name, as = fmt.Sprintf("g%d_%d", lv.n, i/maxSideJoins), "AS MATERIALIZED"
+		}
+		sel := []string{"a.*"}
+		joins := make([]string, 0, len(chunk))
+		for _, d := range chunk {
+			for _, tm := range sides {
+				if tm.d != d {
+					continue
+				}
+				value := tm.d + "." + tm.name
+				if tm.zero {
+					value = "COALESCE(" + value + ", 0)"
+				}
+				sel = append(sel, value+" AS "+tm.name)
+			}
+			on := []string{"1"}
+			for _, k := range lv.keys {
+				on = append(on, fmt.Sprintf("%s.%s IS a.%s", d, k, k))
+			}
+			joins = append(joins, fmt.Sprintf("LEFT JOIN %s ON %s", d, strings.Join(on, " AND ")))
+		}
+		ctes = append(ctes, fmt.Sprintf("%s %s (SELECT %s FROM %s a %s)", name, as, strings.Join(sel, ", "), from, strings.Join(joins, " ")))
+		from = name
+	}
+	return ctes, from
 }
 
 // rowsCells are the level's cells of its "rows" columns, which rt<L> holds for
@@ -513,95 +561,69 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	return lc.recompute(cp, at)
 }
 
-// rowsTotal is a "rows" column's cell on this level (R8): above the innermost
-// group, the sum of its cells on the next level's rows that pass their own
-// having (childSum); on the innermost group (or the total of a report with no
-// groups) the sum of its detail cells when the column has no value of its own
-// on a group (a path with no aggregate, F17, or a formula that reads a row's
-// value), else its own cell. A group column keeps its key on the levels that
-// group by it.
+// rowsTotal is a "rows" column's cell on this level (R8): the sum of the cells
+// of the shown rows directly under the row. Above the innermost group those
+// are the next level's rows that pass their own having (childSum); on the
+// innermost group, or the total of a report with no groups, the detail rows,
+// whatever the column's aggregate (an average adds its detail cells too). A
+// group column keeps its key on the levels that group by it.
 func (lc *levelCtx) rowsTotal(cp *colPlan) (expr, error) {
 	lv := lc.lv
 	at := cp.at + ".total"
-	if cp.nest > 0 {
-		return expr{}, invalid(at, "child rows are not totalled; add the link as a total instead")
-	}
-	e, err := lc.recompute(cp, cp.at)
+	d, err := lv.detailCell(cp, at)
 	if err != nil {
 		return expr{}, err
 	}
-	if e.win {
-		return expr{}, invalid(at, "a running value or a percent is not added up")
-	}
-	if !isNumeric(e.typ) || e.typ == Bool {
-		return expr{}, invalid(at, "only a number or an amount column adds the rows shown")
-	}
-	idx := lv.c.p.index(cp)
-	switch {
-	case lv.groupKey(cp) != "":
-		return e, nil
-	case lv.n < len(lv.c.p.groups):
-		cur, err := lv.c.rowsCurrency(e.cur, at)
-		if err != nil {
-			return expr{}, err
-		}
-		return withCurrency(expr{sql: lv.childSum(fmt.Sprintf("v%d", idx)), typ: e.typ}, cur), nil
-	case lv.hasOwnValue(cp):
-		return e, nil
-	}
-	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}}).col(cp.col.ID, cp.at)
-	if err != nil {
-		return expr{}, err
+	if lv.groupKey(cp) != "" {
+		return lc.recompute(cp, cp.at)
 	}
 	cur, err := lv.c.totalCurrency(d, at)
 	if err != nil {
 		return expr{}, err
 	}
-	return withCurrency(expr{sql: lv.agg(fmt.Sprintf("r%d", idx), "COALESCE(sum("+d.sql+"), 0)"), typ: e.typ}, cur), nil
+	idx := lv.c.p.index(cp)
+	if lv.n < len(lv.c.p.groups) {
+		return withCurrency(expr{sql: lv.childSum(fmt.Sprintf("v%d", idx)), typ: d.typ}, cur), nil
+	}
+	return withCurrency(expr{sql: lv.agg(fmt.Sprintf("r%d", idx), "COALESCE(sum("+d.sql+"), 0)"), typ: d.typ}, cur), nil
 }
 
-// hasOwnValue is true when a column has one value on a row of this level:
-// an aggregate, or a formula that reads no row's value.
-func (lv *level) hasOwnValue(cp *colPlan) bool {
-	if cp.col.Aggregate != "" {
-		return true
+// detailCell is a "rows" column's cell on a detail row, which its totals add.
+// It must be a number or an amount, and not a running value or a percent (a
+// sum of them means nothing). A child row column has no detail cell: child
+// rows are not totalled, a to-many total column adds them instead.
+func (lv *level) detailCell(cp *colPlan, at string) (expr, error) {
+	if cp.nest > 0 {
+		return expr{}, invalid(at, "child rows are not totalled; add the link as a total instead")
 	}
-	return cp.col.Formula != nil && !lv.readsRowValue(cp.col.Formula, false, map[string]bool{})
-}
-
-// rowsCurrency is the currency of a sum of a column's cells on the rows of the
-// next level: the cells' own when it is a currency key or a fixed one; an
-// amount that carries its own currency (a record's, a looked-up row's) is
-// added per the currency key valueCurrencies gave it.
-func (c *compiler) rowsCurrency(cur currency, at string) (currency, error) {
-	if cur.sql == "" {
-		return cur, nil
+	// With a frame a running value compiles, and is refused here by what it
+	// is; the frame's SQL is never used.
+	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}, detail: &windowFrame{}}).col(cp.col.ID, cp.at)
+	if err != nil {
+		return expr{}, err
 	}
-	if ck, ok := c.valueCur[cur.id]; ok {
-		return currency{key: ck, id: cur.id}, nil
+	if d.win {
+		return expr{}, invalid(at, "a running value or a percent is not added up")
 	}
-	return c.totalCurrency(expr{cur: cur}, at)
+	if !isNumeric(d.typ) || d.typ == Bool {
+		return expr{}, invalid(at, "only a number or an amount column adds the rows shown")
+	}
+	return d, nil
 }
 
 // childSum adds the cell of the next level's rows under this level's row
 // (alias a), in its currency. rt<L+1> holds the rows that pass their own
 // having whether or not the groups above them are shown, so a having that
 // reads this sum does not read itself; a shown row's children all pass the
-// groups above them. The sums are one CTE per cell (rs<L>_<cell>), grouped by
-// the level's keys and joined to g<L> as a to-many total is, so each row
-// reads its own by a join rather than a scan of the level below; a row with
-// no child rows reads 0.
+// groups above them. Every sum the level reads is in one CTE, rs<L>, grouped
+// by the level's keys and joined once to g<L>, so each row reads its own by a
+// join rather than a scan of the level below; a row with no child rows reads
+// 0.
 func (lv *level) childSum(cell string) string {
-	name := "ch_" + cell
-	if lv.aggNames[name] {
-		return "a." + name
+	if !slices.Contains(lv.childCells, cell) {
+		lv.childCells = append(lv.childCells, cell)
 	}
-	lv.aggNames[name] = true
-	d := fmt.Sprintf("rs%d_%s", lv.n, cell)
-	sel := append(slices.Clone(lv.keys), fmt.Sprintf("COALESCE(sum(%s), 0) AS %s", cell, name))
-	lv.tms = append(lv.tms, fmt.Sprintf("%s AS (SELECT %s FROM rt%d%s)", d, strings.Join(sel, ", "), lv.n+1, groupBy(lv.keys)))
-	lv.tmCols = append(lv.tmCols, tmCol{d: d, name: name, zero: true})
-	return "a." + name
+	return "a.ch_" + cell
 }
 
 // recompute is a column's cell on this level computed from every base row

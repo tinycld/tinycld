@@ -1,6 +1,10 @@
 package reports
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 const speciesRows = `{"version":2,"source":"zoo.feedings","params":[{"id":"min","type":"number"}],"columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
@@ -172,7 +176,8 @@ func TestARowsFormulaAddsItsDetailCellsUnderGroups(t *testing.T) {
 }
 
 // A record's amount carries its own currency: its "rows" total adds the
-// shown groups of each currency.
+// shown rows of each currency. The animal's group adds its two detail rows,
+// each of which shows the animal's fee.
 func TestARowsTotalOfACarriedAmountAddsEachCurrency(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
@@ -180,8 +185,78 @@ func TestARowsTotalOfACarriedAmountAddsEachCurrency(t *testing.T) {
 		{"id":"fee","formula":{"record":"g","path":[{"field":"fee"}]},"total":"rows"}],
 		"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"fee"}]}`, Options{}, nil)
 	requireRows(t, res, "label", "Leo", "Total", "Zed", "Total")
-	requireRows(t, res, "fee", int64(700), int64(700), int64(300), int64(300))
+	requireRows(t, res, "fee", int64(1400), int64(1400), int64(600), int64(600))
 	requireRows(t, res, "fee@currency", "EUR", "EUR", "USD", "USD")
+}
+
+// A rows total adds the shown cells whatever the column's aggregate: the
+// grams average adds its detail cells, and a constant 1 counts its rows.
+func TestRowsTotalsAddTheDetailCellsOfEveryColumnKind(t *testing.T) {
+	z := newZoo(t)
+	const cols = `"columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"avg","path":[{"field":"grams"}],"aggregate":"avg","scale":0,"total":"rows"},
+		{"id":"one","formula":{"value":1},"total":"rows"}]`
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings",`+cols+`,"sort":[{"col":"note"}]}`, Options{}, nil)
+	requireRows(t, res, "avg", int64(500), int64(800), int64(300), int64(100), int64(1700))
+	requireRows(t, res, "one", int64(1), int64(1), int64(1), int64(1), int64(4))
+	res = z.run(t, "ann", `{"version":2,"source":"zoo.feedings",`+cols+`,"groups":[{"id":"g","col":"species"}],"sort":[{"col":"species"}]}`, Options{}, nil)
+	requireRows(t, res, "label", "lion", "zebra", "Total")
+	requireRows(t, res, "avg", int64(1300), int64(400), int64(1700))
+	requireRows(t, res, "one", int64(2), int64(2), int64(4))
+}
+
+// A middle group hidden by its own having adds nothing to its parent, whose
+// having reads that sum and hides it in turn (South, its zebra 1000).
+func TestARowsTotalAddsThroughThreeLevels(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"site","path":[{"link":"animal"},{"link":"site"},{"field":"name"}]},
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"shown","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"}],
+		"groups":[{"id":"g","col":"site","having":{"op":"gt","args":[{"col":"shown"},{"value":0}]}},
+			{"id":"h","col":"species","having":{"op":"gt","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":1500}]}},
+			{"id":"i","col":"name"}],
+		"sort":[{"col":"site"},{"col":"note"}]}`, Options{ExpandAll: true}, nil)
+	requireRows(t, res, "kind", "group", "group", "group", "detail", "detail", "total")
+	requireRows(t, res, "note", nil, nil, nil, "f1", "f2", nil)
+	requireRows(t, res, "shown", int64(3500), int64(3500), int64(3500), int64(1000), int64(2500), int64(3500))
+}
+
+// More pivot values than SQLite joins in one select: every sum of a level is
+// in one CTE, joined once.
+func TestRowsTotalsOnMorePivotCellsThanAJoinHolds(t *testing.T) {
+	z := newZoo(t)
+	for i := range 70 {
+		z.feeding(t, fmt.Sprintf("p%02d", i), z.recs["leo"], 1, "2026-04-01", 1)
+	}
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
+		{"id":"shown","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"}],
+		"groups":[{"id":"g","col":"species"},{"id":"h","col":"name"}],"sort":[{"col":"species"}],
+		"pivot":{"path":[{"field":"note"}],"cell":"shown","maxColumns":100}}`, Options{}, nil)
+	requireRows(t, res, "label", "lion", "zebra", "Total")
+	requireRows(t, res, "shown.p0", int64(1000), int64(0), int64(1000))
+	requireRows(t, res, "shown.p73", int64(1), int64(0), int64(1))
+}
+
+// Many to-many totals and "rows" columns: the level's joins are split so no
+// select joins more tables than SQLite allows.
+func TestManyToManyTotalsAndRowsColumns(t *testing.T) {
+	z := newZoo(t)
+	cols := []string{`{"id":"region","path":[{"field":"region"}]}`, `{"id":"name","path":[{"field":"name"}]}`}
+	for i := range 70 {
+		cols = append(cols, fmt.Sprintf(`{"id":"w%d","path":[{"link":"animals","mode":"aggregate"},{"field":"weight"}],"aggregate":"sum","total":"rows"}`, i))
+	}
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[`+strings.Join(cols, ",")+`],
+		"groups":[{"id":"g","col":"region"},{"id":"h","col":"name"}],"sort":[{"col":"region"}]}`, Options{}, nil)
+	requireRows(t, res, "label", "North", "South", "Total")
+	requireRows(t, res, "w0", int64(190), int64(300), int64(490))
+	requireRows(t, res, "w69", int64(190), int64(300), int64(490))
 }
 
 func TestRowsTotalIsRefusedWhereItMeansNothing(t *testing.T) {
