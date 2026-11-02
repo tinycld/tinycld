@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pocketbase/dbx"
+	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/automation"
 )
 
@@ -40,5 +42,25 @@ func TestFormFieldsMapsKindsAndValues(t *testing.T) {
 	}
 	if got["cv"].Type != "text" || !strings.Contains(got["cv"].Value.(string), "cv.pdf") {
 		t.Fatalf("a file field gives its file names: %#v", got["cv"])
+	}
+}
+
+func TestFailureNoticeOncePerRulePerDay(t *testing.T) {
+	f := newFixture(t, rulesDef)
+	rlsUser(t, f.app, "boss@test.local", "admin")
+	rules, _ := f.app.FindCollectionByNameOrId("rules")
+	rule := core.NewRecord(rules)
+	rule.Id = "rulefixture0001"
+	rule.Set("name", "To the board")
+	sub := storeForTest(t, f, map[string]any{"name": "Ada"})
+	bad := automation.RunOutcome{Matched: true, Results: []automation.ActionResult{{Ref: "x", Status: "error"}}}
+
+	onFormRun(f.app, rule, sub, bad)
+	onFormRun(f.app, rule, sub, bad)
+	onFormRun(f.app, rule, sub, automation.RunOutcome{Matched: true})
+
+	n, _ := f.app.CountRecords("notifications", dbx.HashExp{"type": "core.web_form.delivery_failed"})
+	if n != 1 {
+		t.Fatalf("one notice for the admin, got %d", n)
 	}
 }

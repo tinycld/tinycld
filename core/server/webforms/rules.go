@@ -2,10 +2,13 @@ package webforms
 
 import (
 	"strings"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/automation"
 	"tinycld.org/core/forms"
+	"tinycld.org/core/notify"
+	"tinycld.org/core/ratelimit"
 )
 
 const FormSubmittedTrigger = "core:form-submitted"
@@ -74,4 +77,29 @@ func fileNames(app core.App, record *core.Record) map[string][]string {
 func registerRules() {
 	automation.RegisterRuleFilter(FormSubmittedTrigger, formRuleWants)
 	automation.RegisterFieldsResolver(FormSubmittedTrigger, formFields)
+	automation.RegisterRunObserver(FormSubmittedTrigger, onFormRun)
+}
+
+var failureNotices = ratelimit.NewPerApp("webforms.failureNotice", 1, 24*time.Hour)
+
+// onFormRun tells the admins, at most once a day for each rule, that a
+// destination failed; the Submissions tab shows which submissions.
+func onFormRun(app core.App, rule, record *core.Record, outcome automation.RunOutcome) {
+	if !outcome.Failed() || record == nil || !failureNotices.For(app).Allow(rule.Id) {
+		return
+	}
+	formName := record.GetString("form")
+	if form, err := app.FindRecordById("forms", record.GetString("form")); err == nil {
+		formName = form.GetString("name")
+	}
+	_, err := notify.Administrators(app, notify.NotifyParams{
+		Type:    "core.web_form.delivery_failed",
+		Package: "core",
+		Title:   "A web form destination failed",
+		Body:    rule.GetString("name") + " could not deliver a submission of " + formName + ".",
+		URL:     "/settings/forms/" + record.GetString("form"),
+	})
+	if err != nil {
+		log.Warn("notify admins of a failed web form destination", "rule", rule.Id, "err", err)
+	}
 }
