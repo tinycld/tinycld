@@ -19,7 +19,9 @@ export type PublicForm = z.infer<typeof publicFormSchema>
 
 class FormGoneError extends Error {}
 
-async function fetchPublicForm(token: string) {
+export const publicFormKey = (token: string) => ['public-form', token]
+
+export async function fetchPublicForm(token: string) {
     const res = await serverFetch(`${PB_SERVER_ADDR}/api/forms/public/${encodeURIComponent(token)}`)
     if (res.status === 404) throw new FormGoneError()
     if (!res.ok) throw new Error(`public form ${res.status}`)
@@ -28,7 +30,7 @@ async function fetchPublicForm(token: string) {
 
 export function usePublicForm(token: string) {
     const q = useQuery({
-        queryKey: ['public-form', token],
+        queryKey: publicFormKey(token),
         queryFn: () => fetchPublicForm(token),
         retry: (count, err) => !(err instanceof FormGoneError) && count < 2,
         staleTime: Number.POSITIVE_INFINITY,

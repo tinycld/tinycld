@@ -59,11 +59,13 @@ async function savePublication(page: Page) {
     expect((await stored).ok()).toBe(true)
 }
 
-async function buildAndPublish(
-    page: Page,
-    name: string,
-    opts: { domains?: string; pow?: boolean } = {}
-) {
+interface PublishOptions {
+    domains?: string
+    pow?: boolean
+    cvMaxSizeMb?: number
+}
+
+async function buildAndPublish(page: Page, name: string, opts: PublishOptions = {}) {
     await login(page)
     await openWebForms(page)
     await page.getByTestId('forms-new').click()
@@ -73,6 +75,9 @@ async function buildAndPublish(
     await addField(page, 'text', 'Name')
     await properties(page).locator('[data-testid$=".required"]').click()
     await addField(page, 'file', 'CV')
+    if (opts.cvMaxSizeMb) {
+        await properties(page).locator('[data-testid$=".maxSizeMb"]').fill(String(opts.cvMaxSizeMb))
+    }
     await saveDefinition(page)
 
     await page.getByTestId('form-tab-publish').click()
@@ -201,13 +206,27 @@ test('an allowed site frames the form, sizes it and hears the submission', async
     })
     const allowed = await frameFormAt('https://client.example', url)
     try {
+        // The frame grows to show the whole form: Send sits inside it.
+        const frameEl = allowed.page.locator('#f')
+        const send = allowed.frame.getByTestId('form-wizard-next')
+        await expect(send).toBeVisible()
+        await expect
+            .poll(async () => {
+                const frameBox = await frameEl.boundingBox()
+                const sendBox = await send.boundingBox()
+                if (!frameBox || !sendBox) return false
+                return sendBox.y + sendBox.height <= frameBox.y + frameBox.height
+            })
+            .toBe(true)
+        const before = (await frameEl.boundingBox())?.height ?? 0
+
         await fillAndSend(allowed.frame, allowed.page, 'Embedded Visitor')
         await expect(allowed.frame.getByTestId('web-form-confirmation')).toBeVisible()
         await expect(allowed.page).toHaveTitle(/^submitted:/)
-        const height = await allowed.page
-            .locator('#f')
-            .evaluate(el => (el as HTMLIFrameElement).style.height)
-        expect(Number.parseInt(height, 10)).toBeGreaterThan(50)
+        // And shrinks to the confirmation after sending.
+        await expect
+            .poll(async () => (await frameEl.boundingBox())?.height ?? 0)
+            .toBeLessThan(before)
     } finally {
         await allowed.browser.close()
     }
@@ -230,4 +249,40 @@ test('a visitor submits at phone width', async ({ page, browser }) => {
     const visitor = await visitAnonymously(browser, url, { width: 390, height: 844 })
     await fillAndSend(visitor, visitor, 'Phone Visitor')
     await expect(visitor.getByTestId('web-form-confirmation')).toBeVisible()
+})
+
+test('Send is off while sending, so a second click sends nothing', async ({ page, browser }) => {
+    const url = await buildAndPublish(page, `Double ${Date.now()}`)
+    const visitor = await visitAnonymously(browser, url)
+    await visitor.getByLabel('Name', { exact: true }).fill('Double Click')
+    const send = visitor.getByTestId('form-wizard-next')
+    await send.click()
+    // While it sends (at least the 3 s minimum fill time), Send is off and says so.
+    await expect(send).toBeDisabled()
+    await expect(send).toContainText('Sending')
+    await send.click({ force: true })
+    await expect(visitor.getByTestId('web-form-confirmation')).toBeVisible()
+    expect(await submissionsNamed(page, 'Double Click')).toHaveLength(1)
+})
+
+test('a file over the field limit is refused before upload', async ({ page, browser }) => {
+    const url = await buildAndPublish(page, `Big ${Date.now()}`, { cvMaxSizeMb: 1 })
+    const visitor = await visitAnonymously(browser, url)
+    let posted = false
+    visitor.on('request', r => {
+        if (r.url().includes('/submit') && r.method() === 'POST') posted = true
+    })
+    await visitor.getByLabel('Name', { exact: true }).fill('Too Big')
+    const chooser = visitor.waitForEvent('filechooser')
+    await visitor.locator('[data-testid$="-pick"]').click()
+    await (await chooser).setFiles({
+        name: 'big.pdf',
+        mimeType: 'application/pdf',
+        buffer: Buffer.alloc(2 * 1024 * 1024, 1),
+    })
+    await visitor.getByTestId('form-wizard-next').click()
+    // Named at the field and in the error summary.
+    await expect(visitor.getByText(/big\.pdf is larger than 1 MB/)).toHaveCount(2)
+    await expect(visitor.getByTestId('web-form-confirmation')).toBeHidden()
+    expect(posted).toBe(false)
 })

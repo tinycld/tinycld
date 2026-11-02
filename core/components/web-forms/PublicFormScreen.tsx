@@ -2,17 +2,25 @@ import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { MarkdownRenderer } from '@tinycld/core/components/help/MarkdownRenderer'
 import { toDateString } from '@tinycld/core/lib/dates'
 import { WEB_FORM_HOST_KEY } from '@tinycld/core/lib/forms/core-hosts'
-import { applyDefaults, type EvalContext, evaluate } from '@tinycld/core/lib/forms/logic'
+import {
+    applyDefaults,
+    type EvalContext,
+    evaluate,
+    type FormValues,
+} from '@tinycld/core/lib/forms/logic'
 import { useFormHost } from '@tinycld/core/lib/forms/use-form-hosts'
 import { buildSchema } from '@tinycld/core/lib/forms/values'
-import { useReportHeight } from '@tinycld/core/lib/web-forms/parent-messages'
+import { fileLimitIssues } from '@tinycld/core/lib/web-forms/file-limits'
+import { reportHeight } from '@tinycld/core/lib/web-forms/parent-messages'
+import { usePendingFiles } from '@tinycld/core/lib/web-forms/pending-files-store'
 import { type PublicForm, usePublicForm } from '@tinycld/core/lib/web-forms/use-public-form'
 import { usePublicSubmit } from '@tinycld/core/lib/web-forms/use-public-submit'
+import { zodResolver } from '@tinycld/core/ui/form'
 import { FormRenderer, useSchemaRefResolver } from '@tinycld/core/ui/forms'
 import { useLocalSearchParams } from 'expo-router'
 import type { ReactNode } from 'react'
-import { useForm } from 'react-hook-form'
-import { Text, TextInput, View } from 'react-native'
+import { type Resolver, useForm } from 'react-hook-form'
+import { type LayoutChangeEvent, ScrollView, Text, TextInput, View } from 'react-native'
 import { ScopedTheme } from 'uniwind'
 
 type ThemeParam = 'light' | 'dark' | 'auto'
@@ -21,8 +29,18 @@ function themeOf(raw: string | undefined): ThemeParam {
     return raw === 'light' || raw === 'dark' ? raw : 'auto'
 }
 
+const onContentLayout = (e: LayoutChangeEvent) => reportHeight(e.nativeEvent.layout.height)
+
+// Scrolls on its own when opened directly; inside an iframe the embedding
+// page sizes the frame to the reported content height.
 function Themed({ theme, children }: { theme: ThemeParam; children: ReactNode }) {
-    const body = <View className="bg-background p-4">{children}</View>
+    const body = (
+        <ScrollView className="flex-1 bg-background">
+            <View className="p-4" onLayout={onContentLayout}>
+                {children}
+            </View>
+        </ScrollView>
+    )
     if (theme === 'auto') return body
     return <ScopedTheme theme={theme}>{body}</ScopedTheme>
 }
@@ -35,6 +53,28 @@ function Message({ text, testID }: { text: string; testID: string }) {
     )
 }
 
+// The renderer's schema plus the upload limits, checked before anything is
+// sent: the pending files live outside the form values, so the zod refine
+// reads them from their store.
+function useWebFormResolver(
+    form: PublicForm,
+    schemaRef: ReturnType<typeof useSchemaRefResolver>['schemaRef']
+) {
+    const resolver: Resolver<FormValues> = (values, context, options) => {
+        const schema = schemaRef.current.superRefine((v, ctx) => {
+            const issues = fileLimitIssues(
+                form.definition,
+                v,
+                usePendingFiles.getState().files,
+                form.maxUploadMb
+            )
+            for (const issue of issues) ctx.addIssue({ code: 'custom', ...issue })
+        })
+        return zodResolver(schema)(values, context, options)
+    }
+    return resolver
+}
+
 function usePublicFormBody(token: string, form: PublicForm, receivedAt: number) {
     const host = useFormHost(WEB_FORM_HOST_KEY)
     if (!host) throw new Error('core:web_form host missing from the registry')
@@ -45,10 +85,18 @@ function usePublicFormBody(token: string, form: PublicForm, receivedAt: number) 
         host,
         evaluate(form.definition, defaults, context)
     )
-    const { schemaRef, resolver } = useSchemaRefResolver(initialSchema)
+    const { schemaRef } = useSchemaRefResolver(initialSchema)
+    const resolver = useWebFormResolver(form, schemaRef)
     const rhf = useForm({ resolver, defaultValues: defaults })
     const submit = usePublicSubmit({ token, form, receivedAt, host, rhf })
-    return { host, context, schemaRef, rhf, submit }
+    return {
+        host,
+        context,
+        schemaRef,
+        rhf,
+        submit,
+        submitLabel: submit.isSubmitting ? 'Sending…' : 'Send',
+    }
 }
 
 // Off-screen and hidden from assistive tech; people never fill it, bots do.
@@ -92,7 +140,7 @@ function PublicFormBody(p: { token: string; form: PublicForm; receivedAt: number
                 context={b.context}
                 schemaRef={b.schemaRef}
                 pendingFiles
-                submitLabel="Send"
+                submitLabel={b.submitLabel}
                 onSubmit={b.submit.submit}
                 testID="web-form"
             />
@@ -104,7 +152,6 @@ export default function PublicFormScreen() {
     const params = useLocalSearchParams<{ token: string; theme?: string }>()
     const token = params.token ?? ''
     const state = usePublicForm(token)
-    useReportHeight()
     const theme = themeOf(params.theme)
     if (state.status === 'gone')
         return (

@@ -73,7 +73,8 @@ export interface FormRendererProps {
     readOnly?: boolean
     collab?: CollabDoc | null
     /** Wizard: called after the last page validates. */
-    onSubmit?: () => void
+    /** Wizard: called after the last page validates; Send stays off until a returned promise settles. */
+    onSubmit?: () => unknown
     submitLabel?: string
     design?: DesignOptions
     /** Sections only: the renderer owns a ScrollView whose direct children are the rows, so pinned rows can stick. */

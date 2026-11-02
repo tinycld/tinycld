@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { Platform } from 'react-native'
 
 export type ParentMessage =
@@ -11,16 +10,11 @@ export function postToParent(message: ParentMessage) {
     window.parent.postMessage(message, '*')
 }
 
-/** Reports the document height to the embedding page whenever it changes. */
-export function useReportHeight() {
-    // Subscribes to a DOM API; it syncs no React state.
-    useEffect(() => {
-        if (Platform.OS !== 'web' || typeof ResizeObserver === 'undefined') return
-        const el = document.documentElement
-        const report = () => postToParent({ type: 'tinycld:form-resize', height: el.scrollHeight })
-        const observer = new ResizeObserver(report)
-        observer.observe(document.body)
-        report()
-        return () => observer.disconnect()
-    }, [])
+/**
+ * Reports the form's content height to the embedding page. It is the content
+ * wrapper's height, not the document's: the app shell pins html and body to
+ * the viewport, so the document never measures taller than the iframe.
+ */
+export function reportHeight(height: number) {
+    postToParent({ type: 'tinycld:form-resize', height: Math.ceil(height) })
 }
