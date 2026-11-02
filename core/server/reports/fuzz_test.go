@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 )
@@ -209,14 +210,23 @@ func (z *zoo) lookupParity(t *testing.T, mux http.Handler, user string) {
 	res := z.run(t, user, `{"version":2,"source":"zoo.feedings","columns":[{"id":"id","path":[{"field":"id"}]},
 		{"id":"lk","formula":{"op":"lookup","source":"zoo.sites","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"North"}]},"value":{"path":[{"field":"id"}]}}}]}`,
 		Options{Limit: 1000}, nil)
+	// pick defaults to min: the smallest id among the sites the reader lists.
 	var want any
 	if ids := z.listIDs(t, mux, "zoo_sites", user, `name="North"`); len(ids) > 0 {
-		want = ids[0]
+		want = slices.Min(ids)
 	}
+	details := 0
 	for _, row := range res.Rows {
-		if row.Kind == KindDetail && row.Cells["lk"] != want {
+		if row.Kind != KindDetail {
+			continue
+		}
+		details++
+		if row.Cells["lk"] != want {
 			t.Fatalf("%s: lookup = %v, list API = %v", user, row.Cells["lk"], want)
 		}
+	}
+	if details == 0 {
+		t.Fatalf("%s: no detail rows to check the lookup on", user)
 	}
 }
 

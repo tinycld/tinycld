@@ -60,7 +60,7 @@ const every = `{"version":2,"source":"zoo.feedings",
 		{"id":"rows","type":"choice","label":"Rows","default":"nonzero","options":[{"value":"nonzero","label":"Non-zero"},{"value":"all","label":"All"}]},
 		{"id":"animals","type":"choice","label":"Animals","multiple":true,"optionsFrom":{"source":"zoo.animals","value":[{"field":"id"}],"label":[{"field":"name"}],"group":[{"field":"species"}],
 			"where":{"op":"eq","args":[{"path":[{"field":"active"}]},{"value":true}]}}}],
-	"columns":[{"id":"animal","label":"Animal","path":[{"link":"animal"}]},
+	"columns":[{"id":"animal","label":"Animal","path":[{"link":"animal"}],"labelField":"name"},
 		{"id":"weight","label":"Weight","formula":{"record":"byAnimal","path":[{"field":"weight"}]}},
 		{"id":"cost","label":"Cost","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"},
 		{"id":"site","label":"Site","formula":{"op":"lookup","source":"zoo.sites","where":{"op":"eq","args":[{"path":[{"field":"region"}]},{"value":"north"}]},"value":{"path":[{"field":"name"}]},"pick":"min"}}],
@@ -73,26 +73,42 @@ const every = `{"version":2,"source":"zoo.feedings",
 	"detail":{"label":{"op":"concat","args":[{"path":[{"field":"fed"}]},{"value":" · "},{"path":[{"field":"note"}]}]}},
 	"display":{"layouts":[{"width":"mobile","tracks":3,"cells":[{"col":"animal","line":1,"span":3},{"col":"weight","line":2},{"col":"cost","line":2,"justify":"end"},{"col":"site","line":2,"justify":"end"}]}]}}`
 
+// pivoted is a pivot over a link named by a label field, with a display
+// layout that places the pivot's cell column.
+const pivoted = `{"version":2,"source":"zoo.feedings",
+	"columns":[{"id":"month","path":[{"field":"fed"}]},{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
+	"groups":[{"id":"m","col":"month","bucket":"month"}],
+	"pivot":{"path":[{"link":"animal"}],"cell":"grams","labelField":"name"},
+	"display":{"layouts":[{"width":"desktop","tracks":2,"cells":[{"col":"month","line":1},{"col":"grams","line":1}]}]}}`
+
 // A spec with every v2 part loads, validates, runs, and is stored with
 // every part unchanged.
 func TestASpecWithEveryV2PartIsKeptWhole(t *testing.T) {
 	z := newZoo(t)
-	spec, _, stored := mustLoad(t, every)
-	if err := Validate(z.app, spec); err != nil {
-		t.Fatal(err)
-	}
-	z.run(t, "ann", every, Options{Today: "2026-04-15"}, nil)
-	_, _, again := mustLoad(t, string(stored))
-	if !bytes.Equal(stored, again) {
-		t.Fatalf("stored twice differs:\n%s\n%s", stored, again)
-	}
-	for _, key := range []string{`"optionsFrom"`, `"record":"byAnimal"`, `"total":"rows"`, `"op":"lookup"`, `"pick":"min"`, `"label":{`, `"fill":{`, `"having":{`, `"open":true`, `"dir":"desc"`, `"detail":{`, `"display":{`} {
-		if !strings.Contains(string(stored), key) {
-			t.Fatalf("stored spec lost %s: %s", key, stored)
+	for _, c := range []struct {
+		raw  string
+		keys []string
+	}{
+		{every, []string{`"optionsFrom"`, `"record":"byAnimal"`, `"total":"rows"`, `"op":"lookup"`, `"pick":"min"`, `"label":{`, `"fill":{`, `"having":{`, `"open":true`, `"dir":"desc"`, `"detail":{`, `"display":{`, `"labelField":"name"`}},
+		{pivoted, []string{`"pivot":{`, `"labelField":"name"`, `"display":{`}},
+	} {
+		spec, _, stored := mustLoad(t, c.raw)
+		if err := Validate(z.app, spec); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if !reflect.DeepEqual(jsonDoc(t, []byte(every)), jsonDoc(t, stored)) {
-		t.Fatalf("stored spec differs from the posted one:\n%s", stored)
+		z.run(t, "ann", c.raw, Options{Today: "2026-04-15"}, nil)
+		_, _, again := mustLoad(t, string(stored))
+		if !bytes.Equal(stored, again) {
+			t.Fatalf("stored twice differs:\n%s\n%s", stored, again)
+		}
+		for _, key := range c.keys {
+			if !strings.Contains(string(stored), key) {
+				t.Fatalf("stored spec lost %s: %s", key, stored)
+			}
+		}
+		if !reflect.DeepEqual(jsonDoc(t, []byte(c.raw)), jsonDoc(t, stored)) {
+			t.Fatalf("stored spec differs from the posted one:\n%s", stored)
+		}
 	}
 }
 
@@ -160,12 +176,35 @@ func TestDisplayLayoutsAreChecked(t *testing.T) {
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"lines":2},{"col":"b","line":2,"start":1}]}`, "display.layouts.0.cells.1", "overlaps", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"justify":"left"}]}`, "display.layouts.0.cells.0.justify", "start, center or end", 400},
 		{`{"width":"mobile","tracks":2,"cells":[]},{"width":"mobile","tracks":1,"cells":[]}`, "display.layouts.1.width", "one layout per width", 400},
+		{`{"width":"mobile","tracks":1,"cells":[]},{"width":"tablet","tracks":1,"cells":[]},{"width":"desktop","tracks":1,"cells":[]},{"width":"mobile","tracks":1,"cells":[]}`, "display.layouts", "at most 3 display layouts", 400},
+		{`{"width":"mobile","tracks":2,"cells":[` + strings.Repeat(`{"col":"a","line":1},`, 100) + `{"col":"a","line":1}]}`, "display.layouts.0.cells", "at most 100 columns", 400},
+		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1},{"col":"a","line":2}]}`, "display.layouts.0.cells.1.col", "placed once per layout", 400},
+		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"lines":-1}]}`, "display.layouts.0.cells.0", "lines is 1 to 8", 400},
+		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"span":-1}]}`, "display.layouts.0.cells.0", "span is 1 to 2", 400},
+		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"span":3}]}`, "display.layouts.0.cells.0", "span is 1 to 2", 400},
+		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"start":3}]}`, "display.layouts.0.cells.0", "does not fit its line", 400},
+		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"start":2,"span":2}]}`, "display.layouts.0.cells.0", "does not fit its line", 400},
+		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":8,"lines":2}]}`, "display.layouts.0.cells.0", "a cell ends by line 8", 400},
 	} {
 		spec, _, err := Load([]byte(fmt.Sprintf(base, c.layout)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		requireSpecError(t, Validate(app, spec), c.status, c.at, c.want)
+	}
+	// A layout need not list every column; a pivot report places its cell
+	// column.
+	for _, raw := range []string{
+		fmt.Sprintf(base, `{"width":"mobile","tracks":2,"cells":[{"col":"b","line":1,"start":2}]}`),
+		pivoted,
+	} {
+		spec, _, err := Load([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Validate(app, spec); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
 	}
 }
 
