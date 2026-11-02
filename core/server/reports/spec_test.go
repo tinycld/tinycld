@@ -190,13 +190,13 @@ func TestAliasPathLeavesKeysAloneBehindAnUnknownLink(t *testing.T) {
 		Links:   []Link{{Key: "gone", Target: "zoo.nowhere"}},
 		Aliases: map[string]string{"mass": "weight"},
 	}
-	var out []Alias
+	a := &aliaser{targets: map[string]*Source{}}
 	path := Path{{Link: "gone"}, {Field: "mass"}}
-	if got := aliasPath(base, path, &out); got != nil {
-		t.Fatalf("aliasPath = %v, want nil", got)
+	if got := a.path(base, path); got != nil {
+		t.Fatalf("aliaser.path = %v, want nil", got)
 	}
-	if len(out) != 0 || path[1].Field != "mass" {
-		t.Fatalf("aliased %+v, path %+v: want the key untouched", out, path)
+	if len(a.out) != 0 || path[1].Field != "mass" {
+		t.Fatalf("aliased %+v, path %+v: want the key untouched", a.out, path)
 	}
 	spec := &Spec{Source: "zoo.nope", Columns: []Column{{ID: "a", Path: Path{{Field: "mass"}}}}}
 	if got := resolveAliases(spec); got != nil || spec.Columns[0].Path[0].Field != "mass" {

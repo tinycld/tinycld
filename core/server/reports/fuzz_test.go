@@ -198,7 +198,48 @@ func FuzzRuleParity(f *testing.F) {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("seed %d: %s as %s, filter %s\nengine: %v\nlist:   %v", seed, src.key, user, pbFilter, keys(got), keys(want))
 		}
+		z.lookupParity(t, mux, user)
+		z.fillParity(t, mux, user)
 	})
+}
+
+// lookupParity: a lookup reads exactly what the list API lists for the reader.
+func (z *zoo) lookupParity(t *testing.T, mux http.Handler, user string) {
+	t.Helper()
+	res := z.run(t, user, `{"version":2,"source":"zoo.feedings","columns":[{"id":"id","path":[{"field":"id"}]},
+		{"id":"lk","formula":{"op":"lookup","source":"zoo.sites","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"North"}]},"value":{"path":[{"field":"id"}]}}}]}`,
+		Options{Limit: 1000}, nil)
+	var want any
+	if ids := z.listIDs(t, mux, "zoo_sites", user, `name="North"`); len(ids) > 0 {
+		want = ids[0]
+	}
+	for _, row := range res.Rows {
+		if row.Kind == KindDetail && row.Cells["lk"] != want {
+			t.Fatalf("%s: lookup = %v, list API = %v", user, row.Cells["lk"], want)
+		}
+	}
+}
+
+// fillParity: a fill adds exactly the animals the list API lists for the reader.
+func (z *zoo) fillParity(t *testing.T, mux http.Handler, user string) {
+	t.Helper()
+	res := z.run(t, user, `{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
+		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],"groups":[{"id":"g","col":"a","fill":{}}]}`, Options{}, nil)
+	got := map[string]bool{}
+	for _, row := range res.Rows {
+		if row.Kind == KindGroup && row.GroupKey[0] != nil {
+			got[row.GroupKey[0].(string)] = true
+		}
+	}
+	want := z.listIDs(t, mux, "zoo_animals", user, "")
+	if len(got) != len(want) {
+		t.Fatalf("%s: fill keys %v, list API %v", user, got, want)
+	}
+	for _, id := range want {
+		if !got[id] {
+			t.Fatalf("%s: fill left out %s", user, id)
+		}
+	}
 }
 
 func keys(m map[string]any) []string {
