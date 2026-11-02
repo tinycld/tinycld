@@ -27,7 +27,7 @@
     "tailwind-variants": "0.1.20",
     "tailwind-merge": "3.7.0",
     "@gluestack-ui/utils": "5.0.6",
-    "@shopify/flash-list": "github:nathanstitt/flash-list#8364a1610e5fef6463f8f5a63b6ecdc31a0ca067",
+    "@shopify/flash-list": "github:nathanstitt/flash-list#265c951ddb7781b29345902b8a20d048a769b682",
     "lucide-react-native": "1.52.0",
     "react-hook-form": "7.89.0",
     "pbtsdb": "2.1.1",
