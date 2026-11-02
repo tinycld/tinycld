@@ -138,7 +138,12 @@ func TestWriteRunRecordsTheTriggerRecord(t *testing.T) {
 	}
 	var summary map[string]any
 	_ = json.Unmarshal([]byte(run.GetString("trigger_summary")), &summary)
-	if summary["fields.email"] != "a@b.c" || summary["title"] != "hello" {
-		t.Fatalf("summary must hold columns and dynamic fields: %v", summary)
+	if summary["title"] != "hello" {
+		t.Fatalf("summary must hold the trigger's columns: %v", summary)
+	}
+	// A web form's answers live on the submission, which retention and
+	// Delete remove; a copy in run history would outlive both.
+	if _, ok := summary["fields.email"]; ok {
+		t.Fatalf("summary must not copy dynamic values: %v", summary)
 	}
 }

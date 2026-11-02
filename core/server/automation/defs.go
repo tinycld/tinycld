@@ -11,6 +11,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/appstate"
 )
 
 // FieldRef decodes both wire forms: "subject" and {"key":..., "label":...}.
@@ -87,6 +90,11 @@ type ParamDef struct {
 	// because most legitimately accept an empty string. core:notify's title
 	// does not — it becomes notifications.title, which the schema requires.
 	Required bool `json:"required"`
+	// Recipient marks a param that names who a message is sent to (an email
+	// address). Web forms refuse a recipient filled from a form's answers
+	// unless the form asks for proof of work: otherwise a bot could make the
+	// server send mail to any address.
+	Recipient bool `json:"recipient"`
 }
 
 type ActionDef struct {
@@ -190,4 +198,27 @@ func (d *Defs) TriggersFor(collection, op string) []QualifiedTrigger {
 		}
 	}
 	return out
+}
+
+var defsKey = appstate.NewKey[*Defs]("automation.defs")
+
+// RecipientParams returns the keys of an action's params that name who a
+// message goes to (ParamDef.Recipient), as app's engine declares them; none
+// when the action or the engine is unknown.
+func RecipientParams(app core.App, ref string) []string {
+	defs, ok := defsKey.GetOk(app)
+	if !ok || defs == nil {
+		return nil
+	}
+	action, _, ok := defs.Action(ref)
+	if !ok {
+		return nil
+	}
+	var keys []string
+	for _, p := range action.Params {
+		if p.Recipient {
+			keys = append(keys, p.Key)
+		}
+	}
+	return keys
 }

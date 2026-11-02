@@ -109,10 +109,10 @@ func onFormRun(app core.App, rule, record *core.Record, outcome automation.RunOu
 
 var formFieldInTo = regexp.MustCompile(`\{\{\s*fields\.`)
 
-// sendsToFormAddress reports an action list with a send-email whose
-// recipient comes from the form: without proof of work, a bot could make the
-// server mail any address.
-func sendsToFormAddress(rule *core.Record) bool {
+// sendsToFormAddress reports an action list with a recipient param (an
+// email's "to", or any package action that declares one) filled from the
+// form: without proof of work, a bot could make the server mail any address.
+func sendsToFormAddress(app core.App, rule *core.Record) bool {
 	var actions []struct {
 		Ref    string         `json:"ref"`
 		Params map[string]any `json:"params"`
@@ -122,9 +122,11 @@ func sendsToFormAddress(rule *core.Record) bool {
 		return false
 	}
 	for _, a := range actions {
-		to, _ := a.Params["to"].(string)
-		if a.Ref == "core:send-email" && formFieldInTo.MatchString(to) {
-			return true
+		for _, key := range automation.RecipientParams(app, a.Ref) {
+			to, _ := a.Params[key].(string)
+			if formFieldInTo.MatchString(to) {
+				return true
+			}
 		}
 	}
 	return false
@@ -136,7 +138,7 @@ func formRequiresPow(app core.App, formID string) bool {
 }
 
 func checkAutoReply(app core.App, rule *core.Record) error {
-	if rule.GetString("trigger") != FormSubmittedTrigger || !rule.GetBool("enabled") || !sendsToFormAddress(rule) {
+	if rule.GetString("trigger") != FormSubmittedTrigger || !rule.GetBool("enabled") || !sendsToFormAddress(app, rule) {
 		return nil
 	}
 	if formRequiresPow(app, configFormOf(rule)) {
@@ -162,7 +164,7 @@ func checkPowStillNeeded(app core.App, pub *core.Record) error {
 		return nil
 	}
 	for _, r := range rules {
-		if configFormOf(r) == pub.GetString("form") && sendsToFormAddress(r) {
+		if configFormOf(r) == pub.GetString("form") && sendsToFormAddress(app, r) {
 			return validation.Errors{"require_pow": validation.NewError("validation_auto_reply_needs_pow",
 				"A rule sends email to an address from this form. Turn that rule off first.")}
 		}

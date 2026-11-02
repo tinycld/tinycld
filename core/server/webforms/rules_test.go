@@ -114,3 +114,17 @@ func TestEmailToAFixedAddressIsAllowed(t *testing.T) {
 		t.Fatalf("a fixed recipient is safe: %v", err)
 	}
 }
+
+func TestAutoReplyThroughAPackageSendActionNeedsProofOfWork(t *testing.T) {
+	f := newFixture(t, rulesDef)
+	r, _ := autoReplyRule(t, f, false)
+	r.Set("actions", `[{"ref":"gizmos:dispatch","params":{"recipient":"{{ fields.name }}","note":"hi"}}]`)
+	r.Set("enabled", true)
+	if err := f.app.Save(r); err == nil || !strings.Contains(err.Error(), "actions") {
+		t.Fatalf("any recipient param filled from the form needs proof of work, got %v", err)
+	}
+	r.Set("actions", `[{"ref":"gizmos:dispatch","params":{"recipient":"ops@example.com","note":"{{fields.name}}"}}]`)
+	if err := f.app.Save(r); err != nil {
+		t.Fatalf("a fixed recipient is safe even when another param reads the form: %v", err)
+	}
+}

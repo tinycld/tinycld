@@ -16,6 +16,12 @@ describe('CORE_AUTOMATION', () => {
         expect(actionIds).toEqual(['apply-label', 'notify', 'post-webhook', 'send-email'])
     })
 
+    it("marks send-email's recipient, so web forms can refuse one filled from a form", () => {
+        const sendEmail = CORE_AUTOMATION.actions?.find(a => a.id === 'send-email')
+        const to = sendEmail?.params?.find(p => p.key === 'to')
+        expect(to).toMatchObject({ recipient: true })
+    })
+
     it('declares the web form trigger on submissions, exposing only the time', () => {
         const t = CORE_AUTOMATION.triggers?.find(x => x.id === 'form-submitted')
         expect(t).toMatchObject({

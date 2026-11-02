@@ -9,6 +9,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/automation"
 	"tinycld.org/core/forms"
 	"tinycld.org/core/rlstest"
 )
@@ -51,6 +52,16 @@ func buildFixture(t *testing.T, def string, bindHost bool) *fixture {
 		}
 		forms.BindHooks(app, defs)
 	}
+	// The action catalog the safety rule reads: core's send-email and a
+	// fictional package's send action, both with a recipient param.
+	automation.NewEngine(app, &automation.Defs{Packages: []automation.PackageDefs{
+		{Slug: "core", Actions: []automation.ActionDef{{ID: "send-email", Kind: "native", Params: []automation.ParamDef{
+			{Key: "to", Type: "text", Recipient: true}, {Key: "subject", Type: "text"},
+		}}}},
+		{Slug: "gizmos", Actions: []automation.ActionDef{{ID: "dispatch", Kind: "native", Params: []automation.ParamDef{
+			{Key: "recipient", Type: "text", Recipient: true}, {Key: "note", Type: "text"},
+		}}}},
+	}})
 	Register(app)
 
 	formsCol, _ := app.FindCollectionByNameOrId("forms")

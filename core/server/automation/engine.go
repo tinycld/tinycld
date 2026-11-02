@@ -62,6 +62,7 @@ type Engine struct {
 }
 
 func NewEngine(app core.App, defs *Defs) *Engine {
+	defsKey.Set(app, defs)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{
 		app: app, defs: defs,
