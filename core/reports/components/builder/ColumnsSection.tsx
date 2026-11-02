@@ -16,7 +16,8 @@ import {
     nextColumnId,
     pathLabel,
 } from '../../lib/builder/columns'
-import type { ColumnDraft, FormulaDraft } from '../../lib/builder/draft'
+import { type ColumnDraft, type FormulaDraft, showsDetailLabel } from '../../lib/builder/draft'
+import { rowsTotalColumns } from '../../lib/builder/formula-context'
 import type { SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
@@ -77,11 +78,11 @@ interface ColumnRowProps {
     index: number
     /** The columns whose cells are numbers, amounts or percents. */
     numericIds: ReadonlySet<string>
-    /** The columns that show child rows: no one value to total. */
-    nestedIds: ReadonlySet<string>
+    /** The columns whose total may add the rows shown (levels.go detailCell). */
+    rowsTotalIds: ReadonlySet<string>
 }
 
-function ColumnRow({ builder, columns, index, numericIds, nestedIds }: ColumnRowProps) {
+function ColumnRow({ builder, columns, index, numericIds, rowsTotalIds }: ColumnRowProps) {
     const source = useWatch({ control: builder.form.control, name: 'source' })
     const column = columns[index]
     if (!column) return null
@@ -130,10 +131,11 @@ function ColumnRow({ builder, columns, index, numericIds, nestedIds }: ColumnRow
                 label="Summarize"
                 options={aggregateOptions(builder, column)}
                 testID={`${testID}-aggregate`}
+                onValueChange={builder.validateLists}
             />
             <FormatField builder={builder} column={column} index={index} numericIds={numericIds} />
             <TotalField
-                isVisible={numericIds.has(column.id) && !nestedIds.has(column.id)}
+                isVisible={rowsTotalIds.has(column.id) || column.total === 'rows'}
                 builder={builder}
                 index={index}
             />
@@ -196,7 +198,11 @@ const TOTAL_OPTIONS = [
     { value: 'rows', label: 'Add the rows shown' },
 ]
 
-/** A number or amount column totals all rows, or only the rows the report shows (E2). */
+/**
+ * A number or amount column totals all rows, or only the rows the report shows (E2).
+ * A running value, a percent or child rows are not added up; a column that became
+ * one after "Add the rows shown" keeps the choice in view, so it can be set back.
+ */
 function TotalField({
     isVisible,
     builder,
@@ -214,6 +220,7 @@ function TotalField({
             label="Total"
             options={TOTAL_OPTIONS}
             testID={`report-builder-column-${index}-total`}
+            onValueChange={builder.validateLists}
         />
     )
 }
@@ -277,12 +284,34 @@ function DetailFormula({
     )
 }
 
-/** "Row label": opened rows are labelled by the first column, or by a formula (E7). */
+function DetailLabelError({ message }: { message: string | undefined }) {
+    if (!message) return null
+    return (
+        <Text
+            testID="report-builder-detail-label-error"
+            role="alert"
+            className="text-xs text-danger"
+        >
+            {message}
+        </Text>
+    )
+}
+
+/**
+ * "Row label": opened rows are labelled by the first column, or by a formula (E7). A
+ * pivot report has no opened rows (bind.go detail.label); a label set before the
+ * pivot stays in view with its refusal, so it can be turned off.
+ */
 function DetailLabelCard({ builder }: { builder: ReportBuilder }) {
-    const label = useWatch({ control: builder.form.control, name: 'detailLabel' })
+    const control = builder.form.control
+    const label = useWatch({ control, name: 'detailLabel' })
+    const pivot = useWatch({ control, name: 'pivot' })
+    if (!showsDetailLabel({ pivot, detailLabel: label })) return null
+    const error = builder.form.getFieldState('detailLabel', builder.form.formState).error
     const testID = 'report-builder-detail-label'
     return (
-        <View className="gap-1.5 rounded-lg border border-border p-2">
+        <View testID={`${testID}-card`} className="gap-1.5 rounded-lg border border-border p-2">
+            <DetailLabelError message={error?.message} />
             <View className="flex-row items-center gap-2">
                 <Switch
                     value={label !== null}
@@ -318,6 +347,7 @@ function FormatField({
             label="Show as"
             options={FORMAT_OPTIONS}
             testID={`report-builder-column-${index}-format`}
+            onValueChange={builder.validateLists}
         />
     )
 }
@@ -352,7 +382,7 @@ export function ColumnsSection({
     const columns = useWatch({ control: builder.form.control, name: 'columns' })
     const choices = useColumnChoices(builder)
     const numericIds = new Set(choices.filter(choice => choice.isNumeric).map(choice => choice.key))
-    const nestedIds = new Set(choices.filter(choice => choice.isNested).map(choice => choice.key))
+    const rowsTotalIds = rowsTotalColumns(choices, columns)
     const onPick = (path: SpecHop[]) => {
         const info = describePath(builder.catalog, builder.base.key, path)
         if (!info) return
@@ -399,7 +429,7 @@ export function ColumnsSection({
             columns={columns}
             index={index}
             numericIds={numericIds}
-            nestedIds={nestedIds}
+            rowsTotalIds={rowsTotalIds}
         />
     ))
     return (

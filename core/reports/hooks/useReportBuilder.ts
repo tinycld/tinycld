@@ -195,6 +195,8 @@ export function useReportBuilder(input: BuilderInput) {
         },
         isConfirmingDiscard,
         onKeepEditing: () => setConfirmingDiscard(false),
+        /** A registered control's edit (a total, a sort order) can change what another refuses. */
+        validateLists,
         onDiscard: () => {
             setConfirmingDiscard(false)
             form.reset(defaults)

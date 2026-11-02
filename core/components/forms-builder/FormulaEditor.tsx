@@ -169,7 +169,8 @@ export function FormulaPlacesPick({
         isSelected: n === places,
         onSelect: () => onChange(n),
     }))
-    return <PickMenu label={`${places} places`} purpose={purpose} items={items} testID={testID} />
+    const label = places === 1 ? '1 place' : `${places} places`
+    return <PickMenu label={label} purpose={purpose} items={items} testID={testID} />
 }
 
 type ComputeLeafProps = FormulaLeafProps<ComputeExpr> & {

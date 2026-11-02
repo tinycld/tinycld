@@ -50,6 +50,7 @@ import {
     columnTypes,
     formulaContext,
     isNumericType,
+    levelValueColumns,
     recordGroups,
 } from './formula-context'
 import { isEditableNode, settleScales } from './formula-ops'
@@ -256,10 +257,12 @@ function groupingIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
 // and the groups above it (F21).
 function levelIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues: Issue[] = []
-    const level = levelScope(draft, catalog)
     draft.groups.forEach((group, i) => {
+        const level = levelScope(draft, catalog, i)
         const [having] = conditionProblems(group.having, catalog, draft.source, level)
-        if (having) issues.push({ path: ['groups', i, 'having'], message: having })
+        if (!offersHaving(draft, i) && hasHaving(draft, i))
+            issues.push({ path: ['groups', i, 'having'], message: LAYOUT_HAVING })
+        else if (having) issues.push({ path: ['groups', i, 'having'], message: having })
         if (!group.fill.on) return
         const [fill] = conditionProblems(
             group.fill.where,
@@ -273,10 +276,39 @@ function levelIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     return issues
 }
 
+const LAYOUT_HAVING = "A layout's sections are fixed rows: hide rows on a deeper group"
+const PIVOT_DETAIL = 'A pivot report has no opened rows to label: turn the row label off'
+
+/**
+ * A level's "Show only groups where…" is offered unless the level is a layout's first
+ * group, whose sections are fixed rows (bind.go layout).
+ */
+export function offersHaving(draft: Pick<BuilderDraft, 'layout'>, index: number): boolean {
+    return index > 0 || draft.layout.length === 0
+}
+
+const hasHaving = (draft: Pick<BuilderDraft, 'groups'>, index: number) =>
+    (draft.groups[index]?.having.items.length ?? 0) > 0
+
+/** The having editor shows where it is offered, or where it holds conditions to remove. */
+export function showsHaving(draft: Pick<BuilderDraft, 'layout' | 'groups'>, index: number) {
+    return offersHaving(draft, index) || hasHaving(draft, index)
+}
+
+/**
+ * The row label is offered unless the report pivots: a pivot has no opened rows
+ * (bind.go detail.label); a label already set stays in view so it can be turned off.
+ */
+export function showsDetailLabel(draft: Pick<BuilderDraft, 'pivot' | 'detailLabel'>): boolean {
+    return !draft.pivot.on || draft.detailLabel !== null
+}
+
 export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues = [...columnIssues(draft, catalog), ...groupingIssues(draft, catalog)]
     const [firstProblem] = conditionProblems(draft.filter, catalog, draft.source)
     if (firstProblem) issues.push({ path: ['filter'], message: firstProblem })
+    if (draft.pivot.on && draft.detailLabel !== null)
+        issues.push({ path: ['detailLabel'], message: PIVOT_DETAIL })
     return [...issues, ...levelIssues(draft, catalog)]
 }
 
@@ -405,7 +437,6 @@ export function draftFromSpec(
     const columns = spec.columns.map(column => columnDraft(column, catalog, spec.source, params))
     const specGroups = spec.groups ?? []
     const base = { source: spec.source, columns, groups: specGroups, params }
-    const level = levelScope(base, catalog)
     return {
         title: meta.title,
         description: meta.description,
@@ -418,7 +449,7 @@ export function draftFromSpec(
                 catalog,
                 baseKey: spec.source,
                 params,
-                level,
+                level: levelScope(base, catalog, index),
                 fillSource: groupTarget(base, catalog, g)?.key ?? spec.source,
                 above: aboveOf(specGroups, index, spec.columns),
             })
@@ -526,12 +557,14 @@ export function groupTarget(
 }
 
 /**
- * What a group level's conditions read: the columns (child rows have no one value
- * on a group row) and the record groups.
+ * What the conditions of group level `index` read (levels.go own): the columns with
+ * one value on its rows (no row value, running value or percent) and the records
+ * of its own group and the groups around it.
  */
-export function levelScope(draft: ColumnsOf, catalog: Catalog): LevelScope {
+export function levelScope(draft: ColumnsOf, catalog: Catalog, index: number): LevelScope {
+    const offered = levelValueColumns(draft, catalog, index)
     const columns = columnChoices(draft, catalog)
-        .filter(choice => !choice.isNested)
+        .filter(choice => offered.has(choice.key))
         .map(choice => {
             const column = draft.columns.find(c => c.id === choice.key)
             const info =
@@ -545,7 +578,8 @@ export function levelScope(draft: ColumnsOf, catalog: Catalog): LevelScope {
             }
             return { key: choice.key, label: choice.label, field, target: info?.target }
         })
-    return { columns, records: recordGroups(draft, catalog) }
+    const groups = draft.groups.slice(0, index + 1)
+    return { columns, records: recordGroups({ ...draft, groups }, catalog) }
 }
 
 /**
@@ -603,9 +637,9 @@ function specSort(draft: BuilderDraft, catalog: Catalog): SpecSortKey[] {
 }
 
 function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
-    const level = levelScope(draft, catalog)
-    const ctx = formulaContext(draft, catalog, { kind: 'level' })
     return draft.groups.map((g, index) => {
+        const level = levelScope(draft, catalog, index)
+        const ctx = formulaContext(draft, catalog, { kind: 'level', index })
         const having = filterToNode(g.having, catalog, draft.source, level)
         const fillSource = groupTarget(draft, catalog, g)?.key ?? draft.source
         const above = aboveOf(draft.groups, index, draft.columns)

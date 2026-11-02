@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { appShell, createInvitedUser, skipWithoutReportsStub } from './helpers'
+import { appShell, createInvitedUser, login, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
     addSale,
@@ -163,7 +163,7 @@ test.describe('group levels', () => {
             await pickIn(p, `${h}-add-total`, 'report-builder-pick-field-quantity')
             await chooseOption(p, `${h}-0-aggregate`, 'avg')
             await chooseOption(p, `${h}-0-places`, '1')
-            await expect(p.getByTestId(`${h}-0-places`)).toHaveText('1 places')
+            await expect(p.getByTestId(`${h}-0-places`)).toHaveText('1 place')
             await chooseOption(p, `${h}-0-op`, 'gt')
             await p.getByTestId(`${h}-0-value`).fill('3')
             await expect(groupRows(p)).toHaveText([`${stem} A`])
@@ -427,6 +427,47 @@ test.describe('group levels', () => {
         } finally {
             await close()
         }
+    })
+
+    // The builder never offers what the engine refuses: a group row's value it does
+    // not have, a total of a running value, a sort by one, a having on a layout's
+    // first group, or a row label on a pivot.
+    test('the builder offers no choice the engine refuses', async ({ page }) => {
+        await login(page)
+        await openReportsHub(page)
+        await startReport(page, SALES_SOURCE)
+        await addColumn(page, ['status'])
+        await addColumn(page, ['amount'])
+        await chooseOption(page, 'report-builder-column-2-aggregate', 'sum')
+        await page.getByTestId('report-builder-add-formula').click()
+        await chooseOption(page, 'report-builder-column-3-formula-root-part', 'runningSum')
+        await expect(page.getByTestId('report-builder-column-2-total')).toBeVisible()
+        await expect(page.getByTestId('report-builder-column-3-total')).toHaveCount(0)
+
+        await page.getByTestId('report-builder-section-group').click()
+        await page.getByTestId('report-builder-group-add').click()
+        await chooseOption(page, 'report-builder-group-0-col', 'status')
+        const having = 'report-builder-group-0-having-add-column'
+        await page.getByTestId(having).click()
+        await expect(page.getByTestId(`${having}-amount`)).toBeVisible()
+        await expect(page.getByTestId(`${having}-status`)).toBeVisible()
+        // A row's customer, and a running value, have no one value on a group row.
+        await expect(page.getByTestId(`${having}-customer`)).toHaveCount(0)
+        await expect(page.getByTestId(`${having}-formula`)).toHaveCount(0)
+        await page.keyboard.press('Escape')
+        await page.getByTestId('report-builder-sort-add-menu').click()
+        await expect(page.getByTestId('report-builder-sort-add-menu-amount')).toBeVisible()
+        await expect(page.getByTestId('report-builder-sort-add-menu-formula')).toHaveCount(0)
+        await page.keyboard.press('Escape')
+
+        await page.getByTestId('report-builder-section-layout').click()
+        await page.getByTestId('report-builder-layout-add-section').click()
+        await expect(page.getByTestId('report-builder-group-0-having-add-total')).toHaveCount(0)
+
+        await expect(page.getByTestId('report-builder-detail-label-on')).toBeVisible()
+        await page.getByTestId('report-builder-section-pivot').click()
+        await page.getByTestId('report-builder-pivot-on').click()
+        await expect(page.getByTestId('report-builder-detail-label-on')).toHaveCount(0)
     })
 
     test('on a phone a group by a linked team is set up in the builder sheet', async ({ page }) => {

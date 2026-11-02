@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec, type SpecNode } from '../../spec'
 import {
+    type BuilderDraft,
     builderSchema,
     type ColumnDraft,
     draftFromSpec,
@@ -10,6 +11,9 @@ import {
     groupTarget,
     keptParams,
     levelScope,
+    offersHaving,
+    showsDetailLabel,
+    showsHaving,
     specFromDraft,
 } from '../draft'
 import { emptyCondition, emptyGroup } from '../filter'
@@ -721,7 +725,7 @@ describe('spec version 2 in the builder', () => {
         const draft = draftFromSpec(V2, META, CATALOG)
         expect(groupTarget(draft, CATALOG, { col: 'team' })?.key).toBe(TEAMS_KEY)
         expect(groupTarget(draft, CATALOG, { col: 'amount' })).toBeUndefined()
-        const level = levelScope(draft, CATALOG)
+        const level = levelScope(draft, CATALOG, 0)
         const column = (key: string) => level.columns.find(c => c.key === key)
         expect(column('quantity')?.field.type).toBe('number')
         expect(column('gone')).toBeUndefined()
@@ -729,6 +733,58 @@ describe('spec version 2 in the builder', () => {
         expect(column('team')).toMatchObject({ label: 'Team', field: { type: 'relation' } })
         expect(column('team')?.target?.key).toBe(TEAMS_KEY)
         expect(level.records).toEqual([{ group: 'byTeam', label: 'Team', source: TEAMS_KEY }])
+    })
+
+    // levels.go own: a having reads only what a group row has.
+    it('offers a level condition only the columns with a value on its rows', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        const customer: ColumnDraft = {
+            kind: 'path',
+            id: 'customer',
+            label: 'Customer',
+            path: [{ field: 'customer' }],
+            aggregate: '',
+            scale: null,
+            format: '',
+            total: 'recompute',
+            explicitTotal: false,
+            labelField: '',
+        }
+        const level = levelScope({ ...draft, columns: [...draft.columns, customer] }, CATALOG, 0)
+        expect(level.columns.map(c => c.key)).not.toContain('customer')
+        expect(level.columns.map(c => c.key)).toContain('quantity')
+    })
+
+    it('hides a layout first group’s having, and a pivot’s row label, unless one is set', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        const section = { kind: 'section' as const, id: 's', title: 'S', key: 'x' }
+        const empty = { ...draft.groups[0], having: emptyGroup() }
+        const laidOut = { layout: [section], groups: [empty] as BuilderDraft['groups'] }
+        expect(offersHaving(laidOut, 0)).toBe(false)
+        expect(showsHaving(laidOut, 0)).toBe(false)
+        expect(offersHaving(laidOut, 1)).toBe(true)
+        expect(showsHaving({ layout: [section], groups: draft.groups }, 0)).toBe(true)
+        const pivot = { ...draft.pivot, on: true }
+        expect(showsDetailLabel({ pivot, detailLabel: null })).toBe(false)
+        const label = { kind: 'editable' as const, node: { value: 'x' } }
+        expect(showsDetailLabel({ pivot, detailLabel: label })).toBe(true)
+        expect(showsDetailLabel({ pivot: draft.pivot, detailLabel: null })).toBe(true)
+    })
+
+    it('refuses a having on a layout’s first group and a row label on a pivot', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        const section = { kind: 'section' as const, id: 's', title: 'S', key: 'x' }
+        const laidOut = draftIssues({ ...draft, layout: [section] }, CATALOG)
+        expect(laidOut).toContainEqual({
+            path: ['groups', 0, 'having'],
+            message: "A layout's sections are fixed rows: hide rows on a deeper group",
+        })
+        const label = { kind: 'editable' as const, node: { value: 'x' } }
+        const pivoted = draftIssues(
+            { ...draft, pivot: { ...draft.pivot, on: true }, detailLabel: label },
+            CATALOG
+        )
+        expect(pivoted.map(i => i.path.join('.'))).toContain('detailLabel')
     })
 
     it('names a group condition the draft can no longer run', () => {

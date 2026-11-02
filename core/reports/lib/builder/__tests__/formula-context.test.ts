@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import type { ParamDef } from '../../spec'
-import { type BuilderDraft, emptyDraft } from '../draft'
+import type { ParamDef, SpecHop, SpecNode } from '../../spec'
+import { type BuilderDraft, type ColumnDraft, emptyDraft, type FormulaDraft } from '../draft'
 import { emptyGroup } from '../filter'
-import { columnChoices, formulaContext, recordGroups } from '../formula-context'
+import {
+    columnChoices,
+    formulaContext,
+    levelValueColumns,
+    readsColumn,
+    recordGroups,
+    rowsTotalColumns,
+    windowColumns,
+} from '../formula-context'
 import { contextAt } from '../formula-ops'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
@@ -63,6 +71,117 @@ function draft(): BuilderDraft {
         ],
     }
 }
+
+// Two levels, by status then by team, over columns with and without a value on a
+// group row (levels.go readsRowValue), and two running values.
+function levelsDraft(): BuilderDraft {
+    const base = draft()
+    const common = {
+        aggregate: '' as const,
+        scale: null,
+        format: '',
+        total: 'recompute' as const,
+        explicitTotal: false,
+        labelField: '',
+    }
+    const column = (
+        id: string,
+        rest:
+            | { kind: 'path'; path: SpecHop[]; aggregate?: 'sum'; total?: 'rows' }
+            | { kind: 'formula'; formula: FormulaDraft }
+    ): ColumnDraft => ({ ...common, id, label: id, ...rest })
+    const formula = (node: SpecNode): FormulaDraft => ({ kind: 'editable', node })
+    const level = (id: string, col: string, bucket: '' | 'month' = '') => ({
+        id,
+        col,
+        bucket,
+        subtotals: false,
+        open: false,
+        label: null,
+        having: emptyGroup(),
+        fill: { on: false, where: emptyGroup() },
+    })
+    return {
+        ...base,
+        columns: [
+            column('team', { kind: 'path', path: [{ link: 'team' }] }),
+            column('status', { kind: 'path', path: [{ field: 'status' }] }),
+            column('customer', { kind: 'path', path: [{ field: 'customer' }] }),
+            column('day', { kind: 'path', path: [{ field: 'day' }] }),
+            column('amount', { kind: 'path', path: [{ field: 'amount' }], aggregate: 'sum' }),
+            column('qty', { kind: 'path', path: [{ field: 'quantity' }], total: 'rows' }),
+            column('run', {
+                kind: 'formula',
+                formula: formula({ op: 'runningSum', args: [{ col: 'amount' }] }),
+            }),
+            column('share', {
+                kind: 'formula',
+                formula: formula({ op: 'div', args: [{ col: 'run' }, { value: 2 }] }),
+            }),
+            column('teamName', {
+                kind: 'formula',
+                formula: formula({ record: 'byTeam', path: [{ field: 'name' }] }),
+            }),
+            column('total', {
+                kind: 'formula',
+                formula: formula({ op: 'sum', args: [{ path: [{ field: 'cost' }] }] }),
+            }),
+        ],
+        groups: [
+            level('byStatus', 'status'),
+            level('byTeam', 'team'),
+            level('byDay', 'day', 'month'),
+        ],
+        layout: [],
+    }
+}
+
+describe('what a group row has', () => {
+    const keys = (set: ReadonlySet<string>) => [...set].sort()
+
+    it('finds running values and percents, and the columns that read them', () => {
+        expect(keys(windowColumns(levelsDraft().columns))).toEqual(['run', 'share'])
+    })
+
+    it('reads on a level only totals, rows totals, its keys and outer records', () => {
+        const d = levelsDraft()
+        expect(keys(levelValueColumns(d, CATALOG, 0))).toEqual(['amount', 'qty', 'status', 'total'])
+        expect(keys(levelValueColumns(d, CATALOG, 1))).toEqual([
+            'amount',
+            'qty',
+            'status',
+            'team',
+            'teamName',
+            'total',
+        ])
+        // A bucketed key is a month, not the day itself.
+        expect(levelValueColumns(d, CATALOG, 2).has('day')).toBe(false)
+    })
+
+    it('offers a label only what its level has, and a sort anything but a running value', () => {
+        const d = levelsDraft()
+        const label = formulaContext(d, CATALOG, { kind: 'level', index: 0 })
+        expect(label.values.map(v => v.key)).toEqual(['status', 'amount', 'qty', 'total'])
+        expect(label.records).toEqual([])
+        const inner = formulaContext(d, CATALOG, { kind: 'level', index: 1 })
+        expect(inner.records.map(r => r.group)).toEqual(['byTeam'])
+        const sort = formulaContext(d, CATALOG, { kind: 'level' })
+        expect(sort.values.map(v => v.key)).not.toContain('run')
+        expect(sort.values.map(v => v.key)).not.toContain('share')
+        expect(sort.values.map(v => v.key)).toContain('customer')
+    })
+
+    it('adds the rows shown only for numbers and amounts that are not running values', () => {
+        const d = levelsDraft()
+        const choices = columnChoices(d, CATALOG)
+        expect(keys(rowsTotalColumns(choices, d.columns))).toEqual(['amount', 'qty', 'total'])
+    })
+
+    it('knows when a formula reads a column', () => {
+        expect(readsColumn({ op: 'concat', args: [{ col: 'status' }] }, 'status')).toBe(true)
+        expect(readsColumn({ op: 'concat', args: [{ col: 'team' }] }, 'status')).toBe(false)
+    })
+})
 
 describe('what a formula reads where it is edited', () => {
     it('a group by a link carries its record', () => {

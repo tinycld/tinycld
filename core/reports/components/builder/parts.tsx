@@ -80,10 +80,17 @@ interface BucketSelectProps {
     name: 'pivot.bucket' | `groups.${number}.bucket`
     control: Control<BuilderDraft>
     testID: string
+    onValueChange?: () => void
 }
 
 /** A date's bucket; only a date field has one. */
-export function BucketSelect({ isVisible, name, control, testID }: BucketSelectProps) {
+export function BucketSelect({
+    isVisible,
+    name,
+    control,
+    testID,
+    onValueChange,
+}: BucketSelectProps) {
     if (!isVisible) return null
     return (
         <SelectInput
@@ -92,6 +99,7 @@ export function BucketSelect({ isVisible, name, control, testID }: BucketSelectP
             label="By"
             options={BUCKET_OPTIONS}
             testID={testID}
+            onValueChange={onValueChange}
         />
     )
 }

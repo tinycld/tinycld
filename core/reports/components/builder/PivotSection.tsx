@@ -63,6 +63,7 @@ function PivotFields({ builder }: { builder: ReportBuilder }) {
                 label="Cells show"
                 options={cells}
                 testID="report-builder-pivot-cell"
+                onValueChange={builder.validateLists}
             />
             <NumberInput
                 name="pivot.maxColumns"
@@ -92,6 +93,7 @@ export function PivotSection({
                 control={builder.form.control}
                 label="Pivot by a field"
                 testID="report-builder-pivot-on"
+                onValueChange={builder.validateLists}
             />
             <PivotFields builder={builder} />
         </BuilderSection>
