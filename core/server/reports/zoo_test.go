@@ -73,6 +73,8 @@ func newZoo(t testing.TB) *zoo {
 		&core.DateField{Name: "born"},
 		&core.BoolField{Name: "active"},
 		&core.TextField{Name: "secret", Hidden: true},
+		&core.NumberField{Name: "fee"},
+		&core.TextField{Name: "fee_currency"},
 	)
 	z.save(t, animals)
 
@@ -119,10 +121,10 @@ func newZoo(t testing.TB) *zoo {
 	bob := z.user(t, "bob")
 	north := z.rec(t, "north", "zoo_sites", map[string]any{"name": "North", "region": "north"})
 	south := z.rec(t, "south", "zoo_sites", map[string]any{"name": "South", "region": "south"})
-	leo := z.rec(t, "leo", "zoo_animals", map[string]any{"name": "Leo", "species": "lion", "site": north.Id, "owner": ann.Id, "weight": 190, "price": 500000, "born": "2020-05-01 00:00:00.000Z", "active": true})
-	zed := z.rec(t, "zed", "zoo_animals", map[string]any{"name": "Zed", "species": "zebra", "site": south.Id, "owner": bob.Id, "weight": 300, "price": 120000, "born": "2019-02-10 00:00:00.000Z", "active": true})
-	mo := z.rec(t, "mo", "zoo_animals", map[string]any{"name": "Mo", "species": "monkey", "site": north.Id, "owner": bob.Id, "weight": 12, "price": 30000, "born": "2022-08-15 00:00:00.000Z"})
-	kit := z.rec(t, "kit", "zoo_animals", map[string]any{"name": "Kit", "species": "cat", "owner": ann.Id, "weight": 4, "price": 5000, "active": true})
+	leo := z.rec(t, "leo", "zoo_animals", map[string]any{"name": "Leo", "species": "lion", "site": north.Id, "owner": ann.Id, "weight": 190, "price": 500000, "born": "2020-05-01 00:00:00.000Z", "active": true, "fee": 700, "fee_currency": "EUR"})
+	zed := z.rec(t, "zed", "zoo_animals", map[string]any{"name": "Zed", "species": "zebra", "site": south.Id, "owner": bob.Id, "weight": 300, "price": 120000, "born": "2019-02-10 00:00:00.000Z", "active": true, "fee": 300, "fee_currency": "USD"})
+	mo := z.rec(t, "mo", "zoo_animals", map[string]any{"name": "Mo", "species": "monkey", "site": north.Id, "owner": bob.Id, "weight": 12, "price": 30000, "born": "2022-08-15 00:00:00.000Z", "fee": 20, "fee_currency": "GBP"})
+	kit := z.rec(t, "kit", "zoo_animals", map[string]any{"name": "Kit", "species": "cat", "owner": ann.Id, "weight": 4, "price": 5000, "active": true, "fee": 50, "fee_currency": "USD"})
 	z.rec(t, "k1", "zoo_keepers", map[string]any{"user": ann.Id, "animal": leo.Id})
 	z.rec(t, "k2", "zoo_keepers", map[string]any{"user": ann.Id, "animal": zed.Id})
 	z.rec(t, "k3", "zoo_keepers", map[string]any{"user": bob.Id, "animal": zed.Id})
@@ -165,6 +167,8 @@ func registerZooSources() {
 			{Key: "price", Label: "Price", Type: Money, Aggregates: SumAll},
 			{Key: "born", Label: "Born", Type: Date, Aggregates: MinMax},
 			{Key: "active", Label: "Active", Type: Bool},
+			{Key: "fee", Label: "Fee", Type: Money, Aggregates: SumAll, Currency: "fee_currency"},
+			{Key: "fee_currency", Label: "Fee currency", Type: Text},
 		},
 		Links: []Link{
 			{Key: "site", Label: "Site", Target: "zoo.sites", Cardinality: ToOne, Field: "site"},

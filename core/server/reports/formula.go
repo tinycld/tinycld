@@ -36,23 +36,35 @@ type expr struct {
 }
 
 // currency is where a money value's currency comes from: a currency key of w
-// (the ck<n> that holds each row's currency) or a source's fixed currency.
-// The zero value is a value that is not money, or a section subtotal, which
-// a layout reads in one currency at a time.
+// (the ck<n> that holds each row's currency), a source's fixed currency, or a
+// subquery that reads the currency where the value is read (sql: a record's or
+// a looked-up row's own currency). id names a carried currency for combining:
+// two values combine only when their currencies come from the same place (R3).
+// A carried currency read inside a total is a currency key that keeps its id,
+// so it still combines with the same value read outside one. The zero value is
+// a value that is not money, or a section subtotal, which a layout reads in one
+// currency at a time.
 type currency struct {
 	key   string
 	fixed *Source
+	sql   string
+	id    string
 }
 
-func (a currency) none() bool { return a.key == "" && a.fixed == nil }
+func (a currency) none() bool { return a.key == "" && a.fixed == nil && a.sql == "" }
 
-// same is true for one currency source: a key equals itself, a fixed
-// currency the same source's.
+// same is true for one currency source: one carried value, a key equals
+// itself, a fixed currency the same source's.
 func (a currency) same(b currency) bool {
-	if a.key != b.key || (a.fixed == nil) != (b.fixed == nil) {
-		return false
+	switch {
+	case a.id != "" && a.id == b.id:
+		return true
+	case a.key != "" || b.key != "":
+		return a.key == b.key
+	case a.fixed != nil || b.fixed != nil:
+		return a.fixed != nil && b.fixed != nil && a.fixed.Key == b.fixed.Key
 	}
-	return a.fixed == nil || a.fixed.Key == b.fixed.Key
+	return a.id == b.id
 }
 
 // withCurrency gives a money value its currency; any other value has none.

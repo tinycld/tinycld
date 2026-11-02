@@ -213,9 +213,6 @@ func TestALookupIsRefusedWhereItCannotBeRead(t *testing.T) {
 			"columns.0.formula.source", "does not exist"},
 		"a total inside": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"op":"sum","args":[{"path":[{"field":"weight"}]}]}}}]}`,
 			"columns.0.formula.value", "one value per matching row"},
-		// Task 5a builds this (Q5) and deletes the case.
-		"an amount with a row currency": {`{"version":2,"source":"zoo.animals","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.feedings","value":{"path":[{"field":"cost"}]}}}]}`,
-			"columns.0.formula.value.path", "read it through a column"},
 		"a bad pick": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"id"}]},"pick":"avg"}}]}`,
 			"columns.0.formula.pick", "min or max"},
 		"a source on another op": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"add","source":"zoo.animals","args":[{"value":1},{"value":2}]}}]}`,

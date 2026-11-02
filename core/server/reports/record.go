@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -31,29 +32,50 @@ func (c *compiler) recordOf(group, at string) (int, *Source, error) {
 }
 
 // bindRecordPath binds a record leaf's path on the group's target: to-one
-// links, then a field. An amount needs its source's fixed currency here; Task
-// 5a lifts that (Q5: the amount carries its own currency).
+// links, then a field. An amount with its own currency field carries that
+// currency (recordCurrency).
 func bindRecordPath(app core.App, target *Source, p Path, at string) (*pathPlan, error) {
 	if len(p) == 0 {
 		return nil, invalid(at, "a record leaf names a field of the record")
 	}
-	bound, err := bindValuePath(app, target, p, at+".path", pathValue)
-	if err != nil {
-		return nil, err
-	}
-	if bound.field.Type == Money && bound.field.Currency != "" {
-		return nil, invalid(at+".path", "this amount has its own row's currency, which totals cannot group by: read it through a column")
-	}
-	return bound, nil
+	return bindValuePath(app, target, p, at+".path", pathValue)
 }
 
-// recordExpr types a record leaf; sql is filled in by its context.
+// recordExpr types a record leaf; its context fills in sql and cur.
 func recordExpr(bound *pathPlan) expr {
-	e := expr{typ: bound.field.Type, target: bound.target}
-	if bound.field.Type == Money && bound.src.Currency != nil {
-		e.cur = currency{fixed: bound.src}
+	return expr{typ: bound.field.Type, target: bound.target}
+}
+
+// recordCurrencyID names a record amount's currency for combining.
+func recordCurrencyID(group string, p Path) string {
+	raw, _ := json.Marshal(p)
+	return "rec:" + group + ":" + string(raw)
+}
+
+// recordCurrency is a record amount's currency read beside it: its record's
+// currency field, keyed like the value (key NULL: no record, no currency), or
+// the source's fixed currency.
+func recordCurrency(s *stmt, target *Source, bound *pathPlan, key, id string) currency {
+	f := bound.field
+	switch {
+	case f.Type != Money:
+		return currency{}
+	case f.Currency != "" && key == "NULL":
+		return currency{sql: "NULL", id: id}
+	case f.Currency != "":
+		return currency{sql: recordCurrencySQL(s, target, bound.hops, bound.src, f, key), id: id}
+	case bound.src.Currency != nil:
+		return currency{fixed: bound.src}
 	}
-	return e
+	return currency{}
+}
+
+// recordCurrencySQL reads the currency field of the amount f (on src, after
+// hops from target) of the record key points at, through the rule CTEs, so a
+// record the reader cannot see has no currency. A record label's currency is
+// read the same way (labelCurrencySQL).
+func recordCurrencySQL(s *stmt, target *Source, hops []hopPlan, src *Source, f *Field, key string) string {
+	return recordSQL(s, target, &pathPlan{hops: hops, field: src.field(f.Currency), src: src}, key)
 }
 
 // recordSQL reads a group record's field: a subquery on the target's rule

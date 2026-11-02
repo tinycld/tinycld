@@ -416,6 +416,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		}
 		cells := make([]string, 0, len(c.p.cols))
 		labels := make([]string, 0, len(c.p.cols))
+		carried := make([]string, 0, len(c.p.cols))
 		for idx, cp := range c.p.cols {
 			e, err := lv.cell(cp)
 			if err != nil {
@@ -424,14 +425,16 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			cells = append(cells, fmt.Sprintf("%s AS v%d", e.sql, idx))
 			ref, _ := c.columnLabel(lv.labels, cp, e)
 			labels = append(labels, ref.cells(idx)...)
+			carried = append(carried, c.carriedCell(cp, e, idx))
 			c.levelTypes[cp.col.ID] = e.typ
 		}
 		pivotCells, err := c.pivotCells(lv, pivot)
 		if err != nil {
 			return nil, "", err
 		}
-		// The labels follow the pivot cells, as in every leg of the union.
-		cells = append(append(cells, pivotCells...), labels...)
+		// The labels, then the carried currencies, follow the pivot cells, as in
+		// every leg of the union.
+		cells = append(append(append(cells, pivotCells...), labels...), carried...)
 		ctes = append(ctes, lv.render(cells, "1")...)
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
@@ -571,7 +574,7 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 			if err := c.checkLabelField(cp, cp.path.target); err != nil {
 				return "", nil, err
 			}
-			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx))
+			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx), noCarriedCell(idx))
 			sel = append(sel, labelRef{}.cells(idx)...)
 			c.detailTypes[cp.col.ID] = cp.path.field.Type
 			continue
@@ -585,7 +588,7 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 			return "", nil, err
 		}
 		ref, _ := c.columnLabel(labels, cp, e)
-		sel = append(sel, fmt.Sprintf("%s AS v%d", e.sql, idx))
+		sel = append(sel, fmt.Sprintf("%s AS v%d", e.sql, idx), c.carriedCell(cp, e, idx))
 		sel = append(sel, ref.cells(idx)...)
 		c.detailTypes[cp.col.ID] = e.typ
 		if cp.path == nil {
@@ -598,6 +601,19 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 	}
 	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from("w", "w"), order, nil
 }
+
+// carriedCell is the currency a column's value e carries on a row (a record's
+// or a looked-up row's own, vcur<idx>), NULL when it carries none. A column
+// that carries one has the cell <id>@currency.
+func (c *compiler) carriedCell(cp *colPlan, e expr, idx int) string {
+	if e.cur.sql == "" {
+		return noCarriedCell(idx)
+	}
+	c.carried[cp.col.ID] = true
+	return fmt.Sprintf("%s AS vcur%d", e.cur.sql, idx)
+}
+
+func noCarriedCell(idx int) string { return fmt.Sprintf("NULL AS vcur%d", idx) }
 
 // sortKey is one ORDER BY column of the detail select: s<i> for a sort
 // column, then __id, which is unique and never NULL.

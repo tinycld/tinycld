@@ -123,12 +123,58 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		}
 		out.agg, out.win = out.agg || w.agg, out.win || w.win
 	}
+	if v.typ == Money && v.cur.sql != "" {
+		return pickedAmount(outer, r, n, v, sc, where, out), nil
+	}
 	pick := "min"
 	if n.Pick == "max" {
 		pick = "max"
 	}
 	out.sql = fmt.Sprintf("(SELECT %s(%s)\n%s\nWHERE %s)", pick, v.sql, sc.render(), where)
 	return out, nil
+}
+
+// pickedAmount is a lookup of an amount that carries its row's currency: the
+// matching row with the smallest (min) or largest (max) amount, ties broken
+// by currency code, gives both the amount and its currency, so the two always
+// come from one row. On a base row inside a total the currency is the key
+// valueCurrencies gave the lookup, which the total groups by.
+func pickedAmount(outer fctx, r *rowsCTE, n *Node, v expr, sc *scope, where string, out expr) expr {
+	dir := "ASC"
+	if n.Pick == "max" {
+		dir = "DESC"
+	}
+	from := sc.render()
+	pickOne := func(col string) string {
+		return fmt.Sprintf("(SELECT %s\n%s\nWHERE %s AND %s IS NOT NULL\nORDER BY %s %s, %s LIMIT 1)", col, from, where, v.sql, v.sql, dir, v.cur.sql)
+	}
+	id := lookupCurrencyID(n)
+	out.sql = pickOne(v.sql)
+	out.cur = currency{sql: pickOne(v.cur.sql), id: id}
+	if ck, ok := r.c.valueCur[id]; ok && !inLevel(outer) {
+		out.cur = currency{key: ck, id: id}
+	}
+	return out
+}
+
+// lookupCurrencyID names a looked-up amount's currency for combining.
+func lookupCurrencyID(n *Node) string {
+	raw, _ := json.Marshal(n)
+	return "lk:" + string(raw)
+}
+
+// inLevel is true when a formula is compiled on a group, subtotal or total
+// row (a levelCtx, or a lookup inside one) or on a layout's computed row:
+// there a picked or record currency is read by subquery; on a base row inside
+// a total, by its registered key.
+func inLevel(f fctx) bool {
+	switch x := f.(type) {
+	case *levelCtx, *layoutCtx:
+		return true
+	case *lookupCtx:
+		return inLevel(x.outer)
+	}
+	return false
 }
 
 // windowHoister is a context whose select can compute a running value or a
@@ -193,12 +239,16 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	if bound.field.Type == Money && bound.field.Currency != "" {
-		return expr{}, invalid(at, "this amount has its own row's currency, which totals cannot group by: read it through a column")
-	}
 	hops := append(append([]hopPlan{}, l.prefix...), bound.hops...)
 	e := l.sc.value(&pathPlan{hops: hops, field: bound.field, src: bound.src, target: bound.target})
-	if bound.field.Type == Money && bound.src.Currency != nil {
+	switch {
+	case bound.field.Type != Money:
+	case bound.field.Currency != "":
+		// The looked-up row's own currency, read beside the amount; lookupIn
+		// picks the two from one row. The column names it for combining.
+		cur := l.sc.value(&pathPlan{hops: hops, field: bound.src.field(bound.field.Currency), src: bound.src}).sql
+		e.cur = currency{sql: cur, id: "row:" + cur}
+	case bound.src.Currency != nil:
 		e.cur = currency{fixed: bound.src}
 	}
 	return e, nil

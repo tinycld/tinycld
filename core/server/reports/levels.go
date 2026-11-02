@@ -275,6 +275,11 @@ func (lv *level) labelSQL() error {
 		}
 		if e.target == nil {
 			lv.label.value, lv.labelKey = e.sql, e.sql
+			// An amount that carries its own currency labels the row with it.
+			if e.typ == Money && e.cur.sql != "" {
+				lv.label.currency = e.cur.sql
+				lv.c.labels[lv.n-1].recordCurrency = true
+			}
 			return nil
 		}
 		// A label that points at a record shows the record's label, by the
@@ -397,7 +402,22 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	if err := checkAggregate(cp.col.Aggregate, e.typ, cp.scale, cp.at+".aggregate"); err != nil {
 		return expr{}, err
 	}
-	return withCurrency(expr{sql: lv.agg(name, aggregateSQL(cp.col.Aggregate, e.sql, cp.scale)), typ: aggregateType(cp.col.Aggregate, e.typ, cp.scale)}, e.cur), nil
+	totalCur, err := totalCurrency(e, cp.at+".formula")
+	if err != nil {
+		return expr{}, err
+	}
+	return withCurrency(expr{sql: lv.agg(name, aggregateSQL(cp.col.Aggregate, e.sql, cp.scale)), typ: aggregateType(cp.col.Aggregate, e.typ, cp.scale)}, totalCur), nil
+}
+
+// totalCurrency is the currency of a total of e. A total groups by its
+// amounts' currencies, so a carried currency read inside it is a currency key
+// of w (valueCurrencies); one read by subquery has no base row to read it on
+// here.
+func totalCurrency(e expr, at string) (currency, error) {
+	if e.cur.sql != "" {
+		return currency{}, invalid(at, "this amount's currency is read per row, and the total has no currency key to group it by")
+	}
+	return e.cur, nil
 }
 
 // formulaGroupColumn is a formula column that is also a group column: on a
@@ -519,12 +539,15 @@ func (lc *levelCtx) record(group string, p Path, at string) (expr, error) {
 		return expr{}, err
 	}
 	e := recordExpr(bound)
-	// Outside the group (a level above it, the total) there is no one record.
-	if lc.lv.n < gi+1 {
-		e.sql = "NULL"
-		return e, nil
+	// Outside the group (a level above it, the total) there is no one record,
+	// and so no amount and no currency.
+	key := "NULL"
+	e.sql = "NULL"
+	if lc.lv.n >= gi+1 {
+		key = fmt.Sprintf("a.k%d", gi)
+		e.sql = recordSQL(lc.lv.r.s, target, bound, key)
 	}
-	e.sql = recordSQL(lc.lv.r.s, target, bound, fmt.Sprintf("a.k%d", gi))
+	e.cur = recordCurrency(lc.lv.r.s, target, bound, key, recordCurrencyID(group, p))
 	return e, nil
 }
 
@@ -552,8 +575,12 @@ func (lc *levelCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (ex
 	if err != nil {
 		return expr{}, err
 	}
+	cur, err := totalCurrency(e, at+".args.0")
+	if err != nil {
+		return expr{}, err
+	}
 	name := fmt.Sprintf("y%d", len(lc.lv.aggs))
-	return withCurrency(expr{sql: lc.lv.agg(name, aggregateSQL(op, e.sql, scale)), typ: aggregateType(op, e.typ, scale)}, e.cur), nil
+	return withCurrency(expr{sql: lc.lv.agg(name, aggregateSQL(op, e.sql, scale)), typ: aggregateType(op, e.typ, scale)}, cur), nil
 }
 
 func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, error) {

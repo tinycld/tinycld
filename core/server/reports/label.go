@@ -95,7 +95,7 @@ func labelCurrencySQL(s *stmt, target *Source, f *Field, key string) string {
 	case f == nil || f.Type != Money:
 		return "NULL"
 	case f.Currency != "":
-		return labelSQL(s, target, target.field(f.Currency), key, "")
+		return recordCurrencySQL(s, target, nil, target, f, key)
 	case target.Currency != nil && s.app != nil:
 		return s.bind(target.Currency(s.app))
 	}

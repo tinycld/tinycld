@@ -20,6 +20,13 @@ type compiler struct {
 	// currencyOf maps a money column's id to its currency: a currency key
 	// of w, or a source's fixed currency.
 	currencyOf map[string]currency
+	// valueCur maps a carried currency's id (a record's or a looked-up row's
+	// own currency) to the currency key of w that holds it, for every such
+	// amount read inside a total.
+	valueCur map[string]string
+	// carried holds the columns whose cells carry their own currency on some
+	// row (vcur<idx>, the cell <id>@currency).
+	carried map[string]bool
 	// detailTypes and levelTypes are each column's type on detail rows
 	// and on group, subtotal and total rows.
 	detailTypes map[string]FieldType
@@ -37,7 +44,8 @@ type compiler struct {
 }
 
 // labelPlan is what a group's label compiled to. recordCurrency says an
-// amount label is a record's, whose currency each row holds (__labelcur).
+// amount label carries its own currency (a record's, or a looked-up row's),
+// which each row holds (__labelcur).
 type labelPlan struct {
 	typ            FieldType
 	cur            currency
@@ -45,7 +53,7 @@ type labelPlan struct {
 }
 
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
-	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}}
+	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, valueCur: map[string]string{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}}
 	if app != nil {
 		c.fiscal = fiscalStartOf(p.base, app)
 	}
@@ -85,7 +93,7 @@ type rowsCTE struct {
 
 func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	// Each statement builds its own w; the currency keys come out the same.
-	c.currencies, c.currencyOf = nil, map[string]currency{}
+	c.currencies, c.currencyOf, c.valueCur = nil, map[string]currency{}, map[string]string{}
 	r := &rowsCTE{c: c, s: s, root: newScope(s, c.p.base), raw: map[string]string{}, byExpr: map[string]string{}}
 	r.add("__id", q(r.root.alias, "id"))
 	if f := c.p.spec.Filter; f != nil {
@@ -138,8 +146,82 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	for _, s := range c.p.sort {
 		r.formulaCurrencies(s.formula)
 	}
+	r.valueCurrencies()
 	r.pivotKey()
 	return r, nil
+}
+
+// valueCurrencies adds a currency key to w for every record or looked-up
+// amount with a per-row currency read inside a total (an aggregate, a running
+// value or a percent, directly or through a column it reads): a total groups
+// by its currency as by a path amount's (R3). Read outside a total, such an
+// amount carries its currency by subquery and needs no key. A record key reads
+// the group key's own expression, so the group keys are in w by now.
+func (r *rowsCTE) valueCurrencies() {
+	seen := map[string]bool{}
+	var walk func(n *Node, inTotal bool)
+	walk = func(n *Node, inTotal bool) {
+		if n == nil {
+			return
+		}
+		switch {
+		case inTotal && (n.Record != "" || n.Op == "lookup"):
+			r.valueCurrencyKey(n)
+		case inTotal && n.Col != "" && !seen[n.Col]:
+			// A formula column read inside a total is read per base row.
+			if cp := r.c.p.byID[n.Col]; cp != nil && cp.col.Formula != nil && cp.col.Aggregate == "" {
+				seen[n.Col] = true
+				walk(cp.col.Formula, true)
+			}
+		}
+		inTotal = inTotal || aggregateOp(n) || windowOp(n)
+		for _, a := range n.Args {
+			walk(a, inTotal)
+		}
+	}
+	for _, cp := range r.c.p.cols {
+		walk(cp.col.Formula, cp.col.Aggregate != "")
+	}
+	for _, g := range r.c.p.groups {
+		walk(g.group.Label, false)
+	}
+	for _, s := range r.c.p.sort {
+		walk(s.formula, false)
+	}
+	// Task 7 adds walk(g.group.Having, false) beside the label walk; Task 10
+	// adds the detail label.
+}
+
+// windowOp is true for an operator that sums the rows a report shows.
+func windowOp(n *Node) bool {
+	switch n.Op {
+	case "runningSum", "percentOfParent", "percentOfTotal":
+		return true
+	}
+	return false
+}
+
+// valueCurrencyKey compiles a record leaf or a lookup inside w and keeps its
+// carried currency as a currency key. One that does not compile is left to
+// the compile that follows, which reports it where it is.
+func (r *rowsCTE) valueCurrencyKey(n *Node) {
+	id := lookupCurrencyID(n)
+	if n.Record != "" {
+		id = recordCurrencyID(n.Record, n.Path)
+	}
+	if _, seen := r.c.valueCur[id]; seen {
+		return
+	}
+	j := r.join(false)
+	j.records = true
+	e, err := compileFormula(j, n, "")
+	if err != nil || e.typ != Money || e.cur.sql == "" || e.cur.id != id {
+		return
+	}
+	name := fmt.Sprintf("ck%d", len(r.c.currencies))
+	r.add(name, e.cur.sql)
+	r.c.currencies = append(r.c.currencies, name)
+	r.c.valueCur[id] = name
 }
 
 // pathCurrency is the currency of a to-one path's amount: its currency

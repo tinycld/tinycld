@@ -51,6 +51,9 @@ type joinCtx struct {
 	src      *Source
 	isFilter bool
 	visiting map[string]bool
+	// records reads a group's record by its group key, which w holds once its
+	// group keys are in: a carried currency's key is read so (valueCurrencies).
+	records bool
 }
 
 func (j *joinCtx) col(id, at string) (expr, error) {
@@ -66,6 +69,11 @@ func (j *joinCtx) col(id, at string) (expr, error) {
 		return expr{}, err
 	}
 	defer done()
+	if j.records && cp.path == nil && cp.nest == 0 {
+		inner := j.r.join(false)
+		inner.visiting, inner.records = j.visiting, true
+		return compileFormula(inner, cp.col.Formula, cp.at+".formula")
+	}
 	return j.r.rowValue(cp, at, j.visiting)
 }
 
@@ -79,9 +87,26 @@ func (j *joinCtx) path(p Path, at string) (expr, error) {
 }
 
 // record is refused: the filter, a group key and a fill read base rows
-// before any group has a record (R21).
-func (j *joinCtx) record(_ string, _ Path, at string) (expr, error) {
-	return expr{}, invalid(at, "the filter, a group key and a fill read rows before they are grouped: read the field through a path")
+// before any group has a record (R21). A currency key reads it by the
+// group key's own expression.
+func (j *joinCtx) record(group string, p Path, at string) (expr, error) {
+	if !j.records {
+		return expr{}, invalid(at, "the filter, a group key and a fill read rows before they are grouped: read the field through a path")
+	}
+	c := j.r.c
+	gi, target, err := c.recordOf(group, at)
+	if err != nil {
+		return expr{}, err
+	}
+	bound, err := bindRecordPath(c.p.app, target, p, at)
+	if err != nil {
+		return expr{}, err
+	}
+	key := j.r.inner(fmt.Sprintf("w.k%d", gi))
+	e := recordExpr(bound)
+	e.sql = recordSQL(j.r.s, target, bound, key)
+	e.cur = recordCurrency(j.r.s, target, bound, key, recordCurrencyID(group, p))
+	return e, nil
 }
 
 func (j *joinCtx) param(id, at string) (expr, error) {

@@ -94,7 +94,9 @@ func (rc *rowsCtx) path(p Path, at string) (expr, error) {
 }
 
 // record reads the group record's field on a base row: a base row is under
-// every group, so its record is its own key.
+// every group, so its record is its own key. An amount's own currency is the
+// currency key valueCurrencies gave it when it is read inside a total, else
+// read beside it.
 func (rc *rowsCtx) record(group string, p Path, at string) (expr, error) {
 	c := rc.r.c
 	gi, target, err := c.recordOf(group, at)
@@ -106,7 +108,14 @@ func (rc *rowsCtx) record(group string, p Path, at string) (expr, error) {
 		return expr{}, err
 	}
 	e := recordExpr(bound)
-	e.sql = recordSQL(rc.r.s, target, bound, fmt.Sprintf("w.k%d", gi))
+	key := fmt.Sprintf("w.k%d", gi)
+	e.sql = recordSQL(rc.r.s, target, bound, key)
+	id := recordCurrencyID(group, p)
+	if ck, ok := c.valueCur[id]; ok && bound.field.Currency != "" {
+		e.cur = currency{key: ck, id: id}
+	} else {
+		e.cur = recordCurrency(rc.r.s, target, bound, key, id)
+	}
 	return e, nil
 }
 

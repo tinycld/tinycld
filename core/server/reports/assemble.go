@@ -56,15 +56,16 @@ func (rn *runner) columns() []ResultColumn {
 }
 
 // currencyOfColumn names a money column's currency: the cell that holds each
-// row's currency, or the fixed code. A child row column reads its own
-// currency field, which nestLevel selects.
+// row's currency (a currency key's, or the one its value carries), or the
+// fixed code. A child row column reads its own currency field, which
+// nestLevel selects.
 func (rn *runner) currencyOfColumn(cp *colPlan, rc *ResultColumn) {
 	cur := rn.c.currencyOf[cp.col.ID]
 	if cp.nest > 0 {
 		cur = rn.c.p.nestCurrency(cp)
 	}
 	switch {
-	case cur.key != "":
+	case cur.key != "" || rn.c.carried[cp.col.ID]:
 		rc.CurrencyCell = cp.col.ID + "@currency"
 	case cur.fixed != nil:
 		rc.Currency = cur.fixed.Currency(rn.app)
@@ -337,7 +338,11 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 			continue
 		}
 		out[cp.col.ID] = rn.cellValue(cp, row[name], grouped)
-		if ck := rn.c.currencyOf[cp.col.ID].key; ck != "" {
+		// A currency the value carries (a record's or a looked-up row's own)
+		// is its row's; else the column's currency key holds it.
+		if v := row[fmt.Sprintf("vcur%d", idx)]; v != nil {
+			out[cp.col.ID+"@currency"] = v
+		} else if ck := rn.c.currencyOf[cp.col.ID].key; ck != "" {
 			out[cp.col.ID+"@currency"] = row[ck]
 		}
 		rn.labelCell(out, cp, row)
