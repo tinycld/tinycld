@@ -305,6 +305,16 @@ describe('scales follow the operands', () => {
         const whole = div({ col: 'qty' }, 0)
         expect(settleScales(CTX, whole, whole)).toBe(whole)
     })
+    it('keeps an author scale when removing an operand moves its ratio into a forced one', () => {
+        const x: SpecNode = { col: 'cost' }
+        const stored: SpecNode = {
+            op: 'add',
+            args: [x, div({ col: 'amount' }, 0), div({ col: 'qty' }, 3)],
+        }
+        const removed = removeOperandNode(stored, 1)
+        expect(removed.args).toEqual([x, div({ col: 'qty' }, 3)])
+        expect(settleScales(CTX, removed, stored)).toBe(removed)
+    })
     it('averages amounts in whole cents, and gives numbers DEFAULT_PLACES when they stop being amounts', () => {
         const avgQty: SpecNode = { op: 'avg', args: [{ col: 'qty' }], scale: 3 }
         const avgAmount = replaceTreeAt(REPORT_TREE, avgQty, [0], { col: 'amount' })

@@ -378,15 +378,17 @@ function forcedScale(here: ReportFormulaContext, node: SpecNode): number | undef
 }
 
 // A scale the engine forces wins. Any other scale is the author's and stays, unless
-// it is missing or was forced before the edit and no longer is: then a ratio gets
-// RATIO_SCALE places and any other part DEFAULT_PLACES.
+// it is missing or is still the scale forced before the edit, which no longer
+// applies: then a ratio gets RATIO_SCALE places and any other part DEFAULT_PLACES.
+// Operands are paired with the formula before the edit by position, so a node that
+// moved may meet another's forced scale; only a scale equal to it is reset.
 function scaleFor(here: ReportFormulaContext, node: SpecNode, before?: Before): number | undefined {
     const part = partOf(node)
     if (!SCALED_PARTS.has(part)) return undefined
     const forced = forcedScale(here, node)
     if (forced !== undefined) return forced
-    const wasForced = before !== undefined && forcedScale(before.here, before.node) !== undefined
-    if (hasScale(node) && !wasForced) return node.scale
+    const wasForced = before ? forcedScale(before.here, before.node) : undefined
+    if (hasScale(node) && node.scale !== wasForced) return node.scale
     return part === 'div' ? RATIO_SCALE : DEFAULT_PLACES
 }
 
