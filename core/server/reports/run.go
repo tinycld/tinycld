@@ -513,9 +513,17 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 		if e.win {
 			return "", nil, notASortKey(fmt.Sprintf("sort.%d.col", i))
 		}
-		name := fmt.Sprintf("s%d", i)
+		name, col := fmt.Sprintf("s%d", i), s.col.col.ID
+		// A record sorts by its label, then by its id so equal labels keep
+		// one order.
+		if label := c.labelOf(r.s, s.col, e); label != "NULL" {
+			sel = append(sel, label+" AS "+name)
+			order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: Text})
+			frame.order = append(frame.order, "("+label+" IS NULL)", label+dirOf(s.desc))
+			name, col = name+"_id", col+"@id"
+		}
 		sel = append(sel, e.sql+" AS "+name)
-		order = append(order, sortKey{name: name, desc: s.desc, col: s.col.col.ID, typ: e.typ})
+		order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: e.typ})
 		frame.order = append(frame.order, "("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
 	}
 	frame.order = append(frame.order, "w.__id")

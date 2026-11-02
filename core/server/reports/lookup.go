@@ -227,3 +227,4 @@ func (l *lookupCtx) exists(n *Node, at string) (expr, error) {
 func (l *lookupCtx) bind(v any) string   { return l.r.s.bind(v) }
 func (l *lookupCtx) fiscalStart() string { return l.bind(int64(l.r.c.fiscal)) }
 func (l *lookupCtx) filter() bool        { return l.inWhere }
+func (l *lookupCtx) label(e expr) string { return l.r.c.textOf(l.r.s, e) }

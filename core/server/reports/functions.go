@@ -24,6 +24,7 @@ func init() {
 	sqlite.MustRegisterDeterministicScalarFunction("tc_fiscal_year", 2, sqlFiscalYear)
 	sqlite.MustRegisterDeterministicScalarFunction("tc_fiscal_period", 2, sqlFiscalPeriod)
 	sqlite.MustRegisterDeterministicScalarFunction("tc_add_months", 2, sqlAddMonths)
+	sqlite.MustRegisterDeterministicScalarFunction("tc_text", 3, sqlText)
 }
 
 // errOverflow has the text SQLite's own sum() uses, so the run maps both to

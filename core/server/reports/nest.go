@@ -78,8 +78,10 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 		v := sc.value(rest).sql
 		sel = append(sel, fmt.Sprintf("%s AS v%d", v, p.index(cp)))
 		if rn.c.labelled[cp.col.ID] {
+			// Child rows of records read in label order, then by id.
 			label := labelValueSQL(s, cp.path.target, labelFieldOf(cp.path.target, cp.col.LabelField), v)
 			sel = append(sel, fmt.Sprintf("%s AS vl%d", label, p.index(cp)))
+			order = append(order, "("+label+" IS NULL)", label)
 		}
 		order = append(order, "("+v+" IS NULL)", v)
 		if cur := p.nestCurrency(cp); cur.key != "" {

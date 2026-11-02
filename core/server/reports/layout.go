@@ -314,6 +314,7 @@ func (lc *layoutCtx) only(at string) error {
 func (lc *layoutCtx) bind(v any) string   { return lc.s.bind(v) }
 func (lc *layoutCtx) fiscalStart() string { return lc.bind(int64(lc.c.fiscal)) }
 func (lc *layoutCtx) filter() bool        { return false }
+func (lc *layoutCtx) label(e expr) string { return lc.c.textOf(lc.s, e) }
 
 // layoutRows emits the rows for one currency: each section's group row
 // (titled, always with its subtotal) and each computed row, in the layout's

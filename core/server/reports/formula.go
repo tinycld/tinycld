@@ -30,6 +30,9 @@ type expr struct {
 	// target is the source a relation value points at, nil for any other
 	// value. A group by such a value is a record group.
 	target *Source
+	// col is the column a {col} leaf reads, whose label field shows the
+	// record a relation value points at.
+	col string
 }
 
 // currency is where a money value's currency comes from: a currency key of w
@@ -99,6 +102,10 @@ type fctx interface {
 	fiscalStart() string
 	// filter is true while compiling a filter.
 	filter() bool
+	// label is a relation value read as text: the label of the record it
+	// points at, empty text for a blank link or a record the reader cannot
+	// see.
+	label(e expr) string
 }
 
 // aggregate and window receive the operator node's path; the value they
@@ -137,7 +144,9 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	case n.Record != "":
 		return c.record(n.Record, n.Path, at)
 	case n.Col != "":
-		return c.col(n.Col, at)
+		e, err := c.col(n.Col, at)
+		e.col = n.Col
+		return e, err
 	case n.Path != nil:
 		return c.path(n.Path, at+".path")
 	case n.Param != "":
@@ -325,6 +334,15 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 	return e, nil
 }
 
+// asText is a value a text operator reads: a relation as the label of the
+// record it points at, never its id.
+func asText(c fctx, a expr) string {
+	if a.target != nil && a.sql != "NULL" {
+		return c.label(a)
+	}
+	return a.sql
+}
+
 func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 	argc := func(min, max int) error {
 		if len(args) < min || (max >= 0 && len(args) > max) {
@@ -508,22 +526,23 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		}
 		parts := make([]string, len(args))
 		for i, a := range args {
-			parts[i] = "COALESCE(" + a.sql + ", '')"
+			parts[i] = "COALESCE(" + asText(c, a) + ", '')"
 		}
 		return expr{sql: "(" + strings.Join(parts, " || ") + ")", typ: Text}, nil
 	case "upper", "lower":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err
 		}
-		return expr{sql: n.Op + "(" + args[0].sql + ")", typ: Text}, nil
+		return expr{sql: n.Op + "(" + asText(c, args[0]) + ")", typ: Text}, nil
 	case "contains", "startsWith":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err
 		}
+		text, part := asText(c, args[0]), asText(c, args[1])
 		if n.Op == "contains" {
-			return expr{sql: "(instr(lower(" + args[0].sql + "), lower(" + args[1].sql + ")) > 0)", typ: Bool}, nil
+			return expr{sql: "(instr(lower(" + text + "), lower(" + part + ")) > 0)", typ: Bool}, nil
 		}
-		return expr{sql: "(substr(lower(" + args[0].sql + "), 1, length(" + args[1].sql + ")) = lower(" + args[1].sql + "))", typ: Bool}, nil
+		return expr{sql: "(substr(lower(" + text + "), 1, length(" + part + ")) = lower(" + part + "))", typ: Bool}, nil
 	case "year", "quarter", "month", "fiscalYear", "fiscalPeriod":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err

@@ -95,6 +95,9 @@ func (c *tableCtx) exists(*Node, string) (expr, error) {
 }
 func (c *tableCtx) filter() bool { return false }
 
+// label: the formula table reads no records.
+func (c *tableCtx) label(e expr) string { return e.sql }
+
 // record reads a field of the case's record, whichever group it names.
 func (c *tableCtx) record(_ string, p Path, at string) (expr, error) {
 	if len(p) != 1 || p[0].Field == "" {
@@ -212,6 +215,7 @@ func (l *tableLookupCtx) record(g string, p Path, at string) (expr, error) {
 func (l *tableLookupCtx) bind(v any) string   { return l.outer.bind(v) }
 func (l *tableLookupCtx) fiscalStart() string { return l.outer.fiscalStart() }
 func (l *tableLookupCtx) filter() bool        { return false }
+func (l *tableLookupCtx) label(e expr) string { return l.outer.label(e) }
 
 // jsonValue turns a decoded case value into what SQLite binds: a whole
 // number binds as an integer.

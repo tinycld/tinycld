@@ -131,11 +131,11 @@ func (lv *level) order() ([]string, error) {
 		if !ok {
 			continue
 		}
-		dir := ""
-		if s.desc {
-			dir = " DESC"
+		// A record sorts by its label, then by its id.
+		if label := lv.c.labelOf(lv.r.s, s.col, e); label != "NULL" {
+			out = append(out, "("+label+" IS NULL)", label+dirOf(s.desc))
 		}
-		out = append(out, "("+e+" IS NULL)", e+dir)
+		out = append(out, "("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
 	}
 	if lv.n > 0 {
 		if lv.c.groupTargets[lv.n-1] != nil && lv.label != "NULL" {
@@ -150,18 +150,18 @@ func (lv *level) order() ([]string, error) {
 	return out, nil
 }
 
-func (lv *level) sortValue(cp *colPlan, at string) (string, bool, error) {
+func (lv *level) sortValue(cp *colPlan, at string) (expr, bool, error) {
 	if cp.path != nil && cp.col.Aggregate == "" && lv.groupKey(cp) == "" {
-		return "", false, nil
+		return expr{}, false, nil
 	}
 	e, err := lv.cell(cp)
 	if err != nil {
-		return "", false, err
+		return expr{}, false, err
 	}
 	if e.win {
-		return "", false, notASortKey(at)
+		return expr{}, false, notASortKey(at)
 	}
-	return e.sql, true, nil
+	return e, true, nil
 }
 
 // groupKey is the key of the group column cp on this level, or "".
@@ -539,6 +539,7 @@ func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, er
 func (lc *levelCtx) bind(v any) string                       { return lc.lv.r.s.bind(v) }
 func (lc *levelCtx) fiscalStart() string                     { return lc.bind(int64(lc.lv.c.fiscal)) }
 func (lc *levelCtx) filter() bool                            { return false }
+func (lc *levelCtx) label(e expr) string                     { return lc.lv.c.textOf(lc.lv.r.s, e) }
 func (lc *levelCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(lc, lc.lv.r, n, at) }
 
 // hoist computes a running value a lookup reads below the level's select.
