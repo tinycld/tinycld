@@ -205,22 +205,71 @@ func (rn *runner) group(t *tree, row map[string]any, n int, section string) {
 	key := rn.rowKey(row, n)
 	id := "g:" + keyString(key)
 	g := rn.c.p.groups[n-1]
-	label := rn.display(g.col, row[fmt.Sprintf("k%d", n-1)], g.group.Bucket != "")
+	label := rowLabel{text: rn.display(g.col, row[fmt.Sprintf("k%d", n-1)], g.group.Bucket != "")}
 	// A record group and a labelled group are named by their label; a blank
 	// one reads (none), never the record's id.
 	if g.group.Label != nil || rn.c.groupTargets[n-1] != nil {
-		label = labelText(row["__label"])
+		label = rn.groupLabel(row, rn.c.labels[n-1])
 	}
 	rn.groupWithLabel(t, row, n, section, id, label, key, g.group.Subtotals)
 }
 
+// rowLabel is a group row's label: its text and, for a label that is not
+// text, its type, value and currency (Row.LabelType).
+type rowLabel struct {
+	text     string
+	typ      FieldType
+	value    any
+	currency string
+}
+
+// groupLabel is the label a group's __label holds. A label formula that is
+// not text keeps its type, so the client formats it as a cell (R9).
+func (rn *runner) groupLabel(row map[string]any, lp labelPlan) rowLabel {
+	v := row["__label"]
+	switch {
+	case v == nil:
+		return rowLabel{text: blankLabel}
+	case lp.typ == Bool:
+		yes := toInt(v) != 0
+		text := "No"
+		if yes {
+			text = "Yes"
+		}
+		return rowLabel{text: text, typ: Bool, value: yes}
+	case lp.typ == Number || lp.typ == Money || lp.typ == Percent || lp.typ == Date || lp.typ == DateTime:
+		out := rowLabel{text: labelText(v), typ: lp.typ, value: v}
+		if lp.typ == Money {
+			out.currency = rn.currencyOf(row, lp.cur)
+		}
+		return out
+	}
+	return rowLabel{text: labelText(v)}
+}
+
+// currencyOf is a money value's currency on a row: its currency key's value
+// or its source's fixed code.
+func (rn *runner) currencyOf(row map[string]any, cur currency) string {
+	switch {
+	case cur.key != "":
+		s, _ := row[cur.key].(string)
+		return s
+	case cur.fixed != nil && rn.app != nil:
+		return cur.fixed.Currency(rn.app)
+	}
+	return ""
+}
+
 // groupWithLabel emits a group row; subtotal says whether an expanded group
 // ends in a subtotal row (a layout section always does).
-func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id, label string, key []any, subtotal bool) {
+func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id string, label rowLabel, key []any, subtotal bool) {
 	p := rn.c.p
 	canOpen := n < len(p.groups) || p.pivot == nil
 	expanded := canOpen && rn.expand.has(key)
-	rn.push(Row{ID: id, Kind: KindGroup, Depth: n - 1, Label: label, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row)})
+	rn.push(Row{
+		ID: id, Kind: KindGroup, Depth: n - 1, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),
+		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
+	})
 	if expanded {
 		if n < len(p.groups) {
 			for _, child := range t.children[keyString(key)] {
@@ -233,7 +282,10 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 		}
 	}
 	if subtotal && (expanded || len(p.layout) > 0) {
-		rn.push(Row{ID: "s:" + keyString(key), Kind: KindSubtotal, Depth: n - 1, Label: "Total " + label, Section: id, GroupKey: key, Cells: rn.cells(row)})
+		rn.push(Row{
+			ID: "s:" + keyString(key), Kind: KindSubtotal, Depth: n - 1, Label: "Total " + label.text, Section: id, GroupKey: key, Cells: rn.cells(row),
+			LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
+		})
 	}
 }
 

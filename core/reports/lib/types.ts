@@ -60,6 +60,14 @@ export interface ResultRow {
     expanded?: boolean
     canExpand?: boolean
     cells: Record<string, CellValue>
+    /**
+     * Set when a group row's label (and its subtotal's) is not text: format
+     * `labelValue` as a cell of this type (an amount in integer cents, in
+     * `labelCurrency`); `label` is its plain text.
+     */
+    labelType?: FieldType
+    labelValue?: CellValue
+    labelCurrency?: string
 }
 
 export interface Notice {

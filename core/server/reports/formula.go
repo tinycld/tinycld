@@ -206,10 +206,10 @@ const errNodeKind = "a formula node is one of op, col, path, param, value, subto
 
 func nodeKinds(n *Node) int {
 	kinds := 0
-	// A record leaf's path is part of it; a lookup's value is not a literal.
+	// A record leaf's path is part of it. (A lookup, whose value is a
+	// formula, is compiled before nodes are counted.)
 	path := n.Path != nil && n.Record == ""
-	value := n.Value != nil && n.Op != "lookup"
-	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Param != "", value, n.Subtotal != "", n.Record != ""} {
+	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Param != "", n.Value != nil, n.Subtotal != "", n.Record != ""} {
 		if set {
 			kinds++
 		}

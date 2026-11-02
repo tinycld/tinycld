@@ -339,6 +339,6 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 			}
 		}
 		groupKey := rn.rowKey(row, 1)
-		rn.groupWithLabel(t, row, 1, "", "g:"+keyString(groupKey), item.Title, groupKey, true)
+		rn.groupWithLabel(t, row, 1, "", "g:"+keyString(groupKey), rowLabel{text: item.Title}, groupKey, true)
 	}
 }

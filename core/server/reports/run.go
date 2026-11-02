@@ -109,6 +109,15 @@ type Row struct {
 	// innermost group), so the client never repeats that rule.
 	CanExpand bool           `json:"canExpand,omitempty"`
 	Cells     map[string]any `json:"cells"`
+	// LabelType is set when a group row's label (and its subtotal's) is a
+	// value that is not text: an amount, a number, a percent, a date or a
+	// yes/no. LabelValue is that value as a cell of the type holds it (an
+	// amount in integer cents, a yes/no as true or false) and LabelCurrency
+	// is an amount's currency, so the client formats the label as it formats
+	// a cell; Label is its plain text (a subtotal's is "Total " + it).
+	LabelType     FieldType `json:"labelType,omitempty"`
+	LabelValue    any       `json:"labelValue,omitempty"`
+	LabelCurrency string    `json:"labelCurrency,omitempty"`
 }
 
 type Notice struct {
@@ -403,11 +412,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			return nil, "", err
 		}
 		cells = append(cells, pivotCells...)
-		label, err := lv.labelSQL()
-		if err != nil {
-			return nil, "", err
-		}
-		ctes = append(ctes, lv.render(cells, "1", label)...)
+		ctes = append(ctes, lv.render(cells, "1", lv.label)...)
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
 			leg += " WHERE " + expand.where(c, s, n-1, "")

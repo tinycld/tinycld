@@ -24,6 +24,8 @@ type level struct {
 	tms      []string // d<L> CTEs
 	tmCols   []string // g<L> values taken from d<L>
 	frame    *windowFrame
+	// label is the SQL of the level's row label (labelSQL).
+	label    string
 	visiting map[string]bool
 	// reads memoizes readsRowValue per formula column.
 	reads map[string]bool
@@ -42,6 +44,11 @@ func (c *compiler) level(r *rowsCTE, n int) (*level, error) {
 		parent = append(parent, fmt.Sprintf("k%d", i))
 	}
 	lv.frame = &windowFrame{parent: prefixed("a.", parent), total: prefixed("a.", c.currencies)}
+	label, err := lv.labelSQL()
+	if err != nil {
+		return nil, err
+	}
+	lv.label = label
 	order, err := lv.order()
 	if err != nil {
 		return nil, err
@@ -110,8 +117,10 @@ func (lv *level) cell(cp *colPlan) (expr, error) {
 }
 
 // order sorts sibling rows: by the spec's sort keys that mean something on
-// this level (a total, a formula, this level's own group column), then by
-// the level's key.
+// this level (a total, a formula, this level's own group column), then, for
+// a record group, by its label, then by the level's key (the record's id), so
+// records with no sort key read in label order and the same label keeps one
+// order.
 func (lv *level) order() ([]string, error) {
 	var out []string
 	for i, s := range lv.c.p.sort {
@@ -129,6 +138,9 @@ func (lv *level) order() ([]string, error) {
 		out = append(out, "("+e+" IS NULL)", e+dir)
 	}
 	if lv.n > 0 {
+		if lv.c.groupTargets[lv.n-1] != nil && lv.label != "NULL" {
+			out = append(out, "("+lv.label+" IS NULL)", lv.label)
+		}
 		key := fmt.Sprintf("a.k%d", lv.n-1)
 		out = append(out, "("+key+" IS NULL)", key)
 	}
@@ -226,6 +238,10 @@ func (lv *level) labelSQL() (string, error) {
 		if e.win {
 			return "", invalid(g.at+".label", "a running value or a percent is not a label")
 		}
+		if at, inner := lv.innerRecord(g.group.Label, g.at+".label", false, map[string]bool{}); inner != "" {
+			return "", invalid(at, fmt.Sprintf("the label of group %q reads the record of group %q, which is grouped inside it: a %q row has no one %q record", g.group.ID, inner, g.group.ID, inner))
+		}
+		lv.c.labels[lv.n-1] = labelPlan{typ: e.typ, cur: e.cur}
 		// A label that reads a row's value has none for a group of rows.
 		if lv.readsRowValue(g.group.Label, false, map[string]bool{}) {
 			return "NULL", nil
@@ -241,6 +257,47 @@ func (lv *level) labelSQL() (string, error) {
 		return "NULL", nil
 	}
 	return recordSQL(lv.r.s, target, &pathPlan{field: f, src: target}, fmt.Sprintf("a.k%d", lv.n-1)), nil
+}
+
+// innerRecord finds where a formula on this level reads, outside a total,
+// the record of a group nested inside the level's group (directly, through a
+// column it reads or through a lookup), and that group's id; "" when it reads
+// none. Such a read has no value on the level's rows.
+func (lv *level) innerRecord(n *Node, at string, inAggregate bool, seen map[string]bool) (string, string) {
+	if n == nil {
+		return "", ""
+	}
+	if n.Record != "" {
+		if gi := lv.c.groupIndex(n.Record); !inAggregate && gi >= lv.n {
+			return at, n.Record
+		}
+		return "", ""
+	}
+	if cp := lv.c.p.byID[n.Col]; cp != nil && cp.col.Formula != nil && cp.col.Aggregate == "" && !seen[n.Col] {
+		seen[n.Col] = true
+		if _, inner := lv.innerRecord(cp.col.Formula, cp.at+".formula", inAggregate, seen); inner != "" {
+			return at, inner
+		}
+		return "", ""
+	}
+	if n.Op == "lookup" {
+		// bind has refused a value that does not decode.
+		if v, err := lv.c.p.lookupOf(n, at); err == nil {
+			if at, inner := lv.innerRecord(v, at+".value", inAggregate, seen); inner != "" {
+				return at, inner
+			}
+		}
+	}
+	if at, inner := lv.innerRecord(n.Where, at+".where", inAggregate, seen); inner != "" {
+		return at, inner
+	}
+	inAggregate = inAggregate || aggregateOp(n)
+	for i, a := range n.Args {
+		if at, inner := lv.innerRecord(a, fmt.Sprintf("%s.args.%d", at, i), inAggregate, seen); inner != "" {
+			return at, inner
+		}
+	}
+	return "", ""
 }
 
 // levelCtx compiles a cell of a group, subtotal or total row from the

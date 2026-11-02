@@ -27,10 +27,20 @@ type compiler struct {
 	// groupTargets is the source each group's key links to (nil for a group
 	// that is not by a link).
 	groupTargets []*Source
+	// labels is each group's label formula as it compiled: its type and,
+	// for an amount, its currency. It outlives a statement (assembly reads
+	// it after every pass), so rows() leaves it.
+	labels []labelPlan
+}
+
+// labelPlan is what a group's label formula compiled to.
+type labelPlan struct {
+	typ FieldType
+	cur currency
 }
 
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
-	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}}
+	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, labels: make([]labelPlan, len(p.groups))}
 	if app != nil {
 		c.fiscal = fiscalStartOf(p.base, app)
 	}
