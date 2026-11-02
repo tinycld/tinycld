@@ -175,12 +175,26 @@ type LayoutItem struct {
 }
 
 type ParamDef struct {
-	ID       string          `json:"id"`
-	Type     string          `json:"type"`
-	Label    string          `json:"label,omitempty"`
-	Default  json.RawMessage `json:"default,omitempty"`
-	Options  []Option        `json:"options,omitempty"`
-	Multiple bool            `json:"multiple,omitempty"`
+	ID      string          `json:"id"`
+	Type    string          `json:"type"`
+	Label   string          `json:"label,omitempty"`
+	Default json.RawMessage `json:"default,omitempty"`
+	Options []Option        `json:"options,omitempty"`
+	// OptionsFrom names the source a choice param's options come from, in
+	// place of Options.
+	OptionsFrom *OptionsFrom `json:"optionsFrom,omitempty"`
+	Multiple    bool         `json:"multiple,omitempty"`
+}
+
+// OptionsFrom reads a choice param's options from a source, under the
+// reader's list rules: Value is what the param holds, Label what the picker
+// shows, Group (optional) how it groups them, Where which rows count.
+type OptionsFrom struct {
+	Source string `json:"source"`
+	Value  Path   `json:"value"`
+	Label  Path   `json:"label"`
+	Group  Path   `json:"group,omitempty"`
+	Where  *Node  `json:"where,omitempty"`
 }
 
 // LoadInfo says what Load changed: the version it upgraded from (0 when it
@@ -337,6 +351,19 @@ func resolveAliases(spec *Spec) []Alias {
 	if spec.Pivot != nil {
 		if t := aliasPath(base, spec.Pivot.Path, &out); t != nil && spec.Pivot.LabelField != "" {
 			spec.Pivot.LabelField = aliasKey(t, spec.Pivot.LabelField, &out)
+		}
+	}
+	for _, d := range spec.Params {
+		// An options source's paths and where read that source, not base.
+		of := d.OptionsFrom
+		if of == nil {
+			continue
+		}
+		if src := lookupRegistered(of.Source); src != nil {
+			aliasPath(src, of.Value, &out)
+			aliasPath(src, of.Label, &out)
+			aliasPath(src, of.Group, &out)
+			aliasNode(src, of.Where, &out)
 		}
 	}
 	return out

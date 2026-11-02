@@ -24,6 +24,8 @@ const (
 const (
 	maxParams    = 20
 	maxParamText = 500
+	// maxChoiceValues is the most values a multiple choice holds.
+	maxChoiceValues = 1000
 )
 
 var idRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
@@ -72,12 +74,12 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 		seen[d.ID] = true
 		switch d.Type {
 		case ParamDate, ParamAsOf, ParamDateRange, ParamText, ParamNumber:
-			if len(d.Options) > 0 || d.Multiple {
+			if len(d.Options) > 0 || d.OptionsFrom != nil || d.Multiple {
 				return invalid(at, "only a choice param has options")
 			}
 		case ParamChoice:
-			if len(d.Options) == 0 {
-				return invalid(at+".options", "a choice param lists its options")
+			if (len(d.Options) == 0) == (d.OptionsFrom == nil) {
+				return invalid(at+".options", "a choice param lists its options, or names the source they come from")
 			}
 		default:
 			return invalid(at+".type", fmt.Sprintf("unknown param type %q", d.Type))
@@ -191,6 +193,11 @@ func parseParam(d ParamDef, raw json.RawMessage, pc periodContext, at string) (p
 func choiceValue(d ParamDef, v any, at string) (paramValue, *SpecError) {
 	out := paramValue{typ: d.Type, multiple: d.Multiple}
 	valid := func(s string) bool {
+		if d.OptionsFrom != nil {
+			// Its options live in a source the reader's rules filter: a run
+			// checks the value's type only (R13).
+			return s != "" && len(s) <= maxParamText
+		}
 		return slices.ContainsFunc(d.Options, func(o Option) bool { return o.Value == s })
 	}
 	if !d.Multiple {
@@ -204,6 +211,9 @@ func choiceValue(d ParamDef, v any, at string) (paramValue, *SpecError) {
 	items, ok := v.([]any)
 	if !ok {
 		return out, invalid(at, "the value is a list of the param's options")
+	}
+	if len(items) > maxChoiceValues {
+		return out, invalid(at, fmt.Sprintf("the value is a list of at most %d choices", maxChoiceValues))
 	}
 	for _, item := range items {
 		s, ok := item.(string)

@@ -860,6 +860,15 @@ func compileDry(p *plan) error {
 		// refuse the same layouts.
 		pivot = make([]pivotValue, p.pivot.max)
 	}
-	_, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1)
-	return err
+	if _, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1); err != nil {
+		return err
+	}
+	for _, d := range p.spec.Params {
+		if op := p.options[d.ID]; op != nil {
+			if _, err := c.optionsSelect(newStmt(nil, nil), op); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

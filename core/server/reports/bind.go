@@ -45,6 +45,18 @@ type plan struct {
 	nest []*nestLevel
 	// lookups holds each lookup node's decoded value (lookupOf).
 	lookups map[*Node]decodedLookup
+	// options binds each choice param whose options come from a source, by
+	// param id.
+	options map[string]*optionsPlan
+}
+
+// optionsPlan is a choice param's options source bound to the registry: its
+// value, label and (optional) group paths on src.
+type optionsPlan struct {
+	def                 *ParamDef
+	at                  string
+	src                 *Source
+	value, label, group *pathPlan
 }
 
 type hopPlan struct {
@@ -181,6 +193,7 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	}
 	p := &plan{app: app, spec: spec, base: base, byID: map[string]*colPlan{}, lookups: map[*Node]decodedLookup{}}
 	b.merge(checkParamDefs(spec.Params))
+	b.optionSources(p)
 	b.columns(p)
 	b.lookups(p)
 	b.formulaSizes(p)
@@ -199,6 +212,34 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 		return nil, err
 	}
 	return p, nil
+}
+
+// optionSources binds each choice param's options source: its value, label
+// and group paths, to-one only.
+func (b *binder) optionSources(p *plan) {
+	p.options = map[string]*optionsPlan{}
+	for i := range p.spec.Params {
+		d := &p.spec.Params[i]
+		if d.Type != ParamChoice || d.OptionsFrom == nil {
+			continue
+		}
+		at := fmt.Sprintf("params.%d.optionsFrom", i)
+		of := d.OptionsFrom
+		src := lookupSource(b.app, of.Source)
+		if src == nil {
+			b.missing(at+".source", "unknown_source", fmt.Sprintf("the source %q does not exist", of.Source))
+			continue
+		}
+		op := &optionsPlan{def: d, at: at, src: src}
+		op.value = b.path(src, of.Value, at+".value", pathValue, "")
+		op.label = b.path(src, of.Label, at+".label", pathValue, "")
+		if of.Group != nil {
+			op.group = b.path(src, of.Group, at+".group", pathValue, "")
+		}
+		if op.value != nil && op.label != nil {
+			p.options[d.ID] = op
+		}
+	}
 }
 
 func (b *binder) columns(p *plan) {
