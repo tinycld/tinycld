@@ -44,11 +44,13 @@ save.
 
 ## What every workspace can do
 
-Three things are always available, whichever packages are installed:
+These are always available, whichever packages are installed:
 
 - **A user joins** — a trigger for onboarding: welcome someone, add them to a
   board, create a contact for them. Make it an organization rule; a new user
   doesn't belong to anyone, so personal rules never match it.
+- **A web form is sent** — runs for each submission of one web form. See
+  [Web forms](help://core:web-forms).
 - **Send me a notification** — the in-app bell.
 - **Send an email** — sends to any address, with a subject and body you write.
   Both accept `{{ }}` placeholders, so the mail can describe whatever started
