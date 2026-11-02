@@ -26,6 +26,8 @@ func (rn *runner) columns() []ResultColumn {
 			if cp.path.field.Type == Select {
 				rc.Options = cp.path.field.Options
 			}
+		} else if rc.Type == Select {
+			rc.Options = c.formulaOptions[cp.col.ID]
 		}
 		if t := c.levelTypes[cp.col.ID]; t != "" && t != rc.Type && cp.col.Aggregate != "" {
 			rc.TotalType = t
@@ -421,20 +423,30 @@ func (rn *runner) firstLabel(cols []*colPlan, row map[string]any) rowLabel {
 	return rowLabel{text: rn.display(cols[0], row[fmt.Sprintf("v%d", idx)], false)}
 }
 
+// columnOptions are the options of a column whose values are a select's: its
+// field's, or those of the select a formula column reads.
+func (c *compiler) columnOptions(cp *colPlan) []Option {
+	if cp.path != nil {
+		return optionsOf(cp.path.field)
+	}
+	return c.formulaOptions[cp.col.ID]
+}
+
 // display is a value as a row label: a select's label, Yes or No, the
 // number or text itself, or (none) for a blank.
 func (rn *runner) display(cp *colPlan, v any, bucketed bool) string {
 	if v == nil || v == "" {
 		return blankLabel
 	}
+	if !bucketed {
+		for _, o := range rn.c.columnOptions(cp) {
+			if o.Value == v {
+				return o.Label
+			}
+		}
+	}
 	if !bucketed && cp.path != nil {
 		switch cp.path.field.Type {
-		case Select:
-			for _, o := range cp.path.field.Options {
-				if o.Value == v {
-					return o.Label
-				}
-			}
 		case Bool:
 			if toInt(v) != 0 {
 				return "Yes"

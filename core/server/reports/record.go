@@ -43,7 +43,7 @@ func bindRecordPath(app core.App, target *Source, p Path, at string) (*pathPlan,
 
 // recordExpr types a record leaf; its context fills in sql and cur.
 func recordExpr(bound *pathPlan) expr {
-	return expr{typ: bound.field.Type, target: bound.target}
+	return pathExpr("", bound)
 }
 
 // recordCurrencyID names a record amount's currency for combining.

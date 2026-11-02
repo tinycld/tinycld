@@ -105,16 +105,36 @@ func labelCurrencySQL(s *stmt, target *Source, f *Field, key string) string {
 // selectLabelSQL is a select value shown by its option's label; a value no
 // option names shows as stored.
 func selectLabelSQL(s *stmt, f *Field, value string) string {
-	if len(f.Options) == 0 {
+	return optionLabelSQL(s.bind, f.Options, value)
+}
+
+// optionLabelSQL is a select's stored value shown by its option's label; a
+// value no option names shows as stored.
+func optionLabelSQL(bind func(any) string, options []Option, value string) string {
+	if len(options) == 0 {
 		return value
 	}
 	var b strings.Builder
 	b.WriteString("(CASE " + value)
-	for _, o := range f.Options {
-		b.WriteString(" WHEN " + s.bind(o.Value) + " THEN " + s.bind(o.Label))
+	for _, o := range options {
+		b.WriteString(" WHEN " + bind(o.Value) + " THEN " + bind(o.Label))
 	}
 	b.WriteString(" ELSE " + value + " END)")
 	return b.String()
+}
+
+// optionsOf is a select field's options; nil for any other field.
+func optionsOf(f *Field) []Option {
+	if f == nil || f.Type != Select {
+		return nil
+	}
+	return f.Options
+}
+
+// pathExpr is a path's field value, read by sql: typed as the field, a
+// relation with the source it points at, a select with its options.
+func pathExpr(sql string, p *pathPlan) expr {
+	return expr{sql: sql, typ: p.field.Type, target: p.target, options: optionsOf(p.field)}
 }
 
 // labelOrder is the label as a sort key: records with no name sort with the
@@ -238,14 +258,16 @@ func (c *compiler) chosenLabel(e expr) string {
 
 // compileDetailLabel compiles the formula that labels each detail row and
 // keeps what it compiled to (c.detailLabel): a value that points at a record
-// is shown by the record's label, by the label field of the column it reads;
-// any other value keeps its type, and an amount its currency (a carried one
-// beside it), so the client formats the label as a cell (R9).
+// is shown by the record's label, by the label field of the column it reads,
+// and a select by its option's label; any other value keeps its type, and an
+// amount its currency (a carried one beside it), so the client formats the
+// label as a cell (R9).
 func (c *compiler) compileDetailLabel(rc *rowsCtx, labels *labelRefs, n *Node) (labelRef, error) {
 	e, err := compileFormula(rc, n, "detail.label")
 	if err != nil {
 		return labelRef{}, err
 	}
+	e = shownSelect(rc.bind, e)
 	if e.target == nil {
 		lp := labelPlan{typ: e.typ, cur: e.cur}
 		ref := labelRef{value: e.sql, currency: "NULL"}

@@ -90,7 +90,7 @@ func (rc *rowsCtx) path(p Path, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return withCurrency(expr{sql: rc.r.hidden(bound), typ: bound.field.Type, target: bound.target}, rc.r.pathCurrency(bound)), nil
+	return withCurrency(pathExpr(rc.r.hidden(bound), bound), rc.r.pathCurrency(bound)), nil
 }
 
 // record reads the group record's field on a base row: a base row is under

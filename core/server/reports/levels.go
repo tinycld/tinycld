@@ -461,6 +461,8 @@ func (lv *level) labelSQL() error {
 		if e.win {
 			return invalid(g.at+".label", "a running value or a percent is not a label")
 		}
+		// A select labels by its option's label, which also orders the groups.
+		e = shownSelect(lv.r.s.bind, e)
 		if at, inner := lv.innerRecord(g.group.Label, g.at+".label", false, map[string]bool{}); inner != "" {
 			return invalid(at, fmt.Sprintf("the label of group %q reads the record of group %q, which is grouped inside it: a %q row has no one %q record", g.group.ID, inner, g.group.ID, inner))
 		}
@@ -636,7 +638,7 @@ func (lc *levelCtx) recompute(cp *colPlan, at string) (expr, error) {
 	cur := lv.c.currencyOf[id]
 	switch {
 	case cp.nest > 0:
-		return expr{sql: "NULL", typ: cp.path.field.Type, target: cp.path.target}, nil
+		return pathExpr("NULL", cp.path), nil
 	case cp.path != nil && cp.tm >= 0:
 		return withCurrency(expr{sql: lv.toManyTotal(cp), typ: aggregateType(cp.col.Aggregate, cp.path.field.Type, cp.scale)}, cur), nil
 	case cp.path != nil && cp.col.Aggregate != "":
@@ -647,7 +649,7 @@ func (lc *levelCtx) recompute(cp *colPlan, at string) (expr, error) {
 		if key := lv.groupKey(cp); key != "" {
 			sql = key
 		}
-		return withCurrency(expr{sql: sql, typ: cp.path.field.Type, target: cp.path.target}, cur), nil
+		return withCurrency(pathExpr(sql, cp.path), cur), nil
 	case cp.col.Aggregate == "" && lv.isGroupColumn(cp):
 		return lc.formulaGroupColumn(cp, at)
 	}
@@ -851,7 +853,7 @@ func (lc *levelCtx) path(p Path, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return withCurrency(expr{sql: "NULL", typ: bound.field.Type, target: bound.target}, lc.lv.r.pathCurrency(bound)), nil
+	return withCurrency(pathExpr("NULL", bound), lc.lv.r.pathCurrency(bound)), nil
 }
 
 func (lc *levelCtx) param(id, at string) (expr, error) {

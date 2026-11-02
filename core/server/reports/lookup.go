@@ -118,7 +118,7 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	out := expr{typ: v.typ, target: v.target, cur: v.cur, agg: v.agg, win: v.win}
+	out := expr{typ: v.typ, target: v.target, cur: v.cur, agg: v.agg, win: v.win, options: v.options}
 	where := "1"
 	if n.Where != nil {
 		w, err := compileWhere(&lookupCtx{outer: outer, r: r, sc: sc, src: src, inWhere: true}, n.Where, at)

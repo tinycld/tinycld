@@ -33,6 +33,9 @@ type expr struct {
 	// col is the column a {col} leaf reads, whose label field shows the
 	// record a relation value points at.
 	col string
+	// options are a select value's options: a label or a text operator shows
+	// a stored value by its option's label.
+	options []Option
 }
 
 // currency is where a money value's currency comes from: a currency key of w
@@ -347,12 +350,49 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 }
 
 // asText is a value a text operator reads: a relation as the label of the
-// record it points at, never its id.
+// record it points at, never its id, and a select as its option's label.
 func asText(c fctx, a expr) string {
 	if a.target != nil && a.sql != "NULL" {
 		return c.label(a)
 	}
-	return a.sql
+	return shownSelect(c.bind, a).sql
+}
+
+// shownSelect is a value as a label shows it: a select's stored value as its
+// option's label, which is text; any other value as it is.
+func shownSelect(bind func(any) string, e expr) expr {
+	if len(e.options) == 0 {
+		return e
+	}
+	e.sql, e.typ, e.options = optionLabelSQL(bind, e.options, e.sql), Text, nil
+	return e
+}
+
+// selectResults keeps the options of results (of if, case or coalesce) that
+// are all values of one select, or blanks. When selects with other options,
+// or other text, are among them, each select result is shown by its own
+// option labels instead, so the result is text with no options.
+func selectResults(bind func(any) string, results []expr) []Option {
+	var options []Option
+	mixed := false
+	for _, r := range results {
+		switch {
+		case r.typ == "":
+		case len(r.options) == 0:
+			mixed = true
+		case options == nil:
+			options = r.options
+		case !slices.Equal(options, r.options):
+			mixed = true
+		}
+	}
+	if !mixed {
+		return options
+	}
+	for i := range results {
+		results[i] = shownSelect(bind, results[i])
+	}
+	return nil
 }
 
 func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
@@ -590,6 +630,7 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if args[0].typ != Bool {
 			return expr{}, invalid(at+".args.0", "if needs a condition first")
 		}
+		options := selectResults(c.bind, args[1:])
 		typ, ok := commonType(args[1], args[2])
 		if !ok {
 			return expr{}, invalid(at, "both results of if are of one kind")
@@ -599,25 +640,38 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{}, err
 		}
 		out := wholeCents(expr{sql: "(CASE WHEN " + args[0].sql + " THEN " + args[1].sql + " ELSE " + args[2].sql + " END)", typ: typ}, args[1:])
-		out.target = target
+		out.target, out.options = target, options
 		return out, nil
 	case "case":
 		if err := argc(2, -1); err != nil {
 			return expr{}, err
 		}
+		// The results are the odd args, then an else (the last of an odd count).
+		slots := make([]int, 0, len(args)/2+1)
+		for i := 1; i < len(args); i += 2 {
+			slots = append(slots, i)
+		}
+		if len(args)%2 == 1 {
+			slots = append(slots, len(args)-1)
+		}
+		results := make([]expr, len(slots))
+		for j, i := range slots {
+			results[j] = args[i]
+		}
+		options := selectResults(c.bind, results)
+		for j, i := range slots {
+			args[i] = results[j]
+		}
 		var b strings.Builder
 		b.WriteString("(CASE")
-		results := []expr{}
 		for i := 0; i+1 < len(args); i += 2 {
 			if args[i].typ != Bool {
 				return expr{}, invalid(fmt.Sprintf("%s.args.%d", at, i), "case takes condition and result pairs")
 			}
 			b.WriteString(" WHEN " + args[i].sql + " THEN " + args[i+1].sql)
-			results = append(results, args[i+1])
 		}
 		if len(args)%2 == 1 {
 			b.WriteString(" ELSE " + args[len(args)-1].sql)
-			results = append(results, args[len(args)-1])
 		}
 		b.WriteString(" END)")
 		typ, ok := commonType(results...)
@@ -629,12 +683,13 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{}, err
 		}
 		out := wholeCents(expr{sql: b.String(), typ: typ}, results)
-		out.target = target
+		out.target, out.options = target, options
 		return out, nil
 	case "coalesce":
 		if err := argc(1, -1); err != nil {
 			return expr{}, err
 		}
+		options := selectResults(c.bind, args)
 		typ, ok := commonType(args...)
 		if !ok {
 			return expr{}, invalid(at, "coalesce takes values of one kind")
@@ -644,14 +699,14 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{}, err
 		}
 		if len(args) == 1 {
-			return expr{sql: args[0].sql, typ: typ, target: target}, nil
+			return expr{sql: args[0].sql, typ: typ, target: target, options: options}, nil
 		}
 		parts := make([]string, len(args))
 		for i, a := range args {
 			parts[i] = a.sql
 		}
 		out := wholeCents(expr{sql: "COALESCE(" + strings.Join(parts, ", ") + ")", typ: typ}, args)
-		out.target = target
+		out.target, out.options = target, options
 		return out, nil
 	case "isEmpty":
 		if err := argc(1, 1); err != nil {

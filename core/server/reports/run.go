@@ -640,7 +640,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	}
 	frame.order = append(frame.order, "w.__id")
 	order = append(order, sortKey{name: "__id"})
-	c.detailTypes = map[string]FieldType{}
+	c.detailTypes, c.formulaOptions = map[string]FieldType{}, map[string][]Option{}
 	for idx, cp := range c.p.cols {
 		if cp.nest > 0 {
 			// A child row column's label is read with its child rows.
@@ -667,6 +667,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		if cp.path == nil {
 			// A formula's amount has the currency of the amounts it reads.
 			c.currencyOf[cp.col.ID] = e.cur
+			c.formulaOptions[cp.col.ID] = e.options
 		}
 	}
 	if d := c.p.spec.Detail; d != nil && d.Label != nil {

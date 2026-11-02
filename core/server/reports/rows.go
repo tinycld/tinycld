@@ -44,6 +44,9 @@ type compiler struct {
 	// amount, its currency. It outlives a statement (assembly reads it after
 	// every pass), so rows() leaves it.
 	labels []labelPlan
+	// formulaOptions holds the options of each formula column whose value is
+	// a select's, so its cells and group labels show option labels.
+	formulaOptions map[string][]Option
 	// detailLabel is what the report's detail label compiled to (the detail
 	// select's __label); nil when the first column labels detail rows.
 	detailLabel *labelPlan
@@ -325,7 +328,7 @@ func (r *rowsCTE) colValue(cp *colPlan) expr {
 	}
 	ref := withCurrency(expr{sql: "w." + name, typ: typ}, r.c.currencyOf[cp.col.ID])
 	if cp.tm < 0 {
-		ref.target = cp.path.target
+		ref.target, ref.options = cp.path.target, optionsOf(cp.path.field)
 	}
 	if _, ok := r.raw[name]; ok {
 		return ref

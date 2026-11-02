@@ -141,7 +141,7 @@ func (sc *scope) join(hops []hopPlan) string {
 
 // value reads a to-one path's field in this scope.
 func (sc *scope) value(p *pathPlan) expr {
-	return expr{sql: fieldSQL(sc.join(p.hops), p.field), typ: p.field.Type, target: p.target}
+	return pathExpr(fieldSQL(sc.join(p.hops), p.field), p)
 }
 
 // sql renders the FROM clause, its joins and its to-many subqueries.
