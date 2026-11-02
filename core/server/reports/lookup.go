@@ -67,6 +67,9 @@ func (b *binder) lookups(p *plan) {
 	walk(p.spec.Filter, "filter")
 	for i, g := range p.spec.Groups {
 		walk(g.Label, fmt.Sprintf("groups.%d.label", i))
+		if g.Fill != nil {
+			walk(g.Fill.Where, fmt.Sprintf("groups.%d.fill.where", i))
+		}
 	}
 	for i, s := range p.spec.Sort {
 		walk(s.Formula, fmt.Sprintf("sort.%d.formula", i))

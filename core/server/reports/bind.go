@@ -288,6 +288,9 @@ func (b *binder) formulaSizes(p *plan) {
 		if l := p.spec.Groups[i].Label; l != nil {
 			check(fmt.Sprintf("groups.%d.label", i), p.nodeSize(l, memo, map[string]bool{}, true))
 		}
+		if f := p.spec.Groups[i].Fill; f != nil && f.Where != nil {
+			check(fmt.Sprintf("groups.%d.fill.where", i), p.nodeSize(f.Where, memo, map[string]bool{}, true))
+		}
 	}
 	for i, s := range p.spec.Sort {
 		if s.Formula != nil {

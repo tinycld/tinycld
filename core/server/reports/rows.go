@@ -47,6 +47,9 @@ type compiler struct {
 	// labelTypes holds the type of the record label of each column whose
 	// values point at a record (vl<idx>, the cell <id>@label).
 	labelTypes map[string]FieldType
+	// fillSets is the keyset of each level whose group fills in its records
+	// (fillKeys), which the level below crosses its own records with.
+	fillSets map[int]string
 }
 
 // labelPlan is what a group's label compiled to. recordCurrency says an

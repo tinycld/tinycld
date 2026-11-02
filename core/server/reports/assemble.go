@@ -289,6 +289,11 @@ func (rn *runner) currencyOf(row map[string]any, cur currency) string {
 func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id string, label rowLabel, key []any, subtotal bool) {
 	p := rn.c.p
 	canOpen := n < len(p.groups) || p.pivot == nil
+	// A fill record has no base rows: it opens only onto a deeper level's fill
+	// records. A layout section with no rows has no __n and keeps this rule.
+	if v, ok := row["__n"]; ok && v != nil && toInt(v) == 0 && !rn.c.deeperFill(n) {
+		canOpen = false
+	}
 	expanded := canOpen && rn.expand.has(key)
 	rn.push(Row{
 		ID: id, Kind: KindGroup, Depth: n - 1, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),

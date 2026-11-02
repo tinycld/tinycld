@@ -118,6 +118,15 @@ type Group struct {
 	// group is labelled as its column shows the record (labelFieldOf), any
 	// other group by its key.
 	Label *Node `json:"label,omitempty"`
+	// Fill adds the linked records that have no rows, under each parent group.
+	Fill *Fill `json:"fill,omitempty"`
+}
+
+// Fill is a record group's "show every record": the target's records that
+// match Where (all it may list when Where is nil) and have no base rows, under
+// each parent group and currency.
+type Fill struct {
+	Where *Node `json:"where,omitempty"`
 }
 
 type Pivot struct {
