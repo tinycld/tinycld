@@ -205,7 +205,7 @@ func (lv *level) render(cells []string) []string {
 	}
 	out = append(out, cells...)
 	out = append(out, fmt.Sprintf("ROW_NUMBER() OVER (%s ORDER BY %s) AS __ord", partitionBy(lv.frame.parent), strings.Join(lv.frame.order, ", ")))
-	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s a)", lv.n, strings.Join(out, ", "), g))
+	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, strings.Join(out, ", "), lv.frame.from(g, "a")))
 	return ctes
 }
 
@@ -359,7 +359,8 @@ func (lv *level) lookupReadsRowValue(n *Node, inAggregate bool, seen map[string]
 			return lv.readsRowValue(n, inAggregate, seen)
 		}
 		if n.Op == "lookup" {
-			if v, err := lookupValue(n, ""); err == nil && walk(v) {
+			// bind has refused a value that does not decode.
+			if v, err := lv.c.p.lookupOf(n, ""); err == nil && walk(v) {
 				return true
 			}
 		}
@@ -408,3 +409,6 @@ func (lc *levelCtx) bind(v any) string                       { return lc.lv.r.s.
 func (lc *levelCtx) fiscalStart() string                     { return lc.bind(int64(lc.lv.c.fiscal)) }
 func (lc *levelCtx) filter() bool                            { return false }
 func (lc *levelCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(lc, lc.lv.r, n, at) }
+
+// hoist computes a running value a lookup reads below the level's select.
+func (lc *levelCtx) hoist(sql string) string { return lc.lv.frame.hoist("a", sql) }

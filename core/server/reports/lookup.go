@@ -7,7 +7,7 @@ import (
 )
 
 // lookupValue decodes a lookup's value: a formula node over the looked-up
-// source.
+// source. A bound spec decodes each lookup once, through plan.lookupOf.
 func lookupValue(n *Node, at string) (*Node, error) {
 	if n.Value == nil {
 		return nil, invalid(at+".value", "a lookup names the value it reads")
@@ -21,6 +21,55 @@ func lookupValue(n *Node, at string) (*Node, error) {
 	return &v, nil
 }
 
+// decodedLookup is a lookup's value as plan.lookupOf decoded it, or why it
+// could not be.
+type decodedLookup struct {
+	value *Node
+	err   error
+}
+
+// lookupOf is a lookup node's decoded value, decoded on first use and kept
+// with its error, so the binder, the size counts and the compiler read one
+// decode. bind decodes every lookup of the spec first (lookups) and refuses
+// a value that does not decode, so a later reader may skip a failed one.
+func (p *plan) lookupOf(n *Node, at string) (*Node, error) {
+	if d, ok := p.lookups[n]; ok {
+		return d.value, d.err
+	}
+	v, err := lookupValue(n, at)
+	p.lookups[n] = decodedLookup{value: v, err: err}
+	return v, err
+}
+
+// lookups decodes the value of every lookup in the spec's formulas and
+// reports one that does not decode where it is.
+func (b *binder) lookups(p *plan) {
+	var walk func(n *Node, at string)
+	walk = func(n *Node, at string) {
+		if n == nil {
+			return
+		}
+		if n.Op == "lookup" {
+			v, err := p.lookupOf(n, at)
+			if se, ok := err.(*SpecError); ok {
+				b.merge(se)
+			}
+			walk(v, at+".value")
+		}
+		walk(n.Where, at+".where")
+		for i, a := range n.Args {
+			walk(a, fmt.Sprintf("%s.args.%d", at, i))
+		}
+	}
+	for i, c := range p.spec.Columns {
+		walk(c.Formula, fmt.Sprintf("columns.%d.formula", i))
+	}
+	walk(p.spec.Filter, "filter")
+	for i, item := range p.spec.Layout {
+		walk(item.Formula, fmt.Sprintf("layout.%d.formula", i))
+	}
+}
+
 // lookupIn compiles a lookup in a context whose rows CTE is r: the smallest
 // (pick min, the default) or largest value of the node's value over the rows
 // of its source that match its where, NULL when none match. Every row of the
@@ -28,18 +77,26 @@ func lookupValue(n *Node, at string) (*Node, error) {
 // Inside, a path reads the looked-up source; a column, a group record or a
 // param reads the report's row through outer, which makes the subquery
 // correlated. SQLite runs an uncorrelated scalar subquery once per statement.
+// A column it reads may be a total (one value per row of its level) or a
+// running value, which the outer select computes first (windowHoister).
 func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
+	if n.Col != "" || n.Path != nil || n.Param != "" || n.Subtotal != "" {
+		return expr{}, invalid(at, "a formula node is one of op, col, path, param, value or subtotal")
+	}
 	if len(n.Args) > 0 || n.Link != nil || n.Scale != nil {
 		return expr{}, invalid(at, "lookup takes a source, a where, a value and a pick")
 	}
 	if n.Pick != "" && n.Pick != "min" && n.Pick != "max" {
 		return expr{}, invalid(at+".pick", "pick is min or max")
 	}
+	if n.Source == "" {
+		return expr{}, invalid(at+".source", "a lookup names its source")
+	}
 	src := lookupSource(r.c.p.app, n.Source)
 	if src == nil {
 		return expr{}, unknownRef(at+".source", "unknown_source", fmt.Sprintf("the source %q does not exist", n.Source))
 	}
-	valueNode, err := lookupValue(n, at)
+	valueNode, err := r.c.p.lookupOf(n, at)
 	if err != nil {
 		return expr{}, err
 	}
@@ -48,28 +105,33 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	if v.agg || v.win {
-		return expr{}, invalid(at+".value", "a lookup reads one value per matching row: totals and running values go outside it")
-	}
+	out := expr{typ: v.typ, target: v.target, cur: v.cur, agg: v.agg, win: v.win}
 	where := "1"
 	if n.Where != nil {
 		w, err := compileWhere(&lookupCtx{outer: outer, r: r, sc: sc, src: src, inWhere: true}, n.Where, at)
 		if err != nil {
 			return expr{}, err
 		}
-		if w.agg || w.win {
-			return expr{}, invalid(at+".where", "a lookup's where reads one row at a time")
-		}
 		if !w.unset {
 			where = "COALESCE(" + w.sql + ", 0)"
 		}
+		out.agg, out.win = out.agg || w.agg, out.win || w.win
 	}
 	pick := "min"
 	if n.Pick == "max" {
 		pick = "max"
 	}
-	sql := fmt.Sprintf("(SELECT %s(%s)\n%s\nWHERE %s)", pick, v.sql, sc.render(), where)
-	return expr{sql: sql, typ: v.typ, target: v.target, cur: v.cur}, nil
+	out.sql = fmt.Sprintf("(SELECT %s(%s)\n%s\nWHERE %s)", pick, v.sql, sc.render(), where)
+	return out, nil
+}
+
+// windowHoister is a context whose select can compute a running value or a
+// percent before the rows it reads are narrowed: hoist puts the value's SQL
+// in a select below the context's own and returns the reference to it. A
+// window function inside a lookup's subquery would run over the looked-up
+// rows, so a lookup reads a running value through this.
+type windowHoister interface {
+	hoist(sql string) string
 }
 
 // lookupCtx compiles inside a lookup: paths on the looked-up source (after
@@ -84,7 +146,18 @@ type lookupCtx struct {
 	inWhere bool
 }
 
-func (l *lookupCtx) col(id, at string) (expr, error) { return l.outer.col(id, at) }
+// col reads the report's row; a running value is computed in the outer
+// select first (a lookup inside a lookup leaves that to the outermost).
+func (l *lookupCtx) col(id, at string) (expr, error) {
+	e, err := l.outer.col(id, at)
+	if err != nil || !e.win {
+		return e, err
+	}
+	if h, ok := l.outer.(windowHoister); ok {
+		e.sql = h.hoist(e.sql)
+	}
+	return e, nil
+}
 
 // A param is the run's value wherever the lookup sits (a layout row's outer
 // context reads no params, so a lookup there resolves them itself).

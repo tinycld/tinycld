@@ -43,6 +43,8 @@ type plan struct {
 	layout []*LayoutItem
 	// nest is the chain of nested child rows, outermost first.
 	nest []*nestLevel
+	// lookups holds each lookup node's decoded value (lookupOf).
+	lookups map[*Node]decodedLookup
 }
 
 type hopPlan struct {
@@ -173,9 +175,10 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 		b.missing("source", "unknown_source", fmt.Sprintf("the source %q does not exist", spec.Source))
 		return nil, b.err()
 	}
-	p := &plan{app: app, spec: spec, base: base, byID: map[string]*colPlan{}}
+	p := &plan{app: app, spec: spec, base: base, byID: map[string]*colPlan{}, lookups: map[*Node]decodedLookup{}}
 	b.merge(checkParamDefs(spec.Params))
 	b.columns(p)
+	b.lookups(p)
 	b.formulaSizes(p)
 	b.nestChain(p)
 	b.sorts(p)
@@ -320,7 +323,8 @@ func (p *plan) nodeSize(n *Node, memo map[string]formulaSize, visiting map[strin
 	// refused a report column when it compiles.)
 	add(n.Where, inline)
 	if n.Op == "lookup" {
-		if v, err := lookupValue(n, ""); err == nil {
+		// bind has refused a value that does not decode.
+		if v, err := p.lookupOf(n, ""); err == nil {
 			add(v, inline)
 		}
 	}

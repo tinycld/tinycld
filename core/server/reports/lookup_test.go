@@ -76,7 +76,9 @@ func TestALookupNeverReadsARowTheReaderCannotList(t *testing.T) {
 
 // On a group row a correlated lookup reads the group's key; on the total row,
 // where the column it reads has no single value, it is blank, even when its
-// where would match a blank (ne).
+// where would match a blank (ne). lighter reads another lookup column: the
+// heaviest animal ann may list that is lighter than the group's (Mo, 12, is
+// lighter than Leo but hidden from her, so Leo's group reads Kit's 4).
 func TestACorrelatedLookupOnAGroupRowReadsTheGroupsKey(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
@@ -87,11 +89,61 @@ func TestACorrelatedLookupOnAGroupRowReadsTheGroupsKey(t *testing.T) {
 		{"id":"other","formula":{"op":"lookup","source":"zoo.animals","pick":"max",
 			"where":{"op":"ne","args":[{"path":[{"field":"id"}]},{"col":"animal"}]},
 			"value":{"path":[{"field":"weight"}]}}},
+		{"id":"lighter","formula":{"op":"lookup","source":"zoo.animals","pick":"max",
+			"where":{"op":"lt","args":[{"path":[{"field":"weight"}]},{"col":"weight"}]},
+			"value":{"path":[{"field":"weight"}]}}},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"weight"}]}`, Options{ExpandAll: true}, nil)
 	requireRows(t, res, "kind", "group", "detail", "detail", "group", "detail", "detail", "total")
 	requireRows(t, res, "weight", int64(190), int64(190), int64(190), int64(300), int64(300), int64(300), nil)
 	requireRows(t, res, "other", int64(300), int64(300), int64(300), int64(190), int64(190), int64(190), nil)
+	requireRows(t, res, "lighter", int64(4), int64(4), int64(4), int64(190), int64(190), int64(190), nil)
+}
+
+// A lookup may read a column that totals rows: on a detail row it is that
+// row's amount, on a group or total row the level's total. Here: the heaviest
+// animal ann may list whose weight times 10 fits the amount (Mo's 120 would
+// fit 300, 700 and 1000 but she cannot list Mo).
+func TestALookupReadsATotalColumnOnEveryRow(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"spent","formula":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}},
+		{"id":"fits","formula":{"op":"lookup","source":"zoo.animals","pick":"max",
+			"where":{"op":"lte","args":[{"op":"mul","args":[{"path":[{"field":"weight"}]},{"value":10}]},{"col":"spent"}]},
+			"value":{"path":[{"field":"weight"}]}}}],
+		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`, Options{ExpandAll: true}, nil)
+	requireRows(t, res, "kind", "group", "detail", "detail", "group", "detail", "detail", "total")
+	requireRows(t, res, "spent", int64(3500), int64(1000), int64(2500), int64(1000), int64(700), int64(300), int64(4500))
+	requireRows(t, res, "fits", int64(300), int64(4), int64(190), int64(4), int64(4), int64(4), int64(300))
+}
+
+// A lookup may read a running value: the outer select computes it before the
+// lookup's subquery reads it, on detail rows (running within the group) and
+// on group and total rows (running across the level's rows). fits is the
+// heaviest animal ann may list whose weight times 15 is at most the running
+// cost (Mo's 180 would fit 700 and 1000, but she cannot list Mo); lighter
+// is the heaviest one lighter than fits.
+func TestALookupReadsARunningValue(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
+		{"id":"run","formula":{"op":"runningSum","args":[{"col":"cost"}]}},
+		{"id":"fits","formula":{"op":"lookup","source":"zoo.animals","pick":"max",
+			"where":{"op":"lte","args":[{"op":"mul","args":[{"path":[{"field":"weight"}]},{"value":15}]},{"col":"run"}]},
+			"value":{"path":[{"field":"weight"}]}}},
+		{"id":"lighter","formula":{"op":"lookup","source":"zoo.animals","pick":"max",
+			"where":{"op":"lt","args":[{"path":[{"field":"weight"}]},{"col":"fits"}]},
+			"value":{"path":[{"field":"weight"}]}}}],
+		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`, Options{ExpandAll: true}, nil)
+	requireRows(t, res, "kind", "group", "detail", "detail", "group", "detail", "detail", "total")
+	requireRows(t, res, "run", int64(3500), int64(1000), int64(3500), int64(4500), int64(700), int64(1000), int64(4500))
+	requireRows(t, res, "fits", int64(190), int64(4), int64(190), int64(300), int64(4), int64(4), int64(300))
+	// A lookup of that lookup reads it computed too.
+	requireRows(t, res, "lighter", int64(4), nil, int64(4), int64(190), nil, nil, int64(190))
 }
 
 // A computed layout row may look a value up (F16): here a section's cost
@@ -104,9 +156,12 @@ func TestALayoutRowLooksAValueUp(t *testing.T) {
 		"groups":[{"id":"g","col":"species"}],
 		"layout":[{"section":"l","title":"Lions","key":"lion"},
 			{"row":"r","label":"Lions and Leo","formula":{"op":"add","args":[{"subtotal":"l"},
-				{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Leo"}]},"value":{"path":[{"field":"weight"}]}}]}}]}`, Options{}, nil)
-	requireRows(t, res, "label", "Lions", "Total Lions", "Lions and Leo")
-	requireRows(t, res, "cost", int64(3500), int64(3500), int64(3690))
+				{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Leo"}]},"value":{"path":[{"field":"weight"}]}}]}},
+			{"row":"m","label":"Lions and Mo","formula":{"op":"add","args":[{"subtotal":"l"},
+				{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Mo"}]},"value":{"path":[{"field":"weight"}]}}]}}]}`, Options{}, nil)
+	// ann cannot list Mo: his lookup is blank and adds nothing.
+	requireRows(t, res, "label", "Lions", "Total Lions", "Lions and Leo", "Lions and Mo")
+	requireRows(t, res, "cost", int64(3500), int64(3500), int64(3690), int64(3500))
 }
 
 // A lookup in a computed row reads the run's params, and refuses a report
@@ -143,6 +198,12 @@ func TestALookupIsRefusedWhereItCannotBeRead(t *testing.T) {
 			"columns.0.formula.pick", "min or max"},
 		"a source on another op": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"add","source":"zoo.animals","args":[{"value":1},{"value":2}]}}]}`,
 			"columns.0.formula", "only lookup takes a source"},
+		"a leaf key too": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","col":"x","value":{"path":[{"field":"id"}]}}}]}`,
+			"columns.0.formula", "one of op, col, path"},
+		"no source": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","value":{"path":[{"field":"id"}]}}}]}`,
+			"columns.0.formula.source", "a lookup names its source"},
+		"a value that is not a formula": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"field":"id"}}}]}`,
+			"columns.0.formula.value", "a lookup's value is a formula"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -525,7 +525,7 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 	if len(c.p.nest) > 0 {
 		sel = append(sel, r.nestParent()+" AS __n0")
 	}
-	return "SELECT " + strings.Join(sel, ", ") + " FROM w", order, nil
+	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from("w", "w"), order, nil
 }
 
 // sortKey is one ORDER BY column of the detail select: s<i> for a sort

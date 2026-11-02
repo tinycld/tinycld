@@ -46,7 +46,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err er
 		// A formula that reads an earlier row is compiled with that row
 		// inside it, so its size grows with every reference, and it is
 		// compiled once for every cell.
-		sizes[item.Row] = expandedSize(item.Formula, sizes)
+		sizes[item.Row] = c.p.expandedSize(item.Formula, sizes)
 		compiled += sizes[item.Row] * (len(c.p.cols) + len(pivot))
 		if sizes[item.Row] > maxLayoutNodes || compiled > maxLayoutCompiled {
 			return nil, nil, invalid(at, "the layout's computed rows are too large; reference fewer earlier rows")
@@ -170,19 +170,20 @@ const errLayoutKey = "a section key is text, a number, true, false or null"
 
 // expandedSize counts a formula's nodes with each earlier row it reads
 // counted in full.
-func expandedSize(n *Node, rows map[string]int) int {
+func (p *plan) expandedSize(n *Node, rows map[string]int) int {
 	if n == nil {
 		return 0
 	}
 	size := 1 + rows[n.Subtotal]
 	for _, a := range n.Args {
-		size += expandedSize(a, rows)
+		size += p.expandedSize(a, rows)
 	}
-	// A lookup's where and value are compiled with it.
-	size += expandedSize(n.Where, rows)
+	// A lookup's where and value are compiled with it; bind has refused a
+	// value that does not decode.
+	size += p.expandedSize(n.Where, rows)
 	if n.Op == "lookup" {
-		if v, err := lookupValue(n, ""); err == nil {
-			size += expandedSize(v, rows)
+		if v, err := p.lookupOf(n, ""); err == nil {
+			size += p.expandedSize(v, rows)
 		}
 	}
 	return size

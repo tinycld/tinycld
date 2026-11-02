@@ -25,6 +25,42 @@ type windowFrame struct {
 	parent []string
 	total  []string
 	order  []string
+	// hoisted are running values a lookup reads, computed in a select below
+	// the one over the frame's rows ("<sql> AS wh<n>"); hoistedAs names them
+	// by their SQL.
+	hoisted   []string
+	hoistedAs map[string]string
+}
+
+// hoist keeps a running value to compute in the select below and returns
+// its reference under alias.
+func (f *windowFrame) hoist(alias, sql string) string {
+	if name, ok := f.hoistedAs[sql]; ok {
+		return alias + "." + name
+	}
+	if f.hoistedAs == nil {
+		f.hoistedAs = map[string]string{}
+	}
+	name := fmt.Sprintf("wh%d", len(f.hoisted))
+	f.hoisted = append(f.hoisted, sql+" AS "+name)
+	f.hoistedAs[sql] = name
+	return alias + "." + name
+}
+
+// from is what a select over table (as alias) reads: the table, or with
+// hoisted values, selects of the table's rows that add them one at a time
+// under the same alias, so every reference to alias still reads and a
+// hoisted value may read one hoisted before it (a lookup of a lookup of a
+// running value).
+func (f *windowFrame) from(table, alias string) string {
+	from := table + " " + alias
+	if len(f.hoisted) == 0 && table == alias {
+		from = table
+	}
+	for _, h := range f.hoisted {
+		from = fmt.Sprintf("(SELECT %s.*, %s FROM %s) %s", alias, h, from, alias)
+	}
+	return from
 }
 
 func (rc *rowsCtx) col(id, at string) (expr, error) {
@@ -101,6 +137,15 @@ func (rc *rowsCtx) bind(v any) string                       { return rc.r.s.bind
 func (rc *rowsCtx) fiscalStart() string                     { return rc.bind(int64(rc.r.c.fiscal)) }
 func (rc *rowsCtx) filter() bool                            { return false }
 func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(rc, rc.r, n, at) }
+
+// hoist computes a running value a lookup reads below the detail select.
+// Only a detail row has one (inside a total a running value is refused).
+func (rc *rowsCtx) hoist(sql string) string {
+	if rc.detail == nil {
+		return sql
+	}
+	return rc.detail.hoist("w", sql)
+}
 
 // windowSQL is a running value or a percent over a frame. A running sum
 // adds in the frame's order within the parent; a percent divides by the sum
