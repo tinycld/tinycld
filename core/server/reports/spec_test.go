@@ -104,7 +104,7 @@ func TestLoadRefusesWhatIsNotASpec(t *testing.T) {
 		"no version":      {`{"source":"zoo.feedings","columns":[]}`, "version", "whole number"},
 		"version zero":    {`{"version":0,"columns":[]}`, "version", "whole number"},
 		"version 1.5":     {`{"version":1.5,"columns":[]}`, "version", "whole number"},
-		"newer version":   {`{"version":2,"columns":[]}`, "version", "newer than this server reads (1)"},
+		"newer version":   {`{"version":3,"columns":[]}`, "version", "newer than this server reads (2)"},
 		"wrong leaf type": {`{"version":1,"source":"zoo.feedings","columns":[{"id":"a","path":"cost"}]}`, "spec", "cannot unmarshal"},
 	}
 	for name, c := range cases {
@@ -169,20 +169,17 @@ func TestLoadResolvesAliasesOnEveryPath(t *testing.T) {
 
 func TestLoadKeepsLargeIntegersAcrossAnUpgrade(t *testing.T) {
 	withZooRegistry(t)
-	// CurrentVersion is 1, so a stand-in step is run through loadWith, which
-	// Load calls with upgradeSteps and CurrentVersion.
-	steps := map[int]upgradeStep{1: func(doc map[string]any) error { return nil }}
 	raw := `{"version":1,"source":"zoo.feedings","columns":[],
 		"filter":{"op":"eq","args":[{"path":[{"field":"id"}]},{"value":9007199254740993}]}}`
-	spec, info, err := loadWith([]byte(raw), steps, 2)
+	spec, info, err := Load([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := string(spec.Filter.Args[1].Value); got != "9007199254740993" {
 		t.Fatalf("value = %s, want 9007199254740993", got)
 	}
-	if info.UpgradedFrom != 1 {
-		t.Fatalf("UpgradedFrom = %d, want 1", info.UpgradedFrom)
+	if info.UpgradedFrom != 0 {
+		t.Fatalf("UpgradedFrom = %d, want 0", info.UpgradedFrom)
 	}
 }
 

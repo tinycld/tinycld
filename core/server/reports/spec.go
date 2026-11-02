@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -13,12 +14,19 @@ import (
 
 // CurrentVersion is the spec version this engine writes. Load upgrades an
 // older spec one version at a time with upgradeSteps.
-const CurrentVersion = 1
+const CurrentVersion = 2
 
 // upgradeSteps[v] turns a version v document into version v+1. upgrade sets
 // the version, not each step. Add a step whenever the spec format changes,
 // and raise CurrentVersion with it.
-var upgradeSteps = map[int]upgradeStep{}
+//
+// 1 → 2 adds only optional parts (column totals, group having, labels, fill
+// and open, formula sort keys, the detail label, options from a source, the
+// record and lookup formulas, display layouts), so a version 1 document is
+// already a valid version 2 document.
+var upgradeSteps = map[int]upgradeStep{
+	1: func(map[string]any) error { return nil },
+}
 
 type upgradeStep func(doc map[string]any) error
 
@@ -182,7 +190,9 @@ func loadWith(raw []byte, steps map[int]upgradeStep, target int) (*Spec, *LoadIn
 		return nil, nil, invalid("spec", "the spec is not valid: "+err.Error())
 	}
 	info := &LoadInfo{Aliased: resolveAliases(&spec)}
-	if from != target {
+	// The notice says the report changed; a step that changed nothing (1 → 2)
+	// gives none.
+	if from != target && !sameExceptVersion(raw, upgraded) {
 		info.UpgradedFrom = from
 	}
 	return &spec, info, nil
@@ -227,6 +237,24 @@ func upgrade(raw []byte, steps map[int]upgradeStep, target int) ([]byte, int, er
 	}
 	out, err := json.Marshal(doc)
 	return out, from, err
+}
+
+// sameExceptVersion reports whether two spec documents differ only in their
+// version. Numbers stay json.Number, so a large integer compares exactly.
+func sameExceptVersion(a, b []byte) bool {
+	read := func(raw []byte) (map[string]any, bool) {
+		var doc map[string]any
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		if dec.Decode(&doc) != nil {
+			return nil, false
+		}
+		delete(doc, "version")
+		return doc, true
+	}
+	da, okA := read(a)
+	db, okB := read(b)
+	return okA && okB && reflect.DeepEqual(da, db)
 }
 
 // resolveAliases replaces an aliased link or field key on every path with

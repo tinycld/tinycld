@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ReportSpec } from '../../spec'
+import { CURRENT_SPEC_VERSION, type ReportSpec } from '../../spec'
 import {
     builderSchema,
     type ColumnDraft,
@@ -11,7 +11,7 @@ import {
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
 const RICH: ReportSpec = {
-    version: 1,
+    version: CURRENT_SPEC_VERSION,
     source: SALES_KEY,
     params: [{ id: 'period', type: 'dateRange', label: 'Day', default: { preset: 'thisMonth' } }],
     columns: [
@@ -50,7 +50,7 @@ describe('draftFromSpec and specFromDraft', () => {
 
     it('keeps parts the builder cannot edit unchanged', () => {
         const shipped: ReportSpec = {
-            version: 1,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'customer', label: 'Customer', path: [{ field: 'customer' }] },
@@ -78,7 +78,7 @@ describe('draftFromSpec and specFromDraft', () => {
 
     it('keeps a formula over a column id the editor cannot read', () => {
         const shipped: ReportSpec = {
-            version: 1,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'netAmount', label: 'Net', path: [{ field: 'amount' }], aggregate: 'sum' },
@@ -159,7 +159,7 @@ describe('the scale of a division and an average', () => {
     })
 
     const layoutSpec = (columns: ReportSpec['columns']): ReportSpec => ({
-        version: 1,
+        version: CURRENT_SPEC_VERSION,
         source: SALES_KEY,
         columns,
         groups: [{ id: 'byStatus', col: 'status', subtotals: true }],
@@ -215,7 +215,7 @@ describe('emptyDraft', () => {
             },
         ])
         expect(specFromDraft({ ...draft, title: 'Teams' }, CATALOG)).toEqual({
-            version: 1,
+            version: CURRENT_SPEC_VERSION,
             source: TEAMS_KEY,
             columns: [{ id: 'name', label: 'Name', path: [{ field: 'name' }] }],
         })

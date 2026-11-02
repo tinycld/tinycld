@@ -111,7 +111,7 @@ func TestValidateRefusesAnInvalidSpec(t *testing.T) {
 			"layout.0", "a section or a computed row"},
 		"section without key": {`{"version":1,"source":"zoo.feedings","columns":[{"id":"a","path":[{"field":"note"}]}],"groups":[{"id":"g","col":"a"}],"layout":[{"section":"s","title":"S"}]}`,
 			"layout.0", "the key of a first-level group"},
-		"version": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"field":"cost"}]}]}`, "version", "load the spec first"},
+		"version": {`{"version":1,"source":"zoo.feedings","columns":[{"id":"a","path":[{"field":"cost"}]}]}`, "version", "load the spec first"},
 		"param":   {`{"version":1,"source":"zoo.feedings","params":[{"id":"p","type":"color"}],"columns":[{"id":"a","path":[{"field":"cost"}]}]}`, "params.0.type", "unknown param type"},
 	}
 	for name, c := range cases {

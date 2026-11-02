@@ -67,6 +67,12 @@ describe('parseSpec', () => {
         ).toBeNull()
     })
 
+    it('reads a version 1 spec and a version 2 spec', () => {
+        expect(parseSpec({ ...FEEDINGS, version: 1 })).not.toBeNull()
+        expect(parseSpec({ ...FEEDINGS, version: 2 })).not.toBeNull()
+        expect(parseSpec({ ...FEEDINGS, version: 3 })).toBeNull()
+    })
+
     it('refuses a spec from a newer version of the app as unreadable', () => {
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION })).not.toBeNull()
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION + 1 })).toBeNull()

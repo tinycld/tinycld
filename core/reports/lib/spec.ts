@@ -6,7 +6,7 @@ import { AGGREGATES, PARAM_TYPES, type Problem } from './types'
 // too. Null parts read as absent: a hand-written or shipped spec may say
 // "layout": null.
 
-export const CURRENT_SPEC_VERSION = 1
+export const CURRENT_SPEC_VERSION = 2
 export const BUCKETS = ['day', 'month', 'quarter', 'year', 'fiscalYear'] as const
 export type Bucket = (typeof BUCKETS)[number]
 
