@@ -7,9 +7,11 @@
  * packages register, and core must not name a package. App-shell CI installs no
  * feature package, so without a stub the reports e2e (tests/e2e/reports-*.spec.ts)
  * has nothing to report on. The stub registers two sources from Go (a to-one and
- * a to-many link, money with a currency field, a number, a date and a select) over
- * its own collections and one shipped report with a formula the builder cannot
- * edit, and its landing screen adds rows through the UI, as the specs must.
+ * a to-many link, money with a currency field, a number, a date, a day kept as
+ * text, selects and a heading) over its own collections and two shipped reports
+ * (a published one with a formula the builder cannot edit, and an unpublished one
+ * over the spec v2 parts), and its landing screen adds rows through the UI, as the
+ * specs must.
  *
  * Writes every file itself, as scaffold-forms-host-stub.ts does: no bootstrap
  * preset ships a migration, a Go module and collections together. The screen,

@@ -19,7 +19,11 @@ import { ScrollView, Text, View } from 'react-native'
 // E2E fixture screen: adds teams and sales through the UI, as the reports specs
 // must set their data up.
 
-const teamSchema = z.object({ name: z.string().trim().min(1).max(200) })
+const teamSchema = z.object({
+    name: z.string().trim().min(1).max(200),
+    region: z.enum(['north', 'south']),
+})
+type TeamValues = z.infer<typeof teamSchema>
 const saleSchema = z.object({
     team: z.string().min(1, 'Choose a team'),
     customer: z.string().trim().min(1).max(200),
@@ -30,6 +34,11 @@ const saleSchema = z.object({
     status: z.enum(['open', 'paid']),
 })
 type SaleValues = z.infer<typeof saleSchema>
+
+const REGION_OPTIONS = [
+    { value: 'north', label: 'North' },
+    { value: 'south', label: 'South' },
+]
 
 const STATUS_OPTIONS = [
     { value: 'open', label: 'Open' },
@@ -48,18 +57,18 @@ function SavedNote({ text, testID }: { text: string; testID: string }) {
 function TeamForm() {
     const [teams] = useStore('salesstub_teams')
     const [saved, setSaved] = useState('')
-    const form = useForm({
+    const form = useForm<TeamValues>({
         resolver: zodResolver(teamSchema),
         mode: 'onChange',
-        defaultValues: { name: '' },
+        defaultValues: { name: '', region: 'north' },
     })
     const create = useMutation({
-        mutationFn: function* (values: z.infer<typeof teamSchema>) {
-            yield teams.insert({ id: newRecordId(), name: values.name })
+        mutationFn: function* (values: TeamValues) {
+            yield teams.insert({ id: newRecordId(), name: values.name, region: values.region })
         },
         onSuccess: (_data, values) => {
             setSaved(`Saved ${values.name}`)
-            form.reset({ name: '' })
+            form.reset({ name: '', region: values.region })
         },
     })
     const onCreate = () => {
@@ -73,6 +82,13 @@ function TeamForm() {
                 control={form.control}
                 label="Team name"
                 testID="salesstub-team-name"
+            />
+            <ButtonGroup
+                name="region"
+                control={form.control}
+                label="Region"
+                horizontal
+                options={REGION_OPTIONS}
             />
             <Button onPress={onCreate} isDisabled={create.isPending} testID="salesstub-team-create">
                 <ButtonText>Add team</ButtonText>
@@ -116,6 +132,8 @@ function SaleForm() {
                 quantity: values.quantity,
                 currency: 'USD',
                 day: `${values.day} 00:00:00.000Z`,
+                // The same day kept as text, which the booked field reads (R22).
+                booked_on: values.day,
                 status: values.status,
             })
         },
