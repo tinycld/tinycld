@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
 import { createInvitedUser, loginAs, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
@@ -30,6 +30,46 @@ import {
  * in-app move.
  */
 const YEAR = new Date().getFullYear()
+
+async function topOf(locator: Locator): Promise<number> {
+    return (await locator.boundingBox())?.y ?? -1
+}
+
+type Box = { x: number; y: number; width: number; height: number } | null
+
+function overlaps(a: Box, b: Box): boolean {
+    if (!a || !b) return false
+    return (
+        a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+    )
+}
+
+/** Holds every report run until the returned release is called. */
+async function holdRuns(p: Page): Promise<() => void> {
+    let release = () => {}
+    const held = new Promise<void>(resolve => {
+        release = resolve
+    })
+    await p.route('**/api/reports/run', async route => {
+        await held
+        await route.continue()
+    })
+    return release
+}
+
+// "Updating…" shows in its own slot in the header: a status live region that is
+// always there, so the table does not move and nothing is covered while it shows.
+async function expectUpdatingInItsSlot(p: Page, tableTop: number) {
+    const slot = p.getByTestId('report-updating-slot')
+    await expect(slot).toHaveAttribute('role', 'status')
+    await expect(slot).toHaveAttribute('aria-live', 'polite')
+    await expect(slot.getByTestId('report-updating')).toHaveText('Updating…')
+    expect(await topOf(p.getByTestId('report-table'))).toBe(tableTop)
+    const box = await slot.boundingBox()
+    for (const id of ['report-back', 'report-title']) {
+        expect(overlaps(box, await p.getByTestId(id).boundingBox()), id).toBe(false)
+    }
+}
 
 async function makeReport(page: Page, label: string, askDay: boolean) {
     const invited = await createInvitedUser(page, label)
@@ -348,22 +388,53 @@ test.describe('the report view', () => {
             await expect(await cellOf(p, 'amount', 'Open')).toHaveText('10.00')
 
             // The expanded run is held, so the figures in view while it loads can be read.
-            let release = () => {}
-            const held = new Promise<void>(resolve => {
-                release = resolve
-            })
-            await p.route('**/api/reports/run', async route => {
-                await held
-                await route.continue()
-            })
+            let tableTop = await topOf(table)
+            let release = await holdRuns(p)
             await rowOf(p, 'Open').click()
-            await expect(p.getByTestId('report-updating')).toHaveText('Updating…')
+            await expectUpdatingInItsSlot(p, tableTop)
             await expect(await cellOf(p, 'amount', 'Open')).toHaveText('10.00')
             await expect(table.getByText('Alpha', { exact: true })).toHaveCount(0)
             release()
             await p.unrouteAll({ behavior: 'wait' })
             await expect(table.getByText('Alpha', { exact: true })).toBeVisible()
             await expect(p.getByTestId('report-updating')).toHaveCount(0)
+            expect(await topOf(table)).toBe(tableTop)
+
+            // The same on a phone, where the header row is narrow.
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect(rowOf(p, 'Open')).toHaveAttribute('aria-expanded', 'true')
+            tableTop = await topOf(table)
+            release = await holdRuns(p)
+            // The open group's stuck copy lies over its row at the top, so fold from
+            // the toolbar.
+            await pressToolbar(p, 'report-fold-all', 'Collapse all')
+            await expectUpdatingInItsSlot(p, tableTop)
+            release()
+            await p.unrouteAll({ behavior: 'wait' })
+            await expect(table.getByText('Alpha', { exact: true })).toHaveCount(0)
+            await expect(p.getByTestId('report-updating')).toHaveCount(0)
+
+            // The builder sheet has the same slot in its header, beside Close.
+            await pressToolbar(p, 'report-edit-open', 'Edit report')
+            const sheet = p.getByTestId('report-builder')
+            await expect(sheet).toBeVisible()
+            await p.getByTestId('report-builder-section-group').click()
+            release = await holdRuns(p)
+            await p.getByTestId('report-builder-group-0-subtotals').click()
+            const sheetSlot = sheet.getByTestId('report-updating-slot')
+            await expect(sheetSlot).toHaveAttribute('role', 'status')
+            await expect(sheetSlot.getByTestId('report-updating')).toHaveText('Updating…')
+            const closeBox = await p.getByTestId('report-builder-close').boundingBox()
+            expect(overlaps(await sheetSlot.boundingBox(), closeBox)).toBe(false)
+            release()
+            await p.unrouteAll({ behavior: 'wait' })
+            await expect(sheetSlot.getByTestId('report-updating')).toHaveCount(0)
+            await p.getByTestId('report-builder-close').click()
+            await p.getByText('Discard', { exact: true }).click()
+            await expect(sheet).toBeHidden()
+            await p.setViewportSize({ width: 1280, height: 720 })
+            await rowOf(p, 'Open').click()
+            await expect(table.getByText('Alpha', { exact: true })).toBeVisible()
 
             await p.getByTestId('report-back').click()
             await hubRow(p, title).click()

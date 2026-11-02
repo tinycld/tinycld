@@ -52,10 +52,10 @@ async function wideReport(p: Page, title: string, grouped: boolean) {
         await p.getByTestId('report-builder-group-add').click()
         await chooseOption(p, 'report-builder-group-0-col', 'status')
         await p.getByTestId('report-builder-group-0-open').click()
-    } else {
-        // Sorted, so "Wrapco 00" is the first row, the one a scroll takes away.
-        await chooseOption(p, 'report-builder-sort-add-menu', 'customer')
     }
+    // Sorted, so "Wrapco 00" is the first row (the first of the open Open group
+    // when grouped), the one in view at first; unsorted rows come in record order.
+    await chooseOption(p, 'report-builder-sort-add-menu', 'customer')
     await saveNewReport(p, title)
 }
 

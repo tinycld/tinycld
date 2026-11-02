@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test'
+import { type ElementHandle, expect, type Locator, type Page } from '@playwright/test'
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import PocketBase from 'pocketbase'
 import { loginAs, navigateToPackage } from './helpers'
@@ -109,20 +109,28 @@ export async function addColumn(page: Page, keys: string[], mode?: 'total' | 'ne
     await expect(picker).toBeHidden()
 }
 
-/**
- * Scrolls the report list (the row's nearest vertical scroller) so the row's top
- * edge lands `below` px under the list's top edge.
- */
-export async function scrollRowTo(row: Locator, below = 0) {
-    await row.evaluate((element, offset) => {
+/** The report list's own scroller: the row's nearest vertical (overflow-y: auto) ancestor. */
+export async function listScroller(row: Locator): Promise<ElementHandle<HTMLElement>> {
+    return row.evaluateHandle(element => {
         let scroller = element.parentElement
         while (scroller && getComputedStyle(scroller).overflowY !== 'auto') {
             scroller = scroller.parentElement
         }
         if (!scroller) throw new Error('the row has no vertical scroller')
-        const top = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-        scroller.scrollTop += top - offset
-    }, below)
+        return scroller
+    })
+}
+
+/** Scrolls the report list so the row's top edge lands `below` px under the list's top edge. */
+export async function scrollRowTo(row: Locator, below = 0) {
+    const scroller = await listScroller(row)
+    await row.evaluate(
+        (element, { list, offset }) => {
+            const top = element.getBoundingClientRect().top - list.getBoundingClientRect().top
+            list.scrollTop += top - offset
+        },
+        { list: scroller, offset: below }
+    )
 }
 
 export async function chooseOption(page: Page, selectTestId: string, value: string) {

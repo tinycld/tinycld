@@ -27,6 +27,7 @@ import type { ReportViewModel } from '../../hooks/useReportView'
 import type { Problem } from '../../lib/types'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 import { ReportNotices } from '../ReportNotices'
+import { ReportUpdating } from '../ReportUpdating'
 import { ReportBody } from '../ReportView'
 import { ArrangeSection } from './ArrangeSection'
 import { ColumnsSection } from './ColumnsSection'
@@ -240,9 +241,12 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
             testID="report-builder"
         >
             <View style={{ height }}>
-                <View className="flex-row items-center justify-between px-3">
+                <View className="flex-row items-center justify-between gap-2 px-3">
                     <PanelTitle builder={builder} />
-                    <CloseButton onPress={builder.onClose} />
+                    <View className="flex-row items-center gap-1">
+                        <ReportUpdating isUpdating={preview.isUpdating} />
+                        <CloseButton onPress={builder.onClose} />
+                    </View>
                 </View>
                 <ModeSwitch mode={mode} onChange={setMode} />
                 <ModeBody isVisible={mode === 'design'}>
@@ -251,7 +255,7 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
                     </ScrollView>
                 </ModeBody>
                 <ModeBody isVisible={mode === 'preview'}>
-                    <ReportNotices notices={preview.notices} isUpdating={preview.isUpdating} />
+                    <ReportNotices notices={preview.notices} />
                     <ReportBody model={preview} />
                 </ModeBody>
                 <Footer builder={builder} onSaveAs={onSaveAs} />

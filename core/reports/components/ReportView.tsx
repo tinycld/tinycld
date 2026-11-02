@@ -148,9 +148,14 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
     return (
         <View testID="report-screen" className="flex-1 flex-row bg-background">
             <View className="min-w-0 flex-1">
-                <ReportHeader title={model.title} onBack={model.onBack} toolbar={toolbar} />
+                <ReportHeader
+                    title={model.title}
+                    onBack={model.onBack}
+                    toolbar={toolbar}
+                    isUpdating={model.isUpdating}
+                />
                 <ReportControls model={model} />
-                <ReportNotices notices={model.notices} isUpdating={model.isUpdating} />
+                <ReportNotices notices={model.notices} />
                 <ReportDocumentHeader
                     heading={model.heading}
                     title={model.title}

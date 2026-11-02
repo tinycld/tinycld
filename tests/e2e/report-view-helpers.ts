@@ -14,16 +14,45 @@ export function hubRow(page: Page, title: string): Locator {
     return page.locator('[data-testid^="reports-hub-row-"]').filter({ hasText: title })
 }
 
+// Present in a fitted toolbar row: drawn (no box around it at opacity 0, which is
+// how the row measures), inside the window, and every item of its row inside
+// the row (a row still fitted to an earlier width runs past its edge).
+function isInFittedRow(locator: Locator): Promise<boolean> {
+    return locator.evaluateAll(elements =>
+        elements.some(element => {
+            const row = element.closest('[data-testid="toolbar-row"]')
+            if (!row) return false
+            for (let node: Element | null = element; node; node = node.parentElement) {
+                if (getComputedStyle(node).opacity === '0') return false
+            }
+            const box = element.getBoundingClientRect()
+            const rowBox = row.getBoundingClientRect()
+            const inWindow = box.width > 0 && box.left >= 0 && box.right <= window.innerWidth
+            const rowFits = [...row.children].every(child => {
+                const c = child.getBoundingClientRect()
+                return c.left >= rowBox.left - 1 && c.right <= rowBox.right + 1
+            })
+            return inWindow && rowFits
+        })
+    )
+}
+
 /**
  * A toolbar action, folded into "More actions" when the row is narrow. The toolbar
- * draws after the report loads, so wait for the button or the More button before
+ * draws after the report loads, and after a width change it refits its items
+ * (until then they can run past the row's edge), so wait for a fitted row before
  * choosing a branch.
  */
 export async function pressToolbar(page: Page, testId: string, label: string) {
     const button = page.getByTestId(testId)
     const more = page.getByTestId('toolbar-more-button')
-    await expect(button.or(more).first()).toBeVisible()
-    if (await button.isVisible()) await button.click()
+    const fitted = async () => {
+        if (await isInFittedRow(button)) return 'button'
+        if ((await button.count()) === 0 && (await isInFittedRow(more))) return 'more'
+        return null
+    }
+    await expect.poll(fitted).not.toBeNull()
+    if ((await fitted()) === 'button') await button.click()
     else {
         await more.click()
         await page.getByRole('menuitem', { name: label }).click()
