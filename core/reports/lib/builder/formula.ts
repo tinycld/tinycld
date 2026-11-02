@@ -24,7 +24,8 @@ export function onlyKeys(node: SpecNode, keys: readonly string[]): boolean {
 
 const isKey = (name: string) => keySchema.safeParse(name).success
 
-function hasScale(node: SpecNode): node is SpecNode & { scale: number } {
+/** The node carries a scale the engine accepts (0 to 6 places). */
+export function hasScale(node: SpecNode): node is SpecNode & { scale: number } {
     return node.scale !== undefined && node.scale >= 0 && node.scale <= MAX_PLACES
 }
 

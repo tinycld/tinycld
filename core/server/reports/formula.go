@@ -881,6 +881,12 @@ var conditionOps = map[string]bool{
 var comparisons = map[string]string{"lt": "<", "lte": "<=", "gt": ">", "gte": ">="}
 
 func between(args []expr, at string) (expr, error) {
+	// A date range has no single value to compare: it is only ever the bounds.
+	for i, a := range args {
+		if a.rng && (len(args) != 2 || i != 1) {
+			return expr{}, invalid(fmt.Sprintf("%s.args.%d", at, i), "a date range param is the second of two between values")
+		}
+	}
 	switch {
 	case len(args) == 2 && args[1].rng:
 		x := args[0]

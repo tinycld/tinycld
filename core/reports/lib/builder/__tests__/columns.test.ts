@@ -49,6 +49,13 @@ describe('describePath', () => {
             labels: ['Team'],
         })
         expect(describePath(CATALOG, TEAMS_KEY, [{ link: 'sales' }])).toBeNull()
+        // Only the last link must be to-one: a total column may cross a to-many link first.
+        const viaSales = describePath(CATALOG, TEAMS_KEY, [
+            { link: 'sales', mode: 'aggregate' },
+            { link: 'team' },
+        ])
+        expect(viaSales).toMatchObject({ viaToMany: true, mode: 'aggregate', target: teams })
+        expect(viaSales?.field).toMatchObject({ key: 'id', label: 'Team', type: 'relation' })
         expect(describePath(CATALOG, SALES_KEY, [{ field: 'id' }])?.target?.key).toBe(SALES_KEY)
         expect(describePath(CATALOG, SALES_KEY, [{ field: 'amount' }])?.target).toBeUndefined()
     })

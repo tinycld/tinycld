@@ -282,6 +282,24 @@ func TestValidateChecksAConditionOnAnUnsetParam(t *testing.T) {
 	requireSpecError(t, err, 400, "filter.args.0", "between takes")
 }
 
+// A date range param is the second of two between values; anywhere else in a
+// between it has no single value to compare, so Validate refuses it.
+func TestValidateRefusesADateRangeOutsideItsBetweenSlot(t *testing.T) {
+	app := withZooRegistry(t)
+	spec := func(filter string) string {
+		return `{"version":1,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
+			"columns":[{"id":"note","path":[{"field":"note"}]}],"filter":` + filter + `}`
+	}
+	fed := `{"path":[{"field":"fed"}]}`
+	err := Validate(app, loadSpec(t, spec(`{"op":"between","args":[`+fed+`,{"param":"period"},`+fed+`]}`)))
+	requireSpecError(t, err, 400, "filter.args.1", "a date range param is the second of two between values")
+	err = Validate(app, loadSpec(t, spec(`{"op":"between","args":[{"param":"period"},{"param":"period"}]}`)))
+	requireSpecError(t, err, 400, "filter.args.0", "a date range param is the second of two between values")
+	if err := Validate(app, loadSpec(t, spec(`{"op":"between","args":[`+fed+`,{"param":"period"}]}`))); err != nil {
+		t.Fatalf("two-value between over a range: %v", err)
+	}
+}
+
 // A dry compile gives a param its default: Validate compiles what a run with
 // no posted value compiles.
 func TestValidateCompilesAParamWithItsDefault(t *testing.T) {

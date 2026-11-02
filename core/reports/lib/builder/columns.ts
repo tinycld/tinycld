@@ -1,5 +1,5 @@
 import type { SpecHop } from '../spec'
-import type { Aggregate, CatalogField, CatalogSource, FieldType } from '../types'
+import type { Aggregate, CatalogField, CatalogLink, CatalogSource, FieldType } from '../types'
 
 // Columns as the builder offers them: a path of link hops ending in a field, as
 // the catalog describes it. The engine's limits are repeated here only to stop a
@@ -55,11 +55,13 @@ export function describePath(
     const labels: string[] = []
     let viaToMany = false
     let mode: PathInfo['mode']
+    let lastLink: CatalogLink | undefined
     for (const hop of path) {
         if (!source) return null
         if (hop.link) {
             const link = source.links.find(l => l.key === hop.link)
             if (!link) return null
+            lastLink = link
             labels.push(link.label)
             if (link.cardinality === 'toMany') {
                 viaToMany = true
@@ -73,9 +75,9 @@ export function describePath(
         const target = field.key === 'id' ? source : undefined
         return { field, source, viaToMany, mode, labels: [...labels, field.label], target }
     }
-    // A path that ends at a to-one link reads the linked record's id (bind.go path).
-    const last = path[path.length - 1]
-    if (last?.link && source && !viaToMany) {
+    // A path that ends at a to-one link reads the linked record's id; only that last
+    // link must be to-one (bind.go path).
+    if (lastLink?.cardinality === 'toOne' && source) {
         const label = labels[labels.length - 1] ?? source.label
         const field: CatalogField = {
             key: 'id',
