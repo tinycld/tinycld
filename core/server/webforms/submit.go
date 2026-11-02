@@ -27,16 +27,22 @@ const (
 	multipartMemory = 8 << 20
 	maxClientID     = 64
 	maxUserAgent    = 300
+	// The values part is text the visitor typed; 1 MB is the column's maxSize.
+	maxValuesBytes = 1 << 20
+	// A coarse per-IP budget checked before the body is read.
+	preParseLimit = 30
 )
 
 var (
 	log        = logging.ForPackage("webforms")
+	preLimiter = ratelimit.New(preParseLimit, 10*time.Minute)
 	ipLimiter  = ratelimit.New(5, 10*time.Minute)
 	pubLimiter = ratelimit.New(200, time.Hour)
 	spentPow   = newPowLedger()
 )
 
 func resetLimitersForTesting() {
+	preLimiter.Reset()
 	ipLimiter.Reset()
 	pubLimiter.Reset()
 	spentPow = newPowLedger()
@@ -80,7 +86,19 @@ func ok(re *core.RequestEvent) error {
 	return re.JSON(http.StatusOK, map[string]bool{"ok": true})
 }
 
+// bodyCap is the largest body a publication accepts: its upload cap plus
+// room for the values part and the small text fields.
+func bodyCap(pub *core.Record) int64 {
+	return int64(pub.GetInt("max_upload_mb"))<<20 + maxValuesBytes + 64<<10
+}
+
+func tooLarge(re *core.RequestEvent) error {
+	return re.Error(http.StatusRequestEntityTooLarge, "The files are too large", nil)
+}
+
 // handleSubmit runs the checks cheapest first and stops at the first failure.
+// Nothing reads the body before the origin, the coarse per-IP limit and the
+// publication's size cap have passed.
 func handleSubmit(app core.App, re *core.RequestEvent) error {
 	ctx := re.Request.Context()
 	pub, form, def, err := livePublication(app, re.Request.PathValue("token"))
@@ -93,7 +111,20 @@ func handleSubmit(app core.App, re *core.RequestEvent) error {
 	if !sameOrigin(app, re.Request) {
 		return re.ForbiddenError("", nil)
 	}
+	ip := re.RealIP()
+	if !preLimiter.AllowOrLog(ip, "webforms.submit.pre") {
+		return re.TooManyRequestsError("Please wait and try again", nil)
+	}
+	limit := bodyCap(pub)
+	if re.Request.ContentLength > limit {
+		return tooLarge(re)
+	}
+	re.Request.Body = http.MaxBytesReader(re.Response, re.Request.Body, limit)
 	if err := re.Request.ParseMultipartForm(multipartMemory); err != nil {
+		var big *http.MaxBytesError
+		if errors.As(err, &big) {
+			return tooLarge(re)
+		}
 		return re.BadRequestError("The submission could not be read", nil)
 	}
 	r := re.Request
@@ -113,22 +144,12 @@ func handleSubmit(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("Please reload the form and try again", fieldError("stamp", "validation_invalid_stamp", "Please reload the form and try again"))
 	}
 
-	ip := re.RealIP()
 	if !ipLimiter.AllowOrLog(pub.Id+"|"+ip, "webforms.submit.ip") || !pubLimiter.AllowOrLog(pub.Id, "webforms.submit.publication") {
 		return re.TooManyRequestsError("Please wait and try again", nil)
 	}
 
-	if pub.GetBool("require_pow") {
-		if err := checkPow(app, r.FormValue("pow"), pub.Id); err != nil {
-			return re.BadRequestError("Please wait and try again", fieldError("pow", "validation_invalid_pow", "Please wait and try again"))
-		}
-	}
-
-	uploads, ferrs := checkFiles(def, r.MultipartForm.File, pub.GetInt("max_upload_mb"))
-	if ferrs != nil {
-		return re.BadRequestError("The form has errors", ferrs)
-	}
-
+	// Before the proof of work: a retry of a stored submission (its response
+	// was lost) carries a spent solution and must still get ok.
 	clientID := r.FormValue("client_id")
 	if clientID == "" || len(clientID) > maxClientID {
 		return re.BadRequestError("The submission could not be read", nil)
@@ -142,45 +163,86 @@ func handleSubmit(app core.App, re *core.RequestEvent) error {
 		return re.InternalServerError("", err)
 	}
 
+	var powSignature string
+	if pub.GetBool("require_pow") {
+		sig, err := checkPow(app, r.FormValue("pow"), pub.Id)
+		if err != nil {
+			return re.BadRequestError("Please wait and try again", fieldError("pow", "validation_invalid_pow", "Please wait and try again"))
+		}
+		powSignature = sig
+	}
+	refuse := func(e error) error {
+		if powSignature != "" {
+			spentPow.release(powSignature)
+		}
+		return e
+	}
+
+	uploads, ferrs := checkFiles(def, r.MultipartForm.File, pub.GetInt("max_upload_mb"))
+	if ferrs != nil {
+		return refuse(re.BadRequestError("The form has errors", ferrs))
+	}
+	raw := r.FormValue("values")
+	if len(raw) > maxValuesBytes {
+		return refuse(re.BadRequestError("The form has errors", fieldError("values", "validation_values_too_large", "The answers are too long")))
+	}
 	values := map[string]any{}
-	if err := json.Unmarshal([]byte(r.FormValue("values")), &values); err != nil {
-		return re.BadRequestError("The submission could not be read", nil)
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return refuse(re.BadRequestError("The submission could not be read", nil))
 	}
 	ipHash, err := hashIP(app, ip)
 	if err != nil {
-		return re.InternalServerError("", err)
+		return refuse(re.InternalServerError("", err))
 	}
-	if err := store(app, pub, form, def, values, uploads, clientID, ipHash, r.UserAgent()); err != nil {
+	if err := store(app, pub, form, def, ownFields(def, values), uploads, clientID, ipHash, r.UserAgent()); err != nil {
 		var verrs validation.Errors
 		if errors.As(err, &verrs) {
-			return re.BadRequestError("The form has errors", verrs)
+			return refuse(re.BadRequestError("The form has errors", verrs))
 		}
-		return re.InternalServerError("", err)
+		return refuse(re.InternalServerError("", err))
 	}
 	return ok(re)
 }
 
-func checkPow(app core.App, encoded, pubID string) error {
+// ownFields keeps only this form's non-file fields. A key from another form
+// or a removed field is dropped here, so the host validation never searches
+// the other forms for it; file keys are set by store from the uploads.
+func ownFields(def *forms.Definition, values map[string]any) map[string]any {
+	out := make(map[string]any, len(values))
+	for key, v := range values {
+		if f := def.Field(key); f != nil && f.Kind != "file" && f.Kind != "builtin" {
+			out[key] = v
+		}
+	}
+	return out
+}
+
+// checkPow verifies and reserves a solution, and returns its signature so a
+// refused submit can release it.
+func checkPow(app core.App, encoded, pubID string) (string, error) {
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return errPow
+		return "", errPow
 	}
 	var s Solution
 	if err := json.Unmarshal(raw, &s); err != nil {
-		return errPow
+		return "", errPow
 	}
 	key, err := subkey(app, powLabel)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return spentPow.verify(key, s, pubID, time.Now())
+	if err := spentPow.verify(key, s, pubID, time.Now()); err != nil {
+		return "", err
+	}
+	return s.Signature, nil
 }
 
 // store writes the submission and its files in one transaction. File-row ids
 // are made first and written into values, so the host-record validation sees
 // a required file field as filled; a single file field holds one id string.
-// Client-sent values for file keys are dropped first, so a visitor cannot
-// point a file field at another submission's file.
+// values holds no file keys (ownFields drops them), so a visitor cannot point
+// a file field at another submission's file.
 func store(app core.App, pub, form *core.Record, def *forms.Definition, values map[string]any,
 	uploads map[string][]*multipart.FileHeader, clientID, ipHash, userAgent string) error {
 	type pending struct {
@@ -188,11 +250,6 @@ func store(app core.App, pub, form *core.Record, def *forms.Definition, values m
 		header  *multipart.FileHeader
 	}
 	var files []pending
-	for _, f := range def.Fields {
-		if f.Kind == "file" {
-			delete(values, f.Key)
-		}
-	}
 	for key, headers := range uploads {
 		ids := make([]any, 0, len(headers))
 		for _, h := range headers {

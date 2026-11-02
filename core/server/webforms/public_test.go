@@ -53,7 +53,7 @@ func TestEmbedResolver(t *testing.T) {
 	if got := frame("/p/forms/" + f.token); got != "https://client.example" {
 		t.Fatalf("got %q", got)
 	}
-	for _, p := range []string{"/p/forms/nope", "/p/forms/" + f.token + "/x", "/p/forms/", "/a/settings"} {
+	for _, p := range []string{"/p/forms/" + f.token + "/x", "/p/forms/", "/a/settings"} {
 		if got := frame(p); got != "'none'" {
 			t.Fatalf("%s: want 'none', got %q", p, got)
 		}

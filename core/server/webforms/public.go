@@ -80,14 +80,19 @@ func embedToken(r *http.Request) string {
 }
 
 // registerEmbedPolicy frames a known publication's page at its allowed
-// origins, or anywhere when the list is empty. A disabled publication still
-// frames, so the page can say "not available" inside the client's site
-// instead of a browser error. An unknown token is not claimed.
+// origins, or anywhere when the list is empty. A disabled publication, and
+// an unknown token (a regenerated or deleted link), still frame anywhere: that
+// page shows only "This form is not available", so the client's site says so
+// instead of a browser framing error. Any other path is not claimed.
 func registerEmbedPolicy(app core.App) {
 	embedpolicy.Register(app, func(r *http.Request) []string {
-		pub, err := findPublication(app, embedToken(r))
-		if err != nil {
+		token := embedToken(r)
+		if token == "" {
 			return nil
+		}
+		pub, err := findPublication(app, token)
+		if err != nil {
+			return []string{"*"}
 		}
 		origins := strings.Fields(pub.GetString("allowed_domains"))
 		if len(origins) == 0 {

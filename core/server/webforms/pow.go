@@ -60,7 +60,9 @@ func newChallenge(key []byte, pubID string, now time.Time) (Challenge, error) {
 }
 
 // powLedger remembers spent signatures until they expire, so one solution
-// cannot be replayed. Process-local like ratelimit: a second instance would
+// cannot be replayed. verify reserves a signature; a submit refused after
+// that releases it, so the visitor can fix the form and send the same
+// solution again. Process-local like ratelimit: a second instance would
 // accept a replay once, which the rate limit still bounds.
 type powLedger struct {
 	mu   sync.Mutex
@@ -103,4 +105,11 @@ func (l *powLedger) verify(key []byte, s Solution, pubID string, now time.Time) 
 	}
 	l.used[s.Signature] = time.Unix(exp, 0)
 	return nil
+}
+
+// release returns a reserved signature, for a submit refused after verify.
+func (l *powLedger) release(signature string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.used, signature)
 }
