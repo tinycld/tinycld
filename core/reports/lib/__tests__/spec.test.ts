@@ -77,6 +77,93 @@ describe('parseSpec', () => {
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION })).not.toBeNull()
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION + 1 })).toBeNull()
     })
+
+    it('reads every v2 part', () => {
+        const spec = {
+            version: 2,
+            source: 'zoo.feedings',
+            params: [
+                {
+                    id: 'animals',
+                    type: 'choice',
+                    multiple: true,
+                    optionsFrom: {
+                        source: 'zoo.animals',
+                        value: [{ field: 'id' }],
+                        label: [{ field: 'name' }],
+                        group: [{ field: 'species' }],
+                        where: {
+                            op: 'eq',
+                            args: [{ path: [{ field: 'active' }] }, { value: true }],
+                        },
+                    },
+                },
+                { id: 'budget', type: 'amount', default: { amount: 150000, currency: 'USD' } },
+            ],
+            columns: [
+                { id: 'animal', path: [{ link: 'animal' }], labelField: 'name' },
+                { id: 'weight', formula: { record: 'g', path: [{ field: 'weight' }] } },
+                { id: 'cost', path: [{ field: 'cost' }], aggregate: 'sum', total: 'rows' },
+                {
+                    id: 'site',
+                    formula: {
+                        op: 'lookup',
+                        source: 'zoo.sites',
+                        value: { path: [{ field: 'name' }] },
+                        pick: 'max',
+                    },
+                },
+            ],
+            groups: [
+                {
+                    id: 'g',
+                    col: 'animal',
+                    label: { record: 'g', path: [{ field: 'name' }] },
+                    having: { op: 'gt', args: [{ col: 'cost' }, { value: 0 }] },
+                    fill: {
+                        where: {
+                            op: 'eq',
+                            args: [{ path: [{ field: 'active' }] }, { value: true }],
+                        },
+                    },
+                    open: true,
+                },
+            ],
+            sort: [
+                { formula: { record: 'g', path: [{ field: 'weight' }] }, dir: 'desc' },
+                { col: 'cost' },
+            ],
+            detail: { label: { path: [{ field: 'note' }] } },
+            display: {
+                layouts: [
+                    {
+                        width: 'mobile',
+                        tracks: 3,
+                        cells: [
+                            { col: 'animal', line: 1, span: 3 },
+                            { col: 'cost', line: 2, justify: 'end' },
+                        ],
+                    },
+                ],
+            },
+        }
+        expect(parseSpec(spec)).toEqual(spec)
+        expect(parseSpec({ ...spec, columns: [{ id: 'x', path: [], total: 'some' }] })).toBeNull()
+        expect(
+            parseSpec({
+                ...spec,
+                display: { layouts: [{ width: 'watch', tracks: 1, cells: [] }] },
+            })
+        ).toBeNull()
+        expect(
+            parseSpec({ ...spec, columns: [{ id: 'x', formula: { op: 'lookup', pick: 'avg' } }] })
+        ).toBeNull()
+    })
+
+    it('reads a pivot over a link by its label field', () => {
+        const pivot = { path: [{ link: 'animal' }], cell: 'cost', labelField: 'name' }
+        expect(parseSpec({ ...FEEDINGS, pivot })?.pivot).toEqual(pivot)
+    })
 })
 
 describe('canCopyReport', () => {

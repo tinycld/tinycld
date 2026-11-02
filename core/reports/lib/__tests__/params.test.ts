@@ -6,6 +6,10 @@ import {
     emptyAction,
     emptyMessage,
     isOptional,
+    MAX_CHOICE_VALUES,
+    MAX_OPTION_GROUPS,
+    MAX_TEXT_PARAM,
+    type ParamValue,
     type ParamValues,
     periodWords,
     postedParams,
@@ -131,6 +135,106 @@ describe('chip text', () => {
         )
         expect(chipText(NAME, { kind: 'text', text: 'Acme' }, undefined)).toBe('Name: “Acme”')
         expect(chipText(AS_OF, { kind: 'day', day: '2026-06-30' }, undefined)).toBe('Jun 30, 2026')
+    })
+})
+
+describe('a choice whose options come from a source', () => {
+    const def: ParamDef = {
+        id: 'accounts',
+        type: 'choice',
+        label: 'Accounts',
+        multiple: true,
+        optionsFrom: { source: 'x.accounts', value: [{ field: 'id' }], label: [{ field: 'name' }] },
+    }
+
+    it('takes any ids, checked by type only', () => {
+        expect(valueFromJson(def, ['a1', 'b2'])).toEqual({ kind: 'choice', values: ['a1', 'b2'] })
+        expect(valueFromJson(def, [''])).toBeNull()
+        expect(valueFromJson(def, [7])).toBeNull()
+        expect(valueFromJson(def, ['x'.repeat(MAX_TEXT_PARAM + 1)])).toBeNull()
+        expect(
+            valueFromJson(
+                def,
+                Array.from({ length: 1001 }, (_, i) => `x${i}`)
+            )
+        ).toBeNull()
+        expect(
+            valueFromJson(
+                def,
+                Array.from({ length: MAX_CHOICE_VALUES }, (_, i) => `x${i}`)
+            )
+        ).not.toBeNull()
+        const single = { ...def, multiple: false }
+        expect(valueFromJson(single, 'a1')).toEqual({ kind: 'choice', values: ['a1'] })
+        expect(valueFromJson(single, ['a1'])).toBeNull()
+    })
+
+    it('names one chosen record, and counts more', () => {
+        const labels = new Map([
+            ['a1', 'Cash'],
+            ['b2', 'Bank'],
+        ])
+        expect(chipText(def, { kind: 'choice', values: ['a1'] }, undefined, labels)).toBe(
+            'Accounts: Cash'
+        )
+        expect(
+            chipText(def, { kind: 'choice', values: ['a1', 'b2', 'c3'] }, undefined, labels)
+        ).toBe('Accounts: 3 selected')
+        expect(chipText(def, { kind: 'choice', values: ['c3'] }, undefined, labels)).toBe(
+            'Accounts: c3'
+        )
+    })
+})
+
+describe('a whole group of options from a source', () => {
+    const ungrouped: ParamDef = {
+        id: 'teams',
+        type: 'choice',
+        multiple: true,
+        optionsFrom: { source: 's', value: [{ field: 'id' }], label: [{ field: 'name' }] },
+    }
+    const def: ParamDef = {
+        ...ungrouped,
+        optionsFrom: {
+            source: 's',
+            value: [{ field: 'id' }],
+            label: [{ field: 'name' }],
+            group: [{ field: 'region' }],
+        },
+    }
+    const picked: ParamValue = { kind: 'choice', values: ['a1'], groups: ['north'] }
+
+    it('reads a group reference beside the ids, and writes it back', () => {
+        expect(valueFromJson(def, ['a1', { group: 'north' }])).toEqual(picked)
+        expect(valueToJson(def, picked)).toEqual(['a1', { group: 'north' }])
+        // The blank group's value is "".
+        expect(valueFromJson(def, [{ group: '' }])).toEqual({
+            kind: 'choice',
+            values: [],
+            groups: [''],
+        })
+    })
+
+    it('refuses what the engine refuses', () => {
+        expect(valueFromJson(def, [{ group: 7 }])).toBeNull()
+        expect(valueFromJson(def, [{ group: 'north', extra: 1 }])).toBeNull()
+        expect(valueFromJson(def, [{ group: 'x'.repeat(MAX_TEXT_PARAM + 1) }])).toBeNull()
+        expect(valueFromJson(ungrouped, [{ group: 'north' }])).toBeNull()
+        expect(valueFromJson({ ...def, multiple: false }, { group: 'north' })).toBeNull()
+        const groups = Array.from({ length: MAX_OPTION_GROUPS + 1 }, (_, i) => ({ group: `g${i}` }))
+        expect(valueFromJson(def, groups)).toBeNull()
+        expect(valueFromJson(def, groups.slice(1))).not.toBeNull()
+    })
+
+    it('names the whole group on the chip', () => {
+        const labels = new Map([
+            ['a1', 'N1'],
+            ['group:north', 'North'],
+        ])
+        expect(chipText({ ...def, label: 'Teams' }, picked, undefined, labels)).toBe(
+            'Teams: N1, All North'
+        )
+        expect(chipText({ ...def, label: 'Teams' }, picked, undefined)).toBe('Teams: a1, All north')
     })
 })
 

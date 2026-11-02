@@ -114,6 +114,8 @@ export interface ResolvedParam {
     unset?: boolean
     value?: string | number | { amount: number; currency: string }
     list?: string[]
+    /** The whole groups a choice from a source picked, by group value; the run expanded them. */
+    groups?: string[]
     from?: string
     to?: string
 }
@@ -128,8 +130,45 @@ export interface RunResult {
     rows: ResultRow[]
     notices: Notice[]
     topics: string[]
+    /** The source's heading, printed above the title; absent: the organization's name. */
+    heading?: string
     page: RunPage | null
     params: ResolvedParam[]
+}
+
+/**
+ * One option of a choice param from a source: the value a run takes, its shown label
+ * and its group's value ('' and absent are the blank group). A typed label (a number,
+ * amount, percent or date) is formatted as a cell of `type`, an amount in `currency`.
+ */
+export interface ParamOption {
+    value: string
+    label: string
+    type?: FieldType
+    currency?: string
+    group?: string
+}
+
+/**
+ * One group of a choice param's options, its label typed as an option's is. A group
+ * read from an amount has the value "<amount> <currency>" (e.g. "300 EUR").
+ */
+export interface ParamOptionGroup {
+    value: string
+    label: string
+    type?: FieldType
+    currency?: string
+}
+
+/** One page of a choice param's options from a source (POST /api/reports/param-options). */
+export interface ParamOptionsPage {
+    options: ParamOption[]
+    /** The groups of every matching option; sent with the first page only. */
+    groups: ParamOptionGroup[]
+    /** The group list stops at the server's cap. */
+    groupsCut?: boolean
+    /** The cursor of the next page; absent on the last. */
+    next?: string
 }
 
 export interface CatalogField {

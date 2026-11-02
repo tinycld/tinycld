@@ -48,12 +48,18 @@ export const PRESET_LABELS: Record<Preset, string> = {
 }
 export const CUSTOM_LABEL = 'Custom'
 export const MAX_TEXT_PARAM = 500
+/** The most values a multiple choice holds (params.go maxChoiceValues). */
+export const MAX_CHOICE_VALUES = 1000
+/** The most whole groups a choice from a source names (options.go maxOptionGroups). */
+export const MAX_OPTION_GROUPS = 200
 
 export type ParamValue =
     | { kind: 'preset'; preset: Preset }
     | { kind: 'day'; day: string }
     | { kind: 'range'; from: string; to: string }
-    | { kind: 'choice'; values: string[] }
+    // `groups`: whole groups of a choice from a source, by group value, which the
+    // server expands under the reader's rules.
+    | { kind: 'choice'; values: string[]; groups?: string[] }
     | { kind: 'text'; text: string }
     | { kind: 'number'; number: number }
     // Whole cents in a currency; currency '' is an amount in any currency.
@@ -106,8 +112,40 @@ export function rangeValue(from: string, to: string): ParamValue | null {
     return isIsoDay(from) && isIsoDay(to) && from <= to ? { kind: 'range', from, to } : null
 }
 
+const isSourceId = (item: unknown): item is string =>
+    typeof item === 'string' && item.length > 0 && item.length <= MAX_TEXT_PARAM
+
+// A whole group is posted as {"group": "<group value>"}; '' is the blank group.
+function isGroupRef(item: unknown): item is { group: string } {
+    return (
+        isRecord(item) &&
+        Object.keys(item).length === 1 &&
+        typeof item.group === 'string' &&
+        item.group.length <= MAX_TEXT_PARAM
+    )
+}
+
+// Its options live in a source the reader's rules filter, so a value is checked by
+// type only; a group reference needs options that have groups (params.go choiceValue).
+function sourceChoiceValue(def: ParamDef, raw: unknown[]): ParamValue | null {
+    const ids: string[] = []
+    const groups: string[] = []
+    const canGroup = (def.optionsFrom?.group?.length ?? 0) > 0
+    for (const item of raw) {
+        if (isSourceId(item)) ids.push(item)
+        else if (canGroup && isGroupRef(item)) groups.push(item.group)
+        else return null
+    }
+    if (ids.length > MAX_CHOICE_VALUES || groups.length > MAX_OPTION_GROUPS) return null
+    if (!def.multiple && (ids.length !== 1 || groups.length > 0)) return null
+    const values = [...new Set(ids)]
+    if (groups.length === 0) return { kind: 'choice', values }
+    return { kind: 'choice', values, groups: [...new Set(groups)] }
+}
+
 function choiceValue(def: ParamDef, raw: unknown): ParamValue | null {
     if (!Array.isArray(raw) || raw.length === 0) return null
+    if (def.optionsFrom) return sourceChoiceValue(def, raw)
     const offered = (def.options ?? []).map(option => option.value)
     if (!raw.every(item => typeof item === 'string' && offered.includes(item))) return null
     const values = offered.filter(value => raw.includes(value))
@@ -157,7 +195,8 @@ export function valueToJson(def: ParamDef, value: ParamValue): unknown {
         case 'range':
             return { from: value.from, to: value.to }
         case 'choice':
-            return def.multiple ? value.values : value.values[0]
+            if (!def.multiple) return value.values[0]
+            return [...value.values, ...(value.groups ?? []).map(group => ({ group }))]
         case 'text':
             return value.text
         case 'number':
@@ -235,17 +274,35 @@ function resolvedDates(resolved: ResolvedParam | undefined): string | null {
     return null
 }
 
-function choiceLabels(def: ParamDef, values: readonly string[]): string {
-    const labels = values.map(
-        value => def.options?.find(option => option.value === value)?.label ?? value
+/**
+ * The shown labels of a choice from a source, which the picker reads from the server:
+ * by value, and a whole group's under `group:<group value>`.
+ */
+export type ChoiceLabels = ReadonlyMap<string, string>
+
+export const groupLabelKey = (group: string) => `group:${group}`
+
+function choiceLabels(
+    def: ParamDef,
+    value: { values: readonly string[]; groups?: readonly string[] },
+    labels: ChoiceLabels | undefined
+): string {
+    const named = value.values.map(
+        item =>
+            labels?.get(item) ?? def.options?.find(option => option.value === item)?.label ?? item
     )
-    return labels.length <= 2 ? labels.join(', ') : `${labels.length} selected`
+    const groups = (value.groups ?? []).map(
+        group => `All ${labels?.get(groupLabelKey(group)) ?? group}`
+    )
+    const all = [...named, ...groups]
+    return all.length <= 2 ? all.join(', ') : `${all.length} selected`
 }
 
 export function valueText(
     def: ParamDef,
     value: ParamValue | null,
-    resolved: ResolvedParam | undefined
+    resolved: ResolvedParam | undefined,
+    labels?: ChoiceLabels
 ): string {
     if (!value) return 'Any'
     switch (value.kind) {
@@ -258,7 +315,7 @@ export function valueText(
         case 'range':
             return rangeChipText(value.from, value.to)
         case 'choice':
-            return choiceLabels(def, value.values)
+            return choiceLabels(def, value, labels)
         case 'text':
             return `“${value.text}”`
         case 'number':
@@ -277,9 +334,10 @@ function amountText(cents: number, currency: string): string {
 export function chipText(
     def: ParamDef,
     value: ParamValue | null,
-    resolved: ResolvedParam | undefined
+    resolved: ResolvedParam | undefined,
+    labels?: ChoiceLabels
 ): string {
-    const text = valueText(def, value, resolved)
+    const text = valueText(def, value, resolved, labels)
     return def.label ? `${def.label}: ${text}` : text
 }
 

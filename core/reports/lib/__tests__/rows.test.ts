@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+    DEFAULT_EXPANSION,
     EXPAND_ALL,
     expansionOptions,
     foldAllLabel,
@@ -10,14 +11,7 @@ import {
     toggleGroup,
     visibleRows,
 } from '../rows'
-import type { ResultColumn, ResultRow, RunResult } from '../types'
-
-const COLUMNS: ResultColumn[] = [
-    { id: 'name', label: 'Name', type: 'text' },
-    { id: 'cost', label: 'Cost', type: 'money', currency: 'USD' },
-    { id: 'customer', label: 'Customer', type: 'text' },
-    { id: 'amount', label: 'Amount', type: 'money', currencyCell: 'amount@currency' },
-]
+import type { ResultRow, RunResult } from '../types'
 
 const group = (id: string, key: unknown[], extra: Partial<ResultRow> = {}): ResultRow => ({
     id,
@@ -62,7 +56,7 @@ describe('visibleRows', () => {
             group('g:b', ['b']),
             total,
         ]
-        const shown = visibleRows(rows, COLUMNS)
+        const shown = visibleRows(rows)
         expect(shown[0].cells).toEqual({})
         expect(shown[0]).toMatchObject({ isToggle: true, isOpen: true })
         expect(shown[3].cells).toEqual({ cost: 100 })
@@ -71,21 +65,26 @@ describe('visibleRows', () => {
     })
 
     it('does not offer a toggle on a group that cannot open', () => {
-        const shown = visibleRows([group('g:a', ['a'], { canExpand: false })], COLUMNS)
+        const shown = visibleRows([group('g:a', ['a'], { canExpand: false })])
         expect(shown[0].isToggle).toBe(false)
     })
 
     it('leaves out the cell that labels a child row, and only for a child row', () => {
-        const parent = { ...detail('d:1'), cells: { name: 'Team A', customer: null, cost: 50 } }
+        const parent: ResultRow = {
+            ...detail('d:1'),
+            labelColumn: 'name',
+            cells: { name: 'Team A', customer: null, cost: 50 },
+        }
         const child: ResultRow = {
             id: 'd:1/s1',
             kind: 'detail',
             depth: 2,
             label: 'First buyer',
             parent: 'd:1',
+            labelColumn: 'customer',
             cells: { customer: 'First buyer', amount: 100, 'amount@currency': 'USD' },
         }
-        const shown = visibleRows([parent, child], COLUMNS)
+        const shown = visibleRows([parent, child])
         expect(shown[0].cells).toEqual(parent.cells)
         expect(shown[1].cells).toEqual({ amount: 100, 'amount@currency': 'USD' })
     })
@@ -97,9 +96,50 @@ describe('visibleRows', () => {
             depth: 2,
             label: '(none)',
             parent: 'd:1',
+            labelColumn: 'customer',
             cells: { customer: null, amount: 100 },
         }
-        expect(visibleRows([child], COLUMNS)[0].cells).toEqual({ amount: 100 })
+        expect(visibleRows([child])[0].cells).toEqual({ amount: 100 })
+    })
+})
+
+describe('expansion state', () => {
+    it('sends no expand on the first run, so groups marked open open', () => {
+        expect(expansionOptions(DEFAULT_EXPANSION)).toEqual({})
+    })
+
+    it('collapse sends an empty expand, so groups marked open stay closed', () => {
+        expect(foldAllTarget([group('g:a', ['a'], { expanded: true })])).toEqual(NO_EXPANSION)
+        expect(expansionOptions(NO_EXPANSION)).toEqual({ expand: [] })
+    })
+
+    it('a press under the default state keeps the groups the result shows open', () => {
+        const rows = [group('g:a', ['a'], { expanded: true }), group('g:b', ['b'])]
+        expect(toggleGroup(DEFAULT_EXPANSION, rows[1] as ResultRow, rows)).toEqual({
+            all: false,
+            keys: [['a'], ['b']],
+        })
+        expect(toggleGroup(DEFAULT_EXPANSION, rows[0] as ResultRow, rows)).toEqual({
+            all: false,
+            keys: [],
+        })
+    })
+})
+
+describe('child rows', () => {
+    it('drop exactly the cell their label repeats, and a label that is no cell drops none', () => {
+        const child: ResultRow = {
+            id: 'd:1/x',
+            kind: 'detail',
+            depth: 2,
+            label: 'Ann',
+            parent: 'd:1',
+            labelColumn: 'customer',
+            cells: { customer: 'Ann', amount: 5 },
+        }
+        const own: ResultRow = { ...child, labelColumn: undefined }
+        expect(visibleRows([child])[0]?.cells).toEqual({ amount: 5 })
+        expect(visibleRows([own])[0]?.cells).toEqual({ customer: 'Ann', amount: 5 })
     })
 })
 
@@ -148,7 +188,7 @@ describe('fold all', () => {
     })
 
     it('turns an expansion into run options', () => {
-        expect(expansionOptions(NO_EXPANSION)).toEqual({})
+        expect(expansionOptions(NO_EXPANSION)).toEqual({ expand: [] })
         expect(expansionOptions(EXPAND_ALL)).toEqual({ expandAll: true })
         expect(expansionOptions({ all: false, keys: [['a']] })).toEqual({ expand: [['a']] })
     })

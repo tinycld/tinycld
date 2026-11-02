@@ -21,12 +21,12 @@ import {
     withoutOptional,
 } from '../lib/params'
 import {
+    DEFAULT_EXPANSION,
     type Expansion,
     expansionOptions,
     foldAllLabel,
     foldAllTarget,
     hasRows,
-    NO_EXPANSION,
     toggleGroup,
     visibleRows,
 } from '../lib/rows'
@@ -112,7 +112,7 @@ export function useReportView(input: ReportViewInput) {
     const { user } = useAuth()
     const search = useLocalSearchParams()
     const options = parseViewOptions(defs, search)
-    const expansion = useReportUIStore(s => s.expansion[reportKey]) ?? NO_EXPANSION
+    const expansion = useReportUIStore(s => s.expansion[reportKey]) ?? DEFAULT_EXPANSION
     const setExpansion = useReportUIStore(s => s.setExpansion)
     const body = broken && !isEditing ? null : runBody(source, defs, options, expansion)
     const run = useReportRun({ body, userId: user.id })
@@ -214,13 +214,14 @@ export function useReportView(input: ReportViewInput) {
         isBodyShown: !(isEditing && breakpoint === 'mobile'),
         problems: broken && !isEditing ? brokenProblems(broken) : run.problems,
         run,
-        rows: visibleRows(rows, allColumns),
+        rows: visibleRows(rows),
         columns: shownColumns(allColumns, options.display.hidden),
         allColumns,
         notices: run.result?.notices ?? NO_NOTICES,
         isUpdating: run.isUpdating,
         breakpoint,
         orgName: org?.name ?? '',
+        heading: run.result?.heading ?? '',
         periodWords: periodWords(period, periodResolved),
         emptyMessage: emptyMessage(period, periodResolved),
         emptyAction: action,

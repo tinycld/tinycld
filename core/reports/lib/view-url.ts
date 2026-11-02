@@ -10,6 +10,7 @@ import {
     presetsFor,
     rangeValue,
     valueFromJson,
+    valueToJson,
 } from './params'
 import type { ParamDef } from './spec'
 
@@ -50,8 +51,9 @@ export function encodeParamValue(def: ParamDef, value: ParamValue): string {
         case 'range':
             return `${value.from}${RANGE_SEPARATOR}${value.to}`
         case 'choice':
-            // An option value may hold a comma, so a list is written as JSON.
-            return def.multiple ? JSON.stringify(value.values) : (value.values[0] ?? '')
+            // An option value may hold a comma, so a list is written as JSON, its
+            // whole groups as the group references the run endpoint reads.
+            return def.multiple ? JSON.stringify(valueToJson(def, value)) : (value.values[0] ?? '')
         case 'text':
             return value.text
         case 'number':

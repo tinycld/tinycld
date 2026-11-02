@@ -322,7 +322,7 @@ export function draftFromSpec(
             bucket: g.bucket ?? '',
             subtotals: g.subtotals === true,
         })),
-        sort: (spec.sort ?? []).map(s => ({ col: s.col, dir: s.dir ?? 'asc' })),
+        sort: (spec.sort ?? []).map(s => ({ col: s.col ?? '', dir: s.dir ?? 'asc' })),
         pivot,
         layout: (spec.layout ?? []).map(layoutItemDraft),
     }

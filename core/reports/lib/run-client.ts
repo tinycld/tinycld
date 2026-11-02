@@ -3,15 +3,16 @@ import { isRecord } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { ClientResponseError } from 'pocketbase'
 import type { ReportSpec } from './spec'
-import type { CatalogSource, Problem, RunResult } from './types'
+import type { CatalogSource, ParamOptionsPage, Problem, RunResult } from './types'
 
-// The report endpoints (core/server/reports/endpoint.go, catalog.go). A run is a
-// read sent by POST, because a draft spec does not fit in a URL. The refusals a
-// person can cause (400, 403, 408, 422) come back as data, so the global query
-// error handler does not report them; every other failure is thrown.
+// The report endpoints (core/server/reports/endpoint.go, catalog.go, options.go). A
+// run is a read sent by POST, because a draft spec does not fit in a URL. The
+// refusals a person can cause (400, 403, 408, 422) come back as data, so the global
+// query error handler does not report them; every other failure is thrown.
 
 export const RUN_PATH = '/api/reports/run'
 export const SOURCES_PATH = '/api/reports/sources'
+export const PARAM_OPTIONS_PATH = '/api/reports/param-options'
 
 export interface RunOptions {
     expand?: unknown[][]
@@ -87,6 +88,38 @@ export async function runReport(body: RunBody, signal?: AbortSignal): Promise<Ru
         if (refusal) return refusal
         throw error
     }
+}
+
+/**
+ * One param-options request (options.go paramOptionsBody): a saved report the reader
+ * can view or a draft spec, the param, and what to read. `group` reads one group's
+ * options ('' is the blank group); `values` asks for the labels of those values;
+ * `params` are the run's other params, which a `where` may read.
+ */
+export type ParamOptionsBody = ({ reportId: string } | { spec: ReportSpec }) & {
+    param: string
+    search?: string
+    after?: string
+    group?: string
+    values?: string[]
+    limit?: number
+    params?: Record<string, unknown>
+    /** The reader's day, which presets resolve against. */
+    today: string
+}
+
+/** One page of a choice param's options, read under the reader's rules. */
+export async function fetchParamOptions(
+    body: ParamOptionsBody,
+    signal?: AbortSignal
+): Promise<ParamOptionsPage> {
+    // requestKey null: a picker's searches overlap; each one's signal cancels it.
+    return pb.send<ParamOptionsPage>(PARAM_OPTIONS_PATH, {
+        method: 'POST',
+        body,
+        signal,
+        requestKey: null,
+    })
 }
 
 export async function fetchCatalog(signal?: AbortSignal): Promise<CatalogSource[]> {

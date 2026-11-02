@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_DISPLAY } from '../format'
+import type { ParamValue } from '../params'
 import type { ParamDef } from '../spec'
 import { parseViewOptions, reportLink, serializeViewOptions, type ViewOptions } from '../view-url'
 
@@ -96,6 +97,27 @@ describe('the view URL', () => {
         ).toBe('12.00')
         for (const bad of ['12 usd', '12.345 USD', 'USD', '1 2 USD', ''])
             expect(parseViewOptions([BUDGET], { 'p-b': bad }).params).toEqual({})
+    })
+
+    it('keeps a whole group picked from a source in the address', () => {
+        const TEAMS: ParamDef = {
+            id: 'teams',
+            type: 'choice',
+            multiple: true,
+            optionsFrom: {
+                source: 's',
+                value: [{ field: 'id' }],
+                label: [{ field: 'name' }],
+                group: [{ field: 'region' }],
+            },
+        }
+        const picked: ParamValue = { kind: 'choice', values: ['a1'], groups: ['north'] }
+        const search = serializeViewOptions([TEAMS], {
+            params: { teams: picked },
+            display: DEFAULT_DISPLAY,
+        })
+        expect(search['p-teams']).toBe('["a1",{"group":"north"}]')
+        expect(parseViewOptions([TEAMS], search).params.teams).toEqual(picked)
     })
 
     it('builds a full link the reader can copy', () => {
