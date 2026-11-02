@@ -255,3 +255,51 @@ func TestAHiddenRowCarriesNoCurrency(t *testing.T) {
 	requireRows(t, rec, "vfee", nil, nil, nil)
 	requireRows(t, rec, "vfee@currency", nil, nil, nil)
 }
+
+// pivotLabels lists a result's pivot columns as "id=amount currency (type)".
+func pivotLabels(res *Result) []string {
+	var out []string
+	for _, c := range res.Columns {
+		if c.Pivot != nil {
+			out = append(out, fmt.Sprintf("%s=%v %s (%s)", c.ID, c.Pivot.LabelValue, c.Pivot.LabelCurrency, c.Pivot.LabelType))
+		}
+	}
+	return out
+}
+
+// A pivot over an amount with its own currency field pivots on the amount and
+// its currency: a 300 EUR feeding of leo's and zed's 300 USD one are two
+// columns, in currency order, then by amount, each labelled by its typed
+// amount and currency.
+func TestAPivotOverAnAmountSplitsItsCurrencies(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 300, "currency": "EUR", "fed": "2026-04-01 00:00:00.000Z", "grams": 10, "note": "f7"})
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species"}],
+		"pivot":{"path":[{"field":"cost"}],"cell":"cost"}}`, Options{}, nil)
+	want := []string{"cost.p0=300 EUR (money)", "cost.p1=300 USD (money)", "cost.p2=700 USD (money)", "cost.p3=1000 USD (money)", "cost.p4=2500 USD (money)"}
+	if got := pivotLabels(res); !slices.Equal(got, want) {
+		t.Fatalf("pivot columns = %v, want %v", got, want)
+	}
+	requireRows(t, res, "label", "lion", "Total", "lion", "zebra", "Total")
+	requireRows(t, res, "cost@currency", "EUR", "EUR", "USD", "USD", "USD")
+	requireRows(t, res, "cost.p0", int64(300), int64(300), int64(0), int64(0), int64(0))
+	requireRows(t, res, "cost.p1", int64(0), int64(0), int64(0), int64(300), int64(300))
+}
+
+// A pivot over an amount in its source's fixed currency keeps one column per
+// amount, each labelled by its typed amount and that currency.
+func TestAPivotOverAFixedCurrencyAmountKeepsOneColumnPerAmount(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+		{"id":"active","path":[{"field":"active"}]},
+		{"id":"weight","path":[{"field":"weight"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"active"}],
+		"pivot":{"path":[{"field":"price"}],"cell":"weight"}}`, Options{}, nil)
+	want := []string{"weight.p0=5000 USD (money)", "weight.p1=120000 USD (money)", "weight.p2=500000 USD (money)"}
+	if got := pivotLabels(res); !slices.Equal(got, want) {
+		t.Fatalf("pivot columns = %v, want %v", got, want)
+	}
+}

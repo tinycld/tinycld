@@ -41,12 +41,12 @@ func (rn *runner) columns() []ResultColumn {
 	}
 	if pv := c.p.pivot; pv != nil {
 		cell := pv.cell
-		for j, key := range rn.pivotValues {
-			label := rn.pivotLabel(j, key)
+		for j, v := range rn.pivotValues {
+			label := rn.pivotLabel(j, v.key)
 			rc := ResultColumn{
 				ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: label.text,
 				Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format,
-				Pivot: &PivotColumn{Cell: cell.col.ID, Key: key, LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency},
+				Pivot: &PivotColumn{Cell: cell.col.ID, Key: v.key, LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency},
 			}
 			rn.currencyOfColumn(cell, &rc)
 			out = append(out, rc)

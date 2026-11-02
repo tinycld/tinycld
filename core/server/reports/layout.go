@@ -12,7 +12,7 @@ import (
 // computed row (and currency), whose cells compute the row's formula from
 // the first-level group rows its sections name. A formula reads sections
 // and earlier computed rows by name, never by row position.
-func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err error) {
+func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes, legs []string, err error) {
 	if len(c.p.layout) == 0 {
 		return nil, nil, nil
 	}

@@ -187,7 +187,7 @@ type runner struct {
 	topics map[string]bool
 	// pivotValues are the pivot's columns, from its first pass, and
 	// pivotLabels their records' labels for a pivot over a link.
-	pivotValues []any
+	pivotValues []pivotValue
 	pivotLabels []rowLabel
 }
 
@@ -406,7 +406,7 @@ func notASortKey(at string) error {
 
 // groupStatement is the UNION ALL of every level's rows (the children of
 // expanded groups only) and the layout's computed rows.
-func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []any, limit int64) ([]string, string, error) {
+func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64) ([]string, string, error) {
 	var ctes, legs []string
 	c.levelTypes, c.sectionCur = map[string]FieldType{}, map[string]currency{}
 	for n := 0; n <= len(c.p.groups); n++ {
@@ -761,11 +761,11 @@ func compileDry(p *plan) error {
 	if _, _, err := c.detailSelect(r); err != nil {
 		return err
 	}
-	var pivot []any
+	var pivot []pivotValue
 	if p.pivot != nil {
 		// As many cells as Run compiles at the cap, so Validate and Run
 		// refuse the same layouts.
-		pivot = make([]any, p.pivot.max)
+		pivot = make([]pivotValue, p.pivot.max)
 	}
 	_, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1)
 	return err
