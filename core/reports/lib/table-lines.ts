@@ -64,7 +64,7 @@ function parts(pieces: readonly Piece[], at: number, across: boolean) {
 }
 
 /** A cell's tracks and lines; an absent or zero span or lines counts as one. */
-function extent(c: DisplayCell) {
+export function extent(c: Pick<DisplayCell, 'span' | 'lines'>) {
     return { span: Math.max(c.span ?? 0, 1), lines: Math.max(c.lines ?? 0, 1) }
 }
 
@@ -187,6 +187,17 @@ function build(pieces: readonly Piece[], box: Box, cellOf: (index: number) => Bl
 
 const justifyOf = (column: ResultColumn): Justify => (isRightAligned(column) ? 'end' : 'start')
 
+/**
+ * How a placed column aligns when its cell does not say: the label column at the
+ * left, numbers at the right, the rest at the left. A pivot cell column aligns
+ * as its pivot columns; a column not in the result yet at the left.
+ */
+export function defaultJustify(columns: readonly ResultColumn[], col: string): Justify {
+    if (columns[0]?.id === col) return 'start'
+    const column = columns.find(c => c.id === col) ?? columns.find(c => c.pivot?.cell === col)
+    return column ? justifyOf(column) : 'start'
+}
+
 // No arrangement for this width: the label across line 1, the other columns
 // in order on the lines below, one per track of at least AUTO_TRACK_MIN.
 function autoLines(
@@ -256,11 +267,10 @@ function authoredLines(
     const labelId = columns[0]?.id
     const cellOf = (index: number): Block => {
         const cell = cells[index]
-        const column = columns.find(c => c.id === cell?.col)
-        if (!cell || !column) return { kind: 'gap', lines: 1 }
+        if (!cell) return { kind: 'gap', lines: 1 }
         // The label column starts at the left, whatever its type, as in one line.
-        const justify = column.id === labelId ? 'start' : justifyOf(column)
-        return { kind: 'cell', col: cell.col, justify: cell.justify ?? justify }
+        const justify = cell.justify ?? defaultJustify(columns, cell.col)
+        return { kind: 'cell', col: cell.col, justify }
     }
     const tree = build(pieces, { x0: 0, x1: layout.tracks, y0: 0, y1: lines }, cellOf)
     // An arrangement that leaves out the label column puts the label on a line of

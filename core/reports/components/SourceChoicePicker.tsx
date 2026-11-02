@@ -22,6 +22,7 @@ import {
 } from '../lib/param-options'
 import type { ParamValue } from '../lib/params'
 import type { ParamOption } from '../lib/types'
+import { isNearEnd } from './near-end'
 import {
     ApplyButton,
     type BodyProps,
@@ -31,13 +32,6 @@ import {
 } from './ParamPickerParts'
 
 // The picker body of a choice param whose options come from a source (E8).
-
-/** About ten options before the end, so the next page is there before the reader is. */
-const NEAR_END_PX = 600
-
-function isNearEnd({ contentOffset, layoutMeasurement, contentSize }: NativeScrollEvent) {
-    return contentOffset.y + layoutMeasurement.height >= contentSize.height - NEAR_END_PX
-}
 
 const SEARCH_DELAY_MS = 250
 const OTHER_GROUPS_LABEL = 'Other'

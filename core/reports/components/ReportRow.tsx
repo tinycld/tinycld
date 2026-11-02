@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import type { ReactNode } from 'react'
-import { Animated, Pressable, Text, View } from 'react-native'
+import { Animated, type LayoutChangeEvent, Pressable, Text, View } from 'react-native'
 import { type CellDisplay, cellDisplay, type NumberFormat, rowLabelText } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import { groupChain } from '../lib/sticky'
@@ -125,8 +125,8 @@ interface RowLabelProps {
     format: NumberFormat
     onToggleGroup(row: ResultRow): void
     justify?: Justify
-    /** The test id's stem: `report-row` in the list, another in a stuck copy. */
-    idStem?: string
+    /** Part of the stuck copy: its own test ids, and no tab stop (the row in the list has them). */
+    isCopy?: boolean
 }
 
 // Child rows indent the label only, so the figures stay aligned.
@@ -140,19 +140,26 @@ function labelStyle(row: ResultRow, justify: Justify) {
     }
 }
 
+const labelId = (row: ResultRow, isCopy: boolean) =>
+    `${isCopy ? 'report-sticky-row' : 'report-row'}-${row.id}`
+
 // A role-button Pressable takes a click, Enter and Space on web and a tap on native.
+// The stuck copy's is pointer-only: the row in the list is the accessible toggle.
 function GroupToggleLabel({
     item,
     format,
     onToggleGroup,
     justify = 'start',
-    idStem = 'report-row',
+    isCopy = false,
 }: RowLabelProps) {
     const { row } = item
     const text = rowLabelText(row, format)
     return (
         <Pressable
-            testID={`${idStem}-${row.id}`}
+            testID={labelId(row, isCopy)}
+            accessible={!isCopy}
+            focusable={!isCopy}
+            tabIndex={isCopy ? -1 : 0}
             accessibilityRole="button"
             accessibilityLabel={text}
             aria-expanded={item.isOpen}
@@ -169,11 +176,11 @@ function GroupToggleLabel({
 /** A row's label: a group's is its fold toggle. */
 export function RowLabel(props: RowLabelProps) {
     if (props.item.isToggle) return <GroupToggleLabel {...props} />
-    const { item, format, justify = 'start', idStem = 'report-row' } = props
+    const { item, format, justify = 'start', isCopy = false } = props
     const text = rowLabelText(item.row, format)
     return (
         <View
-            testID={`${idStem}-${item.row.id}`}
+            testID={labelId(item.row, isCopy)}
             className="flex-row items-center pr-3"
             style={labelStyle(item.row, justify)}
         >
@@ -203,12 +210,21 @@ interface RowCellProps {
     onToggleGroup(row: ResultRow): void
     /** A one-line amount's fixed width; a block cell fills its slot. */
     width?: number
+    isCopy?: boolean
 }
 
 // A group row's label is its one accessible toggle. Its figures take the same
 // press but are not a button and have no tab stop, so a closed group's figures
 // stay readable.
-export function RowCell({ item, column, format, justify, onToggleGroup, width }: RowCellProps) {
+export function RowCell({
+    item,
+    column,
+    format,
+    justify,
+    onToggleGroup,
+    width,
+    isCopy = false,
+}: RowCellProps) {
     const { row } = item
     const display = cellDisplay(column, row, item.cells[column.id], format)
     const text = (
@@ -216,7 +232,7 @@ export function RowCell({ item, column, format, justify, onToggleGroup, width }:
             {display.text}
         </Text>
     )
-    const testID = `report-cell-${column.id}-${row.id}`
+    const testID = `${isCopy ? 'report-sticky-cell' : 'report-cell'}-${column.id}-${row.id}`
     const style = cellBoxStyle(width)
     if (!item.isToggle) {
         return (
@@ -230,6 +246,7 @@ export function RowCell({ item, column, format, justify, onToggleGroup, width }:
             testID={testID}
             onPress={() => onToggleGroup(row)}
             accessible={false}
+            focusable={false}
             tabIndex={-1}
             className="justify-center px-3"
             style={style}
@@ -239,16 +256,21 @@ export function RowCell({ item, column, format, justify, onToggleGroup, width }:
     )
 }
 
-/** Holds the label column at the left while a desktop table scrolls sideways (R27). */
+/**
+ * Holds the label column at the left while a desktop table scrolls sideways
+ * (R27): it follows the sideways offset. A table that does not scroll sideways
+ * passes no offset, so nothing moves it.
+ */
 export function FrozenLabel({
     scrollX,
     style,
     children,
 }: {
-    scrollX: Animated.Value
+    scrollX: Animated.Value | null
     style: ReportTableLayout['labelStyle']
     children: ReactNode
 }) {
+    if (!scrollX) return <View style={style}>{children}</View>
     return (
         <Animated.View
             className="z-10 bg-background"
@@ -266,10 +288,19 @@ export interface TableRowProps {
     oneLine: ReportTableLayout
     format: NumberFormat
     onToggleGroup(row: ResultRow): void
-    scrollX: Animated.Value
+    scrollX: Animated.Value | null
+    isCopy?: boolean
 }
 
-function OneLineRow({ item, columns, oneLine, format, onToggleGroup, scrollX }: TableRowProps) {
+function OneLineRow({
+    item,
+    columns,
+    oneLine,
+    format,
+    onToggleGroup,
+    scrollX,
+    isCopy,
+}: TableRowProps) {
     const [, ...amounts] = columns
     const cells = amounts.map((column, i) => (
         <RowCell
@@ -280,19 +311,25 @@ function OneLineRow({ item, columns, oneLine, format, onToggleGroup, scrollX }: 
             justify={amountJustify(column, i + 1)}
             onToggleGroup={onToggleGroup}
             width={oneLine.amountWidth}
+            isCopy={isCopy}
         />
     ))
     return (
-        <View className={`flex-row ${ROW_RULE[item.row.kind]}`}>
+        <View className={`flex-row bg-background ${ROW_RULE[item.row.kind]}`}>
             <FrozenLabel scrollX={scrollX} style={oneLine.labelStyle}>
-                <RowLabel item={item} format={format} onToggleGroup={onToggleGroup} />
+                <RowLabel
+                    item={item}
+                    format={format}
+                    onToggleGroup={onToggleGroup}
+                    isCopy={isCopy}
+                />
             </FrozenLabel>
             {cells}
         </View>
     )
 }
 
-function BlocksRow({ item, columns, layout, format, onToggleGroup }: TableRowProps) {
+function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: TableRowProps) {
     const [label] = columns
     const lines = rowLayout(item, layout, label?.id ?? '')
     if (lines.kind !== 'blocks') return null
@@ -305,6 +342,7 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup }: TableRowPro
                     format={format}
                     onToggleGroup={onToggleGroup}
                     justify={justify}
+                    isCopy={isCopy}
                 />
             )
         }
@@ -317,11 +355,12 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup }: TableRowPro
                 format={format}
                 justify={justify}
                 onToggleGroup={onToggleGroup}
+                isCopy={isCopy}
             />
         )
     }
     return (
-        <View className={ROW_RULE[item.row.kind]}>
+        <View className={`bg-background ${ROW_RULE[item.row.kind]}`}>
             <BlockView block={lines.root} renderCell={renderCell} />
         </View>
     )
@@ -333,52 +372,54 @@ export function TableRow(props: TableRowProps) {
     return <BlocksRow {...props} />
 }
 
-interface StickyGroupProps {
+interface StickyGroupProps extends Omit<TableRowProps, 'item' | 'isCopy'> {
     rows: VisibleRow[]
     index: number
-    format: NumberFormat
-    onToggleGroup(row: ResultRow): void
-    oneLine: ReportTableLayout
-    isOneLine: boolean
-    scrollX: Animated.Value
+    /** The stuck copy's height, for pushing it by its own height. */
+    onHeight(height: number): void
 }
 
-// The stuck copy of an open group row (FlashList's StickyHeader target), with
-// the open groups that enclose it stacked above it, outermost first (R26). Each
-// line is that group's label, so a press folds it. Its test ids are its own: the
-// list still holds the group's row.
-export function StickyGroup({
-    rows,
-    index,
-    format,
-    onToggleGroup,
-    oneLine,
-    isOneLine,
-    scrollX,
-}: StickyGroupProps) {
+function OwnRow({ item, ...props }: Omit<TableRowProps, 'item'> & { item: VisibleRow | null }) {
+    if (!item) return null
+    return <TableRow {...props} item={item} />
+}
+
+// The stuck copy of a section boundary (FlashList's StickyHeader target): the
+// open groups the rows below it are inside, outermost first, as label lines; an
+// open group's own row is drawn whole, figures included, as the list draws it.
+// Each label still folds its group on a press, but the copy is hidden from
+// assistive technology and the tab order: the rows in the list are the
+// accessible controls. Nothing is drawn outside every group.
+export function StickyGroup({ rows, index, onHeight, ...props }: StickyGroupProps) {
     const byId = new Map(rows.map(item => [item.row.id, item]))
-    const labels = groupChain(rows, index).map(row => {
-        const item = byId.get(row.id)
-        if (!item) return null
-        return (
-            <RowLabel
-                key={row.id}
-                item={item}
-                format={format}
-                onToggleGroup={onToggleGroup}
-                idStem="report-sticky-row"
-            />
-        )
-    })
-    const style = isOneLine ? oneLine.labelStyle : { flex: 1 }
+    const chain = groupChain(rows, index).flatMap(row => byId.get(row.id) ?? [])
+    if (chain.length === 0) return null
+    const stuck = rows[index]
+    const own = chain[chain.length - 1] === stuck ? (stuck ?? null) : null
+    const frozenStyle = props.layout.kind === 'one-line' ? props.oneLine.labelStyle : { flex: 1 }
+    const labels = (own ? chain.slice(0, -1) : chain).map(item => (
+        <View key={item.row.id} className="flex-row bg-background">
+            <FrozenLabel scrollX={props.scrollX} style={frozenStyle}>
+                <RowLabel
+                    item={item}
+                    format={props.format}
+                    onToggleGroup={props.onToggleGroup}
+                    isCopy
+                />
+            </FrozenLabel>
+        </View>
+    ))
     return (
         <View
             testID="report-sticky-group"
-            className="flex-row border-b border-border bg-background"
+            aria-hidden
+            importantForAccessibility="no-hide-descendants"
+            accessibilityElementsHidden
+            onLayout={(e: LayoutChangeEvent) => onHeight(e.nativeEvent.layout.height)}
+            className="border-b border-border bg-background"
         >
-            <FrozenLabel scrollX={scrollX} style={style}>
-                {labels}
-            </FrozenLabel>
+            {labels}
+            <OwnRow {...props} item={own} isCopy />
         </View>
     )
 }

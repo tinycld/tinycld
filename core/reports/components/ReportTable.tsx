@@ -1,11 +1,21 @@
-import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list'
+import { FlashList, type FlashListRef, type ListRenderItemInfo } from '@shopify/flash-list'
 import { type Breakpoint, useWindowWidth } from '@tinycld/core/components/workspace/useBreakpoint'
-import { type ReactNode, useRef, useState } from 'react'
-import { ActivityIndicator, Animated, Platform, ScrollView, Text, View } from 'react-native'
+import { type ReactNode, useMemo, useRef, useState } from 'react'
+import {
+    ActivityIndicator,
+    Animated,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
+    Platform,
+    ScrollView,
+    type ScrollViewInstance,
+    Text,
+    View,
+} from 'react-native'
 import { headingText, type NumberFormat } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import type { DisplayLayout } from '../lib/spec'
-import { stickyIndices } from '../lib/sticky'
+import { groupChain, stickyIndices, stickyPush } from '../lib/sticky'
 import { type Justify, type LineLayout, tableLines } from '../lib/table-lines'
 import type { ResultColumn, ResultRow } from '../lib/types'
 import {
@@ -23,6 +33,15 @@ const TEXT_ALIGN: Record<Justify, string> = {
     start: 'text-left',
     center: 'text-center',
     end: 'text-right',
+}
+
+// The value kept from an earlier render while it is equal in content, so a new
+// array or object with the same content does not redraw every row.
+function useStable<T>(value: T): T {
+    const [kept, setKept] = useState(value)
+    if (kept === value || JSON.stringify(kept) === JSON.stringify(value)) return kept
+    setKept(value)
+    return value
 }
 
 function HeadingCell({
@@ -53,12 +72,21 @@ function HeadingCell({
     )
 }
 
+// The label's heading sits over the label's text, which starts after the row's indent.
+function LabelHeading({ column, format }: { column: ResultColumn; format: NumberFormat }) {
+    return (
+        <View className="grow pl-1">
+            <HeadingCell column={column} justify="start" format={format} />
+        </View>
+    )
+}
+
 interface HeadingRowProps {
     columns: ResultColumn[]
     layout: LineLayout
     oneLine: ReportTableLayout
     format: NumberFormat
-    scrollX: Animated.Value
+    scrollX: Animated.Value | null
 }
 
 function OneLineHeading({ columns, oneLine, format, scrollX }: HeadingRowProps) {
@@ -76,9 +104,7 @@ function OneLineHeading({ columns, oneLine, format, scrollX }: HeadingRowProps) 
     return (
         <>
             <FrozenLabel scrollX={scrollX} style={oneLine.labelStyle}>
-                <View className="pl-1">
-                    <HeadingCell column={label} justify="start" format={format} />
-                </View>
+                <LabelHeading column={label} format={format} />
             </FrozenLabel>
             {cells}
         </>
@@ -90,9 +116,11 @@ function OneLineHeading({ columns, oneLine, format, scrollX }: HeadingRowProps) 
 function BlocksHeading({ columns, layout, format }: HeadingRowProps) {
     if (layout.kind !== 'blocks') return null
     const byId = new Map(columns.map(column => [column.id, column]))
+    const labelId = columns[0]?.id
     const renderCell: RenderCell = (col, justify) => {
         const column = byId.get(col)
         if (!column) return null
+        if (col === labelId) return <LabelHeading column={column} format={format} />
         return <HeadingCell column={column} justify={justify} format={format} />
     }
     return (
@@ -142,29 +170,82 @@ function LayoutNotice({ text }: { text: string | undefined }) {
 interface SidewaysProps {
     isEnabled: boolean
     minWidth: number
-    scrollX: Animated.Value
-    children: ReactNode
+    /** Draws the table; the offset is null when the table does not scroll sideways. */
+    children(scrollX: Animated.Value | null): ReactNode
 }
 
 // A desktop table wider than its view scrolls sideways as a whole: the heading
 // row and the list sit in one horizontal scroller, and the list scrolls
-// vertically inside it. The sideways offset drives the frozen label column.
-function Sideways({ isEnabled, minWidth, scrollX, children }: SidewaysProps) {
-    if (!isEnabled) return <View className="min-h-0 flex-1">{children}</View>
+// vertically inside it. The scroller owns its sideways offset, which drives the
+// frozen label column. It stays mounted when sideways scroll turns off (a
+// narrower width), so the list keeps its vertical position; its content is then
+// the view's width and its offset goes back to 0.
+function Sideways({ isEnabled, minWidth, children }: SidewaysProps) {
+    const scrollX = useRef(new Animated.Value(0)).current
+    const scrollerRef = useRef<ScrollViewInstance>(null)
     const onScroll = Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], {
         useNativeDriver: false,
     })
+    const onContentSizeChange = () => {
+        if (isEnabled) return
+        scrollerRef.current?.scrollTo({ x: 0, animated: false })
+        scrollX.setValue(0)
+    }
+    const content = isEnabled
+        ? { width: '100%', minWidth, flexDirection: 'column' as const }
+        : { width: '100%', flexDirection: 'column' as const }
     return (
         <ScrollView
+            ref={scrollerRef}
             horizontal
+            scrollEnabled={isEnabled}
+            showsHorizontalScrollIndicator={isEnabled}
             className="min-h-0 flex-1"
-            contentContainerStyle={{ width: '100%', minWidth, flexDirection: 'column' }}
+            contentContainerStyle={content}
             onScroll={onScroll}
+            onContentSizeChange={onContentSizeChange}
             scrollEventThrottle={16}
         >
-            {children}
+            {children(isEnabled ? scrollX : null)}
         </ScrollView>
     )
+}
+
+// FlashList pushes the stuck copy by the height it measured for the stuck row;
+// the copy is as tall as its stack of groups. This follows the list's scroll and
+// moves the copy by the difference (lib/sticky.ts stickyPush), so it is pushed
+// by its own height.
+function useStickyPush(rows: VisibleRow[], sticky: number[]) {
+    const listRef = useRef<FlashListRef<VisibleRow>>(null)
+    const push = useRef(new Animated.Value(0)).current
+    const stuck = useRef({ index: -1, height: 0 })
+    const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const list = listRef.current
+        if (!list) return
+        const next = sticky.find(index => index > stuck.current.index)
+        const nextLayout = next === undefined ? undefined : list.getLayout(next)
+        push.setValue(
+            stickyPush({
+                offset: event.nativeEvent.contentOffset.y,
+                nextY: nextLayout ? nextLayout.y + list.getFirstItemOffset() : undefined,
+                stackHeight: stuck.current.height,
+                itemHeight: list.getLayout(stuck.current.index)?.height ?? 0,
+            })
+        )
+    }
+    return {
+        listRef,
+        push,
+        onScroll,
+        // A boundary with no open group above draws no copy, so it has no height.
+        onChangeStickyIndex: (index: number) => {
+            const hasCopy = index >= 0 && groupChain(rows, index).length > 0
+            stuck.current = { index, height: hasCopy ? stuck.current.height : 0 }
+        },
+        onHeight: (height: number) => {
+            stuck.current = { ...stuck.current, height }
+        },
+    }
 }
 
 export interface ReportTableProps {
@@ -183,55 +264,73 @@ export interface ReportTableProps {
 // guard (hasNextPage and not already fetching). FlashList checks it after each
 // commit and again when the rows change, so a first page shorter than the view
 // asks for the next one too.
-export function ReportTable({
-    columns,
-    rows,
-    format,
-    breakpoint,
-    layouts,
-    onToggleGroup,
-    onNearEnd,
-    isLoadingMore,
-}: ReportTableProps) {
+export function ReportTable(props: ReportTableProps) {
+    const { rows, breakpoint, layouts, onToggleGroup, onNearEnd, isLoadingMore } = props
+    const columns = useStable(props.columns)
+    const format = useStable(props.format)
     const windowWidth = useWindowWidth()
     // The table's own width (a builder drawer narrows it): local layout state from onLayout.
     const [width, setWidth] = useState(windowWidth)
-    const scrollX = useRef(new Animated.Value(0)).current
     const amountCount = Math.max(columns.length - 1, 0)
     const oneLine = reportTableLayout({ breakpoint, amountCount })
-    const layout = tableLines({
-        columns,
-        width,
-        breakpoint,
-        layouts,
-        oneLineFits: fitsOnOneLine({ breakpoint, amountCount, width }),
-    })
+    const fits = fitsOnOneLine({ breakpoint, amountCount, width })
+    const layout = useMemo(
+        () => tableLines({ columns, width, breakpoint, layouts, oneLineFits: fits }),
+        [columns, width, breakpoint, layouts, fits]
+    )
+    const extraData = useMemo(() => ({ layout, format }), [layout, format])
+    const sticky = stickyIndices(rows)
+    const stickyPushing = useStickyPush(rows, sticky)
     if (columns.length === 0) return null
     const isOneLine = layout.kind === 'one-line'
-    const renderItem = ({ item, index, target }: ListRenderItemInfo<VisibleRow>) => {
-        if (target === 'StickyHeader') {
+    const tableRow = (scrollX: Animated.Value | null) => ({
+        columns,
+        layout,
+        oneLine,
+        format,
+        onToggleGroup,
+        scrollX,
+    })
+    const list = (scrollX: Animated.Value | null) => {
+        const renderItem = ({ item, index, target }: ListRenderItemInfo<VisibleRow>) => {
+            if (target !== 'StickyHeader') return <TableRow {...tableRow(scrollX)} item={item} />
             return (
-                <StickyGroup
-                    rows={rows}
-                    index={index}
-                    format={format}
-                    onToggleGroup={onToggleGroup}
-                    oneLine={oneLine}
-                    isOneLine={isOneLine}
-                    scrollX={scrollX}
-                />
+                <Animated.View style={{ transform: [{ translateY: stickyPushing.push }] }}>
+                    <StickyGroup
+                        {...tableRow(scrollX)}
+                        rows={rows}
+                        index={index}
+                        onHeight={stickyPushing.onHeight}
+                    />
+                </Animated.View>
             )
         }
         return (
-            <TableRow
-                item={item}
-                columns={columns}
-                layout={layout}
-                oneLine={oneLine}
-                format={format}
-                onToggleGroup={onToggleGroup}
-                scrollX={scrollX}
-            />
+            <>
+                <HeadingRow
+                    columns={columns}
+                    layout={layout}
+                    oneLine={oneLine}
+                    format={format}
+                    scrollX={scrollX}
+                />
+                <FlashList
+                    ref={stickyPushing.listRef}
+                    data={rows}
+                    renderItem={renderItem}
+                    keyExtractor={item => item.row.id}
+                    getItemType={item => item.row.kind}
+                    extraData={extraData}
+                    stickyHeaderIndices={sticky}
+                    stickyHeaderConfig={{ useNativeDriver: Platform.OS !== 'web' }}
+                    onChangeStickyIndex={stickyPushing.onChangeStickyIndex}
+                    onScroll={stickyPushing.onScroll}
+                    onEndReached={onNearEnd}
+                    onEndReachedThreshold={0.5}
+                    className="web:[scrollbar-gutter:stable]"
+                    ListFooterComponent={<LoadingMore isVisible={isLoadingMore} />}
+                />
+            </>
         )
     }
     const notice = layout.kind === 'blocks' ? layout.notice : undefined
@@ -245,28 +344,8 @@ export function ReportTable({
             <Sideways
                 isEnabled={isOneLine && oneLine.scrollsSideways}
                 minWidth={oneLine.labelMin + oneLine.amountContentMinWidth}
-                scrollX={scrollX}
             >
-                <HeadingRow
-                    columns={columns}
-                    layout={layout}
-                    oneLine={oneLine}
-                    format={format}
-                    scrollX={scrollX}
-                />
-                <FlashList
-                    data={rows}
-                    renderItem={renderItem}
-                    keyExtractor={item => item.row.id}
-                    getItemType={item => item.row.kind}
-                    extraData={layout}
-                    stickyHeaderIndices={stickyIndices(rows)}
-                    stickyHeaderConfig={{ useNativeDriver: Platform.OS !== 'web' }}
-                    onEndReached={onNearEnd}
-                    onEndReachedThreshold={0.5}
-                    className="web:[scrollbar-gutter:stable]"
-                    ListFooterComponent={<LoadingMore isVisible={isLoadingMore} />}
-                />
+                {list}
             </Sideways>
         </View>
     )

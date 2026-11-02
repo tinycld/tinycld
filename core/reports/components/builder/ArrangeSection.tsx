@@ -8,8 +8,14 @@ import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { type ColumnDraft, displayIssues } from '../../lib/builder/draft'
 import type { DisplayCell, DisplayLayout, DisplayWidth } from '../../lib/spec'
-import { MAX_LINES, MAX_TRACKS, startingLayout } from '../../lib/table-lines'
-import type { Problem } from '../../lib/types'
+import {
+    defaultJustify,
+    extent,
+    MAX_LINES,
+    MAX_TRACKS,
+    startingLayout,
+} from '../../lib/table-lines'
+import type { Problem, ResultColumn } from '../../lib/types'
 import { useReportUIStore } from '../../stores/report-ui-store'
 import { BuilderSection } from './BuilderSection'
 import { IconButton } from './parts'
@@ -46,11 +52,15 @@ function fitCell(cell: DisplayCell, tracks: number): DisplayCell {
 
 /** The line below every placed cell, for a column shown again. */
 function nextLine(cells: readonly DisplayCell[]): number {
-    const last = Math.max(0, ...cells.map(c => c.line + Math.max(c.lines ?? 1, 1) - 1))
+    const last = Math.max(0, ...cells.map(c => c.line + extent(c).lines - 1))
     return Math.min(MAX_LINES, last + 1)
 }
 
-function useArrange(builder: ReportBuilder) {
+/**
+ * The Arrange section's state. `resultColumns` are the preview's columns: a cell
+ * that sets no alignment aligns as the table draws it (lib/table-lines.ts).
+ */
+function useArrange(builder: ReportBuilder, resultColumns: readonly ResultColumn[]) {
     const { control } = builder.form
     const display = useWatch({ control, name: 'display' })
     const columns = useWatch({ control, name: 'columns' })
@@ -79,6 +89,7 @@ function useArrange(builder: ReportBuilder) {
         layout,
         columns,
         issues,
+        defaultJustify: (col: string) => defaultJustify(resultColumns, col),
         // The preview draws the arrangement of the width it is drawn at.
         hint:
             width === breakpoint
@@ -105,8 +116,6 @@ function useArrange(builder: ReportBuilder) {
                     : cells.filter(c => c.col !== col)
             )
         },
-        removeCell: (cellIndex: number) =>
-            setCells(layout?.cells.filter((_, i) => i !== cellIndex) ?? []),
     }
 }
 
@@ -186,15 +195,15 @@ function CellMenus({ column, cell, cellIndex, tracks, arrange }: CellMenusProps)
             onSelect: () => set({ start: n }),
         })),
     ]
-    const justify = cell.justify ?? 'start'
+    // A cell that sets no alignment shows the one the table gives it.
+    const justify = cell.justify ?? arrange.defaultJustify(column.id)
     const aligns = (['start', 'center', 'end'] as const).map(value => ({
         id: value,
         label: JUSTIFY_NAMES[value],
-        isSelected: value === cell.justify,
+        isSelected: value === justify,
         onSelect: () => set({ justify: value }),
     }))
-    const span = Math.max(cell.span ?? 1, 1)
-    const lines = Math.max(cell.lines ?? 1, 1)
+    const { span, lines } = extent(cell)
     const startLabel = cell.start === undefined ? 'Auto' : String(cell.start)
     return (
         <View className="flex-row flex-wrap gap-2">
@@ -261,7 +270,10 @@ function ColumnRow({
     const cell = layout.cells[cellIndex]
     const testID = `report-builder-arrange-${column.id}`
     return (
-        <View testID={testID} className="gap-2 rounded-lg border border-border p-2">
+        <View
+            testID={`report-builder-arrange-col-${column.id}`}
+            className="gap-2 rounded-lg border border-border p-2"
+        >
             <View className="flex-row items-center justify-between gap-2">
                 <Text className="flex-1 text-sm text-foreground">{column.label}</Text>
                 <Text className="text-xs text-muted-foreground">Show</Text>
@@ -285,26 +297,18 @@ function ColumnRow({
     )
 }
 
-// A cell whose column is no longer in the report: the engine refuses it, so it
-// can only be removed.
-function StrayCell({
-    cell,
-    cellIndex,
-    arrange,
-}: {
-    cell: DisplayCell
-    cellIndex: number
-    arrange: Arrange
-}) {
+// A column the arrangement places but the report no longer has: the engine
+// refuses its cells, so they can only be removed.
+function StrayColumn({ col, arrange }: { col: string; arrange: Arrange }) {
     return (
         <View className="flex-row items-center gap-2 rounded-lg border border-border p-2">
-            <Text className="flex-1 text-sm text-danger">{`${cell.col} is not in the report`}</Text>
+            <Text className="flex-1 text-sm text-danger">{`${col} is not in the report`}</Text>
             <IconButton
                 label="Remove"
-                testID={`report-builder-arrange-stray-${cellIndex}-remove`}
+                testID={`report-builder-arrange-stray-${col}-remove`}
                 isVisible
                 icon={Trash2}
-                onPress={() => arrange.removeCell(cellIndex)}
+                onPress={() => arrange.showColumn(col, false)}
             />
         </View>
     )
@@ -328,11 +332,8 @@ function ArrangeFields({ arrange }: { arrange: Arrange }) {
     const rows = columns.map(column => (
         <ColumnRow key={column.id} column={column} layout={layout} arrange={arrange} />
     ))
-    const strays = layout.cells.flatMap((cell, cellIndex) =>
-        ids.has(cell.col)
-            ? []
-            : [<StrayCell key={cell.col} cell={cell} cellIndex={cellIndex} arrange={arrange} />]
-    )
+    const strayCols = new Set(layout.cells.map(cell => cell.col).filter(col => !ids.has(col)))
+    const strays = [...strayCols].map(col => <StrayColumn key={col} col={col} arrange={arrange} />)
     return (
         <View className="gap-2">
             <View className="flex-row items-center gap-2">
@@ -354,11 +355,14 @@ function ArrangeFields({ arrange }: { arrange: Arrange }) {
 export function ArrangeSection({
     builder,
     problems,
+    resultColumns,
 }: {
     builder: ReportBuilder
     problems: Problem[]
+    /** The preview's columns. */
+    resultColumns: readonly ResultColumn[]
 }) {
-    const arrange = useArrange(builder)
+    const arrange = useArrange(builder, resultColumns)
     const tabs = WIDTHS.map(item => <WidthTab key={item.value} item={item} arrange={arrange} />)
     return (
         <BuilderSection title="Arrange" section="arrange" problems={problems}>

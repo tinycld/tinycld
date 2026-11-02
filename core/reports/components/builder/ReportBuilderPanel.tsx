@@ -71,7 +71,15 @@ function PanelTitle({ builder }: { builder: ReportBuilder }) {
 }
 
 // The sections, in the order a report is designed.
-function Sections({ builder, problems }: { builder: ReportBuilder; problems: Problem[] }) {
+function Sections({
+    builder,
+    problems,
+    preview,
+}: {
+    builder: ReportBuilder
+    problems: Problem[]
+    preview: ReportViewModel
+}) {
     return (
         <View>
             <DetailsSection builder={builder} problems={problems} />
@@ -80,7 +88,11 @@ function Sections({ builder, problems }: { builder: ReportBuilder; problems: Pro
             <GroupSortSection builder={builder} problems={problems} />
             <PivotSection builder={builder} problems={problems} />
             <LayoutSection builder={builder} problems={problems} />
-            <ArrangeSection builder={builder} problems={problems} />
+            <ArrangeSection
+                builder={builder}
+                problems={problems}
+                resultColumns={preview.allColumns}
+            />
         </View>
     )
 }
@@ -121,6 +133,7 @@ interface SurfaceProps {
 // and a close fired by the next push would undo that push.
 function DrawerSurface({
     builder,
+    preview,
     problems,
     onSaveAs,
     breakpoint,
@@ -149,7 +162,7 @@ function DrawerSurface({
                     <CloseButton onPress={builder.onClose} />
                 </DrawerHeader>
                 <DrawerBody style={{ flexShrink: 1 }}>
-                    <Sections builder={builder} problems={problems} />
+                    <Sections builder={builder} problems={problems} preview={preview} />
                 </DrawerBody>
                 <DrawerFooter>
                     <Footer builder={builder} onSaveAs={onSaveAs} />
@@ -234,7 +247,7 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
                 <ModeSwitch mode={mode} onChange={setMode} />
                 <ModeBody isVisible={mode === 'design'}>
                     <ScrollView contentContainerClassName="px-3">
-                        <Sections builder={builder} problems={problems} />
+                        <Sections builder={builder} problems={problems} preview={preview} />
                     </ScrollView>
                 </ModeBody>
                 <ModeBody isVisible={mode === 'preview'}>

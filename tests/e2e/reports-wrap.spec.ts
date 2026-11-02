@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
 import { createInvitedUser, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
@@ -72,6 +72,17 @@ async function boxes(p: Page, row: string) {
     }
 }
 
+async function bottomOf(locator: Locator): Promise<number> {
+    const box = await locator.boundingBox()
+    return (box?.y ?? 0) + (box?.height ?? 0)
+}
+
+// A row the list scrolled up under the heading row, or one it no longer holds.
+async function isScrolledAway(row: Locator, headingBottom: number): Promise<boolean> {
+    if ((await row.count()) === 0) return true
+    return (await bottomOf(row)) <= headingBottom + 1
+}
+
 test.describe('report rows per width', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
@@ -99,20 +110,16 @@ test.describe('report rows per width', () => {
                 await p.evaluate(() => document.documentElement.scrollWidth)
             ).toBeLessThanOrEqual(390)
 
-            // Scroll the open group's rows: its row stays stuck under the heading row.
-            const heading = await p.getByTestId('report-heading-row').boundingBox()
+            // Scroll the open group's rows: its own row goes up under the heading row,
+            // and its stuck copy stays just under the heading row.
+            const headingBottom = await bottomOf(p.getByTestId('report-heading-row'))
             await p.getByTestId('report-table').hover()
             await p.mouse.wheel(0, 900)
             const sticky = p.getByTestId('report-sticky-group')
-            await expect(sticky).toBeVisible()
             await expect(sticky).toContainText('Open')
+            await expect.poll(() => isScrolledAway(rowOf(p, 'Open'), headingBottom)).toBe(true)
             await expect
-                .poll(async () =>
-                    Math.abs(
-                        ((await sticky.boundingBox())?.y ?? 0) -
-                            ((heading?.y ?? 0) + (heading?.height ?? 0))
-                    )
-                )
+                .poll(async () => Math.abs(((await sticky.boundingBox())?.y ?? 0) - headingBottom))
                 .toBeLessThanOrEqual(2)
         } finally {
             await close()
@@ -157,6 +164,13 @@ test.describe('report rows per width', () => {
             await p.getByTestId('report-builder-section-arrange').click()
             await p.getByTestId('report-builder-arrange-width-mobile').click()
             await p.getByTestId('report-builder-arrange-on').click()
+            // A cell that sets no alignment shows the one the table gives it.
+            await expect(p.getByTestId('report-builder-arrange-amount-justify')).toContainText(
+                'Align end'
+            )
+            await expect(p.getByTestId('report-builder-arrange-customer-justify')).toContainText(
+                'Align start'
+            )
             await chooseOption(p, 'report-builder-arrange-tracks', '3')
             // Line 1: customer · quantity · amount; line 2: (empty) · quantity · cost.
             await chooseOption(p, 'report-builder-arrange-customer-span', '1')
@@ -195,6 +209,163 @@ test.describe('report rows per width', () => {
                     )
                 })
                 .toBe(true)
+        } finally {
+            await close()
+        }
+    })
+
+    test('an open group stays stuck only through its own section', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptsect')
+        try {
+            await seed(p, 16)
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await chooseOption(p, 'report-builder-column-1-aggregate', 'sum')
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'customer')
+            // No subtotal rows, so an open group's row keeps its figures.
+            await p.getByTestId('report-builder-group-0-subtotals').click()
+            await saveNewReport(p, uniqueName('Sections'))
+            const first = rowOf(p, 'Wrapco 00')
+            await first.click()
+            await expect(first).toHaveAttribute('aria-expanded', 'true')
+
+            // A little scroll: the open group's row goes up under the heading row, and
+            // its stuck copy, figures included, stays just under the heading row.
+            const headingBottom = await bottomOf(p.getByTestId('report-heading-row'))
+            const sticky = p.getByTestId('report-sticky-group')
+            await p.getByTestId('report-table').hover()
+            await p.mouse.wheel(0, 30)
+            await expect(sticky).toContainText('Wrapco 00')
+            await expect(sticky).toContainText('10.00')
+            await expect
+                .poll(async () => (await first.boundingBox())?.y ?? 0)
+                .toBeLessThan(headingBottom)
+            await expect
+                .poll(async () => Math.abs(((await sticky.boundingBox())?.y ?? 0) - headingBottom))
+                .toBeLessThanOrEqual(2)
+
+            // Into the closed groups after it: no open group is above, so nothing sticks.
+            await p.mouse.wheel(0, 200)
+            await expect(sticky).toHaveCount(0)
+        } finally {
+            await close()
+        }
+    })
+
+    test('on a desktop a table wider than its view scrolls sideways with its labels held at the left', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptside')
+        try {
+            await seed(p, 1)
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            for (const keys of [
+                ['amount'],
+                ['cost'],
+                ['quantity'],
+                ['currency'],
+                ['day'],
+                ['booked'],
+                ['status'],
+                ['team', 'name'],
+            ]) {
+                await addColumn(p, keys)
+            }
+            await saveNewReport(p, uniqueName('Sideways'))
+            await p.setViewportSize({ width: 1100, height: 720 })
+            const label = rowOf(p, 'Wrapco 00')
+            const id = (await label.getAttribute('data-testid'))?.replace('report-row-', '') ?? ''
+            const x = async (testId: string) => (await p.getByTestId(testId).boundingBox())?.x ?? 0
+            const before = {
+                label: (await label.boundingBox())?.x ?? 0,
+                headLabel: await x('report-heading-customer'),
+                headAmount: await x('report-heading-amount'),
+            }
+            await p.getByTestId('report-table').hover()
+            await p.mouse.wheel(300, 0)
+            await expect
+                .poll(async () => before.headAmount - (await x('report-heading-amount')))
+                .toBeGreaterThan(100)
+            // The heading and the rows move in step; the label column stays put.
+            expect(
+                Math.abs((await x('report-heading-amount')) - (await x(`report-cell-amount-${id}`)))
+            ).toBeLessThanOrEqual(1)
+            expect(
+                Math.abs((await x('report-heading-customer')) - before.headLabel)
+            ).toBeLessThanOrEqual(1)
+            expect(
+                Math.abs(((await label.boundingBox())?.x ?? 0) - before.label)
+            ).toBeLessThanOrEqual(1)
+        } finally {
+            await close()
+        }
+    })
+
+    test('an arrangement names its problems in the builder, and a pivot that cannot follow it says so', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptpivn')
+        try {
+            const team = uniqueName('Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            for (const status of ['open', 'paid'] as const) {
+                const customer = `Pivco ${status}`
+                await addSale(p, {
+                    team,
+                    customer,
+                    amount: 100,
+                    cost: 40,
+                    day: '2026-01-05',
+                    status,
+                })
+            }
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await chooseOption(p, 'report-builder-column-1-aggregate', 'sum')
+            await addColumn(p, ['cost'])
+            await chooseOption(p, 'report-builder-column-2-aggregate', 'sum')
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'customer')
+            await p.getByTestId('report-builder-section-pivot').click()
+            await p.getByTestId('report-builder-pivot-on').click()
+            await p.getByTestId('report-builder-pivot-field').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-status')
+                .click()
+            await chooseOption(p, 'report-builder-pivot-cell', 'amount')
+
+            await p.getByTestId('report-builder-section-arrange').click()
+            await p.getByTestId('report-builder-arrange-width-mobile').click()
+            await p.getByTestId('report-builder-arrange-on').click()
+            await chooseOption(p, 'report-builder-arrange-tracks', '2')
+            await chooseOption(p, 'report-builder-arrange-customer-span', '1')
+            await chooseOption(p, 'report-builder-arrange-amount-line', '1')
+            // On the customer's track: the cell says why, and Save is refused.
+            await chooseOption(p, 'report-builder-arrange-cost-line', '1')
+            await chooseOption(p, 'report-builder-arrange-cost-start', '1')
+            await expect(p.getByTestId('report-builder-arrange-cost-problem')).toHaveText(
+                'the cell overlaps another'
+            )
+            await p.getByTestId('report-builder-title').fill(uniqueName('Pivot arrange'))
+            await p.getByTestId('report-builder-save').click()
+            await expect(p.getByTestId('report-builder-arrange-cost-problem')).toBeVisible()
+            await expect(p.getByTestId('report-builder')).toBeVisible()
+
+            // Line 2, track 1: the entry is valid, but the second pivot column wraps
+            // onto that track.
+            await chooseOption(p, 'report-builder-arrange-cost-line', '2')
+            await expect(p.getByTestId('report-builder-arrange-cost-problem')).toHaveCount(0)
+            await saveNewReport(p, uniqueName('Pivot arrange'))
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect(p.getByTestId('report-layout-notice')).toBeVisible()
         } finally {
             await close()
         }
