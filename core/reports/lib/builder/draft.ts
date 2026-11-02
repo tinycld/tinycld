@@ -14,6 +14,7 @@ import {
     specHopSchema,
     specNodeSchema,
 } from '../spec'
+import { MAX_TRACKS, placeCells } from '../table-lines'
 import { AGGREGATES, type CatalogSource, type FieldType } from '../types'
 import {
     aggregatesFor,
@@ -309,7 +310,24 @@ export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     if (firstProblem) issues.push({ path: ['filter'], message: firstProblem })
     if (draft.pivot.on && draft.detailLabel !== null)
         issues.push({ path: ['detailLabel'], message: PIVOT_DETAIL })
-    return [...issues, ...levelIssues(draft, catalog)]
+    return [...issues, ...levelIssues(draft, catalog), ...displayIssues(draft)]
+}
+
+// What the engine refuses in a display layout's tracks and cells, in its order
+// (core/server/reports/display.go): bad tracks or no cells stop the layout's
+// checks; otherwise the first cell placeCells refuses.
+function displayIssues(draft: BuilderDraft): Issue[] {
+    return draft.display.layouts.flatMap((layout, i): Issue[] => {
+        const at = ['display', 'layouts', i]
+        if (layout.tracks < 1 || layout.tracks > MAX_TRACKS)
+            return [{ path: [...at, 'tracks'], message: `tracks is 1 to ${MAX_TRACKS}` }]
+        if (layout.cells.length === 0)
+            return [{ path: [...at, 'cells'], message: 'a layout places at least one column' }]
+        const placement = placeCells(layout.tracks, layout.cells)
+        if (!('problem' in placement)) return []
+        const { index, message } = placement.problem
+        return [{ path: [...at, 'cells', index], message }]
+    })
 }
 
 export function builderSchema(catalog: Catalog) {

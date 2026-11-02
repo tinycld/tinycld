@@ -39,6 +39,18 @@ export function columnAlign(column: ResultColumn, index: number): 'left' | 'righ
     return isRightAligned(column) ? 'right' : 'left'
 }
 
+/** The label column and the amount columns fit one line at this width (E14). */
+export function fitsOnOneLine(input: {
+    breakpoint: Breakpoint
+    amountCount: number
+    width: number
+}): boolean {
+    const { breakpoint, amountCount, width } = input
+    if (breakpoint === 'mobile')
+        return PHONE_LABEL_WIDTH + amountCount * PHONE_AMOUNT_WIDTH <= width
+    return LABEL_MIN_WIDTH + amountCount * AMOUNT_WIDTH <= width
+}
+
 export function reportTableLayout(input: {
     breakpoint: Breakpoint
     amountCount: number

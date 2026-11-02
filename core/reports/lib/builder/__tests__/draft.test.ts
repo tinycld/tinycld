@@ -804,6 +804,33 @@ describe('spec version 2 in the builder', () => {
             'groups.0.fill',
         ])
     })
+
+    it('names a display layout the engine would refuse, at its cell', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        const mobile = { width: 'mobile' as const, tracks: 2, cells: [{ col: 'team', line: 1 }] }
+        const tablet = {
+            width: 'tablet' as const,
+            tracks: 2,
+            cells: [
+                { col: 'team', line: 1, span: 2 },
+                { col: 'amount', line: 1 },
+            ],
+        }
+        const issues = draftIssues({ ...draft, display: { layouts: [mobile, tablet] } }, CATALOG)
+        expect(issues).toEqual([
+            { path: ['display', 'layouts', 1, 'cells', 1], message: 'no room on line 1' },
+        ])
+        const wide = { ...mobile, tracks: 13 }
+        const empty = { ...mobile, width: 'desktop' as const, cells: [] }
+        const refused = draftIssues({ ...draft, display: { layouts: [wide, empty] } }, CATALOG)
+        expect(refused).toEqual([
+            { path: ['display', 'layouts', 0, 'tracks'], message: 'tracks is 1 to 12' },
+            {
+                path: ['display', 'layouts', 1, 'cells'],
+                message: 'a layout places at least one column',
+            },
+        ])
+    })
 })
 
 describe('a no-op save keeps what the spec says', () => {

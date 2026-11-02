@@ -3,6 +3,7 @@ import type { ResultColumn } from '../../lib/types'
 import {
     AMOUNT_WIDTH,
     columnAlign,
+    fitsOnOneLine,
     LABEL_MIN_WIDTH,
     PHONE_AMOUNT_WIDTH,
     PHONE_LABEL_WIDTH,
@@ -30,6 +31,19 @@ describe('reportTableLayout', () => {
             scrollsSideways: true,
             labelStyle: { width: PHONE_LABEL_WIDTH },
         })
+    })
+})
+
+describe('fitsOnOneLine', () => {
+    it('fits a phone row when the label and its amounts fit the width', () => {
+        // 168 + 2 × 108 = 384
+        expect(fitsOnOneLine({ breakpoint: 'mobile', amountCount: 2, width: 390 })).toBe(true)
+        expect(fitsOnOneLine({ breakpoint: 'mobile', amountCount: 3, width: 390 })).toBe(false)
+    })
+
+    it('fits a tablet row at 220 plus 128 per amount', () => {
+        expect(fitsOnOneLine({ breakpoint: 'tablet', amountCount: 4, width: 732 })).toBe(true)
+        expect(fitsOnOneLine({ breakpoint: 'tablet', amountCount: 4, width: 731 })).toBe(false)
     })
 })
 
