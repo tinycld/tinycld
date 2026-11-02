@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { SpecNode } from '../../spec'
 import {
+    aboveOf,
+    askHighParamFor,
     askParamFor,
+    type ConditionDraft,
     conditionProblems,
     emptyCondition,
     filterToNode,
     type GroupDraft,
+    type LevelScope,
     nodeToFilter,
     opsFor,
     opsShownFor,
@@ -130,7 +134,12 @@ describe('asking when run', () => {
                 { value: 'paid', label: 'Paid' },
             ],
         })
-        expect(askParamFor(field('amount'), 'gt', 'a')).toBeNull()
+        expect(askParamFor(field('amount'), 'gt', 'a')).toEqual({
+            id: 'a',
+            type: 'amount',
+            label: 'Amount',
+        })
+        expect(askParamFor(field('day'), 'in', 'd')).toBeNull()
         expect(askParamFor(field('customer'), 'isEmpty', 'e')).toBeNull()
     })
 
@@ -183,5 +192,253 @@ describe('client checks', () => {
         expect(opsShownFor('date', 'ne')).toEqual(['ne', ...opsFor('date')])
         expect(opsShownFor('text', 'lt')[0]).toBe('lt')
         expect(opsShownFor('bool', 'eq')).toEqual(['eq', 'isTrue', 'isFalse'])
+    })
+})
+
+describe('relation conditions', () => {
+    const teamLink = {
+        key: 'id',
+        label: 'Team',
+        type: 'relation' as const,
+        aggregates: ['count' as const, 'countDistinct' as const],
+    }
+    const teams = CATALOG.get(TEAMS_KEY)
+
+    it('offers is, is not, is any of, is empty and is not empty', () => {
+        expect(opsFor('relation')).toEqual(['eq', 'ne', 'in', 'isEmpty', 'notEmpty'])
+    })
+
+    it('asks a record picked from the target’s records', () => {
+        expect(askParamFor(teamLink, 'in', 'team', teams)).toEqual({
+            id: 'team',
+            type: 'choice',
+            label: 'Team',
+            multiple: true,
+            optionsFrom: {
+                source: TEAMS_KEY,
+                value: [{ field: 'id' }],
+                label: [{ field: 'name' }],
+            },
+        })
+        expect(askParamFor(teamLink, 'eq', 'team', teams)).toEqual({
+            id: 'team',
+            type: 'choice',
+            label: 'Team',
+            optionsFrom: {
+                source: TEAMS_KEY,
+                value: [{ field: 'id' }],
+                label: [{ field: 'name' }],
+            },
+        })
+        expect(askParamFor(teamLink, 'in', 'team')).toBeNull()
+    })
+
+    it('round-trips each relation shape', () => {
+        const team = { path: [{ link: 'team' }] }
+        const shapes: SpecNode[] = [
+            { op: 'eq', args: [team, { value: 'abc123' }] },
+            { op: 'ne', args: [team, { param: 'team' }] },
+            { op: 'in', args: [team, { value: ['a', 'b'] }] },
+            { op: 'in', args: [team, { param: 'teams' }] },
+            { op: 'isEmpty', args: [team] },
+            { op: 'not', args: [{ op: 'isEmpty', args: [team] }] },
+        ]
+        for (const node of shapes) {
+            expect(nodeToFilter(node, CATALOG, SALES_KEY).items[0]?.kind).toBe('condition')
+            expect(roundTrip(node)).toEqual(node)
+        }
+    })
+})
+
+describe('conditions on a group level', () => {
+    const level: LevelScope = {
+        colType: key => (key === 'quantity' ? 'number' : undefined),
+        records: [{ group: 'byTeam', label: 'Team', source: TEAMS_KEY }],
+    }
+    const levelTrip = (node: SpecNode) =>
+        filterToNode(nodeToFilter(node, CATALOG, SALES_KEY, level), CATALOG, SALES_KEY, level)
+
+    it('writes a total condition and reads it back to the same draft', () => {
+        const condition: ConditionDraft = {
+            ...emptyCondition([{ field: 'amount' }]),
+            subject: 'total',
+            aggregate: 'sum',
+            op: 'gt',
+            value: '10.00',
+        }
+        const group: GroupDraft = { kind: 'group', match: 'all', items: [condition] }
+        const node = filterToNode(group, CATALOG, SALES_KEY, level)
+        expect(node).toEqual({
+            op: 'gt',
+            args: [{ op: 'sum', args: [{ path: [{ field: 'amount' }] }] }, { value: 1000 }],
+        })
+        expect(nodeToFilter(node, CATALOG, SALES_KEY, level)).toEqual(group)
+    })
+
+    it('round-trips a column, a count and a group record condition', () => {
+        const shapes: SpecNode[] = [
+            { op: 'gte', args: [{ col: 'quantity' }, { value: 3 }] },
+            { op: 'lt', args: [{ col: 'quantity' }, { param: 'least' }] },
+            {
+                op: 'gt',
+                args: [{ op: 'count', args: [{ path: [{ field: 'id' }] }] }, { value: 2 }],
+            },
+            {
+                op: 'lte',
+                args: [
+                    { op: 'max', args: [{ path: [{ field: 'day' }] }] },
+                    { value: '2026-01-31' },
+                ],
+            },
+            {
+                op: 'eq',
+                args: [{ record: 'byTeam', path: [{ field: 'region' }] }, { value: 'north' }],
+            },
+            { op: 'isEmpty', args: [{ record: 'byTeam', path: [{ field: 'name' }] }] },
+        ]
+        for (const node of shapes) {
+            expect(nodeToFilter(node, CATALOG, SALES_KEY, level).items[0]?.kind).toBe('condition')
+            expect(levelTrip(node)).toEqual(node)
+        }
+        expect(nodeToFilter(shapes[2], CATALOG, SALES_KEY, level).items[0]).toMatchObject({
+            subject: 'total',
+            aggregate: 'count',
+        })
+        expect(nodeToFilter(shapes[4], CATALOG, SALES_KEY, level).items[0]).toMatchObject({
+            subject: 'record',
+            record: 'byTeam',
+            path: [{ field: 'region' }],
+        })
+    })
+
+    it('reads a column, a total or a record as fixed outside a group level', () => {
+        const node: SpecNode = { op: 'gte', args: [{ col: 'quantity' }, { value: 3 }] }
+        expect(nodeToFilter(node, CATALOG, SALES_KEY).items[0]?.kind).toBe('fixed')
+        const unknown: SpecNode = { op: 'gte', args: [{ col: 'gone' }, { value: 3 }] }
+        expect(nodeToFilter(unknown, CATALOG, SALES_KEY, level).items[0]?.kind).toBe('fixed')
+    })
+
+    it('names a level condition with a missing column or value', () => {
+        const group: GroupDraft = {
+            kind: 'group',
+            match: 'all',
+            items: [
+                { ...emptyCondition([]), subject: 'column', col: 'gone', op: 'gt', value: '1' },
+                { ...emptyCondition([]), subject: 'column', col: 'quantity', op: 'gt', value: 'x' },
+                {
+                    ...emptyCondition([{ field: 'amount' }]),
+                    subject: 'total',
+                    aggregate: 'sum',
+                    op: 'gt',
+                    value: '',
+                },
+            ],
+        }
+        expect(conditionProblems(group, CATALOG, SALES_KEY, level)).toEqual([
+            'A condition names a column that is no longer in the report',
+            'quantity: enter a number',
+            'Amount: enter a value',
+        ])
+    })
+})
+
+describe('asked amounts and ranges', () => {
+    const amount = {
+        key: 'amount',
+        label: 'Amount',
+        type: 'money' as const,
+        aggregates: ['sum' as const],
+    }
+    const quantity = { key: 'quantity', label: 'Quantity', type: 'number' as const, aggregates: [] }
+    it('asks a money value as an amount param', () => {
+        expect(askParamFor(amount, 'gte', 'amount')).toEqual({
+            id: 'amount',
+            type: 'amount',
+            label: 'Amount',
+        })
+    })
+    it('asks a range of numbers or amounts as two params', () => {
+        expect(askParamFor(quantity, 'between', 'quantity')).toEqual({
+            id: 'quantity',
+            type: 'number',
+            label: 'Quantity from',
+        })
+        expect(askHighParamFor(quantity, 'between', 'quantity')).toEqual({
+            id: 'quantityTo',
+            type: 'number',
+            label: 'Quantity to',
+        })
+        expect(askHighParamFor(amount, 'between', 'amount')).toEqual({
+            id: 'amountTo',
+            type: 'amount',
+            label: 'Amount to',
+        })
+        expect(askHighParamFor(quantity, 'gte', 'quantity')).toBeNull()
+    })
+    it('writes and reads a two-param between', () => {
+        const node = {
+            op: 'between',
+            args: [
+                { path: [{ field: 'quantity' }] },
+                { param: 'quantity' },
+                { param: 'quantityTo' },
+            ],
+        }
+        const group = nodeToFilter(node, CATALOG, SALES_KEY)
+        expect(group.items[0]).toMatchObject({
+            kind: 'condition',
+            op: 'between',
+            param: 'quantity',
+            paramHigh: 'quantityTo',
+        })
+        expect(filterToNode(group, CATALOG, SALES_KEY)).toEqual(node)
+        expect([...paramsInGroup(group, new Set())]).toEqual(['quantity', 'quantityTo'])
+    })
+})
+
+describe('a fill condition that matches the group above', () => {
+    const above = [{ id: 'g0', col: 'region', label: 'Region' }]
+    it('reads {col} of an enclosing group as "same as the group above" and writes it back', () => {
+        const node = { op: 'eq', args: [{ path: [{ field: 'region' }] }, { col: 'region' }] }
+        const group = nodeToFilter(node, CATALOG, TEAMS_KEY, undefined, above)
+        expect(group.items[0]).toMatchObject({
+            kind: 'condition',
+            op: 'eq',
+            above: 'g0',
+            param: '',
+            value: '',
+        })
+        expect(filterToNode(group, CATALOG, TEAMS_KEY, undefined, above)).toEqual(node)
+        expect(conditionProblems(group, CATALOG, TEAMS_KEY, undefined, above)).toEqual([])
+    })
+    it('reads a {col} that is no enclosing group as a fixed part', () => {
+        const node = { op: 'eq', args: [{ path: [{ field: 'region' }] }, { col: 'other' }] }
+        expect(nodeToFilter(node, CATALOG, TEAMS_KEY, undefined, above).items[0]).toMatchObject({
+            kind: 'fixed',
+        })
+    })
+    it('names a condition whose group above is gone', () => {
+        const node = { op: 'eq', args: [{ path: [{ field: 'region' }] }, { col: 'region' }] }
+        const group = nodeToFilter(node, CATALOG, TEAMS_KEY, undefined, above)
+        expect(conditionProblems(group, CATALOG, TEAMS_KEY, undefined, [])).toEqual([
+            'Region: the group above is no longer in the report',
+        ])
+    })
+    it('lists the groups above a level, named by their columns', () => {
+        const groups = [
+            { id: 'g0', col: 'region' },
+            { id: 'g1', col: 'team' },
+            { id: 'g2', col: 'gone' },
+        ]
+        const columns = [
+            { id: 'region', label: 'Region' },
+            { id: 'team', label: 'Team' },
+        ]
+        expect(aboveOf(groups, 0, columns)).toEqual([])
+        expect(aboveOf(groups, 2, columns)).toEqual([
+            { id: 'g0', col: 'region', label: 'Region' },
+            { id: 'g1', col: 'team', label: 'Team' },
+        ])
+        expect(aboveOf(groups, 3, columns)[2]).toEqual({ id: 'g2', col: 'gone', label: 'gone' })
     })
 })

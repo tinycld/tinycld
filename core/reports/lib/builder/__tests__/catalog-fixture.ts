@@ -32,6 +32,12 @@ export const CATALOG = catalogOf([
                 currency: 'currency',
             },
             {
+                key: 'quantity',
+                label: 'Quantity',
+                type: 'number',
+                aggregates: ['sum', 'avg', 'min', 'max', 'count', 'countDistinct'],
+            },
+            {
                 key: 'currency',
                 label: 'Currency',
                 type: 'text',
@@ -66,6 +72,16 @@ export const CATALOG = catalogOf([
                 label: 'Name',
                 type: 'text',
                 aggregates: ['min', 'max', 'count', 'countDistinct'],
+            },
+            {
+                key: 'region',
+                label: 'Region',
+                type: 'select',
+                aggregates: [],
+                options: [
+                    { value: 'north', label: 'North' },
+                    { value: 'south', label: 'South' },
+                ],
             },
         ],
         links: [{ key: 'sales', label: 'Sales', target: SALES_KEY, cardinality: 'toMany' }],

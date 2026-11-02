@@ -17,9 +17,9 @@ import {
     pathLabel,
     sourceAtLinks,
 } from '../../lib/builder/columns'
-import { paramsReadByFormulas } from '../../lib/builder/draft'
 import {
     addFilterItem,
+    askHighParamFor,
     askParamFor,
     type ConditionDraft,
     emptyCondition,
@@ -27,7 +27,6 @@ import {
     type FilterItem,
     type FilterPath,
     filterItemKeys,
-    filterParams,
     type GroupDraft,
     needsValue,
     opLabel,
@@ -58,27 +57,27 @@ function filterTestId(path: FilterPath): string {
 
 // What every part of the filter editor needs: the tree, the asked params, and how
 // to change them. Every change replaces the whole filter and its params in the form
-// in one edit: a param no condition asks for any more leaves with it, and `added`
-// is a newly asked one.
+// in one edit: a param nothing reads any more leaves with it, and `added` are the
+// newly asked ones.
 interface FilterContext {
     builder: ReportBuilder
     catalog: Catalog
     root: GroupDraft
     params: ParamDef[]
-    change(next: GroupDraft, added?: ParamDef): void
+    change(next: GroupDraft, ...added: ParamDef[]): void
 }
 
 function setCondition(
     ctx: FilterContext,
     path: FilterPath,
     patch: Partial<ConditionDraft>,
-    added?: ParamDef
+    ...added: ParamDef[]
 ) {
     ctx.change(
         updateFilterItem(ctx.root, path, item =>
             item.kind === 'condition' ? { ...item, ...patch } : item
         ),
-        added
+        ...added
     )
 }
 
@@ -254,26 +253,32 @@ function DefaultPreset({ ctx, item, path }: ValueProps) {
     )
 }
 
-// "Ask when run" turns the value into a param the reader sets from a chip (R16).
-// Money and yes/no cannot be asked. A read-back condition that already asks stays
-// switchable off even when its operator could not be asked today.
+// "Ask when run" turns the value into a param the reader sets from a chip (R16); a
+// range of numbers or amounts asks both ends (F18). Yes/no cannot be asked. A
+// read-back condition that already asks stays switchable off even when its
+// operator could not be asked today.
 function AskToggle(props: ValueProps) {
     const { ctx, item, path, info } = props
     const isAsking = item.param !== ''
     const canAsk = askParamFor(info.field, item.op, 'probe') !== null
     if (!isAsking && !canAsk) return null
-    const isFull = !isAsking && ctx.params.length >= MAX_PARAMS
+    const needed = askHighParamFor(info.field, item.op, 'probe') ? 2 : 1
+    const isFull = !isAsking && ctx.params.length + needed > MAX_PARAMS
     const onChange = (on: boolean) => {
         if (!on) {
-            setCondition(ctx, path, { param: '' })
+            setCondition(ctx, path, { param: '', paramHigh: '' })
             return
         }
-        const id = nextColumnId(
-            ctx.params.map(p => p.id),
-            columnHint(item.path)
-        )
-        const def = askParamFor(info.field, item.op, id)
-        if (def) setCondition(ctx, path, { param: def.id }, def)
+        const taken = ctx.params.map(p => p.id)
+        const low = askParamFor(info.field, item.op, nextColumnId(taken, columnHint(item.path)))
+        if (!low) return
+        const asked = askHighParamFor(info.field, item.op, low.id)
+        if (!asked) {
+            setCondition(ctx, path, { param: low.id }, low)
+            return
+        }
+        const high = { ...asked, id: nextColumnId([...taken, low.id], asked.id) }
+        setCondition(ctx, path, { param: low.id, paramHigh: high.id }, low, high)
     }
     return (
         <View className="flex-row flex-wrap items-center gap-2">
@@ -356,7 +361,7 @@ function ConditionRow({ ctx, item, path, baseKey }: RowProps<ConditionDraft>) {
         label: opLabel(op, type),
         isSelected: op === item.op,
         onSelect: () => {
-            if (op !== item.op) setCondition(ctx, path, { op, param: '' })
+            if (op !== item.op) setCondition(ctx, path, { op, param: '', paramHigh: '' })
         },
     }))
     const onField = (next: SpecHop[]) =>
@@ -575,19 +580,13 @@ export function FilterSection({
     const { control } = builder.form
     const root = useWatch({ control, name: 'filter' })
     const params = useWatch({ control, name: 'params' })
-    const columns = useWatch({ control, name: 'columns' })
-    const layout = useWatch({ control, name: 'layout' })
     const error = builder.form.getFieldState('filter', builder.form.formState).error?.message
     const ctx: FilterContext = {
         builder,
         catalog: builder.catalog,
         root,
         params,
-        change: (next, added) =>
-            builder.setFilter(
-                next,
-                filterParams(params, next, paramsReadByFormulas({ columns, layout }), added)
-            ),
+        change: (next, ...added) => builder.setFilter(next, ...added),
     }
     return (
         <BuilderSection title="Filter" section="filter" problems={problems}>

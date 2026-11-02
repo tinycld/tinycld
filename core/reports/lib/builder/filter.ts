@@ -2,10 +2,16 @@ import { z } from '@tinycld/core/ui/form'
 import { isIsoDay } from '../dates'
 import { centsFromText, textFromCents } from '../money'
 import { type ParamDef, type SpecHop, type SpecNode, specHopSchema, specNodeSchema } from '../spec'
-import type { CatalogField, FieldType } from '../types'
-import { type Catalog, describePath, sourceAtLinks } from './columns'
+import {
+    AGGREGATES,
+    type Aggregate,
+    type CatalogField,
+    type CatalogSource,
+    type FieldType,
+} from '../types'
+import { type Catalog, describePath, firstTextField, sourceAtLinks } from './columns'
 import { onlyKeys } from './formula'
-import { lookupValueNode } from './formula-parts'
+import { type FormulaRecord, lookupValueNode } from './formula-parts'
 
 // The builder's filter: groups of conditions joined by All of / Any of / None of,
 // "has / has no related" rows over a link, and fixed parts it cannot edit. Only
@@ -31,9 +37,24 @@ export const CONDITION_OPS = [
 ] as const
 export type ConditionOp = (typeof CONDITION_OPS)[number]
 
+/**
+ * What a condition compares (R18): a field of the row; on a group level also a
+ * total of a field, a column, or a field of the group's record.
+ */
+export const CONDITION_SUBJECTS = ['field', 'total', 'column', 'record'] as const
+export type ConditionSubject = (typeof CONDITION_SUBJECTS)[number]
+
 export type ConditionDraft = {
     kind: 'condition'
+    subject: ConditionSubject
+    /** The field (subject field or total), or the record's field (subject record). */
     path: SpecHop[]
+    /** A total's aggregate (subject total); else ''. */
+    aggregate: Aggregate | ''
+    /** The column a column subject reads; else ''. */
+    col: string
+    /** The group whose record a record subject reads; else ''. */
+    record: string
     op: ConditionOp
     /** The value, or the low end of between. Money is typed in units (12.50). */
     value: string
@@ -43,20 +64,53 @@ export type ConditionDraft = {
     values: string[]
     /** A param id when the value is asked when the report runs; else ''. */
     param: string
+    /** The param of a range's high end, when both ends are asked; else ''. */
+    paramHigh: string
+    /** An enclosing group's id when the value is that group's key (a fill); else ''. */
+    above: string
 }
 export type FixedDraft = { kind: 'fixed'; node: SpecNode }
 export type GroupDraft = { kind: 'group'; match: 'all' | 'any' | 'none'; items: FilterItem[] }
 export type RelatedDraft = { kind: 'related'; has: boolean; link: SpecHop[]; where: GroupDraft }
 export type FilterItem = ConditionDraft | RelatedDraft | GroupDraft | FixedDraft
 
+/** A group level's conditions read its columns and its group records. */
+export type LevelScope = {
+    colType: (key: string) => FieldType | undefined
+    records: readonly FormulaRecord[]
+}
+
+/** A group that encloses a level: a fill condition there can read its key ({col}). */
+export type AboveGroup = { id: string; col: string; label: string }
+
+/** The groups above level `index`, named by their columns. */
+export function aboveOf(
+    groups: readonly { id: string; col: string }[],
+    index: number,
+    columns: readonly { id: string; label?: string }[]
+): AboveGroup[] {
+    return groups.slice(0, index).map(g => ({
+        id: g.id,
+        col: g.col,
+        label: columns.find(c => c.id === g.col)?.label ?? g.col,
+    }))
+}
+
 const conditionSchema = z.object({
     kind: z.literal('condition'),
-    path: z.array(specHopSchema).min(1),
+    subject: z.enum(CONDITION_SUBJECTS),
+    // A column subject has no path.
+    path: z.array(specHopSchema),
+    aggregate: z.enum(['', ...AGGREGATES]),
+    col: z.string(),
+    record: z.string(),
     op: z.enum(CONDITION_OPS),
     value: z.string(),
     high: z.string(),
     values: z.array(z.string()),
     param: z.string(),
+    paramHigh: z.string(),
+    above: z.string(),
 })
 const fixedSchema = z.object({ kind: z.literal('fixed'), node: specNodeSchema })
 
@@ -84,12 +138,26 @@ export function emptyGroup(): GroupDraft {
 }
 
 export function emptyCondition(path: SpecHop[]): ConditionDraft {
-    return { kind: 'condition', path, op: 'eq', value: '', high: '', values: [], param: '' }
+    return {
+        kind: 'condition',
+        subject: 'field',
+        path,
+        aggregate: '',
+        col: '',
+        record: '',
+        op: 'eq',
+        value: '',
+        high: '',
+        values: [],
+        param: '',
+        paramHigh: '',
+        above: '',
+    }
 }
 
 const OPS_BY_TYPE: Record<FieldType, ConditionOp[]> = {
     text: ['eq', 'ne', 'contains', 'startsWith', 'isEmpty', 'notEmpty'],
-    relation: ['eq', 'ne', 'isEmpty', 'notEmpty'],
+    relation: ['eq', 'ne', 'in', 'isEmpty', 'notEmpty'],
     number: ['eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'between', 'isEmpty', 'notEmpty'],
     money: ['eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'between', 'isEmpty', 'notEmpty'],
     percent: ['eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'between'],
@@ -151,8 +219,16 @@ export function needsValue(op: ConditionOp): boolean {
     return !['isEmpty', 'notEmpty', 'isTrue', 'isFalse'].includes(op)
 }
 
-/** The param an asked value becomes, or null when the field cannot be asked (R16). */
-export function askParamFor(field: CatalogField, op: ConditionOp, id: string): ParamDef | null {
+/**
+ * The param an asked value becomes, or null when the field cannot be asked (R16).
+ * A relation is asked as a record picked from `target`, the source it points at.
+ */
+export function askParamFor(
+    field: CatalogField,
+    op: ConditionOp,
+    id: string,
+    target?: CatalogSource
+): ParamDef | null {
     const label = field.label
     if (!needsValue(op)) return null
     if (isDayType(field.type)) {
@@ -160,14 +236,49 @@ export function askParamFor(field: CatalogField, op: ConditionOp, id: string): P
         if (op === 'lte') return { id, type: 'asOf', label }
         return op === 'in' ? null : { id, type: 'date', label }
     }
-    if (field.type === 'number') return op === 'between' ? null : { id, type: 'number', label }
-    if (field.type === 'text' || field.type === 'relation') return { id, type: 'text', label }
+    const ranged = rangedType(field.type)
+    if (ranged) return { id, type: ranged, label: op === 'between' ? `${label} from` : label }
+    if (field.type === 'relation') return relationParam(id, label, op, target)
+    if (field.type === 'text') return { id, type: 'text', label }
     if (field.type === 'select') {
         const options = field.options ?? []
         if (op === 'in') return { id, type: 'choice', label, multiple: true, options }
         return { id, type: 'choice', label, options }
     }
     return null
+}
+
+// A record is picked from the target's records, read under the reader's rules (R19);
+// without a target only one id can be typed.
+function relationParam(
+    id: string,
+    label: string,
+    op: ConditionOp,
+    target: CatalogSource | undefined
+): ParamDef | null {
+    if (!target) return op === 'in' ? null : { id, type: 'text', label }
+    const shown = firstTextField(target)?.key ?? 'id'
+    const optionsFrom = {
+        source: target.key,
+        value: [{ field: 'id' }],
+        label: [{ field: shown }],
+    }
+    if (op === 'in') return { id, type: 'choice', label, optionsFrom, multiple: true }
+    return { id, type: 'choice', label, optionsFrom }
+}
+
+/** The second param a range of numbers or amounts asks: its high end. */
+export function askHighParamFor(field: CatalogField, op: ConditionOp, id: string): ParamDef | null {
+    const ranged = rangedType(field.type)
+    return op === 'between' && ranged
+        ? { id: `${id}To`, type: ranged, label: `${field.label} to` }
+        : null
+}
+
+// A number asks a number; money asks an amount, kept to its currency (R29).
+function rangedType(type: FieldType): 'number' | 'amount' | null {
+    if (type === 'number') return 'number'
+    return type === 'money' ? 'amount' : null
 }
 
 function fieldType(catalog: Catalog, baseKey: string, path: readonly SpecHop[]): FieldType | null {
@@ -180,13 +291,66 @@ function literal(type: FieldType, text: string): unknown {
     return text
 }
 
-function conditionNode(c: ConditionDraft, type: FieldType): SpecNode {
-    const target: SpecNode = { path: c.path }
-    const subject: SpecNode = isDayType(type)
+// Where a condition tree is read and written: the source its fields are on, and on
+// a group level its columns and records (having) or the groups above it (fill).
+type Scope = {
+    catalog: Catalog
+    baseKey: string
+    level: LevelScope | undefined
+    above: readonly AboveGroup[]
+}
+
+// A total that reads one value: one-argument min and max are the smallest and the
+// largest of the level's rows.
+const AGGREGATE_OPS: ReadonlySet<string> = new Set(AGGREGATES)
+const isAggregate = (op: string): op is Aggregate => AGGREGATE_OPS.has(op)
+const counts = (aggregate: Aggregate | '') =>
+    aggregate === '' || aggregate === 'count' || aggregate === 'countDistinct'
+
+// A row's date is compared by its day (R31); a total or a column is compared as it is.
+const usesDay = (subject: ConditionSubject, type: FieldType) =>
+    isDayType(type) && (subject === 'field' || subject === 'record')
+
+function subjectNode(c: ConditionDraft): SpecNode {
+    switch (c.subject) {
+        case 'total':
+            return { op: c.aggregate || 'count', args: [{ path: c.path }] }
+        case 'column':
+            return { col: c.col }
+        case 'record':
+            return { record: c.record, path: c.path }
+    }
+    return { path: c.path }
+}
+
+/** The type of what a condition compares, or null when it is no longer offered. */
+function subjectType(c: ConditionDraft, scope: Scope): FieldType | null {
+    switch (c.subject) {
+        case 'column':
+            return scope.level?.colType(c.col) ?? null
+        case 'record': {
+            const record = scope.level?.records.find(r => r.group === c.record)
+            return record ? fieldType(scope.catalog, record.source, c.path) : null
+        }
+        case 'total': {
+            const type = fieldType(scope.catalog, scope.baseKey, c.path)
+            return type && counts(c.aggregate) ? 'number' : type
+        }
+    }
+    return fieldType(scope.catalog, scope.baseKey, c.path)
+}
+
+function conditionNode(c: ConditionDraft, type: FieldType, scope: Scope): SpecNode {
+    const target = subjectNode(c)
+    const subject: SpecNode = usesDay(c.subject, type)
         ? { op: 'addDays', args: [target, { value: 0 }] }
         : target
-    const leaf = (text: string): SpecNode =>
-        c.param ? { param: c.param } : { value: literal(type, text) }
+    // In a fill, a value can be the key of a group above: the record's parent (F21).
+    const group = c.above ? scope.above.find(g => g.id === c.above) : undefined
+    const leaf = (text: string): SpecNode => {
+        if (group) return { col: group.col }
+        return c.param ? { param: c.param } : { value: literal(type, text) }
+    }
     switch (c.op) {
         case 'isEmpty':
             return { op: 'isEmpty', args: [target] }
@@ -197,6 +361,8 @@ function conditionNode(c: ConditionDraft, type: FieldType): SpecNode {
         case 'isFalse':
             return { op: 'eq', args: [target, { value: false }] }
         case 'between':
+            if (c.param && c.paramHigh)
+                return { op: 'between', args: [target, { param: c.param }, { param: c.paramHigh }] }
             // A date range param reads the stored value's day itself (params.go).
             if (c.param) return { op: 'between', args: [target, { param: c.param }] }
             return { op: 'between', args: [subject, leaf(c.value), leaf(c.high)] }
@@ -207,9 +373,9 @@ function conditionNode(c: ConditionDraft, type: FieldType): SpecNode {
     }
 }
 
-function groupNode(group: GroupDraft, catalog: Catalog, baseKey: string): SpecNode | undefined {
+function groupNode(group: GroupDraft, scope: Scope): SpecNode | undefined {
     const nodes = group.items
-        .map(item => itemNode(item, catalog, baseKey))
+        .map(item => itemNode(item, scope))
         .filter((node): node is SpecNode => node !== undefined)
     if (nodes.length === 0) return undefined
     const joined =
@@ -219,50 +385,73 @@ function groupNode(group: GroupDraft, catalog: Catalog, baseKey: string): SpecNo
     return group.match === 'none' ? { op: 'not', args: [joined] } : joined
 }
 
-function itemNode(item: FilterItem, catalog: Catalog, baseKey: string): SpecNode | undefined {
+// Related rows' conditions are on the rows the link reaches: no level, no group above.
+function relatedScope(scope: Scope, link: readonly SpecHop[]): Scope | null {
+    const target = sourceAtLinks(scope.catalog, scope.baseKey, link)
+    return target
+        ? { catalog: scope.catalog, baseKey: target.key, level: undefined, above: [] }
+        : null
+}
+
+function itemNode(item: FilterItem, scope: Scope): SpecNode | undefined {
     switch (item.kind) {
         case 'fixed':
             return item.node
         case 'group':
-            return groupNode(item, catalog, baseKey)
+            return groupNode(item, scope)
         case 'related': {
-            const target = sourceAtLinks(catalog, baseKey, item.link)
-            const where = target ? groupNode(item.where, catalog, target.key) : undefined
+            const inner = relatedScope(scope, item.link)
+            const where = inner ? groupNode(item.where, inner) : undefined
             const node: SpecNode = { op: item.has ? 'exists' : 'notExists', link: item.link }
             return where ? { ...node, where } : node
         }
         case 'condition': {
-            const type = fieldType(catalog, baseKey, item.path)
-            return type ? conditionNode(item, type) : undefined
+            const type = subjectType(item, scope)
+            return type ? conditionNode(item, type, scope) : undefined
         }
     }
 }
 
+/**
+ * The spec node of a condition tree. `level` is given on a group level (having),
+ * `above` in a fill under other groups.
+ */
 export function filterToNode(
     group: GroupDraft,
     catalog: Catalog,
-    baseKey: string
+    baseKey: string,
+    level?: LevelScope,
+    above: readonly AboveGroup[] = []
 ): SpecNode | undefined {
-    return groupNode(group, catalog, baseKey)
+    return groupNode(group, { catalog, baseKey, level, above })
 }
 
 function plainPath(node: SpecNode | undefined): SpecHop[] | null {
     return node?.path && onlyKeys(node, ['path']) ? node.path : null
 }
 
-function dayPath(node: SpecNode | undefined): SpecHop[] | null {
+// The x of addDays(x, 0): a date compared by its day.
+function dayInner(node: SpecNode | undefined): SpecNode | null {
     if (node?.op !== 'addDays' || !onlyKeys(node, ['op', 'args'])) return null
     const [subject, zero] = node.args ?? []
     if (node.args?.length !== 2 || !zero || zero.value !== 0 || !onlyKeys(zero, ['value']))
         return null
-    return plainPath(subject)
+    return subject ?? null
 }
 
-type Leaf = { param: string } | { text: string }
+type Leaf = { param: string } | { text: string } | { above: string }
 
-function leafOf(node: SpecNode | undefined, type: FieldType): Leaf | null {
+function leafOf(
+    node: SpecNode | undefined,
+    type: FieldType,
+    above: readonly AboveGroup[]
+): Leaf | null {
     if (!node) return null
     if (node.param && onlyKeys(node, ['param'])) return { param: node.param }
+    if (node.col !== undefined && onlyKeys(node, ['col'])) {
+        const group = above.find(g => g.col === node.col)
+        return group ? { above: group.id } : null
+    }
     if (!onlyKeys(node, ['value'])) return null
     const v = node.value
     if (isAmountType(type))
@@ -272,21 +461,31 @@ function leafOf(node: SpecNode | undefined, type: FieldType): Leaf | null {
     return typeof v === 'string' ? { text: v } : null
 }
 
+// What a condition node compares: its subject (a field's path, a total, a column or
+// a group record's field), read plainly (`raw`) or as the day of a date
+// (addDays(x, 0), `day`), and its type.
+type Subject = {
+    kind: ConditionSubject
+    raw: SpecHop[] | null
+    day: SpecHop[] | null
+    path: SpecHop[]
+    type: FieldType
+    parts: Partial<ConditionDraft>
+}
+
 function condition(
+    s: Subject,
     path: SpecHop[],
     op: ConditionOp,
     parts: Partial<ConditionDraft> = {}
 ): ConditionDraft {
-    return { ...emptyCondition(path), op, ...parts }
+    return { ...emptyCondition(path), ...s.parts, op, ...parts }
 }
 
 function fromLeaf(leaf: Leaf): Partial<ConditionDraft> {
-    return 'param' in leaf ? { param: leaf.param } : { value: leaf.text }
+    if ('param' in leaf) return { param: leaf.param }
+    return 'above' in leaf ? { above: leaf.above } : { value: leaf.text }
 }
-
-// What a condition node compares: the field's path, as written plainly or as the
-// day of a date (addDays(path, 0)), and the field's type.
-type Subject = { raw: SpecHop[] | null; day: SpecHop[] | null; path: SpecHop[]; type: FieldType }
 
 function paramLeaf(node: SpecNode | undefined): string | null {
     return node?.param && onlyKeys(node, ['param']) ? node.param : null
@@ -295,22 +494,31 @@ function paramLeaf(node: SpecNode | undefined): string | null {
 function inCondition(s: Subject, args: SpecNode[]): ConditionDraft | null {
     if (!s.raw || args.length !== 2) return null
     const param = paramLeaf(args[1])
-    if (param) return condition(s.raw, 'in', { param })
+    if (param) return condition(s, s.raw, 'in', { param })
     const list = args[1] && onlyKeys(args[1], ['value']) ? args[1].value : null
     if (!Array.isArray(list) || !list.every(v => typeof v === 'string')) return null
-    return condition(s.raw, 'in', { values: list })
+    return condition(s, s.raw, 'in', { values: list })
 }
 
-function betweenCondition(s: Subject, args: SpecNode[]): ConditionDraft | null {
-    const wantsDay = isDayType(s.type)
+// A date range param, both ends asked (numbers and amounts), or two values.
+function betweenCondition(s: Subject, args: SpecNode[], scope: Scope): ConditionDraft | null {
     const param = paramLeaf(args[1])
     if (args.length === 2 && s.raw && param)
-        return wantsDay ? condition(s.raw, 'between', { param }) : null
-    if (args.length !== 3 || (wantsDay ? !s.day : !s.raw)) return null
-    const low = leafOf(args[1], s.type)
-    const high = leafOf(args[2], s.type)
-    if (!low || !high || 'param' in low || 'param' in high) return null
-    return condition(s.path, 'between', { value: low.text, high: high.text })
+        return isDayType(s.type) ? condition(s, s.raw, 'between', { param }) : null
+    if (args.length !== 3) return null
+    const paramHigh = paramLeaf(args[2])
+    if (param && paramHigh)
+        return s.raw && rangedType(s.type)
+            ? condition(s, s.raw, 'between', { param, paramHigh })
+            : null
+    if (usesDay(s.kind, s.type) ? !s.day : !s.raw) return null
+    const low = leafOf(args[1], s.type, scope.above)
+    const high = leafOf(args[2], s.type, scope.above)
+    if (low && high && 'text' in low && 'text' in high)
+        return condition(s, s.path, 'between', { value: low.text, high: high.text })
+    if (low && high && 'above' in low && 'above' in high && low.above === high.above)
+        return condition(s, s.path, 'between', { above: low.above })
+    return null
 }
 
 function boolCondition(s: Subject, args: SpecNode[]): ConditionDraft | null {
@@ -318,7 +526,7 @@ function boolCondition(s: Subject, args: SpecNode[]): ConditionDraft | null {
     if (!s.raw || args.length !== 2 || s.type !== 'bool' || !second || !onlyKeys(second, ['value']))
         return null
     return typeof second.value === 'boolean'
-        ? condition(s.raw, second.value ? 'isTrue' : 'isFalse')
+        ? condition(s, s.raw, second.value ? 'isTrue' : 'isFalse')
         : null
 }
 
@@ -333,32 +541,81 @@ const COMPARE_OPS: readonly ConditionOp[] = [
     'startsWith',
 ]
 
-function compareCondition(s: Subject, op: string, args: SpecNode[]): ConditionDraft | null {
+function compareCondition(
+    s: Subject,
+    op: string,
+    args: SpecNode[],
+    scope: Scope
+): ConditionDraft | null {
     const known = COMPARE_OPS.find(o => o === op)
-    if (!known || args.length !== 2 || (isDayType(s.type) ? !s.day : !s.raw)) return null
-    const leaf = leafOf(args[1], s.type)
-    return leaf ? condition(s.path, known, fromLeaf(leaf)) : null
+    if (!known || args.length !== 2 || (usesDay(s.kind, s.type) ? !s.day : !s.raw)) return null
+    const leaf = leafOf(args[1], s.type, scope.above)
+    return leaf ? condition(s, s.path, known, fromLeaf(leaf)) : null
 }
 
-function subjectOf(node: SpecNode | undefined, catalog: Catalog, baseKey: string): Subject | null {
-    const raw = plainPath(node)
-    const day = dayPath(node)
-    const path = raw ?? day
-    const type = path ? fieldType(catalog, baseKey, path) : null
-    return path && type ? { raw, day, path, type } : null
+function subject(
+    kind: ConditionSubject,
+    path: SpecHop[],
+    type: FieldType,
+    parts: Partial<ConditionDraft> = {}
+): Subject {
+    return { kind, raw: path, day: null, path, type, parts: { subject: kind, ...parts } }
 }
 
-function conditionFrom(node: SpecNode, catalog: Catalog, baseKey: string): ConditionDraft | null {
+// A total reads one plain path: sum(x), count(x), min(x), ….
+function totalPath(node: SpecNode): SpecHop[] | null {
+    const [arg] = node.args ?? []
+    if (!node.op || !isAggregate(node.op) || !onlyKeys(node, ['op', 'args'])) return null
+    return node.args?.length === 1 ? plainPath(arg) : null
+}
+
+// Columns, totals and group records are read only on a group level (R18).
+function levelSubject(node: SpecNode, scope: Scope, level: LevelScope): Subject | null {
+    if (node.col !== undefined && onlyKeys(node, ['col'])) {
+        const type = level.colType(node.col)
+        return type ? subject('column', [], type, { col: node.col }) : null
+    }
+    if (node.record !== undefined && onlyKeys(node, ['record', 'path'])) {
+        const record = level.records.find(r => r.group === node.record)
+        const path = node.path ?? []
+        const type = record ? fieldType(scope.catalog, record.source, path) : null
+        return type ? subject('record', path, type, { record: node.record }) : null
+    }
+    const total = totalPath(node)
+    if (!total || !node.op || !isAggregate(node.op)) return null
+    const field = fieldType(scope.catalog, scope.baseKey, total)
+    const type = field && counts(node.op) ? 'number' : field
+    return type ? subject('total', total, type, { aggregate: node.op }) : null
+}
+
+function plainSubject(node: SpecNode, scope: Scope): Subject | null {
+    const atLevel = scope.level ? levelSubject(node, scope, scope.level) : null
+    if (atLevel) return atLevel
+    const path = plainPath(node)
+    const type = path ? fieldType(scope.catalog, scope.baseKey, path) : null
+    return path && type ? subject('field', path, type) : null
+}
+
+function subjectOf(node: SpecNode | undefined, scope: Scope): Subject | null {
+    if (!node) return null
+    const inner = dayInner(node)
+    if (!inner) return plainSubject(node, scope)
+    const s = plainSubject(inner, scope)
+    if (!s || (s.kind !== 'field' && s.kind !== 'record')) return null
+    return { ...s, raw: null, day: s.path }
+}
+
+function conditionFrom(node: SpecNode, scope: Scope): ConditionDraft | null {
     if (!node.op || !onlyKeys(node, ['op', 'args'])) return null
     const args = node.args ?? []
-    const s = subjectOf(args[0], catalog, baseKey)
+    const s = subjectOf(args[0], scope)
     if (!s) return null
     if (node.op === 'isEmpty')
-        return s.raw && args.length === 1 ? condition(s.raw, 'isEmpty') : null
+        return s.raw && args.length === 1 ? condition(s, s.raw, 'isEmpty') : null
     if (node.op === 'in') return inCondition(s, args)
-    if (node.op === 'between') return betweenCondition(s, args)
+    if (node.op === 'between') return betweenCondition(s, args, scope)
     const yesNo = node.op === 'eq' ? boolCondition(s, args) : null
-    return yesNo ?? compareCondition(s, node.op, args)
+    return yesNo ?? compareCondition(s, node.op, args, scope)
 }
 
 function isJoin(node: SpecNode): boolean {
@@ -369,52 +626,59 @@ function isJoin(node: SpecNode): boolean {
     )
 }
 
-function noneFrom(inner: SpecNode, catalog: Catalog, baseKey: string): FilterItem {
-    const empty = inner.op === 'isEmpty' ? conditionFrom(inner, catalog, baseKey) : null
+function noneFrom(inner: SpecNode, scope: Scope): FilterItem {
+    const empty = inner.op === 'isEmpty' ? conditionFrom(inner, scope) : null
     if (empty) return { ...empty, op: 'notEmpty' }
     const items = inner.op === 'or' && isJoin(inner) ? (inner.args ?? []) : [inner]
-    return { kind: 'group', match: 'none', items: items.map(a => itemFrom(a, catalog, baseKey)) }
+    return { kind: 'group', match: 'none', items: items.map(a => itemFrom(a, scope)) }
 }
 
-function relatedFrom(node: SpecNode, catalog: Catalog, baseKey: string): RelatedDraft | null {
+function relatedFrom(node: SpecNode, scope: Scope): RelatedDraft | null {
     if (node.op !== 'exists' && node.op !== 'notExists') return null
     if (!node.link || !onlyKeys(node, ['op', 'link', 'where'])) return null
-    const target = sourceAtLinks(catalog, baseKey, node.link)
-    if (!target) return null
+    const inner = relatedScope(scope, node.link)
+    if (!inner) return null
     return {
         kind: 'related',
         has: node.op === 'exists',
         link: node.link,
-        where: nodeToFilter(node.where, catalog, target.key),
+        where: groupFrom(node.where, inner),
     }
 }
 
-function itemFrom(node: SpecNode, catalog: Catalog, baseKey: string): FilterItem {
+function itemFrom(node: SpecNode, scope: Scope): FilterItem {
     if (isJoin(node)) {
         return {
             kind: 'group',
             match: node.op === 'and' ? 'all' : 'any',
-            items: (node.args ?? []).map(a => itemFrom(a, catalog, baseKey)),
+            items: (node.args ?? []).map(a => itemFrom(a, scope)),
         }
     }
     const inner = node.args?.[0]
     if (node.op === 'not' && onlyKeys(node, ['op', 'args']) && node.args?.length === 1 && inner) {
-        return noneFrom(inner, catalog, baseKey)
+        return noneFrom(inner, scope)
     }
-    return (
-        relatedFrom(node, catalog, baseKey) ??
-        conditionFrom(node, catalog, baseKey) ?? { kind: 'fixed', node }
-    )
+    return relatedFrom(node, scope) ?? conditionFrom(node, scope) ?? { kind: 'fixed', node }
 }
 
+function groupFrom(node: SpecNode | null | undefined, scope: Scope): GroupDraft {
+    if (!node) return emptyGroup()
+    const item = itemFrom(node, scope)
+    return item.kind === 'group' ? item : { kind: 'group', match: 'all', items: [item] }
+}
+
+/**
+ * The condition tree of a spec node. `level` is given on a group level (having),
+ * `above` in a fill under other groups.
+ */
 export function nodeToFilter(
     node: SpecNode | null | undefined,
     catalog: Catalog,
-    baseKey: string
+    baseKey: string,
+    level?: LevelScope,
+    above: readonly AboveGroup[] = []
 ): GroupDraft {
-    if (!node) return emptyGroup()
-    const item = itemFrom(node, catalog, baseKey)
-    return item.kind === 'group' ? item : { kind: 'group', match: 'all', items: [item] }
+    return groupFrom(node, { catalog, baseKey, level, above })
 }
 
 /** Every param id a node reads, fixed parts included. */
@@ -430,6 +694,7 @@ export function paramsInNode(node: SpecNode | undefined, into: Set<string>): Set
 export function paramsInGroup(group: GroupDraft, into: Set<string>): Set<string> {
     for (const item of group.items) {
         if (item.kind === 'condition' && item.param) into.add(item.param)
+        if (item.kind === 'condition' && item.paramHigh) into.add(item.paramHigh)
         if (item.kind === 'fixed') paramsInNode(item.node, into)
         if (item.kind === 'group') paramsInGroup(item, into)
         if (item.kind === 'related') paramsInGroup(item.where, into)
@@ -446,37 +711,72 @@ function textProblem(text: string, type: FieldType): string | null {
     return null
 }
 
-function valueProblem(c: ConditionDraft, field: CatalogField): string | null {
-    if (!needsValue(c.op) || c.param) return null
+function valueProblem(c: ConditionDraft, type: FieldType, scope: Scope): string | null {
+    if (!needsValue(c.op)) return null
+    // Only a date range is one param; a range of numbers asks both ends.
+    if (c.op === 'between' && c.param && !c.paramHigh && !isDayType(type))
+        return 'ask both ends of the range'
+    if (c.param) return null
     if (c.op === 'in') return c.values.length > 0 ? null : 'choose at least one'
+    // The value is the key of the group above.
+    if (c.above) {
+        return scope.above.some(g => g.id === c.above)
+            ? null
+            : 'the group above is no longer in the report'
+    }
     const texts = c.op === 'between' ? [c.value, c.high] : [c.value]
     for (const text of texts) {
-        const problem = textProblem(text, field.type)
+        const problem = textProblem(text, type)
         if (problem) return problem
     }
     return null
 }
 
-/** What a person must fix before the filter can run, one line per condition. */
-export function conditionProblems(group: GroupDraft, catalog: Catalog, baseKey: string): string[] {
+const MISSING_SUBJECT: Record<ConditionSubject, string> = {
+    field: 'A condition names a field that is no longer offered',
+    total: 'A condition names a field that is no longer offered',
+    column: 'A condition names a column that is no longer in the report',
+    record: 'A condition names a group that no longer links to a record',
+}
+
+function subjectLabel(c: ConditionDraft, scope: Scope): string {
+    if (c.subject === 'column') return c.col
+    const record =
+        c.subject === 'record' ? scope.level?.records.find(r => r.group === c.record) : undefined
+    const info = describePath(scope.catalog, record?.source ?? scope.baseKey, c.path)
+    return info?.field.label ?? ''
+}
+
+function problemsIn(group: GroupDraft, scope: Scope): string[] {
     const out: string[] = []
     for (const item of group.items) {
-        if (item.kind === 'group') out.push(...conditionProblems(item, catalog, baseKey))
+        if (item.kind === 'group') out.push(...problemsIn(item, scope))
         if (item.kind === 'related') {
-            const target = sourceAtLinks(catalog, baseKey, item.link)
-            if (target) out.push(...conditionProblems(item.where, catalog, target.key))
+            const inner = relatedScope(scope, item.link)
+            if (inner) out.push(...problemsIn(item.where, inner))
             else out.push('A related-rows condition names a link that is no longer offered')
         }
         if (item.kind !== 'condition') continue
-        const info = describePath(catalog, baseKey, item.path)
-        if (!info) {
-            out.push('A condition names a field that is no longer offered')
+        const type = subjectType(item, scope)
+        if (!type) {
+            out.push(MISSING_SUBJECT[item.subject])
             continue
         }
-        const problem = valueProblem(item, info.field)
-        if (problem) out.push(`${info.field.label}: ${problem}`)
+        const problem = valueProblem(item, type, scope)
+        if (problem) out.push(`${subjectLabel(item, scope)}: ${problem}`)
     }
     return out
+}
+
+/** What a person must fix before the conditions can run, one line per condition. */
+export function conditionProblems(
+    group: GroupDraft,
+    catalog: Catalog,
+    baseKey: string,
+    level?: LevelScope,
+    above: readonly AboveGroup[] = []
+): string[] {
+    return problemsIn(group, { catalog, baseKey, level, above })
 }
 
 /** An item's place in the tree: indexes from the root; a related item's children are its conditions. */
@@ -560,7 +860,7 @@ export function setMatchAt(
 function itemSignature(item: FilterItem): string {
     switch (item.kind) {
         case 'condition':
-            return `condition:${JSON.stringify(item.path)}`
+            return `condition:${item.subject}:${item.col}:${item.record}:${JSON.stringify(item.path)}`
         case 'related':
             return `related:${JSON.stringify(item.link)}`
         case 'group':
@@ -583,20 +883,4 @@ export function filterItemKeys(items: readonly FilterItem[]): string[] {
         seen.set(signature, n + 1)
         return `${signature}#${n}`
     })
-}
-
-/**
- * The params after a filter change: those the new filter asks for or something
- * else reads (`readElsewhere`, e.g. a fixed column formula), plus a newly asked
- * one. A removed condition, group or related row takes its asked values with it.
- */
-export function filterParams(
-    params: readonly ParamDef[],
-    filter: GroupDraft,
-    readElsewhere: ReadonlySet<string>,
-    added?: ParamDef
-): ParamDef[] {
-    const asked = paramsInGroup(filter, new Set(readElsewhere))
-    const kept = params.filter(p => asked.has(p.id))
-    return added ? [...kept, added] : kept
 }

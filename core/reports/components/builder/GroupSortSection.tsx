@@ -5,6 +5,7 @@ import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { MAX_GROUP_LEVELS, MAX_SORT_KEYS, nextColumnId } from '../../lib/builder/columns'
 import type { BuilderDraft } from '../../lib/builder/draft'
+import { emptyGroup } from '../../lib/builder/filter'
 import type { ColumnChoice as Choice } from '../../lib/builder/formula-context'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
@@ -136,6 +137,10 @@ function GroupRows({ builder }: { builder: ReportBuilder }) {
                 col: first?.key ?? '',
                 bucket: '',
                 subtotals: true,
+                open: false,
+                label: null,
+                having: emptyGroup(),
+                fill: { on: false, where: emptyGroup() },
             },
         ])
     return (
@@ -158,6 +163,34 @@ interface SortRowProps {
     options: { value: string; label: string }[]
 }
 
+function SortColumn({ builder, index, options }: Omit<SortRowProps, 'sort'>) {
+    return (
+        <SelectInput
+            name={`sort.${index}.col`}
+            control={builder.form.control}
+            label="Sort by"
+            options={options}
+            testID={`report-builder-sort-${index}-col`}
+        />
+    )
+}
+
+// A sort by a formula (a group record's field) is kept as it is until the sort
+// editor offers formulas.
+function SortFormula({ index }: { index: number }) {
+    return (
+        <Text testID={`report-builder-sort-${index}-formula`} className="text-sm text-foreground">
+            Sorted by a formula, kept as it is
+        </Text>
+    )
+}
+
+function SortKeyPicker({ builder, sort, index, options }: SortRowProps) {
+    const isColumn = sort[index]?.kind === 'col'
+    if (isColumn) return <SortColumn builder={builder} index={index} options={options} />
+    return <SortFormula index={index} />
+}
+
 function SortRow({ builder, sort, index, options }: SortRowProps) {
     const { control } = builder.form
     const testID = `report-builder-sort-${index}`
@@ -173,13 +206,7 @@ function SortRow({ builder, sort, index, options }: SortRowProps) {
                     onPress={() => builder.setSort(sort.filter((_, i) => i !== index))}
                 />
             </View>
-            <SelectInput
-                name={`sort.${index}.col`}
-                control={control}
-                label="Sort by"
-                options={options}
-                testID={`${testID}-col`}
-            />
+            <SortKeyPicker builder={builder} sort={sort} index={index} options={options} />
             <ButtonGroup
                 name={`sort.${index}.dir`}
                 control={control}
@@ -191,14 +218,15 @@ function SortRow({ builder, sort, index, options }: SortRowProps) {
     )
 }
 
-// A sort key has no id: its column and how many earlier keys sort on the same
-// column name it, so removing a key does not hand its row to the next one.
+// A sort key has no id: what it sorts on and how many earlier keys sort on the
+// same name it, so removing a key does not hand its row to the next one.
 function sortRowKeys(sort: BuilderDraft['sort']): string[] {
     const seen = new Map<string, number>()
     return sort.map(key => {
-        const n = seen.get(key.col) ?? 0
-        seen.set(key.col, n + 1)
-        return `${key.col}#${n}`
+        const on = key.kind === 'col' ? key.col : JSON.stringify(key.formula.node)
+        const n = seen.get(on) ?? 0
+        seen.set(on, n + 1)
+        return `${on}#${n}`
     })
 }
 
@@ -208,7 +236,8 @@ function SortRows({ builder }: { builder: ReportBuilder }) {
     const rows = sortRowKeys(sort).map((rowKey, index) => (
         <SortRow key={rowKey} builder={builder} sort={sort} index={index} options={options} />
     ))
-    const add = () => builder.setSort([...sort, { col: options[0]?.value ?? '', dir: 'asc' }])
+    const add = () =>
+        builder.setSort([...sort, { kind: 'col', col: options[0]?.value ?? '', dir: 'asc' }])
     return (
         <View className="gap-2">
             {rows}

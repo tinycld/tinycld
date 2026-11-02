@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { CURRENT_SPEC_VERSION, type ReportSpec } from '../../spec'
+import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec, type SpecNode } from '../../spec'
 import {
     builderSchema,
     type ColumnDraft,
     draftFromSpec,
+    draftIssues,
     emptyDraft,
     type FormulaDraft,
+    groupTarget,
+    keptParams,
+    levelScope,
     specFromDraft,
 } from '../draft'
+import { emptyCondition, emptyGroup } from '../filter'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
 const RICH: ReportSpec = {
@@ -286,6 +291,8 @@ describe('the scale of a division and an average', () => {
             aggregate: '',
             scale: null,
             format: '',
+            total: 'recompute',
+            labelField: '',
             formula: {
                 kind: 'editable',
                 node: { op: 'div', args: [{ col: 'profit' }, { value: 2 }] },
@@ -371,6 +378,8 @@ describe('emptyDraft', () => {
                 aggregate: '',
                 scale: null,
                 format: '',
+                total: 'recompute',
+                labelField: '',
             },
         ])
         expect(specFromDraft({ ...draft, title: 'Teams' }, CATALOG)).toEqual({
@@ -410,6 +419,8 @@ describe('builderSchema', () => {
                     aggregate: '',
                     scale: null,
                     format: '',
+                    total: 'recompute',
+                    labelField: '',
                 },
             ],
         }
@@ -428,5 +439,301 @@ describe('builderSchema', () => {
 
     it('needs a title', () => {
         expect(messages({ ...base, title: ' ' })).toEqual(['title: Enter a title'])
+    })
+})
+
+const V2: ReportSpec = {
+    version: 2,
+    source: SALES_KEY,
+    params: [
+        { id: 'asOf', type: 'asOf', label: 'As of', default: { preset: 'endOfLastMonth' } },
+        {
+            id: 'rows',
+            type: 'choice',
+            label: 'Rows',
+            default: 'nonzero',
+            options: [
+                { value: 'nonzero', label: 'Non-zero' },
+                { value: 'all', label: 'All' },
+            ],
+        },
+        { id: 'min', type: 'number', label: 'Quantity' },
+        {
+            id: 'teams',
+            type: 'choice',
+            label: 'Teams',
+            optionsFrom: {
+                source: TEAMS_KEY,
+                value: [{ field: 'id' }],
+                label: [{ field: 'name' }],
+            },
+            multiple: true,
+        },
+    ],
+    columns: [
+        { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+        { id: 'name', label: 'Name', formula: { record: 'byTeam', path: [{ field: 'name' }] } },
+        {
+            id: 'amount',
+            label: 'Amount',
+            path: [{ field: 'amount' }],
+            aggregate: 'sum',
+            total: 'rows',
+        },
+        { id: 'quantity', label: 'Quantity', path: [{ field: 'quantity' }], aggregate: 'sum' },
+        {
+            id: 'north',
+            label: 'North',
+            formula: {
+                op: 'lookup',
+                source: TEAMS_KEY,
+                where: { op: 'eq', args: [{ path: [{ field: 'name' }] }, { value: 'North' }] },
+                value: { path: [{ field: 'id' }] },
+                pick: 'min',
+            },
+        },
+    ],
+    filter: {
+        op: 'and',
+        args: [
+            {
+                op: 'lte',
+                args: [
+                    { op: 'addDays', args: [{ path: [{ field: 'day' }] }, { value: 0 }] },
+                    { param: 'asOf' },
+                ],
+            },
+            { op: 'in', args: [{ path: [{ link: 'team' }] }, { param: 'teams' }] },
+        ],
+    },
+    sort: [
+        { formula: { record: 'byTeam', path: [{ field: 'name' }] }, dir: 'desc' },
+        { col: 'amount' },
+    ],
+    groups: [
+        {
+            id: 'byTeam',
+            col: 'team',
+            label: { record: 'byTeam', path: [{ field: 'name' }] },
+            having: {
+                op: 'and',
+                args: [
+                    { op: 'gte', args: [{ col: 'quantity' }, { param: 'min' }] },
+                    {
+                        op: 'or',
+                        args: [
+                            { op: 'eq', args: [{ param: 'rows' }, { value: 'all' }] },
+                            {
+                                op: 'ne',
+                                args: [
+                                    { op: 'sum', args: [{ path: [{ field: 'amount' }] }] },
+                                    { value: 0 },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+            fill: {
+                where: { op: 'startsWith', args: [{ path: [{ field: 'name' }] }, { value: 'A' }] },
+            },
+            open: true,
+        },
+    ],
+    detail: {
+        label: {
+            op: 'concat',
+            args: [
+                { path: [{ field: 'customer' }] },
+                { value: ' · ' },
+                { path: [{ field: 'day' }] },
+            ],
+        },
+    },
+    display: {
+        layouts: [
+            {
+                width: 'mobile',
+                tracks: 3,
+                cells: [
+                    { col: 'team', line: 1, span: 3 },
+                    { col: 'amount', line: 2, justify: 'end' },
+                ],
+            },
+        ],
+    },
+}
+
+const META = { title: 'T', description: '' }
+
+describe('spec version 2 in the builder', () => {
+    it('keeps every v2 part through the draft', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        expect(specFromDraft(draft, CATALOG)).toEqual(V2)
+        // A save that changes nothing writes the same bytes.
+        expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(V2))
+    })
+
+    it('reads an aggregate condition and a relation condition as editable, and the rest as fixed', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        const [column, fixed] = draft.groups[0]?.having.items ?? []
+        expect(column).toMatchObject({
+            kind: 'condition',
+            subject: 'column',
+            col: 'quantity',
+            op: 'gte',
+            param: 'min',
+        })
+        // or(...) reads back as an Any-of group: the param test is fixed, the total a condition (F8).
+        expect(fixed).toMatchObject({
+            kind: 'group',
+            match: 'any',
+            items: [
+                { kind: 'fixed' },
+                { kind: 'condition', subject: 'total', aggregate: 'sum', op: 'ne' },
+            ],
+        })
+        expect(draft.filter.items[1]).toMatchObject({
+            kind: 'condition',
+            subject: 'field',
+            path: [{ link: 'team' }],
+            op: 'in',
+            param: 'teams',
+        })
+        expect(draft.groups[0]?.fill).toMatchObject({
+            on: true,
+            where: { items: [{ kind: 'condition', op: 'startsWith' }] },
+        })
+        expect(draft.sort[0]).toMatchObject({ kind: 'formula', dir: 'desc' })
+        expect(draft.columns[2]).toMatchObject({ total: 'rows' })
+    })
+
+    it('drops a param only when nothing reads it any more', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        const noHaving = {
+            ...draft,
+            groups: draft.groups.map(g => ({ ...g, having: emptyGroup() })),
+        }
+        expect(keptParams(noHaving).map(p => p.id)).toEqual(['asOf', 'teams'])
+        expect(specFromDraft(noHaving, CATALOG).params?.map(p => p.id)).toEqual(['asOf', 'teams'])
+        // A newly asked param joins the kept ones.
+        const asked: ParamDef = { id: 'least', type: 'amount', label: 'Least' }
+        expect(keptParams(noHaving, asked).map(p => p.id)).toEqual(['asOf', 'teams', 'least'])
+        // A param a sort formula, a group label or a row label reads stays.
+        const read = (node: SpecNode) => ({ kind: 'editable' as const, node })
+        const readers = {
+            ...draft,
+            filter: emptyGroup(),
+            groups: draft.groups.map(g => ({
+                ...g,
+                having: emptyGroup(),
+                label: read({ param: 'rows' }),
+            })),
+            sort: [
+                { kind: 'formula' as const, formula: read({ param: 'min' }), dir: 'asc' as const },
+            ],
+            detailLabel: read({ param: 'asOf' }),
+        }
+        expect(keptParams(readers).map(p => p.id)).toEqual(['asOf', 'rows', 'min'])
+    })
+
+    it('keeps the label field of a link column and of a pivot', () => {
+        const spec: ReportSpec = {
+            version: 2,
+            source: SALES_KEY,
+            columns: [
+                { id: 'team', label: 'Team', path: [{ link: 'team' }], labelField: 'region' },
+                { id: 'plain', label: 'Plain', path: [{ link: 'team' }] },
+                { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+            ],
+            groups: [{ id: 'byTeam', col: 'team' }],
+            pivot: {
+                path: [{ link: 'team' }],
+                cell: 'amount',
+                maxColumns: 50,
+                labelField: 'region',
+            },
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(draft.columns[0]).toMatchObject({ labelField: 'region' })
+        expect(draft.columns[1]).toMatchObject({ labelField: '' })
+        expect(draft.pivot).toMatchObject({ labelField: 'region' })
+        expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(spec))
+    })
+
+    it('reads a fill condition that matches the group above, and writes it back', () => {
+        const spec: ReportSpec = {
+            version: 2,
+            source: SALES_KEY,
+            columns: [
+                { id: 'region', label: 'Region', path: [{ link: 'team' }, { field: 'region' }] },
+                { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+                { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+            ],
+            groups: [
+                { id: 'g0', col: 'region' },
+                {
+                    id: 'g1',
+                    col: 'team',
+                    fill: {
+                        where: {
+                            op: 'eq',
+                            args: [{ path: [{ field: 'region' }] }, { col: 'region' }],
+                        },
+                    },
+                },
+            ],
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(draft.groups[1]?.fill.where.items[0]).toMatchObject({
+            kind: 'condition',
+            op: 'eq',
+            above: 'g0',
+            value: '',
+            param: '',
+        })
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+    })
+
+    it('saves a fill with no conditions as an empty fill', () => {
+        const spec: ReportSpec = {
+            version: 2,
+            source: SALES_KEY,
+            columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
+            groups: [{ id: 'byTeam', col: 'team', fill: {} }],
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(draft.groups[0]?.fill).toEqual({ on: true, where: emptyGroup() })
+        expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+    })
+
+    it('reads a group level’s conditions against its columns and its record', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        expect(groupTarget(draft, CATALOG, { col: 'team' })?.key).toBe(TEAMS_KEY)
+        expect(groupTarget(draft, CATALOG, { col: 'amount' })).toBeUndefined()
+        const level = levelScope(draft, CATALOG)
+        expect(level.colType('quantity')).toBe('number')
+        expect(level.colType('gone')).toBeUndefined()
+        expect(level.records).toEqual([{ group: 'byTeam', label: 'Team', source: TEAMS_KEY }])
+    })
+
+    it('names a group condition the draft can no longer run', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        const columns = draft.columns.filter(c => c.id !== 'quantity')
+        const issues = draftIssues({ ...draft, columns }, CATALOG).map(i => i.path.join('.'))
+        expect(issues).toContain('groups.0.having')
+        const fill = {
+            on: true,
+            where: {
+                ...emptyGroup(),
+                items: [{ ...emptyCondition([{ field: 'name' }]), op: 'eq' as const }],
+            },
+        }
+        const blankFill = { ...draft, groups: draft.groups.map(g => ({ ...g, fill })) }
+        expect(draftIssues(blankFill, CATALOG).map(i => i.path.join('.'))).toEqual([
+            'groups.0.fill',
+        ])
     })
 })

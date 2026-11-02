@@ -2,11 +2,15 @@ import { z } from '@tinycld/core/ui/form'
 import {
     BUCKETS,
     CURRENT_SPEC_VERSION,
+    DISPLAY_WIDTHS,
+    displayLayoutSchema,
     type ParamDef,
     paramDefSchema,
     type ReportSpec,
     type SpecColumn,
+    type SpecGroup,
     type SpecNode,
+    type SpecSortKey,
     specHopSchema,
     specNodeSchema,
 } from '../spec'
@@ -29,15 +33,24 @@ import {
     pathLabel,
 } from './columns'
 import {
+    type AboveGroup,
+    aboveOf,
     conditionProblems,
     emptyGroup,
     filterGroupSchema,
-    filterParams,
     filterToNode,
+    type LevelScope,
     nodeToFilter,
+    paramsInGroup,
     paramsInNode,
 } from './filter'
-import { columnTypes, formulaContext, isNumericType } from './formula-context'
+import {
+    type ColumnsOf,
+    columnTypes,
+    formulaContext,
+    isNumericType,
+    recordGroups,
+} from './formula-context'
 import { isEditableNode, settleScales } from './formula-ops'
 import type { ReportFormulaContext } from './formula-parts'
 
@@ -75,6 +88,10 @@ const columnFields = {
     scale: z.number().int().min(0).max(6).nullable(),
     /** The client's display format, kept as given ('percent' is the one the builder offers). */
     format: z.string().max(50),
+    /** Level and total cells: recomputed from every row, or the rows shown added (E2). */
+    total: z.enum(['recompute', 'rows']),
+    /** The field a link column shows its record by; '' takes the first text field (R31). */
+    labelField: z.string(),
 }
 export const columnDraftSchema = z.union([
     z.object({
@@ -105,6 +122,30 @@ const layoutItemSchema = z.union([
 ])
 export type LayoutItemDraft = z.infer<typeof layoutItemSchema>
 
+const SORT_DIR = z.enum(['asc', 'desc'])
+/** A sort key: a column, or a formula (a group record's field, R9). */
+export const sortDraftSchema = z.union([
+    z.object({ kind: z.literal('col'), col: z.string().min(1, 'Choose a column'), dir: SORT_DIR }),
+    z.object({ kind: z.literal('formula'), formula: formulaDraftSchema, dir: SORT_DIR }),
+])
+export type SortDraft = z.infer<typeof sortDraftSchema>
+
+export const groupLevelSchema = z.object({
+    id: idSchema,
+    col: z.string().min(1, 'Choose a column'),
+    bucket: z.enum(BUCKET_CHOICES),
+    subtotals: z.boolean(),
+    /** Opens the level when the report opens. */
+    open: z.boolean(),
+    /** null: the key, or a record group's first text field, labels the row (R9). */
+    label: formulaDraftSchema.nullable(),
+    /** Show only groups where…: conditions on the level's totals, columns and record (R18). */
+    having: filterGroupSchema,
+    /** Show every linked record, even with no rows, of those `where` keeps (R6). */
+    fill: z.object({ on: z.boolean(), where: filterGroupSchema }),
+})
+export type GroupLevelDraft = z.infer<typeof groupLevelSchema>
+
 const draftShape = z.object({
     title: z.string().trim().min(1, 'Enter a title').max(200),
     description: z.string().max(2000),
@@ -112,29 +153,22 @@ const draftShape = z.object({
     params: z.array(paramDefSchema).max(MAX_PARAMS),
     columns: z.array(columnDraftSchema).min(1, 'Add a column').max(MAX_COLUMNS),
     filter: filterGroupSchema,
-    groups: z
-        .array(
-            z.object({
-                id: idSchema,
-                col: z.string().min(1, 'Choose a column'),
-                bucket: z.enum(BUCKET_CHOICES),
-                subtotals: z.boolean(),
-            })
-        )
-        .max(MAX_GROUP_LEVELS),
-    sort: z
-        .array(
-            z.object({ col: z.string().min(1, 'Choose a column'), dir: z.enum(['asc', 'desc']) })
-        )
-        .max(MAX_SORT_KEYS),
+    groups: z.array(groupLevelSchema).max(MAX_GROUP_LEVELS),
+    sort: z.array(sortDraftSchema).max(MAX_SORT_KEYS),
     pivot: z.object({
         on: z.boolean(),
         path: z.array(specHopSchema),
         bucket: z.enum(BUCKET_CHOICES),
         cell: z.string(),
         maxColumns: z.number().int().min(1).max(MAX_PIVOT_COLUMNS),
+        /** The field a pivot over a link heads its columns by; '' takes the first text field. */
+        labelField: z.string(),
     }),
     layout: z.array(layoutItemSchema).max(MAX_LAYOUT_ITEMS),
+    /** A formula that labels each opened (detail) row; null: the first column's value (E7). */
+    detailLabel: formulaDraftSchema.nullable(),
+    /** The line layouts per width (E14), kept as the spec says them. */
+    display: z.object({ layouts: z.array(displayLayoutSchema).max(DISPLAY_WIDTHS.length) }),
 })
 export type BuilderDraft = z.infer<typeof draftShape>
 
@@ -180,7 +214,7 @@ function groupingIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         }
     })
     draft.sort.forEach((key, i) => {
-        if (key.col !== '' && !ids.includes(key.col)) {
+        if (key.kind === 'col' && key.col !== '' && !ids.includes(key.col)) {
             issues.push({ path: ['sort', i, 'col'], message: 'Choose a column' })
         }
     })
@@ -207,11 +241,32 @@ function groupingIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     return issues
 }
 
+// A level's having reads its columns and records; its fill reads the linked records
+// and the groups above it (F21).
+function levelIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
+    const issues: Issue[] = []
+    const level = levelScope(draft, catalog)
+    draft.groups.forEach((group, i) => {
+        const [having] = conditionProblems(group.having, catalog, draft.source, level)
+        if (having) issues.push({ path: ['groups', i, 'having'], message: having })
+        if (!group.fill.on) return
+        const [fill] = conditionProblems(
+            group.fill.where,
+            catalog,
+            groupTarget(draft, catalog, group)?.key ?? draft.source,
+            undefined,
+            aboveOf(draft.groups, i, draft.columns)
+        )
+        if (fill) issues.push({ path: ['groups', i, 'fill'], message: fill })
+    })
+    return issues
+}
+
 export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues = [...columnIssues(draft, catalog), ...groupingIssues(draft, catalog)]
     const [firstProblem] = conditionProblems(draft.filter, catalog, draft.source)
     if (firstProblem) issues.push({ path: ['filter'], message: firstProblem })
-    return issues
+    return [...issues, ...levelIssues(draft, catalog)]
 }
 
 export function builderSchema(catalog: Catalog) {
@@ -234,6 +289,8 @@ export function emptyDraft(source: CatalogSource): BuilderDraft {
                   aggregate: '',
                   scale: null,
                   format: '',
+                  total: 'recompute',
+                  labelField: '',
               },
           ]
         : []
@@ -246,9 +303,20 @@ export function emptyDraft(source: CatalogSource): BuilderDraft {
         filter: emptyGroup(),
         groups: [],
         sort: [],
-        pivot: { on: false, path: [], bucket: '', cell: '', maxColumns: DEFAULT_PIVOT_COLUMNS },
+        pivot: NO_PIVOT,
         layout: [],
+        detailLabel: null,
+        display: { layouts: [] },
     }
+}
+
+const NO_PIVOT: BuilderDraft['pivot'] = {
+    on: false,
+    path: [],
+    bucket: '',
+    cell: '',
+    maxColumns: DEFAULT_PIVOT_COLUMNS,
+    labelField: '',
 }
 
 function columnDraft(
@@ -262,6 +330,8 @@ function columnDraft(
         aggregate: column.aggregate ?? '',
         scale: column.scale ?? null,
         format: column.format ?? '',
+        total: column.total ?? 'recompute',
+        labelField: column.labelField ?? '',
     } as const
     if (column.formula) {
         return {
@@ -312,25 +382,71 @@ export function draftFromSpec(
               bucket: spec.pivot.bucket ?? '',
               cell: spec.pivot.cell,
               maxColumns: spec.pivot.maxColumns ?? DEFAULT_PIVOT_COLUMNS,
+              labelField: spec.pivot.labelField ?? '',
           }
-        : { on: false, path: [], bucket: '', cell: '', maxColumns: DEFAULT_PIVOT_COLUMNS }
+        : NO_PIVOT
     const params = spec.params ?? []
+    const columns = spec.columns.map(column => columnDraft(column, catalog, spec.source, params))
+    const specGroups = spec.groups ?? []
+    const base = { source: spec.source, columns, groups: specGroups, params }
+    const level = levelScope(base, catalog)
     return {
         title: meta.title,
         description: meta.description,
         source: spec.source,
         params,
-        columns: spec.columns.map(column => columnDraft(column, catalog, spec.source, params)),
+        columns,
         filter: nodeToFilter(spec.filter, catalog, spec.source),
-        groups: (spec.groups ?? []).map(g => ({
-            id: g.id,
-            col: g.col,
-            bucket: g.bucket ?? '',
-            subtotals: g.subtotals === true,
-        })),
-        sort: (spec.sort ?? []).map(s => ({ col: s.col ?? '', dir: s.dir ?? 'asc' })),
+        groups: specGroups.map((g, index) =>
+            groupLevelDraft(g, {
+                catalog,
+                baseKey: spec.source,
+                params,
+                level,
+                fillSource: groupTarget(base, catalog, g)?.key ?? spec.source,
+                above: aboveOf(specGroups, index, spec.columns),
+            })
+        ),
+        sort: (spec.sort ?? []).map(s => sortDraft(s, params)),
         pivot,
         layout: (spec.layout ?? []).map(item => layoutItemDraft(item, params)),
+        detailLabel: spec.detail?.label ? formulaDraft(spec.detail.label, params) : null,
+        display: { layouts: spec.display?.layouts ?? [] },
+    }
+}
+
+function sortDraft(key: SpecSortKey, params: readonly ParamDef[]): SortDraft {
+    const dir = key.dir ?? 'asc'
+    if (key.formula) return { kind: 'formula', formula: formulaDraft(key.formula, params), dir }
+    return { kind: 'col', col: key.col ?? '', dir }
+}
+
+interface LevelRead {
+    catalog: Catalog
+    baseKey: string
+    params: readonly ParamDef[]
+    level: LevelScope
+    /** The source a fill's conditions are on: the linked records. */
+    fillSource: string
+    above: readonly AboveGroup[]
+}
+
+// A fill on a group that is not by a link (refused by the server) reads against the
+// base source, so its conditions show as fixed parts or name missing fields.
+function groupLevelDraft(g: SpecGroup, read: LevelRead): GroupLevelDraft {
+    const { catalog, params, level } = read
+    return {
+        id: g.id,
+        col: g.col,
+        bucket: g.bucket ?? '',
+        subtotals: g.subtotals === true,
+        open: g.open === true,
+        label: g.label ? formulaDraft(g.label, params) : null,
+        having: nodeToFilter(g.having, catalog, read.baseKey, level),
+        fill: {
+            on: g.fill !== undefined,
+            where: nodeToFilter(g.fill?.where, catalog, read.fillSource, undefined, read.above),
+        },
     }
 }
 
@@ -366,6 +482,8 @@ function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecC
             out.scale = column.scale ?? avgScaleFor(types.get(column.id) ?? 'number')
         }
         if (column.format !== '' && showsFormat(column, types)) out.format = column.format
+        if (column.total === 'rows') out.total = 'rows'
+        if (column.labelField !== '') out.labelField = column.labelField
         return out
     })
 }
@@ -378,21 +496,42 @@ function showsFormat(column: ColumnDraft, types: Types): boolean {
     return isNumericType(types.get(column.id) ?? 'text')
 }
 
-/** The params the formulas read, in columns and layout rows. */
-export function paramsReadByFormulas(draft: Pick<BuilderDraft, 'columns' | 'layout'>): Set<string> {
-    const read = new Set<string>()
-    for (const column of draft.columns) {
-        if (column.kind === 'formula') paramsInNode(column.formula.node, read)
-    }
-    for (const item of draft.layout) {
-        if (item.kind === 'row') paramsInNode(item.formula.node, read)
-    }
-    return read
+/** The source a group's column links to (a record group), or undefined. */
+export function groupTarget(
+    draft: Pick<BuilderDraft, 'source' | 'columns'>,
+    catalog: Catalog,
+    group: { col: string }
+): CatalogSource | undefined {
+    const column = draft.columns.find(c => c.id === group.col)
+    return column?.kind === 'path'
+        ? describePath(catalog, draft.source, column.path)?.target
+        : undefined
 }
 
-// A param stays only while something asks for it: a filter condition or a formula.
-function askedParams(draft: BuilderDraft): ParamDef[] {
-    return filterParams(draft.params, draft.filter, paramsReadByFormulas(draft))
+/** What a group level's conditions read: the columns' types and the record groups. */
+export function levelScope(draft: ColumnsOf, catalog: Catalog): LevelScope {
+    const types = columnTypes(draft, catalog)
+    return { colType: key => types.get(key), records: recordGroups(draft, catalog) }
+}
+
+/**
+ * The params something in the draft still reads, plus newly asked ones (R20): a
+ * filter, having or fill condition, or a formula anywhere. A param stays while
+ * anything reads it, and leaves with the last part that does.
+ */
+export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[] {
+    const read = paramsInGroup(draft.filter, new Set<string>())
+    const node = (n: SpecNode | undefined) => paramsInNode(n, read)
+    for (const column of draft.columns) if (column.kind === 'formula') node(column.formula.node)
+    for (const group of draft.groups) {
+        paramsInGroup(group.having, read)
+        if (group.fill.on) paramsInGroup(group.fill.where, read)
+        node(group.label?.node)
+    }
+    for (const key of draft.sort) if (key.kind === 'formula') node(key.formula.node)
+    for (const item of draft.layout) if (item.kind === 'row') node(item.formula.node)
+    node(draft.detailLabel?.node)
+    return [...draft.params.filter(p => read.has(p.id)), ...added]
 }
 
 function specLayout(
@@ -409,38 +548,70 @@ function specLayout(
     )
 }
 
-export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec {
-    const types = columnTypes(draft, catalog)
-    const spec: ReportSpec = {
-        version: CURRENT_SPEC_VERSION,
-        source: draft.source,
-        columns: specColumns(draft, catalog, types),
-    }
-    const params = askedParams(draft)
-    if (params.length > 0) spec.params = params
-    const filter = filterToNode(draft.filter, catalog, draft.source)
-    if (filter) spec.filter = filter
-    if (draft.sort.length > 0) {
-        spec.sort = draft.sort.map(s =>
-            s.dir === 'desc' ? { col: s.col, dir: 'desc' } : { col: s.col }
-        )
-    }
-    if (draft.groups.length > 0) {
-        spec.groups = draft.groups.map(g => ({
+function specSort(draft: BuilderDraft, catalog: Catalog): SpecSortKey[] {
+    const ctx = formulaContext(draft, catalog, { kind: 'level' })
+    return draft.sort.map(s => {
+        const dir = s.dir === 'desc' ? { dir: 'desc' as const } : {}
+        return s.kind === 'col'
+            ? { col: s.col, ...dir }
+            : { formula: specFormula(s.formula, ctx), ...dir }
+    })
+}
+
+function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
+    const level = levelScope(draft, catalog)
+    const ctx = formulaContext(draft, catalog, { kind: 'level' })
+    return draft.groups.map((g, index) => {
+        const having = filterToNode(g.having, catalog, draft.source, level)
+        const fillSource = groupTarget(draft, catalog, g)?.key ?? draft.source
+        const above = aboveOf(draft.groups, index, draft.columns)
+        const where = g.fill.on
+            ? filterToNode(g.fill.where, catalog, fillSource, undefined, above)
+            : undefined
+        return {
             id: g.id,
             col: g.col,
             ...(g.bucket !== '' ? { bucket: g.bucket } : {}),
             ...(g.subtotals ? { subtotals: true } : {}),
-        }))
-    }
-    if (draft.pivot.on) {
-        spec.pivot = {
-            path: draft.pivot.path,
-            ...(draft.pivot.bucket !== '' ? { bucket: draft.pivot.bucket } : {}),
-            cell: draft.pivot.cell,
-            maxColumns: draft.pivot.maxColumns,
+            ...(g.label ? { label: specFormula(g.label, ctx) } : {}),
+            ...(having ? { having } : {}),
+            ...(g.fill.on ? { fill: where ? { where } : {} } : {}),
+            ...(g.open ? { open: true } : {}),
         }
+    })
+}
+
+function specPivot(pivot: BuilderDraft['pivot']): NonNullable<ReportSpec['pivot']> {
+    return {
+        path: pivot.path,
+        ...(pivot.bucket !== '' ? { bucket: pivot.bucket } : {}),
+        cell: pivot.cell,
+        maxColumns: pivot.maxColumns,
+        ...(pivot.labelField !== '' ? { labelField: pivot.labelField } : {}),
     }
+}
+
+// Parts are written in the spec's own order, so a save that changes nothing writes
+// the spec it read.
+export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec {
+    const types = columnTypes(draft, catalog)
+    const params = keptParams(draft)
+    const spec: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: draft.source,
+        ...(params.length > 0 ? { params } : {}),
+        columns: specColumns(draft, catalog, types),
+    }
+    const filter = filterToNode(draft.filter, catalog, draft.source)
+    if (filter) spec.filter = filter
+    if (draft.sort.length > 0) spec.sort = specSort(draft, catalog)
+    if (draft.groups.length > 0) spec.groups = specGroups(draft, catalog)
+    if (draft.pivot.on) spec.pivot = specPivot(draft.pivot)
     if (draft.layout.length > 0) spec.layout = specLayout(draft, catalog, types)
+    if (draft.detailLabel) {
+        const ctx = formulaContext(draft, catalog, { kind: 'detail' })
+        spec.detail = { label: specFormula(draft.detailLabel, ctx) }
+    }
+    if (draft.display.layouts.length > 0) spec.display = { layouts: draft.display.layouts }
     return spec
 }

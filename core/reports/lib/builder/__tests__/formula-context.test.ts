@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ParamDef } from '../../spec'
 import { type BuilderDraft, emptyDraft } from '../draft'
+import { emptyGroup } from '../filter'
 import { columnChoices, formulaContext, recordGroups } from '../formula-context'
 import { contextAt } from '../formula-ops'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
@@ -22,6 +23,8 @@ function draft(): BuilderDraft {
                 aggregate: '',
                 scale: null,
                 format: '',
+                total: 'recompute',
+                labelField: '',
             },
             {
                 kind: 'path',
@@ -31,9 +34,22 @@ function draft(): BuilderDraft {
                 aggregate: 'sum',
                 scale: null,
                 format: '',
+                total: 'recompute',
+                labelField: '',
             },
         ],
-        groups: [{ id: 'byTeam', col: 'team', bucket: '', subtotals: false }],
+        groups: [
+            {
+                id: 'byTeam',
+                col: 'team',
+                bucket: '',
+                subtotals: false,
+                open: false,
+                label: null,
+                having: emptyGroup(),
+                fill: { on: false, where: emptyGroup() },
+            },
+        ],
         layout: [
             { kind: 'section', id: 'open', title: 'Open', key: 'open' },
             {
@@ -125,6 +141,8 @@ describe('the type of a column', () => {
             aggregate: '' as const,
             scale: null,
             format: '',
+            total: 'recompute' as const,
+            labelField: '',
             formula: { kind: 'editable' as const, node },
         })
         const typed: BuilderDraft = {

@@ -186,14 +186,14 @@ test.describe('filtering a report', () => {
             await p.getByTestId('report-builder-filter-0-default-today').click()
             await expect(p.getByTestId('report-empty')).toBeVisible()
 
-            // Money cannot be asked.
+            // Money is asked too, as an amount (F18).
             await p.getByTestId('report-builder-filter-add-condition').click()
             await p
                 .getByTestId('report-builder-picker')
                 .getByTestId('report-builder-pick-field-amount')
                 .click()
             await expect(p.getByTestId('report-builder-filter-1-op')).toBeVisible()
-            await expect(p.getByTestId('report-builder-filter-1-ask')).toHaveCount(0)
+            await expect(p.getByTestId('report-builder-filter-1-ask')).toBeVisible()
         } finally {
             await close()
         }

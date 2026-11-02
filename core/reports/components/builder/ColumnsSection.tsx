@@ -195,6 +195,8 @@ export function ColumnsSection({
             aggregate: info.mode === 'aggregate' ? defaultAggregate(info.field, true) : '',
             scale: null,
             format: '',
+            total: 'recompute',
+            labelField: '',
         }
         builder.setColumns([...columns, column])
     }
@@ -212,6 +214,8 @@ export function ColumnsSection({
                 aggregate: '',
                 scale: null,
                 format: '',
+                total: 'recompute',
+                labelField: '',
             },
         ])
     const rows = columns.map((column, index) => (

@@ -25,7 +25,12 @@ export type FormulaPlace =
  * formula reading a record or a param is typed by. Every caller passes all four,
  * so a column has one type in every section and in the saved spec.
  */
-export type ColumnsOf = Pick<BuilderDraft, 'source' | 'columns' | 'groups' | 'params'>
+export type ColumnsOf = Pick<BuilderDraft, 'source' | 'columns' | 'params'> & {
+    groups: readonly GroupKey[]
+}
+
+/** What a group level is keyed by: enough to tell which levels carry a record. */
+export type GroupKey = { id: string; col: string }
 
 /**
  * The type of each column's cells, by id, for formula operands, division and
@@ -96,7 +101,7 @@ export type ColumnChoice = ReturnType<typeof columnChoices>[number]
 
 /** The group levels whose column is a link to one record: they carry that record. */
 export function recordGroups(
-    draft: Pick<BuilderDraft, 'source' | 'columns' | 'groups'>,
+    draft: Pick<BuilderDraft, 'source' | 'columns'> & { groups: readonly GroupKey[] },
     catalog: Catalog
 ): FormulaRecord[] {
     return draft.groups.flatMap(group => {
