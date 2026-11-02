@@ -28,6 +28,7 @@ import { ChecklistField } from './fields/ChecklistField'
 import { DateField } from './fields/DateField'
 import { FileField } from './fields/FileField'
 import { formatComputed } from './fields/format-computed'
+import { PendingFileField } from './fields/PendingFileField'
 import { RichTextField } from './fields/RichTextField'
 import { TableField } from './fields/TableField'
 import { UserField } from './fields/UserField'
@@ -50,6 +51,8 @@ export interface FieldInputProps {
     containerWidth?: number
     /** The live computed values (`applyComputed` over the form); without them a computed field shows its stored value. */
     computed?: FormValues
+    /** Create mode on a page with no session: hold picked files until submit. */
+    pendingFiles?: boolean
 }
 
 type Resolved = ReturnType<typeof resolveKind>
@@ -406,11 +409,30 @@ function FileKind({
     control,
     resolved,
     recordId,
+    pendingFiles,
     disabled,
     testID,
     label,
 }: KindProps) {
     const file = resolved.custom?.kind === 'file' ? resolved.custom : undefined
+    if (!recordId && pendingFiles)
+        return (
+            <Uncontrolled<string | string[] | null>
+                name={field.key}
+                control={control}
+                render={(v, set) => (
+                    <PendingFileField
+                        value={v}
+                        onChange={set}
+                        multiple={file?.multiple ?? false}
+                        accept={file?.accept ?? []}
+                        disabled={disabled}
+                        testID={testID}
+                        accessibilityLabel={label}
+                    />
+                )}
+            />
+        )
     if (!recordId) return <Text className="text-muted-foreground">Add files after creating.</Text>
     return (
         <Uncontrolled<string[] | null>

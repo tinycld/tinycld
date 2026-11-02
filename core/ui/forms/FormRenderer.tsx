@@ -87,6 +87,8 @@ export interface FormRendererProps {
      * submit. See submitSummary.
      */
     summary?: SubmitSummaryKind
+    /** Create mode with no session (a public form): file fields hold picked files until submit. */
+    pendingFiles?: boolean
     testID?: string
 }
 
@@ -166,6 +168,7 @@ function Cell(props: CellProps) {
                 onSubmitEditing={props.onSubmitEditing}
                 containerWidth={containerWidth}
                 computed={props.computed}
+                pendingFiles={props.pendingFiles}
             />
         </FieldCell>
     )
