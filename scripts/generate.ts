@@ -136,7 +136,7 @@ type Feature = { name: string; dir: string; manifest: PackageManifest }
 // and core functionality (the device-consent screen for the OAuth authorization
 // server), not a per-package public-route dir. It has no manifest and must
 // survive a generate run even when no package declares publicRoutes.
-const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>(['oauth'])
+const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>(['oauth', 'forms'])
 
 function emitFeatureRoutes(features: Feature[]) {
     fs.mkdirSync(ROUTES_BASE, { recursive: true })

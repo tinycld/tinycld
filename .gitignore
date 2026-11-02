@@ -82,6 +82,8 @@ server/builds/
 # oauth is app-shell/core functionality (the device-consent screen), not a
 # generated package subtree — keep it tracked like settings/help/admin above.
 !/app/p/oauth/
+# forms is core functionality (public web forms), not a package subtree.
+!/app/p/forms/
 /lib/generated/
 /tinycld.config.ts
 /tinycld.seeds.ts
