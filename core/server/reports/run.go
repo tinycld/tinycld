@@ -403,7 +403,11 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			return nil, "", err
 		}
 		cells = append(cells, pivotCells...)
-		ctes = append(ctes, lv.render(cells)...)
+		label, err := lv.labelSQL()
+		if err != nil {
+			return nil, "", err
+		}
+		ctes = append(ctes, lv.render(cells, "1", label)...)
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
 			leg += " WHERE " + expand.where(c, s, n-1, "")

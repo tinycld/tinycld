@@ -261,10 +261,10 @@ func (b *binder) pathColumn(p *plan, cp *colPlan) {
 // counts twice.
 type formulaSize struct{ nodes, depth int }
 
-// formulaSizes refuses a formula column or a filter that passes the formula
-// limits once the formula columns it reads are inlined. Each column's size is
-// counted once, so a chain of columns that each read the one before twice is
-// refused without compiling it.
+// formulaSizes refuses a formula column, a filter or a group label that
+// passes the formula limits once the formula columns it reads are inlined.
+// Each column's size is counted once, so a chain of columns that each read
+// the one before twice is refused without compiling it.
 func (b *binder) formulaSizes(p *plan) {
 	memo := map[string]formulaSize{}
 	check := func(at string, sz formulaSize) {
@@ -279,6 +279,11 @@ func (b *binder) formulaSizes(p *plan) {
 	}
 	if f := p.spec.Filter; f != nil {
 		check("filter", p.nodeSize(f, memo, map[string]bool{}, true))
+	}
+	for i := range p.spec.Groups {
+		if l := p.spec.Groups[i].Label; l != nil {
+			check(fmt.Sprintf("groups.%d.label", i), p.nodeSize(l, memo, map[string]bool{}, true))
+		}
 	}
 }
 

@@ -65,6 +65,9 @@ func (b *binder) lookups(p *plan) {
 		walk(c.Formula, fmt.Sprintf("columns.%d.formula", i))
 	}
 	walk(p.spec.Filter, "filter")
+	for i, g := range p.spec.Groups {
+		walk(g.Label, fmt.Sprintf("groups.%d.label", i))
+	}
 	for i, item := range p.spec.Layout {
 		walk(item.Formula, fmt.Sprintf("layout.%d.formula", i))
 	}
@@ -80,8 +83,8 @@ func (b *binder) lookups(p *plan) {
 // A column it reads may be a total (one value per row of its level) or a
 // running value, which the outer select computes first (windowHoister).
 func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
-	if n.Col != "" || n.Path != nil || n.Param != "" || n.Subtotal != "" {
-		return expr{}, invalid(at, "a formula node is one of op, col, path, param, value or subtotal")
+	if n.Col != "" || n.Path != nil || n.Param != "" || n.Subtotal != "" || n.Record != "" {
+		return expr{}, invalid(at, errNodeKind)
 	}
 	if len(n.Args) > 0 || n.Link != nil || n.Scale != nil {
 		return expr{}, invalid(at, "lookup takes a source, a where, a value and a pick")
@@ -170,6 +173,12 @@ func (l *lookupCtx) param(id, at string) (expr, error) {
 }
 
 func (l *lookupCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(l, l.r, n, at) }
+
+// record reads the report row's group record, as a column does: through
+// outer, which makes the subquery correlated.
+func (l *lookupCtx) record(group string, p Path, at string) (expr, error) {
+	return l.outer.record(group, p, at)
+}
 
 // subtotal reads a layout's section or earlier row at the cell being
 // compiled, as the computed row's own formula does; elsewhere outer refuses

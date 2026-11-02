@@ -65,12 +65,36 @@ func (z *zoo) tableSource(t *testing.T, n int, c formulaCase, fiscal *int) (sour
 	collection := fmt.Sprintf("zoo_case%d", n)
 	fields, names := z.caseTable(t, collection, c.Types, rows)
 	source = fmt.Sprintf("zoo.case%d", n)
+	var links []Link
+	if c.RecordTypes != nil {
+		links = append(links, z.recordLink(t, n, c, collection))
+	}
 	RegisterSource(Source{
-		Key: source, Collection: collection, Label: "Case", Fields: fields,
+		Key: source, Collection: collection, Label: "Case", Fields: fields, Links: links,
 		Currency:         func(core.App) string { return "USD" },
 		FiscalStartMonth: func(core.App) int { return *fiscal },
 	})
 	return source, names
+}
+
+// recordLink gives a case's record its own collection and source, and every
+// row of the case's table a link "rec" to it, so the case's record leaves
+// read it through a group by that link.
+func (z *zoo) recordLink(t *testing.T, n int, c formulaCase, table string) Link {
+	t.Helper()
+	collection := fmt.Sprintf("zoo_case%d_record", n)
+	fields, _ := z.caseTable(t, collection, c.RecordTypes, []map[string]any{c.Record})
+	source := fmt.Sprintf("zoo.case%d_record", n)
+	RegisterSource(Source{Key: source, Collection: collection, Label: "Case record", Fields: fields})
+	for _, stmt := range []string{
+		fmt.Sprintf("ALTER TABLE `%s` ADD COLUMN `rec`", table),
+		fmt.Sprintf("UPDATE `%s` SET `rec` = 'row0'", table),
+	} {
+		if _, err := z.app.DB().NewQuery(stmt).Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return Link{Key: "rec", Label: "Record", Target: source, Cardinality: ToOne, Field: "rec"}
 }
 
 // lookupSource gives a case's lookupRows their own collection and source,
@@ -124,11 +148,12 @@ func (z *zoo) caseTable(t *testing.T, collection string, types map[string]FieldT
 
 // The shared formula table, through the production Run: a case with one row
 // is a detail row's formula (rowsCtx); a case that totals rows is a total
-// row's formula (levelCtx) over the rows it lists.
+// row's formula (levelCtx) over the rows it lists; a case that reads a record
+// is both, on the group row of its record and on the row under it.
 func TestFormulaCasesThroughRun(t *testing.T) {
 	z := newZoo(t)
 	fiscal := 1
-	detailRuns, totalRuns := 0, 0
+	detailRuns, totalRuns, recordRuns := 0, 0, 0
 	for n, c := range loadFormulaCases(t) {
 		t.Run(c.Name, func(t *testing.T) {
 			fiscal = max(c.FiscalStart, 1)
@@ -147,6 +172,19 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 			columns = append(columns, `{"id":"zz_out","formula":`+string(node)+`}`)
 			raw := fmt.Sprintf(`{"version":1,"source":%q,"columns":[%s]}`, source, strings.Join(columns, ","))
 
+			if c.RecordTypes != nil {
+				recordRuns++
+				columns = append(columns, `{"id":"zz_rec","path":[{"link":"rec"}]}`)
+				raw = fmt.Sprintf(`{"version":2,"source":%q,"columns":[%s],"groups":[{"id":"g","col":"zz_rec"}]}`, source, strings.Join(columns, ","))
+				res := z.run(t, "ann", raw, Options{Expand: [][]any{{"row0"}}}, nil)
+				requireRows(t, res, "kind", "group", "detail", "total")
+				for _, row := range res.Rows[:2] {
+					if got := row.Cells["zz_out"]; !sameCell(got, c.Expect) {
+						t.Fatalf("%s row: got %#v, want %v", row.Kind, got, c.Expect)
+					}
+				}
+				return
+			}
 			if c.Values != nil && c.Error == "" {
 				detailRuns++
 				res := z.run(t, "ann", raw, Options{}, nil)
@@ -186,7 +224,7 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 	}
 	// Keep in step with the table: the cases with one row, and the cases
 	// that total rows.
-	if detailRuns != 59 || totalRuns != 12 {
-		t.Fatalf("ran %d detail rows and %d totals", detailRuns, totalRuns)
+	if detailRuns != 59 || totalRuns != 12 || recordRuns != 2 {
+		t.Fatalf("ran %d detail rows, %d totals and %d records", detailRuns, totalRuns, recordRuns)
 	}
 }

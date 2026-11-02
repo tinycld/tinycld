@@ -24,6 +24,9 @@ type compiler struct {
 	// and on group, subtotal and total rows.
 	detailTypes map[string]FieldType
 	levelTypes  map[string]FieldType
+	// groupTargets is the source each group's key links to (nil for a group
+	// that is not by a link).
+	groupTargets []*Source
 }
 
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
@@ -80,6 +83,7 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 		}
 		r.filter = e.sql
 	}
+	c.groupTargets = make([]*Source, len(c.p.groups))
 	for i, g := range c.p.groups {
 		e, err := r.rowValue(g.col, g.at+".col", map[string]bool{})
 		if err != nil {
@@ -90,6 +94,9 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 				return nil, invalid(g.at+".bucket", "only a date column has a bucket")
 			}
 			e.sql = bucketSQL(r.join(false), g.group.Bucket, e.sql)
+		}
+		if g.group.Bucket == "" {
+			c.groupTargets[i] = e.target
 		}
 		r.add(fmt.Sprintf("k%d", i), e.sql)
 	}
@@ -109,6 +116,9 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	// keys are all known here, before any level groups by them.
 	for _, cp := range c.p.cols {
 		r.formulaCurrencies(cp.col.Formula)
+	}
+	for _, g := range c.p.groups {
+		r.formulaCurrencies(g.group.Label)
 	}
 	r.pivotKey()
 	return r, nil
@@ -139,12 +149,13 @@ func (r *rowsCTE) pathCurrency(p *pathPlan) currency {
 }
 
 // formulaCurrencies adds the currency key of every amount a formula reads by
-// path. A path that does not bind is reported when the formula compiles.
+// path. A path that does not bind is reported when the formula compiles. A
+// record leaf's path is on its group's target, not on the base source.
 func (r *rowsCTE) formulaCurrencies(n *Node) {
 	if n == nil {
 		return
 	}
-	if n.Path != nil {
+	if n.Path != nil && n.Record == "" {
 		if bound, err := bindValuePath(r.c.p.app, r.c.p.base, n.Path, "", pathValue); err == nil {
 			r.pathCurrency(bound)
 		}

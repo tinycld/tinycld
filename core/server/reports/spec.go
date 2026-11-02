@@ -71,9 +71,9 @@ type Column struct {
 }
 
 // Node is a formula or filter tree: an operator with arguments, or a leaf
-// (col, path, param, value, subtotal). exists and notExists carry a link path
-// and an optional where; lookup carries a source, an optional where, a value
-// and a pick.
+// (col, path, param, value, subtotal, record). exists and notExists carry a
+// link path and an optional where; lookup carries a source, an optional
+// where, a value and a pick.
 type Node struct {
 	Op       string          `json:"op,omitempty"`
 	Args     []*Node         `json:"args,omitempty"`
@@ -83,8 +83,11 @@ type Node struct {
 	Param    string          `json:"param,omitempty"`
 	Value    json.RawMessage `json:"value,omitempty"`
 	Subtotal string          `json:"subtotal,omitempty"`
-	Link     Path            `json:"link,omitempty"`
-	Where    *Node           `json:"where,omitempty"`
+	// Record names a group whose key is a link: the leaf reads Path from the
+	// linked record, on that group's rows and every row below them.
+	Record string `json:"record,omitempty"`
+	Link   Path   `json:"link,omitempty"`
+	Where  *Node  `json:"where,omitempty"`
 	// Source and Pick belong to lookup: the source it reads, and "min" (the
 	// default) or "max" of the matching rows' value. A lookup's Value is a
 	// formula node over that source, not a literal.
@@ -102,6 +105,10 @@ type Group struct {
 	Col       string `json:"col"`
 	Bucket    string `json:"bucket,omitempty"` // a date column's bucket
 	Subtotals bool   `json:"subtotals,omitempty"`
+	// Label is a formula on the group's level that labels its rows. Without
+	// it a record group is labelled by its record's first text field, any
+	// other group by its key.
+	Label *Node `json:"label,omitempty"`
 }
 
 type Pivot struct {
@@ -327,7 +334,10 @@ func aliasNode(src *Source, n *Node, out *[]Alias) {
 	if n == nil {
 		return
 	}
-	aliasPath(src, n.Path, out)
+	// A record leaf's path is on its group's target, not on src.
+	if n.Record == "" {
+		aliasPath(src, n.Path, out)
+	}
 	for _, a := range n.Args {
 		aliasNode(src, a, out)
 	}

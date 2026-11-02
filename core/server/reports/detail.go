@@ -93,6 +93,23 @@ func (rc *rowsCtx) path(p Path, at string) (expr, error) {
 	return withCurrency(expr{sql: rc.r.hidden(bound), typ: bound.field.Type, target: bound.target}, rc.r.pathCurrency(bound)), nil
 }
 
+// record reads the group record's field on a base row: a base row is under
+// every group, so its record is its own key.
+func (rc *rowsCtx) record(group string, p Path, at string) (expr, error) {
+	c := rc.r.c
+	gi, target, err := c.recordOf(group, at)
+	if err != nil {
+		return expr{}, err
+	}
+	bound, err := bindRecordPath(c.p.app, target, p, at)
+	if err != nil {
+		return expr{}, err
+	}
+	e := recordExpr(bound)
+	e.sql = recordSQL(rc.r.s, target, bound, fmt.Sprintf("w.k%d", gi))
+	return e, nil
+}
+
 func (rc *rowsCtx) param(id, at string) (expr, error) {
 	v, err := paramOf(rc.r.c, id, at)
 	if err != nil {

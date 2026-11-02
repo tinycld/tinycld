@@ -167,8 +167,9 @@ func (lv *level) isGroupColumn(cp *colPlan) bool {
 	return slices.ContainsFunc(lv.c.p.groups, func(g *groupPlan) bool { return g.col == cp })
 }
 
-// render returns the level's CTEs; o<L> selects the given cells.
-func (lv *level) render(cells []string) []string {
+// render returns the level's CTEs; o<L> selects the given cells, then
+// __own, the row's label and its count of base rows.
+func (lv *level) render(cells []string, own, label string) []string {
 	a := fmt.Sprintf("a%d", lv.n)
 	keyCols := slices.Clone(lv.keys)
 	// __n counts the base rows of the group; it also keeps the select of a
@@ -205,8 +206,41 @@ func (lv *level) render(cells []string) []string {
 	}
 	out = append(out, cells...)
 	out = append(out, fmt.Sprintf("ROW_NUMBER() OVER (%s ORDER BY %s) AS __ord", partitionBy(lv.frame.parent), strings.Join(lv.frame.order, ", ")))
+	out = append(out, own+" AS __own", label+" AS __label", "a.__n AS __n")
 	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, strings.Join(out, ", "), lv.frame.from(g, "a")))
 	return ctes
+}
+
+// labelSQL is the label of the level's rows: the group's label formula, a
+// record group's first text field, or NULL (the key labels the row).
+func (lv *level) labelSQL() (string, error) {
+	if lv.n == 0 {
+		return "NULL", nil
+	}
+	g := lv.c.p.groups[lv.n-1]
+	if g.group.Label != nil {
+		e, err := compileFormula(&levelCtx{lv: lv, visiting: lv.visiting}, g.group.Label, g.at+".label")
+		if err != nil {
+			return "", err
+		}
+		if e.win {
+			return "", invalid(g.at+".label", "a running value or a percent is not a label")
+		}
+		// A label that reads a row's value has none for a group of rows.
+		if lv.readsRowValue(g.group.Label, false, map[string]bool{}) {
+			return "NULL", nil
+		}
+		return e.sql, nil
+	}
+	target := lv.c.groupTargets[lv.n-1]
+	if target == nil {
+		return "NULL", nil
+	}
+	f := firstTextField(target)
+	if f == nil {
+		return "NULL", nil
+	}
+	return recordSQL(lv.r.s, target, &pathPlan{field: f, src: target}, fmt.Sprintf("a.k%d", lv.n-1)), nil
 }
 
 // levelCtx compiles a cell of a group, subtotal or total row from the
@@ -311,6 +345,12 @@ func (lv *level) readsRowValue(n *Node, inAggregate bool, seen map[string]bool) 
 	if n.Op == "lookup" {
 		return lv.lookupReadsRowValue(n, inAggregate, seen)
 	}
+	// A record leaf has one value on its group's level and the levels
+	// below it; above them the rows have no one record.
+	if n.Record != "" {
+		gi := lv.c.groupIndex(n.Record)
+		return !inAggregate && gi >= 0 && lv.n < gi+1
+	}
 	if n.Path != nil {
 		return !inAggregate
 	}
@@ -353,10 +393,12 @@ func (lv *level) lookupReadsRowValue(n *Node, inAggregate bool, seen map[string]
 	var walk func(n *Node) bool
 	walk = func(n *Node) bool {
 		switch {
-		case n == nil || n.Path != nil:
+		case n == nil:
 			return false
-		case n.Col != "":
+		case n.Col != "" || n.Record != "":
 			return lv.readsRowValue(n, inAggregate, seen)
+		case n.Path != nil:
+			return false
 		}
 		if n.Op == "lookup" {
 			// bind has refused a value that does not decode.
@@ -367,6 +409,28 @@ func (lv *level) lookupReadsRowValue(n *Node, inAggregate bool, seen map[string]
 		return walk(n.Where) || slices.ContainsFunc(n.Args, walk)
 	}
 	return walk(n)
+}
+
+// record reads the group record's field on the group's level and the levels
+// below it, keyed by the group's key.
+func (lc *levelCtx) record(group string, p Path, at string) (expr, error) {
+	c := lc.lv.c
+	gi, target, err := c.recordOf(group, at)
+	if err != nil {
+		return expr{}, err
+	}
+	bound, err := bindRecordPath(c.p.app, target, p, at)
+	if err != nil {
+		return expr{}, err
+	}
+	e := recordExpr(bound)
+	// Outside the group (a level above it, the total) there is no one record.
+	if lc.lv.n < gi+1 {
+		e.sql = "NULL"
+		return e, nil
+	}
+	e.sql = recordSQL(lc.lv.r.s, target, bound, fmt.Sprintf("a.k%d", gi))
+	return e, nil
 }
 
 // path is blank on a group, subtotal or total row, as a path column with no

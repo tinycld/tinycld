@@ -89,6 +89,9 @@ type fctx interface {
 	exists(n *Node, at string) (expr, error)
 	// lookup compiles a lookup node: a value from another source's rows.
 	lookup(n *Node, at string) (expr, error)
+	// record compiles a record leaf: path read from the linked record of
+	// the group named group.
+	record(group string, p Path, at string) (expr, error)
 	// bind adds a value to the statement's parameters and returns its
 	// placeholder.
 	bind(v any) string
@@ -128,9 +131,11 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 		return expr{}, invalid(at, "only lookup takes a source and a pick")
 	}
 	if kinds := nodeKinds(n); kinds != 1 {
-		return expr{}, invalid(at, "a formula node is one of op, col, path, param, value or subtotal")
+		return expr{}, invalid(at, errNodeKind)
 	}
 	switch {
+	case n.Record != "":
+		return c.record(n.Record, n.Path, at)
 	case n.Col != "":
 		return c.col(n.Col, at)
 	case n.Path != nil:
@@ -196,9 +201,15 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	return e, nil
 }
 
+// errNodeKind refuses a node that is not exactly one kind of node.
+const errNodeKind = "a formula node is one of op, col, path, param, value, subtotal or record"
+
 func nodeKinds(n *Node) int {
 	kinds := 0
-	for _, set := range []bool{n.Op != "", n.Col != "", n.Path != nil, n.Param != "", n.Value != nil, n.Subtotal != ""} {
+	// A record leaf's path is part of it; a lookup's value is not a literal.
+	path := n.Path != nil && n.Record == ""
+	value := n.Value != nil && n.Op != "lookup"
+	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Param != "", value, n.Subtotal != "", n.Record != ""} {
 		if set {
 			kinds++
 		}
@@ -814,6 +825,10 @@ func (ctxBase) exists(n *Node, at string) (expr, error) {
 
 func (ctxBase) lookup(_ *Node, at string) (expr, error) {
 	return expr{}, invalid(at, "a lookup is read in a column, the filter, a group, a sort or a label")
+}
+
+func (ctxBase) record(_ string, _ Path, at string) (expr, error) {
+	return expr{}, invalid(at, "a record field is read on a group's rows, the rows below them, a sort, a label or a having")
 }
 
 // aggregateArg compiles an aggregate's argument over one base row and

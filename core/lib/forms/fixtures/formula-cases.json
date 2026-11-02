@@ -641,6 +641,37 @@
                 ]
             },
             "expect": 5
+        },
+        {
+            "name": "a record field reads the group's record",
+            "types": {},
+            "values": {},
+            "recordTypes": { "name": "text" },
+            "record": { "name": "Cash" },
+            "formula": { "record": "g", "path": [{ "field": "name" }] },
+            "expect": "Cash"
+        },
+        {
+            "name": "if over a record field",
+            "types": {},
+            "values": {},
+            "recordTypes": { "kind": "text" },
+            "record": { "kind": "equity" },
+            "formula": {
+                "op": "if",
+                "args": [
+                    {
+                        "op": "eq",
+                        "args": [
+                            { "record": "g", "path": [{ "field": "kind" }] },
+                            { "value": "equity" }
+                        ]
+                    },
+                    { "value": 1 },
+                    { "value": 2 }
+                ]
+            },
+            "expect": 1
         }
     ]
 }

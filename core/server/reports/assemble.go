@@ -202,11 +202,16 @@ func (rn *runner) push(row Row) { rn.res.Rows = append(rn.res.Rows, row) }
 // group emits a level-n group row, its children when expanded, and its
 // subtotal.
 func (rn *runner) group(t *tree, row map[string]any, n int, section string) {
-	p := rn.c.p
 	key := rn.rowKey(row, n)
 	id := "g:" + keyString(key)
-	label := rn.display(p.groups[n-1].col, row[fmt.Sprintf("k%d", n-1)], p.groups[n-1].group.Bucket != "")
-	rn.groupWithLabel(t, row, n, section, id, label, key, p.groups[n-1].group.Subtotals)
+	g := rn.c.p.groups[n-1]
+	label := rn.display(g.col, row[fmt.Sprintf("k%d", n-1)], g.group.Bucket != "")
+	// A record group and a labelled group are named by their label; a blank
+	// one reads (none), never the record's id.
+	if g.group.Label != nil || rn.c.groupTargets[n-1] != nil {
+		label = labelText(row["__label"])
+	}
+	rn.groupWithLabel(t, row, n, section, id, label, key, g.group.Subtotals)
 }
 
 // groupWithLabel emits a group row; subtotal says whether an expanded group

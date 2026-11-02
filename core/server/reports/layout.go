@@ -84,7 +84,8 @@ func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err er
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
 		}
-		cells = append(cells, fmt.Sprintf("%d AS __ord", i))
+		// The level rows' last columns, so every leg of the union has the same.
+		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __n")
 		if len(lc.used) > maxJoinedChunks {
 			return nil, nil, invalid(at, "a computed row reads too many sections")
 		}
@@ -285,7 +286,10 @@ func (lc *layoutCtx) col(id, at string) (expr, error) {
 	return expr{}, invalid(at, fmt.Sprintf("a computed row reads sections' subtotals, earlier rows, values and lookups: its cell in %q is this formula, so reading the column would read itself", id))
 }
 func (lc *layoutCtx) path(_ Path, at string) (expr, error) { return expr{}, lc.only(at) }
-func (lc *layoutCtx) param(_, at string) (expr, error)     { return expr{}, lc.only(at) }
+func (lc *layoutCtx) record(_ string, _ Path, at string) (expr, error) {
+	return expr{}, lc.only(at)
+}
+func (lc *layoutCtx) param(_, at string) (expr, error) { return expr{}, lc.only(at) }
 func (lc *layoutCtx) aggregate(_ Aggregate, _ *Node, _ int, at string) (expr, error) {
 	return expr{}, lc.only(at)
 }

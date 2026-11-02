@@ -26,6 +26,9 @@ type formulaCase struct {
 	Rows        []map[string]any     `json:"rows"`
 	LookupTypes map[string]FieldType `json:"lookupTypes"`
 	LookupRows  []map[string]any     `json:"lookupRows"`
+	// RecordTypes and Record are the group record a record leaf reads.
+	RecordTypes map[string]FieldType `json:"recordTypes"`
+	Record      map[string]any       `json:"record"`
 	FiscalStart int                  `json:"fiscalStart"`
 	Formula     *Node                `json:"formula"`
 	Forms       any                  `json:"forms"`
@@ -61,6 +64,10 @@ type tableCtx struct {
 	fiscal      int
 	lookupTypes map[string]FieldType
 	lookupRows  []map[string]any
+	// recordTypes and recordRow are the case's group record; the row is not
+	// named record, which is the method.
+	recordTypes map[string]FieldType
+	recordRow   map[string]any
 }
 
 func (c *tableCtx) col(id, at string) (expr, error) {
@@ -87,6 +94,18 @@ func (c *tableCtx) exists(*Node, string) (expr, error) {
 	return expr{}, fmt.Errorf("no links in the table")
 }
 func (c *tableCtx) filter() bool { return false }
+
+// record reads a field of the case's record, whichever group it names.
+func (c *tableCtx) record(_ string, p Path, at string) (expr, error) {
+	if len(p) != 1 || p[0].Field == "" {
+		return expr{}, invalid(at, "a record path is one field here")
+	}
+	typ, ok := c.recordTypes[p[0].Field]
+	if !ok {
+		return expr{}, invalid(at, "unknown record field "+p[0].Field)
+	}
+	return expr{sql: c.bind(jsonValue(c.recordRow[p[0].Field])), typ: typ}, nil
+}
 
 func (c *tableCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (expr, error) {
 	e, err := compileFormula(c, arg, at+".args.0")
@@ -187,9 +206,12 @@ func (l *tableLookupCtx) window(string, *Node, int, string) (expr, error) {
 	return expr{}, fmt.Errorf("no windows")
 }
 func (l *tableLookupCtx) lookup(n *Node, at string) (expr, error) { return l.outer.lookup(n, at) }
-func (l *tableLookupCtx) bind(v any) string                       { return l.outer.bind(v) }
-func (l *tableLookupCtx) fiscalStart() string                     { return l.outer.fiscalStart() }
-func (l *tableLookupCtx) filter() bool                            { return false }
+func (l *tableLookupCtx) record(g string, p Path, at string) (expr, error) {
+	return l.outer.record(g, p, at)
+}
+func (l *tableLookupCtx) bind(v any) string   { return l.outer.bind(v) }
+func (l *tableLookupCtx) fiscalStart() string { return l.outer.fiscalStart() }
+func (l *tableLookupCtx) filter() bool        { return false }
 
 // jsonValue turns a decoded case value into what SQLite binds: a whole
 // number binds as an integer.
@@ -202,7 +224,11 @@ func jsonValue(v any) any {
 
 func runFormulaCase(t *testing.T, app core.App, c formulaCase) (any, error) {
 	t.Helper()
-	ctx := &tableCtx{types: c.Types, params: dbx.Params{}, fiscal: c.FiscalStart, lookupTypes: c.LookupTypes, lookupRows: c.LookupRows}
+	ctx := &tableCtx{
+		types: c.Types, params: dbx.Params{}, fiscal: c.FiscalStart,
+		lookupTypes: c.LookupTypes, lookupRows: c.LookupRows,
+		recordTypes: c.RecordTypes, recordRow: c.Record,
+	}
 	e, err := compileFormula(ctx, c.Formula, "formula")
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -267,10 +293,14 @@ func sameValue(got, want any) bool {
 }
 
 // onlyFormsOps is true when every operator is one the forms engine has. count is left out: the
-// report's count(col) skips blanks and the forms count(rows) counts every row.
+// report's count(col) skips blanks and the forms count(rows) counts every row. A form has
+// no groups, so it has no record leaf.
 func onlyFormsOps(n *Node) bool {
 	if n == nil {
 		return true
+	}
+	if n.Record != "" {
+		return false
 	}
 	if n.Op != "" {
 		switch n.Op {

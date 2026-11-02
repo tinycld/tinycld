@@ -78,6 +78,12 @@ func (j *joinCtx) path(p Path, at string) (expr, error) {
 	return j.sc.value(&pathPlan{hops: hops, field: bound.field}), nil
 }
 
+// record is refused: the filter, a group key and a fill read base rows
+// before any group has a record (R21).
+func (j *joinCtx) record(_ string, _ Path, at string) (expr, error) {
+	return expr{}, invalid(at, "the filter, a group key and a fill read rows before they are grouped: read the field through a path")
+}
+
 func (j *joinCtx) param(id, at string) (expr, error) {
 	v, err := paramOf(j.r.c, id, at)
 	if err != nil {
