@@ -237,7 +237,10 @@ function SortRows({ builder }: { builder: ReportBuilder }) {
         <SortRow key={rowKey} builder={builder} sort={sort} index={index} options={options} />
     ))
     const add = () =>
-        builder.setSort([...sort, { kind: 'col', col: options[0]?.value ?? '', dir: 'asc' }])
+        builder.setSort([
+            ...sort,
+            { kind: 'col', col: options[0]?.value ?? '', dir: 'asc', explicitDir: false },
+        ])
     return (
         <View className="gap-2">
             {rows}

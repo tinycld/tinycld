@@ -24,6 +24,7 @@ function draft(): BuilderDraft {
                 scale: null,
                 format: '',
                 total: 'recompute',
+                explicitTotal: false,
                 labelField: '',
             },
             {
@@ -35,6 +36,7 @@ function draft(): BuilderDraft {
                 scale: null,
                 format: '',
                 total: 'recompute',
+                explicitTotal: false,
                 labelField: '',
             },
         ],
@@ -142,6 +144,7 @@ describe('the type of a column', () => {
             scale: null,
             format: '',
             total: 'recompute' as const,
+            explicitTotal: false,
             labelField: '',
             formula: { kind: 'editable' as const, node },
         })

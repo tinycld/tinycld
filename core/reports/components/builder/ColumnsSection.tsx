@@ -196,6 +196,7 @@ export function ColumnsSection({
             scale: null,
             format: '',
             total: 'recompute',
+            explicitTotal: false,
             labelField: '',
         }
         builder.setColumns([...columns, column])
@@ -215,6 +216,7 @@ export function ColumnsSection({
                 scale: null,
                 format: '',
                 total: 'recompute',
+                explicitTotal: false,
                 labelField: '',
             },
         ])

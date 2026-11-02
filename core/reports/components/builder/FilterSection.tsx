@@ -260,7 +260,8 @@ function DefaultPreset({ ctx, item, path }: ValueProps) {
 function AskToggle(props: ValueProps) {
     const { ctx, item, path, info } = props
     const isAsking = item.param !== ''
-    const canAsk = askParamFor(info.field, item.op, 'probe') !== null
+    // A relation is asked as a record picked from the source it points at (R19).
+    const canAsk = askParamFor(info.field, item.op, 'probe', info.target) !== null
     if (!isAsking && !canAsk) return null
     const needed = askHighParamFor(info.field, item.op, 'probe') ? 2 : 1
     const isFull = !isAsking && ctx.params.length + needed > MAX_PARAMS
@@ -270,7 +271,8 @@ function AskToggle(props: ValueProps) {
             return
         }
         const taken = ctx.params.map(p => p.id)
-        const low = askParamFor(info.field, item.op, nextColumnId(taken, columnHint(item.path)))
+        const id = nextColumnId(taken, columnHint(item.path))
+        const low = askParamFor(info.field, item.op, id, info.target)
         if (!low) return
         const asked = askHighParamFor(info.field, item.op, low.id)
         if (!asked) {

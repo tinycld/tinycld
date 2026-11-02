@@ -9,8 +9,8 @@ import {
     type CatalogSource,
     type FieldType,
 } from '../types'
-import { type Catalog, describePath, firstTextField, sourceAtLinks } from './columns'
-import { onlyKeys } from './formula'
+import { avgScaleFor, type Catalog, describePath, firstTextField, sourceAtLinks } from './columns'
+import { hasScale, onlyKeys } from './formula'
 import { type FormulaRecord, lookupValueNode } from './formula-parts'
 
 // The builder's filter: groups of conditions joined by All of / Any of / None of,
@@ -51,6 +51,8 @@ export type ConditionDraft = {
     path: SpecHop[]
     /** A total's aggregate (subject total); else ''. */
     aggregate: Aggregate | ''
+    /** An average's decimal places; null takes the field type's default (amounts 0). */
+    scale: number | null
     /** The column a column subject reads; else ''. */
     col: string
     /** The group whose record a record subject reads; else ''. */
@@ -102,6 +104,7 @@ const conditionSchema = z.object({
     // A column subject has no path.
     path: z.array(specHopSchema),
     aggregate: z.enum(['', ...AGGREGATES]),
+    scale: z.number().int().min(0).max(6).nullable(),
     col: z.string(),
     record: z.string(),
     op: z.enum(CONDITION_OPS),
@@ -143,6 +146,7 @@ export function emptyCondition(path: SpecHop[]): ConditionDraft {
         subject: 'field',
         path,
         aggregate: '',
+        scale: null,
         col: '',
         record: '',
         op: 'eq',
@@ -311,10 +315,20 @@ const counts = (aggregate: Aggregate | '') =>
 const usesDay = (subject: ConditionSubject, type: FieldType) =>
     isDayType(type) && (subject === 'field' || subject === 'record')
 
-function subjectNode(c: ConditionDraft): SpecNode {
+// The engine averages at a scale it is told: whole cents for amounts, else the
+// author's places or the number default (formula.go aggregateNode, checkAggregate).
+function avgScale(c: ConditionDraft, field: FieldType | null): number {
+    if (field === 'money') return 0
+    return c.scale ?? avgScaleFor(field ?? 'number')
+}
+
+function subjectNode(c: ConditionDraft, scope: Scope): SpecNode {
     switch (c.subject) {
-        case 'total':
-            return { op: c.aggregate || 'count', args: [{ path: c.path }] }
+        case 'total': {
+            const node = { op: c.aggregate || 'count', args: [{ path: c.path }] }
+            if (c.aggregate !== 'avg') return node
+            return { ...node, scale: avgScale(c, fieldType(scope.catalog, scope.baseKey, c.path)) }
+        }
         case 'column':
             return { col: c.col }
         case 'record':
@@ -340,12 +354,13 @@ function subjectType(c: ConditionDraft, scope: Scope): FieldType | null {
     return fieldType(scope.catalog, scope.baseKey, c.path)
 }
 
-function conditionNode(c: ConditionDraft, type: FieldType, scope: Scope): SpecNode {
-    const target = subjectNode(c)
+function conditionNode(draft: ConditionDraft, type: FieldType, scope: Scope): SpecNode {
+    // A value that is the key of a group above (a fill, F21) is not asked.
+    const c = draft.above ? { ...draft, param: '', paramHigh: '' } : draft
+    const target = subjectNode(c, scope)
     const subject: SpecNode = usesDay(c.subject, type)
         ? { op: 'addDays', args: [target, { value: 0 }] }
         : target
-    // In a fill, a value can be the key of a group above: the record's parent (F21).
     const group = c.above ? scope.above.find(g => g.id === c.above) : undefined
     const leaf = (text: string): SpecNode => {
         if (group) return { col: group.col }
@@ -562,11 +577,28 @@ function subject(
     return { kind, raw: path, day: null, path, type, parts: { subject: kind, ...parts } }
 }
 
-// A total reads one plain path: sum(x), count(x), min(x), ….
+// A total reads one plain path: sum(x), count(x), min(x), …; an average also says
+// its scale.
 function totalPath(node: SpecNode): SpecHop[] | null {
     const [arg] = node.args ?? []
-    if (!node.op || !isAggregate(node.op) || !onlyKeys(node, ['op', 'args'])) return null
+    if (!node.op || !isAggregate(node.op)) return null
+    const isAvg = node.op === 'avg'
+    const keys = isAvg ? ['op', 'args', 'scale'] : ['op', 'args']
+    if (!onlyKeys(node, keys) || (isAvg && !hasScale(node))) return null
     return node.args?.length === 1 ? plainPath(arg) : null
+}
+
+// An average keeps the author's places; the default reads as null. An average of
+// amounts at other places is refused by the engine and stays a fixed part.
+function totalParts(
+    node: SpecNode,
+    op: Aggregate,
+    field: FieldType
+): Partial<ConditionDraft> | null {
+    if (op !== 'avg') return { aggregate: op }
+    const scale = node.scale ?? 0
+    if (field === 'money' && scale !== 0) return null
+    return { aggregate: op, scale: scale === avgScaleFor(field) ? null : scale }
 }
 
 // Columns, totals and group records are read only on a group level (R18).
@@ -584,8 +616,9 @@ function levelSubject(node: SpecNode, scope: Scope, level: LevelScope): Subject 
     const total = totalPath(node)
     if (!total || !node.op || !isAggregate(node.op)) return null
     const field = fieldType(scope.catalog, scope.baseKey, total)
-    const type = field && counts(node.op) ? 'number' : field
-    return type ? subject('total', total, type, { aggregate: node.op }) : null
+    const parts = field ? totalParts(node, node.op, field) : null
+    if (!field || !parts) return null
+    return subject('total', total, counts(node.op) ? 'number' : field, parts)
 }
 
 function plainSubject(node: SpecNode, scope: Scope): Subject | null {
@@ -693,8 +726,10 @@ export function paramsInNode(node: SpecNode | undefined, into: Set<string>): Set
 
 export function paramsInGroup(group: GroupDraft, into: Set<string>): Set<string> {
     for (const item of group.items) {
-        if (item.kind === 'condition' && item.param) into.add(item.param)
-        if (item.kind === 'condition' && item.paramHigh) into.add(item.paramHigh)
+        // A value that is the key of a group above asks nothing (conditionNode).
+        const asks = item.kind === 'condition' && !item.above
+        if (asks && item.param) into.add(item.param)
+        if (asks && item.paramHigh) into.add(item.paramHigh)
         if (item.kind === 'fixed') paramsInNode(item.node, into)
         if (item.kind === 'group') paramsInGroup(item, into)
         if (item.kind === 'related') paramsInGroup(item.where, into)
@@ -713,17 +748,18 @@ function textProblem(text: string, type: FieldType): string | null {
 
 function valueProblem(c: ConditionDraft, type: FieldType, scope: Scope): string | null {
     if (!needsValue(c.op)) return null
-    // Only a date range is one param; a range of numbers asks both ends.
-    if (c.op === 'between' && c.param && !c.paramHigh && !isDayType(type))
-        return 'ask both ends of the range'
-    if (c.param) return null
-    if (c.op === 'in') return c.values.length > 0 ? null : 'choose at least one'
-    // The value is the key of the group above.
-    if (c.above) {
+    // The value is the key of the group above; nothing is asked (conditionNode).
+    if (c.above && c.op !== 'in') {
         return scope.above.some(g => g.id === c.above)
             ? null
             : 'the group above is no longer in the report'
     }
+    const param = c.above ? '' : c.param
+    // Only a date range is one param; a range of numbers asks both ends.
+    if (c.op === 'between' && param && !c.paramHigh && !isDayType(type))
+        return 'ask both ends of the range'
+    if (param) return null
+    if (c.op === 'in') return c.values.length > 0 ? null : 'choose at least one'
     const texts = c.op === 'between' ? [c.value, c.high] : [c.value]
     for (const text of texts) {
         const problem = textProblem(text, type)

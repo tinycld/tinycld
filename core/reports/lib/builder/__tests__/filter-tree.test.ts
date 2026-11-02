@@ -112,6 +112,7 @@ describe('filter tree edits', () => {
             scale: null,
             format: '',
             total: 'recompute',
+            explicitTotal: false,
             labelField: '',
             formula: { kind: 'fixed', node: { param: 'rate' } },
         }

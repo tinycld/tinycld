@@ -90,6 +90,8 @@ const columnFields = {
     format: z.string().max(50),
     /** Level and total cells: recomputed from every row, or the rows shown added (E2). */
     total: z.enum(['recompute', 'rows']),
+    /** The read spec said `total` itself, so a save keeps even the default. */
+    explicitTotal: z.boolean(),
     /** The field a link column shows its record by; '' takes the first text field (R31). */
     labelField: z.string(),
 }
@@ -122,11 +124,15 @@ const layoutItemSchema = z.union([
 ])
 export type LayoutItemDraft = z.infer<typeof layoutItemSchema>
 
-const SORT_DIR = z.enum(['asc', 'desc'])
+const sortDir = {
+    dir: z.enum(['asc', 'desc']),
+    /** The read spec said `dir` itself, so a save keeps even 'asc'. */
+    explicitDir: z.boolean(),
+}
 /** A sort key: a column, or a formula (a group record's field, R9). */
 export const sortDraftSchema = z.union([
-    z.object({ kind: z.literal('col'), col: z.string().min(1, 'Choose a column'), dir: SORT_DIR }),
-    z.object({ kind: z.literal('formula'), formula: formulaDraftSchema, dir: SORT_DIR }),
+    z.object({ kind: z.literal('col'), col: z.string().min(1, 'Choose a column'), ...sortDir }),
+    z.object({ kind: z.literal('formula'), formula: formulaDraftSchema, ...sortDir }),
 ])
 export type SortDraft = z.infer<typeof sortDraftSchema>
 
@@ -161,6 +167,8 @@ const draftShape = z.object({
         bucket: z.enum(BUCKET_CHOICES),
         cell: z.string(),
         maxColumns: z.number().int().min(1).max(MAX_PIVOT_COLUMNS),
+        /** The read spec said `maxColumns` itself, so a save keeps even the default. */
+        explicitMax: z.boolean(),
         /** The field a pivot over a link heads its columns by; '' takes the first text field. */
         labelField: z.string(),
     }),
@@ -169,6 +177,8 @@ const draftShape = z.object({
     detailLabel: formulaDraftSchema.nullable(),
     /** The line layouts per width (E14), kept as the spec says them. */
     display: z.object({ layouts: z.array(displayLayoutSchema).max(DISPLAY_WIDTHS.length) }),
+    /** Empty parts the read spec spelled out (`detail: {}`, `display: {}`), kept by a save. */
+    explicit: z.object({ detail: z.boolean(), display: z.boolean() }),
 })
 export type BuilderDraft = z.infer<typeof draftShape>
 
@@ -290,6 +300,7 @@ export function emptyDraft(source: CatalogSource): BuilderDraft {
                   scale: null,
                   format: '',
                   total: 'recompute',
+                  explicitTotal: false,
                   labelField: '',
               },
           ]
@@ -307,6 +318,7 @@ export function emptyDraft(source: CatalogSource): BuilderDraft {
         layout: [],
         detailLabel: null,
         display: { layouts: [] },
+        explicit: { detail: false, display: false },
     }
 }
 
@@ -316,6 +328,7 @@ const NO_PIVOT: BuilderDraft['pivot'] = {
     bucket: '',
     cell: '',
     maxColumns: DEFAULT_PIVOT_COLUMNS,
+    explicitMax: false,
     labelField: '',
 }
 
@@ -331,6 +344,7 @@ function columnDraft(
         scale: column.scale ?? null,
         format: column.format ?? '',
         total: column.total ?? 'recompute',
+        explicitTotal: column.total !== undefined,
         labelField: column.labelField ?? '',
     } as const
     if (column.formula) {
@@ -382,6 +396,7 @@ export function draftFromSpec(
               bucket: spec.pivot.bucket ?? '',
               cell: spec.pivot.cell,
               maxColumns: spec.pivot.maxColumns ?? DEFAULT_PIVOT_COLUMNS,
+              explicitMax: spec.pivot.maxColumns !== undefined,
               labelField: spec.pivot.labelField ?? '',
           }
         : NO_PIVOT
@@ -412,13 +427,14 @@ export function draftFromSpec(
         layout: (spec.layout ?? []).map(item => layoutItemDraft(item, params)),
         detailLabel: spec.detail?.label ? formulaDraft(spec.detail.label, params) : null,
         display: { layouts: spec.display?.layouts ?? [] },
+        explicit: { detail: Boolean(spec.detail), display: Boolean(spec.display) },
     }
 }
 
 function sortDraft(key: SpecSortKey, params: readonly ParamDef[]): SortDraft {
-    const dir = key.dir ?? 'asc'
-    if (key.formula) return { kind: 'formula', formula: formulaDraft(key.formula, params), dir }
-    return { kind: 'col', col: key.col ?? '', dir }
+    const dir = { dir: key.dir ?? 'asc', explicitDir: key.dir !== undefined }
+    if (key.formula) return { kind: 'formula', formula: formulaDraft(key.formula, params), ...dir }
+    return { kind: 'col', col: key.col ?? '', ...dir }
 }
 
 interface LevelRead {
@@ -482,7 +498,7 @@ function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecC
             out.scale = column.scale ?? avgScaleFor(types.get(column.id) ?? 'number')
         }
         if (column.format !== '' && showsFormat(column, types)) out.format = column.format
-        if (column.total === 'rows') out.total = 'rows'
+        if (column.total === 'rows' || column.explicitTotal) out.total = column.total
         if (column.labelField !== '') out.labelField = column.labelField
         return out
     })
@@ -531,6 +547,16 @@ export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[
     for (const key of draft.sort) if (key.kind === 'formula') node(key.formula.node)
     for (const item of draft.layout) if (item.kind === 'row') node(item.formula.node)
     node(draft.detailLabel?.node)
+    // A kept param's options can be filtered by another param, which then stays too,
+    // and so on (params.go optionsFrom.where).
+    const byId = new Map([...draft.params, ...added].map(p => [p.id, p]))
+    const pending = [...read, ...added.map(p => p.id)]
+    for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
+        for (const next of paramsInNode(byId.get(id)?.optionsFrom?.where, new Set())) {
+            if (!read.has(next)) pending.push(next)
+            read.add(next)
+        }
+    }
     return [...draft.params.filter(p => read.has(p.id)), ...added]
 }
 
@@ -551,7 +577,7 @@ function specLayout(
 function specSort(draft: BuilderDraft, catalog: Catalog): SpecSortKey[] {
     const ctx = formulaContext(draft, catalog, { kind: 'level' })
     return draft.sort.map(s => {
-        const dir = s.dir === 'desc' ? { dir: 'desc' as const } : {}
+        const dir = s.dir === 'desc' || s.explicitDir ? { dir: s.dir } : {}
         return s.kind === 'col'
             ? { col: s.col, ...dir }
             : { formula: specFormula(s.formula, ctx), ...dir }
@@ -586,7 +612,10 @@ function specPivot(pivot: BuilderDraft['pivot']): NonNullable<ReportSpec['pivot'
         path: pivot.path,
         ...(pivot.bucket !== '' ? { bucket: pivot.bucket } : {}),
         cell: pivot.cell,
-        maxColumns: pivot.maxColumns,
+        // The engine shows DEFAULT_PIVOT_COLUMNS when none is said (bind.go pivot).
+        ...(pivot.explicitMax || pivot.maxColumns !== DEFAULT_PIVOT_COLUMNS
+            ? { maxColumns: pivot.maxColumns }
+            : {}),
         ...(pivot.labelField !== '' ? { labelField: pivot.labelField } : {}),
     }
 }
@@ -611,7 +640,8 @@ export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec
     if (draft.detailLabel) {
         const ctx = formulaContext(draft, catalog, { kind: 'detail' })
         spec.detail = { label: specFormula(draft.detailLabel, ctx) }
-    }
+    } else if (draft.explicit.detail) spec.detail = {}
     if (draft.display.layouts.length > 0) spec.display = { layouts: draft.display.layouts }
+    else if (draft.explicit.display) spec.display = {}
     return spec
 }

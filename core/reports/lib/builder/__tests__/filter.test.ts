@@ -442,3 +442,90 @@ describe('a fill condition that matches the group above', () => {
         expect(aboveOf(groups, 3, columns)[2]).toEqual({ id: 'g2', col: 'gone', label: 'gone' })
     })
 })
+
+describe('an average on a group level', () => {
+    const level: LevelScope = { colType: () => undefined, records: [] }
+    const avg = (field: string, scale?: number): SpecNode => ({
+        op: 'avg',
+        args: [{ path: [{ field }] }],
+        ...(scale === undefined ? {} : { scale }),
+    })
+    const gt = (subject: SpecNode, value: number): SpecNode => ({
+        op: 'gt',
+        args: [subject, { value }],
+    })
+
+    it('writes the scale the engine needs: whole cents for amounts, else the number default', () => {
+        const condition = (field: string): GroupDraft => ({
+            kind: 'group',
+            match: 'all',
+            items: [
+                {
+                    ...emptyCondition([{ field }]),
+                    subject: 'total',
+                    aggregate: 'avg',
+                    op: 'gt',
+                    value: '5',
+                },
+            ],
+        })
+        expect(filterToNode(condition('amount'), CATALOG, SALES_KEY, level)).toEqual(
+            gt(avg('amount', 0), 500)
+        )
+        expect(filterToNode(condition('quantity'), CATALOG, SALES_KEY, level)).toEqual(
+            gt(avg('quantity', 2), 5)
+        )
+    })
+
+    it('reads an average with its scale as an editable total and keeps the scale', () => {
+        for (const node of [
+            gt(avg('amount', 0), 500),
+            gt(avg('quantity', 2), 5),
+            gt(avg('quantity', 4), 5),
+        ]) {
+            const group = nodeToFilter(node, CATALOG, SALES_KEY, level)
+            expect(group.items[0]).toMatchObject({
+                kind: 'condition',
+                subject: 'total',
+                aggregate: 'avg',
+            })
+            expect(filterToNode(group, CATALOG, SALES_KEY, level)).toEqual(node)
+        }
+        expect(
+            nodeToFilter(gt(avg('quantity', 4), 5), CATALOG, SALES_KEY, level).items[0]
+        ).toMatchObject({
+            scale: 4,
+        })
+    })
+
+    it('keeps an average the engine refuses as a fixed part', () => {
+        for (const node of [gt(avg('quantity'), 5), gt(avg('amount', 2), 500)]) {
+            expect(nodeToFilter(node, CATALOG, SALES_KEY, level).items[0]?.kind).toBe('fixed')
+        }
+    })
+})
+
+describe('a value that is the key of the group above', () => {
+    const above = [{ id: 'g0', col: 'region', label: 'Region' }]
+    it('asks nothing, even when the condition still names a param', () => {
+        const group: GroupDraft = {
+            kind: 'group',
+            match: 'all',
+            items: [
+                {
+                    ...emptyCondition([{ field: 'region' }]),
+                    op: 'eq',
+                    above: 'g0',
+                    param: 'stale',
+                    paramHigh: 'staleTo',
+                },
+            ],
+        }
+        expect([...paramsInGroup(group, new Set())]).toEqual([])
+        expect(filterToNode(group, CATALOG, TEAMS_KEY, undefined, above)).toEqual({
+            op: 'eq',
+            args: [{ path: [{ field: 'region' }] }, { col: 'region' }],
+        })
+        expect(conditionProblems(group, CATALOG, TEAMS_KEY, undefined, above)).toEqual([])
+    })
+})

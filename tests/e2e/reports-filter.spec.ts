@@ -3,9 +3,11 @@ import { createInvitedUser, skipWithoutReportsStub } from './helpers'
 import {
     addSale,
     addTeam,
+    chooseOption,
     openReportStub,
     openReportsHub,
     SALES_SOURCE,
+    saveNewReport,
     startReport,
     TEAMS_SOURCE,
     uniqueName,
@@ -194,6 +196,55 @@ test.describe('filtering a report', () => {
                 .click()
             await expect(p.getByTestId('report-builder-filter-1-op')).toBeVisible()
             await expect(p.getByTestId('report-builder-filter-1-ask')).toBeVisible()
+        } finally {
+            await close()
+        }
+    })
+
+    test('a range of numbers asked when run asks both ends, and the report runs on them', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptrange')
+        try {
+            const team = uniqueName('Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            const sales = [
+                { customer: 'Few', quantity: 1 },
+                { customer: 'Some', quantity: 5 },
+                { customer: 'Many', quantity: 9 },
+            ]
+            for (const sale of sales) {
+                await addSale(p, { team, amount: 100, cost: 0, day: '2026-01-10', ...sale })
+            }
+
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await p.getByTestId('report-builder-section-filter').click()
+            await p.getByTestId('report-builder-filter-add-condition').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-quantity')
+                .click()
+            await chooseOption(p, 'report-builder-filter-0-op', 'between')
+            await p.getByTestId('report-builder-filter-0-ask').click()
+            await expect(p.getByTestId('report-builder-filter-0-value')).toBeHidden()
+            await expect(p.getByTestId('report-builder-filter-0-high')).toBeHidden()
+            await saveNewReport(p, uniqueName('Range'))
+
+            const setNumber = async (id: string, value: string) => {
+                await p.getByTestId('report-add-filter').click()
+                await p.getByTestId(`report-add-filter-${id}`).click()
+                await p.getByTestId('report-filter-value').fill(value)
+                await p.getByTestId('report-filter-apply').click()
+                await expect(p.getByTestId(`report-param-${id}`)).toBeVisible()
+            }
+            await setNumber('quantity', '3')
+            await setNumber('quantity_to', '7')
+            const table = p.getByTestId('report-table')
+            await expect(table.getByText('Some', { exact: true })).toBeVisible()
+            await expect(table.getByText('Few', { exact: true })).toHaveCount(0)
+            await expect(table.getByText('Many', { exact: true })).toHaveCount(0)
         } finally {
             await close()
         }

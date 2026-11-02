@@ -292,6 +292,7 @@ describe('the scale of a division and an average', () => {
             scale: null,
             format: '',
             total: 'recompute',
+            explicitTotal: false,
             labelField: '',
             formula: {
                 kind: 'editable',
@@ -379,6 +380,7 @@ describe('emptyDraft', () => {
                 scale: null,
                 format: '',
                 total: 'recompute',
+                explicitTotal: false,
                 labelField: '',
             },
         ])
@@ -420,6 +422,7 @@ describe('builderSchema', () => {
                     scale: null,
                     format: '',
                     total: 'recompute',
+                    explicitTotal: false,
                     labelField: '',
                 },
             ],
@@ -631,7 +634,12 @@ describe('spec version 2 in the builder', () => {
                 label: read({ param: 'rows' }),
             })),
             sort: [
-                { kind: 'formula' as const, formula: read({ param: 'min' }), dir: 'asc' as const },
+                {
+                    kind: 'formula' as const,
+                    formula: read({ param: 'min' }),
+                    dir: 'asc' as const,
+                    explicitDir: false,
+                },
             ],
             detailLabel: read({ param: 'asOf' }),
         }
@@ -735,5 +743,93 @@ describe('spec version 2 in the builder', () => {
         expect(draftIssues(blankFill, CATALOG).map(i => i.path.join('.'))).toEqual([
             'groups.0.fill',
         ])
+    })
+})
+
+describe('a no-op save keeps what the spec says', () => {
+    it('keeps a param that only another param’s options read, through a chain', () => {
+        const spec: ReportSpec = {
+            version: 2,
+            source: SALES_KEY,
+            params: [
+                {
+                    id: 'teams',
+                    type: 'choice',
+                    label: 'Teams',
+                    optionsFrom: {
+                        source: TEAMS_KEY,
+                        value: [{ field: 'id' }],
+                        label: [{ field: 'name' }],
+                        where: {
+                            op: 'eq',
+                            args: [{ path: [{ field: 'region' }] }, { param: 'region' }],
+                        },
+                    },
+                    multiple: true,
+                },
+                {
+                    id: 'region',
+                    type: 'choice',
+                    label: 'Region',
+                    optionsFrom: {
+                        source: TEAMS_KEY,
+                        value: [{ field: 'region' }],
+                        label: [{ field: 'region' }],
+                        where: {
+                            op: 'startsWith',
+                            args: [{ path: [{ field: 'name' }] }, { param: 'stem' }],
+                        },
+                    },
+                },
+                { id: 'stem', type: 'text', label: 'Stem' },
+                { id: 'unread', type: 'text', label: 'Unread' },
+            ],
+            columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
+            filter: { op: 'in', args: [{ path: [{ link: 'team' }] }, { param: 'teams' }] },
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(specFromDraft(draft, CATALOG)).toEqual({
+            ...spec,
+            params: spec.params?.filter(p => p.id !== 'unread'),
+        })
+        const kept = { ...spec, params: spec.params?.filter(p => p.id !== 'unread') }
+        const again = draftFromSpec(kept, META, CATALOG)
+        expect(JSON.stringify(specFromDraft(again, CATALOG))).toBe(JSON.stringify(kept))
+    })
+
+    it('keeps defaults the spec spells out', () => {
+        const spec: ReportSpec = {
+            version: 2,
+            source: SALES_KEY,
+            columns: [
+                { id: 'status', label: 'Status', path: [{ field: 'status' }] },
+                {
+                    id: 'amount',
+                    label: 'Amount',
+                    path: [{ field: 'amount' }],
+                    aggregate: 'sum',
+                    total: 'recompute',
+                },
+            ],
+            sort: [{ col: 'amount', dir: 'asc' }],
+            groups: [{ id: 'byStatus', col: 'status' }],
+            pivot: { path: [{ field: 'day' }], bucket: 'month', cell: 'amount' },
+            detail: {},
+            display: {},
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(spec))
+        // A pivot the builder turns on says no maxColumns until one other than the default is chosen.
+        const fresh = draftFromSpec({ ...spec, pivot: undefined }, META, CATALOG)
+        const on = {
+            ...fresh,
+            pivot: { ...fresh.pivot, on: true, path: [{ field: 'day' }], cell: 'amount' },
+        }
+        expect(specFromDraft(on, CATALOG).pivot).toEqual({
+            path: [{ field: 'day' }],
+            cell: 'amount',
+        })
+        const twelve = { ...on, pivot: { ...on.pivot, maxColumns: 12 } }
+        expect(specFromDraft(twelve, CATALOG).pivot?.maxColumns).toBe(12)
     })
 })
