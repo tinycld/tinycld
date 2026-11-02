@@ -7,6 +7,7 @@ import "github.com/pocketbase/pocketbase/core"
 func Register(app core.App) {
 	registerRules()
 	bindSafetyHooks(app)
+	scheduleRetention(app)
 	bindPublicationHooks(app)
 	registerEmbedPolicy(app)
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
