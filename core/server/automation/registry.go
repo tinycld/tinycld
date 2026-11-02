@@ -273,6 +273,10 @@ func ResetRegistriesForTest() {
 	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
 	triggerRecordAuthorizers = map[string]TriggerRecordAuthorizer{}
 	sendGuards = map[string][]namedSendGuard{}
+
+	filesMu.Lock()
+	defer filesMu.Unlock()
+	filesProviders = map[string]FilesProvider{}
 }
 
 var autoOwnerFields = []string{"user", "owner", "author"}
