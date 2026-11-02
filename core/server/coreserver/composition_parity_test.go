@@ -70,17 +70,17 @@ var hostHookCounts = map[string]int{
 	"OnRecordAuthRequest":                 2, // the disabled-user guard and the MFA gate
 	"OnRecordAuthWithPasswordRequest":     2,
 	"OnRecordConfirmPasswordResetRequest": 1, // a reset ends an admin-set temporary password
-	"OnRecordCreate":                      4,
+	"OnRecordCreate":                      5, // incl. the web form publication token and defaults
 	"OnRecordCreateExecute":               2,
 	"OnRecordCreateRequest":               16,
 	"OnRecordDelete":                      5,
 	"OnRecordDeleteExecute":               5,
 	"OnRecordDeleteRequest":               18,
-	"OnRecordUpdate":                      8, // incl. app passwords revoked on a tokenKey change
+	"OnRecordUpdate":                      9, // incl. app passwords revoked on a tokenKey change, and the web form publication token
 	"OnRecordUpdateExecute":               4,
 	"OnRecordUpdateRequest":               19,
 	"OnRecordValidate":                    6,
-	"OnServe":                             37,
+	"OnServe":                             38,
 	"OnSettingsReload":                    1,
 	"OnTerminate":                         12, // the start of the terminate's shared deadline (shutdown.Register, shared: the first shared registration that waits binds it, readonly.Register in RegisterSharedEarly); readonly.Register ending tail waits (shared, via RegisterSharedEarly); realtime storing every collaborative document; the background runners of notify (mention notifications), coreserver (invite email + notification; boot notices and the auto-upgrade checks reuse it), audit (audit rows) and search (search sources), all shared, via RegisterSharedCore; drainhooks dropping the app from the process drain (shared, via realtime's drain hook); the package-operation stop and watcher-restart veto (host-only, rebuildJobsFor)
 }
