@@ -24,6 +24,10 @@ This section is for the human before anything runs. Core UI has no design gate, 
 - **Q10 changed:** general spanning cells by guillotine cuts; only a pinwheel is refused with "These cells overlap in a way that can't be laid out; move one cell." (R28, Tasks 15, 24, 25).
 - **Web scroll offset:** fixed in the FlashList fork (Tasks 25a–25d, with a STOP at Task 25c for the human to review and merge the fork PR); the web caveat leaves the [platform] list.
 
+### Preflight rulings (2026-11-01), applied
+
+Order: Task 9 (formula sort keys) runs before Tasks 5a and 6. Under the no-limits rule five limits became features, and no new refusal was added: lookups in layout computed rows (F16, R21 withdrawn), `total: "rows"` on a number column with no aggregate (F17, R8), an amount param so a money total can be asked (F18, R18 and new R29, Task 12a), "All <group>" as a group reference the server expands (F19, R13 and new R30, Task 13a), and link columns that show their record's label (F22, R9 and new R31, Task 5b). Money currency keys are now gathered from every formula a level reads (F5, R3).
+
 ### Why this is one exclusive PR
 
 E12 changes the report spec contract every lane's report units write (version 2, new fields the builder must keep). E4 and E8 change the run contract (relation-typed values, a new route `POST /api/reports/param-options`, the result's `heading`) and the builder draft contract. OQ2 adds a prop to a forms-engine component. E14 changes how every report table draws on narrow screens and adds `display` to the spec. E1, E9, E10 and E11 alone would be small, but the Books checkpoints need the whole set (spec OQ1). One PR on `books/p5-trial-balance` in `tinycld`, `exclusive` held by lane purchases until it merges, merged before Books checkpoint 1. No core migration, no generator change, no removed or renamed export.
@@ -86,14 +90,14 @@ New fields, by part: `columns[].total` (`"recompute"` default | `"rows"`); `grou
 ### Engine behaviour, per change
 
 - **E1 `Field.TextDay`** (`registry.go`, `check.go`): a `Date` field with `TextDay: true` reads a `text` column that holds `YYYY-MM-DD`. `CheckSources` accepts only a text column for it and refuses `TextDay` on any other type. It reads like a date column (`fieldSQL` takes the first ten characters, `stmt.go:85-94`), so filters, buckets, presets and pivots work unchanged; the catalog says `date`.
-- **E2 `total: "rows"`** (`levels.go`, `run.go`, `pivot.go`): a `rows` column's group, subtotal and total cells are the sum of the cells of the rows directly under them that the result shows (after `having`), per currency. The innermost group computes from its base rows. With no groups, the total adds the detail cells. Pivot cells of a `rows` cell column follow the same rule. Layout sections add their shown rows; computed rows are unchanged. Refused on a column whose level cell is not a number or amount, and on a running value or percent (R8). `recompute` (the default) totals every base row (OQ6).
+- **E2 `total: "rows"`** (`levels.go`, `run.go`, `pivot.go`): a `rows` column's group, subtotal and total cells are the sum of the cells of the rows directly under them that the result shows (after `having`), per currency. The innermost group computes from its base rows. With no groups, the total adds the detail cells. Pivot cells of a `rows` cell column follow the same rule. Layout sections add their shown rows; computed rows are unchanged. A number or amount column with no aggregate also adds its rows: its detail cells, and per group the sum of its base rows (F17). Refused on a column that is neither a number nor an amount, and on a running value or percent (R8). `recompute` (the default) totals every base row (OQ6).
 - **E3 `groups[].having`** (`levels.go`, `run.go`): a condition compiled on that level's rows (aggregates, columns, record fields, params; a condition on an unset param matches every group, as in `filter`). A hidden group hides its children. `recompute` totals still read every base row; `rows` totals add only the rows shown. Refused on the first group of a layout report (R7).
-- **E4 record groups** (`bind.go`, `formula.go`, new `record.go`, `levels.go`): a path that ends at a to-one link, or at the `id` field, is a relation value that carries its target source (R2). `if`, `case` and `coalesce` of relations need one target. A group whose column is such a value is a record group: its key is the record id (no two records merge). The `record` leaf reads the record's fields on the group's level, its subtotal and every row below (blank on outer rows). `groups[].label` labels any group's row (a formula on that level; default for a record group: the target's first text field). `groups[].fill` adds the target's records (filtered by `where`, under the reader's rules) that have no base rows, on any group level, under each parent group and every currency (R6); a fill's `where` may tie a record to its parent (`{col}` of an enclosing group reads the parent's key, `{record}` its record). A fill row opens only onto a deeper level's fill records.
+- **E4 record groups** (`bind.go`, `formula.go`, new `record.go`, `levels.go`): a path that ends at a to-one link, or at the `id` field, is a relation value that carries its target source (R2). `if`, `case` and `coalesce` of relations need one target. A group whose column is such a value is a record group: its key is the record id (no two records merge). The `record` leaf reads the record's fields on the group's level, its subtotal and every row below (blank on outer rows). `groups[].label` labels any group's row (a formula on that level; default for a record group: its record's label, R31). A column whose value is a relation shows its record's label beside the id (`<col>@label`, `columns[].labelField` picks the field, R31). `groups[].fill` adds the target's records (filtered by `where`, under the reader's rules) that have no base rows, on any group level, under each parent group and every currency (R6); a fill's `where` may tie a record to its parent (`{col}` of an enclosing group reads the parent's key, `{record}` its record). A fill row opens only onto a deeper level's fill records.
 - **E5 sort by formula** (`levels.go`, `run.go`, `paging.go`): `sort[]` takes `{ formula, dir }`. On a level the formula is a cell of that level (skipped where it is blank); on detail rows a row value. A formula sort key can page a detail report like a column key; only a running value or a percent is refused, as for columns.
 - **Per-row currencies (Q5):** a `record` amount or a looked-up amount whose source keeps a currency per row carries that currency: beside the value on group and detail rows (the cell's `<col>@currency`), and as a currency key of the rows when it is totalled, so totals group by it (R3).
-- **E6 `lookup`** (`formula.go`, new `lookup.go`): one value (`min` by default, or `max`, R5) of `value` over the rows of `source` that match `where`, read from that source's rule CTE, so the reader's list rule applies; NULL when none match. Inside a lookup a path reads the looked-up source; a column, a record field or a param reads the report's row (a correlated subquery, R4). Allowed in columns, filter, group keys, having, labels and sort; refused in layout computed rows. The run's topics include the looked-up collection (the change signal reads every table the statement reads, `changesignal/topics.go:18-36`).
+- **E6 `lookup`** (`formula.go`, new `lookup.go`): one value (`min` by default, or `max`, R5) of `value` over the rows of `source` that match `where`, read from that source's rule CTE, so the reader's list rule applies; NULL when none match. Inside a lookup a path reads the looked-up source; a column, a record field or a param reads the report's row (a correlated subquery, R4). Allowed in columns, filter, group keys, having, labels, sort and layout computed rows (F16: there `{col}` reads the computed row's section values and `{param}` the run's params). The run's topics include the looked-up collection (the change signal reads every table the statement reads, `changesignal/topics.go:18-36`).
 - **E7 `detail.label`** (`run.go`, `assemble.go`): a formula that labels each detail row (default: the first column, as today). Each row also says which column its label repeats (`labelColumn`, R11) so the client drops exactly that cell from child rows.
-- **E8 `optionsFrom`** (`params.go`, `bind.go`, new `options.go`, `endpoint.go`): a choice param may read its options from a source. A run checks a posted value by type only (R13). New read route `POST /api/reports/param-options` (approved, OQ5), described under "API".
+- **E8 `optionsFrom`** (`params.go`, `bind.go`, new `options.go`, `endpoint.go`): a choice param may read its options from a source. A run checks a posted value by type only (R13); a multiple choice may also hold whole groups, `{"group": "<value>"}`, which the server expands under the reader's rules at run time (R30). A new param type `amount` holds cents and a currency (R29). New read route `POST /api/reports/param-options` (approved, OQ5), described under "API".
 - **E9 `Source.Heading`** (`registry.go`, `run.go`): `func(app core.App) string`, the name a report on that base source prints above its title; the result gains `heading`. With it, `Source.Watch []string` (R14, Q1): collections the source's Go hooks read (`Heading`, `FiscalStartMonth`, `Currency`), added to every run's topics, so a settings change re-runs an open report.
 - **E10 `Shipped.Unpublished`** (`shipped.go`): core creates such a report unpublished and never publishes it on a revision; the package shares it (R15).
 - **E11 report e2e helpers**: the generic part of `tests/e2e/reports-helpers.ts` (`openReportsHub`, `hubRow`, `rowOf`, `cellOf`, `pressToolbar`) moves to `tests/e2e/report-view-helpers.ts` with a new `chooseParamOption`, exported through `@tinycld/core/e2e-helpers`.
@@ -116,17 +120,17 @@ New fields, by part: `columns[].total` (`"recompute"` default | `"rows"`); `grou
 
 Widths are core's breakpoints (`useBreakpoint`): `mobile` (phone), `tablet`, `desktop`. The builder is an inline drawer (440pt) on desktop, an overlay drawer (440pt) on tablet and a full-height sheet with a Design | Preview switch on phone (unchanged); every new control below stacks vertically inside its section card, so it reads the same at every width, and every menu and picker is a popover on desktop and tablet and a bottom sheet on phone (core `PickMenu`, `Popover`).
 
-- **Columns section** (each column card): a "Total" choice for a number or amount column — "Recompute from all rows" (default) / "Add the rows shown" (E2); under the column list a "Row label" card: "First column" (default) or a formula (E7), edited with the report formula editor.
+- **Columns section** (each column card): for a link column, a "Show as" menu of the linked record's fields (default: its first text field, R31); a "Total" choice for a number or amount column — "Recompute from all rows" (default) / "Add the rows shown" (E2); under the column list a "Row label" card: "First column" (default) or a formula (E7), edited with the report formula editor.
 - **Formulas** (columns, row label, group label, sort formula, layout rows): the report formula editor (OQ2): the same part menu, now listing Number, Text, Yes or no, Empty, Column, Field, Group field, Asked value, the arithmetic, totals (Sum of, Count of, …), running values, comparisons, All of / Any of / Not, Is empty, If, First match, First not empty, the text and date operators, and Look up. Parts with slots show a small slot caption ("When", "Then", "Otherwise"; "Where", "Value"). A formula the editor cannot show (an unknown key or operator) stays read-only and is saved unchanged (R17).
 - **Group and sort section** (each group level card): "Group by" lists columns, including a column that is a link ("Team (record)"); for a record group three more rows: "Label" (a field picker over the linked source, or "Formula…"), a "Show every Team, even with no rows" switch with its own condition editor (any level; under another group a condition can be "Same as the <group> above"), and, for every group, "Show only groups where…" (the filter editor in aggregate mode: Total of a field, Column, Group field, with Ask when run) and an "Open when the report opens" switch. Sort rows: "Sort by" lists columns, the group record's fields ("Team › Name") and "Formula…".
-- **Filter section**: a condition on a link ("Team (record)") offers is / is not / is any of / is empty; its value is picked from the linked records (a searching picker); "Ask when run" turns it into a choice param whose options come from that source (E8).
+- **Filter section**: a condition on a link ("Team (record)") offers is / is not / is any of / is empty; its value is picked from the linked records (a searching picker); "Ask when run" turns it into a choice param whose options come from that source (E8). On a money field or total, "Ask when run" asks an amount (R29); on "is between" a number or amount asks two params, from and to.
 - **Arrange section** (new, E14): width tabs Phone · Tablet · Desktop; per width a switch "Arrange columns for this width" (off = automatic), a "Columns per line" choice (1–12), and one row per column with Line, Start, Span, Lines and Align choices; a column left out of an arrangement is not shown at that width. The live preview shows the arrangement for the width it is drawn at.
-- **Report view, param chips**: a choice param from a source opens a picker (popover 340pt on desktop and tablet, bottom sheet on phone): a search field at the top, the options in groups with an "All <group>" row at each group head, more options loading near the end of the list, Apply at the bottom. The chip shows the one label when one is chosen, else "N selected".
+- **Report view, param chips**: a choice param from a source opens a picker (popover 340pt on desktop and tablet, bottom sheet on phone): a search field at the top, the options in groups with an "All <group>" row at each group head, more options loading near the end of the list, Apply at the bottom. "All <group>" picks the whole group, kept as a group (R30). The chip shows up to two labels ("Teams: N1, All North"), else "N selected". An amount param opens an amount box and a currency box (blank for any currency); its chip reads "Budget: USD 1,500.00".
 - **Document header**: the source heading (E9), else the organization name, then the title and the period.
 
 ### Report table layout per width (E14)
 
-Modelled on Gridley: one cell renderer per column; per-width layouts place each column on a line (`line`, like Gridley's `row`) with `start`, `span` (Gridley's `colSpan`), `lines` (Gridley's `rowSpan`) and `justify`; the heading row uses the same line layout, so each heading sits over its values. React Native has no CSS grid on native, so a row is drawn with flex (the same code on web and native): its arrangement is cut into a tree of blocks — a stack of blocks top to bottom, or blocks side by side as wide as their share of equal tracks (a percent) — so a plain arrangement is a vertical stack of lines, each a flex row of cells with spacers for empty tracks, and `justify` aligns each cell. No absolute positioning; rows measure themselves.
+Modelled on Gridley: one cell renderer per column; per-width layouts place each column on a line (`line`, like Gridley's `row`) with `start`, `span` (Gridley's `colSpan`), `lines` (Gridley's `rowSpan`) and `justify`; the heading row uses the same line layout, so each heading sits over its values. React Native has no CSS grid on native, so a row is drawn with flex (the same code on web and native): its arrangement is cut into a tree of blocks — a stack of blocks top to bottom, or blocks side by side as wide as their share of equal tracks (a percent) — so a plain arrangement is a vertical stack of lines, each a flex row of cells with spacers for empty tracks, and `justify` aligns each cell. Row content is flex lines; FlashList positions the rows (it measures each one).
 
 - **Desktop:** one line per row, the label column flexible (min 220pt), amount columns 128pt. When they do not fit, the whole table (heading row and list together) sits in one horizontal scroller, so headings and cells move sideways in step; the label column stays frozen at the left by a `translateX` that follows the sideways scroll (R27). An author arrangement for desktop replaces the one line.
 - **Tablet and phone, automatic:** when the label (min 220pt tablet, 168pt phone) and the amount columns (128pt / 108pt) fit the table's width, one line as today. When they do not fit, each row wraps: line 1 is the label across the row; the amount columns follow on lines 2, 3, … in aligned tracks (`tracks = max(1, floor(width / 104))`, 3 at 390pt), in column order; the heading wraps the same way. No sideways scroll. Example, the Trial Balance on a 390pt phone: line 1 "Cash and bank:Business checking"; line 2 No. · Debit · Credit, each under its heading.
@@ -143,32 +147,35 @@ Core `help/reports.md` gains sections: Totals (recompute or add the rows shown),
 
 - **R1. Silent identity upgrade.** `Load` gives the "upgraded" notice only when an upgrade step changed the document. The 1→2 step changes nothing, so a v1 report runs with no notice; its next save stores version 2.
 - **R2. Relation values.** A value path that ends at a to-one link means the linked row's `id` (the join, so a linked row the reader cannot see reads blank, as every to-one value does, `stmt.go:117-140`); a path ending at the `id` field is a relation to its own source. Both carry the target source; `if`, `case` and `coalesce` refuse results that link to different sources.
-- **R3. Amounts in records and lookups carry their currency (Q5, changed).** Read on a group, subtotal or detail row and not totalled, a record amount's currency is its record's own currency field and a looked-up amount's is the picked row's (a subquery beside the value; the cell's `<col>@currency`). Read inside a total, it is read once per base row, so its currency becomes a currency key of the rows like a path amount's and the totals group by it. A lookup of such an amount picks the row with the smallest or largest amount and returns that row's amount and currency (ties by currency code). Amounts combine only when their currencies come from the same place (a currency key, a fixed currency, or the same record field or lookup), as the engine's money rule already says.
+- **R3. Amounts in records and lookups carry their currency (Q5, changed).** Read on a group, subtotal or detail row and not totalled, a record amount's currency is its record's own currency field and a looked-up amount's is the picked row's (a subquery beside the value; the cell's `<col>@currency`). Read inside a total, it is read once per base row, so its currency becomes a currency key of the rows like a path amount's and the totals group by it. A lookup of such an amount picks the row with the smallest or largest amount and returns that row's amount and currency (ties by currency code). Amounts combine only when their currencies come from the same place (a currency key, a fixed currency, or the same record field or lookup), as the engine's money rule already says. The currency keys of a level come from every formula it reads — columns, labels, having, sort formulas and the row label — so a having on a total of an amount no column shows still totals per currency (F5; record leaves add none of their own).
 - **R4. Correlated lookups.** Inside a lookup, `{col}`, `{record}` and `{param}` read the report's row; a lookup that reads none of them is uncorrelated and SQLite evaluates it once per statement.
 - **R5. `pick` defaults to `min`.**
 - **R6. Fill on every level (Q3, changed).** A fill level's keys are its base rows' keys united with each parent row (the level above's keys, its own fill rows included; the report's currencies for the first level, or one no-currency row when it has no rows) crossed with the target's records that match the fill's `where`. The `where` reads the target's fields, params, lookups, and the enclosing groups (`{col}` of an enclosing group's column → the parent's key; `{record}` of an enclosing record group → its record), so "accounts of this type" ties to the parent. Fill rows sort with their siblings, add nothing to `recompute` totals, add their (blank or zero) cells to `rows` totals, meet `having`, and open only onto a deeper level's fill records.
 - **R7. Having on a layout's first group is refused:** layout sections are fixed rows; hide rows on a deeper group.
-- **R8. `total: "rows"`** is allowed on a column whose level cell is a number or amount and is not a running value or percent; with no groups it adds the detail cells.
-- **R9. Group labels** apply to any group (default: today's key text; for a record group the target's first text field; a record group whose target has no text field needs a label formula, else its rows read "(none)", never a raw id).
+- **R8. `total: "rows"`** is allowed on any number or amount column, with or without an aggregate (F17: with none, a group adds its base rows' values), that is not a running value or percent; with no groups it adds the detail cells.
+- **R9. Group labels** apply to any group (default: today's key text; for a record group its record's label by R31 — never a raw id; "(none)" only for a blank link).
 - **R10. `options.expand`:** absent → the levels marked `open` expand; `[]` → nothing expands; a list → those groups. The client's first run sends no `expand`; Collapse all sends `[]`.
 - **R11. `Row.labelColumn`** names the column whose cell a row's label repeats (detail rows without `detail.label`, nested child rows); `lib/rows.ts` drops exactly that cell from child rows.
-- **R12. param-options** as described under "API": page 50, `limit` ≤ 1000, search ≤ 200 characters, `values` ≤ 1000, groups capped at 200, label/group of a select field shown by its option label.
-- **R13. An options-from-source choice value** is checked by type only: one string (single) or a list of 1–1000 strings, each 1–500 characters.
+- **R12. param-options** as described under "API": page 50, `limit` ≤ 1000, search ≤ 200 characters, `values` ≤ 1000, groups capped at 200 and sent on the first page only (the client keeps one head per group), label/group of a select field shown by its option label.
+- **R13. An options-from-source choice value** is checked by type only: one string (single) or a list of up to 1000 strings, each 1–500 characters, plus up to 200 group references (R30). Past 1000 values the run and the picker say "pick a whole group instead".
 - **R14. `Source.Watch`** (beyond the spec's E9 text; see Q1): `CheckSources` refuses a watched collection that does not exist or is a system collection; each run adds the topics of the watched collections of every source whose collection it read.
 - **R15. Sharing a shipped report is the package's own work:** core adds no share API. A package binds `OnRecordAfterCreateSuccess("reports")` (fired by `ReconcileShipped`'s `app.Save`) and reconciles at serve start; `docs/packages.md` says so (Books' `report_shares.go` uses it).
 - **R16. The `operators` prop** is typed as a discriminated union on the forms `FormulaEditor`: without it the editor is today's forms editor, part for part and test id for test id; with it the editor works on the operator set's own tree type. The report operator set keeps the forms part ids for the parts both have (`number`, `field`, `add`, `sub`, `mul`, `div`, `round`, `min`, `max`), so existing report e2e ids stay.
 - **R17. Report formula drafts edit the spec's own `{ op, args }` tree** (no ComputeExpr bridge). A formula is read-only only when it has a key or operator the editor does not write; `reports-shipped.spec.ts`'s `if` formula becomes editable and that spec changes to say so.
-- **R18. The having editor** is the filter editor in aggregate mode: a condition's subject is "Total of a field" (sum, count, smallest, largest, average), "Column" or "Group field"; Ask when run follows the filter's rules (a money total cannot be asked).
+- **R18. The having editor** is the filter editor in aggregate mode: a condition's subject is "Total of a field" (sum, count, smallest, largest, average), "Column" or "Group field"; Ask when run follows the filter's rules; a money total asks an amount param (R29), and a range asks two params.
 - **R19. Relation conditions** offer is / is not / is any of / is empty / is not empty; a typed value is picked from the target's records through param-options with a one-param draft spec; Ask when run makes a choice param with `optionsFrom { source: target, value: [id], label: [first text field] }` (multiple for "is any of").
 - **R20. Params stay while anything reads them:** the builder keeps a param while the filter, a column formula, a group label, having or fill, a sort formula or the row label reads it (`keptParams`).
-- **R21. Record leaves are refused in the filter and group keys** (they read rows before grouping); a fill's `where` may read only the records of the groups above it (R6); lookups are refused in layout computed rows.
+- **R21. Record leaves are refused in the filter and group keys** (they read rows before grouping); a fill's `where` may read only the records of the groups above it (R6). Lookups work everywhere, layout computed rows included (F16; the earlier refusal is withdrawn).
 - **R22. Stub changes:** `salesstub_sales.booked_on` (text day, written from the sale's day), `salesstub_teams.region` (select north/south, a radio on the team form), both sources print the heading "Stub Sales Co", and a second shipped report "Stub team totals" (unpublished) uses a record group with label, `total: "rows"`, a sort formula, a detail label, a text-day filter and an options-from-source param grouped by region.
-- **R23. E14 wrap rule:** automatic wrapping applies at tablet and phone widths when the one-line layout does not fit; desktop keeps one line and sideways scroll unless the author arranged desktop (wide pivots read better scrolled). Rows are drawn with flex lines (no absolute positioning, the human's review of 2026-11-01). See Q8.
+- **R23. E14 wrap rule:** automatic wrapping applies at tablet and phone widths when the one-line layout does not fit; desktop keeps one line and sideways scroll unless the author arranged desktop (wide pivots read better scrolled). Row content is drawn with flex lines (the human's review of 2026-11-01); FlashList positions the rows. See Q8.
 - **R24. E14 author arrangement is in spec v2 (`display.layouts`) and the builder edits it** (the no-limits rule; see Q9). The engine validates it (known column ids, `width` one of mobile|tablet|desktop, `tracks` 1–12, `line` 1–8, `start` and `span` within the tracks, `lines` 1–8 under R28, `justify` start|center|end, no two cells overlapping) and otherwise ignores it.
 - **R25. FlashList v2 replaces the custom row window.** Rows measure themselves; `onEndReached` (threshold 0.5) calls `loadMore`, whose guard stays; the "first page shorter than the view" fill comes from FlashList's own end check after each commit (`useBoundDetection.ts:96-108,165-170`). `use-row-window.ts` and its test are deleted.
 - **R26. Sticky groups stack in one slot.** Every open group row is a sticky index; the stuck copy (`target: 'StickyHeader'`) draws the chain of open groups enclosing it, outermost first, so the reader sees every level they are inside even though FlashList sticks one item at a time. Chosen over sticking only the outermost group, which would hide the level the reader is reading.
 - **R27. Frozen label column on desktop sideways scroll:** the heading row and the list share one horizontal scroller; label cells follow its offset with `translateX`, so they stay at the left as today's two-stack table kept them.
 - **R28. `lines` (rowSpan) by guillotine cuts (Q10, changed).** An arrangement is cut recursively — a straight cut between lines into top and bottom blocks (tried first), or between tracks into left and right blocks — until each block holds one cell or none; a cell may then span lines anywhere, mid-row included (it sits in a side block beside stacked lines, stretched to their height). Only a pinwheel, which no straight cut can split, is refused, by the engine and the builder, with "These cells overlap in a way that can't be laid out; move one cell." on its first cell.
+- **R29. Amount params (F18).** A param of type `amount` is a whole number of cents with a currency code (`{"amount": 150000, "currency": "USD"}`), or a bare number for any currency. It is money: against an amount with its own currency (a currency key, a fixed or carried currency), a comparison or a computed value holds only where the currencies match (`CASE WHEN <currency> IS <param's currency> THEN … END`), so a USD budget never meets EUR totals. The URL writes `p-budget=1500.00 USD`.
+- **R30. Whole groups (F19).** "All <group>" adds `{"group": "<value>"}` to the choice's value; the server expands it at run time to every option of that group the reader may list (the options select under the reader's rules), so a group has no size cap and follows rule changes. Explicit values keep the 1000 cap.
+- **R31. Link labels (F22).** A column whose value is a relation with a target shows that record's label: the column's `labelField`, else the target's first text field, else its first other field, else the target source's name; a select label field shows its option's label; a visible record with a blank label field reads "(no name)"; a blank or hidden link reads "(none)". The engine sends it as `<col>@label` (`ResultColumn.labelCell`); a detail row labelled by such a column and a record group's default label use the same rule.
 
 ### [platform] web-only or native-only items
 
@@ -270,6 +277,8 @@ Deferrals: none. Every item of spec §4 (E1–E13, OQ2), the human's E14 and the
 
 ## Tasks
 
+**Run the tasks in this order** (the numbers name the tasks; the order is binding): 0, 1, 2, 3, 4, 5, 5b, 9, 5a, 6, 7, 8, 10, 11, 12, 12a, 13, 13a, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 25a, 25b, 25c (STOP), 25d, 26, 27, 28. Task 9 (formula sort keys) runs before 5a and 6 because their tests and walks use formula sort keys; Task 5b (link labels) follows Task 5, whose record helpers it uses.
+
 ### Task 0: Preflight
 
 **Files:** none.
@@ -277,7 +286,7 @@ Deferrals: none. Every item of spec §4 (E1–E13, OQ2), the human's E14 and the
 - [ ] **Step 1: Branch and tree**
 
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && git branch --show-current && git status --short && git log --oneline -2`
-Expected: `books/p5-trial-balance`; a clean tree; this plan's commit on top of `7a21579b`.
+Expected: `books/p5-trial-balance`; a clean tree; the plan's own commits (four or more, the newest the plan's latest revision) on top of `7a21579b`, which is an ancestor (`git merge-base --is-ancestor 7a21579b HEAD` exits 0).
 
 - [ ] **Step 2: Baseline checks are green**
 
@@ -837,6 +846,21 @@ func TestALookupInTheFilterPicksMinOrMaxAndIsBlankWithNoMatch(t *testing.T) {
 	requireRows(t, res, "none", nil, nil, nil)
 }
 
+// A computed layout row may look a value up (F16): here a section's cost
+// plus the weight of Leo.
+func TestALayoutRowLooksAValueUp(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species"}],
+		"layout":[{"section":"l","title":"Lions","key":"lion"},
+			{"row":"r","label":"Lions and Leo","formula":{"op":"add","args":[{"subtotal":"l"},
+				{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Leo"}]},"value":{"path":[{"field":"weight"}]}}]}}]}`, Options{}, nil)
+	requireRows(t, res, "label", "Lions", "Total Lions", "Lions and Leo")
+	requireRows(t, res, "cost", int64(3500), int64(3500), int64(3690))
+}
+
 func TestALookupIsRefusedWhereItCannotBeRead(t *testing.T) {
 	app := withZooRegistry(t)
 	cases := map[string]struct{ spec, at, want string }{
@@ -851,10 +875,6 @@ func TestALookupIsRefusedWhereItCannotBeRead(t *testing.T) {
 			"columns.0.formula.pick", "min or max"},
 		"a source on another op": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"add","source":"zoo.animals","args":[{"value":1},{"value":2}]}}]}`,
 			"columns.0.formula", "only lookup takes a source"},
-		"a layout row": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
-			"groups":[{"id":"g","col":"n"}],"layout":[{"section":"a","title":"A","key":"f1"},
-			{"row":"r","label":"R","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"weight"}]}}}]}`,
-			"layout.1.formula", "a computed row reads"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -943,7 +963,13 @@ func (ctxBase) lookup(_ *Node, at string) (expr, error) {
 }
 ```
 
-In `layout.go`, add `func (lc *layoutCtx) lookup(_ *Node, at string) (expr, error) { return expr{}, lc.only(at) }`.
+In `layout.go`, a computed row may look a value up (F16; R21's refusal is withdrawn): the lookup reads its source's rule CTE in the layout statement, with no report row to read (a column or a record inside it is refused as layout rows refuse them; params resolve directly):
+
+```go
+func (lc *layoutCtx) lookup(n *Node, at string) (expr, error) {
+	return lookupIn(lc, &rowsCTE{c: lc.c, s: lc.s}, n, at)
+}
+```
 
 In `bind.go` `nodeSize`, after `add(n.Where, false)`:
 
@@ -1045,8 +1071,14 @@ type lookupCtx struct {
 }
 
 func (l *lookupCtx) col(id, at string) (expr, error) { return l.outer.col(id, at) }
+// A param is the run's value wherever the lookup sits (a layout row's outer
+// context reads no params, so a lookup there resolves them itself).
 func (l *lookupCtx) param(id, at string) (expr, error) {
-	return l.outer.param(id, at)
+	v, err := paramOf(l.r.c, id, at)
+	if err != nil {
+		return expr{}, err
+	}
+	return paramExpr(l, v), nil
 }
 func (l *lookupCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(l, l.r, n, at) }
 
@@ -1479,6 +1511,26 @@ func labelText(v any) string {
 
 In `rows.go` `compiler`, add `groupTargets []*Source` with the comment "the source each group's key links to (nil for a group that is not by a link)". In `rows()`, before the groups loop: `c.groupTargets = make([]*Source, len(c.p.groups))`; inside it, after the bucket handling: `if g.group.Bucket == "" { c.groupTargets[i] = e.target }`.
 
+`formulaCurrencies` (`rows.go:143-155`) registers the currency key of every amount a formula reads by path, before any level groups by the keys. A record leaf's path is on its group's target, not on the base source, so it must not be bound there, and the labels' formulas must be walked too (F5):
+
+```go
+func (r *rowsCTE) formulaCurrencies(n *Node) {
+	if n == nil {
+		return
+	}
+	if n.Path != nil && n.Record == "" {
+		if bound, err := bindValuePath(r.c.p.app, r.c.p.base, n.Path, "", pathValue); err == nil {
+			r.pathCurrency(bound)
+		}
+	}
+	for _, a := range n.Args {
+		r.formulaCurrencies(a)
+	}
+}
+```
+
+and in `rows()`, after the columns' walk: `for _, g := range c.p.groups { r.formulaCurrencies(g.group.Label) }`. (Tasks 7, 9 and 10 add the having, sort-formula and detail-label walks.)
+
 Contexts:
 
 ```go
@@ -1540,7 +1592,7 @@ In `levels.go` `readsRowValue`, before the `n.Path != nil` test:
 	}
 ```
 
-In `formula_cases_test.go`: add `RecordTypes map[string]FieldType json:"recordTypes"` and `Record map[string]any json:"record"` to `formulaCase`, the same two maps to `tableCtx` (set in `runFormulaCase`), and:
+In `formula_cases_test.go`: add `RecordTypes map[string]FieldType json:"recordTypes"` and `Record map[string]any json:"record"` to `formulaCase`; add `recordTypes map[string]FieldType` and `recordRow map[string]any` to `tableCtx` (set from the case in `runFormulaCase`; the row is not named `record`, which is the method), and:
 
 ```go
 func (c *tableCtx) record(_ string, p Path, at string) (expr, error) {
@@ -1551,7 +1603,7 @@ func (c *tableCtx) record(_ string, p Path, at string) (expr, error) {
 	if !ok {
 		return expr{}, invalid(at, "unknown record field "+p[0].Field)
 	}
-	return expr{sql: c.bind(jsonValue(c.record[p[0].Field])), typ: typ}, nil
+	return expr{sql: c.bind(jsonValue(c.recordRow[p[0].Field])), typ: typ}, nil
 }
 func (l *tableLookupCtx) record(g string, p Path, at string) (expr, error) { return l.outer.record(g, p, at) }
 ```
@@ -1619,6 +1671,175 @@ cd /Users/nas/tmp/tinycld/books-purchases/tinycld
 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check
 git add core/server/reports core/lib/forms/fixtures/formula-cases.json
 git commit -m "feat(core): record groups, the record leaf and group labels"
+git push origin books/p5-trial-balance
+```
+
+---
+
+### Task 5b: F22 — a link column shows its record's label, never a raw id
+
+Engine facts used: a relation value carries its target (Task 3); `recordSQL` reads a target's field through its rule CTE keyed by a value (Task 5); level legs and computed legs share one column list (`levels.go` `render`, `layout.go` `layoutLegs`); `cells` maps `v<idx>` to cells (`assemble.go:242-266`); a detail row's default label is its first column (`assemble.go:233-240`).
+
+Design (R31): every column whose value is a relation with a known target (a path ending at a to-one link or at `id`, a lookup or formula of one) shows the target record's label beside the id: the cell `<col>@label`, and the result column's `labelCell`. The label field is the column's `labelField` (a field of the target the author picks in the builder) or, without one, the target's first text field, else its first other field, else the target source's own name. A blank link (no id, or a record the reader cannot see, which reads blank through the join) has no label, and the client shows "(none)"; a visible record whose label field is blank shows "(no name)". A record group's default label (R9) and a detail row's default label use the same rule, so no row or cell ever shows a raw id.
+
+**Files:**
+- Modify: `core/server/reports/spec.go` (`Column.LabelField`), `record.go` (`labelFieldOf`, `labelSQL`), `run.go` (`ResultColumn.LabelCell`; `vl<idx>` in the detail select and level cells), `levels.go` (`labelSQL` of a record group uses `labelFieldOf`), `layout.go` (legs add `NULL AS vl<idx>`), `assemble.go` (`cells`, `columns`, `firstLabel`)
+- Modify: `core/server/reports/relation_test.go`, `record_test.go`
+
+**Interfaces:**
+- Consumes: Tasks 3, 5.
+- Produces: `Column.LabelField string` (`json:"labelField,omitempty"`); `labelFieldOf(src *Source, chosen string) *Field`; `labelValueSQL(s *stmt, target *Source, f *Field, key string) string`; `selectLabelSQL(s *stmt, f *Field, value string) string`; `ResultColumn.LabelCell string` (`json:"labelCell,omitempty"`, `"<id>@label"`); rows carry `vl<idx>` (NULL when the column has no target).
+
+- [ ] **Step 1: Write the failing tests**
+
+In `relation_test.go`, extend `TestAPathEndingAtALinkReadsTheLinkedRowsID` (it still asserts the ids) with:
+
+```go
+	requireRows(t, res, "animal@label", "Leo", "Leo", "Zed", "Zed", nil)
+	if c := res.Columns[1]; c.LabelCell != "animal@label" {
+		t.Fatalf("animal column = %+v", c)
+	}
+```
+
+and `TestALinkToAHiddenRowReadsBlank` with `requireRows(t, res, "vault@label", nil, nil, nil, nil)`. Add:
+
+```go
+// The author picks the field a link column shows; a target with no fields
+// shows its source's name, never an id.
+func TestALinkColumnShowsTheChosenLabelField(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"animal","path":[{"link":"animal"}],"labelField":"species"}],"sort":[{"col":"note"}]}`, Options{}, nil)
+	requireRows(t, res, "animal@label", "lion", "lion", "zebra", "zebra", nil)
+	keepers := z.run(t, "ann", `{"version":2,"source":"zoo.keepers","columns":[{"id":"k","path":[{"field":"id"}]}]}`, Options{}, nil)
+	requireRows(t, keepers, "k@label", "Keepers", "Keepers", nil)
+	app := withZooRegistry(t)
+	spec, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}],"labelField":"nope"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSpecError(t, Validate(app, spec), 422, "columns.0.labelField", "has no field")
+}
+
+// A select label field shows its option's label, not the stored value.
+func TestALinkLabelFieldThatIsASelectShowsItsOptionLabel(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"site","path":[{"link":"animal"},{"link":"site"}],"labelField":"region"}],"sort":[{"col":"note"}]}`, Options{}, nil)
+	requireRows(t, res, "site@label", "North", "North", "South", "South", nil)
+}
+
+// A link column first in the report labels its detail rows by the record.
+func TestADetailRowIsLabelledByItsLinkedRecord(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`, Options{}, nil)
+	requireRows(t, res, "label", "Leo", "Leo", "Zed", "Zed", "Total")
+}
+```
+
+(ann keeps leo and zed: two feedings each. The keepers report as ann lists her two keeper rows k1 and k2.)
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 -run 'LinkedRowsID|HiddenRowReadsBlank|ChosenLabelField|LabelFieldThatIsASelect|LabelledByItsLinkedRecord' ./reports/`
+Expected: FAIL to load: `json: unknown field "labelField"`.
+
+- [ ] **Step 3: Implement**
+
+`spec.go` `Column`: `LabelField string \`json:"labelField,omitempty"\`` ("the field of a link column's record it shows; the first text field when empty").
+
+`record.go`:
+
+```go
+// labelFieldOf is the field a record is shown by (R31): the chosen field, else
+// the first text field, else the first other field; nil when the source has
+// no field but its id (then its own name is shown).
+func labelFieldOf(src *Source, chosen string) *Field {
+	if chosen != "" {
+		return src.field(chosen)
+	}
+	if f := firstTextField(src); f != nil {
+		return f
+	}
+	for i := range src.Fields {
+		if src.Fields[i].Key != idField.Key {
+			return &src.Fields[i]
+		}
+	}
+	return nil
+}
+
+// labelValueSQL reads a record's label keyed by a relation value: NULL for a
+// blank link, "(no name)" for a record whose label field is blank, the
+// source's name for a source with no field to show.
+func labelValueSQL(s *stmt, target *Source, f *Field, key string) string {
+	if f == nil {
+		return fmt.Sprintf("(CASE WHEN %s IS NULL THEN NULL ELSE %s END)", key, s.bind(target.Label))
+	}
+	read := recordSQL(s, target, &pathPlan{field: f, src: target}, key)
+	if f.Type == Select {
+		read = selectLabelSQL(s, f, read)
+	}
+	return fmt.Sprintf("(CASE WHEN %s IS NULL THEN NULL ELSE COALESCE(NULLIF(CAST(%s AS TEXT), ''), %s) END)", key, read, s.bind("(no name)"))
+}
+
+// selectLabelSQL is a select value shown by its option's label; a value no
+// option names shows as stored.
+func selectLabelSQL(s *stmt, f *Field, value string) string {
+	if len(f.Options) == 0 {
+		return value
+	}
+	var b strings.Builder
+	b.WriteString("(CASE " + value)
+	for _, o := range f.Options {
+		b.WriteString(" WHEN " + s.bind(o.Value) + " THEN " + s.bind(o.Label))
+	}
+	b.WriteString(" ELSE " + value + " END)")
+	return b.String()
+}
+```
+
+`levels.go` `labelSQL`: the record-group default becomes `labelValueSQL(lv.r.s, target, labelFieldOf(target, groupColumn.col.LabelField), fmt.Sprintf("a.k%d", lv.n-1))` (`groupColumn` is the group's column plan).
+
+`run.go`: add `LabelCell string \`json:"labelCell,omitempty"\`` to `ResultColumn`; `compiler` gains `labelled map[string]bool`. In `detailSelect`, after each column's expr `e`, append `labelOf(e) + " AS vl<idx>"`, and in `groupStatement`'s cells loop the same with the level cell (the key on the group's own level, NULL elsewhere), where:
+
+```go
+// labelOf is the label beside a relation value with a target, or NULL. An
+// unknown labelField is an unknown reference at columns.N.labelField.
+func (c *compiler) labelOf(s *stmt, cp *colPlan, e expr) (string, error) {
+	if e.target == nil {
+		if cp.col.LabelField != "" {
+			return "", invalid(cp.at+".labelField", "only a column that links to a record shows a label field")
+		}
+		return "NULL", nil
+	}
+	f := labelFieldOf(e.target, cp.col.LabelField)
+	if cp.col.LabelField != "" && f == nil {
+		return "", unknownRef(cp.at+".labelField", "unknown_field", fmt.Sprintf("the source %q has no field %q", e.target.Key, cp.col.LabelField))
+	}
+	c.labelled[cp.col.ID] = true
+	if e.sql == "NULL" {
+		return "NULL", nil
+	}
+	return labelValueSQL(s, e.target, f, e.sql), nil
+}
+```
+
+`layout.go`: computed legs append `NULL AS vl<idx>` for every column. `assemble.go`: `columns` sets `rc.LabelCell = cp.col.ID + "@label"` when `c.labelled[id]`; `cells` sets `out[id+"@label"] = row["vl<idx>"]` for a labelled column; `firstLabel` uses `labelText(row["vl0"])` when the first column is labelled (a blank link reads "(none)").
+
+- [ ] **Step 4: Run, then commit**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 ./reports/`
+Expected: PASS.
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases/tinycld
+PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check
+git add core/server/reports
+git commit -m "feat(core): link columns show their record's label"
 git push origin books/p5-trial-balance
 ```
 
@@ -1822,7 +2043,22 @@ func recordCurrency(s *stmt, target *Source, bound *pathPlan, key, id string) cu
 	}
 ```
 
-(`inLevel(outer)` is true for a `levelCtx` outer: a group row reads the picked currency by subquery; a base row inside a total reads the registered key.)
+with:
+
+```go
+// inLevel is true when a formula is compiled on a group, subtotal or total
+// row (a levelCtx, or a lookup inside one): there a picked or record currency
+// is read by subquery; on a base row inside a total, by its registered key.
+func inLevel(f fctx) bool {
+	switch x := f.(type) {
+	case *levelCtx:
+		return true
+	case *lookupCtx:
+		return inLevel(x.outer)
+	}
+	return false
+}
+```
 
 - [ ] **Step 6: Register currency keys for carried amounts inside totals**
 
@@ -1854,12 +2090,13 @@ func (r *rowsCTE) valueCurrencies() {
 		walk(cp.col.Formula, cp.col.Aggregate != "")
 	}
 	for _, g := range r.c.p.groups {
-		walk(g.group.Having, false)
 		walk(g.group.Label, false)
 	}
 	for _, s := range r.c.p.sort {
 		walk(s.formula, false)
 	}
+	// Task 7 adds walk(g.group.Having, false) beside the label walk; Task 10
+	// adds the detail label.
 }
 
 // recordCurrencyKey reads a record amount's currency field in w, keyed by the
@@ -1999,7 +2236,7 @@ func TestFillWithNoRowsSitsUnderOneTotal(t *testing.T) {
 const sitesThenAnimals = `{"version":2,"source":"zoo.feedings","columns":[
 	{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
 	{"id":"animal","path":[{"link":"animal"}]},
-	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"}],
+	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 	"groups":[
 		{"id":"s","col":"site","fill":{}},
 		{"id":"a","col":"animal","fill":{"where":{"op":"and","args":[
@@ -2289,6 +2526,21 @@ func TestHavingReadsARecordField(t *testing.T) {
 	requireRows(t, res, "label", "Zed", "Total")
 }
 
+// A having that totals an amount no column shows, in two currencies, still
+// groups by the amount's currency: its key is known before the levels (F5).
+func TestHavingOnAnAmountNoColumnShows(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 100, "currency": "EUR",
+		"fed": "2026-01-07 00:00:00.000Z", "grams": 10, "note": "f7", "due": "2026-01-07"})
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
+		"groups":[{"id":"g","col":"species","having":{"op":"gt","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":150}]}}],
+		"sort":[{"col":"species"}]}`, Options{}, nil)
+	requireRows(t, res, "label", "Total", "lion", "zebra", "Total")
+	requireRows(t, res, "n", int64(1), int64(2), int64(2), int64(4))
+}
+
 func TestHavingIsRefusedWhereItCannotWork(t *testing.T) {
 	app := withZooRegistry(t)
 	for _, c := range []struct{ spec, at, want string }{
@@ -2356,6 +2608,8 @@ func (lv *level) own() (string, error) {
 	return "COALESCE(" + e.sql + ", 0)", nil
 }
 ```
+
+`rows.go` `rows()`: walk each group's having for currency keys before any level compiles (F5): `r.formulaCurrencies(g.group.Having)` beside the label walk; and in Task 5a's `valueCurrencies`, add `walk(g.group.Having, false)` beside `walk(g.group.Label, false)`.
 
 `run.go` `groupStatement`: compile `own, err := lv.own()` before `lv.render(cells, own, label)` (aggregates it reads join `a<L>`), and replace the leg:
 
@@ -2509,13 +2763,24 @@ func TestALayoutSectionAddsItsShownRows(t *testing.T) {
 	requireRows(t, res, "shown", int64(3500), int64(3500), int64(0), int64(0), int64(3500))
 }
 
+// A number path column with no aggregate adds its rows too (F17): the
+// innermost group sums its base rows, the levels above their shown groups.
+func TestRowsTotalOnANumberWithoutAnAggregate(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"grams","path":[{"field":"grams"}],"total":"rows"}],
+		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"species"}]}`, Options{}, nil)
+	requireRows(t, res, "grams", int64(1300), int64(400), int64(1700))
+}
+
 func TestRowsTotalIsRefusedWhereItMeansNothing(t *testing.T) {
 	app := withZooRegistry(t)
 	for _, c := range []struct{ spec, at, want string }{
 		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"c","path":[{"field":"cost"}],"aggregate":"sum","total":"some"}]}`,
 			"columns.0.total", "total is recompute or rows"},
 		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}],"total":"rows"}]}`,
-			"columns.0.total", "a value with no total cannot add its rows"},
+			"columns.0.total", "only a number or an amount column adds the rows shown"},
 		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"},
 			{"id":"p","formula":{"op":"percentOfTotal","scale":2,"args":[{"col":"c"}]},"total":"rows"}],"groups":[{"id":"g","col":"n"}]}`,
 			"columns.2.total", "is not added up"},
@@ -2551,8 +2816,6 @@ Expected: FAIL to load: `json: unknown field "total"`.
 		switch {
 		case c.Total != "" && c.Total != "recompute" && c.Total != "rows":
 			b.bad(at+".total", "total is recompute or rows")
-		case c.Total == "rows" && c.Path != nil && c.Aggregate == "":
-			b.bad(at+".total", "a value with no total cannot add its rows")
 		}
 ```
 
@@ -2582,13 +2845,25 @@ func (lv *level) rowsTotal(cp *colPlan, idx int, e expr) (string, error) {
 	if e.win {
 		return "", invalid(at, "a running value or a percent is not added up")
 	}
-	if !isNumeric(e.typ) || e.typ == Bool || e.typ == "" {
+	groups := len(lv.c.p.groups)
+	bare := cp.path != nil && cp.col.Aggregate == ""
+	if !bare && (!isNumeric(e.typ) || e.typ == Bool || e.typ == "") {
 		return "", invalid(at, "only a number or an amount column adds the rows shown")
 	}
-	groups := len(lv.c.p.groups)
+	if bare && (!isNumeric(cp.path.field.Type) || cp.path.field.Type == Bool) {
+		return "", invalid(at, "only a number or an amount column adds the rows shown")
+	}
 	switch {
 	case lv.n < groups:
 		return lv.childSum(fmt.Sprintf("v%d", idx)), nil
+	case cp.path != nil && cp.col.Aggregate == "" && cp.tm < 0 && lv.groupKey(cp) == "":
+		// A value with no aggregate (F17): the innermost group sums its base
+		// rows' values; type-checked against the field's type, not the blank cell.
+		t := cp.path.field.Type
+		if !isNumeric(t) || t == Bool {
+			return "", invalid(at, "only a number or an amount column adds the rows shown")
+		}
+		return lv.agg(fmt.Sprintf("r%d", idx), fmt.Sprintf("COALESCE(sum(w.c%d), 0)", idx)), nil
 	case groups == 0:
 		d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}}).col(cp.col.ID, cp.at)
 		if err != nil {
@@ -2749,6 +3024,8 @@ type SortKey struct {
 		p.sort = append(p.sort, sortPlan{col: cp, at: at + ".col", desc: desc})
 ```
 
+`rows.go` `rows()`: `for _, s := range c.p.sort { r.formulaCurrencies(s.formula) }` beside the label walk (F5: a sort formula's amounts register their currency keys before the levels).
+
 `levels.go` `order`: replace `lv.sortValue(s.col, fmt.Sprintf("sort.%d.col", i))` with `lv.sortKey(s)` and add:
 
 ```go
@@ -2898,6 +3175,8 @@ type Detail struct {
 	// client can leave that cell out; "" when the label is no cell's value.
 	LabelColumn string `json:"labelColumn,omitempty"`
 ```
+
+`rows.go` `rows()`: `if d := c.p.spec.Detail; d != nil { r.formulaCurrencies(d.Label) }` (F5).
 
 `detailSelect`, before the nest parent: 
 
@@ -3254,6 +3533,172 @@ git push origin books/p5-trial-balance
 
 ---
 
+### Task 12a: F18 — an amount param (a number of cents and a currency)
+
+Engine facts used: param types and parsing (`params.go:15-218`), `paramExpr` (`params.go:344-365`), the currency rules (`formula.go:32-74`, Task 5a's `currency.id`), `operator` (`formula.go:288-304`).
+
+Design (R29): a param of type `amount` holds a whole number of cents and a currency code: `{"amount": 150000, "currency": "USD"}`, or just a number for "in any currency". It is money: on a filter, a having, or in a formula it compares and combines with amounts under the money rules. Where an amount param with a currency meets an amount with its own currency (a currency key, a fixed currency, a carried currency), the operation holds only where the two currencies are the same: the compiled SQL is guarded `CASE WHEN <that amount's currency> IS <the param's currency> THEN <the operation> END`, so a USD budget never compares with EUR totals (the condition is false, a computed amount is blank). So "Ask when run" can ask a money total (R18).
+
+**Files:**
+- Modify: `core/server/reports/params.go` (`ParamAmount`, parse, resolved value, `paramExpr`), `formula.go` (`currency.param`, the guard in `operator`, `fctx.currencySQL`), `levels.go`/`detail.go`/`join.go`/`lookup.go`/`layout.go`/`formula_cases_test.go` (`currencySQL`)
+- Modify: `core/reports/lib/types.ts` (`PARAM_TYPES` gains `'amount'`; `ResolvedParam.value` may be `{ amount: number; currency: string }`), `lib/params.ts` (`{ kind: 'amount'; cents; currency }` values, JSON, chip text), `lib/view-url.ts` (`p-<id>=150.00 USD`)
+- Create: `core/server/reports/amountparam_test.go`; Test: `core/reports/lib/__tests__/params.test.ts`, `view-url.test.ts`
+
+**Interfaces:**
+- Produces: `ParamAmount = "amount"`; `paramValue.currency string`; `currency.param string` (a param's currency code; `""` is "any"); `fctx.currencySQL(cur currency) string`; TS `ParamValue` member `{ kind: 'amount'; cents: number; currency: string }`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `core/server/reports/amountparam_test.go`:
+
+```go
+package reports
+
+import "testing"
+
+const budgetHaving = `{"version":2,"source":"zoo.feedings","params":[{"id":"budget","type":"amount","label":"Budget"}],"columns":[
+	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
+	{"id":"left","formula":{"op":"sub","args":[{"param":"budget"},{"op":"sum","args":[{"path":[{"field":"cost"}]}]}]}}],
+	"groups":[{"id":"g","col":"species","having":{"op":"gte","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"param":"budget"}]}}],
+	"sort":[{"col":"species"}]}`
+
+// An amount param compares and combines only with amounts of its currency.
+func TestAnAmountParamKeepsToItsCurrency(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 100, "currency": "EUR",
+		"fed": "2026-01-07 00:00:00.000Z", "grams": 10, "note": "f7", "due": "2026-01-07"})
+	all := z.run(t, "ann", budgetHaving, Options{}, nil)
+	requireRows(t, all, "label", "lion", "Total", "lion", "zebra", "Total")
+
+	usd := z.run(t, "ann", budgetHaving, Options{}, map[string]string{"budget": `{"amount":1500,"currency":"USD"}`})
+	requireRows(t, usd, "label", "Total", "lion", "Total")
+	requireRows(t, usd, "left", nil, int64(-2000), int64(-3000))
+
+	eur := z.run(t, "ann", budgetHaving, Options{}, map[string]string{"budget": `{"amount":50,"currency":"EUR"}`})
+	requireRows(t, eur, "label", "lion", "Total", "Total")
+	requireRows(t, eur, "left", int64(-50), int64(-50), nil)
+
+	any := z.run(t, "ann", budgetHaving, Options{}, map[string]string{"budget": `1500`})
+	requireRows(t, any, "label", "Total", "lion", "Total")
+}
+
+func TestAnAmountParamValueIsChecked(t *testing.T) {
+	z := newZoo(t)
+	for _, bad := range []string{`"12"`, `{"amount":1.5,"currency":"USD"}`, `{"amount":100,"currency":"usd"}`, `{"amount":100,"rate":2}`} {
+		_, err := z.try(t, "ann", budgetHaving, Options{}, map[string]string{"budget": bad})
+		requireSpecError(t, err, 400, "params.budget", "an amount is")
+	}
+}
+```
+
+(The rows come one total per currency, EUR first. Unset, the having matches every group; with a USD budget the EUR rows fail the guard; `left` is blank on rows whose currency differs from the budget's.)
+
+In `params.test.ts`: `valueFromJson({ id: 'b', type: 'amount' }, { amount: 150000, currency: 'USD' })` gives `{ kind: 'amount', cents: 150000, currency: 'USD' }`; `valueToJson` gives it back; `chipText({ id: 'b', type: 'amount', label: 'Budget' }, { kind: 'amount', cents: 150000, currency: 'USD' }, undefined)` is `'Budget: USD 1,500.00'`. In `view-url.test.ts`: `p-b=1500.00 USD` parses to that value and serializes back; `p-b=12` (no currency) parses to `{ kind: 'amount', cents: 1200, currency: '' }`.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 -run 'AmountParam' ./reports/`
+Expected: FAIL: `unknown param type "amount"`.
+
+- [ ] **Step 3: Engine**
+
+`params.go`: `ParamAmount = "amount"` beside the others; `checkParamDefs` treats it like `ParamNumber` (no options); `paramValue` gains `currency string`; in `parseParam`:
+
+```go
+	case ParamAmount:
+		cents, cur, ok := amountValue(v)
+		if !ok {
+			return out, invalid(at, `an amount is a whole number of cents, or {"amount": cents, "currency": "USD"}`)
+		}
+		out.value, out.currency = cents, cur
+```
+
+```go
+var currencyCodeRe = regexp.MustCompile(`^[A-Z]{3}$`)
+
+func amountValue(v any) (int64, string, bool) {
+	whole := func(n any) (int64, bool) {
+		num, ok := n.(json.Number)
+		if !ok {
+			return 0, false
+		}
+		i, err := num.Int64()
+		return i, err == nil
+	}
+	if i, ok := whole(v); ok {
+		return i, "", true
+	}
+	m, ok := v.(map[string]any)
+	if !ok || len(m) > 2 {
+		return 0, "", false
+	}
+	i, ok := whole(m["amount"])
+	cur, _ := m["currency"].(string)
+	if !ok || (len(m) == 2 && !currencyCodeRe.MatchString(cur)) {
+		return 0, "", false
+	}
+	return i, cur, true
+}
+```
+
+`resolvedParams` gives an amount `Value: map[string]any{"amount": v.value, "currency": v.currency}`. `paramExpr`:
+
+```go
+	case ParamAmount:
+		if v.unset {
+			return expr{sql: "NULL", typ: Money, unset: true}
+		}
+		return expr{sql: c.bind(v.value), typ: Money, cur: currency{param: v.currency, id: "param:" + v.currency}}
+```
+
+`formula.go`: `currency` gains `param string`; `none()` is also false for a param with a code (`a.param != ""`); `combined` skips a value whose currency is a param's (the guard takes it); `fctx` gains `currencySQL(cur currency) string` — `rowsCtx`: `"w." + key`; `joinCtx`: `j.r.inner("w." + key)`; `levelCtx`: `"a." + key`; `layoutCtx`: `"cur." + key`; `lookupCtx`: `l.outer.currencySQL(cur)`; `tableCtx`: `"NULL"`; in every context a fixed currency is `c.bind(fixed.Currency(app))` (`""` when dry), a carried one is `cur.sql`, a param's is `c.bind(cur.param)`. In `operator`, after `operatorExpr`:
+
+```go
+	// An amount param holds only against amounts of its currency (R29).
+	if p, other, ok := paramAgainst(args); ok && (conditionOps[n.Op] || e.typ == Money) {
+		e.sql = fmt.Sprintf("(CASE WHEN %s IS %s THEN %s END)", c.currencySQL(other), c.bind(p.param), e.sql)
+	}
+```
+
+```go
+// paramAgainst finds an amount param with a currency among values and another
+// amount whose currency is not a param's.
+func paramAgainst(values []expr) (currency, currency, bool) {
+	var p, other currency
+	for _, v := range values {
+		switch {
+		case v.cur.param != "":
+			p = v.cur
+		case !v.cur.none():
+			other = v.cur
+		}
+	}
+	return p, other, p.param != "" && !other.none()
+}
+```
+
+(A condition's guard yields NULL where the currencies differ, which `own()` and the filter read as false.)
+
+- [ ] **Step 4: Client values, chips and URL**
+
+`types.ts`: `PARAM_TYPES = [..., 'amount']`; `ResolvedParam.value?: string | number | { amount: number; currency: string }`. `params.ts`: `ParamValue` gains `| { kind: 'amount'; cents: number; currency: string }`; `valueFromJson` for `amount` reads a whole number (currency `''`) or `{ amount, currency }` (currency `/^[A-Z]{3}$/` or absent); `valueToJson` writes `{ amount: cents, currency }` (just the number when the currency is `''`); `valueText` writes `"<currency> <amount>"` with the core money formatter (`formatCents` in `lib/money.ts`), or the amount alone with no currency. `view-url.ts`: an amount is `"<amount> <CUR>"` (`textFromCents` / `centsFromText` from `lib/builder/filter.ts`, moved to `lib/money.ts` so both read them).
+
+- [ ] **Step 5: Run, then commit**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 ./reports/`
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check`
+Expected: PASS.
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases/tinycld
+git add core/server/reports core/reports
+git commit -m "feat(core): amount params, kept to their currency"
+git push origin books/p5-trial-balance
+```
+
+---
+
 ### Task 13: E8 (part 2) — `POST /api/reports/param-options`
 
 Engine facts used: `Register` binds the read routes with `RequireAuth("users")` and a body limit (`endpoint.go:48-66`); `handleRun` decodes strictly, reads a saved report through `viewableSpec` and answers refusals with `runError` (`endpoint.go:104-247`); `runner.query` runs a statement under the time limit (`run.go:292-318`); OAuth classifies no scope for a report route, so a token is refused by default-deny (`endpoint_test.go:159-186`).
@@ -3265,7 +3710,7 @@ Engine facts used: `Register` binds the read routes with `RequireAuth("users")` 
 
 **Interfaces:**
 - Consumes: `plan.options`, `optionsSelect` (Task 12).
-- Produces: `func Options(ctx context.Context, app core.App, req OptionsRequest) (*ParamOptions, error)`; `ParamOptions{Options []ParamOption; Groups []OptionGroup; Next string}` (json `options,groups,next`); `ParamOption{Value, Label, Group string}`; `OptionGroup{Value, Label string}`; route `POST /api/reports/param-options`; `requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, error)`.
+- Produces: `func ReadParamOptions(ctx context.Context, app core.App, req OptionsRequest) (*ParamOptions, error)` (not `Options`, which is the run's options type, `run.go:18`); `ParamOptions{Options []ParamOption; Groups []OptionGroup; Next string}` (json `options,groups,next`); `ParamOption{Value, Label, Group string}`; `OptionGroup{Value, Label string}`; route `POST /api/reports/param-options`; `requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, error)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3279,7 +3724,7 @@ func (z *zoo) options(t *testing.T, user, spec string, req OptionsRequest) *Para
 		t.Fatal(err)
 	}
 	req.Spec, req.Auth = loaded, z.recs[user]
-	res, err := Options(context.Background(), z.app, req)
+	res, err := ReadParamOptions(context.Background(), z.app, req)
 	if err != nil {
 		t.Fatalf("Options: %v", err)
 	}
@@ -3304,7 +3749,8 @@ func TestParamOptionsReadOnlyRowsTheReaderMayList(t *testing.T) {
 	if got := optionLabels(z.options(t, "bob", animalsParam, OptionsRequest{Param: "animals"})); !slices.Equal(got, []string{"Mo", "Zed"}) {
 		t.Fatalf("bob = %v", got)
 	}
-	if got := optionLabels(z.options(t, "ann", animalsParam, OptionsRequest{Param: "animals", Search: "E"})); !slices.Equal(got, []string{"Leo", "Zed"}) {
+	// "o" is in Leo and in bob's Mo, which ann may not list.
+	if got := optionLabels(z.options(t, "ann", animalsParam, OptionsRequest{Param: "animals", Search: "o"})); !slices.Equal(got, []string{"Leo"}) {
 		t.Fatalf("search = %v", got)
 	}
 	lion := "lion"
@@ -3331,6 +3777,9 @@ func TestParamOptionsPageByLabel(t *testing.T) {
 	if got := optionLabels(next); !slices.Equal(got, []string{"Zed"}) || next.Next != "" {
 		t.Fatalf("next = %v next %q", got, next.Next)
 	}
+	if len(first.Groups) == 0 || len(next.Groups) != 0 {
+		t.Fatalf("groups come with the first page only: %v then %v", first.Groups, next.Groups)
+	}
 }
 
 func TestParamOptionsWhereAndRefusals(t *testing.T) {
@@ -3351,10 +3800,10 @@ func TestParamOptionsWhereAndRefusals(t *testing.T) {
 		{OptionsRequest{Param: "animals", After: "garbage"}, "after", "not one this list gave"},
 	} {
 		c.req.Spec, c.req.Auth = loaded, z.recs["ann"]
-		_, err := Options(context.Background(), z.app, c.req)
+		_, err := ReadParamOptions(context.Background(), z.app, c.req)
 		requireSpecError(t, err, 400, c.at, c.want)
 	}
-	_, err := Options(context.Background(), z.app, OptionsRequest{Spec: loaded, Param: "animals"})
+	_, err := ReadParamOptions(context.Background(), z.app, OptionsRequest{Spec: loaded, Param: "animals"})
 	if !errors.Is(err, ErrNoReader) {
 		t.Fatalf("no reader: %v", err)
 	}
@@ -3363,35 +3812,25 @@ func TestParamOptionsWhereAndRefusals(t *testing.T) {
 func TestParamOptionsEndpoint(t *testing.T) {
 	s := newSavedZoo(t)
 	o := s.saved(t, "O", "ann", "O", animalsParam, false)
-	call := func(name, token, body string, status int, want ...string) {
-		t.Helper()
-		sc := tests.ApiScenario{
-			Name: name, Method: http.MethodPost, URL: "/api/reports/param-options",
-			Body: strings.NewReader(body), Headers: map[string]string{"Authorization": token},
-			ExpectedStatus: status, ExpectedContent: want,
-			TestAppFactory:        func(testing.TB) *tests.TestApp { return s.app },
-			DisableTestAppCleanup: true,
-		}
-		sc.Test(t)
-	}
-	call("a draft", s.token(t, "ann"), `{"spec":`+animalsParam+`,"param":"animals"}`, http.StatusOK, `"label":"Kit"`, `"groups":[`)
-	call("a saved report the reader may view", s.token(t, "ann"), `{"reportId":"`+o.Id+`","param":"animals","search":"ze"}`, http.StatusOK, `"label":"Zed"`)
-	call("a saved report the reader may not view", s.token(t, "ot"), `{"reportId":"`+o.Id+`","param":"animals"}`, http.StatusForbidden, `"reportId":{"code":"no_access"`)
-	call("signed out", "", `{"spec":`+animalsParam+`,"param":"animals"}`, http.StatusUnauthorized)
-	call("an unknown field", s.token(t, "ann"), `{"spec":`+animalsParam+`,"param":"animals","sql":"x"}`, http.StatusBadRequest, `unknown field`)
-	call("both", s.token(t, "ann"), `{"spec":`+animalsParam+`,"reportId":"`+o.Id+`","param":"animals"}`, http.StatusBadRequest, `not both`)
-	if got := oauth.ScopeForRoute(http.MethodPost, "/api/reports/param-options"); len(got) != 0 {
+	const url = "/api/reports/param-options"
+	s.expect(t, "ann", http.MethodPost, url, `{"spec":`+animalsParam+`,"param":"animals"}`, http.StatusOK, `"label":"Kit"`, `"groups":[`)
+	s.expect(t, "ann", http.MethodPost, url, `{"reportId":"`+o.Id+`","param":"animals","search":"ze"}`, http.StatusOK, `"label":"Zed"`)
+	s.expect(t, "ot", http.MethodPost, url, `{"reportId":"`+o.Id+`","param":"animals"}`, http.StatusForbidden, `"reportId":{"code":"no_access"`)
+	s.expect(t, "", http.MethodPost, url, `{"spec":`+animalsParam+`,"param":"animals"}`, http.StatusUnauthorized)
+	s.expect(t, "ann", http.MethodPost, url, `{"spec":`+animalsParam+`,"param":"animals","sql":"x"}`, http.StatusBadRequest, `unknown field`)
+	s.expect(t, "ann", http.MethodPost, url, `{"spec":`+animalsParam+`,"reportId":"`+o.Id+`","param":"animals"}`, http.StatusBadRequest, `not both`)
+	if got := oauth.ScopeForRoute(http.MethodPost, url); len(got) != 0 {
 		t.Fatalf("param-options resolved to scopes %v, want default-deny", got)
 	}
 }
 ```
 
-(Add imports: `context`, `errors`, `net/http`, `slices`, `github.com/pocketbase/pocketbase/tests`, `tinycld.org/core/oauth`.)
+(Add imports: `context`, `errors`, `net/http`, `slices`, `tinycld.org/core/oauth`. `s.expect` is the saved-zoo helper, `saved_fixture_test.go:129-141`, which sends through the real router with the user's session token, or none for `""`.)
 
 - [ ] **Step 2: Run them to see them fail**
 
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 -run 'ParamOptions' ./reports/`
-Expected: FAIL to compile: `undefined: Options`.
+Expected: FAIL to compile: `undefined: ReadParamOptions`.
 
 - [ ] **Step 3: Implement the options read**
 
@@ -3440,9 +3879,9 @@ type ParamOptions struct {
 	Next    string        `json:"next,omitempty"`
 }
 
-// Options reads one page of a choice param's options for its reader, under
+// ReadParamOptions reads one page of a choice param's options for its reader, under
 // the reader's list rules, ordered by label then value. It writes nothing.
-func Options(ctx context.Context, app core.App, req OptionsRequest) (*ParamOptions, error) {
+func ReadParamOptions(ctx context.Context, app core.App, req OptionsRequest) (*ParamOptions, error) {
 	if req.Auth == nil || req.Auth.IsSuperuser() {
 		return nil, ErrNoReader
 	}
@@ -3480,7 +3919,8 @@ func Options(ctx context.Context, app core.App, req OptionsRequest) (*ParamOptio
 	if err := c.optionsPage(ctx, op, req, limit, res); err != nil {
 		return nil, err
 	}
-	if op.group != nil && len(req.Values) == 0 {
+	// Groups come with the first page only; later pages carry options (F9).
+	if op.group != nil && len(req.Values) == 0 && req.After == "" {
 		if err := c.optionGroups(ctx, op, req, res); err != nil {
 			return nil, err
 		}
@@ -3606,23 +4046,11 @@ func readOptionsCursor(text string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-// queryRows runs a read statement under the run time limit.
+// queryRows runs a read statement under the run time limit: readRows,
+// shared with the runner (below), with no topics.
 func queryRows(ctx context.Context, app core.App, s *stmt, body string) ([]map[string]any, error) {
-	with, err := s.with()
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, runLimits.timeout)
-	defer cancel()
-	rows, err := app.DB().NewQuery(with + body).Bind(s.params).WithContext(ctx).Rows()
-	if err != nil {
-		return nil, mapRunError(err)
-	}
-	out, err := scanRows(rows)
-	if err != nil {
-		return nil, mapRunError(err)
-	}
-	return out, nil
+	rows, _, err := readRows(ctx, app, s, nil, body, false)
+	return rows, err
 }
 
 type paramOptionsBody struct {
@@ -3643,13 +4071,8 @@ type paramOptionsBody struct {
 // view (the reports read exception, OQ5). It writes nothing.
 func handleParamOptions(re *core.RequestEvent) error {
 	var body paramOptionsBody
-	dec := json.NewDecoder(re.Request.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil {
-		return re.BadRequestError("The request is not a param-options request: "+err.Error(), nil)
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return re.BadRequestError("The request is not a param-options request: it has data after the first object.", nil)
+	if err := decodeStrict(re, &body, "a param-options request"); err != nil {
+		return err
 	}
 	raw, err := requestSpec(re, body.Spec, body.ReportID)
 	if err != nil {
@@ -3659,7 +4082,7 @@ func handleParamOptions(re *core.RequestEvent) error {
 	if err != nil {
 		return runError(re, err)
 	}
-	res, err := Options(re.Request.Context(), re.App, OptionsRequest{
+	res, err := ReadParamOptions(re.Request.Context(), re.App, OptionsRequest{
 		Spec: spec, Param: body.Param, Search: body.Search, After: body.After, Group: body.Group,
 		Values: body.Values, Limit: body.Limit, Params: body.Params, Today: body.Today,
 		Auth: re.Auth, Headers: ruleHeaders(re.Request.Header),
@@ -3673,7 +4096,68 @@ func handleParamOptions(re *core.RequestEvent) error {
 
 (`bytes` is not needed here; leave it out.)
 
-- [ ] **Step 4: Share the spec-or-report rule and bind the route**
+- [ ] **Step 4: Share the statement runner, the strict decode and the spec-or-report rule; bind the route**
+
+Extract from `run.go` `runner.query` (`run.go:292-318`) the statement runner both reads use (F14), and make `runner.query` call it:
+
+```go
+// readRows runs one read statement with the rule CTEs and ctes under the run
+// time limit; with topics, it also returns the change-signal topics of every
+// collection the statement reads.
+func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body string, topics bool) ([]map[string]any, []string, error) {
+	with, err := s.with(ctes...)
+	if err != nil {
+		return nil, nil, err
+	}
+	sql := with + body
+	ctx, cancel := context.WithTimeout(ctx, runLimits.timeout)
+	defer cancel()
+	var read []string
+	if topics {
+		if read, err = changesignal.TopicsRead(ctx, app, sql, s.params); err != nil {
+			return nil, nil, mapRunError(err)
+		}
+	}
+	rows, err := app.DB().NewQuery(sql).Bind(s.params).WithContext(ctx).Rows()
+	if err != nil {
+		return nil, nil, mapRunError(err)
+	}
+	out, err := scanRows(rows)
+	if err != nil {
+		return nil, nil, mapRunError(err)
+	}
+	return out, read, nil
+}
+
+func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, error) {
+	rows, topics, err := readRows(rn.ctx, rn.app, s, ctes, body, true)
+	for _, t := range topics {
+		rn.topics[t] = true
+	}
+	return rows, err
+}
+```
+
+and from `handleRun`'s decode (`endpoint.go:105-113`):
+
+```go
+// decodeStrict reads one JSON object with no unknown field and nothing after
+// it, answering 400 naming what the request should have been.
+func decodeStrict(re *core.RequestEvent, into any, what string) error {
+	dec := json.NewDecoder(re.Request.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(into); err != nil {
+		return re.BadRequestError("The request is not "+what+": "+err.Error(), nil)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return re.BadRequestError("The request is not "+what+": it has data after the first object.", nil)
+	}
+	return nil
+}
+```
+
+`handleRun` calls `decodeStrict(re, &body, "a report run")` (its messages stay as `TestRunEndpoint` expects: "The request is not a report run: …").
+
 
 In `endpoint.go`, move the spec/reportId switch of `handleRun` (`endpoint.go:114-126`) into:
 
@@ -3700,7 +4184,7 @@ func requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) (
 			Bind(apis.RequireAuth("users"), apis.BodyLimit(maxRunBody))
 ```
 
-and extend `Register`'s doc comment: "and POST /api/reports/param-options, the options of a choice param read from a source (Options)".
+and extend `Register`'s doc comment: "and POST /api/reports/param-options, the options of a choice param read from a source (ReadParamOptions)".
 
 - [ ] **Step 5: Run, then commit**
 
@@ -3712,6 +4196,134 @@ cd /Users/nas/tmp/tinycld/books-purchases/tinycld
 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check
 git add core/server/reports
 git commit -m "feat(core): POST /api/reports/param-options reads a choice param's options"
+git push origin books/p5-trial-balance
+```
+
+---
+
+### Task 13a: F19 — a whole group picked from a source is expanded on the server
+
+Engine facts used: an options-from-source choice value is checked by type only (Task 12, `choiceValue`); `optionsSelect` reads the options under the reader's rules (Task 12); every context resolves a param through `paramOf` and `paramExpr` (`join.go:21-27`, `params.go:344-365`).
+
+Design (R30, changing R13): a multiple choice from a source may hold, besides record values, group references `{"group": "<group value>"}`. The server expands a group reference at run time to every option of that group the reader may list (the options select, filtered by group), so a group has no size cap and follows rule changes. Explicit values keep the cap of 1000; past it the run says "the value is a list of at most 1000 choices; pick a whole group instead", and the picker says the same before Apply. Group references are capped at 200 (the groups a picker lists).
+
+**Files:**
+- Modify: `core/server/reports/params.go` (`paramValue.groups`, `choiceValue`, `ResolvedParam.Groups`), `options.go` (`groupListSQL`), `join.go`/`detail.go`/`levels.go`/`lookup.go` (their `param` builds the list through `paramLeaf`)
+- Modify: `core/server/reports/options_test.go`
+
+**Interfaces:**
+- Consumes: Tasks 12, 13.
+- Produces: `paramValue.groups []string`; `ResolvedParam.Groups []string` (`json:"groups,omitempty"`); `paramLeaf(c *compiler, s *stmt, f fctx, id string, v paramValue) expr`; `(c *compiler) groupListSQL(s *stmt, op *optionsPlan, values, groups []string) string`.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `options_test.go`:
+
+```go
+// A group reference picks every option of the group the reader may list, at
+// run time: no cap, and it follows the reader's rules.
+func TestAGroupReferenceExpandsOnTheServer(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `[{"group":"zebra"}]`})
+	requireRows(t, res, "note", "f3", "f4", nil)
+	res = z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `["` + z.id("leo") + `",{"group":"zebra"}]`})
+	requireRows(t, res, "note", "f1", "f2", "f3", "f4", nil)
+	if p := res.Params[0]; len(p.Groups) != 1 || p.Groups[0] != "zebra" || len(p.List) != 1 {
+		t.Fatalf("resolved = %+v", p)
+	}
+	_, err := z.try(t, "ann", animalsParam, Options{}, map[string]string{"animals": `[{"group":7}]`})
+	requireSpecError(t, err, 400, "params.animals", "a group is")
+}
+```
+
+and in `TestARunTakesAnyIDForAnOptionsFromSourceParam` the over-cap message becomes `"pick a whole group instead"`.
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 -run 'GroupReference|AnyIDForAnOptionsFromSource' ./reports/`
+Expected: FAIL: `the value is a list of the param's options`.
+
+- [ ] **Step 3: Implement**
+
+`params.go`: `paramValue` gains `groups []string`; `ResolvedParam` gains `Groups []string \`json:"groups,omitempty"\`` (filled with `v.groups`). In `choiceValue`, for a multiple choice with `OptionsFrom`, each item is a string (a value) or an object `{"group": string}`:
+
+```go
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok && d.OptionsFrom != nil {
+			g, ok := m["group"].(string)
+			if !ok || len(m) != 1 || len(g) > maxParamText {
+				return out, invalid(at, `a group is {"group": "<group value>"}`)
+			}
+			out.groups = append(out.groups, g)
+			continue
+		}
+		s, ok := item.(string)
+		if !ok || !valid(s) {
+			return out, invalid(at, "the value is a list of the param's options")
+		}
+		out.list = append(out.list, s)
+	}
+	if len(out.list) > maxChoiceValues {
+		return out, invalid(at, fmt.Sprintf("the value is a list of at most %d choices; pick a whole group instead", maxChoiceValues))
+	}
+	if len(out.groups) > maxOptionGroups {
+		return out, invalid(at, fmt.Sprintf("the value holds at most %d groups", maxOptionGroups))
+	}
+	out.unset = len(out.list) == 0 && len(out.groups) == 0
+```
+
+(the `len(items) > maxChoiceValues` check from Task 12 moves to `out.list` here). `options.go`:
+
+```go
+// groupListSQL is a choice list with group references expanded under the
+// reader's rules: the values of the options select whose group is one of
+// groups, plus the explicit values.
+func (c *compiler) groupListSQL(s *stmt, op *optionsPlan, values, groups []string) (string, error) {
+	inner, err := c.optionsSelect(s, op)
+	if err != nil {
+		return "", err
+	}
+	marks := make([]string, len(groups))
+	for i, g := range groups {
+		marks[i] = s.bind(g)
+	}
+	sql := fmt.Sprintf("SELECT o.v FROM (%s) o WHERE o.g IN (%s)", inner, strings.Join(marks, ", "))
+	for _, v := range values {
+		sql += " UNION SELECT " + s.bind(v)
+	}
+	return "(" + sql + ")", nil
+}
+
+// paramLeaf is a param as a formula leaf in a context with a statement: a
+// choice with group references reads the expanded list.
+func paramLeaf(c *compiler, s *stmt, f fctx, id string, v paramValue) (expr, error) {
+	if len(v.groups) == 0 {
+		return paramExpr(f, v), nil
+	}
+	op := c.p.options[id]
+	if op == nil {
+		return paramExpr(f, v), nil
+	}
+	sql, err := c.groupListSQL(s, op, v.list, v.groups)
+	if err != nil {
+		return expr{}, err
+	}
+	return expr{sql: sql, typ: Text, list: true}, nil
+}
+```
+
+Each context's `param` calls `paramLeaf` with its compiler and statement (`rowsCtx`: `rc.r.c, rc.r.s`; `joinCtx`: `j.r.c, j.sc.s`; `levelCtx`: `lv.c, lv.r.s`; `lookupCtx`: `l.r.c, l.r.s`). `x IN (SELECT …)` is the `in` operator's existing `(arg IN list)` form.
+
+- [ ] **Step 4: Run, then commit**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 ./reports/`
+Expected: PASS.
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases/tinycld
+PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check
+git add core/server/reports
+git commit -m "feat(core): a whole group picked from a source expands on the server"
 git push origin books/p5-trial-balance
 ```
 
@@ -4019,7 +4631,6 @@ func TestDisplayLayoutsAreChecked(t *testing.T) {
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"span":2},{"col":"b","line":1}]}`, "display.layouts.0.cells.1", "no room on line 1", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"lines":2},{"col":"b","line":2,"start":1}]}`, "display.layouts.0.cells.1", "overlaps", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"justify":"left"}]}`, "display.layouts.0.cells.0.justify", "start, center or end", 400},
-		{`{"width":"mobile","tracks":3,"cells":[{"col":"a","line":1,"start":1,"span":2},{"col":"b","line":1,"start":3,"lines":2},{"col":"c","line":3,"start":2,"span":2},{"col":"d","line":2,"start":1,"lines":2},{"col":"e","line":2,"start":2}]}`, "display.layouts.0.cells.0", "can't be laid out", 400},
 		{`{"width":"mobile","tracks":2,"cells":[]},{"width":"mobile","tracks":1,"cells":[]}`, "display.layouts.1.width", "one layout per width", 400},
 	} {
 		spec, _, err := Load([]byte(fmt.Sprintf(base, c.layout)))
@@ -4028,6 +4639,20 @@ func TestDisplayLayoutsAreChecked(t *testing.T) {
 		}
 		requireSpecError(t, Validate(app, spec), c.status, c.at, c.want)
 	}
+}
+
+// A pinwheel over five real columns is a 400 (not an unknown column).
+func TestDisplayRefusesAPinwheel(t *testing.T) {
+	app := withZooRegistry(t)
+	spec, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"a","path":[{"field":"note"}]},{"id":"b","path":[{"field":"cost"}]},{"id":"c","path":[{"field":"grams"}]},
+		{"id":"d","path":[{"field":"fed"}]},{"id":"e","path":[{"field":"currency"}]}],
+		"display":{"layouts":[{"width":"mobile","tracks":3,"cells":[{"col":"a","line":1,"start":1,"span":2},{"col":"b","line":1,"start":3,"lines":2},
+			{"col":"c","line":3,"start":2,"span":2},{"col":"d","line":2,"start":1,"lines":2},{"col":"e","line":2,"start":2}]}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSpecError(t, Validate(app, spec), 400, "display.layouts.0.cells.0", "can't be laid out")
 }
 
 func TestPlaceCellsFlowsIntoFreeTracks(t *testing.T) {
@@ -4545,8 +5170,8 @@ git push origin books/p5-trial-balance
 Code facts used: the strict spec schema (`core/reports/lib/spec.ts:13-111`), result types (`lib/types.ts:33-98`), the expansion helpers and child cells (`lib/rows.ts:17-111`), the run client (`lib/run-client.ts:74-99`), choice values and chip text (`lib/params.ts:86-93,209-247`), the store's expansion and the view's default (`stores/report-ui-store.ts:14-38`, `hooks/useReportView.ts:115`).
 
 **Files:**
-- Modify: `core/reports/lib/spec.ts`, `lib/types.ts`, `lib/rows.ts`, `lib/run-client.ts`, `lib/params.ts`, `hooks/useReportView.ts:115,217`
-- Test: `core/reports/lib/__tests__/spec.test.ts`, `rows.test.ts`, `run-client.test.ts`, `params.test.ts`
+- Modify: `core/reports/lib/spec.ts`, `lib/types.ts`, `lib/rows.ts`, `lib/run-client.ts`, `lib/params.ts`, `lib/view-url.ts` (a choice list with groups), `lib/format.ts` (a link cell shows its label), `hooks/useReportView.ts:115,217`
+- Test: `core/reports/lib/__tests__/spec.test.ts`, `rows.test.ts`, `run-client.test.ts`, `params.test.ts`, `view-url.test.ts`, `format.test.ts`
 
 **Interfaces:**
 - Produces (TS): `SpecNode.record?`, `SpecNode.source?`, `SpecNode.pick?`; `ParamDef.optionsFrom?: OptionsFrom`; `SpecColumn.total?: 'recompute' | 'rows'`; `SpecSortKey = { col?: string; formula?: SpecNode; dir? }`; `SpecGroup` with `label?`, `having?`, `fill?: { where? }`, `open?`; `ReportSpec.detail?`; `ReportSpec.display?: { layouts?: DisplayLayout[] }` with `DisplayLayout = { width: 'mobile' | 'tablet' | 'desktop'; tracks: number; cells: DisplayCell[] }`, `DisplayCell = { col: string; line: number; start?: number; span?: number; lines?: number; justify?: 'start' | 'center' | 'end' }`; `RunResult.heading?`; `ResultRow.labelColumn?`; `ParamOption`, `ParamOptionGroup`, `ParamOptionsPage`; `DEFAULT_EXPANSION`; `visibleRows(rows)` (no columns argument); `PARAM_OPTIONS_PATH`, `ParamOptionsBody`, `fetchParamOptions(body, signal?)`; `MAX_CHOICE_VALUES = 1000`; `chipText(def, value, resolved, labels?)`.
@@ -4661,8 +5286,18 @@ describe('a choice whose options come from a source', () => {
 `run-client.test.ts`, add:
 
 ```ts
+// The PocketBase client is mocked the way core's unit tests mock it
+// (vi.mock of @tinycld/core/lib/pocketbase), at the top of run-client.test.ts:
+//   const send = vi.fn()
+//   vi.mock('@tinycld/core/lib/pocketbase', () => ({ pb: { send: (...args: unknown[]) => send(...args) } }))
 describe('fetchParamOptions', () => {
-    it('posts to the param-options route', () => {
+    it('posts the request to the param-options route and returns the page', async () => {
+        const page = { options: [{ value: 'a', label: 'Bank' }], groups: [] }
+        send.mockResolvedValueOnce(page)
+        const signal = new AbortController().signal
+        const body = { reportId: 'r1', param: 'accounts', search: 'ba', today: '2026-11-01' }
+        await expect(fetchParamOptions(body, signal)).resolves.toEqual(page)
+        expect(send).toHaveBeenCalledWith(PARAM_OPTIONS_PATH, { method: 'POST', body, signal, requestKey: null })
         expect(PARAM_OPTIONS_PATH).toBe('/api/reports/param-options')
     })
 })
@@ -4815,6 +5450,36 @@ export async function fetchParamOptions(body: ParamOptionsBody, signal?: AbortSi
 ```
 
 `choiceLabels(def, values, labels?)` reads `labels?.get(value)` before `def.options`; `valueText` and `chipText` take an optional fourth argument `labels?: ReadonlyMap<string, string>` and pass it on.
+
+Whole groups (F19, R30): the choice member of `ParamValue` becomes `{ kind: 'choice'; values: string[]; groups?: string[] }`. The `optionsFrom` branch above reads each item as an id or a group reference:
+
+```ts
+    if (def.optionsFrom) {
+        // Its options live in a source the reader's rules filter: checked by type only (R13).
+        // A whole group is a reference the server expands at run time (R30).
+        const ids: string[] = []
+        const groups: string[] = []
+        for (const item of raw) {
+            if (typeof item === 'string' && item.length > 0 && item.length <= MAX_TEXT_PARAM) ids.push(item)
+            else if (isGroupRef(item)) groups.push(item.group)
+            else return null
+        }
+        if (ids.length > MAX_CHOICE_VALUES || groups.length > MAX_OPTION_GROUPS) return null
+        if (!def.multiple && (ids.length !== 1 || groups.length > 0)) return null
+        return groups.length > 0 ? { kind: 'choice', values: [...new Set(ids)], groups: [...new Set(groups)] } : { kind: 'choice', values: [...new Set(ids)] }
+    }
+```
+
+with `MAX_OPTION_GROUPS = 200` and `isGroupRef(item): item is { group: string }` (an object whose only key is a 1–500 character string `group`). `valueToJson` writes a choice as `[...values, ...(groups ?? []).map(group => ({ group }))]`. `choiceLabels` lists the values' labels, then `All <label>` for each group, its label read from `labels?.get('group:' + group)` (else the group value). `view-url.ts` `encodeParamValue` writes a multiple choice as `JSON.stringify(valueToJson(def, value))`, so groups survive the address. Tests (`params.test.ts`): with `def = { id: 'teams', type: 'choice', multiple: true, optionsFrom: { source: 's', value: [{ field: 'id' }], label: [{ field: 'name' }] } }`, `valueFromJson(def, ['a1', { group: 'north' }])` is `{ kind: 'choice', values: ['a1'], groups: ['north'] }`, `valueToJson` gives `['a1', { group: 'north' }]` back, `valueFromJson(def, [{ group: 7 }])` is null, and `chipText({ ...def, label: 'Teams' }, that value, undefined, new Map([['a1', 'N1'], ['group:north', 'North']]))` is `'Teams: N1, All North'`; `view-url.test.ts`: that value encodes to `'["a1",{"group":"north"}]'` and decodes back.
+
+Link labels (F22, R31): `spec.ts` `specColumnSchema` gains `labelField: z.string().min(1).max(MAX_ID_LENGTH).optional()`; `types.ts` `ResultColumn` gains `/** The cell holding the label of the record a link cell names (R31). */ labelCell?: string`. `format.ts` `cellDisplay`, first:
+
+```ts
+    // A link shows its record's label, never an id; a blank link reads "(none)" (R31).
+    if (column.labelCell) return plainDisplay(linkLabel(row.cells[column.labelCell]), 'left')
+```
+
+with `linkLabel = (label: CellValue | undefined) => (typeof label === 'string' ? label : '(none)')`. Tests (`format.test.ts`): a column `{ id: 'team', type: 'relation', labelCell: 'team@label' }` shows `'North team'` for a row with cells `{ team: 'r1', 'team@label': 'North team' }` and `'(none)'` for `{ team: null, 'team@label': null }`.
 
 - [ ] **Step 5: Run, then commit**
 
@@ -5131,7 +5796,12 @@ export interface FormulaOperators<E> extends FormulaTree<E> {
     addOperand(expr: E): E
     removeOperand(expr: E, index: number): E
     describe(expr: E): string
-    Leaf(props: FormulaLeafProps<E>): ReactNode
+    /**
+     * The controls beside a part's menu. Called as a function, not drawn as a
+     * component: an operator set is rebuilt each render, and a new component
+     * type would remount its inputs and drop the caret while typing.
+     */
+    renderLeaf(props: FormulaLeafProps<E>): ReactNode
 }
 
 interface Common {
@@ -5155,45 +5825,42 @@ export type FormulaEditorProps<E = ComputeExpr> =
 Forms' leaves, rewritten to take `set` and the pure helpers (same ids and labels as today's `NumberPart`, `ValuePick`, `PlacesPick`, `TotalPick`):
 
 ```tsx
+// The leaf views both operator sets draw (F15): a typed number, a value
+// picked from a list, and decimal places.
+
+/** A number typed into a formula part. A cleared number is 0, the value the engines read for nothing. */
+export function FormulaNumberInput({ value, onChange, label, testID }: { value: number; onChange: (n: number) => void; label: string; testID: string }) {
+    return <NumberText value={value} onChange={n => onChange(n ?? 0)} label={label} placeholder="0" emptyAs={0} testID={testID} />
+}
+
+/** A value a part reads: a field, a column or a section, by key. */
+export function FormulaValuePick({ choices, selected, onChange, purpose, testID }: { choices: readonly { key: string; label: string }[]; selected: string; onChange: (key: string) => void; purpose: string; testID: string }) {
+    const items: PickItem[] = choices.map(c => ({ id: c.key, label: c.label, isSelected: c.key === selected, onSelect: () => onChange(c.key) }))
+    const label = choices.find(c => c.key === selected)?.label ?? `${selected} (missing)`
+    return <PickMenu label={label} purpose={purpose} items={items} testID={testID} />
+}
+
+/** The decimal places of a Round or a Divide. */
+export function FormulaPlacesPick({ places, onChange, purpose, testID }: { places: number; onChange: (n: number) => void; purpose: string; testID: string }) {
+    const items: PickItem[] = PLACES.map(n => ({ id: String(n), label: String(n), isSelected: n === places, onSelect: () => onChange(n) }))
+    return <PickMenu label={`${places} places`} purpose={purpose} items={items} testID={testID} />
+}
+
 type ComputeLeafProps = FormulaLeafProps<ComputeExpr> & { operands: FormulaOperands; valueNoun: string }
 
 function NumberPart({ expr, set, id, where }: ComputeLeafProps) {
     if (typeof expr !== 'number') return null
-    // A cleared number is 0, the value the engine reads for nothing.
-    return (
-        <NumberText
-            value={expr}
-            onChange={n => set(n ?? 0)}
-            label={`Number${where}`}
-            placeholder="0"
-            emptyAs={0}
-            testID={`${id}-number`}
-        />
-    )
+    return <FormulaNumberInput value={expr} onChange={set} label={`Number${where}`} testID={`${id}-number`} />
 }
 
 function ValuePick({ expr, set, id, where, operands, valueNoun }: ComputeLeafProps) {
     if (typeof expr !== 'object' || !('var' in expr)) return null
-    const items: PickItem[] = operands.values.map(v => ({
-        id: v.key,
-        label: v.label,
-        isSelected: v.key === expr.var,
-        onSelect: () => set({ var: v.key }),
-    }))
-    const label = operands.values.find(v => v.key === expr.var)?.label ?? `${expr.var} (missing)`
-    return <PickMenu label={label} purpose={`${valueNoun}${where}`} items={items} testID={`${id}-field`} />
+    return <FormulaValuePick choices={operands.values} selected={expr.var} onChange={key => set({ var: key })} purpose={`${valueNoun}${where}`} testID={`${id}-field`} />
 }
 
 function PlacesPick({ expr, set, id, where }: ComputeLeafProps) {
     if (typeof expr !== 'object' || !('round' in expr)) return null
-    const places = expr.round[1]
-    const items: PickItem[] = PLACES.map(n => ({
-        id: String(n),
-        label: String(n),
-        isSelected: n === places,
-        onSelect: () => set(setPlaces(expr, n)),
-    }))
-    return <PickMenu label={`${places} places`} purpose={`Decimal places${where}`} items={items} testID={`${id}-places`} />
+    return <FormulaPlacesPick places={expr.round[1]} onChange={n => set(setPlaces(expr, n))} purpose={`Decimal places${where}`} testID={`${id}-places`} />
 }
 ```
 
@@ -5309,12 +5976,13 @@ function FormulaNode<E>({ tree, path, removal }: { tree: Tree<E>; path: FormulaP
         onSelect: () => tree.set(path, operators.withPart(tree.root, path, p)),
     }))
     const leaf = operators.renderLeaf({ root: tree.root, path, expr, set: next => tree.set(path, next), id, where: whereOf(path) })
+    const purpose = path.length ? `Part ${placeOf(path)}` : 'Formula part'
     return (
         <View className="gap-1.5" testID={id}>
             <View className="flex-row flex-wrap items-center gap-1.5">
                 <PickMenu
                     label={operators.label(part)}
-                    purpose={path.length ? `Part ${placeOf(path)}` : 'Formula part'}
+                    purpose={purpose}
                     items={partItems}
                     testID={`${id}-part`}
                 />
@@ -6284,7 +6952,9 @@ export function recordGroups(draft: Pick<BuilderDraft, 'source' | 'columns' | 'g
     })
 }
 
-export function formulaContext(draft: BuilderDraft, catalog: Catalog, place: FormulaPlace): ReportFormulaContext {
+export type FormulaDraftParts = Pick<BuilderDraft, 'source' | 'columns' | 'groups' | 'params' | 'layout'>
+
+export function formulaContext(draft: FormulaDraftParts, catalog: Catalog, place: FormulaPlace): ReportFormulaContext {
     if (place.kind === 'layout') {
         const earlier = draft.layout.slice(0, place.index)
         return {
@@ -6321,7 +6991,7 @@ export function formulaContext(draft: BuilderDraft, catalog: Catalog, place: For
 
 ```tsx
 import type { FormulaLeafProps, FormulaOperators } from '@tinycld/core/components/forms-builder/FormulaEditor'
-import { NumberText } from '@tinycld/core/components/forms-builder/rule-parts'
+import { FormulaNumberInput, FormulaPlacesPick, FormulaValuePick } from '@tinycld/core/components/forms-builder/FormulaEditor'
 import { treeAt } from '@tinycld/core/lib/forms/builder/formula-tree'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
@@ -6346,14 +7016,13 @@ import {
 import { type SpecHop, type SpecNode, specNodeSchema } from '../../lib/spec'
 import { ColumnPicker } from './ColumnPicker'
 
-const PLACES = [0, 1, 2, 3, 4, 5, 6]
 const INPUT_CLASS = 'min-w-24 flex-1 rounded-md border border-border px-2 py-2 text-sm text-foreground'
 
 type LeafProps = FormulaLeafProps<SpecNode> & { ctx: ReportFormulaContext }
 
 function NumberLeaf({ expr, set, id, where }: LeafProps) {
     if (partOf(expr) !== 'number') return null
-    return <NumberText value={Number(expr.value)} onChange={n => set({ value: n ?? 0 })} label={`Number${where}`} placeholder="0" emptyAs={0} testID={`${id}-number`} />
+    return <FormulaNumberInput value={Number(expr.value)} onChange={n => set({ value: n })} label={`Number${where}`} testID={`${id}-number`} />
 }
 
 function TextLeaf({ expr, set, id, where }: LeafProps) {
@@ -6378,14 +7047,8 @@ function ValueLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
     if (partOf(expr) !== 'field') return null
     const here = contextAt(ctx, root, path)
     const key = expr.col ?? expr.subtotal ?? ''
-    const items: PickItem[] = here.values.map(v => ({
-        id: v.key,
-        label: v.label,
-        isSelected: v.key === key,
-        onSelect: () => set(here.leaf === 'col' ? { col: v.key } : { subtotal: v.key }),
-    }))
-    const label = here.values.find(v => v.key === key)?.label ?? `${key} (missing)`
-    return <PickMenu label={label} purpose={`${partLabel(here, 'field')}${where}`} items={items} testID={`${id}-field`} />
+    const choose = (picked: string) => set(here.leaf === 'col' ? { col: picked } : { subtotal: picked })
+    return <FormulaValuePick choices={here.values} selected={key} onChange={choose} purpose={`${partLabel(here, 'field')}${where}`} testID={`${id}-field`} />
 }
 
 function PathLeaf({ ctx, root, path, expr, set, id }: LeafProps) {
@@ -6393,12 +7056,13 @@ function PathLeaf({ ctx, root, path, expr, set, id }: LeafProps) {
     const here = contextAt(ctx, root, path)
     if (!here.source) return null
     const info = describePath(here.catalog, here.source, expr.path ?? [])
+    const label = info ? pathLabel(info) : 'Choose a field'
     return (
         <ColumnPicker
             catalog={here.catalog}
             baseKey={here.source}
             onPick={(next: SpecHop[]) => set({ path: next })}
-            label={info ? pathLabel(info) : 'Choose a field'}
+            label={label}
             testID={`${id}-path`}
             toOneOnly
         />
@@ -6416,10 +7080,12 @@ function RecordLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
         onSelect: () => set({ record: r.group, path: expr.path ?? [] }),
     }))
     const info = record ? describePath(here.catalog, record.source, expr.path ?? []) : null
+    const fieldLabel = info ? pathLabel(info) : 'Choose a field'
+    const groupLabel = record?.label ?? `${expr.record} (missing)`
     return (
         <>
-            <PickMenu label={record?.label ?? `${expr.record} (missing)`} purpose={`Group${where}`} items={groups} testID={`${id}-record-group`} />
-            <RecordField isVisible={record !== undefined} catalogCtx={here} source={record?.source ?? ''} label={info ? pathLabel(info) : 'Choose a field'} onPick={next => set({ record: expr.record, path: next })} testID={`${id}-record-field`} />
+            <PickMenu label={groupLabel} purpose={`Group${where}`} items={groups} testID={`${id}-record-group`} />
+            <RecordField isVisible={record !== undefined} catalogCtx={here} source={record?.source ?? ''} label={fieldLabel} onPick={next => set({ record: expr.record, path: next })} testID={`${id}-record-field`} />
         </>
     )
 }
@@ -6439,8 +7105,7 @@ function ParamLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
 
 function PlacesLeaf({ expr, set, id, where }: LeafProps) {
     if (!SCALED_PARTS.has(partOf(expr))) return null
-    const items: PickItem[] = PLACES.map(n => ({ id: String(n), label: String(n), isSelected: n === expr.scale, onSelect: () => set({ ...expr, scale: n }) }))
-    return <PickMenu label={`${expr.scale ?? 0} places`} purpose={`Decimal places${where}`} items={items} testID={`${id}-places`} />
+    return <FormulaPlacesPick places={expr.scale ?? 0} onChange={n => set({ ...expr, scale: n })} purpose={`Decimal places${where}`} testID={`${id}-places`} />
 }
 
 function LookupLeaf({ ctx, expr, set, id, where }: LeafProps) {
@@ -6483,6 +7148,20 @@ function parseNode(value: unknown): SpecNode {
     return parsed.success ? parsed.data : { value: 0 }
 }
 
+/**
+ * The formula context of a place in the builder, read with useWatch so the
+ * menus follow edits made in other sections (F27); never getValues in render.
+ */
+export function useFormulaContext(builder: ReportBuilder, place: FormulaPlace): ReportFormulaContext {
+    const control = builder.form.control
+    const source = useWatch({ control, name: 'source' })
+    const columns = useWatch({ control, name: 'columns' })
+    const groups = useWatch({ control, name: 'groups' })
+    const params = useWatch({ control, name: 'params' })
+    const layout = useWatch({ control, name: 'layout' })
+    return formulaContext({ source, columns, groups, params, layout }, builder.catalog, place)
+}
+
 /** The report builder's formula parts for the FormulaEditor's operators prop (OQ2). */
 export function reportOperators(ctx: ReportFormulaContext): FormulaOperators<SpecNode> {
     return {
@@ -6505,10 +7184,10 @@ export function reportOperators(ctx: ReportFormulaContext): FormulaOperators<Spe
 
 - [ ] **Step 6: Wire the column and layout formulas**
 
-`ColumnsSection.tsx` `ColumnFormula`: replace the choices/`formulaOperands` lines and the editor with (the section re-renders on every change through its own `useWatch` of `columns`, so reading the whole draft with `getValues` is current):
+`ColumnsSection.tsx` `ColumnFormula`: replace the choices/`formulaOperands` lines and the editor with (the context is read with `useWatch`, F27; the hook is called before the early returns):
 
 ```tsx
-    const ctx = formulaContext(builder.form.getValues(), builder.catalog, { kind: 'column', selfKey: column.id })
+    const ctx = useFormulaContext(builder, { kind: 'column', selfKey: columns[index]?.id ?? '' })
     return (
         <FormulaEditor
             operators={reportOperators(ctx)}
@@ -6519,13 +7198,15 @@ export function reportOperators(ctx: ReportFormulaContext): FormulaOperators<Spe
     )
 ```
 
-`LayoutSection.tsx` does the same with `{ kind: 'layout', index }` and `value={item.formula.node}`. Remove the now unused `formulaOperands`/`columnChoices` imports.
+`LayoutSection.tsx` does the same with `useFormulaContext(builder, { kind: 'layout', index })` and `value={item.formula.node}`. Remove the now unused `formulaOperands`/`columnChoices` imports.
 
 - [ ] **Step 7: The shipped report's `if` is now editable**
 
 In `tests/e2e/reports-shipped.spec.ts`, replace the read-only assertions (lines 51-55) with:
 
 ```ts
+        // A version 1 shipped report runs with no "upgraded" notice (R1, F25).
+        await expect(page.getByTestId('report-notice-upgraded')).toHaveCount(0)
         // The copy's builder edits the if formula (OQ2): its parts are menus.
         await pressToolbar(page, 'report-edit-open', 'Edit report')
         await expect(page.getByTestId('report-builder')).toBeVisible()
@@ -6558,7 +7239,8 @@ git push origin books/p5-trial-balance
 Code facts used: the draft and its conversions (`core/reports/lib/builder/draft.ts:59-500`); the filter draft, its node conversion and params (`lib/builder/filter.ts:32-612`); `askParamFor` (`filter.ts:165-182`); the builder hook's setters (`hooks/useReportBuilder.ts:177-191`); `FilterSection`'s change (`components/builder/FilterSection.tsx:580-590`).
 
 **Files:**
-- Modify: `core/reports/lib/builder/filter.ts` (condition subjects, `LevelScope`, relation ops and asks, `paramsInNode` reads lookups)
+- Modify: `core/reports/lib/builder/filter.ts` (condition subjects, `LevelScope`, relation ops and asks, amount asks and two-param between, `above` conditions, `paramsInNode` reads lookups)
+- Modify: `core/reports/lib/builder/__tests__/catalog-fixture.ts` (the teams source gains `region`, a select north/south)
 - Modify: `core/reports/lib/builder/draft.ts` (group, sort, column, detail and display fields; `keptParams`; `draftFromSpec`/`specFromDraft`)
 - Modify: `core/reports/lib/builder/errors.ts` (`detail` → columns, `display` → arrange)
 - Modify: `core/reports/hooks/useReportBuilder.ts` (setters keep params; `setDetailLabel`, `setDisplay`)
@@ -6567,7 +7249,7 @@ Code facts used: the draft and its conversions (`core/reports/lib/builder/draft.
 
 **Interfaces:**
 - Consumes: Task 19/20 (`formulaDraft`, `formulaType`, `recordGroups`).
-- Produces: `ConditionDraft.subject: 'field' | 'total' | 'column' | 'record'`, `.aggregate: Aggregate | ''`, `.col: string`, `.record: string`; `type LevelScope = { colType(key: string): FieldType | undefined; records: FormulaRecord[] }`; `nodeToFilter(node, catalog, baseKey, level?)`, `filterToNode(group, catalog, baseKey, level?)`, `conditionProblems(group, catalog, baseKey, level?)`; `askParamFor(field, op, id, target?)`; `GroupLevelDraft = { id; col; bucket; subtotals; open: boolean; label: FormulaDraft | null; having: GroupDraft; fill: { on: boolean; where: GroupDraft } }`; `SortDraft = { kind: 'col'; col; dir } | { kind: 'formula'; formula: FormulaDraft; dir }`; `ColumnDraft.total: 'recompute' | 'rows'`; `BuilderDraft.detailLabel: FormulaDraft | null`; `BuilderDraft.display: { layouts: DisplayLayout[] }`; `keptParams(draft, added?): ParamDef[]`; `levelScope(draft, catalog): LevelScope`; `groupTarget(draft, catalog, group): CatalogSource | undefined`; builder setters `setColumns(items)`, `setGroups(items, added?)`, `setSort(items, added?)`, `setFilter(filter, added?)`, `setDetailLabel(label)`, `setDisplay(display)`.
+- Produces: `ConditionDraft.subject: 'field' | 'total' | 'column' | 'record'`, `.aggregate: Aggregate | ''`, `.col: string`, `.record: string`; `type LevelScope = { colType(key: string): FieldType | undefined; records: FormulaRecord[] }`; `nodeToFilter(node, catalog, baseKey, level?)`, `filterToNode(group, catalog, baseKey, level?)`, `conditionProblems(group, catalog, baseKey, level?)`; `askParamFor(field, op, id, target?)`; `askHighParamFor(field, op, id): ParamDef | null`; `ConditionDraft.paramHigh: string`, `ConditionDraft.above: string`; `type AboveGroup = { id: string; col: string; label: string }`; `aboveOf(groups, index, columns): AboveGroup[]`; `nodeToFilter`/`filterToNode`/`conditionProblems` take a fifth argument `above?: readonly AboveGroup[]`; `ColumnDraft.labelField: string`; `GroupLevelDraft = { id; col; bucket; subtotals; open: boolean; label: FormulaDraft | null; having: GroupDraft; fill: { on: boolean; where: GroupDraft } }`; `SortDraft = { kind: 'col'; col; dir } | { kind: 'formula'; formula: FormulaDraft; dir }`; `ColumnDraft.total: 'recompute' | 'rows'`; `BuilderDraft.detailLabel: FormulaDraft | null`; `BuilderDraft.display: { layouts: DisplayLayout[] }`; `keptParams(draft, added?): ParamDef[]`; `levelScope(draft, catalog): LevelScope`; `groupTarget(draft, catalog, group): CatalogSource | undefined`; builder setters `setColumns(items)`, `setGroups(items, added?)`, `setSort(items, added?)`, `setFilter(filter, added?)`, `setDetailLabel(label)`, `setDisplay(display)`.
 
 - [ ] **Step 1: Write the failing round-trip test**
 
@@ -6632,7 +7314,8 @@ describe('spec version 2 in the builder', () => {
         const draft = draftFromSpec(V2, { title: 'T', description: '' }, CATALOG)
         const [column, fixed] = draft.groups[0]?.having.items ?? []
         expect(column).toMatchObject({ kind: 'condition', subject: 'column', col: 'quantity', op: 'gte', param: 'min' })
-        expect(fixed?.kind).toBe('fixed')
+        // or(...) reads back as an Any-of group: the param test is fixed, the total a condition (F8).
+        expect(fixed).toMatchObject({ kind: 'group', match: 'any', items: [{ kind: 'fixed' }, { kind: 'condition', subject: 'total', aggregate: 'sum', op: 'ne' }] })
         expect(draft.filter.items[1]).toMatchObject({ kind: 'condition', subject: 'field', path: [{ link: 'team' }], op: 'in', param: 'teams' })
         expect(draft.groups[0]?.fill).toMatchObject({ on: true, where: { items: [{ kind: 'condition', op: 'startsWith' }] } })
         expect(draft.sort[0]).toMatchObject({ kind: 'formula', dir: 'desc' })
@@ -6647,6 +7330,48 @@ describe('spec version 2 in the builder', () => {
 ```
 
 In `filter.test.ts` add: `askParamFor(<team relation field>, 'in', 'team', <teams source>)` gives `{ id: 'team', type: 'choice', label: 'Team', multiple: true, optionsFrom: { source: TEAMS_KEY, value: [{ field: 'id' }], label: [{ field: 'name' }] } }`; `opsFor('relation')` is `['eq', 'ne', 'in', 'isEmpty', 'notEmpty']`; a level condition `{ subject: 'total', aggregate: 'sum', path: [{ field: 'amount' }], op: 'gt', value: '10.00' }` writes `{ op: 'gt', args: [{ op: 'sum', args: [{ path: [{ field: 'amount' }] }] }, { value: 1000 }] }` and reads back to the same draft. In `errors.test.ts`: `sectionOf('detail.label')` is `'columns'` and `sectionOf('display.layouts.0.cells.1')` is `'arrange'`.
+
+Also in `filter.test.ts` (F18, F21):
+
+```ts
+describe('asked amounts and ranges', () => {
+    const amount = { key: 'amount', label: 'Amount', type: 'money' as const, aggregates: ['sum' as const] }
+    const quantity = { key: 'quantity', label: 'Quantity', type: 'number' as const, aggregates: [] }
+    it('asks a money value as an amount param', () => {
+        expect(askParamFor(amount, 'gte', 'amount')).toEqual({ id: 'amount', type: 'amount', label: 'Amount' })
+    })
+    it('asks a range of numbers or amounts as two params', () => {
+        expect(askParamFor(quantity, 'between', 'quantity')).toEqual({ id: 'quantity', type: 'number', label: 'Quantity from' })
+        expect(askHighParamFor(quantity, 'between', 'quantity')).toEqual({ id: 'quantityTo', type: 'number', label: 'Quantity to' })
+        expect(askHighParamFor(amount, 'between', 'amount')).toEqual({ id: 'amountTo', type: 'amount', label: 'Amount to' })
+        expect(askHighParamFor(quantity, 'gte', 'quantity')).toBeNull()
+    })
+    it('writes and reads a two-param between', () => {
+        const node = { op: 'between', args: [{ path: [{ field: 'quantity' }] }, { param: 'quantity' }, { param: 'quantityTo' }] }
+        const group = nodeToFilter(node, CATALOG, SALES_KEY)
+        expect(group.items[0]).toMatchObject({ kind: 'condition', op: 'between', param: 'quantity', paramHigh: 'quantityTo' })
+        expect(filterToNode(group, CATALOG, SALES_KEY)).toEqual(node)
+        expect([...paramsInGroup(group, new Set())]).toEqual(['quantity', 'quantityTo'])
+    })
+})
+
+describe('a fill condition that matches the group above', () => {
+    const above = [{ id: 'g0', col: 'region', label: 'Region' }]
+    it('reads {col} of an enclosing group as "same as the group above" and writes it back', () => {
+        const node = { op: 'eq', args: [{ path: [{ field: 'region' }] }, { col: 'region' }] }
+        const group = nodeToFilter(node, CATALOG, TEAMS_KEY, undefined, above)
+        expect(group.items[0]).toMatchObject({ kind: 'condition', op: 'eq', above: 'g0', param: '', value: '' })
+        expect(filterToNode(group, CATALOG, TEAMS_KEY, undefined, above)).toEqual(node)
+        expect(conditionProblems(group, CATALOG, TEAMS_KEY, undefined, above)).toEqual([])
+    })
+    it('reads a {col} that is no enclosing group as a fixed part', () => {
+        const node = { op: 'eq', args: [{ path: [{ field: 'region' }] }, { col: 'other' }] }
+        expect(nodeToFilter(node, CATALOG, TEAMS_KEY, undefined, above).items[0]).toMatchObject({ kind: 'fixed' })
+    })
+})
+```
+
+In `draft.test.ts`, a spec whose second group (`g1`, by a team record column) has `fill: { where: { op: 'eq', args: [{ path: [{ field: 'region' }] }, { col: 'region' }] } }` under a first group `g0` by a `region` column round-trips through `draftFromSpec`/`specFromDraft` unchanged, its fill condition reading `above: 'g0'`; a column `{ id: 'team', path: [{ link: 'team' }], labelField: 'region' }` reads `labelField: 'region'` and writes it back, and one without `labelField` reads `''` and writes none (F22).
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -6740,15 +7465,78 @@ function subjectOf(node: SpecNode | undefined, catalog: Catalog, baseKey: string
 }
 ```
 
-with `Subject` gaining `kind`, `col?`, `record?`, `aggregate?` and `condition(...)` copying them into the draft (`AGGREGATE_OPS = new Set(['sum', 'count', 'countDistinct', 'avg', 'min', 'max'])`; one-argument `min`/`max` are totals). `askParamFor` takes `target?: CatalogSource` and, before the text case:
+with `Subject` gaining `kind`, `col?`, `record?`, `aggregate?` and `condition(...)` copying them into the draft (`AGGREGATE_OPS = new Set(['sum', 'count', 'countDistinct', 'avg', 'min', 'max'])`; one-argument `min`/`max` are totals). `askParamFor` and its partner for the high end of a range (F18, R29):
 
 ```ts
+/** The param an asked value becomes, or null when the field cannot be asked (R16). */
+export function askParamFor(field: CatalogField, op: ConditionOp, id: string, target?: CatalogSource): ParamDef | null {
+    const label = field.label
+    if (!needsValue(op)) return null
+    if (isDayType(field.type)) {
+        if (op === 'between') return { id, type: 'dateRange', label }
+        if (op === 'lte') return { id, type: 'asOf', label }
+        return op === 'in' ? null : { id, type: 'date', label }
+    }
+    const ranged = rangedType(field.type)
+    if (ranged) return { id, type: ranged, label: op === 'between' ? `${label} from` : label }
     // A record is picked from the target's records, read under the reader's rules (R19).
     if (field.type === 'relation' && target && (op === 'eq' || op === 'ne' || op === 'in')) {
-        const label = firstTextField(target)?.key ?? 'id'
-        return { id, type: 'choice', label: field.label, multiple: op === 'in', optionsFrom: { source: target.key, value: [{ field: 'id' }], label: [{ field: label }] } }
+        const shown = firstTextField(target)?.key ?? 'id'
+        return { id, type: 'choice', label, multiple: op === 'in', optionsFrom: { source: target.key, value: [{ field: 'id' }], label: [{ field: shown }] } }
+    }
+    if (field.type === 'text' || field.type === 'relation') return { id, type: 'text', label }
+    if (field.type === 'select') {
+        const options = field.options ?? []
+        if (op === 'in') return { id, type: 'choice', label, multiple: true, options }
+        return { id, type: 'choice', label, options }
+    }
+    return null
+}
+
+/** The second param a range of numbers or amounts asks: its high end. */
+export function askHighParamFor(field: CatalogField, op: ConditionOp, id: string): ParamDef | null {
+    const ranged = rangedType(field.type)
+    return op === 'between' && ranged ? { id: `${id}To`, type: ranged, label: `${field.label} to` } : null
+}
+
+// A number asks a number; money asks an amount, kept to its currency (R29).
+function rangedType(type: FieldType): 'number' | 'amount' | null {
+    if (type === 'number') return 'number'
+    return type === 'money' ? 'amount' : null
+}
+```
+
+`ConditionDraft` gains `paramHigh: string` (the high end's param, '' when none; schema `z.string()`) and `above: string` (an enclosing group's id, '' for none; schema `z.string()`); `emptyCondition` sets both to `''`. A fill condition under other groups ties a record to its parent with `above` (F21; the builder's "Same as the <group> above" in Task 22 writes it):
+
+```ts
+/** A group that encloses a level: a fill condition there can read its key ({col}). */
+export type AboveGroup = { id: string; col: string; label: string }
+
+/** The groups above level index, labelled by their columns. */
+export function aboveOf(groups: readonly { id: string; col: string }[], index: number, columns: readonly { id: string; label: string }[]): AboveGroup[] {
+    return groups.slice(0, index).map(g => ({ id: g.id, col: g.col, label: columns.find(c => c.id === g.col)?.label ?? g.col }))
+}
+```
+
+`nodeToFilter`, `filterToNode` and `conditionProblems` take `above: readonly AboveGroup[] = []` after `level` and pass it down. In `conditionNode(c, type, above)` the value leaf becomes:
+
+```ts
+    const group = c.above ? above.find(g => g.id === c.above) : undefined
+    const leaf = (text: string): SpecNode => {
+        if (group) return { col: group.col }
+        return c.param ? { param: c.param } : { value: literal(type, text) }
     }
 ```
+
+and the `between` case, before the date-range form:
+
+```ts
+            if (c.param && c.paramHigh) return { op: 'between', args: [target, { param: c.param }, { param: c.paramHigh }] }
+```
+
+Reading: `Leaf` gains `| { above: string }`; `leafOf(node, type, above)` returns `{ above: g.id }` for a node `{ col }` (its only key) whose `col` is an enclosing group's column, and `fromLeaf` copies it to `above`; `betweenCondition` reads three-argument `between` whose two ends are param leaves as `{ param, paramHigh }`. `paramsInGroup` adds `item.paramHigh` when set; `valueProblems` returns null when `c.above` is set (the value is the group's key). Every caller in `draft.ts` passes the enclosing groups to a fill (below); filter and having pass none.
+
+`catalog-fixture.ts`: the teams source's fields gain `{ key: 'region', label: 'Region', type: 'select', aggregates: [], options: [{ value: 'north', label: 'North' }, { value: 'south', label: 'South' }] }`.
 
 `paramsInNode` also walks a lookup's `value` (parsed with `specNodeSchema`), so a param a lookup reads stays.
 
@@ -6776,7 +7564,7 @@ export const groupLevelSchema = z.object({
 export type GroupLevelDraft = z.infer<typeof groupLevelSchema>
 ```
 
-`columnFields` gains `total: z.enum(['recompute', 'rows'])`; `draftShape`: `groups: z.array(groupLevelSchema).max(MAX_GROUP_LEVELS)`, `sort: z.array(sortDraftSchema).max(MAX_SORT_KEYS)`, `detailLabel: formulaDraftSchema.nullable()`, `display: z.object({ layouts: z.array(displayLayoutSchema).max(DISPLAY_WIDTHS.length) })`. `emptyDraft` sets `detailLabel: null`, `display: { layouts: [] }`, and its column `total: 'recompute'`; `ColumnsSection`'s new columns set `total: 'recompute'`; `GroupSortSection`'s new level sets `open: false, label: null, having: emptyGroup(), fill: { on: false, where: emptyGroup() }` and a new sort key `{ kind: 'col', col, dir: 'asc' }`.
+`columnFields` gains `total: z.enum(['recompute', 'rows'])` and `labelField: z.string()` ('' shows the target's first text field, R31; `draftFromSpec` reads `c.labelField ?? ''`, `specFromDraft` writes it only when set); `draftShape`: `groups: z.array(groupLevelSchema).max(MAX_GROUP_LEVELS)`, `sort: z.array(sortDraftSchema).max(MAX_SORT_KEYS)`, `detailLabel: formulaDraftSchema.nullable()`, `display: z.object({ layouts: z.array(displayLayoutSchema).max(DISPLAY_WIDTHS.length) })`. `emptyDraft` sets `detailLabel: null`, `display: { layouts: [] }`, and its column `total: 'recompute', labelField: ''`; `ColumnsSection`'s new columns set `total: 'recompute', labelField: ''`; `GroupSortSection`'s new level sets `open: false, label: null, having: emptyGroup(), fill: { on: false, where: emptyGroup() }` and a new sort key `{ kind: 'col', col, dir: 'asc' }`.
 
 ```ts
 /** The source a group's column links to (a record group), or undefined. */
@@ -6811,7 +7599,7 @@ export function keptParams(draft: BuilderDraft, added?: ParamDef): ParamDef[] {
 `draftFromSpec` — columns gain `total: column.total ?? 'recompute'`; then, with `const base = { source: spec.source, columns, groups: basicGroups }` (groups with only `id`, `col`), `const level = levelScope(base, catalog)`:
 
 ```ts
-        groups: (spec.groups ?? []).map(g => {
+        groups: (spec.groups ?? []).map((g, index) => {
             const target = groupTarget(base, catalog, g)
             return {
                 id: g.id,
@@ -6823,7 +7611,7 @@ export function keptParams(draft: BuilderDraft, added?: ParamDef): ParamDef[] {
                 having: nodeToFilter(g.having, catalog, spec.source, level),
                 // A fill on a group that is not by a link (refused by the server)
                 // reads against the base source and shows as fixed parts.
-                fill: { on: g.fill !== undefined, where: nodeToFilter(g.fill?.where, catalog, target?.key ?? spec.source) },
+                fill: { on: g.fill !== undefined, where: nodeToFilter(g.fill?.where, catalog, target?.key ?? spec.source, undefined, aboveOf(spec.groups ?? [], index, spec.columns)) },
             }
         }),
         sort: (spec.sort ?? []).map(s =>
@@ -6846,10 +7634,10 @@ export function keptParams(draft: BuilderDraft, added?: ParamDef): ParamDef[] {
     }
     if (draft.groups.length > 0) {
         const level = levelScope(draft, catalog)
-        spec.groups = draft.groups.map(g => {
+        spec.groups = draft.groups.map((g, index) => {
             const having = filterToNode(g.having, catalog, draft.source, level)
             const target = groupTarget(draft, catalog, g)
-            const fillWhere = g.fill.on ? filterToNode(g.fill.where, catalog, target?.key ?? draft.source) : undefined
+            const fillWhere = g.fill.on ? filterToNode(g.fill.where, catalog, target?.key ?? draft.source, undefined, aboveOf(draft.groups, index, draft.columns)) : undefined
             return {
                 id: g.id,
                 col: g.col,
@@ -6904,6 +7692,7 @@ Code facts used: the group and sort cards (`components/builder/GroupSortSection.
 **Files:**
 - Create: `core/reports/components/builder/ConditionTree.tsx` (the filter editor body, moved out of `FilterSection.tsx` and parameterized)
 - Modify: `core/reports/components/builder/FilterSection.tsx` (uses `ConditionTree`), `ColumnPicker.tsx` (`allowLinkEnd`), `GroupSortSection.tsx`, `ColumnsSection.tsx`
+- Modify: `core/reports/lib/builder/columns.ts` (`linkTarget`), test `lib/builder/__tests__/columns.test.ts` (the `above`, `paramHigh` and `labelField` draft fields are Task 21's, in `filter.ts` and `draft.ts`)
 - Create: `tests/e2e/reports-groups-v2.spec.ts`
 
 **Interfaces:**
@@ -6916,7 +7705,7 @@ Create `tests/e2e/reports-groups-v2.spec.ts`:
 
 ```ts
 import { expect, type Page, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import { appShell, createInvitedUser, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
     addSale,
@@ -7061,6 +7850,9 @@ test.describe('group levels', () => {
             await expect(rowOf(p, 'Acme at 2026-01-05')).toBeHidden()
             const other = await p.context().newPage()
             try {
+                // A new page loads the app first (the initial load login also makes).
+                await other.goto('/')
+                await appShell(other).waitFor({ state: 'visible' })
                 await openReportStub(other)
                 await addSale(other, { team: `${stem} C`, customer: 'Cole', amount: 50, cost: 0, day: '2026-01-07' })
             } finally {
@@ -7177,7 +7969,25 @@ function conditionInfo(ctx: FilterContext, item: ConditionDraft, baseKey: string
 }
 ```
 
-`ConditionValue`, `AskToggle` and the operator menu take this info (a column or a count asks like a number: `askParamFor({ key: item.col, label, type, aggregates: [] }, op, id)`; a relation passes `target`). A column subject's asked param takes the column id as its id hint (`columnHint(item.path) || item.col`), so a having on Quantity asks `quantity`. A relation condition's typed value is chosen with a `RecordValuePicker` (Task 23 builds it; until then the value is the text box, which takes a record id). For a `total` subject an extra menu picks the aggregate (`${id}-aggregate`: Sum, Count, Smallest, Largest, Average as the field offers). In level mode, `GroupBody`'s add row offers three adders instead of "Add condition":
+`AskToggle` moves into `ConditionTree` and asks both ends of a range of numbers or amounts (F18, R29); `setCondition(ctx, path, patch, ...added: ParamDef[])` keeps every added param:
+
+```tsx
+    const onChange = (on: boolean) => {
+        if (!on) {
+            setCondition(ctx, path, { param: '', paramHigh: '' })
+            return
+        }
+        const taken = ctx.params.map(p => p.id)
+        const id = nextColumnId(taken, columnHint(item.path) || item.col)
+        const low = askParamFor(info.field, item.op, id, info.target)
+        if (!low) return
+        const high = askHighParamFor(info.field, item.op, nextColumnId([...taken, id], `${id}To`))
+        if (high) setCondition(ctx, path, { param: low.id, paramHigh: high.id }, low, high)
+        else setCondition(ctx, path, { param: low.id }, low)
+    }
+```
+
+(`isFull` counts two free param slots for a range.) A money total in a having (`subject: 'total'`, aggregate `sum` of an amount) asks an amount param, so a having on a money total can be asked (R18 changed). `ConditionValue`, `AskToggle` and the operator menu take this info (a column or a count asks like a number: `askParamFor({ key: item.col, label, type, aggregates: [] }, op, id)`; a relation passes `target`). A column subject's asked param takes the column id as its id hint (`columnHint(item.path) || item.col`), so a having on Quantity asks `quantity`. A relation condition's typed value is chosen with a `RecordValuePicker` (Task 23 builds it; until then the value is the text box, which takes a record id). For a `total` subject an extra menu picks the aggregate (`${id}-aggregate`: Sum, Count, Smallest, Largest, Average as the field offers). In level mode, `GroupBody`'s add row offers three adders instead of "Add condition":
 
 ```tsx
 function LevelAdders({ ctx, path, baseKey }: { ctx: FilterContext; path: FilterPath; baseKey: string }) {
@@ -7293,9 +8103,12 @@ function GroupFill({ builder, groups, index, target }: LevelPartProps) {
 /** "Show only groups where…": the filter editor in aggregate mode (R18). */
 function GroupHaving({ builder, groups, index }: LevelPartProps) {
     const group = groups[index]
-    const draft = builder.form.getValues()
+    const control = builder.form.control
+    const source = useWatch({ control, name: 'source' })
+    const columns = useWatch({ control, name: 'columns' })
+    // Read with useWatch, so the condition menus follow other sections (F27).
+    const level = { ...levelScope({ source, columns, groups }, builder.catalog), columns: columns.map(c => ({ key: c.id, label: c.label })) }
     if (!group) return null
-    const level = { ...levelScope(draft, builder.catalog), columns: draft.columns.map(c => ({ key: c.id, label: c.label })) }
     return (
         <View className="gap-1">
             <Text className="text-xs text-muted-foreground">Show only groups where…</Text>
@@ -7305,7 +8118,7 @@ function GroupHaving({ builder, groups, index }: LevelPartProps) {
 }
 ```
 
-A fill's conditions on a level under other groups can tie a record to its parent: a condition row in the fill tree gains a "Same as the <group> above" choice (`…-fill-<n>-above`, a `PickMenu` of the enclosing groups whose column type matches the field), which makes the condition's value that group's key — `ConditionDraft` gains `above: string` (a group id, '' for none; schema `z.string()`, default ''), written as `{ col: <that group's column> }` and read back from that shape when the column is an enclosing group's (`filter.ts` `conditionNode`/`compareCondition` with the level scope's enclosing groups). (`LevelFormula` draws `FormulaEditor` with `reportOperators(formulaContext(builder.form.getValues(), builder.catalog, { kind: 'level' }))` and returns null when not visible; `FillConditions` draws `ConditionTree` and returns null when not visible.)
+A fill's conditions on a level under other groups can tie a record to its parent: a condition row in the fill tree gains a "Same as the <group> above" choice (`…-fill-<n>-above`, a `PickMenu` of `aboveOf(groups, index, columns)` whose column type matches the field, plus "A value" to clear it), which sets the condition's `above` (Task 21 reads and writes it as `{ col: <that group's column> }`). `ConditionTree` takes `above?: readonly AboveGroup[]` and passes it to `nodeToFilter`/`filterToNode`/`conditionProblems`; `FillConditions` passes `aboveOf(groups, index, columns)`, filter and having pass none. While `above` is set the value box and Ask when run are hidden (the value is the group's key). (`LevelFormula` draws `FormulaEditor` with `reportOperators(useFormulaContext(builder, { kind: 'level' }))` (the hook before its `isVisible` return) and returns null when not visible; `FillConditions` draws `ConditionTree` and returns null when not visible.)
 
 Sort rows: replace the column `SelectInput` with a `PickMenu` whose items are the columns (`id: column.id`), each record group's fields (`id: record.<group>.<field>`, label `"<Group> › <Field>"`), and `formula` ("Formula…"); choosing one sets the sort key to `{ kind: 'col', col }`, `{ kind: 'formula', formula: { kind: 'editable', node: { record, path: [{ field }] } } }` or `{ kind: 'formula', formula: NEW_FORMULA }`. A formula key that is not a bare record field shows `LevelFormula` (test id `report-builder-sort-<i>-formula`). "Add sort" becomes the same menu (`report-builder-sort-add-menu`) appending a key. `sortRowKeys` reads `key.kind === 'col' ? key.col : JSON.stringify(key.formula.node)`.
 
@@ -7325,7 +8138,9 @@ const TOTAL_OPTIONS = [
 
 /** A number or amount column totals all rows, or only the rows the report shows (E2). */
 function TotalField({ builder, column, index }: { builder: ReportBuilder; column: ColumnDraft; index: number }) {
-    if (!isNumberColumn(builder, column) && !columnIsAmount(column, builder.form.getValues(), builder.catalog)) return null
+    const columns = useWatch({ control: builder.form.control, name: 'columns' })
+    const source = useWatch({ control: builder.form.control, name: 'source' })
+    if (!isNumberColumn(builder, column) && !columnIsAmount(column, { source, columns }, builder.catalog)) return null
     return (
         <SelectInput name={`columns.${index}.total`} control={builder.form.control} label="Total" options={TOTAL_OPTIONS} testID={`report-builder-column-${index}-total`} />
     )
@@ -7351,7 +8166,50 @@ function DetailLabelCard({ builder }: { builder: ReportBuilder }) {
 }
 ```
 
-(`DetailFormula` is `FormulaEditor` with `formulaContext(…, { kind: 'detail' })`, or `FixedFormula` for a fixed draft, and returns null when not visible.)
+(`DetailFormula` is `FormulaEditor` with `useFormulaContext(builder, { kind: 'detail' })`, or `FixedFormula` for a fixed draft, and returns null when not visible.)
+
+A link column shows its record's label (R31, F22); in `ColumnRow`, after `TotalField`, `<LinkLabelField builder={builder} column={column} index={index} source={source} />` (`ColumnRow` reads `source` with `useWatch`, F27):
+
+```tsx
+/** "Show as": the field of a link column's record its cells show. */
+function LinkLabelField({ builder, column, index, source }: { builder: ReportBuilder; column: ColumnDraft; index: number; source: string }) {
+    const target = linkTarget(builder.catalog, source, column)
+    if (!target) return null
+    const first = firstTextField(target)
+    const items: PickItem[] = [
+        { id: '', label: first ? `${first.label} (first text field)` : target.label, isSelected: column.labelField === '', onSelect: () => builder.form.setValue(`columns.${index}.labelField`, '') },
+        ...target.fields.filter(f => f.key !== 'id').map(f => ({ id: f.key, label: f.label, isSelected: f.key === column.labelField, onSelect: () => builder.form.setValue(`columns.${index}.labelField`, f.key) })),
+    ]
+    const label = items.find(i => i.isSelected)?.label ?? `${column.labelField} (missing)`
+    return <PickMenu label={label} purpose="Show as" items={items} testID={`report-builder-column-${index}-label-field`} />
+}
+```
+
+with `linkTarget(catalog, source, column)` (in `lib/builder/columns.ts`, with a `columns.test.ts` case: a team-link column gives the teams source, a customer column undefined): the target source of a path column that ends at a to-one link or at `id`, else undefined. Add to `reports-groups-v2.spec.ts`:
+
+```ts
+    test('a link column shows its team by name, then by the field chosen under Show as', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptlbl')
+        try {
+            const stem = uniqueName('Lbl')
+            await openReportStub(p)
+            await addTeam(p, `${stem} T`, 'south')
+            await addSale(p, { team: `${stem} T`, customer: `${stem} Cy`, amount: 100, cost: 0, day: '2026-01-05' })
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['customer'])
+            await p.getByTestId('report-builder-add-column').click()
+            await p.getByTestId('report-builder-picker').getByTestId('report-builder-pick-record-team').click()
+            const row = p.getByTestId('report-table').locator('[data-testid^="report-row-"]').filter({ hasText: `${stem} Cy` })
+            await expect(row).toContainText(`${stem} T`)
+            await chooseOption(p, 'report-builder-column-1-label-field', 'region')
+            await expect(row).toContainText('South')
+            await expect(row).not.toContainText(`${stem} T`)
+        } finally {
+            await close()
+        }
+    })
+```
 
 - [ ] **Step 6: A fill under a parent group, in e2e**
 
@@ -7424,13 +8282,15 @@ Code facts used: `ParamPicker` and its bodies (`components/ParamPickers.tsx:75-2
 
 **Files:**
 - Create: `core/reports/lib/param-options.ts`, `core/reports/lib/__tests__/param-options.test.ts`, `core/reports/hooks/useParamOptions.ts`
-- Modify: `core/reports/components/ParamPickers.tsx` (`SourceChoiceBody`, `SourcePicker`), `ReportControls.tsx`, `ReportView.tsx:153-158`, `ReportDocumentHeader.tsx`, `hooks/useReportView.ts`
+- Modify: `core/reports/lib/param-forms.ts` (`amountValueSchema`), test `lib/__tests__/param-forms.test.ts`
+- Modify: `core/reports/components/ParamPickers.tsx` (`SourceChoiceBody`, `SourcePicker`, `AmountBody`), `ReportControls.tsx`, `ReportView.tsx:153-158`, `ReportDocumentHeader.tsx`, `hooks/useReportView.ts`
 - Modify: `core/reports/components/builder/ConditionTree.tsx` (`RecordValuePicker`)
 - Create: `tests/e2e/reports-source-params.spec.ts`
+- Modify: `tests/e2e/helpers.ts` (`createInvitedUser(page, label, options: { name?: string } = {})`: the invitee's name, default `'Invited Tester'`, filled at `getByTestId('name')`, `helpers.ts:335`)
 
 **Interfaces:**
 - Consumes: `fetchParamOptions`, `chipText(…, labels)` (Task 16), `askParamFor(…, target)` (Task 21), the stub's "Stub team totals" (Task 17).
-- Produces: `type OptionsSource = { reportId: string } | { spec: ReportSpec }`; `optionSections(pages: ParamOptionsPage[]): { group: ParamOptionGroup | null; options: ParamOption[] }[]`; `withValues(current: readonly string[], added: readonly string[]): string[]`; `useParamOptions({ source, param, search, params, isEnabled })`; `useParamOptionLabels(source, defs, values): ReadonlyMap<string, string>`; `fetchGroupValues(source, param, group, params): Promise<string[]>`; view model fields `heading`, `optionsSource`, `postedParams`, `optionLabels`; picker test ids `report-filter-search`, `report-filter-group-<value>`, `report-filter-option-<value>`, `report-filter-more`.
+- Produces: `type OptionsSource = { reportId: string } | { spec: ReportSpec }`; `optionSections(pages: ParamOptionsPage[]): { group: ParamOptionGroup | null; options: ParamOption[] }[]` (groups deduped, F9); `toggleGroup(groups, group): string[]`; `useParamOptions({ source, param, search, params, isEnabled })`; `useParamOptionLabels(source, defs, values): ReadonlyMap<string, string>`; view model fields `heading`, `optionsSource`, `postedParams`, `optionLabels`; picker test ids `report-filter-search`, `report-filter-group-<value>`, `report-filter-option-<value>`, `report-filter-more`.
 
 - [ ] **Step 1: Write the failing lib test**
 
@@ -7438,7 +8298,7 @@ Create `core/reports/lib/__tests__/param-options.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { optionSections, withValues } from '../param-options'
+import { optionSections, toggleGroup } from '../param-options'
 
 describe('options from a source', () => {
     it('sections the loaded pages by group, in the groups order', () => {
@@ -7452,8 +8312,20 @@ describe('options from a source', () => {
             { group: { value: 'income', label: 'Income' }, options: [{ value: 'b', label: 'Sales', group: 'income' }] },
         ])
     })
-    it('adds a group pick to the chosen values once', () => {
-        expect(withValues(['a', 'b'], ['b', 'c'])).toEqual(['a', 'b', 'c'])
+    it('keeps one head per group when a later page repeats the groups, and heads a group no page listed', () => {
+        const groups = [{ value: 'asset', label: 'Asset' }]
+        const pages = [
+            { options: [{ value: 'a', label: 'Bank', group: 'asset' }], groups, next: 'x' },
+            { options: [{ value: 'c', label: 'Cash', group: 'asset' }, { value: 'e', label: 'Gear', group: 'equipment' }], groups },
+        ]
+        expect(optionSections(pages).map(s => [s.group?.value, s.options.map(o => o.value)])).toEqual([
+            ['asset', ['a', 'c']],
+            ['equipment', ['e']],
+        ])
+    })
+    it('picks a whole group once and unpicks it', () => {
+        expect(toggleGroup(['asset'], 'income')).toEqual(['asset', 'income'])
+        expect(toggleGroup(['asset', 'income'], 'asset')).toEqual(['income'])
     })
 })
 ```
@@ -7464,8 +8336,9 @@ Create `tests/e2e/reports-source-params.spec.ts`:
 
 ```ts
 import { expect, type Page, test } from '@playwright/test'
-import { login, signInAsCollaborator, skipWithoutReportsStub, TEST_COLLABORATOR_NAME } from './helpers'
+import { createInvitedUser, login, skipWithoutReportsStub } from './helpers'
 import {
+    addColumn,
     addSale,
     addTeam,
     chooseOption,
@@ -7518,15 +8391,18 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         await openTeamTotals(page)
         await expect(page.getByTestId('report-business-name')).toHaveText(STUB_HEADING)
 
-        const { page: c, close } = await signInAsCollaborator(page)
+        // A fresh reader each run, with a name no one else has, so a re-run on
+        // the same database finds them as a candidate (F24).
+        const readerName = uniqueName('Reader')
+        const { inviteePage: c, close } = await createInvitedUser(page, 'rptshr', { name: readerName })
         try {
             await openReportsHub(c)
             await c.getByTestId('reports-hub-tab-published').click()
             await expect(hubRow(c, TEAM_TOTALS_TITLE)).toHaveCount(0)
 
             await pressToolbar(page, 'report-share-open', 'Share')
-            await page.getByTestId('report-share-search').fill(TEST_COLLABORATOR_NAME.slice(0, 6))
-            await page.getByTestId('report-share-dialog').locator('[data-testid^="report-share-candidate-"]').filter({ hasText: TEST_COLLABORATOR_NAME }).click()
+            await page.getByTestId('report-share-search').fill(readerName)
+            await page.getByTestId('report-share-dialog').locator('[data-testid^="report-share-candidate-"]').filter({ hasText: readerName }).click()
             await page.getByTestId('report-share-done').click()
 
             await c.getByTestId('reports-hub-tab-shared').click()
@@ -7548,7 +8424,7 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         const rows = page.getByTestId('report-table').locator('[data-testid^="report-row-g:"]')
         await expect(rows).toHaveText([`${stem} N1`])
         await chooseParamOption(page, 'teams', { from: 'chip', search: stem, group: 'north' })
-        await expect(page.getByTestId('report-param-teams')).toHaveText(/^Teams: \d+ selected$/)
+        await expect(page.getByTestId('report-param-teams')).toHaveText(`Teams: ${stem} N1, All North`)
         await expect(rowOf(page, `${stem} N2`)).toBeVisible()
         await expect(rows.filter({ hasText: `${stem} S1` })).toHaveCount(0)
     })
@@ -7603,19 +8479,25 @@ export type OptionSection = { group: ParamOptionGroup | null; options: ParamOpti
 
 /** The loaded options in sections: ungrouped first, then each group in the server's order. */
 export function optionSections(pages: readonly ParamOptionsPage[]): OptionSection[] {
-    const groups = pages.flatMap(page => page.groups)
     const options = pages.flatMap(page => page.options)
+    // Groups come with the first page; a group seen twice is one head (F9). An
+    // option of a group no page listed (past the 200 the server lists) gets a
+    // head of its own, named by its value.
+    const groups = new Map<string, ParamOptionGroup>()
+    for (const group of pages.flatMap(page => page.groups)) if (!groups.has(group.value)) groups.set(group.value, group)
+    for (const option of options) if (option.group && !groups.has(option.group)) groups.set(option.group, { value: option.group, label: option.group })
     const loose = options.filter(o => !o.group)
     const sections: OptionSection[] = loose.length > 0 ? [{ group: null, options: loose }] : []
-    for (const group of groups) {
+    for (const group of groups.values()) {
         const inGroup = options.filter(o => o.group === group.value)
         if (inGroup.length > 0) sections.push({ group, options: inGroup })
     }
     return sections
 }
 
-export function withValues(current: readonly string[], added: readonly string[]): string[] {
-    return [...new Set([...current, ...added])]
+/** A group picked whole (or unpicked): the server expands it at run time (R30). */
+export function toggleGroup(groups: readonly string[], group: string): string[] {
+    return groups.includes(group) ? groups.filter(g => g !== group) : [...groups, group]
 }
 ```
 
@@ -7645,16 +8527,11 @@ export function useParamOptions(input: { source: OptionsSource; param: string; s
     })
 }
 
-/** Every value of one group: what "All <group>" picks. */
-export async function fetchGroupValues(source: OptionsSource, param: string, group: string, params: Record<string, unknown>) {
-    const page = await fetchParamOptions({ ...source, param, group, limit: 1000, params, today: todayIso() })
-    return page.options.map(o => o.value)
-}
-
 /** The labels of the chosen records of every options-from-source param, for the chips. */
 export function useParamOptionLabels(source: OptionsSource | null, defs: readonly ParamDef[], values: ParamValues): ReadonlyMap<string, string> {
     const wanted = defs.flatMap(def => {
         const value = values[def.id]
+        // A request with only groups chosen still runs: its first page lists the groups.
         return def.optionsFrom && value?.kind === 'choice' ? [{ id: def.id, ids: value.values }] : []
     })
     const results = useQueries({
@@ -7665,7 +8542,11 @@ export function useParamOptionLabels(source: OptionsSource | null, defs: readonl
                 source ? fetchParamOptions({ ...source, param: w.id, values: w.ids, today: todayIso() }, signal) : Promise.resolve(NO_PAGE),
         })),
     })
-    return new Map(results.flatMap(r => (r.data?.options ?? []).map(o => [o.value, o.label] as const)))
+    // Group labels are filed as group:<value>, for the chip's "All <group>" (R30).
+    return new Map(results.flatMap(r => [
+        ...(r.data?.options ?? []).map(o => [o.value, o.label] as const),
+        ...(r.data?.groups ?? []).map(g => [`group:${g.value}`, g.label] as const),
+    ]))
 }
 ```
 
@@ -7676,7 +8557,8 @@ In `ParamPickers.tsx`:
 ```tsx
 const sourceChoiceSchema = z.object({
     search: z.string().max(200),
-    values: z.array(z.string()),
+    values: z.array(z.string()).max(MAX_CHOICE_VALUES, 'Pick at most 1000 records, or pick a whole group'),
+    groups: z.array(z.string()).max(200),
 })
 
 interface SourceBodyProps extends BodyProps {
@@ -7684,38 +8566,54 @@ interface SourceBodyProps extends BodyProps {
     params: Record<string, unknown>
 }
 
-function GroupHead({ group, canPickAll, onPickAll }: { group: ParamOptionGroup | null; canPickAll: boolean; onPickAll: (value: string) => void }) {
+function GroupHead({ group, isPicked, canPickAll, onPickAll }: { group: ParamOptionGroup | null; isPicked: boolean; canPickAll: boolean; onPickAll: (value: string) => void }) {
     if (!group) return null
     return (
         <View className="flex-row items-center justify-between px-2 pt-2">
             <Text className="text-xs font-semibold uppercase text-muted-foreground">{group.label}</Text>
-            <AllOfGroup isVisible={canPickAll} group={group} onPress={() => onPickAll(group.value)} />
+            <AllOfGroup isVisible={canPickAll} isPicked={isPicked} group={group} onPress={() => onPickAll(group.value)} />
         </View>
     )
 }
 
-function AllOfGroup({ isVisible, group, onPress }: { isVisible: boolean; group: ParamOptionGroup; onPress: () => void }) {
+function AllOfGroup({ isVisible, isPicked, group, onPress }: { isVisible: boolean; isPicked: boolean; group: ParamOptionGroup; onPress: () => void }) {
     if (!isVisible) return null
     return (
-        <Pressable testID={`report-filter-group-${group.value}`} accessibilityRole="button" onPress={onPress} style={TARGET_STYLE} className="justify-center px-2">
+        <Pressable testID={`report-filter-group-${group.value}`} accessibilityRole="checkbox" aria-checked={isPicked} onPress={onPress} style={TARGET_STYLE} className="justify-center px-2">
             <Text className="text-sm text-primary">{`All ${group.label}`}</Text>
         </Pressable>
     )
 }
 
+function SectionOptions({ options, values, groupPicked, isMultiple, onToggle }: { options: ParamOption[]; values: string[]; groupPicked: boolean; isMultiple: boolean; onToggle: (value: string) => void }) {
+    const rows = options.map(option => (
+        <OptionRow key={option.value} value={option.value} label={option.label} isChecked={groupPicked || values.includes(option.value)} isRadio={!isMultiple} onPress={() => onToggle(option.value)} />
+    ))
+    return <>{rows}</>
+}
+
+function PickError({ message }: { message: string | undefined }) {
+    if (!message) return null
+    return <Text role="alert" testID="report-filter-error" className="text-xs text-danger">{message}</Text>
+}
+
 // Options read from a source under the reader's rules: searched, loaded a page at a
-// time near the end of the list, and picked one by one or a group at a time.
+// time near the end of the list, and picked one by one or a whole group at a time
+// (a group reference the server expands at run time, R30).
 function SourceChoiceBody({ def, value, onApply, source, params }: SourceBodyProps) {
+    const chosen = value?.kind === 'choice' ? value : null
     const form = useForm({
         resolver: zodResolver(sourceChoiceSchema),
         mode: 'onChange',
-        defaultValues: { search: '', values: value?.kind === 'choice' ? value.values : [] },
+        defaultValues: { search: '', values: chosen?.values ?? [], groups: chosen?.groups ?? [] },
     })
     const search = useDebouncedValue(useWatch({ control: form.control, name: 'search' }), 250)
     const values = useWatch({ control: form.control, name: 'values' })
+    const groups = useWatch({ control: form.control, name: 'groups' })
     const options = useParamOptions({ source, param: def.id, search, params, isEnabled: true })
     const sections = optionSections(options.data?.pages ?? [])
     const isMultiple = def.multiple === true
+    const error = form.formState.errors.values?.message
     const toggle = (option: string) => {
         if (!isMultiple) {
             onApply({ kind: 'choice', values: [option] })
@@ -7724,21 +8622,21 @@ function SourceChoiceBody({ def, value, onApply, source, params }: SourceBodyPro
         const next = values.includes(option) ? values.filter(v => v !== option) : [...values, option]
         form.setValue('values', next, { shouldValidate: true })
     }
-    const pickAll = (group: string) => {
-        void fetchGroupValues(source, def.id, group, params).then(ids => form.setValue('values', withValues(values, ids), { shouldValidate: true }))
-    }
+    const pickAll = (group: string) => form.setValue('groups', toggleGroup(groups, group), { shouldValidate: true })
     const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
         if (isNearEnd(event.nativeEvent) && options.hasNextPage && !options.isFetchingNextPage) void options.fetchNextPage()
     }
-    const body = sections.map(section => (
-        <View key={section.group?.value ?? 'loose'}>
-            <GroupHead group={section.group} canPickAll={isMultiple} onPickAll={pickAll} />
-            {section.options.map(option => (
-                <OptionRow key={option.value} value={option.value} label={option.label} isChecked={values.includes(option.value)} isRadio={!isMultiple} onPress={() => toggle(option.value)} />
-            ))}
-        </View>
-    ))
-    const apply = () => void form.handleSubmit(submitted => onApply({ kind: 'choice', values: submitted.values }))()
+    const body = sections.map(section => {
+        const groupPicked = section.group !== null && groups.includes(section.group.value)
+        return (
+            <View key={section.group?.value ?? 'loose'}>
+                <GroupHead group={section.group} isPicked={groupPicked} canPickAll={isMultiple} onPickAll={pickAll} />
+                <SectionOptions options={section.options} values={values} groupPicked={groupPicked} isMultiple={isMultiple} onToggle={toggle} />
+            </View>
+        )
+    })
+    const isEmpty = values.length === 0 && groups.length === 0
+    const apply = () => void form.handleSubmit(submitted => onApply({ kind: 'choice', values: submitted.values, groups: submitted.groups }))()
     return (
         <View className="gap-2">
             <TextInput name="search" control={form.control} label="Search" testID="report-filter-search" />
@@ -7746,13 +8644,102 @@ function SourceChoiceBody({ def, value, onApply, source, params }: SourceBodyPro
                 {body}
                 <LoadingMoreOptions isVisible={options.isFetchingNextPage} />
             </ScrollView>
-            <SourceApply isVisible={isMultiple} isDisabled={values.length === 0} onPress={apply} />
+            <PickError message={error} />
+            <SourceApply isVisible={isMultiple} isDisabled={isEmpty || error !== undefined} onPress={apply} />
         </View>
     )
 }
 ```
 
-— the inner `section.options.map` moves into a `SectionOptions` component (no `.map()` inside the returned JSX); `LoadingMoreOptions` (`testID="report-filter-more"`, an `ActivityIndicator`, null when not visible) and `SourceApply` (the existing `ApplyButton`, null when not visible) are small parts. `PickerBody` chooses it first: `if (props.def.type === 'choice' && props.def.optionsFrom && props.source) return <SourceChoiceBody {...props} source={props.source} params={props.params} />`; `ParamPicker` takes `source: OptionsSource | null` and `params: Record<string, unknown>` and passes them on. Export a `SourcePicker({ trigger, isOpen, onOpenChange, def, value, onApply, source, params, title })` (the same `Popover` around `SourceChoiceBody`) for the builder.
+An amount param (R29, F18) is picked with `AmountBody`. In `param-forms.ts`:
+
+```ts
+export const amountValueSchema = z.object({
+    amount: z.string().trim().refine(text => centsFromText(text) !== null, 'Type an amount, like 1500.00'),
+    currency: z.string().trim().regex(/^([A-Za-z]{3})?$/, 'Type a three-letter currency code, like USD, or leave it blank for any currency'),
+})
+export type AmountValue = z.infer<typeof amountValueSchema>
+
+/** The param value of a submitted amount form; the schema has checked the text. */
+export function amountParamValue(form: AmountValue): ParamValue {
+    return { kind: 'amount', cents: centsFromText(form.amount) ?? 0, currency: form.currency.toUpperCase() }
+}
+```
+
+(`param-forms.test.ts`: `'1,500.00'` with `'usd'` gives `{ kind: 'amount', cents: 150000, currency: 'USD' }`; `'12.3.4'` and the currency `'US'` fail with those messages.) In `ParamPickers.tsx`:
+
+```tsx
+function AmountBody({ def, value, onApply }: BodyProps) {
+    const current = value?.kind === 'amount' ? value : null
+    const form = useForm<AmountValue>({
+        resolver: zodResolver(amountValueSchema),
+        mode: 'onChange',
+        defaultValues: { amount: current ? textFromCents(current.cents) : '', currency: current?.currency ?? '' },
+    })
+    const apply = () => void form.handleSubmit(submitted => onApply(amountParamValue(submitted)))()
+    return (
+        <View className="gap-2">
+            <TextInput name="amount" control={form.control} label={def.label ?? 'Amount'} keyboardType="decimal-pad" testID="report-filter-value" />
+            <TextInput name="currency" control={form.control} label="Currency" autoCapitalize="characters" placeholder="Any currency" testID="report-filter-currency" />
+            <ApplyButton isDisabled={!form.formState.isValid} onPress={apply} />
+        </View>
+    )
+}
+```
+
+and `PickerBody` gains `if (props.def.type === 'amount') return <AmountBody {...props} />` before the number case. Add to `reports-source-params.spec.ts`:
+
+```ts
+    test('a having on a money total asks an amount, kept to its currency', async ({ page }) => {
+        await login(page)
+        const stem = uniqueName('Amt')
+        await seedRegions(page, stem)
+        await addSale(page, { team: `${stem} N1`, customer: 'Nia', amount: 300, cost: 0, day: '2026-01-06' })
+        await openReportsHub(page)
+        await startReport(page, SALES_SOURCE)
+        await page.getByTestId('report-builder-add-column').click()
+        await page.getByTestId('report-builder-picker').getByTestId('report-builder-pick-record-team').click()
+        await addColumn(page, ['amount'])
+        await chooseOption(page, 'report-builder-column-1-aggregate', 'sum')
+        await page.getByTestId('report-builder-section-filter').click()
+        await page.getByTestId('report-builder-filter-add-condition').click()
+        await page.getByTestId('report-builder-picker').getByTestId('report-builder-pick-link-team').click()
+        await page.getByTestId('report-builder-picker').getByTestId('report-builder-pick-field-name').click()
+        await chooseOption(page, 'report-builder-filter-0-op', 'startsWith')
+        await page.getByTestId('report-builder-filter-0-value').fill(stem)
+        await page.getByTestId('report-builder-section-group').click()
+        await page.getByTestId('report-builder-group-add').click()
+        await chooseOption(page, 'report-builder-group-0-col', 'team')
+        await page.getByTestId('report-builder-group-0-having-add-total').click()
+        await page.getByTestId('report-builder-picker').getByTestId('report-builder-pick-field-amount').click()
+        await chooseOption(page, 'report-builder-group-0-having-0-aggregate', 'sum')
+        await chooseOption(page, 'report-builder-group-0-having-0-op', 'gte')
+        await page.getByTestId('report-builder-group-0-having-0-ask').click()
+
+        const table = page.getByTestId('report-table')
+        const pickBudget = async (amount: string, currency: string) => {
+            await page.getByTestId('report-add-filter').click()
+            await page.getByTestId('report-add-filter-amount').click()
+            const picker = page.getByTestId('report-filter-picker')
+            await picker.getByTestId('report-filter-value').fill(amount)
+            await picker.getByTestId('report-filter-currency').fill(currency)
+            await picker.getByTestId('report-filter-apply').click()
+        }
+        await pickBudget('200.00', 'USD')
+        await expect(page.getByTestId('report-param-amount')).toHaveText('Amount: USD 200.00')
+        await expect(rowOf(page, `${stem} N1`)).toBeVisible()
+        await expect(table.getByText(`${stem} N2`, { exact: true })).toHaveCount(0)
+        await page.getByTestId('report-param-amount').click()
+        await page.getByTestId('report-filter-picker').getByTestId('report-filter-currency').fill('EUR')
+        await page.getByTestId('report-filter-picker').getByTestId('report-filter-apply').click()
+        // The sales are in USD: a EUR amount compares with none of them (R29).
+        await expect(table.getByText(`${stem} N1`, { exact: true })).toHaveCount(0)
+    })
+```
+
+(When the param is already set, `report-add-filter-amount` is gone, so the second pick opens the chip.)
+
+`LoadingMoreOptions` (`testID="report-filter-more"`, an `ActivityIndicator`, null when not visible) and `SourceApply` (the existing `ApplyButton`, null when not visible) are small parts. `PickerBody` chooses it first: `if (props.def.type === 'choice' && props.def.optionsFrom && props.source) return <SourceChoiceBody {...props} source={props.source} params={props.params} />`; `ParamPicker` takes `source: OptionsSource | null` and `params: Record<string, unknown>` and passes them on. Export a `SourcePicker({ trigger, isOpen, onOpenChange, def, value, onApply, source, params, title })` (the same `Popover` around `SourceChoiceBody`) for the builder.
 
 - [ ] **Step 5: The view: chip labels, picker source, heading**
 
@@ -7791,7 +8778,8 @@ function RecordValuePicker({ ctx, item, path, target }: { ctx: FilterContext; it
     const setPicker = useReportUIStore(s => s.setBuilderPicker)
     const def = source.spec.params?.[0]
     if (!def) return null
-    const text = chosen.length === 0 ? `Choose ${target.label}` : chosen.length <= 2 ? chosen.map(id => labels.get(id) ?? id).join(', ') : `${chosen.length} selected`
+    const text = chosenText(chosen, labels, target.label)
+    const current: ParamValue | null = chosen.length > 0 ? { kind: 'choice', values: chosen } : null
     const trigger = (
         <Button testID={`${itemTestId(ctx, path)}-value`} variant="outline" size="sm">
             <ButtonText>{text}</ButtonText>
@@ -7804,8 +8792,18 @@ function RecordValuePicker({ ctx, item, path, target }: { ctx: FilterContext; it
     }
     return (
         <SourcePicker trigger={trigger} isOpen={isOpen} onOpenChange={open => setPicker(open ? itemTestId(ctx, path) : null)} def={def}
-            value={chosen.length > 0 ? { kind: 'choice', values: chosen } : null} onApply={onApply} source={source} params={{}} title={target.label} />
+            value={current} onApply={onApply} source={source} params={{}} title={target.label} />
     )
+}
+```
+
+with:
+
+```tsx
+function chosenText(chosen: readonly string[], labels: ReadonlyMap<string, string>, noun: string): string {
+    if (chosen.length === 0) return `Choose ${noun}`
+    if (chosen.length > 2) return `${chosen.length} selected`
+    return chosen.map(id => labels.get(id) ?? '(none)').join(', ')
 }
 ```
 
@@ -7830,7 +8828,7 @@ git push origin books/p5-trial-balance
 
 ### Task 24: E14 (part 1) — line layouts per width as a block tree (guillotine cuts)
 
-Code facts used: today's layout rule (`components/report-table-layout.ts:42-53`); `isRightAligned` (`lib/format.ts`); the engine's placement and cut rules (Task 15 `placeCells`, `cuttable`, R28).
+Code facts used: today's layout rule (`components/report-table-layout.ts:42-53`); `isRightAligned` (`lib/format.ts`); the engine's placement and cut rules (Task 15 `placeCells`, `uncuttable`, R28).
 
 Design (R28, Q10 as the human answered): an arrangement is cut into blocks recursively — a straight cut between two lines splits a block into a top and a bottom block, a straight cut between two tracks into a left and a right block — until each block holds one cell or none. A cell may then span lines anywhere, mid-row included: a left/right cut puts it in a block beside stacked lines. Only a "pinwheel" (cells arranged so no straight cut separates any of them) cannot be cut; the engine and the builder refuse it with "These cells overlap in a way that can't be laid out; move one cell." The client draws the tree with flex: a top/bottom split is a column of blocks, a left/right split a row of blocks whose widths are their shares of the tracks; rows stretch their blocks to one height, so a cell that spans lines is as tall as the lines beside it, and `justify` aligns it.
 
@@ -8012,7 +9010,7 @@ function uncuttable(pieces: readonly Piece[], box: Box): Piece | null {
     return uncuttable(lo, boxLo) ?? uncuttable(hi, boxHi)
 }
 
-/** The engine's placement rules (core/server/reports/bind.go placeCells, cuttable). */
+/** The engine's placement rules (core/server/reports/bind.go placeCells, uncuttable). */
 export function placeCells(tracks: number, cells: readonly DisplayCell[]): { placed: Placed[] } | { problem: { index: number; message: string } } {
     const taken = new Set<string>()
     const placed: Placed[] = []
@@ -8552,7 +9550,7 @@ Why the content still jumps on web (the root causes the tests below pin; confirm
 
 **Files (in the fork clone `/Users/nas/tmp/tinycld/books-purchases-flash-list`):**
 - Modify: `src/native/config/PlatformHelper.web.ts` (`offsetCorrection: "scrollTop"`; the other platform files gain `"anchor"`/`"scrollTo"` matching today's behaviour), `src/recyclerview/hooks/useRecyclerViewController.tsx` (the web branch), `src/recyclerview/RecyclerView.tsx` (the web scroller's `overflowAnchor: 'none'` style)
-- Create: `src/__tests__/webOffsetCorrection.test.tsx`
+- Create: `src/recyclerview/utils/webOffsetCorrection.ts`, `src/__tests__/webOffsetCorrection.test.ts` (and the render test of Step 2)
 
 - [ ] **Step 1: Clone the fork and branch from the pinned commit**
 
@@ -8565,15 +9563,44 @@ yarn test
 ```
 Expected: the fork's own suite passes before any change (a failure here is fixed at its root first).
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Read the fork's own offset tests, then write the failing tests**
 
-Create `src/__tests__/webOffsetCorrection.test.tsx` with the fork's test tools (`@quilted/react-testing`, the existing mocks under `src/__tests__/helpers` or the closest existing offset-correction test, which this file follows): render a vertical `FlashList` of 50 items with web's `PlatformConfig` (`jest.mock("../native/config/PlatformHelper", () => jest.requireActual("../native/config/PlatformHelper.web"))`) and a scrollable DOM-like node whose `scrollTop` the test reads and writes; scroll so item 20 is the first visible; grow item 5 by 100px (change its data so it re-renders taller, with its measured layout mocked); then assert:
-- the scroller's `scrollTop` grew by exactly 100 (once — not 0, not 200),
-- the scroller's style has `overflowAnchor: 'none'`,
-- a scroll event that reported a stale offset before the change does not move the result (the correction reads the node's `scrollTop`, not the last event).
+Read how the fork already tests offset correction and web, and follow that file's tools and mocks (F20); do not invent a harness:
 
-Run: `cd /Users/nas/tmp/tinycld/books-purchases-flash-list && yarn test src/__tests__/webOffsetCorrection.test.tsx`
-Expected: FAIL (no `overflowAnchor`; the correction goes through `scrollTo` from the stale offset).
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases-flash-list
+grep -rlE "applyOffsetCorrection|maintainVisibleContentPosition|PlatformHelper|scrollTo" src | grep -E "__tests__|\.test\." | head
+```
+
+Two tests, the first pure (it pins both root causes without a renderer), the second following the closest file the grep found:
+
+1. Move the web correction into a pure function, `src/recyclerview/utils/webOffsetCorrection.ts`, and test it in `src/__tests__/webOffsetCorrection.test.ts`:
+
+```ts
+import { correctWebOffset, WEB_SCROLLER_STYLE } from "../recyclerview/utils/webOffsetCorrection";
+
+describe("web offset correction", () => {
+  it("moves the DOM scroller by the difference from where it is now", () => {
+    const node = { scrollTop: 900, scrollLeft: 0 };
+    // The last scroll event said 850; the DOM is at 900. The result must not use 850.
+    correctWebOffset(node, 100, false);
+    expect(node.scrollTop).toBe(1000);
+  });
+  it("moves sideways for a horizontal list", () => {
+    const node = { scrollTop: 0, scrollLeft: 40 };
+    correctWebOffset(node, -10, true);
+    expect(node.scrollLeft).toBe(30);
+  });
+  it("turns the browser's own scroll anchoring off on the scroller", () => {
+    expect(WEB_SCROLLER_STYLE).toEqual({ overflowAnchor: "none" });
+  });
+});
+```
+
+2. In the file the grep found closest (or a new `src/__tests__/webOffsetCorrection.render.test.tsx` built with the same render helper and mocks it uses), with web's `PlatformConfig` (`jest.mock("../native/config/PlatformHelper", () => jest.requireActual("../native/config/PlatformHelper.web"))`): render a vertical `FlashList` of 50 items, scroll so item 20 is first, grow item 5 by 100px (its measured layout mocked as that file mocks layouts), and assert the scroller's `scrollTop` grew by exactly 100 once (not 0, not 200) and that `scrollTo` was not called. If that file's harness cannot drive a DOM `scrollTop` (react-native-web is not under jest there), the pure test above and the web e2e in Task 25d are the proof, and the PR body says so; write nothing that mocks the code under test.
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases-flash-list && yarn test src/__tests__/webOffsetCorrection`
+Expected: FAIL (`webOffsetCorrection` does not exist; the render test sees `scrollTo` from the stale offset).
 
 - [ ] **Step 3: Implement**
 
@@ -8588,16 +9615,26 @@ Expected: FAIL (no `overflowAnchor`; the correction goes through `scrollTo` from
               // this scroller (overflow-anchor: none), so this is the only
               // correction, and the last scroll event's offset can be stale.
               const node = getScrollableNode(scrollViewRef.current);
-              if (node) {
-                if (horizontal) node.scrollLeft += diff;
-                else node.scrollTop += diff;
-              }
+              if (node) correctWebOffset(node, diff, horizontal);
             } else {
               /* today's scrollTo branch, unchanged */
             }
 ```
 
-with `getScrollableNode` reading `scrollViewRef.current?.getScrollableNode?.()` (react-native-web's ScrollView exposes it). In `RecyclerView.tsx`, the scroll component's style gains `Platform.OS === "web" ? { overflowAnchor: "none" } : undefined` (typed through a web style cast the fork already uses for web-only styles, or a `StyleSheet.create` entry in a `.web.ts` helper). The `hasDataChanged` handling after the correction stays as it is.
+where `src/recyclerview/utils/webOffsetCorrection.ts` is:
+
+```ts
+/** The browser's own scroll anchoring would correct a second time; FlashList corrects alone. */
+export const WEB_SCROLLER_STYLE = { overflowAnchor: "none" } as const;
+
+/** Moves the DOM scroller by diff from where it is now (not from the last scroll event). */
+export function correctWebOffset(node: { scrollTop: number; scrollLeft: number }, diff: number, horizontal: boolean): void {
+  if (horizontal) node.scrollLeft += diff;
+  else node.scrollTop += diff;
+}
+```
+
+with `getScrollableNode` reading `scrollViewRef.current?.getScrollableNode?.()` (react-native-web's ScrollView exposes it). In `RecyclerView.tsx`, the scroll component's style gains `Platform.OS === "web" ? WEB_SCROLLER_STYLE : undefined` (typed through the web style cast the fork already uses for web-only styles). The `hasDataChanged` handling after the correction stays as it is.
 
 - [ ] **Step 4: Run the fork's checks**
 
@@ -8625,7 +9662,7 @@ cd /Users/nas/tmp/tinycld/books-purchases-flash-list
 git push -u origin books/p5-trial-balance
 gh pr create --repo nathanstitt/flash-list --base main --head books/p5-trial-balance \
   --title "fix(web): keep the visible rows in place when rows above change height" \
-  --body "On web, rows that change height above the viewport (a group opening above, a live update adding rows) made the content jump: the browser's own scroll anchoring and FlashList's correction both moved scrollTop, from a stale offset. This turns the browser's anchoring off on the list's scroller and corrects from the DOM scroller's current scrollTop before paint. Tested in src/__tests__/webOffsetCorrection.test.tsx."
+  --body "On web, rows that change height above the viewport (a group opening above, a live update adding rows) made the content jump: the browser's own scroll anchoring and FlashList's correction both moved scrollTop, from a stale offset. This turns the browser's anchoring off on the list's scroller and corrects from the DOM scroller's current scrollTop before paint. Tested in src/__tests__/webOffsetCorrection.test.ts."
 ```
 Expected: the PR URL (the fork's default branch is the base; if it is not `main`, use the branch `git remote show origin` names).
 
@@ -8752,7 +9789,7 @@ To show only some groups, open **Group and sort**, find the level, and add a con
 
 ## Group by a linked record
 
-To group by a linked record (for example each team of a sale), add the link as a column: in **Add column**, pick **Team (record)**. Group by that column. The group row shows the record's name; pick another field, or a formula, under **Label**. On the first level, turn on **Show every team, even with no rows** to list records that have no rows, and add conditions to choose which.
+To group by a linked record (for example each team of a sale), add the link as a column: in **Add column**, pick **Team (record)**. Group by that column. The group row shows the record's name; pick another field, or a formula, under **Label**. On any level, turn on **Show every team, even with no rows** to list records that have no rows, and add conditions to choose which. Under another group, a condition can be **Same as the group above**, so each region lists only its own teams.
 
 ## Sort
 
@@ -8851,7 +9888,7 @@ git push origin books/p5-trial-balance
 
 - [ ] **Step 1: Every reports spec and the forms builder spec**
 
-Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_PORT_2=7211 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test:e2e -- tests/e2e/reports-create.spec.ts tests/e2e/reports-filter.spec.ts tests/e2e/reports-group-pivot.spec.ts tests/e2e/reports-formula-layout.spec.ts tests/e2e/reports-view.spec.ts tests/e2e/reports-share.spec.ts tests/e2e/reports-shipped.spec.ts tests/e2e/reports-formulas-v2.spec.ts tests/e2e/reports-groups-v2.spec.ts tests/e2e/reports-source-params.spec.ts tests/e2e/reports-wrap.spec.ts tests/e2e/forms-builder.spec.ts`
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_PORT_2=7211 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test:e2e -- tests/e2e/reports-create.spec.ts tests/e2e/reports-filter.spec.ts tests/e2e/reports-group-pivot.spec.ts tests/e2e/reports-formula-layout.spec.ts tests/e2e/reports-view.spec.ts tests/e2e/reports-share.spec.ts tests/e2e/reports-shipped.spec.ts tests/e2e/reports-formulas-v2.spec.ts tests/e2e/reports-groups-v2.spec.ts tests/e2e/reports-source-params.spec.ts tests/e2e/reports-wrap.spec.ts tests/e2e/reports-scroll-anchor.spec.ts tests/e2e/forms-builder.spec.ts`
 Expected: all pass. A failure is diagnosed and fixed at its root (no re-runs, no timeouts raised).
 
 - [ ] **Step 2: Books' report shell and chrome e2e**
@@ -8873,11 +9910,11 @@ Expected: pushed; CI runs the full suite (the reports stub scaffold step already
 | E1 `Field.TextDay` | 1, 17, 26 |
 | E2 `total: "rows"` (OQ6) | 8, 21, 22, 26 |
 | E3 `groups[].having` + builder | 7, 21, 22, 26 |
-| E4 record groups, `record` leaf, `label`, `fill` | 3, 5, 6, 15, 19, 21, 22, 26 |
+| E4 record groups, `record` leaf, `label`, `fill` | 3, 5, 5b, 6, 15, 19, 21, 22, 26 |
 | E5 sort by formula | 9, 21, 22, 26 |
 | E6 `lookup` under the reader's rules | 4, 15, 19, 20, 26 |
 | E7 `detail.label` | 10, 16, 21, 22, 26 |
-| E8 options from a source, route, picker (OQ5) | 12, 13, 16, 21, 23, 26 |
+| E8 options from a source, route, picker (OQ5) | 12, 13, 13a, 16, 21, 23, 26 |
 | E9 `Source.Heading` → `heading` | 14, 16, 17, 23, 26 |
 | E10 `Shipped.Unpublished` | 14, 17, 23, 26 |
 | E11 report e2e helpers exported | 17, 26 |
@@ -8889,6 +9926,12 @@ Expected: pushed; CI runs the full suite (the reports stub scaffold step already
 | Q5 (changed) per-row currencies in record leaves and lookups | 5a |
 | Q10 (changed) spanning cells by guillotine cuts, pinwheel refused | 15, 24, 25 |
 | Web scroll offset fixed in the FlashList fork (with the STOP for its PR) | 25a, 25b, 25c, 25d |
+| F16 lookups in layout computed rows (R21 withdrawn) | 4 |
+| F17 `total: "rows"` on a number column with no aggregate (R8) | 8, 22 |
+| F18 amount params; a money total asked when run (R18, R29) | 12a, 16, 21, 22, 23, 26 |
+| F19 whole groups expanded on the server (R13, R30) | 13a, 16, 23 |
+| F22 link columns show their record's label (R9, R31) | 5b, 16, 21, 22 |
+| F5 currency keys from every formula a level reads (R3) | 5, 7, 9, 10 |
 | Core tests: formula table `lookup`/`record`, rule-parity fuzz with lookup and fill, vitest v2/round-trip/options, e2e desktop + phone | 4, 5, 15, 16, 21, 23, 20, 22, 23, 25 |
 | Books unchanged and green | 27, 28 |
 
@@ -8897,5 +9940,6 @@ Expected: pushed; CI runs the full suite (the reports stub scaffold step already
 - Every engine task cites the code it changes; the plan relies on two probed behaviours (Go's nil vs empty slice for `expand`, SQLite's CTE references) and writes them under "What was probed".
 - Placement is one rule in two languages (`placeCells` and the guillotine cut check in Go, Task 15; in TS, Task 24), with the same examples (a mid-row spanning cell, a pinwheel) in both test suites.
 - The human's answers of 2026-11-01 are folded in: fill on every level (Task 6), per-row currencies (Task 5a), guillotine cuts (Tasks 15, 24, 25), and the FlashList fork fix with its STOP (Tasks 25a–25d).
-- E14 was revised after the human's review: flex lines instead of absolute positions, FlashList v2 instead of the custom row window, sticky heading and stacked sticky groups.
+- E14 was revised after the human's review: row content is flex lines (FlashList positions the rows), FlashList v2 instead of the custom row window, sticky heading and stacked sticky groups.
+- The preflight's 29 findings are applied in the tasks themselves (code and tests); the five no-limits rulings (F16, F17, F18, F19, F22) are built, and no refusal was added.
 - The forms editor's ids and labels are preserved by construction (the forms operator set wraps the existing helpers); the report set keeps the shared ids, so the existing report e2e keeps its selectors.
