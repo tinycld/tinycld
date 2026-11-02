@@ -88,7 +88,7 @@ export function DryRunPanel({ draft, catalog, isVisible }: DryRunPanelProps) {
 
     return (
         <DryRunPanelContent
-            key={`${draft.trigger}:${conditionsKey}`}
+            key={`${draft.trigger}:${draft.triggerConfig.form ?? ''}:${conditionsKey}`}
             draft={draft}
             trigger={trigger}
         />
@@ -129,6 +129,7 @@ function DryRunPanelContent({
         dryRun.mutate(
             {
                 trigger: draft.trigger,
+                triggerConfig: draft.triggerConfig,
                 // conditionsAstSchema.parse strips the builder-local `uid` key
                 // (see condition-helpers.ts) before the AST is sent — the
                 // server's ConditionsAST has no such field.

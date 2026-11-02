@@ -143,6 +143,7 @@ export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
     if (!catalog) return <RulesPanelCatalogError />
 
     const handleNewRule = () => openCreate(scope, nextOrder, pkgFilter)
+    const preset = builder.mode === 'create' ? builder.preset : undefined
 
     return (
         <View className="gap-3">
@@ -165,6 +166,7 @@ export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
                 ruleId={builder.mode === 'edit' ? builder.ruleId : undefined}
                 presetPkg={builder.mode === 'create' ? builder.presetPkg : undefined}
                 nextOrder={builder.mode === 'create' ? builder.nextOrder : 0}
+                preset={preset}
             />
             <RunHistory ruleId={historyRuleId} onClose={closeHistory} />
         </View>

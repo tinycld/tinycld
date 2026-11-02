@@ -60,6 +60,8 @@ export interface CatalogResponse {
 
 export interface DryRunRequest {
     trigger: string
+    /** The rule's trigger_config: a web form rule tests only its form's submissions. */
+    triggerConfig?: { cron?: string; form?: string }
     conditions: ConditionsAst
 }
 
