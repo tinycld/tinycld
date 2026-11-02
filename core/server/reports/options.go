@@ -16,15 +16,18 @@ import (
 // the reader may list that pass its where, one row per value (v) with its
 // label (l) and group (g) as text. The label is already shown (R31); the
 // group is its stored value, an empty text for a blank one, so options with
-// no group value make one blank group. A where on another param reads that param's
-// value for the request.
+// no group value make one blank group. A link to a record the reader cannot
+// see reads blank (the hop joins through the target's rule CTE), so it joins
+// that blank group. Where a value's rows differ, a set label or group wins
+// over a blank one. A where on another param reads that param's value for
+// the request.
 func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 	sc := newScope(s, op.src)
 	value := "CAST(" + sc.value(op.value).sql + " AS TEXT)"
-	label := "CAST(" + optionLabelOf(s, sc.value(op.label)) + " AS TEXT)"
+	label := "COALESCE(min(NULLIF(CAST(" + optionLabelOf(s, sc.value(op.label)) + " AS TEXT), '')), '')"
 	group := "NULL"
 	if op.group != nil {
-		group = "COALESCE(CAST(" + sc.value(op.group).sql + " AS TEXT), '')"
+		group = "COALESCE(min(NULLIF(CAST(" + sc.value(op.group).sql + " AS TEXT), '')), '')"
 	}
 	where := "1"
 	if w := op.def.OptionsFrom.Where; w != nil {
@@ -39,7 +42,7 @@ func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 			where = "COALESCE(" + e.sql + ", 0)"
 		}
 	}
-	return fmt.Sprintf("SELECT %s AS v, min(COALESCE(%s, '')) AS l, min(%s) AS g\n%s\nWHERE %s AND %s IS NOT NULL\nGROUP BY 1",
+	return fmt.Sprintf("SELECT %s AS v, %s AS l, %s AS g\n%s\nWHERE %s AND %s IS NOT NULL\nGROUP BY 1",
 		value, label, group, sc.render(), where, value), nil
 }
 
@@ -96,20 +99,25 @@ type ParamOption struct {
 }
 
 // OptionGroup is one group of a param's options: the value its options
-// carry and its shown label (a record's label, a select's option label).
+// carry and its shown label (a record's label, a select's option label, Yes
+// or No). A number, amount, percent, date or date-time label also has its
+// type, so the client formats it as it formats a cell (R9).
 type OptionGroup struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
+	Value string    `json:"value"`
+	Label string    `json:"label"`
+	Type  FieldType `json:"type,omitempty"`
 }
 
 // ParamOptions is one page of options, ordered by label then value. Groups
-// are the groups of every option that matches the search; they come with
-// the first page only (F9). Next is the cursor of the next page, "" on the
-// last.
+// are the groups of every option that matches the search, at most
+// maxOptionGroups of them (GroupsCut says the list stops there); they come
+// with the first page only (F9). Next is the cursor of the next page, "" on
+// the last.
 type ParamOptions struct {
-	Options []ParamOption `json:"options"`
-	Groups  []OptionGroup `json:"groups"`
-	Next    string        `json:"next,omitempty"`
+	Options   []ParamOption `json:"options"`
+	Groups    []OptionGroup `json:"groups"`
+	GroupsCut bool          `json:"groupsCut,omitempty"`
+	Next      string        `json:"next,omitempty"`
 }
 
 // ReadParamOptions reads one page of a choice param's options for its
@@ -123,6 +131,9 @@ func ReadParamOptions(ctx context.Context, app core.App, req OptionsRequest) (*P
 	op := c.p.options[req.Param]
 	if op == nil {
 		return nil, invalid("param", fmt.Sprintf("the report has no choice param %q whose options come from a source", req.Param))
+	}
+	if req.Group != nil && op.group == nil {
+		return nil, invalid("group", fmt.Sprintf("the options of %q have no groups", req.Param))
 	}
 	limit, err := optionsLimit(req)
 	if err != nil {
@@ -150,8 +161,8 @@ func optionsLimit(req OptionsRequest) (int, error) {
 		switch {
 		case len(req.Values) > maxChoiceValues:
 			return 0, invalid("values", fmt.Sprintf("a request labels at most %d values", maxChoiceValues))
-		case req.Search != "" || req.Group != nil || req.After != "":
-			return 0, invalid("values", "values are labelled alone, with no search, group or after")
+		case req.Search != "" || req.Group != nil || req.After != "" || req.Limit != 0:
+			return 0, invalid("values", "values are labelled alone, with no search, group, after or limit")
 		}
 		return len(req.Values), nil
 	}
@@ -217,24 +228,61 @@ func (c *compiler) optionGroups(ctx context.Context, op *optionsPlan, search str
 	if err != nil {
 		return err
 	}
+	typ := shownType(op.group)
 	label := "COALESCE(" + optionLabelOf(s, pathExpr("o.g", op.group)) + ", '')"
-	body := fmt.Sprintf("SELECT o.g AS g, %s AS gl FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY 2, 1 LIMIT %s",
-		label, inner, strings.Join(optionConds(s, search, nil), " AND "), s.bind(int64(maxOptionGroups)))
+	// A number orders by its value, not its text ("4" before "190"); the
+	// blank group comes first, as a blank text label does.
+	order := "2, 1"
+	if typ == Number || typ == Money || typ == Percent {
+		order = "o.g <> '', CAST(o.g AS REAL), 1"
+	}
+	body := fmt.Sprintf("SELECT o.g AS g, %s AS gl FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY %s LIMIT %s",
+		label, inner, strings.Join(optionConds(s, search, nil), " AND "), order, s.bind(int64(maxOptionGroups+1)))
 	rows, _, err := readRows(ctx, c.app, s, nil, body, false)
 	if err != nil {
 		return err
 	}
+	if len(rows) > maxOptionGroups {
+		rows, res.GroupsCut = rows[:maxOptionGroups], true
+	}
 	for _, row := range rows {
-		res.Groups = append(res.Groups, OptionGroup{Value: textOf(row["g"]), Label: shownText(row["gl"])})
+		res.Groups = append(res.Groups, groupOf(textOf(row["g"]), textOf(row["gl"]), typ))
 	}
 	return nil
+}
+
+// shownType is the type of what a path shows: a linked record's label
+// field's, a select's text, else the field's own.
+func shownType(p *pathPlan) FieldType {
+	if p.target != nil && p.field.Type == Relation {
+		return labelTypeOf(labelFieldOf(p.target, ""))
+	}
+	return labelTypeOf(p.field)
+}
+
+// groupOf is a group shown as a run shows a group label of its type: (none)
+// for a blank, Yes or No for a yes/no, a typed text for a number, amount,
+// percent or date, which the client formats.
+func groupOf(value, label string, typ FieldType) OptionGroup {
+	g := OptionGroup{Value: value, Label: shownText(label)}
+	switch {
+	case label == "" || label == noName:
+	case typ == Bool:
+		g.Label = "No"
+		if label != "0" && label != "false" {
+			g.Label = "Yes"
+		}
+	case typ == Number || typ == Money || typ == Percent || typ == Date || typ == DateTime:
+		g.Type = typ
+	}
+	return g
 }
 
 // optionConds are the search and group conditions on the options select (o).
 func optionConds(s *stmt, search string, group *string) []string {
 	conds := []string{"1"}
 	if search != "" {
-		conds = append(conds, "instr(lower(o.l), lower("+s.bind(search)+")) > 0")
+		conds = append(conds, "instr(tc_fold(o.l), tc_fold("+s.bind(search)+")) > 0")
 	}
 	if group != nil {
 		conds = append(conds, "o.g IS "+s.bind(*group))

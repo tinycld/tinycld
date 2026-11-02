@@ -287,12 +287,18 @@ func TestParamOptionsWhereAndRefusals(t *testing.T) {
 		{OptionsRequest{Param: "animals", After: "garbage"}, "after", "not one this list gave"},
 		{OptionsRequest{Param: "animals", Values: make([]string, 1001)}, "values", "at most 1000"},
 		{OptionsRequest{Param: "animals", Today: "soon"}, "today", "YYYY-MM-DD"},
+		{OptionsRequest{Param: "animals", Values: []string{"x"}, Limit: 5}, "values", "labelled alone"},
+		{OptionsRequest{Param: "animals", Values: []string{"x"}, Search: "x"}, "values", "labelled alone"},
 	} {
 		c.req.Spec, c.req.Auth = loaded, z.recs["ann"]
 		_, err := ReadParamOptions(context.Background(), z.app, c.req)
 		requireSpecError(t, err, 400, c.at, c.want)
 	}
-	_, err := ReadParamOptions(context.Background(), z.app, OptionsRequest{Spec: loaded, Param: "animals"})
+	ungrouped, _, _ := Load([]byte(strings.Replace(animalsParam, `,"group":[{"field":"species"}]`, ``, 1)))
+	lion := "lion"
+	_, err := ReadParamOptions(context.Background(), z.app, OptionsRequest{Spec: ungrouped, Param: "animals", Group: &lion, Auth: z.recs["ann"]})
+	requireSpecError(t, err, 400, "group", "have no groups")
+	_, err = ReadParamOptions(context.Background(), z.app, OptionsRequest{Spec: loaded, Param: "animals"})
 	if !errors.Is(err, ErrNoReader) {
 		t.Fatalf("no reader: %v", err)
 	}
@@ -350,5 +356,103 @@ func TestParamOptionsRefuseAnOAuthTokenThroughTheMiddleware(t *testing.T) {
 			DisableTestAppCleanup: true,
 		}
 		sc.Test(t)
+	}
+}
+
+// withGroup is animalsParam with its options grouped by group (a path).
+func withGroup(group string) string {
+	return strings.Replace(animalsParam, `"group":[{"field":"species"}]`, `"group":`+group, 1)
+}
+
+func groupsOf(res *ParamOptions) []OptionGroup { return res.Groups }
+
+// A search matches any case of any script: Unicode case folding, not
+// SQLite's ASCII-only lower().
+func TestParamOptionsSearchFoldsUnicodeCase(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "emile", "zoo_animals", map[string]any{"name": "Émile", "species": "emu", "owner": z.id("ann")})
+	z.rec(t, "strasse", "zoo_animals", map[string]any{"name": "Straße", "species": "stork", "owner": z.id("ann")})
+	for search, want := range map[string]string{"émile": "Émile", "ÉMILE": "Émile", "STRASSE": "Straße", "straße": "Straße"} {
+		if got := optionLabels(z.options(t, "ann", animalsParam, OptionsRequest{Param: "animals", Search: search})); !slices.Equal(got, []string{want}) {
+			t.Fatalf("search %q = %v, want %s", search, got, want)
+		}
+	}
+}
+
+// Two options with one label page by value: a page boundary between them
+// loses neither and repeats neither.
+func TestParamOptionsPageSplitsADuplicateLabel(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "leo2", "zoo_animals", map[string]any{"name": "Leo", "species": "lion", "owner": z.id("ann")})
+	var labels, values []string
+	req := OptionsRequest{Param: "animals", Limit: 1}
+	for range 10 {
+		res := z.options(t, "ann", animalsParam, req)
+		for _, o := range res.Options {
+			labels, values = append(labels, o.Label), append(values, o.Value)
+		}
+		if res.Next == "" {
+			break
+		}
+		req.After = res.Next
+	}
+	leos := []string{z.id("leo"), z.id("leo2")}
+	slices.Sort(leos)
+	if !slices.Equal(labels, []string{"Kit", "Leo", "Leo", "Zed"}) || !slices.Equal(values, []string{z.id("kit"), leos[0], leos[1], z.id("zed")}) {
+		t.Fatalf("pages = %v %v", labels, values)
+	}
+}
+
+// A groups list stops at maxOptionGroups and says so.
+func TestParamOptionGroupsSayWhenCut(t *testing.T) {
+	z := newZoo(t)
+	if z.options(t, "ann", animalsParam, OptionsRequest{Param: "animals"}).GroupsCut {
+		t.Fatal("three groups are not cut")
+	}
+	for i := range maxOptionGroups {
+		z.rec(t, fmt.Sprint("a", i), "zoo_animals", map[string]any{"name": fmt.Sprint("A", i), "species": fmt.Sprintf("s%03d", i), "owner": z.id("ann")})
+	}
+	res := z.options(t, "ann", animalsParam, OptionsRequest{Param: "animals"})
+	if len(res.Groups) != maxOptionGroups || !res.GroupsCut {
+		t.Fatalf("groups = %d, cut %v", len(res.Groups), res.GroupsCut)
+	}
+}
+
+// A value whose rows differ keeps its set group over a blank one, and a link
+// to a record the reader cannot see joins the one blank group.
+func TestParamOptionGroupsKeepTheSetGroupAndMergeHiddenLinks(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "nobody", "zoo_animals", map[string]any{"name": "Nobody", "site": z.id("north"), "owner": z.id("ann")})
+	bySite := strings.Replace(animalsParam, `"value":[{"field":"id"}],"label":[{"field":"name"}],"group":[{"field":"species"}]`,
+		`"value":[{"link":"site"}],"label":[{"link":"site"}],"group":[{"field":"species"}]`, 1)
+	res := z.options(t, "ann", bySite, OptionsRequest{Param: "animals"})
+	if len(res.Options) != 2 || res.Options[0].Label != "North" || res.Options[0].Group != "lion" {
+		t.Fatalf("site options = %+v", res.Options)
+	}
+
+	// No reader may list the vault: Leo's vault reads as no vault.
+	res = z.options(t, "ann", withGroup(`[{"link":"vault"}]`), OptionsRequest{Param: "animals"})
+	if want := []OptionGroup{{Value: "", Label: "(none)"}}; !slices.Equal(res.Groups, want) {
+		t.Fatalf("vault groups = %+v, want %+v", res.Groups, want)
+	}
+}
+
+// A group read from a yes/no, number, amount or date is labelled as a run
+// labels a group of that type: Yes or No, or a typed value the client
+// formats; numbers order by value.
+func TestParamOptionGroupsOfTypedFields(t *testing.T) {
+	z := newZoo(t)
+	for _, c := range []struct {
+		group, user string
+		want        []OptionGroup
+	}{
+		{`[{"field":"active"}]`, "bob", []OptionGroup{{Value: "0", Label: "No"}, {Value: "1", Label: "Yes"}}},
+		{`[{"field":"weight"}]`, "ann", []OptionGroup{{Value: "4", Label: "4", Type: Number}, {Value: "190", Label: "190", Type: Number}, {Value: "300", Label: "300", Type: Number}}},
+		{`[{"field":"price"}]`, "ann", []OptionGroup{{Value: "5000", Label: "5000", Type: Money}, {Value: "120000", Label: "120000", Type: Money}, {Value: "500000", Label: "500000", Type: Money}}},
+		{`[{"field":"born"}]`, "ann", []OptionGroup{{Value: "", Label: "(none)"}, {Value: "2019-02-10", Label: "2019-02-10", Type: Date}, {Value: "2020-05-01", Label: "2020-05-01", Type: Date}}},
+	} {
+		if got := groupsOf(z.options(t, c.user, withGroup(c.group), OptionsRequest{Param: "animals"})); !slices.Equal(got, c.want) {
+			t.Fatalf("%s groups = %+v, want %+v", c.group, got, c.want)
+		}
 	}
 }
