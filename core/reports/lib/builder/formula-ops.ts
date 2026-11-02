@@ -361,37 +361,70 @@ export function withPart(
 const isAmount = (here: ReportFormulaContext, node: SpecNode | undefined) =>
     node !== undefined && formulaType(node, typesOf(here)) === 'money'
 
-// The scale the engine requires of a node for its current operands: an amount
-// divided by a number, and an average of amounts, keep whole cents (formula.go
-// div, checkAggregate); any other ratio keeps RATIO_SCALE places. A Round's or a
-// percent's places are the author's, set to DEFAULT_PLACES when missing.
-function scaleFor(here: ReportFormulaContext, node: SpecNode): number | undefined {
-    const part = partOf(node)
-    if (!SCALED_PARTS.has(part)) return undefined
-    const [first, second] = node.args ?? []
-    if (part === 'div') return isAmount(here, first) && !isAmount(here, second) ? 0 : RATIO_SCALE
-    if (part === 'avg' && isAmount(here, first)) return 0
-    return hasScale(node) ? node.scale : DEFAULT_PLACES
+/** The same part in the formula before an edit, and what could be read there. */
+interface Before {
+    node: SpecNode
+    here: ReportFormulaContext
 }
 
-function settledNode(here: ReportFormulaContext, node: SpecNode): SpecNode {
-    const scale = scaleFor(here, node)
+// The scale the engine forces for the operands: whole cents for an amount divided
+// by a number and for an average of amounts (formula.go div, checkAggregate).
+function forcedScale(here: ReportFormulaContext, node: SpecNode): number | undefined {
+    const part = partOf(node)
+    const [first, second] = node.args ?? []
+    if (part === 'div' && isAmount(here, first) && !isAmount(here, second)) return 0
+    if (part === 'avg' && isAmount(here, first)) return 0
+    return undefined
+}
+
+// A scale the engine forces wins. Any other scale is the author's and stays, unless
+// it is missing or was forced before the edit and no longer is: then a ratio gets
+// RATIO_SCALE places and any other part DEFAULT_PLACES.
+function scaleFor(here: ReportFormulaContext, node: SpecNode, before?: Before): number | undefined {
+    const part = partOf(node)
+    if (!SCALED_PARTS.has(part)) return undefined
+    const forced = forcedScale(here, node)
+    if (forced !== undefined) return forced
+    const wasForced = before !== undefined && forcedScale(before.here, before.node) !== undefined
+    if (hasScale(node) && !wasForced) return node.scale
+    return part === 'div' ? RATIO_SCALE : DEFAULT_PLACES
+}
+
+function settledNode(here: ReportFormulaContext, node: SpecNode, before?: Before): SpecNode {
+    const scale = scaleFor(here, node, before)
     return scale === undefined || scale === node.scale ? node : { ...node, scale }
 }
 
+const sameKind = (a: SpecNode | undefined, b: SpecNode) =>
+    a !== undefined && partOf(a) === partOf(b)
+
 /**
- * The formula with every Divide's and Average's scale set for its current operands
- * (see scaleFor). The editor calls it after every edit, since changing an operand
- * can make an amount a number or the other way round.
+ * The formula with the scales the engine forces (see scaleFor) after an edit that
+ * turned `previous` into `root`. The editor calls it after every edit, since
+ * changing an operand can make an amount a number or the other way round; with
+ * `previous` it also knows a scale an amount forced that no longer applies.
  */
-export function settleScales(ctx: ReportFormulaContext, root: SpecNode): SpecNode {
-    const walk = (node: SpecNode, here: ReportFormulaContext): SpecNode => {
+export function settleScales(
+    ctx: ReportFormulaContext,
+    root: SpecNode,
+    previous?: SpecNode
+): SpecNode {
+    const walk = (node: SpecNode, here: ReportFormulaContext, before?: Before): SpecNode => {
         const children = REPORT_TREE.childrenOf(node)
-        const next = children.map((child, i) => walk(child, childContext(here, node, i)))
+        const earlier = before ? REPORT_TREE.childrenOf(before.node) : []
+        const next = children.map((child, i) => {
+            const was = earlier[i]
+            const childBefore =
+                before && was && sameKind(was, child)
+                    ? { node: was, here: childContext(before.here, before.node, i) }
+                    : undefined
+            return walk(child, childContext(here, node, i), childBefore)
+        })
         const changed = next.some((child, i) => child !== children[i])
-        return settledNode(here, changed ? REPORT_TREE.withChildren(node, next) : node)
+        return settledNode(here, changed ? REPORT_TREE.withChildren(node, next) : node, before)
     }
-    return walk(root, ctx)
+    const before = previous && sameKind(previous, root) ? { node: previous, here: ctx } : undefined
+    return walk(root, ctx, before)
 }
 
 export function slotLabel(node: SpecNode, index: number): string | null {

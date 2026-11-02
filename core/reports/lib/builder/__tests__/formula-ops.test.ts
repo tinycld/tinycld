@@ -285,17 +285,34 @@ describe('scales follow the operands', () => {
         scale,
     })
 
-    it('makes an amount ratio a number ratio and back when an operand changes', () => {
+    it('forces whole cents on an amount divided by a number', () => {
+        const qtyByQty = div({ col: 'qty' }, 2)
+        const back = replaceTreeAt(REPORT_TREE, qtyByQty, [0], { col: 'amount' })
+        expect(settleScales(CTX, back, qtyByQty)).toEqual(div({ col: 'amount' }, 0))
+        expect(settleScales(CTX, div({ col: 'amount' }, 2))).toEqual(div({ col: 'amount' }, 0))
+    })
+    it('gives a ratio RATIO_SCALE places when its top stops being an amount', () => {
         const amountByQty = div({ col: 'amount' }, 0)
         const qtyByQty = replaceTreeAt(REPORT_TREE, amountByQty, [0], { col: 'qty' })
-        expect(settleScales(CTX, qtyByQty)).toEqual(div({ col: 'qty' }, 4))
-        const back = replaceTreeAt(REPORT_TREE, div({ col: 'qty' }, 4), [0], { col: 'amount' })
-        expect(settleScales(CTX, back)).toEqual(amountByQty)
+        expect(settleScales(CTX, qtyByQty, amountByQty)).toEqual(div({ col: 'qty' }, 4))
+        const noScale: SpecNode = { op: 'div', args: [{ col: 'qty' }, { col: 'qty' }] }
+        expect(settleScales(CTX, noScale)).toEqual(div({ col: 'qty' }, 4))
     })
-    it('averages amounts in whole cents after the operand becomes an amount', () => {
-        const avgQty: SpecNode = { op: 'avg', args: [{ col: 'qty' }], scale: 2 }
+    it('keeps the scale an author chose for a ratio through an unrelated edit', () => {
+        const stored: SpecNode = { op: 'add', args: [div({ col: 'qty' }, 2), { col: 'amount' }] }
+        const edited = replaceTreeAt(REPORT_TREE, stored, [1], { col: 'cost' })
+        expect(settleScales(CTX, edited, stored)).toBe(edited)
+        const whole = div({ col: 'qty' }, 0)
+        expect(settleScales(CTX, whole, whole)).toBe(whole)
+    })
+    it('averages amounts in whole cents, and gives numbers DEFAULT_PLACES when they stop being amounts', () => {
+        const avgQty: SpecNode = { op: 'avg', args: [{ col: 'qty' }], scale: 3 }
         const avgAmount = replaceTreeAt(REPORT_TREE, avgQty, [0], { col: 'amount' })
-        expect(settleScales(CTX, avgAmount)).toEqual({ ...avgAmount, scale: 0 })
+        expect(settleScales(CTX, avgAmount, avgQty)).toEqual({ ...avgAmount, scale: 0 })
+        const forced = { ...avgAmount, scale: 0 }
+        const back = replaceTreeAt(REPORT_TREE, forced, [0], { col: 'qty' })
+        expect(settleScales(CTX, back, forced)).toEqual({ ...back, scale: 2 })
+        expect(settleScales(CTX, avgQty, avgQty)).toBe(avgQty)
     })
     it('keeps a Round as the author set it, and a settled formula as it is', () => {
         const round: SpecNode = { op: 'round', args: [div({ col: 'amount' }, 0)], scale: 3 }
