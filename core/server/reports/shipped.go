@@ -19,7 +19,7 @@ import (
 const maxShippedKey = 120
 
 // Shipped is a report a package ships: a published report every user sees,
-// owned by the first admin. Register it from the package's Register(app).
+// or with Unpublished a report its package shares, owned by the first admin. Register it from the package's Register(app).
 type Shipped struct {
 	// Key names the report for good: "<package>.<name>".
 	Key         string
@@ -30,6 +30,9 @@ type Shipped struct {
 	// changes: the server then replaces the stored report's spec, title and
 	// description at its next start.
 	Revision int
+	// Unpublished ships the report unpublished: core never publishes it, and
+	// the package shares it with the people who should see it.
+	Unpublished bool
 }
 
 var (
@@ -75,8 +78,8 @@ func isShipped(key string) bool {
 }
 
 // ReconcileShipped makes the stored reports match the shipped ones. A
-// missing report is created, published, owned and published by the first
-// admin; with no admin yet it waits until one appears (shipForAdmin). A
+// missing report is created and owned by the first admin, and published by
+// them unless it is Unpublished; with no admin yet it waits until one appears (shipForAdmin). A
 // stored report whose revision is older gets the shipped spec, title and
 // description; its owner and whether it is published stay as people left
 // them. A spec that does not validate is skipped and named in the returned
@@ -116,8 +119,10 @@ func ReconcileShipped(app core.App) error {
 			}
 			rec = core.NewRecord(col)
 			rec.Set("owner", admin.Id)
-			rec.Set("published", true)
-			rec.Set("published_by", admin.Id)
+			rec.Set("published", !s.Unpublished)
+			if !s.Unpublished {
+				rec.Set("published_by", admin.Id)
+			}
 			rec.Set("shipped_key", key)
 		}
 		rec.Set("title", s.Title)

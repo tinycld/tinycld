@@ -121,6 +121,14 @@ type Source struct {
 	// FiscalStartMonth (1-12) drives fiscalYear, fiscalPeriod and the
 	// fiscal period presets when this source is a report's base. nil means 1.
 	FiscalStartMonth func(app core.App) int
+	// Heading is the name a report on this base source prints above its
+	// title (a business name), read at each run. nil prints the
+	// organization's name.
+	Heading func(app core.App) string
+	// Watch names the collections Heading, FiscalStartMonth and Currency
+	// read. A run that reads this source subscribes to them too, so a
+	// settings change runs an open report again.
+	Watch []string
 }
 
 var (
@@ -175,6 +183,11 @@ func validateSource(src *Source) error {
 	}
 	if src.PrimaryKey != "" && src.PrimaryKey != "id" {
 		return fmt.Errorf("primary key must be id: PocketBase relations point at id")
+	}
+	for _, w := range src.Watch {
+		if w == "" {
+			return fmt.Errorf("a watched collection needs a name")
+		}
 	}
 	keys := map[string]bool{}
 	claim := func(key string) error {

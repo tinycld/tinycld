@@ -88,6 +88,17 @@ func checkSource(app core.App, src *Source) []string {
 			problems = append(problems, fmt.Sprintf("link %q: %s", l.Key, msg))
 		}
 	}
+	for _, w := range src.Watch {
+		wc, err := app.FindCollectionByNameOrId(w)
+		switch {
+		case err != nil:
+			problems = append(problems, fmt.Sprintf("watched collection %q does not exist", w))
+		case wc.Name != w:
+			problems = append(problems, fmt.Sprintf("watched collection %q must be named %q, not by id", w, wc.Name))
+		case wc.System:
+			problems = append(problems, fmt.Sprintf("watched collection %q is a system collection", w))
+		}
+	}
 	if msg := checkRule(app, col); msg != "" {
 		problems = append(problems, msg)
 	}

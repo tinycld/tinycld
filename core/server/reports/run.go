@@ -54,7 +54,10 @@ type Result struct {
 	Rows    []Row          `json:"rows"`
 	Notices []Notice       `json:"notices"`
 	Topics  []string       `json:"topics"`
-	Page    *Page          `json:"page"`
+	// Heading is what the report prints above its title: the base source's
+	// Heading, or "" for the organization's name.
+	Heading string `json:"heading,omitempty"`
+	Page    *Page  `json:"page"`
 	// Params are the report's params as this run resolved them, in spec
 	// order, so the shell shows the period the server ran.
 	Params []ResolvedParam `json:"params"`
@@ -230,6 +233,9 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 		return nil, err
 	}
 	rn.res.Params = resolvedParams(p.spec.Params, params)
+	if h := p.base.Heading; h != nil {
+		rn.res.Heading = strings.TrimSpace(h(app))
+	}
 	return rn.res, nil
 }
 
@@ -320,6 +326,15 @@ func (rn *runner) run() error {
 	rn.res.Columns = rn.columns()
 	rn.markCurrencies(groupRows)
 	rn.assemble(groupRows, details, nested)
+	// A source's Go hooks read collections no statement reads, so their
+	// topics are added by name.
+	for _, src := range Sources(rn.app) {
+		if rn.topics[changesignal.Topic(src.Collection)] {
+			for _, w := range src.Watch {
+				rn.topics[changesignal.Topic(w)] = true
+			}
+		}
+	}
 	rn.res.Topics = make([]string, 0, len(rn.topics))
 	for t := range rn.topics {
 		rn.res.Topics = append(rn.res.Topics, t)

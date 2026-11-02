@@ -1106,6 +1106,13 @@ reports.RegisterSource(reports.Source{
   (`"old": "new"`). Saved reports then keep working.
 - `FiscalStartMonth` (1 to 12) sets the fiscal year for the source's reports:
   the fiscal presets, `fiscalYear` and `fiscalPeriod`.
+- `Heading` returns the name a report on this base source prints above its
+  title. The result carries it as `heading` (trimmed); nil leaves it empty,
+  and the shell prints the organization's name.
+- `Watch` names the collections that `Heading`, `FiscalStartMonth` and
+  `Currency` read. A run that reads this source also subscribes to them, so a
+  change there runs an open report again. The start check refuses a watched
+  collection that does not exist, is named by id, or is a system collection.
 
 When the server starts, core checks every source against the database:
 
@@ -1227,6 +1234,12 @@ reports.RegisterShipped(reports.Shipped{
 - A shipped spec that does not validate against the sources is logged and
   skipped. Pin the spec in the package's tests: call `reports.CheckSources`,
   then `reports.Load` and `reports.Validate`.
+- Set `Unpublished: true` for a report only some people should see. Core
+  creates it unpublished and never publishes it, also on a new revision. The
+  package shares it itself: add `report_shares` rows from
+  `app.OnRecordAfterCreateSuccess("reports")` for a new shipped copy, and
+  again when the server starts (after `ReconcileShipped`) to cover reports
+  that already exist. Core has no share API for this.
 - A shipped report cannot be deleted while the package ships it. The
   server answers "This report ships with a package. An admin who owns or
   edits it can unpublish it instead." Only an admin with update access (the
