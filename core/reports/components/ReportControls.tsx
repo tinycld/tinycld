@@ -53,6 +53,8 @@ function ParamSurface({ model, def, value, trigger }: SurfaceProps) {
             def={def}
             value={value}
             onApply={next => model.onApplyParam(def.id, next)}
+            source={model.optionsSource}
+            params={model.postedParams}
         />
     )
 }
@@ -70,7 +72,7 @@ function ParamControl({ model, def, value, isRemovable }: ParamControlProps) {
     const chip = (
         <ParamChip
             paramId={def.id}
-            text={chipText(def, value, model.resolved[def.id])}
+            text={chipText(def, value, model.resolved[def.id], model.optionLabels.get(def.id))}
             label={def.label ?? def.id}
             isDate={isDateParam(def)}
             isRemovable={isRemovable}

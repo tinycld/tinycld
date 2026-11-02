@@ -18,7 +18,8 @@ function Line({
 }
 
 interface ReportDocumentHeaderProps {
-    orgName: string
+    /** The source's heading, else the organization's name (E9). */
+    heading: string
     title: string
     periodWords: string | null
     isThousands: boolean
@@ -26,12 +27,12 @@ interface ReportDocumentHeaderProps {
 
 // The finished-document strip above the table: who, what and which period.
 export function ReportDocumentHeader({
-    orgName,
+    heading,
     title,
     periodWords,
     isThousands,
 }: ReportDocumentHeaderProps) {
-    const businessName = orgName.trim() || null
+    const businessName = heading.trim() || null
     const thousandsNote = isThousands ? 'Amounts in thousands' : null
     return (
         <View

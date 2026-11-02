@@ -58,7 +58,12 @@ export interface ParamPick {
     group?: string
 }
 
-/** Opens a param's picker, searches, picks options or a whole group, and applies. */
+/**
+ * Opens a param's picker, searches, picks options or a whole group, and applies. A
+ * multiple choice always has Apply; a single choice applies when its option is
+ * pressed and has none. The kind is read from the options' role (a checkbox or a
+ * radio) before the press, never from whether Apply happens to be on screen.
+ */
 export async function chooseParamOption(page: Page, paramId: string, pick: ParamPick) {
     if (pick.from === 'chip') await page.getByTestId(`report-param-${paramId}`).click()
     else {
@@ -69,14 +74,17 @@ export async function chooseParamOption(page: Page, paramId: string, pick: Param
     await expect(picker).toBeVisible()
     if (pick.search !== undefined)
         await picker.getByTestId('report-filter-search').fill(pick.search)
+    // Only a multiple choice picks whole groups.
+    let isMultiple = pick.group !== undefined
     if (pick.group) await picker.getByTestId(`report-filter-group-${pick.group}`).click()
     for (const label of pick.labels ?? []) {
-        await picker
+        const option = picker
             .getByRole('checkbox', { name: label, exact: true })
             .or(picker.getByRole('radio', { name: label, exact: true }))
-            .click()
+        await expect(option).toBeVisible()
+        if ((await option.getAttribute('role')) === 'checkbox') isMultiple = true
+        await option.click()
     }
-    const apply = picker.getByTestId('report-filter-apply')
-    if (await apply.isVisible()) await apply.click()
+    if (isMultiple) await picker.getByTestId('report-filter-apply').click()
     await expect(picker).toBeHidden()
 }

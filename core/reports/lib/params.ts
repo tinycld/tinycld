@@ -301,20 +301,34 @@ export type ChoiceLabels = ReadonlyMap<string, string>
 
 export const groupLabelKey = (group: string) => `group:${group}`
 
+/** A chip names up to this many choices; more are counted ("3 selected"). */
+export const NAMED_CHOICES = 2
+
+/** How many choices a choice value holds: its values and its whole groups. */
+export function choiceCount(value: { values: readonly string[]; groups?: readonly string[] }) {
+    return value.values.length + (value.groups?.length ?? 0)
+}
+
 function choiceLabels(
     def: ParamDef,
     value: { values: readonly string[]; groups?: readonly string[] },
     labels: ChoiceLabels | undefined
 ): string {
+    const count = choiceCount(value)
     const named = value.values.map(
-        item =>
-            labels?.get(item) ?? def.options?.find(option => option.value === item)?.label ?? item
+        item => labels?.get(item) ?? def.options?.find(option => option.value === item)?.label
     )
-    const groups = (value.groups ?? []).map(
-        group => `All ${labels?.get(groupLabelKey(group)) ?? group}`
-    )
+    const groups = (value.groups ?? []).map(group => {
+        const label = labels?.get(groupLabelKey(group))
+        return label === undefined ? undefined : `All ${label}`
+    })
     const all = [...named, ...groups]
-    return all.length <= 2 ? all.join(', ') : `${all.length} selected`
+    // A record of a source is never shown by its id: until its label is read (or
+    // when the reader can no longer list it), the choices are counted.
+    if (count > NAMED_CHOICES || all.some(label => label === undefined)) {
+        return `${count} selected`
+    }
+    return all.join(', ')
 }
 
 export function valueText(

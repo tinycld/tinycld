@@ -1,6 +1,7 @@
 import { expect, type Page } from '@playwright/test'
+import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import PocketBase from 'pocketbase'
-import { navigateToPackage } from './helpers'
+import { loginAs, navigateToPackage } from './helpers'
 
 export {
     cellOf,
@@ -122,17 +123,26 @@ export async function saveNewReport(page: Page, title: string) {
     await expect(page.getByTestId('report-title')).toHaveText(title)
 }
 
+const ADMIN_LOGIN = process.env.ADMIN_USER_LOGIN || 'admin@tinycld.org'
+const ADMIN_PASSWORD = process.env.ADMIN_USER_PW || 'AdminPass1234!'
+
 // A PocketBase client signed in as the e2e server's superuser, for the one fixture
 // reports-share.spec.ts seeds (its header says why). scripts/e2e-serve.ts creates
 // this superuser from the same variables and defaults.
 export async function superuserClient(): Promise<PocketBase> {
     const pb = new PocketBase(`http://127.0.0.1:${process.env.E2E_PORT ?? 7200}`)
     pb.autoCancellation(false)
-    await pb
-        .collection('_superusers')
-        .authWithPassword(
-            process.env.ADMIN_USER_LOGIN || 'admin@tinycld.org',
-            process.env.ADMIN_USER_PW || 'AdminPass1234!'
-        )
+    await pb.collection('_superusers').authWithPassword(ADMIN_LOGIN, ADMIN_PASSWORD)
     return pb
+}
+
+/**
+ * Signs in as the owner of the shipped reports: the oldest active owner
+ * (shipped.go firstAdmin), which is the seed's admin app user (scripts/seed-db.ts
+ * ensureAdminAppUser), created before the shared test user. It signs in by its
+ * username, which the seed derives from the email: the e2e server's users sign in
+ * by username.
+ */
+export async function loginAsShippedOwner(page: Page) {
+    await loginAs(page, deriveUsername(ADMIN_LOGIN), ADMIN_PASSWORD)
 }

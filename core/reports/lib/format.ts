@@ -196,9 +196,9 @@ export function cellDisplay(
 
 const LABEL_ROW: ResultRow = { id: '', kind: 'detail', depth: 0, label: '', cells: {} }
 
-// A typed label (a row's, a pivot heading's) formatted as a cell of its type. An
-// amount always shows its currency, so 300 EUR and 300 USD read apart.
-function typedLabelText(
+// A typed label (a row's, a pivot heading's, a param option's) formatted as a cell
+// of its type. An amount always shows its currency, so 300 EUR and 300 USD read apart.
+export function typedLabelText(
     type: FieldType,
     value: CellValue,
     currency: string,

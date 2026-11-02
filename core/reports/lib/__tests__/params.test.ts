@@ -181,8 +181,13 @@ describe('a choice whose options come from a source', () => {
         expect(
             chipText(def, { kind: 'choice', values: ['a1', 'b2', 'c3'] }, undefined, labels)
         ).toBe('Accounts: 3 selected')
+        // A record whose label is not read yet (or that the reader can no longer
+        // list) is counted, never shown by its id.
         expect(chipText(def, { kind: 'choice', values: ['c3'] }, undefined, labels)).toBe(
-            'Accounts: c3'
+            'Accounts: 1 selected'
+        )
+        expect(chipText(def, { kind: 'choice', values: ['a1', 'c3'] }, undefined, labels)).toBe(
+            'Accounts: 2 selected'
         )
     })
 })
@@ -235,7 +240,7 @@ describe('a whole group of options from a source', () => {
         expect(chipText({ ...def, label: 'Teams' }, picked, undefined, labels)).toBe(
             'Teams: N1, All North'
         )
-        expect(chipText({ ...def, label: 'Teams' }, picked, undefined)).toBe('Teams: a1, All north')
+        expect(chipText({ ...def, label: 'Teams' }, picked, undefined)).toBe('Teams: 2 selected')
     })
 })
 

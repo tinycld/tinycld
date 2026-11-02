@@ -151,7 +151,7 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
                 <ReportControls model={model} />
                 <ReportNotices notices={model.notices} isUpdating={model.isUpdating} />
                 <ReportDocumentHeader
-                    orgName={model.orgName}
+                    heading={model.heading}
                     title={model.title}
                     periodWords={model.periodWords}
                     isThousands={model.display.divideBy1000}

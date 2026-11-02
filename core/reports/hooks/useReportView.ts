@@ -10,6 +10,7 @@ import { useCallback, useEffectEvent } from 'react'
 import type { ReportAccess } from '../lib/access'
 import { todayIso } from '../lib/dates'
 import { DEFAULT_DISPLAY, type DisplayOptions, shownColumns } from '../lib/format'
+import { chipLabelAsks } from '../lib/param-options'
 import {
     controlItems,
     emptyAction,
@@ -40,6 +41,7 @@ import {
     type ViewOptions,
 } from '../lib/view-url'
 import { useReportUIStore } from '../stores/report-ui-store'
+import { type OptionsSource, useParamOptionLabels } from './useParamOptions'
 import { type ReportRun, useReportRun } from './useReportRun'
 
 export type ViewSource = { kind: 'saved'; reportId: string } | { kind: 'draft'; spec: ReportSpec }
@@ -90,6 +92,12 @@ function runBody(
         : { spec: source.spec, ...common }
 }
 
+// A param's options are read against what the view runs: the saved report, or the draft.
+function optionsSourceOf(source: ViewSource | null): OptionsSource | null {
+    if (!source) return null
+    return source.kind === 'saved' ? { reportId: source.reportId } : { spec: source.spec }
+}
+
 export interface ReportViewInput {
     /** Keys the open groups: the report id, or NEW_REPORT_KEY for an unsaved draft. */
     reportKey: string
@@ -137,6 +145,13 @@ export function useReportView(input: ReportViewInput) {
     const period = firstDateParam(defs)
     const periodResolved = period ? resolved[period.id] : undefined
     const action = emptyAction(defs, options.params)
+    const optionsSource = optionsSourceOf(source)
+    const posted = postedParams(defs, options.params)
+    const optionLabels = useParamOptionLabels(
+        optionsSource,
+        chipLabelAsks(defs, options.params),
+        posted
+    )
 
     // setParams replaces the history entry, so a change adds none; defaults are left out.
     const write = (next: ViewOptions) => router.setParams(serializeViewOptions(defs, next))
@@ -220,8 +235,11 @@ export function useReportView(input: ReportViewInput) {
         notices: run.result?.notices ?? NO_NOTICES,
         isUpdating: run.isUpdating,
         breakpoint,
-        orgName: org?.name ?? '',
-        heading: run.result?.heading ?? '',
+        // The source's heading (E9), else the organization's name.
+        heading: run.result?.heading || org?.name || '',
+        optionsSource,
+        postedParams: posted,
+        optionLabels,
         periodWords: periodWords(period, periodResolved),
         emptyMessage: emptyMessage(period, periodResolved),
         emptyAction: action,

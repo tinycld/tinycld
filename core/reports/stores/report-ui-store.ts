@@ -27,6 +27,9 @@ interface ReportUIState {
     closeShare: () => void
     // A visit opened from the hub starts with no surface open; its open groups stay.
     startVisit: () => void
+    /** The builder's open record picker, by its value's test id; one at a time. */
+    builderPicker: string | null
+    setBuilderPicker: (picker: string | null) => void
 }
 
 export const useReportUIStore = create<ReportUIState>()(set => ({
@@ -34,6 +37,8 @@ export const useReportUIStore = create<ReportUIState>()(set => ({
     surface: null,
     isCustomizeOpen: false,
     shareReportId: null,
+    builderPicker: null,
+    setBuilderPicker: picker => set({ builderPicker: picker }),
     setExpansion: (reportKey, expansion) =>
         set(state => ({ expansion: { ...state.expansion, [reportKey]: expansion } })),
     openSurface: surface => set({ surface }),
@@ -43,5 +48,5 @@ export const useReportUIStore = create<ReportUIState>()(set => ({
     closeCustomize: () => set({ isCustomizeOpen: false }),
     openShare: reportId => set({ shareReportId: reportId }),
     closeShare: () => set({ shareReportId: null }),
-    startVisit: () => set({ surface: null, isCustomizeOpen: false }),
+    startVisit: () => set({ surface: null, isCustomizeOpen: false, builderPicker: null }),
 }))

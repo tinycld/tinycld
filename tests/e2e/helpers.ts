@@ -285,10 +285,12 @@ export async function signInAsCollaborator(page: Page): Promise<{
 //
 // The credentials are unique per call (Date.now() + a caller label) because the
 // e2e DB is reset across runs but NOT between tests. Pass an `email` so the
-// account can drive email-addressed flows (e.g. password reset by email).
+// account can drive email-addressed flows (e.g. password reset by email). Pass a
+// `name` when a spec finds the invitee by name (a share candidate).
 export async function createInvitedUser(
     page: Page,
-    label: string
+    label: string,
+    options: { name?: string } = {}
 ): Promise<{ user: InvitedUser; inviteePage: Page; close: () => Promise<void> }> {
     const stamp = Date.now()
     const user: InvitedUser = {
@@ -332,7 +334,7 @@ export async function createInvitedUser(
     await expect(inviteePage.getByText("You're invited", { exact: true })).toBeVisible({
         timeout: 10_000,
     })
-    await inviteePage.getByTestId('name').fill('Invited Tester')
+    await inviteePage.getByTestId('name').fill(options.name ?? 'Invited Tester')
     await inviteePage.getByTestId('password').fill(user.password)
     await inviteePage.getByTestId('confirmPassword').fill(user.password)
     await inviteePage.getByText(/Set password and sign in/i).click()

@@ -1,9 +1,11 @@
 import { FormulaPlacesPick } from '@tinycld/core/components/forms-builder/FormulaEditor'
+import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { DateField } from '@tinycld/core/ui/forms/fields/DateField'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
 import { Switch } from '@tinycld/core/ui/switch'
 import { Pressable, Text, View } from 'react-native'
+import { useParamOptionLabels } from '../../hooks/useParamOptions'
 import { avgScaleFor, columnHint, MAX_PARAMS, nextColumnId } from '../../lib/builder/columns'
 import {
     askHighParamFor,
@@ -12,8 +14,18 @@ import {
     type FilterPath,
     needsValue,
 } from '../../lib/builder/filter'
-import { isDateParam, PRESET_LABELS, presetsFor } from '../../lib/params'
-import type { ParamDef } from '../../lib/spec'
+import { BLANK_LINK_LABEL } from '../../lib/format'
+import {
+    type ChoiceLabels,
+    isDateParam,
+    type ParamValue,
+    PRESET_LABELS,
+    presetsFor,
+} from '../../lib/params'
+import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec } from '../../lib/spec'
+import type { CatalogSource } from '../../lib/types'
+import { useReportUIStore } from '../../stores/report-ui-store'
+import { SourcePicker } from '../ParamPickers'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 import {
     type AboveChoice,
@@ -102,6 +114,127 @@ function ChoiceValue({ ctx, item, path, info }: ValueProps) {
     )
 }
 
+const TARGET_STYLE = { minHeight: REPORT_TAP_TARGET }
+const NO_PARAMS: Record<string, unknown> = {}
+const PICK_PARAM = 'pick'
+/** The operators whose value is a record of the linked source. */
+const RECORD_OPS: ReadonlySet<string> = new Set(['eq', 'ne', 'in'])
+
+// The spec the record picker reads its options from: the linked source, with the
+// one param a run of this condition would ask (askParamFor), so the options are the
+// records the reader may list there (R19), shown by the same label field.
+function recordPickerSpec(def: ParamDef, target: CatalogSource): ReportSpec {
+    const label = def.optionsFrom?.label ?? [{ field: 'id' }]
+    return {
+        version: CURRENT_SPEC_VERSION,
+        source: target.key,
+        columns: [{ id: 'label', path: label }],
+        params: [def],
+    }
+}
+
+function chosenRecords(item: ConditionDraft): string[] {
+    if (item.op === 'in') return item.values
+    return item.value ? [item.value] : []
+}
+
+function RecordChips({
+    isVisible,
+    ids,
+    labels,
+    testID,
+    onRemove,
+}: {
+    isVisible: boolean
+    ids: readonly string[]
+    labels: ChoiceLabels | undefined
+    testID: string
+    onRemove: (id: string) => void
+}) {
+    if (!isVisible) return null
+    const chips = ids.map(id => {
+        const label = labels?.get(id) ?? BLANK_LINK_LABEL
+        return (
+            <Pressable
+                key={id}
+                testID={`${testID}-${id}`}
+                accessibilityRole="button"
+                accessibilityHint={`Removes ${label}`}
+                onPress={() => onRemove(id)}
+                className="flex-row items-center gap-1 rounded-full border border-primary bg-primary px-3"
+                style={{ minHeight: REPORT_TAP_TARGET }}
+            >
+                <Text numberOfLines={1} className="text-sm text-primary-foreground">
+                    {label}
+                </Text>
+            </Pressable>
+        )
+    })
+    return <View className="flex-row flex-wrap gap-1.5">{chips}</View>
+}
+
+function triggerText(
+    isMultiple: boolean,
+    chosen: readonly string[],
+    labels: ChoiceLabels | undefined,
+    noun: string
+): string {
+    if (isMultiple || chosen.length === 0) return `Choose ${noun}`
+    return labels?.get(chosen[0] ?? '') ?? BLANK_LINK_LABEL
+}
+
+// A record on a link is picked from the linked source's records the reader may list
+// (R19): "is" and "is not" pick one; "is any of" shows each picked record as a chip
+// that removes it, and picks more from the same searching picker.
+function RecordValues({ ctx, item, path, info, target }: ValueProps & { target: CatalogSource }) {
+    const testID = `${itemTestId(ctx, path)}-value`
+    const isMultiple = item.op === 'in'
+    const def = askParamFor(info.field, item.op, PICK_PARAM, target)
+    const source = def ? { spec: recordPickerSpec(def, target) } : null
+    const chosen = chosenRecords(item)
+    const asks = [{ param: PICK_PARAM, values: chosen, groups: [] }]
+    const labels = useParamOptionLabels(source, asks, NO_PARAMS).get(PICK_PARAM)
+    const isOpen = useReportUIStore(s => s.builderPicker === testID)
+    const setPicker = useReportUIStore(s => s.setBuilderPicker)
+    if (!def || !source) return null
+    const trigger = (
+        <Button testID={testID} variant="outline" size="sm" style={TARGET_STYLE}>
+            <ButtonText numberOfLines={1}>
+                {triggerText(isMultiple, chosen, labels, target.label)}
+            </ButtonText>
+        </Button>
+    )
+    const setChosen = (ids: string[]) =>
+        setCondition(ctx, path, isMultiple ? { values: ids } : { value: ids[0] ?? '' })
+    const onApply = (next: ParamValue) => {
+        if (next.kind === 'choice') setChosen(next.values)
+        setPicker(null)
+    }
+    const value: ParamValue | null = chosen.length > 0 ? { kind: 'choice', values: chosen } : null
+    return (
+        <View className="flex-row flex-wrap items-center gap-1.5">
+            <RecordChips
+                isVisible={isMultiple}
+                ids={chosen}
+                labels={labels}
+                testID={testID}
+                onRemove={id => setChosen(chosen.filter(c => c !== id))}
+            />
+            <SourcePicker
+                trigger={trigger}
+                isOpen={isOpen}
+                onOpenChange={open => setPicker(open ? testID : null)}
+                def={def}
+                value={value}
+                onApply={onApply}
+                source={source}
+                params={NO_PARAMS}
+                title={target.label}
+            />
+        </View>
+    )
+}
+
 const NUMERIC_TYPES = new Set(['number', 'money', 'percent'])
 
 function OneValue({ ctx, item, path, info, part }: ValueProps & { part: 'value' | 'high' }) {
@@ -143,6 +276,9 @@ function HighValue({ isVisible, ...props }: ValueProps & { isVisible: boolean })
 export function ConditionValue(props: ValueProps) {
     const { item, info } = props
     if (!needsValue(item.op) || item.param || item.above) return null
+    if (info.field.type === 'relation' && info.target && RECORD_OPS.has(item.op)) {
+        return <RecordValues {...props} target={info.target} />
+    }
     if (info.field.type === 'select' && item.op === 'in') return <ChoiceValues {...props} />
     if (info.field.type === 'select') return <ChoiceValue {...props} />
     return (
