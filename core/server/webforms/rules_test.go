@@ -64,3 +64,53 @@ func TestFailureNoticeOncePerRulePerDay(t *testing.T) {
 		t.Fatalf("one notice for the admin, got %d", n)
 	}
 }
+
+func autoReplyRule(t *testing.T, f *fixture, enabled bool) (*core.Record, error) {
+	t.Helper()
+	owner, _ := f.app.FindFirstRecordByFilter("users", "role = 'admin'")
+	if owner == nil {
+		rlsUser(t, f.app, "admin2@test.local", "admin")
+		owner, _ = f.app.FindFirstRecordByFilter("users", "role = 'admin'")
+	}
+	rules, _ := f.app.FindCollectionByNameOrId("rules")
+	r := core.NewRecord(rules)
+	r.Set("name", "Auto reply")
+	r.Set("scope", "org")
+	r.Set("owner", owner.Id)
+	r.Set("trigger", FormSubmittedTrigger)
+	r.Set("trigger_config", map[string]any{"form": f.form.Id})
+	r.Set("actions", `[{"ref":"core:send-email","params":{"to":"{{fields.email}}","subject":"Thanks"}}]`)
+	r.Set("enabled", enabled)
+	return r, f.app.Save(r)
+}
+
+func TestAutoReplyNeedsProofOfWork(t *testing.T) {
+	f := newFixture(t, rulesDef)
+	if _, err := autoReplyRule(t, f, true); err == nil || !strings.Contains(err.Error(), "actions") {
+		t.Fatalf("an enabled auto-reply without proof of work is refused, got %v", err)
+	}
+	if _, err := autoReplyRule(t, f, false); err != nil {
+		t.Fatalf("a disabled one may be saved: %v", err)
+	}
+	f.pub.Set("require_pow", true)
+	if err := f.app.Save(f.pub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := autoReplyRule(t, f, true); err != nil {
+		t.Fatalf("with proof of work it is allowed: %v", err)
+	}
+	f.pub.Set("require_pow", false)
+	if err := f.app.Save(f.pub); err == nil || !strings.Contains(err.Error(), "require_pow") {
+		t.Fatalf("proof of work cannot be turned off while the rule is on, got %v", err)
+	}
+}
+
+func TestEmailToAFixedAddressIsAllowed(t *testing.T) {
+	f := newFixture(t, rulesDef)
+	r, _ := autoReplyRule(t, f, false)
+	r.Set("actions", `[{"ref":"core:send-email","params":{"to":"sales@example.com","subject":"New lead {{fields.name}}"}}]`)
+	r.Set("enabled", true)
+	if err := f.app.Save(r); err != nil {
+		t.Fatalf("a fixed recipient is safe: %v", err)
+	}
+}

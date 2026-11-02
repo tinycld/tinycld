@@ -6,6 +6,7 @@ import "github.com/pocketbase/pocketbase/core"
 // policy. Called from coreserver.RegisterSharedCore.
 func Register(app core.App) {
 	registerRules()
+	bindSafetyHooks(app)
 	bindPublicationHooks(app)
 	registerEmbedPolicy(app)
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {

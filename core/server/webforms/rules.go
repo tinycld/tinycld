@@ -1,9 +1,12 @@
 package webforms
 
 import (
+	"encoding/json"
+	"regexp"
 	"strings"
 	"time"
 
+	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/automation"
 	"tinycld.org/core/forms"
@@ -102,4 +105,88 @@ func onFormRun(app core.App, rule, record *core.Record, outcome automation.RunOu
 	if err != nil {
 		log.Warn("notify admins of a failed web form destination", "rule", rule.Id, "err", err)
 	}
+}
+
+var formFieldInTo = regexp.MustCompile(`\{\{\s*fields\.`)
+
+// sendsToFormAddress reports an action list with a send-email whose
+// recipient comes from the form: without proof of work, a bot could make the
+// server mail any address.
+func sendsToFormAddress(rule *core.Record) bool {
+	var actions []struct {
+		Ref    string         `json:"ref"`
+		Params map[string]any `json:"params"`
+	}
+	b, _ := json.Marshal(rule.Get("actions"))
+	if json.Unmarshal(b, &actions) != nil {
+		return false
+	}
+	for _, a := range actions {
+		to, _ := a.Params["to"].(string)
+		if a.Ref == "core:send-email" && formFieldInTo.MatchString(to) {
+			return true
+		}
+	}
+	return false
+}
+
+func formRequiresPow(app core.App, formID string) bool {
+	pub, err := app.FindFirstRecordByData(publicationsName, "form", formID)
+	return err == nil && pub.GetBool("require_pow")
+}
+
+func checkAutoReply(app core.App, rule *core.Record) error {
+	if rule.GetString("trigger") != FormSubmittedTrigger || !rule.GetBool("enabled") || !sendsToFormAddress(rule) {
+		return nil
+	}
+	if formRequiresPow(app, configFormOf(rule)) {
+		return nil
+	}
+	return validation.Errors{"actions": validation.NewError("validation_unsafe_auto_reply",
+		`An email to an address from the form needs "Ask the browser to prove it is not a bot" on the form's Publish tab.`)}
+}
+
+func configFormOf(rule *core.Record) string {
+	var cfg map[string]any
+	b, _ := json.Marshal(rule.Get("trigger_config"))
+	_ = json.Unmarshal(b, &cfg)
+	return configForm(cfg)
+}
+
+func checkPowStillNeeded(app core.App, pub *core.Record) error {
+	if pub.GetBool("require_pow") {
+		return nil
+	}
+	rules, err := app.FindRecordsByFilter("rules", "trigger = {:t} && enabled = true", "", 0, 0, map[string]any{"t": FormSubmittedTrigger})
+	if err != nil {
+		return nil
+	}
+	for _, r := range rules {
+		if configFormOf(r) == pub.GetString("form") && sendsToFormAddress(r) {
+			return validation.Errors{"require_pow": validation.NewError("validation_auto_reply_needs_pow",
+				"A rule sends email to an address from this form. Turn that rule off first.")}
+		}
+	}
+	return nil
+}
+
+func bindSafetyHooks(app core.App) {
+	app.OnRecordCreate("rules").BindFunc(func(e *core.RecordEvent) error {
+		if err := checkAutoReply(e.App, e.Record); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+	app.OnRecordUpdate("rules").BindFunc(func(e *core.RecordEvent) error {
+		if err := checkAutoReply(e.App, e.Record); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+	app.OnRecordUpdate(publicationsName).BindFunc(func(e *core.RecordEvent) error {
+		if err := checkPowStillNeeded(e.App, e.Record); err != nil {
+			return err
+		}
+		return e.Next()
+	})
 }
