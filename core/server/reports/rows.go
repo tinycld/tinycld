@@ -174,6 +174,9 @@ func (r *rowsCTE) colValue(cp *colPlan) expr {
 		typ = aggregateType(cp.col.Aggregate, typ, cp.scale)
 	}
 	ref := withCurrency(expr{sql: "w." + name, typ: typ}, r.c.currencyOf[cp.col.ID])
+	if cp.tm < 0 {
+		ref.target = cp.path.target
+	}
 	if _, ok := r.raw[name]; ok {
 		return ref
 	}

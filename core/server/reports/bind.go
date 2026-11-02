@@ -56,6 +56,11 @@ type pathPlan struct {
 	hops  []hopPlan
 	field *Field
 	src   *Source // the source the field is on
+	// target is the source a relation value points at: the linked source of
+	// a path that ends at a to-one link, or the source whose id it reads.
+	target *Source
+	// endsAtLink is true for a path whose last step is a link.
+	endsAtLink bool
 }
 
 // key names a path's links; equal keys share one join.
@@ -367,6 +372,9 @@ func (b *binder) path(src *Source, path Path, at string, kind pathKind, agg Aggr
 				b.bad(hat, "mode and with belong to a link step")
 				return nil
 			}
+			if out.field.Key == idField.Key {
+				out.target = src
+			}
 			return out
 		}
 		links++
@@ -404,8 +412,16 @@ func (b *binder) path(src *Source, path Path, at string, kind pathKind, agg Aggr
 		src = target
 	}
 	if kind != pathLinks {
-		b.bad(at, "a path ends with a field")
-		return nil
+		last := out.hops[len(out.hops)-1]
+		if last.link.Cardinality != ToOne {
+			b.bad(at, "a path ends with a field, or with a link to one row")
+			return nil
+		}
+		// A path that ends at a to-one link reads the linked row's id through
+		// the join: a relation to the target, blank when the reader cannot
+		// see that row.
+		out.field, out.src, out.target, out.endsAtLink = src.field(idField.Key), src, src, true
+		return out
 	}
 	out.src = src
 	return out

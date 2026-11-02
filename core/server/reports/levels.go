@@ -239,7 +239,7 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 		if key := lv.groupKey(cp); key != "" {
 			sql = key
 		}
-		return withCurrency(expr{sql: sql, typ: cp.path.field.Type}, cur), nil
+		return withCurrency(expr{sql: sql, typ: cp.path.field.Type, target: cp.path.target}, cur), nil
 	case cp.col.Aggregate == "" && lv.isGroupColumn(cp):
 		return lc.formulaGroupColumn(cp, at)
 	}
@@ -350,7 +350,7 @@ func (lc *levelCtx) path(p Path, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return withCurrency(expr{sql: "NULL", typ: bound.field.Type}, lc.lv.r.pathCurrency(bound)), nil
+	return withCurrency(expr{sql: "NULL", typ: bound.field.Type, target: bound.target}, lc.lv.r.pathCurrency(bound)), nil
 }
 
 func (lc *levelCtx) param(id, at string) (expr, error) {

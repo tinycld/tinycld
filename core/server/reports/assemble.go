@@ -68,6 +68,8 @@ func labelOf(cp *colPlan) string {
 	switch {
 	case cp.col.Label != "":
 		return cp.col.Label
+	case cp.path != nil && cp.path.endsAtLink:
+		return cp.path.hops[len(cp.path.hops)-1].link.Label
 	case cp.path != nil:
 		return cp.path.field.Label
 	}

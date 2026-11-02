@@ -27,6 +27,9 @@ type expr struct {
 	win   bool // contains a window function
 	// cur is where a money value's currency comes from.
 	cur currency
+	// target is the source a relation value points at, nil for any other
+	// value. A group by such a value is a record group.
+	target *Source
 }
 
 // currency is where a money value's currency comes from: a currency key of w
@@ -541,7 +544,13 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if !ok {
 			return expr{}, invalid(at, "both results of if are of one kind")
 		}
-		return wholeCents(expr{sql: "(CASE WHEN " + args[0].sql + " THEN " + args[1].sql + " ELSE " + args[2].sql + " END)", typ: typ}, args[1:]), nil
+		target, err := oneTarget(args[1:], "if", at)
+		if err != nil {
+			return expr{}, err
+		}
+		out := wholeCents(expr{sql: "(CASE WHEN " + args[0].sql + " THEN " + args[1].sql + " ELSE " + args[2].sql + " END)", typ: typ}, args[1:])
+		out.target = target
+		return out, nil
 	case "case":
 		if err := argc(2, -1); err != nil {
 			return expr{}, err
@@ -565,7 +574,13 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if !ok {
 			return expr{}, invalid(at, "every result of case is of one kind")
 		}
-		return wholeCents(expr{sql: b.String(), typ: typ}, results), nil
+		target, err := oneTarget(results, "case", at)
+		if err != nil {
+			return expr{}, err
+		}
+		out := wholeCents(expr{sql: b.String(), typ: typ}, results)
+		out.target = target
+		return out, nil
 	case "coalesce":
 		if err := argc(1, -1); err != nil {
 			return expr{}, err
@@ -574,14 +589,20 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if !ok {
 			return expr{}, invalid(at, "coalesce takes values of one kind")
 		}
+		target, err := oneTarget(args, "coalesce", at)
+		if err != nil {
+			return expr{}, err
+		}
 		if len(args) == 1 {
-			return expr{sql: args[0].sql, typ: typ}, nil
+			return expr{sql: args[0].sql, typ: typ, target: target}, nil
 		}
 		parts := make([]string, len(args))
 		for i, a := range args {
 			parts[i] = a.sql
 		}
-		return wholeCents(expr{sql: "COALESCE(" + strings.Join(parts, ", ") + ")", typ: typ}, args), nil
+		out := wholeCents(expr{sql: "COALESCE(" + strings.Join(parts, ", ") + ")", typ: typ}, args)
+		out.target = target
+		return out, nil
 	case "isEmpty":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err
@@ -589,6 +610,23 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		return expr{sql: "(" + args[0].sql + " IS NULL OR " + args[0].sql + " = '')", typ: Bool}, nil
 	}
 	return expr{}, invalid(at, fmt.Sprintf("unknown operator %q", n.Op))
+}
+
+// oneTarget is the source the relations among values point at; two that
+// point at different sources are refused, since a record group could not
+// read both.
+func oneTarget(values []expr, op, at string) (*Source, error) {
+	var out *Source
+	for _, v := range values {
+		if v.target == nil {
+			continue
+		}
+		if out != nil && out.Key != v.target.Key {
+			return nil, invalid(at, fmt.Sprintf("the results of %s link to different sources", op))
+		}
+		out = v.target
+	}
+	return out, nil
 }
 
 // conditionOps match every row in a filter when one of their values is an

@@ -54,7 +54,7 @@ func (rc *rowsCtx) path(p Path, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return withCurrency(expr{sql: rc.r.hidden(bound), typ: bound.field.Type}, rc.r.pathCurrency(bound)), nil
+	return withCurrency(expr{sql: rc.r.hidden(bound), typ: bound.field.Type, target: bound.target}, rc.r.pathCurrency(bound)), nil
 }
 
 func (rc *rowsCtx) param(id, at string) (expr, error) {
