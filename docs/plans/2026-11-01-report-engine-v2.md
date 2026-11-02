@@ -117,13 +117,14 @@ Widths are core's breakpoints (`useBreakpoint`): `mobile` (phone), `tablet`, `de
 
 ### Report table layout per width (E14)
 
-Modelled on Gridley: one cell renderer per column; per-width layouts place each column on a line (`line`, like Gridley's `row`) with `start`, `span` (Gridley's `colSpan`), `lines` (Gridley's `rowSpan`) and `justify`; the heading row is laid out the same way, so each heading sits over its values. React Native has no CSS grid on native, so the core table computes each cell's rectangle (x, y, width, height) in a pure function (`lib/table-lines.ts`) and draws cells absolutely positioned inside a row of known height — the same code on web and native.
+Modelled on Gridley: one cell renderer per column; per-width layouts place each column on a line (`line`, like Gridley's `row`) with `start`, `span` (Gridley's `colSpan`), `lines` (Gridley's `rowSpan`) and `justify`; the heading row uses the same line layout, so each heading sits over its values. React Native has no CSS grid on native, so a row is drawn with flex (the same code on web and native): a vertical stack of lines, each line a flex row whose cells are as wide as their span of equal tracks (a percent of the row), with empty tracks as spacers and `justify` aligning each cell in its slot. No absolute positioning; rows measure themselves.
 
-- **Desktop:** one line per row, the label column flexible (min 220pt), amount columns 128pt, sideways scroll when they do not fit (today's table, unchanged). An author arrangement for desktop replaces the one line.
-- **Tablet and phone, automatic:** when the label (min 220pt tablet, 168pt phone) and the amount columns (128pt / 108pt) fit the table's width, one line as today. When they do not fit, each row wraps: line 1 is the label at full width; the amount columns follow on lines 2, 3, … in an aligned grid of `tracks = max(1, floor(width / 104))` equal tracks (3 at 390pt), in column order; the heading wraps the same way. No sideways scroll. Example, the Trial Balance on a 390pt phone: line 1 "Cash and bank:Business checking"; line 2 No. · Debit · Credit, each under its heading.
-- **Author arrangement:** `display.layouts[]` for a width replaces the automatic layout at that width; columns not listed are not shown there; the pivot cell column's entry stands for all its pivot columns, which flow one per track from that position.
-- **Rows keep their styling:** group, subtotal, computed and total rows keep their weight and rules (the rule draws across the whole wrapped row); a group row's label cell is its fold toggle (the other cells take the same press, not a tab stop); a group row followed by its subtotal shows only its label line; child rows indent the label cell only, so amounts stay aligned.
-- **Windowing:** row heights are computed, not measured: a row's height is its number of lines × 44pt (a row with no figures has one line). The row window keeps the prefix sums of those heights and finds the first visible row by binary search; the spacers are the summed heights above and below.
+- **Desktop:** one line per row, the label column flexible (min 220pt), amount columns 128pt. When they do not fit, the whole table (heading row and list together) sits in one horizontal scroller, so headings and cells move sideways in step; the label column stays frozen at the left by a `translateX` that follows the sideways scroll (R27). An author arrangement for desktop replaces the one line.
+- **Tablet and phone, automatic:** when the label (min 220pt tablet, 168pt phone) and the amount columns (128pt / 108pt) fit the table's width, one line as today. When they do not fit, each row wraps: line 1 is the label across the row; the amount columns follow on lines 2, 3, … in aligned tracks (`tracks = max(1, floor(width / 104))`, 3 at 390pt), in column order; the heading wraps the same way. No sideways scroll. Example, the Trial Balance on a 390pt phone: line 1 "Cash and bank:Business checking"; line 2 No. · Debit · Credit, each under its heading.
+- **Author arrangement:** `display.layouts[]` for a width replaces the automatic layout there; columns not listed are not shown at that width (the label column, if left out, gets a line of its own above, so a row always has its label); the pivot cell column's entry stands for all its pivot columns, which flow one per track from that position. A cell with `lines > 1` sits at the row's start or end edge and spans every line, beside the stacked lines (Gridley's demo of an ID centred down the end of a two-line row); `justify` centres it (R28, Q10).
+- **The list:** core's custom row window and its spacers (`components/use-row-window.ts`) are replaced by FlashList v2 (`@shopify/flash-list` 2.3.3, the `nathanstitt` fork core already pins and uses on web in the emoji picker). Rows measure themselves, so wrapped rows of any height need no height scheme. Paging stays: `onEndReached` calls `useReportRun.loadMore`, which keeps its guard (`hasNextPage && !isFetchingNextPage`); FlashList checks the end after every commit and again when the rows change, so a first page shorter than the view asks for the next page by itself (R25).
+- **Sticky headers:** the column heading row sits above the list, outside its scroll, so it always stays at the top. Open group rows are FlashList `stickyHeaderIndices`: while a group's rows scroll, its row stays stuck under the heading row until the next group pushes it up. FlashList keeps one sticky item at a time; every open group at any depth is a sticky index, so the stuck item is the innermost open group above the top, drawn with the open groups that enclose it stacked above it — nested levels read as a stack (for example "Assets" over "Current assets") in one sticky slot (R26). Folding changes the rows, so the indices are recomputed from the visible rows on every render; a press on a stuck group folds it.
+- **Rows keep their styling:** group, subtotal, computed and total rows keep their weight and rules (the rule draws across the whole wrapped row); a group row's label is its fold toggle (its figures take the same press, not a tab stop); a group row followed by its subtotal shows only its label line; child rows indent the label only, so figures stay aligned; pivot columns are ordinary amount columns in every layout.
 
 ### Help changes
 
@@ -153,12 +154,16 @@ Core `help/reports.md` gains sections: Totals (recompute or add the rows shown),
 - **R20. Params stay while anything reads them:** the builder keeps a param while the filter, a column formula, a group label, having or fill, a sort formula or the row label reads it (`keptParams`).
 - **R21. Record leaves are refused in the filter, group keys and fill where** (they read rows before grouping); lookups are refused in layout computed rows.
 - **R22. Stub changes:** `salesstub_sales.booked_on` (text day, written from the sale's day), `salesstub_teams.region` (select north/south, a radio on the team form), both sources print the heading "Stub Sales Co", and a second shipped report "Stub team totals" (unpublished) uses a record group with label, `total: "rows"`, a sort formula, a detail label, a text-day filter and an options-from-source param grouped by region.
-- **R23. E14 wrap rule:** automatic wrapping applies at tablet and phone widths when the one-line layout does not fit; desktop keeps one line and sideways scroll unless the author arranged desktop (wide pivots read better scrolled). See Q8.
-- **R24. E14 author arrangement is in spec v2 (`display.layouts`) and the builder edits it** (the no-limits rule; see Q9). The engine validates it (known column ids, `width` one of mobile|tablet|desktop, `tracks` 1–12, `line` 1–8, `start` and `span` within the tracks, `lines` 1–8, `justify` start|center|end, no two cells overlapping) and otherwise ignores it.
+- **R23. E14 wrap rule:** automatic wrapping applies at tablet and phone widths when the one-line layout does not fit; desktop keeps one line and sideways scroll unless the author arranged desktop (wide pivots read better scrolled). Rows are drawn with flex lines (no absolute positioning, the human's review of 2026-11-01). See Q8.
+- **R24. E14 author arrangement is in spec v2 (`display.layouts`) and the builder edits it** (the no-limits rule; see Q9). The engine validates it (known column ids, `width` one of mobile|tablet|desktop, `tracks` 1–12, `line` 1–8, `start` and `span` within the tracks, `lines` 1–8 under R28, `justify` start|center|end, no two cells overlapping) and otherwise ignores it.
+- **R25. FlashList v2 replaces the custom row window.** Rows measure themselves; `onEndReached` (threshold 0.5) calls `loadMore`, whose guard stays; the "first page shorter than the view" fill comes from FlashList's own end check after each commit (`useBoundDetection.ts:96-108,165-170`). `use-row-window.ts` and its test are deleted.
+- **R26. Sticky groups stack in one slot.** Every open group row is a sticky index; the stuck copy (`target: 'StickyHeader'`) draws the chain of open groups enclosing it, outermost first, so the reader sees every level they are inside even though FlashList sticks one item at a time. Chosen over sticking only the outermost group, which would hide the level the reader is reading.
+- **R27. Frozen label column on desktop sideways scroll:** the heading row and the list share one horizontal scroller; label cells follow its offset with `translateX`, so they stay at the left as today's two-stack table kept them.
+- **R28. `lines` (rowSpan) with flex:** a cell that spans lines sits at the start or the end edge (its first track 1, or its last track the last) and spans every line of the arrangement (from line 1 to the last line); the other cells stack in lines between the edges. The engine and the builder refuse any other spanning cell with "a cell that spans lines sits at the start or the end and spans every line". See Q10.
 
 ### [platform] web-only or native-only items
 
-None new. The table's wrapped rows use absolutely positioned views inside a row of computed height (web and native); the param picker list pages with `ScrollView` `onScroll` near the end (web and native); every popover and menu is a core component that becomes a sheet on phone. Inherited, unchanged and already signed off: `DocumentTitle` (web tab title only), `web:[scrollbar-gutter:stable]` on the table scrollers (changes nothing on native), `useLeaveGuard`'s browser Back/Forward half (web only).
+None new is web-only or native-only by design: wrapped rows are flex lines (web and native); the param picker list pages with `ScrollView` `onScroll` near the end (web and native); every popover and menu is a core component that becomes a sheet on phone. FlashList v2 runs on web in this fork (`src/isNewArch.ts:19` treats web as the new architecture; `measureLayout.web.ts` and `PlatformHelper.web.ts` measure DOM elements; core's emoji picker already uses it on web), with two web caveats: (1) `supportsOffsetCorrection: false` on web (`PlatformHelper.web.ts`), so when rows above the view change height (a group opened or closed above the top, a live re-run that adds rows above) the content can shift instead of holding its place — drawback: on web a reader scrolled deep into a report may see it jump after such a change; native holds position; (2) sticky headers animate with the JS driver on web (`useNativeDriver: Platform.OS !== 'web'`, as React Native Web has no native driver) — drawback: on a slow web device the stuck group can trail the scroll by a frame. Inherited, unchanged and already signed off: `DocumentTitle` (web tab title only), `web:[scrollbar-gutter:stable]` on the table scrollers (changes nothing on native), `useLeaveGuard`'s browser Back/Forward half (web only).
 
 ### Open questions (recommended answer first)
 
@@ -171,6 +176,7 @@ None new. The table's wrapped rows use absolutely positioned views inside a row 
 - **Q7. Correlated lookups (R4).** **Recommended: allow** (a rate on the row's day is a real need).
 - **Q8. Automatic wrapping on desktop (R23).** **Recommended: no** — desktop keeps one line and sideways scroll; authors may arrange desktop.
 - **Q9. Author placement per width in spec v2 with builder support (R24).** **Recommended: yes** (the Arrange section), per the no-limits rule.
+- **Q10. Fully general `lines` (a cell spanning lines in the middle of a row, or only some lines) with flex (R28).** Flex can stack lines beside an edge column but cannot place a cell that spans lines between other cells without absolute positioning, which the review ruled out. **Recommended: edge cells spanning every line only** (Gridley's own demo case, the ID down the row's end), refused otherwise with a clear message; revisit if an author needs more.
 
 ---
 
@@ -207,6 +213,7 @@ Deferrals: none. Every item of spec §4 (E1–E13, OQ2) and the human's E14 is b
 - `cd $WS/tinycld/core/server && go test -tags no_ui -count=1 -run 'TestGroupsLoadLazily$' ./reports/` passes (0.8 s).
 - Go `encoding/json` decodes an absent `expand` to a nil slice and `"expand": []` to a non-nil empty slice (a scratch program printed `true false 0`), so R10 can tell them apart.
 - SQLite accepts a CTE that references a CTE written later in the same `WITH`, and a correlated `(SELECT COALESCE(sum(v),0) FROM b WHERE b.k IS a.k …)` inside a CTE (`sqlite3` printed `2` and `1|12`, `2|0`), so `o<L>` may read `o<L+1>` without reordering the level CTEs.
+- FlashList v2.3.3 (the pinned `nathanstitt/flash-list` fork, `node_modules/@shopify/flash-list/src`): web is supported (`isNewArch.ts:19`, `measureLayout.web.ts`, `PlatformHelper.web.ts` with `supportsOffsetCorrection: false`); `stickyHeaderIndices` sticks one item at a time, pushed by the next (`recyclerview/components/StickyHeaders.tsx:80-150`), and the stuck copy is rendered by `renderItem` with `target: 'StickyHeader'`; `onEndReached` is checked after each commit and re-armed when `data` changes (`recyclerview/hooks/useBoundDetection.ts:96-108,165-170`, `RecyclerView.tsx:640`), so a short first page asks for the next.
 - `core/server/reports/formula_cases_test.go` and the forms readers (`core/server/forms/formula_cases_test.go`, `core/lib/forms/__tests__/formula-cases.test.ts`) read only cases with a `forms` formula, so report-only cases with new keys do not disturb them.
 
 ---
@@ -234,14 +241,14 @@ Deferrals: none. Every item of spec §4 (E1–E13, OQ2) and the human's E14 is b
 | `core/server/reports/*_test.go` | Go tests per extension (new: `textday_test.go`, `relation_test.go`, `lookup_test.go`, `record_test.go`, `fill_test.go`, `having_test.go`, `rowstotal_test.go`, `sortformula_test.go`, `detaillabel_test.go`, `open_test.go`, `options_test.go`, `heading_test.go`, `v2_test.go`) |
 | `core/lib/forms/fixtures/formula-cases.json` | `lookup` and `record` rows |
 | `core/reports/lib/*.ts`, `core/reports/lib/builder/*.ts` | client lib (above), with vitest |
-| `core/reports/lib/table-lines.ts` (new) | E14 line layouts and row heights |
+| `core/reports/lib/table-lines.ts` (new) | E14 line layouts (flex lines, edge cells) |
 | `core/lib/forms/builder/formula-tree.ts` (new), `core/components/forms-builder/FormulaEditor.tsx` | generic formula tree, `operators` prop |
 | `core/reports/components/builder/report-formula.tsx` (new) | the report operator set with its leaf controls |
 | `core/reports/components/builder/ConditionTree.tsx` (new) | the filter editor, reusable for having and fill |
 | `core/reports/components/builder/ArrangeSection.tsx` (new) | E14 Arrange section |
 | `core/reports/components/builder/*Section.tsx`, `ColumnPicker.tsx`, `parts.tsx`, `ReportBuilderPanel.tsx` | builder controls |
 | `core/reports/components/ParamPickers.tsx`, `hooks/useParamOptions.ts` (new) | the searching source picker, chip labels |
-| `core/reports/components/ReportTable.tsx`, `ReportRow.tsx`, `report-table-layout.ts`, `use-row-window.ts` | E14 wrapped rows, computed heights |
+| `core/reports/components/ReportTable.tsx`, `ReportRow.tsx`, `report-table-layout.ts`; `lib/sticky.ts` (new); `use-row-window.ts` (deleted) | E14 flex lines on FlashList, sticky heading and groups, sideways scroll |
 | `core/reports/components/ReportDocumentHeader.tsx`, `hooks/useReportView.ts`, `stores/report-ui-store.ts` | heading, expansion default |
 | `tests/scripts/reports-stub/**` | stub: text day, region, heading, second shipped report |
 | `tests/e2e/report-view-helpers.ts` (new), `tests/e2e/reports-helpers.ts`, `core/e2e-helpers.ts` | E11 |
@@ -3616,6 +3623,7 @@ func TestDisplayLayoutsAreChecked(t *testing.T) {
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"span":2},{"col":"b","line":1}]}`, "display.layouts.0.cells.1", "no room on line 1", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"lines":2},{"col":"b","line":2,"start":1}]}`, "display.layouts.0.cells.1", "overlaps", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"justify":"left"}]}`, "display.layouts.0.cells.0.justify", "start, center or end", 400},
+		{`{"width":"mobile","tracks":3,"cells":[{"col":"a","line":1,"start":2,"lines":2}]}`, "display.layouts.0.cells.0", "sits at the start or the end", 400},
 		{`{"width":"mobile","tracks":2,"cells":[]},{"width":"mobile","tracks":1,"cells":[]}`, "display.layouts.1.width", "one layout per width", 400},
 	} {
 		spec, _, err := Load([]byte(fmt.Sprintf(base, c.layout)))
@@ -3627,14 +3635,24 @@ func TestDisplayLayoutsAreChecked(t *testing.T) {
 }
 
 func TestPlaceCellsFlowsIntoFreeTracks(t *testing.T) {
-	got, err := placeCells(3, []DisplayCell{{Col: "a", Line: 1, Span: 3}, {Col: "b", Line: 2}, {Col: "c", Line: 2, Lines: 2}, {Col: "d", Line: 2}, {Col: "e", Line: 3}})
+	got, err := placeCells(3, []DisplayCell{{Col: "a", Line: 1, Span: 3}, {Col: "b", Line: 2}, {Col: "c", Line: 2}, {Col: "d", Line: 3}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []placed{{1, 3, 1, 1}, {1, 1, 2, 1}, {2, 1, 2, 2}, {3, 1, 2, 1}, {1, 1, 3, 1}}
+	want := []placed{{1, 3, 1, 1}, {1, 1, 2, 1}, {2, 1, 2, 1}, {1, 1, 3, 1}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("placed = %+v", got)
 	}
+}
+
+// A cell that spans lines sits at an edge and spans every line (R28): flex
+// stacks the other lines beside it.
+func TestPlaceCellsKeepsSpanningCellsAtAnEdge(t *testing.T) {
+	if _, err := placeCells(3, []DisplayCell{{Col: "id", Line: 1, Start: 3, Lines: 2}, {Col: "a", Line: 1, Span: 2}, {Col: "b", Line: 2, Span: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := placeCells(3, []DisplayCell{{Col: "a", Line: 1}, {Col: "mid", Line: 1, Start: 2, Lines: 2}, {Col: "b", Line: 2}})
+	requireSpecError(t, err, 400, "cells.1", "a cell that spans lines sits at the start or the end and spans every line")
 }
 ```
 
@@ -3771,7 +3789,8 @@ type placed struct{ start, span, line, lines int }
 
 // placeCells lays cells out in order: a cell with a start sits there; one
 // without takes the first tracks of its line that are free on every line it
-// spans. lib/table-lines.ts places cells by the same rule.
+// spans; a cell that spans lines must sit at an edge and span every line
+// (R28). lib/table-lines.ts places cells by the same rule.
 func placeCells(tracks int, cells []DisplayCell) ([]placed, error) {
 	taken := map[[2]int]bool{}
 	out := make([]placed, 0, len(cells))
@@ -3817,6 +3836,18 @@ func placeCells(tracks int, cells []DisplayCell) ([]placed, error) {
 			}
 		}
 		out = append(out, placed{start, span, c.Line, lines})
+	}
+	// A flex row places a cell that spans lines only beside the stacked lines
+	// (R28): at the start or the end edge, from line 1 to the last line.
+	last := 0
+	for _, p := range out {
+		last = max(last, p.line+p.lines-1)
+	}
+	for j, p := range out {
+		atEdge := p.start == 1 || p.start+p.span-1 == tracks
+		if p.lines > 1 && (p.line != 1 || p.lines != last || !atEdge) {
+			return nil, invalid(fmt.Sprintf("cells.%d", j), "a cell that spans lines sits at the start or the end and spans every line")
+		}
 	}
 	return out, nil
 }
@@ -7289,17 +7320,17 @@ git push origin books/p5-trial-balance
 
 ---
 
-### Task 24: E14 (part 1) — line layouts per width and computed row heights
+### Task 24: E14 (part 1) — line layouts per width (flex lines, edge cells)
 
-Code facts used: today's layout rule (`components/report-table-layout.ts:42-53`); the row window over one row height (`components/use-row-window.ts:25-86`) and its test (`components/__tests__/use-row-window.test.ts`); `isRightAligned` (`lib/format.ts`); the engine's placement rule (Task 15 `placeCells`).
+Code facts used: today's layout rule (`components/report-table-layout.ts:42-53`); `isRightAligned` (`lib/format.ts`); the engine's placement rule with its edge rule for `lines` (Task 15 `placeCells`, R28).
 
 **Files:**
 - Create: `core/reports/lib/table-lines.ts`, `core/reports/lib/__tests__/table-lines.test.ts`
-- Modify: `core/reports/components/report-table-layout.ts` (`fitsOnOneLine`), `components/use-row-window.ts` (heights), `components/__tests__/use-row-window.test.ts`, `components/__tests__/report-table-layout.test.ts`
+- Modify: `core/reports/components/report-table-layout.ts` (`fitsOnOneLine`), `components/__tests__/report-table-layout.test.ts`
 - Modify: `core/reports/lib/builder/draft.ts` (`draftIssues` reports each display layout `placeCells` refuses)
 
 **Interfaces:**
-- Produces: `LINE_HEIGHT = 44`, `AUTO_TRACK_MIN = 104`; `placeCells(tracks, cells): { placed: Placed[] } | { problem: { index: number; message: string } }`; `type CellRect = { x; y; width; height; justify: 'start' | 'center' | 'end' }`; `type TableLines = { kind: 'one-line' } | { kind: 'lines'; lines: number; label: CellRect; cells: Record<string, CellRect> }`; `tableLines({ columns, width, breakpoint, layouts, oneLineFits }): TableLines`; `rowLines(row: VisibleRow, lines: TableLines): number`; `fitsOnOneLine({ breakpoint, amountCount, width }): boolean`; `rowOffsets(heights): number[]`; `rowAt(offsets, y): number`; `rowWindowBounds({ firstVisible, heights, viewHeight })`; `useRowWindow({ heights, viewHeight, onNearEnd })`.
+- Produces: `placeCells(tracks, cells): { placed: Placed[] } | { problem: { index: number; message: string } }` (the Go rule, edge rule included); `type Justify = 'start' | 'center' | 'end'`; `type LineCell = { col: string; start: number; span: number; justify: Justify }` (start within the middle region, from 1); `type EdgeCell = { col: string; span: number; justify: Justify }`; `type LineLayout = { kind: 'one-line' } | { kind: 'lines'; tracks: number; left: EdgeCell[]; right: EdgeCell[]; middleTracks: number; lines: LineCell[][] }`; `tableLines({ columns, width, breakpoint, layouts, oneLineFits }): LineLayout`; `lineSegments(line: LineCell[], middleTracks: number): ({ kind: 'cell'; cell: LineCell; width: string } | { kind: 'gap'; width: string })[]`; `trackWidth(span, of): string` (a percent); `rowLayout(item: VisibleRow, layout: LineLayout, labelId: string): LineLayout` (a row with no figures draws only its label line); `startingLayout(width, columns, tracks?)`; `fitsOnOneLine({ breakpoint, amountCount, width }): boolean`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -7307,7 +7338,7 @@ Create `core/reports/lib/__tests__/table-lines.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { LINE_HEIGHT, placeCells, rowLines, tableLines } from '../table-lines'
+import { lineSegments, placeCells, rowLayout, startingLayout, tableLines } from '../table-lines'
 import type { ResultColumn } from '../types'
 
 const COLS: ResultColumn[] = [
@@ -7319,18 +7350,23 @@ const COLS: ResultColumn[] = [
 
 describe('placing cells (the engine rule)', () => {
     it('flows cells into the first free tracks of their line', () => {
-        expect(placeCells(3, [{ col: 'a', line: 1, span: 3 }, { col: 'b', line: 2 }, { col: 'c', line: 2, lines: 2 }, { col: 'd', line: 2 }, { col: 'e', line: 3 }])).toEqual({
+        expect(placeCells(3, [{ col: 'a', line: 1, span: 3 }, { col: 'b', line: 2 }, { col: 'c', line: 2 }, { col: 'd', line: 3 }])).toEqual({
             placed: [
                 { start: 1, span: 3, line: 1, lines: 1 },
                 { start: 1, span: 1, line: 2, lines: 1 },
-                { start: 2, span: 1, line: 2, lines: 2 },
-                { start: 3, span: 1, line: 2, lines: 1 },
+                { start: 2, span: 1, line: 2, lines: 1 },
                 { start: 1, span: 1, line: 3, lines: 1 },
             ],
         })
     })
     it('names a cell with no room', () => {
         expect(placeCells(2, [{ col: 'a', line: 1, span: 2 }, { col: 'b', line: 1 }])).toEqual({ problem: { index: 1, message: 'no room on line 1' } })
+    })
+    it('lets a cell span lines only at an edge, from the first line to the last', () => {
+        expect(placeCells(3, [{ col: 'id', line: 1, start: 3, lines: 2 }, { col: 'a', line: 1, span: 2 }, { col: 'b', line: 2, span: 2 }])).toMatchObject({ placed: expect.any(Array) })
+        expect(placeCells(3, [{ col: 'a', line: 1 }, { col: 'mid', line: 1, start: 2, lines: 2 }, { col: 'b', line: 2 }])).toEqual({
+            problem: { index: 1, message: 'a cell that spans lines sits at the start or the end and spans every line' },
+        })
     })
 })
 
@@ -7339,53 +7375,64 @@ describe('the table layout per width', () => {
         expect(tableLines({ columns: COLS, width: 1280, breakpoint: 'desktop', layouts: [], oneLineFits: false })).toEqual({ kind: 'one-line' })
         expect(tableLines({ columns: COLS, width: 900, breakpoint: 'tablet', layouts: [], oneLineFits: true })).toEqual({ kind: 'one-line' })
     })
-    it('wraps a phone row: the label on line 1, the amounts aligned on line 2', () => {
-        const lines = tableLines({ columns: COLS, width: 390, breakpoint: 'mobile', layouts: [], oneLineFits: false })
-        expect(lines).toEqual({
+    it('wraps a phone row: the label across line 1, the amounts in aligned tracks on line 2', () => {
+        expect(tableLines({ columns: COLS, width: 390, breakpoint: 'mobile', layouts: [], oneLineFits: false })).toEqual({
             kind: 'lines',
-            lines: 2,
-            label: { x: 0, y: 0, width: 390, height: LINE_HEIGHT, justify: 'start' },
-            cells: {
-                number: { x: 0, y: 44, width: 130, height: 44, justify: 'start' },
-                debit: { x: 130, y: 44, width: 130, height: 44, justify: 'end' },
-                credit: { x: 260, y: 44, width: 130, height: 44, justify: 'end' },
-            },
+            tracks: 3,
+            left: [],
+            right: [],
+            middleTracks: 3,
+            lines: [
+                [{ col: 'account', start: 1, span: 3, justify: 'start' }],
+                [
+                    { col: 'number', start: 1, span: 1, justify: 'start' },
+                    { col: 'debit', start: 2, span: 1, justify: 'end' },
+                    { col: 'credit', start: 3, span: 1, justify: 'end' },
+                ],
+            ],
         })
     })
-    it('follows the author arrangement for the width, and leaves out what it does not list', () => {
-        const lines = tableLines({
+    it('follows the author arrangement, an edge cell spanning both lines beside the others', () => {
+        const layout = tableLines({
             columns: COLS,
             width: 400,
             breakpoint: 'mobile',
             oneLineFits: false,
-            layouts: [{ width: 'mobile', tracks: 2, cells: [{ col: 'account', line: 1 }, { col: 'debit', line: 1, justify: 'end' }, { col: 'credit', line: 2, start: 2, justify: 'end' }] }],
+            layouts: [{ width: 'mobile', tracks: 3, cells: [{ col: 'account', line: 1, span: 2 }, { col: 'number', line: 1, start: 3, lines: 2, justify: 'center' }, { col: 'debit', line: 2, justify: 'end' }, { col: 'credit', line: 2, justify: 'end' }] }],
         })
-        expect(lines).toMatchObject({ kind: 'lines', lines: 2, label: { x: 0, y: 0, width: 200 }, cells: { debit: { x: 200, y: 0, width: 200 }, credit: { x: 200, y: 44 } } })
-        expect(lines.kind === 'lines' && 'number' in lines.cells).toBe(false)
+        expect(layout).toEqual({
+            kind: 'lines',
+            tracks: 3,
+            left: [],
+            right: [{ col: 'number', span: 1, justify: 'center' }],
+            middleTracks: 2,
+            lines: [[{ col: 'account', start: 1, span: 2, justify: 'start' }], [{ col: 'debit', start: 1, span: 1, justify: 'end' }, { col: 'credit', start: 2, span: 1, justify: 'end' }]],
+        })
     })
-    it('a row with no figures draws one line', () => {
-        const lines = tableLines({ columns: COLS, width: 390, breakpoint: 'mobile', layouts: [], oneLineFits: false })
+    it('puts a label the arrangement leaves out on a line of its own', () => {
+        const layout = tableLines({ columns: COLS, width: 400, breakpoint: 'mobile', oneLineFits: false, layouts: [{ width: 'mobile', tracks: 2, cells: [{ col: 'debit', line: 1 }] }] })
+        expect(layout.kind === 'lines' && layout.lines[0]).toEqual([{ col: 'account', start: 1, span: 2, justify: 'start' }])
+    })
+    it('fills the gaps of a line so each cell sits on its own tracks', () => {
+        expect(lineSegments([{ col: 'b', start: 2, span: 1, justify: 'end' }], 3)).toEqual([
+            { kind: 'gap', width: '33.333333333333336%' },
+            { kind: 'cell', cell: { col: 'b', start: 2, span: 1, justify: 'end' }, width: '33.333333333333336%' },
+            { kind: 'gap', width: '33.333333333333336%' },
+        ])
+    })
+    it('a row with no figures draws only its label line', () => {
+        const layout = tableLines({ columns: COLS, width: 390, breakpoint: 'mobile', layouts: [], oneLineFits: false })
         const row = { id: 'g', kind: 'group' as const, depth: 0, label: 'Assets', cells: {} }
-        expect(rowLines({ row, cells: {}, isToggle: true, isOpen: false }, lines)).toBe(1)
-        expect(rowLines({ row, cells: { debit: 5 }, isToggle: true, isOpen: false }, lines)).toBe(2)
+        const bare = rowLayout({ row, cells: {}, isToggle: true, isOpen: false }, layout, 'account')
+        expect(bare.kind === 'lines' && bare.lines).toEqual([[{ col: 'account', start: 1, span: 3, justify: 'start' }]])
+    })
+    it('starts an arrangement from the columns', () => {
+        expect(startingLayout('mobile', [{ id: 'a' }, { id: 'b' }, { id: 'c' }])).toEqual({ width: 'mobile', tracks: 3, cells: [{ col: 'a', line: 1, span: 3 }, { col: 'b', line: 2 }, { col: 'c', line: 2 }] })
     })
 })
 ```
 
-In `use-row-window.test.ts`, rewrite the bounds cases onto heights (`rowWindowBounds({ firstVisible, heights: Array(total).fill(44), viewHeight })` gives the numbers the old cases expected) and add:
-
-```ts
-it('windows rows of different heights by their summed offsets', () => {
-    const heights = [44, 88, 44, 88, 44, 88, 44, 88, 44, 88, 44, 88, 44, 88, 44, 88, 44, 88, 44, 88]
-    expect(rowOffsets(heights).slice(0, 4)).toEqual([0, 44, 132, 176])
-    expect(rowAt(rowOffsets(heights), 140)).toBe(2)
-    const bounds = rowWindowBounds({ firstVisible: 10, heights, viewHeight: 200 })
-    expect(bounds.first).toBe(4)
-    expect(bounds.topSpace).toBe(rowOffsets(heights)[4])
-})
-```
-
-In `report-table-layout.test.ts`: `fitsOnOneLine({ breakpoint: 'mobile', amountCount: 2, width: 390 })` is true (168 + 2 × 108 = 384), with 3 amount columns false; on tablet 220 + n × 128 ≤ width.
+In `report-table-layout.test.ts`: `fitsOnOneLine({ breakpoint: 'mobile', amountCount: 2, width: 390 })` is true (168 + 2 × 108 = 384), with 3 amount columns false; on tablet `220 + n × 128 ≤ width`.
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -7398,25 +7445,32 @@ Expected: FAIL: cannot resolve `../table-lines`.
 import type { Breakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { isRightAligned } from './format'
 import type { VisibleRow } from './rows'
-import type { DisplayCell, DisplayLayout } from './spec'
+import type { DisplayCell, DisplayLayout, DisplayWidth } from './spec'
 import type { ResultColumn } from './types'
 
 // E14: a report row wraps onto more lines where its columns do not fit, after
 // Gridley: one cell renderer per column, and per width a layout that puts each
-// column on a line, at a start track, spanning tracks and lines. React Native has
-// no CSS grid on native, so cells are placed by computed rectangles (web and
-// native alike).
+// column on a line, at a start track, spanning tracks, with an alignment. React
+// Native has no CSS grid on native, so a row is drawn with flex: a vertical stack
+// of lines, each a flex row of cells whose widths are their share of equal tracks
+// (a percent of the row). A cell that spans lines (Gridley's rowSpan) sits at the
+// row's start or end edge and spans every line, beside the stacked lines (R28).
+// Rows measure themselves; nothing here knows a height.
 
-export const LINE_HEIGHT = 44
 export const AUTO_TRACK_MIN = 104
 const MAX_LINES = 8
 
 export type Justify = 'start' | 'center' | 'end'
-export type CellRect = { x: number; y: number; width: number; height: number; justify: Justify }
-export type TableLines = { kind: 'one-line' } | { kind: 'lines'; lines: number; label: CellRect; cells: Record<string, CellRect> }
+export type LineCell = { col: string; start: number; span: number; justify: Justify }
+export type EdgeCell = { col: string; span: number; justify: Justify }
+export type LineLayout =
+    | { kind: 'one-line' }
+    | { kind: 'lines'; tracks: number; left: EdgeCell[]; right: EdgeCell[]; middleTracks: number; lines: LineCell[][] }
 export type Placed = { start: number; span: number; line: number; lines: number }
 
-/** The engine's placement rule (core/server/reports/bind.go placeCells). */
+const EDGE_RULE = 'a cell that spans lines sits at the start or the end and spans every line'
+
+/** The engine's placement rule (core/server/reports/bind.go placeCells), its edge rule included. */
 export function placeCells(tracks: number, cells: readonly DisplayCell[]): { placed: Placed[] } | { problem: { index: number; message: string } } {
     const taken = new Set<string>()
     const placed: Placed[] = []
@@ -7440,21 +7494,26 @@ export function placeCells(tracks: number, cells: readonly DisplayCell[]): { pla
         for (let line = c.line; line < c.line + lines; line++) for (let t = start; t < start + span; t++) taken.add(`${line}:${t}`)
         placed.push({ start, span, line: c.line, lines })
     }
+    // A flex row can place a cell that spans lines only beside the stacked lines.
+    const last = Math.max(0, ...placed.map(p => p.line + p.lines - 1))
+    for (const [index, p] of placed.entries()) {
+        const atEdge = p.start === 1 || p.start + p.span - 1 === tracks
+        if (p.lines > 1 && (p.line !== 1 || p.lines !== last || !atEdge)) return { problem: { index, message: EDGE_RULE } }
+    }
     return { placed }
 }
 
 const justifyOf = (column: ResultColumn): Justify => (isRightAligned(column) ? 'end' : 'start')
 
-function autoLines(columns: readonly ResultColumn[], width: number): TableLines {
-    const [, ...amounts] = columns
+function autoLines(columns: readonly ResultColumn[], width: number): LineLayout {
+    const [label, ...amounts] = columns
     const tracks = Math.max(1, Math.floor(width / AUTO_TRACK_MIN))
-    const track = width / tracks
-    const cells: Record<string, CellRect> = {}
+    const lines: LineCell[][] = label ? [[{ col: label.id, start: 1, span: tracks, justify: 'start' }]] : []
     for (const [k, column] of amounts.entries()) {
-        const line = 2 + Math.floor(k / tracks)
-        cells[column.id] = { x: (k % tracks) * track, y: (line - 1) * LINE_HEIGHT, width: track, height: LINE_HEIGHT, justify: justifyOf(column) }
+        const line = 1 + Math.floor(k / tracks)
+        lines[line] = [...(lines[line] ?? []), { col: column.id, start: (k % tracks) + 1, span: 1, justify: justifyOf(column) }]
     }
-    return { kind: 'lines', lines: 1 + Math.ceil(amounts.length / tracks), label: { x: 0, y: 0, width, height: LINE_HEIGHT, justify: 'start' }, cells }
+    return { kind: 'lines', tracks, left: [], right: [], middleTracks: tracks, lines }
 }
 
 // A pivot cell column's entry stands for all its pivot columns, one per track
@@ -7468,34 +7527,35 @@ function expandPivots(layout: DisplayLayout, columns: readonly ResultColumn[]): 
     })
 }
 
-function authoredLines(layout: DisplayLayout, columns: readonly ResultColumn[], width: number): TableLines {
+function authoredLines(layout: DisplayLayout, columns: readonly ResultColumn[], width: number): LineLayout {
     const cells = expandPivots(layout, columns)
     const result = placeCells(layout.tracks, cells)
     if ('problem' in result) return autoLines(columns, width)
-    const track = width / layout.tracks
-    const labelId = columns[0]?.id
-    // An arrangement that leaves out the label column puts the label on a line of
-    // its own above it: a row is never without its label.
-    const shift = cells.some(c => c.col === labelId) ? 0 : 1
-    const rects: Record<string, CellRect> = {}
-    let label: CellRect = { x: 0, y: 0, width, height: LINE_HEIGHT, justify: 'start' }
-    let lines = shift
+    const tracks = layout.tracks
+    const left: EdgeCell[] = []
+    const right: EdgeCell[] = []
+    const flat: (LineCell & { line: number })[] = []
     for (const [i, cell] of cells.entries()) {
         const p = result.placed[i]
         const column = columns.find(c => c.id === cell.col)
         if (!p || !column) continue
-        const rect: CellRect = {
-            x: (p.start - 1) * track,
-            y: (p.line - 1 + shift) * LINE_HEIGHT,
-            width: p.span * track,
-            height: p.lines * LINE_HEIGHT,
-            justify: cell.justify ?? justifyOf(column),
-        }
-        if (cell.col === labelId) label = rect
-        else rects[cell.col] = rect
-        lines = Math.max(lines, p.line + p.lines - 1 + shift)
+        const justify = cell.justify ?? justifyOf(column)
+        if (p.lines > 1 && p.start === 1) left.push({ col: cell.col, span: p.span, justify })
+        else if (p.lines > 1) right.push({ col: cell.col, span: p.span, justify })
+        else flat.push({ col: cell.col, start: p.start, span: p.span, justify, line: p.line })
     }
-    return { kind: 'lines', lines, label, cells: rects }
+    const leftTracks = left.reduce((n, c) => n + c.span, 0)
+    const middleTracks = tracks - leftTracks - right.reduce((n, c) => n + c.span, 0)
+    const lineCount = Math.max(1, ...flat.map(c => c.line))
+    const lines: LineCell[][] = Array.from({ length: lineCount }, (_, i) =>
+        flat.filter(c => c.line === i + 1).sort((a, b) => a.start - b.start).map(({ line: _line, ...c }) => ({ ...c, start: c.start - leftTracks }))
+    )
+    // An arrangement that leaves out the label column puts the label on a line of
+    // its own above it: a row is never without its label.
+    const labelId = columns[0]?.id
+    const listed = cells.some(c => c.col === labelId)
+    if (labelId && !listed) lines.unshift([{ col: labelId, start: 1, span: middleTracks, justify: 'start' }])
+    return { kind: 'lines', tracks, left, right, middleTracks, lines }
 }
 
 export function tableLines(input: {
@@ -7504,17 +7564,43 @@ export function tableLines(input: {
     breakpoint: Breakpoint
     layouts: readonly DisplayLayout[]
     oneLineFits: boolean
-}): TableLines {
+}): LineLayout {
     const authored = input.layouts.find(l => l.width === input.breakpoint)
     if (authored) return authoredLines(authored, input.columns, input.width)
     if (input.breakpoint === 'desktop' || input.oneLineFits) return { kind: 'one-line' }
     return autoLines(input.columns, input.width)
 }
 
-/** A row's lines: a row with no figures (a group its subtotal follows) draws only its label line. */
-export function rowLines(item: VisibleRow, lines: TableLines): number {
-    if (lines.kind === 'one-line' || Object.keys(item.cells).length === 0) return 1
-    return lines.lines
+/** A span of equal tracks as a percent of their region. */
+export function trackWidth(span: number, of: number): string {
+    return `${(span / of) * 100}%`
+}
+
+/** A line's cells with the empty tracks between them, left to right. */
+export function lineSegments(line: readonly LineCell[], middleTracks: number) {
+    const out: ({ kind: 'cell'; cell: LineCell; width: string } | { kind: 'gap'; width: string })[] = []
+    let at = 1
+    for (const cell of line) {
+        if (cell.start > at) out.push({ kind: 'gap', width: trackWidth(cell.start - at, middleTracks) })
+        out.push({ kind: 'cell', cell, width: trackWidth(cell.span, middleTracks) })
+        at = cell.start + cell.span
+    }
+    if (at <= middleTracks) out.push({ kind: 'gap', width: trackWidth(middleTracks - at + 1, middleTracks) })
+    return out
+}
+
+/** A row with no figures (a group its subtotal follows) draws only its label, across the row. */
+export function rowLayout(item: VisibleRow, layout: LineLayout, labelId: string): LineLayout {
+    if (layout.kind === 'one-line' || Object.keys(item.cells).length > 0) return layout
+    return { kind: 'lines', tracks: layout.tracks, left: [], right: [], middleTracks: layout.tracks, lines: [[{ col: labelId, start: 1, span: layout.tracks, justify: 'start' }]] }
+}
+
+/** A first arrangement: the first column across line 1, the others in order on the lines below. */
+export function startingLayout(width: DisplayWidth, columns: readonly { id: string }[], tracks = 3): DisplayLayout {
+    const [first, ...rest] = columns
+    const cells: DisplayCell[] = first ? [{ col: first.id, line: 1, span: tracks }] : []
+    rest.forEach((c, k) => cells.push({ col: c.id, line: 2 + Math.floor(k / tracks) }))
+    return { width, tracks, cells }
 }
 ```
 
@@ -7529,77 +7615,73 @@ export function fitsOnOneLine(input: { breakpoint: Breakpoint; amountCount: numb
 }
 ```
 
-`use-row-window.ts`:
-
-```ts
-/** The top of each row and, last, the end of the rows. */
-export function rowOffsets(heights: readonly number[]): number[] {
-    const out = [0]
-    for (const h of heights) out.push((out[out.length - 1] ?? 0) + h)
-    return out
-}
-
-/** The row at offset y: the last row whose top is at or above y. */
-export function rowAt(offsets: readonly number[], y: number): number {
-    let lo = 0
-    let hi = Math.max(0, offsets.length - 2)
-    while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2)
-        if ((offsets[mid] ?? 0) <= y) lo = mid
-        else hi = mid - 1
-    }
-    return lo
-}
-
-// Rows have computed heights (lines × 44), never measured ones: the window sums them.
-export function rowWindowBounds(input: { firstVisible: number; heights: readonly number[]; viewHeight: number }) {
-    const { firstVisible, heights, viewHeight } = input
-    const offsets = rowOffsets(heights)
-    const total = heights.length
-    const tail = heights[total - 1] ?? 44
-    // As many rows as fill the view from the first visible one (past the end, rows
-    // as tall as the last), so the window keeps its size near the end.
-    let visibleCount = 0
-    for (let filled = 0; filled < viewHeight; visibleCount++) filled += heights[firstVisible + visibleCount] ?? tail
-    const first = Math.min(Math.max(0, firstVisible - ROW_OVERSCAN), Math.max(0, total - visibleCount))
-    const last = Math.min(total, first + visibleCount + ROW_OVERSCAN * 2)
-    return { first, last, topSpace: offsets[first] ?? 0, bottomSpace: (offsets[total] ?? 0) - (offsets[last] ?? 0) }
-}
-```
-
-`useRowWindow({ heights, viewHeight, onNearEnd })` keeps its metrics and near-end logic; `onScroll` sets `setFirstVisible(rowAt(rowOffsets(input.heights), event.nativeEvent.contentOffset.y))`, and the bounds come from `rowWindowBounds({ firstVisible, heights: input.heights, viewHeight: input.viewHeight })`.
-
 `draft.ts` `draftIssues`: for each `draft.display.layouts[i]`, a `placeCells` problem becomes `{ path: ['display', 'layouts', i, 'cells', problem.index], message }`.
 
 - [ ] **Step 4: Run, then commit**
 
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check`
-Expected: PASS (`ReportTable` passes `heights: rows.map(() => ROW_HEIGHT)` until Task 25).
+Expected: PASS.
 
 ```bash
 cd /Users/nas/tmp/tinycld/books-purchases/tinycld
 git add core/reports
-git commit -m "feat(core): report line layouts per width and row windows of computed heights"
+git commit -m "feat(core): report line layouts per width"
 git push origin books/p5-trial-balance
 ```
 
 ---
 
-### Task 25: E14 (part 2) — wrapped rows in the table, the Arrange section; e2e
+### Task 25: E14 (part 2) — the table on FlashList: flex lines, sticky headings and groups, sideways scroll; the Arrange section; e2e
 
-Code facts used: `ReportTable` (two stacks, one-line, `components/ReportTable.tsx:113-190`), `ReportRowLabel`/`ReportRowAmounts` (`components/ReportRow.tsx:73-156`), `ROW_RULE`/`ROW_WEIGHT`, `INDENT`, `useWindowWidth` (`components/workspace/useBreakpoint.ts:19`), the builder panel's sections (`components/builder/ReportBuilderPanel.tsx:76-82`).
+Code facts used: today's table (two stacks and a custom row window, `components/ReportTable.tsx:113-190`, `components/use-row-window.ts`), the row parts (`components/ReportRow.tsx`), `useReportRun.loadMore`'s guard (`hooks/useReportRun.ts:64-65`: `hasNextPage && !isFetchingNextPage`); FlashList v2.3.3 (the `nathanstitt/flash-list` fork pinned at `core/package-versions.json:30`, used on web by `core/ui/emoji-picker/EmojiPickerGrid.tsx`): `stickyHeaderIndices` with one sticky item at a time, pushed by the next (`node_modules/@shopify/flash-list/src/recyclerview/components/StickyHeaders.tsx:80-150`), `renderItem` called with `target: 'StickyHeader'` for the stuck copy (`src/FlashListProps.ts:18-34`), `stickyHeaderConfig.useNativeDriver` (`FlashListProps.ts:426-466`), `onEndReached` checked after every commit and re-armed when `data` changes (`src/recyclerview/hooks/useBoundDetection.ts:96-108,165-170`, `RecyclerView.tsx:640`), web support (`src/isNewArch.ts:19`, `src/recyclerview/utils/measureLayout.web.ts`, `src/native/config/PlatformHelper.web.ts`: `supportsOffsetCorrection: false`).
 
 **Files:**
-- Modify: `core/reports/components/ReportTable.tsx`, `ReportRow.tsx` (a wrapped row), `ReportView.tsx` (passes `layouts`)
-- Modify: `core/reports/hooks/useReportView.ts` (`layouts`: the spec's `display.layouts` — the saved record's spec or the draft)
+- Modify: `core/reports/components/ReportTable.tsx` (FlashList), `ReportRow.tsx` (`TableRow`, `LinesRow`, `StickyGroup`), `ReportView.tsx` (passes `layouts`)
+- Delete: `core/reports/components/use-row-window.ts`, `core/reports/components/__tests__/use-row-window.test.ts`
+- Create: `core/reports/lib/sticky.ts`, `core/reports/lib/__tests__/sticky.test.ts`
+- Modify: `core/reports/hooks/useReportView.ts` (`layouts`), `screens/ReportScreen.tsx` (passes `record.spec?.display?.layouts` or `builder.previewSpec?.display?.layouts`)
 - Create: `core/reports/components/builder/ArrangeSection.tsx`; modify `ReportBuilderPanel.tsx`
 - Create: `tests/e2e/reports-wrap.spec.ts`
 
 **Interfaces:**
 - Consumes: Task 24.
-- Produces: `ReportTable` prop `layouts: readonly DisplayLayout[]`; test ids `report-heading-<col>` and `report-cell-<col>-<row>` (unchanged) in wrapped rows, `report-wrap-row-<row>` on a wrapped row's container; Arrange ids `report-builder-arrange-width-<width>`, `report-builder-arrange-on`, `report-builder-arrange-tracks`, `report-builder-arrange-<col>-show|line|start|span|lines|justify`.
+- Produces: `stickyIndices(rows: VisibleRow[]): number[]` (every open group row); `groupChain(rows, index): ResultRow[]` (the open groups enclosing a row, outermost first); `ReportTable` prop `layouts`; unchanged test ids `report-row-<id>`, `report-cell-<col>-<row>`, `report-heading-<col>`, `report-heading-row`, `report-table`, `report-loading-more`; new `report-sticky-group` (the stuck group stack).
 
-- [ ] **Step 1: Write the failing e2e**
+- [ ] **Step 1: Write the failing tests**
+
+Create `core/reports/lib/__tests__/sticky.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { groupChain, stickyIndices } from '../sticky'
+import type { VisibleRow } from '../rows'
+import type { ResultRow } from '../types'
+
+const row = (id: string, kind: ResultRow['kind'], extra: Partial<ResultRow> = {}): VisibleRow => ({
+    row: { id, kind, depth: 0, label: id, cells: {}, ...extra },
+    cells: {},
+    isToggle: kind === 'group',
+    isOpen: extra.expanded === true,
+})
+
+const ROWS = [
+    row('g:a', 'group', { expanded: true }),
+    row('g:a1', 'group', { expanded: true, section: 'g:a', depth: 1 }),
+    row('d:1', 'detail', { section: 'g:a1', depth: 2 }),
+    row('g:b', 'group'),
+    row('total', 'total'),
+]
+
+describe('sticky groups', () => {
+    it('sticks every open group, at any depth', () => {
+        expect(stickyIndices(ROWS)).toEqual([0, 1])
+    })
+    it('stacks the open groups that enclose the stuck one, outermost first', () => {
+        expect(groupChain(ROWS, 1).map(r => r.id)).toEqual(['g:a', 'g:a1'])
+        expect(groupChain(ROWS, 0).map(r => r.id)).toEqual(['g:a'])
+    })
+})
+```
 
 Create `tests/e2e/reports-wrap.spec.ts`:
 
@@ -7609,22 +7691,35 @@ import { createInvitedUser, skipWithoutReportsStub } from './helpers'
 import { addColumn, addSale, addTeam, chooseOption, openReportStub, openReportsHub, rowOf, SALES_SOURCE, saveNewReport, startReport, uniqueName } from './reports-helpers'
 
 /**
- * E14: on a phone a row too wide for one line wraps: the label on line 1, the
- * figures aligned on line 2 under headings that wrap the same way; nothing scrolls
- * sideways. Desktop keeps one line per row. An author arrangement for phones
- * places columns on chosen lines.
+ * E14: on a phone a row too wide for one line wraps (the label on line 1, the
+ * figures aligned on line 2 under headings that wrap the same way) and nothing
+ * scrolls sideways; an open group's row sticks while its rows scroll under it.
+ * Desktop keeps one line per row and the heading row stays at the top. An author
+ * arrangement for phones places columns on chosen lines.
  */
 
-async function wideReport(p: Page, title: string) {
+async function seed(p: Page, sales: number) {
     const team = uniqueName('Team')
     await openReportStub(p)
     await addTeam(p, team)
-    await addSale(p, { team, customer: 'Wrapco', amount: 1000, cost: 400, quantity: 3, day: '2026-01-05' })
+    for (let i = 0; i < sales; i++) {
+        await addSale(p, { team, customer: `Wrapco ${String(i).padStart(2, '0')}`, amount: 1000 + i, cost: 400, quantity: 3, day: '2026-01-05', status: i % 2 === 0 ? 'open' : 'paid' })
+    }
+}
+
+async function wideReport(p: Page, title: string, grouped: boolean) {
     await openReportsHub(p)
     await startReport(p, SALES_SOURCE)
     await addColumn(p, ['amount'])
     await addColumn(p, ['cost'])
     await addColumn(p, ['quantity'])
+    if (grouped) {
+        await addColumn(p, ['status'])
+        await p.getByTestId('report-builder-section-group').click()
+        await p.getByTestId('report-builder-group-add').click()
+        await chooseOption(p, 'report-builder-group-0-col', 'status')
+        await p.getByTestId('report-builder-group-0-open').click()
+    }
     await saveNewReport(p, title)
 }
 
@@ -7645,57 +7740,75 @@ async function boxes(p: Page, row: string) {
 test.describe('report rows per width', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
-    test('on a phone a wide row wraps under aligned wrapped headings, with no sideways scroll', async ({ page }) => {
+    test('on a phone a wide row wraps under aligned wrapped headings, with no sideways scroll, and an open group sticks', async ({ page }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptwrap')
         try {
-            await wideReport(p, uniqueName('Wrap'))
+            await seed(p, 24)
+            await wideReport(p, uniqueName('Wrap'), true)
             await p.setViewportSize({ width: 390, height: 844 })
             await expect.poll(async () => {
-                const b = await boxes(p, 'Wrapco')
+                const b = await boxes(p, 'Wrapco 00')
                 return b.label && b.amount ? b.amount.y >= b.label.y + b.label.height - 1 : false
             }).toBe(true)
-            const b = await boxes(p, 'Wrapco')
+            const b = await boxes(p, 'Wrapco 00')
             expect(Math.abs((b.headAmount?.x ?? 0) - (b.amount?.x ?? -9))).toBeLessThanOrEqual(1)
             expect(Math.abs((b.headCost?.x ?? 0) - (b.cost?.x ?? -9))).toBeLessThanOrEqual(1)
             expect((b.headAmount?.y ?? 0) > (b.headLabel?.y ?? 0)).toBe(true)
             expect(await p.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+
+            // Scroll the open group's rows: its row stays stuck under the heading row.
+            const heading = await p.getByTestId('report-heading-row').boundingBox()
+            await p.getByTestId('report-table').hover()
+            await p.mouse.wheel(0, 900)
+            const sticky = p.getByTestId('report-sticky-group')
+            await expect(sticky).toBeVisible()
+            await expect(sticky).toContainText('Open')
+            await expect.poll(async () => Math.abs(((await sticky.boundingBox())?.y ?? 0) - ((heading?.y ?? 0) + (heading?.height ?? 0)))).toBeLessThanOrEqual(2)
         } finally {
             await close()
         }
     })
 
-    test('on a desktop a row stays one line', async ({ page }) => {
+    test('on a desktop a row stays one line and the heading row stays at the top', async ({ page }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptline')
         try {
-            await wideReport(p, uniqueName('Line'))
+            await seed(p, 24)
+            await wideReport(p, uniqueName('Line'), false)
             await expect.poll(async () => {
-                const b = await boxes(p, 'Wrapco')
+                const b = await boxes(p, 'Wrapco 00')
                 return b.label && b.amount ? Math.abs(b.label.y - b.amount.y) : 99
             }).toBeLessThanOrEqual(1)
+            const before = await p.getByTestId('report-heading-row').boundingBox()
+            await p.getByTestId('report-table').hover()
+            await p.mouse.wheel(0, 900)
+            await expect(rowOf(p, 'Wrapco 00')).toBeHidden()
+            await expect.poll(async () => (await p.getByTestId('report-heading-row').boundingBox())?.y).toBe(before?.y)
         } finally {
             await close()
         }
     })
 
-    test('an author arrangement for phones puts the amount beside the label', async ({ page }) => {
+    test('an author arrangement for phones puts the amount beside the label and the quantity down the edge', async ({ page }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptarr')
         try {
-            await wideReport(p, uniqueName('Arrange'))
+            await seed(p, 1)
+            await wideReport(p, uniqueName('Arrange'), false)
             await p.getByTestId('report-edit-open').click()
             await p.getByTestId('report-builder-section-arrange').click()
             await p.getByTestId('report-builder-arrange-width-mobile').click()
             await p.getByTestId('report-builder-arrange-on').click()
-            await chooseOption(p, 'report-builder-arrange-tracks', '2')
-            await chooseOption(p, 'report-builder-arrange-customer-line', '1')
+            await chooseOption(p, 'report-builder-arrange-tracks', '3')
             await chooseOption(p, 'report-builder-arrange-customer-span', '1')
             await chooseOption(p, 'report-builder-arrange-amount-line', '1')
             await chooseOption(p, 'report-builder-arrange-cost-line', '2')
-            await chooseOption(p, 'report-builder-arrange-quantity-line', '2')
+            await chooseOption(p, 'report-builder-arrange-quantity-start', '3')
+            await chooseOption(p, 'report-builder-arrange-quantity-line', '1')
+            await chooseOption(p, 'report-builder-arrange-quantity-lines', '2')
             await p.getByTestId('report-builder-save').click()
             await expect(p.getByTestId('report-builder')).toBeHidden()
             await p.setViewportSize({ width: 390, height: 844 })
             await expect.poll(async () => {
-                const b = await boxes(p, 'Wrapco')
+                const b = await boxes(p, 'Wrapco 00')
                 return b.label && b.amount && b.cost ? Math.abs(b.label.y - b.amount.y) <= 1 && b.cost.y > b.label.y : false
             }).toBe(true)
         } finally {
@@ -7705,53 +7818,96 @@ test.describe('report rows per width', () => {
 })
 ```
 
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test -- core/reports/lib/__tests__/sticky.test.ts`
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_PORT_2=7211 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test:e2e -- tests/e2e/reports-wrap.spec.ts`
-Expected: FAIL: on the phone the amount cell sits on the label's line (today's table scrolls sideways).
+Expected: FAIL (no `../sticky`; on the phone the amount cell sits on the label's line).
 
-- [ ] **Step 2: The wrapped row**
+- [ ] **Step 2: `lib/sticky.ts`**
 
-In `ReportRow.tsx` add (the one-line parts stay as they are):
+```ts
+import type { VisibleRow } from './rows'
+import type { ResultRow } from './types'
+
+// FlashList keeps one sticky item at a time, pushed up by the next (R26). Every
+// open group row, at any depth, is a sticky index, so the stuck item is the
+// innermost open group above the top; it is drawn with the open groups that
+// enclose it stacked above it, so nested levels read as a stack.
+
+export function stickyIndices(rows: readonly VisibleRow[]): number[] {
+    return rows.flatMap((item, index) => (item.row.kind === 'group' && item.isOpen ? [index] : []))
+}
+
+export function groupChain(rows: readonly VisibleRow[], index: number): ResultRow[] {
+    const byId = new Map(rows.map(item => [item.row.id, item.row]))
+    const chain: ResultRow[] = []
+    let current: ResultRow | undefined = rows[index]?.row
+    while (current) {
+        chain.unshift(current)
+        current = current.section ? byId.get(current.section) : undefined
+    }
+    return chain
+}
+```
+
+Folding changes the rows, so the indices are recomputed from the visible rows on every render and FlashList re-reads them.
+
+- [ ] **Step 3: Rows drawn with flex lines**
+
+In `ReportRow.tsx`, keep `ReportRowLabel`'s label (renamed `RowLabel`, same `report-row-<id>` test id, caret, `aria-expanded`, accessibility label, indent `paddingLeft: INDENT + row.depth * INDENT` — child rows indent the label only, so figures stay aligned) and `AmountCell`'s view (`RowCell`, same `report-cell-<col>-<row>` id), now sized by their parent: `minHeight: ROW_HEIGHT`, `flex` from their slot. Add:
 
 ```tsx
-interface WrappedRowProps {
-    item: VisibleRow
-    columns: ResultColumn[]
-    lines: Extract<TableLines, { kind: 'lines' }>
-    width: number
-    format: NumberFormat
-    onToggleGroup(row: ResultRow): void
-}
-
 const JUSTIFY: Record<Justify, 'flex-start' | 'center' | 'flex-end'> = { start: 'flex-start', center: 'center', end: 'flex-end' }
 
-function rectStyle(rect: CellRect) {
-    return { position: 'absolute', left: rect.x, top: rect.y, width: rect.width, height: rect.height, justifyContent: 'center', alignItems: JUSTIFY[rect.justify] } as const
+interface LinesProps {
+    layout: Extract<LineLayout, { kind: 'lines' }>
+    /** Draws one cell (a row's label or figure, or a heading) in its slot. */
+    renderCell: (col: string) => ReactNode
 }
 
-/** One wrapped row: its height is its lines × 44, and each cell sits at its computed place. */
-export function WrappedRow({ item, columns, lines, width, format, onToggleGroup }: WrappedRowProps) {
-    const { row } = item
-    const lineCount = rowLines(item, lines)
-    // A row with no figures draws only its label, on its own line.
-    const label = lineCount === 1 ? { x: 0, y: 0, width, height: LINE_HEIGHT, justify: 'start' as const } : lines.label
-    const cells = lineCount === 1 ? [] : columns.filter(c => lines.cells[c.id])
-    const amounts = cells.map(column => (
-        <WrappedCell key={column.id} item={item} column={column} rect={lines.cells[column.id]} format={format} />
-    ))
+function Slot({ width, justify, children }: { width: string; justify: Justify; children: ReactNode }) {
+    return <View style={{ width, alignItems: JUSTIFY[justify], justifyContent: 'center' }}>{children}</View>
+}
+
+/** One line: a flex row of cells, each on its own tracks, with the empty tracks between. */
+function Line({ line, middleTracks, renderCell }: { line: LineCell[]; middleTracks: number; renderCell: LinesProps['renderCell'] }) {
+    const parts = lineSegments(line, middleTracks).map((part, i) =>
+        part.kind === 'gap' ? <View key={`gap-${i}`} style={{ width: part.width }} /> : (
+            <Slot key={part.cell.col} width={part.width} justify={part.cell.justify}>
+                {renderCell(part.cell.col)}
+            </Slot>
+        )
+    )
+    return <View className="flex-row">{parts}</View>
+}
+
+/**
+ * A row (or the heading) as Gridley lays it out, with flex: edge cells that span
+ * every line at the start and the end, and between them the lines stacked
+ * vertically. Widths are shares of equal tracks; heights come from the content.
+ */
+export function Lines({ layout, renderCell }: LinesProps) {
+    const edge = (cells: EdgeCell[]) =>
+        cells.map(cell => (
+            <Slot key={cell.col} width={trackWidth(cell.span, layout.tracks)} justify={cell.justify}>
+                {renderCell(cell.col)}
+            </Slot>
+        ))
+    const lines = layout.lines.map((line, i) => <Line key={`line-${i}`} line={line} middleTracks={layout.middleTracks} renderCell={renderCell} />)
     return (
-        <View testID={`report-wrap-row-${row.id}`} className={ROW_RULE[row.kind]} style={{ height: lineCount * LINE_HEIGHT, width }}>
-            <WrappedLabel item={item} rect={label} onToggleGroup={onToggleGroup} />
-            {amounts}
+        <View className="flex-row">
+            {edge(layout.left)}
+            <View style={{ width: trackWidth(layout.middleTracks, layout.tracks) }}>{lines}</View>
+            {edge(layout.right)}
         </View>
     )
 }
 ```
 
-`WrappedLabel` is the label Pressable/View of `ReportRowLabel` (same `report-row-<id>` test id, caret, `aria-expanded`, `accessibilityLabel`) positioned with `rectStyle(rect)` and `paddingLeft: INDENT + row.depth * INDENT` (child rows indent the label only, so figures stay aligned); `WrappedCell` is `AmountCell`'s view (same `report-cell-<col>-<row>` id, `cellDisplay`, `cellTextClass`) positioned with `rectStyle(rect)`, returning null when `rect` is undefined. A group row's cells take the same press as its label (a `Pressable` with `accessible={false}` and `tabIndex={-1}` around the cells), as `ReportRowAmounts` does.
+(The ternary inside `Line`'s `map` moves into a small `Segment` component to keep JSX plain.) `TableRow({ item, columns, layout, format, onToggleGroup, labelId })`: in one-line mode it draws the label then the amount cells in a flex row (label `flex: 1, minWidth` from `report-table-layout`, amount cells `width: layout.amountWidth`); in lines mode it draws `<Lines layout={rowLayout(item, layout, labelId)} renderCell={col => col === labelId ? <RowLabel …/> : <RowCell …/>} />`. The row's container carries `ROW_RULE[row.kind]`, so a subtotal or total rule runs across the whole wrapped row; a group row's figures take the same press as its label (a `Pressable` with `accessible={false}`, `tabIndex={-1}`), as `ReportRowAmounts` does. `StickyGroup({ rows, index, … })` draws `groupChain(rows, index)` as a column of label lines (each a `RowLabel`, so a press folds that group), `testID="report-sticky-group"`, `bg-background border-b border-border`.
 
-- [ ] **Step 3: The table chooses one line or wrapped lines**
+- [ ] **Step 4: The table on FlashList**
 
-In `ReportTable.tsx`:
+`ReportTable.tsx`:
 
 ```tsx
 export interface ReportTableProps {
@@ -7765,93 +7921,72 @@ export interface ReportTableProps {
     isLoadingMore: boolean
 }
 
-export function ReportTable(props: ReportTableProps) {
+// FlashList measures every row (wrapped rows have the heights their content
+// gives them); onEndReached asks for the next page, through useReportRun's
+// guard (hasNextPage and not already fetching). FlashList checks it after each
+// commit and again when the rows change, so a first page shorter than the view
+// asks for the next one too.
+export function ReportTable({ columns, rows, format, breakpoint, layouts, onToggleGroup, onNearEnd, isLoadingMore }: ReportTableProps) {
     const windowWidth = useWindowWidth()
     // The table's own width (a builder drawer narrows it): local layout state from onLayout.
     const [width, setWidth] = useState(windowWidth)
-    const [, ...amountColumns] = props.columns
-    const lines = tableLines({
-        columns: props.columns,
-        width,
-        breakpoint: props.breakpoint,
-        layouts: props.layouts,
-        oneLineFits: fitsOnOneLine({ breakpoint: props.breakpoint, amountCount: amountColumns.length, width }),
-    })
-    const onLayout = (event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width)
-    if (lines.kind === 'lines') return <WrappedTable {...props} lines={lines} width={width} onLayout={onLayout} />
-    return <OneLineTable {...props} onLayout={onLayout} />
-}
-```
-
-`OneLineTable` is today's body (heights `rows.map(() => ROW_HEIGHT)`), with `onLayout` on its outer view. `WrappedTable`:
-
-```tsx
-function WrappedTable({ columns, rows, format, lines, width, onToggleGroup, onNearEnd, isLoadingMore, onLayout }: ReportTableProps & { lines: Extract<TableLines, { kind: 'lines' }>; width: number; onLayout(e: LayoutChangeEvent): void }) {
+    const scrollX = useRef(new Animated.Value(0)).current
     const [labelColumn, ...amountColumns] = columns
-    const heights = rows.map(item => rowLines(item, lines) * LINE_HEIGHT)
-    const rowWindow = useRowWindow({ heights, viewHeight: useWindowHeight(), onNearEnd })
+    const oneLine = reportTableLayout({ breakpoint, amountCount: amountColumns.length })
+    const layout = tableLines({ columns, width, breakpoint, layouts, oneLineFits: fitsOnOneLine({ breakpoint, amountCount: amountColumns.length, width }) })
+    const sticky = stickyIndices(rows)
     if (!labelColumn) return null
-    const shown = rows.slice(rowWindow.first, rowWindow.last)
-    const items = shown.map(item => (
-        <WrappedRow key={item.row.id} item={item} columns={amountColumns} lines={lines} width={width} format={format} onToggleGroup={onToggleGroup} />
-    ))
+    const renderItem = ({ item, index, target }: ListRenderItemInfo<VisibleRow>) =>
+        target === 'StickyHeader' ? (
+            <StickyGroup rows={rows} index={index} onToggleGroup={onToggleGroup} scrollX={scrollX} />
+        ) : (
+            <TableRow item={item} columns={amountColumns} labelId={labelColumn.id} layout={layout} oneLine={oneLine} format={format} onToggleGroup={onToggleGroup} scrollX={scrollX} />
+        )
+    const sideways = layout.kind === 'one-line' && oneLine.scrollsSideways
     return (
-        <View testID="report-table" className="min-h-0 flex-1" onLayout={onLayout}>
-            <WrappedHeading labelColumn={labelColumn} amountColumns={amountColumns} lines={lines} width={width} />
-            <ScrollView className="flex-1" onScroll={rowWindow.onScroll} onLayout={rowWindow.onLayout} onContentSizeChange={rowWindow.onContentSizeChange} scrollEventThrottle={16}>
-                <View style={{ height: rowWindow.topSpace }} />
-                {items}
-                <View style={{ height: rowWindow.bottomSpace }} />
-                <LoadingMore isVisible={isLoadingMore} />
-            </ScrollView>
+        <View testID="report-table" className="min-h-0 flex-1" onLayout={e => setWidth(e.nativeEvent.layout.width)}>
+            <Sideways isEnabled={sideways} minWidth={oneLine.labelMin + oneLine.amountContentMinWidth} scrollX={scrollX}>
+                <HeadingRow labelColumn={labelColumn} amountColumns={amountColumns} layout={layout} oneLine={oneLine} scrollX={scrollX} />
+                <FlashList
+                    data={rows}
+                    renderItem={renderItem}
+                    keyExtractor={item => item.row.id}
+                    getItemType={item => item.row.kind}
+                    extraData={{ layout, format }}
+                    stickyHeaderIndices={sticky}
+                    stickyHeaderConfig={{ useNativeDriver: Platform.OS !== 'web' }}
+                    onEndReached={onNearEnd}
+                    onEndReachedThreshold={0.5}
+                    ListFooterComponent={<LoadingMore isVisible={isLoadingMore} />}
+                />
+            </Sideways>
         </View>
     )
 }
 ```
 
-`WrappedHeading` (`testID="report-heading-row"`, `border-b border-border bg-background`, height `lines.lines * LINE_HEIGHT`) places `HeadingCell`s at `lines.label` and each `lines.cells[col]` with the same `rectStyle`, so each heading sits over its values. `ReportView` passes `layouts={model.layouts}`; `useReportView` returns `layouts: input.layouts ?? []`, which `ReportScreen` fills from `record.spec?.display?.layouts` (saved) or `builder.previewSpec?.display?.layouts` (draft).
+(The `renderItem` ternary becomes a small `TableItem` component; `reportTableLayout` gains `labelMin`.) The heading row is outside the FlashList and above it, so it stays at the top while the rows scroll (sticky by construction); in lines mode it is `<Lines layout={layout} renderCell={col => <HeadingCell …/>} />`, the same lines as the rows, so each heading sits over its values.
 
-- [ ] **Step 4: The Arrange section**
+`Sideways` is the desktop sideways scroll (one line per row, wide pivots): a horizontal `ScrollView` whose content has the table's minimum width and holds the heading row and the FlashList together, so both move sideways in step; the list scrolls vertically inside it. Its `onScroll` drives `scrollX` (`Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], { useNativeDriver: false })`), and the label cells of the heading, the rows and the stuck group take `transform: [{ translateX: scrollX }]`, so the label column stays frozen at the left as today's two-stack table kept it (R27). When `isEnabled` is false it renders its children in a plain `View`.
 
-Create `ArrangeSection.tsx`:
+`ReportView` passes `layouts={model.layouts}`; `useReportView` returns `layouts: input.layouts ?? []`, which `ReportScreen` fills from `record.spec?.display?.layouts` (saved) or `builder.previewSpec?.display?.layouts` (draft). Delete `use-row-window.ts` and its test (FlashList replaces them; `isNearEnd` moves to `ParamPickers.tsx`, its only other user, as a local helper).
 
-```tsx
-const WIDTHS = [
-    { value: 'mobile', label: 'Phone' },
-    { value: 'tablet', label: 'Tablet' },
-    { value: 'desktop', label: 'Desktop' },
-] as const
-const LINES = [1, 2, 3, 4, 5, 6, 7, 8]
-const TRACKS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-const JUSTIFIES = [
-    { value: 'start', label: 'Start' },
-    { value: 'center', label: 'Center' },
-    { value: 'end', label: 'End' },
-] as const
+- [ ] **Step 5: The Arrange section**
 
-/** A first arrangement: the first column across line 1, the others in order on the lines below. */
-export function startingLayout(width: DisplayWidth, columns: readonly { id: string }[], tracks = 3): DisplayLayout {
-    const [first, ...rest] = columns
-    const cells: DisplayCell[] = first ? [{ col: first.id, line: 1, span: tracks }] : []
-    rest.forEach((c, k) => cells.push({ col: c.id, line: 2 + Math.floor(k / tracks) }))
-    return { width, tracks, cells }
-}
-```
+`ArrangeSection.tsx` (title "Arrange", `section="arrange"`): the chosen width tab lives in the reports UI store (`arrangeWidth`, shared by the section and the preview hint) and is picked with three buttons (`report-builder-arrange-width-mobile|tablet|desktop`: Phone, Tablet, Desktop); a `Switch` "Arrange columns for this width" (`report-builder-arrange-on`: on adds `startingLayout(width, columns)`, off removes that width's layout, through `builder.setDisplay`); a `PickMenu` "Columns per line" (`report-builder-arrange-tracks`, 1–12; cells wider than the new count shrink to it); and one row per column with a "Show" switch (`…-<col>-show`: off removes its cell) and `PickMenu`s Line (1–8), Start (Auto, 1…tracks), Span (1…tracks), Lines (1–8) and Align (Start, Center, End) (`…-<col>-line|start|span|lines|justify`). A row that spans lines must sit at the start or the end and span every line (R28): the Lines menu says so in its hint, and `draftIssues` names a cell that breaks it. Placement problems show under the section (`problemsFor('arrange', …)`), and Save refuses them as the server does. Add `<ArrangeSection builder={builder} problems={problems} />` after `LayoutSection` in `ReportBuilderPanel.tsx`.
 
-(`startingLayout` lives in `lib/table-lines.ts` with a vitest case: three columns at 3 tracks give line 1 span 3, then line 2.) The section (title "Arrange", `section="arrange"`) holds the chosen width tab in the reports UI store (`arrangeWidth`, shared by the section and the preview hint), a `ButtonGroup`-like row of three buttons (`report-builder-arrange-width-<value>`), a `Switch` "Arrange columns for this width" (`report-builder-arrange-on`: on adds `startingLayout(width, columns)`, off removes that width's layout, through `builder.setDisplay`), a `PickMenu` "Columns per line" (`report-builder-arrange-tracks`, 1–12; cells wider than the new count shrink to it), and one row per column with a "Show" switch (`…-<col>-show`: off removes its cell) and `PickMenu`s Line, Start (Auto, 1…tracks), Span (1…tracks), Lines (1–8), Align (`…-<col>-line|start|span|lines|justify`); each change replaces that width's layout. Placement problems (`draftIssues`) show under the section (`problemsFor('arrange', …)`) and the save refuses them, as the server does. Add `<ArrangeSection builder={builder} problems={problems} />` after `LayoutSection` in `ReportBuilderPanel.tsx`.
-
-- [ ] **Step 5: Run**
+- [ ] **Step 6: Run**
 
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check`
-Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_PORT_2=7211 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test:e2e -- tests/e2e/reports-wrap.spec.ts tests/e2e/reports-view.spec.ts tests/e2e/reports-group-pivot.spec.ts tests/e2e/reports-formula-layout.spec.ts`
-Expected: all pass (the phone pivot and layout specs read cells by test id, which wrapped rows keep).
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_PORT_2=7211 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test:e2e -- tests/e2e/reports-wrap.spec.ts tests/e2e/reports-view.spec.ts tests/e2e/reports-group-pivot.spec.ts tests/e2e/reports-formula-layout.spec.ts tests/e2e/reports-groups-v2.spec.ts`
+Expected: all pass (cells keep their test ids; the paging spec in `reports-view.spec.ts` loads its next page through `onEndReached`).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 cd /Users/nas/tmp/tinycld/books-purchases/tinycld
-git add core/reports tests/e2e/reports-wrap.spec.ts
-git commit -m "feat(core): report rows wrap on narrow screens; authors arrange columns per width"
+git add -A core/reports tests/e2e/reports-wrap.spec.ts
+git commit -m "feat(core): the report table on FlashList: wrapped rows, sticky headings and groups"
 git push origin books/p5-trial-balance
 ```
 
@@ -8008,7 +8143,7 @@ Expected: pushed; CI runs the full suite (the reports stub scaffold step already
 | E11 report e2e helpers exported | 17, 26 |
 | E12 spec v2, v1 unchanged, builder round-trip | 2, 15, 16, 21 |
 | E13 `groups[].open` | 11, 16, 22, 26 |
-| E14 wrapped rows, author arrangement (human addition) | 15, 16, 24, 25, 26 |
+| E14 wrapped rows (flex), FlashList, sticky heading and groups, author arrangement (human addition) | 15, 16, 24, 25, 26 |
 | OQ2 every report operator in the formula editor | 18, 19, 20 |
 | Core tests: formula table `lookup`/`record`, rule-parity fuzz with lookup and fill, vitest v2/round-trip/options, e2e desktop + phone | 4, 5, 15, 16, 21, 23, 20, 22, 23, 25 |
 | Books unchanged and green | 27, 28 |
@@ -8016,5 +8151,6 @@ Expected: pushed; CI runs the full suite (the reports stub scaffold step already
 ## Self-review notes
 
 - Every engine task cites the code it changes; the plan relies on two probed behaviours (Go's nil vs empty slice for `expand`, SQLite's CTE references) and writes them under "What was probed".
-- Placement is one rule in two languages (`placeCells` in Go, Task 15; in TS, Task 24) with the same example in both test suites.
+- Placement is one rule in two languages (`placeCells` in Go, Task 15; in TS, Task 24), the R28 edge rule included, with the same examples in both test suites.
+- E14 was revised after the human's review: flex lines instead of absolute positions, FlashList v2 instead of the custom row window, sticky heading and stacked sticky groups.
 - The forms editor's ids and labels are preserved by construction (the forms operator set wraps the existing helpers); the report set keeps the shared ids, so the existing report e2e keeps its selectors.
