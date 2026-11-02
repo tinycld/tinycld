@@ -396,6 +396,7 @@ function DeleteSubmission({
                 confirmLabel="Delete"
                 isDestructive
                 isSubmitting={remove.isPending}
+                confirmTestID="web-form-delete-confirm"
                 onConfirm={confirm}
                 onClose={() => setIsConfirming(false)}
             />

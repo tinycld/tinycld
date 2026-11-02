@@ -33,6 +33,7 @@ export function useRuleDraft(
         trigger: validate,
         handleSubmit,
         setFocus,
+        setError,
         formState: { errors, isSubmitted },
     } = useForm({
         resolver: (values, context, options) =>
@@ -112,6 +113,8 @@ export function useRuleDraft(
     return {
         control,
         draft,
+        setError,
+        getValues,
         errors,
         isSubmitted,
         setFocus,

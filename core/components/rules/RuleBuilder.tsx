@@ -7,6 +7,7 @@ import { extendCatalogForDraft } from '@tinycld/core/lib/automation/form-trigger
 import { useAutomationCatalog } from '@tinycld/core/lib/automation/use-automation-catalog'
 import { useRuleDraft } from '@tinycld/core/lib/automation/use-rule-draft'
 import { useRuleMutations } from '@tinycld/core/lib/automation/use-rule-mutations'
+import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import type { FormDefinition } from '@tinycld/core/lib/forms/definition'
 import { useFormRow } from '@tinycld/core/lib/forms/use-forms-of-host'
 import { useStore } from '@tinycld/core/lib/pocketbase'
@@ -123,7 +124,7 @@ function BuilderContent({
             catalog={catalog}
             isLocked={Boolean(ruleId)}
             isSaving={save.isPending}
-            onSave={draft => save.mutate(draft, { onSuccess: onClose })}
+            onSave={(draft, onError) => save.mutate(draft, { onSuccess: onClose, onError })}
         />
     )
 }
@@ -157,7 +158,8 @@ interface RuleBuilderFormProps {
     catalog: NonNullable<ReturnType<typeof useAutomationCatalog>['catalog']>
     isLocked: boolean
     isSaving: boolean
-    onSave: (draft: RuleDraft) => void
+    /** onError puts the server's field errors (a refused rule) on the form. */
+    onSave: (draft: RuleDraft, onError: (error: unknown) => void) => void
 }
 
 function RuleBuilderForm({
@@ -195,7 +197,11 @@ function RuleBuilderForm({
         return () => cancelAnimationFrame(raf)
     }, [shouldFocusName, setFocus])
 
-    const handleSave = form.handleSubmit(onSave)
+    const onServerError = handleMutationErrorsWithForm({
+        setError: form.setError,
+        getValues: form.getValues,
+    })
+    const handleSave = form.handleSubmit(draft => onSave(draft, onServerError))
 
     return (
         <>
