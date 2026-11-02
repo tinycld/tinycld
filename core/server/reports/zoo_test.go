@@ -100,6 +100,7 @@ func newZoo(t testing.TB) *zoo {
 		&core.NumberField{Name: "grams"},
 		&core.DateField{Name: "fed"},
 		&core.TextField{Name: "note"},
+		&core.TextField{Name: "due"},
 	)
 	z.save(t, feedings)
 
@@ -183,6 +184,7 @@ func registerZooSources() {
 			{Key: "grams", Label: "Grams", Type: Number, Aggregates: SumAll},
 			{Key: "fed", Label: "Fed", Type: Date, Aggregates: MinMax},
 			{Key: "note", Label: "Note", Type: Text},
+			{Key: "due", Label: "Due", Type: Date, TextDay: true, Aggregates: MinMax},
 		},
 		Links:            []Link{{Key: "animal", Label: "Animal", Target: "zoo.animals", Cardinality: ToOne, Field: "animal"}},
 		FiscalStartMonth: func(core.App) int { return zooFiscalStart },
@@ -247,7 +249,7 @@ func (z *zoo) rec(t testing.TB, key, collection string, data map[string]any) *co
 func (z *zoo) feeding(t testing.TB, key string, animal *core.Record, cost int, day string, grams int) *core.Record {
 	t.Helper()
 	return z.rec(t, key, "zoo_feedings", map[string]any{
-		"animal": animal.Id, "cost": cost, "currency": "USD", "fed": day + " 00:00:00.000Z", "grams": grams, "note": key,
+		"animal": animal.Id, "cost": cost, "currency": "USD", "fed": day + " 00:00:00.000Z", "grams": grams, "note": key, "due": day,
 	})
 }
 

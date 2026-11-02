@@ -113,7 +113,11 @@ func checkField(col *core.Collection, f Field) string {
 	if pf.GetHidden() {
 		return fmt.Sprintf("column %q is hidden from the API", f.Column)
 	}
-	if !slices.Contains(compatible[f.Type], pf.Type()) {
+	want := compatible[f.Type]
+	if f.TextDay {
+		want = []string{core.FieldTypeText}
+	}
+	if !slices.Contains(want, pf.Type()) {
 		return fmt.Sprintf("column %q is a %s field, which a %s field cannot read", f.Column, pf.Type(), f.Type)
 	}
 	switch x := pf.(type) {

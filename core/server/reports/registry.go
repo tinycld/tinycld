@@ -84,6 +84,10 @@ type Field struct {
 	Currency string
 	// Options label a Select field's values.
 	Options []Option
+	// TextDay, on a Date field, reads a text column that holds a day as
+	// YYYY-MM-DD, for a package that stores days as text. The engine reads its
+	// first ten characters, as it reads a date column's day.
+	TextDay bool
 }
 
 // Link is a path from one source to another.
@@ -222,6 +226,9 @@ func validateField(src *Source, f *Field) error {
 	case Text, Number, Money, Date, DateTime, Bool, Select, Relation:
 	default:
 		return fmt.Errorf("unknown type %q", f.Type)
+	}
+	if f.TextDay && f.Type != Date {
+		return fmt.Errorf("only a date field reads a text day")
 	}
 	numeric := f.Type == Number || f.Type == Money
 	for _, a := range f.Aggregates {
