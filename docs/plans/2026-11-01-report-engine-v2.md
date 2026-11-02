@@ -9769,6 +9769,25 @@ git push origin books/p5-trial-balance
 
 ---
 
+### Task 25e: Virtual tables in report SQL (changesignal), lists bound through json_each
+
+Approved by the human 2026-11-02 ("we need to allow virtual tables such as json_each"; recommended fix "yes").
+
+Why: `changesignal.tablesRead` (core/server/changesignal/viewcheck.go:115) refuses every `VOpen`, because a VOpen opcode carries a vtab pointer, not a table name, so the check cannot tell a table-valued function (json_each, json_tree: no stored rows, nothing to signal) from a stored virtual table (an FTS5 index, whose rows change when its source collection changes). The modernc driver has no authorizer callback. Report SQL therefore expands lists as VALUES terms (reports/options.go:62-81, reports/run.go:844-879).
+
+**Files:** core/server/changesignal (viewcheck.go, topics.go, registry.go, tests), core/server/fts/register.go (registration), core/server/reports (options.go, run.go, and any other list/IN expansion you find; tests), package docs where changesignal's registries are documented (tinycld/docs/packages.md "Registries" section).
+
+1. Stored virtual tables: read `sqlite_schema` rows of type 'table' whose `sql` starts with `CREATE VIRTUAL TABLE` (case-insensitive, whitespace-tolerant). Eponymous table-valued functions are not in sqlite_schema.
+2. Names a query reaches: tokenize the query's SQL for identifiers (quoted and unquoted; strip `{{ }}` dbx placeholders; case-insensitive as SQLite is), and add, recursively, the identifiers of the SQL of every VIEW the query names (sqlite_schema type 'view'), with a cycle guard. A name-scan is conservative: a false hit (a column or alias spelled like a vtab) only means the vtab must be mapped or refused — never a missed topic.
+3. VOpen handling in tablesRead: if the query reaches no stored virtual table, VOpen is a table-valued function → allowed, adds no table. If it reaches stored virtual tables, each must be mapped through a new registry `changesignal.RegisterVirtualTable(table string, collections ...string)` (same rules/panics as RegisterView); a mapped vtab adds its collections to the tables read (so TopicsRead returns their topics); an unmapped one is refused with a message naming it. CheckViews: a view that reads a mapped vtab must declare the mapped collections.
+4. fts.Register registers each Config's Table → Collection with RegisterVirtualTable, so a report or view may read an FTS index and stays live. Core names no package: tests use fictional zoo_* collections and a fictional FTS5 table created in the test.
+5. Report SQL: bind explicit option values and expanded group keys as one JSON parameter read through `json_each(?)` (or json_each of a bound param with the needed columns via json_extract for multi-column keys) instead of VALUES literals, where it simplifies the SQL and removes statement-size growth; keep exact value semantics (text vs number typing, NULL, currency keys) — prove with the existing tests unchanged plus new ones. Grep reports for other long literal lists / IN (?,?,...) expansions and move them too if they can exceed SQLite limits.
+6. Tests (failing first): json_each query allowed with no extra topics; an FTS5 vtab read refused when unmapped and mapped to its collection topic when registered; a view over an FTS vtab (reached through view SQL); a query that names a vtab only as a column alias (conservative refusal or mapping, documented); CheckViews with a mapped vtab; reports: option lists and group-reference expansion with thousands of values, mixed types, rule-parity fuzz still green; `changesignal` docs updated (package comment + packages.md registry list).
+
+Run: `cd core/server && go test -tags no_ui ./changesignal/ ./fts/ ./reports/` and the full `tinycld-pkg check`; e2e: reports-source-params, reports-filter, reports-view (E2E_PORT=7210 E2E_PORT_2=7211).
+
+---
+
 ### Task 26: Help and package docs
 
 **Files:**
