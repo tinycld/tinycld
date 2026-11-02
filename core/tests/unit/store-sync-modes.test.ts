@@ -54,6 +54,8 @@ const CORE_COLLECTIONS = [
     'automation_catalog',
     'comment_mentions',
     'form_publications',
+    'form_submissions',
+    'form_submission_files',
     'forms',
     'app_passwords',
     'mfa_totp',
