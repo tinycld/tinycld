@@ -171,6 +171,11 @@ func (l *lookupCtx) param(id, at string) (expr, error) {
 
 func (l *lookupCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(l, l.r, n, at) }
 
+// subtotal reads a layout's section or earlier row at the cell being
+// compiled, as the computed row's own formula does; elsewhere outer refuses
+// it.
+func (l *lookupCtx) subtotal(id, at string) (expr, error) { return l.outer.subtotal(id, at) }
+
 func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	bound, err := bindValuePath(l.r.c.p.app, l.src, p, at, pathValue)
 	if err != nil {

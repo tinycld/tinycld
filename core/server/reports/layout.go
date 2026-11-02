@@ -279,7 +279,11 @@ func layoutKey(raw json.RawMessage) (any, error) {
 	return nil, fmt.Errorf("not a scalar")
 }
 
-func (lc *layoutCtx) col(_, at string) (expr, error)       { return expr{}, lc.only(at) }
+// col is refused: a computed row's cell in a column is its own formula, so
+// a column read from it (even inside a lookup) would read itself.
+func (lc *layoutCtx) col(id, at string) (expr, error) {
+	return expr{}, invalid(at, fmt.Sprintf("a computed row reads sections' subtotals, earlier rows, values and lookups: its cell in %q is this formula, so reading the column would read itself", id))
+}
 func (lc *layoutCtx) path(_ Path, at string) (expr, error) { return expr{}, lc.only(at) }
 func (lc *layoutCtx) param(_, at string) (expr, error)     { return expr{}, lc.only(at) }
 func (lc *layoutCtx) aggregate(_ Aggregate, _ *Node, _ int, at string) (expr, error) {

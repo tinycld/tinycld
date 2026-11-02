@@ -165,7 +165,7 @@ func TestALayoutRowLooksAValueUp(t *testing.T) {
 }
 
 // A lookup in a computed row reads the run's params, and refuses a report
-// column: a computed row has no report row to read.
+// column: the row's cell in that column is its own formula.
 func TestALayoutLookupReadsParamsButNoColumn(t *testing.T) {
 	z := newZoo(t)
 	layout := func(where string) string {
@@ -181,7 +181,29 @@ func TestALayoutLookupReadsParamsButNoColumn(t *testing.T) {
 	res := z.run(t, "ann", layout(byParam), Options{}, map[string]string{"who": `"Zed"`})
 	requireRows(t, res, "cost", int64(3500), int64(3500), int64(300))
 	_, err := z.try(t, "ann", layout(`{"op":"eq","args":[{"path":[{"field":"name"}]},{"col":"species"}]}`), Options{}, nil)
-	requireSpecError(t, err, 400, "layout.1.formula.where.args.1", "a computed row reads")
+	requireSpecError(t, err, 400, "layout.1.formula.where.args.1", "would read itself")
+}
+
+// A lookup in a computed row reads what the row's own formula reads: a
+// section's subtotal and an earlier row, at the cell being computed. fits is
+// the heaviest animal ann may list whose weight times 10 is at most the
+// zebras' cost (1000); next is the lightest one heavier than fits. Mo (12)
+// would be the answer to both, but ann cannot list him.
+func TestALayoutLookupReadsSectionsAndEarlierRows(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species"}],
+		"layout":[{"section":"z","title":"Zebras","key":"zebra"},
+			{"row":"fits","label":"Fits","formula":{"op":"lookup","source":"zoo.animals","pick":"max",
+				"where":{"op":"lte","args":[{"op":"mul","args":[{"path":[{"field":"weight"}]},{"value":10}]},{"subtotal":"z"}]},
+				"value":{"path":[{"field":"weight"}]}}},
+			{"row":"next","label":"Next","formula":{"op":"lookup","source":"zoo.animals",
+				"where":{"op":"gt","args":[{"path":[{"field":"weight"}]},{"subtotal":"fits"}]},
+				"value":{"path":[{"field":"weight"}]}}}]}`, Options{}, nil)
+	requireRows(t, res, "label", "Zebras", "Total Zebras", "Fits", "Next")
+	requireRows(t, res, "cost", int64(1000), int64(1000), int64(4), int64(190))
 }
 
 func TestALookupIsRefusedWhereItCannotBeRead(t *testing.T) {
