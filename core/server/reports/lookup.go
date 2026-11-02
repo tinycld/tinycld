@@ -137,8 +137,24 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 	if n.Pick == "max" {
 		pick = "max"
 	}
-	out.sql = fmt.Sprintf("(SELECT %s(%s)\n%s\nWHERE %s)", pick, v.sql, sc.render(), where)
+	from := sc.render()
+	out.sql = fmt.Sprintf("(SELECT %s(%s)\n%s\nWHERE %s)", pick, v.sql, from, where)
+	if v.shown != "" {
+		out.shown = pickedShown(n, v, from, where)
+	}
 	return out, nil
+}
+
+// pickedShown is the shown form of a looked-up value that mixes a select's
+// values with other text, read from the row whose stored value the lookup
+// picks: the smallest (min) or largest (max) one, as min() and max() pick it,
+// ties broken by the shown form.
+func pickedShown(n *Node, v expr, from, where string) string {
+	dir := "ASC"
+	if n.Pick == "max" {
+		dir = "DESC"
+	}
+	return fmt.Sprintf("(SELECT %s\n%s\nWHERE %s AND %s IS NOT NULL\nORDER BY %s %s, %s LIMIT 1)", v.shown, from, where, v.sql, v.sql, dir, v.shown)
 }
 
 // pickedAmount is a lookup of an amount that carries its row's currency: the

@@ -151,6 +151,24 @@ func TestSelectGroupsReadInOptionLabelOrder(t *testing.T) {
 	}
 }
 
+// A looked-up mix of a select's values and other text is shown by the picked
+// row's option label, and compared by its stored value.
+func TestALookedUpMixShowsItsOptionLabels(t *testing.T) {
+	z := newZoo(t)
+	region := `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"id"}]},{"col":"animal"}]},
+		"value":{"op":"coalesce","args":[{"path":[{"link":"site"},{"field":"region"}]},{"value":""}]}}`
+	spec := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"region","formula":` + region + `}],"sort":[{"col":"note"}],"detail":{"label":` + region + `}`
+	res := z.run(t, "ann", spec+`}`, Options{}, nil)
+	requireRows(t, res, "region", "North", "North", "South", "South", nil)
+	requireRows(t, res, "label", "North", "North", "South", "South", "Total")
+	filtered := z.run(t, "ann", spec+`,"filter":{"op":"eq","args":[`+region+`,{"value":"north"}]}}`, Options{}, nil)
+	requireRows(t, filtered, "note", "f1", "f2", nil)
+	// A max pick shows the row it picks: the largest stored value, south.
+	top := `{"op":"lookup","source":"zoo.animals","pick":"max","value":{"op":"coalesce","args":[{"path":[{"link":"site"},{"field":"region"}]},{"value":""}]}}`
+	requireRows(t, z.run(t, "ann", withDetailLabel(top), Options{}, nil), "label", "South", "South", "South", "South", "Total")
+}
+
 func TestADetailLabelIsRefusedOnAPivot(t *testing.T) {
 	app := withZooRegistry(t)
 	spec := loadSpec(t, `{"version":2,"source":"zoo.feedings","columns":[{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
