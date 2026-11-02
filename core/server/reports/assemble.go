@@ -339,11 +339,17 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 		}
 		out[cp.col.ID] = rn.cellValue(cp, row[name], grouped)
 		// A currency the value carries (a record's or a looked-up row's own)
-		// is its row's; else the column's currency key holds it.
-		if v := row[fmt.Sprintf("vcur%d", idx)]; v != nil {
+		// is its row's; else the column's currency key holds it. A column with
+		// a fixed currency that some row carries its own on names a currency
+		// cell, so every other row shows the fixed code there.
+		cur := rn.c.currencyOf[cp.col.ID]
+		switch v := row[fmt.Sprintf("vcur%d", idx)]; {
+		case v != nil:
 			out[cp.col.ID+"@currency"] = v
-		} else if ck := rn.c.currencyOf[cp.col.ID].key; ck != "" {
-			out[cp.col.ID+"@currency"] = row[ck]
+		case cur.key != "":
+			out[cp.col.ID+"@currency"] = row[cur.key]
+		case cur.fixed != nil && rn.c.carried[cp.col.ID]:
+			out[cp.col.ID+"@currency"] = rn.currencyOf(row, cur)
 		}
 		rn.labelCell(out, cp, row)
 	}

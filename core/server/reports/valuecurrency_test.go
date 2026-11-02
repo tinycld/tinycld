@@ -191,6 +191,34 @@ func TestAComputedRowKeepsALookedUpAmountsCurrency(t *testing.T) {
 	}
 }
 
+// A column with a fixed currency (price, USD) and a computed row that carries
+// its own (leo's fee, EUR) names a currency cell: the section and its
+// subtotal show the fixed code there, the computed row its own.
+func TestAFixedCurrencyColumnKeepsItsCodeBesideACarriedRow(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+		{"id":"species","path":[{"field":"species"}]},
+		{"id":"price","path":[{"field":"price"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species"}],
+		"layout":[{"section":"lions","title":"Lions","key":"lion"},
+			{"row":"fee","label":"Leo fee","formula":`+leoFee+`}]}`, Options{}, nil)
+	requireRows(t, res, "label", "Lions", "Total Lions", "Leo fee")
+	requireRows(t, res, "price", int64(500000), int64(500000), int64(700))
+	requireRows(t, res, "price@currency", "USD", "USD", "EUR")
+	if c := res.Columns[1]; c.CurrencyCell != "price@currency" {
+		t.Fatalf("price column = %+v", c)
+	}
+	// Expanded, the section's detail rows read the fixed code too.
+	open := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+		{"id":"species","path":[{"field":"species"}]},
+		{"id":"price","path":[{"field":"price"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species"}],
+		"layout":[{"section":"lions","title":"Lions","key":"lion"},
+			{"row":"fee","label":"Leo fee","formula":`+leoFee+`}]}`, Options{ExpandAll: true}, nil)
+	requireRows(t, open, "kind", "group", "detail", "subtotal", "computed")
+	requireRows(t, open, "price@currency", "USD", "USD", "USD", "EUR")
+}
+
 // ivy is a second animal ann owns with a 300 fee, in euros: zed's 300 is in
 // dollars.
 func addIvy(t *testing.T, z *zoo) {
