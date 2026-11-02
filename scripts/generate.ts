@@ -26,7 +26,7 @@ import {
     type CliPkg,
 } from './gen-cli'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
-import { emitFormHosts, loadFormHosts, mergeFormHosts } from './gen-form-hosts'
+import { emitFormHosts, loadFormHosts, mergeAllFormHosts } from './gen-form-hosts'
 import {
     buildHelpSource,
     collectHelpImages,
@@ -588,7 +588,7 @@ async function main() {
                 hosts: await loadFormHosts(f.dir, f.name, f.manifest.forms!.hosts),
             }))
     )
-    emitFormHosts(mergeFormHosts(formFeatures))
+    emitFormHosts(mergeAllFormHosts(formFeatures))
 
     // --- 1c. @tinycld/app-generated package manifest -----------------------
     // Makes lib/generated/ a real, name-resolvable package so `@tinycld/app-generated/*`

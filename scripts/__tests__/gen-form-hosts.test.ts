@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { loadFormHosts, mergeFormHosts } from '../gen-form-hosts'
+import { loadFormHosts, mergeAllFormHosts, mergeFormHosts } from '../gen-form-hosts'
 
 const tmpDirs: string[] = []
 afterEach(() => {
@@ -140,5 +140,21 @@ describe('mergeFormHosts with computed and table built-ins', () => {
         expect(builtins[0].columns?.[0].key).toBe('qty')
         expect(builtins[1].expression).toEqual({ sumOf: [{ var: 'lines' }, 'qty'] })
         expect(builtins[1].decimals).toBe(2)
+    })
+})
+
+describe('mergeAllFormHosts', () => {
+    it('always includes the core web form host', () => {
+        const merged = mergeAllFormHosts([])
+        expect(merged.hosts.map(h => h.key)).toEqual(['core:web_form'])
+        expect(merged.hosts[0]).toMatchObject({
+            pkgSlug: 'core',
+            collection: 'form_submissions',
+            builtin: [],
+        })
+    })
+
+    it('rejects a package that uses the core slug', () => {
+        expect(() => mergeAllFormHosts([{ slug: 'core', hosts: [] }])).toThrow(/reserved/)
     })
 })

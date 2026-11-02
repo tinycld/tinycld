@@ -1,3 +1,4 @@
+import { CORE_FORM_HOST_SLUG, CORE_FORM_HOSTS } from '../forms/core-hosts'
 import { type FormHostDef, type FormHostDefInput, hostDefListSchema } from '../forms/host'
 import type { FormHostUi } from '../forms/host-ui'
 
@@ -14,6 +15,12 @@ type FormHostEntryLike = {
 }
 
 const EMPTY_UI: FormHostUi = { components: {} }
+
+/** The hosts core owns, shaped as a package entry so they derive the same way. */
+export const CORE_FORM_HOST_ENTRY: FormHostEntryLike = {
+    manifest: { name: 'Core', slug: CORE_FORM_HOST_SLUG },
+    formHosts: CORE_FORM_HOSTS,
+}
 
 export function deriveFormHosts(entries: readonly FormHostEntryLike[]): FormHost[] {
     const out: FormHost[] = []
