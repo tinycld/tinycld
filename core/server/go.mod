@@ -43,6 +43,7 @@ require (
 	github.com/pocketbase/pocketbase v0.40.4
 	github.com/pquerna/otp v1.5.0
 	github.com/skyterra/y-crdt v0.0.0-20260224023949-c0cb10d3f33e
+	github.com/spf13/cast v1.10.0
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/crypto v0.58.0
@@ -88,7 +89,6 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/teambition/rrule-go v1.8.2 // indirect

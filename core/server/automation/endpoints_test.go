@@ -70,7 +70,7 @@ func TestDryRunScoping(t *testing.T) {
 		Match:      "any",
 		Conditions: []Condition{{Field: "title", Op: "contains", Value: "urgent"}},
 	}}}
-	res, err := eng.dryRun(u, "tickets:ticket-created", ast)
+	res, err := eng.dryRun(u, "tickets:ticket-created", nil, ast)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestDryRunZeroMatchesMarshalsToEmptyArray(t *testing.T) {
 		Conditions: []Condition{{Field: "title", Op: "contains", Value: "matches-nothing"}},
 	}}}
 
-	res, err := eng.dryRun(u, "tickets:ticket-created", ast)
+	res, err := eng.dryRun(u, "tickets:ticket-created", nil, ast)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestDryRunZeroMatchesMarshalsToEmptyArray(t *testing.T) {
 
 	// An error return must not emit `null` either — the client parses the body
 	// on the failure path too.
-	bad, err := eng.dryRun(u, "tickets:no-such-trigger", ast)
+	bad, err := eng.dryRun(u, "tickets:no-such-trigger", nil, ast)
 	if err == nil {
 		t.Fatal("unknown trigger must error")
 	}
@@ -142,7 +142,7 @@ func TestDryRunUnscopedRequiresAdmin(t *testing.T) {
 		Conditions: []Condition{{Field: "title", Op: "contains", Value: "alert"}},
 	}}}
 
-	if _, err := eng.dryRun(u, "tickets:broadcast-created", ast); err == nil {
+	if _, err := eng.dryRun(u, "tickets:broadcast-created", nil, ast); err == nil {
 		t.Fatal("non-admin caller against an unscoped collection must be rejected")
 	}
 
@@ -150,7 +150,7 @@ func TestDryRunUnscopedRequiresAdmin(t *testing.T) {
 	if err := app.Save(u); err != nil {
 		t.Fatal(err)
 	}
-	res, err := eng.dryRun(u, "tickets:broadcast-created", ast)
+	res, err := eng.dryRun(u, "tickets:broadcast-created", nil, ast)
 	if err != nil {
 		t.Fatalf("admin caller must be allowed against an unscoped collection: %v", err)
 	}

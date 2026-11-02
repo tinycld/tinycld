@@ -266,12 +266,12 @@ func checkPersonalAccess(app core.App, rule *core.Record, pkg string) error {
 // ExecuteAction runs one rule action against one trigger event. depth is the
 // chain depth to stamp onto any resulting engine write.
 func ExecuteAction(app core.App, defs *Defs, ref string, rawParams map[string]any, rule *core.Record, trigger TriggerDef, record *core.Record, depth int) error {
-	return ExecuteActionContext(context.Background(), app, defs, ref, rawParams, rule, trigger, record, depth)
+	return ExecuteActionContext(context.Background(), app, defs, ref, rawParams, rule, trigger, record, depth, nil)
 }
 
 // ExecuteActionContext is ExecuteAction bound to ctx. A native handler gets
 // ctx as ActionRequest.Ctx; a record-op does not write once ctx has ended.
-func ExecuteActionContext(ctx context.Context, app core.App, defs *Defs, ref string, rawParams map[string]any, rule *core.Record, trigger TriggerDef, record *core.Record, depth int) error {
+func ExecuteActionContext(ctx context.Context, app core.App, defs *Defs, ref string, rawParams map[string]any, rule *core.Record, trigger TriggerDef, record *core.Record, depth int, fields []DynamicField) error {
 	action, pkg, ok := defs.Action(ref)
 	if !ok {
 		return fmt.Errorf("unknown action %q (package uninstalled?)", ref)
@@ -283,9 +283,9 @@ func ExecuteActionContext(ctx context.Context, app core.App, defs *Defs, ref str
 			relationKeys[p.Key] = true
 		}
 	}
-	env := TemplateEnv{App: app, Labels: defs.RecordLabels, OwnerID: ownerID}
+	env := TemplateEnv{App: app, Labels: defs.RecordLabels, OwnerID: ownerID, Dynamic: dynamicValues(fields)}
 	params := substituteParams(action, rawParams, record, trigger, relationKeys, env)
-	req := ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record, Depth: depth, Ctx: ctx}
+	req := ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record, Depth: depth, Ctx: ctx, Fields: fields}
 
 	// Both kinds pass the relation-id gates: a record-op's superuser Save
 	// bypasses collection rules just as thoroughly as a native handler's

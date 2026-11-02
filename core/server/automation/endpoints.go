@@ -73,7 +73,7 @@ func (e *Engine) ownerFilterFor(trigger TriggerDef) (string, bool) {
 	return "", false
 }
 
-func (e *Engine) dryRun(caller *core.Record, triggerRef string, ast ConditionsAST) (dryRunResult, error) {
+func (e *Engine) dryRun(caller *core.Record, triggerRef string, config map[string]any, ast ConditionsAST) (dryRunResult, error) {
 	// Non-nil so zero matches marshals to [] rather than null: the client maps
 	// over this array, and a null crashes the dry-run panel on the very common
 	// "conditions match nothing yet" case.
@@ -101,7 +101,10 @@ func (e *Engine) dryRun(caller *core.Record, triggerRef string, ast ConditionsAS
 		if !triggerAllowed(e.app, triggerRef, r) {
 			continue
 		}
-		if EvaluateConditions(ast, r, trigger) {
+		if !ruleAllowed(e.app, triggerRef, config, r) {
+			continue
+		}
+		if EvaluateConditionsWith(ast, r, trigger, dynamicValues(dynamicFields(e.app, triggerRef, config, r))) {
 			out.Matches = append(out.Matches, dryRunMatch{ID: r.Id, Summary: triggerSummary(r, trigger, nil)})
 		}
 	}
@@ -132,13 +135,14 @@ func registerEndpoints(app core.App, engine *Engine) {
 
 		se.Router.POST("/api/automation/dry-run", func(re *core.RequestEvent) error {
 			var body struct {
-				Trigger    string        `json:"trigger"`
-				Conditions ConditionsAST `json:"conditions"`
+				Trigger       string         `json:"trigger"`
+				TriggerConfig map[string]any `json:"triggerConfig"`
+				Conditions    ConditionsAST  `json:"conditions"`
 			}
 			if err := re.BindBody(&body); err != nil {
 				return re.BadRequestError("invalid body", err)
 			}
-			res, err := engine.dryRun(re.Auth, body.Trigger, body.Conditions)
+			res, err := engine.dryRun(re.Auth, body.Trigger, body.TriggerConfig, body.Conditions)
 			if err != nil {
 				return re.BadRequestError(err.Error(), nil)
 			}

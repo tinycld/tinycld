@@ -82,20 +82,20 @@ func toFloat(v any) (float64, bool) {
 	}
 }
 
-func stringValues(record *core.Record, field string) []string {
-	if vs := record.GetStringSlice(field); len(vs) > 0 {
+func stringValues(src valueSource, field string) []string {
+	if vs := src.GetStringSlice(field); len(vs) > 0 {
 		return vs
 	}
-	if s := record.GetString(field); s != "" {
+	if s := src.GetString(field); s != "" {
 		return []string{s}
 	}
 	return nil
 }
 
-func evalCondition(c Condition, record *core.Record) bool {
+func evalCondition(c Condition, src valueSource) bool {
 	switch c.Op {
 	case "contains", "not_contains", "equals", "starts_with":
-		field := strings.ToLower(normalize(record.Get(c.Field)))
+		field := strings.ToLower(normalize(src.Get(c.Field)))
 		want := strings.ToLower(normalize(c.Value))
 		var hit bool
 		switch c.Op {
@@ -110,7 +110,7 @@ func evalCondition(c Condition, record *core.Record) bool {
 		}
 		return hit
 	case "eq", "neq", "gt", "lt":
-		have := record.GetFloat(c.Field)
+		have := src.GetFloat(c.Field)
 		want, ok := toFloat(c.Value)
 		if !ok {
 			return false
@@ -126,11 +126,11 @@ func evalCondition(c Condition, record *core.Record) bool {
 			return have < want
 		}
 	case "is_true":
-		return record.GetBool(c.Field)
+		return src.GetBool(c.Field)
 	case "is_false":
-		return !record.GetBool(c.Field)
+		return !src.GetBool(c.Field)
 	case "before", "after", "within_last_days":
-		have := record.GetDateTime(c.Field).Time()
+		have := src.GetDateTime(c.Field).Time()
 		if have.IsZero() {
 			return false
 		}
@@ -162,7 +162,7 @@ func evalCondition(c Condition, record *core.Record) bool {
 	case "is", "is_not":
 		want := normalize(c.Value)
 		hit := false
-		for _, v := range stringValues(record, c.Field) {
+		for _, v := range stringValues(src, c.Field) {
 			if v == want {
 				hit = true
 				break
@@ -173,19 +173,19 @@ func evalCondition(c Condition, record *core.Record) bool {
 		}
 		return !hit
 	case "is_empty":
-		return len(stringValues(record, c.Field)) == 0 && normalize(record.Get(c.Field)) == ""
+		return len(stringValues(src, c.Field)) == 0 && normalize(src.Get(c.Field)) == ""
 	}
 	// Unknown operator: a rule authored against a newer core than this one.
 	// Fail closed (no match) rather than erroring the whole dispatch.
 	return false
 }
 
-func evalGroup(g ConditionGroup, record *core.Record, exposed map[string]bool) bool {
+func evalGroup(g ConditionGroup, src valueSource, exposed map[string]bool) bool {
 	if len(g.Conditions) == 0 {
 		return true
 	}
 	for _, c := range g.Conditions {
-		hit := exposed[c.Field] && evalCondition(c, record)
+		hit := exposed[c.Field] && evalCondition(c, src)
 		if g.Match == "any" && hit {
 			return true
 		}
@@ -196,7 +196,12 @@ func evalGroup(g ConditionGroup, record *core.Record, exposed map[string]bool) b
 	return g.Match != "any"
 }
 
-// EvaluateConditions applies the one-level AND/OR AST. No conditions = match.
+// EvaluateConditions is EvaluateConditionsWith without dynamic values.
+func EvaluateConditions(ast ConditionsAST, record *core.Record, trigger TriggerDef) bool {
+	return EvaluateConditionsWith(ast, record, trigger, nil)
+}
+
+// EvaluateConditionsWith applies the one-level AND/OR AST. No conditions = match.
 //
 // record != nil: a condition whose Field isn't in this trigger's
 // exposedFields evaluates to false regardless of operator — fail closed, the
@@ -210,7 +215,11 @@ func evalGroup(g ConditionGroup, record *core.Record, exposed map[string]bool) b
 // Every evalCondition branch reads the record, so this guard is what keeps
 // those paths from dereferencing nil — a rule saved with conditions still
 // reaches here on both. An empty AST matches, as it does everywhere else.
-func EvaluateConditions(ast ConditionsAST, record *core.Record, trigger TriggerDef) bool {
+//
+// dyn holds a run's dynamic values ("fields.<key>"), which a condition reads
+// as it reads a column. A key neither the trigger nor the resolver exposes
+// fails closed, the same as a hidden column.
+func EvaluateConditionsWith(ast ConditionsAST, record *core.Record, trigger TriggerDef, dyn map[string]any) bool {
 	if len(ast.Groups) == 0 {
 		return true
 	}
@@ -218,8 +227,12 @@ func EvaluateConditions(ast ConditionsAST, record *core.Record, trigger TriggerD
 		return false
 	}
 	exposed := exposedFields(record, trigger)
+	for key := range dyn {
+		exposed[key] = true
+	}
+	src := overlaySource{Record: record, dyn: dyn}
 	for _, g := range ast.Groups {
-		hit := evalGroup(g, record, exposed)
+		hit := evalGroup(g, src, exposed)
 		if ast.Match == "any" && hit {
 			return true
 		}
