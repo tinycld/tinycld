@@ -77,6 +77,8 @@ for rules that run when records change, which are a different thing.
 
 An owner or admin opens **Settings → Forms**. With one record type the list opens directly; otherwise pick the record type first. The list shows every form of that type. Drag the handle to reorder the type selector, and use the menu on a row to rename, duplicate, make default, archive or delete a form. The default form cannot be deleted or archived; a form that records still use cannot be deleted, archive it instead.
 
+To collect forms from a website, see [Web forms](help://core:web-forms).
+
 ## Editing a form
 
 The editor shows the form as users see it. Select a field to edit its label, width (Full, Half, Third or Quarter), requirement, default and kind-specific settings in the panel. Drag a field by its handle to move it, also onto another page: a chip with its label follows the pointer and a bar shows where it lands. On a phone or a tablet, hold the handle for a moment before you drag. To move a field without dragging, use **Page**, **Move up** and **Move down** in its panel. **Add field** at the end of a page asks for the field's label, then adds a field of the chosen kind and opens its panel. **Add page** appends a page; a page can be deleted only when it is empty.
