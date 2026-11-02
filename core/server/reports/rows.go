@@ -24,6 +24,12 @@ type compiler struct {
 	// own currency) to the currency key of w that holds it, for every such
 	// amount read inside a total.
 	valueCur map[string]string
+	// valueCurErr is why a carried currency read inside a total got no key:
+	// its record leaf or lookup does not compile.
+	valueCurErr map[string]error
+	// sectionCur is each column's currency on a first-level group row, which
+	// a layout's section subtotal reads.
+	sectionCur map[string]currency
 	// carried holds the columns whose cells carry their own currency on some
 	// row (vcur<idx>, the cell <id>@currency).
 	carried map[string]bool
@@ -53,7 +59,7 @@ type labelPlan struct {
 }
 
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
-	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, valueCur: map[string]string{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}}
+	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, valueCur: map[string]string{}, valueCurErr: map[string]error{}, sectionCur: map[string]currency{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}}
 	if app != nil {
 		c.fiscal = fiscalStartOf(p.base, app)
 	}
@@ -93,7 +99,7 @@ type rowsCTE struct {
 
 func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	// Each statement builds its own w; the currency keys come out the same.
-	c.currencies, c.currencyOf, c.valueCur = nil, map[string]currency{}, map[string]string{}
+	c.currencies, c.currencyOf, c.valueCur, c.valueCurErr = nil, map[string]currency{}, map[string]string{}, map[string]error{}
 	r := &rowsCTE{c: c, s: s, root: newScope(s, c.p.base), raw: map[string]string{}, byExpr: map[string]string{}}
 	r.add("__id", q(r.root.alias, "id"))
 	if f := c.p.spec.Filter; f != nil {
@@ -120,6 +126,12 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 		}
 		if g.group.Bucket == "" {
 			c.groupTargets[i] = e.target
+		}
+		// A group by an amount that carries its own currency (a looked-up
+		// row's) groups by that currency too: 300 USD and 300 EUR are two
+		// groups.
+		if e.typ == Money && e.cur.sql != "" && e.cur.id != "" {
+			r.currencyKey(e.cur.id, e.cur.sql)
 		}
 		r.add(fmt.Sprintf("k%d", i), e.sql)
 	}
@@ -159,37 +171,37 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 // the group key's own expression, so the group keys are in w by now.
 func (r *rowsCTE) valueCurrencies() {
 	seen := map[string]bool{}
-	var walk func(n *Node, inTotal bool)
-	walk = func(n *Node, inTotal bool) {
+	var walk func(n *Node, at string, inTotal bool)
+	walk = func(n *Node, at string, inTotal bool) {
 		if n == nil {
 			return
 		}
 		switch {
 		case inTotal && (n.Record != "" || n.Op == "lookup"):
-			r.valueCurrencyKey(n)
+			r.valueCurrencyKey(n, at)
 		case inTotal && n.Col != "" && !seen[n.Col]:
 			// A formula column read inside a total is read per base row.
 			if cp := r.c.p.byID[n.Col]; cp != nil && cp.col.Formula != nil && cp.col.Aggregate == "" {
 				seen[n.Col] = true
-				walk(cp.col.Formula, true)
+				walk(cp.col.Formula, cp.at+".formula", true)
 			}
 		}
 		inTotal = inTotal || aggregateOp(n) || windowOp(n)
-		for _, a := range n.Args {
-			walk(a, inTotal)
+		for i, a := range n.Args {
+			walk(a, fmt.Sprintf("%s.args.%d", at, i), inTotal)
 		}
 	}
 	for _, cp := range r.c.p.cols {
-		walk(cp.col.Formula, cp.col.Aggregate != "")
+		walk(cp.col.Formula, cp.at+".formula", cp.col.Aggregate != "")
 	}
 	for _, g := range r.c.p.groups {
-		walk(g.group.Label, false)
+		walk(g.group.Label, g.at+".label", false)
 	}
 	for _, s := range r.c.p.sort {
-		walk(s.formula, false)
+		walk(s.formula, s.at, false)
 	}
-	// Task 7 adds walk(g.group.Having, false) beside the label walk; Task 10
-	// adds the detail label.
+	// Task 7 adds walk(g.group.Having, …, false) beside the label walk; Task
+	// 10 adds the detail label.
 }
 
 // windowOp is true for an operator that sums the rows a report shows.
@@ -201,10 +213,12 @@ func windowOp(n *Node) bool {
 	return false
 }
 
-// valueCurrencyKey compiles a record leaf or a lookup inside w and keeps its
-// carried currency as a currency key. One that does not compile is left to
-// the compile that follows, which reports it where it is.
-func (r *rowsCTE) valueCurrencyKey(n *Node) {
+// valueCurrencyKey compiles a record leaf or a lookup (at) inside w and keeps
+// its carried currency as a currency key. One that does not compile is
+// reported by the compile that follows, where it is; its error is kept, so a
+// total that then finds no key for its currency names the real cause
+// (totalCurrency).
+func (r *rowsCTE) valueCurrencyKey(n *Node, at string) {
 	id := lookupCurrencyID(n)
 	if n.Record != "" {
 		id = recordCurrencyID(n.Record, n.Path)
@@ -214,12 +228,24 @@ func (r *rowsCTE) valueCurrencyKey(n *Node) {
 	}
 	j := r.join(false)
 	j.records = true
-	e, err := compileFormula(j, n, "")
-	if err != nil || e.typ != Money || e.cur.sql == "" || e.cur.id != id {
+	e, err := compileFormula(j, n, at)
+	if err != nil {
+		r.c.valueCurErr[id] = err
+		return
+	}
+	if e.typ == Money && e.cur.sql != "" && e.cur.id == id {
+		r.currencyKey(id, e.cur.sql)
+	}
+}
+
+// currencyKey keeps a carried currency (id) in w as a currency key every
+// total groups by, once.
+func (r *rowsCTE) currencyKey(id, sql string) {
+	if _, seen := r.c.valueCur[id]; seen {
 		return
 	}
 	name := fmt.Sprintf("ck%d", len(r.c.currencies))
-	r.add(name, e.cur.sql)
+	r.add(name, sql)
 	r.c.currencies = append(r.c.currencies, name)
 	r.c.valueCur[id] = name
 }

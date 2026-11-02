@@ -402,7 +402,7 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	if err := checkAggregate(cp.col.Aggregate, e.typ, cp.scale, cp.at+".aggregate"); err != nil {
 		return expr{}, err
 	}
-	totalCur, err := totalCurrency(e, cp.at+".formula")
+	totalCur, err := lv.c.totalCurrency(e, cp.at+".formula")
 	if err != nil {
 		return expr{}, err
 	}
@@ -412,12 +412,16 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 // totalCurrency is the currency of a total of e. A total groups by its
 // amounts' currencies, so a carried currency read inside it is a currency key
 // of w (valueCurrencies); one read by subquery has no base row to read it on
-// here.
-func totalCurrency(e expr, at string) (currency, error) {
-	if e.cur.sql != "" {
-		return currency{}, invalid(at, "this amount's currency is read per row, and the total has no currency key to group it by")
+// here. When its key was not made because the value does not compile, that
+// is the error.
+func (c *compiler) totalCurrency(e expr, at string) (currency, error) {
+	if e.cur.sql == "" {
+		return e.cur, nil
 	}
-	return e.cur, nil
+	if err := c.valueCurErr[e.cur.id]; err != nil {
+		return currency{}, err
+	}
+	return currency{}, invalid(at, "this amount's currency is read per row, and the total has no currency key to group it by")
 }
 
 // formulaGroupColumn is a formula column that is also a group column: on a
@@ -432,6 +436,15 @@ func (lc *levelCtx) formulaGroupColumn(cp *colPlan, at string) (expr, error) {
 	e.sql = "NULL"
 	if key := lc.lv.groupKey(cp); key != "" {
 		e.sql = key
+	}
+	// The value compiled inside w, so a currency it carries is read there:
+	// rows() kept it as the currency key the levels group by.
+	if e.cur.sql != "" {
+		ck, ok := lc.lv.c.valueCur[e.cur.id]
+		if !ok {
+			return expr{}, invalid(at, "this amount's currency is read per row, and the group has no currency key to group it by")
+		}
+		e.cur = currency{key: ck, id: e.cur.id}
 	}
 	return e, nil
 }
@@ -575,7 +588,7 @@ func (lc *levelCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (ex
 	if err != nil {
 		return expr{}, err
 	}
-	cur, err := totalCurrency(e, at+".args.0")
+	cur, err := lc.lv.c.totalCurrency(e, at+".args.0")
 	if err != nil {
 		return expr{}, err
 	}

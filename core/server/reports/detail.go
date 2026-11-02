@@ -111,7 +111,7 @@ func (rc *rowsCtx) record(group string, p Path, at string) (expr, error) {
 	key := fmt.Sprintf("w.k%d", gi)
 	e.sql = recordSQL(rc.r.s, target, bound, key)
 	id := recordCurrencyID(group, p)
-	if ck, ok := c.valueCur[id]; ok && bound.field.Currency != "" {
+	if ck, ok := c.valueCur[id]; ok {
 		e.cur = currency{key: ck, id: id}
 	} else {
 		e.cur = recordCurrency(rc.r.s, target, bound, key, id)

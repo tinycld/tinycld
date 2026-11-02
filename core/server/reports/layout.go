@@ -33,6 +33,13 @@ func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err er
 	for j := range pivot {
 		lc.cellNames = append(lc.cellNames, fmt.Sprintf("pv%d", j))
 	}
+	// A section whose cell carries its own currency (a record's) is read
+	// with that currency.
+	for idx, cp := range c.p.cols {
+		if c.sectionCur[cp.col.ID].sql != "" {
+			lc.cellNames = append(lc.cellNames, fmt.Sprintf("vcur%d", idx))
+		}
+	}
 	lc.perChunk = max(1, chunkColumns/max(1, len(lc.cellNames)))
 	sizes := map[string]int{}
 	compiled := 0
@@ -64,34 +71,34 @@ func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err er
 		if _, err := lc.row(item, at+".formula"); err != nil {
 			return nil, nil, err
 		}
+		carried := make([]string, 0, len(c.p.cols))
 		for idx, cp := range c.p.cols {
 			if !isNumeric(c.levelTypes[cp.col.ID]) || c.levelTypes[cp.col.ID] == Bool {
 				cells = append(cells, fmt.Sprintf("NULL AS v%d", idx))
+				carried = append(carried, noCarriedCell(idx))
 				continue
 			}
-			lc.cell, lc.typ = fmt.Sprintf("v%d", idx), c.levelTypes[cp.col.ID]
+			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("v%d", idx), c.levelTypes[cp.col.ID], cp, idx
 			e, err := lc.row(item, at+".formula")
 			if err != nil {
 				return nil, nil, err
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
+			carried = append(carried, lc.carriedCell(cp, e, idx))
 		}
 		for j := range pivot {
-			lc.cell, lc.typ = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID]
+			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1
 			e, err := lc.row(item, at+".formula")
 			if err != nil {
 				return nil, nil, err
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
 		}
-		// A computed row points at no record: no column has a label, and no
-		// cell carries its own currency.
+		// A computed row points at no record: no column has a label.
 		for idx := range c.p.cols {
 			cells = append(cells, labelRef{}.cells(idx)...)
 		}
-		for idx := range c.p.cols {
-			cells = append(cells, noCarriedCell(idx))
-		}
+		cells = append(cells, carried...)
 		// The level rows' last columns, so every leg of the union has the same.
 		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n")
 		if len(lc.used) > maxJoinedChunks {
@@ -138,6 +145,10 @@ type layoutCtx struct {
 	// typ is the type of that column's cells, which a subtotal keeps so the
 	// money rules apply to a computed row.
 	typ FieldType
+	// col is that column (the pivot's cell column for a pivot cell), and idx
+	// its index, -1 for a pivot cell.
+	column *colPlan
+	idx    int
 	// The sections a computed row reads are grouped in chunks, one CTE each
 	// (see chunkCTEs), so a SELECT stays under SQLite's column limit. chunkOf
 	// and keys are by section id; used lists the chunks the computed row
@@ -236,7 +247,34 @@ func (lc *layoutCtx) subtotal(id, at string) (expr, error) {
 		lc.used = append(lc.used, slot.chunk)
 	}
 	// An empty section counts as zero.
-	return expr{sql: fmt.Sprintf("COALESCE(ls%d.%s, 0)", slot.chunk, slot.column(lc.cell)), typ: lc.typ}, nil
+	e := expr{sql: fmt.Sprintf("COALESCE(ls%d.%s, 0)", slot.chunk, slot.column(lc.cell)), typ: lc.typ}
+	return withCurrency(e, lc.sectionCurrency(id, slot)), nil
+}
+
+// sectionCurrency is the currency of a section's cell in the column being
+// compiled: the column's on a first-level group row. A currency key is the
+// row's currency, which the computed row is in (one row per currency); a
+// currency the section's cell carries is read from the section beside the
+// cell and is that section's alone, so it combines with no other section.
+func (lc *layoutCtx) sectionCurrency(id string, slot sectionSlot) currency {
+	cur := lc.c.sectionCur[lc.column.col.ID]
+	if cur.sql == "" || lc.idx < 0 {
+		return cur
+	}
+	return currency{sql: fmt.Sprintf("ls%d.%s", slot.chunk, slot.column(fmt.Sprintf("vcur%d", lc.idx))), id: "sub:" + id + ":" + cur.id}
+}
+
+// carriedCell is a computed row's currency in a column, when it is not the
+// row's own (the currency key the computed row is in): one its amount carries
+// (a looked-up row's, a section's record), or a source's fixed currency that
+// is not the column's.
+func (lc *layoutCtx) carriedCell(cp *colPlan, e expr, idx int) string {
+	fixed := e.cur.fixed
+	if fixed == nil || lc.c.sectionCur[cp.col.ID].same(e.cur) || lc.c.app == nil {
+		return lc.c.carriedCell(cp, e, idx)
+	}
+	lc.c.carried[cp.col.ID] = true
+	return fmt.Sprintf("%s AS vcur%d", lc.s.bind(fixed.Currency(lc.c.app)), idx)
 }
 
 // chunkCTEs renders one CTE per chunk of sections. Each has one row per

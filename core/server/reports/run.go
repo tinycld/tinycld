@@ -408,7 +408,7 @@ func notASortKey(at string) error {
 // expanded groups only) and the layout's computed rows.
 func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []any, limit int64) ([]string, string, error) {
 	var ctes, legs []string
-	c.levelTypes = map[string]FieldType{}
+	c.levelTypes, c.sectionCur = map[string]FieldType{}, map[string]currency{}
 	for n := 0; n <= len(c.p.groups); n++ {
 		lv, err := c.level(r, n)
 		if err != nil {
@@ -427,6 +427,9 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			labels = append(labels, ref.cells(idx)...)
 			carried = append(carried, c.carriedCell(cp, e, idx))
 			c.levelTypes[cp.col.ID] = e.typ
+			if n == 1 {
+				c.sectionCur[cp.col.ID] = e.cur
+			}
 		}
 		pivotCells, err := c.pivotCells(lv, pivot)
 		if err != nil {

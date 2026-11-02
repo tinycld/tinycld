@@ -69,7 +69,7 @@ func (j *joinCtx) col(id, at string) (expr, error) {
 		return expr{}, err
 	}
 	defer done()
-	if j.records && cp.path == nil && cp.nest == 0 {
+	if j.records && cp.path == nil && cp.nest == 0 && cp.col.Aggregate == "" {
 		inner := j.r.join(false)
 		inner.visiting, inner.records = j.visiting, true
 		return compileFormula(inner, cp.col.Formula, cp.at+".formula")

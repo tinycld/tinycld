@@ -1,6 +1,11 @@
 package reports
 
-import "testing"
+import (
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+)
 
 const feeByAnimal = `{"version":2,"source":"zoo.feedings","columns":[
 	{"id":"animal","path":[{"link":"animal"}]},
@@ -149,4 +154,104 @@ func TestARecordAmountLabelCarriesItsCurrency(t *testing.T) {
 	if got[int64(700)] != "EUR" || got[int64(300)] != "USD" {
 		t.Fatalf("labels = %v", got)
 	}
+}
+
+// lionsLayout is ann's feedings by species with a Lions section (leo's two
+// feedings, 3500 USD) and the computed rows rows.
+func lionsLayout(rows string) string {
+	return `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species"}],
+		"layout":[{"section":"lions","title":"Lions","key":"lion"},` + rows + `]}`
+}
+
+const leoFee = `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Leo"}]},"value":{"path":[{"field":"fee"}]}}`
+
+const leoPrice = `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Leo"}]},"value":{"path":[{"field":"price"}]}}`
+
+// A computed row shows a looked-up amount in its own currency, not in the
+// currency of the row it is in; and a section's subtotal, which is in that
+// row's currency, combines with neither a carried nor a fixed currency.
+func TestAComputedRowKeepsALookedUpAmountsCurrency(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", lionsLayout(`{"row":"fee","label":"Leo fee","formula":`+leoFee+`},
+		{"row":"price","label":"Leo price","formula":`+leoPrice+`}`), Options{}, nil)
+	requireRows(t, res, "label", "Lions", "Total Lions", "Leo fee", "Leo price")
+	requireRows(t, res, "cost", int64(3500), int64(3500), int64(700), int64(500000))
+	requireRows(t, res, "cost@currency", "USD", "USD", "EUR", "USD")
+	if c := res.Columns[1]; c.CurrencyCell != "cost@currency" {
+		t.Fatalf("cost column = %+v", c)
+	}
+	for name, formula := range map[string]string{"carried": leoFee, "fixed": leoPrice} {
+		t.Run(name, func(t *testing.T) {
+			_, err := z.try(t, "ann", lionsLayout(`{"row":"x","label":"Lions plus Leo","formula":{"op":"add","args":[{"subtotal":"lions"},`+formula+`]}}`), Options{}, nil)
+			requireSpecError(t, err, 400, "layout.1.formula", "different currencies")
+		})
+	}
+}
+
+// ivy is a second animal ann owns with a 300 fee, in euros: zed's 300 is in
+// dollars.
+func addIvy(t *testing.T, z *zoo) {
+	t.Helper()
+	z.rec(t, "ivy", "zoo_animals", map[string]any{"name": "Ivy", "species": "ibex", "owner": z.id("ann"), "fee": 300, "fee_currency": "EUR"})
+}
+
+// A group by a looked-up amount groups by its currency too: 300 EUR and 300
+// USD are two groups, each under its currency's total.
+func TestAGroupByALookedUpAmountGroupsByItsCurrency(t *testing.T) {
+	z := newZoo(t)
+	addIvy(t, z)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+		{"id":"aid","path":[{"field":"id"}]},
+		{"id":"fe","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"id"}]},{"col":"aid"}]},"value":{"path":[{"field":"fee"}]}}},
+		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
+		"groups":[{"id":"g","col":"fe"}]}`, Options{}, nil)
+	var groups []string
+	for _, row := range res.Rows {
+		if row.Kind == KindGroup {
+			groups = append(groups, fmt.Sprintf("%v %v n=%v", row.Cells["fe"], row.Cells["fe@currency"], row.Cells["n"]))
+		}
+	}
+	want := []string{"300 EUR n=1", "700 EUR n=1", "50 USD n=1", "300 USD n=1"}
+	if !slices.Equal(groups, want) {
+		t.Fatalf("groups = %v, want %v", groups, want)
+	}
+}
+
+// Equal amounts in two currencies tie: the pick takes the lower currency code
+// for min and for max, amount and currency from one row.
+func TestALookupTieIsBrokenByCurrencyCode(t *testing.T) {
+	z := newZoo(t)
+	addIvy(t, z)
+	tied := `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"fee"}]},{"value":300}]},"value":{"path":[{"field":"fee"}]},"pick":"PICK"}`
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+		{"id":"lo","formula":`+strings.Replace(tied, "PICK", "min", 1)+`},
+		{"id":"hi","formula":`+strings.Replace(tied, "PICK", "max", 1)+`}],"sort":[{"col":"name"}]}`, Options{}, nil)
+	c := res.Rows[0].Cells
+	if c["lo"] != int64(300) || c["lo@currency"] != "EUR" || c["hi"] != int64(300) || c["hi@currency"] != "EUR" {
+		t.Fatalf("row = %+v", c)
+	}
+}
+
+// A looked-up row or a record the reader cannot see has no amount and no
+// currency.
+func TestAHiddenRowCarriesNoCurrency(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+		{"id":"mo","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Mo"}]},"value":{"path":[{"field":"fee"}]}}}],"sort":[{"col":"name"}]}`, Options{}, nil)
+	if c := res.Rows[0].Cells; c["mo"] != nil || c["mo@currency"] != nil {
+		t.Fatalf("Mo's fee = %+v", c)
+	}
+	// leo's vault is hidden, so the animal read past it is too; zed has none.
+	rec := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"fee","formula":{"record":"g","path":[{"field":"fee"}]}},
+		{"id":"vfee","formula":{"record":"g","path":[{"link":"vault"},{"link":"animal"},{"field":"fee"}]}}],
+		"groups":[{"id":"g","col":"animal"}]}`, Options{}, nil)
+	requireRows(t, rec, "label", "Leo", "Zed", "Total")
+	requireRows(t, rec, "fee@currency", "EUR", "USD", nil)
+	requireRows(t, rec, "vfee", nil, nil, nil)
+	requireRows(t, rec, "vfee@currency", nil, nil, nil)
 }

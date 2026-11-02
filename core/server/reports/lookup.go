@@ -145,6 +145,9 @@ func pickedAmount(outer fctx, r *rowsCTE, n *Node, v expr, sc *scope, where stri
 		dir = "DESC"
 	}
 	from := sc.render()
+	// Two correlated subqueries with one ORDER BY, so both pick the same row:
+	// a scalar subquery returns one column, and the amount and its currency
+	// are read as two cells wherever the lookup is used.
 	pickOne := func(col string) string {
 		return fmt.Sprintf("(SELECT %s\n%s\nWHERE %s AND %s IS NOT NULL\nORDER BY %s %s, %s LIMIT 1)", col, from, where, v.sql, v.sql, dir, v.cur.sql)
 	}
