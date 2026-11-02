@@ -13,6 +13,7 @@ import { buildSchema } from '@tinycld/core/lib/forms/values'
 import { fileLimitIssues } from '@tinycld/core/lib/web-forms/file-limits'
 import { reportHeight } from '@tinycld/core/lib/web-forms/parent-messages'
 import { usePendingFiles } from '@tinycld/core/lib/web-forms/pending-files-store'
+import { browserCanSolvePow } from '@tinycld/core/lib/web-forms/pow-capability'
 import { type PublicForm, usePublicForm } from '@tinycld/core/lib/web-forms/use-public-form'
 import { usePublicSubmit } from '@tinycld/core/lib/web-forms/use-public-submit'
 import { zodResolver } from '@tinycld/core/ui/form'
@@ -169,6 +170,16 @@ export default function PublicFormScreen() {
             </Themed>
         )
     if (state.status === 'loading') return <Themed theme={theme}>{null}</Themed>
+    const isInsecure = state.form.requirePow && !browserCanSolvePow()
+    if (isInsecure)
+        return (
+            <Themed theme={theme}>
+                <Message
+                    text="This form needs a secure (https) connection."
+                    testID="web-form-insecure"
+                />
+            </Themed>
+        )
     return (
         <Themed theme={theme}>
             <DocumentTitle title={state.form.name} includeOrg={false} />
