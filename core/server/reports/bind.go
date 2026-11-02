@@ -99,9 +99,13 @@ type pivotPlan struct {
 	max   int
 }
 
+// sortPlan is a sort key: a column (col) or a formula; at is where its
+// errors are reported.
 type sortPlan struct {
-	col  *colPlan
-	desc bool
+	col     *colPlan
+	formula *Node
+	at      string
+	desc    bool
 }
 
 // nestLevel is one level of nested child rows: the hops from its parent's
@@ -283,6 +287,11 @@ func (b *binder) formulaSizes(p *plan) {
 	for i := range p.spec.Groups {
 		if l := p.spec.Groups[i].Label; l != nil {
 			check(fmt.Sprintf("groups.%d.label", i), p.nodeSize(l, memo, map[string]bool{}, true))
+		}
+	}
+	for i, s := range p.spec.Sort {
+		if s.Formula != nil {
+			check(fmt.Sprintf("sort.%d.formula", i), p.nodeSize(s.Formula, memo, map[string]bool{}, true))
 		}
 	}
 }
@@ -541,10 +550,19 @@ func (b *binder) sorts(p *plan) {
 	}
 	for i, s := range p.spec.Sort {
 		at := fmt.Sprintf("sort.%d", i)
-		cp := b.column(p, s.Col, at+".col")
 		if s.Dir != "" && s.Dir != "asc" && s.Dir != "desc" {
 			b.bad(at+".dir", "dir is asc or desc")
 		}
+		desc := s.Dir == "desc"
+		if (s.Col == "") == (s.Formula == nil) {
+			b.bad(at, "a sort key is a column or a formula")
+			continue
+		}
+		if s.Formula != nil {
+			p.sort = append(p.sort, sortPlan{formula: s.Formula, at: at + ".formula", desc: desc})
+			continue
+		}
+		cp := b.column(p, s.Col, at+".col")
 		if cp == nil {
 			continue
 		}
@@ -552,7 +570,7 @@ func (b *binder) sorts(p *plan) {
 			b.bad(at+".col", "child rows keep their own order")
 			continue
 		}
-		p.sort = append(p.sort, sortPlan{col: cp, desc: s.Dir == "desc"})
+		p.sort = append(p.sort, sortPlan{col: cp, at: at + ".col", desc: desc})
 	}
 }
 

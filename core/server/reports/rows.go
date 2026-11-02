@@ -135,6 +135,9 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	for _, g := range c.p.groups {
 		r.formulaCurrencies(g.group.Label)
 	}
+	for _, s := range c.p.sort {
+		r.formulaCurrencies(s.formula)
+	}
 	r.pivotKey()
 	return r, nil
 }

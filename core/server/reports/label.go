@@ -215,14 +215,31 @@ func (c *compiler) columnLabel(lr *labelRefs, cp *colPlan, e expr) (labelRef, bo
 	return lr.of(e.target, labelFieldOf(e.target, c.p.labelFieldName(cp)), e.sql), true
 }
 
+// sortLabel is the label a sort key's relation value e sorts by: a column's
+// by its label field, a formula's by the label field of the column it reads.
+func (c *compiler) sortLabel(lr *labelRefs, s sortPlan, e expr) (labelRef, bool) {
+	if s.col != nil {
+		return c.columnLabel(lr, s.col, e)
+	}
+	if e.target == nil || e.sql == "NULL" {
+		return labelRef{}, false
+	}
+	return lr.of(e.target, labelFieldOf(e.target, c.chosenLabel(e)), e.sql), true
+}
+
+// chosenLabel is the label field of the column a relation value reads ("" for
+// the target's own label field).
+func (c *compiler) chosenLabel(e expr) string {
+	if cp := c.p.byID[e.col]; cp != nil {
+		return c.p.labelFieldName(cp)
+	}
+	return ""
+}
+
 // textOf is a relation value read as text, by a text operator: the stored
 // value of the record's label field (a select's option label), by the label
 // field of the column it reads, and empty text for a blank link or a record
 // the reader cannot see.
 func (c *compiler) textOf(s *stmt, e expr) string {
-	chosen := ""
-	if cp := c.p.byID[e.col]; cp != nil {
-		chosen = c.p.labelFieldName(cp)
-	}
-	return "COALESCE(" + labelSQL(s, e.target, labelFieldOf(e.target, chosen), e.sql, "") + ", '')"
+	return "COALESCE(" + labelSQL(s, e.target, labelFieldOf(e.target, c.chosenLabel(e)), e.sql, "") + ", '')"
 }

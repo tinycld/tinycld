@@ -100,9 +100,12 @@ type Node struct {
 	Pick   string `json:"pick,omitempty"`
 }
 
+// SortKey sorts by a column or by a formula ("asc" by default). On a group
+// level a formula is a cell of that level; on detail rows a row value.
 type SortKey struct {
-	Col string `json:"col"`
-	Dir string `json:"dir,omitempty"` // "asc" (default) or "desc"
+	Col     string `json:"col,omitempty"`
+	Formula *Node  `json:"formula,omitempty"`
+	Dir     string `json:"dir,omitempty"`
 }
 
 type Group struct {

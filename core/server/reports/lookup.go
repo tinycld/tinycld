@@ -68,6 +68,9 @@ func (b *binder) lookups(p *plan) {
 	for i, g := range p.spec.Groups {
 		walk(g.Label, fmt.Sprintf("groups.%d.label", i))
 	}
+	for i, s := range p.spec.Sort {
+		walk(s.Formula, fmt.Sprintf("sort.%d.formula", i))
+	}
 	for i, item := range p.spec.Layout {
 		walk(item.Formula, fmt.Sprintf("layout.%d.formula", i))
 	}

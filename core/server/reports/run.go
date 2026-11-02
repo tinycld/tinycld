@@ -500,6 +500,30 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 	return rows, nil
 }
 
+// detailSortValue is a sort key's value on a detail row, and the name its
+// cursor fingerprint records: the column's id, or the formula itself, so a
+// cursor from another sort is refused.
+func detailSortValue(ctx *rowsCtx, s sortPlan) (expr, string, error) {
+	var e expr
+	var err error
+	key := ""
+	if s.formula != nil {
+		e, err = compileFormula(ctx, s.formula, s.at)
+		raw, _ := json.Marshal(s.formula)
+		key = "=" + string(raw)
+	} else {
+		e, err = ctx.col(s.col.col.ID, s.at)
+		key = s.col.col.ID
+	}
+	if err != nil {
+		return expr{}, "", err
+	}
+	if e.win {
+		return expr{}, "", notASortKey(s.at)
+	}
+	return e, key, nil
+}
+
 // detailSelect is the select of detail rows over w and their sort keys.
 func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 	keys := make([]string, 0)
@@ -518,20 +542,16 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 		sel = append(sel, k+" AS "+strings.TrimPrefix(k, "w."))
 	}
 	for i, s := range c.p.sort {
-		ctx := &rowsCtx{r: r, visiting: visiting, detail: frame}
-		e, err := ctx.col(s.col.col.ID, fmt.Sprintf("sort.%d.col", i))
+		e, col, err := detailSortValue(&rowsCtx{r: r, visiting: visiting, detail: frame}, s)
 		if err != nil {
 			return "", nil, err
 		}
-		if e.win {
-			return "", nil, notASortKey(fmt.Sprintf("sort.%d.col", i))
-		}
-		name, col := fmt.Sprintf("s%d", i), s.col.col.ID
+		name := fmt.Sprintf("s%d", i)
 		// A record sorts by its label's typed value, then by its id so equal
 		// labels keep one order. A label key holds a value of the label
 		// field's type or a no-name record's text, so its cursor value may be
 		// either (typ "").
-		if ref, ok := c.columnLabel(labels, s.col, e); ok {
+		if ref, ok := c.sortLabel(labels, s, e); ok {
 			key := labelOrder(r.s, ref.value)
 			sel = append(sel, key+" AS "+name)
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@label"})

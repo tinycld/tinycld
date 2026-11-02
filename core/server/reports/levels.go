@@ -127,8 +127,8 @@ func (lv *level) cell(cp *colPlan) (expr, error) {
 // order.
 func (lv *level) order() ([]string, error) {
 	var out []string
-	for i, s := range lv.c.p.sort {
-		e, ok, err := lv.sortValue(s.col, fmt.Sprintf("sort.%d.col", i))
+	for _, s := range lv.c.p.sort {
+		e, ok, err := lv.sortKey(s)
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +136,7 @@ func (lv *level) order() ([]string, error) {
 			continue
 		}
 		// A record sorts by its label's typed value, then by its id.
-		if ref, ok := lv.c.columnLabel(lv.labels, s.col, e); ok {
+		if ref, ok := lv.c.sortLabel(lv.labels, s, e); ok {
 			key := labelOrder(lv.r.s, ref.value)
 			out = append(out, "("+key+" IS NULL)", key+dirOf(s.desc))
 		}
@@ -153,6 +153,25 @@ func (lv *level) order() ([]string, error) {
 		out = []string{"1"}
 	}
 	return out, nil
+}
+
+// sortKey is a sort key's value on this level, or ok false where it means
+// nothing (a path, or a formula that reads a row value).
+func (lv *level) sortKey(s sortPlan) (expr, bool, error) {
+	if s.formula == nil {
+		return lv.sortValue(s.col, s.at)
+	}
+	if lv.readsRowValue(s.formula, false, map[string]bool{}) {
+		return expr{}, false, nil
+	}
+	e, err := compileFormula(&levelCtx{lv: lv, visiting: lv.visiting}, s.formula, s.at)
+	if err != nil {
+		return expr{}, false, err
+	}
+	if e.win {
+		return expr{}, false, notASortKey(s.at)
+	}
+	return e, true, nil
 }
 
 func (lv *level) sortValue(cp *colPlan, at string) (expr, bool, error) {
