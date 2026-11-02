@@ -16,6 +16,14 @@
 
 This section is for the human before anything runs. Core UI has no design gate, so the layout per width is written out here.
 
+### Answers (the human, 2026-11-01): plan approved
+
+- **Q1** yes (`Source.Watch`). **Q2** refuse having on a layout's first group. **Q4** `pick` optional, default `min`. **Q6** refuse `total: "rows"` on running values and percents. **Q7** allow correlated lookups. **Q8** no automatic wrapping on desktop. **Q9** yes, author arrangement per width with the Arrange section.
+- **Q3 changed:** fill on every group level — a fill record appears under each parent group, under every currency (R6, Task 6, builder in Task 22).
+- **Q5 changed:** amounts with a per-row currency in `record` leaves and `lookup` values carry their currency through (R3, Task 5a).
+- **Q10 changed:** general spanning cells by guillotine cuts; only a pinwheel is refused with "These cells overlap in a way that can't be laid out; move one cell." (R28, Tasks 15, 24, 25).
+- **Web scroll offset:** fixed in the FlashList fork (Tasks 25a–25d, with a STOP at Task 25c for the human to review and merge the fork PR); the web caveat leaves the [platform] list.
+
 ### Why this is one exclusive PR
 
 E12 changes the report spec contract every lane's report units write (version 2, new fields the builder must keep). E4 and E8 change the run contract (relation-typed values, a new route `POST /api/reports/param-options`, the result's `heading`) and the builder draft contract. OQ2 adds a prop to a forms-engine component. E14 changes how every report table draws on narrow screens and adds `display` to the spec. E1, E9, E10 and E11 alone would be small, but the Books checkpoints need the whole set (spec OQ1). One PR on `books/p5-trial-balance` in `tinycld`, `exclusive` held by lane purchases until it merges, merged before Books checkpoint 1. No core migration, no generator change, no removed or renamed export.
@@ -80,8 +88,9 @@ New fields, by part: `columns[].total` (`"recompute"` default | `"rows"`); `grou
 - **E1 `Field.TextDay`** (`registry.go`, `check.go`): a `Date` field with `TextDay: true` reads a `text` column that holds `YYYY-MM-DD`. `CheckSources` accepts only a text column for it and refuses `TextDay` on any other type. It reads like a date column (`fieldSQL` takes the first ten characters, `stmt.go:85-94`), so filters, buckets, presets and pivots work unchanged; the catalog says `date`.
 - **E2 `total: "rows"`** (`levels.go`, `run.go`, `pivot.go`): a `rows` column's group, subtotal and total cells are the sum of the cells of the rows directly under them that the result shows (after `having`), per currency. The innermost group computes from its base rows. With no groups, the total adds the detail cells. Pivot cells of a `rows` cell column follow the same rule. Layout sections add their shown rows; computed rows are unchanged. Refused on a column whose level cell is not a number or amount, and on a running value or percent (R8). `recompute` (the default) totals every base row (OQ6).
 - **E3 `groups[].having`** (`levels.go`, `run.go`): a condition compiled on that level's rows (aggregates, columns, record fields, params; a condition on an unset param matches every group, as in `filter`). A hidden group hides its children. `recompute` totals still read every base row; `rows` totals add only the rows shown. Refused on the first group of a layout report (R7).
-- **E4 record groups** (`bind.go`, `formula.go`, new `record.go`, `levels.go`): a path that ends at a to-one link, or at the `id` field, is a relation value that carries its target source (R2). `if`, `case` and `coalesce` of relations need one target. A group whose column is such a value is a record group: its key is the record id (no two records merge). The `record` leaf reads the record's fields on the group's level, its subtotal and every row below (blank on outer rows). `groups[].label` labels any group's row (a formula on that level; default for a record group: the target's first text field). `groups[].fill` adds the target's records (filtered by `where`, under the reader's rules) that have no base rows, on the first group level only, under every currency of the report (R6). Fill rows cannot open (no rows below).
+- **E4 record groups** (`bind.go`, `formula.go`, new `record.go`, `levels.go`): a path that ends at a to-one link, or at the `id` field, is a relation value that carries its target source (R2). `if`, `case` and `coalesce` of relations need one target. A group whose column is such a value is a record group: its key is the record id (no two records merge). The `record` leaf reads the record's fields on the group's level, its subtotal and every row below (blank on outer rows). `groups[].label` labels any group's row (a formula on that level; default for a record group: the target's first text field). `groups[].fill` adds the target's records (filtered by `where`, under the reader's rules) that have no base rows, on any group level, under each parent group and every currency (R6); a fill's `where` may tie a record to its parent (`{col}` of an enclosing group reads the parent's key, `{record}` its record). A fill row opens only onto a deeper level's fill records.
 - **E5 sort by formula** (`levels.go`, `run.go`, `paging.go`): `sort[]` takes `{ formula, dir }`. On a level the formula is a cell of that level (skipped where it is blank); on detail rows a row value. A formula sort key can page a detail report like a column key; only a running value or a percent is refused, as for columns.
+- **Per-row currencies (Q5):** a `record` amount or a looked-up amount whose source keeps a currency per row carries that currency: beside the value on group and detail rows (the cell's `<col>@currency`), and as a currency key of the rows when it is totalled, so totals group by it (R3).
 - **E6 `lookup`** (`formula.go`, new `lookup.go`): one value (`min` by default, or `max`, R5) of `value` over the rows of `source` that match `where`, read from that source's rule CTE, so the reader's list rule applies; NULL when none match. Inside a lookup a path reads the looked-up source; a column, a record field or a param reads the report's row (a correlated subquery, R4). Allowed in columns, filter, group keys, having, labels and sort; refused in layout computed rows. The run's topics include the looked-up collection (the change signal reads every table the statement reads, `changesignal/topics.go:18-36`).
 - **E7 `detail.label`** (`run.go`, `assemble.go`): a formula that labels each detail row (default: the first column, as today). Each row also says which column its label repeats (`labelColumn`, R11) so the client drops exactly that cell from child rows.
 - **E8 `optionsFrom`** (`params.go`, `bind.go`, new `options.go`, `endpoint.go`): a choice param may read its options from a source. A run checks a posted value by type only (R13). New read route `POST /api/reports/param-options` (approved, OQ5), described under "API".
@@ -109,7 +118,7 @@ Widths are core's breakpoints (`useBreakpoint`): `mobile` (phone), `tablet`, `de
 
 - **Columns section** (each column card): a "Total" choice for a number or amount column — "Recompute from all rows" (default) / "Add the rows shown" (E2); under the column list a "Row label" card: "First column" (default) or a formula (E7), edited with the report formula editor.
 - **Formulas** (columns, row label, group label, sort formula, layout rows): the report formula editor (OQ2): the same part menu, now listing Number, Text, Yes or no, Empty, Column, Field, Group field, Asked value, the arithmetic, totals (Sum of, Count of, …), running values, comparisons, All of / Any of / Not, Is empty, If, First match, First not empty, the text and date operators, and Look up. Parts with slots show a small slot caption ("When", "Then", "Otherwise"; "Where", "Value"). A formula the editor cannot show (an unknown key or operator) stays read-only and is saved unchanged (R17).
-- **Group and sort section** (each group level card): "Group by" lists columns, including a column that is a link ("Team (record)"); for a record group three more rows: "Label" (a field picker over the linked source, or "Formula…"), a "Show every Team, even with no rows" switch with its own condition editor (first level only), and, for every group, "Show only groups where…" (the filter editor in aggregate mode: Total of a field, Column, Group field, with Ask when run) and an "Open when the report opens" switch. Sort rows: "Sort by" lists columns, the group record's fields ("Team › Name") and "Formula…".
+- **Group and sort section** (each group level card): "Group by" lists columns, including a column that is a link ("Team (record)"); for a record group three more rows: "Label" (a field picker over the linked source, or "Formula…"), a "Show every Team, even with no rows" switch with its own condition editor (any level; under another group a condition can be "Same as the <group> above"), and, for every group, "Show only groups where…" (the filter editor in aggregate mode: Total of a field, Column, Group field, with Ask when run) and an "Open when the report opens" switch. Sort rows: "Sort by" lists columns, the group record's fields ("Team › Name") and "Formula…".
 - **Filter section**: a condition on a link ("Team (record)") offers is / is not / is any of / is empty; its value is picked from the linked records (a searching picker); "Ask when run" turns it into a choice param whose options come from that source (E8).
 - **Arrange section** (new, E14): width tabs Phone · Tablet · Desktop; per width a switch "Arrange columns for this width" (off = automatic), a "Columns per line" choice (1–12), and one row per column with Line, Start, Span, Lines and Align choices; a column left out of an arrangement is not shown at that width. The live preview shows the arrangement for the width it is drawn at.
 - **Report view, param chips**: a choice param from a source opens a picker (popover 340pt on desktop and tablet, bottom sheet on phone): a search field at the top, the options in groups with an "All <group>" row at each group head, more options loading near the end of the list, Apply at the bottom. The chip shows the one label when one is chosen, else "N selected".
@@ -117,11 +126,11 @@ Widths are core's breakpoints (`useBreakpoint`): `mobile` (phone), `tablet`, `de
 
 ### Report table layout per width (E14)
 
-Modelled on Gridley: one cell renderer per column; per-width layouts place each column on a line (`line`, like Gridley's `row`) with `start`, `span` (Gridley's `colSpan`), `lines` (Gridley's `rowSpan`) and `justify`; the heading row uses the same line layout, so each heading sits over its values. React Native has no CSS grid on native, so a row is drawn with flex (the same code on web and native): a vertical stack of lines, each line a flex row whose cells are as wide as their span of equal tracks (a percent of the row), with empty tracks as spacers and `justify` aligning each cell in its slot. No absolute positioning; rows measure themselves.
+Modelled on Gridley: one cell renderer per column; per-width layouts place each column on a line (`line`, like Gridley's `row`) with `start`, `span` (Gridley's `colSpan`), `lines` (Gridley's `rowSpan`) and `justify`; the heading row uses the same line layout, so each heading sits over its values. React Native has no CSS grid on native, so a row is drawn with flex (the same code on web and native): its arrangement is cut into a tree of blocks — a stack of blocks top to bottom, or blocks side by side as wide as their share of equal tracks (a percent) — so a plain arrangement is a vertical stack of lines, each a flex row of cells with spacers for empty tracks, and `justify` aligns each cell. No absolute positioning; rows measure themselves.
 
 - **Desktop:** one line per row, the label column flexible (min 220pt), amount columns 128pt. When they do not fit, the whole table (heading row and list together) sits in one horizontal scroller, so headings and cells move sideways in step; the label column stays frozen at the left by a `translateX` that follows the sideways scroll (R27). An author arrangement for desktop replaces the one line.
 - **Tablet and phone, automatic:** when the label (min 220pt tablet, 168pt phone) and the amount columns (128pt / 108pt) fit the table's width, one line as today. When they do not fit, each row wraps: line 1 is the label across the row; the amount columns follow on lines 2, 3, … in aligned tracks (`tracks = max(1, floor(width / 104))`, 3 at 390pt), in column order; the heading wraps the same way. No sideways scroll. Example, the Trial Balance on a 390pt phone: line 1 "Cash and bank:Business checking"; line 2 No. · Debit · Credit, each under its heading.
-- **Author arrangement:** `display.layouts[]` for a width replaces the automatic layout there; columns not listed are not shown at that width (the label column, if left out, gets a line of its own above, so a row always has its label); the pivot cell column's entry stands for all its pivot columns, which flow one per track from that position. A cell with `lines > 1` sits at the row's start or end edge and spans every line, beside the stacked lines (Gridley's demo of an ID centred down the end of a two-line row); `justify` centres it (R28, Q10).
+- **Author arrangement:** `display.layouts[]` for a width replaces the automatic layout there; columns not listed are not shown at that width (the label column, if left out, gets a line of its own above, so a row always has its label); the pivot cell column's entry stands for all its pivot columns, which flow one per track from that position. The arrangement is cut into blocks by straight lines (guillotine cuts), so a cell with `lines > 1` may sit anywhere, mid-row included, beside the lines it spans and as tall as they are; `justify` aligns it (Gridley's demo of an ID centred down a two-line row works at either edge or in the middle). Only a pinwheel arrangement is refused (R28).
 - **The list:** core's custom row window and its spacers (`components/use-row-window.ts`) are replaced by FlashList v2 (`@shopify/flash-list` 2.3.3, the `nathanstitt` fork core already pins and uses on web in the emoji picker). Rows measure themselves, so wrapped rows of any height need no height scheme. Paging stays: `onEndReached` calls `useReportRun.loadMore`, which keeps its guard (`hasNextPage && !isFetchingNextPage`); FlashList checks the end after every commit and again when the rows change, so a first page shorter than the view asks for the next page by itself (R25).
 - **Sticky headers:** the column heading row sits above the list, outside its scroll, so it always stays at the top. Open group rows are FlashList `stickyHeaderIndices`: while a group's rows scroll, its row stays stuck under the heading row until the next group pushes it up. FlashList keeps one sticky item at a time; every open group at any depth is a sticky index, so the stuck item is the innermost open group above the top, drawn with the open groups that enclose it stacked above it — nested levels read as a stack (for example "Assets" over "Current assets") in one sticky slot (R26). Folding changes the rows, so the indices are recomputed from the visible rows on every render; a press on a stuck group folds it.
 - **Rows keep their styling:** group, subtotal, computed and total rows keep their weight and rules (the rule draws across the whole wrapped row); a group row's label is its fold toggle (its figures take the same press, not a tab stop); a group row followed by its subtotal shows only its label line; child rows indent the label only, so figures stay aligned; pivot columns are ordinary amount columns in every layout.
@@ -134,10 +143,10 @@ Core `help/reports.md` gains sections: Totals (recompute or add the rows shown),
 
 - **R1. Silent identity upgrade.** `Load` gives the "upgraded" notice only when an upgrade step changed the document. The 1→2 step changes nothing, so a v1 report runs with no notice; its next save stores version 2.
 - **R2. Relation values.** A value path that ends at a to-one link means the linked row's `id` (the join, so a linked row the reader cannot see reads blank, as every to-one value does, `stmt.go:117-140`); a path ending at the `id` field is a relation to its own source. Both carry the target source; `if`, `case` and `coalesce` refuse results that link to different sources.
-- **R3. Amounts in records and lookups.** A `record` leaf or a `lookup` value may read a money field only when its source has a fixed currency (`Source.Currency`); a per-row currency field cannot group totals, so it is refused with "read it through a column".
+- **R3. Amounts in records and lookups carry their currency (Q5, changed).** Read on a group, subtotal or detail row and not totalled, a record amount's currency is its record's own currency field and a looked-up amount's is the picked row's (a subquery beside the value; the cell's `<col>@currency`). Read inside a total, it is read once per base row, so its currency becomes a currency key of the rows like a path amount's and the totals group by it. A lookup of such an amount picks the row with the smallest or largest amount and returns that row's amount and currency (ties by currency code). Amounts combine only when their currencies come from the same place (a currency key, a fixed currency, or the same record field or lookup), as the engine's money rule already says.
 - **R4. Correlated lookups.** Inside a lookup, `{col}`, `{record}` and `{param}` read the report's row; a lookup that reads none of them is uncorrelated and SQLite evaluates it once per statement.
 - **R5. `pick` defaults to `min`.**
-- **R6. Fill** is allowed on the first group level only (a fill row has no base rows, so no outer key); a fill record appears under every currency the report shows, or under the no-currency total when the report has no rows.
+- **R6. Fill on every level (Q3, changed).** A fill level's keys are its base rows' keys united with each parent row (the level above's keys, its own fill rows included; the report's currencies for the first level, or one no-currency row when it has no rows) crossed with the target's records that match the fill's `where`. The `where` reads the target's fields, params, lookups, and the enclosing groups (`{col}` of an enclosing group's column → the parent's key; `{record}` of an enclosing record group → its record), so "accounts of this type" ties to the parent. Fill rows sort with their siblings, add nothing to `recompute` totals, add their (blank or zero) cells to `rows` totals, meet `having`, and open only onto a deeper level's fill records.
 - **R7. Having on a layout's first group is refused:** layout sections are fixed rows; hide rows on a deeper group.
 - **R8. `total: "rows"`** is allowed on a column whose level cell is a number or amount and is not a running value or percent; with no groups it adds the detail cells.
 - **R9. Group labels** apply to any group (default: today's key text; for a record group the target's first text field; a record group whose target has no text field needs a label formula, else its rows read "(none)", never a raw id).
@@ -152,31 +161,33 @@ Core `help/reports.md` gains sections: Totals (recompute or add the rows shown),
 - **R18. The having editor** is the filter editor in aggregate mode: a condition's subject is "Total of a field" (sum, count, smallest, largest, average), "Column" or "Group field"; Ask when run follows the filter's rules (a money total cannot be asked).
 - **R19. Relation conditions** offer is / is not / is any of / is empty / is not empty; a typed value is picked from the target's records through param-options with a one-param draft spec; Ask when run makes a choice param with `optionsFrom { source: target, value: [id], label: [first text field] }` (multiple for "is any of").
 - **R20. Params stay while anything reads them:** the builder keeps a param while the filter, a column formula, a group label, having or fill, a sort formula or the row label reads it (`keptParams`).
-- **R21. Record leaves are refused in the filter, group keys and fill where** (they read rows before grouping); lookups are refused in layout computed rows.
+- **R21. Record leaves are refused in the filter and group keys** (they read rows before grouping); a fill's `where` may read only the records of the groups above it (R6); lookups are refused in layout computed rows.
 - **R22. Stub changes:** `salesstub_sales.booked_on` (text day, written from the sale's day), `salesstub_teams.region` (select north/south, a radio on the team form), both sources print the heading "Stub Sales Co", and a second shipped report "Stub team totals" (unpublished) uses a record group with label, `total: "rows"`, a sort formula, a detail label, a text-day filter and an options-from-source param grouped by region.
 - **R23. E14 wrap rule:** automatic wrapping applies at tablet and phone widths when the one-line layout does not fit; desktop keeps one line and sideways scroll unless the author arranged desktop (wide pivots read better scrolled). Rows are drawn with flex lines (no absolute positioning, the human's review of 2026-11-01). See Q8.
 - **R24. E14 author arrangement is in spec v2 (`display.layouts`) and the builder edits it** (the no-limits rule; see Q9). The engine validates it (known column ids, `width` one of mobile|tablet|desktop, `tracks` 1–12, `line` 1–8, `start` and `span` within the tracks, `lines` 1–8 under R28, `justify` start|center|end, no two cells overlapping) and otherwise ignores it.
 - **R25. FlashList v2 replaces the custom row window.** Rows measure themselves; `onEndReached` (threshold 0.5) calls `loadMore`, whose guard stays; the "first page shorter than the view" fill comes from FlashList's own end check after each commit (`useBoundDetection.ts:96-108,165-170`). `use-row-window.ts` and its test are deleted.
 - **R26. Sticky groups stack in one slot.** Every open group row is a sticky index; the stuck copy (`target: 'StickyHeader'`) draws the chain of open groups enclosing it, outermost first, so the reader sees every level they are inside even though FlashList sticks one item at a time. Chosen over sticking only the outermost group, which would hide the level the reader is reading.
 - **R27. Frozen label column on desktop sideways scroll:** the heading row and the list share one horizontal scroller; label cells follow its offset with `translateX`, so they stay at the left as today's two-stack table kept them.
-- **R28. `lines` (rowSpan) with flex:** a cell that spans lines sits at the start or the end edge (its first track 1, or its last track the last) and spans every line of the arrangement (from line 1 to the last line); the other cells stack in lines between the edges. The engine and the builder refuse any other spanning cell with "a cell that spans lines sits at the start or the end and spans every line". See Q10.
+- **R28. `lines` (rowSpan) by guillotine cuts (Q10, changed).** An arrangement is cut recursively — a straight cut between lines into top and bottom blocks (tried first), or between tracks into left and right blocks — until each block holds one cell or none; a cell may then span lines anywhere, mid-row included (it sits in a side block beside stacked lines, stretched to their height). Only a pinwheel, which no straight cut can split, is refused, by the engine and the builder, with "These cells overlap in a way that can't be laid out; move one cell." on its first cell.
 
 ### [platform] web-only or native-only items
 
-None new is web-only or native-only by design: wrapped rows are flex lines (web and native); the param picker list pages with `ScrollView` `onScroll` near the end (web and native); every popover and menu is a core component that becomes a sheet on phone. FlashList v2 runs on web in this fork (`src/isNewArch.ts:19` treats web as the new architecture; `measureLayout.web.ts` and `PlatformHelper.web.ts` measure DOM elements; core's emoji picker already uses it on web), with two web caveats: (1) `supportsOffsetCorrection: false` on web (`PlatformHelper.web.ts`), so when rows above the view change height (a group opened or closed above the top, a live re-run that adds rows above) the content can shift instead of holding its place — drawback: on web a reader scrolled deep into a report may see it jump after such a change; native holds position; (2) sticky headers animate with the JS driver on web (`useNativeDriver: Platform.OS !== 'web'`, as React Native Web has no native driver) — drawback: on a slow web device the stuck group can trail the scroll by a frame. Inherited, unchanged and already signed off: `DocumentTitle` (web tab title only), `web:[scrollbar-gutter:stable]` on the table scrollers (changes nothing on native), `useLeaveGuard`'s browser Back/Forward half (web only).
+None new is web-only or native-only by design: wrapped rows are flex lines (web and native); the param picker list pages with `ScrollView` `onScroll` near the end (web and native); every popover and menu is a core component that becomes a sheet on phone. FlashList v2 runs on web in this fork (`src/isNewArch.ts:19` treats web as the new architecture; `measureLayout.web.ts` and `PlatformHelper.web.ts` measure DOM elements; core's emoji picker already uses it on web), with one web caveat: sticky headers animate with the JS driver on web (`useNativeDriver: Platform.OS !== 'web'`, as React Native Web has no native driver) — drawback: on a slow web device the stuck group can trail the scroll by a frame. Inherited, unchanged and already signed off: `DocumentTitle` (web tab title only), `web:[scrollbar-gutter:stable]` on the table scrollers (changes nothing on native), `useLeaveGuard`'s browser Back/Forward half (web only).
 
 ### Open questions (recommended answer first)
 
 - **Q1. `Source.Watch` (R14).** The spec's "settings change re-runs" needs it: `Heading` and `FiscalStartMonth` read a settings row by Go, which no SQL topic covers. **Recommended: add it.**
 - **Q2. Having on a layout's first group (R7).** **Recommended: refuse** (sections are fixed rows; a hidden section would leave a computed row reading nothing).
-- **Q3. Fill on deeper levels (R6).** **Recommended: first level only** (a fill row has no parent key to sit under).
+- **Q3. Fill on deeper levels (R6).** **Answered: every level**, under each parent group.
 - **Q4. `lookup` `pick` (R5).** **Recommended: optional, default `min`** (deterministic, as the Trial Balance writes it).
-- **Q5. Amounts with a per-row currency in `record`/`lookup` (R3).** **Recommended: refuse with "read it through a column".**
+- **Q5. Amounts with a per-row currency in `record`/`lookup` (R3).** **Answered: build them**; the amount carries its currency.
 - **Q6. `total: "rows"` on running values and percents (R8).** **Recommended: refuse** (a sum of running sums means nothing).
 - **Q7. Correlated lookups (R4).** **Recommended: allow** (a rate on the row's day is a real need).
 - **Q8. Automatic wrapping on desktop (R23).** **Recommended: no** — desktop keeps one line and sideways scroll; authors may arrange desktop.
 - **Q9. Author placement per width in spec v2 with builder support (R24).** **Recommended: yes** (the Arrange section), per the no-limits rule.
-- **Q10. Fully general `lines` (a cell spanning lines in the middle of a row, or only some lines) with flex (R28).** Flex can stack lines beside an edge column but cannot place a cell that spans lines between other cells without absolute positioning, which the review ruled out. **Recommended: edge cells spanning every line only** (Gridley's own demo case, the ID down the row's end), refused otherwise with a clear message; revisit if an author needs more.
+- **Q10. General `lines` (R28).** **Answered: guillotine cuts**; only a pinwheel is refused.
+
+The scroll position on web: the pinned FlashList fork's web correction raced the browser's own scroll anchoring from a stale offset; Tasks 25a–25d fix it in the fork (`overflow-anchor: none` on the list's scroller, a correction from the DOM scroller's current `scrollTop` before paint), stop for the human to merge the fork PR, pin the merged commit, and add a web e2e.
 
 ---
 
@@ -191,7 +202,7 @@ None new is web-only or native-only by design: wrapped rows are flex lines (web 
 - Spec limits (engine): 100 columns, 4 link hops, 10 sort keys, 6 group levels, 200 layout items, labels ≤ 200, ids `^[A-Za-z][A-Za-z0-9_]{0,63}$`, 20 params, text params ≤ 500, formula depth 32 and 1000 nodes; new: choice values ≤ 1000, param-options limit ≤ 1000, search ≤ 200, display layouts ≤ 3 (one per width), tracks 1–12, lines 1–8.
 - Front-end behaviour is tested by Playwright on the `salesstub` stub at desktop and at phone 390×844 where the phone path runs different code; vitest only for non-UI logic (every `lib/` module, the row window). Go code keeps Go tests (`-tags no_ui`).
 - E2E: never `page.goto()` for in-app moves; set `E2E_PORT=7210 E2E_PORT_2=7211` before every e2e command; no timeouts bumped, no forced-serial runs; every created record uses `uniqueName`.
-- Run tools from `$WS/node_modules/.bin` (`$WS` = `/Users/nas/tmp/tinycld/books-purchases`); `pnpm exec` starts a workspace install. Never run `pnpm install`.
+- Run tools from `$WS/node_modules/.bin` (`$WS` = `/Users/nas/tmp/tinycld/books-purchases`); `pnpm exec` starts a workspace install. Never run `pnpm install`, except in Task 25d, where the human asked for the install that brings in the merged FlashList fork.
 - Commits: repo `$WS/tinycld`, branch `books/p5-trial-balance`; messages never mention Claude. Every task's commit step runs the member's full check (`tinycld-pkg check`: biome check --write, tsc, all vitest) and pushes.
 - Before each lint step, run `PATH=$WS/node_modules/.bin:$PATH biome format --write <the task's new and changed files>` from `$WS/tinycld`; the plan's code blocks are not wrapped to Biome's 100 columns.
 
@@ -205,7 +216,7 @@ None new is web-only or native-only by design: wrapped rows are flex lines (web 
 
 ## Deferrals
 
-Deferrals: none. Every item of spec §4 (E1–E13, OQ2) and the human's E14 is built in this plan.
+Deferrals: none. Every item of spec §4 (E1–E13, OQ2), the human's E14 and the human's answers of 2026-11-01 are built in this plan. Task 25c is a STOP for the human's review of the FlashList fork PR, not a deferral.
 
 ## What was probed
 
@@ -833,6 +844,7 @@ func TestALookupIsRefusedWhereItCannotBeRead(t *testing.T) {
 			"columns.0.formula.source", "does not exist"},
 		"a total inside": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"op":"sum","args":[{"path":[{"field":"weight"}]}]}}}]}`,
 			"columns.0.formula.value", "one value per matching row"},
+		// Task 5a builds this (Q5) and deletes the case.
 		"an amount with a row currency": {`{"version":2,"source":"zoo.animals","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.feedings","value":{"path":[{"field":"cost"}]}}}]}`,
 			"columns.0.formula.value.path", "read it through a column"},
 		"a bad pick": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"id"}]},"pick":"avg"}}]}`,
@@ -1399,7 +1411,8 @@ func (c *compiler) recordOf(group, at string) (int, *Source, error) {
 }
 
 // bindRecordPath binds a record leaf's path on the group's target: to-one
-// links, then a field. An amount needs its source's fixed currency (R3).
+// links, then a field. An amount needs its source's fixed currency here; Task
+// 5a lifts that (Q5: the amount carries its own currency).
 func bindRecordPath(app core.App, target *Source, p Path, at string) (*pathPlan, error) {
 	if len(p) == 0 {
 		return nil, invalid(at, "a record leaf names a field of the record")
@@ -1611,36 +1624,348 @@ git push origin books/p5-trial-balance
 
 ---
 
-### Task 6: E4 (part 3) — `groups[].fill`: records with no rows
+### Task 5a: Q5 (changed by the human) — amounts with a per-row currency in `record` leaves and `lookup` values
 
-Engine facts used: `a<L>` groups `w` by the level keys and counts `__n` (`levels.go:170-178`); to-many totals join `d<L>_<idx>` onto `a<L>` (`levels.go:73-97`, `levels.go:179-194`); `joinCtx` on a scope other than the root reads that scope's paths and refuses report columns (`join.go:56-79`); a group row is pushed with `CanExpand` (`assemble.go:212-231`); totals are one per currency (`assemble.go:146-189`).
+Engine facts used: a money value's currency is a currency key of `w` (`ck<n>`) or a source's fixed currency (`formula.go:32-74`); every level groups by the currency keys, so a total never adds two currencies (`levels.go:32-51`); the keys are known before any level compiles (`rows.go:108-114`); a money cell names its currency cell `<col>@currency` (`assemble.go:51-65,242-266`); Tasks 4 and 5 refused a money field with a per-row currency field in a lookup value and a record leaf.
+
+Design (R3, changed): the amount carries its currency through.
+- **On a group row, its subtotal, or a detail row, not totalled**, a record amount's currency is its record's own currency field, and a looked-up amount's currency is the currency of the row the lookup picked; each is read by a subquery next to the value (`currency.sql`), and the cell's `<col>@currency` shows it.
+- **Inside a total** (an aggregate's argument, or a formula column with an aggregate), the amount is read once per base row, so its currency becomes a currency key of `w` like a path amount's (registered before the levels compile, by a walk of every formula): the totals group by it, one row per currency, as the engine's money rule says.
+- **A lookup of such an amount** picks the matching row with the smallest (`min`) or largest (`max`) amount and returns that row's amount and currency (ties broken by currency code), so the two always come from one row.
+- **Combining amounts** keeps today's rule: amounts combine only when their currencies come from the same place. Each currency has an identity — a currency key, a source's fixed currency, or `rec:<group>:<path>` / `lk:<node JSON>` for a carried currency — and `combined` compares identities, so two reads of the same record field combine and a record amount plus a path amount is refused ("amounts in different currencies cannot be combined").
 
 **Files:**
-- Modify: `core/server/reports/spec.go` (`Fill`, `Group.Fill`), `bind.go` (`groupsAndPivot`: fill only on the first level), `levels.go` (`level.fill`, `compiler.fillKeys`, `render`, `toManyTotal`), `assemble.go` (`groupWithLabel`)
+- Modify: `core/server/reports/formula.go` (`currency.id`, `currency.sql`, `none`, `same`), `rows.go` (`compiler.valueCurrencies`, `rowsCTE.valueCurrencies`), `record.go` (`bindRecordPath` keeps the currency field; `recordCurrency`), `lookup.go` (picked-row value and currency), `levels.go`/`detail.go` (`record` and `lookup` read registered keys inside totals), `run.go` (`vc<idx>` currency columns in level and detail selects), `layout.go` (legs add `NULL AS vc<idx>`), `assemble.go` (`cells`, `currencyOfColumn`)
+- Modify: `core/server/reports/zoo_test.go` (`zoo_animals.fee`, `fee_currency`), `lookup_test.go` (the refused case becomes a working one)
+- Create: `core/server/reports/valuecurrency_test.go`
+
+**Interfaces:**
+- Consumes: Tasks 4, 5.
+- Produces: `currency{key string; fixed *Source; sql string; id string}`; `compiler.valueCur map[string]string` (identity → `ck<n>`); level and detail rows carry `vc<idx>` (a column's carried currency, NULL when it has none); `ResultColumn.CurrencyCell` is set for a column with a carried currency.
+
+- [ ] **Step 1: Give the zoo an amount with a per-row currency on a record**
+
+In `zoo_test.go`: `animals.Fields.Add(…)` gains `&core.NumberField{Name: "fee"}` and `&core.TextField{Name: "fee_currency"}`; the animals' data gain `"fee": 700, "fee_currency": "EUR"` (leo), `"fee": 300, "fee_currency": "USD"` (zed), `"fee": 20, "fee_currency": "GBP"` (mo), `"fee": 50, "fee_currency": "USD"` (kit); `zoo.animals` Fields gain `{Key: "fee", Label: "Fee", Type: Money, Aggregates: SumAll, Currency: "fee_currency"}` and `{Key: "fee_currency", Label: "Fee currency", Type: Text}`.
+
+- [ ] **Step 2: Write the failing tests**
+
+Create `core/server/reports/valuecurrency_test.go`:
+
+```go
+package reports
+
+import "testing"
+
+const feeByAnimal = `{"version":2,"source":"zoo.feedings","columns":[
+	{"id":"animal","path":[{"link":"animal"}]},
+	{"id":"fee","formula":{"record":"g","path":[{"field":"fee"}]}},
+	{"id":"fees","formula":{"record":"g","path":[{"field":"fee"}]},"aggregate":"sum"}],
+	"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"fees"}]}`
+
+// A record's amount carries its record's currency into the cell; totalled, it
+// groups by that currency.
+func TestARecordAmountCarriesItsCurrency(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", feeByAnimal, Options{}, nil)
+	// One total per fee currency, each after its groups: EUR (leo, 2 × 700) sorts
+	// before USD (zed, 2 × 300).
+	requireRows(t, res, "label", "Leo", "Total", "Zed", "Total")
+	cells := map[string]any{}
+	for _, row := range res.Rows {
+		if row.Kind == KindGroup {
+			cells[row.Label] = row.Cells["fee@currency"]
+		}
+	}
+	if cells["Leo"] != "EUR" || cells["Zed"] != "USD" {
+		t.Fatalf("fee currencies = %v", cells)
+	}
+	totals := map[any]any{}
+	for _, row := range res.Rows {
+		if row.Kind == KindTotal {
+			totals[row.Cells["fees@currency"]] = row.Cells["fees"]
+		}
+	}
+	if totals["EUR"] != int64(1400) || totals["USD"] != int64(600) {
+		t.Fatalf("totals = %v", totals)
+	}
+	if c := res.Columns[1]; c.CurrencyCell != "fee@currency" {
+		t.Fatalf("fee column = %+v", c)
+	}
+}
+
+// A looked-up amount carries the currency of the row it picked.
+func TestALookedUpAmountCarriesThePickedRowsCurrency(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+		{"id":"top","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"fee"}]},"pick":"max"}},
+		{"id":"low","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"fee"}]}}}],"sort":[{"col":"name"}]}`, Options{}, nil)
+	// ann may list leo (700 EUR), zed (300 USD), kit (50 USD).
+	first := res.Rows[0]
+	if first.Cells["top"] != int64(700) || first.Cells["top@currency"] != "EUR" || first.Cells["low"] != int64(50) || first.Cells["low@currency"] != "USD" {
+		t.Fatalf("row = %+v", first.Cells)
+	}
+}
+
+func TestCarriedCurrenciesCombineOnlyWithTheirOwn(t *testing.T) {
+	app := withZooRegistry(t)
+	twice, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
+		{"id":"x","formula":{"op":"add","args":[{"record":"g","path":[{"field":"fee"}]},{"record":"g","path":[{"field":"fee"}]}]}}],"groups":[{"id":"g","col":"a"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(app, twice); err != nil {
+		t.Fatalf("one record field twice combines: %v", err)
+	}
+	mixed, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
+		{"id":"x","formula":{"op":"add","args":[{"record":"g","path":[{"field":"fee"}]},{"op":"sum","args":[{"path":[{"field":"cost"}]}]}]}}],"groups":[{"id":"g","col":"a"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSpecError(t, Validate(app, mixed), 400, "columns.1.formula", "different currencies")
+}
+```
+
+In `lookup_test.go`, delete the case "an amount with a row currency" (Q5 builds it). In `record_test.go`, nothing refuses a record amount any more.
+
+- [ ] **Step 3: Run them to see them fail**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 -run 'CarriesItsCurrency|PickedRowsCurrency|CombineOnlyWithTheirOwn' ./reports/`
+Expected: FAIL: `this amount has its own row's currency, which totals cannot group by`.
+
+- [ ] **Step 4: Currencies with an identity**
+
+`formula.go`:
+
+```go
+// currency is where a money value's currency comes from: a currency key of w
+// (the ck<n> that holds each row's currency), a source's fixed currency, or a
+// subquery that reads the currency where the value is read (sql: a record's or
+// a looked-up row's own currency). id names it for combining: two values
+// combine only when their currencies come from the same place (R3).
+type currency struct {
+	key   string
+	fixed *Source
+	sql   string
+	id    string
+}
+
+func (a currency) none() bool { return a.key == "" && a.fixed == nil && a.sql == "" }
+
+func (a currency) same(b currency) bool {
+	switch {
+	case a.key != "" || b.key != "":
+		return a.key == b.key
+	case a.fixed != nil || b.fixed != nil:
+		return a.fixed != nil && b.fixed != nil && a.fixed.Key == b.fixed.Key
+	}
+	return a.id == b.id
+}
+```
+
+- [ ] **Step 5: Carried currencies in record leaves and lookups**
+
+`record.go`: `bindRecordPath` no longer refuses an amount with a currency field. Add:
+
+```go
+// recordCurrencyID names a record amount's currency for combining.
+func recordCurrencyID(group string, p Path) string {
+	raw, _ := json.Marshal(p)
+	return "rec:" + group + ":" + string(raw)
+}
+
+// recordCurrency is a record amount's currency read beside it: its record's
+// currency field, keyed like the value, or the source's fixed currency.
+func recordCurrency(s *stmt, target *Source, bound *pathPlan, key, id string) currency {
+	f := bound.field
+	switch {
+	case f.Type != Money:
+		return currency{}
+	case f.Currency != "":
+		cur := &pathPlan{hops: bound.hops, field: bound.src.field(f.Currency), src: bound.src}
+		return currency{sql: recordSQL(s, target, cur, key), id: id}
+	case bound.src.Currency != nil:
+		return currency{fixed: bound.src}
+	}
+	return currency{}
+}
+```
+
+`recordExpr` drops its `cur` (each context sets it): `levelCtx.record` sets `e.cur = recordCurrency(lc.lv.r.s, target, bound, fmt.Sprintf("a.k%d", gi), recordCurrencyID(group, p))`; `rowsCtx.record` uses the registered key when one exists (inside a total), else the same subquery keyed by `w.k<gi>`:
+
+```go
+	id := recordCurrencyID(group, p)
+	if ck, ok := c.valueCur[id]; ok && bound.field.Currency != "" {
+		e.cur = currency{key: ck}
+	} else {
+		e.cur = recordCurrency(rc.r.s, target, bound, fmt.Sprintf("w.k%d", gi), id)
+	}
+```
+
+`lookup.go`: `lookupCtx.path` no longer refuses an amount with a currency field; it returns the value with `cur: currency{sql: <the currency column>, id: "pending"}` (the column SQL of the currency field on the lookup's scope). In `lookupIn`, when `v.typ == Money` and `v.cur.sql != ""`, the value and its currency come from one picked row:
+
+```go
+	if v.typ == Money && v.cur.sql != "" {
+		dir := "ASC"
+		if n.Pick == "max" {
+			dir = "DESC"
+		}
+		pickOne := func(col string) string {
+			return fmt.Sprintf("(SELECT %s\n%s\nWHERE %s AND %s IS NOT NULL\nORDER BY %s %s, %s LIMIT 1)", col, sc.render(), where, v.sql, v.sql, dir, v.cur.sql)
+		}
+		raw, _ := json.Marshal(n)
+		id := "lk:" + string(raw)
+		cur := currency{sql: pickOne(v.cur.sql), id: id}
+		if ck, ok := r.c.valueCur[id]; ok && !inLevel(outer) {
+			cur = currency{key: ck}
+		}
+		return expr{sql: pickOne(v.sql), typ: Money, target: v.target, cur: cur}, nil
+	}
+```
+
+(`inLevel(outer)` is true for a `levelCtx` outer: a group row reads the picked currency by subquery; a base row inside a total reads the registered key.)
+
+- [ ] **Step 6: Register currency keys for carried amounts inside totals**
+
+`rows.go`: add `valueCur map[string]string` to `compiler` (reset in `rows()` with `currencies`), and call `r.valueCurrencies()` after `r.formulaCurrencies(…)`:
+
+```go
+// valueCurrencies adds a currency key to w for every record or looked-up
+// amount with a per-row currency read inside a total: a total groups by its
+// currency as by a path amount's (R3). Read outside a total, such an amount
+// carries its currency by subquery and needs no key.
+func (r *rowsCTE) valueCurrencies() {
+	var walk func(n *Node, inTotal bool)
+	walk = func(n *Node, inTotal bool) {
+		if n == nil {
+			return
+		}
+		switch {
+		case n.Record != "" && inTotal:
+			r.recordCurrencyKey(n)
+		case n.Op == "lookup" && inTotal:
+			r.lookupCurrencyKey(n)
+		}
+		inTotal = inTotal || aggregateOp(n)
+		for _, a := range n.Args {
+			walk(a, inTotal)
+		}
+	}
+	for _, cp := range r.c.p.cols {
+		walk(cp.col.Formula, cp.col.Aggregate != "")
+	}
+	for _, g := range r.c.p.groups {
+		walk(g.group.Having, false)
+		walk(g.group.Label, false)
+	}
+	for _, s := range r.c.p.sort {
+		walk(s.formula, false)
+	}
+}
+
+// recordCurrencyKey reads a record amount's currency field in w, keyed by the
+// group key's own expression.
+func (r *rowsCTE) recordCurrencyKey(n *Node) {
+	gi, target, err := r.c.recordOf(n.Record, "")
+	if err != nil {
+		return
+	}
+	bound, err := bindRecordPath(r.c.p.app, target, n.Path, "")
+	if err != nil || bound.field.Type != Money || bound.field.Currency == "" {
+		return
+	}
+	cur := recordCurrency(r.s, target, bound, r.inner(fmt.Sprintf("w.k%d", gi)), "")
+	r.currencyKey(recordCurrencyID(n.Record, n.Path), cur.sql)
+}
+
+// lookupCurrencyKey compiles the lookup inside w and keeps its picked row's
+// currency as a key.
+func (r *rowsCTE) lookupCurrencyKey(n *Node) {
+	e, err := lookupIn(r.join(false), r, n, "")
+	if err != nil || e.typ != Money || e.cur.sql == "" {
+		return
+	}
+	raw, _ := json.Marshal(n)
+	r.currencyKey("lk:"+string(raw), e.cur.sql)
+}
+
+func (r *rowsCTE) currencyKey(id, sql string) {
+	if _, seen := r.c.valueCur[id]; seen {
+		return
+	}
+	name := fmt.Sprintf("ck%d", len(r.c.currencies))
+	r.add(name, sql)
+	r.c.currencies = append(r.c.currencies, name)
+	r.c.valueCur[id] = name
+}
+```
+
+(A record key is only known once the group keys are in `w`, which `rows()` has done by then; a walk that cannot bind leaves the error to the compile that follows.)
+
+- [ ] **Step 7: Carried currencies reach the cells**
+
+`run.go` `groupStatement`: after each column's cell, append `curSQL + " AS vc<idx>"` where `curSQL` is `e.cur.sql` or `NULL`, and record `c.carried[cp.col.ID] = true` when `e.cur.sql != ""`; `detailSelect` does the same with the detail expr. `layout.go` computed legs append `NULL AS vc<idx>` for every column (the union's columns stay equal). `assemble.go`: `cells` sets `out[id+"@currency"]` from `row["vc<idx>"]` when it is not nil, else from the column's currency key as today; `currencyOfColumn` sets `CurrencyCell` when the column has a currency key or `c.carried[id]`.
+
+- [ ] **Step 8: Run, then commit**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 ./reports/`
+Expected: PASS (`markCurrencies` treats the new keys like any other: a column whose totals hold two fee currencies is marked mixed).
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases/tinycld
+PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check
+git add core/server/reports
+git commit -m "feat(core): record and looked-up amounts carry their own currency"
+git push origin books/p5-trial-balance
+```
+
+---
+
+### Task 6: E4 (part 3) — `groups[].fill` on every group level: records with no rows
+
+Engine facts used: `a<L>` groups `w` by the level keys and counts `__n` (`levels.go:170-178`); to-many totals join `d<L>_<idx>` onto `a<L>` (`levels.go:73-97`, `levels.go:179-194`); `joinCtx` on a scope other than the root reads that scope's paths and refuses report columns (`join.go:56-79`); siblings are ordered within their parent (`levels.go:32-51`); a group row is pushed with `CanExpand` (`assemble.go:212-231`); totals are one per currency (`assemble.go:146-189`).
+
+Design (R6, changed by the human — Q3: every level):
+- **Keys.** The keyset of a fill level L is the keys of its base rows (`k0…k<L-1>` and the currency keys, from `w`) united with every parent row of level L-1 crossed with the target's records that match the fill's `where`. The parent rows of level 1 are the report's currencies (or one no-currency row when the report has no rows); of level L > 1, level L-1's keyset — its fill rows included, when level L-1 has a fill — so a fill record also appears under a parent that is itself a fill record. A fill record therefore appears under each parent group, under every currency.
+- **Where.** The fill's `where` reads the target's fields (paths), params, lookups, and the group above: `{col}` naming the column of an enclosing group reads that parent row's key (`p.k<i>`), and `{record}` naming an enclosing record group reads that parent's record. So "the accounts of this account type" is `eq([type], {col: type})` on a level under a group by type. The target's records are read through its rule CTE.
+- **Ordering, totals, having.** Fill rows sort with their siblings under their parent by the spec's sort keys; `recompute` totals read base rows only (a fill row adds nothing); `rows` totals add a fill row's cells (blank or zero); `having` applies to fill rows as to any group.
+- **Opening.** A fill row has no base rows, so it opens only when a deeper level has a fill (then it opens on that level's fill records).
+
+**Files:**
+- Modify: `core/server/reports/spec.go` (`Fill`, `Group.Fill`), `levels.go` (`level.fill`, `compiler.fillSets`, `compiler.fillKeys`, `fillCtx`, `render`, `toManyTotal`), `assemble.go` (`groupWithLabel`)
 - Create: `core/server/reports/fill_test.go`
 
 **Interfaces:**
-- Consumes: `compiler.groupTargets` (Task 5).
-- Produces: `type Fill struct { Where *Node \`json:"where,omitempty"\` }`; `Group.Fill *Fill` (`json:"fill,omitempty"`); `(c *compiler) fillKeys(r *rowsCTE, at string) (string, error)`; a fill row has `__n = 0` and `CanExpand = false`.
+- Consumes: `compiler.groupTargets`, `recordSQL` (Task 5).
+- Produces: `type Fill struct { Where *Node \`json:"where,omitempty"\` }`; `Group.Fill *Fill` (`json:"fill,omitempty"`); `(c *compiler) fillKeys(r *rowsCTE, n int, at string) (string, error)`; `compiler.fillSets map[int]string` (level → its keyset SQL); `fillCtx` (paths on the target, `{col}`/`{record}` of enclosing groups on the parent row `p`); a fill row has `__n = 0`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Records with no rows, made by the fill tests only**
+
+The fill tests add, with `z.rec`, a site and two animals ann owns that have no feeding (made in the tests, not in `newZoo`, so no other test's rows change): see `withEmptyAnimals` below.
+
+- [ ] **Step 2: Write the failing tests**
 
 Create `core/server/reports/fill_test.go`:
 
 ```go
 package reports
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
+
+// withEmptyAnimals adds a site and two of ann's animals with no feeding: Lia
+// (lion, at North) and Eli (elk, at East).
+func withEmptyAnimals(t *testing.T, z *zoo) {
+	t.Helper()
+	east := z.rec(t, "east", "zoo_sites", map[string]any{"name": "East", "region": "north"})
+	z.rec(t, "lia", "zoo_animals", map[string]any{"name": "Lia", "species": "lion", "site": z.id("north"), "owner": z.id("ann"), "active": true})
+	z.rec(t, "eli", "zoo_animals", map[string]any{"name": "Eli", "species": "elk", "site": east.Id, "owner": z.id("ann"), "active": true})
+}
 
 func animalFill(fill, filter string) string {
 	spec := `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
-		"groups":[{"id":"g","col":"animal","fill":` + fill + `}],"sort":[{"col":"cost"}]`
+		"groups":[{"id":"g","col":"animal","fill":` + fill + `}],"sort":[{"col":"cost"},{"formula":{"record":"g","path":[{"field":"name"}]}}]`
 	if filter != "" {
 		spec += `,"filter":` + filter
 	}
@@ -1648,115 +1973,141 @@ func animalFill(fill, filter string) string {
 }
 
 // Fill adds the target's records that have no rows, under the reader's rules:
-// ann sees kit (active, no feeding she may read); mo is bob's and hidden.
+// ann sees eli, kit and lia (active, no feeding she may read); mo is bob's.
 func TestFillAddsRecordsWithNoRows(t *testing.T) {
 	z := newZoo(t)
+	withEmptyAnimals(t, z)
 	res := z.run(t, "ann", animalFill(`{"where":{"op":"eq","args":[{"path":[{"field":"active"}]},{"value":true}]}}`, ""), Options{}, nil)
-	requireRows(t, res, "label", "Kit", "Zed", "Leo", "Total")
-	requireRows(t, res, "cost", int64(0), int64(1000), int64(3500), int64(4500))
-	requireRows(t, res, "n", int64(0), int64(2), int64(2), int64(4))
-	if res.Rows[0].CanExpand || !res.Rows[1].CanExpand {
-		t.Fatalf("a fill row has nothing to open: %+v", res.Rows[:2])
+	requireRows(t, res, "label", "Eli", "Kit", "Lia", "Zed", "Leo", "Total")
+	requireRows(t, res, "cost", int64(0), int64(0), int64(0), int64(1000), int64(3500), int64(4500))
+	requireRows(t, res, "n", int64(0), int64(0), int64(0), int64(2), int64(2), int64(4))
+	if res.Rows[0].CanExpand || !res.Rows[3].CanExpand {
+		t.Fatalf("a fill row with no deeper fill has nothing to open: %+v", res.Rows[:4])
 	}
 }
 
-func TestFillWithoutWhereAddsEveryVisibleRecord(t *testing.T) {
-	z := newZoo(t)
-	res := z.run(t, "bob", animalFill(`{}`, `{"op":"ne","args":[{"path":[{"field":"note"}]},{"value":"f5"}]}`), Options{}, nil)
-	requireRows(t, res, "label", "Mo", "Zed", "Total")
-	requireRows(t, res, "cost", int64(0), int64(1000), int64(1000))
-}
-
-// With no rows at all the fill records sit under the no-currency total.
+// With no rows at all the first level's fill records sit under the no-currency total.
 func TestFillWithNoRowsSitsUnderOneTotal(t *testing.T) {
 	z := newZoo(t)
+	withEmptyAnimals(t, z)
 	res := z.run(t, "ann", animalFill(`{}`, `{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"none"}]}`), Options{}, nil)
-	requireRows(t, res, "kind", "group", "group", "group", "total")
-	if last := res.Rows[len(res.Rows)-1]; last.ID != "total:[null]" {
-		t.Fatalf("total = %+v", last)
+	if last := res.Rows[len(res.Rows)-1]; last.ID != "total:[null]" || len(res.Rows) != 6 {
+		t.Fatalf("rows = %+v", res.Rows)
+	}
+}
+
+const sitesThenAnimals = `{"version":2,"source":"zoo.feedings","columns":[
+	{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
+	{"id":"animal","path":[{"link":"animal"}]},
+	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"}],
+	"groups":[
+		{"id":"s","col":"site","fill":{}},
+		{"id":"a","col":"animal","fill":{"where":{"op":"and","args":[
+			{"op":"eq","args":[{"path":[{"field":"active"}]},{"value":true}]},
+			{"op":"eq","args":[{"path":[{"link":"site"}]},{"col":"site"}]}]}}}],
+	"sort":[{"formula":{"record":"s","path":[{"field":"name"}]}},{"formula":{"record":"a","path":[{"field":"name"}]}}]}`
+
+// A deeper fill adds, under each parent, the records its where ties to that
+// parent; a parent that is itself a fill record opens on them.
+func TestFillOnADeeperLevelSitsUnderEachParent(t *testing.T) {
+	z := newZoo(t)
+	withEmptyAnimals(t, z)
+	// Open the sites, not the animals, so no feeding rows show.
+	sites := [][]any{{z.id("east"), "USD"}, {z.id("north"), "USD"}, {z.id("south"), "USD"}}
+	res := z.run(t, "ann", sitesThenAnimals, Options{Expand: sites}, nil)
+	requireRows(t, res, "label", "East", "Eli", "North", "Leo", "Lia", "South", "Zed", "Total")
+	requireRows(t, res, "cost", int64(0), int64(0), int64(3500), int64(3500), int64(0), int64(1000), int64(1000), int64(4500))
+	if !res.Rows[0].CanExpand || res.Rows[1].CanExpand {
+		t.Fatalf("east opens on its fill record, which opens on nothing: %+v", res.Rows[:2])
 	}
 }
 
 func TestFillIsRefusedWhereItCannotWork(t *testing.T) {
 	app := withZooRegistry(t)
-	second := `{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"a","path":[{"link":"animal"}]}],
-		"groups":[{"id":"g0","col":"n"},{"id":"g1","col":"a","fill":{}}]}`
 	notRecord := `{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"groups":[{"id":"g","col":"n","fill":{}}]}`
-	recordInWhere := `{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],
-		"groups":[{"id":"g","col":"a","fill":{"where":{"op":"eq","args":[{"record":"g","path":[{"field":"name"}]},{"value":"x"}]}}}]}`
+	ownColumn := `{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"a","fill":{"where":{"op":"gt","args":[{"col":"c"},{"value":0}]}}}]}`
 	for _, c := range []struct{ spec, at, want string }{
-		{second, "groups.1.fill", "only the first group level"},
 		{notRecord, "groups.0.fill", "only a group by a link"},
-		{recordInWhere, "groups.0.fill.where.args.0", "before they are grouped"},
+		{ownColumn, "groups.0.fill.where.args.0", "the keys of the groups above it"},
 	} {
 		spec, _, err := Load([]byte(c.spec))
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = Validate(app, spec)
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Fatalf("%s: err = %v", c.at, err)
-		}
-		requireSpecError(t, err, 400, c.at, c.want)
+		requireSpecError(t, Validate(app, spec), 400, c.at, c.want)
 	}
 }
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [ ] **Step 3: Run them to see them fail**
 
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 -run 'Fill' ./reports/`
 Expected: FAIL to load: `json: unknown field "fill"`.
 
-- [ ] **Step 3: Spec and binder**
+- [ ] **Step 4: Spec**
 
-In `spec.go` add to `Group`: `Fill *Fill \`json:"fill,omitempty"\`` with the comment "Fill adds the linked records that have no rows (first level only)", and:
+`spec.go`: `Group` gains `Fill *Fill \`json:"fill,omitempty"\`` ("adds the linked records that have no rows, under each parent group"), and:
 
 ```go
 // Fill is a record group's "show every record": the target's records that
-// match Where (all it may list when Where is nil) and have no base rows.
+// match Where (all it may list when Where is nil) and have no base rows, under
+// each parent group and currency.
 type Fill struct {
 	Where *Node `json:"where,omitempty"`
 }
 ```
 
-In `bind.go` `groupsAndPivot`, inside the loop after `seen[g.ID] = true`:
+- [ ] **Step 5: Fill keysets on every level**
+
+`levels.go`: `level` gains `fill string`; `compiler` gains `fillSets map[int]string` (reset in `groupStatement`). In `compiler.level`, after the keys:
 
 ```go
-		if g.Fill != nil && i > 0 {
-			b.bad(at+".fill", "only the first group level shows records with no rows")
-		}
-```
-
-- [ ] **Step 4: The fill keyset and level 1**
-
-In `levels.go`, add `fill string` to `level` ("the first level's keys with the fill records added; empty without a fill") and, in `compiler.level`, after the keys are set:
-
-```go
-	if g := c.p.groups; n == 1 && g[0].group.Fill != nil {
-		fill, err := c.fillKeys(r, g[0].at+".fill")
+	if n >= 1 && c.p.groups[n-1].group.Fill != nil {
+		fill, err := c.fillKeys(r, n, c.p.groups[n-1].at+".fill")
 		if err != nil {
 			return nil, err
 		}
 		lv.fill = fill
+		c.fillSets[n] = fill
 	}
 ```
 
-Add:
-
 ```go
-// fillKeys selects the first level's keys: those of the base rows, and every
-// record of the group's target that matches the fill's where, read through
-// the target's rule CTE. With currencies, a fill record is added under each
-// currency the report shows, or under none when it shows no rows (R6).
-func (c *compiler) fillKeys(r *rowsCTE, at string) (string, error) {
-	target := c.groupTargets[0]
+// parentKeys selects the parent rows of level n: the currencies for level 1
+// (or one no-currency row when there are no rows); for a deeper level the
+// keyset of level n-1, its fill rows included.
+func (c *compiler) parentKeys(n int) string {
+	if n == 1 {
+		if len(c.currencies) == 0 {
+			return "SELECT 1 AS __one"
+		}
+		cks := strings.Join(c.currencies, ", ")
+		nulls := strings.TrimSuffix(strings.Repeat("NULL, ", len(c.currencies)), ", ")
+		return fmt.Sprintf("SELECT DISTINCT %s FROM w UNION ALL SELECT %s WHERE NOT EXISTS (SELECT 1 FROM w)", cks, nulls)
+	}
+	if set, ok := c.fillSets[n-1]; ok {
+		return set
+	}
+	keys := make([]string, 0, n-1+len(c.currencies))
+	for i := range n - 1 {
+		keys = append(keys, fmt.Sprintf("k%d", i))
+	}
+	return "SELECT DISTINCT " + strings.Join(append(keys, c.currencies...), ", ") + " FROM w"
+}
+
+// fillKeys selects level n's keys: those of its base rows, and each parent row
+// crossed with the target's records that match the fill's where (R6).
+func (c *compiler) fillKeys(r *rowsCTE, n int, at string) (string, error) {
+	target := c.groupTargets[n-1]
 	if target == nil {
 		return "", invalid(at, "only a group by a link to one record shows records with no rows")
 	}
 	sc := newScope(r.s, target)
 	where := "1"
-	if w := c.p.groups[0].group.Fill.Where; w != nil {
-		e, err := compileWhere(&joinCtx{r: r, sc: sc, src: target, isFilter: true, visiting: map[string]bool{}}, w, at)
+	if w := c.p.groups[n-1].group.Fill.Where; w != nil {
+		j := &joinCtx{r: r, sc: sc, src: target, isFilter: true, visiting: map[string]bool{}}
+		e, err := compileWhere(&fillCtx{joinCtx: j, n: n}, w, at)
 		if err != nil {
 			return "", err
 		}
@@ -1764,23 +2115,68 @@ func (c *compiler) fillKeys(r *rowsCTE, at string) (string, error) {
 			where = "COALESCE(" + e.sql + ", 0)"
 		}
 	}
-	id := q(sc.alias, "id")
-	if len(c.currencies) == 0 {
-		return fmt.Sprintf("SELECT k0 FROM w UNION SELECT %s AS k0\n%s\nWHERE %s", id, sc.render(), where), nil
+	keys := make([]string, 0, n+len(c.currencies))
+	picked := make([]string, 0, n+len(c.currencies))
+	for i := range n - 1 {
+		keys = append(keys, fmt.Sprintf("k%d", i))
+		picked = append(picked, fmt.Sprintf("p.k%d AS k%d", i, i))
 	}
-	cks := strings.Join(c.currencies, ", ")
-	nulls := strings.TrimSuffix(strings.Repeat("NULL, ", len(c.currencies)), ", ")
-	cur := fmt.Sprintf("(SELECT DISTINCT %s FROM w UNION ALL SELECT %s WHERE NOT EXISTS (SELECT 1 FROM w)) cur", cks, nulls)
-	picked := make([]string, len(c.currencies))
-	for i, ck := range c.currencies {
-		picked[i] = "cur." + ck + " AS " + ck
+	keys = append(keys, fmt.Sprintf("k%d", n-1))
+	picked = append(picked, q(sc.alias, "id")+fmt.Sprintf(" AS k%d", n-1))
+	for _, ck := range c.currencies {
+		keys = append(keys, ck)
+		picked = append(picked, "p."+ck+" AS "+ck)
 	}
-	return fmt.Sprintf("SELECT k0, %s FROM w UNION SELECT %s AS k0, %s\n%s\nCROSS JOIN %s\nWHERE %s",
-		cks, id, strings.Join(picked, ", "), sc.render(), cur, where), nil
+	from := strings.TrimPrefix(sc.render(), "FROM ")
+	return fmt.Sprintf("SELECT %s FROM w UNION SELECT %s\nFROM (%s) p\nCROSS JOIN %s\nWHERE %s",
+		strings.Join(keys, ", "), strings.Join(picked, ", "), c.parentKeys(n), from, where), nil
 }
+
+// fillCtx compiles a fill's where: the target's paths (joinCtx on its scope),
+// and the parent row p: {col} naming an enclosing group's column reads that
+// parent's key, {record} naming an enclosing record group reads its record.
+type fillCtx struct {
+	*joinCtx
+	n int
+}
+
+func (f *fillCtx) col(id, at string) (expr, error) {
+	for i := range f.n - 1 {
+		if g := f.r.c.p.groups[i]; g.col.col.ID == id {
+			e, err := f.r.rowValue(g.col, at, map[string]bool{})
+			if err != nil {
+				return expr{}, err
+			}
+			e.sql = fmt.Sprintf("p.k%d", i)
+			return e, nil
+		}
+	}
+	return expr{}, invalid(at, "a fill's where reads its records' fields, params, and the keys of the groups above it")
+}
+
+func (f *fillCtx) record(group string, p Path, at string) (expr, error) {
+	gi, target, err := f.r.c.recordOf(group, at)
+	if err != nil {
+		return expr{}, err
+	}
+	if gi >= f.n-1 {
+		return expr{}, invalid(at, "a fill's where reads the records of the groups above it")
+	}
+	bound, err := bindRecordPath(f.r.c.p.app, target, p, at)
+	if err != nil {
+		return expr{}, err
+	}
+	e := recordExpr(bound)
+	e.sql = recordSQL(f.r.s, target, bound, fmt.Sprintf("p.k%d", gi))
+	return e, nil
+}
+
+func (f *fillCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(f, f.r, n, at) }
 ```
 
-In `render`, build `a<L>` from the keyset when the level has a fill (a left join keeps a record with no base rows; `count(w.__id)` counts 0 for it, and every aggregate reads `w.` columns that are NULL there):
+(For level 1, `parentKeys` with no currencies is `SELECT 1 AS __one`, and the picked list has no `p.` columns, so the cross join adds every matching record once.)
+
+`render` builds `a<L>` from the keyset when the level has a fill (a left join keeps a record with no base rows; `count(w.__id)` counts 0 for it, and every aggregate reads `w.` columns that are NULL there):
 
 ```go
 	a := fmt.Sprintf("a%d", lv.n)
@@ -1802,32 +2198,32 @@ In `render`, build `a<L>` from the keyset when the level has a fill (a left join
 	}
 ```
 
-A fill record has no `d<L>_<idx>` row, so its to-many sum and count would read NULL instead of 0. Change `lv.tmCols` from `[]string` to `[]tmCol` with `type tmCol struct{ d, idx string; zero bool }` (set in `toManyTotal`: `zero` is true for `Sum` and `Count`) and select `COALESCE(d.x<idx>, 0) AS x<idx>` for those in `render`'s `g<L>` CTE (`d.x<idx>` for the others).
+A fill record has no `d<L>_<idx>` row, so its to-many sum and count would read NULL instead of 0: `lv.tmCols` becomes `[]tmCol` with `type tmCol struct{ d, idx string; zero bool }` (`zero` for `Sum` and `Count`, set in `toManyTotal`), and `render`'s `g<L>` CTE selects `COALESCE(d.x<idx>, 0) AS x<idx>` for those.
 
-- [ ] **Step 5: A fill row cannot open**
+- [ ] **Step 6: A fill row opens only onto a deeper fill**
 
-In `assemble.go` `groupWithLabel`, after `canOpen` is computed:
+`assemble.go` `groupWithLabel`, after `canOpen`:
 
 ```go
-	// A fill record has no base rows, so nothing opens under it. A layout's
-	// section with no rows has no __n and keeps today's behaviour.
-	if v, ok := row["__n"]; ok && v != nil && toInt(v) == 0 {
+	// A fill record has no base rows: it opens only onto a deeper level's fill
+	// records. A layout section with no rows has no __n and keeps today's rule.
+	if v, ok := row["__n"]; ok && v != nil && toInt(v) == 0 && !rn.c.deeperFill(n) {
 		canOpen = false
 	}
 ```
 
-- [ ] **Step 6: Run the reports tests**
+with `func (c *compiler) deeperFill(n int) bool` true when a group after index `n-1` has a fill.
+
+- [ ] **Step 7: Run, then commit**
 
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test -tags no_ui -count=1 ./reports/`
 Expected: PASS.
-
-- [ ] **Step 7: Commit**
 
 ```bash
 cd /Users/nas/tmp/tinycld/books-purchases/tinycld
 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check
 git add core/server/reports
-git commit -m "feat(core): a record group can show every record, even with no rows"
+git commit -m "feat(core): record groups can show every record, under each parent group"
 git push origin books/p5-trial-balance
 ```
 
@@ -3623,7 +4019,7 @@ func TestDisplayLayoutsAreChecked(t *testing.T) {
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"span":2},{"col":"b","line":1}]}`, "display.layouts.0.cells.1", "no room on line 1", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"lines":2},{"col":"b","line":2,"start":1}]}`, "display.layouts.0.cells.1", "overlaps", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"justify":"left"}]}`, "display.layouts.0.cells.0.justify", "start, center or end", 400},
-		{`{"width":"mobile","tracks":3,"cells":[{"col":"a","line":1,"start":2,"lines":2}]}`, "display.layouts.0.cells.0", "sits at the start or the end", 400},
+		{`{"width":"mobile","tracks":3,"cells":[{"col":"a","line":1,"start":1,"span":2},{"col":"b","line":1,"start":3,"lines":2},{"col":"c","line":3,"start":2,"span":2},{"col":"d","line":2,"start":1,"lines":2},{"col":"e","line":2,"start":2}]}`, "display.layouts.0.cells.0", "can't be laid out", 400},
 		{`{"width":"mobile","tracks":2,"cells":[]},{"width":"mobile","tracks":1,"cells":[]}`, "display.layouts.1.width", "one layout per width", 400},
 	} {
 		spec, _, err := Load([]byte(fmt.Sprintf(base, c.layout)))
@@ -3645,14 +4041,22 @@ func TestPlaceCellsFlowsIntoFreeTracks(t *testing.T) {
 	}
 }
 
-// A cell that spans lines sits at an edge and spans every line (R28): flex
-// stacks the other lines beside it.
-func TestPlaceCellsKeepsSpanningCellsAtAnEdge(t *testing.T) {
-	if _, err := placeCells(3, []DisplayCell{{Col: "id", Line: 1, Start: 3, Lines: 2}, {Col: "a", Line: 1, Span: 2}, {Col: "b", Line: 2, Span: 2}}); err != nil {
+// A cell may span lines anywhere a straight cut frees it, mid-row included;
+// only a pinwheel is refused (R28).
+func TestPlaceCellsCutsAnyLayoutButAPinwheel(t *testing.T) {
+	mid := []DisplayCell{{Col: "a", Line: 1}, {Col: "m", Line: 1, Start: 2, Lines: 2}, {Col: "b", Line: 1, Start: 3}, {Col: "c", Line: 2, Start: 1}, {Col: "d", Line: 2, Start: 3}}
+	if _, err := placeCells(3, mid); err != nil {
 		t.Fatal(err)
 	}
-	_, err := placeCells(3, []DisplayCell{{Col: "a", Line: 1}, {Col: "mid", Line: 1, Start: 2, Lines: 2}, {Col: "b", Line: 2}})
-	requireSpecError(t, err, 400, "cells.1", "a cell that spans lines sits at the start or the end and spans every line")
+	pinwheel := []DisplayCell{
+		{Col: "a", Line: 1, Start: 1, Span: 2},
+		{Col: "b", Line: 1, Start: 3, Lines: 2},
+		{Col: "c", Line: 3, Start: 2, Span: 2},
+		{Col: "d", Line: 2, Start: 1, Lines: 2},
+		{Col: "e", Line: 2, Start: 2},
+	}
+	_, err := placeCells(3, pinwheel)
+	requireSpecError(t, err, 400, "cells.0", "These cells overlap in a way that can't be laid out; move one cell.")
 }
 ```
 
@@ -3789,8 +4193,8 @@ type placed struct{ start, span, line, lines int }
 
 // placeCells lays cells out in order: a cell with a start sits there; one
 // without takes the first tracks of its line that are free on every line it
-// spans; a cell that spans lines must sit at an edge and span every line
-// (R28). lib/table-lines.ts places cells by the same rule.
+// spans; then the cells must cut down by straight lines (no pinwheel, R28).
+// lib/table-lines.ts places and cuts cells by the same rules.
 func placeCells(tracks int, cells []DisplayCell) ([]placed, error) {
 	taken := map[[2]int]bool{}
 	out := make([]placed, 0, len(cells))
@@ -3837,19 +4241,75 @@ func placeCells(tracks int, cells []DisplayCell) ([]placed, error) {
 		}
 		out = append(out, placed{start, span, c.Line, lines})
 	}
-	// A flex row places a cell that spans lines only beside the stacked lines
-	// (R28): at the start or the end edge, from line 1 to the last line.
-	last := 0
-	for _, p := range out {
-		last = max(last, p.line+p.lines-1)
-	}
-	for j, p := range out {
-		atEdge := p.start == 1 || p.start+p.span-1 == tracks
-		if p.lines > 1 && (p.line != 1 || p.lines != last || !atEdge) {
-			return nil, invalid(fmt.Sprintf("cells.%d", j), "a cell that spans lines sits at the start or the end and spans every line")
-		}
+	// The client draws an arrangement as blocks cut by straight lines (R28): a
+	// pinwheel no straight cut can split cannot be drawn.
+	if j := uncuttable(out, tracks); j >= 0 {
+		return nil, invalid(fmt.Sprintf("cells.%d", j), pinwheelMessage)
 	}
 	return out, nil
+}
+
+const pinwheelMessage = "These cells overlap in a way that can't be laid out; move one cell."
+
+// piece is a placed cell as a box: tracks [x0, x1) and lines [y0, y1), from 0.
+type piece struct{ index, x0, x1, y0, y1 int }
+
+// uncuttable is the index of the first cell of a part no straight cut between
+// lines or tracks can split into two non-empty sides, or -1 when the cells cut
+// down to one each (guillotine cuts; lib/table-lines.ts cuts the same way).
+func uncuttable(ps []placed, tracks int) int {
+	pieces := make([]piece, len(ps))
+	lines := 0
+	for i, p := range ps {
+		pieces[i] = piece{i, p.start - 1, p.start - 1 + p.span, p.line - 1, p.line - 1 + p.lines}
+		lines = max(lines, p.line-1+p.lines)
+	}
+	return cutDown(pieces, 0, tracks, 0, lines)
+}
+
+func cutDown(pieces []piece, x0, x1, y0, y1 int) int {
+	if len(pieces) <= 1 {
+		return -1
+	}
+	split := func(at int, across bool) ([]piece, []piece, bool) {
+		var lo, hi []piece
+		for _, p := range pieces {
+			a0, a1 := p.x0, p.x1
+			if across {
+				a0, a1 = p.y0, p.y1
+			}
+			switch {
+			case a1 <= at:
+				lo = append(lo, p)
+			case a0 >= at:
+				hi = append(hi, p)
+			default:
+				return nil, nil, false
+			}
+		}
+		return lo, hi, len(lo) > 0 && len(hi) > 0
+	}
+	for y := y0 + 1; y < y1; y++ {
+		if lo, hi, ok := split(y, true); ok {
+			if j := cutDown(lo, x0, x1, y0, y); j >= 0 {
+				return j
+			}
+			return cutDown(hi, x0, x1, y, y1)
+		}
+	}
+	for x := x0 + 1; x < x1; x++ {
+		if lo, hi, ok := split(x, false); ok {
+			if j := cutDown(lo, x0, x, y0, y1); j >= 0 {
+				return j
+			}
+			return cutDown(hi, x, x1, y0, y1)
+		}
+	}
+	first := pieces[0].index
+	for _, p := range pieces {
+		first = min(first, p.index)
+	}
+	return first
 }
 
 // prefixProblem moves an error's problem keys under at.
@@ -6814,10 +7274,10 @@ function GroupLabel({ builder, groups, index, target }: LevelPartProps) {
     )
 }
 
-/** "Show every <target>, even with no rows", with its own conditions (first level only). */
+/** "Show every <target>, even with no rows", with its own conditions, on any level (R6). */
 function GroupFill({ builder, groups, index, target }: LevelPartProps) {
     const group = groups[index]
-    if (!group || !target || index !== 0) return null
+    if (!group || !target) return null
     const testID = `report-builder-group-${index}-fill`
     return (
         <View className="gap-1.5">
@@ -6845,7 +7305,7 @@ function GroupHaving({ builder, groups, index }: LevelPartProps) {
 }
 ```
 
-(`LevelFormula` draws `FormulaEditor` with `reportOperators(formulaContext(builder.form.getValues(), builder.catalog, { kind: 'level' }))` and returns null when not visible; `FillConditions` draws `ConditionTree` and returns null when not visible.)
+A fill's conditions on a level under other groups can tie a record to its parent: a condition row in the fill tree gains a "Same as the <group> above" choice (`…-fill-<n>-above`, a `PickMenu` of the enclosing groups whose column type matches the field), which makes the condition's value that group's key — `ConditionDraft` gains `above: string` (a group id, '' for none; schema `z.string()`, default ''), written as `{ col: <that group's column> }` and read back from that shape when the column is an enclosing group's (`filter.ts` `conditionNode`/`compareCondition` with the level scope's enclosing groups). (`LevelFormula` draws `FormulaEditor` with `reportOperators(formulaContext(builder.form.getValues(), builder.catalog, { kind: 'level' }))` and returns null when not visible; `FillConditions` draws `ConditionTree` and returns null when not visible.)
 
 Sort rows: replace the column `SelectInput` with a `PickMenu` whose items are the columns (`id: column.id`), each record group's fields (`id: record.<group>.<field>`, label `"<Group> › <Field>"`), and `formula` ("Formula…"); choosing one sets the sort key to `{ kind: 'col', col }`, `{ kind: 'formula', formula: { kind: 'editable', node: { record, path: [{ field }] } } }` or `{ kind: 'formula', formula: NEW_FORMULA }`. A formula key that is not a bare record field shows `LevelFormula` (test id `report-builder-sort-<i>-formula`). "Add sort" becomes the same menu (`report-builder-sort-add-menu`) appending a key. `sortRowKeys` reads `key.kind === 'col' ? key.col : JSON.stringify(key.formula.node)`.
 
@@ -6893,13 +7353,61 @@ function DetailLabelCard({ builder }: { builder: ReportBuilder }) {
 
 (`DetailFormula` is `FormulaEditor` with `formulaContext(…, { kind: 'detail' })`, or `FixedFormula` for a fixed draft, and returns null when not visible.)
 
-- [ ] **Step 6: Run**
+- [ ] **Step 6: A fill under a parent group, in e2e**
+
+Add to `reports-groups-v2.spec.ts`:
+
+```ts
+    test('a deeper group shows every team of its region, even with no rows, under each region', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptfill2')
+        try {
+            const stem = uniqueName('Deep')
+            await openReportStub(p)
+            await addTeam(p, `${stem} N1`, 'north')
+            await addTeam(p, `${stem} N2`, 'north')
+            await addTeam(p, `${stem} S1`, 'south')
+            await addSale(p, { team: `${stem} N1`, customer: 'Nia', amount: 100, cost: 0, day: '2026-01-05' })
+            await addSale(p, { team: `${stem} S1`, customer: 'Sol', amount: 100, cost: 0, day: '2026-01-05' })
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['team', 'region'])
+            await p.getByTestId('report-builder-add-column').click()
+            await p.getByTestId('report-builder-picker').getByTestId('report-builder-pick-record-team').click()
+            await addColumn(p, ['amount'])
+            await chooseOption(p, 'report-builder-column-3-aggregate', 'sum')
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'team_region')
+            await p.getByTestId('report-builder-group-0-open').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-1-col', 'team')
+            await p.getByTestId('report-builder-group-1-fill-on').click()
+            await p.getByTestId('report-builder-group-1-fill-add-condition').click()
+            await p.getByTestId('report-builder-picker').getByTestId('report-builder-pick-field-name').click()
+            await chooseOption(p, 'report-builder-group-1-fill-0-op', 'startsWith')
+            await p.getByTestId('report-builder-group-1-fill-0-value').fill(stem)
+            await p.getByTestId('report-builder-group-1-fill-add-condition').click()
+            await p.getByTestId('report-builder-picker').getByTestId('report-builder-pick-field-region').click()
+            await chooseOption(p, 'report-builder-group-1-fill-1-above', 'level')
+            await chooseOption(p, 'report-builder-sort-add-menu', 'record.level2.name')
+            const rows = p.getByTestId('report-table').locator('[data-testid^="report-row-g:"]')
+            await expect(rows.filter({ hasText: stem })).toHaveText([`${stem} N1`, `${stem} N2`, `${stem} S1`])
+            await expect(rowOf(p, `${stem} N2`)).not.toHaveAttribute('aria-expanded')
+        } finally {
+            await close()
+        }
+    })
+```
+
+(The sales filter is not narrowed: other tests' teams with this member's sales cannot exist — the member is fresh — and the fill keeps only this test's teams; `N2` sits under North with no sales, `S1` under South.)
+
+- [ ] **Step 7: Run**
 
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check`
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_PORT_2=7211 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test:e2e -- tests/e2e/reports-groups-v2.spec.ts tests/e2e/reports-filter.spec.ts tests/e2e/reports-group-pivot.spec.ts tests/e2e/reports-create.spec.ts`
 Expected: all pass (the filter, group and create specs keep their ids).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 cd /Users/nas/tmp/tinycld/books-purchases/tinycld
@@ -7320,9 +7828,11 @@ git push origin books/p5-trial-balance
 
 ---
 
-### Task 24: E14 (part 1) — line layouts per width (flex lines, edge cells)
+### Task 24: E14 (part 1) — line layouts per width as a block tree (guillotine cuts)
 
-Code facts used: today's layout rule (`components/report-table-layout.ts:42-53`); `isRightAligned` (`lib/format.ts`); the engine's placement rule with its edge rule for `lines` (Task 15 `placeCells`, R28).
+Code facts used: today's layout rule (`components/report-table-layout.ts:42-53`); `isRightAligned` (`lib/format.ts`); the engine's placement and cut rules (Task 15 `placeCells`, `cuttable`, R28).
+
+Design (R28, Q10 as the human answered): an arrangement is cut into blocks recursively — a straight cut between two lines splits a block into a top and a bottom block, a straight cut between two tracks into a left and a right block — until each block holds one cell or none. A cell may then span lines anywhere, mid-row included: a left/right cut puts it in a block beside stacked lines. Only a "pinwheel" (cells arranged so no straight cut separates any of them) cannot be cut; the engine and the builder refuse it with "These cells overlap in a way that can't be laid out; move one cell." The client draws the tree with flex: a top/bottom split is a column of blocks, a left/right split a row of blocks whose widths are their shares of the tracks; rows stretch their blocks to one height, so a cell that spans lines is as tall as the lines beside it, and `justify` aligns it.
 
 **Files:**
 - Create: `core/reports/lib/table-lines.ts`, `core/reports/lib/__tests__/table-lines.test.ts`
@@ -7330,7 +7840,7 @@ Code facts used: today's layout rule (`components/report-table-layout.ts:42-53`)
 - Modify: `core/reports/lib/builder/draft.ts` (`draftIssues` reports each display layout `placeCells` refuses)
 
 **Interfaces:**
-- Produces: `placeCells(tracks, cells): { placed: Placed[] } | { problem: { index: number; message: string } }` (the Go rule, edge rule included); `type Justify = 'start' | 'center' | 'end'`; `type LineCell = { col: string; start: number; span: number; justify: Justify }` (start within the middle region, from 1); `type EdgeCell = { col: string; span: number; justify: Justify }`; `type LineLayout = { kind: 'one-line' } | { kind: 'lines'; tracks: number; left: EdgeCell[]; right: EdgeCell[]; middleTracks: number; lines: LineCell[][] }`; `tableLines({ columns, width, breakpoint, layouts, oneLineFits }): LineLayout`; `lineSegments(line: LineCell[], middleTracks: number): ({ kind: 'cell'; cell: LineCell; width: string } | { kind: 'gap'; width: string })[]`; `trackWidth(span, of): string` (a percent); `rowLayout(item: VisibleRow, layout: LineLayout, labelId: string): LineLayout` (a row with no figures draws only its label line); `startingLayout(width, columns, tracks?)`; `fitsOnOneLine({ breakpoint, amountCount, width }): boolean`.
+- Produces: `placeCells(tracks, cells): { placed: Placed[] } | { problem: { index: number; message: string } }` (the Go rules, the cut rule included); `PINWHEEL_MESSAGE`; `type Justify = 'start' | 'center' | 'end'`; `type Block = { kind: 'cell'; col: string; justify: Justify } | { kind: 'gap' } | { kind: 'stack'; parts: Block[] } | { kind: 'side'; of: number; parts: { block: Block; tracks: number }[] }` (a part is `tracks` of the block's `of` tracks wide); `type LineLayout = { kind: 'one-line' } | { kind: 'blocks'; root: Block }`; `tableLines({ columns, width, breakpoint, layouts, oneLineFits }): LineLayout`; `rowLayout(item: VisibleRow, layout: LineLayout, labelId: string): LineLayout` (a row with no figures draws only its label); `startingLayout(width, columns, tracks?)`; `fitsOnOneLine({ breakpoint, amountCount, width }): boolean`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -7338,7 +7848,7 @@ Create `core/reports/lib/__tests__/table-lines.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { lineSegments, placeCells, rowLayout, startingLayout, tableLines } from '../table-lines'
+import { PINWHEEL_MESSAGE, placeCells, rowLayout, startingLayout, tableLines } from '../table-lines'
 import type { ResultColumn } from '../types'
 
 const COLS: ResultColumn[] = [
@@ -7348,25 +7858,30 @@ const COLS: ResultColumn[] = [
     { id: 'credit', label: 'Credit', type: 'money', currency: 'USD' },
 ]
 
-describe('placing cells (the engine rule)', () => {
+describe('placing cells (the engine rules)', () => {
     it('flows cells into the first free tracks of their line', () => {
-        expect(placeCells(3, [{ col: 'a', line: 1, span: 3 }, { col: 'b', line: 2 }, { col: 'c', line: 2 }, { col: 'd', line: 3 }])).toEqual({
+        expect(placeCells(3, [{ col: 'a', line: 1, span: 3 }, { col: 'b', line: 2 }, { col: 'c', line: 2 }])).toEqual({
             placed: [
                 { start: 1, span: 3, line: 1, lines: 1 },
                 { start: 1, span: 1, line: 2, lines: 1 },
                 { start: 2, span: 1, line: 2, lines: 1 },
-                { start: 1, span: 1, line: 3, lines: 1 },
             ],
         })
     })
     it('names a cell with no room', () => {
         expect(placeCells(2, [{ col: 'a', line: 1, span: 2 }, { col: 'b', line: 1 }])).toEqual({ problem: { index: 1, message: 'no room on line 1' } })
     })
-    it('lets a cell span lines only at an edge, from the first line to the last', () => {
-        expect(placeCells(3, [{ col: 'id', line: 1, start: 3, lines: 2 }, { col: 'a', line: 1, span: 2 }, { col: 'b', line: 2, span: 2 }])).toMatchObject({ placed: expect.any(Array) })
-        expect(placeCells(3, [{ col: 'a', line: 1 }, { col: 'mid', line: 1, start: 2, lines: 2 }, { col: 'b', line: 2 }])).toEqual({
-            problem: { index: 1, message: 'a cell that spans lines sits at the start or the end and spans every line' },
-        })
+    it('lets a cell span lines anywhere a straight cut can free it, and refuses a pinwheel', () => {
+        const mid = [{ col: 'a', line: 1 }, { col: 'm', line: 1, start: 2, lines: 2 }, { col: 'b', line: 1, start: 3 }, { col: 'c', line: 2, start: 1 }, { col: 'd', line: 2, start: 3 }]
+        expect('placed' in placeCells(3, mid)).toBe(true)
+        const pinwheel = [
+            { col: 'a', line: 1, start: 1, span: 2 },
+            { col: 'b', line: 1, start: 3, lines: 2 },
+            { col: 'c', line: 3, start: 2, span: 2 },
+            { col: 'd', line: 2, start: 1, lines: 2 },
+            { col: 'e', line: 2, start: 2 },
+        ]
+        expect(placeCells(3, pinwheel)).toEqual({ problem: { index: 0, message: PINWHEEL_MESSAGE } })
     })
 })
 
@@ -7375,56 +7890,55 @@ describe('the table layout per width', () => {
         expect(tableLines({ columns: COLS, width: 1280, breakpoint: 'desktop', layouts: [], oneLineFits: false })).toEqual({ kind: 'one-line' })
         expect(tableLines({ columns: COLS, width: 900, breakpoint: 'tablet', layouts: [], oneLineFits: true })).toEqual({ kind: 'one-line' })
     })
-    it('wraps a phone row: the label across line 1, the amounts in aligned tracks on line 2', () => {
+    it('wraps a phone row: the label across line 1, the amounts in aligned tracks below', () => {
         expect(tableLines({ columns: COLS, width: 390, breakpoint: 'mobile', layouts: [], oneLineFits: false })).toEqual({
-            kind: 'lines',
-            tracks: 3,
-            left: [],
-            right: [],
-            middleTracks: 3,
-            lines: [
-                [{ col: 'account', start: 1, span: 3, justify: 'start' }],
-                [
-                    { col: 'number', start: 1, span: 1, justify: 'start' },
-                    { col: 'debit', start: 2, span: 1, justify: 'end' },
-                    { col: 'credit', start: 3, span: 1, justify: 'end' },
+            kind: 'blocks',
+            root: {
+                kind: 'stack',
+                parts: [
+                    { kind: 'cell', col: 'account', justify: 'start' },
+                    {
+                        kind: 'side',
+                        of: 3,
+                        parts: [
+                            { block: { kind: 'cell', col: 'number', justify: 'start' }, tracks: 1 },
+                            { block: { kind: 'cell', col: 'debit', justify: 'end' }, tracks: 1 },
+                            { block: { kind: 'cell', col: 'credit', justify: 'end' }, tracks: 1 },
+                        ],
+                    },
                 ],
-            ],
+            },
         })
     })
-    it('follows the author arrangement, an edge cell spanning both lines beside the others', () => {
+    it('cuts an arrangement with a mid-row cell spanning two lines into side blocks', () => {
         const layout = tableLines({
             columns: COLS,
             width: 400,
             breakpoint: 'mobile',
             oneLineFits: false,
-            layouts: [{ width: 'mobile', tracks: 3, cells: [{ col: 'account', line: 1, span: 2 }, { col: 'number', line: 1, start: 3, lines: 2, justify: 'center' }, { col: 'debit', line: 2, justify: 'end' }, { col: 'credit', line: 2, justify: 'end' }] }],
+            layouts: [{ width: 'mobile', tracks: 3, cells: [{ col: 'account', line: 1 }, { col: 'number', line: 1, start: 2, lines: 2, justify: 'center' }, { col: 'debit', line: 1, start: 3 }, { col: 'credit', line: 2, start: 3 }] }],
         })
         expect(layout).toEqual({
-            kind: 'lines',
-            tracks: 3,
-            left: [],
-            right: [{ col: 'number', span: 1, justify: 'center' }],
-            middleTracks: 2,
-            lines: [[{ col: 'account', start: 1, span: 2, justify: 'start' }], [{ col: 'debit', start: 1, span: 1, justify: 'end' }, { col: 'credit', start: 2, span: 1, justify: 'end' }]],
+            kind: 'blocks',
+            root: {
+                kind: 'side',
+                of: 3,
+                parts: [
+                    { block: { kind: 'stack', parts: [{ kind: 'cell', col: 'account', justify: 'start' }, { kind: 'gap' }] }, tracks: 1 },
+                    { block: { kind: 'cell', col: 'number', justify: 'center' }, tracks: 1 },
+                    { block: { kind: 'stack', parts: [{ kind: 'cell', col: 'debit', justify: 'end' }, { kind: 'cell', col: 'credit', justify: 'end' }] }, tracks: 1 },
+                ],
+            },
         })
     })
     it('puts a label the arrangement leaves out on a line of its own', () => {
-        const layout = tableLines({ columns: COLS, width: 400, breakpoint: 'mobile', oneLineFits: false, layouts: [{ width: 'mobile', tracks: 2, cells: [{ col: 'debit', line: 1 }] }] })
-        expect(layout.kind === 'lines' && layout.lines[0]).toEqual([{ col: 'account', start: 1, span: 2, justify: 'start' }])
+        const layout = tableLines({ columns: COLS, width: 400, breakpoint: 'mobile', oneLineFits: false, layouts: [{ width: 'mobile', tracks: 2, cells: [{ col: 'debit', line: 1, span: 2 }] }] })
+        expect(layout).toEqual({ kind: 'blocks', root: { kind: 'stack', parts: [{ kind: 'cell', col: 'account', justify: 'start' }, { kind: 'cell', col: 'debit', justify: 'end' }] } })
     })
-    it('fills the gaps of a line so each cell sits on its own tracks', () => {
-        expect(lineSegments([{ col: 'b', start: 2, span: 1, justify: 'end' }], 3)).toEqual([
-            { kind: 'gap', width: '33.333333333333336%' },
-            { kind: 'cell', cell: { col: 'b', start: 2, span: 1, justify: 'end' }, width: '33.333333333333336%' },
-            { kind: 'gap', width: '33.333333333333336%' },
-        ])
-    })
-    it('a row with no figures draws only its label line', () => {
+    it('a row with no figures draws only its label', () => {
         const layout = tableLines({ columns: COLS, width: 390, breakpoint: 'mobile', layouts: [], oneLineFits: false })
         const row = { id: 'g', kind: 'group' as const, depth: 0, label: 'Assets', cells: {} }
-        const bare = rowLayout({ row, cells: {}, isToggle: true, isOpen: false }, layout, 'account')
-        expect(bare.kind === 'lines' && bare.lines).toEqual([[{ col: 'account', start: 1, span: 3, justify: 'start' }]])
+        expect(rowLayout({ row, cells: {}, isToggle: true, isOpen: false }, layout, 'account')).toEqual({ kind: 'blocks', root: { kind: 'cell', col: 'account', justify: 'start' } })
     })
     it('starts an arrangement from the columns', () => {
         expect(startingLayout('mobile', [{ id: 'a' }, { id: 'b' }, { id: 'c' }])).toEqual({ width: 'mobile', tracks: 3, cells: [{ col: 'a', line: 1, span: 3 }, { col: 'b', line: 2 }, { col: 'c', line: 2 }] })
@@ -7450,27 +7964,55 @@ import type { ResultColumn } from './types'
 
 // E14: a report row wraps onto more lines where its columns do not fit, after
 // Gridley: one cell renderer per column, and per width a layout that puts each
-// column on a line, at a start track, spanning tracks, with an alignment. React
-// Native has no CSS grid on native, so a row is drawn with flex: a vertical stack
-// of lines, each a flex row of cells whose widths are their share of equal tracks
-// (a percent of the row). A cell that spans lines (Gridley's rowSpan) sits at the
-// row's start or end edge and spans every line, beside the stacked lines (R28).
-// Rows measure themselves; nothing here knows a height.
+// column on a line, at a start track, spanning tracks and lines, with an
+// alignment. React Native has no CSS grid on native, so a layout is cut into a
+// tree of blocks (guillotine cuts between lines or between tracks) that flex
+// draws: a stack of blocks top to bottom, or blocks side by side whose widths
+// are their shares of the tracks. Rows measure themselves (R28).
 
 export const AUTO_TRACK_MIN = 104
 const MAX_LINES = 8
+export const PINWHEEL_MESSAGE = "These cells overlap in a way that can't be laid out; move one cell."
 
 export type Justify = 'start' | 'center' | 'end'
-export type LineCell = { col: string; start: number; span: number; justify: Justify }
-export type EdgeCell = { col: string; span: number; justify: Justify }
-export type LineLayout =
-    | { kind: 'one-line' }
-    | { kind: 'lines'; tracks: number; left: EdgeCell[]; right: EdgeCell[]; middleTracks: number; lines: LineCell[][] }
+export type Block =
+    | { kind: 'cell'; col: string; justify: Justify }
+    | { kind: 'gap' }
+    | { kind: 'stack'; parts: Block[] }
+    | { kind: 'side'; of: number; parts: { block: Block; tracks: number }[] }
+export type LineLayout = { kind: 'one-line' } | { kind: 'blocks'; root: Block }
 export type Placed = { start: number; span: number; line: number; lines: number }
 
-const EDGE_RULE = 'a cell that spans lines sits at the start or the end and spans every line'
+type Box = { x0: number; x1: number; y0: number; y1: number } // tracks [x0, x1), lines [y0, y1), from 0
+type Piece = { index: number; x0: number; x1: number; y0: number; y1: number }
 
-/** The engine's placement rule (core/server/reports/bind.go placeCells), its edge rule included. */
+const pieceOf = (p: Placed, index: number): Piece => ({ index, x0: p.start - 1, x1: p.start - 1 + p.span, y0: p.line - 1, y1: p.line - 1 + p.lines })
+
+// A straight cut of the box that separates its pieces into two non-empty sides,
+// lines first, or null when none exists (a pinwheel).
+function cut(pieces: readonly Piece[], box: Box): { across: boolean; at: number } | null {
+    for (let y = box.y0 + 1; y < box.y1; y++) {
+        if (pieces.every(p => p.y1 <= y || p.y0 >= y) && pieces.some(p => p.y1 <= y) && pieces.some(p => p.y0 >= y)) return { across: true, at: y }
+    }
+    for (let x = box.x0 + 1; x < box.x1; x++) {
+        if (pieces.every(p => p.x1 <= x || p.x0 >= x) && pieces.some(p => p.x1 <= x) && pieces.some(p => p.x0 >= x)) return { across: false, at: x }
+    }
+    return null
+}
+
+/** The first piece of a part no straight cut separates, or null when the pieces can be cut down to one each. */
+function uncuttable(pieces: readonly Piece[], box: Box): Piece | null {
+    if (pieces.length <= 1) return null
+    const c = cut(pieces, box)
+    if (!c) return [...pieces].sort((a, b) => a.index - b.index)[0] ?? null
+    const [lo, hi] = c.across
+        ? [pieces.filter(p => p.y1 <= c.at), pieces.filter(p => p.y0 >= c.at)]
+        : [pieces.filter(p => p.x1 <= c.at), pieces.filter(p => p.x0 >= c.at)]
+    const [boxLo, boxHi] = c.across ? [{ ...box, y1: c.at }, { ...box, y0: c.at }] : [{ ...box, x1: c.at }, { ...box, x0: c.at }]
+    return uncuttable(lo, boxLo) ?? uncuttable(hi, boxHi)
+}
+
+/** The engine's placement rules (core/server/reports/bind.go placeCells, cuttable). */
 export function placeCells(tracks: number, cells: readonly DisplayCell[]): { placed: Placed[] } | { problem: { index: number; message: string } } {
     const taken = new Set<string>()
     const placed: Placed[] = []
@@ -7494,13 +8036,44 @@ export function placeCells(tracks: number, cells: readonly DisplayCell[]): { pla
         for (let line = c.line; line < c.line + lines; line++) for (let t = start; t < start + span; t++) taken.add(`${line}:${t}`)
         placed.push({ start, span, line: c.line, lines })
     }
-    // A flex row can place a cell that spans lines only beside the stacked lines.
-    const last = Math.max(0, ...placed.map(p => p.line + p.lines - 1))
-    for (const [index, p] of placed.entries()) {
-        const atEdge = p.start === 1 || p.start + p.span - 1 === tracks
-        if (p.lines > 1 && (p.line !== 1 || p.lines !== last || !atEdge)) return { problem: { index, message: EDGE_RULE } }
-    }
+    const pieces = placed.map(pieceOf)
+    const lines = Math.max(0, ...pieces.map(p => p.y1))
+    const stuck = uncuttable(pieces, { x0: 0, x1: tracks, y0: 0, y1: lines })
+    if (stuck) return { problem: { index: stuck.index, message: PINWHEEL_MESSAGE } }
     return { placed }
+}
+
+/** A stack with nested stacks folded in; a stack of one block is that block. */
+function stackOf(parts: Block[]): Block {
+    const flat = parts.flatMap(p => (p.kind === 'stack' ? p.parts : [p]))
+    return flat.length === 1 && flat[0] ? flat[0] : { kind: 'stack', parts: flat }
+}
+
+/** A part of a side block; a nested side block's parts fold into it (track counts are absolute). */
+function sideParts(block: Block, tracks: number): { block: Block; tracks: number }[] {
+    return block.kind === 'side' ? block.parts : [{ block, tracks }]
+}
+
+// The block tree of pieces inside a box: a piece that fills its box is a cell,
+// an empty box a gap, anything else is cut (always possible after placeCells).
+function build(pieces: readonly Piece[], box: Box, cellOf: (index: number) => Block): Block {
+    if (pieces.length === 0) return { kind: 'gap' }
+    const [only] = pieces
+    if (pieces.length === 1 && only && only.x0 === box.x0 && only.x1 === box.x1 && only.y0 === box.y0 && only.y1 === box.y1) return cellOf(only.index)
+    const edges = (axis: 'y' | 'x') => [...new Set(pieces.flatMap(p => (axis === 'y' ? [p.y0, p.y1] : [p.x0, p.x1])))].sort((a, b) => a - b)
+    for (const y of edges('y')) {
+        if (y <= box.y0 || y >= box.y1 || !pieces.every(p => p.y1 <= y || p.y0 >= y)) continue
+        return stackOf([build(pieces.filter(p => p.y1 <= y), { ...box, y1: y }, cellOf), build(pieces.filter(p => p.y0 >= y), { ...box, y0: y }, cellOf)])
+    }
+    for (const x of edges('x')) {
+        if (x <= box.x0 || x >= box.x1 || !pieces.every(p => p.x1 <= x || p.x0 >= x)) continue
+        const left = build(pieces.filter(p => p.x1 <= x), { ...box, x1: x }, cellOf)
+        const right = build(pieces.filter(p => p.x0 >= x), { ...box, x0: x }, cellOf)
+        return { kind: 'side', of: box.x1 - box.x0, parts: [...sideParts(left, x - box.x0), ...sideParts(right, box.x1 - x)] }
+    }
+    // Unreachable after placeCells: a lone piece smaller than its box is cut at
+    // its own edges above, and pieces with no cut are refused as a pinwheel.
+    return { kind: 'gap' }
 }
 
 const justifyOf = (column: ResultColumn): Justify => (isRightAligned(column) ? 'end' : 'start')
@@ -7508,12 +8081,15 @@ const justifyOf = (column: ResultColumn): Justify => (isRightAligned(column) ? '
 function autoLines(columns: readonly ResultColumn[], width: number): LineLayout {
     const [label, ...amounts] = columns
     const tracks = Math.max(1, Math.floor(width / AUTO_TRACK_MIN))
-    const lines: LineCell[][] = label ? [[{ col: label.id, start: 1, span: tracks, justify: 'start' }]] : []
-    for (const [k, column] of amounts.entries()) {
-        const line = 1 + Math.floor(k / tracks)
-        lines[line] = [...(lines[line] ?? []), { col: column.id, start: (k % tracks) + 1, span: 1, justify: justifyOf(column) }]
+    const lines: Block[] = label ? [{ kind: 'cell', col: label.id, justify: 'start' }] : []
+    for (let i = 0; i < amounts.length; i += tracks) {
+        const line = amounts.slice(i, i + tracks)
+        const parts: { block: Block; tracks: number }[] = line.map(column => ({ block: { kind: 'cell', col: column.id, justify: justifyOf(column) }, tracks: 1 }))
+        // A short last line keeps each amount on its own track.
+        if (line.length < tracks) parts.push({ block: { kind: 'gap' }, tracks: tracks - line.length })
+        lines.push({ kind: 'side', of: tracks, parts })
     }
-    return { kind: 'lines', tracks, left: [], right: [], middleTracks: tracks, lines }
+    return { kind: 'blocks', root: stackOf(lines) }
 }
 
 // A pivot cell column's entry stands for all its pivot columns, one per track
@@ -7528,34 +8104,22 @@ function expandPivots(layout: DisplayLayout, columns: readonly ResultColumn[]): 
 }
 
 function authoredLines(layout: DisplayLayout, columns: readonly ResultColumn[], width: number): LineLayout {
-    const cells = expandPivots(layout, columns)
+    const cells = expandPivots(layout, columns).filter(cell => columns.some(c => c.id === cell.col))
     const result = placeCells(layout.tracks, cells)
     if ('problem' in result) return autoLines(columns, width)
-    const tracks = layout.tracks
-    const left: EdgeCell[] = []
-    const right: EdgeCell[] = []
-    const flat: (LineCell & { line: number })[] = []
-    for (const [i, cell] of cells.entries()) {
-        const p = result.placed[i]
-        const column = columns.find(c => c.id === cell.col)
-        if (!p || !column) continue
-        const justify = cell.justify ?? justifyOf(column)
-        if (p.lines > 1 && p.start === 1) left.push({ col: cell.col, span: p.span, justify })
-        else if (p.lines > 1) right.push({ col: cell.col, span: p.span, justify })
-        else flat.push({ col: cell.col, start: p.start, span: p.span, justify, line: p.line })
+    const pieces = result.placed.map(pieceOf)
+    const lines = Math.max(1, ...pieces.map(p => p.y1))
+    const cellOf = (index: number): Block => {
+        const cell = cells[index]
+        const column = columns.find(c => c.id === cell?.col)
+        return cell && column ? { kind: 'cell', col: cell.col, justify: cell.justify ?? justifyOf(column) } : { kind: 'gap' }
     }
-    const leftTracks = left.reduce((n, c) => n + c.span, 0)
-    const middleTracks = tracks - leftTracks - right.reduce((n, c) => n + c.span, 0)
-    const lineCount = Math.max(1, ...flat.map(c => c.line))
-    const lines: LineCell[][] = Array.from({ length: lineCount }, (_, i) =>
-        flat.filter(c => c.line === i + 1).sort((a, b) => a.start - b.start).map(({ line: _line, ...c }) => ({ ...c, start: c.start - leftTracks }))
-    )
+    const tree = build(pieces, { x0: 0, x1: layout.tracks, y0: 0, y1: lines }, cellOf)
     // An arrangement that leaves out the label column puts the label on a line of
     // its own above it: a row is never without its label.
     const labelId = columns[0]?.id
-    const listed = cells.some(c => c.col === labelId)
-    if (labelId && !listed) lines.unshift([{ col: labelId, start: 1, span: middleTracks, justify: 'start' }])
-    return { kind: 'lines', tracks, left, right, middleTracks, lines }
+    if (labelId && !cells.some(c => c.col === labelId)) return { kind: 'blocks', root: stackOf([{ kind: 'cell', col: labelId, justify: 'start' }, tree]) }
+    return { kind: 'blocks', root: tree }
 }
 
 export function tableLines(input: {
@@ -7571,28 +8135,10 @@ export function tableLines(input: {
     return autoLines(input.columns, input.width)
 }
 
-/** A span of equal tracks as a percent of their region. */
-export function trackWidth(span: number, of: number): string {
-    return `${(span / of) * 100}%`
-}
-
-/** A line's cells with the empty tracks between them, left to right. */
-export function lineSegments(line: readonly LineCell[], middleTracks: number) {
-    const out: ({ kind: 'cell'; cell: LineCell; width: string } | { kind: 'gap'; width: string })[] = []
-    let at = 1
-    for (const cell of line) {
-        if (cell.start > at) out.push({ kind: 'gap', width: trackWidth(cell.start - at, middleTracks) })
-        out.push({ kind: 'cell', cell, width: trackWidth(cell.span, middleTracks) })
-        at = cell.start + cell.span
-    }
-    if (at <= middleTracks) out.push({ kind: 'gap', width: trackWidth(middleTracks - at + 1, middleTracks) })
-    return out
-}
-
 /** A row with no figures (a group its subtotal follows) draws only its label, across the row. */
 export function rowLayout(item: VisibleRow, layout: LineLayout, labelId: string): LineLayout {
     if (layout.kind === 'one-line' || Object.keys(item.cells).length > 0) return layout
-    return { kind: 'lines', tracks: layout.tracks, left: [], right: [], middleTracks: layout.tracks, lines: [[{ col: labelId, start: 1, span: layout.tracks, justify: 'start' }]] }
+    return { kind: 'blocks', root: { kind: 'cell', col: labelId, justify: 'start' } }
 }
 
 /** A first arrangement: the first column across line 1, the others in order on the lines below. */
@@ -7620,12 +8166,12 @@ export function fitsOnOneLine(input: { breakpoint: Breakpoint; amountCount: numb
 - [ ] **Step 4: Run, then commit**
 
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check`
-Expected: PASS.
+Expected: PASS. (The auto-layout test expects no trailing gap at 3 tracks with 3 amounts; the mid-row test's left block is `[account, gap]` because line 2 of track 1 is empty.)
 
 ```bash
 cd /Users/nas/tmp/tinycld/books-purchases/tinycld
 git add core/reports
-git commit -m "feat(core): report line layouts per width"
+git commit -m "feat(core): report line layouts per width, cut into blocks"
 git push origin books/p5-trial-balance
 ```
 
@@ -7788,7 +8334,7 @@ test.describe('report rows per width', () => {
         }
     })
 
-    test('an author arrangement for phones puts the amount beside the label and the quantity down the edge', async ({ page }) => {
+    test('an author arrangement for phones puts a cell spanning two lines in the middle of the row', async ({ page }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptarr')
         try {
             await seed(p, 1)
@@ -7798,18 +8344,26 @@ test.describe('report rows per width', () => {
             await p.getByTestId('report-builder-arrange-width-mobile').click()
             await p.getByTestId('report-builder-arrange-on').click()
             await chooseOption(p, 'report-builder-arrange-tracks', '3')
+            // Line 1: customer · quantity · amount; line 2: (empty) · quantity · cost.
             await chooseOption(p, 'report-builder-arrange-customer-span', '1')
             await chooseOption(p, 'report-builder-arrange-amount-line', '1')
+            await chooseOption(p, 'report-builder-arrange-amount-start', '3')
             await chooseOption(p, 'report-builder-arrange-cost-line', '2')
-            await chooseOption(p, 'report-builder-arrange-quantity-start', '3')
+            await chooseOption(p, 'report-builder-arrange-cost-start', '3')
             await chooseOption(p, 'report-builder-arrange-quantity-line', '1')
+            await chooseOption(p, 'report-builder-arrange-quantity-start', '2')
             await chooseOption(p, 'report-builder-arrange-quantity-lines', '2')
             await p.getByTestId('report-builder-save').click()
             await expect(p.getByTestId('report-builder')).toBeHidden()
             await p.setViewportSize({ width: 390, height: 844 })
+            const id = async () => (await rowOf(p, 'Wrapco 00').getAttribute('data-testid'))?.replace('report-row-', '') ?? ''
             await expect.poll(async () => {
                 const b = await boxes(p, 'Wrapco 00')
-                return b.label && b.amount && b.cost ? Math.abs(b.label.y - b.amount.y) <= 1 && b.cost.y > b.label.y : false
+                const quantity = await p.getByTestId(`report-cell-quantity-${await id()}`).boundingBox()
+                if (!b.label || !b.amount || !b.cost || !quantity) return false
+                const between = quantity.x > b.label.x && quantity.x + quantity.width <= b.amount.x + 1
+                const spans = quantity.y <= b.amount.y + 1 && quantity.y + quantity.height >= b.cost.y + b.cost.height - 1
+                return Math.abs(b.label.y - b.amount.y) <= 1 && b.cost.y > b.amount.y && between && spans
             }).toBe(true)
         } finally {
             await close()
@@ -7858,52 +8412,50 @@ In `ReportRow.tsx`, keep `ReportRowLabel`'s label (renamed `RowLabel`, same `rep
 ```tsx
 const JUSTIFY: Record<Justify, 'flex-start' | 'center' | 'flex-end'> = { start: 'flex-start', center: 'center', end: 'flex-end' }
 
-interface LinesProps {
-    layout: Extract<LineLayout, { kind: 'lines' }>
-    /** Draws one cell (a row's label or figure, or a heading) in its slot. */
-    renderCell: (col: string) => ReactNode
-}
-
-function Slot({ width, justify, children }: { width: string; justify: Justify; children: ReactNode }) {
-    return <View style={{ width, alignItems: JUSTIFY[justify], justifyContent: 'center' }}>{children}</View>
-}
-
-/** One line: a flex row of cells, each on its own tracks, with the empty tracks between. */
-function Line({ line, middleTracks, renderCell }: { line: LineCell[]; middleTracks: number; renderCell: LinesProps['renderCell'] }) {
-    const parts = lineSegments(line, middleTracks).map((part, i) =>
-        part.kind === 'gap' ? <View key={`gap-${i}`} style={{ width: part.width }} /> : (
-            <Slot key={part.cell.col} width={part.width} justify={part.cell.justify}>
-                {renderCell(part.cell.col)}
-            </Slot>
-        )
-    )
-    return <View className="flex-row">{parts}</View>
-}
+type RenderCell = (col: string) => ReactNode
 
 /**
- * A row (or the heading) as Gridley lays it out, with flex: edge cells that span
- * every line at the start and the end, and between them the lines stacked
- * vertically. Widths are shares of equal tracks; heights come from the content.
+ * A row (or the heading) as its block tree (lib/table-lines.ts), drawn with flex:
+ * a stack is a column of blocks, a side block a row of blocks as wide as their
+ * share of the tracks. A side row stretches its blocks to one height, so a cell
+ * that spans lines is as tall as the lines beside it; justify aligns each cell.
+ * Heights come from the content: FlashList measures the row.
  */
-export function Lines({ layout, renderCell }: LinesProps) {
-    const edge = (cells: EdgeCell[]) =>
-        cells.map(cell => (
-            <Slot key={cell.col} width={trackWidth(cell.span, layout.tracks)} justify={cell.justify}>
-                {renderCell(cell.col)}
-            </Slot>
-        ))
-    const lines = layout.lines.map((line, i) => <Line key={`line-${i}`} line={line} middleTracks={layout.middleTracks} renderCell={renderCell} />)
-    return (
-        <View className="flex-row">
-            {edge(layout.left)}
-            <View style={{ width: trackWidth(layout.middleTracks, layout.tracks) }}>{lines}</View>
-            {edge(layout.right)}
+export function BlockView({ block, renderCell }: { block: Block; renderCell: RenderCell }) {
+    if (block.kind === 'gap') return null
+    if (block.kind === 'cell') return <CellSlot block={block} renderCell={renderCell} />
+    if (block.kind === 'stack') return <StackBlock parts={block.parts} renderCell={renderCell} />
+    return <SideBlock of={block.of} parts={block.parts} renderCell={renderCell} />
+}
+
+function CellSlot({ block, renderCell }: { block: Extract<Block, { kind: 'cell' }>; renderCell: RenderCell }) {
+    return <View style={{ flex: 1, alignItems: JUSTIFY[block.justify], justifyContent: 'center' }}>{renderCell(block.col)}</View>
+}
+
+function StackBlock({ parts, renderCell }: { parts: Block[]; renderCell: RenderCell }) {
+    const items = parts.map((part, i) => <BlockView key={blockKey(part, i)} block={part} renderCell={renderCell} />)
+    return <View className="flex-1">{items}</View>
+}
+
+function SideBlock({ of, parts, renderCell }: { of: number; parts: { block: Block; tracks: number }[]; renderCell: RenderCell }) {
+    const items = parts.map((part, i) => (
+        <View key={blockKey(part.block, i)} style={{ width: `${(part.tracks / of) * 100}%` }}>
+            <BlockView block={part.block} renderCell={renderCell} />
         </View>
-    )
+    ))
+    return <View className="flex-row">{items}</View>
+}
+
+/** A block's key: its first cell's column, or its place. */
+function blockKey(block: Block, index: number): string {
+    if (block.kind === 'cell') return block.col
+    if (block.kind === 'stack') return block.parts[0] ? blockKey(block.parts[0], index) : `stack-${index}`
+    if (block.kind === 'side') return block.parts[0] ? blockKey(block.parts[0].block, index) : `side-${index}`
+    return `gap-${index}`
 }
 ```
 
-(The ternary inside `Line`'s `map` moves into a small `Segment` component to keep JSX plain.) `TableRow({ item, columns, layout, format, onToggleGroup, labelId })`: in one-line mode it draws the label then the amount cells in a flex row (label `flex: 1, minWidth` from `report-table-layout`, amount cells `width: layout.amountWidth`); in lines mode it draws `<Lines layout={rowLayout(item, layout, labelId)} renderCell={col => col === labelId ? <RowLabel …/> : <RowCell …/>} />`. The row's container carries `ROW_RULE[row.kind]`, so a subtotal or total rule runs across the whole wrapped row; a group row's figures take the same press as its label (a `Pressable` with `accessible={false}`, `tabIndex={-1}`), as `ReportRowAmounts` does. `StickyGroup({ rows, index, … })` draws `groupChain(rows, index)` as a column of label lines (each a `RowLabel`, so a press folds that group), `testID="report-sticky-group"`, `bg-background border-b border-border`.
+(`BlockView`'s kind checks are early returns, not JSX ternaries.) `TableRow({ item, columns, layout, format, onToggleGroup, labelId })`: in one-line mode it draws the label then the amount cells in a flex row (label `flex: 1, minWidth` from `report-table-layout`, amount cells `width: layout.amountWidth`); in blocks mode it draws `<BlockView block={rowLayout(item, layout, labelId).root} renderCell={…} />` (the label column's cell is the `RowLabel`, every other a `RowCell`; the `renderCell` function is built above the JSX). The row's container carries `ROW_RULE[row.kind]`, so a subtotal or total rule runs across the whole wrapped row; a group row's figures take the same press as its label (a `Pressable` with `accessible={false}`, `tabIndex={-1}`), as `ReportRowAmounts` does. `StickyGroup({ rows, index, … })` draws `groupChain(rows, index)` as a column of label lines (each a `RowLabel`, so a press folds that group), `testID="report-sticky-group"`, `bg-background border-b border-border`.
 
 - [ ] **Step 4: The table on FlashList**
 
@@ -7965,7 +8517,7 @@ export function ReportTable({ columns, rows, format, breakpoint, layouts, onTogg
 }
 ```
 
-(The `renderItem` ternary becomes a small `TableItem` component; `reportTableLayout` gains `labelMin`.) The heading row is outside the FlashList and above it, so it stays at the top while the rows scroll (sticky by construction); in lines mode it is `<Lines layout={layout} renderCell={col => <HeadingCell …/>} />`, the same lines as the rows, so each heading sits over its values.
+(The `renderItem` ternary becomes a small `TableItem` component; `reportTableLayout` gains `labelMin`.) The heading row is outside the FlashList and above it, so it stays at the top while the rows scroll (sticky by construction); in blocks mode it is `<BlockView block={layout.root} renderCell={headingCell} />`, the same blocks as the rows, so each heading sits over its values.
 
 `Sideways` is the desktop sideways scroll (one line per row, wide pivots): a horizontal `ScrollView` whose content has the table's minimum width and holds the heading row and the FlashList together, so both move sideways in step; the list scrolls vertically inside it. Its `onScroll` drives `scrollX` (`Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], { useNativeDriver: false })`), and the label cells of the heading, the rows and the stuck group take `transform: [{ translateX: scrollX }]`, so the label column stays frozen at the left as today's two-stack table kept it (R27). When `isEnabled` is false it renders its children in a plain `View`.
 
@@ -7973,7 +8525,7 @@ export function ReportTable({ columns, rows, format, breakpoint, layouts, onTogg
 
 - [ ] **Step 5: The Arrange section**
 
-`ArrangeSection.tsx` (title "Arrange", `section="arrange"`): the chosen width tab lives in the reports UI store (`arrangeWidth`, shared by the section and the preview hint) and is picked with three buttons (`report-builder-arrange-width-mobile|tablet|desktop`: Phone, Tablet, Desktop); a `Switch` "Arrange columns for this width" (`report-builder-arrange-on`: on adds `startingLayout(width, columns)`, off removes that width's layout, through `builder.setDisplay`); a `PickMenu` "Columns per line" (`report-builder-arrange-tracks`, 1–12; cells wider than the new count shrink to it); and one row per column with a "Show" switch (`…-<col>-show`: off removes its cell) and `PickMenu`s Line (1–8), Start (Auto, 1…tracks), Span (1…tracks), Lines (1–8) and Align (Start, Center, End) (`…-<col>-line|start|span|lines|justify`). A row that spans lines must sit at the start or the end and span every line (R28): the Lines menu says so in its hint, and `draftIssues` names a cell that breaks it. Placement problems show under the section (`problemsFor('arrange', …)`), and Save refuses them as the server does. Add `<ArrangeSection builder={builder} problems={problems} />` after `LayoutSection` in `ReportBuilderPanel.tsx`.
+`ArrangeSection.tsx` (title "Arrange", `section="arrange"`): the chosen width tab lives in the reports UI store (`arrangeWidth`, shared by the section and the preview hint) and is picked with three buttons (`report-builder-arrange-width-mobile|tablet|desktop`: Phone, Tablet, Desktop); a `Switch` "Arrange columns for this width" (`report-builder-arrange-on`: on adds `startingLayout(width, columns)`, off removes that width's layout, through `builder.setDisplay`); a `PickMenu` "Columns per line" (`report-builder-arrange-tracks`, 1–12; cells wider than the new count shrink to it); and one row per column with a "Show" switch (`…-<col>-show`: off removes its cell) and `PickMenu`s Line (1–8), Start (Auto, 1…tracks), Span (1…tracks), Lines (1–8) and Align (Start, Center, End) (`…-<col>-line|start|span|lines|justify`). A cell may span lines anywhere a straight cut can free it (R28); a pinwheel arrangement shows "These cells overlap in a way that can't be laid out; move one cell." on the cell `draftIssues` names. Placement problems show under the section (`problemsFor('arrange', …)`), and Save refuses them as the server does. Add `<ArrangeSection builder={builder} problems={problems} />` after `LayoutSection` in `ReportBuilderPanel.tsx`.
 
 - [ ] **Step 6: Run**
 
@@ -7987,6 +8539,194 @@ Expected: all pass (cells keep their test ids; the paging spec in `reports-view.
 cd /Users/nas/tmp/tinycld/books-purchases/tinycld
 git add -A core/reports tests/e2e/reports-wrap.spec.ts
 git commit -m "feat(core): the report table on FlashList: wrapped rows, sticky headings and groups"
+git push origin books/p5-trial-balance
+```
+
+---
+
+### Task 25a: The FlashList fork corrects the scroll offset on web
+
+Code facts used (the pinned fork, `node_modules/@shopify/flash-list/src`, commit `84a89f4253533633c86a2ce582a5ccfa52f50688`): `useRecyclerViewController.applyOffsetCorrection` (`recyclerview/hooks/useRecyclerViewController.tsx:119-240`) measures how far the first visible item moved and, where `PlatformConfig.supportsOffsetCorrection` is false (web, `native/config/PlatformHelper.web.ts`), calls `scrollViewRef.current?.scrollTo({ y: getAbsoluteLastScrollOffset() + diff })` instead of moving the `ScrollAnchor` that native's `maintainVisibleContentPosition` follows; the fork runs `jest` (`package.json` `"test": "jest"`) and has a web fixture (`fixture/web`, `fixture/expo`).
+
+Why the content still jumps on web (the root causes the tests below pin; confirm each by the failing test before the fix): (1) browsers anchor scrolling themselves (CSS `overflow-anchor: auto`, the default in Chrome and Firefox), so when a row above the view grows the browser already moves `scrollTop`, and FlashList's `scrollTo(last + diff)` moves it again or from a stale value; (2) `getAbsoluteLastScrollOffset()` is the last offset a scroll event reported, which on web can lag the DOM's `scrollTop`, so `last + diff` lands off by the lag. The fix: on web, turn the browser's own anchoring off on the list's scroller (`overflowAnchor: 'none'`) so FlashList is the only one correcting, and correct relatively from the DOM's current `scrollTop` (`node.scrollTop += diff`), synchronously in the layout effect, before paint.
+
+**Files (in the fork clone `/Users/nas/tmp/tinycld/books-purchases-flash-list`):**
+- Modify: `src/native/config/PlatformHelper.web.ts` (`offsetCorrection: "scrollTop"`; the other platform files gain `"anchor"`/`"scrollTo"` matching today's behaviour), `src/recyclerview/hooks/useRecyclerViewController.tsx` (the web branch), `src/recyclerview/RecyclerView.tsx` (the web scroller's `overflowAnchor: 'none'` style)
+- Create: `src/__tests__/webOffsetCorrection.test.tsx`
+
+- [ ] **Step 1: Clone the fork and branch from the pinned commit**
+
+```bash
+git clone git@github.com:nathanstitt/flash-list.git /Users/nas/tmp/tinycld/books-purchases-flash-list
+cd /Users/nas/tmp/tinycld/books-purchases-flash-list
+git checkout -b books/p5-trial-balance 84a89f4253533633c86a2ce582a5ccfa52f50688
+yarn
+yarn test
+```
+Expected: the fork's own suite passes before any change (a failure here is fixed at its root first).
+
+- [ ] **Step 2: Write the failing test**
+
+Create `src/__tests__/webOffsetCorrection.test.tsx` with the fork's test tools (`@quilted/react-testing`, the existing mocks under `src/__tests__/helpers` or the closest existing offset-correction test, which this file follows): render a vertical `FlashList` of 50 items with web's `PlatformConfig` (`jest.mock("../native/config/PlatformHelper", () => jest.requireActual("../native/config/PlatformHelper.web"))`) and a scrollable DOM-like node whose `scrollTop` the test reads and writes; scroll so item 20 is the first visible; grow item 5 by 100px (change its data so it re-renders taller, with its measured layout mocked); then assert:
+- the scroller's `scrollTop` grew by exactly 100 (once — not 0, not 200),
+- the scroller's style has `overflowAnchor: 'none'`,
+- a scroll event that reported a stale offset before the change does not move the result (the correction reads the node's `scrollTop`, not the last event).
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases-flash-list && yarn test src/__tests__/webOffsetCorrection.test.tsx`
+Expected: FAIL (no `overflowAnchor`; the correction goes through `scrollTo` from the stale offset).
+
+- [ ] **Step 3: Implement**
+
+`PlatformHelper.web.ts`: add `offsetCorrection: "scrollTop" as const` (and `"anchor"` in the iOS and Android helpers, `"scrollTo"` in the default one, so other platforms keep their behaviour). In `applyOffsetCorrection`'s non-anchor branch:
+
+```ts
+            if (PlatformConfig.supportsOffsetCorrection) {
+              scrollAnchorRef.current?.scrollBy(diff);
+            } else if (PlatformConfig.offsetCorrection === "scrollTop") {
+              // Web: move the DOM scroller by the difference from where it is
+              // now, before paint. The browser's own scroll anchoring is off on
+              // this scroller (overflow-anchor: none), so this is the only
+              // correction, and the last scroll event's offset can be stale.
+              const node = getScrollableNode(scrollViewRef.current);
+              if (node) {
+                if (horizontal) node.scrollLeft += diff;
+                else node.scrollTop += diff;
+              }
+            } else {
+              /* today's scrollTo branch, unchanged */
+            }
+```
+
+with `getScrollableNode` reading `scrollViewRef.current?.getScrollableNode?.()` (react-native-web's ScrollView exposes it). In `RecyclerView.tsx`, the scroll component's style gains `Platform.OS === "web" ? { overflowAnchor: "none" } : undefined` (typed through a web style cast the fork already uses for web-only styles, or a `StyleSheet.create` entry in a `.web.ts` helper). The `hasDataChanged` handling after the correction stays as it is.
+
+- [ ] **Step 4: Run the fork's checks**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases-flash-list && yarn test && yarn type-check && yarn lint && yarn build`
+Expected: all pass, the new test included.
+
+- [ ] **Step 5: Commit on the fork branch**
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases-flash-list
+git add src
+git commit -m "fix(web): correct the scroll offset from the DOM scroller, without the browser's own anchoring"
+```
+
+---
+
+### Task 25b: Push the fork branch and open its PR
+
+**Files:** none in `tinycld`.
+
+- [ ] **Step 1: Push and open the PR on the fork**
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases-flash-list
+git push -u origin books/p5-trial-balance
+gh pr create --repo nathanstitt/flash-list --base main --head books/p5-trial-balance \
+  --title "fix(web): keep the visible rows in place when rows above change height" \
+  --body "On web, rows that change height above the viewport (a group opening above, a live update adding rows) made the content jump: the browser's own scroll anchoring and FlashList's correction both moved scrollTop, from a stale offset. This turns the browser's anchoring off on the list's scroller and corrects from the DOM scroller's current scrollTop before paint. Tested in src/__tests__/webOffsetCorrection.test.tsx."
+```
+Expected: the PR URL (the fork's default branch is the base; if it is not `main`, use the branch `git remote show origin` names).
+
+- [ ] **Step 2: Note the PR**
+
+Write the PR URL into this plan's ledger entry for checkpoint 0 (`books/docs/plans/trial-balance-ledger.md`, "Checkpoint 0" section) as "flash-list fork PR: <url> — awaiting the human's review".
+
+---
+
+### Task 25c: STOP — the human reviews and merges the fork PR
+
+**Files:** none.
+
+- [ ] **Step 1: Stop and ask**
+
+Stop here. Report the fork PR URL from Task 25b and ask the human to review and merge it. Do not pin an unmerged commit. Continue with Task 25d only after the human says the PR is merged, and record the merge commit's SHA they give (or read it with `gh pr view <url> --repo nathanstitt/flash-list --json mergeCommit`).
+
+---
+
+### Task 25d: Pin the merged fork; install; a web e2e that a group opening above keeps the rows in place
+
+Code facts used: the pin lives in `core/package-versions.json:30` (the source of truth the workspace-root install transcribes into `overrides`) and in `core/package.json:74`; after a pull that changes `core/package-versions.json`, `pnpm run packages:generate` in `tinycld` and then `pnpm install` at the workspace root again (memory: the first install reads the old root copy).
+
+**Files:**
+- Modify: `core/package-versions.json:30`, `core/package.json:74` (`github:nathanstitt/flash-list#<merged SHA>`)
+- Create: `tests/e2e/reports-scroll-anchor.spec.ts`
+
+- [ ] **Step 1: Pin the merged commit**
+
+Replace `84a89f4253533633c86a2ce582a5ccfa52f50688` with the merged SHA in both files.
+
+- [ ] **Step 2: Install and regenerate (this task is where the plan runs the workspace install)**
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases && pnpm install
+cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH pnpm run packages:generate
+cd /Users/nas/tmp/tinycld/books-purchases && pnpm install
+node -e "console.log(require('./node_modules/@shopify/flash-list/package.json').version)" && grep -n "overflowAnchor" node_modules/@shopify/flash-list/dist/recyclerview/RecyclerView.js
+```
+Expected: the installed fork has the fix (`overflowAnchor` is in its build).
+
+- [ ] **Step 3: Write the web e2e**
+
+Create `tests/e2e/reports-scroll-anchor.spec.ts`:
+
+```ts
+import { expect, test } from '@playwright/test'
+import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import { addColumn, addSale, addTeam, chooseOption, openReportStub, openReportsHub, pressToolbar, rowOf, SALES_SOURCE, saveNewReport, startReport, uniqueName } from './reports-helpers'
+
+/**
+ * Web: when rows above the view change height, the rows in view stay where they
+ * are (the FlashList fork's offset correction). A report grouped by status, the
+ * Paid group open and scrolled into view; Expand all opens the Open group above
+ * it, and a row of Paid keeps its place on screen.
+ */
+test.describe('scroll position on web', () => {
+    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+
+    test('a group opening above the view keeps the visible rows in place', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptanchor')
+        try {
+            const team = uniqueName('Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            for (let i = 0; i < 20; i++) {
+                await addSale(p, { team, customer: `Open ${String(i).padStart(2, '0')}`, amount: 100, cost: 0, day: '2026-01-05' })
+                await addSale(p, { team, customer: `Paid ${String(i).padStart(2, '0')}`, amount: 100, cost: 0, day: '2026-01-05', status: 'paid' })
+            }
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await addColumn(p, ['status'])
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'status')
+            await saveNewReport(p, uniqueName('Anchor'))
+            await rowOf(p, 'Paid').click()
+            const target = rowOf(p, 'Paid 10')
+            await target.scrollIntoViewIfNeeded()
+            const before = (await target.boundingBox())?.y ?? -1
+            await pressToolbar(p, 'report-fold-all', 'Expand all')
+            await expect(rowOf(p, 'Open 00')).toBeAttached()
+            await expect.poll(async () => Math.abs(((await target.boundingBox())?.y ?? -999) - before)).toBeLessThanOrEqual(2)
+        } finally {
+            await close()
+        }
+    })
+})
+```
+
+- [ ] **Step 4: Run, then commit**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg check`
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_PORT_2=7211 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test:e2e -- tests/e2e/reports-scroll-anchor.spec.ts tests/e2e/reports-wrap.spec.ts`
+Expected: both pass (the anchor spec fails against the old pin; it is the regression test for the fork fix).
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases/tinycld
+git add core/package-versions.json core/package.json tests/e2e/reports-scroll-anchor.spec.ts
+git commit -m "chore(core): pin the flash-list fork with web offset correction"
 git push origin books/p5-trial-balance
 ```
 
@@ -8145,12 +8885,17 @@ Expected: pushed; CI runs the full suite (the reports stub scaffold step already
 | E13 `groups[].open` | 11, 16, 22, 26 |
 | E14 wrapped rows (flex), FlashList, sticky heading and groups, author arrangement (human addition) | 15, 16, 24, 25, 26 |
 | OQ2 every report operator in the formula editor | 18, 19, 20 |
+| Q3 (changed) fill on every level, under each parent | 6, 21, 22 |
+| Q5 (changed) per-row currencies in record leaves and lookups | 5a |
+| Q10 (changed) spanning cells by guillotine cuts, pinwheel refused | 15, 24, 25 |
+| Web scroll offset fixed in the FlashList fork (with the STOP for its PR) | 25a, 25b, 25c, 25d |
 | Core tests: formula table `lookup`/`record`, rule-parity fuzz with lookup and fill, vitest v2/round-trip/options, e2e desktop + phone | 4, 5, 15, 16, 21, 23, 20, 22, 23, 25 |
 | Books unchanged and green | 27, 28 |
 
 ## Self-review notes
 
 - Every engine task cites the code it changes; the plan relies on two probed behaviours (Go's nil vs empty slice for `expand`, SQLite's CTE references) and writes them under "What was probed".
-- Placement is one rule in two languages (`placeCells` in Go, Task 15; in TS, Task 24), the R28 edge rule included, with the same examples in both test suites.
+- Placement is one rule in two languages (`placeCells` and the guillotine cut check in Go, Task 15; in TS, Task 24), with the same examples (a mid-row spanning cell, a pinwheel) in both test suites.
+- The human's answers of 2026-11-01 are folded in: fill on every level (Task 6), per-row currencies (Task 5a), guillotine cuts (Tasks 15, 24, 25), and the FlashList fork fix with its STOP (Tasks 25a–25d).
 - E14 was revised after the human's review: flex lines instead of absolute positions, FlashList v2 instead of the custom row window, sticky heading and stacked sticky groups.
 - The forms editor's ids and labels are preserved by construction (the forms operator set wraps the existing helpers); the report set keeps the shared ids, so the existing report e2e keeps its selectors.
