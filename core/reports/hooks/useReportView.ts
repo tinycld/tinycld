@@ -6,7 +6,7 @@ import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import * as Clipboard from 'expo-clipboard'
 import { router, useFocusEffect, useIsFocused, useLocalSearchParams } from 'expo-router'
-import { useCallback, useEffectEvent } from 'react'
+import { useCallback, useEffectEvent, useMemo } from 'react'
 import type { ReportAccess } from '../lib/access'
 import { todayIso } from '../lib/dates'
 import { DEFAULT_DISPLAY, type DisplayOptions, shownColumns } from '../lib/format'
@@ -229,6 +229,14 @@ export function useReportView(input: ReportViewInput) {
     })
     useFocusEffect(useCallback(() => () => closeOnBlur(), []))
 
+    // Kept while the run's rows and the open groups stay, so the table redraws
+    // its rows only when they change.
+    const shownRows = useMemo(() => visibleRows(rows), [rows])
+    const onToggleGroup = useCallback(
+        (row: ResultRow) => setExpansion(reportKey, toggleGroup(expansion, row, rows)),
+        [setExpansion, reportKey, expansion, rows]
+    )
+
     return {
         title: input.title,
         access: input.access,
@@ -246,7 +254,7 @@ export function useReportView(input: ReportViewInput) {
         isBodyShown: !(isEditing && breakpoint === 'mobile'),
         problems: broken && !isEditing ? brokenProblems(broken) : run.problems,
         run,
-        rows: visibleRows(rows),
+        rows: shownRows,
         columns: shownColumns(allColumns, options.display.hidden),
         allColumns,
         notices: run.result?.notices ?? NO_NOTICES,
@@ -266,8 +274,7 @@ export function useReportView(input: ReportViewInput) {
         resolved,
         foldAllLabel: foldAllLabel(rows),
         onFoldAll: () => setExpansion(reportKey, foldAllTarget(rows)),
-        onToggleGroup: (row: ResultRow) =>
-            setExpansion(reportKey, toggleGroup(expansion, row, rows)),
+        onToggleGroup,
         surface: isFocused ? storedSurface : null,
         onOpenSurface: openSurface,
         onCloseSurface: closeSurface,

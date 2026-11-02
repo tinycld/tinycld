@@ -389,11 +389,13 @@ function OwnRow({ item, ...props }: Omit<TableRowProps, 'item'> & { item: Visibl
 // open group's own row is drawn whole, figures included, as the list draws it.
 // Each label still folds its group on a press, but the copy is hidden from
 // assistive technology and the tab order: the rows in the list are the
-// accessible controls. Nothing is drawn outside every group.
+// accessible controls. Outside every group the copy is empty: its frame stays,
+// so its measured height follows what it holds, down to 0.
 export function StickyGroup({ rows, index, onHeight, ...props }: StickyGroupProps) {
     const byId = new Map(rows.map(item => [item.row.id, item]))
     const chain = groupChain(rows, index).flatMap(row => byId.get(row.id) ?? [])
-    if (chain.length === 0) return null
+    const onLayout = (e: LayoutChangeEvent) => onHeight(e.nativeEvent.layout.height)
+    if (chain.length === 0) return <View onLayout={onLayout} />
     const stuck = rows[index]
     const own = chain[chain.length - 1] === stuck ? (stuck ?? null) : null
     const frozenStyle = props.layout.kind === 'one-line' ? props.oneLine.labelStyle : { flex: 1 }
@@ -415,7 +417,7 @@ export function StickyGroup({ rows, index, onHeight, ...props }: StickyGroupProp
             aria-hidden
             importantForAccessibility="no-hide-descendants"
             accessibilityElementsHidden
-            onLayout={(e: LayoutChangeEvent) => onHeight(e.nativeEvent.layout.height)}
+            onLayout={onLayout}
             className="border-b border-border bg-background"
         >
             {labels}

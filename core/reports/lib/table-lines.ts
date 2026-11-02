@@ -254,9 +254,7 @@ function authoredLines(
 ): LineLayout {
     const arranged = placeCells(layout.tracks, layout.cells)
     if ('problem' in arranged) return autoLines(columns, width)
-    const cells = expandPivots(layout, arranged.placed, columns).filter(cell =>
-        columns.some(c => c.id === cell.col)
-    )
+    const cells = expandPivots(layout, arranged.placed, columns)
     // The engine checks the entries as written; a run's pivot columns may still
     // run into another cell or past the last line. The rows are then laid out
     // automatically, and the table says why.
@@ -267,7 +265,10 @@ function authoredLines(
     const labelId = columns[0]?.id
     const cellOf = (index: number): Block => {
         const cell = cells[index]
-        if (!cell) return { kind: 'gap', lines: 1 }
+        // A placed column the run does not show (hidden by the reader, or a pivot
+        // with no columns) keeps its place and its lines, so the others do not move.
+        if (!cell || !columns.some(c => c.id === cell.col))
+            return { kind: 'gap', lines: result.placed[index]?.lines ?? 1 }
         // The label column starts at the left, whatever its type, as in one line.
         const justify = cell.justify ?? defaultJustify(columns, cell.col)
         return { kind: 'cell', col: cell.col, justify }

@@ -371,6 +371,53 @@ describe('the table layout per width', () => {
             },
         })
     })
+    it('keeps the place and the lines of a placed column the run does not show', () => {
+        const shown = COLS.filter(c => c.id !== 'number')
+        const layout = tableLines({
+            columns: shown,
+            width: 390,
+            breakpoint: 'mobile',
+            oneLineFits: false,
+            layouts: [
+                {
+                    width: 'mobile',
+                    tracks: 2,
+                    cells: [
+                        { col: 'account', line: 1, span: 2 },
+                        { col: 'number', line: 2, lines: 2 },
+                        { col: 'debit', line: 2 },
+                        { col: 'credit', line: 3, start: 2 },
+                    ],
+                },
+            ],
+        })
+        expect(layout).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'stack',
+                parts: [
+                    { kind: 'cell', col: 'account', justify: 'start' },
+                    {
+                        kind: 'side',
+                        of: 2,
+                        parts: [
+                            { block: { kind: 'gap', lines: 2 }, tracks: 1 },
+                            {
+                                block: {
+                                    kind: 'stack',
+                                    parts: [
+                                        { kind: 'cell', col: 'debit', justify: 'end' },
+                                        { kind: 'cell', col: 'credit', justify: 'end' },
+                                    ],
+                                },
+                                tracks: 1,
+                            },
+                        ],
+                    },
+                ],
+            },
+        })
+    })
     it('starts the label column at the left in an arrangement, whatever its type', () => {
         const columns: ResultColumn[] = [
             { id: 'number', label: 'No.', type: 'number' },

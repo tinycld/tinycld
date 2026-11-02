@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import { createInvitedUser, login, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
     addSale,
@@ -369,5 +369,46 @@ test.describe('report rows per width', () => {
         } finally {
             await close()
         }
+    })
+})
+
+test.describe('report rows on a touch phone', () => {
+    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.use({ hasTouch: true })
+
+    test('the table keeps the browser touch gestures, and a swipe scrolls its rows', async ({
+        page,
+    }) => {
+        await login(page)
+        await seed(page, 16)
+        await wideReport(page, uniqueName('Touch'), false)
+        await page.setViewportSize({ width: 390, height: 844 })
+        const first = rowOf(page, 'Wrapco 00')
+        await expect(first).toBeVisible()
+
+        // Nothing from a row up to the table turns touch gestures (zoom, pan) off.
+        const blocked = await first.evaluate(element => {
+            const found: string[] = []
+            for (let node: Element | null = element; node; node = node.parentElement) {
+                const testId = node.getAttribute('data-testid')
+                if (getComputedStyle(node).touchAction === 'none')
+                    found.push(testId ?? node.tagName)
+                if (testId === 'report-table') break
+            }
+            return found
+        })
+        expect(blocked).toEqual([])
+
+        const headingBottom = await bottomOf(page.getByTestId('report-heading-row'))
+        const table = await page.getByTestId('report-table').boundingBox()
+        const cdp = await page.context().newCDPSession(page)
+        await cdp.send('Input.synthesizeScrollGesture', {
+            x: (table?.x ?? 0) + 100,
+            y: (table?.y ?? 0) + 500,
+            yDistance: -400,
+            gestureSourceType: 'touch',
+        })
+        await cdp.detach()
+        await expect.poll(() => isScrolledAway(first, headingBottom)).toBe(true)
     })
 })
