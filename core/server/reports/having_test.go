@@ -47,6 +47,55 @@ func TestAHiddenGroupHidesItsChildrenWhenExpandedByKey(t *testing.T) {
 	requireRows(t, res, "label", "lion", "f1", "f2", "Total")
 }
 
+const lionHidden = `{"version":2,"source":"zoo.feedings","columns":[
+	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+	{"id":"note","path":[{"field":"note"}]},
+	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
+	{"id":"running","formula":{"op":"runningSum","args":[{"col":"cost"}]}},
+	{"id":"ofParent","formula":{"op":"percentOfParent","args":[{"col":"cost"}],"scale":1}},
+	{"id":"ofTotal","formula":{"op":"percentOfTotal","args":[{"col":"cost"}],"scale":1}}],
+	"groups":[{"id":"g","col":"species","having":{"op":"lt","args":[
+		{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":2000}]}}],
+	"sort":[{"col":"species"},{"col":"note"}]}`
+
+// The rows of a hidden group take no place under the row cap: lion's two
+// feedings sort first, and with them a cap of 3 rows would cut zebra's.
+func TestHiddenRowsTakeNoPlaceUnderTheRowCap(t *testing.T) {
+	z := newZoo(t)
+	withLimits(t, func(l *limits) { l.rowCap = 3 })
+	res := z.run(t, "ann", lionHidden, Options{ExpandAll: true}, nil)
+	requireRows(t, res, "note", nil, "f3", "f4", nil)
+	if len(res.Notices) != 0 {
+		t.Fatalf("notices = %+v", res.Notices)
+	}
+}
+
+// A running value or a percent adds the rows the reader sees: a hidden group
+// adds nothing to them. The total still adds every base row (OQ6).
+func TestRunningValuesReadTheShownRowsOnly(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", lionHidden, Options{ExpandAll: true}, nil)
+	requireRows(t, res, "note", nil, "f3", "f4", nil)
+	requireRows(t, res, "running", int64(1000), int64(700), int64(1000), int64(4500))
+	requireRows(t, res, "ofParent", 100.0, 70.0, 30.0, 100.0)
+	requireRows(t, res, "ofTotal", 100.0, 70.0, 30.0, 100.0)
+}
+
+// A having on a deeper group hides its rows, but its parent's subtotal still
+// adds every base row under the parent.
+func TestADeeperHavingLeavesTheParentSubtotal(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species","subtotals":true},{"id":"h","col":"note","having":{"op":"gt","args":[{"col":"cost"},{"value":900}]}}],
+		"sort":[{"col":"species"},{"col":"note"}]}`, Options{Expand: [][]any{{"lion", "USD"}, {"zebra", "USD"}}}, nil)
+	requireRows(t, res, "kind", KindGroup, KindGroup, KindGroup, KindSubtotal, KindGroup, KindSubtotal, KindTotal)
+	requireRows(t, res, "label", "lion", "f1", "f2", "Total lion", "zebra", "Total zebra", "Total")
+	requireRows(t, res, "cost", int64(3500), int64(1000), int64(2500), int64(3500), int64(1000), int64(1000), int64(4500))
+}
+
 func TestHavingReadsARecordField(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[

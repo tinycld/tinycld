@@ -228,9 +228,35 @@ func (lv *level) isGroupColumn(cp *colPlan) bool {
 	return slices.ContainsFunc(lv.c.p.groups, func(g *groupPlan) bool { return g.col == cp })
 }
 
-// render returns the level's CTEs; o<L> selects the given cells, then
-// __own, the row's label and its currency, and its count of base rows.
+// render returns the level's CTEs; o<L> selects the given cells of its shown
+// rows (base), then __own, the row's label and its currency, and its count of
+// base rows. o<L> holds only the rows a run shows, so __own is 1 on each, and
+// a running value or a percent over its rows adds the shown rows only.
 func (lv *level) render(cells []string, own string) []string {
+	ctes, g := lv.base(own)
+	out := []string{fmt.Sprintf("%d AS __level", lv.n), "NULL AS __row"}
+	for i := range lv.c.p.groups {
+		if i < lv.n {
+			out = append(out, fmt.Sprintf("a.k%d AS k%d", i, i))
+		} else {
+			out = append(out, fmt.Sprintf("NULL AS k%d", i))
+		}
+	}
+	for _, ck := range lv.c.currencies {
+		out = append(out, "a."+ck+" AS "+ck)
+	}
+	out = append(out, cells...)
+	out = append(out, fmt.Sprintf("ROW_NUMBER() OVER (%s ORDER BY %s) AS __ord", partitionBy(lv.frame.parent), strings.Join(lv.frame.order, ", ")))
+	out = append(out, "1 AS __own", lv.label.value+" AS __label", lv.label.currency+" AS __labelcur", "a.__n AS __n")
+	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, strings.Join(out, ", "), lv.frame.from(g, "a")))
+	return ctes
+}
+
+// base returns the CTEs of the level's rows before its cells, and the one that
+// holds them: g<L> (a<L> with its to-many totals), or, when the level or a
+// group above it has a having, s<L>, its rows that pass their having and whose
+// enclosing groups pass theirs (a hidden group hides every row under it).
+func (lv *level) base(own string) ([]string, string) {
 	a := fmt.Sprintf("a%d", lv.n)
 	keyCols := slices.Clone(lv.keys)
 	// __n counts the base rows of the group; it also keeps the select of a
@@ -263,22 +289,44 @@ func (lv *level) render(cells []string, own string) []string {
 		}
 		ctes = append(ctes, fmt.Sprintf("%s AS (SELECT %s FROM %s a %s)", g, strings.Join(sel, ", "), a, strings.Join(joins, " ")))
 	}
-	out := []string{fmt.Sprintf("%d AS __level", lv.n), "NULL AS __row"}
-	for i := range lv.c.p.groups {
-		if i < lv.n {
-			out = append(out, fmt.Sprintf("a.k%d AS k%d", i, i))
-		} else {
-			out = append(out, fmt.Sprintf("NULL AS k%d", i))
+	conds := []string{}
+	if own != "1" {
+		conds = append(conds, own)
+	}
+	if m := lv.c.havingAbove(lv.n); m > 0 {
+		conds = append(conds, lv.c.inShown(m, "a"))
+	}
+	if len(conds) > 0 {
+		s := fmt.Sprintf("s%d", lv.n)
+		ctes = append(ctes, fmt.Sprintf("%s AS (SELECT a.* FROM %s a WHERE %s)", s, g, strings.Join(conds, " AND ")))
+		g = s
+	}
+	return ctes, g
+}
+
+// havingAbove is the deepest level above level n whose group has a having, 0
+// when none has. Its s<m> holds the shown rows of that level, so a row of
+// level n is under shown groups when it is under one of them.
+func (c *compiler) havingAbove(n int) int {
+	for m := n - 1; m >= 1; m-- {
+		if c.p.groups[m-1].group.Having != nil {
+			return m
 		}
 	}
-	for _, ck := range lv.c.currencies {
-		out = append(out, "a."+ck+" AS "+ck)
+	return 0
+}
+
+// inShown is true for a row (alias) under a shown row of level m: one of
+// s<m> with the row's first m group keys and its currency keys.
+func (c *compiler) inShown(m int, alias string) string {
+	match := make([]string, 0, m+len(c.currencies))
+	for i := range m {
+		match = append(match, fmt.Sprintf("p.k%d IS %s.k%d", i, alias, i))
 	}
-	out = append(out, cells...)
-	out = append(out, fmt.Sprintf("ROW_NUMBER() OVER (%s ORDER BY %s) AS __ord", partitionBy(lv.frame.parent), strings.Join(lv.frame.order, ", ")))
-	out = append(out, own+" AS __own", lv.label.value+" AS __label", lv.label.currency+" AS __labelcur", "a.__n AS __n")
-	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, strings.Join(out, ", "), lv.frame.from(g, "a")))
-	return ctes
+	for _, ck := range c.currencies {
+		match = append(match, fmt.Sprintf("p.%s IS %s.%s", ck, alias, ck))
+	}
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM s%d p WHERE %s)", m, strings.Join(match, " AND "))
 }
 
 // own is 1 for a row of this level that passes its group's having.

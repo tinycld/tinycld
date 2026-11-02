@@ -310,7 +310,7 @@ func (rn *runner) detailTypes() error {
 	if err != nil {
 		return err
 	}
-	_, _, err = rn.c.detailSelect(r)
+	_, _, err = rn.c.detailSelect(r, "w")
 	return err
 }
 
@@ -445,11 +445,8 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		}
 		ctes = append(ctes, lv.render(cells, own)...)
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
-		if n >= 1 {
-			leg = fmt.Sprintf("SELECT x.* FROM o%d x WHERE %s", n, c.shown(n))
-			if n >= 2 {
-				leg += " AND " + expand.where(c, s, n-1, "x.")
-			}
+		if n >= 2 {
+			leg += " WHERE " + expand.where(c, s, n-1, "")
 		}
 		legs = append(legs, leg)
 	}
@@ -465,28 +462,36 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 	return ctes, strings.Join(all, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
 }
 
-// shown is true for a level-n row (alias x) that passes its having and whose
-// enclosing groups pass theirs: a hidden group hides every row under it.
-func (c *compiler) shown(n int) string {
-	conds := []string{"x.__own"}
-	for m := 1; m < n; m++ {
-		if c.p.groups[m-1].group.Having == nil {
-			continue
-		}
-		match := []string{"p.__own"}
-		for i := range m {
-			match = append(match, fmt.Sprintf("p.k%d IS x.k%d", i, i))
-		}
-		for _, ck := range c.currencies {
-			match = append(match, fmt.Sprintf("p.%s IS x.%s", ck, ck))
-		}
-		conds = append(conds, fmt.Sprintf("EXISTS (SELECT 1 FROM o%d p WHERE %s)", m, strings.Join(match, " AND ")))
+// shownLevels returns the CTEs that select the shown rows of the deepest level
+// whose group has a having (s<m>), and m; m is 0 when no group has one. The
+// detail statement reads only the base rows under them.
+func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, error) {
+	m := c.havingAbove(len(c.p.groups) + 1)
+	if m == 0 {
+		return nil, 0, nil
 	}
-	return strings.Join(conds, " AND ")
+	c.fillSets = map[int]string{}
+	var ctes []string
+	for n := 1; n <= m; n++ {
+		lv, err := c.level(r, n, expand)
+		if err != nil {
+			return nil, 0, err
+		}
+		own, err := lv.own()
+		if err != nil {
+			return nil, 0, err
+		}
+		base, _ := lv.base(own)
+		ctes = append(ctes, base...)
+	}
+	return ctes, m, nil
 }
 
 // detailPass runs the detail statement: one row per base row, a page at a
-// time without groups, or the rows of the expanded innermost groups.
+// time without groups, or the rows of the expanded innermost groups. Rows
+// under a hidden group are left out before any running value reads them, so
+// they neither take a place under the row cap nor add to a shown row's
+// running value or percent.
 func (rn *runner) detailPass() ([]map[string]any, error) {
 	c := rn.c
 	s := newStmt(rn.app, c.info)
@@ -494,7 +499,16 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	sel, order, err := c.detailSelect(r)
+	shown, m, err := c.shownLevels(r, rn.expand)
+	if err != nil {
+		return nil, err
+	}
+	table := "w"
+	if m > 0 {
+		table = "ws"
+		shown = append(shown, "ws AS (SELECT w.* FROM w WHERE "+c.inShown(m, "w")+")")
+	}
+	sel, order, err := c.detailSelect(r, table)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +529,7 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 	}
 	body := fmt.Sprintf("SELECT * FROM (%s) d WHERE %s ORDER BY %s LIMIT %s",
 		sel, where, orderBy(order), s.bind(int64(limit+1)))
-	rows, err := rn.query(s, []string{r.render()}, body)
+	rows, err := rn.query(s, append([]string{r.render()}, shown...), body)
 	if err != nil {
 		return nil, err
 	}
@@ -558,8 +572,9 @@ func detailSortValue(ctx *rowsCtx, s sortPlan) (expr, string, error) {
 	return e, key, nil
 }
 
-// detailSelect is the select of detail rows over w and their sort keys.
-func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
+// detailSelect is the select of detail rows over table (w, or ws: w's rows
+// under shown groups) and their sort keys. table is read as w.
+func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, error) {
 	keys := make([]string, 0)
 	for i := range c.p.groups {
 		keys = append(keys, fmt.Sprintf("w.k%d", i))
@@ -630,7 +645,7 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 	if len(c.p.nest) > 0 {
 		sel = append(sel, r.nestParent()+" AS __n0")
 	}
-	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from("w", "w"), order, nil
+	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"), order, nil
 }
 
 // carriedCell is the currency a column's value e carries on a row (a record's
@@ -764,10 +779,9 @@ func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string
 	}
 	match := make([]string, len(cols))
 	for i, col := range cols {
-		match[i] = fmt.Sprintf("ek.column%d IS %s", i+1, col)
+		match[i] = fmt.Sprintf("x.column%d IS %s", i+1, col)
 	}
-	// ek, not x: a level leg reads its rows as x (shown).
-	return fmt.Sprintf("EXISTS (SELECT 1 FROM (VALUES %s) ek WHERE %s)", strings.Join(rows, ", "), strings.Join(match, " AND "))
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM (VALUES %s) x WHERE %s)", strings.Join(rows, ", "), strings.Join(match, " AND "))
 }
 
 func (e *expansion) has(key []any) bool {
@@ -787,7 +801,7 @@ func compileDry(p *plan) error {
 	if err != nil {
 		return err
 	}
-	if _, _, err := c.detailSelect(r); err != nil {
+	if _, _, err := c.detailSelect(r, "w"); err != nil {
 		return err
 	}
 	var pivot []pivotValue

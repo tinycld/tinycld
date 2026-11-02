@@ -548,7 +548,7 @@ func TestARecordLabelIsComputedOncePerRow(t *testing.T) {
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
-	sel, _, derr := c.detailSelect(r)
+	sel, _, derr := c.detailSelect(r, "w")
 	if derr != nil {
 		t.Fatal(derr)
 	}
