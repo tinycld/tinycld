@@ -223,8 +223,9 @@ func (lv *level) render(cells []string, own, label string) []string {
 	return ctes
 }
 
-// labelSQL is the label of the level's rows: the group's label formula, a
-// record group's first text field, or NULL (the key labels the row).
+// labelSQL is the label of the level's rows: the group's label formula (the
+// record's label when its value points at one), a record group's label
+// (labelFieldOf), or NULL (the key labels the row).
 func (lv *level) labelSQL() (string, error) {
 	if lv.n == 0 {
 		return "NULL", nil
@@ -246,17 +247,26 @@ func (lv *level) labelSQL() (string, error) {
 		if lv.readsRowValue(g.group.Label, false, map[string]bool{}) {
 			return "NULL", nil
 		}
-		return e.sql, nil
+		if e.target == nil {
+			return e.sql, nil
+		}
+		// A label that points at a record shows the record's label, which is
+		// text; a column it reads shows the column's label field.
+		lv.c.labels[lv.n-1] = labelPlan{typ: Text}
+		chosen := ""
+		if cp := lv.c.p.byID[g.group.Label.Col]; cp != nil {
+			chosen = cp.col.LabelField
+		}
+		if e.sql == "NULL" {
+			return "NULL", nil
+		}
+		return labelValueSQL(lv.r.s, e.target, labelFieldOf(e.target, chosen), e.sql), nil
 	}
 	target := lv.c.groupTargets[lv.n-1]
 	if target == nil {
 		return "NULL", nil
 	}
-	f := firstTextField(target)
-	if f == nil {
-		return "NULL", nil
-	}
-	return recordSQL(lv.r.s, target, &pathPlan{field: f, src: target}, fmt.Sprintf("a.k%d", lv.n-1)), nil
+	return labelValueSQL(lv.r.s, target, labelFieldOf(target, g.col.col.LabelField), fmt.Sprintf("a.k%d", lv.n-1)), nil
 }
 
 // innerRecord finds where a formula on this level reads, outside a total,
@@ -319,7 +329,7 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	cur := lv.c.currencyOf[id]
 	switch {
 	case cp.nest > 0:
-		return expr{sql: "NULL", typ: cp.path.field.Type}, nil
+		return expr{sql: "NULL", typ: cp.path.field.Type, target: cp.path.target}, nil
 	case cp.path != nil && cp.tm >= 0:
 		return withCurrency(expr{sql: lv.toManyTotal(cp), typ: aggregateType(cp.col.Aggregate, cp.path.field.Type, cp.scale)}, cur), nil
 	case cp.path != nil && cp.col.Aggregate != "":

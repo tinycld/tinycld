@@ -30,6 +30,9 @@ func (rn *runner) columns() []ResultColumn {
 		if t := c.levelTypes[cp.col.ID]; t != "" && t != rc.Type && cp.col.Aggregate != "" {
 			rc.TotalType = t
 		}
+		if c.labelled[cp.col.ID] {
+			rc.LabelCell = cp.col.ID + "@label"
+		}
 		rn.currencyOfColumn(cp, &rc)
 		out = append(out, rc)
 	}
@@ -37,7 +40,7 @@ func (rn *runner) columns() []ResultColumn {
 		cell := pv.cell
 		for j, key := range rn.pivotValues {
 			rc := ResultColumn{
-				ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: rn.pivotLabel(key),
+				ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: rn.pivotLabel(j, key),
 				Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format,
 				Pivot: &PivotColumn{Cell: cell.col.ID, Key: key},
 			}
@@ -313,6 +316,7 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 		if ck := rn.c.currencyOf[cp.col.ID].key; ck != "" {
 			out[cp.col.ID+"@currency"] = row[ck]
 		}
+		rn.labelCell(out, cp, row)
 	}
 	if pv := rn.c.p.pivot; pv != nil {
 		for j := range rn.pivotValues {
@@ -322,6 +326,14 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 		}
 	}
 	return out
+}
+
+// labelCell puts a labelled column's record label (vl<idx>) in the cell
+// <id>@label.
+func (rn *runner) labelCell(out map[string]any, cp *colPlan, row map[string]any) {
+	if rn.c.labelled[cp.col.ID] {
+		out[cp.col.ID+"@label"] = row[fmt.Sprintf("vl%d", rn.c.p.index(cp))]
+	}
 }
 
 func (rn *runner) cellValue(cp *colPlan, v any, grouped bool) any {
@@ -345,6 +357,11 @@ func (rn *runner) firstLabel(cols []*colPlan, row map[string]any) string {
 		return ""
 	}
 	idx := rn.c.p.index(cols[0])
+	// A record is named by its label, never by its id; a blank link reads
+	// (none).
+	if rn.c.labelled[cols[0].col.ID] {
+		return labelText(row[fmt.Sprintf("vl%d", idx)])
+	}
 	return rn.display(cols[0], row[fmt.Sprintf("v%d", idx)], false)
 }
 

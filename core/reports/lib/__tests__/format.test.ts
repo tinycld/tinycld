@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+    BLANK_LINK_LABEL,
     cellCurrency,
     cellDisplay,
     DEFAULT_DISPLAY,
@@ -124,7 +125,41 @@ describe('formatReportPercent', () => {
     })
 })
 
+const ANIMAL: ResultColumn = {
+    id: 'animal',
+    label: 'Animal',
+    type: 'relation',
+    labelCell: 'animal@label',
+}
+
 describe('cellDisplay', () => {
+    it('shows a link cell by its record’s label, never its id', () => {
+        const leo = row('detail', { animal: 'r1', 'animal@label': 'Leo' })
+        expect(cellDisplay(ANIMAL, leo, 'r1', PLAIN)).toEqual({
+            text: 'Leo',
+            align: 'left',
+            isRed: false,
+            isError: false,
+        })
+        expect(cellDisplay(ANIMAL, row('group', { 'animal@label': 'Leo' }), 'r1', PLAIN).text).toBe(
+            'Leo'
+        )
+    })
+
+    it('shows (none) for a blank link on a detail row, nothing on a total row', () => {
+        const blank = row('detail', { animal: null, 'animal@label': null })
+        expect(cellDisplay(ANIMAL, blank, null, PLAIN).text).toBe(BLANK_LINK_LABEL)
+        const unseen = row('detail', { animal: 'r9', 'animal@label': null })
+        expect(cellDisplay(ANIMAL, unseen, 'r9', PLAIN).text).toBe(BLANK_LINK_LABEL)
+        expect(cellDisplay(ANIMAL, row('total', { animal: null }), null, PLAIN).text).toBe('')
+        expect(cellDisplay(ANIMAL, row('group'), undefined, PLAIN).text).toBe('')
+    })
+
+    it('shows a count of a link column’s records as a number on total rows', () => {
+        const counted: ResultColumn = { ...ANIMAL, aggregate: 'count', totalType: 'number' }
+        expect(cellDisplay(counted, row('total', { animal: 4 }), 4, PLAIN).text).toBe('4')
+    })
+
     it('reads each row’s currency from its currency cell, or the fixed one', () => {
         const eur = row('detail', { cost: 500, 'cost@currency': 'EUR' })
         expect(cellCurrency(MONEY, eur)).toBe('EUR')

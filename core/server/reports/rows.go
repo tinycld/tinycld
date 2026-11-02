@@ -31,6 +31,9 @@ type compiler struct {
 	// for an amount, its currency. It outlives a statement (assembly reads
 	// it after every pass), so rows() leaves it.
 	labels []labelPlan
+	// labelled holds the columns whose values point at a record, which each
+	// carry that record's label (vl<idx>, the cell <id>@label).
+	labelled map[string]bool
 }
 
 // labelPlan is what a group's label formula compiled to.
@@ -40,7 +43,7 @@ type labelPlan struct {
 }
 
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
-	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, labels: make([]labelPlan, len(p.groups))}
+	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, labels: make([]labelPlan, len(p.groups)), labelled: map[string]bool{}}
 	if app != nil {
 		c.fiscal = fiscalStartOf(p.base, app)
 	}

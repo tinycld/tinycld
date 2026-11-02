@@ -68,6 +68,9 @@ type Column struct {
 	Scale *int `json:"scale,omitempty"`
 	// Format is the client's display format, returned as given.
 	Format string `json:"format,omitempty"`
+	// LabelField is the field of a link column's record it shows beside
+	// the record's id; the record's first text field when empty.
+	LabelField string `json:"labelField,omitempty"`
 }
 
 // Node is a formula or filter tree: an operator with arguments, or a leaf
@@ -105,8 +108,9 @@ type Group struct {
 	Col       string `json:"col"`
 	Bucket    string `json:"bucket,omitempty"` // a date column's bucket
 	Subtotals bool   `json:"subtotals,omitempty"`
-	// Label is a formula on the group's level that labels its rows. Without
-	// it a record group is labelled by its record's first text field, any
+	// Label is a formula on the group's level that labels its rows (a
+	// record's label when its value points at one). Without it a record
+	// group is labelled as its column shows the record (labelFieldOf), any
 	// other group by its key.
 	Label *Node `json:"label,omitempty"`
 }
@@ -282,7 +286,10 @@ func resolveAliases(spec *Spec) []Alias {
 	}
 	var out []Alias
 	for i := range spec.Columns {
-		aliasPath(base, spec.Columns[i].Path, &out)
+		// A label field is a field of the record the path points at.
+		if t := aliasPath(base, spec.Columns[i].Path, &out); t != nil && spec.Columns[i].LabelField != "" {
+			spec.Columns[i].LabelField = aliasKey(t, spec.Columns[i].LabelField, &out)
+		}
 		aliasNode(base, spec.Columns[i].Formula, &out)
 	}
 	aliasNode(base, spec.Filter, &out)

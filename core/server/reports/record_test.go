@@ -217,3 +217,68 @@ func TestALookupReadsTheGroupRecord(t *testing.T) {
 	open := z.run(t, "ann", spec, Options{Expand: [][]any{res.Rows[0].GroupKey}}, nil)
 	requireRows(t, open, "kg", int64(300), int64(300), int64(300), int64(190), nil)
 }
+
+// A group label formula whose value links to a record shows that record's
+// label, never its id: a link column's label field, else the record's first
+// text field. Such a label is text.
+func TestARelationGroupLabelShowsItsRecordsLabel(t *testing.T) {
+	z := newZoo(t)
+	run := func(animal, label string) *Result {
+		t.Helper()
+		return z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+			`+animal+`,{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+			"groups":[{"id":"g","col":"animal","label":`+label+`}],"sort":[{"col":"cost"}]}`, Options{}, nil)
+	}
+	const plain = `{"id":"animal","path":[{"link":"animal"}]}`
+	const bySpecies = `{"id":"animal","path":[{"link":"animal"}],"labelField":"species"}`
+	cases := []struct {
+		name, animal, label string
+		want                []any
+	}{
+		{"a link column", plain, `{"col":"animal"}`, []any{"Zed", "Leo", "Total"}},
+		{"a link column's label field", bySpecies, `{"col":"animal"}`, []any{"zebra", "lion", "Total"}},
+		{"a record's link", plain, `{"record":"g","path":[{"link":"site"}]}`, []any{"South", "North", "Total"}},
+		{"a hidden record's link", plain, `{"record":"g","path":[{"link":"vault"}]}`, []any{"(none)", "(none)", "Total"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := run(c.animal, c.label)
+			requireRows(t, res, "label", c.want...)
+			for _, row := range res.Rows[:2] {
+				if row.LabelType != "" || row.LabelValue != nil {
+					t.Fatalf("label of %s = %+v", row.ID, row)
+				}
+			}
+		})
+	}
+}
+
+// A record group with no label formula is labelled as its column shows the
+// record: the column's label field, else the first text field, else the
+// source's name.
+func TestARecordGroupIsLabelledByItsColumnsLabelField(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}],"labelField":"species"},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"cost"}]}`, Options{}, nil)
+	requireRows(t, res, "label", "zebra", "lion", "Total")
+	// The group rows' link cells carry the same label; the total has none.
+	requireRows(t, res, "animal@label", "zebra", "lion", nil)
+	keepers := z.run(t, "ann", `{"version":2,"source":"zoo.keepers","columns":[
+		{"id":"k","path":[{"field":"id"}]},{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
+		"groups":[{"id":"g","col":"k"}]}`, Options{}, nil)
+	requireRows(t, keepers, "label", "Keepers", "Keepers", "Total")
+}
+
+// Computed rows carry no label beside a link column.
+func TestALayoutReportWithALinkColumnLabelsItsSections(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"animal"}],
+		"layout":[{"section":"l","title":"Leo","key":"`+z.id("leo")+`"},{"row":"r","label":"Twice","formula":{"op":"mul","args":[{"subtotal":"l"},{"value":2}]}}]}`, Options{}, nil)
+	requireRows(t, res, "kind", "group", "subtotal", "computed")
+	requireRows(t, res, "animal@label", "Leo", "Leo", nil)
+	requireRows(t, res, "cost", int64(3500), int64(3500), int64(7000))
+}

@@ -45,6 +45,11 @@ export interface ResultColumn {
     currencyCell?: string
     mixedCurrency?: boolean
     pivot?: { cell: string; key: unknown }
+    /**
+     * A link column's cell that holds the label of the record each value points at
+     * (`<id>@label`); null for a blank link or a record the reader cannot see.
+     */
+    labelCell?: string
 }
 
 export interface ResultRow {

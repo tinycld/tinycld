@@ -76,6 +76,9 @@ type ResultColumn struct {
 	CurrencyCell  string       `json:"currencyCell,omitempty"`
 	MixedCurrency bool         `json:"mixedCurrency,omitempty"`
 	Pivot         *PivotColumn `json:"pivot,omitempty"`
+	// LabelCell names the cell that holds the label of the record a link
+	// column's value points at (<id>@label), so no cell shows a raw id.
+	LabelCell string `json:"labelCell,omitempty"`
 }
 
 // PivotColumn marks a pivot cell column: the cell column it splits, and
@@ -171,8 +174,10 @@ type runner struct {
 	expand *expansion
 	res    *Result
 	topics map[string]bool
-	// pivotValues are the pivot's columns, from its first pass.
+	// pivotValues are the pivot's columns, from its first pass, and
+	// pivotLabels their records' labels for a pivot over a link.
 	pivotValues []any
+	pivotLabels []any
 }
 
 // Run runs a report for its reader. The statements read only rows the
@@ -399,19 +404,22 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			return nil, "", err
 		}
 		cells := make([]string, 0, len(c.p.cols))
+		labels := make([]string, 0, len(c.p.cols))
 		for idx, cp := range c.p.cols {
 			e, err := lv.cell(cp)
 			if err != nil {
 				return nil, "", err
 			}
 			cells = append(cells, fmt.Sprintf("%s AS v%d", e.sql, idx))
+			labels = append(labels, fmt.Sprintf("%s AS vl%d", c.labelOf(s, cp, e), idx))
 			c.levelTypes[cp.col.ID] = e.typ
 		}
 		pivotCells, err := c.pivotCells(lv, pivot)
 		if err != nil {
 			return nil, "", err
 		}
-		cells = append(cells, pivotCells...)
+		// The labels follow the pivot cells, as in every leg of the union.
+		cells = append(append(cells, pivotCells...), labels...)
 		ctes = append(ctes, lv.render(cells, "1", lv.label)...)
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
@@ -515,7 +523,11 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 	c.detailTypes = map[string]FieldType{}
 	for idx, cp := range c.p.cols {
 		if cp.nest > 0 {
-			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx))
+			// A child row column's label is read with its child rows.
+			if err := c.checkLabelField(cp, cp.path.target); err != nil {
+				return "", nil, err
+			}
+			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx), fmt.Sprintf("NULL AS vl%d", idx))
 			c.detailTypes[cp.col.ID] = cp.path.field.Type
 			continue
 		}
@@ -524,7 +536,10 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 		if err != nil {
 			return "", nil, err
 		}
-		sel = append(sel, fmt.Sprintf("%s AS v%d", e.sql, idx))
+		if err := c.checkLabelField(cp, e.target); err != nil {
+			return "", nil, err
+		}
+		sel = append(sel, fmt.Sprintf("%s AS v%d", e.sql, idx), fmt.Sprintf("%s AS vl%d", c.labelOf(r.s, cp, e), idx))
 		c.detailTypes[cp.col.ID] = e.typ
 		if cp.path == nil {
 			// A formula's amount has the currency of the amounts it reads.

@@ -139,6 +139,17 @@ function dayText(value: string): string {
     return isIsoDay(day) ? shortDay(day) : value
 }
 
+export const BLANK_LINK_LABEL = '(none)'
+
+// A link cell shows its record's label, never the record's id. A detail row's blank
+// link (or a record the reader cannot see) reads (none); a group or total row with no
+// value in the column shows nothing.
+function linkLabel(labelCell: string, row: ResultRow, value: CellValue): string {
+    const label = row.cells[labelCell]
+    if (typeof label === 'string' && label !== '') return label
+    return value === null && row.kind !== 'detail' ? '' : BLANK_LINK_LABEL
+}
+
 export function cellDisplay(
     column: ResultColumn,
     row: ResultRow,
@@ -147,7 +158,11 @@ export function cellDisplay(
 ): CellDisplay {
     const type = cellType(column, row)
     const align = RIGHT_TYPES.includes(type) ? 'right' : 'left'
-    if (value === null || value === undefined) return plainDisplay('', align)
+    if (value === undefined) return plainDisplay('', align)
+    if (column.labelCell && type === 'relation') {
+        return plainDisplay(linkLabel(column.labelCell, row, value), align)
+    }
+    if (value === null) return plainDisplay('', align)
     if (type === 'money' && typeof value === 'number')
         return moneyDisplay(column, row, value, format)
     if (typeof value === 'number' && (type === 'percent' || column.format === 'percent')) {

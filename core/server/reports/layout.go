@@ -84,6 +84,10 @@ func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err er
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
 		}
+		// A computed row points at no record: no column has a label.
+		for idx := range c.p.cols {
+			cells = append(cells, fmt.Sprintf("NULL AS vl%d", idx))
+		}
 		// The level rows' last columns, so every leg of the union has the same.
 		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __n")
 		if len(lc.used) > maxJoinedChunks {

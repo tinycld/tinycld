@@ -77,6 +77,10 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 		rest := &pathPlan{hops: cp.path.hops[len(nl.hops):], field: cp.path.field}
 		v := sc.value(rest).sql
 		sel = append(sel, fmt.Sprintf("%s AS v%d", v, p.index(cp)))
+		if rn.c.labelled[cp.col.ID] {
+			label := labelValueSQL(s, cp.path.target, labelFieldOf(cp.path.target, cp.col.LabelField), v)
+			sel = append(sel, fmt.Sprintf("%s AS vl%d", label, p.index(cp)))
+		}
 		order = append(order, "("+v+" IS NULL)", v)
 		if cur := p.nestCurrency(cp); cur.key != "" {
 			field := cp.path.src.field(cp.path.field.Currency)
@@ -135,6 +139,7 @@ func (rn *runner) nestedRows(t *tree, level int, parentKey any, parentID, sectio
 			if cur := rn.c.p.nestCurrency(cp); cur.key != "" {
 				cells[cp.col.ID+"@currency"] = row[cur.key]
 			}
+			rn.labelCell(cells, cp, row)
 		}
 		rn.push(Row{ID: id, Kind: KindDetail, Depth: depth, Label: rn.firstLabel(cols, row), Section: section, Parent: parentID, Cells: cells})
 		rn.nestedRows(t, level+1, row["__next"], id, section, depth+1)
