@@ -27,23 +27,25 @@ type compiler struct {
 	// groupTargets is the source each group's key links to (nil for a group
 	// that is not by a link).
 	groupTargets []*Source
-	// labels is each group's label formula as it compiled: its type and,
-	// for an amount, its currency. It outlives a statement (assembly reads
-	// it after every pass), so rows() leaves it.
+	// labels is each group's label as it compiled: its type and, for an
+	// amount, its currency. It outlives a statement (assembly reads it after
+	// every pass), so rows() leaves it.
 	labels []labelPlan
-	// labelled holds the columns whose values point at a record, which each
-	// carry that record's label (vl<idx>, the cell <id>@label).
-	labelled map[string]bool
+	// labelTypes holds the type of the record label of each column whose
+	// values point at a record (vl<idx>, the cell <id>@label).
+	labelTypes map[string]FieldType
 }
 
-// labelPlan is what a group's label formula compiled to.
+// labelPlan is what a group's label compiled to. recordCurrency says an
+// amount label is a record's, whose currency each row holds (__labelcur).
 type labelPlan struct {
-	typ FieldType
-	cur currency
+	typ            FieldType
+	cur            currency
+	recordCurrency bool
 }
 
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
-	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, labels: make([]labelPlan, len(p.groups)), labelled: map[string]bool{}}
+	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}}
 	if app != nil {
 		c.fiscal = fiscalStartOf(p.base, app)
 	}

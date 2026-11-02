@@ -146,6 +146,33 @@ describe('cellDisplay', () => {
         )
     })
 
+    it('formats a typed link label as a cell of its type', () => {
+        const priced: ResultColumn = {
+            ...ANIMAL,
+            labelType: 'money',
+            labelCurrencyCell: 'animal@labelCurrency',
+        }
+        const eur = { animal: 'r1', 'animal@label': 150000, 'animal@labelCurrency': 'EUR' }
+        expect(cellDisplay(priced, row('detail', eur), 'r1', PLAIN)).toEqual({
+            text: '1,500.00',
+            align: 'left',
+            isRed: false,
+            isError: false,
+        })
+        expect(cellDisplay(priced, row('subtotal', eur), 'r1', PLAIN).text).toBe('€1,500.00')
+        const nameless = row('detail', { animal: 'r2', 'animal@label': '(no name)' })
+        expect(cellDisplay(priced, nameless, 'r2', PLAIN).text).toBe('(no name)')
+        const born: ResultColumn = { ...ANIMAL, labelType: 'date' }
+        const may = row('detail', { animal: 'r1', 'animal@label': '2020-05-01' })
+        expect(cellDisplay(born, may, 'r1', PLAIN).text).toBe('May 1, 2020')
+        const active: ResultColumn = { ...ANIMAL, labelType: 'bool' }
+        const no = row('detail', { animal: 'r1', 'animal@label': false })
+        expect(cellDisplay(active, no, 'r1', PLAIN).text).toBe('No')
+        const weight: ResultColumn = { ...ANIMAL, labelType: 'number' }
+        const heavy = row('detail', { animal: 'r1', 'animal@label': 1900 })
+        expect(cellDisplay(weight, heavy, 'r1', PLAIN).text).toBe('1,900')
+    })
+
     it('shows (none) for a blank link on a detail row, nothing on a total row', () => {
         const blank = row('detail', { animal: null, 'animal@label': null })
         expect(cellDisplay(ANIMAL, blank, null, PLAIN).text).toBe(BLANK_LINK_LABEL)

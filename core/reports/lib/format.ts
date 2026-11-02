@@ -141,13 +141,28 @@ function dayText(value: string): string {
 
 export const BLANK_LINK_LABEL = '(none)'
 
-// A link cell shows its record's label, never the record's id. A detail row's blank
-// link (or a record the reader cannot see) reads (none); a group or total row with no
-// value in the column shows nothing.
-function linkLabel(labelCell: string, row: ResultRow, value: CellValue): string {
+// A link cell shows its record's label, never the record's id: the label field's
+// typed value, formatted as a cell of its type. A detail row's blank link (or a
+// record the reader cannot see) reads (none); a group or total row with no value in
+// the column shows nothing.
+function linkDisplay(
+    column: ResultColumn,
+    labelCell: string,
+    row: ResultRow,
+    value: CellValue,
+    format: NumberFormat
+): CellDisplay {
     const label = row.cells[labelCell]
-    if (typeof label === 'string' && label !== '') return label
-    return value === null && row.kind !== 'detail' ? '' : BLANK_LINK_LABEL
+    if (label === null || label === undefined || label === '') {
+        return plainDisplay(value === null && row.kind !== 'detail' ? '' : BLANK_LINK_LABEL, 'left')
+    }
+    const labelColumn: ResultColumn = {
+        id: labelCell,
+        label: column.label,
+        type: column.labelType ?? 'text',
+        currencyCell: column.labelCurrencyCell,
+    }
+    return { ...cellDisplay(labelColumn, row, label, format), align: 'left' }
 }
 
 export function cellDisplay(
@@ -160,7 +175,7 @@ export function cellDisplay(
     const align = RIGHT_TYPES.includes(type) ? 'right' : 'left'
     if (value === undefined) return plainDisplay('', align)
     if (column.labelCell && type === 'relation') {
-        return plainDisplay(linkLabel(column.labelCell, row, value), align)
+        return linkDisplay(column, column.labelCell, row, value, format)
     }
     if (value === null) return plainDisplay('', align)
     if (type === 'money' && typeof value === 'number')

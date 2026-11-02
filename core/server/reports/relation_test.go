@@ -3,6 +3,8 @@ package reports
 import (
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -211,29 +213,113 @@ func TestALabelFieldFollowsItsAlias(t *testing.T) {
 	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"animal","path":[{"link":"animal"}],"labelField":"mass"}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "animal@label", "190", "190", "300", "300", nil)
+	requireRows(t, res, "animal@label", int64(190), int64(190), int64(300), int64(300), nil)
 }
 
-// A record shown by a field that is not text reads as that field's cell does
-// in the shell: an amount with its currency, Yes or No, a number, a day.
-func TestALabelFieldOfAnyTypeReadsAsItsCellDoes(t *testing.T) {
+// A record shown by a field that is not text is labelled by that field's
+// stored value, typed as the field is, so the client formats it as a cell of
+// that type; an amount label carries its currency.
+func TestALabelFieldOfAnyTypeIsTyped(t *testing.T) {
 	z := newZoo(t)
 	zed := z.recs["zed"]
 	zed.Set("active", false)
 	if err := z.app.Save(zed); err != nil {
 		t.Fatal(err)
 	}
-	for field, want := range map[string][]any{
-		"price":  {"$5,000.00", "$5,000.00", "$1,200.00", "$1,200.00", nil},
-		"active": {"Yes", "Yes", "No", "No", nil},
-		"weight": {"190", "190", "300", "300", nil},
-		"born":   {"May 1, 2020", "May 1, 2020", "Feb 10, 2019", "Feb 10, 2019", nil},
+	for field, c := range map[string]struct {
+		typ  FieldType
+		want []any
+	}{
+		"price":  {Money, []any{int64(500000), int64(500000), int64(120000), int64(120000), nil}},
+		"active": {Bool, []any{true, true, false, false, nil}},
+		"weight": {Number, []any{int64(190), int64(190), int64(300), int64(300), nil}},
+		"born":   {Date, []any{"2020-05-01", "2020-05-01", "2019-02-10", "2019-02-10", nil}},
 	} {
 		t.Run(field, func(t *testing.T) {
 			res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
-				{"id":"note","path":[{"field":"note"}]},
-				{"id":"animal","path":[{"link":"animal"}],"labelField":"`+field+`"}],"sort":[{"col":"note"}]}`, Options{}, nil)
-			requireRows(t, res, "animal@label", want...)
+				{"id":"animal","path":[{"link":"animal"}],"labelField":"`+field+`"},
+				{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`, Options{}, nil)
+			requireRows(t, res, "animal@label", c.want...)
+			if col := res.Columns[0]; col.LabelType != c.typ {
+				t.Fatalf("animal column = %+v", col)
+			}
+			// The detail row is labelled by the typed record label.
+			if row := res.Rows[0]; row.LabelType != c.typ || row.LabelValue != c.want[0] {
+				t.Fatalf("first row label = %+v", row)
+			}
+			if c.typ != Money {
+				return
+			}
+			requireRows(t, res, "animal@labelCurrency", "USD", "USD", "USD", "USD", nil)
+			if col := res.Columns[0]; col.LabelCurrencyCell != "animal@labelCurrency" {
+				t.Fatalf("animal column = %+v", col)
+			}
+			if row := res.Rows[0]; row.LabelCurrency != "USD" {
+				t.Fatalf("first row label = %+v", row)
+			}
+		})
+	}
+	text := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},{"id":"site","path":[{"link":"animal"},{"link":"site"}],"labelField":"region"}]}`, Options{}, nil)
+	if text.Columns[0].LabelType != Text || text.Columns[1].LabelType != Text || text.Rows[0].LabelType != "" {
+		t.Fatalf("text labels = %+v / %+v", text.Columns, text.Rows[0])
+	}
+}
+
+// An amount label reads each record's own currency field.
+func TestAnAmountLabelReadsItsRecordsCurrency(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("zed"), "cost": 400, "currency": "EUR", "fed": "2026-03-10 00:00:00.000Z", "note": "f7"})
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"f","path":[{"field":"id"}],"labelField":"cost"},{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`, Options{}, nil)
+	requireRows(t, res, "f@label", int64(1000), int64(2500), int64(700), int64(300), int64(400), nil)
+	requireRows(t, res, "f@labelCurrency", "USD", "USD", "USD", "USD", "EUR", nil)
+	if row := res.Rows[4]; row.LabelType != Money || row.LabelValue != int64(400) || row.LabelCurrency != "EUR" {
+		t.Fatalf("f7 label = %+v", row)
+	}
+}
+
+// A formula column that is a link column shows its records as that column
+// does.
+func TestAFormulaOfALinkColumnShowsItsLabelField(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"animal","path":[{"link":"animal"}],"labelField":"species"},
+		{"id":"again","formula":{"col":"animal"}}],"sort":[{"col":"note"}]}`, Options{}, nil)
+	requireRows(t, res, "again@label", "lion", "lion", "zebra", "zebra", nil)
+}
+
+// A pivot over a link may name its columns by a label field, typed and in
+// that field's order; the field is checked as a column's is.
+func TestAPivotOverALinkChoosesItsLabelField(t *testing.T) {
+	z := sortZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"currency","path":[{"field":"currency"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"currency"}],
+		"pivot":{"path":[{"link":"animal"}],"labelField":"born","cell":"cost"}}`, Options{}, nil)
+	if got := pivotIDs(res); !reflect.DeepEqual(got, []string{"cost.p0=2018-01-01", "cost.p1=2019-02-10", "cost.p2=2020-05-01", "cost.p3=2023-01-01"}) {
+		t.Fatalf("pivot columns = %v", got)
+	}
+	for _, c := range res.Columns {
+		if c.Pivot != nil && c.Pivot.LabelType != Date {
+			t.Fatalf("pivot column = %+v", c.Pivot)
+		}
+	}
+	app := withZooRegistry(t)
+	cases := map[string]struct {
+		pivot, at, want string
+		status          int
+	}{
+		"unknown":    {`{"path":[{"link":"animal"}],"labelField":"nope","cell":"cost"}`, "pivot.labelField", "has no field", 422},
+		"the id":     {`{"path":[{"link":"animal"}],"labelField":"id","cell":"cost"}`, "pivot.labelField", "is a record id or a link", 400},
+		"not a link": {`{"path":[{"field":"note"}],"labelField":"note","cell":"cost"}`, "pivot.labelField", "only a pivot over a link", 400},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			raw := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+				"groups":[{"id":"g","col":"note"}],"pivot":` + c.pivot + `}`
+			requireSpecError(t, Validate(app, loadSpec(t, raw)), c.status, c.at, c.want)
 		})
 	}
 }
@@ -252,11 +338,21 @@ func TestALabelFallsBackToTheFirstFieldOfAnyType(t *testing.T) {
 
 // sortZoo adds two animals ann keeps whose ids sort opposite to their names,
 // each with a feeding: Abe's id sorts last, Zara's first, both in the north.
+// Their weights, birthdays and prices put them at the other ends of those
+// orders than of the names' (Leo 190, 2020-05-01, 500000; Zed 300,
+// 2019-02-10, 120000), and text order would differ from the typed order.
 func sortZoo(t *testing.T) *zoo {
 	t.Helper()
 	z := newZoo(t)
-	for _, a := range []struct{ key, id, name string }{{"abe", "zzzzzzzzzzzzzz1", "Abe"}, {"zara", "aaaaaaaaaaaaaa1", "Zara"}} {
-		rec := z.rec(t, a.key, "zoo_animals", map[string]any{"id": a.id, "name": a.name, "site": z.id("north"), "owner": z.id("ann"), "weight": 10})
+	for _, a := range []struct {
+		key, id, name, born string
+		weight, price       int
+	}{
+		{"abe", "zzzzzzzzzzzzzz1", "Abe", "2018-01-01 00:00:00.000Z", 500, 1000000},
+		{"zara", "aaaaaaaaaaaaaa1", "Zara", "2023-01-01 00:00:00.000Z", 5, 999999},
+	} {
+		rec := z.rec(t, a.key, "zoo_animals", map[string]any{"id": a.id, "name": a.name, "site": z.id("north"), "owner": z.id("ann"),
+			"weight": a.weight, "born": a.born, "price": a.price})
 		z.rec(t, "k-"+a.key, "zoo_keepers", map[string]any{"user": z.id("ann"), "animal": rec.Id})
 		z.feeding(t, "f-"+a.key, rec, 10, "2026-04-01", 1)
 	}
@@ -336,4 +432,135 @@ func TestTextOperatorsReadARelationAsItsLabel(t *testing.T) {
 		"groups":[{"id":"g","col":"animal","label":{"op":"concat","args":[{"col":"animal"},{"value":" at "},{"record":"g","path":[{"link":"site"}]}]}}],
 		"sort":[{"col":"cost"}]}`, Options{}, nil)
 	requireRows(t, label, "label", "Zed at South", "Leo at North", "Total")
+}
+
+// pageLabels pages through a detail report one row at a time and returns
+// each detail row's label.
+func pageLabels(t *testing.T, z *zoo, spec string) []any {
+	t.Helper()
+	var out []any
+	opts := Options{Limit: 1}
+	for range 20 {
+		page := z.run(t, "ann", spec, opts, nil)
+		for _, r := range page.Rows {
+			if r.Kind == KindDetail {
+				out = append(out, r.Label)
+			}
+		}
+		if page.Page.Next == "" {
+			return out
+		}
+		opts.Cursor = page.Page.Next
+	}
+	t.Fatal("too many pages")
+	return nil
+}
+
+// A link column whose label field is a number, a date or an amount sorts by
+// that typed value (not its text), then by id, in detail rows, across pages,
+// on group levels, in child rows and in a pivot's columns.
+func TestALinkColumnSortsByItsTypedLabel(t *testing.T) {
+	z := sortZoo(t)
+	for field, want := range map[string][]any{
+		"weight": {"Zara", "Leo", "Leo", "Zed", "Zed", "Abe"},
+		"born":   {"Abe", "Zed", "Zed", "Leo", "Leo", "Zara"},
+		"price":  {"Zed", "Zed", "Leo", "Leo", "Zara", "Abe"},
+	} {
+		t.Run(field, func(t *testing.T) {
+			detail := fmt.Sprintf(`{"version":2,"source":"zoo.feedings","columns":[
+				{"id":"name","path":[{"link":"animal"},{"field":"name"}]},{"id":"animal","path":[{"link":"animal"}],"labelField":"%s"}],
+				"sort":[{"col":"animal","dir":"%%s"},{"col":"name"}]}`, field)
+			res := z.run(t, "ann", fmt.Sprintf(detail, "asc"), Options{}, nil)
+			requireRows(t, res, "label", append(slices.Clone(want), "Total")...)
+			if got := pageLabels(t, z, fmt.Sprintf(detail, "asc")); !reflect.DeepEqual(got, want) {
+				t.Fatalf("pages = %v", got)
+			}
+			desc := slices.Clone(want)
+			slices.Reverse(desc)
+			if got := pageLabels(t, z, fmt.Sprintf(detail, "desc")); !reflect.DeepEqual(got, desc) {
+				t.Fatalf("pages, descending = %v", got)
+			}
+			names := slices.Compact(slices.Clone(want))
+			grouped := fmt.Sprintf(`{"version":2,"source":"zoo.feedings","columns":[
+				{"id":"animal","path":[{"link":"animal"}],"labelField":"%s"},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
+				{"id":"name","formula":{"record":"g","path":[{"field":"name"}]}}],
+				"groups":[{"id":"g","col":"animal"}]%%s}`, field)
+			for _, sort := range []string{"", `,"sort":[{"col":"animal"}]`} {
+				res := z.run(t, "ann", fmt.Sprintf(grouped, sort), Options{}, nil)
+				requireRows(t, res, "name", append(names, nil)...)
+			}
+		})
+	}
+	// Child rows: Zara 5, Leo 190, Abe 500 in the north.
+	nested := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[
+		{"id":"site","path":[{"field":"name"}]},
+		{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"id"}],"labelField":"weight"}],"sort":[{"col":"site"}]}`, Options{}, nil)
+	requireRows(t, nested, "label", "North", "5", "190", "500", "South", "300", "Total")
+	if row := nested.Rows[1]; row.LabelType != Number || row.LabelValue != int64(5) {
+		t.Fatalf("child row label = %+v", row)
+	}
+	// A pivot over a link by a number field: 5, 190, 300, 500.
+	pivot := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"currency","path":[{"field":"currency"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"currency"}],"pivot":{"path":[{"link":"animal"}],"labelField":"weight","cell":"cost"}}`, Options{}, nil)
+	if got := pivotIDs(pivot); !reflect.DeepEqual(got, []string{"cost.p0=5", "cost.p1=190", "cost.p2=300", "cost.p3=500"}) {
+		t.Fatalf("pivot columns = %v", got)
+	}
+}
+
+// Pages cross blank links and no-name records, which sort last in either
+// direction (by link id, a blank one last, then by the next key).
+func TestPagingCrossesBlankLinks(t *testing.T) {
+	z := sortZoo(t)
+	nameless := z.rec(t, "nameless", "zoo_sites", map[string]any{"region": "south"})
+	zara := z.recs["zara"]
+	zara.Set("site", nameless.Id)
+	if err := z.app.Save(zara); err != nil {
+		t.Fatal(err)
+	}
+	const spec = `{"version":2,"source":"zoo.animals","columns":[
+		{"id":"name","path":[{"field":"name"}]},{"id":"site","path":[{"link":"site"}]}],
+		"sort":[{"col":"site","dir":"%s"},{"col":"name"}]}`
+	if got := pageLabels(t, z, fmt.Sprintf(spec, "asc")); !reflect.DeepEqual(got, []any{"Abe", "Leo", "Zed", "Zara", "Kit"}) {
+		t.Fatalf("pages = %v", got)
+	}
+	if got := pageLabels(t, z, fmt.Sprintf(spec, "desc")); !reflect.DeepEqual(got, []any{"Zed", "Abe", "Leo", "Zara", "Kit"}) {
+		t.Fatalf("pages, descending = %v", got)
+	}
+}
+
+// Each row computes a record's label once, however many cells, sort keys and
+// window orders read it.
+func TestARecordLabelIsComputedOncePerRow(t *testing.T) {
+	app := withZooRegistry(t)
+	spec := loadSpec(t, `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}],"labelField":"born"},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
+		{"id":"run","formula":{"op":"runningSum","args":[{"col":"cost"}]}}],
+		"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"animal"}]}`)
+	p, err := bind(app, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newCompiler(p, nil, nil, nil)
+	s := newStmt(nil, nil)
+	r, rerr := c.rows(s)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	sel, _, derr := c.detailSelect(r)
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	ctes, body, gerr := c.groupStatement(s, r, &expansion{}, nil, 1)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	const label = "COALESCE(NULLIF("
+	if n := strings.Count(sel, label); n != 1 {
+		t.Fatalf("the detail select computes the label %d times:\n%s", n, sel)
+	}
+	if n := strings.Count(strings.Join(ctes, "\n")+body, label); n != 1 {
+		t.Fatalf("the group statement computes the label %d times", n)
+	}
 }

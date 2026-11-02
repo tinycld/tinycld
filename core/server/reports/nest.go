@@ -77,11 +77,15 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 		rest := &pathPlan{hops: cp.path.hops[len(nl.hops):], field: cp.path.field}
 		v := sc.value(rest).sql
 		sel = append(sel, fmt.Sprintf("%s AS v%d", v, p.index(cp)))
-		if rn.c.labelled[cp.col.ID] {
-			// Child rows of records read in label order, then by id.
-			label := labelValueSQL(s, cp.path.target, labelFieldOf(cp.path.target, cp.col.LabelField), v)
-			sel = append(sel, fmt.Sprintf("%s AS vl%d", label, p.index(cp)))
-			order = append(order, "("+label+" IS NULL)", label)
+		if _, ok := rn.c.labelTypes[cp.col.ID]; ok {
+			// Child rows of records read in their labels' order, then by id.
+			// The order reads the selected label by name, so each row's label
+			// is computed once.
+			t, idx := cp.path.target, p.index(cp)
+			f := labelFieldOf(t, p.labelFieldName(cp))
+			sel = append(sel, fmt.Sprintf("%s AS vl%d", labelValueSQL(s, t, f, v), idx), fmt.Sprintf("%s AS vc%d", labelCurrencySQL(s, t, f, v), idx))
+			key := labelOrder(s, fmt.Sprintf("vl%d", idx))
+			order = append(order, "("+key+" IS NULL)", key)
 		}
 		order = append(order, "("+v+" IS NULL)", v)
 		if cur := p.nestCurrency(cp); cur.key != "" {
@@ -143,7 +147,11 @@ func (rn *runner) nestedRows(t *tree, level int, parentKey any, parentID, sectio
 			}
 			rn.labelCell(cells, cp, row)
 		}
-		rn.push(Row{ID: id, Kind: KindDetail, Depth: depth, Label: rn.firstLabel(cols, row), Section: section, Parent: parentID, Cells: cells})
+		label := rn.firstLabel(cols, row)
+		rn.push(Row{
+			ID: id, Kind: KindDetail, Depth: depth, Label: label.text, Section: section, Parent: parentID, Cells: cells,
+			LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
+		})
 		rn.nestedRows(t, level+1, row["__next"], id, section, depth+1)
 	}
 }

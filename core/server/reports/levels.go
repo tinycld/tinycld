@@ -24,8 +24,13 @@ type level struct {
 	tms      []string // d<L> CTEs
 	tmCols   []string // g<L> values taken from d<L>
 	frame    *windowFrame
-	// label is the SQL of the level's row label (labelSQL).
-	label    string
+	// labels computes the record labels the level's rows read once per row.
+	labels *labelRefs
+	// label is the level's row label (labelSQL) and its currency; labelKey
+	// sorts by it: a record's label with no-name records last, or "" for a
+	// level whose rows are not records.
+	label    labelRef
+	labelKey string
 	visiting map[string]bool
 	// reads memoizes readsRowValue per formula column.
 	reads map[string]bool
@@ -44,11 +49,10 @@ func (c *compiler) level(r *rowsCTE, n int) (*level, error) {
 		parent = append(parent, fmt.Sprintf("k%d", i))
 	}
 	lv.frame = &windowFrame{parent: prefixed("a.", parent), total: prefixed("a.", c.currencies)}
-	label, err := lv.labelSQL()
-	if err != nil {
+	lv.labels = newLabelRefs(r.s, lv.frame, "a")
+	if err := lv.labelSQL(); err != nil {
 		return nil, err
 	}
-	lv.label = label
 	order, err := lv.order()
 	if err != nil {
 		return nil, err
@@ -131,15 +135,16 @@ func (lv *level) order() ([]string, error) {
 		if !ok {
 			continue
 		}
-		// A record sorts by its label, then by its id.
-		if label := lv.c.labelOf(lv.r.s, s.col, e); label != "NULL" {
-			out = append(out, "("+label+" IS NULL)", label+dirOf(s.desc))
+		// A record sorts by its label's typed value, then by its id.
+		if ref, ok := lv.c.columnLabel(lv.labels, s.col, e); ok {
+			key := labelOrder(lv.r.s, ref.value)
+			out = append(out, "("+key+" IS NULL)", key+dirOf(s.desc))
 		}
 		out = append(out, "("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
 	}
 	if lv.n > 0 {
-		if lv.c.groupTargets[lv.n-1] != nil && lv.label != "NULL" {
-			out = append(out, "("+lv.label+" IS NULL)", lv.label)
+		if lv.c.groupTargets[lv.n-1] != nil && lv.labelKey != "" {
+			out = append(out, "("+lv.labelKey+" IS NULL)", lv.labelKey)
 		}
 		key := fmt.Sprintf("a.k%d", lv.n-1)
 		out = append(out, "("+key+" IS NULL)", key)
@@ -180,8 +185,8 @@ func (lv *level) isGroupColumn(cp *colPlan) bool {
 }
 
 // render returns the level's CTEs; o<L> selects the given cells, then
-// __own, the row's label and its count of base rows.
-func (lv *level) render(cells []string, own, label string) []string {
+// __own, the row's label and its currency, and its count of base rows.
+func (lv *level) render(cells []string, own string) []string {
 	a := fmt.Sprintf("a%d", lv.n)
 	keyCols := slices.Clone(lv.keys)
 	// __n counts the base rows of the group; it also keeps the select of a
@@ -218,55 +223,59 @@ func (lv *level) render(cells []string, own, label string) []string {
 	}
 	out = append(out, cells...)
 	out = append(out, fmt.Sprintf("ROW_NUMBER() OVER (%s ORDER BY %s) AS __ord", partitionBy(lv.frame.parent), strings.Join(lv.frame.order, ", ")))
-	out = append(out, own+" AS __own", label+" AS __label", "a.__n AS __n")
+	out = append(out, own+" AS __own", lv.label.value+" AS __label", lv.label.currency+" AS __labelcur", "a.__n AS __n")
 	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, strings.Join(out, ", "), lv.frame.from(g, "a")))
 	return ctes
 }
 
-// labelSQL is the label of the level's rows: the group's label formula (the
-// record's label when its value points at one), a record group's label
-// (labelFieldOf), or NULL (the key labels the row).
-func (lv *level) labelSQL() (string, error) {
+// labelSQL sets the label of the level's rows: the group's label formula
+// (the record's label when its value points at one), a record group's
+// record label, or none (the key labels the row).
+func (lv *level) labelSQL() error {
+	lv.label = labelRef{value: "NULL", currency: "NULL"}
 	if lv.n == 0 {
-		return "NULL", nil
+		return nil
 	}
 	g := lv.c.p.groups[lv.n-1]
+	target, chosen, key := lv.c.groupTargets[lv.n-1], lv.c.p.labelFieldName(g.col), fmt.Sprintf("a.k%d", lv.n-1)
 	if g.group.Label != nil {
 		e, err := compileFormula(&levelCtx{lv: lv, visiting: lv.visiting}, g.group.Label, g.at+".label")
 		if err != nil {
-			return "", err
+			return err
 		}
 		if e.win {
-			return "", invalid(g.at+".label", "a running value or a percent is not a label")
+			return invalid(g.at+".label", "a running value or a percent is not a label")
 		}
 		if at, inner := lv.innerRecord(g.group.Label, g.at+".label", false, map[string]bool{}); inner != "" {
-			return "", invalid(at, fmt.Sprintf("the label of group %q reads the record of group %q, which is grouped inside it: a %q row has no one %q record", g.group.ID, inner, g.group.ID, inner))
+			return invalid(at, fmt.Sprintf("the label of group %q reads the record of group %q, which is grouped inside it: a %q row has no one %q record", g.group.ID, inner, g.group.ID, inner))
 		}
 		lv.c.labels[lv.n-1] = labelPlan{typ: e.typ, cur: e.cur}
 		// A label that reads a row's value has none for a group of rows.
 		if lv.readsRowValue(g.group.Label, false, map[string]bool{}) {
-			return "NULL", nil
+			return nil
 		}
 		if e.target == nil {
-			return e.sql, nil
+			lv.label.value, lv.labelKey = e.sql, e.sql
+			return nil
 		}
-		// A label that points at a record shows the record's label, which is
-		// text; a column it reads shows the column's label field.
-		lv.c.labels[lv.n-1] = labelPlan{typ: Text}
-		chosen := ""
+		// A label that points at a record shows the record's label, by the
+		// label field of the column it reads.
+		target, chosen, key = e.target, "", e.sql
 		if cp := lv.c.p.byID[g.group.Label.Col]; cp != nil {
-			chosen = cp.col.LabelField
+			chosen = lv.c.p.labelFieldName(cp)
 		}
-		if e.sql == "NULL" {
-			return "NULL", nil
-		}
-		return labelValueSQL(lv.r.s, e.target, labelFieldOf(e.target, chosen), e.sql), nil
 	}
-	target := lv.c.groupTargets[lv.n-1]
 	if target == nil {
-		return "NULL", nil
+		return nil
 	}
-	return labelValueSQL(lv.r.s, target, labelFieldOf(target, g.col.col.LabelField), fmt.Sprintf("a.k%d", lv.n-1)), nil
+	f := labelFieldOf(target, chosen)
+	lv.c.labels[lv.n-1] = labelPlan{typ: labelTypeOf(f), recordCurrency: labelTypeOf(f) == Money}
+	if key == "NULL" {
+		return nil
+	}
+	lv.label = lv.labels.of(target, f, key)
+	lv.labelKey = labelOrder(lv.r.s, lv.label.value)
+	return nil
 }
 
 // innerRecord finds where a formula on this level reads, outside a total,

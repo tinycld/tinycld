@@ -44,12 +44,23 @@ export interface ResultColumn {
     /** The cell that holds each row's currency instead (`<id>@currency`). */
     currencyCell?: string
     mixedCurrency?: boolean
-    pivot?: { cell: string; key: unknown }
+    pivot?: {
+        cell: string
+        key: unknown
+        /** A pivot over a link: its column label typed, as a row's `labelType`. */
+        labelType?: FieldType
+        labelValue?: CellValue
+        labelCurrency?: string
+    }
     /**
      * A link column's cell that holds the label of the record each value points at
-     * (`<id>@label`); null for a blank link or a record the reader cannot see.
+     * (`<id>@label`); null for a blank link or a record the reader cannot see. The
+     * label is the label field's stored value, of type `labelType`, formatted as a
+     * cell of that type; an amount's currency is in `labelCurrencyCell`.
      */
     labelCell?: string
+    labelType?: FieldType
+    labelCurrencyCell?: string
 }
 
 export interface ResultRow {
@@ -66,7 +77,8 @@ export interface ResultRow {
     canExpand?: boolean
     cells: Record<string, CellValue>
     /**
-     * Set when a group row's label (and its subtotal's) is not text: format
+     * Set when a group row's label (and its subtotal's), or a detail row's record
+     * label, is not text: format
      * `labelValue` as a cell of this type (an amount in integer cents, in
      * `labelCurrency`); `label` is its plain text.
      */

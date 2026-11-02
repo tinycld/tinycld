@@ -3,7 +3,6 @@ package reports
 import (
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -64,127 +63,6 @@ func recordSQL(s *stmt, target *Source, bound *pathPlan, key string) string {
 	sc := newScope(s, target)
 	v := sc.value(bound)
 	return fmt.Sprintf("(SELECT %s\n%s\nWHERE %s IS %s)", v.sql, sc.render(), q(sc.alias, "id"), key)
-}
-
-// noName is the label of a visible record whose label field is blank.
-const noName = "(no name)"
-
-// isLabelType is true for a field type a record can be shown by: any but a
-// relation, which would show another record's id.
-func isLabelType(t FieldType) bool { return t != Relation }
-
-// labelFieldOf is the field a record is shown by (R31): the chosen field,
-// else the first text field, else its first other field but its id; nil when
-// the source has none (then its own name is shown). checkLabelField checks a
-// chosen field.
-func labelFieldOf(src *Source, chosen string) *Field {
-	if chosen != "" {
-		return src.field(chosen)
-	}
-	for _, text := range []bool{true, false} {
-		for i := range src.Fields {
-			f := &src.Fields[i]
-			if (f.Type == Text) == text && isLabelType(f.Type) {
-				return f
-			}
-		}
-	}
-	return nil
-}
-
-// labelValueSQL reads the label of the record a relation value (key) points
-// at, through the target's rule CTE: NULL for a blank link or a record the
-// reader cannot see, "(no name)" for a visible record whose label field is
-// blank, the source's name for a source with no field to show.
-func labelValueSQL(s *stmt, target *Source, f *Field, key string) string {
-	sc := newScope(s, target)
-	shown := s.bind(target.Label)
-	if f != nil {
-		shown = fmt.Sprintf("COALESCE(NULLIF(%s, ''), %s)", fieldTextSQL(s, sc, target, f), s.bind(noName))
-	}
-	return fmt.Sprintf("(SELECT %s\n%s\nWHERE %s IS %s)", shown, sc.render(), q(sc.alias, "id"), key)
-}
-
-// fieldTextSQL is a field of the scope's row as the report shell shows it in
-// a cell: text as stored, a select by its option's label, any other value
-// through tc_text (Yes or No, an amount with its currency, a short day).
-func fieldTextSQL(s *stmt, sc *scope, src *Source, f *Field) string {
-	v := sc.value(&pathPlan{field: f, src: src}).sql
-	switch f.Type {
-	case Text:
-		return "CAST(" + v + " AS TEXT)"
-	case Select:
-		return selectLabelSQL(s, f, v)
-	}
-	code := s.bind("")
-	if f.Type == Money {
-		switch {
-		case f.Currency != "":
-			code = sc.value(&pathPlan{field: src.field(f.Currency), src: src}).sql
-		case src.Currency != nil && s.app != nil:
-			code = s.bind(src.Currency(s.app))
-		}
-	}
-	return fmt.Sprintf("tc_text(%s, %s, %s)", v, s.bind(string(f.Type)), code)
-}
-
-// selectLabelSQL is a select value shown by its option's label; a value no
-// option names shows as stored.
-func selectLabelSQL(s *stmt, f *Field, value string) string {
-	if len(f.Options) == 0 {
-		return value
-	}
-	var b strings.Builder
-	b.WriteString("(CASE " + value)
-	for _, o := range f.Options {
-		b.WriteString(" WHEN " + s.bind(o.Value) + " THEN " + s.bind(o.Label))
-	}
-	b.WriteString(" ELSE " + value + " END)")
-	return b.String()
-}
-
-// checkLabelField marks a column whose value points at target as labelled.
-// Its chosen label field must be one of the target's fields but a relation,
-// and only such a column chooses one. Every run compiles the detail select,
-// which checks every column, before its result is assembled.
-func (c *compiler) checkLabelField(cp *colPlan, target *Source) error {
-	chosen, at := cp.col.LabelField, cp.at+".labelField"
-	if target == nil {
-		if chosen != "" {
-			return invalid(at, "only a column that links to a record shows a label field")
-		}
-		return nil
-	}
-	f := labelFieldOf(target, chosen)
-	switch {
-	case chosen == "":
-	case f == nil:
-		return unknownRef(at, "unknown_field", fmt.Sprintf("the source %q has no field %q", target.Key, chosen))
-	case !isLabelType(f.Type):
-		return invalid(at, fmt.Sprintf("%q is a record id or a link, which would show an id: a record is shown by one of its other fields", chosen))
-	}
-	c.labelled[cp.col.ID] = true
-	return nil
-}
-
-// labelOf is the label beside a column's relation value e, or NULL for a
-// value with no target or a blank one.
-func (c *compiler) labelOf(s *stmt, cp *colPlan, e expr) string {
-	if e.target == nil || e.sql == "NULL" {
-		return "NULL"
-	}
-	return labelValueSQL(s, e.target, labelFieldOf(e.target, cp.col.LabelField), e.sql)
-}
-
-// textOf is a relation value read as text, by a text operator: the label of
-// the record it points at (by the label field of the column it reads, if
-// any), and empty text for a blank link or a record the reader cannot see.
-func (c *compiler) textOf(s *stmt, e expr) string {
-	chosen := ""
-	if cp := c.p.byID[e.col]; cp != nil {
-		chosen = cp.col.LabelField
-	}
-	return "COALESCE(" + labelValueSQL(s, e.target, labelFieldOf(e.target, chosen), e.sql) + ", '')"
 }
 
 // labelText is a label value as row text: (none) for a blank.

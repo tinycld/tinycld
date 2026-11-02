@@ -77,8 +77,13 @@ type ResultColumn struct {
 	MixedCurrency bool         `json:"mixedCurrency,omitempty"`
 	Pivot         *PivotColumn `json:"pivot,omitempty"`
 	// LabelCell names the cell that holds the label of the record a link
-	// column's value points at (<id>@label), so no cell shows a raw id.
-	LabelCell string `json:"labelCell,omitempty"`
+	// column's value points at (<id>@label), so no cell shows a raw id. The
+	// label is its label field's stored value, of type LabelType (a select's
+	// option label and a source's name are text), formatted as a cell of
+	// that type; an amount's currency is in LabelCurrencyCell.
+	LabelCell         string    `json:"labelCell,omitempty"`
+	LabelType         FieldType `json:"labelType,omitempty"`
+	LabelCurrencyCell string    `json:"labelCurrencyCell,omitempty"`
 }
 
 // PivotColumn marks a pivot cell column: the cell column it splits, and
@@ -86,6 +91,12 @@ type ResultColumn struct {
 type PivotColumn struct {
 	Cell string `json:"cell"`
 	Key  any    `json:"key"`
+	// LabelType, LabelValue and LabelCurrency type a pivot over a link's
+	// column label as Row's do: the record label's typed value, which the
+	// column's Label holds as plain text.
+	LabelType     FieldType `json:"labelType,omitempty"`
+	LabelValue    any       `json:"labelValue,omitempty"`
+	LabelCurrency string    `json:"labelCurrency,omitempty"`
 }
 
 // Row kinds.
@@ -112,9 +123,9 @@ type Row struct {
 	// innermost group), so the client never repeats that rule.
 	CanExpand bool           `json:"canExpand,omitempty"`
 	Cells     map[string]any `json:"cells"`
-	// LabelType is set when a group row's label (and its subtotal's) is a
-	// value that is not text: an amount, a number, a percent, a date or a
-	// yes/no. LabelValue is that value as a cell of the type holds it (an
+	// LabelType is set when a group row's label (and its subtotal's), or a
+	// detail row's record label, is a value that is not text: an amount, a
+	// number, a percent, a date or a yes/no. LabelValue is that value as a cell of the type holds it (an
 	// amount in integer cents, a yes/no as true or false) and LabelCurrency
 	// is an amount's currency, so the client formats the label as it formats
 	// a cell; Label is its plain text (a subtotal's is "Total " + it).
@@ -177,7 +188,7 @@ type runner struct {
 	// pivotValues are the pivot's columns, from its first pass, and
 	// pivotLabels their records' labels for a pivot over a link.
 	pivotValues []any
-	pivotLabels []any
+	pivotLabels []rowLabel
 }
 
 // Run runs a report for its reader. The statements read only rows the
@@ -411,7 +422,8 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 				return nil, "", err
 			}
 			cells = append(cells, fmt.Sprintf("%s AS v%d", e.sql, idx))
-			labels = append(labels, fmt.Sprintf("%s AS vl%d", c.labelOf(s, cp, e), idx))
+			ref, _ := c.columnLabel(lv.labels, cp, e)
+			labels = append(labels, ref.cells(idx)...)
 			c.levelTypes[cp.col.ID] = e.typ
 		}
 		pivotCells, err := c.pivotCells(lv, pivot)
@@ -420,7 +432,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		}
 		// The labels follow the pivot cells, as in every leg of the union.
 		cells = append(append(cells, pivotCells...), labels...)
-		ctes = append(ctes, lv.render(cells, "1", lv.label)...)
+		ctes = append(ctes, lv.render(cells, "1")...)
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
 			leg += " WHERE " + expand.where(c, s, n-1, "")
@@ -499,6 +511,7 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 		total:  prefixed("w.", c.currencies),
 	}
 	visiting := map[string]bool{}
+	labels := newLabelRefs(r.s, frame, "w")
 	var order []sortKey
 	sel := []string{"w.__id AS __id"}
 	for _, k := range append(keys, prefixed("w.", c.currencies)...) {
@@ -514,13 +527,16 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 			return "", nil, notASortKey(fmt.Sprintf("sort.%d.col", i))
 		}
 		name, col := fmt.Sprintf("s%d", i), s.col.col.ID
-		// A record sorts by its label, then by its id so equal labels keep
-		// one order.
-		if label := c.labelOf(r.s, s.col, e); label != "NULL" {
-			sel = append(sel, label+" AS "+name)
-			order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: Text})
-			frame.order = append(frame.order, "("+label+" IS NULL)", label+dirOf(s.desc))
-			name, col = name+"_id", col+"@id"
+		// A record sorts by its label's typed value, then by its id so equal
+		// labels keep one order. A label key holds a value of the label
+		// field's type or a no-name record's text, so its cursor value may be
+		// either (typ "").
+		if ref, ok := c.columnLabel(labels, s.col, e); ok {
+			key := labelOrder(r.s, ref.value)
+			sel = append(sel, key+" AS "+name)
+			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@label"})
+			frame.order = append(frame.order, "("+key+" IS NULL)", key+dirOf(s.desc))
+			name = name + "_id"
 		}
 		sel = append(sel, e.sql+" AS "+name)
 		order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: e.typ})
@@ -535,7 +551,8 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 			if err := c.checkLabelField(cp, cp.path.target); err != nil {
 				return "", nil, err
 			}
-			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx), fmt.Sprintf("NULL AS vl%d", idx))
+			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx))
+			sel = append(sel, labelRef{}.cells(idx)...)
 			c.detailTypes[cp.col.ID] = cp.path.field.Type
 			continue
 		}
@@ -547,7 +564,9 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 		if err := c.checkLabelField(cp, e.target); err != nil {
 			return "", nil, err
 		}
-		sel = append(sel, fmt.Sprintf("%s AS v%d", e.sql, idx), fmt.Sprintf("%s AS vl%d", c.labelOf(r.s, cp, e), idx))
+		ref, _ := c.columnLabel(labels, cp, e)
+		sel = append(sel, fmt.Sprintf("%s AS v%d", e.sql, idx))
+		sel = append(sel, ref.cells(idx)...)
 		c.detailTypes[cp.col.ID] = e.typ
 		if cp.path == nil {
 			// A formula's amount has the currency of the amounts it reads.

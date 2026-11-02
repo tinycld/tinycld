@@ -30,8 +30,11 @@ func (rn *runner) columns() []ResultColumn {
 		if t := c.levelTypes[cp.col.ID]; t != "" && t != rc.Type && cp.col.Aggregate != "" {
 			rc.TotalType = t
 		}
-		if c.labelled[cp.col.ID] {
-			rc.LabelCell = cp.col.ID + "@label"
+		if typ, ok := c.labelTypes[cp.col.ID]; ok {
+			rc.LabelCell, rc.LabelType = cp.col.ID+"@label", typ
+			if typ == Money {
+				rc.LabelCurrencyCell = cp.col.ID + "@labelCurrency"
+			}
 		}
 		rn.currencyOfColumn(cp, &rc)
 		out = append(out, rc)
@@ -39,10 +42,11 @@ func (rn *runner) columns() []ResultColumn {
 	if pv := c.p.pivot; pv != nil {
 		cell := pv.cell
 		for j, key := range rn.pivotValues {
+			label := rn.pivotLabel(j, key)
 			rc := ResultColumn{
-				ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: rn.pivotLabel(j, key),
+				ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: label.text,
 				Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format,
-				Pivot: &PivotColumn{Cell: cell.col.ID, Key: key},
+				Pivot: &PivotColumn{Cell: cell.col.ID, Key: key, LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency},
 			}
 			rn.currencyOfColumn(cell, &rc)
 			out = append(out, rc)
@@ -226,24 +230,40 @@ type rowLabel struct {
 	currency string
 }
 
-// groupLabel is the label a group's __label holds. A label formula that is
-// not text keeps its type, so the client formats it as a cell (R9).
+// groupLabel is the label a group's __label holds. A label formula or a
+// record label that is not text keeps its type, so the client formats it as
+// a cell (R9).
 func (rn *runner) groupLabel(row map[string]any, lp labelPlan) rowLabel {
-	v := row["__label"]
+	cur := ""
+	if lp.typ == Money {
+		cur = rn.currencyOf(row, lp.cur)
+		if lp.recordCurrency {
+			cur, _ = row["__labelcur"].(string)
+		}
+	}
+	return typedLabel(row["__label"], lp.typ, cur)
+}
+
+// typedLabel is a label value of type typ as a row label: (none) for a blank,
+// a no-name record's text as text, Yes or No, any other value that is not
+// text typed with its plain text.
+func typedLabel(v any, typ FieldType, currency string) rowLabel {
 	switch {
 	case v == nil:
 		return rowLabel{text: blankLabel}
-	case lp.typ == Bool:
+	case v == noName:
+		return rowLabel{text: noName}
+	case typ == Bool:
 		yes := toInt(v) != 0
 		text := "No"
 		if yes {
 			text = "Yes"
 		}
 		return rowLabel{text: text, typ: Bool, value: yes}
-	case lp.typ == Number || lp.typ == Money || lp.typ == Percent || lp.typ == Date || lp.typ == DateTime:
-		out := rowLabel{text: labelText(v), typ: lp.typ, value: v}
-		if lp.typ == Money {
-			out.currency = rn.currencyOf(row, lp.cur)
+	case typ == Number || typ == Money || typ == Percent || typ == Date || typ == DateTime:
+		out := rowLabel{text: labelText(v), typ: typ, value: v}
+		if typ == Money {
+			out.currency = currency
 		}
 		return out
 	}
@@ -295,7 +315,11 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 // detail emits a detail row and the child rows nested under it.
 func (rn *runner) detail(t *tree, row map[string]any, section string, depth int) {
 	id := fmt.Sprintf("d:%v", row["__id"])
-	rn.push(Row{ID: id, Kind: KindDetail, Depth: depth, Label: rn.firstLabel(rn.c.p.cols, row), Section: section, Cells: rn.cells(row)})
+	label := rn.firstLabel(rn.c.p.cols, row)
+	rn.push(Row{
+		ID: id, Kind: KindDetail, Depth: depth, Label: label.text, Section: section, Cells: rn.cells(row),
+		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
+	})
 	if len(t.nested) > 0 {
 		rn.nestedRows(t, 0, row["__n0"], id, section, depth+1)
 	}
@@ -329,10 +353,21 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 }
 
 // labelCell puts a labelled column's record label (vl<idx>) in the cell
-// <id>@label.
+// <id>@label, typed as its label field is, and an amount label's currency
+// (vc<idx>) in <id>@labelCurrency.
 func (rn *runner) labelCell(out map[string]any, cp *colPlan, row map[string]any) {
-	if rn.c.labelled[cp.col.ID] {
-		out[cp.col.ID+"@label"] = row[fmt.Sprintf("vl%d", rn.c.p.index(cp))]
+	typ, ok := rn.c.labelTypes[cp.col.ID]
+	if !ok {
+		return
+	}
+	idx := rn.c.p.index(cp)
+	v := row[fmt.Sprintf("vl%d", idx)]
+	if typ == Bool && v != nil && v != noName {
+		v = toInt(v) != 0
+	}
+	out[cp.col.ID+"@label"] = v
+	if typ == Money {
+		out[cp.col.ID+"@labelCurrency"] = row[fmt.Sprintf("vc%d", idx)]
 	}
 }
 
@@ -352,17 +387,19 @@ func (rn *runner) typeOf(cp *colPlan, grouped bool) FieldType {
 	return rn.c.detailTypes[cp.col.ID]
 }
 
-func (rn *runner) firstLabel(cols []*colPlan, row map[string]any) string {
+// firstLabel is a detail row's label: its first column's value, or the
+// record label of a first column that points at records, typed (a blank link
+// reads (none)).
+func (rn *runner) firstLabel(cols []*colPlan, row map[string]any) rowLabel {
 	if len(cols) == 0 {
-		return ""
+		return rowLabel{}
 	}
 	idx := rn.c.p.index(cols[0])
-	// A record is named by its label, never by its id; a blank link reads
-	// (none).
-	if rn.c.labelled[cols[0].col.ID] {
-		return labelText(row[fmt.Sprintf("vl%d", idx)])
+	if typ, ok := rn.c.labelTypes[cols[0].col.ID]; ok {
+		cur, _ := row[fmt.Sprintf("vc%d", idx)].(string)
+		return typedLabel(row[fmt.Sprintf("vl%d", idx)], typ, cur)
 	}
-	return rn.display(cols[0], row[fmt.Sprintf("v%d", idx)], false)
+	return rowLabel{text: rn.display(cols[0], row[fmt.Sprintf("v%d", idx)], false)}
 }
 
 // display is a value as a row label: a select's label, Yes or No, the

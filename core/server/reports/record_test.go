@@ -220,7 +220,7 @@ func TestALookupReadsTheGroupRecord(t *testing.T) {
 
 // A group label formula whose value links to a record shows that record's
 // label, never its id: a link column's label field, else the record's first
-// text field. Such a label is text.
+// text field. The label is typed by its label field, as a cell of it is.
 func TestARelationGroupLabelShowsItsRecordsLabel(t *testing.T) {
 	z := newZoo(t)
 	run := func(animal, label string) *Result {
@@ -231,21 +231,28 @@ func TestARelationGroupLabelShowsItsRecordsLabel(t *testing.T) {
 	}
 	const plain = `{"id":"animal","path":[{"link":"animal"}]}`
 	const bySpecies = `{"id":"animal","path":[{"link":"animal"}],"labelField":"species"}`
+	const byBirth = `{"id":"animal","path":[{"link":"animal"}],"labelField":"born"}`
 	cases := []struct {
 		name, animal, label string
 		want                []any
+		typ                 FieldType
 	}{
-		{"a link column", plain, `{"col":"animal"}`, []any{"Zed", "Leo", "Total"}},
-		{"a link column's label field", bySpecies, `{"col":"animal"}`, []any{"zebra", "lion", "Total"}},
-		{"a record's link", plain, `{"record":"g","path":[{"link":"site"}]}`, []any{"South", "North", "Total"}},
-		{"a hidden record's link", plain, `{"record":"g","path":[{"link":"vault"}]}`, []any{"(none)", "(none)", "Total"}},
+		{"a link column", plain, `{"col":"animal"}`, []any{"Zed", "Leo", "Total"}, ""},
+		{"a link column's label field", bySpecies, `{"col":"animal"}`, []any{"zebra", "lion", "Total"}, ""},
+		{"a typed label field", byBirth, `{"col":"animal"}`, []any{"2019-02-10", "2020-05-01", "Total"}, Date},
+		{"a record's link", plain, `{"record":"g","path":[{"link":"site"}]}`, []any{"South", "North", "Total"}, ""},
+		{"a hidden record's link", plain, `{"record":"g","path":[{"link":"vault"}]}`, []any{"(none)", "(none)", "Total"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			res := run(c.animal, c.label)
 			requireRows(t, res, "label", c.want...)
-			for _, row := range res.Rows[:2] {
-				if row.LabelType != "" || row.LabelValue != nil {
+			for i, row := range res.Rows[:2] {
+				var value any
+				if c.typ != "" {
+					value = c.want[i]
+				}
+				if row.LabelType != c.typ || row.LabelValue != value {
 					t.Fatalf("label of %s = %+v", row.ID, row)
 				}
 			}

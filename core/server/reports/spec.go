@@ -68,8 +68,10 @@ type Column struct {
 	Scale *int `json:"scale,omitempty"`
 	// Format is the client's display format, returned as given.
 	Format string `json:"format,omitempty"`
-	// LabelField is the field of a link column's record it shows beside
-	// the record's id; the record's first text field when empty.
+	// LabelField is the field a column whose values point at records shows
+	// each record by, in place of its id. Empty: the record's first text
+	// field, else its first other field but its id, else its source's name.
+	// A formula that is a column shows that column's label field.
 	LabelField string `json:"labelField,omitempty"`
 }
 
@@ -120,6 +122,9 @@ type Pivot struct {
 	Bucket     string `json:"bucket,omitempty"`
 	Cell       string `json:"cell"`
 	MaxColumns int    `json:"maxColumns,omitempty"`
+	// LabelField is the field a pivot over a link names its columns by, as
+	// Column.LabelField.
+	LabelField string `json:"labelField,omitempty"`
 }
 
 // LayoutItem is a section (section, title, key: the first group's key it
@@ -294,7 +299,9 @@ func resolveAliases(spec *Spec) []Alias {
 	}
 	aliasNode(base, spec.Filter, &out)
 	if spec.Pivot != nil {
-		aliasPath(base, spec.Pivot.Path, &out)
+		if t := aliasPath(base, spec.Pivot.Path, &out); t != nil && spec.Pivot.LabelField != "" {
+			spec.Pivot.LabelField = aliasKey(t, spec.Pivot.LabelField, &out)
+		}
 	}
 	return out
 }

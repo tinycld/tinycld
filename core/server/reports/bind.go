@@ -601,6 +601,13 @@ func (b *binder) groupsAndPivot(p *plan) {
 		b.bad("pivot.maxColumns", fmt.Sprintf("maxColumns is 1 to %d", maxPivotColumns))
 	}
 	pp.path = b.path(p.base, pv.Path, "pivot.path", pathValue, "")
+	if pp.path != nil && pv.LabelField != "" {
+		if pp.path.target == nil {
+			b.bad("pivot.labelField", "only a pivot over a link to a record shows a label field")
+		} else {
+			b.merge(checkLabel(pp.path.target, pv.LabelField, "pivot.labelField"))
+		}
+	}
 	if pp.path != nil && pv.Bucket != "" {
 		if !slices.Contains(buckets, pv.Bucket) {
 			b.bad("pivot.bucket", fmt.Sprintf("bucket is one of %v", buckets))

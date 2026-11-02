@@ -35,25 +35,33 @@ func (rn *runner) pivotPass() ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A pivot over a link names its columns by the records' labels and reads
-	// them in label order, as record groups do.
-	label, order := "NULL", "(pk IS NULL), pk"
+	// A pivot over a link names its columns by the records' labels (its
+	// label field's typed values) and reads them in label order, then by id,
+	// as record groups do.
+	label, cur, order := "NULL", "NULL", "(pk IS NULL), pk"
 	if t := pv.path.target; t != nil {
-		label = labelValueSQL(s, t, labelFieldOf(t, ""), "pk")
-		order = "(pk IS NULL), (__label IS NULL), __label, pk"
+		f := labelFieldOf(t, pv.pivot.LabelField)
+		label, cur = labelValueSQL(s, t, f, "pk"), labelCurrencySQL(s, t, f, "pk")
+		key := labelOrder(s, "__label")
+		order = "(pk IS NULL), (" + key + " IS NULL), " + key + ", pk"
 	}
-	body := fmt.Sprintf("SELECT pk, __label, COUNT(*) OVER () AS __n FROM (SELECT pk, %s AS __label FROM (SELECT DISTINCT pk FROM w)) ORDER BY %s LIMIT %s",
-		label, order, s.bind(int64(pv.max+1)))
+	body := fmt.Sprintf("SELECT pk, __label, __labelcur, COUNT(*) OVER () AS __n FROM (SELECT pk, %s AS __label, %s AS __labelcur FROM (SELECT DISTINCT pk FROM w)) ORDER BY %s LIMIT %s",
+		label, cur, order, s.bind(int64(pv.max+1)))
 	rows, err := rn.query(s, []string{r.render()}, body)
 	if err != nil {
 		return nil, err
 	}
 	values := make([]any, 0, len(rows))
-	rn.pivotLabels = make([]any, 0, len(rows))
+	rn.pivotLabels = make([]rowLabel, 0, len(rows))
+	typ := labelTypeOf(nil)
+	if t := pv.path.target; t != nil {
+		typ = labelTypeOf(labelFieldOf(t, pv.pivot.LabelField))
+	}
 	for i, row := range rows {
 		if i < pv.max {
 			values = append(values, row["pk"])
-			rn.pivotLabels = append(rn.pivotLabels, row["__label"])
+			cur, _ := row["__labelcur"].(string)
+			rn.pivotLabels = append(rn.pivotLabels, typedLabel(row["__label"], typ, cur))
 		}
 	}
 	if len(rows) > pv.max {
@@ -98,12 +106,12 @@ func (lv *level) cellArg(cp *colPlan) (string, FieldType, error) {
 	return e.sql, e.typ, err
 }
 
-// pivotLabel is the j-th pivot value as a column label: a record's label for
-// a pivot over a link, else the value as a row label shows it.
-func (rn *runner) pivotLabel(j int, key any) string {
+// pivotLabel is the j-th pivot value as a column label: a record's typed
+// label for a pivot over a link, else the value as a row label shows it.
+func (rn *runner) pivotLabel(j int, key any) rowLabel {
 	pv := rn.c.p.pivot
 	if pv.path.target != nil {
-		return labelText(rn.pivotLabels[j])
+		return rn.pivotLabels[j]
 	}
-	return rn.display(&colPlan{col: &Column{}, path: pv.path}, key, pv.pivot.Bucket != "")
+	return rowLabel{text: rn.display(&colPlan{col: &Column{}, path: pv.path}, key, pv.pivot.Bucket != "")}
 }
