@@ -291,6 +291,9 @@ func (b *binder) formulaSizes(p *plan) {
 		if f := p.spec.Groups[i].Fill; f != nil && f.Where != nil {
 			check(fmt.Sprintf("groups.%d.fill.where", i), p.nodeSize(f.Where, memo, map[string]bool{}, true))
 		}
+		if h := p.spec.Groups[i].Having; h != nil {
+			check(fmt.Sprintf("groups.%d.having", i), p.nodeSize(h, memo, map[string]bool{}, true))
+		}
 	}
 	for i, s := range p.spec.Sort {
 		if s.Formula != nil {
@@ -668,6 +671,9 @@ func (b *binder) layout(p *plan) {
 	}
 	if len(p.spec.Groups) == 0 {
 		b.bad("layout", "a layout selects rows by the first group, so it needs a group")
+	}
+	if len(p.spec.Groups) > 0 && p.spec.Groups[0].Having != nil {
+		b.bad("groups.0.having", "a layout's sections are fixed rows: hide rows on a deeper group")
 	}
 	seen := map[string]bool{}
 	keys := map[string]bool{}

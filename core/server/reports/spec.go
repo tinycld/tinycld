@@ -120,6 +120,9 @@ type Group struct {
 	Label *Node `json:"label,omitempty"`
 	// Fill adds the linked records that have no rows, under each parent group.
 	Fill *Fill `json:"fill,omitempty"`
+	// Having is a condition on the group's level; a group that fails it is
+	// hidden with every row under it.
+	Having *Node `json:"having,omitempty"`
 }
 
 // Fill is a record group's "show every record": the target's records that

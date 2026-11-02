@@ -70,6 +70,7 @@ func (b *binder) lookups(p *plan) {
 		if g.Fill != nil {
 			walk(g.Fill.Where, fmt.Sprintf("groups.%d.fill.where", i))
 		}
+		walk(g.Having, fmt.Sprintf("groups.%d.having", i))
 	}
 	for i, s := range p.spec.Sort {
 		walk(s.Formula, fmt.Sprintf("sort.%d.formula", i))

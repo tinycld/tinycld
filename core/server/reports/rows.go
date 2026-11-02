@@ -157,6 +157,7 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	}
 	for _, g := range c.p.groups {
 		r.formulaCurrencies(g.group.Label)
+		r.formulaCurrencies(g.group.Having)
 	}
 	for _, s := range c.p.sort {
 		r.formulaCurrencies(s.formula)
@@ -199,12 +200,12 @@ func (r *rowsCTE) valueCurrencies() {
 	}
 	for _, g := range r.c.p.groups {
 		walk(g.group.Label, g.at+".label", false)
+		walk(g.group.Having, g.at+".having", false)
 	}
 	for _, s := range r.c.p.sort {
 		walk(s.formula, s.at, false)
 	}
-	// Task 7 adds walk(g.group.Having, …, false) beside the label walk; Task
-	// 10 adds the detail label.
+	// Task 10 adds the detail label.
 }
 
 // windowOp is true for an operator that sums the rows a report shows.

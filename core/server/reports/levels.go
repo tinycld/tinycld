@@ -281,6 +281,37 @@ func (lv *level) render(cells []string, own string) []string {
 	return ctes
 }
 
+// own is 1 for a row of this level that passes its group's having.
+func (lv *level) own() (string, error) {
+	if lv.n == 0 {
+		return "1", nil
+	}
+	g := lv.c.p.groups[lv.n-1]
+	if g.group.Having == nil {
+		return "1", nil
+	}
+	at := g.at + ".having"
+	e, err := compileFormula(&levelCtx{lv: lv, visiting: lv.visiting, cond: true}, g.group.Having, at)
+	if err != nil {
+		return "", err
+	}
+	if e.win {
+		return "", invalid(at, "a running value or a percent is not a condition on a group")
+	}
+	if e.typ != Bool && e.typ != "" {
+		return "", invalid(at, "having is a condition")
+	}
+	// A row's value is blank on a group of rows, so such a having would hide
+	// every group.
+	if lv.readsRowValue(g.group.Having, false, map[string]bool{}) {
+		return "", invalid(at, "having reads a group's totals, keys and records, not a value of one row")
+	}
+	if e.unset {
+		return "1", nil
+	}
+	return "COALESCE(" + e.sql + ", 0)", nil
+}
+
 // labelSQL sets the label of the level's rows: the group's label formula
 // (the record's label when its value points at one), a record group's
 // record label, or none (the key labels the row).
@@ -383,6 +414,9 @@ type levelCtx struct {
 	ctxBase
 	lv       *level
 	visiting map[string]bool
+	// cond is compiling a having: a condition on an unset param matches every
+	// group.
+	cond bool
 }
 
 func (lc *levelCtx) col(id, at string) (expr, error) {
@@ -417,7 +451,10 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	}
 	defer done()
 	if cp.col.Aggregate == "" {
-		e, err := compileFormula(lc, cp.col.Formula, cp.at+".formula")
+		// A column has the value its cell shows wherever it is read: a having
+		// that reads it does not make its conditions on an unset param match,
+		// as a filter that reads a column does not (rowValue).
+		e, err := compileFormula(&levelCtx{lv: lv, visiting: lc.visiting}, cp.col.Formula, cp.at+".formula")
 		if err != nil {
 			return expr{}, err
 		}
@@ -640,7 +677,7 @@ func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, er
 
 func (lc *levelCtx) bind(v any) string                       { return lc.lv.r.s.bind(v) }
 func (lc *levelCtx) fiscalStart() string                     { return lc.bind(int64(lc.lv.c.fiscal)) }
-func (lc *levelCtx) filter() bool                            { return false }
+func (lc *levelCtx) filter() bool                            { return lc.cond }
 func (lc *levelCtx) label(e expr) string                     { return lc.lv.c.textOf(lc.lv.r.s, e) }
 func (lc *levelCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(lc, lc.lv.r, n, at) }
 

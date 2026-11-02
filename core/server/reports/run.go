@@ -438,10 +438,18 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		// The labels, then the carried currencies, follow the pivot cells, as in
 		// every leg of the union.
 		cells = append(append(append(cells, pivotCells...), labels...), carried...)
-		ctes = append(ctes, lv.render(cells, "1")...)
+		// The having's aggregates join a<L>, so it compiles before render.
+		own, err := lv.own()
+		if err != nil {
+			return nil, "", err
+		}
+		ctes = append(ctes, lv.render(cells, own)...)
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
-		if n >= 2 {
-			leg += " WHERE " + expand.where(c, s, n-1, "")
+		if n >= 1 {
+			leg = fmt.Sprintf("SELECT x.* FROM o%d x WHERE %s", n, c.shown(n))
+			if n >= 2 {
+				leg += " AND " + expand.where(c, s, n-1, "x.")
+			}
 		}
 		legs = append(legs, leg)
 	}
@@ -455,6 +463,26 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 	levels := fmt.Sprintf("SELECT * FROM (%s\nORDER BY __level, __ord LIMIT %s)", strings.Join(legs, "\nUNION ALL\n"), s.bind(limit))
 	all := append([]string{levels}, computed...)
 	return ctes, strings.Join(all, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
+}
+
+// shown is true for a level-n row (alias x) that passes its having and whose
+// enclosing groups pass theirs: a hidden group hides every row under it.
+func (c *compiler) shown(n int) string {
+	conds := []string{"x.__own"}
+	for m := 1; m < n; m++ {
+		if c.p.groups[m-1].group.Having == nil {
+			continue
+		}
+		match := []string{"p.__own"}
+		for i := range m {
+			match = append(match, fmt.Sprintf("p.k%d IS x.k%d", i, i))
+		}
+		for _, ck := range c.currencies {
+			match = append(match, fmt.Sprintf("p.%s IS x.%s", ck, ck))
+		}
+		conds = append(conds, fmt.Sprintf("EXISTS (SELECT 1 FROM o%d p WHERE %s)", m, strings.Join(match, " AND ")))
+	}
+	return strings.Join(conds, " AND ")
 }
 
 // detailPass runs the detail statement: one row per base row, a page at a
@@ -736,9 +764,10 @@ func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string
 	}
 	match := make([]string, len(cols))
 	for i, col := range cols {
-		match[i] = fmt.Sprintf("x.column%d IS %s", i+1, col)
+		match[i] = fmt.Sprintf("ek.column%d IS %s", i+1, col)
 	}
-	return fmt.Sprintf("EXISTS (SELECT 1 FROM (VALUES %s) x WHERE %s)", strings.Join(rows, ", "), strings.Join(match, " AND "))
+	// ek, not x: a level leg reads its rows as x (shown).
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM (VALUES %s) ek WHERE %s)", strings.Join(rows, ", "), strings.Join(match, " AND "))
 }
 
 func (e *expansion) has(key []any) bool {
