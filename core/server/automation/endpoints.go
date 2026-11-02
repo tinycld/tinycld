@@ -120,6 +120,7 @@ func requireAuth(re *core.RequestEvent) error {
 
 func registerEndpoints(app core.App, engine *Engine) {
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		bindRetryRoute(se, engine)
 		se.Router.POST("/api/automation/rules/{id}/run", func(re *core.RequestEvent) error {
 			rule, err := re.App.FindRecordById("rules", re.Request.PathValue("id"))
 			if err != nil {
