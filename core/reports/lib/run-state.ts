@@ -46,13 +46,25 @@ function baseState(query: RunQueryState, refusal: RunRefusal | undefined): RunSt
     return query.isPending ? 'loading' : 'ready'
 }
 
+// One merged result per pages array (the query keeps the array while its pages stay
+// the same), so a render that changes only the run's state keeps the rows: the
+// table redraws, and its list re-lays out, only when the rows change.
+const mergedByPages = new WeakMap<readonly RunOutcome[], RunResult | undefined>()
+
+function mergedResult(pages: readonly RunOutcome[]): RunResult | undefined {
+    if (mergedByPages.has(pages)) return mergedByPages.get(pages)
+    const results = pages.flatMap(page => (page.kind === 'ok' ? [page.result] : []))
+    const merged = results.length > 0 ? mergePages(results) : undefined
+    mergedByPages.set(pages, merged)
+    return merged
+}
+
 // What a run shows from its query. Placeholder pages are the previous body's answer:
 // its figures stay in view while the new run loads, but its refusal does not belong
 // to this body, so it shows as loading, not as the old refusal.
 export function runView(query: RunQueryState): RunView {
     const refusal = firstRefusal(query.pages)
-    const results = query.pages.flatMap(page => (page.kind === 'ok' ? [page.result] : []))
-    const merged = results.length > 0 ? mergePages(results) : undefined
+    const merged = mergedResult(query.pages)
     const isStaleRefusal = query.isPlaceholderData && refusal !== undefined
     return {
         state: isStaleRefusal ? 'loading' : baseState(query, refusal),

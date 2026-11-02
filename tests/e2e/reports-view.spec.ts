@@ -6,6 +6,7 @@ import {
     addTeam,
     cellOf,
     chooseOption,
+    holdRuns,
     hubRow,
     openReportStub,
     openReportsHub,
@@ -42,19 +43,6 @@ function overlaps(a: Box, b: Box): boolean {
     return (
         a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
     )
-}
-
-/** Holds every report run until the returned release is called. */
-async function holdRuns(p: Page): Promise<() => void> {
-    let release = () => {}
-    const held = new Promise<void>(resolve => {
-        release = resolve
-    })
-    await p.route('**/api/reports/run', async route => {
-        await held
-        await route.continue()
-    })
-    return release
 }
 
 // "Updating…" shows in its own slot in the header: a status live region that is

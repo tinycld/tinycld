@@ -109,6 +109,19 @@ export async function addColumn(page: Page, keys: string[], mode?: 'total' | 'ne
     await expect(picker).toBeHidden()
 }
 
+/** Holds every report run until the returned release is called. */
+export async function holdRuns(page: Page): Promise<() => void> {
+    let release = () => {}
+    const held = new Promise<void>(resolve => {
+        release = resolve
+    })
+    await page.route('**/api/reports/run', async route => {
+        await held
+        await route.continue()
+    })
+    return release
+}
+
 /** The report list's own scroller: the row's nearest vertical (overflow-y: auto) ancestor. */
 export async function listScroller(row: Locator): Promise<ElementHandle<HTMLElement>> {
     return row.evaluateHandle(element => {
