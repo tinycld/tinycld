@@ -101,6 +101,36 @@ test('a failed destination shows as not delivered, and retry delivers it after a
     )
 })
 
+// The builder reads the form's answers as condition fields once the form's
+// definition loads. Reopened from Settings → Rules, where the form is not
+// loaded yet, a destination with such a condition must save unchanged.
+test('a destination with a condition on a form answer saves again unchanged', async ({ page }) => {
+    const formName = `Condition ${Date.now()}`
+    await buildAndPublish(page, formName)
+    await page.getByTestId('web-form-add-destination').click()
+    await builder(page).getByText('Field…', { exact: true }).click()
+    await page.getByTestId('condition-field-option-fields.name').click()
+    await builder(page).getByLabel('Condition value').fill('Lead')
+    await addAction(page, 'Send me a notification')
+    await setActionParam(page, 'Title', 'A lead')
+    await saveRule(page)
+    await expect(builder(page)).toBeHidden()
+
+    await page.getByTestId('nav-settings').click()
+    await page.getByText('Rules', { exact: true }).first().click()
+    await page.getByText('Organization', { exact: true }).click()
+    const row = page
+        .locator('div')
+        .filter({ has: page.getByText(`${formName}:`, { exact: true }) })
+        .filter({ has: page.getByLabel('More actions') })
+        .last()
+    await row.getByLabel('More actions').click()
+    await page.getByText('Edit', { exact: true }).click()
+    await expect(builder(page).getByLabel('Condition value')).toHaveValue('Lead')
+    await saveRule(page)
+    await expect(builder(page)).toBeHidden()
+})
+
 test('an auto-reply to a form address needs proof of work', async ({ page }) => {
     await buildAndPublish(page, `Reply ${Date.now()}`)
     await page.getByTestId('web-form-add-destination').click()
@@ -110,6 +140,30 @@ test('an auto-reply to a form address needs proof of work', async ({ page }) => 
     await expect(
         builder(page).getByText(/needs "Ask the browser to prove it is not a bot"/)
     ).toBeVisible()
+})
+
+// One query reads the delivery status of the whole page of submissions, not
+// one for each row: a busy form would otherwise open a subscription per row.
+test('the submissions list reads delivery status in one request', async ({ page, browser }) => {
+    const url = await buildAndPublish(page, `Batch ${Date.now()}`)
+    for (const name of ['Batch One', 'Batch Two']) {
+        const visitor = await visitAnonymously(browser, url)
+        await fillAndSend(visitor, visitor, name)
+        await expect(visitor.getByTestId('web-form-confirmation')).toBeVisible()
+    }
+    const runReads: string[] = []
+    page.on('request', r => {
+        if (
+            r.url().includes('/api/collections/rule_runs/records') &&
+            r.url().includes('record_id')
+        ) {
+            runReads.push(r.url())
+        }
+    })
+    await page.getByTestId('form-tab-submissions').click()
+    await expect(submissionRows(page)).toHaveCount(2)
+    await expect.poll(() => runReads.length).toBeGreaterThan(0)
+    expect(runReads).toHaveLength(1)
 })
 
 test('an admin deletes a submission', async ({ page, browser }) => {

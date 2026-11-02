@@ -9,6 +9,7 @@ import type { FormDefinition } from '@tinycld/core/lib/forms/definition'
 import {
     deliveryStatus,
     newestRun,
+    type RunLike,
     runSucceeded,
 } from '@tinycld/core/lib/web-forms/delivery-status'
 import { answersOf, previewOf } from '@tinycld/core/lib/web-forms/submission-answers'
@@ -17,6 +18,7 @@ import {
     type SubmissionRow,
     useDeleteSubmission,
     useRetry,
+    useRunsBySubmission,
     useSubmissionFiles,
     useSubmissionRuns,
     useSubmissions,
@@ -40,14 +42,23 @@ export function SubmissionsTab({ isVisible, ...rest }: SubmissionsTabProps) {
     return <SubmissionsPanel {...rest} />
 }
 
+// A page of the list; "Show more" adds another.
+const PAGE_SIZE = 50
+
 function useSubmissionsPanel(formId: string) {
-    const { submissions, isReady } = useSubmissions(formId)
+    // How many pages are shown, and which submission's detail is open: local
+    // to this panel.
+    const [pages, setPages] = useState(1)
+    const { submissions, hasMore, isReady } = useSubmissions(formId, pages * PAGE_SIZE)
+    const runsBySubmission = useRunsBySubmission(submissions.map(s => s.id))
     const { rules } = useDestinations(formId)
-    // Which submission's detail is open: local to this panel.
     const [openId, setOpenId] = useState<string | null>(null)
     const open = submissions.find(s => s.id === openId)
     return {
         submissions,
+        hasMore,
+        showMore: () => setPages(n => n + 1),
+        runsBySubmission,
         isReady,
         destinations: rules,
         destinationIds: rules.map(r => r.id),
@@ -65,10 +76,12 @@ function SubmissionsPanel({ formId, definition }: Omit<SubmissionsTabProps, 'isV
             <SubmissionsEmpty isVisible={p.isReady && p.submissions.length === 0} />
             <SubmissionList
                 submissions={p.submissions}
+                runsBySubmission={p.runsBySubmission}
                 destinationIds={p.destinationIds}
                 definition={definition}
                 onOpen={p.setOpenId}
             />
+            <ShowMore isVisible={p.hasMore} onPress={p.showMore} />
             <SubmissionDetail
                 submission={p.open}
                 definition={definition}
@@ -84,13 +97,32 @@ function SubmissionsEmpty({ isVisible }: { isVisible: boolean }) {
     return <Text className="text-muted-foreground text-sm">No submissions yet.</Text>
 }
 
+function ShowMore({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
+    if (!isVisible) return null
+    return (
+        <Button
+            variant="outline"
+            size="sm"
+            className="self-start"
+            onPress={onPress}
+            testID="web-form-submissions-more"
+        >
+            <ButtonText>Show more</ButtonText>
+        </Button>
+    )
+}
+
+type RunsBySubmission = ReturnType<typeof useRunsBySubmission>
+
 function SubmissionList({
     submissions,
+    runsBySubmission,
     destinationIds,
     definition,
     onOpen,
 }: {
     submissions: SubmissionRow[]
+    runsBySubmission: RunsBySubmission
     destinationIds: string[]
     definition: FormDefinition
     onOpen: (id: string) => void
@@ -99,6 +131,7 @@ function SubmissionList({
         <SubmissionRowView
             key={submission.id}
             submission={submission}
+            runs={runsBySubmission.get(submission.id) ?? []}
             destinationIds={destinationIds}
             definition={definition}
             onOpen={onOpen}
@@ -109,11 +142,13 @@ function SubmissionList({
 
 function SubmissionRowView({
     submission,
+    runs,
     destinationIds,
     definition,
     onOpen,
 }: {
     submission: SubmissionRow
+    runs: RunLike[]
     destinationIds: string[]
     definition: FormDefinition
     onOpen: (id: string) => void
@@ -129,7 +164,11 @@ function SubmissionRowView({
                 <Text className="text-xs text-muted-foreground">
                     {formatTimeAgo(submission.created)}
                 </Text>
-                <DeliveryBadge submissionId={submission.id} destinationIds={destinationIds} />
+                <DeliveryBadge
+                    submissionId={submission.id}
+                    runs={runs}
+                    destinationIds={destinationIds}
+                />
             </View>
             <Text className="text-sm text-foreground" numberOfLines={1}>
                 {preview}
@@ -140,12 +179,13 @@ function SubmissionRowView({
 
 function DeliveryBadge({
     submissionId,
+    runs,
     destinationIds,
 }: {
     submissionId: string
+    runs: RunLike[]
     destinationIds: string[]
 }) {
-    const runs = useSubmissionRuns(submissionId)
     const { delivered, total } = deliveryStatus(destinationIds, runs)
     if (total === 0) return null
     const tone = delivered < total ? 'text-danger' : 'text-muted-foreground'
