@@ -195,7 +195,7 @@ func parseParam(d ParamDef, raw json.RawMessage, pc periodContext, at string) (p
 	case ParamAmount:
 		cents, cur, ok := amountValue(v)
 		if !ok {
-			return out, invalid(at, `an amount is a whole number of cents, or {"amount": cents, "currency": "USD"}`)
+			return out, invalid(at, `an amount is a whole number of cents up to 2^53-1, or {"amount": cents, "currency": "USD"}`)
 		}
 		out.value, out.currency = cents, cur
 	case ParamChoice:
@@ -206,6 +206,11 @@ func parseParam(d ParamDef, raw json.RawMessage, pc periodContext, at string) (p
 
 var currencyCodeRe = regexp.MustCompile(`^[A-Z]{3}$`)
 
+// maxAmountCents is the largest amount an amount param holds: 2^53-1 cents,
+// the largest whole number a stored amount (a float64) or the shell keeps
+// exact.
+const maxAmountCents = 1<<53 - 1
+
 // amountValue reads an amount param's value: whole cents in any currency, or
 // {"amount": cents, "currency": code} (the amount alone is in any currency).
 func amountValue(v any) (int64, string, bool) {
@@ -215,7 +220,7 @@ func amountValue(v any) (int64, string, bool) {
 			return 0, false
 		}
 		i, err := num.Int64()
-		return i, err == nil
+		return i, err == nil && i >= -maxAmountCents && i <= maxAmountCents
 	}
 	if i, ok := whole(v); ok {
 		return i, "", true

@@ -118,36 +118,29 @@ func combined(values []expr, at string) (currency, error) {
 }
 
 // currencyGuard is the condition under which an operation on values holds
-// when an amount param with a currency is among them (R29): the other
-// amounts' currency, or with none, the first param's, is each param's. ""
-// when no param with a currency meets another currency.
-func currencyGuard(c fctx, values []expr) string {
-	var codes []string
-	var other currency
+// under the money rules: every amount among them is in one currency. An amount
+// param's currency is known only when the report runs (R29), and a comparison
+// is not combined (combined refuses other amounts in two currencies at
+// compile time), so it is checked on each row: "" when the values are in one
+// currency source, or when neither a param with a currency nor a comparison
+// (compare) is among them.
+func currencyGuard(c fctx, values []expr, compare bool) string {
+	var curs []currency
+	param := false
 	for _, v := range values {
-		switch {
-		case v.cur.param != "":
-			if !slices.Contains(codes, v.cur.param) {
-				codes = append(codes, v.cur.param)
-			}
-		case !v.cur.none():
-			other = v.cur
+		if v.cur.none() || slices.ContainsFunc(curs, v.cur.same) {
+			continue
 		}
+		curs = append(curs, v.cur)
+		param = param || v.cur.param != ""
 	}
-	var against string
-	switch {
-	case len(codes) == 0:
-		return ""
-	case !other.none():
-		against = c.currencySQL(other)
-	case len(codes) > 1:
-		against, codes = c.bind(codes[0]), codes[1:]
-	default:
+	if len(curs) < 2 || !(param || compare) {
 		return ""
 	}
-	conds := make([]string, len(codes))
-	for i, code := range codes {
-		conds[i] = against + " IS " + c.bind(code)
+	first := c.currencySQL(curs[0])
+	conds := make([]string, 0, len(curs)-1)
+	for _, cur := range curs[1:] {
+		conds = append(conds, first+" IS "+c.currencySQL(cur))
 	}
 	return strings.Join(conds, " AND ")
 }
@@ -423,11 +416,19 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{}, err
 		}
 	}
-	// An amount param holds only against amounts of its currency (R29): a
-	// condition is blank (false) and an amount or a ratio blank where they
-	// differ, so a USD budget never compares with EUR cents.
-	if guard := currencyGuard(c, args); guard != "" {
-		e.sql = "(CASE WHEN " + guard + " THEN " + e.sql + " END)"
+	// Amounts are compared, and an amount param combined, only in one
+	// currency (R29): a comparison compares the amount AND the currency, so
+	// across currencies ne is true and every other comparison false; an amount
+	// or a ratio is blank. A USD budget never compares with EUR cents.
+	if guard := currencyGuard(c, args, conditionOps[n.Op]); guard != "" {
+		otherwise := ""
+		switch {
+		case n.Op == "ne":
+			otherwise = " ELSE 1"
+		case conditionOps[n.Op]:
+			otherwise = " ELSE 0"
+		}
+		e.sql = "(CASE WHEN " + guard + " THEN " + e.sql + otherwise + " END)"
 	}
 	if c.filter() && conditionOps[n.Op] && slices.ContainsFunc(args, func(a expr) bool { return a.unset }) {
 		return unsetCondition, nil

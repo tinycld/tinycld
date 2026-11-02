@@ -267,15 +267,14 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	}
 	hops := append(append([]hopPlan{}, l.prefix...), bound.hops...)
 	e := l.sc.value(&pathPlan{hops: hops, field: bound.field, src: bound.src, target: bound.target})
-	switch {
-	case bound.field.Type != Money:
-	case bound.field.Currency != "":
-		// The looked-up row's own currency, read beside the amount; lookupIn
-		// picks the two from one row. The column names it for combining.
-		cur := l.sc.value(&pathPlan{hops: hops, field: bound.src.field(bound.field.Currency), src: bound.src}).sql
+	// A currency field is the looked-up row's own currency, read beside the
+	// amount; lookupIn picks the two from one row. The column names it for
+	// combining.
+	switch cur, fixed := amountCurrencyOf(l.sc, hops, bound); {
+	case cur != "":
 		e.cur = currency{sql: cur, id: "row:" + cur}
-	case bound.src.Currency != nil:
-		e.cur = currency{fixed: bound.src}
+	case fixed != nil:
+		e.cur = currency{fixed: fixed}
 	}
 	return e, nil
 }

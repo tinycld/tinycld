@@ -117,36 +117,9 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	c.currencies, c.currencyOf, c.valueCur, c.valueCurErr = nil, map[string]currency{}, map[string]string{}, map[string]error{}
 	r := &rowsCTE{c: c, s: s, root: newScope(s, c.p.base), raw: map[string]string{}, byExpr: map[string]string{}}
 	r.add("__id", q(r.root.alias, "id"))
-	c.groupTargets = make([]*Source, len(c.p.groups))
-	c.groupOptions, c.groupShown = make([][]Option, len(c.p.groups)), make([]bool, len(c.p.groups))
-	for i, g := range c.p.groups {
-		e, err := r.rowValue(g.col, g.at+".col", map[string]bool{})
-		if err != nil {
-			return nil, err
-		}
-		if g.group.Bucket != "" {
-			if e.typ != Date && e.typ != DateTime {
-				return nil, invalid(g.at+".bucket", "only a date column has a bucket")
-			}
-			e.sql = bucketSQL(r.join(false), g.group.Bucket, e.sql)
-		}
-		if g.group.Bucket == "" {
-			c.groupTargets[i], c.groupOptions[i] = e.target, e.options
-			// A key that mixes a select's values with other text is shown, and
-			// its groups ordered, by its shown form, which w keeps beside it.
-			if e.shown != "" {
-				r.add(fmt.Sprintf("kl%d", i), e.shown)
-				c.groupShown[i] = true
-			}
-		}
-		// A group by an amount that carries its own currency (a looked-up
-		// row's) groups by that currency too: 300 USD and 300 EUR are two
-		// groups.
-		if e.typ == Money && e.cur.sql != "" && e.cur.id != "" {
-			r.currencyKey(e.cur.id, e.cur.sql)
-		}
-		r.add(fmt.Sprintf("k%d", i), e.sql)
-	}
+	// The currency keys of the amounts the report reads by path come first, so
+	// a group key, the filter and a fill that read one of them have its key
+	// (joinCtx.path).
 	for _, cp := range c.p.cols {
 		if cp.path == nil || cp.nest > 0 {
 			continue
@@ -174,8 +147,38 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	if d := c.p.spec.Detail; d != nil {
 		r.formulaCurrencies(d.Label)
 	}
+	c.groupTargets = make([]*Source, len(c.p.groups))
+	c.groupOptions, c.groupShown = make([][]Option, len(c.p.groups)), make([]bool, len(c.p.groups))
+	for i, g := range c.p.groups {
+		e, err := r.rowValue(g.col, g.at+".col", map[string]bool{})
+		if err != nil {
+			return nil, err
+		}
+		if g.group.Bucket != "" {
+			if e.typ != Date && e.typ != DateTime {
+				return nil, invalid(g.at+".bucket", "only a date column has a bucket")
+			}
+			e.sql = bucketSQL(r.join(false), g.group.Bucket, e.sql)
+		}
+		if g.group.Bucket == "" {
+			c.groupTargets[i], c.groupOptions[i] = e.target, e.options
+			// A key that mixes a select's values with other text is shown, and
+			// its groups ordered, by its shown form, which w keeps beside it.
+			if e.shown != "" {
+				r.add(fmt.Sprintf("kl%d", i), e.shown)
+				c.groupShown[i] = true
+			}
+		}
+		// A group by an amount that carries its own currency (a looked-up
+		// row's, or a path's read beside it) groups by that currency too: 300
+		// USD and 300 EUR are two groups.
+		if e.typ == Money && e.cur.sql != "" && e.cur.id != "" {
+			r.currencyKey(e.cur.id, e.cur.sql)
+		}
+		r.add(fmt.Sprintf("k%d", i), e.sql)
+	}
 	// The filter compiles once the currency keys are known, so an amount it
-	// reads by path has the key a column of it has (joinCtx.amountCurrency).
+	// reads by path has the key a column of it has (joinCtx.path).
 	if f := c.p.spec.Filter; f != nil {
 		e, err := compileFormula(r.join(true), f, "filter")
 		if err != nil {
@@ -275,34 +278,51 @@ func (r *rowsCTE) currencyKey(id, sql string) {
 	if _, seen := r.c.valueCur[id]; seen {
 		return
 	}
+	r.c.valueCur[id] = r.currencyColumn(sql)
+}
+
+// currencyColumn is the currency key of w that holds sql, added once: one
+// currency read the same way is one key, however it was reached.
+func (r *rowsCTE) currencyColumn(sql string) string {
+	if name, seen := r.byExpr[sql]; seen {
+		return name
+	}
 	name := fmt.Sprintf("ck%d", len(r.c.currencies))
+	r.byExpr[sql] = name
 	r.add(name, sql)
 	r.c.currencies = append(r.c.currencies, name)
-	r.c.valueCur[id] = name
+	return name
 }
 
 // pathCurrency is the currency of a to-one path's amount: its currency
 // field, kept in w as a currency key every total groups by, or its source's
 // fixed currency.
 func (r *rowsCTE) pathCurrency(p *pathPlan) currency {
+	sql, fixed := amountCurrencyOf(r.root, p.hops, p)
+	switch {
+	case sql != "":
+		return currency{key: r.currencyColumn(sql)}
+	case fixed != nil:
+		return currency{fixed: fixed}
+	}
+	return currency{}
+}
+
+// amountCurrencyOf is where the currency of p's amount, read in sc after hops,
+// comes from: the SQL of its currency field read beside it, or its source's
+// fixed currency. Neither for a value that is not an amount, or an amount
+// with no currency.
+func amountCurrencyOf(sc *scope, hops []hopPlan, p *pathPlan) (string, *Source) {
 	f := p.field
 	switch {
 	case f.Type != Money:
-		return currency{}
+		return "", nil
 	case f.Currency != "":
-		sql := fieldSQL(r.root.join(p.hops), p.src.field(f.Currency))
-		name, seen := r.byExpr[sql]
-		if !seen {
-			name = fmt.Sprintf("ck%d", len(r.c.currencies))
-			r.byExpr[sql] = name
-			r.add(name, sql)
-			r.c.currencies = append(r.c.currencies, name)
-		}
-		return currency{key: name}
+		return fieldSQL(sc.join(hops), p.src.field(f.Currency)), nil
 	case p.src.Currency != nil:
-		return currency{fixed: p.src}
+		return "", p.src
 	}
-	return currency{}
+	return "", nil
 }
 
 // formulaCurrencies adds the currency key of every amount a formula reads by

@@ -54,11 +54,6 @@ type joinCtx struct {
 	// records reads a group's record by its group key, which w holds once its
 	// group keys are in: a carried currency's key is read so (valueCurrencies).
 	records bool
-	// conditions is compiling a filter's, an exists' or a fill's where, or a
-	// column one of them reads: an amount there carries its currency, which an
-	// amount param is compared in (currencyGuard). A group key's amount does
-	// not, so it groups by no currency of its own.
-	conditions bool
 }
 
 func (j *joinCtx) col(id, at string) (expr, error) {
@@ -74,17 +69,17 @@ func (j *joinCtx) col(id, at string) (expr, error) {
 		return expr{}, err
 	}
 	defer done()
-	if (j.records || j.carries()) && cp.path == nil && cp.nest == 0 && cp.col.Aggregate == "" {
+	if j.records && cp.path == nil && cp.nest == 0 && cp.col.Aggregate == "" {
 		inner := j.r.join(false)
-		inner.visiting, inner.records, inner.conditions = j.visiting, j.records, j.carries()
+		inner.visiting, inner.records = j.visiting, true
 		return compileFormula(inner, cp.col.Formula, cp.at+".formula")
 	}
 	return j.r.rowValue(cp, at, j.visiting)
 }
 
-// carries is true where an amount carries its currency (conditions).
-func (j *joinCtx) carries() bool { return j.isFilter || j.conditions }
-
+// path reads a field after the scope's prefix. An amount carries its currency
+// (amountCurrency), which comparisons and amount params are checked in
+// (currencyGuard).
 func (j *joinCtx) path(p Path, at string) (expr, error) {
 	bound, err := bindValuePath(j.r.c.p.app, j.src, p, at, pathValue)
 	if err != nil {
@@ -92,29 +87,23 @@ func (j *joinCtx) path(p Path, at string) (expr, error) {
 	}
 	hops := append(append([]hopPlan{}, j.prefix...), bound.hops...)
 	e := j.sc.value(&pathPlan{hops: hops, field: bound.field, target: bound.target})
-	if j.carries() {
-		e = withCurrency(e, j.amountCurrency(hops, bound))
-	}
-	return e, nil
+	return withCurrency(e, j.amountCurrency(hops, bound)), nil
 }
 
-// amountCurrency is the currency of a money path read in a condition: its
-// currency field, by the currency key w keeps for it when a column reads it
-// too (so the two combine), else read beside it; or its source's fixed
-// currency.
+// amountCurrency is the currency of a money path: its currency field, by the
+// currency key w keeps for it (rows() keeps one for every amount the report's
+// columns, labels, havings and sorts read, so the two combine), else read
+// beside it; or its source's fixed currency.
 func (j *joinCtx) amountCurrency(hops []hopPlan, bound *pathPlan) currency {
-	f := bound.field
+	sql, fixed := amountCurrencyOf(j.sc, hops, bound)
 	switch {
-	case f.Type != Money:
-		return currency{}
-	case f.Currency != "":
-		sql := j.sc.value(&pathPlan{hops: hops, field: bound.src.field(f.Currency), src: bound.src}).sql
+	case sql != "":
 		if name, ok := j.r.byExpr[sql]; ok && j.sc == j.r.root {
 			return currency{key: name}
 		}
 		return currency{sql: sql, id: "row:" + sql}
-	case bound.src.Currency != nil:
-		return currency{fixed: bound.src}
+	case fixed != nil:
+		return currency{fixed: fixed}
 	}
 	return currency{}
 }

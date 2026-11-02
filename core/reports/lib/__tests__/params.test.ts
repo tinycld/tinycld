@@ -153,6 +153,15 @@ describe('amount params', () => {
         expect(valueFromJson(BUDGET, { amount: 1.5, currency: 'USD' })).toBeNull()
         expect(valueFromJson(BUDGET, { amount: 100, currency: 'usd' })).toBeNull()
         expect(valueFromJson(BUDGET, { amount: 100, rate: 2 })).toBeNull()
+        expect(valueFromJson(BUDGET, { currency: 'USD' })).toBeNull()
+        expect(valueFromJson(BUDGET, { amount: '100' })).toBeNull()
+        expect(valueFromJson(BUDGET, 2 ** 53)).toBeNull()
+        expect(valueFromJson(BUDGET, -(2 ** 53))).toBeNull()
+        expect(valueFromJson(BUDGET, 2 ** 53 - 1)).toEqual({
+            kind: 'amount',
+            cents: 2 ** 53 - 1,
+            currency: '',
+        })
     })
 
     it('writes the JSON the run endpoint reads', () => {
