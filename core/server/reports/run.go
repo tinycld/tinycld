@@ -477,9 +477,10 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 
 // shownLevels returns the CTEs that select the shown rows of the deepest level
 // whose group has a having (s<m>), and m; m is 0 when no group has one. The
-// detail statement reads only the base rows under them. A level whose having
-// or order reads a "rows" column adds the level below it (rt<L>), which may
-// add the one below it in turn; those levels are compiled too, no others.
+// detail statement reads only the base rows under them. It compiles levels 1
+// to m, and past m each next level whose rt<L> the level before it reads (any
+// "rows" sum a compiled level reads: in its having, its sort keys or its own
+// rt cells); no others.
 func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, error) {
 	m := c.havingAbove(len(c.p.groups) + 1)
 	if m == 0 {

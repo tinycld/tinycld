@@ -259,6 +259,27 @@ func TestManyToManyTotalsAndRowsColumns(t *testing.T) {
 	requireRows(t, res, "w69", int64(190), int64(300), int64(490))
 }
 
+// More recompute to-many totals than one select may join, beside a "rows"
+// column: the level's joins are split into chunks. The having hides the North
+// site (190), so the rows total adds South only while the recompute total
+// adds both.
+func TestManyToManyTotalsJoinInChunks(t *testing.T) {
+	z := newZoo(t)
+	cols := []string{`{"id":"region","path":[{"field":"region"}]}`, `{"id":"name","path":[{"field":"name"}]}`,
+		`{"id":"shown","path":[{"link":"animals","mode":"aggregate"},{"field":"weight"}],"aggregate":"sum","total":"rows"}`}
+	for i := range 65 {
+		cols = append(cols, fmt.Sprintf(`{"id":"w%d","path":[{"link":"animals","mode":"aggregate"},{"field":"weight"}],"aggregate":"sum"}`, i))
+	}
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[`+strings.Join(cols, ",")+`],
+		"groups":[{"id":"g","col":"region"},{"id":"h","col":"name","having":{"op":"gt","args":[{"col":"w0"},{"value":200}]}}],
+		"sort":[{"col":"region"}]}`, Options{ExpandAll: true}, nil)
+	requireRows(t, res, "kind", "group", "group", "group", "detail", "total")
+	requireRows(t, res, "name", nil, nil, "South", "South", nil)
+	requireRows(t, res, "shown", int64(0), int64(300), int64(300), int64(300), int64(300))
+	requireRows(t, res, "w0", int64(190), int64(300), int64(300), int64(300), int64(490))
+	requireRows(t, res, "w64", int64(190), int64(300), int64(300), int64(300), int64(490))
+}
+
 func TestRowsTotalIsRefusedWhereItMeansNothing(t *testing.T) {
 	app := withZooRegistry(t)
 	for _, c := range []struct{ spec, at, want string }{
