@@ -216,6 +216,11 @@ func (rn *runner) group(t *tree, row map[string]any, n int, section string) {
 	id := "g:" + keyString(key)
 	g := rn.c.p.groups[n-1]
 	label := rowLabel{text: rn.display(g.col, row[fmt.Sprintf("k%d", n-1)], g.group.Bucket != "")}
+	// A key that mixes a select's values with other text reads as its group
+	// column's cell shows it.
+	if rn.c.groupShown[n-1] {
+		label = rowLabel{text: labelText(row[fmt.Sprintf("v%d", rn.c.p.index(g.col))])}
+	}
 	// A record group and a labelled group are named by their label; a blank
 	// one reads (none), never the record's id.
 	if g.group.Label != nil || rn.c.groupTargets[n-1] != nil {

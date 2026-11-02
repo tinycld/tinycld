@@ -267,7 +267,7 @@ func (c *compiler) compileDetailLabel(rc *rowsCtx, labels *labelRefs, n *Node) (
 	if err != nil {
 		return labelRef{}, err
 	}
-	e = shownSelect(rc.bind, e)
+	e = asShown(rc.bind, e)
 	if e.target == nil {
 		lp := labelPlan{typ: e.typ, cur: e.cur}
 		ref := labelRef{value: e.sql, currency: "NULL"}

@@ -179,6 +179,10 @@ func (lv *level) order() ([]string, error) {
 		if lv.c.groupTargets[lv.n-1] != nil && lv.labelKey != "" {
 			out = append(out, "("+lv.labelKey+" IS NULL)", lv.labelKey)
 		}
+		// A select's groups read in the order of their option labels.
+		if shown := lv.shownKey(lv.n - 1); shown != "" {
+			out = append(out, "("+shown+" IS NULL)", shown)
+		}
 		key := fmt.Sprintf("a.k%d", lv.n-1)
 		out = append(out, "("+key+" IS NULL)", key)
 	}
@@ -223,10 +227,32 @@ func (lv *level) sortValue(cp *colPlan, at string) (expr, bool, error) {
 
 // groupKey is the key of the group column cp on this level, or "".
 func (lv *level) groupKey(cp *colPlan) string {
+	if i := lv.groupIndex(cp); i >= 0 {
+		return fmt.Sprintf("a.k%d", i)
+	}
+	return ""
+}
+
+// groupIndex is the index of the group at or above this level that groups by
+// cp with no bucket, -1 for none.
+func (lv *level) groupIndex(cp *colPlan) int {
 	for i, g := range lv.c.p.groups {
 		if i < lv.n && g.col == cp && g.group.Bucket == "" {
-			return fmt.Sprintf("a.k%d", i)
+			return i
 		}
+	}
+	return -1
+}
+
+// shownKey is how group i's key is shown on this level's rows: its options'
+// label for a select's value, its shown form (kl<i>) for a mix of a select's
+// values and other text, "" for any other key.
+func (lv *level) shownKey(i int) string {
+	switch {
+	case lv.c.groupShown[i]:
+		return lv.agg(fmt.Sprintf("kl%d", i), fmt.Sprintf("min(w.kl%d)", i))
+	case len(lv.c.groupOptions[i]) > 0:
+		return optionLabelSQL(lv.r.s.bind, lv.c.groupOptions[i], fmt.Sprintf("a.k%d", i))
 	}
 	return ""
 }
@@ -462,7 +488,7 @@ func (lv *level) labelSQL() error {
 			return invalid(g.at+".label", "a running value or a percent is not a label")
 		}
 		// A select labels by its option's label, which also orders the groups.
-		e = shownSelect(lv.r.s.bind, e)
+		e = asShown(lv.r.s.bind, e)
 		if at, inner := lv.innerRecord(g.group.Label, g.at+".label", false, map[string]bool{}); inner != "" {
 			return invalid(at, fmt.Sprintf("the label of group %q reads the record of group %q, which is grouped inside it: a %q row has no one %q record", g.group.ID, inner, g.group.ID, inner))
 		}
@@ -715,6 +741,12 @@ func (lc *levelCtx) formulaGroupColumn(cp *colPlan, at string) (expr, error) {
 	e.sql = "NULL"
 	if key := lc.lv.groupKey(cp); key != "" {
 		e.sql = key
+	}
+	if e.shown != "" {
+		e.shown = "NULL"
+		if i := lc.lv.groupIndex(cp); i >= 0 {
+			e.shown = lc.lv.shownKey(i)
+		}
 	}
 	// The value compiled inside w, so a currency it carries is read there:
 	// rows() kept it as the currency key the levels group by.

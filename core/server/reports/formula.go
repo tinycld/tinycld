@@ -36,6 +36,12 @@ type expr struct {
 	// options are a select value's options: a label or a text operator shows
 	// a stored value by its option's label.
 	options []Option
+	// shown is how a value that mixes a select's values with other text is
+	// shown (each select value by its option's label); sql keeps the stored
+	// values, which conditions compare. "" for any other value.
+	shown string
+	// text is a text literal's value.
+	text *string
 }
 
 // currency is where a money value's currency comes from: a currency key of w
@@ -280,7 +286,7 @@ func literal(c fctx, raw json.RawMessage, at string) (expr, error) {
 	case bool:
 		return expr{sql: c.bind(x), typ: Bool}, nil
 	case string:
-		return expr{sql: c.bind(x), typ: Text}, nil
+		return expr{sql: c.bind(x), typ: Text, text: &x}, nil
 	case json.Number:
 		return expr{sql: c.bind(numberValue(x)), typ: Number}, nil
 	case []any:
@@ -355,44 +361,84 @@ func asText(c fctx, a expr) string {
 	if a.target != nil && a.sql != "NULL" {
 		return c.label(a)
 	}
-	return shownSelect(c.bind, a).sql
+	return showSQL(c.bind, a)
 }
 
-// shownSelect is a value as a label shows it: a select's stored value as its
-// option's label, which is text; any other value as it is.
-func shownSelect(bind func(any) string, e expr) expr {
-	if len(e.options) == 0 {
+// showSQL is a value as a label, a text operator or a cell shows it: a
+// select's stored value as its option's label, a value that mixes selects
+// with other text by its shown form, any other value as it is.
+func showSQL(bind func(any) string, e expr) string {
+	if e.shown != "" {
+		return e.shown
+	}
+	return optionLabelSQL(bind, e.options, e.sql)
+}
+
+// asShown is a value as a label shows it: a select's (or a mix's) as text.
+func asShown(bind func(any) string, e expr) expr {
+	if e.shown == "" && len(e.options) == 0 {
 		return e
 	}
-	e.sql, e.typ, e.options = optionLabelSQL(bind, e.options, e.sql), Text, nil
+	e.sql, e.typ, e.options, e.shown = showSQL(bind, e), Text, nil, ""
 	return e
 }
 
-// selectResults keeps the options of results (of if, case or coalesce) that
-// are all values of one select, or blanks. When selects with other options,
-// or other text, are among them, each select result is shown by its own
-// option labels instead, so the result is text with no options.
-func selectResults(bind func(any) string, results []expr) []Option {
-	var options []Option
-	mixed := false
+// selectResults reads the results of an if, a case or a coalesce: the options
+// of results that are all one select's values (or blanks, or a text literal
+// that is one of its stored values), which the result keeps; or mixed when
+// they mix a select's values with other options or other text, so the result
+// is text shown by each result's own shown form (showSQL).
+func selectResults(results []expr) (options []Option, mixed bool) {
 	for _, r := range results {
 		switch {
-		case r.typ == "":
 		case len(r.options) == 0:
-			mixed = true
 		case options == nil:
 			options = r.options
 		case !slices.Equal(options, r.options):
 			mixed = true
 		}
 	}
-	if !mixed {
-		return options
+	for _, r := range results {
+		switch {
+		case r.typ == "" || len(r.options) > 0:
+		case r.shown != "":
+			mixed = true
+		case options == nil:
+		case r.text != nil && slices.ContainsFunc(options, func(o Option) bool { return o.Value == *r.text }):
+		default:
+			mixed = true
+		}
 	}
-	for i := range results {
-		results[i] = shownSelect(bind, results[i])
+	if mixed {
+		return nil, true
 	}
-	return nil
+	return options, false
+}
+
+// sqlOf is a value's stored form, as conditions compare it.
+func sqlOf(e expr) string { return e.sql }
+
+// cellSQL is a value as its cell holds it: a mix of a select's values and
+// other text as shown; a select's stored value, which the column's options
+// show; any other value as it is.
+func cellSQL(e expr) string {
+	if e.shown != "" {
+		return e.shown
+	}
+	return e.sql
+}
+
+// withResults gives the result of an if, a case or a coalesce the options
+// its results share, or, when they mix, its shown form (render over each
+// result's shown form) and the type text.
+func withResults(out expr, bind func(any) string, results []expr, render func(func(expr) string) string) expr {
+	options, mixed := selectResults(results)
+	out.options = options
+	if mixed {
+		out.shown = render(func(e expr) string { return showSQL(bind, e) })
+		out.typ = Text
+	}
+	return out
 }
 
 func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
@@ -630,7 +676,6 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if args[0].typ != Bool {
 			return expr{}, invalid(at+".args.0", "if needs a condition first")
 		}
-		options := selectResults(c.bind, args[1:])
 		typ, ok := commonType(args[1], args[2])
 		if !ok {
 			return expr{}, invalid(at, "both results of if are of one kind")
@@ -639,41 +684,27 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if err != nil {
 			return expr{}, err
 		}
-		out := wholeCents(expr{sql: "(CASE WHEN " + args[0].sql + " THEN " + args[1].sql + " ELSE " + args[2].sql + " END)", typ: typ}, args[1:])
-		out.target, out.options = target, options
-		return out, nil
+		render := func(value func(expr) string) string {
+			return "(CASE WHEN " + args[0].sql + " THEN " + value(args[1]) + " ELSE " + value(args[2]) + " END)"
+		}
+		out := wholeCents(expr{sql: render(sqlOf), typ: typ}, args[1:])
+		out.target = target
+		return withResults(out, c.bind, args[1:], render), nil
 	case "case":
 		if err := argc(2, -1); err != nil {
 			return expr{}, err
 		}
 		// The results are the odd args, then an else (the last of an odd count).
-		slots := make([]int, 0, len(args)/2+1)
-		for i := 1; i < len(args); i += 2 {
-			slots = append(slots, i)
-		}
-		if len(args)%2 == 1 {
-			slots = append(slots, len(args)-1)
-		}
-		results := make([]expr, len(slots))
-		for j, i := range slots {
-			results[j] = args[i]
-		}
-		options := selectResults(c.bind, results)
-		for j, i := range slots {
-			args[i] = results[j]
-		}
-		var b strings.Builder
-		b.WriteString("(CASE")
+		results := []expr{}
 		for i := 0; i+1 < len(args); i += 2 {
 			if args[i].typ != Bool {
 				return expr{}, invalid(fmt.Sprintf("%s.args.%d", at, i), "case takes condition and result pairs")
 			}
-			b.WriteString(" WHEN " + args[i].sql + " THEN " + args[i+1].sql)
+			results = append(results, args[i+1])
 		}
 		if len(args)%2 == 1 {
-			b.WriteString(" ELSE " + args[len(args)-1].sql)
+			results = append(results, args[len(args)-1])
 		}
-		b.WriteString(" END)")
 		typ, ok := commonType(results...)
 		if !ok {
 			return expr{}, invalid(at, "every result of case is of one kind")
@@ -682,14 +713,25 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if err != nil {
 			return expr{}, err
 		}
-		out := wholeCents(expr{sql: b.String(), typ: typ}, results)
-		out.target, out.options = target, options
-		return out, nil
+		render := func(value func(expr) string) string {
+			var b strings.Builder
+			b.WriteString("(CASE")
+			for i := 0; i+1 < len(args); i += 2 {
+				b.WriteString(" WHEN " + args[i].sql + " THEN " + value(args[i+1]))
+			}
+			if len(args)%2 == 1 {
+				b.WriteString(" ELSE " + value(args[len(args)-1]))
+			}
+			b.WriteString(" END)")
+			return b.String()
+		}
+		out := wholeCents(expr{sql: render(sqlOf), typ: typ}, results)
+		out.target = target
+		return withResults(out, c.bind, results, render), nil
 	case "coalesce":
 		if err := argc(1, -1); err != nil {
 			return expr{}, err
 		}
-		options := selectResults(c.bind, args)
 		typ, ok := commonType(args...)
 		if !ok {
 			return expr{}, invalid(at, "coalesce takes values of one kind")
@@ -698,16 +740,22 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if err != nil {
 			return expr{}, err
 		}
-		if len(args) == 1 {
-			return expr{sql: args[0].sql, typ: typ, target: target, options: options}, nil
+		render := func(value func(expr) string) string {
+			if len(args) == 1 {
+				return value(args[0])
+			}
+			parts := make([]string, len(args))
+			for i, a := range args {
+				parts[i] = value(a)
+			}
+			return "COALESCE(" + strings.Join(parts, ", ") + ")"
 		}
-		parts := make([]string, len(args))
-		for i, a := range args {
-			parts[i] = a.sql
+		out := expr{sql: render(sqlOf), typ: typ}
+		if len(args) > 1 {
+			out = wholeCents(out, args)
 		}
-		out := wholeCents(expr{sql: "COALESCE(" + strings.Join(parts, ", ") + ")", typ: typ}, args)
-		out.target, out.options = target, options
-		return out, nil
+		out.target = target
+		return withResults(out, c.bind, args, render), nil
 	case "isEmpty":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err

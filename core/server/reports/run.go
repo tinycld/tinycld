@@ -428,7 +428,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			if err != nil {
 				return nil, "", err
 			}
-			cells = append(cells, fmt.Sprintf("%s AS v%d", e.sql, idx))
+			cells = append(cells, fmt.Sprintf("%s AS v%d", cellSQL(e), idx))
 			ref, _ := c.columnLabel(lv.labels, cp, e)
 			labels = append(labels, ref.cells(idx)...)
 			carried = append(carried, c.carriedCell(cp, e, idx))
@@ -661,7 +661,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			return "", nil, err
 		}
 		ref, _ := c.columnLabel(labels, cp, e)
-		sel = append(sel, fmt.Sprintf("%s AS v%d", e.sql, idx), c.carriedCell(cp, e, idx))
+		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(cp, e, idx))
 		sel = append(sel, ref.cells(idx)...)
 		c.detailTypes[cp.col.ID] = e.typ
 		if cp.path == nil {

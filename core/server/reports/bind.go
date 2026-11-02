@@ -188,8 +188,12 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	b.sorts(p)
 	b.groupsAndPivot(p)
 	b.layout(p)
-	if d := spec.Detail; d != nil && d.Label == nil {
+	switch d := spec.Detail; {
+	case d == nil:
+	case d.Label == nil:
 		b.bad("detail", "detail has a label")
+	case spec.Pivot != nil:
+		b.bad("detail.label", "a pivot report has no detail rows to label")
 	}
 	if err := b.err(); err != nil {
 		return nil, err

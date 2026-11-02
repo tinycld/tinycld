@@ -40,6 +40,12 @@ type compiler struct {
 	// groupTargets is the source each group's key links to (nil for a group
 	// that is not by a link).
 	groupTargets []*Source
+	// groupOptions are the options of each group whose key is a select's
+	// value; groupShown marks a group whose key mixes a select's values with
+	// other text, whose shown form w holds as kl<n>. Such groups are shown,
+	// and ordered, by their option labels.
+	groupOptions [][]Option
+	groupShown   []bool
 	// labels is each group's label as it compiled: its type and, for an
 	// amount, its currency. It outlives a statement (assembly reads it after
 	// every pass), so rows() leaves it.
@@ -122,6 +128,7 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 		r.filter = e.sql
 	}
 	c.groupTargets = make([]*Source, len(c.p.groups))
+	c.groupOptions, c.groupShown = make([][]Option, len(c.p.groups)), make([]bool, len(c.p.groups))
 	for i, g := range c.p.groups {
 		e, err := r.rowValue(g.col, g.at+".col", map[string]bool{})
 		if err != nil {
@@ -134,7 +141,13 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 			e.sql = bucketSQL(r.join(false), g.group.Bucket, e.sql)
 		}
 		if g.group.Bucket == "" {
-			c.groupTargets[i] = e.target
+			c.groupTargets[i], c.groupOptions[i] = e.target, e.options
+			// A key that mixes a select's values with other text is shown, and
+			// its groups ordered, by its shown form, which w keeps beside it.
+			if e.shown != "" {
+				r.add(fmt.Sprintf("kl%d", i), e.shown)
+				c.groupShown[i] = true
+			}
 		}
 		// A group by an amount that carries its own currency (a looked-up
 		// row's) groups by that currency too: 300 USD and 300 EUR are two
