@@ -10,6 +10,7 @@ import {
     rowOf,
     SALES_SOURCE,
     saveNewReport,
+    scrollRowTo,
     startReport,
     uniqueName,
 } from './reports-helpers'
@@ -75,6 +76,39 @@ async function boxes(p: Page, row: string) {
 async function bottomOf(locator: Locator): Promise<number> {
     const box = await locator.boundingBox()
     return (box?.y ?? 0) + (box?.height ?? 0)
+}
+
+// The open status group and the open day group inside it are stuck as one stack
+// while the day's rows scroll under them. The next day's row then pushes the
+// stack up whole: halfway in, the stack is half gone and its bottom sits on that
+// row's top, so it never draws over the row.
+async function expectWholeStackPushed(p: Page, stackIds: string[]) {
+    const sticky = p.getByTestId('report-sticky-group')
+    const next = rowOf(p, '2026-01-06')
+    await scrollRowTo(rowOf(p, 'Push 04'))
+    // The stack holds both groups' rows (the copies carry their own test ids).
+    for (const id of stackIds) {
+        await expect(sticky.getByTestId(`report-sticky-row-${id}`)).toBeVisible()
+    }
+    const headingBottom = await bottomOf(p.getByTestId('report-heading-row'))
+    await expect
+        .poll(async () => Math.abs(((await sticky.boundingBox())?.y ?? 0) - headingBottom))
+        .toBeLessThanOrEqual(2)
+    const height = (await sticky.boundingBox())?.height ?? 0
+    const dayRow = (await rowOf(p, '2026-01-05').boundingBox())?.height ?? 0
+    expect(height).toBeGreaterThan(dayRow + 10)
+
+    await scrollRowTo(next, height / 2)
+    await expect
+        .poll(async () => {
+            const stack = await sticky.boundingBox()
+            const row = await next.boundingBox()
+            if (!stack || !row) return Number.POSITIVE_INFINITY
+            return Math.abs(stack.y + stack.height - row.y)
+        })
+        .toBeLessThanOrEqual(2)
+    const stack = await sticky.boundingBox()
+    expect(Math.abs((stack?.y ?? 0) - (headingBottom - height / 2))).toBeLessThanOrEqual(2)
 }
 
 // A row the list scrolled up under the heading row, or one it no longer holds.
@@ -255,6 +289,75 @@ test.describe('report rows per width', () => {
         }
     })
 
+    test('the next section pushes the whole stuck stack of open groups, on a desktop and a phone', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptpush')
+        try {
+            const team = uniqueName('Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            // One day with ten sales, then ten days with one each: the rows after
+            // the open day leave room to scroll its section away.
+            for (let i = 0; i < 20; i++) {
+                const day = `2026-01-${String(Math.max(i - 4, 5)).padStart(2, '0')}`
+                await addSale(p, {
+                    team,
+                    customer: `Push ${String(i).padStart(2, '0')}`,
+                    amount: 1000 + i,
+                    cost: 400,
+                    quantity: 3,
+                    day,
+                })
+            }
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await chooseOption(p, 'report-builder-column-1-aggregate', 'sum')
+            await addColumn(p, ['cost'])
+            await addColumn(p, ['quantity'])
+            await addColumn(p, ['status'])
+            await addColumn(p, ['booked'])
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'status')
+            await p.getByTestId('report-builder-group-0-subtotals').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-1-col', 'booked')
+            await p.getByTestId('report-builder-group-1-subtotals').click()
+            // Sorted, so the day's rows come in a known order: Push 04 has five rows
+            // under it before the next day's row.
+            await chooseOption(p, 'report-builder-sort-add-menu', 'customer')
+            await saveNewReport(p, uniqueName('Push'))
+            const stackIds: string[] = []
+            for (const label of ['Open', '2026-01-05']) {
+                const row = rowOf(p, label)
+                await row.click()
+                await expect(row).toHaveAttribute('aria-expanded', 'true')
+                stackIds.push(
+                    (await row.getAttribute('data-testid'))?.replace('report-row-', '') ?? ''
+                )
+            }
+            await expect(rowOf(p, 'Push 09')).toBeVisible()
+
+            await expectWholeStackPushed(p, stackIds)
+
+            // On a phone the rows wrap, so the stack is drawn by other code.
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect
+                .poll(async () => {
+                    const b = await boxes(p, 'Push 09')
+                    return b.label && b.amount
+                        ? b.amount.y >= b.label.y + b.label.height - 1
+                        : false
+                })
+                .toBe(true)
+            await expectWholeStackPushed(p, stackIds)
+        } finally {
+            await close()
+        }
+    })
+
     test('on a desktop a table wider than its view scrolls sideways with its labels held at the left', async ({
         page,
     }) => {
@@ -383,7 +486,12 @@ test.describe('report rows on a touch phone', () => {
         await seed(page, 16)
         await wideReport(page, uniqueName('Touch'), false)
         await page.setViewportSize({ width: 390, height: 844 })
-        const first = rowOf(page, 'Wrapco 00')
+        // The shared sign-in also owns other specs' sales, which sort before or after
+        // these, so the row to swipe away is the table's first, not a named one.
+        const first = page
+            .getByTestId('report-table')
+            .locator('[data-testid^="report-row-"]')
+            .first()
         await expect(first).toBeVisible()
 
         // Nothing from a row up to the table turns touch gestures (zoom, pan) off.

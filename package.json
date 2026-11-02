@@ -83,7 +83,7 @@
         "@react-stately/tree": "^3.10.0",
         "@react-stately/utils": "^3.12.0",
         "@sentry/react-native": "~8.28.0",
-        "@shopify/flash-list": "github:nathanstitt/flash-list#84a89f4253533633c86a2ce582a5ccfa52f50688",
+        "@shopify/flash-list": "github:nathanstitt/flash-list#8364a1610e5fef6463f8f5a63b6ecdc31a0ca067",
         "@simplewebauthn/browser": "^14.0.0",
         "@tanstack/db": "^0.12.1",
         "@tanstack/react-db": "^0.5.5",

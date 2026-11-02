@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import PocketBase from 'pocketbase'
 import { loginAs, navigateToPackage } from './helpers'
@@ -107,6 +107,22 @@ export async function addColumn(page: Page, keys: string[], mode?: 'total' | 'ne
     }
     await picker.getByTestId(`report-builder-pick-field-${keys[keys.length - 1]}`).click()
     await expect(picker).toBeHidden()
+}
+
+/**
+ * Scrolls the report list (the row's nearest vertical scroller) so the row's top
+ * edge lands `below` px under the list's top edge.
+ */
+export async function scrollRowTo(row: Locator, below = 0) {
+    await row.evaluate((element, offset) => {
+        let scroller = element.parentElement
+        while (scroller && getComputedStyle(scroller).overflowY !== 'auto') {
+            scroller = scroller.parentElement
+        }
+        if (!scroller) throw new Error('the row has no vertical scroller')
+        const top = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+        scroller.scrollTop += top - offset
+    }, below)
 }
 
 export async function chooseOption(page: Page, selectTestId: string, value: string) {

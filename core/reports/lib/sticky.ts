@@ -40,22 +40,3 @@ export function groupChain(rows: readonly VisibleRow[], index: number): ResultRo
     }
     return chain
 }
-
-/**
- * The extra move of the stuck copy as the next sticky row comes up under it.
- * FlashList pushes the copy by the height it measured for the stuck row; the
- * copy is as tall as its stack, so this adds the difference: the copy starts to
- * move when the next row reaches the copy's real bottom and is gone when that
- * row reaches the top. All in the list's content offsets.
- */
-export function stickyPush(input: {
-    offset: number
-    nextY: number | undefined
-    stackHeight: number
-    itemHeight: number
-}): number {
-    const { offset, nextY, stackHeight, itemHeight } = input
-    if (nextY === undefined) return 0
-    const pushed = (height: number) => Math.min(Math.max(offset - (nextY - height), 0), height)
-    return pushed(itemHeight) - pushed(stackHeight)
-}
