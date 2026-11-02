@@ -117,14 +117,18 @@ func combined(values []expr, at string) (currency, error) {
 	return out, nil
 }
 
-// currencyGuard is the condition under which an operation on values holds
-// under the money rules: every amount among them is in one currency. An amount
-// param's currency is known only when the report runs (R29), and a comparison
-// is not combined (combined refuses other amounts in two currencies at
-// compile time), so it is checked on each row: "" when the values are in one
-// currency source, or when neither a param with a currency nor a comparison
-// (compare) is among them.
-func currencyGuard(c fctx, values []expr, compare bool) string {
+// currencyGuard is the operation e (op) on values under the money rules: it
+// holds where every amount among them is in one currency. An amount param's
+// currency is known only when the report runs (R29), and a comparison or a
+// ratio does not combine (combined refuses other amounts in two currencies
+// only for an amount), so the currencies are checked on each row. Where they
+// are known and differ, a comparison compares the amount AND the currency (ne
+// is true, every other comparison false) and anything else is blank. A missing
+// currency (an empty link, a record outside its group) is not a second
+// currency: the comparison is as within one. sql is e's unchanged when the
+// values are in one currency source, or when neither a param with a currency,
+// a comparison nor a ratio is among them.
+func currencyGuard(c fctx, op string, values []expr, sql string) string {
 	var curs []currency
 	param := false
 	for _, v := range values {
@@ -134,15 +138,30 @@ func currencyGuard(c fctx, values []expr, compare bool) string {
 		curs = append(curs, v.cur)
 		param = param || v.cur.param != ""
 	}
-	if len(curs) < 2 || !(param || compare) {
-		return ""
+	if len(curs) < 2 || !(param || conditionOps[op] || op == "div") {
+		return sql
 	}
-	first := c.currencySQL(curs[0])
-	conds := make([]string, 0, len(curs)-1)
-	for _, cur := range curs[1:] {
-		conds = append(conds, first+" IS "+c.currencySQL(cur))
+	codes := make([]string, len(curs))
+	for i, cur := range curs {
+		codes[i] = c.currencySQL(cur)
 	}
-	return strings.Join(conds, " AND ")
+	same := make([]string, 0, len(codes)-1)
+	for _, code := range codes[1:] {
+		same = append(same, codes[0]+" IS "+code)
+	}
+	one := strings.Join(same, " AND ")
+	if !conditionOps[op] {
+		return "(CASE WHEN " + one + " THEN " + sql + " END)"
+	}
+	known := make([]string, len(codes))
+	for i, code := range codes {
+		known[i] = code + " IS NOT NULL"
+	}
+	apart := "0"
+	if op == "ne" {
+		apart = "1"
+	}
+	return fmt.Sprintf("(CASE WHEN %s AND NOT (%s) THEN %s ELSE %s END)", strings.Join(known, " AND "), one, apart, sql)
 }
 
 // currencyCode is the SQL of a money value's currency code where c compiles,
@@ -416,20 +435,9 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{}, err
 		}
 	}
-	// Amounts are compared, and an amount param combined, only in one
-	// currency (R29): a comparison compares the amount AND the currency, so
-	// across currencies ne is true and every other comparison false; an amount
-	// or a ratio is blank. A USD budget never compares with EUR cents.
-	if guard := currencyGuard(c, args, conditionOps[n.Op]); guard != "" {
-		otherwise := ""
-		switch {
-		case n.Op == "ne":
-			otherwise = " ELSE 1"
-		case conditionOps[n.Op]:
-			otherwise = " ELSE 0"
-		}
-		e.sql = "(CASE WHEN " + guard + " THEN " + e.sql + otherwise + " END)"
-	}
+	// Amounts are compared, divided, and combined with an amount param only
+	// in one currency (R29): a USD budget never compares with EUR cents.
+	e.sql = currencyGuard(c, n.Op, args, e.sql)
 	if c.filter() && conditionOps[n.Op] && slices.ContainsFunc(args, func(a expr) bool { return a.unset }) {
 		return unsetCondition, nil
 	}

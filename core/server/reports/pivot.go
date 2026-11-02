@@ -19,7 +19,8 @@ func (r *rowsCTE) pivotKey() {
 	}
 	r.add("pk", key)
 	if pv.byCurrency() {
-		r.add("pkc", fieldSQL(r.root.join(pv.path.hops), pv.path.src.field(pv.path.field.Currency)))
+		cur, _ := amountCurrencyOf(r.root, pv.path.hops, pv.path)
+		r.add("pkc", cur)
 	}
 }
 

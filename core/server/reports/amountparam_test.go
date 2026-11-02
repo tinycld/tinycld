@@ -158,6 +158,42 @@ func TestAmountsInTwoCurrenciesCompareAsUnequal(t *testing.T) {
 	requireRows(t, res, "label", "Kit", "Zed", "Total")
 }
 
+// A missing amount is not one in another currency: with no animal, its fee
+// and price compare as two blanks in one currency do, never as unequal
+// currencies.
+const keepersCompared = `{"version":2,"source":"zoo.keepers","columns":[
+	{"id":"name","path":[{"link":"animal"},{"field":"name"}]}],
+	"filter":%s,"sort":[{"col":"name"}]}`
+
+func TestAMissingCurrencyIsNotAnotherCurrency(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "k5", "zoo_keepers", map[string]any{"user": z.id("ann")})
+	fee := `{"path":[{"link":"animal"},{"field":"fee"}]}`
+	price := `{"path":[{"link":"animal"},{"field":"price"}]}`
+	weight := `{"path":[{"link":"animal"},{"field":"weight"}]}`
+	apart := z.run(t, "ann", fmt.Sprintf(keepersCompared, `{"op":"ne","args":[`+fee+`,`+price+`]}`), Options{}, nil)
+	oneKind := z.run(t, "ann", fmt.Sprintf(keepersCompared, `{"op":"ne","args":[`+price+`,`+weight+`]}`), Options{}, nil)
+	requireRows(t, apart, "label", "Leo", "Zed", "Total")
+	requireRows(t, oneKind, "label", "Leo", "Zed", "Total")
+	// Against a value, a blank is not equal to it, in the one currency.
+	toValue := z.run(t, "ann", fmt.Sprintf(keepersCompared, `{"op":"ne","args":[`+price+`,{"value":5}]}`), Options{}, nil)
+	requireRows(t, toValue, "label", "Leo", "Zed", blankLabel, "Total")
+}
+
+// A ratio of two amounts holds only in one currency: Leo's fee is in EUR,
+// his price in USD.
+func TestARatioOfAmountsKeepsToOneCurrency(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+		{"id":"name","path":[{"field":"name"}]},
+		{"id":"share","formula":{"op":"div","scale":4,"args":[{"path":[{"field":"fee"}]},{"path":[{"field":"price"}]}]}}],
+		"sort":[{"col":"name"}]}`, Options{}, nil)
+	// The fee's currency splits the totals (EUR, USD); a ratio of row values
+	// has no figure there.
+	requireRows(t, res, "label", "Kit", "Leo", "Zed", "Total", "Total")
+	requireRows(t, res, "share", 0.01, nil, 0.0025, nil, nil)
+}
+
 // Two amount params in different currencies hold against nothing; in one,
 // they combine.
 const twoParams = `{"version":2,"source":"zoo.feedings","params":[{"id":"a","type":"amount"},{"id":"b","type":"amount"}],"columns":[
