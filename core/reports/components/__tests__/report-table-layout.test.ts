@@ -11,25 +11,26 @@ import {
 } from '../report-table-layout'
 
 describe('reportTableLayout', () => {
-    it('gives the label the free space on wide screens and scrolls the amounts sideways', () => {
+    it('gives the label the free space on a desktop and scrolls the table sideways', () => {
         expect(reportTableLayout({ breakpoint: 'desktop', amountCount: 3 })).toEqual({
             labelStyle: { flex: 1, minWidth: LABEL_MIN_WIDTH },
+            labelMin: LABEL_MIN_WIDTH,
             amountWidth: AMOUNT_WIDTH,
             scrollsSideways: true,
             amountContentMinWidth: 3 * AMOUNT_WIDTH,
         })
     })
 
-    it('fits one or two narrower amount columns on a phone, and scrolls three or more', () => {
+    it('never scrolls a tablet or a phone sideways: their rows wrap where one line does not fit', () => {
+        expect(reportTableLayout({ breakpoint: 'tablet', amountCount: 3 })).toMatchObject({
+            amountWidth: AMOUNT_WIDTH,
+            scrollsSideways: false,
+        })
         expect(reportTableLayout({ breakpoint: 'mobile', amountCount: 2 })).toMatchObject({
             amountWidth: PHONE_AMOUNT_WIDTH,
             scrollsSideways: false,
-            labelStyle: { flex: 1 },
-        })
-        expect(reportTableLayout({ breakpoint: 'mobile', amountCount: 3 })).toMatchObject({
-            amountWidth: AMOUNT_WIDTH,
-            scrollsSideways: true,
-            labelStyle: { width: PHONE_LABEL_WIDTH },
+            labelStyle: { flex: 1, minWidth: PHONE_LABEL_WIDTH },
+            labelMin: PHONE_LABEL_WIDTH,
         })
     })
 })

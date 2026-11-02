@@ -1,12 +1,16 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
-import { Pressable, Text, View } from 'react-native'
+import type { ReactNode } from 'react'
+import { Animated, Pressable, Text, View } from 'react-native'
 import { type CellDisplay, cellDisplay, type NumberFormat, rowLabelText } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
+import { groupChain } from '../lib/sticky'
+import { type Block, type Justify, type LineLayout, rowLayout } from '../lib/table-lines'
 import type { ResultColumn, ResultRow, RowKind } from '../lib/types'
 import { columnAlign, INDENT, type ReportTableLayout, ROW_HEIGHT } from './report-table-layout'
 
-// The rule above a row; the label and amount stacks draw it alike, so it runs the full width.
+// The rule above a row; it is drawn on the row's container, so it runs across
+// the whole row, wrapped lines included.
 const ROW_RULE: Record<RowKind, string> = {
     group: '',
     detail: '',
@@ -23,10 +27,80 @@ const ROW_WEIGHT: Record<RowKind, string> = {
     total: 'font-semibold',
 }
 
+const TEXT_ALIGN: Record<Justify, string> = {
+    start: 'text-left',
+    center: 'text-center',
+    end: 'text-right tabular-nums',
+}
+const JUSTIFY_CONTENT = { start: 'flex-start', center: 'center', end: 'flex-end' } as const
+
 const CARET_SIZE = 14
 
-function labelRowStyle(row: ResultRow) {
-    return { height: ROW_HEIGHT, paddingLeft: INDENT + row.depth * INDENT }
+/** A one-line amount's alignment: numbers right, anything else left. */
+export function amountJustify(column: ResultColumn, index: number): Justify {
+    return columnAlign(column, index) === 'right' ? 'end' : 'start'
+}
+
+/** Draws a column's cell, aligned as its block says. */
+export type RenderCell = (col: string, justify: Justify) => ReactNode
+
+/**
+ * A row (or the heading) as its block tree (lib/table-lines.ts), drawn with flex:
+ * a stack is a column of blocks, a side block a row of blocks as wide as their
+ * share of the tracks. A side row stretches its blocks to one height, so a cell
+ * that spans lines is as tall as the lines beside it; justify aligns each cell,
+ * and an empty part keeps the height of the lines it stands for. Heights come
+ * from the content: FlashList measures the row.
+ */
+export function BlockView({ block, renderCell }: { block: Block; renderCell: RenderCell }) {
+    if (block.kind === 'gap') return <View style={{ minHeight: block.lines * ROW_HEIGHT }} />
+    if (block.kind === 'cell') return <CellSlot block={block} renderCell={renderCell} />
+    if (block.kind === 'stack') return <StackBlock parts={block.parts} renderCell={renderCell} />
+    return <SideBlock of={block.of} parts={block.parts} renderCell={renderCell} />
+}
+
+function CellSlot({
+    block,
+    renderCell,
+}: {
+    block: Extract<Block, { kind: 'cell' }>
+    renderCell: RenderCell
+}) {
+    return <View className="min-w-0 grow">{renderCell(block.col, block.justify)}</View>
+}
+
+function StackBlock({ parts, renderCell }: { parts: Block[]; renderCell: RenderCell }) {
+    const items = parts.map((part, i) => (
+        <BlockView key={blockKey(part, i)} block={part} renderCell={renderCell} />
+    ))
+    return <View className="grow">{items}</View>
+}
+
+function SideBlock({
+    of,
+    parts,
+    renderCell,
+}: {
+    of: number
+    parts: { block: Block; tracks: number }[]
+    renderCell: RenderCell
+}) {
+    const items = parts.map((part, i) => (
+        <View key={blockKey(part.block, i)} style={{ width: `${(part.tracks / of) * 100}%` }}>
+            <BlockView block={part.block} renderCell={renderCell} />
+        </View>
+    ))
+    return <View className="flex-row">{items}</View>
+}
+
+/** A block's key: its first cell's column, or its place. */
+function blockKey(block: Block, index: number): string {
+    if (block.kind === 'cell') return block.col
+    if (block.kind === 'stack')
+        return block.parts[0] ? blockKey(block.parts[0], index) : `stack-${index}`
+    if (block.kind === 'side')
+        return block.parts[0] ? blockKey(block.parts[0].block, index) : `side-${index}`
+    return `gap-${index}`
 }
 
 function GroupCaret({ isOpen }: { isOpen: boolean }) {
@@ -46,25 +120,45 @@ function LabelText({ row, text }: { row: ResultRow; text: string }) {
     )
 }
 
-interface ReportRowLabelProps {
+interface RowLabelProps {
     item: VisibleRow
     format: NumberFormat
     onToggleGroup(row: ResultRow): void
+    justify?: Justify
+    /** The test id's stem: `report-row` in the list, another in a stuck copy. */
+    idStem?: string
+}
+
+// Child rows indent the label only, so the figures stay aligned.
+// It grows to fill its slot (or its frozen column), as a block cell does.
+function labelStyle(row: ResultRow, justify: Justify) {
+    return {
+        flexGrow: 1,
+        minHeight: ROW_HEIGHT,
+        paddingLeft: INDENT + row.depth * INDENT,
+        justifyContent: JUSTIFY_CONTENT[justify],
+    }
 }
 
 // A role-button Pressable takes a click, Enter and Space on web and a tap on native.
-function GroupToggleLabel({ item, format, onToggleGroup }: ReportRowLabelProps) {
+function GroupToggleLabel({
+    item,
+    format,
+    onToggleGroup,
+    justify = 'start',
+    idStem = 'report-row',
+}: RowLabelProps) {
     const { row } = item
     const text = rowLabelText(row, format)
     return (
         <Pressable
-            testID={`report-row-${row.id}`}
+            testID={`${idStem}-${row.id}`}
             accessibilityRole="button"
             accessibilityLabel={text}
             aria-expanded={item.isOpen}
             onPress={() => onToggleGroup(row)}
             className="flex-row items-center gap-1 pr-3"
-            style={labelRowStyle(row)}
+            style={labelStyle(row, justify)}
         >
             <GroupCaret isOpen={item.isOpen} />
             <LabelText row={row} text={text} />
@@ -72,90 +166,219 @@ function GroupToggleLabel({ item, format, onToggleGroup }: ReportRowLabelProps) 
     )
 }
 
-export function ReportRowLabel({ item, format, onToggleGroup }: ReportRowLabelProps) {
-    if (item.isToggle) {
-        return <GroupToggleLabel item={item} format={format} onToggleGroup={onToggleGroup} />
-    }
-    const { row } = item
-    const text = rowLabelText(row, format)
+/** A row's label: a group's is its fold toggle. */
+export function RowLabel(props: RowLabelProps) {
+    if (props.item.isToggle) return <GroupToggleLabel {...props} />
+    const { item, format, justify = 'start', idStem = 'report-row' } = props
+    const text = rowLabelText(item.row, format)
     return (
         <View
-            testID={`report-row-${row.id}`}
-            className={`flex-row items-center pr-3 ${ROW_RULE[row.kind]}`}
-            style={labelRowStyle(row)}
+            testID={`${idStem}-${item.row.id}`}
+            className="flex-row items-center pr-3"
+            style={labelStyle(item.row, justify)}
         >
-            <LabelText row={row} text={text} />
+            <LabelText row={item.row} text={text} />
         </View>
     )
 }
 
-function cellTextClass(display: CellDisplay, align: 'left' | 'right', kind: RowKind): string {
-    const alignClass = align === 'right' ? 'text-right tabular-nums' : 'text-left'
-    const tone = display.isRed || display.isError ? 'text-danger' : 'text-foreground'
-    return `text-sm ${alignClass} ${tone} ${ROW_WEIGHT[kind]}`
+/**
+ * A cell's box. A one-line amount keeps its width; a block cell has none and
+ * grows to fill its slot, so a cell spanning lines is as tall as they are.
+ */
+export function cellBoxStyle(width?: number) {
+    return { width, minHeight: ROW_HEIGHT, flexGrow: width === undefined ? 1 : 0 }
 }
 
-interface AmountCellProps {
+function cellTextClass(display: CellDisplay, justify: Justify, kind: RowKind): string {
+    const tone = display.isRed || display.isError ? 'text-danger' : 'text-foreground'
+    return `text-sm ${TEXT_ALIGN[justify]} ${tone} ${ROW_WEIGHT[kind]}`
+}
+
+interface RowCellProps {
     item: VisibleRow
     column: ResultColumn
-    index: number
-    width: number
     format: NumberFormat
+    justify: Justify
+    onToggleGroup(row: ResultRow): void
+    /** A one-line amount's fixed width; a block cell fills its slot. */
+    width?: number
 }
 
-function AmountCell({ item, column, index, width, format }: AmountCellProps) {
+// A group row's label is its one accessible toggle. Its figures take the same
+// press but are not a button and have no tab stop, so a closed group's figures
+// stay readable.
+export function RowCell({ item, column, format, justify, onToggleGroup, width }: RowCellProps) {
     const { row } = item
     const display = cellDisplay(column, row, item.cells[column.id], format)
-    const align = columnAlign(column, index)
+    const text = (
+        <Text numberOfLines={1} className={cellTextClass(display, justify, row.kind)}>
+            {display.text}
+        </Text>
+    )
+    const testID = `report-cell-${column.id}-${row.id}`
+    const style = cellBoxStyle(width)
+    if (!item.isToggle) {
+        return (
+            <View testID={testID} className="justify-center px-3" style={style}>
+                {text}
+            </View>
+        )
+    }
     return (
-        <View
-            testID={`report-cell-${column.id}-${row.id}`}
-            className={`justify-center px-3 ${ROW_RULE[row.kind]}`}
-            style={{ width, height: ROW_HEIGHT }}
+        <Pressable
+            testID={testID}
+            onPress={() => onToggleGroup(row)}
+            accessible={false}
+            tabIndex={-1}
+            className="justify-center px-3"
+            style={style}
         >
-            <Text numberOfLines={1} className={cellTextClass(display, align, row.kind)}>
-                {display.text}
-            </Text>
-        </View>
+            {text}
+        </Pressable>
     )
 }
 
-interface ReportRowAmountsProps {
-    item: VisibleRow
-    columns: ResultColumn[]
-    layout: ReportTableLayout
-    format: NumberFormat
-    onToggleGroup(row: ResultRow): void
+/** Holds the label column at the left while a desktop table scrolls sideways (R27). */
+export function FrozenLabel({
+    scrollX,
+    style,
+    children,
+}: {
+    scrollX: Animated.Value
+    style: ReportTableLayout['labelStyle']
+    children: ReactNode
+}) {
+    return (
+        <Animated.View
+            className="z-10 bg-background"
+            style={[style, { transform: [{ translateX: scrollX }] }]}
+        >
+            {children}
+        </Animated.View>
+    )
 }
 
-// The label side is the row's one accessible toggle. This side takes the same press but
-// is not a button and has no tab stop, so a closed group's figures stay readable.
-export function ReportRowAmounts({
-    item,
-    columns,
-    layout,
-    format,
-    onToggleGroup,
-}: ReportRowAmountsProps) {
-    const cells = columns.map((column, i) => (
-        <AmountCell
+export interface TableRowProps {
+    item: VisibleRow
+    columns: ResultColumn[]
+    layout: LineLayout
+    oneLine: ReportTableLayout
+    format: NumberFormat
+    onToggleGroup(row: ResultRow): void
+    scrollX: Animated.Value
+}
+
+function OneLineRow({ item, columns, oneLine, format, onToggleGroup, scrollX }: TableRowProps) {
+    const [, ...amounts] = columns
+    const cells = amounts.map((column, i) => (
+        <RowCell
             key={column.id}
             item={item}
             column={column}
-            index={i + 1}
-            width={layout.amountWidth}
             format={format}
+            justify={amountJustify(column, i + 1)}
+            onToggleGroup={onToggleGroup}
+            width={oneLine.amountWidth}
         />
     ))
-    if (!item.isToggle) return <View className="flex-row">{cells}</View>
     return (
-        <Pressable
-            onPress={() => onToggleGroup(item.row)}
-            accessible={false}
-            tabIndex={-1}
-            className="flex-row"
-        >
+        <View className={`flex-row ${ROW_RULE[item.row.kind]}`}>
+            <FrozenLabel scrollX={scrollX} style={oneLine.labelStyle}>
+                <RowLabel item={item} format={format} onToggleGroup={onToggleGroup} />
+            </FrozenLabel>
             {cells}
-        </Pressable>
+        </View>
+    )
+}
+
+function BlocksRow({ item, columns, layout, format, onToggleGroup }: TableRowProps) {
+    const [label] = columns
+    const lines = rowLayout(item, layout, label?.id ?? '')
+    if (lines.kind !== 'blocks') return null
+    const byId = new Map(columns.map(column => [column.id, column]))
+    const renderCell: RenderCell = (col, justify) => {
+        if (col === label?.id) {
+            return (
+                <RowLabel
+                    item={item}
+                    format={format}
+                    onToggleGroup={onToggleGroup}
+                    justify={justify}
+                />
+            )
+        }
+        const column = byId.get(col)
+        if (!column) return null
+        return (
+            <RowCell
+                item={item}
+                column={column}
+                format={format}
+                justify={justify}
+                onToggleGroup={onToggleGroup}
+            />
+        )
+    }
+    return (
+        <View className={ROW_RULE[item.row.kind]}>
+            <BlockView block={lines.root} renderCell={renderCell} />
+        </View>
+    )
+}
+
+/** One row of the table: one line, or its block tree where rows wrap (E14). */
+export function TableRow(props: TableRowProps) {
+    if (props.layout.kind === 'one-line') return <OneLineRow {...props} />
+    return <BlocksRow {...props} />
+}
+
+interface StickyGroupProps {
+    rows: VisibleRow[]
+    index: number
+    format: NumberFormat
+    onToggleGroup(row: ResultRow): void
+    oneLine: ReportTableLayout
+    isOneLine: boolean
+    scrollX: Animated.Value
+}
+
+// The stuck copy of an open group row (FlashList's StickyHeader target), with
+// the open groups that enclose it stacked above it, outermost first (R26). Each
+// line is that group's label, so a press folds it. Its test ids are its own: the
+// list still holds the group's row.
+export function StickyGroup({
+    rows,
+    index,
+    format,
+    onToggleGroup,
+    oneLine,
+    isOneLine,
+    scrollX,
+}: StickyGroupProps) {
+    const byId = new Map(rows.map(item => [item.row.id, item]))
+    const labels = groupChain(rows, index).map(row => {
+        const item = byId.get(row.id)
+        if (!item) return null
+        return (
+            <RowLabel
+                key={row.id}
+                item={item}
+                format={format}
+                onToggleGroup={onToggleGroup}
+                idStem="report-sticky-row"
+            />
+        )
+    })
+    const style = isOneLine ? oneLine.labelStyle : { flex: 1 }
+    return (
+        <View
+            testID="report-sticky-group"
+            className="flex-row border-b border-border bg-background"
+        >
+            <FrozenLabel scrollX={scrollX} style={style}>
+                {labels}
+            </FrozenLabel>
+        </View>
     )
 }

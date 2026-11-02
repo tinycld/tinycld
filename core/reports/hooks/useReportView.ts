@@ -32,7 +32,13 @@ import {
     visibleRows,
 } from '../lib/rows'
 import type { RunBody } from '../lib/run-client'
-import { type BrokenMark, brokenProblems, type ParamDef, type ReportSpec } from '../lib/spec'
+import {
+    type BrokenMark,
+    brokenProblems,
+    type DisplayLayout,
+    type ParamDef,
+    type ReportSpec,
+} from '../lib/spec'
 import type { Notice, ResolvedParam, ResultColumn, ResultRow, RunResult } from '../lib/types'
 import {
     parseViewOptions,
@@ -59,6 +65,7 @@ export type ViewState =
 const NO_COLUMNS: ResultColumn[] = []
 const NO_NOTICES: Notice[] = []
 const NO_ROWS: ResultRow[] = []
+const NO_LAYOUTS: readonly DisplayLayout[] = []
 
 function viewState(input: {
     source: ViewSource | null
@@ -121,6 +128,8 @@ export interface ReportViewInput {
     missingNote?: string | null
     onShare?(): void
     onSaveAs?(): void
+    /** The report's line layouts per width (E14): the saved spec's, or the draft's. */
+    layouts?: readonly DisplayLayout[]
 }
 
 export function useReportView(input: ReportViewInput) {
@@ -243,6 +252,7 @@ export function useReportView(input: ReportViewInput) {
         notices: run.result?.notices ?? NO_NOTICES,
         isUpdating: run.isUpdating,
         breakpoint,
+        layouts: input.layouts ?? NO_LAYOUTS,
         heading: headingOf(run.result, org?.name),
         optionsSource,
         postedParams: posted,

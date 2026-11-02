@@ -3,6 +3,7 @@ import {
     BUCKETS,
     CURRENT_SPEC_VERSION,
     DISPLAY_WIDTHS,
+    type DisplayLayout,
     displayLayoutSchema,
     type ParamDef,
     paramDefSchema,
@@ -310,23 +311,58 @@ export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     if (firstProblem) issues.push({ path: ['filter'], message: firstProblem })
     if (draft.pivot.on && draft.detailLabel !== null)
         issues.push({ path: ['detailLabel'], message: PIVOT_DETAIL })
-    return [...issues, ...levelIssues(draft, catalog), ...displayIssues(draft)]
+    const columnIds = draft.columns.map(column => column.id)
+    return [...issues, ...levelIssues(draft, catalog), ...displayIssues(draft.display, columnIds)]
 }
 
-// What the engine refuses in a display layout's tracks and cells, in its order
-// (core/server/reports/display.go): bad tracks or no cells stop the layout's
-// checks; otherwise the first cell placeCells refuses.
-function displayIssues(draft: BuilderDraft): Issue[] {
-    return draft.display.layouts.flatMap((layout, i): Issue[] => {
-        const at = ['display', 'layouts', i]
-        if (layout.tracks < 1 || layout.tracks > MAX_TRACKS)
-            return [{ path: [...at, 'tracks'], message: `tracks is 1 to ${MAX_TRACKS}` }]
-        if (layout.cells.length === 0)
-            return [{ path: [...at, 'cells'], message: 'a layout places at least one column' }]
-        const placement = placeCells(layout.tracks, layout.cells)
-        if (!('problem' in placement)) return []
+// What the engine refuses in each display layout, in its order
+// (core/server/reports/display.go display): a second layout for a width; bad
+// tracks, no cells or more cells than a report has columns stop the layout's
+// checks; then each cell whose column the report lacks or another cell placed;
+// then the first cell placeCells refuses.
+function layoutIssues(
+    layout: DisplayLayout,
+    at: (string | number)[],
+    columnIds: readonly string[]
+): Issue[] {
+    if (layout.tracks < 1 || layout.tracks > MAX_TRACKS)
+        return [{ path: [...at, 'tracks'], message: `tracks is 1 to ${MAX_TRACKS}` }]
+    if (layout.cells.length === 0)
+        return [{ path: [...at, 'cells'], message: 'a layout places at least one column' }]
+    if (layout.cells.length > MAX_COLUMNS)
+        return [
+            { path: [...at, 'cells'], message: `a layout places at most ${MAX_COLUMNS} columns` },
+        ]
+    const issues: Issue[] = []
+    const placed = new Set<string>()
+    layout.cells.forEach((cell, j) => {
+        const path = [...at, 'cells', j, 'col']
+        if (!columnIds.includes(cell.col))
+            issues.push({ path, message: `the report has no column "${cell.col}"` })
+        else if (placed.has(cell.col))
+            issues.push({ path, message: 'a column is placed once per layout' })
+        placed.add(cell.col)
+    })
+    const placement = placeCells(layout.tracks, layout.cells)
+    if ('problem' in placement) {
         const { index, message } = placement.problem
-        return [{ path: [...at, 'cells', index], message }]
+        issues.push({ path: [...at, 'cells', index], message })
+    }
+    return issues
+}
+
+export function displayIssues(
+    display: BuilderDraft['display'],
+    columnIds: readonly string[]
+): Issue[] {
+    const widths = new Set<string>()
+    return display.layouts.flatMap((layout, i): Issue[] => {
+        const at = ['display', 'layouts', i]
+        const again: Issue[] = widths.has(layout.width)
+            ? [{ path: [...at, 'width'], message: 'one layout per width' }]
+            : []
+        widths.add(layout.width)
+        return [...again, ...layoutIssues(layout, at, columnIds)]
     })
 }
 

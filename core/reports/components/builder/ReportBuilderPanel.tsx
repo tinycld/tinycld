@@ -28,6 +28,7 @@ import type { Problem } from '../../lib/types'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 import { ReportNotices } from '../ReportNotices'
 import { ReportBody } from '../ReportView'
+import { ArrangeSection } from './ArrangeSection'
 import { ColumnsSection } from './ColumnsSection'
 import { DetailsSection } from './DetailsSection'
 import { FilterSection } from './FilterSection'
@@ -79,6 +80,7 @@ function Sections({ builder, problems }: { builder: ReportBuilder; problems: Pro
             <GroupSortSection builder={builder} problems={problems} />
             <PivotSection builder={builder} problems={problems} />
             <LayoutSection builder={builder} problems={problems} />
+            <ArrangeSection builder={builder} problems={problems} />
         </View>
     )
 }

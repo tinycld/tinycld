@@ -41,8 +41,8 @@ func TestDisplayCellsSharedTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Keep equal to the count in the client test.
-	if len(table.Cases) != 19 {
-		t.Fatalf("cases = %d, want 19", len(table.Cases))
+	if len(table.Cases) != 21 {
+		t.Fatalf("cases = %d, want 21", len(table.Cases))
 	}
 	for _, c := range table.Cases {
 		t.Run(c.Name, func(t *testing.T) {

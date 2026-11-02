@@ -106,6 +106,7 @@ function SavedReportView({ record, onBack }: { record: RecordModel; onBack: () =
         missingNote,
         onShare: report ? () => openShare(report.id) : undefined,
         onSaveAs: canCopy ? () => setSavingAs(true) : undefined,
+        layouts: record.spec?.display?.layouts,
     })
     const onSaveCopy = (title: string) => {
         setSavingAs(false)
@@ -174,6 +175,7 @@ function EditingReport({ record, catalog, base, onBack }: EditingReportProps) {
         broken: null,
         isEditing: true,
         onBack,
+        layouts: builder.previewSpec?.display?.layouts,
     })
     return (
         <ReportView model={model} side={<ReportBuilderPanel builder={builder} preview={model} />} />

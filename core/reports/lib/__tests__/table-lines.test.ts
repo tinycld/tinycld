@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import table from '../fixtures/display-cells.json'
-import { displayCellSchema } from '../spec'
-import { PINWHEEL_MESSAGE, placeCells, rowLayout, startingLayout, tableLines } from '../table-lines'
+import { type DisplayCell, displayCellSchema } from '../spec'
+import {
+    PINWHEEL_MESSAGE,
+    PIVOT_NOTICE,
+    placeCells,
+    rowLayout,
+    startingLayout,
+    tableLines,
+} from '../table-lines'
 import type { ResultColumn } from '../types'
 
 const COLS: ResultColumn[] = [
@@ -78,7 +85,7 @@ const SHARED = z.array(caseSchema).parse(table.cases)
 describe('the shared display cell table', () => {
     // Keep equal to the count in the Go test.
     it('holds every case', () => {
-        expect(SHARED.length).toBe(19)
+        expect(SHARED.length).toBe(21)
     })
     for (const c of SHARED) {
         it(c.name, () => {
@@ -165,7 +172,7 @@ describe('the table layout per width', () => {
                         of: 2,
                         parts: [
                             { block: { kind: 'cell', col: 'credit', justify: 'end' }, tracks: 1 },
-                            { block: { kind: 'gap' }, tracks: 1 },
+                            { block: { kind: 'gap', lines: 1 }, tracks: 1 },
                         ],
                     },
                 ],
@@ -202,7 +209,7 @@ describe('the table layout per width', () => {
                             kind: 'stack',
                             parts: [
                                 { kind: 'cell', col: 'account', justify: 'start' },
-                                { kind: 'gap' },
+                                { kind: 'gap', lines: 1 },
                             ],
                         },
                         tracks: 1,
@@ -325,6 +332,168 @@ describe('the table layout per width', () => {
                 ],
             },
         })
+    })
+    it('gives an empty part as many lines as it stands for', () => {
+        const layout = tableLines({
+            columns: COLS,
+            width: 390,
+            breakpoint: 'mobile',
+            oneLineFits: false,
+            layouts: [
+                {
+                    width: 'mobile',
+                    tracks: 2,
+                    cells: [
+                        { col: 'account', line: 1, lines: 3 },
+                        { col: 'debit', line: 1 },
+                    ],
+                },
+            ],
+        })
+        expect(layout).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'side',
+                of: 2,
+                parts: [
+                    { block: { kind: 'cell', col: 'account', justify: 'start' }, tracks: 1 },
+                    {
+                        block: {
+                            kind: 'stack',
+                            parts: [
+                                { kind: 'cell', col: 'debit', justify: 'end' },
+                                { kind: 'gap', lines: 2 },
+                            ],
+                        },
+                        tracks: 1,
+                    },
+                ],
+            },
+        })
+    })
+    it('starts the label column at the left in an arrangement, whatever its type', () => {
+        const columns: ResultColumn[] = [
+            { id: 'number', label: 'No.', type: 'number' },
+            { id: 'debit', label: 'Debit', type: 'money', currency: 'USD' },
+        ]
+        const layout = tableLines({
+            columns,
+            width: 390,
+            breakpoint: 'mobile',
+            oneLineFits: false,
+            layouts: [
+                {
+                    width: 'mobile',
+                    tracks: 2,
+                    cells: [
+                        { col: 'number', line: 1 },
+                        { col: 'debit', line: 1 },
+                    ],
+                },
+            ],
+        })
+        expect(layout).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'side',
+                of: 2,
+                parts: [
+                    { block: { kind: 'cell', col: 'number', justify: 'start' }, tracks: 1 },
+                    { block: { kind: 'cell', col: 'debit', justify: 'end' }, tracks: 1 },
+                ],
+            },
+        })
+    })
+    const PIVOTS: ResultColumn[] = [
+        { id: 'account', label: 'Account', type: 'text' },
+        { id: 'number', label: 'No.', type: 'text' },
+        { id: 'amount_q1', label: 'Q1', type: 'money', pivot: { cell: 'amount', key: 1 } },
+        { id: 'amount_q2', label: 'Q2', type: 'money', pivot: { cell: 'amount', key: 2 } },
+        { id: 'amount_q3', label: 'Q3', type: 'money', pivot: { cell: 'amount', key: 3 } },
+    ]
+    const pivotLines = (cells: DisplayCell[], tracks: number) =>
+        tableLines({
+            columns: PIVOTS,
+            width: 390,
+            breakpoint: 'mobile',
+            oneLineFits: false,
+            layouts: [{ width: 'mobile', tracks, cells }],
+        })
+    const pivotCell = (col: string) => ({ kind: 'cell', col, justify: 'end' })
+    it('gives each pivot column the span and lines of its entry', () => {
+        expect(
+            pivotLines(
+                [
+                    { col: 'account', line: 1, lines: 2 },
+                    { col: 'amount', line: 1, lines: 2 },
+                ],
+                4
+            )
+        ).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'side',
+                of: 4,
+                parts: [
+                    { block: { kind: 'cell', col: 'account', justify: 'start' }, tracks: 1 },
+                    { block: pivotCell('amount_q1'), tracks: 1 },
+                    { block: pivotCell('amount_q2'), tracks: 1 },
+                    { block: pivotCell('amount_q3'), tracks: 1 },
+                ],
+            },
+        })
+        expect(
+            pivotLines(
+                [
+                    { col: 'account', line: 1, span: 4 },
+                    { col: 'amount', line: 2, span: 2 },
+                ],
+                4
+            )
+        ).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'stack',
+                parts: [
+                    { kind: 'cell', col: 'account', justify: 'start' },
+                    {
+                        kind: 'side',
+                        of: 4,
+                        parts: [
+                            { block: pivotCell('amount_q1'), tracks: 2 },
+                            { block: pivotCell('amount_q2'), tracks: 2 },
+                        ],
+                    },
+                    {
+                        kind: 'side',
+                        of: 4,
+                        parts: [
+                            { block: pivotCell('amount_q3'), tracks: 2 },
+                            { block: { kind: 'gap', lines: 1 }, tracks: 2 },
+                        ],
+                    },
+                ],
+            },
+        })
+    })
+    it('lays out automatically, and says so, when the pivot columns collide with a cell', () => {
+        const auto = tableLines({
+            columns: PIVOTS,
+            width: 390,
+            breakpoint: 'mobile',
+            layouts: [],
+            oneLineFits: false,
+        })
+        expect(
+            pivotLines(
+                [
+                    { col: 'account', line: 1 },
+                    { col: 'amount', line: 1 },
+                    { col: 'number', line: 2 },
+                ],
+                2
+            )
+        ).toEqual({ ...auto, notice: PIVOT_NOTICE })
     })
     it('a row with no figures draws only its label', () => {
         const layout = tableLines({

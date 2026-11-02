@@ -130,6 +130,7 @@ function TableBody({ model }: { model: ReportViewModel }) {
             rows={model.rows}
             format={model.display}
             breakpoint={model.breakpoint}
+            layouts={model.layouts}
             onToggleGroup={model.onToggleGroup}
             onNearEnd={model.run.loadMore}
             isLoadingMore={model.run.isLoadingMore}

@@ -15,17 +15,19 @@ import type { ResultColumn } from './types'
 
 export const AUTO_TRACK_MIN = 104
 export const MAX_TRACKS = 12
-const MAX_LINES = 8
+export const MAX_LINES = 8
 export const PINWHEEL_MESSAGE =
     "These cells overlap in a way that can't be laid out; move one cell."
+export const PIVOT_NOTICE =
+    "The pivot columns do not fit this width's arrangement, so the rows are laid out automatically here."
 
 export type Justify = 'start' | 'center' | 'end'
 export type Block =
     | { kind: 'cell'; col: string; justify: Justify }
-    | { kind: 'gap' }
+    | { kind: 'gap'; lines: number }
     | { kind: 'stack'; parts: Block[] }
     | { kind: 'side'; of: number; parts: { block: Block; tracks: number }[] }
-export type LineLayout = { kind: 'one-line' } | { kind: 'blocks'; root: Block }
+export type LineLayout = { kind: 'one-line' } | { kind: 'blocks'; root: Block; notice?: string }
 export type Placed = { start: number; span: number; line: number; lines: number }
 export type Placement = { placed: Placed[] } | { problem: { index: number; message: string } }
 
@@ -42,7 +44,7 @@ const pieceOf = (p: Placed, index: number): Piece => ({
 })
 
 // The two sides of a straight cut at `at` (across: between lines, else between
-// tracks), or null when a piece straddles it or a side is empty.
+// tracks), or null when a piece straddles it. A side may be empty.
 function split(pieces: readonly Piece[], at: number, across: boolean): [Piece[], Piece[]] | null {
     const lo: Piece[] = []
     const hi: Piece[] = []
@@ -52,7 +54,18 @@ function split(pieces: readonly Piece[], at: number, across: boolean): [Piece[],
         else if (a0 >= at) hi.push(p)
         else return null
     }
-    return lo.length > 0 && hi.length > 0 ? [lo, hi] : null
+    return [lo, hi]
+}
+
+// A cut that parts the pieces: neither side is empty.
+function parts(pieces: readonly Piece[], at: number, across: boolean) {
+    const sides = split(pieces, at, across)
+    return sides && sides[0].length > 0 && sides[1].length > 0 ? sides : null
+}
+
+/** A cell's tracks and lines; an absent or zero span or lines counts as one. */
+function extent(c: DisplayCell) {
+    return { span: Math.max(c.span ?? 0, 1), lines: Math.max(c.lines ?? 0, 1) }
 }
 
 /**
@@ -63,13 +76,13 @@ function split(pieces: readonly Piece[], at: number, across: boolean): [Piece[],
 function cutDown(pieces: readonly Piece[], box: Box): number {
     if (pieces.length <= 1) return -1
     for (let y = box.y0 + 1; y < box.y1; y++) {
-        const sides = split(pieces, y, true)
+        const sides = parts(pieces, y, true)
         if (!sides) continue
         const stuck = cutDown(sides[0], { ...box, y1: y })
         return stuck >= 0 ? stuck : cutDown(sides[1], { ...box, y0: y })
     }
     for (let x = box.x0 + 1; x < box.x1; x++) {
-        const sides = split(pieces, x, false)
+        const sides = parts(pieces, x, false)
         if (!sides) continue
         const stuck = cutDown(sides[0], { ...box, x1: x })
         return stuck >= 0 ? stuck : cutDown(sides[1], { ...box, x0: x })
@@ -79,8 +92,7 @@ function cutDown(pieces: readonly Piece[], box: Box): number {
 
 // A cell's first refusal before placement, as the engine's checks in order.
 function cellProblem(c: DisplayCell, tracks: number): string | null {
-    const span = Math.max(c.span ?? 0, 1)
-    const lines = Math.max(c.lines ?? 0, 1)
+    const { span, lines } = extent(c)
     const start = c.start ?? 0
     if (c.line < 1 || c.line > MAX_LINES) return `line is 1 to ${MAX_LINES}`
     if ((c.lines ?? 0) < 0 || lines > MAX_LINES) return `lines is 1 to ${MAX_LINES}`
@@ -102,8 +114,7 @@ export function placeCells(tracks: number, cells: readonly DisplayCell[]): Place
     for (const [index, c] of cells.entries()) {
         const problem = cellProblem(c, tracks)
         if (problem) return { problem: { index, message: problem } }
-        const span = Math.max(c.span ?? 0, 1)
-        const lines = Math.max(c.lines ?? 0, 1)
+        const { span, lines } = extent(c)
         const free = (start: number) => {
             for (let line = c.line; line < c.line + lines; line++)
                 for (let t = start; t < start + span; t++)
@@ -144,29 +155,25 @@ const fills = (p: Piece, box: Box) =>
     p.x0 === box.x0 && p.x1 === box.x1 && p.y0 === box.y0 && p.y1 === box.y1
 
 // The block tree of pieces inside a box: a piece that fills its box is a cell,
-// an empty box a gap, anything else is cut where the engine cuts it (lines
-// first, then tracks, the first cut found). Always cuttable after placeCells:
-// a lone piece smaller than its box is cut at its own edges, and pieces with no
-// cut are refused as a pinwheel.
+// an empty box a gap as tall as its lines, anything else is cut where the
+// engine cuts it (lines first, then tracks, the first cut found). Always
+// cuttable after placeCells: a lone piece smaller than its box is cut at its own
+// edges (one side empty), and pieces with no cut are refused as a pinwheel.
 function build(pieces: readonly Piece[], box: Box, cellOf: (index: number) => Block): Block {
     const [only] = pieces
-    if (!only) return { kind: 'gap' }
+    const gap: Block = { kind: 'gap', lines: box.y1 - box.y0 }
+    if (!only) return gap
     if (pieces.length === 1 && fills(only, box)) return cellOf(only.index)
-    const sidesAt = (at: number, across: boolean) => {
-        const lo = pieces.filter(p => (across ? p.y1 : p.x1) <= at)
-        const hi = pieces.filter(p => (across ? p.y0 : p.x0) >= at)
-        return lo.length + hi.length === pieces.length ? [lo, hi] : null
-    }
     for (let y = box.y0 + 1; y < box.y1; y++) {
-        const sides = sidesAt(y, true)
+        const sides = split(pieces, y, true)
         if (!sides) continue
-        const [lo = [], hi = []] = sides
+        const [lo, hi] = sides
         return stackOf([build(lo, { ...box, y1: y }, cellOf), build(hi, { ...box, y0: y }, cellOf)])
     }
     for (let x = box.x0 + 1; x < box.x1; x++) {
-        const sides = sidesAt(x, false)
+        const sides = split(pieces, x, false)
         if (!sides) continue
-        const [lo = [], hi = []] = sides
+        const [lo, hi] = sides
         const left = build(lo, { ...box, x1: x }, cellOf)
         const right = build(hi, { ...box, x0: x }, cellOf)
         return {
@@ -175,14 +182,17 @@ function build(pieces: readonly Piece[], box: Box, cellOf: (index: number) => Bl
             parts: [...sideParts(left, x - box.x0), ...sideParts(right, box.x1 - x)],
         }
     }
-    return { kind: 'gap' }
+    return gap
 }
 
 const justifyOf = (column: ResultColumn): Justify => (isRightAligned(column) ? 'end' : 'start')
 
 // No arrangement for this width: the label across line 1, the other columns
 // in order on the lines below, one per track of at least AUTO_TRACK_MIN.
-function autoLines(columns: readonly ResultColumn[], width: number): LineLayout {
+function autoLines(
+    columns: readonly ResultColumn[],
+    width: number
+): Extract<LineLayout, { kind: 'blocks' }> {
     const [label, ...amounts] = columns
     const tracks = Math.max(1, Math.floor(width / AUTO_TRACK_MIN))
     const lines: Block[] = label ? [{ kind: 'cell', col: label.id, justify: 'start' }] : []
@@ -194,14 +204,15 @@ function autoLines(columns: readonly ResultColumn[], width: number): LineLayout 
         }))
         // A short last line keeps each amount on its own track.
         if (line.length < tracks)
-            parts.push({ block: { kind: 'gap' }, tracks: tracks - line.length })
+            parts.push({ block: { kind: 'gap', lines: 1 }, tracks: tracks - line.length })
         lines.push({ kind: 'side', of: tracks, parts })
     }
     return { kind: 'blocks', root: stackOf(lines) }
 }
 
-// A pivot cell column's entry stands for all its pivot columns, one per track
-// from where the entry is placed, wrapping onto the lines below.
+// A pivot cell column's entry stands for all its pivot columns, each as wide
+// and as tall as the entry, side by side from where the entry is placed and
+// wrapping onto the lines below it, from the first track.
 function expandPivots(
     layout: DisplayLayout,
     placed: readonly Placed[],
@@ -211,13 +222,17 @@ function expandPivots(
         const pivots = columns.filter(c => c.pivot?.cell === cell.col)
         const at = placed[index]
         if (pivots.length === 0 || !at) return [cell]
-        const first = at.start - 1
-        return pivots.map((p, k) => ({
-            col: p.id,
-            line: at.line + Math.floor((first + k) / layout.tracks),
-            start: ((first + k) % layout.tracks) + 1,
-            justify: cell.justify,
-        }))
+        let track = at.start - 1
+        let line = at.line
+        return pivots.map(p => {
+            if (track + at.span > layout.tracks) {
+                track = 0
+                line += at.lines
+            }
+            const start = track + 1
+            track += at.span
+            return { col: p.id, line, start, span: at.span, lines: at.lines, justify: cell.justify }
+        })
     })
 }
 
@@ -231,20 +246,25 @@ function authoredLines(
     const cells = expandPivots(layout, arranged.placed, columns).filter(cell =>
         columns.some(c => c.id === cell.col)
     )
+    // The engine checks the entries as written; a run's pivot columns may still
+    // run into another cell or past the last line. The rows are then laid out
+    // automatically, and the table says why.
     const result = placeCells(layout.tracks, cells)
-    if ('problem' in result) return autoLines(columns, width)
+    if ('problem' in result) return { ...autoLines(columns, width), notice: PIVOT_NOTICE }
     const pieces = result.placed.map(pieceOf)
     const lines = Math.max(1, ...pieces.map(p => p.y1))
+    const labelId = columns[0]?.id
     const cellOf = (index: number): Block => {
         const cell = cells[index]
         const column = columns.find(c => c.id === cell?.col)
-        if (!cell || !column) return { kind: 'gap' }
-        return { kind: 'cell', col: cell.col, justify: cell.justify ?? justifyOf(column) }
+        if (!cell || !column) return { kind: 'gap', lines: 1 }
+        // The label column starts at the left, whatever its type, as in one line.
+        const justify = column.id === labelId ? 'start' : justifyOf(column)
+        return { kind: 'cell', col: cell.col, justify: cell.justify ?? justify }
     }
     const tree = build(pieces, { x0: 0, x1: layout.tracks, y0: 0, y1: lines }, cellOf)
     // An arrangement that leaves out the label column puts the label on a line of
     // its own above it: a row is never without its label.
-    const labelId = columns[0]?.id
     if (labelId && !cells.some(c => c.col === labelId)) {
         const label: Block = { kind: 'cell', col: labelId, justify: 'start' }
         return { kind: 'blocks', root: stackOf([label, tree]) }

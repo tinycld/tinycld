@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec, type SpecNode } from '../../spec'
+import { MAX_COLUMNS } from '../columns'
 import {
     type BuilderDraft,
     builderSchema,
@@ -828,6 +829,49 @@ describe('spec version 2 in the builder', () => {
             {
                 path: ['display', 'layouts', 1, 'cells'],
                 message: 'a layout places at least one column',
+            },
+        ])
+    })
+
+    it('names a column an arrangement does not have or places twice, and a second layout for a width', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        const twice = {
+            width: 'mobile' as const,
+            tracks: 3,
+            cells: [
+                { col: 'team', line: 1 },
+                { col: 'gone', line: 1 },
+                { col: 'gone', line: 2 },
+                { col: 'team', line: 2 },
+            ],
+        }
+        const again = { width: 'mobile' as const, tracks: 1, cells: [{ col: 'team', line: 1 }] }
+        const issues = draftIssues({ ...draft, display: { layouts: [twice, again] } }, CATALOG)
+        expect(issues).toEqual([
+            {
+                path: ['display', 'layouts', 0, 'cells', 1, 'col'],
+                message: 'the report has no column "gone"',
+            },
+            {
+                path: ['display', 'layouts', 0, 'cells', 2, 'col'],
+                message: 'the report has no column "gone"',
+            },
+            {
+                path: ['display', 'layouts', 0, 'cells', 3, 'col'],
+                message: 'a column is placed once per layout',
+            },
+            { path: ['display', 'layouts', 1, 'width'], message: 'one layout per width' },
+        ])
+    })
+
+    it('refuses an arrangement with more cells than a report has columns', () => {
+        const draft = draftFromSpec(V2, META, CATALOG)
+        const cells = Array.from({ length: MAX_COLUMNS + 1 }, () => ({ col: 'team', line: 1 }))
+        const many = { width: 'tablet' as const, tracks: 1, cells }
+        expect(draftIssues({ ...draft, display: { layouts: [many] } }, CATALOG)).toEqual([
+            {
+                path: ['display', 'layouts', 0, 'cells'],
+                message: `a layout places at most ${MAX_COLUMNS} columns`,
             },
         ])
     })

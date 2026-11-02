@@ -162,6 +162,31 @@
                 "index": 1,
                 "message": "These cells overlap in a way that can't be laid out; move one cell."
             }
+        },
+        {
+            "name": "a pinwheel beside a cuttable track is refused at its own first cell",
+            "tracks": 4,
+            "cells": [
+                { "col": "z", "line": 1, "start": 1, "lines": 3 },
+                { "col": "a", "line": 1, "start": 2, "span": 2 },
+                { "col": "b", "line": 1, "start": 4, "lines": 2 },
+                { "col": "c", "line": 3, "start": 3, "span": 2 },
+                { "col": "d", "line": 2, "start": 2, "lines": 2 },
+                { "col": "e", "line": 2, "start": 3 }
+            ],
+            "problem": {
+                "index": 1,
+                "message": "These cells overlap in a way that can't be laid out; move one cell."
+            }
+        },
+        {
+            "name": "a cell may end exactly on the last track",
+            "tracks": 3,
+            "cells": [{ "col": "a", "line": 1, "start": 2, "span": 2 }, { "col": "b", "line": 1 }],
+            "placed": [
+                { "start": 2, "span": 2, "line": 1, "lines": 1 },
+                { "start": 1, "span": 1, "line": 1, "lines": 1 }
+            ]
         }
     ]
 }

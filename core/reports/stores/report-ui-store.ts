@@ -1,5 +1,6 @@
 import { create } from '@tinycld/core/lib/store'
 import type { Expansion } from '../lib/rows'
+import type { DisplayWidth } from '../lib/spec'
 
 // Shared UI state of the reports screens. One chip popover or sheet is open at a
 // time; open groups last for the session per report (not persisted, not in the
@@ -30,6 +31,9 @@ interface ReportUIState {
     /** The builder's open record picker, by its value's test id; one at a time. */
     builderPicker: string | null
     setBuilderPicker: (picker: string | null) => void
+    /** The width the builder's Arrange section edits (E14). */
+    arrangeWidth: DisplayWidth
+    setArrangeWidth: (width: DisplayWidth) => void
 }
 
 export const useReportUIStore = create<ReportUIState>()(set => ({
@@ -39,6 +43,8 @@ export const useReportUIStore = create<ReportUIState>()(set => ({
     shareReportId: null,
     builderPicker: null,
     setBuilderPicker: picker => set({ builderPicker: picker }),
+    arrangeWidth: 'mobile',
+    setArrangeWidth: width => set({ arrangeWidth: width }),
     setExpansion: (reportKey, expansion) =>
         set(state => ({ expansion: { ...state.expansion, [reportKey]: expansion } })),
     openSurface: surface => set({ surface }),

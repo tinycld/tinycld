@@ -9,11 +9,10 @@ export const PHONE_LABEL_WIDTH = 168
 export const PHONE_AMOUNT_WIDTH = 108
 export const INDENT = 16
 
-// A phone fits this many amount columns whole beside the label; more scroll sideways.
-const PHONE_FIT_COLUMNS = 2
-
 export type ReportTableLayout = {
     labelStyle: { flex?: number; minWidth?: number; width?: number }
+    /** The narrowest the label column gets: the table's minimum width is this plus the amounts. */
+    labelMin: number
     amountWidth: number
     scrollsSideways: boolean
     amountContentMinWidth: number
@@ -27,6 +26,7 @@ function layoutFor(
 ): ReportTableLayout {
     return {
         labelStyle,
+        labelMin: labelStyle.width ?? labelStyle.minWidth ?? 0,
         amountWidth,
         scrollsSideways,
         amountContentMinWidth: amountCount * amountWidth,
@@ -51,15 +51,17 @@ export function fitsOnOneLine(input: {
     return LABEL_MIN_WIDTH + amountCount * AMOUNT_WIDTH <= width
 }
 
+// The one-line layout. Only a desktop scrolls sideways: a narrower screen draws
+// one line only where it fits (fitsOnOneLine) and wraps rows otherwise (E14).
 export function reportTableLayout(input: {
     breakpoint: Breakpoint
     amountCount: number
 }): ReportTableLayout {
     const { breakpoint, amountCount } = input
-    if (breakpoint !== 'mobile') {
-        return layoutFor({ flex: 1, minWidth: LABEL_MIN_WIDTH }, AMOUNT_WIDTH, true, amountCount)
+    if (breakpoint === 'mobile') {
+        const label = { flex: 1, minWidth: PHONE_LABEL_WIDTH }
+        return layoutFor(label, PHONE_AMOUNT_WIDTH, false, amountCount)
     }
-    if (amountCount <= PHONE_FIT_COLUMNS)
-        return layoutFor({ flex: 1 }, PHONE_AMOUNT_WIDTH, false, amountCount)
-    return layoutFor({ width: PHONE_LABEL_WIDTH }, AMOUNT_WIDTH, true, amountCount)
+    const label = { flex: 1, minWidth: LABEL_MIN_WIDTH }
+    return layoutFor(label, AMOUNT_WIDTH, breakpoint === 'desktop', amountCount)
 }
