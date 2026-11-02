@@ -102,7 +102,7 @@ func (e *Engine) dryRun(caller *core.Record, triggerRef string, ast ConditionsAS
 			continue
 		}
 		if EvaluateConditions(ast, r, trigger) {
-			out.Matches = append(out.Matches, dryRunMatch{ID: r.Id, Summary: triggerSummary(r, trigger)})
+			out.Matches = append(out.Matches, dryRunMatch{ID: r.Id, Summary: triggerSummary(r, trigger, nil)})
 		}
 	}
 	return out, nil

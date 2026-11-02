@@ -53,15 +53,21 @@ type RunOutcome struct {
 	Results  []ActionResult
 	Err      string
 	Duration time.Duration
+	// Fields holds the run's dynamic values ("fields.<key>"), from the
+	// trigger's fields resolver.
+	Fields map[string]any
 }
 
-func triggerSummary(record *core.Record, trigger TriggerDef) map[string]any {
+func triggerSummary(record *core.Record, trigger TriggerDef, dyn map[string]any) map[string]any {
 	if record == nil {
 		return nil
 	}
 	out := map[string]any{}
 	for key := range exposedFields(record, trigger) {
 		out[key] = normalize(record.Get(key))
+	}
+	for key, v := range dyn {
+		out[key] = normalize(v)
 	}
 	return out
 }
@@ -81,7 +87,11 @@ func WriteRun(app core.App, rule *core.Record, record *core.Record, trigger Trig
 	run.Set("rule", rule.Id)
 	run.Set("fired_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
 	run.Set("matched", outcome.Matched)
-	run.Set("trigger_summary", triggerSummary(record, trigger))
+	run.Set("trigger_summary", triggerSummary(record, trigger, outcome.Fields))
+	if record != nil {
+		run.Set("record_id", record.Id)
+		run.Set("collection", record.Collection().Name)
+	}
 	if len(outcome.Results) > 0 {
 		b, _ := json.Marshal(outcome.Results)
 		run.Set("results", json.RawMessage(b))
