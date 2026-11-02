@@ -5,6 +5,7 @@ import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
 import { FormErrorSummary, NumberInput, TextInput, Toggle } from '@tinycld/core/ui/form'
 import { useState } from 'react'
 import { Text, View } from 'react-native'
+import { DestinationsSection } from './DestinationsSection'
 
 interface EmbedCodeProps {
     code: string | null
@@ -138,6 +139,7 @@ function PublishPanel({ formId, formName }: Omit<PublishTabProps, 'isVisible'>) 
                 onCopy={t.p.copy}
                 onRegenerate={t.askRegenerate}
             />
+            <DestinationsSection formId={formId} formName={formName} />
             <ConfirmDialog
                 isOpen={t.isConfirming}
                 title="Regenerate the link?"
