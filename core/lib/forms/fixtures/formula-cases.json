@@ -566,6 +566,81 @@
             "rows": [{ "a": 9223372036854775807 }, { "a": 1 }],
             "formula": { "op": "sum", "args": [{ "col": "a" }] },
             "error": "integer overflow"
+        },
+        {
+            "name": "lookup picks the smallest matching value",
+            "types": { "c": "text" },
+            "values": { "c": "a" },
+            "lookupTypes": { "code": "text", "rate": "number" },
+            "lookupRows": [
+                { "code": "a", "rate": 3 },
+                { "code": "a", "rate": 1 },
+                { "code": "b", "rate": 9 }
+            ],
+            "formula": {
+                "op": "lookup",
+                "source": "table",
+                "where": {
+                    "op": "eq",
+                    "args": [{ "path": [{ "field": "code" }] }, { "col": "c" }]
+                },
+                "value": { "path": [{ "field": "rate" }] }
+            },
+            "expect": 1
+        },
+        {
+            "name": "lookup pick max takes the largest",
+            "types": { "c": "text" },
+            "values": { "c": "a" },
+            "lookupTypes": { "code": "text", "rate": "number" },
+            "lookupRows": [{ "code": "a", "rate": 3 }, { "code": "a", "rate": 1 }],
+            "formula": {
+                "op": "lookup",
+                "source": "table",
+                "where": {
+                    "op": "eq",
+                    "args": [{ "path": [{ "field": "code" }] }, { "col": "c" }]
+                },
+                "value": { "path": [{ "field": "rate" }] },
+                "pick": "max"
+            },
+            "expect": 3
+        },
+        {
+            "name": "lookup with no match is empty",
+            "types": { "c": "text" },
+            "values": { "c": "z" },
+            "lookupTypes": { "code": "text", "rate": "number" },
+            "lookupRows": [{ "code": "a", "rate": 3 }],
+            "formula": {
+                "op": "lookup",
+                "source": "table",
+                "where": {
+                    "op": "eq",
+                    "args": [{ "path": [{ "field": "code" }] }, { "col": "c" }]
+                },
+                "value": { "path": [{ "field": "rate" }] }
+            },
+            "expect": null
+        },
+        {
+            "name": "lookup inside arithmetic",
+            "types": {},
+            "values": {},
+            "lookupTypes": { "rate": "number" },
+            "lookupRows": [{ "rate": 4 }],
+            "formula": {
+                "op": "add",
+                "args": [
+                    {
+                        "op": "lookup",
+                        "source": "table",
+                        "value": { "path": [{ "field": "rate" }] }
+                    },
+                    { "value": 1 }
+                ]
+            },
+            "expect": 5
         }
     ]
 }

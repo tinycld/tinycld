@@ -178,6 +178,13 @@ func expandedSize(n *Node, rows map[string]int) int {
 	for _, a := range n.Args {
 		size += expandedSize(a, rows)
 	}
+	// A lookup's where and value are compiled with it.
+	size += expandedSize(n.Where, rows)
+	if n.Op == "lookup" {
+		if v, err := lookupValue(n, ""); err == nil {
+			size += expandedSize(v, rows)
+		}
+	}
 	return size
 }
 
@@ -281,8 +288,15 @@ func (lc *layoutCtx) window(_ string, _ *Node, _ int, at string) (expr, error) {
 	return expr{}, lc.only(at)
 }
 func (lc *layoutCtx) exists(_ *Node, at string) (expr, error) { return expr{}, lc.only(at) }
+
+// lookup reads its source's rule CTE in the layout statement. There is no
+// report row to read: a column inside it is refused as above, and a param
+// resolves in the lookup itself.
+func (lc *layoutCtx) lookup(n *Node, at string) (expr, error) {
+	return lookupIn(lc, &rowsCTE{c: lc.c, s: lc.s}, n, at)
+}
 func (lc *layoutCtx) only(at string) error {
-	return invalid(at, "a computed row reads sections' subtotals, earlier rows and values")
+	return invalid(at, "a computed row reads sections' subtotals, earlier rows, values and lookups")
 }
 func (lc *layoutCtx) bind(v any) string   { return lc.s.bind(v) }
 func (lc *layoutCtx) fiscalStart() string { return lc.bind(int64(lc.c.fiscal)) }

@@ -308,6 +308,9 @@ func (lv *level) readsRowValue(n *Node, inAggregate bool, seen map[string]bool) 
 	if n == nil {
 		return false
 	}
+	if n.Op == "lookup" {
+		return lv.lookupReadsRowValue(n, inAggregate, seen)
+	}
 	if n.Path != nil {
 		return !inAggregate
 	}
@@ -340,6 +343,29 @@ func (lv *level) readsRowValue(n *Node, inAggregate bool, seen map[string]bool) 
 		}
 	}
 	return false
+}
+
+// lookupReadsRowValue is readsRowValue for a lookup. Its paths read the
+// looked-up source, never the report's rows; the report's values it reads
+// ({col}) make it correlated, and blank where one of them is. A lookup that
+// reads none is one value for the whole report, shown on every row.
+func (lv *level) lookupReadsRowValue(n *Node, inAggregate bool, seen map[string]bool) bool {
+	var walk func(n *Node) bool
+	walk = func(n *Node) bool {
+		switch {
+		case n == nil || n.Path != nil:
+			return false
+		case n.Col != "":
+			return lv.readsRowValue(n, inAggregate, seen)
+		}
+		if n.Op == "lookup" {
+			if v, err := lookupValue(n, ""); err == nil && walk(v) {
+				return true
+			}
+		}
+		return walk(n.Where) || slices.ContainsFunc(n.Args, walk)
+	}
+	return walk(n)
 }
 
 // path is blank on a group, subtotal or total row, as a path column with no
@@ -378,6 +404,7 @@ func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, er
 	return windowSQL(op, e, scale, lc.lv.frame, at)
 }
 
-func (lc *levelCtx) bind(v any) string   { return lc.lv.r.s.bind(v) }
-func (lc *levelCtx) fiscalStart() string { return lc.bind(int64(lc.lv.c.fiscal)) }
-func (lc *levelCtx) filter() bool        { return false }
+func (lc *levelCtx) bind(v any) string                       { return lc.lv.r.s.bind(v) }
+func (lc *levelCtx) fiscalStart() string                     { return lc.bind(int64(lc.lv.c.fiscal)) }
+func (lc *levelCtx) filter() bool                            { return false }
+func (lc *levelCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(lc, lc.lv.r, n, at) }

@@ -72,7 +72,8 @@ type Column struct {
 
 // Node is a formula or filter tree: an operator with arguments, or a leaf
 // (col, path, param, value, subtotal). exists and notExists carry a link path
-// and an optional where.
+// and an optional where; lookup carries a source, an optional where, a value
+// and a pick.
 type Node struct {
 	Op       string          `json:"op,omitempty"`
 	Args     []*Node         `json:"args,omitempty"`
@@ -84,6 +85,11 @@ type Node struct {
 	Subtotal string          `json:"subtotal,omitempty"`
 	Link     Path            `json:"link,omitempty"`
 	Where    *Node           `json:"where,omitempty"`
+	// Source and Pick belong to lookup: the source it reads, and "min" (the
+	// default) or "max" of the matching rows' value. A lookup's Value is a
+	// formula node over that source, not a literal.
+	Source string `json:"source,omitempty"`
+	Pick   string `json:"pick,omitempty"`
 }
 
 type SortKey struct {

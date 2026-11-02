@@ -97,9 +97,10 @@ func (rc *rowsCtx) window(op string, arg *Node, scale int, at string) (expr, err
 	return windowSQL(op, e, scale, rc.detail, at)
 }
 
-func (rc *rowsCtx) bind(v any) string   { return rc.r.s.bind(v) }
-func (rc *rowsCtx) fiscalStart() string { return rc.bind(int64(rc.r.c.fiscal)) }
-func (rc *rowsCtx) filter() bool        { return false }
+func (rc *rowsCtx) bind(v any) string                       { return rc.r.s.bind(v) }
+func (rc *rowsCtx) fiscalStart() string                     { return rc.bind(int64(rc.r.c.fiscal)) }
+func (rc *rowsCtx) filter() bool                            { return false }
+func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(rc, rc.r, n, at) }
 
 // windowSQL is a running value or a percent over a frame. A running sum
 // adds in the frame's order within the parent; a percent divides by the sum

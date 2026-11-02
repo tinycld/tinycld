@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,36 +55,55 @@ func sameCell(got, want any) bool {
 }
 
 // tableSource gives a table case its own collection with a column for every
-// typed name, and the source that reads it. PocketBase columns are NOT NULL,
-// so the columns are added to the bare table to hold the blanks the table's
-// cases test.
+// typed name, and the source that reads it.
 func (z *zoo) tableSource(t *testing.T, n int, c formulaCase, fiscal *int) (source string, names []string) {
 	t.Helper()
+	rows := c.Rows
+	if c.Values != nil {
+		rows = []map[string]any{c.Values}
+	}
 	collection := fmt.Sprintf("zoo_case%d", n)
-	col := core.NewBaseCollection(collection)
-	col.ListRule = rule("")
-	z.save(t, col)
-	for name := range c.Types {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	fields := make([]Field, 0, len(names))
-	for _, name := range names {
-		stmt := fmt.Sprintf("ALTER TABLE `%s` ADD COLUMN `%s`", collection, name)
-		if _, err := z.app.DB().NewQuery(stmt).Execute(); err != nil {
-			t.Fatal(err)
-		}
-		fields = append(fields, Field{Key: name, Label: name, Type: c.Types[name]})
-	}
+	fields, names := z.caseTable(t, collection, c.Types, rows)
 	source = fmt.Sprintf("zoo.case%d", n)
 	RegisterSource(Source{
 		Key: source, Collection: collection, Label: "Case", Fields: fields,
 		Currency:         func(core.App) string { return "USD" },
 		FiscalStartMonth: func(core.App) int { return *fiscal },
 	})
-	rows := c.Rows
-	if c.Values != nil {
-		rows = []map[string]any{c.Values}
+	return source, names
+}
+
+// lookupSource gives a case's lookupRows their own collection and source,
+// which the case's lookups read in place of "table".
+func (z *zoo) lookupSource(t *testing.T, n int, c formulaCase) string {
+	t.Helper()
+	collection := fmt.Sprintf("zoo_case%d_lookup", n)
+	fields, _ := z.caseTable(t, collection, c.LookupTypes, c.LookupRows)
+	source := fmt.Sprintf("zoo.case%d_lookup", n)
+	RegisterSource(Source{Key: source, Collection: collection, Label: "Case lookup", Fields: fields})
+	return source
+}
+
+// caseTable makes a collection that lists to everyone, with a column for
+// every typed name, holding rows. PocketBase columns are NOT NULL, so the
+// columns are added to the bare table to hold the blanks the table's cases
+// test.
+func (z *zoo) caseTable(t *testing.T, collection string, types map[string]FieldType, rows []map[string]any) (fields []Field, names []string) {
+	t.Helper()
+	col := core.NewBaseCollection(collection)
+	col.ListRule = rule("")
+	z.save(t, col)
+	for name := range types {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	fields = make([]Field, 0, len(names))
+	for _, name := range names {
+		stmt := fmt.Sprintf("ALTER TABLE `%s` ADD COLUMN `%s`", collection, name)
+		if _, err := z.app.DB().NewQuery(stmt).Execute(); err != nil {
+			t.Fatal(err)
+		}
+		fields = append(fields, Field{Key: name, Label: name, Type: types[name]})
 	}
 	for i, row := range rows {
 		params := dbx.Params{"id": fmt.Sprintf("row%d", i)}
@@ -99,7 +119,7 @@ func (z *zoo) tableSource(t *testing.T, n int, c formulaCase, fiscal *int) (sour
 			t.Fatal(err)
 		}
 	}
-	return source, names
+	return fields, names
 }
 
 // The shared formula table, through the production Run: a case with one row
@@ -116,6 +136,9 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 			node, err := json.Marshal(c.Formula)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if c.LookupTypes != nil {
+				node = bytes.ReplaceAll(node, []byte(`"source":"table"`), []byte(`"source":"`+z.lookupSource(t, n, c)+`"`))
 			}
 			columns := make([]string, 0, len(names)+1)
 			for _, name := range names {
@@ -163,7 +186,7 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 	}
 	// Keep in step with the table: the cases with one row, and the cases
 	// that total rows.
-	if detailRuns != 55 || totalRuns != 12 {
+	if detailRuns != 59 || totalRuns != 12 {
 		t.Fatalf("ran %d detail rows and %d totals", detailRuns, totalRuns)
 	}
 }

@@ -112,6 +112,7 @@ func (j *joinCtx) exists(n *Node, at string) (expr, error) {
 	return j.sc.exists(j.prefix, link, n.Where, mk, at)
 }
 
-func (j *joinCtx) bind(v any) string   { return j.sc.s.bind(v) }
-func (j *joinCtx) fiscalStart() string { return j.bind(int64(j.r.c.fiscal)) }
-func (j *joinCtx) filter() bool        { return j.isFilter }
+func (j *joinCtx) bind(v any) string                       { return j.sc.s.bind(v) }
+func (j *joinCtx) fiscalStart() string                     { return j.bind(int64(j.r.c.fiscal)) }
+func (j *joinCtx) filter() bool                            { return j.isFilter }
+func (j *joinCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(j, j.r, n, at) }

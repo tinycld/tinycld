@@ -314,8 +314,16 @@ func (p *plan) nodeSize(n *Node, memo map[string]formulaSize, visiting map[strin
 	for _, a := range n.Args {
 		add(a, inline)
 	}
-	// A where reads the linked rows' paths, never report columns.
-	add(n.Where, false)
+	// A lookup's where and value read report columns through the row the
+	// lookup sits on, and so does an exists inside a lookup's where, so the
+	// columns any where reads count inlined. (An exists in the filter is
+	// refused a report column when it compiles.)
+	add(n.Where, inline)
+	if n.Op == "lookup" {
+		if v, err := lookupValue(n, ""); err == nil {
+			add(v, inline)
+		}
+	}
 	return sz
 }
 

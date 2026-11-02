@@ -87,6 +87,8 @@ type fctx interface {
 	aggregate(op Aggregate, arg *Node, scale int, at string) (expr, error)
 	window(op string, arg *Node, scale int, at string) (expr, error)
 	exists(n *Node, at string) (expr, error)
+	// lookup compiles a lookup node: a value from another source's rows.
+	lookup(n *Node, at string) (expr, error)
 	// bind adds a value to the statement's parameters and returns its
 	// placeholder.
 	bind(v any) string
@@ -118,6 +120,12 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	*count++
 	if depth > maxFormulaDepth || *count > maxFormulaNodes {
 		return expr{}, invalid(at, fmt.Sprintf("a formula has at most %d levels and %d nodes", maxFormulaDepth, maxFormulaNodes))
+	}
+	if n.Op == "lookup" {
+		return c.lookup(n, at)
+	}
+	if n.Source != "" || n.Pick != "" {
+		return expr{}, invalid(at, "only lookup takes a source and a pick")
 	}
 	if kinds := nodeKinds(n); kinds != 1 {
 		return expr{}, invalid(at, "a formula node is one of op, col, path, param, value or subtotal")
@@ -802,6 +810,10 @@ func (ctxBase) subtotal(_, at string) (expr, error) {
 
 func (ctxBase) exists(n *Node, at string) (expr, error) {
 	return expr{}, invalid(at, n.Op+" belongs in the filter")
+}
+
+func (ctxBase) lookup(_ *Node, at string) (expr, error) {
+	return expr{}, invalid(at, "a lookup is read in a column, the filter, a group, a sort or a label")
 }
 
 // aggregateArg compiles an aggregate's argument over one base row and
