@@ -197,22 +197,11 @@ type runner struct {
 // Run runs a report for its reader. The statements read only rows the
 // reader's list rules allow; they never write.
 func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
-	if req.Auth == nil || req.Auth.IsSuperuser() {
-		return nil, ErrNoReader
-	}
-	p, specErr := bind(app, req.Spec)
-	if specErr != nil {
-		return nil, specErr
-	}
-	today, err := todayOf(req.Options.Today)
+	c, err := readerCompiler(app, req.Spec, req.Auth, req.Headers, req.Params, req.Options.Today, "options.today")
 	if err != nil {
 		return nil, err
 	}
-	params, specErr := resolveParams(p.spec.Params, req.Params, periodContext{today: today, fiscalStart: fiscalStartOf(p.base, app)})
-	if specErr != nil {
-		return nil, specErr
-	}
-	c := newCompiler(p, app, listRequestInfo(req.Auth, req.Headers), params)
+	p, params := c.p, c.params
 	expand, err := parseExpansion(req.Options)
 	if err != nil {
 		return nil, err
@@ -244,12 +233,36 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	return rn.res, nil
 }
 
-func todayOf(s string) (time.Time, error) {
+// readerCompiler binds a spec for its reader and resolves its params for the
+// reader's day (today, given at todayAt): what every read of a report, a run
+// or a param's options, starts from. A report never reads as a superuser or
+// as nobody.
+func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[string]string, given map[string]json.RawMessage, today, todayAt string) (*compiler, error) {
+	if auth == nil || auth.IsSuperuser() {
+		return nil, ErrNoReader
+	}
+	p, specErr := bind(app, spec)
+	if specErr != nil {
+		return nil, specErr
+	}
+	day, err := todayOf(today, todayAt)
+	if err != nil {
+		return nil, err
+	}
+	params, specErr := resolveParams(p.spec.Params, given, periodContext{today: day, fiscalStart: fiscalStartOf(p.base, app)})
+	if specErr != nil {
+		return nil, specErr
+	}
+	return newCompiler(p, app, listRequestInfo(auth, headers), params), nil
+}
+
+// todayOf reads the reader's day, given at at in the request.
+func todayOf(s, at string) (time.Time, error) {
 	if s == "" {
 		return time.Now().UTC().Truncate(24 * time.Hour), nil
 	}
 	if !isDay(s) {
-		return time.Time{}, invalid("options.today", "today is YYYY-MM-DD")
+		return time.Time{}, invalid(at, "today is YYYY-MM-DD")
 	}
 	return time.Parse(time.DateOnly, s)
 }
@@ -329,32 +342,42 @@ func (rn *runner) detailTypes() error {
 	return err
 }
 
-// query runs one statement under the time limit and records the topics of
-// every collection it reads.
-func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, error) {
+// readRows runs one read statement with the rule CTEs and ctes under the run
+// time limit; with topics, it also returns the change-signal topics of every
+// collection the statement reads.
+func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body string, topics bool) ([]map[string]any, []string, error) {
 	with, err := s.with(ctes...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sql := with + body
-	ctx, cancel := context.WithTimeout(rn.ctx, runLimits.timeout)
+	ctx, cancel := context.WithTimeout(ctx, runLimits.timeout)
 	defer cancel()
-	topics, err := changesignal.TopicsRead(ctx, rn.app, sql, s.params)
-	if err != nil {
-		return nil, mapRunError(err)
+	var read []string
+	if topics {
+		if read, err = changesignal.TopicsRead(ctx, app, sql, s.params); err != nil {
+			return nil, nil, mapRunError(err)
+		}
 	}
-	for _, t := range topics {
-		rn.topics[t] = true
-	}
-	rows, err := rn.app.DB().NewQuery(sql).Bind(s.params).WithContext(ctx).Rows()
+	rows, err := app.DB().NewQuery(sql).Bind(s.params).WithContext(ctx).Rows()
 	if err != nil {
-		return nil, mapRunError(err)
+		return nil, nil, mapRunError(err)
 	}
 	out, err := scanRows(rows)
 	if err != nil {
-		return nil, mapRunError(err)
+		return nil, nil, mapRunError(err)
 	}
-	return out, nil
+	return out, read, nil
+}
+
+// query runs one statement under the time limit and records the topics of
+// every collection it reads.
+func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, error) {
+	rows, topics, err := readRows(rn.ctx, rn.app, s, ctes, body, true)
+	for _, t := range topics {
+		rn.topics[t] = true
+	}
+	return rows, err
 }
 
 func mapRunError(err error) error {
