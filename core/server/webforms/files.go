@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gabriel-vasile/mimetype"
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"tinycld.org/core/forms"
 )
@@ -39,7 +40,7 @@ func checkFiles(def *forms.Definition, parts map[string][]*multipart.FileHeader,
 		}
 		for _, h := range headers {
 			total += h.Size
-			if len(f.Accept) > 0 && !acceptMatches(f.Accept, h) {
+			if len(f.Accept) > 0 && !acceptMatches(f.Accept, h, sniffType(h)) {
 				errs[errKey] = validation.NewError("validation_file_type", h.Filename+" is not an accepted type")
 				break
 			}
@@ -61,10 +62,25 @@ func checkFiles(def *forms.Definition, parts map[string][]*multipart.FileHeader,
 	return byKey, nil
 }
 
+// sniffType reads the upload's first bytes; the client's Content-Type is
+// whatever the sender chose to say.
+func sniffType(h *multipart.FileHeader) string {
+	f, err := h.Open()
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	mt, err := mimetype.DetectReader(f)
+	if err != nil {
+		return ""
+	}
+	return mt.String()
+}
+
 // acceptMatches reads accept entries as the HTML accept attribute does: a MIME
-// type, a type/* family, or a .extension.
-func acceptMatches(accept []string, h *multipart.FileHeader) bool {
-	ctype := strings.ToLower(h.Header.Get("Content-Type"))
+// type, a type/* family, or a .extension. The type is the sniffed one.
+func acceptMatches(accept []string, h *multipart.FileHeader, sniffed string) bool {
+	ctype := strings.ToLower(strings.SplitN(sniffed, ";", 2)[0])
 	ext := strings.ToLower(filepath.Ext(h.Filename))
 	for _, a := range accept {
 		a = strings.ToLower(strings.TrimSpace(a))

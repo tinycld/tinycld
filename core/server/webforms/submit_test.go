@@ -87,7 +87,7 @@ func countSubmissions(t *testing.T, f *fixture) int {
 func TestSubmit_HappyPathWithFiles(t *testing.T) {
 	f := newFixture(t, contactDef)
 	submit(t, f, "ok", base(t, f, "c1"), 200, []string{`"ok":true`},
-		upload{"files.cv", "cv.pdf", "application/pdf", []byte("%PDF")},
+		upload{"files.cv", "cv.pdf", "application/pdf", []byte("%PDF-1.4\n%%EOF\n")},
 		upload{"files.docs", "a.txt", "text/plain", []byte("a")},
 		upload{"files.docs", "b.txt", "text/plain", []byte("b")})
 

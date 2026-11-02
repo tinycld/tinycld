@@ -1,6 +1,7 @@
 package webforms
 
 import (
+	"bytes"
 	"mime/multipart"
 	"net/textproto"
 	"testing"
@@ -8,10 +9,35 @@ import (
 	"tinycld.org/core/forms"
 )
 
+// sniffedAs holds content that sniffs as each type; checkFiles reads the
+// bytes, not the Content-Type the client sent.
+var sniffedAs = map[string][]byte{
+	"application/pdf": []byte("%PDF-1.4\n%%EOF\n"),
+	"image/png":       []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR"),
+}
+
+// header builds a real upload (so Open works) whose content sniffs as ctype,
+// and reports size as its size.
 func header(name, ctype string, size int64) *multipart.FileHeader {
+	body, ok := sniffedAs[ctype]
+	if !ok {
+		body = []byte("MZ\x90\x00\x03\x00\x00\x00")
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
 	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", `form-data; name="f"; filename="`+name+`"`)
 	h.Set("Content-Type", ctype)
-	return &multipart.FileHeader{Filename: name, Header: h, Size: size}
+	p, _ := w.CreatePart(h)
+	_, _ = p.Write(body)
+	_ = w.Close()
+	form, err := multipart.NewReader(&buf, w.Boundary()).ReadForm(1 << 20)
+	if err != nil {
+		panic(err)
+	}
+	fh := form.File["f"][0]
+	fh.Size = size
+	return fh
 }
 
 func TestCheckFiles(t *testing.T) {
@@ -45,10 +71,10 @@ func TestCheckFiles(t *testing.T) {
 			}
 		}
 	}
-	if !acceptMatches([]string{"image/*"}, header("a.png", "image/png", 1)) {
+	if !acceptMatches([]string{"image/*"}, header("a.png", "image/png", 1), "image/png") {
 		t.Error("image/* must match image/png")
 	}
-	if !acceptMatches([]string{".docx"}, header("CV.DOCX", "application/zip", 1)) {
+	if !acceptMatches([]string{".docx"}, header("CV.DOCX", "application/zip", 1), "application/zip") {
 		t.Error(".docx must match by extension, any case")
 	}
 }

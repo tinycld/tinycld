@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
@@ -30,13 +31,26 @@ type fixture struct {
 // definition is def.
 func newFixture(t *testing.T, def string) *fixture {
 	t.Helper()
-	resetLimitersForTesting()
+	return buildFixture(t, def, true)
+}
+
+// newFixtureWithoutHost is newFixture on an app where no package bound the
+// web form host, so its hooks (validation, files) are absent.
+func newFixtureWithoutHost(t *testing.T, def string) *fixture {
+	t.Helper()
+	return buildFixture(t, def, false)
+}
+
+func buildFixture(t *testing.T, def string, bindHost bool) *fixture {
+	t.Helper()
 	app := rlstest.NewAssembledApp(t)
-	defs, err := forms.ParseHosts([]byte(webFormHostJSON))
-	if err != nil {
-		t.Fatal(err)
+	if bindHost {
+		defs, err := forms.ParseHosts([]byte(webFormHostJSON))
+		if err != nil {
+			t.Fatal(err)
+		}
+		forms.BindHooks(app, defs)
 	}
-	forms.BindHooks(app, defs)
 	Register(app)
 
 	formsCol, _ := app.FindCollectionByNameOrId("forms")
@@ -78,3 +92,5 @@ func storeForTest(t *testing.T, f *fixture, values map[string]any, uploads ...up
 	}
 	return rec
 }
+
+func utf8ValidString(s string) bool { return utf8.ValidString(s) }
