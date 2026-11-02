@@ -4,6 +4,7 @@ import {
     columnHint,
     defaultAggregate,
     describePath,
+    firstTextField,
     nextColumnId,
     pathLabel,
     sourceAtLinks,
@@ -30,6 +31,31 @@ describe('describePath', () => {
         expect(describePath(CATALOG, SALES_KEY, [{ link: 'vendor' }, { field: 'name' }])).toBeNull()
         expect(describePath(CATALOG, SALES_KEY, [{ field: 'gone' }])).toBeNull()
         expect(describePath(CATALOG, 'zoo.gone', [{ field: 'name' }])).toBeNull()
+    })
+
+    it('reads a path that ends at a to-one link as a relation to its target', () => {
+        const teams = CATALOG.get(TEAMS_KEY)
+        expect(describePath(CATALOG, SALES_KEY, [{ link: 'team' }])).toEqual({
+            field: {
+                key: 'id',
+                label: 'Team',
+                type: 'relation',
+                aggregates: ['count', 'countDistinct'],
+            },
+            source: teams,
+            target: teams,
+            viaToMany: false,
+            mode: undefined,
+            labels: ['Team'],
+        })
+        expect(describePath(CATALOG, TEAMS_KEY, [{ link: 'sales' }])).toBeNull()
+        expect(describePath(CATALOG, SALES_KEY, [{ field: 'id' }])?.target?.key).toBe(SALES_KEY)
+        expect(describePath(CATALOG, SALES_KEY, [{ field: 'amount' }])?.target).toBeUndefined()
+    })
+
+    it('names a record by its first text field', () => {
+        const teams = CATALOG.get(TEAMS_KEY)
+        expect(teams && firstTextField(teams)?.key).toBe('name')
     })
 
     it('finds the source a list of links reaches', () => {

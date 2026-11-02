@@ -53,6 +53,11 @@ export interface FormulaOperators<E> extends FormulaTree<E> {
     partOf(expr: E): string
     partsAt(root: E, path: FormulaPath): readonly string[]
     label(part: string): string
+    /**
+     * The part at `path` changed to another kind: returns the replacement for that
+     * part (operands carried over where they can be), not a new root. The editor
+     * puts it in place with `replaceTreeAt`.
+     */
     withPart(root: E, path: FormulaPath, part: string): E
     /** A caption above a part ("When", "Then"), or null. */
     slotLabel(expr: E, index: number): string | null
@@ -84,7 +89,13 @@ export type FormulaEditorProps<E = ComputeExpr> =
           /** What a Field part is called: "Field", or "Column" in a column's formula. */
           valueNoun: string
       })
-    | (Common & { operators: FormulaOperators<E>; onChange: (expr: E) => void })
+    | (Common & {
+          operators: FormulaOperators<E>
+          onChange: (expr: E) => void
+          // The operator set says what a part reads; the forms props would be ignored.
+          operands?: never
+          valueNoun?: never
+      })
 
 // The leaf views both operator sets draw (F15): a typed number, a value
 // picked from a list, and decimal places.
@@ -137,7 +148,10 @@ export function FormulaValuePick({
     return <PickMenu label={label} purpose={purpose} items={items} testID={testID} />
 }
 
-/** The decimal places of a Round or a Divide. */
+/**
+ * The decimal places of a part that keeps a scale: a forms Round, or a report
+ * formula's Round, Divide, Average or percent. A forms Divide has no places.
+ */
 export function FormulaPlacesPick({
     places,
     onChange,

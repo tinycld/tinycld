@@ -42,6 +42,8 @@ export interface PathInfo {
     /** The to-many hop's mode: a total per row, or child rows. */
     mode: 'aggregate' | 'nest' | undefined
     labels: string[]
+    /** The source a relation value points at (a path ending at a to-one link, or at id). */
+    target?: CatalogSource
 }
 
 export function describePath(
@@ -67,9 +69,28 @@ export function describePath(
             continue
         }
         const field = source.fields.find(f => f.key === hop.field)
-        return field ? { field, source, viaToMany, mode, labels: [...labels, field.label] } : null
+        if (!field) return null
+        const target = field.key === 'id' ? source : undefined
+        return { field, source, viaToMany, mode, labels: [...labels, field.label], target }
+    }
+    // A path that ends at a to-one link reads the linked record's id (bind.go path).
+    const last = path[path.length - 1]
+    if (last?.link && source && !viaToMany) {
+        const label = labels[labels.length - 1] ?? source.label
+        const field: CatalogField = {
+            key: 'id',
+            label,
+            type: 'relation',
+            aggregates: ['count', 'countDistinct'],
+        }
+        return { field, source, target: source, viaToMany, mode, labels }
     }
     return null
+}
+
+/** The field a record is named by: its first text field other than id. */
+export function firstTextField(source: CatalogSource): CatalogField | undefined {
+    return source.fields.find(f => f.type === 'text' && f.key !== 'id')
 }
 
 export function pathLabel(info: PathInfo): string {
