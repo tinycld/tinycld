@@ -29,6 +29,16 @@ export const CORE_AUTOMATION: AutomationDefinitions = {
             on: 'create',
             fields: ['name', 'username', 'email', { key: 'role', label: 'Role' }],
         },
+        {
+            // Org rules only: a submission has no user, so personal rules never
+            // match. The answers are dynamic fields (fields.<key>) from the
+            // form the rule names in trigger_config; see webforms/rules.go.
+            id: 'form-submitted',
+            label: 'A web form is sent',
+            collection: 'form_submissions',
+            on: 'create',
+            fields: [{ key: 'created', label: 'Sent at' }],
+        },
     ],
     actions: [
         {

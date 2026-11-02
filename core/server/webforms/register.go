@@ -5,6 +5,7 @@ import "github.com/pocketbase/pocketbase/core"
 // Register binds the publication hooks, the public routes and the embed
 // policy. Called from coreserver.RegisterSharedCore.
 func Register(app core.App) {
+	registerRules()
 	bindPublicationHooks(app)
 	registerEmbedPolicy(app)
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {

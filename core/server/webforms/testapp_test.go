@@ -1,7 +1,10 @@
 package webforms
 
 import (
+	"encoding/json"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
@@ -61,3 +64,17 @@ const contactDef = `{"version":1,"pages":[{"key":"main","title":"Main"}],"fields
 {"key":"name","page":"main","label":"Name","kind":"text","required":true},
 {"key":"cv","page":"main","label":"CV","kind":"file","accept":["application/pdf"],"maxSizeMb":1},
 {"key":"docs","page":"main","label":"Docs","kind":"file","multiple":true}]}`
+
+// storeForTest submits through the public endpoint and returns the stored row.
+func storeForTest(t *testing.T, f *fixture, values map[string]any, uploads ...upload) *core.Record {
+	t.Helper()
+	raw, _ := json.Marshal(values)
+	id := "store-" + strconv.Itoa(int(time.Now().UnixNano()%1e9))
+	fields := map[string]string{"values": string(raw), "client_id": id, "stamp": oldStamp(t, f), "_hp": ""}
+	submit(t, f, "store", fields, 200, []string{`"ok":true`}, uploads...)
+	rec, err := f.app.FindFirstRecordByData("form_submissions", "client_id", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
