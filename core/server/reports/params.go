@@ -49,8 +49,12 @@ type paramValue struct {
 	unset    bool
 	value    any      // a day, a text, a number, an amount's cents or one choice
 	list     []string // a multiple choice
-	from     string   // a date range
-	to       string
+	// groups are a multiple choice's group references (R30): every option
+	// of these groups the reader may list, expanded where the param is read
+	// (paramLeaf).
+	groups []string
+	from   string // a date range
+	to     string
 	// currency is an amount's currency code; "" is an amount in any currency.
 	currency string
 }
@@ -133,8 +137,11 @@ type ResolvedParam struct {
 	// omitempty leaves out only a nil interface: a resolved 0 or "" is kept.
 	Value any      `json:"value,omitempty"`
 	List  []string `json:"list,omitempty"`
-	From  string   `json:"from,omitempty"`
-	To    string   `json:"to,omitempty"`
+	// Groups are the group references of a multiple choice from a source,
+	// by group value (R30); the run expanded them under the reader's rules.
+	Groups []string `json:"groups,omitempty"`
+	From   string   `json:"from,omitempty"`
+	To     string   `json:"to,omitempty"`
 }
 
 // resolvedParams lists defs in order with the values a run resolved for them.
@@ -148,7 +155,7 @@ func resolvedParams(defs []ParamDef, values map[string]paramValue) []ResolvedPar
 		case v.typ == ParamAmount:
 			rp.Value = map[string]any{"amount": v.value, "currency": v.currency}
 		default:
-			rp.Value, rp.List, rp.From, rp.To = v.value, v.list, v.from, v.to
+			rp.Value, rp.List, rp.Groups, rp.From, rp.To = v.value, v.list, v.groups, v.from, v.to
 		}
 		out = append(out, rp)
 	}
@@ -259,18 +266,34 @@ func choiceValue(d ParamDef, v any, at string) (paramValue, *SpecError) {
 	if !ok {
 		return out, invalid(at, "the value is a list of the param's options")
 	}
-	if len(items) > maxChoiceValues {
-		return out, invalid(at, fmt.Sprintf("the value is a list of at most %d choices", maxChoiceValues))
-	}
 	for _, item := range items {
+		// A whole group of options from a source is posted as its group's
+		// value; the run expands it, so it has no cap of its own (R30).
+		if m, ok := item.(map[string]any); ok && d.OptionsFrom != nil {
+			g, ok := m["group"].(string)
+			if !ok || len(m) != 1 || len(g) > maxParamText {
+				return out, invalid(at, `a group is {"group": "<group value>"}`)
+			}
+			if len(d.OptionsFrom.Group) == 0 {
+				return out, invalid(at, "the param's options have no groups")
+			}
+			out.groups = append(out.groups, g)
+			continue
+		}
 		s, ok := item.(string)
 		if !ok || !valid(s) {
 			return out, invalid(at, "the value is a list of the param's options")
 		}
 		out.list = append(out.list, s)
 	}
+	if len(out.list) > maxChoiceValues {
+		return out, invalid(at, fmt.Sprintf("the value is a list of at most %d choices; pick a whole group instead", maxChoiceValues))
+	}
+	if len(out.groups) > maxOptionGroups {
+		return out, invalid(at, fmt.Sprintf("the value holds at most %d groups", maxOptionGroups))
+	}
 	// An empty list is a cleared chip: it filters nothing, as an unset param does.
-	out.unset = len(out.list) == 0
+	out.unset = len(out.list) == 0 && len(out.groups) == 0
 	return out, nil
 }
 

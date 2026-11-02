@@ -54,6 +54,50 @@ func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 		value, label, labelCur, group, sc.render(), where, value), nil
 }
 
+// groupListSQL is a choice list with group references expanded under the
+// reader's rules: the values of the options select whose group is one of
+// groups, plus the explicit values. A group compares by the text the options
+// select gives it, the value the picker listed (an amount group's names its
+// currency too), so a group the reader cannot list matches nothing.
+func (c *compiler) groupListSQL(s *stmt, op *optionsPlan, values, groups []string) (string, error) {
+	inner, err := c.optionsSelect(s, op)
+	if err != nil {
+		return "", err
+	}
+	marks := make([]string, len(groups))
+	for i, g := range groups {
+		marks[i] = s.bind(g)
+	}
+	sql := fmt.Sprintf("SELECT o.v FROM (%s) o WHERE o.g IN (%s)", inner, strings.Join(marks, ", "))
+	for _, v := range values {
+		sql += " UNION SELECT " + s.bind(v)
+	}
+	return "(" + sql + ")", nil
+}
+
+// paramLeaf is a param as a formula leaf in a context with a statement: a
+// choice with group references reads the expanded list. Options whose where
+// reads a param being expanded would expand themselves, so they are refused.
+func paramLeaf(c *compiler, s *stmt, f fctx, id string, v paramValue) (expr, error) {
+	if len(v.groups) == 0 {
+		return paramExpr(f, v), nil
+	}
+	op := c.p.options[id]
+	if op == nil {
+		return expr{}, fmt.Errorf("reports: param %q holds groups but has no options source", id)
+	}
+	if c.expanding[id] {
+		return expr{}, invalid(op.at+".where", fmt.Sprintf("the options of %q read a group picked from them", id))
+	}
+	c.expanding[id] = true
+	defer delete(c.expanding, id)
+	sql, err := c.groupListSQL(s, op, v.list, v.groups)
+	if err != nil {
+		return expr{}, err
+	}
+	return expr{sql: sql, typ: Text, list: true}, nil
+}
+
 // amountGroupSQL is a group's value as text. An amount with a currency is
 // "<amount> <currency>" (one space; a currency code has none), so 300 USD
 // and 300 EUR are two groups and a posted group value (a group filter, a

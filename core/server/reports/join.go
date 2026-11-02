@@ -136,7 +136,7 @@ func (j *joinCtx) param(id, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return paramExpr(j, v), nil
+	return paramLeaf(j.r.c, j.sc.s, j, id, v)
 }
 
 func (j *joinCtx) aggregate(op Aggregate, _ *Node, _ int, at string) (expr, error) {

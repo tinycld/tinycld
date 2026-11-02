@@ -37,7 +37,7 @@ func TestARunTakesAnyIDForAnOptionsFromSourceParam(t *testing.T) {
 		many[i] = fmt.Sprintf("%q", fmt.Sprint("x", i))
 	}
 	_, err := z.try(t, "ann", animalsParam, Options{}, map[string]string{"animals": "[" + strings.Join(many, ",") + "]"})
-	requireSpecError(t, err, 400, "params.animals", "at most 1000")
+	requireSpecError(t, err, 400, "params.animals", "pick a whole group instead")
 }
 
 func TestOptionsFromIsChecked(t *testing.T) {
@@ -526,4 +526,120 @@ func TestParamOptionLabelsOfTypedFields(t *testing.T) {
 	if !slices.Equal(pages, []string{"4", "190", "300"}) {
 		t.Fatalf("weight pages = %v", pages)
 	}
+}
+
+// A group reference picks every option of the group the reader may list, at
+// run time: no cap, and it follows the reader's rules.
+func TestAGroupReferenceExpandsOnTheServer(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `[{"group":"zebra"}]`})
+	requireRows(t, res, "note", "f3", "f4", nil)
+	res = z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `["` + z.id("leo") + `",{"group":"zebra"}]`})
+	requireRows(t, res, "note", "f1", "f2", "f3", "f4", nil)
+	if p := res.Params[0]; len(p.Groups) != 1 || p.Groups[0] != "zebra" || len(p.List) != 1 {
+		t.Fatalf("resolved = %+v", p)
+	}
+	_, err := z.try(t, "ann", animalsParam, Options{}, map[string]string{"animals": `[{"group":7}]`})
+	requireSpecError(t, err, 400, "params.animals", "a group is")
+}
+
+// A group expands to the options the reader may list, never to a value the
+// reader cannot see; the posted group is a bound value, never SQL.
+func TestAGroupReferenceReadsUnderTheReadersRules(t *testing.T) {
+	z := newZoo(t)
+	// Every member lists every site; the options are the sites of the animals
+	// the reader may list, grouped by species.
+	sitesOfAnimals := `{"version":2,"source":"zoo.sites",
+		"params":[{"id":"sites","type":"choice","multiple":true,
+			"optionsFrom":{"source":"zoo.animals","value":[{"link":"site"}],"label":[{"link":"site"}],"group":[{"field":"species"}]}}],
+		"columns":[{"id":"name","path":[{"field":"name"}]}],
+		"filter":{"op":"in","args":[{"path":[{"field":"id"}]},{"param":"sites"}]},
+		"sort":[{"col":"name"}]}`
+	lions := map[string]string{"sites": `[{"group":"lion"}]`}
+	requireRows(t, z.run(t, "ann", sitesOfAnimals, Options{}, lions), "name", "North", nil)
+	// Bob cannot list Leo, the one lion: the group is empty for him.
+	requireRows(t, z.run(t, "bob", sitesOfAnimals, Options{}, lions), "name", nil)
+	injected := map[string]string{"sites": `[{"group":"lion' OR 1=1 --"}]`}
+	requireRows(t, z.run(t, "ann", sitesOfAnimals, Options{}, injected), "name", nil)
+
+	// Leo's vault is hidden, so Leo is in the blank group, and the vault's id
+	// is no group at all.
+	byVault := withGroup(`[{"link":"vault"}]`)
+	requireRows(t, z.run(t, "ann", byVault, Options{}, map[string]string{"animals": `[{"group":""}]`}), "note", "f1", "f2", "f3", "f4", nil)
+	requireRows(t, z.run(t, "ann", byVault, Options{}, map[string]string{"animals": `[{"group":"` + z.id("v1") + `"}]`}), "note", nil)
+}
+
+// A typed group compares by its stored value, and an amount group names its
+// amount and its currency: 300 USD and 300 EUR are two groups.
+func TestAGroupReferenceOfATypedGroup(t *testing.T) {
+	z := newZoo(t)
+	otto := z.rec(t, "otto", "zoo_animals", map[string]any{"name": "Otto", "species": "otter", "owner": z.id("ann"), "fee": 300, "fee_currency": "EUR"})
+	z.rec(t, "k5", "zoo_keepers", map[string]any{"user": z.id("ann"), "animal": otto.Id})
+	z.feeding(t, "f7", otto, 40, "2026-04-01", 10)
+	for _, c := range []struct {
+		group, value string
+		want         []any
+	}{
+		{`[{"field":"fee"}]`, "300 USD", []any{"f3", "f4", nil}},
+		{`[{"field":"fee"}]`, "300 EUR", []any{"f7", nil}},
+		{`[{"field":"fee"}]`, "300", []any{nil}},
+		{`[{"field":"weight"}]`, "190", []any{"f1", "f2", nil}},
+		{`[{"field":"born"}]`, "2019-02-10", []any{"f3", "f4", nil}},
+		// Otto's yes/no is unset, which is stored as no.
+		{`[{"field":"active"}]`, "0", []any{"f7", nil}},
+		{`[{"field":"active"}]`, "1", []any{"f1", "f2", "f3", "f4", nil}},
+	} {
+		res := z.run(t, "ann", withGroup(c.group), Options{}, map[string]string{"animals": `[{"group":"` + c.value + `"}]`})
+		requireRows(t, res, "note", c.want...)
+	}
+}
+
+// Every place a param is read reads the expanded group: a column, a having
+// and a lookup's where, as well as the filter.
+func TestAGroupReferenceInEveryContext(t *testing.T) {
+	z := newZoo(t)
+	zebras := map[string]string{"animals": `[{"group":"zebra"}]`}
+	picked := strings.Replace(animalsParam, `"columns":[{"id":"note","path":[{"field":"note"}]}],
+	"filter":{"op":"in","args":[{"path":[{"link":"animal"}]},{"param":"animals"}]},`,
+		`"columns":[{"id":"note","path":[{"field":"note"}]},
+			{"id":"picked","formula":{"op":"in","args":[{"path":[{"link":"animal"}]},{"param":"animals"}]}},
+			{"id":"name","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"in","args":[{"path":[{"field":"id"}]},{"param":"animals"}]},"value":{"path":[{"field":"name"}]}}}],`, 1)
+	res := z.run(t, "ann", picked, Options{}, zebras)
+	requireRows(t, res, "note", "f1", "f2", "f3", "f4", nil)
+	requireRows(t, res, "picked", false, false, true, true, nil)
+	requireRows(t, res, "name", "Zed", "Zed", "Zed", "Zed", "Zed")
+
+	having := strings.Replace(animalsParam, `"columns":[{"id":"note","path":[{"field":"note"}]}],
+	"filter":{"op":"in","args":[{"path":[{"link":"animal"}]},{"param":"animals"}]},`,
+		`"columns":[{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]}],
+		"groups":[{"id":"g","col":"animal","having":{"op":"in","args":[{"col":"animal"},{"param":"animals"}]}}],`, 1)
+	res = z.run(t, "ann", having, Options{}, zebras)
+	requireRows(t, res, "kind", "group", "total")
+}
+
+// A group reference needs grouped options, at most maxOptionGroups of them,
+// and options that do not read their own group.
+func TestAGroupReferenceRefusals(t *testing.T) {
+	z := newZoo(t)
+	ungrouped := strings.Replace(animalsParam, `,"group":[{"field":"species"}]`, ``, 1)
+	_, err := z.try(t, "ann", ungrouped, Options{}, map[string]string{"animals": `[{"group":"zebra"}]`})
+	requireSpecError(t, err, 400, "params.animals", "have no groups")
+
+	many := make([]string, maxOptionGroups+1)
+	for i := range many {
+		many[i] = fmt.Sprintf(`{"group":"g%d"}`, i)
+	}
+	_, err = z.try(t, "ann", animalsParam, Options{}, map[string]string{"animals": "[" + strings.Join(many, ",") + "]"})
+	requireSpecError(t, err, 400, "params.animals", "at most 200 groups")
+
+	_, err = z.try(t, "ann", animalsParam, Options{}, map[string]string{"animals": `[{"group":"zebra","x":1}]`})
+	requireSpecError(t, err, 400, "params.animals", "a group is")
+
+	// Options whose where reads their own param are fine with values, but a
+	// group of them would need the options to read themselves.
+	selfish := withGroup(`[{"field":"species"}],"where":{"op":"in","args":[{"path":[{"field":"id"}]},{"param":"animals"}]}`)
+	res := z.run(t, "ann", selfish, Options{}, map[string]string{"animals": `["` + z.id("leo") + `"]`})
+	requireRows(t, res, "note", "f1", "f2", nil)
+	_, err = z.try(t, "ann", selfish, Options{}, map[string]string{"animals": `[{"group":"zebra"}]`})
+	requireSpecError(t, err, 400, "params.0.optionsFrom.where", "read a group picked from them")
 }

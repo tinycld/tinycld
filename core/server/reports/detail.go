@@ -124,7 +124,7 @@ func (rc *rowsCtx) param(id, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return paramExpr(rc, v), nil
+	return paramLeaf(rc.r.c, rc.r.s, rc, id, v)
 }
 
 // aggregate on a detail row is the aggregate of one row: sum(x) is x.

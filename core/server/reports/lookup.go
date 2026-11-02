@@ -244,7 +244,7 @@ func (l *lookupCtx) param(id, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return paramExpr(l, v), nil
+	return paramLeaf(l.r.c, l.r.s, l, id, v)
 }
 
 func (l *lookupCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(l, l.r, n, at) }

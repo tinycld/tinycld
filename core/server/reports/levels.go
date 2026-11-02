@@ -893,7 +893,7 @@ func (lc *levelCtx) param(id, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return paramExpr(lc, v), nil
+	return paramLeaf(lc.lv.c, lc.lv.r.s, lc, id, v)
 }
 
 func (lc *levelCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (expr, error) {

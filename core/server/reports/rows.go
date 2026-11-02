@@ -62,6 +62,10 @@ type compiler struct {
 	// fillSets names the keyset CTE (f<L>) of each level whose group fills in
 	// its records (fillKeys); the level below joins its records to its rows.
 	fillSets map[int]string
+	// expanding holds the params whose group references are being expanded,
+	// so options whose where reads such a param back are refused, not
+	// expanded forever.
+	expanding map[string]bool
 }
 
 // labelPlan is what a group's label compiled to. recordCurrency says an
@@ -74,7 +78,7 @@ type labelPlan struct {
 }
 
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
-	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, valueCur: map[string]string{}, valueCurErr: map[string]error{}, sectionCur: map[string]currency{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}}
+	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, valueCur: map[string]string{}, valueCurErr: map[string]error{}, sectionCur: map[string]currency{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}, expanding: map[string]bool{}}
 	if app != nil {
 		c.fiscal = fiscalStartOf(p.base, app)
 	}
