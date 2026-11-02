@@ -123,6 +123,7 @@ var (
 	triggerFilters  = map[string]TriggerFilter{}
 	fieldsResolvers = map[string]FieldsResolver{}
 	ruleFilters     = map[string]RuleFilter{}
+	runObservers    = map[string][]RunObserver{}
 	// actionRef -> paramKey -> authorizer
 	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
 	// actionRef -> authorizer
@@ -268,6 +269,7 @@ func ResetRegistriesForTest() {
 	triggerFilters = map[string]TriggerFilter{}
 	fieldsResolvers = map[string]FieldsResolver{}
 	ruleFilters = map[string]RuleFilter{}
+	runObservers = map[string][]RunObserver{}
 	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
 	triggerRecordAuthorizers = map[string]TriggerRecordAuthorizer{}
 	sendGuards = map[string][]namedSendGuard{}

@@ -397,17 +397,17 @@ func (e *Engine) dispatch(ctx context.Context, ev event) {
 
 		ast, err := DecodeConditions(rule.Get("conditions"))
 		if err != nil {
-			WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Err: "invalid conditions: " + err.Error(), Duration: time.Since(start), Fields: dyn})
+			e.logRun(rule, ev, RunOutcome{Err: "invalid conditions: " + err.Error(), Duration: time.Since(start), Fields: dyn})
 			continue
 		}
 		if !EvaluateConditionsWith(ast, ev.Record, ev.Trigger, dyn) {
-			WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Matched: false, Duration: time.Since(start), Fields: dyn})
+			e.logRun(rule, ev, RunOutcome{Matched: false, Duration: time.Since(start), Fields: dyn})
 			continue
 		}
 
 		actions, err := decodeActions(rule.Get("actions"))
 		if err != nil {
-			WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Matched: true, Err: "invalid actions: " + err.Error(), Duration: time.Since(start), Fields: dyn})
+			e.logRun(rule, ev, RunOutcome{Matched: true, Err: "invalid actions: " + err.Error(), Duration: time.Since(start), Fields: dyn})
 			continue
 		}
 		results := make([]ActionResult, 0, len(actions))
@@ -426,7 +426,7 @@ func (e *Engine) dispatch(ctx context.Context, ev event) {
 		if ctx.Err() == nil {
 			recordRunResult(e.app, rule, len(actions) > 0 && failed == len(actions))
 		}
-		WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Matched: true, Results: results, Duration: time.Since(start), Fields: dyn})
+		e.logRun(rule, ev, RunOutcome{Matched: true, Results: results, Duration: time.Since(start), Fields: dyn})
 
 		if rule.GetBool("stop_processing") {
 			if rule.GetString("scope") == "org" {
@@ -439,6 +439,12 @@ func (e *Engine) dispatch(ctx context.Context, ev event) {
 			}
 		}
 	}
+}
+
+// logRun writes one run row and then tells the trigger's run observers.
+func (e *Engine) logRun(rule *core.Record, ev event, outcome RunOutcome) {
+	WriteRun(e.app, rule, ev.Record, ev.Trigger, outcome)
+	notifyRunObservers(e.app, ev.TriggerRef, rule, ev.Record, outcome)
 }
 
 // actionResult is the run-history entry for one action's outcome. A skip is
