@@ -443,7 +443,14 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		if err != nil {
 			return nil, "", err
 		}
-		ctes = append(ctes, lv.render(cells, own)...)
+		totals, err := lv.rowsCells()
+		if err != nil {
+			return nil, "", err
+		}
+		if pv := c.p.pivot; pv != nil && pv.cell.col.Total == TotalRows && n > 0 {
+			totals = append(totals, pivotCells...)
+		}
+		ctes = append(ctes, lv.render(cells, own, totals)...)
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
 			leg += " WHERE " + expand.where(c, s, n-1, "")
@@ -464,15 +471,21 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 
 // shownLevels returns the CTEs that select the shown rows of the deepest level
 // whose group has a having (s<m>), and m; m is 0 when no group has one. The
-// detail statement reads only the base rows under them.
+// detail statement reads only the base rows under them. A having may read a
+// "rows" column, which adds the rows of every level below it (rt<L>), so with
+// such columns every level is compiled.
 func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, error) {
 	m := c.havingAbove(len(c.p.groups) + 1)
 	if m == 0 {
 		return nil, 0, nil
 	}
+	last := m
+	if slices.ContainsFunc(c.p.cols, func(cp *colPlan) bool { return cp.col.Total == TotalRows }) {
+		last = len(c.p.groups)
+	}
 	c.fillSets = map[int]string{}
 	var ctes []string
-	for n := 1; n <= m; n++ {
+	for n := 1; n <= last; n++ {
 		lv, err := c.level(r, n, expand)
 		if err != nil {
 			return nil, 0, err
@@ -481,7 +494,11 @@ func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, er
 		if err != nil {
 			return nil, 0, err
 		}
-		base, _ := lv.base(own)
+		totals, err := lv.rowsCells()
+		if err != nil {
+			return nil, 0, err
+		}
+		base, _ := lv.base(own, totals)
 		ctes = append(ctes, base...)
 	}
 	return ctes, m, nil
@@ -777,11 +794,13 @@ func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string
 	if len(rows) == 0 {
 		return "0"
 	}
+	// The VALUES list has a name no statement alias uses, so a key column
+	// never resolves to an outer row by mistake.
 	match := make([]string, len(cols))
 	for i, col := range cols {
-		match[i] = fmt.Sprintf("x.column%d IS %s", i+1, col)
+		match[i] = fmt.Sprintf("ek.column%d IS %s", i+1, col)
 	}
-	return fmt.Sprintf("EXISTS (SELECT 1 FROM (VALUES %s) x WHERE %s)", strings.Join(rows, ", "), strings.Join(match, " AND "))
+	return fmt.Sprintf("EXISTS (SELECT 1 FROM (VALUES %s) ek WHERE %s)", strings.Join(rows, ", "), strings.Join(match, " AND "))
 }
 
 func (e *expansion) has(key []any) bool {

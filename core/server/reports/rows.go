@@ -195,8 +195,9 @@ func (r *rowsCTE) valueCurrencies() {
 			walk(a, fmt.Sprintf("%s.args.%d", at, i), inTotal)
 		}
 	}
+	// A "rows" column adds its cells up, so it is a total too.
 	for _, cp := range r.c.p.cols {
-		walk(cp.col.Formula, cp.at+".formula", cp.col.Aggregate != "")
+		walk(cp.col.Formula, cp.at+".formula", cp.col.Aggregate != "" || cp.col.Total == TotalRows)
 	}
 	for _, g := range r.c.p.groups {
 		walk(g.group.Label, g.at+".label", false)

@@ -118,6 +118,12 @@ func (c *compiler) pivotCells(lv *level, values []pivotValue) ([]string, error) 
 	}
 	out := make([]string, 0, len(values))
 	for j, v := range values {
+		// A "rows" cell above the innermost group adds the cells of its
+		// shown child groups, as the column's own cell does.
+		if cell.col.Total == TotalRows && lv.n < len(c.p.groups) {
+			out = append(out, fmt.Sprintf("%s AS pv%d", lv.childSum(fmt.Sprintf("pv%d", j)), j))
+			continue
+		}
 		cond := "w.pk IS " + lv.r.s.bind(v.key)
 		if pv.byCurrency() {
 			cond += " AND w.pkc IS " + lv.r.s.bind(v.currency)

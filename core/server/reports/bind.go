@@ -214,6 +214,9 @@ func (b *binder) columns(p *plan) {
 		if len(c.Label) > maxLabel || len(c.Format) > maxFormat {
 			b.bad(at, fmt.Sprintf("a label has at most %d characters and a format %d", maxLabel, maxFormat))
 		}
+		if c.Total != "" && c.Total != TotalRecompute && c.Total != TotalRows {
+			b.bad(at+".total", "total is recompute or rows")
+		}
 		if (c.Path == nil) == (c.Formula == nil) {
 			b.bad(at, "a column has a path or a formula")
 		}

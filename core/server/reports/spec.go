@@ -68,12 +68,22 @@ type Column struct {
 	Scale *int `json:"scale,omitempty"`
 	// Format is the client's display format, returned as given.
 	Format string `json:"format,omitempty"`
+	// Total is how the column's group, subtotal and total cells are made:
+	// "recompute" (the default) from every base row under them, or "rows",
+	// the sum of the cells of the rows the result shows directly under them.
+	Total string `json:"total,omitempty"`
 	// LabelField is the field a column whose values point at records shows
 	// each record by, in place of its id. Empty: the record's first text
 	// field, else its first other field but its id, else its source's name.
 	// A formula that is a column shows that column's label field.
 	LabelField string `json:"labelField,omitempty"`
 }
+
+// Column.Total values.
+const (
+	TotalRecompute = "recompute"
+	TotalRows      = "rows"
+)
 
 // Node is a formula or filter tree: an operator with arguments, or a leaf
 // (col, path, param, value, subtotal, record). exists and notExists carry a
