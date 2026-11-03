@@ -49,3 +49,32 @@ func TestRelationMatchRefusesAnotherKindOfRecord(t *testing.T) {
 		t.Fatalf("the handler ran %d times, want 1", ran)
 	}
 }
+
+// A record the owner may not see is refused as such, before the match is
+// checked, so the error does not tell whether that record matches.
+func TestRelationMatchIsCheckedAfterTheOwnerMaySeeTheRecord(t *testing.T) {
+	app, _, u := engineApp(t)
+	tickets, _ := app.FindCollectionByNameOrId("tickets")
+	tickets.ViewRule = types.Pointer("user = @request.auth.id")
+	if err := app.Save(tickets); err != nil {
+		t.Fatal(err)
+	}
+	other := core.NewRecord(tickets)
+	other.Set("title", "hidden")
+	other.Set("status", "closed")
+	if err := app.Save(other); err != nil {
+		t.Fatal(err)
+	}
+	defs := &Defs{Packages: []PackageDefs{{Slug: "gizmos", Actions: []ActionDef{{ID: "use", Kind: "native", Params: []ParamDef{
+		{Key: "ticket", Type: "relation", RelationTarget: "tickets", RelationMatch: map[string]any{"status": "open"}},
+	}}}}}}
+	RegisterAction("gizmos:use", func(core.App, ActionRequest) error { return nil })
+	RegisterRelationAuthorizer("gizmos:use", "ticket", func(core.App, ActionRequest, string) error { return nil })
+	rule := makeRule(t, app, u.Id, "personal", nil, nil, 0, false)
+	trigger := TriggerDef{ID: "x", Collection: "tickets", On: "create"}
+
+	err := ExecuteActionContext(context.Background(), app, defs, "gizmos:use", map[string]any{"ticket": other.Id}, rule, trigger, other, 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "may not use") {
+		t.Fatalf("a record the owner may not see is refused for that, got %v", err)
+	}
+}

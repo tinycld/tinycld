@@ -157,9 +157,6 @@ func authorizeRelationParams(app core.App, ref string, action ActionDef, req Act
 		if err != nil {
 			return fmt.Errorf("relation param %q: no %s record %q", p.Key, target, id)
 		}
-		if !recordMatches(rec, p.RelationMatch) {
-			return fmt.Errorf("relation param %q: the picked record is not one this action can use", p.Key)
-		}
 		if owner == nil {
 			owner, err = app.FindRecordById("users", req.OwnerID)
 			if err != nil {
@@ -169,6 +166,11 @@ func authorizeRelationParams(app core.App, ref string, action ActionDef, req Act
 		info := &core.RequestInfo{Auth: owner}
 		if ok, err := app.CanAccessRecord(rec, info, rec.Collection().ViewRule); err != nil || !ok {
 			return fmt.Errorf("relation param %q: rule owner may not use %s record %q", p.Key, target, id)
+		}
+		// After the view check, so a record the owner may not see is not
+		// told apart by whether it matches.
+		if !recordMatches(rec, p.RelationMatch) {
+			return fmt.Errorf("relation param %q: the picked record is not one this action can use", p.Key)
 		}
 		authorize, registered := relationAuthorizer(ref, p.Key)
 		if !registered {
