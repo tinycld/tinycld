@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -94,7 +95,13 @@ func newSubmissionListCmd(c *client.Client) *cobra.Command {
 			}
 			filter := client.Filter("form = {:f}", map[string]any{"f": f.ID})
 			if since != "" {
-				filter += " && " + client.Filter("created >= {:s}", map[string]any{"s": since})
+				day, err := time.Parse("2006-01-02", since)
+				if err != nil {
+					return Usage(fmt.Errorf("--since %q is not a date; use YYYY-MM-DD (UTC)", since))
+				}
+				// PocketBase stores datetimes as "2006-01-02 15:04:05.000Z"
+				// and compares them as text, so the bound uses that form.
+				filter += " && " + client.Filter("created >= {:s}", map[string]any{"s": day.Format("2006-01-02") + " 00:00:00.000Z"})
 			}
 			subs, err := client.ListAll[submissionRecord](cmd.Context(), c, "form_submissions", filter, "-created")
 			if err != nil {
@@ -108,8 +115,8 @@ func newSubmissionListCmd(c *client.Client) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var out []submissionRow
-			var rows [][]string
+			out := make([]submissionRow, 0, len(subs))
+			rows := make([][]string, 0, len(subs))
 			for _, s := range subs {
 				delivered, total := deliveryStatus(ruleIDs(dests), runs[s.ID])
 				if failed && delivered == total {
@@ -121,7 +128,7 @@ func newSubmissionListCmd(c *client.Client) *cobra.Command {
 			return o.Write(cmd.OutOrStdout(), []string{"ID", "SENT", "ANSWERS", "DELIVERED"}, rows, out)
 		},
 	}
-	cmd.Flags().StringVar(&since, "since", "", "only submissions sent on or after this date (YYYY-MM-DD)")
+	cmd.Flags().StringVar(&since, "since", "", "only submissions sent on or after this day (YYYY-MM-DD, UTC)")
 	cmd.Flags().BoolVar(&failed, "failed", false, "only submissions that a destination did not deliver")
 	return cmd
 }
@@ -211,16 +218,33 @@ func newSubmissionViewCmd(c *client.Client) *cobra.Command {
 
 // uniquePath gives name a " (2)", " (3)" … suffix before its extension when
 // the directory already holds a file of that name.
-func uniquePath(dir, name string) string {
+func uniquePath(dir, name string) (string, error) {
 	path := filepath.Join(dir, name)
 	ext := filepath.Ext(name)
 	stem := strings.TrimSuffix(name, ext)
 	for n := 2; ; n++ {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-			return path
+		_, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return path, nil
+		}
+		if err != nil {
+			return "", err
 		}
 		path = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", stem, n, ext))
 	}
+}
+
+// checkDir refuses a --dir that is missing or is not a directory, before
+// any download.
+func checkDir(dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return Usage(fmt.Errorf("--dir %s: %w", dir, err))
+	}
+	if !info.IsDir() {
+		return Usage(fmt.Errorf("--dir %s is not a directory", dir))
+	}
+	return nil
 }
 
 func newSubmissionDownloadCmd(c *client.Client) *cobra.Command {
@@ -234,6 +258,9 @@ func newSubmissionDownloadCmd(c *client.Client) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := checkDir(dir); err != nil {
+				return err
+			}
 			files, err := submissionFiles(cmd, c, args[0])
 			if err != nil {
 				return err
@@ -244,7 +271,10 @@ func newSubmissionDownloadCmd(c *client.Client) *cobra.Command {
 			}
 			var written []string
 			for _, file := range files {
-				dest := uniquePath(dir, client.LocalFileName(file.Name))
+				dest, err := uniquePath(dir, client.LocalFileName(file.Name))
+				if err != nil {
+					return Failed(err)
+				}
 				if err := client.DownloadToFile(cmd.Context(), c, client.FileURL("form_submission_files", file.ID, file.File), dest, nil); err != nil {
 					return explain(err, "")
 				}
@@ -259,6 +289,12 @@ func newSubmissionDownloadCmd(c *client.Client) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dir, "dir", ".", "the directory to write the files to")
 	return cmd
+}
+
+type retryRow struct {
+	Rule   string `json:"rule"`
+	Name   string `json:"name"`
+	Result string `json:"result"`
 }
 
 func newSubmissionRetryCmd(c *client.Client) *cobra.Command {
@@ -284,6 +320,11 @@ func newSubmissionRetryCmd(c *client.Client) *cobra.Command {
 					}
 					continue
 				}
+				// A destination someone turned off is not retried unless
+				// it is named with --destination.
+				if !dst.Enabled {
+					continue
+				}
 				if run := newestRun(dst.ID, runs); run != nil && !runSucceeded(*run) {
 					targets = append(targets, dst)
 				}
@@ -292,18 +333,20 @@ func newSubmissionRetryCmd(c *client.Client) *cobra.Command {
 				return Failed(fmt.Errorf("no destination %q for this form; list them with: tinycld form destination list <form>", only))
 			}
 			sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-			var rows [][]string
+			out := make([]retryRow, 0, len(targets))
+			rows := make([][]string, 0, len(targets))
 			for _, dst := range targets {
 				path := "/api/automation/rules/" + dst.ID + "/records/" + s.ID + "/run"
 				if err := c.PostJSON(cmd.Context(), path, map[string]any{}, nil); err != nil {
 					return explain(err, "")
 				}
+				out = append(out, retryRow{Rule: dst.ID, Name: dst.Name, Result: "retried"})
 				rows = append(rows, []string{dst.ID, dst.Name, "retried"})
 			}
 			if len(rows) == 0 {
 				o.Info(cmd.ErrOrStderr(), "no failed destination to retry")
 			}
-			return o.Write(cmd.OutOrStdout(), []string{"RULE", "NAME", "RESULT"}, rows, rows)
+			return o.Write(cmd.OutOrStdout(), []string{"RULE", "NAME", "RESULT"}, rows, out)
 		},
 	}
 	cmd.Flags().StringVar(&only, "destination", "", "retry this destination (id or name) even if it did not fail")

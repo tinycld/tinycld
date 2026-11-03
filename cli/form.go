@@ -52,7 +52,7 @@ func fetchHosts(cmd *cobra.Command, c *client.Client) (hostsResponse, error) {
 	err := c.GetJSON(cmd.Context(), "/api/forms/hosts", &resp)
 	var apiErr *client.APIError
 	if errors.As(err, &apiErr) && apiErr.Status == 404 {
-		return resp, Failed(errors.New("this server has no form hosts installed"))
+		return resp, Failed(errors.New("this server is older than `tinycld form hosts` (it has no /api/forms/hosts); update the server"))
 	}
 	return resp, explain(err, "")
 }
@@ -419,6 +419,9 @@ func newFormViewCmd(c *client.Client) *cobra.Command {
 					return err
 				}
 				v.Publication = pub
+				if pub != nil {
+					v.URL = publicFormURL(c.Origin(), pub.Token)
+				}
 				for _, dst := range dests {
 					v.Destinations = append(v.Destinations, dst.Name)
 				}
@@ -433,6 +436,7 @@ func newFormViewCmd(c *client.Client) *cobra.Command {
 type formView struct {
 	Form         formRecord         `json:"form"`
 	Fields       int                `json:"fields"`
+	URL          string             `json:"url,omitempty"`
 	Publication  *publicationRecord `json:"publication,omitempty"`
 	Destinations []string           `json:"destinations,omitempty"`
 }

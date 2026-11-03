@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDeliveryStatusMatchesTheAppFixture(t *testing.T) {
@@ -107,5 +108,83 @@ func TestSubmissionRemoveNeedsYes(t *testing.T) {
 	}
 	if _, _, err := runCLI(t, d, "form", "submission", "remove", "s1", "--yes"); err != nil || f.find("form_submissions", "s1") != nil {
 		t.Fatalf("deleted with --yes: %v", err)
+	}
+}
+
+// --dir that is a file is refused at once; before, the name search looped
+// forever on ENOTDIR.
+func TestSubmissionDownloadRefusesADirThatIsAFile(t *testing.T) {
+	f := submissionFixture(t)
+	f.put("form_submission_files", map[string]any{"id": "fa", "submission": "s1", "field": "cv", "file": "cv_a.pdf", "name": "cv.pdf", "size": 3})
+	f.files["/api/files/form_submission_files/fa/cv_a.pdf"] = []byte("one")
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := runCLI(t, f.deps(t), "form", "submission", "download", "s1", "--dir", file)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "not a directory") || exitCode(err) != 2 {
+			t.Fatalf("got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("download hangs on a --dir that is a file")
+	}
+}
+
+func TestSubmissionListRefusesABadSinceAndSendsADatetime(t *testing.T) {
+	f := submissionFixture(t)
+	d := f.deps(t)
+	if _, _, err := runCLI(t, d, "form", "submission", "list", "jobs", "--since", "yesterday"); err == nil || exitCode(err) != 2 {
+		t.Fatalf("a bad --since is a usage error, got %v", err)
+	}
+	if _, _, err := runCLI(t, d, "form", "submission", "list", "jobs", "--since", "2026-11-01"); err != nil {
+		t.Fatal(err)
+	}
+	filter := f.last("GET", "/api/collections/form_submissions/records").Query.Get("filter")
+	if !strings.Contains(filter, `created >= "2026-11-01 00:00:00.000Z"`) {
+		t.Fatalf("filter = %q, want PocketBase's datetime form", filter)
+	}
+}
+
+// An agent reading --json gets a list, never null, even when it is empty.
+func TestSubmissionAndDestinationListsPrintAnEmptyJSONList(t *testing.T) {
+	f := newFakePB(t)
+	f.put("forms", webForm("f1", "Jobs", "jobs"))
+	d := f.deps(t)
+	for _, args := range [][]string{
+		{"form", "submission", "list", "jobs", "--json"},
+		{"form", "destination", "list", "jobs", "--json"},
+	} {
+		out, _, err := runCLI(t, d, args...)
+		if err != nil || strings.TrimSpace(out) != "[]" {
+			t.Errorf("%v: out %q err %v", args, out, err)
+		}
+	}
+}
+
+func TestSubmissionRetryJSONAndSkipsDisabledDestinations(t *testing.T) {
+	f := submissionFixture(t)
+	f.find("rules", "r2")["enabled"] = false
+	out, _, err := runCLI(t, f.deps(t), "form", "submission", "retry", "s1", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range f.requests {
+		if strings.HasPrefix(r.Path, "/api/automation/rules/") {
+			t.Fatalf("a disabled destination is not retried: %s", r.Path)
+		}
+	}
+	if strings.TrimSpace(out) != "[]" {
+		t.Fatalf("json = %q, want []", out)
+	}
+	f.find("rules", "r2")["enabled"] = true
+	out, _, err = runCLI(t, f.deps(t), "form", "submission", "retry", "s1", "--json")
+	if err != nil || !strings.Contains(out, `"rule": "r2"`) || !strings.Contains(out, `"result": "retried"`) {
+		t.Fatalf("json rows are objects: %q %v", out, err)
 	}
 }

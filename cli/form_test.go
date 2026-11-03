@@ -130,3 +130,22 @@ func writeTemp(t *testing.T, name, content string) string {
 	}
 	return path
 }
+
+func TestFormViewJSONHasThePublicURL(t *testing.T) {
+	f := newFakePB(t)
+	f.put("forms", webForm("f1", "Jobs", "jobs"))
+	f.put("form_publications", map[string]any{"id": "p1", "form": "f1", "token": "tok", "enabled": true})
+	out, _, err := runCLI(t, f.deps(t), "form", "view", "jobs", "--json")
+	if err != nil || !strings.Contains(out, `"url": "http`) || !strings.Contains(out, "/p/forms/tok") {
+		t.Fatalf("%q %v", out, err)
+	}
+}
+
+// A 404 from the hosts route means the server predates it.
+func TestFormHostsOnAnOlderServer(t *testing.T) {
+	f := newFakePB(t)
+	_, _, err := runCLI(t, f.deps(t), "form", "hosts")
+	if err == nil || !strings.Contains(err.Error(), "older") {
+		t.Fatalf("got %v", err)
+	}
+}

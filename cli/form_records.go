@@ -149,7 +149,7 @@ func destinationsOf(ctx context.Context, c *client.Client, formID string) ([]rul
 	if err != nil {
 		return nil, explain(err, "")
 	}
-	out := rows[:0]
+	out := make([]ruleRecord, 0, len(rows))
 	for _, r := range rows {
 		if formID == "" || fmt.Sprint(r.TriggerConfig["form"]) == formID {
 			out = append(out, r)
