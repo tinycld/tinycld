@@ -153,6 +153,16 @@ test.describe('formulas, related rows and layouts', () => {
                 await expect(rowOf(p, customer)).toHaveText(customer)
                 await expect(await cellOf(p, 'sales_customer', customer)).toBeEmpty()
             }
+
+            // Child rows keep their own order (bind.go sort): the sort menu offers the
+            // total per row, never the child rows column.
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-sort-add-menu').click()
+            await expect(p.getByTestId('report-builder-sort-add-menu-sales_id')).toBeVisible()
+            await expect(p.getByTestId('report-builder-sort-add-menu-sales_customer')).toHaveCount(
+                0
+            )
+            await p.keyboard.press('Escape')
         } finally {
             await close()
         }

@@ -261,6 +261,52 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         await expect(table.getByText('Sol', { exact: true })).toHaveCount(0)
     })
 
+    // R30: a builder-made ask lists its records in groups when "Group the list by"
+    // names a field, and the reader picks a whole group with "All <group>". A
+    // fresh member owns only this test's sales, so each customer shows once.
+    test('Ask when run can list the teams by region, and a whole region is picked at once', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptaskgrp')
+        try {
+            const stem = uniqueName('Grp')
+            await seedRegions(p, stem)
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await p.getByTestId('report-builder-section-filter').click()
+            await p.getByTestId('report-builder-filter-add-condition').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-record-team')
+                .click()
+            await chooseOption(p, 'report-builder-filter-0-op', 'in')
+            await p.getByTestId('report-builder-filter-0-ask').click()
+            const grouping = p.getByTestId('report-builder-filter-0-options-group')
+            await expect(grouping).toHaveText('No groups')
+            await grouping.click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-region')
+                .click()
+            await expect(grouping).toHaveText('Region')
+
+            await chooseParamOption(p, 'team', { from: 'add-filter', search: stem, group: 'north' })
+            await expect(p.getByTestId('report-param-team')).toHaveText('Team: All North')
+            const table = p.getByTestId('report-table')
+            await expect(table.getByText('Nia', { exact: true })).toBeVisible()
+            await expect(table.getByText('Ned', { exact: true })).toBeVisible()
+            await expect(table.getByText('Sol', { exact: true })).toHaveCount(0)
+
+            // Without groups a whole-group pick no longer fits the param (view-url.ts
+            // reads each value against its param), so the filter is unset again.
+            await p.getByTestId('report-builder-filter-0-options-group-clear').click()
+            await expect(grouping).toHaveText('No groups')
+            await expect(table.getByText('Sol', { exact: true })).toBeVisible()
+        } finally {
+            await close()
+        }
+    })
+
     test('a having on a money total asks an amount, kept to its currency', async ({ page }) => {
         await login(page)
         const stem = uniqueName('Amt')

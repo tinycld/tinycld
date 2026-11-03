@@ -1,14 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import type { ParamDef, SpecHop, SpecNode } from '../../spec'
-import { type BuilderDraft, type ColumnDraft, emptyDraft, type FormulaDraft } from '../draft'
+import {
+    type BuilderDraft,
+    type ColumnDraft,
+    emptyDraft,
+    type FormulaDraft,
+    groupTarget,
+    levelScope,
+} from '../draft'
 import { emptyGroup } from '../filter'
 import {
     columnChoices,
+    columnTarget,
     formulaContext,
     levelValueColumns,
+    linkTarget,
     readsColumn,
     recordGroups,
     rowsTotalColumns,
+    sortColumns,
     windowColumns,
 } from '../formula-context'
 import { contextAt } from '../formula-ops'
@@ -177,6 +187,54 @@ describe('what a group row has', () => {
         expect(keys(rowsTotalColumns(choices, d.columns))).toEqual(['amount', 'qty', 'total'])
     })
 
+    // bind.go: child rows keep their own order; run.go notASortKey: a running value
+    // or a percent is not a sort key. The menu offers neither.
+    it('sorts by no child rows column and no running value', () => {
+        const teams = CATALOG.get(TEAMS_KEY)
+        if (!teams) throw new Error('fixture')
+        const common = {
+            aggregate: '' as const,
+            scale: null,
+            format: '',
+            total: 'recompute' as const,
+            explicitTotal: false,
+            labelField: '',
+        }
+        const d: BuilderDraft = {
+            ...emptyDraft(teams),
+            columns: [
+                { ...common, kind: 'path', id: 'name', label: 'Name', path: [{ field: 'name' }] },
+                {
+                    ...common,
+                    kind: 'path',
+                    id: 'count',
+                    label: 'Count',
+                    path: [{ link: 'sales', mode: 'aggregate' }, { field: 'id' }],
+                    aggregate: 'count',
+                },
+                {
+                    ...common,
+                    kind: 'path',
+                    id: 'buyer',
+                    label: 'Buyer',
+                    path: [{ link: 'sales', mode: 'nest' }, { field: 'customer' }],
+                },
+                {
+                    ...common,
+                    kind: 'formula',
+                    id: 'run',
+                    label: 'Run',
+                    formula: {
+                        kind: 'editable',
+                        node: { op: 'runningSum', args: [{ col: 'count' }] },
+                    },
+                },
+            ],
+        }
+        const choices = columnChoices(d, CATALOG)
+        expect(sortColumns(choices, d.columns).map(c => c.key)).toEqual(['name', 'count'])
+    })
+
     it('knows when a formula reads a column', () => {
         expect(readsColumn({ op: 'concat', args: [{ col: 'status' }] }, 'status')).toBe(true)
         expect(readsColumn({ op: 'concat', args: [{ col: 'team' }] }, 'status')).toBe(false)
@@ -282,5 +340,130 @@ describe('the type of a column', () => {
             isNumeric: true,
         })
         expect(choices.find(c => c.key === 'team_id')?.type).toBe('relation')
+    })
+})
+
+// alias.go targetOf / nodeTarget: the compiler gives a formula of a link the
+// record it points at, so the builder reads the same target (R2).
+describe('the record a column points at', () => {
+    const common = {
+        aggregate: '' as const,
+        scale: null,
+        format: '',
+        total: 'recompute' as const,
+        explicitTotal: false,
+        labelField: '',
+    }
+    const path = (id: string, hops: SpecHop[]): ColumnDraft => ({
+        ...common,
+        kind: 'path',
+        id,
+        label: id,
+        path: hops,
+    })
+    const formula = (id: string, node: SpecNode): ColumnDraft => ({
+        ...common,
+        kind: 'formula',
+        id,
+        label: id,
+        formula: { kind: 'editable', node },
+    })
+    const team: SpecNode = { path: [{ link: 'team' }] }
+    const positive: SpecNode = {
+        op: 'gt',
+        args: [{ path: [{ field: 'quantity' }] }, { value: 0 }],
+    }
+    const level = (id: string, col: string, bucket: '' | 'month' = '') => ({
+        id,
+        col,
+        bucket,
+        subtotals: false,
+        open: false,
+        label: null,
+        having: emptyGroup(),
+        fill: { on: false, where: emptyGroup() },
+    })
+    function targets(): BuilderDraft {
+        return {
+            ...draft(),
+            columns: [
+                path('team', [{ link: 'team' }]),
+                path('sale', [{ field: 'id' }]),
+                path('day', [{ field: 'day' }]),
+                formula('chosen', { op: 'if', args: [positive, { col: 'team' }, team] }),
+                formula('first', {
+                    op: 'case',
+                    args: [positive, { value: null }, { col: 'chosen' }],
+                }),
+                formula('either', { op: 'coalesce', args: [{ value: null }, team] }),
+                formula('looked', {
+                    op: 'lookup',
+                    source: TEAMS_KEY,
+                    where: { value: true },
+                    value: { path: [{ field: 'id' }] },
+                }),
+                formula('again', { record: 'byChosen', path: [{ field: 'id' }] }),
+                formula('loop', { op: 'coalesce', args: [{ col: 'loop2' }] }),
+                formula('loop2', { op: 'if', args: [positive, { col: 'loop' }, { value: null }] }),
+                formula('name', { op: 'if', args: [positive, { value: 'a' }, { value: 'b' }] }),
+                path('amount', [{ field: 'amount' }]),
+            ],
+            groups: [level('byChosen', 'chosen'), level('byDay', 'day', 'month')],
+        }
+    }
+
+    it('reads the record of a path, an if, a case, a coalesce, a lookup and a group record', () => {
+        const d = targets()
+        const at = (id: string) => columnTarget(d, CATALOG, id)?.key
+        expect(at('team')).toBe(TEAMS_KEY)
+        expect(at('sale')).toBe(SALES_KEY)
+        expect(at('chosen')).toBe(TEAMS_KEY)
+        expect(at('first')).toBe(TEAMS_KEY)
+        expect(at('either')).toBe(TEAMS_KEY)
+        expect(at('looked')).toBe(TEAMS_KEY)
+        expect(at('again')).toBe(TEAMS_KEY)
+    })
+
+    it('reads none for a value, a cycle or an unknown column', () => {
+        const d = targets()
+        const at = (id: string) => columnTarget(d, CATALOG, id)
+        expect(at('name')).toBeUndefined()
+        expect(at('amount')).toBeUndefined()
+        expect(at('day')).toBeUndefined()
+        expect(at('loop')).toBeUndefined()
+        expect(at('gone')).toBeUndefined()
+    })
+
+    // The Trial Balance groups by if(prior year, retained earnings, account): the
+    // level carries the account, its fill and labels read it, and "Show as" applies.
+    it('a group by a formula of a link carries its record everywhere the builder reads it', () => {
+        const d = targets()
+        expect(recordGroups(d, CATALOG)).toEqual([
+            { group: 'byChosen', label: 'chosen', source: TEAMS_KEY },
+        ])
+        expect(groupTarget(d, CATALOG, { col: 'chosen', bucket: '' })?.key).toBe(TEAMS_KEY)
+        // A bucketed date has no record (alias.go findTargets).
+        expect(groupTarget(d, CATALOG, { col: 'day', bucket: 'month' })).toBeUndefined()
+        const scope = levelScope(d, CATALOG, 0)
+        expect(scope.columns.find(c => c.key === 'chosen')?.target?.key).toBe(TEAMS_KEY)
+        expect(scope.records).toEqual([{ group: 'byChosen', label: 'chosen', source: TEAMS_KEY }])
+        const chosen = d.columns.find(c => c.id === 'chosen')
+        if (!chosen) throw new Error('fixture')
+        expect(linkTarget(d, CATALOG, chosen)?.key).toBe(TEAMS_KEY)
+        expect(linkTarget(d, CATALOG, { ...chosen, aggregate: 'count' })).toBeUndefined()
+        const ctx = formulaContext(d, CATALOG, { kind: 'level', index: 0 })
+        expect(ctx.records.map(r => r.source)).toEqual([TEAMS_KEY])
+    })
+
+    it('a link column shows its record, a field or a total does not', () => {
+        const d = targets()
+        const column = (hops: SpecHop[], aggregate: 'count' | '' = '') => ({
+            ...path('x', hops),
+            aggregate,
+        })
+        expect(linkTarget(d, CATALOG, column([{ link: 'team' }]))?.key).toBe(TEAMS_KEY)
+        expect(linkTarget(d, CATALOG, column([{ field: 'id' }]))?.key).toBe(SALES_KEY)
+        expect(linkTarget(d, CATALOG, column([{ field: 'customer' }]))).toBeUndefined()
+        expect(linkTarget(d, CATALOG, column([{ link: 'team' }], 'count'))).toBeUndefined()
     })
 })

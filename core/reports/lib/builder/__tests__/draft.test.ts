@@ -11,6 +11,7 @@ import {
     type FormulaDraft,
     groupTarget,
     keptParams,
+    labelStart,
     levelScope,
     offersHaving,
     showsDetailLabel,
@@ -18,6 +19,9 @@ import {
     specFromDraft,
 } from '../draft'
 import { emptyCondition, emptyGroup } from '../filter'
+import { formulaContext } from '../formula-context'
+import { describeNode } from '../formula-describe'
+import { isEditableNode } from '../formula-ops'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
 const RICH: ReportSpec = {
@@ -720,6 +724,141 @@ describe('spec version 2 in the builder', () => {
         const draft = draftFromSpec(spec, META, CATALOG)
         expect(draft.groups[0]?.fill).toEqual({ on: true, where: emptyGroup() })
         expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+    })
+
+    // The Trial Balance shape: a group by if(prior year, retained earnings, account)
+    // carries the account, so its fill conditions read the linked records.
+    it('reads a group by a formula of a link as a record group, and writes it back', () => {
+        const positive: SpecNode = {
+            op: 'gt',
+            args: [{ path: [{ field: 'quantity' }] }, { value: 0 }],
+        }
+        const spec: ReportSpec = {
+            version: 2,
+            source: SALES_KEY,
+            columns: [
+                { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+                {
+                    id: 'chosen',
+                    label: 'Chosen',
+                    formula: {
+                        op: 'if',
+                        args: [positive, { col: 'team' }, { path: [{ link: 'team' }] }],
+                    },
+                    labelField: 'region',
+                },
+                {
+                    id: 'name',
+                    label: 'Name',
+                    formula: { record: 'byChosen', path: [{ field: 'name' }] },
+                },
+                { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+            ],
+            groups: [
+                {
+                    id: 'byChosen',
+                    col: 'chosen',
+                    label: { record: 'byChosen', path: [{ field: 'name' }] },
+                    fill: {
+                        where: {
+                            op: 'startsWith',
+                            args: [{ path: [{ field: 'name' }] }, { value: 'A' }],
+                        },
+                    },
+                },
+            ],
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(groupTarget(draft, CATALOG, { col: 'chosen' })?.key).toBe(TEAMS_KEY)
+        expect(draft.groups[0]?.fill.where.items[0]).toMatchObject({
+            kind: 'condition',
+            subject: 'field',
+            path: [{ field: 'name' }],
+            op: 'startsWith',
+            value: 'A',
+        })
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(spec))
+    })
+
+    // levels.go: a bucketed level has no one value of its date column, so a label
+    // formula starts from the bucket's text spelled by the first date's parts
+    // (rows.go bucketSQL), never from {col}, which would show "(missing)" and run
+    // as "(none)".
+    it('starts a group label formula from what labels the level by default', () => {
+        const columns: ColumnDraft[] = [
+            {
+                kind: 'path',
+                id: 'day',
+                label: 'Day',
+                path: [{ field: 'day' }],
+                aggregate: '',
+                scale: null,
+                format: '',
+                total: 'recompute',
+                explicitTotal: false,
+                labelField: '',
+            },
+            {
+                kind: 'path',
+                id: 'amount',
+                label: 'Amount',
+                path: [{ field: 'amount' }],
+                aggregate: 'sum',
+                scale: null,
+                format: '',
+                total: 'recompute',
+                explicitTotal: false,
+                labelField: '',
+            },
+        ]
+        const first: SpecNode = { op: 'min', args: [{ path: [{ field: 'day' }] }] }
+        const year: SpecNode = { op: 'year', args: [first] }
+        const month: SpecNode = { op: 'month', args: [first] }
+        const padded: SpecNode = {
+            op: 'if',
+            args: [{ op: 'lt', args: [month, { value: 10 }] }, { value: '0' }, { value: '' }],
+        }
+        const concat = (...args: SpecNode[]) => ({ op: 'concat', args })
+        const start = (bucket: '' | 'day' | 'month' | 'quarter' | 'year' | 'fiscalYear') =>
+            labelStart({ id: 'g', col: 'day', bucket }, undefined, columns).node
+        expect(start('year')).toEqual(concat(year))
+        expect(start('fiscalYear')).toEqual(concat({ op: 'fiscalYear', args: [first] }))
+        expect(start('quarter')).toEqual(
+            concat(year, { value: '-Q' }, { op: 'quarter', args: [first] })
+        )
+        expect(start('month')).toEqual(concat(year, { value: '-' }, padded, month))
+        expect(start('day')).toEqual(first)
+        expect(start('')).toEqual(concat({ col: 'day' }))
+        const teams = CATALOG.get(TEAMS_KEY)
+        expect(labelStart({ id: 'g', col: 'team', bucket: '' }, teams, columns).node).toEqual(
+            concat({ record: 'g', path: [{ field: 'name' }] })
+        )
+        // A level label reads every part of the bucketed start.
+        const sales = CATALOG.get(SALES_KEY)
+        if (!sales) throw new Error('fixture')
+        const draft = { ...emptyDraft(sales), columns }
+        const level = {
+            ...draft,
+            groups: [
+                {
+                    id: 'g',
+                    col: 'day',
+                    bucket: 'month' as const,
+                    subtotals: false,
+                    open: false,
+                    label: null,
+                    having: emptyGroup(),
+                    fill: { on: false, where: emptyGroup() },
+                },
+            ],
+        }
+        const ctx = formulaContext(level, CATALOG, { kind: 'level', index: 0 })
+        for (const bucket of ['day', 'month', 'quarter', 'year', 'fiscalYear'] as const) {
+            const node = start(bucket)
+            expect(isEditableNode(node, [])).toBe(true)
+            expect(describeNode(ctx, node)).not.toContain('(missing)')
+        }
     })
 
     it('reads a group level’s conditions against its columns and its record', () => {

@@ -149,6 +149,55 @@ test.describe('grouping and pivoting a report', () => {
         }
     })
 
+    // pivot.go: a pivot over a link names its columns by the records' label field,
+    // which "Show as" picks.
+    test('a pivot by a linked team names its columns by the team, or by another field', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptpivotrec')
+        try {
+            const stem = uniqueName('PvT')
+            await openReportStub(p)
+            await addTeam(p, `${stem} A`, 'north')
+            await addTeam(p, `${stem} B`, 'south')
+            await addSale(p, {
+                team: `${stem} A`,
+                customer: 'Alpha',
+                amount: 1000,
+                cost: 0,
+                day: '2026-01-10',
+            })
+            await addSale(p, {
+                team: `${stem} B`,
+                customer: 'Beta',
+                amount: 2000,
+                cost: 0,
+                day: '2026-01-11',
+            })
+            await openReportsHub(p)
+            await groupByStatus(p)
+            await p.getByTestId('report-builder-section-pivot').click()
+            await p.getByTestId('report-builder-pivot-on').click()
+            await expect(p.getByTestId('report-builder-pivot-label-field')).toHaveCount(0)
+            await p.getByTestId('report-builder-pivot-field').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-record-team')
+                .click()
+            await chooseOption(p, 'report-builder-pivot-cell', 'amount')
+            await expect(p.getByTestId('report-heading-amount.p0')).toHaveText(`${stem} A`)
+            await expect(p.getByTestId('report-heading-amount.p1')).toHaveText(`${stem} B`)
+            await expect(await cellOf(p, 'amount.p1', 'Open')).toHaveText('20.00')
+
+            await chooseOption(p, 'report-builder-pivot-label-field', 'region')
+            await expect(p.getByTestId('report-builder-pivot-label-field')).toContainText('Region')
+            await expect(p.getByTestId('report-heading-amount.p0')).toHaveText('North')
+            await expect(p.getByTestId('report-heading-amount.p1')).toHaveText('South')
+        } finally {
+            await close()
+        }
+    })
+
     test('on a phone a group and a pivot are set in the builder sheet and show in Preview', async ({
         page,
     }) => {

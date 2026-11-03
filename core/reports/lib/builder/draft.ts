@@ -23,6 +23,7 @@ import {
     type Catalog,
     DEFAULT_PIVOT_COLUMNS,
     describePath,
+    firstTextField,
     MAX_COLUMNS,
     MAX_GROUP_LEVELS,
     MAX_HOPS,
@@ -49,11 +50,13 @@ import {
 import {
     type ColumnsOf,
     columnChoices,
+    columnTarget,
     columnTypes,
     formulaContext,
     isNumericType,
     levelValueColumns,
     recordGroups,
+    type TargetDraft,
 } from './formula-context'
 import { isEditableNode, settleScales } from './formula-ops'
 import type { ReportFormulaContext } from './formula-parts'
@@ -598,16 +601,66 @@ function showsFormat(column: ColumnDraft, types: Types): boolean {
     return isNumericType(types.get(column.id) ?? 'text')
 }
 
-/** The source a group's column links to (a record group), or undefined. */
+/**
+ * The source a group's column points at (a record group), or undefined: a bucketed
+ * date has no record (rows.go reads a group's target only unbucketed).
+ */
 export function groupTarget(
-    draft: Pick<BuilderDraft, 'source' | 'columns'>,
+    draft: TargetDraft,
     catalog: Catalog,
-    group: { col: string }
+    group: { col: string; bucket?: string }
 ): CatalogSource | undefined {
-    const column = draft.columns.find(c => c.id === group.col)
-    return column?.kind === 'path'
-        ? describePath(catalog, draft.source, column.path)?.target
-        : undefined
+    return group.bucket ? undefined : columnTarget(draft, catalog, group.col)
+}
+
+// A bucket's key as the engine writes it (rows.go bucketSQL), spelled by the parts
+// of the group's first date: 2026, 2026-Q1, 2026-01. No part reads a day of the
+// month, so a day starts as the first date itself, which labels the level by it.
+function bucketText(bucket: string, first: SpecNode): SpecNode {
+    const part = (op: string): SpecNode => ({ op, args: [first] })
+    const month = part('month')
+    switch (bucket) {
+        case 'day':
+            return first
+        case 'year':
+            return { op: 'concat', args: [part('year')] }
+        case 'fiscalYear':
+            return { op: 'concat', args: [part('fiscalYear')] }
+        case 'quarter':
+            return { op: 'concat', args: [part('year'), { value: '-Q' }, part('quarter')] }
+    }
+    const pad: SpecNode = {
+        op: 'if',
+        args: [{ op: 'lt', args: [month, { value: 10 }] }, { value: '0' }, { value: '' }],
+    }
+    return { op: 'concat', args: [part('year'), { value: '-' }, pad, month] }
+}
+
+/**
+ * The formula a group's label starts as when "Formula…" is chosen: Join text of
+ * what labels the level by default, the record's label field or the group's value.
+ * A bucketed level has no one value of its date column (levels.go groupKey), so it
+ * starts from the bucket's text, read through the column's field; a bucketed date
+ * formula column, which a level row has no value of either, starts as empty text.
+ */
+export function labelStart(
+    group: { id: string; col: string; bucket: string },
+    target: CatalogSource | undefined,
+    columns: readonly ColumnDraft[]
+): FormulaDraft {
+    const concat = (value: SpecNode): FormulaDraft => ({
+        kind: 'editable',
+        node: { op: 'concat', args: [value] },
+    })
+    if (target) {
+        const field = firstTextField(target)?.key ?? 'id'
+        return concat({ record: group.id, path: [{ field }] })
+    }
+    if (group.bucket === '') return concat({ col: group.col })
+    const column = columns.find(c => c.id === group.col)
+    if (column?.kind !== 'path') return concat({ value: '' })
+    const first: SpecNode = { op: 'min', args: [{ path: column.path }] }
+    return { kind: 'editable', node: bucketText(group.bucket, first) }
 }
 
 /**
@@ -620,9 +673,6 @@ export function levelScope(draft: ColumnsOf, catalog: Catalog, index: number): L
     const columns = columnChoices(draft, catalog)
         .filter(choice => offered.has(choice.key))
         .map(choice => {
-            const column = draft.columns.find(c => c.id === choice.key)
-            const info =
-                column?.kind === 'path' ? describePath(catalog, draft.source, column.path) : null
             const field = {
                 key: choice.key,
                 label: choice.label,
@@ -630,7 +680,8 @@ export function levelScope(draft: ColumnsOf, catalog: Catalog, index: number): L
                 aggregates: [],
                 options: choice.options,
             }
-            return { key: choice.key, label: choice.label, field, target: info?.target }
+            const target = columnTarget(draft, catalog, choice.key)
+            return { key: choice.key, label: choice.label, field, target }
         })
     const groups = draft.groups.slice(0, index + 1)
     return { columns, records: recordGroups({ ...draft, groups }, catalog) }

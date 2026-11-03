@@ -1,5 +1,5 @@
-import type { SpecNode } from '../spec'
-import type { FieldType } from '../types'
+import type { SpecHop, SpecNode } from '../spec'
+import type { CatalogSource, FieldType } from '../types'
 import { aggregateResultType, type Catalog, describePath } from './columns'
 import type { BuilderDraft, ColumnDraft } from './draft'
 import {
@@ -246,17 +246,144 @@ export function rowsTotalColumns(
     )
 }
 
-/** The group levels whose column is a link to one record: they carry that record. */
-export function recordGroups(
-    draft: Pick<BuilderDraft, 'source' | 'columns'> & { groups: readonly GroupKey[] },
-    catalog: Catalog
-): FormulaRecord[] {
+/** What a column's record is read from: the columns, and the groups a record leaf names. */
+export type TargetDraft = Pick<BuilderDraft, 'source' | 'columns'> & {
+    groups: readonly GroupKey[]
+}
+
+// A value path's record, as the compiler's pathTarget finds it: the end of to-one
+// links, or the source whose id it reads. A to-many hop makes a total, which points
+// nowhere.
+function pathTarget(
+    catalog: Catalog,
+    sourceKey: string | undefined,
+    path: readonly SpecHop[]
+): CatalogSource | undefined {
+    let source = sourceKey === undefined ? undefined : catalog.get(sourceKey)
+    for (const hop of path) {
+        if (!source) return undefined
+        if (hop.link === undefined) return hop.field === 'id' ? source : undefined
+        const link = source.links.find(l => l.key === hop.link)
+        if (link?.cardinality !== 'toOne') return undefined
+        source = catalog.get(link.target)
+    }
+    return source
+}
+
+// case's results: the second of each condition and result pair, then an else.
+function caseResults(args: readonly SpecNode[]): SpecNode[] {
+    const out: SpecNode[] = []
+    for (let i = 1; i < args.length; i += 2) {
+        const result = args[i]
+        if (result) out.push(result)
+    }
+    const otherwise = args[args.length - 1]
+    return args.length % 2 === 1 && otherwise ? [...out, otherwise] : out
+}
+
+/**
+ * Reads the record a column's cells point at, as the compiler finds it (alias.go
+ * targetOf, nodeTarget): a path that ends at a to-one link or at id, a column a
+ * formula names, a group's record, a lookup's value, or the first result of an if,
+ * a case or a coalesce that points at one (the engine refuses results that point at
+ * different sources).
+ */
+function targetReader(draft: TargetDraft, catalog: Catalog) {
+    const byId = new Map(draft.columns.map(c => [c.id, c]))
+    // A formula that reads itself through other columns or groups points nowhere.
+    const visiting = new Set<string>()
+    const ofColumn = (column: ColumnDraft): CatalogSource | undefined => {
+        if (visiting.has(column.id)) return undefined
+        visiting.add(column.id)
+        const target =
+            column.kind === 'path'
+                ? describePath(catalog, draft.source, column.path)?.target
+                : ofNode(draft.source, column.formula.node)
+        visiting.delete(column.id)
+        return target
+    }
+    // A bucketed date has no record (rows.go reads a target only unbucketed); with
+    // two groups of one id the first counts, as in the compiler.
+    const ofGroup = (id: string): CatalogSource | undefined => {
+        const group = draft.groups.find(g => g.id === id)
+        const column = byId.get(group?.col ?? '')
+        return group && !group.bucket && column ? ofColumn(column) : undefined
+    }
+    const first = (sourceKey: string, nodes: readonly SpecNode[]) => {
+        for (const node of nodes) {
+            const target = ofNode(sourceKey, node)
+            if (target) return target
+        }
+        return undefined
+    }
+    const ofNode = (sourceKey: string, node: SpecNode): CatalogSource | undefined => {
+        if (node.record !== undefined)
+            return pathTarget(catalog, ofGroup(node.record)?.key, node.path ?? [])
+        if (node.path) return pathTarget(catalog, sourceKey, node.path)
+        if (node.col !== undefined) {
+            const column = byId.get(node.col)
+            return column ? ofColumn(column) : undefined
+        }
+        const args = node.args ?? []
+        switch (node.op) {
+            case 'lookup':
+                return node.source ? ofNode(node.source, lookupValueNode(node)) : undefined
+            case 'if':
+                // The first argument is the condition, which points nowhere.
+                return first(sourceKey, args.slice(1))
+            case 'case':
+                return first(sourceKey, caseResults(args))
+            case 'coalesce':
+                return first(sourceKey, args)
+        }
+        return undefined
+    }
+    return { ofColumn }
+}
+
+/** The source column `id`'s cells point at (a record), or undefined. */
+export function columnTarget(
+    draft: TargetDraft,
+    catalog: Catalog,
+    id: string
+): CatalogSource | undefined {
+    const column = draft.columns.find(c => c.id === id)
+    return column ? targetReader(draft, catalog).ofColumn(column) : undefined
+}
+
+/**
+ * The source a link column's cells point at, when they are not totalled (R31): its
+ * cells show the record's label field, which "Show as" picks.
+ */
+export function linkTarget(
+    draft: TargetDraft,
+    catalog: Catalog,
+    column: ColumnDraft
+): CatalogSource | undefined {
+    if (column.aggregate !== '') return undefined
+    return targetReader(draft, catalog).ofColumn(column)
+}
+
+/**
+ * The columns a sort key may name: not child rows, which keep their own order
+ * (bind.go sort), nor a running value or a percent (run.go notASortKey).
+ */
+export function sortColumns(
+    choices: readonly ColumnChoice[],
+    columns: readonly ColumnDraft[]
+): ColumnChoice[] {
+    const windows = windowColumns(columns)
+    return choices.filter(c => !c.isNested && !windows.has(c.key))
+}
+
+/** The group levels whose column points at one record: they carry that record. */
+export function recordGroups(draft: TargetDraft, catalog: Catalog): FormulaRecord[] {
+    const read = targetReader(draft, catalog)
     return draft.groups.flatMap(group => {
         const column = draft.columns.find(c => c.id === group.col)
-        const info =
-            column?.kind === 'path' ? describePath(catalog, draft.source, column.path) : null
-        return info?.target && column
-            ? [{ group: group.id, label: column.label, source: info.target.key }]
+        const target = column && !group.bucket ? read.ofColumn(column) : undefined
+        return target && column
+            ? [{ group: group.id, label: column.label, source: target.key }]
             : []
     })
 }

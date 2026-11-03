@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { SpecHop } from '../../spec'
-import type { Aggregate } from '../../types'
 import {
     aggregatesFor,
     columnHint,
     defaultAggregate,
     describePath,
     firstTextField,
-    linkTarget,
     nextColumnId,
     pathLabel,
     sourceAtLinks,
@@ -76,25 +74,6 @@ describe('describePath', () => {
             SALES_KEY
         )
         expect(sourceAtLinks(CATALOG, SALES_KEY, [{ link: 'nope' }])).toBeNull()
-    })
-})
-
-describe('linkTarget', () => {
-    const column = (path: SpecHop[], aggregate: Aggregate | '' = '') => ({
-        kind: 'path' as const,
-        path,
-        aggregate,
-    })
-
-    it('reads the source a link column points at', () => {
-        expect(linkTarget(CATALOG, SALES_KEY, column([{ link: 'team' }]))?.key).toBe(TEAMS_KEY)
-        expect(linkTarget(CATALOG, SALES_KEY, column([{ field: 'id' }]))?.key).toBe(SALES_KEY)
-    })
-
-    it('reads no target for a field, a total or a formula', () => {
-        expect(linkTarget(CATALOG, SALES_KEY, column([{ field: 'customer' }]))).toBeUndefined()
-        expect(linkTarget(CATALOG, SALES_KEY, column([{ link: 'team' }], 'count'))).toBeUndefined()
-        expect(linkTarget(CATALOG, SALES_KEY, { kind: 'formula', aggregate: '' })).toBeUndefined()
     })
 })
 

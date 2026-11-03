@@ -8,13 +8,21 @@ import { Switch } from '@tinycld/core/ui/switch'
 import { X } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
 import { useParamOptionLabels } from '../../hooks/useParamOptions'
-import { avgScaleFor, columnHint, MAX_PARAMS, nextColumnId } from '../../lib/builder/columns'
+import {
+    avgScaleFor,
+    columnHint,
+    describePath,
+    MAX_PARAMS,
+    nextColumnId,
+    pathLabel,
+} from '../../lib/builder/columns'
 import {
     askHighParamFor,
     askParamFor,
     type ConditionDraft,
     type FilterPath,
     needsValue,
+    withOptionsGroup,
 } from '../../lib/builder/filter'
 import { BLANK_LINK_LABEL } from '../../lib/format'
 import {
@@ -24,11 +32,12 @@ import {
     PRESET_LABELS,
     presetsFor,
 } from '../../lib/params'
-import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec } from '../../lib/spec'
+import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec, type SpecHop } from '../../lib/spec'
 import type { CatalogSource } from '../../lib/types'
 import { useReportUIStore } from '../../stores/report-ui-store'
 import { SourcePicker } from '../ParamPickers'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
+import { ColumnPicker } from './ColumnPicker'
 import {
     type AboveChoice,
     type ConditionInfo,
@@ -36,6 +45,7 @@ import {
     itemTestId,
     setCondition,
 } from './condition-context'
+import { IconButton } from './parts'
 
 // The value side of a condition row: the value (a choice, chips, a text, a number
 // or a date, or a range), Ask when run with a date's default, the group above a
@@ -360,6 +370,41 @@ function DefaultPreset({ ctx, item, path }: ValueProps) {
     )
 }
 
+// Records asked when run can be listed in groups (a team's region), so the reader
+// picks a whole group at once with "All <group>" (R30).
+function OptionsGroup({ ctx, item, path }: ValueProps) {
+    const param = ctx.params.find(p => p.id === item.param)
+    const from = param?.optionsFrom
+    if (!param || !from) return null
+    const testID = `${itemTestId(ctx, path)}-options-group`
+    const info = from.group ? describePath(ctx.catalog, from.source, from.group) : null
+    const setGroup = (group: SpecHop[] | null) => {
+        const next = withOptionsGroup(param, group)
+        ctx.builder.setParams(ctx.params.map(p => (p.id === param.id ? next : p)))
+    }
+    return (
+        <View className="flex-row items-center gap-2">
+            <Text className="text-xs text-muted-foreground">Group the list by</Text>
+            <ColumnPicker
+                catalog={ctx.catalog}
+                baseKey={from.source}
+                onPick={setGroup}
+                label={info ? pathLabel(info) : 'No groups'}
+                testID={testID}
+                toOneOnly
+                allowLinkEnd
+            />
+            <IconButton
+                label="Stop grouping the list"
+                testID={`${testID}-clear`}
+                isVisible={from.group !== undefined}
+                icon={X}
+                onPress={() => setGroup(null)}
+            />
+        </View>
+    )
+}
+
 // "Ask when run" turns the value into a param the reader sets from a chip (R16); a
 // range of numbers or amounts asks both ends (F18). Yes/no cannot be asked. A
 // read-back condition that already asks stays switchable off even when its
@@ -401,6 +446,7 @@ export function AskToggle(props: ValueProps) {
             />
             <Text className="text-sm text-foreground">Ask when the report runs</Text>
             <DefaultPreset {...props} />
+            <OptionsGroup {...props} />
         </View>
     )
 }

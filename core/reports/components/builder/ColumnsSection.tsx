@@ -1,6 +1,5 @@
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { SelectInput, TextInput, useWatch } from '@tinycld/core/ui/form'
-import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
 import { Switch } from '@tinycld/core/ui/switch'
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react-native'
 import { Text, View } from 'react-native'
@@ -11,18 +10,16 @@ import {
     columnHint,
     defaultAggregate,
     describePath,
-    firstTextField,
-    linkTarget,
     nextColumnId,
     pathLabel,
 } from '../../lib/builder/columns'
 import { type ColumnDraft, type FormulaDraft, showsDetailLabel } from '../../lib/builder/draft'
-import { rowsTotalColumns } from '../../lib/builder/formula-context'
+import { linkTarget, rowsTotalColumns } from '../../lib/builder/formula-context'
 import type { SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnPicker } from './ColumnPicker'
-import { IconButton, NEW_FORMULA } from './parts'
+import { IconButton, NEW_FORMULA, RecordLabelField } from './parts'
 import { ReportFormula, useColumnChoices } from './report-formula'
 import { HopJoins } from './report-formula-paths'
 
@@ -227,39 +224,20 @@ function TotalField({
 
 /** "Show as": the field of a link column's record its cells show (R31, F22). */
 function LinkLabelField({ builder, columns, index, source }: ColumnPartProps) {
+    const groups = useWatch({ control: builder.form.control, name: 'groups' })
     const column = columns[index]
-    const target = column ? linkTarget(builder.catalog, source, column) : undefined
-    if (!column || !target) return null
+    if (!column) return null
+    const target = linkTarget({ source, columns, groups }, builder.catalog, column)
     const setField = (labelField: string) =>
         builder.setColumns(columns.map((c, i) => (i === index ? { ...c, labelField } : c)))
-    const first = firstTextField(target)
-    const items: PickItem[] = [
-        {
-            id: ':first',
-            label: first ? `${first.label} (first text field)` : target.label,
-            isSelected: column.labelField === '',
-            onSelect: () => setField(''),
-        },
-        ...target.fields
-            .filter(f => f.key !== 'id')
-            .map(f => ({
-                id: f.key,
-                label: f.label,
-                isSelected: f.key === column.labelField,
-                onSelect: () => setField(f.key),
-            })),
-    ]
-    const shown = items.find(i => i.isSelected)?.label ?? `${column.labelField} (missing)`
     return (
-        <View className="flex-row items-center gap-2">
-            <Text className="text-xs text-muted-foreground">Show as</Text>
-            <PickMenu
-                label={shown}
-                purpose={`${column.label} shown as`}
-                items={items}
-                testID={`report-builder-column-${index}-label-field`}
-            />
-        </View>
+        <RecordLabelField
+            target={target}
+            labelField={column.labelField}
+            purpose={`${column.label} shown as`}
+            testID={`report-builder-column-${index}-label-field`}
+            onChange={setField}
+        />
     )
 }
 

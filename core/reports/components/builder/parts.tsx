@@ -1,8 +1,11 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { type Control, SelectInput } from '@tinycld/core/ui/form'
+import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
 import { type LucideIcon, Trash2 } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
+import { firstTextField } from '../../lib/builder/columns'
 import type { BuilderDraft, FormulaDraft } from '../../lib/builder/draft'
+import type { CatalogSource } from '../../lib/types'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 
 // Small parts every builder section shares.
@@ -101,5 +104,52 @@ export function BucketSelect({
             testID={testID}
             onValueChange={onValueChange}
         />
+    )
+}
+
+interface RecordLabelFieldProps {
+    /** The record the values point at; nothing is shown without one. */
+    target: CatalogSource | undefined
+    labelField: string
+    purpose: string
+    testID: string
+    onChange: (labelField: string) => void
+}
+
+/**
+ * "Show as": the field a record is named by where its values show, a link column's
+ * cells or a pivot's columns (R31, F22). '' is the record's first text field.
+ */
+export function RecordLabelField({
+    target,
+    labelField,
+    purpose,
+    testID,
+    onChange,
+}: RecordLabelFieldProps) {
+    if (!target) return null
+    const first = firstTextField(target)
+    const items: PickItem[] = [
+        {
+            id: ':first',
+            label: first ? `${first.label} (first text field)` : target.label,
+            isSelected: labelField === '',
+            onSelect: () => onChange(''),
+        },
+        ...target.fields
+            .filter(f => f.key !== 'id')
+            .map(f => ({
+                id: f.key,
+                label: f.label,
+                isSelected: f.key === labelField,
+                onSelect: () => onChange(f.key),
+            })),
+    ]
+    const shown = items.find(i => i.isSelected)?.label ?? `${labelField} (missing)`
+    return (
+        <View className="flex-row items-center gap-2">
+            <Text className="text-xs text-muted-foreground">Show as</Text>
+            <PickMenu label={shown} purpose={purpose} items={items} testID={testID} />
+        </View>
     )
 }

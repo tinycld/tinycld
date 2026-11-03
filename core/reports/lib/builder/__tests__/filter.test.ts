@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SpecNode } from '../../spec'
+import type { CatalogField } from '../../types'
 import {
     aboveOf,
     askHighParamFor,
@@ -14,6 +15,7 @@ import {
     opsFor,
     opsShownFor,
     paramsInGroup,
+    withOptionsGroup,
 } from '../filter'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
@@ -107,6 +109,42 @@ describe('asking when run', () => {
         if (!found) throw new Error(key)
         return found
     }
+
+    // R30: records asked when run can be listed in groups, so the reader picks a
+    // whole group with "All <group>"; the spec keeps optionsFrom's own key order.
+    it('groups the records a param lists, and stops grouping them', () => {
+        const teams = CATALOG.get(TEAMS_KEY)
+        const team: CatalogField = {
+            key: 'id',
+            label: 'Team',
+            type: 'relation',
+            aggregates: [],
+        }
+        const asked = askParamFor(team, 'in', 'team', teams)
+        if (!asked?.optionsFrom) throw new Error('asked')
+        const where: SpecNode = { value: true }
+        const withWhere = { ...asked, optionsFrom: { ...asked.optionsFrom, where } }
+        const grouped = withOptionsGroup(withWhere, [{ field: 'region' }])
+        expect(grouped.optionsFrom).toEqual({
+            source: TEAMS_KEY,
+            value: [{ field: 'id' }],
+            label: [{ field: 'name' }],
+            group: [{ field: 'region' }],
+            where,
+        })
+        expect(Object.keys(grouped.optionsFrom ?? {})).toEqual([
+            'source',
+            'value',
+            'label',
+            'group',
+            'where',
+        ])
+        expect(withOptionsGroup(grouped, null)).toEqual(withWhere)
+        // A param with its own options has no records to group.
+        const own = askParamFor(field('status'), 'in', 's')
+        if (!own) throw new Error('own')
+        expect(withOptionsGroup(own, [{ field: 'region' }])).toBe(own)
+    })
 
     it('makes a param that fits the field and operator', () => {
         expect(askParamFor(field('day'), 'between', 'period')).toEqual({

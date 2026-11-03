@@ -8,7 +8,7 @@ import type { BuilderDraft, FormulaDraft, SortDraft } from '../../lib/builder/dr
 import {
     type ColumnChoice as Choice,
     recordGroups,
-    windowColumns,
+    sortColumns,
 } from '../../lib/builder/formula-context'
 import type { FormulaRecord } from '../../lib/builder/formula-parts'
 import { bareRecordField, LevelFormula } from './GroupLevelParts'
@@ -16,7 +16,7 @@ import { IconButton, NEW_FORMULA } from './parts'
 import { useColumnChoices } from './report-formula'
 
 // The report's sort keys: a column, a field of a group's record (R9), or a formula.
-// A running value or a percent is not a sort key (run.go notASortKey).
+// Child rows and running values are not sort keys (sortColumns).
 
 const DIR_OPTIONS = [
     { value: 'asc', label: 'A to Z' },
@@ -44,18 +44,15 @@ interface SortChoice {
 const FORMULA_CHOICE = ':formula'
 
 function sortChoices(
-    choices: readonly Choice[],
-    windows: ReadonlySet<string>,
+    columns: readonly Choice[],
     records: readonly FormulaRecord[],
     catalog: Catalog
 ): SortChoice[] {
-    const columns = choices
-        .filter(choice => !windows.has(choice.key))
-        .map(choice => ({
-            id: choice.key,
-            label: choice.label,
-            key: { kind: 'col' as const, col: choice.key },
-        }))
+    const columnChoices = columns.map(choice => ({
+        id: choice.key,
+        label: choice.label,
+        key: { kind: 'col' as const, col: choice.key },
+    }))
     const recordFields = records.flatMap(record =>
         (catalog.get(record.source)?.fields ?? [])
             .filter(f => f.key !== 'id')
@@ -72,7 +69,11 @@ function sortChoices(
             }))
     )
     const formula = { kind: 'formula' as const, formula: NEW_FORMULA }
-    return [...columns, ...recordFields, { id: FORMULA_CHOICE, label: 'Formula…', key: formula }]
+    return [
+        ...columnChoices,
+        ...recordFields,
+        { id: FORMULA_CHOICE, label: 'Formula…', key: formula },
+    ]
 }
 
 /** The choice a sort key is: its column, its record field, or a formula. */
@@ -207,7 +208,7 @@ export function SortRows({ builder }: { builder: ReportBuilder }) {
     const groups = useWatch({ control, name: 'groups' })
     const choices = useColumnChoices(builder)
     const records = recordGroups({ source, columns, groups }, builder.catalog)
-    const offered = sortChoices(choices, windowColumns(columns), records, builder.catalog)
+    const offered = sortChoices(sortColumns(choices, columns), records, builder.catalog)
     const rows = sortRowKeys(sort).map((rowKey, index) => (
         <SortRow key={rowKey} builder={builder} sort={sort} index={index} offered={offered} />
     ))

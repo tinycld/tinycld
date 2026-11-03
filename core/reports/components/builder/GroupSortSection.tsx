@@ -3,10 +3,14 @@ import { SelectInput, Toggle, useWatch } from '@tinycld/core/ui/form'
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react-native'
 import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
-import { describePath, MAX_GROUP_LEVELS, nextColumnId } from '../../lib/builder/columns'
+import { MAX_GROUP_LEVELS, nextColumnId } from '../../lib/builder/columns'
 import { type BuilderDraft, type GroupLevelDraft, groupTarget } from '../../lib/builder/draft'
 import { aboveOf, emptyGroup } from '../../lib/builder/filter'
-import { type ColumnChoice as Choice, readsColumn } from '../../lib/builder/formula-context'
+import {
+    type ColumnChoice as Choice,
+    columnTarget,
+    readsColumn,
+} from '../../lib/builder/formula-context'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { moved } from './ColumnsSection'
@@ -61,7 +65,7 @@ function GroupRow({ builder, groups, index, choices }: GroupRowProps) {
     const choiceOf = (key: string) => choices.find(choice => choice.key === key)
     const isDate = (key: string) => choiceOf(key)?.isDate === true
     const options = choices.filter(choice => !choice.isNested).map(asOption)
-    const draft = { source, columns }
+    const draft = { source, columns, groups }
     const target = groupTarget(draft, catalog, group)
     // A bucket left from a date column would reach the engine on a column that has
     // none; a label or fill of another record reads fields it no longer has, and a
@@ -82,10 +86,9 @@ function GroupRow({ builder, groups, index, choices }: GroupRowProps) {
     // points at, a select by its options.
     const above: AboveChoice[] = aboveOf(groups, index, columns).map(g => {
         const choice = choiceOf(g.col)
-        const column = columns.find(c => c.id === g.col)
-        const info = column?.kind === 'path' ? describePath(catalog, source, column.path) : null
+        const target = columnTarget(draft, catalog, g.col)?.key
         const options = choice?.options.map(o => o.value)
-        return { ...g, type: choice?.type ?? 'text', target: info?.target?.key, options }
+        return { ...g, type: choice?.type ?? 'text', target, options }
     })
     const labelField = columns.find(c => c.id === group.col)?.labelField ?? ''
     const part = { builder, groups, index, target }

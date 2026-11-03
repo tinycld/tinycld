@@ -8,6 +8,7 @@ import {
     type BuilderDraft,
     type FormulaDraft,
     type GroupLevelDraft,
+    labelStart,
     levelScope,
     showsHaving,
 } from '../../lib/builder/draft'
@@ -76,14 +77,6 @@ export function LevelFormula({
     )
 }
 
-// A label formula starts as Join text of what labels the row by default: the
-// record's label field, or the group's value.
-function startLabel(group: GroupLevelDraft, target: CatalogSource | undefined): FormulaDraft {
-    const field = target ? (firstTextField(target)?.key ?? 'id') : undefined
-    const value: SpecNode = field ? { record: group.id, path: [{ field }] } : { col: group.col }
-    return { kind: 'editable', node: { op: 'concat', args: [value] } }
-}
-
 /** "Label": the default (a record's label field, or the value), another record field, or a formula (R9). */
 export function GroupLabel({
     builder,
@@ -92,6 +85,7 @@ export function GroupLabel({
     target,
     labelField,
 }: LevelPartProps & { labelField: string }) {
+    const columns = useWatch({ control: builder.form.control, name: 'columns' })
     const group = groups[index]
     if (!group) return null
     const testID = `report-builder-group-${index}-label`
@@ -120,7 +114,7 @@ export function GroupLabel({
             label: 'Formula…',
             isSelected: isFormula,
             onSelect: () => {
-                if (!isFormula) set(startLabel(group, target))
+                if (!isFormula) set(labelStart(group, target, columns))
             },
         },
     ]
