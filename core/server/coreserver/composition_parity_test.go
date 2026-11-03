@@ -70,7 +70,7 @@ var hostHookCounts = map[string]int{
 	"OnRecordAuthRequest":                 2, // the disabled-user guard and the MFA gate
 	"OnRecordAuthWithPasswordRequest":     2,
 	"OnRecordConfirmPasswordResetRequest": 1, // a reset ends an admin-set temporary password
-	"OnRecordCreate":                      6, // incl. the web form publication token and defaults, and the web form auto-reply guard on rules
+	"OnRecordCreate":                      7, // incl. the web form publication token and defaults, the web form auto-reply guard on rules, and the proof-of-work guard on a new publication
 	"OnRecordCreateExecute":               2,
 	"OnRecordCreateRequest":               16,
 	"OnRecordDelete":                      5,
