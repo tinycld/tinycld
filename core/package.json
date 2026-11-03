@@ -111,7 +111,7 @@
         "react-dom": "19.3.0",
         "react-hook-form": "^7.89.0",
         "react-native": "0.88.1",
-        "react-native-drax": "github:nathanstitt/react-native-drax#08b48413d4e4d21e35471a2468531122a1b805ad",
+        "react-native-drax": "github:nathanstitt/react-native-drax#cd1b216517a66493fef063438e703e0b99dd6149",
         "react-native-external-keyboard": "~1.2.1",
         "react-native-gesture-handler": ">=3.3.0 <4",
         "react-native-marked": "^8.1.0",
