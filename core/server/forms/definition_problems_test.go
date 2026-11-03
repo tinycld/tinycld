@@ -212,3 +212,17 @@ func TestValidateDefinitionMessagesNameTheAllowedSet(t *testing.T) {
 		}
 	}
 }
+
+// An unknown kind lists the kinds this host allows, not every kind, so the
+// next try is not refused for a kind the host does not take.
+func TestValidateDefinitionUnknownKindListsTheHostKinds(t *testing.T) {
+	host := &Host{Key: "gizmos:narrow", Label: "Narrow", Kinds: []string{"text", "number"}}
+	def, err := ParseDefinition([]byte(`{"version":1,"pages":[{"key":"main","title":"Main"}],"fields":[{"key":"a","kind":"telephone","page":"main","label":"A"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := ValidateDefinition(def, host)["definition.fields.0.kind"].Error()
+	if !strings.Contains(msg, "Kinds: text, number") || strings.Contains(msg, "markdown") {
+		t.Fatalf("msg = %q", msg)
+	}
+}

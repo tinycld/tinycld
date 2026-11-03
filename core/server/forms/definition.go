@@ -315,7 +315,12 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 			continue
 		}
 		if !slices.Contains(CustomKinds(), f.Kind) {
-			p.add(fmt.Sprintf("%q is not a field kind. Kinds: %s; or builtin for a built-in field.", f.Kind, strings.Join(CustomKinds(), ", ")), at("kind")...)
+			// The kinds this host takes, so the next try is not refused again.
+			allowed := host.Kinds
+			if len(allowed) == 0 {
+				allowed = CustomKinds()
+			}
+			p.add(fmt.Sprintf("%q is not a field kind. Kinds: %s; or builtin for a built-in field.", f.Kind, strings.Join(allowed, ", ")), at("kind")...)
 			continue
 		}
 		if len(host.Kinds) > 0 && !slices.Contains(host.Kinds, f.Kind) {
