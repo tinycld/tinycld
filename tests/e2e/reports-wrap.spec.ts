@@ -112,6 +112,26 @@ async function expectWholeStackPushed(p: Page, stackIds: string[]) {
     expect(Math.abs((stack?.y ?? 0) - (headingBottom - height / 2))).toBeLessThanOrEqual(2)
 }
 
+// A finger drag from (x, y) up by `distance` px, sent as raw touch points. The
+// browser itself turns them into a pan (hit test, touch-action, touch listeners,
+// scroll target), as it does for a touchscreen. Input.synthesizeScrollGesture's
+// touch source is not used: in headless Chromium on Linux it scrolls nothing,
+// not even a bare overflow-y:auto div, so it cannot tell a blocked list from a
+// working one.
+async function swipeUp(p: Page, x: number, y: number, distance: number) {
+    const cdp = await p.context().newCDPSession(p)
+    const steps = 20
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+    for (let i = 1; i <= steps; i++) {
+        await cdp.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x, y: y - (distance * i) / steps }],
+        })
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await cdp.detach()
+}
+
 // A row the list scrolled up under the heading row, or one it no longer holds.
 async function isScrolledAway(row: Locator, headingBottom: number): Promise<boolean> {
     if ((await row.count()) === 0) return true
@@ -531,14 +551,7 @@ test.describe('report rows on a touch phone', () => {
         expect(blocked).toEqual([])
 
         const bounds = await table.boundingBox()
-        const cdp = await page.context().newCDPSession(page)
-        await cdp.send('Input.synthesizeScrollGesture', {
-            x: (bounds?.x ?? 0) + 100,
-            y: (bounds?.y ?? 0) + 500,
-            yDistance: -400,
-            gestureSourceType: 'touch',
-        })
-        await cdp.detach()
+        await swipeUp(page, (bounds?.x ?? 0) + 100, (bounds?.y ?? 0) + 500, 400)
         await expect
             .poll(() => scroller.evaluate(list => list.scrollTop), {
                 message: 'the swipe scrolls the list',
