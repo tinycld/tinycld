@@ -146,7 +146,7 @@ func TestMarkdownParamEscapesSubstitutedValues(t *testing.T) {
 	if err := ExecuteActionContext(context.Background(), app, defs, "notes:write", raw, rule, trigger, rec, 0, fields); err != nil {
 		t.Fatal(err)
 	}
-	if want := `Note: \!\[x\]\(https://tracker\.example/p\.png\) \*b\*`; got.Params["md"] != want {
+	if want := `Note: \!\[x\]\(https\://tracker\.example/p\.png\) \*b\*`; got.Params["md"] != want {
 		t.Fatalf("markdown param = %q, want %q", got.Params["md"], want)
 	}
 	if got.Params["plain"] != "![x](https://tracker.example/p.png)" {
