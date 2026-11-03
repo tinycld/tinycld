@@ -27,8 +27,12 @@ type AnySchema = Record<string, { type: Record<string, unknown> }>
 type CollectionsOf<S> = keyof S & string
 type FieldsOf<S, C extends keyof S> = S[C] extends { type: infer T } ? keyof T & string : string
 
-/** A trigger field entry: bare column key, or key + display-label override. */
-export type FieldRef<F extends string = string> = F | { key: F; label: string }
+/**
+ * A trigger field entry: bare column key, or key + display-label override.
+ * `markdown` marks a column that already holds markdown (a card description),
+ * so a markdown param copies it as it is instead of escaping it.
+ */
+export type FieldRef<F extends string = string> = F | { key: F; label: string; markdown?: boolean }
 
 export interface RecordTriggerDefBase<C extends string, F extends string> {
     id: string
@@ -111,6 +115,12 @@ export interface TypedParamDef {
      * send mail to any address. Declare it on every such param.
      */
     recipient?: boolean
+    /**
+     * The param is rendered as markdown (a card description). The server
+     * escapes every value a template puts into it, so a form answer reads as
+     * text and cannot add an image or a link.
+     */
+    markdown?: boolean
     /**
      * Required when `type` is 'relation' (validateDefinitions enforces both
      * directions): the target collection NAME the record picker lists. A

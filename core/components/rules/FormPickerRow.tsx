@@ -52,8 +52,13 @@ export function FormPickerRow({
     control: Control<RuleDraft>
     isVisible: boolean
 }) {
-    const forms = useWebForms()
     if (!isVisible) return null
+    return <FormPickerField control={control} />
+}
+
+// Its own component so the forms are queried only for a web form trigger.
+function FormPickerField({ control }: { control: Control<RuleDraft> }) {
+    const forms = useWebForms()
     return (
         <Controller
             control={control}
@@ -62,9 +67,14 @@ export function FormPickerRow({
                 <View className="gap-1">
                     <Text className="text-sm font-semibold text-foreground">Form</Text>
                     <FormMenu forms={forms} value={field.value} onChange={field.onChange} />
-                    <Text className="text-xs text-danger">{fieldState.error?.message ?? ''}</Text>
+                    <FieldErrorText message={fieldState.error?.message} />
                 </View>
             )}
         />
     )
+}
+
+function FieldErrorText({ message }: { message: string | undefined }) {
+    if (!message) return null
+    return <Text className="text-xs text-danger">{message}</Text>
 }

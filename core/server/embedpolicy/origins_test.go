@@ -18,6 +18,14 @@ func TestParseOrigins(t *testing.T) {
 		{"https://*.example", "", false},
 		{"https://a.example;script-src", "", false},
 		{"https://u:p@a.example", "", false},
+		{"https://a.example?a=b", "", false},
+		{"https://a.example'", "", false},
+		{"https://a.example,https://evil.example", "", false},
+		{"https://a.example;frame-ancestors *", "", false},
+		{"javascript://a.example", "", false},
+		{"   ", "", true},
+		{"\n\t", "", true},
+		{"https://a.example.com\n  http://localhost:3000 https://a.example.com", "https://a.example.com http://localhost:3000", true},
 	}
 	for _, c := range cases {
 		got, err := ParseOrigins(c.in)

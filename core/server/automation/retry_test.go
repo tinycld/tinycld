@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -11,8 +12,8 @@ func TestValidateRecordRun(t *testing.T) {
 	recordTrigger := TriggerDef{ID: "ticket-created", Collection: "tickets", On: "create"}
 	org := makeRule(t, app, u.Id, "org", nil, nil, 0, false)
 	u.Set("role", "member")
-	if err := validateRecordRun(org, recordTrigger, u); err == nil {
-		t.Fatal("a member may not retry an org rule")
+	if err := validateRecordRun(org, recordTrigger, u); !errors.Is(err, errRunNotAllowed) {
+		t.Fatalf("a member may not retry an org rule, as a permission failure: %v", err)
 	}
 	u.Set("role", "admin")
 	if err := validateRecordRun(org, recordTrigger, u); err != nil {
@@ -23,6 +24,10 @@ func TestValidateRecordRun(t *testing.T) {
 	}
 	if err := validateRecordRun(org, recordTrigger, nil); err == nil {
 		t.Fatal("anonymous callers are refused")
+	}
+	org.Set("enabled", false)
+	if err := validateRecordRun(org, recordTrigger, u); err == nil || errors.Is(err, errRunNotAllowed) {
+		t.Fatal("a disabled rule is refused, and not as a permission failure")
 	}
 }
 

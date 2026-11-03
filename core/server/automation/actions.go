@@ -81,7 +81,11 @@ func substituteParams(defs ActionDef, raw map[string]any, record *core.Record, t
 			out[p.Key] = s
 			continue
 		}
-		out[p.Key] = SubstituteTemplates(s, record, trigger, env)
+		pe := env
+		if p.Markdown {
+			pe.Escape = EscapeMarkdown
+		}
+		out[p.Key] = SubstituteTemplates(s, record, trigger, pe)
 	}
 	return out
 }

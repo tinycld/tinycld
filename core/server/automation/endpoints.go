@@ -92,6 +92,12 @@ func (e *Engine) dryRun(caller *core.Record, triggerRef string, config map[strin
 		}
 		filter = "id != ''"
 	}
+	if scope, scopeParams := ruleScope(triggerRef, config); scope != "" {
+		filter = "(" + filter + ") && (" + scope + ")"
+		for k, v := range scopeParams {
+			params[k] = v
+		}
+	}
 	records, err := e.app.FindRecordsByFilter(trigger.Collection, filter, "-created", 50, 0, params)
 	if err != nil {
 		return out, err

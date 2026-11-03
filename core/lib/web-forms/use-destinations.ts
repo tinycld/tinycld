@@ -1,4 +1,4 @@
-import { and, eq } from '@tanstack/db'
+import { and, eq, inArray } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { FORM_SUBMITTED_TRIGGER } from '@tinycld/core/lib/automation/form-trigger'
 import { useStore } from '@tinycld/core/lib/pocketbase'
@@ -17,37 +17,36 @@ function formOf(config: unknown): string | undefined {
  */
 export function useDestinations(formId: string) {
     const [rulesCollection, runsCollection] = useStore('rules', 'rule_runs')
-    const { data, isReady } = useLiveQuery(
-        query =>
+    const { data, isReady } = useLiveQuery({
+        query: query =>
             query
                 .from({ r: rulesCollection })
                 .where(({ r }) => and(eq(r.scope, 'org'), eq(r.trigger, FORM_SUBMITTED_TRIGGER)))
                 .orderBy(({ r }) => r.order, 'asc'),
-        [rulesCollection]
-    )
+    })
     // trigger_config is json, which a where cannot reach into; filter after.
     const rules = useMemo(
         () => (data ?? []).filter(r => formOf(r.trigger_config) === formId),
         [data, formId]
     )
+    const ruleIds = useMemo(() => rules.map(r => r.id), [rules])
     const nextOrder = useMemo(() => Math.max(-1, ...(data ?? []).map(r => r.order)) + 1, [data])
 
-    const { data: runs } = useLiveQuery(
-        query =>
-            query
+    const { data: runs } = useLiveQuery({
+        query: query => {
+            // inArray over no ids is not a valid filter, and there is nothing to read.
+            if (ruleIds.length === 0) return null
+            return query
                 .from({ run: runsCollection })
-                .innerJoin({ rule: rulesCollection }, ({ run, rule }) => eq(run.rule, rule.id))
-                .where(({ rule }) =>
-                    and(eq(rule.scope, 'org'), eq(rule.trigger, FORM_SUBMITTED_TRIGGER))
-                ),
-        [runsCollection, rulesCollection]
-    )
+                .where(({ run }) => inArray(run.rule, ruleIds))
+        },
+    })
     const lastRunByRule = useMemo(() => {
         const latest = new Map<string, { fired_at: string; matched: boolean }>()
-        for (const row of runs ?? []) {
-            const existing = latest.get(row.rule.id)
-            if (!existing || row.run.fired_at > existing.fired_at) {
-                latest.set(row.rule.id, { fired_at: row.run.fired_at, matched: row.run.matched })
+        for (const run of runs ?? []) {
+            const existing = latest.get(run.rule)
+            if (!existing || run.fired_at > existing.fired_at) {
+                latest.set(run.rule, { fired_at: run.fired_at, matched: run.matched })
             }
         }
         return latest

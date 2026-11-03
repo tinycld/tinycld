@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -114,5 +115,93 @@ func TestPlaceholderAcceptsOnlyTheFieldsPrefix(t *testing.T) {
 	}
 	if placeholderRe.MatchString("{{other.email}}") || strings.Contains(placeholderRe.String(), `\.\*`) {
 		t.Fatal("only the fields. prefix is allowed")
+	}
+}
+
+func TestMarkdownParamEscapesSubstitutedValues(t *testing.T) {
+	app, _, u := engineApp(t)
+	col := core.NewBaseCollection("notes")
+	col.Fields.Add(&core.TextField{Name: "body"})
+	if err := app.Save(col); err != nil {
+		t.Fatal(err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("body", "![x](https://tracker.example/p.png)")
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	defs := &Defs{Packages: []PackageDefs{{
+		Slug: "notes",
+		Actions: []ActionDef{{ID: "write", Kind: "native", Params: []ParamDef{
+			{Key: "md", Type: "text", Markdown: true},
+			{Key: "plain", Type: "text"},
+		}}},
+	}}}
+	var got ActionRequest
+	RegisterAction("notes:write", func(_ core.App, req ActionRequest) error { got = req; return nil })
+	rule := makeRule(t, app, u.Id, "org", nil, nil, 0, false)
+	trigger := TriggerDef{ID: "note", Collection: "notes", On: "create"}
+	raw := map[string]any{"md": "Note: {{body}} {{fields.answer}}", "plain": "{{body}}"}
+	fields := []DynamicField{{Key: "answer", Value: "*b*"}}
+	if err := ExecuteActionContext(context.Background(), app, defs, "notes:write", raw, rule, trigger, rec, 0, fields); err != nil {
+		t.Fatal(err)
+	}
+	if want := `Note: \!\[x\]\(https\://tracker\.example/p\.png\) \*b\*`; got.Params["md"] != want {
+		t.Fatalf("markdown param = %q, want %q", got.Params["md"], want)
+	}
+	if got.Params["plain"] != "![x](https://tracker.example/p.png)" {
+		t.Fatalf("a plain param is not escaped: %q", got.Params["plain"])
+	}
+}
+
+func TestDryRunReadsOnlyTheScopedRecords(t *testing.T) {
+	_, eng, u, save := dynamicApp(t)
+	RegisterRuleScope("posts:post-created", func(cfg map[string]any) (string, map[string]any) {
+		return "channel = {:scopeChannel}", map[string]any{"scopeChannel": cfg["channel"]}
+	})
+	save("a", "the one")
+	for i := 0; i < 60; i++ {
+		save("b", "noise")
+	}
+	u.Set("role", "admin")
+	ast, _ := DecodeConditions(nil)
+	res, err := eng.dryRun(u, "posts:post-created", map[string]any{"channel": "a"}, ast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 1 || len(res.Matches) != 1 {
+		t.Fatalf("the dry run must read channel a only, got total %d matches %d", res.Total, len(res.Matches))
+	}
+}
+
+// A trigger column that already holds markdown (a card description) is
+// copied as it is: escaping it would show its formatting as raw characters.
+func TestMarkdownTriggerFieldIsNotEscapedAgain(t *testing.T) {
+	app, _, u := engineApp(t)
+	col := core.NewBaseCollection("notes")
+	col.Fields.Add(&core.TextField{Name: "body"})
+	if err := app.Save(col); err != nil {
+		t.Fatal(err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("body", "**Steps:**\n- one")
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	defs := &Defs{Packages: []PackageDefs{{
+		Slug:    "notes",
+		Actions: []ActionDef{{ID: "write", Kind: "native", Params: []ParamDef{{Key: "md", Type: "text", Markdown: true}}}},
+	}}}
+	var got ActionRequest
+	RegisterAction("notes:write", func(_ core.App, req ActionRequest) error { got = req; return nil })
+	rule := makeRule(t, app, u.Id, "org", nil, nil, 0, false)
+	trigger := TriggerDef{ID: "note", Collection: "notes", On: "create", Fields: []FieldRef{{Key: "body", Markdown: true}}}
+	raw := map[string]any{"md": "{{body}} / {{fields.answer}}"}
+	fields := []DynamicField{{Key: "answer", Value: "*b*"}}
+	if err := ExecuteActionContext(context.Background(), app, defs, "notes:write", raw, rule, trigger, rec, 0, fields); err != nil {
+		t.Fatal(err)
+	}
+	if want := "**Steps:**\n- one / \\*b\\*"; got.Params["md"] != want {
+		t.Fatalf("markdown param = %q, want %q", got.Params["md"], want)
 	}
 }

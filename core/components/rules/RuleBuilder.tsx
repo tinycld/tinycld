@@ -8,7 +8,6 @@ import { useAutomationCatalog } from '@tinycld/core/lib/automation/use-automatio
 import { useRuleDraft } from '@tinycld/core/lib/automation/use-rule-draft'
 import { useRuleMutations } from '@tinycld/core/lib/automation/use-rule-mutations'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
-import type { FormDefinition } from '@tinycld/core/lib/forms/definition'
 import { useFormRow } from '@tinycld/core/lib/forms/use-forms-of-host'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import type { BuilderPreset } from '@tinycld/core/lib/stores/rules-ui-store'
@@ -18,7 +17,7 @@ import { Dialog } from '@tinycld/core/ui/dialog'
 import { type Control, Controller, FormErrorSummary } from '@tinycld/core/ui/form'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { Switch } from '@tinycld/core/ui/switch'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import type { FieldErrors } from 'react-hook-form'
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
 import { ActionsCard } from './ActionsCard'
@@ -171,15 +170,22 @@ function RuleBuilderForm({
     isSaving,
     onSave,
 }: RuleBuilderFormProps) {
-    // The picked form's definition is read through a ref: useFormRow needs
-    // the draft's form id, which useRuleDraft only gives after it runs.
-    const formDefinition = useRef<FormDefinition | undefined>(undefined)
-    const form = useRuleDraft(initial, catalog, (c, d) =>
-        extendCatalogForDraft(c, d, formDefinition.current)
-    )
-    const { row: formRow } = useFormRow(form.draft.triggerConfig.form)
-    formDefinition.current = formRow?.definition
+    const form = useRuleDraft(initial, catalog)
     const { control, draft, setFocus } = form
+    const formId = draft.triggerConfig.form
+    const { row: formRow } = useFormRow(formId)
+    // Built after the form row loads in this render, so the schema and the
+    // cards never lag one render behind the picked form.
+    const draftCatalog = useMemo(
+        () =>
+            extendCatalogForDraft(
+                catalog,
+                { trigger: draft.trigger, triggerConfig: { form: formId } },
+                formRow?.definition
+            ),
+        [catalog, draft.trigger, formId, formRow?.definition]
+    )
+    form.setCatalog(draftCatalog)
 
     // Naming the rule is the first thing every new rule needs, so start there
     // rather than making the user click in.
@@ -226,20 +232,20 @@ function RuleBuilderForm({
                 <TriggerCard
                     control={control}
                     draft={draft}
-                    catalog={form.catalog}
+                    catalog={draftCatalog}
                     onSelectTrigger={form.selectTrigger}
                     isLocked={isLocked}
                     presetPkg={presetPkg}
                 />
                 <ConditionsCard
                     draft={draft}
-                    catalog={form.catalog}
+                    catalog={draftCatalog}
                     onChangeConditions={form.setConditions}
                 />
                 <ActionsCard
                     triggerRef={draft.trigger}
                     actionRows={form.actionRows}
-                    catalog={form.catalog}
+                    catalog={draftCatalog}
                     onAdd={form.addAction}
                     onMove={form.moveAction}
                     onRemove={form.removeAction}
@@ -248,7 +254,7 @@ function RuleBuilderForm({
                 {/* Phase-4 candidate: dry-run resolver-aware scoping (see endpoints.go) */}
                 <DryRunPanel
                     draft={draft}
-                    catalog={form.catalog}
+                    catalog={draftCatalog}
                     isVisible={Boolean(draft.trigger)}
                 />
             </Dialog.Body>

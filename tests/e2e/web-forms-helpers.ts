@@ -1,3 +1,4 @@
+import * as path from 'node:path'
 import { type Browser, expect, type Locator, type Page } from '@playwright/test'
 import { authStorageKey } from './auth-key-helpers'
 import { login } from './helpers'
@@ -8,7 +9,8 @@ import { login } from './helpers'
  */
 
 const HOST_ROW_TEST_ID = 'forms-host-core:web_form'
-const FILE = 'tests/e2e/fixtures/resume.pdf'
+// From this file, not the working directory: package specs run from their own.
+const FILE = path.join(import.meta.dirname, 'fixtures', 'resume.pdf')
 
 async function answerPrompt(page: Page, title: string, value: string) {
     const input = page.getByLabel(title, { exact: true })

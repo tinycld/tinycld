@@ -66,6 +66,12 @@ func SubstituteTemplates(s string, record *core.Record, trigger TriggerDef, env 
 	}
 	exposed := exposedFields(record, trigger)
 	namer := &recordNamer{env: env}
+	escape := func(v string) string {
+		if env.Escape == nil || v == "" {
+			return v
+		}
+		return env.Escape(v)
+	}
 	return placeholderRe.ReplaceAllStringFunc(s, func(m string) string {
 		key := placeholderRe.FindStringSubmatch(m)[1]
 		if strings.HasPrefix(key, DynamicPrefix) {
@@ -73,14 +79,26 @@ func SubstituteTemplates(s string, record *core.Record, trigger TriggerDef, env 
 			if !ok {
 				return ""
 			}
-			return normalize(v)
+			return escape(normalize(v))
 		}
 		if !exposed[key] {
 			return ""
 		}
 		if field, ok := record.Collection().Fields.GetByName(key).(*core.RelationField); ok {
-			return namer.relationText(field, record)
+			return escape(namer.relationText(field, record))
 		}
-		return normalize(record.Get(key))
+		if markdownField(trigger, key) {
+			return normalize(record.Get(key))
+		}
+		return escape(normalize(record.Get(key)))
 	})
+}
+
+func markdownField(trigger TriggerDef, key string) bool {
+	for _, f := range trigger.Fields {
+		if f.Key == key {
+			return f.Markdown
+		}
+	}
+	return false
 }

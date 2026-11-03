@@ -28,6 +28,16 @@ func formRuleWants(_ core.App, config map[string]any, record *core.Record) bool 
 	return form != "" && form == record.GetString("form")
 }
 
+// formScope limits a dry run to the rule's form; a rule with no form reads
+// nothing.
+func formScope(config map[string]any) (string, map[string]any) {
+	form := configForm(config)
+	if form == "" {
+		return "id = ''", nil
+	}
+	return "form = {:scopeForm}", map[string]any{"scopeForm": form}
+}
+
 var kindTypes = map[string]string{
 	"text": "text", "textarea": "text", "number": "number", "computed": "number",
 	"toggle": "boolean", "date": "date", "select": "select", "file": "text",
@@ -79,6 +89,7 @@ func fileNames(app core.App, record *core.Record) map[string][]string {
 
 func registerRules() {
 	automation.RegisterRuleFilter(FormSubmittedTrigger, formRuleWants)
+	automation.RegisterRuleScope(FormSubmittedTrigger, formScope)
 	automation.RegisterFieldsResolver(FormSubmittedTrigger, formFields)
 	automation.RegisterRunObserver(FormSubmittedTrigger, onFormRun)
 }

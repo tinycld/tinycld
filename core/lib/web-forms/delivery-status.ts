@@ -20,6 +20,12 @@ export function newestRun<T extends RunLike>(ruleId: string, runs: T[]): T | und
  * Delivered when a destination's newest run for the submission succeeded. A
  * destination with no run for it is left out: it was added after the
  * submission, or its old runs were pruned, and neither is a failed delivery.
+ *
+ * Counting only destinations with a run for the submission is deliberate:
+ * counting every destination made before the submission would show a false
+ * failure for each submission older than its destination's 200 kept runs.
+ * A run the engine never started shows in the rule's run history and the
+ * failure notice instead.
  */
 export function deliveryStatus(destinationIds: string[], runs: RunLike[]) {
     let delivered = 0

@@ -48,7 +48,8 @@ A destination is an organization rule that runs for every submission of this for
 1. Open the **Publish** tab and select **Add destination**.
 2. The rule starts with **A web form is sent** and this form. Add actions, for example **Send me a notification**.
 3. In a title, body or message, insert answers from the form with the field menu. They show as `{{fields.<field>}}`, for example `New lead: {{fields.name}}`. A file field gives its file names.
-4. Select **Save**.
+4. To make a card for each submission, add **Create a card** (Boards), pick the list, and use the answers in the title and description, for example `Application: {{fields.name}}`. Files the visitor sent are attached to the card.
+5. Select **Save**.
 
 To send an email to the address a visitor typed, turn on **Ask the browser to prove it is not a bot** first. Without it, a bot could use your server to send mail to any address.
 
