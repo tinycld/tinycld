@@ -9,7 +9,7 @@ import (
 )
 
 // RowValue is one labelled value of a trigger's row: what an action that
-// writes a table row (a spreadsheet) puts under a header.
+// writes a table row puts under a header.
 type RowValue struct {
 	Label string
 	Type  string

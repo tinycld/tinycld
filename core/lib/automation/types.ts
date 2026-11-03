@@ -92,7 +92,7 @@ export interface ColumnParamDef<F extends string = string> {
 
 /** How a relation picker makes a new record. Mirrors Go `RelationCreate`. */
 export interface RelationCreate {
-    /** The picker entry, followed by the typed name: `New workbook "Leads"`. */
+    /** The picker entry, followed by the typed name: `New ticket "Printer jam"`. */
     label: string
     /** The field the typed name goes in. */
     nameField: string

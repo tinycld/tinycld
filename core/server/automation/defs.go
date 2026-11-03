@@ -106,7 +106,7 @@ type ParamDef struct {
 	Markdown bool `json:"markdown"`
 	// RelationMatch limits a relation param to records whose fields equal
 	// these values: the picker lists only them and the engine refuses any
-	// other (a spreadsheet param refuses a folder or a PDF).
+	// other.
 	RelationMatch map[string]any `json:"relationMatch"`
 	// RelationCreate lets the picker make a new record of the target from
 	// the name a person types, with these field values.

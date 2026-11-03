@@ -80,7 +80,7 @@ function pickerSources(
 }
 
 // Makes the record as the person through pbtsdb, so the target collection's
-// own create rule and hooks apply (a new workbook gets its blank file there).
+// own create rule and hooks apply.
 function useCreateRecord(
     target: string,
     create: RelationCreate | undefined,
@@ -137,6 +137,7 @@ function PickerResults({
     const matches = isSearching ? [] : records
     const createRecord = useCreateRecord(target, create, onChange)
     const canCreate = Boolean(create) && term !== '' && !createRecord.isPending
+    const createLabel = `${create?.label ?? ''} “${term}”`
 
     return (
         <>
@@ -165,7 +166,7 @@ function PickerResults({
             <MoreHint isVisible={!isSearching && matches.length >= VISIBLE_LIMIT} />
             <CreateItem
                 isVisible={canCreate}
-                label={`${create?.label ?? ''} “${term}”`}
+                label={createLabel}
                 onSelect={() => createRecord.mutate(term)}
             />
         </>
