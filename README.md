@@ -65,7 +65,8 @@ then `pnpm install` again.
 
 `pnpm run dev` runs three processes in parallel: an HTTP proxy on the user-facing port
 7100, the Go PocketBase server on 7101, and the Expo bundler on 7102. The proxy routes
-`/api` and `/_` to PB and everything else to Expo, so the app talks to PB same-origin.
+`/api`, `/_`, and the DAV and OAuth paths (see `PB_PREFIXES` in `scripts/dev.ts`) to PB
+and everything else to Expo, so the app talks to PB same-origin.
 
 SSL is **off by default** — the proxy serves cleartext at `http://localhost:7100`
 regardless of whether the certs exist. Every dev target works over plain HTTP: the
@@ -86,9 +87,12 @@ pnpm run ssl:generate
 
 ## What's where
 
-- **`index.js`** — bundle entry (`package.json` `main`). Runs the Hermes polyfills first
-  (`~/lib/diagnose-regexp`, `~/lib/polyfill-dom-shim`, `~/lib/polyfill-crypto`), then loads
-  `expo-router/entry`.
+- **`index.js`** — bundle entry (`package.json` `main`). Imports use relative `./lib/...`
+  specifiers on purpose, because the entry resolves before any `~/*` alias. It runs the Hermes
+  polyfills first (`./lib/diagnose-regexp`, `./lib/polyfill-dom-shim`, `./lib/polyfill-crypto`),
+  then `./lib/capture-server-handoff` (before expo-router reads the URL on web). It then inlines
+  `expo-router/entry` through `expo-router/build/qualified-entry` and `renderRootComponent`. On
+  web, it awaits `prefetchBootRoutes()` (`./lib/route-prefetch`) before the first render.
 - **`app/`** — Expo Router route tree. `_layout.tsx` imports `~/lib/configure-core` first (which
   calls `configureCore(appConfig)` at module-init), then mounts the server-address gate, which
   loads core's Providers with a dynamic import once a server address resolves. The polyfills are deliberately not imported here — see the comment at the top of `index.js`.

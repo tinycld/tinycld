@@ -1,6 +1,6 @@
 // Dev launcher: spawns the Go PB server + Expo, and runs an HTTP proxy on
-// the user-facing port that routes /api and /_ to PB and everything else to
-// Expo.
+// the user-facing port that routes /api, /_, and the DAV and OAuth paths
+// (PB_PREFIXES below) to PB and everything else to Expo.
 //
 // Bind host: 127.0.0.1 by default — the proxy is NOT reachable from the LAN.
 // This matters because the proxy forwards /_ (PocketBase's superuser dashboard)

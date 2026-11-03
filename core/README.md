@@ -60,11 +60,13 @@ migrations under `server/pb_migrations/`.
 ## Development
 
 Core is typechecked + unit-tested as a workspace member — there is no separate
-build. From the **workspace root** (`~/code/tinycld/`):
+build. Run `pnpm install` from the **workspace root** (`~/code/tinycld/`) to link
+members and run the app generator (postinstall). Then run core's unit tests with
+either command:
 
 ```sh
-pnpm install          # links members + runs the app generator (postinstall)
-npx vitest run       # runs core's unit tests as part of the suite
+cd tinycld && pnpm run test                  # app shell + core suite
+cd tinycld/core && pnpm exec tinycld-pkg test   # core only
 ```
 
 Members import core source directly via the `@tinycld/core/*` path alias
