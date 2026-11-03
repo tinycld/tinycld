@@ -62,14 +62,20 @@ func recordValue(rec *core.Record, f catalogField, namer *recordNamer) any {
 	}
 }
 
+// dynamicValue reads one answer. An empty answer, or one that is not a
+// number for a number field, is nil, so its cell stays empty rather than
+// showing 0 or FALSE.
 func dynamicValue(f DynamicField) any {
 	switch f.Type {
 	case "number":
-		if f.Value == nil {
+		if n, ok := toFloat(f.Value); ok {
+			return n
+		}
+		return nil
+	case "boolean":
+		if f.Value == nil || f.Value == "" {
 			return nil
 		}
-		return cast.ToFloat64(f.Value)
-	case "boolean":
 		return cast.ToBool(f.Value)
 	default:
 		return emptyToNil(normalize(f.Value))

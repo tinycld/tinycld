@@ -67,3 +67,22 @@ func TestTriggerRowWithNoRecordIsOnlyTheDynamicFields(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// An answer left empty, or one that is not a number, leaves its cell empty
+// rather than writing 0 or FALSE.
+func TestTriggerRowEmptyAnswersStayEmpty(t *testing.T) {
+	app, _, u := engineApp(t)
+	req := ActionRequest{OwnerID: u.Id, Fields: []DynamicField{
+		{Key: "qty", Label: "Qty", Type: "number", Value: ""},
+		{Key: "size", Label: "Size", Type: "number", Value: "big"},
+		{Key: "ok", Label: "Ok", Type: "boolean", Value: nil},
+		{Key: "n", Label: "N", Type: "number", Value: "4.5"},
+	}}
+	got := TriggerRow(app, req)
+	if got[0].Value != nil || got[1].Value != nil || got[2].Value != nil {
+		t.Fatalf("empty or unreadable answers give nil, got %+v", got)
+	}
+	if got[3].Value != 4.5 {
+		t.Fatalf("a number given as text is read, got %+v", got[3])
+	}
+}
