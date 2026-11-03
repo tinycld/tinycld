@@ -89,20 +89,6 @@ export function describePath(
     return null
 }
 
-/**
- * The source a link column's cells point at (R31): a path column that ends at a
- * to-one link or at id and is not totalled; else undefined. Its cells show the
- * record's label field.
- */
-export function linkTarget(
-    catalog: Catalog,
-    baseKey: string,
-    column: { kind: 'path' | 'formula'; path?: readonly SpecHop[]; aggregate: Aggregate | '' }
-): CatalogSource | undefined {
-    if (column.kind !== 'path' || !column.path || column.aggregate !== '') return undefined
-    return describePath(catalog, baseKey, column.path)?.target
-}
-
 /** The field a record is named by: its first text field other than id. */
 export function firstTextField(source: CatalogSource): CatalogField | undefined {
     return source.fields.find(f => f.type === 'text' && f.key !== 'id')

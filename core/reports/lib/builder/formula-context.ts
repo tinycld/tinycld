@@ -297,7 +297,7 @@ function targetReader(draft: TargetDraft, catalog: Catalog) {
         visiting.add(column.id)
         const target =
             column.kind === 'path'
-                ? describePath(catalog, draft.source, column.path)?.target
+                ? pathTarget(catalog, draft.source, column.path)
                 : ofNode(draft.source, column.formula.node)
         visiting.delete(column.id)
         return target

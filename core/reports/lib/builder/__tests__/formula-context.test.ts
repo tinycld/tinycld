@@ -465,5 +465,9 @@ describe('the record a column points at', () => {
         expect(linkTarget(d, CATALOG, column([{ field: 'id' }]))?.key).toBe(SALES_KEY)
         expect(linkTarget(d, CATALOG, column([{ field: 'customer' }]))).toBeUndefined()
         expect(linkTarget(d, CATALOG, column([{ link: 'team' }], 'count'))).toBeUndefined()
+        // Through a to-many hop a cell is many records, not one (alias.go pathTarget).
+        expect(
+            linkTarget(d, CATALOG, column([{ link: 'team' }, { link: 'sales' }, { field: 'id' }]))
+        ).toBeUndefined()
     })
 })
