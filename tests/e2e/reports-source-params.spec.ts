@@ -225,9 +225,12 @@ test.describe('params from a source, headings and unpublished shipped reports', 
             .getByRole('radio', { name: `${stem} S1`, exact: true })
             .click()
         await expect(page.getByTestId('report-builder-filter-0-value')).toHaveText(`${stem} S1`)
+        // The user's earlier sales (other tests, other runs on this database)
+        // name Sol too, so the filtered state is the one where this stem's Nia
+        // is gone and exactly one Sol is left.
         const table = page.getByTestId('report-table')
-        await expect(table.getByText('Sol', { exact: true })).toBeVisible()
         await expect(table.getByText('Nia', { exact: true })).toHaveCount(0)
+        await expect(table.getByText('Sol', { exact: true })).toHaveCount(1)
 
         // "Is any of" shows each picked record as a chip that removes it.
         await chooseOption(page, 'report-builder-filter-0-op', 'in')
