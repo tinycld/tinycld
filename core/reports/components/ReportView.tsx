@@ -1,4 +1,4 @@
-import { ResponsiveToolbar, type ToolbarItem } from '@tinycld/core/components/ResponsiveToolbar'
+import type { ToolbarItem } from '@tinycld/core/components/ResponsiveToolbar'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
@@ -144,14 +144,13 @@ function ViewBody({ model }: { model: ReportViewModel }) {
 }
 
 export function ReportView({ model, side }: { model: ReportViewModel; side?: ReactNode }) {
-    const toolbar = <ResponsiveToolbar items={toolbarItems(model)} />
     return (
         <View testID="report-screen" className="flex-1 flex-row bg-background">
             <View className="min-w-0 flex-1">
                 <ReportHeader
                     title={model.title}
                     onBack={model.onBack}
-                    toolbar={toolbar}
+                    actions={toolbarItems(model)}
                     isUpdating={model.isUpdating}
                     isUpdatingLive={!model.isUpdatingInBuilder}
                 />

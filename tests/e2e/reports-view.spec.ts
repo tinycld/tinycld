@@ -59,7 +59,7 @@ async function expectUpdatingInItsSlot(p: Page, tableTop: number) {
     }
 }
 
-async function makeReport(page: Page, label: string, askDay: boolean) {
+async function makeReport(page: Page, label: string, askDay: boolean, title = uniqueName('View')) {
     const invited = await createInvitedUser(page, label)
     const p = invited.inviteePage
     const team = uniqueName('Team')
@@ -91,8 +91,30 @@ async function makeReport(page: Page, label: string, askDay: boolean) {
         await chooseOption(p, 'report-builder-filter-1-op', 'contains')
         await p.getByTestId('report-builder-filter-1-ask').click()
     }
-    await saveNewReport(p, uniqueName('View'))
+    await saveNewReport(p, title)
     return invited
+}
+
+// The title ends before the first action starts, on one line; only a title too
+// long for its room is cut, and it ends in "…".
+async function expectTitleBeforeActions(p: Page, isCut: boolean) {
+    const title = p.getByTestId('report-title')
+    const customize = p.getByTestId('report-customize-open')
+    await expect
+        .poll(async () => {
+            const titleBox = await title.boundingBox()
+            const customizeBox = await customize.boundingBox()
+            if (!titleBox || !customizeBox) return null
+            return title.evaluate(
+                (element, gap) => ({
+                    isClear: gap >= 0,
+                    isCut: element.scrollWidth > element.clientWidth,
+                    overflow: getComputedStyle(element).textOverflow,
+                }),
+                customizeBox.x - (titleBox.x + titleBox.width)
+            )
+        })
+        .toEqual({ isClear: true, isCut, overflow: 'ellipsis' })
 }
 
 async function addCustomerFilter(p: Page, text: string) {
@@ -479,9 +501,12 @@ test.describe('the report view', () => {
     })
 
     test('on a phone the chips open sheets and Customize is a sheet', async ({ page }) => {
-        const { inviteePage: p, close } = await makeReport(page, 'rptviewphone', true)
+        // A short title, which the phone header shows whole; the invited member's
+        // reports are their own, so it need not be unique.
+        const { inviteePage: p, close } = await makeReport(page, 'rptviewphone', true, 'Sales')
         try {
             await p.setViewportSize({ width: 390, height: 844 })
+            await expectTitleBeforeActions(p, false)
             const table = p.getByTestId('report-table')
             await addCustomerFilter(p, 'Gam')
             await expect(table.getByText('Gamma', { exact: true })).toBeVisible()
@@ -503,6 +528,20 @@ test.describe('the report view', () => {
             await p.getByTestId('report-customize-close').click()
             await expect(p.getByTestId('report-customize')).toBeHidden()
             await expect.poll(() => p.url()).toContain('nocents=1')
+        } finally {
+            await close()
+        }
+    })
+
+    test('a long title ends in "…" before the actions, on a desktop and a phone', async ({
+        page,
+    }) => {
+        const title = `${uniqueName('Long')} sales by customer, team and month for every region this year`
+        const { inviteePage: p, close } = await makeReport(page, 'rptviewlong', false, title)
+        try {
+            await expectTitleBeforeActions(p, true)
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expectTitleBeforeActions(p, true)
         } finally {
             await close()
         }

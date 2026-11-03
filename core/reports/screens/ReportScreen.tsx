@@ -51,7 +51,7 @@ export function ReportFrame({ title, state, onBack, onRetry }: FrameProps) {
     const retry = onRetry ? { label: 'Retry', testID: 'report-retry', onPress: onRetry } : null
     return (
         <View testID="report-screen" className="flex-1 bg-background">
-            <ReportHeader title={title} onBack={onBack} toolbar={null} />
+            <ReportHeader title={title} onBack={onBack} actions={[]} />
             <LoadingBody isVisible={state === 'loading'} />
             <MessageBody
                 isVisible={state === 'error'}
