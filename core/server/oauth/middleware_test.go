@@ -35,6 +35,20 @@ func TestScopeForRouteMapsRegisteredRoutes(t *testing.T) {
 		// records API rather than a second endpoint rendering the same rows.
 		{"GET", "/api/collections/backups/records", ScopeBackups},
 		{"GET", "/api/collections/backups/records/abc123", ScopeBackups},
+		// Core's forms and automation, for `tinycld form`.
+		{"GET", "/api/collections/forms/records", ScopeForms},
+		{"PATCH", "/api/collections/forms/records/abc", ScopeForms},
+		{"POST", "/api/collections/form_publications/records", ScopeForms},
+		{"GET", "/api/collections/form_submissions/records", ScopeForms},
+		{"DELETE", "/api/collections/form_submissions/records/abc", ScopeForms},
+		{"GET", "/api/files/form_submission_files/rec123/cv_ab12cd34ef.pdf", ScopeForms},
+		{"GET", "/api/forms/hosts", ScopeForms},
+		{"GET", "/api/collections/rules/records", ScopeAutomation},
+		{"POST", "/api/collections/rules/records", ScopeAutomation},
+		{"GET", "/api/collections/rule_runs/records", ScopeAutomation},
+		{"GET", "/api/collections/automation_catalog/records", ScopeAutomation},
+		{"POST", "/api/automation/rules/abc/run", ScopeAutomation},
+		{"POST", "/api/automation/rules/abc/records/def/run", ScopeAutomation},
 	}
 	for _, c := range cases {
 		if got := ScopeForRoute(c.method, c.path); !onlyScope(got, c.want) {
@@ -56,6 +70,10 @@ func TestScopeForRouteDefaultDenies(t *testing.T) {
 		{"POST", "/api/notes/items/", "bare prefix of a per-record family"},
 		{"GET", "/api/notes/items/abc123/move", "prefix family is method-specific"},
 		{"GET", "/api/notes/send", "exact endpoints are method-specific"},
+		{"POST", "/api/collections/rule_runs/records", "the run history is written by the engine"},
+		{"POST", "/api/collections/automation_catalog/records", "the catalog is written by the server"},
+		{"POST", "/api/automation/rules/", "bare prefix of the rule family"},
+		{"POST", "/api/forms/hosts", "the hosts route is read-only"},
 	}
 	for _, d := range denied {
 		if got := ScopeForRoute(d.method, d.path); len(got) != 0 {

@@ -109,6 +109,12 @@ const ProfileScopeLabel = "See your name and email address"
 // BackupsScopeLabel is the consent copy for ScopeBackups.
 const BackupsScopeLabel = "Create and restore backups"
 
+// FormsScopeLabel is the consent copy for ScopeForms.
+const FormsScopeLabel = "Manage forms, publish web forms and read their submissions"
+
+// AutomationScopeLabel is the consent copy for ScopeAutomation.
+const AutomationScopeLabel = "Manage and run automation rules"
+
 var (
 	slugPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	capabilityPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
@@ -218,7 +224,9 @@ func PackageScopes(slug string) []string {
 // (a package named "reports" would own POST /api/reports/run). Add a name here
 // when core gains a route family; this is the only list.
 var coreRouteFamilies = map[string]bool{
-	"reports": true,
+	"reports":    true,
+	"forms":      true,
+	"automation": true,
 }
 
 func validatePackage(p Package) error {
@@ -308,6 +316,19 @@ func rebuild() tables {
 			// applies — this only stops the grant middleware default-denying
 			// the read.
 			"backups": {read: ScopeRule{ScopeBackups}},
+			// Forms of every host, and web form publishing. Core-owned: no
+			// package owns the forms collection. Submissions and their files
+			// are never created or changed through the API (their rules are
+			// null), so "write" reaches only a delete.
+			"forms":                 {read: ScopeRule{ScopeForms}, write: ScopeRule{ScopeForms}},
+			"form_publications":     {read: ScopeRule{ScopeForms}, write: ScopeRule{ScopeForms}},
+			"form_submissions":      {read: ScopeRule{ScopeForms}, write: ScopeRule{ScopeForms}},
+			"form_submission_files": {read: ScopeRule{ScopeForms}, write: ScopeRule{ScopeForms}},
+			// Rules, their run history and the action catalog. The run
+			// history and the catalog are written by the server only.
+			"rules":              {read: ScopeRule{ScopeAutomation}, write: ScopeRule{ScopeAutomation}},
+			"rule_runs":          {read: ScopeRule{ScopeAutomation}},
+			"automation_catalog": {read: ScopeRule{ScopeAutomation}},
 		},
 		endpoints: map[string]ScopeRule{
 			// The deployment's own backup API. Core-owned, so it is spelled
@@ -327,6 +348,8 @@ func rebuild() tables {
 			// would fall into default-deny and 403 the very call the server
 			// tells clients to make.
 			"GET /oauth/userinfo": {ScopeProfile},
+			// The installed form hosts, for `tinycld form hosts`.
+			"GET /api/forms/hosts": {ScopeForms},
 		},
 		// The two backup routes that carry a record id cannot be spelled as
 		// exact paths. A prefix is broader than it looks, so each one names a
@@ -335,10 +358,14 @@ func rebuild() tables {
 		prefixes: []prefixRule{
 			{method: "GET", prefix: "/api/org-backups/", scopes: ScopeRule{ScopeBackups}},
 			{method: "PATCH", prefix: "/api/org-backups/restore/", scopes: ScopeRule{ScopeBackups}},
+			// Run a rule now, and run it again for one record (a retry).
+			{method: "POST", prefix: "/api/automation/rules/", scopes: ScopeRule{ScopeAutomation}},
 		},
 		scopes: []Scope{
 			{ID: ScopeProfile, Label: ProfileScopeLabel},
 			{ID: ScopeBackups, Label: BackupsScopeLabel},
+			{ID: ScopeForms, Label: FormsScopeLabel},
+			{ID: ScopeAutomation, Label: AutomationScopeLabel},
 		},
 	}
 	slugs := make([]string, 0, len(packages))
