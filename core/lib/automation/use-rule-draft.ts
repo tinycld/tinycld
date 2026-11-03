@@ -9,7 +9,7 @@
 // first character. After that they re-validate on every edit.
 import { useForm, zodResolver } from '@tinycld/core/ui/form'
 import { newRecordId } from 'pbtsdb/core'
-import { useMemo, useRef } from 'react'
+import { useRef } from 'react'
 import { useFieldArray } from 'react-hook-form'
 import type { CatalogResponse } from './api'
 import type { RuleDraft } from './draft'
@@ -17,14 +17,14 @@ import { ruleDraftSchemaFor } from './rule-draft-schema'
 
 type ActionParams = RuleDraft['actions'][number]['params']
 
-export function useRuleDraft(
-    initial: RuleDraft,
-    catalog: CatalogResponse,
-    extend?: (catalog: CatalogResponse, draft: RuleDraft) => CatalogResponse
-) {
+export function useRuleDraft(initial: RuleDraft, catalog: CatalogResponse) {
     // The resolver reads the newest schema: picking a form adds its fields,
     // and a condition on one must validate against them at once.
     const schemaRef = useRef(ruleDraftSchemaFor(catalog))
+    // The catalog the schema was last built from, so a render that passes the
+    // same catalog does not rebuild it (the builder re-renders on every
+    // keystroke).
+    const schemaFor = useRef(catalog)
     const {
         control,
         watch,
@@ -42,8 +42,14 @@ export function useRuleDraft(
     })
     const actionFields = useFieldArray({ control, name: 'actions' })
     const draft = watch()
-    const extended = extend ? extend(catalog, draft) : catalog
-    schemaRef.current = useMemo(() => ruleDraftSchemaFor(extended), [extended])
+
+    // Called during render by the owner of the catalog (the rule builder
+    // extends it with the picked form's fields once that form loads).
+    const setCatalog = (next: CatalogResponse) => {
+        if (next === schemaFor.current) return
+        schemaFor.current = next
+        schemaRef.current = ruleDraftSchemaFor(next)
+    }
 
     // A cross-field edit (a new trigger invalidates conditions, actions and
     // the cron) can change errors anywhere in the draft, so re-run the whole
@@ -126,6 +132,6 @@ export function useRuleDraft(
         moveAction,
         removeAction,
         setActionParams,
-        catalog: extended,
+        setCatalog,
     }
 }
