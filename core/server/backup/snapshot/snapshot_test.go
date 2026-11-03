@@ -86,6 +86,33 @@ func TestFromDataDirBuildsManifestFromTheCopy(t *testing.T) {
 	}
 }
 
+// PocketBase's local storage writes a ".attrs" sidecar beside each stored
+// file. The sidecar must travel in the archive, because a restore swaps in the
+// raw storage tree, but Verify counts through the app's filesystem, which
+// hides sidecars. Counting them here failed the verify of every restored org
+// that had a stored file.
+func TestFromDataDirArchivesSidecarsButDoesNotCountThem(t *testing.T) {
+	dir := fixture(t)
+	sidecar := filepath.Join(dir, "storage", "c1", "r1", "a.txt.attrs")
+	if err := os.WriteFile(sidecar, []byte(`{"user.content_type":"text/plain"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := FromDataDir(Options{DataDir: dir, TmpDir: t.TempDir(), Holder: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	if len(s.Files) != 2 {
+		t.Fatalf("archived files = %+v, want the file and its sidecar", s.Files)
+	}
+	if s.Manifest.Counts.Files != 1 {
+		t.Fatalf("counted files = %d, want 1 (the sidecar is not a stored file)", s.Manifest.Counts.Files)
+	}
+	if want := int64(5 + len(`{"user.content_type":"text/plain"}`)); s.Manifest.Counts.Bytes != want {
+		t.Fatalf("bytes = %d, want %d (a restore stages the sidecar too)", s.Manifest.Counts.Bytes, want)
+	}
+}
+
 func TestFromDataDirHoldsDeletesUntilRelease(t *testing.T) {
 	dir := fixture(t)
 	s, err := FromDataDir(Options{DataDir: dir, TmpDir: t.TempDir(), Holder: "test"})
