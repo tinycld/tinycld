@@ -163,7 +163,7 @@ func TestFormsHook_RejectsMinimumAboveMaximum(t *testing.T) {
 		return withField(widgetDefault, `{"key":"count","kind":"number","page":"main","label":"Count","width":"full","required":false,"hidden":false,"min":`+min+`,"max":`+max+`}`)
 	}
 	err := e.saveFormErr(t, "bad", number("5", "2"))
-	if err == nil || !strings.Contains(err.Error(), "minimum is above maximum") {
+	if err == nil || !strings.Contains(err.Error(), "minimum 5 is above maximum 2") {
 		t.Fatalf("want a min/max error, got %v", err)
 	}
 	if keys := errorKeys(t, err); len(keys) != 1 || keys[0] != "definition.fields.5.min" {
@@ -187,7 +187,7 @@ func TestFormsHook_RejectsRuleOnMissingField(t *testing.T) {
 	e := newTestEnv(t)
 	def := strings.Replace(widgetDefault, `"rules":[]`, `"rules":[{"key":"r","match":"all","when":[{"field":"ghost","op":"is","value":"x"}],"actions":[{"action":"hide","field":"due"}]}]`, 1)
 	err := e.saveFormErr(t, "bad", def)
-	if err == nil || !strings.Contains(err.Error(), "unknown field ghost") {
+	if err == nil || !strings.Contains(err.Error(), `"ghost" is not a field of this form`) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -245,7 +245,7 @@ func TestFormsHook_RejectsDuplicateRuleKey(t *testing.T) {
 	rule := `{"key":"r","match":"all","when":[{"field":"name","op":"is_empty"}],"actions":[{"action":"hide","field":"due"}]}`
 	def := strings.Replace(widgetDefault, `"rules":[]`, `"rules":[`+rule+`,`+rule+`]`, 1)
 	err := e.saveFormErr(t, "bad", def)
-	if err == nil || !strings.Contains(err.Error(), "duplicate rule key r") {
+	if err == nil || !strings.Contains(err.Error(), `rule key "r" is used twice`) {
 		t.Fatalf("got %v", err)
 	}
 }

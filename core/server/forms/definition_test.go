@@ -98,7 +98,7 @@ func TestFormsHook_ValidatesTheDefinitionOnUpdate(t *testing.T) {
 	e := newTestEnv(t)
 	f := e.newForm(t, "widget", widgetDefault, true)
 	f.Set("definition", []byte(strings.Replace(widgetDefault, `"version":1`, `"version":2`, 1)))
-	if err := e.app.Save(f); err == nil || !strings.Contains(err.Error(), "unsupported definition version") {
+	if err := e.app.Save(f); err == nil || !strings.Contains(err.Error(), "version 2 is not supported") {
 		t.Fatalf("an invalid definition update must be refused, got %v", err)
 	}
 }
