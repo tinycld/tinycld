@@ -20,6 +20,10 @@ import (
 type FieldRef struct {
 	Key   string
 	Label string
+	// Markdown marks a column whose value is already markdown (a card
+	// description), so a markdown param copies it as it is instead of
+	// escaping its formatting into raw characters.
+	Markdown bool
 }
 
 func (f *FieldRef) UnmarshalJSON(b []byte) error {
@@ -27,13 +31,14 @@ func (f *FieldRef) UnmarshalJSON(b []byte) error {
 		return json.Unmarshal(b, &f.Key)
 	}
 	var obj struct {
-		Key   string `json:"key"`
-		Label string `json:"label"`
+		Key      string `json:"key"`
+		Label    string `json:"label"`
+		Markdown bool   `json:"markdown"`
 	}
 	if err := json.Unmarshal(b, &obj); err != nil {
 		return err
 	}
-	f.Key, f.Label = obj.Key, obj.Label
+	f.Key, f.Label, f.Markdown = obj.Key, obj.Label, obj.Markdown
 	return nil
 }
 

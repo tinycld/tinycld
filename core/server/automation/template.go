@@ -87,6 +87,18 @@ func SubstituteTemplates(s string, record *core.Record, trigger TriggerDef, env 
 		if field, ok := record.Collection().Fields.GetByName(key).(*core.RelationField); ok {
 			return escape(namer.relationText(field, record))
 		}
+		if markdownField(trigger, key) {
+			return normalize(record.Get(key))
+		}
 		return escape(normalize(record.Get(key)))
 	})
+}
+
+func markdownField(trigger TriggerDef, key string) bool {
+	for _, f := range trigger.Fields {
+		if f.Key == key {
+			return f.Markdown
+		}
+	}
+	return false
 }

@@ -27,8 +27,14 @@ type AnySchema = Record<string, { type: Record<string, unknown> }>
 type CollectionsOf<S> = keyof S & string
 type FieldsOf<S, C extends keyof S> = S[C] extends { type: infer T } ? keyof T & string : string
 
-/** A trigger field entry: bare column key, or key + display-label override. */
-export type FieldRef<F extends string = string> = F | { key: F; label: string }
+/**
+ * A trigger field entry: bare column key, or key + display-label override.
+ * `markdown` marks a column that already holds markdown (a card description),
+ * so a markdown param copies it as it is instead of escaping it.
+ */
+export type FieldRef<F extends string = string> =
+    | F
+    | { key: F; label: string; markdown?: boolean }
 
 export interface RecordTriggerDefBase<C extends string, F extends string> {
     id: string
