@@ -2,6 +2,7 @@ package forms
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -84,5 +85,86 @@ func TestValidateDefinitionValidOneIsNil(t *testing.T) {
 	e := newTestEnv(t)
 	if got := problemsOf(t, e, minimalValidFor(t, e)); len(got) != 0 {
 		t.Fatalf("a valid definition has no problems: %v", got)
+	}
+}
+
+func withDef(t *testing.T, e *env, edit func(def map[string]any)) string {
+	t.Helper()
+	var def map[string]any
+	if err := json.Unmarshal([]byte(minimalValidFor(t, e)), &def); err != nil {
+		t.Fatal(err)
+	}
+	edit(def)
+	raw, _ := json.Marshal(def)
+	return string(raw)
+}
+
+// A required built-in that is present but hidden is one problem, not also a
+// "missing built-in field".
+func TestValidateDefinitionHiddenBuiltinIsNotAlsoMissing(t *testing.T) {
+	e := newTestEnv(t)
+	var required string
+	for _, b := range e.host.Builtins {
+		if b.Required {
+			required = b.Key
+			break
+		}
+	}
+	if required == "" {
+		t.Skip("the test host has no required built-in")
+	}
+	got := problemsOf(t, e, withDef(t, e, func(def map[string]any) {
+		for _, f := range def["fields"].([]any) {
+			if fm := f.(map[string]any); fm["key"] == required {
+				fm["hidden"] = true
+			}
+		}
+	}))
+	if _, ok := got["definition.fields"]; ok {
+		t.Fatalf("a hidden built-in is reported as missing too: %v", got)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want only the hidden problem, got %v", got)
+	}
+}
+
+// A rule that names a declared field whose own definition is wrong reports
+// the field's problem only, not "not a field of this form".
+func TestValidateDefinitionReferenceToAnInvalidFieldIsNotAProblem(t *testing.T) {
+	e := newTestEnv(t)
+	got := problemsOf(t, e, withDef(t, e, func(def map[string]any) {
+		def["fields"] = append(def["fields"].([]any), map[string]any{"key": "phone", "kind": "telephone", "page": "main", "label": "Phone"})
+		def["rules"] = []any{map[string]any{"key": "r1", "match": "all",
+			"when":    []any{map[string]any{"field": "phone", "op": "is_empty"}},
+			"actions": []any{map[string]any{"action": "require", "field": "phone"}}}}
+		def["defaults"] = map[string]any{"phone": "x"}
+		def["submit"] = map[string]any{"required": []any{"phone"}}
+	}))
+	if len(got) != 1 {
+		t.Fatalf("want only the kind problem, got %v", got)
+	}
+	for k := range got {
+		if !strings.HasSuffix(k, ".kind") {
+			t.Fatalf("got %v", got)
+		}
+	}
+}
+
+// A cross-field problem keeps the path of the field it is about, even when
+// an earlier field has its own problem.
+func TestValidateDefinitionCrossFieldPathsKeepTheirIndex(t *testing.T) {
+	e := newTestEnv(t)
+	var at int
+	got := problemsOf(t, e, withDef(t, e, func(def map[string]any) {
+		fields := def["fields"].([]any)
+		fields = append(fields, map[string]any{"key": "Bad", "kind": "text", "page": "main", "label": "Bad"})
+		at = len(fields)
+		fields = append(fields, map[string]any{"key": "total", "kind": "computed", "page": "main", "label": "Total",
+			"decimals": 0, "expression": map[string]any{"mul": []any{map[string]any{"var": "ghost"}, 2}}})
+		def["fields"] = fields
+	}))
+	want := "definition.fields." + strconv.Itoa(at) + ".expression"
+	if got[want] == "" {
+		t.Fatalf("no problem at %s; got %v", want, got)
 	}
 }

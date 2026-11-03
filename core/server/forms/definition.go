@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
@@ -206,6 +207,17 @@ func (p problems) result() validation.Errors {
 	return validation.Errors(p)
 }
 
+// fieldIndexOf reads n from a "definition.fields.<n>…" problem path.
+func fieldIndexOf(path string) (int, bool) {
+	rest, ok := strings.CutPrefix(path, "definition.fields.")
+	if !ok {
+		return 0, false
+	}
+	n, _, _ := strings.Cut(rest, ".")
+	i, err := strconv.Atoi(n)
+	return i, err == nil
+}
+
 func listOrNone(items []string) string {
 	if len(items) == 0 {
 		return "none"
@@ -252,6 +264,10 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 		pageKeys = append(pageKeys, pg.Key)
 	}
 	kinds := map[string]string{}
+	// declared holds every field key the definition lists with a valid,
+	// unique key, even when the field itself has a problem: a reference to
+	// it is not a second problem, and a built-in in the list is not missing.
+	declared := map[string]bool{}
 	seenBuiltin := map[string]bool{}
 	// requiredOnPage lists, per page, the host-required built-ins placed on it.
 	requiredOnPage := map[string][]string{}
@@ -261,9 +277,13 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 			p.add(fmt.Sprintf("%q is not a valid field key. %s", f.Key, keyRule), at("key")...)
 			continue
 		}
-		if _, dup := kinds[f.Key]; dup {
+		if declared[f.Key] {
 			p.add(fmt.Sprintf("field key %q is used twice. Each field key must be unique.", f.Key), at("key")...)
 			continue
+		}
+		declared[f.Key] = true
+		if f.Kind == "builtin" && host.Builtin(f.Key) != nil {
+			seenBuiltin[f.Key] = true
 		}
 		if !pages[f.Page] {
 			p.add(fmt.Sprintf("%q is not a page of this form. Pages: %s.", f.Page, listOrNone(pageKeys)), at("page")...)
@@ -283,7 +303,6 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 				requiredOnPage[f.Page] = append(requiredOnPage[f.Page], f.Key)
 			}
 			kinds[f.Key] = b.Kind
-			seenBuiltin[f.Key] = true
 			continue
 		}
 		if !slices.Contains(CustomKinds(), f.Kind) {
@@ -331,7 +350,23 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 	} else if len(missing) > 1 {
 		p.add(fmt.Sprintf("missing built-in fields %s. Every built-in field of %s must be in fields, with kind builtin.", strings.Join(missing, ", "), host.Label), "fields")
 	}
-	p.merge(computeCrossErrors(def, host))
+	// A field that failed its own checks already has its problem, so a
+	// cross-field problem at that field is not reported again. The paths keep
+	// each field's index in the definition.
+	for k, v := range computeCrossErrors(def, host) {
+		if i, ok := fieldIndexOf(k); ok && i < len(def.Fields) {
+			if _, valid := kinds[def.Fields[i].Key]; !valid {
+				continue
+			}
+		}
+		p.merge(validation.Errors{k: v})
+	}
+	// unusable reports a reference to a field that is declared but has its
+	// own problem: that reference is skipped, not reported again.
+	unusable := func(key string) bool {
+		_, ok := kinds[key]
+		return !ok && declared[key]
+	}
 	ruleKeys := map[string]bool{}
 	for ri, r := range def.Rules {
 		if !keyRe.MatchString(r.Key) {
@@ -350,6 +385,9 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 			p.add("rule "+r.Key+" needs at least one action.", "rules", ri, "actions")
 		}
 		for ci, c := range r.When {
+			if unusable(c.Field) {
+				continue
+			}
 			kind, ok := kinds[c.Field]
 			if !ok {
 				p.add(fmt.Sprintf("%q is not a field of this form. Fields: %s.", c.Field, listOrNone(sortedKeys(kinds))), "rules", ri, "when", ci, "field")
@@ -364,10 +402,16 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 			}
 		}
 		for ai, a := range r.Actions {
+			if a.Field != "" && unusable(a.Field) {
+				continue
+			}
 			p.merge(actionError(a, kinds, pages, requiredOnPage, host, "rules", ri, "actions", ai))
 		}
 	}
 	for k, v := range def.Defaults {
+		if unusable(k) {
+			continue
+		}
 		if _, ok := kinds[k]; !ok {
 			p.add(fmt.Sprintf("%q is not a field of this form. Fields: %s.", k, listOrNone(sortedKeys(kinds))), "defaults", k)
 			continue
@@ -377,6 +421,9 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 		}
 	}
 	for i, k := range def.Submit.Required {
+		if unusable(k) {
+			continue
+		}
 		if _, ok := kinds[k]; !ok {
 			p.add(fmt.Sprintf("%q is not a field of this form. Fields: %s.", k, listOrNone(sortedKeys(kinds))), "submit", "required", i)
 		}
