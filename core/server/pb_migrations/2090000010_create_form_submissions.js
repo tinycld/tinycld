@@ -76,6 +76,9 @@ migrate(
                     maxSelect: 1,
                 },
                 { id: 'fsf_field', name: 'field', type: 'text', required: true, max: 40 },
+                // Not `protected`: the fork checks the view rule (admin) for
+                // every file from the Authorization header or a ?token=, and
+                // `protected` would refuse the header, which a CLI token needs.
                 {
                     id: 'fsf_file',
                     name: 'file',
@@ -83,7 +86,6 @@ migrate(
                     required: true,
                     maxSelect: 1,
                     maxSize: 104857600,
-                    protected: true,
                 },
                 { id: 'fsf_size', name: 'size', type: 'number', onlyInt: true },
                 { id: 'fsf_name', name: 'name', type: 'text', max: 255 },

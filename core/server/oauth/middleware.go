@@ -132,10 +132,11 @@ func ScopeForRoute(method, path string) ScopeRule {
 	}
 	if name, ok := fileCollectionFromPath(path); ok {
 		// A stored file (a message body, an attachment, document content) is
-		// governed by its collection's READ scope. No field is `protected`
-		// today, so these URLs answer a bare unauthenticated GET — but the
-		// CLI attaches its bearer to every request, and without this
-		// classification the file fetch would 403 for OAuth callers only.
+		// governed by its collection's READ scope. The PocketBase fork checks
+		// the collection's view rule for every file, as the caller
+		// (third_party/pocketbase/apis/file_tinycld.go), and the CLI attaches
+		// its bearer to every request, so without this classification the
+		// file fetch would 403 for OAuth callers only.
 		// Writes never go through /api/files/, so any write verb is denied
 		// outright.
 		//
