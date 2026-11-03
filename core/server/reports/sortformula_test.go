@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -146,4 +147,56 @@ func TestASortFormulasAmountsTotalPerCurrency(t *testing.T) {
 		t.Fatalf("total ids = %s, %s", res.Rows[1].ID, res.Rows[4].ID)
 	}
 	requireRows(t, res, "grams", int64(10), int64(10), int64(1300), int64(400), int64(1700))
+}
+
+// One order rule (Task 10): a select, a formula that gives a select's value,
+// and a mix of a select's values and other text sort by the label a row shows,
+// then by the stored value, on detail rows (paged too) and on group rows. The
+// meals' labels invert their stored values: apple reads Zest, zebra Apricot.
+func TestASortByASelectReadsItsOptionLabels(t *testing.T) {
+	z := newZoo(t)
+	withMeals(t, z)
+	const columns = `"columns":[{"id":"note","path":[{"field":"note"}]},{"id":"kind","path":[{"field":"kind"}]},
+		{"id":"byFormula","formula":{"op":"coalesce","args":[{"path":[{"field":"kind"}]}]}},
+		{"id":"mixed","formula":{"op":"if","args":[{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"m3"}]},{"value":"Other"},{"path":[{"field":"kind"}]}]}}`
+	detail := func(sort string) string {
+		return `{"version":2,"source":"zoo.meals",` + columns + `],"sort":[` + sort + `,{"col":"note"}]}`
+	}
+	for name, c := range map[string]struct {
+		sort string
+		want []any
+	}{
+		"column":         {`{"col":"kind"}`, []any{"m2", "m1", "m3"}},
+		"column desc":    {`{"col":"kind","dir":"desc"}`, []any{"m1", "m3", "m2"}},
+		"formula":        {`{"formula":{"col":"kind"}}`, []any{"m2", "m1", "m3"}},
+		"formula column": {`{"col":"byFormula"}`, []any{"m2", "m1", "m3"}},
+		"mixed":          {`{"col":"mixed"}`, []any{"m2", "m3", "m1"}},
+		"mixed desc":     {`{"col":"mixed","dir":"desc"}`, []any{"m1", "m3", "m2"}},
+	} {
+		if got := fullNotes(t, z, detail(c.sort)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: detail rows = %v, want %v", name, got, c.want)
+		}
+		if got := pageNotes(t, z, detail(c.sort)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: paged rows = %v, want %v", name, got, c.want)
+		}
+	}
+
+	grouped := func(col, sort string) string {
+		return `{"version":2,"source":"zoo.meals",` + columns + `,{"id":"n","path":[{"field":"note"}],"aggregate":"count"}],` +
+			`"groups":[{"id":"g","col":"` + col + `"}],"sort":[` + sort + `]}`
+	}
+	for name, c := range map[string]struct {
+		col, sort string
+		want      []any
+	}{
+		"column":         {"kind", `{"col":"kind","dir":"desc"}`, []any{"Zest", "Apricot", "Total"}},
+		"formula":        {"kind", `{"formula":{"col":"kind"},"dir":"desc"}`, []any{"Zest", "Apricot", "Total"}},
+		"formula column": {"byFormula", `{"col":"byFormula","dir":"desc"}`, []any{"Zest", "Apricot", "Total"}},
+		"mixed":          {"mixed", `{"col":"mixed","dir":"desc"}`, []any{"Zest", "Other", "Apricot", "Total"}},
+	} {
+		res := z.run(t, "ann", grouped(c.col, c.sort), Options{}, nil)
+		if got := rowsOf(res, "label"); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: group rows = %v, want %v", name, got, c.want)
+		}
+	}
 }

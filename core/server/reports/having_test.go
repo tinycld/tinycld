@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -82,18 +83,22 @@ func TestRunningValuesReadTheShownRowsOnly(t *testing.T) {
 }
 
 // A having on a deeper group hides its rows, but its parent's subtotal still
-// adds every base row under the parent.
+// adds every base row under the parent: lion's 3500 adds the hidden f1. Zebra,
+// whose note groups are all hidden, stays closed and shows its own figures.
 func TestADeeperHavingLeavesTheParentSubtotal(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
-		"groups":[{"id":"g","col":"species","subtotals":true},{"id":"h","col":"note","having":{"op":"gt","args":[{"col":"cost"},{"value":900}]}}],
+		"groups":[{"id":"g","col":"species","subtotals":true},{"id":"h","col":"note","having":{"op":"gt","args":[{"col":"cost"},{"value":1500}]}}],
 		"sort":[{"col":"species"},{"col":"note"}]}`, Options{Expand: [][]any{{"lion", "USD"}, {"zebra", "USD"}}}, nil)
-	requireRows(t, res, "kind", KindGroup, KindGroup, KindGroup, KindSubtotal, KindGroup, KindSubtotal, KindTotal)
-	requireRows(t, res, "label", "lion", "f1", "f2", "Total lion", "zebra", "Total zebra", "Total")
-	requireRows(t, res, "cost", int64(3500), int64(1000), int64(2500), int64(3500), int64(1000), int64(1000), int64(4500))
+	requireRows(t, res, "kind", KindGroup, KindGroup, KindSubtotal, KindGroup, KindTotal)
+	requireRows(t, res, "label", "lion", "f2", "Total lion", "zebra", "Total")
+	requireRows(t, res, "cost", int64(3500), int64(2500), int64(3500), int64(1000), int64(4500))
+	if zebra := res.Rows[3]; zebra.Expanded || zebra.CanExpand {
+		t.Fatalf("zebra = %+v, want a closed group that cannot open", zebra)
+	}
 }
 
 func TestHavingReadsARecordField(t *testing.T) {
@@ -199,4 +204,35 @@ func TestValidateChecksAHaving(t *testing.T) {
 	bad := `{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],
 		"groups":[{"id":"g","col":"a","having":{"op":"lookup","source":"zoo.sites","value":{"nope":1}}}]}`
 	requireSpecError(t, Validate(app, loadSpec(t, bad)), 400, "groups.0.having.value", "a lookup's value is a formula")
+}
+
+// A group whose every child group its having hides opens onto nothing, so it
+// is not expandable; a group with one shown child is. Lion's feedings cost
+// 1000 and 2500, zebra's 500 each: only lion keeps a note group over 2000.
+func TestAGroupWhoseChildrenAreAllHiddenDoesNotExpand(t *testing.T) {
+	z := newZoo(t)
+	spec := `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species"},{"id":"h","col":"note","having":{"op":"gte","args":[
+			{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":2000}]}}],
+		"sort":[{"col":"species"},{"col":"note"}]}`
+	for _, opts := range []Options{{}, {ExpandAll: true}} {
+		res := z.run(t, "ann", spec, opts, nil)
+		expandable := map[string]bool{}
+		for _, row := range res.Rows {
+			if row.Kind == KindGroup {
+				expandable[row.Label] = row.CanExpand
+			}
+		}
+		want := map[string]bool{"lion": true, "zebra": false}
+		if opts.ExpandAll {
+			// A note group opens onto its feeding.
+			want["f2"] = true
+		}
+		if !reflect.DeepEqual(expandable, want) {
+			t.Errorf("expandAll %v: canExpand = %v, want %v", opts.ExpandAll, expandable, want)
+		}
+	}
 }

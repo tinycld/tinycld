@@ -517,6 +517,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		if err != nil {
 			return nil, "", err
 		}
+		lv.countShownKids()
 		var totals []string
 		if readsSums {
 			if totals, err = lv.rowsCells(); err != nil {
@@ -720,6 +721,17 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 	return rows, nil
 }
 
+// shownOrder is what a select's value (or a mix of a select's values and
+// other text) sorts by first: the label a row shows, as group rows of it
+// read (levels.go shownKey), so one column has one order on every row; the
+// stored value follows it. ok is false for any other value.
+func shownOrder(bind func(any) string, e expr) (string, bool) {
+	if e.shown == "" && len(e.options) == 0 {
+		return "", false
+	}
+	return showSQL(bind, e), true
+}
+
 // detailSortValue is a sort key's value on a detail row, and the name its
 // cursor fingerprint records: the column's id, or the formula itself, so a
 // cursor from another sort is refused.
@@ -778,6 +790,11 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@label"})
 			frame.order = append(frame.order, "("+key+" IS NULL)", key+dirOf(s.desc))
 			name = name + "_id"
+		} else if key, ok := shownOrder(r.s.bind, e); ok {
+			sel = append(sel, key+" AS "+name)
+			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@shown", typ: Text})
+			frame.order = append(frame.order, "("+key+" IS NULL)", key+dirOf(s.desc))
+			name = name + "_value"
 		}
 		sel = append(sel, e.sql+" AS "+name)
 		order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: e.typ})

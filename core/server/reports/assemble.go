@@ -302,6 +302,10 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 	if v, ok := row["__n"]; ok && v != nil && toInt(v) == 0 && !rn.c.nextFill(n) {
 		canOpen = false
 	}
+	// A group whose child groups the having hides, every one, opens onto nothing.
+	if v, ok := row["__kids"]; ok && v != nil && toInt(v) == 0 {
+		canOpen = false
+	}
 	expanded := canOpen && rn.expand.has(key, n)
 	rn.push(Row{
 		ID: id, Kind: KindGroup, Depth: n - 1, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),

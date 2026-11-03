@@ -100,7 +100,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		}
 		cells = append(cells, carried...)
 		// The level rows' last columns, so every leg of the union has the same.
-		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n")
+		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n", "NULL AS __kids")
 		if len(lc.used) > maxJoinedChunks {
 			return nil, nil, invalid(at, "a computed row reads too many sections")
 		}

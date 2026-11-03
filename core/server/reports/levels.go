@@ -44,6 +44,10 @@ type level struct {
 	// level whose rows are not records.
 	label    labelRef
 	labelKey string
+	// kids counts a row's child groups that pass their having (a.ch___shown)
+	// when the next level's group has one, "" otherwise: a row whose
+	// children are all hidden opens onto nothing.
+	kids     string
 	visiting map[string]bool
 	// reads memoizes readsRowValue per formula column.
 	reads map[string]bool
@@ -192,9 +196,12 @@ func (lv *level) order() ([]string, error) {
 		if !ok {
 			continue
 		}
-		// A record sorts by its label's typed value, then by its id.
+		// A record sorts by its label's typed value, then by its id; a select
+		// by its shown label, then by its stored value.
 		if ref, ok := lv.c.sortLabel(lv.labels, s, e); ok {
 			key := labelOrder(lv.r.s, ref.value)
+			out = append(out, "("+key+" IS NULL)", key+dirOf(s.desc))
+		} else if key, ok := shownOrder(lv.r.s.bind, e); ok {
 			out = append(out, "("+key+" IS NULL)", key+dirOf(s.desc))
 		}
 		out = append(out, "("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
@@ -305,7 +312,11 @@ func (lv *level) render(cells []string, own string, totals []string) []string {
 	}
 	out = append(out, cells...)
 	out = append(out, fmt.Sprintf("ROW_NUMBER() OVER (%s ORDER BY %s) AS __ord", partitionBy(lv.frame.parent), strings.Join(lv.frame.order, ", ")))
-	out = append(out, "1 AS __own", lv.label.value+" AS __label", lv.label.currency+" AS __labelcur", "a.__n AS __n")
+	kids := "NULL"
+	if lv.kids != "" {
+		kids = lv.kids
+	}
+	out = append(out, "1 AS __own", lv.label.value+" AS __label", lv.label.currency+" AS __labelcur", "a.__n AS __n", kids+" AS __kids")
 	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, strings.Join(out, ", "), lv.frame.from(g, "a")))
 	return ctes
 }
@@ -419,13 +430,29 @@ func (lv *level) joinSides(a string, sides []tmCol) ([]string, string) {
 	return ctes, from
 }
 
+// shownCell is 1 on each row of rt<L>, so the level above counts its child
+// groups that pass their having (countShownKids).
+const shownCell = "__shown"
+
+// countShownKids makes the level read how many of each row's child groups
+// pass their having, when the next level's group has one.
+func (lv *level) countShownKids() {
+	if lv.n >= 1 && lv.n < len(lv.c.p.groups) && lv.c.p.groups[lv.n].group.Having != nil {
+		lv.kids = lv.childSum(shownCell)
+	}
+}
+
 // rowsCells are the level's cells of its "rows" columns, which rt<L> holds for
-// the level above to add; none on level 0, which has no level above.
+// the level above to add, and shownCell under a having; none on level 0, which
+// has no level above.
 func (lv *level) rowsCells() ([]string, error) {
 	if lv.n == 0 {
 		return nil, nil
 	}
 	var out []string
+	if lv.c.p.groups[lv.n-1].group.Having != nil {
+		out = append(out, "1 AS "+shownCell)
+	}
 	for idx, cp := range lv.c.p.cols {
 		if cp.col.Total != TotalRows {
 			continue

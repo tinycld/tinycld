@@ -3,6 +3,7 @@ package reports
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -320,4 +321,44 @@ func TestARunningValueIsNotASortKey(t *testing.T) {
 		{"id":"running","formula":{"op":"runningSum","args":[{"col":"cost"}]}}],
 		"sort":[{"col":"running"}]}`, Options{}, nil)
 	requireSpecError(t, err, 400, "sort.0.col", "not a sort key")
+}
+
+// The builder's start for a bucketed group's label formula (draft.ts
+// labelStart) spells the bucket's key from the first date's parts, so a run
+// labels each group as it does with no label formula.
+func TestABucketLabelFormulaSpellsTheBucketsKey(t *testing.T) {
+	z := newZoo(t)
+	const first = `{"op":"min","args":[{"path":[{"field":"fed"}]}]}`
+	part := func(op string) string { return `{"op":"` + op + `","args":[` + first + `]}` }
+	pad := `{"op":"if","args":[{"op":"lt","args":[` + part("month") + `,{"value":10}]},{"value":"0"},{"value":""}]}`
+	starts := map[string]string{
+		"month":      `{"op":"concat","args":[` + part("year") + `,{"value":"-"},` + pad + `,` + part("month") + `]}`,
+		"quarter":    `{"op":"concat","args":[` + part("year") + `,{"value":"-Q"},` + part("quarter") + `]}`,
+		"year":       `{"op":"concat","args":[` + part("year") + `]}`,
+		"fiscalYear": `{"op":"concat","args":[` + part("fiscalYear") + `]}`,
+	}
+	spec := func(bucket, label string) string {
+		return `{"version":2,"source":"zoo.feedings","columns":[{"id":"fed","path":[{"field":"fed"}]},
+			{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+			"groups":[{"id":"g","col":"fed","bucket":"` + bucket + `"` + label + `}]}`
+	}
+	for bucket, start := range starts {
+		want := rowsOf(z.run(t, "ann", spec(bucket, ""), Options{}, nil), "label")
+		if len(want) < 2 || want[0] == blankLabel {
+			t.Fatalf("%s: default labels %v", bucket, want)
+		}
+		got := rowsOf(z.run(t, "ann", spec(bucket, `,"label":`+start), Options{}, nil), "label")
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: labels = %v, want %v", bucket, got, want)
+		}
+	}
+	// A day starts as the group's first date, a date label of that day.
+	res := z.run(t, "ann", spec("day", `,"label":`+first), Options{}, nil)
+	days := rowsOf(z.run(t, "ann", spec("day", ""), Options{}, nil), "label")
+	for i, row := range res.Rows[:len(res.Rows)-1] {
+		day, _ := days[i].(string)
+		if row.LabelType != Date || !strings.HasPrefix(row.Label, day) {
+			t.Errorf("day %d: label %q (%s), want the date %s", i, row.Label, row.LabelType, day)
+		}
+	}
 }
