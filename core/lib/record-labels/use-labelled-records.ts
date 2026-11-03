@@ -24,6 +24,8 @@ export type LabelCollection = NonNullable<ReturnType<typeof collectionByName>>
 export interface LabelSources {
     collection: LabelCollection | undefined
     related: LabelCollection | undefined
+    /** Only records whose fields equal these values. */
+    match?: Record<string, string | number | boolean>
 }
 
 export interface LabelledRecord {
@@ -136,6 +138,9 @@ export function useLabelledRecords(sources: LabelSources, label: RecordLabel, te
             // (`wrapLikeParams`). The order is the label's first field rather
             // than id because id order is meaningless to a human.
             let query = q.from({ record: collection })
+            for (const [key, value] of Object.entries(sources.match ?? {})) {
+                query = query.where(({ record }) => eq(fieldRef(record, key), value))
+            }
             if (tokens.length > 0) {
                 query = query.where(({ record }) =>
                     tokens

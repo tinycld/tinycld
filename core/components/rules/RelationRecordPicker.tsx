@@ -1,4 +1,7 @@
-import { collectionByName } from '@tinycld/core/lib/pocketbase'
+import { useAuth } from '@tinycld/core/lib/auth'
+import type { RelationCreate } from '@tinycld/core/lib/automation/types'
+import { useMutation } from '@tinycld/core/lib/mutations'
+import { collectionByName, insertByName } from '@tinycld/core/lib/pocketbase'
 import { fieldLabel, type RecordLabel } from '@tinycld/core/lib/record-labels/label'
 import { packageRecordLabels } from '@tinycld/core/lib/record-labels/registry'
 import {
@@ -12,6 +15,7 @@ import { useDebouncedValue } from '@tinycld/core/lib/use-debounced-value'
 import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
+import { newRecordId } from 'pbtsdb/core'
 import { useState } from 'react'
 import { Pressable, Text } from 'react-native'
 
@@ -25,6 +29,10 @@ export interface RelationRecordPickerProps {
     value: string
     onChange: (id: string) => void
     accessibilityLabel?: string
+    /** Only records whose fields equal these values. */
+    match?: Record<string, string | number | boolean>
+    /** Offer to make a new record named from the search text. */
+    create?: RelationCreate
 }
 
 // Relation targets are arbitrary collections declared by a package's
@@ -57,17 +65,57 @@ function pickerLabel(target: string, displayField: string): RecordLabel {
     return declared
 }
 
-function pickerSources(target: string, displayField: string) {
+function pickerSources(
+    target: string,
+    displayField: string,
+    match: RelationRecordPickerProps['match']
+) {
     const label = pickerLabel(target, displayField)
     const sources: LabelSources = {
         collection: collectionByName(target),
         related: label.related ? collectionByName(label.related.collection) : undefined,
+        match,
     }
     return { label, sources }
 }
 
+// Makes the record as the person through pbtsdb, so the target collection's
+// own create rule and hooks apply (a new workbook gets its blank file there).
+function useCreateRecord(
+    target: string,
+    create: RelationCreate | undefined,
+    onCreated: (id: string) => void
+) {
+    const { user } = useAuth()
+    return useMutation({
+        mutationFn: function* (typed: string) {
+            if (!create) return
+            const suffix = create.nameSuffix ?? ''
+            const name = typed.endsWith(suffix) ? typed : `${typed}${suffix}`
+            const id = newRecordId()
+            const owner = create.ownerField ? { [create.ownerField]: user.id } : {}
+            const insert = insertByName(target, {
+                ...create.values,
+                ...owner,
+                id,
+                [create.nameField]: name,
+            })
+            if (!insert) return
+            yield insert
+            onCreated(id)
+        },
+    })
+}
+
 // Rendered only inside the open menu, so a closed picker runs no results query.
-function PickerResults({ target, displayField, value, onChange }: RelationRecordPickerProps) {
+function PickerResults({
+    target,
+    displayField,
+    value,
+    onChange,
+    match,
+    create,
+}: RelationRecordPickerProps) {
     const placeholderColor = useThemeColor('field-placeholder')
     const [search, setSearch] = useState('')
     // Debounced so each keystroke does not open a new subscription — the query's
@@ -76,7 +124,7 @@ function PickerResults({ target, displayField, value, onChange }: RelationRecord
     // `\"` compiles to an unterminated filter literal and PocketBase answers 400.
     const term = search.trim().replace(/\\/g, '')
     const debouncedSearch = useDebouncedValue(term, SEARCH_DEBOUNCE_MS)
-    const { label, sources } = pickerSources(target, displayField)
+    const { label, sources } = pickerSources(target, displayField, match)
     const { isReady, records } = useLabelledRecords(sources, label, debouncedSearch)
 
     // The debounce window, plus the request it then issues, is a stretch of time
@@ -87,6 +135,8 @@ function PickerResults({ target, displayField, value, onChange }: RelationRecord
     // the results answer the term that is actually in the box.
     const isSearching = debouncedSearch !== term || !isReady
     const matches = isSearching ? [] : records
+    const createRecord = useCreateRecord(target, create, onChange)
+    const canCreate = Boolean(create) && term !== '' && !createRecord.isPending
 
     return (
         <>
@@ -113,6 +163,11 @@ function PickerResults({ target, displayField, value, onChange }: RelationRecord
                 hasSearch={Boolean(debouncedSearch)}
             />
             <MoreHint isVisible={!isSearching && matches.length >= VISIBLE_LIMIT} />
+            <CreateItem
+                isVisible={canCreate}
+                label={`${create?.label ?? ''} “${term}”`}
+                onSelect={() => createRecord.mutate(term)}
+            />
         </>
     )
 }
@@ -120,7 +175,7 @@ function PickerResults({ target, displayField, value, onChange }: RelationRecord
 export function RelationRecordPicker(props: RelationRecordPickerProps) {
     const { target, displayField, value, onChange, accessibilityLabel } = props
     const mutedColor = useThemeColor('muted-foreground')
-    const { label: recordLabel, sources } = pickerSources(target, displayField)
+    const { label: recordLabel, sources } = pickerSources(target, displayField, props.match)
     const selectedRecord = useLabelledRecord(sources, recordLabel, value)
 
     if (!sources.collection) {
@@ -188,4 +243,17 @@ function MoreHint({ isVisible }: { isVisible: boolean }) {
             Showing the first {VISIBLE_LIMIT} — keep typing to narrow
         </Text>
     )
+}
+
+function CreateItem({
+    isVisible,
+    label,
+    onSelect,
+}: {
+    isVisible: boolean
+    label: string
+    onSelect: () => void
+}) {
+    if (!isVisible) return null
+    return <Menu.Item label={label} onSelect={onSelect} testID="relation-picker-create" />
 }

@@ -1,4 +1,4 @@
-import { createLiveQueryCollection, eq } from '@tanstack/db'
+import { createLiveQueryCollection, eq, type Transaction } from '@tanstack/db'
 import { QueryCache, QueryClient } from '@tanstack/react-query'
 import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import { captureException } from '@tinycld/core/lib/errors'
@@ -746,4 +746,20 @@ export { PBTSDBProvider, queryClient, stores, useStore }
  */
 export function collectionByName(name: string): (typeof stores)[keyof typeof stores] | undefined {
     return (stores as Record<string, (typeof stores)[keyof typeof stores]>)[name]
+}
+
+/**
+ * Inserts a row into the collection registered under `name`, for a caller
+ * that names it at run time (a relation picker's "make a new one"). Returns
+ * `undefined` when no collection has that name.
+ */
+export function insertByName(name: string, row: Record<string, unknown>) {
+    const collection = collectionByName(name)
+    if (!collection) return undefined
+    // The row type of a collection picked at run time is a union of every
+    // store's row, too wide for the checker to name, so the cast is here once.
+    const writable = collection as unknown as {
+        insert: (row: Record<string, unknown>) => Transaction<Record<string, unknown>>
+    }
+    return writable.insert(row)
 }

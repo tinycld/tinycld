@@ -169,6 +169,8 @@ export function ValueInput({ field, op, value, onChange, accessibilityLabel }: V
                 displayField={field.displayField ?? 'id'}
                 value={typeof value === 'string' ? value : ''}
                 onChange={onChange}
+                match={field.relationMatch}
+                create={field.relationCreate}
                 accessibilityLabel="Condition value"
             />
         )
