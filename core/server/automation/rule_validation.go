@@ -27,21 +27,21 @@ func BindRuleValidation(app core.App, defs *Defs) {
 		return e.Next()
 	})
 	app.OnRecordUpdate("rules").BindFunc(func(e *core.RecordEvent) error {
-		if actionsChanged(e.App, e.Record) {
+		stored, err := e.App.FindRecordById("rules", e.Record.Id)
+		if err != nil {
 			if errs := ValidateRuleActions(e.App, defs, e.Record.Get("actions")); errs != nil {
+				return errs
+			}
+			return e.Next()
+		}
+		if normalizedJSON(stored.Get("actions")) != normalizedJSON(e.Record.Get("actions")) {
+			previous, _ := decodeActions(stored.Get("actions"))
+			if errs := validateActions(e.App, defs, e.Record.Get("actions"), previous); errs != nil {
 				return errs
 			}
 		}
 		return e.Next()
 	})
-}
-
-func actionsChanged(app core.App, rec *core.Record) bool {
-	stored, err := app.FindRecordById("rules", rec.Id)
-	if err != nil {
-		return true
-	}
-	return normalizedJSON(stored.Get("actions")) != normalizedJSON(rec.Get("actions"))
 }
 
 func normalizedJSON(v any) string {
@@ -60,6 +60,21 @@ func normalizedJSON(v any) string {
 // ValidateRuleActions checks a rule's actions against the installed
 // definitions. raw is the record's `actions` value.
 func ValidateRuleActions(app core.App, defs *Defs, raw any) validation.Errors {
+	return validateActions(app, defs, raw, nil)
+}
+
+// keptParam reports whether the stored rule already held this param on the
+// same action. A param a package update dropped is kept by the app's editor,
+// which cannot show it, so it must not block an edit.
+func keptParam(previous []storedAction, i int, ref, key string) bool {
+	if i >= len(previous) || previous[i].Ref != ref {
+		return false
+	}
+	_, ok := previous[i].Params[key]
+	return ok
+}
+
+func validateActions(app core.App, defs *Defs, raw any, previous []storedAction) validation.Errors {
 	actions, err := decodeActions(raw)
 	if err != nil {
 		return validation.Errors{"actions": validation.NewError(codeInvalidAction,
@@ -89,7 +104,7 @@ func ValidateRuleActions(app core.App, defs *Defs, raw any) validation.Errors {
 		}
 		sort.Strings(given)
 		for _, k := range given {
-			if _, ok := declared[k]; !ok {
+			if _, ok := declared[k]; !ok && !keptParam(previous, i, a.Ref, k) {
 				errs[at+".params."+k] = validation.NewError(codeInvalidAction, fmt.Sprintf(
 					"%q is not a param of %s. Params: %s.", k, a.Ref, paramList(keys)))
 			}

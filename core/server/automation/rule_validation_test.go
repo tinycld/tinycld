@@ -81,3 +81,23 @@ func TestRuleValidationNamesNoParamsAsNone(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// A param the package no longer declares, which the rule already held, does
+// not block an edit: the app cannot show or remove it. A new unknown param
+// is still refused.
+func TestRuleValidationKeepsAStoredParamThePackageDropped(t *testing.T) {
+	app, _, u := engineApp(t)
+	r, err := saveRule(t, app, u.Id, `[{"ref":"gizmos:file","params":{"title":"A","ticket":"t1","colour":"red"}}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	BindRuleValidation(app, validationDefs())
+	r.Set("actions", `[{"ref":"gizmos:file","params":{"title":"B","ticket":"t1","colour":"red"}}]`)
+	if err := app.Save(r); err != nil {
+		t.Fatalf("an edit that keeps the dropped param saves: %v", err)
+	}
+	r.Set("actions", `[{"ref":"gizmos:file","params":{"title":"B","ticket":"t1","colour":"red","size":"xl"}}]`)
+	if err := app.Save(r); err == nil || !strings.Contains(err.Error(), "actions.0.params.size") || strings.Contains(err.Error(), "colour") {
+		t.Fatalf("only the new unknown param is refused, got %v", err)
+	}
+}
