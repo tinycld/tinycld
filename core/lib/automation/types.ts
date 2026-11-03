@@ -90,6 +90,19 @@ export interface ColumnParamDef<F extends string = string> {
     label?: string
 }
 
+/** How a relation picker makes a new record. Mirrors Go `RelationCreate`. */
+export interface RelationCreate {
+    /** The picker entry, followed by the typed name: `New ticket "Printer jam"`. */
+    label: string
+    /** The field the typed name goes in. */
+    nameField: string
+    /** Added to the typed name when it does not already end with it. */
+    nameSuffix?: string
+    /** The field set to the person's user id. */
+    ownerField?: string
+    values?: Record<string, string | number | boolean>
+}
+
 /** Novel param (not a DB column) — declares its own type */
 export interface TypedParamDef {
     key: string
@@ -129,6 +142,16 @@ export interface TypedParamDef {
      * can offer a picker at all.
      */
     relationTarget?: string
+    /**
+     * Only records whose fields equal these values: the picker lists only
+     * them, and the server refuses any other.
+     */
+    relationMatch?: Record<string, string | number | boolean>
+    /**
+     * The picker can make a new record of the target, named from the text a
+     * person types. The client makes it as that person.
+     */
+    relationCreate?: RelationCreate
 }
 
 export type ParamDef<F extends string = string> = ColumnParamDef<F> | TypedParamDef

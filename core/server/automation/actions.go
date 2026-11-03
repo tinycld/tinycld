@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/spf13/cast"
 
 	"tinycld.org/core/pkgaccess"
 )
@@ -166,6 +167,11 @@ func authorizeRelationParams(app core.App, ref string, action ActionDef, req Act
 		if ok, err := app.CanAccessRecord(rec, info, rec.Collection().ViewRule); err != nil || !ok {
 			return fmt.Errorf("relation param %q: rule owner may not use %s record %q", p.Key, target, id)
 		}
+		// After the view check, so a record the owner may not see is not
+		// told apart by whether it matches.
+		if !recordMatches(rec, p.RelationMatch) {
+			return fmt.Errorf("relation param %q: the picked record is not one this action can use", p.Key)
+		}
 		authorize, registered := relationAuthorizer(ref, p.Key)
 		if !registered {
 			return fmt.Errorf(
@@ -178,6 +184,17 @@ func authorizeRelationParams(app core.App, ref string, action ActionDef, req Act
 		}
 	}
 	return nil
+}
+
+// recordMatches reports whether rec's fields equal match's values, compared
+// as text so a JSON number and a stored int agree.
+func recordMatches(rec *core.Record, match map[string]any) bool {
+	for k, v := range match {
+		if cast.ToString(rec.Get(k)) != cast.ToString(v) {
+			return false
+		}
+	}
+	return true
 }
 
 // authorizeTriggerRecordWrite gates a record-op that mutates or deletes the
@@ -289,7 +306,7 @@ func ExecuteActionContext(ctx context.Context, app core.App, defs *Defs, ref str
 	}
 	env := TemplateEnv{App: app, Labels: defs.RecordLabels, OwnerID: ownerID, Dynamic: dynamicValues(fields)}
 	params := substituteParams(action, rawParams, record, trigger, relationKeys, env)
-	req := ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record, Depth: depth, Ctx: ctx, Fields: fields}
+	req := ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record, Trigger: trigger, Depth: depth, Ctx: ctx, Fields: fields}
 
 	// Both kinds pass the relation-id gates: a record-op's superuser Save
 	// bypasses collection rules just as thoroughly as a native handler's

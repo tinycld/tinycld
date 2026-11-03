@@ -3,6 +3,7 @@
 import type { z } from 'zod'
 
 import type { conditionsAstSchema, ruleActionSchema } from './schemas'
+import type { RelationCreate } from './types'
 
 export type ConditionsAst = z.infer<typeof conditionsAstSchema>
 export type RuleActionItem = z.infer<typeof ruleActionSchema>
@@ -14,6 +15,8 @@ export interface CatalogField {
     options?: string[]
     relationTarget?: string
     displayField?: string
+    relationMatch?: Record<string, string | number | boolean>
+    relationCreate?: RelationCreate
 }
 
 export interface CatalogParam {

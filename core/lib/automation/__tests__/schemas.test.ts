@@ -239,6 +239,70 @@ describe('validateDefinitions', () => {
         expect(validateDefinitions('gadgets', good)).toEqual([])
     })
 
+    it('rejects a relationMatch on a non-relation typed param', () => {
+        const bad: AutomationDefinitions = {
+            actions: [
+                {
+                    id: 'add-row',
+                    label: 'Add a row',
+                    kind: 'native',
+                    params: [{ key: 'note', type: 'text', relationMatch: { status: 'open' } }],
+                },
+            ],
+        }
+        expect(validateDefinitions('gadgets', bad).some(e => e.includes('relationMatch'))).toBe(
+            true
+        )
+    })
+
+    it('rejects a relationCreate without a nameField', () => {
+        const bad: AutomationDefinitions = {
+            actions: [
+                {
+                    id: 'add-row',
+                    label: 'Add a row',
+                    kind: 'native',
+                    params: [
+                        {
+                            key: 'ticket',
+                            type: 'relation',
+                            relationTarget: 'tickets',
+                            relationCreate: { label: 'New ticket', nameField: '' },
+                        },
+                    ],
+                },
+            ],
+        }
+        expect(validateDefinitions('gadgets', bad).some(e => e.includes('nameField'))).toBe(true)
+    })
+
+    it('accepts a relation param that matches and creates', () => {
+        const good: AutomationDefinitions = {
+            actions: [
+                {
+                    id: 'add-row',
+                    label: 'Add a row',
+                    kind: 'native',
+                    params: [
+                        {
+                            key: 'ticket',
+                            type: 'relation',
+                            relationTarget: 'tickets',
+                            relationMatch: { status: 'open', urgent: false },
+                            relationCreate: {
+                                label: 'New ticket',
+                                nameField: 'title',
+                                ownerField: 'user',
+                                values: { status: 'open' },
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+        expect(validateDefinitions('gadgets', good)).toEqual([])
+    })
+
     // Column params inherit the column's target; declaring one is not the
     // authoring mistake the typed-param rule guards against.
     it('leaves column-referencing params out of the relation checks', () => {

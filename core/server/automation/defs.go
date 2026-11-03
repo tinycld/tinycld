@@ -104,6 +104,23 @@ type ParamDef struct {
 	// description). Every value a template puts into it is escaped, so a
 	// form answer or a record's text reads as text, never as markup.
 	Markdown bool `json:"markdown"`
+	// RelationMatch limits a relation param to records whose fields equal
+	// these values: the picker lists only them and the engine refuses any
+	// other.
+	RelationMatch map[string]any `json:"relationMatch"`
+	// RelationCreate lets the picker make a new record of the target from
+	// the name a person types, with these field values.
+	RelationCreate *RelationCreate `json:"relationCreate"`
+}
+
+// RelationCreate describes the record a relation picker makes. The client
+// makes it as the person, so the target collection's own rules apply.
+type RelationCreate struct {
+	Label      string         `json:"label"`
+	NameField  string         `json:"nameField"`
+	NameSuffix string         `json:"nameSuffix,omitempty"`
+	OwnerField string         `json:"ownerField,omitempty"`
+	Values     map[string]any `json:"values,omitempty"`
 }
 
 type ActionDef struct {
