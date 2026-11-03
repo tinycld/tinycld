@@ -97,7 +97,7 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 	}
 	body := fmt.Sprintf("SELECT %s\n%s\nWHERE %s IN %s\nORDER BY __parent, %s LIMIT %s",
 		strings.Join(sel, ", "), sc.render(), back, ids,
-		strings.Join(append(order, "__id"), ", "), s.bind(int64(runLimits.rowCap+1)))
+		strings.Join(append(order, "__id"), ", "), limitSQL(int64(runLimits.rowCap+1)))
 	rows, err := rn.query(s, nil, body)
 	if err != nil {
 		return nil, err

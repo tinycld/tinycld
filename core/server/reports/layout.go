@@ -12,7 +12,7 @@ import (
 // computed row (and currency), whose cells compute the row's formula from
 // the first-level group rows its sections name. A formula reads sections
 // and earlier computed rows by name, never by row position.
-func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes, legs []string, err error) {
+func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs []unionLeg, err error) {
 	if len(c.p.layout) == 0 {
 		return nil, nil, nil
 	}
@@ -104,7 +104,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes, legs []string,
 		if len(lc.used) > maxJoinedChunks {
 			return nil, nil, invalid(at, "a computed row reads too many sections")
 		}
-		legs = append(legs, "SELECT "+strings.Join(cells, ", ")+" FROM "+cur+lc.joins())
+		legs = append(legs, unionLeg{cells: cells, from: cur + lc.joins()})
 		lc.items[item.Row] = item
 	}
 	return lc.chunkCTEs(), legs, nil

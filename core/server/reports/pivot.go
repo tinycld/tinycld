@@ -76,7 +76,7 @@ func (rn *runner) pivotPass() ([]pivotValue, error) {
 		}
 	}
 	body := fmt.Sprintf("SELECT pk, __label, __labelcur, COUNT(*) OVER () AS __n FROM (SELECT pk, %s AS __label, %s AS __labelcur FROM (SELECT DISTINCT %s FROM w)) ORDER BY %s LIMIT %s",
-		label, cur, distinct, order, s.bind(int64(pv.max+1)))
+		label, cur, distinct, order, limitSQL(int64(pv.max+1)))
 	rows, err := rn.query(s, []string{r.render()}, body)
 	if err != nil {
 		return nil, err

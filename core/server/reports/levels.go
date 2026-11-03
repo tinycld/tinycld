@@ -13,7 +13,8 @@ import (
 //	f<L>  a fill's keyset: the level's base keys and its fill records
 //	a<L>  aggregates w by the level's keys, then adds a fill's records with
 //	      no rows (fillRows)
-//	d<L>_<idx>  a to-many total, once per parent row (aggregate locality)
+//	d<L>_<idx>  the to-many totals over one link (named by its first
+//	      column), once per parent row (aggregate locality)
 //	rs<L>  the sums of "rows" cells over the next level's rows (childSum)
 //	g<L>  a<L> with its to-many totals and its rows' sums (g<L>_<i> before
 //	      it when they need more joins than one select may hold)
@@ -27,8 +28,8 @@ type level struct {
 	keys     []string // w columns the level groups by
 	aggs     []string // a<L> values, "expr AS name"
 	aggNames map[string]bool
-	tms      []string // d<L> CTEs
-	tmCols   []tmCol  // g<L> values taken from d<L>
+	tms      []*tmGroup // d<L> CTEs, one per link
+	tmCols   []tmCol    // g<L> values taken from d<L>
 	// childCells are the cells of the next level whose sums the level reads
 	// (childSum), all in one CTE rs<L>.
 	childCells []string
@@ -123,12 +124,34 @@ func (lv *level) toManyTotal(cp *colPlan) string {
 		total = fmt.Sprintf("COALESCE(sum(c%d), 0)", idx)
 		zero = true
 	}
-	d := fmt.Sprintf("d%d_%d", lv.n, idx)
-	lv.tms = append(lv.tms, fmt.Sprintf("%s AS (SELECT %s FROM (SELECT DISTINCT %s FROM w)%s)",
-		d, strings.Join(append(slices.Clone(lv.keys), total+" AS "+name), ", "),
-		strings.Join(append(slices.Clone(lv.keys), cols...), ", "), groupBy(lv.keys)))
-	lv.tmCols = append(lv.tmCols, tmCol{d: d, name: name, zero: zero})
+	// Totals over one link have one parent per base row, so they share one
+	// CTE: each parent's row carries every total's per-parent value.
+	parent := lv.r.raw[fmt.Sprintf("p%d", idx)]
+	i := slices.IndexFunc(lv.tms, func(g *tmGroup) bool { return g.parent == parent })
+	if i < 0 {
+		lv.tms = append(lv.tms, &tmGroup{d: fmt.Sprintf("d%d_%d", lv.n, idx), parent: parent, cols: slices.Clone(cols[:1])})
+		i = len(lv.tms) - 1
+	}
+	g := lv.tms[i]
+	g.cols = append(g.cols, cols[1:]...)
+	g.totals = append(g.totals, total+" AS "+name)
+	lv.tmCols = append(lv.tmCols, tmCol{d: g.d, name: name, zero: zero})
 	return "a." + name
+}
+
+// tmGroup is one d<L> CTE: the to-many totals of the level that read one
+// parent (the same link), each parent's values once per group.
+type tmGroup struct {
+	d, parent string
+	// cols are the values of w the distinct parent rows carry (the parent id
+	// first), totals the level's sums of them.
+	cols, totals []string
+}
+
+func (g *tmGroup) render(keys []string) string {
+	return fmt.Sprintf("%s AS (SELECT %s FROM (SELECT DISTINCT %s FROM w)%s)",
+		g.d, strings.Join(append(slices.Clone(keys), g.totals...), ", "),
+		strings.Join(append(slices.Clone(keys), g.cols...), ", "), groupBy(keys))
 }
 
 // tmCol is a value g<L> joins to a<L>: a to-many total from its d<L> CTE, or a
@@ -307,7 +330,9 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 		rows += "\nUNION ALL\n" + lv.fillRows()
 	}
 	ctes = append(ctes, fmt.Sprintf("%s AS (%s)", a, rows))
-	ctes = append(ctes, lv.tms...)
+	for _, g := range lv.tms {
+		ctes = append(ctes, g.render(lv.keys))
+	}
 	sides := slices.Clone(lv.tmCols)
 	if len(lv.childCells) > 0 {
 		rs := fmt.Sprintf("rs%d", lv.n)

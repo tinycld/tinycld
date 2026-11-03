@@ -29,12 +29,21 @@ func newStmt(app core.App, info *core.RequestInfo) *stmt {
 }
 
 // bind adds a value to the statement's parameters and returns its
-// placeholder. Values are always bound, never written into the SQL.
+// placeholder. Values are always bound, never written into the SQL; the one
+// literal is a row limit (limitSQL).
 func (s *stmt) bind(v any) string {
 	name := fmt.Sprintf("rp%d", len(s.params))
 	s.params[name] = v
 	return "{:" + name + "}"
 }
+
+// limitSQL writes a statement's row limit as a literal, never a bound
+// parameter. SQLite marks a statement whose LIMIT is bound to be prepared
+// again once the value is bound (sqlite3ExprIsInteger sets its varmask), so
+// a bound limit costs every run a second prepare of the whole statement, and
+// of the EXPLAIN that finds its change topics. The limits are the engine's
+// own integers, never text from a request.
+func limitSQL(n int64) string { return strconv.FormatInt(n, 10) }
 
 // jsonList is a list of values as "x IN <list>" reads it: jsonSelect in
 // parentheses, or "()" for an empty list, which IN reads as no values.

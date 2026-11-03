@@ -309,7 +309,7 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 		conds = append(conds, fmt.Sprintf("(o.l <> '', %s, o.v) > (%s <> '', %s, %s)", orderKey(typ, "o.l"), l, orderKey(typ, l), s.bind(value)))
 	}
 	body := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g FROM (%s) o\nWHERE %s\nORDER BY o.l <> '', %s, o.v LIMIT %s",
-		inner, strings.Join(conds, " AND "), orderKey(typ, "o.l"), s.bind(int64(limit+1)))
+		inner, strings.Join(conds, " AND "), orderKey(typ, "o.l"), limitSQL(int64(limit+1)))
 	rows, _, err := readRows(ctx, c.app, s, nil, body, false)
 	if err != nil {
 		return err
@@ -350,7 +350,7 @@ func (c *compiler) optionGroups(ctx context.Context, op *optionsPlan, search str
 	// The blank group comes first; a number orders by its value, not its
 	// text ("4" before "190").
 	body := fmt.Sprintf("SELECT o.g AS g, %s AS gl, %s AS glc FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY o.g <> '', %s, 1 LIMIT %s",
-		label, cur, inner, strings.Join(optionConds(s, search, nil), " AND "), orderKey(typ, "gl"), s.bind(int64(maxOptionGroups+1)))
+		label, cur, inner, strings.Join(optionConds(s, search, nil), " AND "), orderKey(typ, "gl"), limitSQL(int64(maxOptionGroups+1)))
 	rows, _, err := readRows(ctx, c.app, s, nil, body, false)
 	if err != nil {
 		return err

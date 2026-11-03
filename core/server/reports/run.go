@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -465,6 +466,14 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 	// readsSums is true when the level above adds this level's "rows" cells
 	// (childSum), which rt<L> then holds.
 	readsSums := false
+	// Each level's o<L> renders once every leg's cells are known: a helper
+	// column no leg has a value for is left out of all of them.
+	type levelRows struct {
+		lv            *level
+		cells, totals []string
+		own           string
+	}
+	var levels []levelRows
 	for n := 0; n <= len(c.p.groups); n++ {
 		lv, err := c.level(r, n, expand)
 		if err != nil {
@@ -508,7 +517,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 				totals = append(totals, pivotCells...)
 			}
 		}
-		ctes = append(ctes, lv.render(cells, own, totals)...)
+		levels = append(levels, levelRows{lv: lv, cells: cells, totals: totals, own: own})
 		readsSums = len(lv.childCells) > 0
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
@@ -520,12 +529,79 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 	if err != nil {
 		return nil, "", err
 	}
+	all := make([][]string, 0, len(levels)+len(computed))
+	for _, l := range levels {
+		all = append(all, l.cells)
+	}
+	for _, leg := range computed {
+		all = append(all, leg.cells)
+	}
+	unread := unreadHelpers(all)
+	for _, l := range levels {
+		ctes = append(ctes, l.lv.render(withoutCells(l.cells, unread), l.own, l.totals)...)
+	}
 	ctes = append(ctes, layoutCTEs...)
 	// The limit applies to the level rows only: computed rows sort last, so a
 	// limit on the whole statement would drop them first.
-	levels := fmt.Sprintf("SELECT * FROM (%s\nORDER BY __level, __ord LIMIT %s)", strings.Join(legs, "\nUNION ALL\n"), s.bind(limit))
-	all := append([]string{levels}, computed...)
-	return ctes, strings.Join(all, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
+	body := []string{fmt.Sprintf("SELECT * FROM (%s\nORDER BY __level, __ord LIMIT %s)", strings.Join(legs, "\nUNION ALL\n"), limitSQL(limit))}
+	for _, leg := range computed {
+		body = append(body, "SELECT "+strings.Join(withoutCells(leg.cells, unread), ", ")+" FROM "+leg.from)
+	}
+	return ctes, strings.Join(body, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
+}
+
+// unionLeg is one select of the group statement's UNION ALL: its cells
+// ("expr AS name", in the union's column order) and its FROM.
+type unionLeg struct {
+	cells []string
+	from  string
+}
+
+// helperCell matches a row's record label (vl<idx>), its label's currency
+// (vc<idx>) and a value's carried currency (vcur<idx>).
+var helperCell = regexp.MustCompile(`^(?:vl|vc|vcur)\d+$`)
+
+// unreadHelpers are the helper cells that are NULL in every leg of a union:
+// no row has a label or a carried currency there, and assembly reads a missing
+// cell as NULL, so the statement leaves them out. Every leg selects the same
+// cells in the same order.
+func unreadHelpers(legs [][]string) map[string]bool {
+	unread := map[string]bool{}
+	for _, cells := range legs {
+		for _, cell := range cells {
+			expr, name := splitCell(cell)
+			if !helperCell.MatchString(name) {
+				continue
+			}
+			if _, seen := unread[name]; !seen {
+				unread[name] = true
+			}
+			if expr != "NULL" {
+				unread[name] = false
+			}
+		}
+	}
+	return unread
+}
+
+// withoutCells drops the cells named in drop.
+func withoutCells(cells []string, drop map[string]bool) []string {
+	out := make([]string, 0, len(cells))
+	for _, cell := range cells {
+		if _, name := splitCell(cell); !drop[name] {
+			out = append(out, cell)
+		}
+	}
+	return out
+}
+
+// splitCell splits "expr AS name" at its last " AS ".
+func splitCell(cell string) (string, string) {
+	i := strings.LastIndex(cell, " AS ")
+	if i < 0 {
+		return cell, ""
+	}
+	return cell[:i], cell[i+len(" AS "):]
 }
 
 // shownLevels returns the CTEs that select the shown rows of the deepest level
@@ -605,7 +681,7 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 		where = rn.expand.where(c, s, len(c.p.groups), "d.")
 	}
 	body := fmt.Sprintf("SELECT * FROM (%s) d WHERE %s ORDER BY %s LIMIT %s",
-		sel, where, orderBy(order), s.bind(int64(limit+1)))
+		sel, where, orderBy(order), limitSQL(int64(limit+1)))
 	rows, err := rn.query(s, append([]string{r.render()}, shown...), body)
 	if err != nil {
 		return nil, err
