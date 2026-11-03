@@ -325,7 +325,7 @@ function DestinationRunList({
 
 type RunRow = ReturnType<typeof useSubmissionRuns>[number]
 
-function useRetryRow(ruleId: string, submissionId: string, newest: RunRow | undefined) {
+function useRetryRow(rule: Rules, submissionId: string, newest: RunRow | undefined) {
     const retry = useRetry()
     // The newest run when Retry was pressed: the button reads "Queued" until a
     // newer run arrives through the live query. Derived, so no effect resets
@@ -334,10 +334,15 @@ function useRetryRow(ruleId: string, submissionId: string, newest: RunRow | unde
     const isQueued = retriedAfter !== undefined && (newest?.fired_at ?? '') === retriedAfter
     const run = () => {
         setRetriedAfter(newest?.fired_at ?? '')
-        retry.mutate({ ruleId, submissionId })
+        // A refused retry never runs, so no newer run would end "Queued".
+        retry.mutate(
+            { ruleId: rule.id, submissionId },
+            { onError: () => setRetriedAfter(undefined) }
+        )
     }
-    const isVisible = isQueued || !newest || !runSucceeded(newest)
-    return { run, isQueued, isVisible, isPending: retry.isPending }
+    // A turned-off destination is not run again; the row says so instead.
+    const isVisible = rule.enabled && (isQueued || !newest || !runSucceeded(newest))
+    return { run, isQueued, isVisible, isOff: !rule.enabled, isPending: retry.isPending }
 }
 
 function DestinationRunRow({
@@ -349,7 +354,7 @@ function DestinationRunRow({
     submissionId: string
     newest: RunRow | undefined
 }) {
-    const r = useRetryRow(rule.id, submissionId, newest)
+    const r = useRetryRow(rule, submissionId, newest)
     const label = r.isQueued ? 'Queued' : 'Retry'
     return (
         <View className="rounded-lg border border-border bg-surface-secondary p-3 gap-2">
@@ -364,6 +369,7 @@ function DestinationRunRow({
                     isVisible={r.isVisible}
                     testID={`web-form-retry-${rule.id}`}
                 />
+                <OffLabel isVisible={r.isOff} />
             </View>
             <RunSummary run={newest} />
         </View>
@@ -395,6 +401,11 @@ function RetryButton({
             <ButtonText>{label}</ButtonText>
         </Button>
     )
+}
+
+function OffLabel({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return <Text className="text-xs text-muted-foreground">Off</Text>
 }
 
 function RunSummary({ run }: { run: RunRow | undefined }) {

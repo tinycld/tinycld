@@ -101,6 +101,25 @@ test('a failed destination shows as not delivered, and retry delivers it after a
     )
 })
 
+test('a turned-off destination shows Off instead of Retry', async ({ page, browser }) => {
+    const url = await buildAndPublish(page, `Off ${Date.now()}`)
+    await addNotifyDestination(page, '{{fields.missing}}')
+    const visitor = await visitAnonymously(browser, url)
+    await fillAndSend(visitor, visitor, 'Off Visitor')
+    await expect(visitor.getByTestId('web-form-confirmation')).toBeVisible()
+
+    await page.getByTestId('web-form-destinations').getByLabel(/^Disable /).click()
+    await expect(page.getByTestId('web-form-destinations').getByLabel(/^Enable /)).toBeVisible()
+    await page.getByTestId('form-tab-submissions').click()
+    const row = submissionRows(page).first()
+    await expect(row.locator('[data-testid^="web-form-delivery-"]')).toContainText(
+        '0 of 1 delivered'
+    )
+    await row.click()
+    await expect(page.getByText('Off', { exact: true })).toBeVisible()
+    await expect(page.locator('[data-testid^="web-form-retry-"]')).toHaveCount(0)
+})
+
 // The builder reads the form's answers as condition fields once the form's
 // definition loads. Reopened from Settings → Rules, where the form is not
 // loaded yet, a destination with such a condition must save unchanged.

@@ -1,6 +1,8 @@
 import { eq, inArray } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
+import { errorToString } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
+import { notify } from '@tinycld/core/lib/notify/dispatcher'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useMemo } from 'react'
 
@@ -76,6 +78,17 @@ export function useRetry() {
             await pb.send(`/api/automation/rules/${ruleId}/records/${submissionId}/run`, {
                 method: 'POST',
             }),
+        // A refusal is the server's answer, not a bug ("Turn this rule on to
+        // run it again."), so it is shown as is and not reported.
+        onError: error => {
+            const message = errorToString(error)
+            notify.emit({
+                event: 'mutation.error',
+                title: 'Retry did not run',
+                body: message,
+                data: { operation: 'web-forms.retry', error: message },
+            })
+        },
     })
 }
 
