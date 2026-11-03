@@ -1079,14 +1079,16 @@ changesignal.RegisterVirtualTable("fts_zoo_animals", "zoo_animals")
 ```
 
 `RegisterVirtualTable(table, collections...)` follows the same rules as
+`RegisterView`: it takes collection names, not ids, and the list you give is
+authoritative. A statement that reads the table reads those collections, so a
+live report gets their topics, and a view over it must list them in
 `RegisterView`. `fts` registers each index automatically, so a package with an
-`fts` config has nothing to add. Report and view SQL may read table-valued
-functions such as `json_each`. A stored virtual table must be mapped, or the
-query is refused. Temp and attached virtual tables are covered only when the
-check and the statement run in one transaction. A statement that reads a mapped table reads its collections: a live
-report gets their topics, and a view over it must list them in
-`RegisterView`. A statement that reads an unmapped stored virtual table is
-refused with an error that names the table.
+`fts` config has nothing to add.
+
+Report and view SQL may read table-valued functions such as `json_each`. A
+stored virtual table must be mapped, or the query is refused with an error
+that names the table. Temp and attached virtual tables are covered only when
+the check and the statement run in one transaction.
 
 SQLite's bytecode does not name the virtual table it opens, so the check
 reads names. When a statement opens a virtual table, every identifier in
@@ -1153,9 +1155,9 @@ reports.RegisterSource(reports.Source{
   value: it carries the target source. A formula, filter or column may use it
   as a value (the linked record's id; blank when the reader cannot see it).
 - A group whose column is a relation value is a record group. Its row shows
-  the record's label: by default the target's first text field. A target with
-  no text field has no default, so the label is `(none)`: give that group a
-  label formula.
+  the record's label: by default the target's first text field, else its
+  first other field that is not a relation or `id`, else the source's own
+  name. Set `labelField` or a `groups[].label` formula to show another field.
 
 When the server starts, core checks every source against the database:
 
@@ -1262,6 +1264,7 @@ version.
 | `params[].optionsFrom` | `{ source, value, label, group?, where? }`: a choice param reads its options from a source, under the reader's rules. |
 | formula leaf `{ record, path }` | Reads a field of a record group's record. |
 | operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: one value (`min` by default, or `max`) from the rows of another source that the reader may see. |
+| `pivot.labelField` | The field of a link's record that a pivot over that link names its columns by. |
 | `display.layouts[]` | `{ width, tracks, cells: [{ col, line, start?, span?, lines?, justify? }] }`: where each column goes on a narrow screen. |
 
 A param of type `amount` holds cents and a currency. A multiple choice param

@@ -15,8 +15,11 @@
 //     authoritative; CheckViews proves it against SQLite's bytecode in the
 //     package's tests.
 //   - RegisterVirtualTable(table, collections...) follows the same rules as
-//     RegisterView. fts registers each index automatically. Report and view
-//     SQL may read table-valued functions such as json_each. A stored
+//     RegisterView: it takes collection names, not ids, and the list is
+//     authoritative. A statement that reads the table reads those
+//     collections, so a live report gets their topics and a view over it
+//     must declare them. fts registers each index automatically. Report and
+//     view SQL may read table-valued functions such as json_each. A stored
 //     virtual table must be mapped, or the query is refused. Temp and
 //     attached virtual tables are covered only when the check and the
 //     statement run in one transaction.
