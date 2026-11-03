@@ -34,6 +34,9 @@ describe('deliveryStatus', () => {
 })
 describe('deliveryStatus shared fixture', () => {
     it.each(cases)('$name', c => {
-        expect(deliveryStatus(c.destinations, c.runs)).toEqual({ delivered: c.delivered, total: c.total })
+        expect(deliveryStatus(c.destinations, c.runs)).toEqual({
+            delivered: c.delivered,
+            total: c.total,
+        })
     })
 })
