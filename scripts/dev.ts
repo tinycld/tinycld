@@ -44,6 +44,7 @@ import * as net from 'node:net'
 import * as path from 'node:path'
 // fb-watchman has no published @types package; declare the surface we use.
 import watchman from 'fb-watchman'
+import { upstreamHeaders } from './dev-proxy-headers'
 import { isPortFree } from './port-probe'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
@@ -626,7 +627,8 @@ function startProxy(opts: {
             }
         }
 
-        const target = isPbPath(requestUrl) ? opts.pbPort : opts.expoPort
+        const toPocketBase = isPbPath(requestUrl)
+        const target = toPocketBase ? opts.pbPort : opts.expoPort
 
         // Browsers and Playwright cancel in-flight requests aggressively.
         // Once the client socket goes away, any further write to req/res
@@ -642,7 +644,7 @@ function startProxy(opts: {
                 port: target,
                 method: req.method,
                 path: req.url,
-                headers: { ...req.headers, host: `127.0.0.1:${target}` },
+                headers: upstreamHeaders(req.headers, target, toPocketBase),
             },
             upstreamRes => {
                 upstreamRes.on('error', err =>
