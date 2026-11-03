@@ -1,4 +1,3 @@
-import { useUrl } from '@tinycld/core/lib/use-url'
 // diagnose-regexp and the two polyfills are NOT imported here — they live in the
 // bundle entry (index.js, referenced by package.json "main"). expo-router's entry
 // eagerly requires the whole app/ route tree via `_ctx` BEFORE this module's body
@@ -23,6 +22,7 @@ import { initSentry } from '@tinycld/core/lib/sentry'
 import { acceptServerHandoff } from '@tinycld/core/lib/server-handoff'
 import { useAppUpdates } from '@tinycld/core/lib/use-app-updates'
 import { useChunkLoadRecovery } from '@tinycld/core/lib/use-chunk-load-recovery'
+import { useUrl } from '@tinycld/core/lib/use-url'
 import { useVersionCheck } from '@tinycld/core/lib/use-version-check'
 import { Slot } from 'expo-router'
 import { View } from 'react-native'
