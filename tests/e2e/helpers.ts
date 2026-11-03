@@ -498,6 +498,19 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     }
 }
 
+/**
+ * Open one item of the Settings index. Settings opens over the package that
+ * was on screen, and that package's sidebar can hold an item with the same
+ * label (mail's "Rules"), so the click is scoped to the settings index and
+ * waits for it to show.
+ */
+export async function openSettingsItem(page: Page, label: string) {
+    await page.getByTestId('nav-settings').click()
+    const index = page.getByTestId('settings-index')
+    await index.waitFor({ state: 'visible' })
+    await index.getByText(label, { exact: true }).click()
+}
+
 export async function clickSidebarItem(page: Page, label: string) {
     await page.getByText(label, { exact: true }).click()
 }

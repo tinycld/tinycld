@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { openSettingsItem } from './helpers'
 import { buildAndPublish, fillAndSend, publishForm, visitAnonymously } from './web-forms-helpers'
 
 /**
@@ -138,8 +139,7 @@ test('a destination with a condition on a form answer saves again unchanged', as
     await saveRule(page)
     await expect(builder(page)).toBeHidden()
 
-    await page.getByTestId('nav-settings').click()
-    await page.getByText('Rules', { exact: true }).first().click()
+    await openSettingsItem(page, 'Rules')
     await page.getByText('Organization', { exact: true }).click()
     const row = page
         .locator('div')
@@ -160,7 +160,7 @@ test('an auto-reply to a form address needs proof of work', async ({ page }) => 
     await setActionParam(page, 'To', '{{fields.name}}')
     await saveRule(page)
     await expect(
-        builder(page).getByText(/needs "Ask the browser to prove it is not a bot"/)
+        builder(page).getByText(/Turn on "Ask the browser to prove it is not a bot"/)
     ).toBeVisible()
 })
 
