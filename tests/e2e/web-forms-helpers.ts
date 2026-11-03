@@ -34,6 +34,17 @@ async function openWebForms(page: Page) {
     await expect(newForm).toBeVisible()
 }
 
+async function addRoleSelect(page: Page) {
+    await addField(page, 'select', 'Role')
+    const option = (i: number, leaf: string) =>
+        properties(page).locator(`[data-testid$=".options.${i}.${leaf}"]`)
+    await option(0, 'label').fill('Developer')
+    await option(0, 'value').fill('dev')
+    await properties(page).getByTestId('form-option-add').click()
+    await option(1, 'label').fill('Designer')
+    await option(1, 'value').fill('design')
+}
+
 async function addField(page: Page, kind: string, label: string) {
     await page.locator('[data-testid^="form-add-field-"]').first().click()
     await page.getByTestId(`form-kind-${kind}`).click()
@@ -62,6 +73,8 @@ interface PublishOptions {
     domains?: string
     pow?: boolean
     cvMaxSizeMb?: number
+    /** Also add a "Role" select: Developer (dev) and Designer (design). */
+    withRole?: boolean
 }
 
 /** Logs in, then builds and publishes a form; returns its public URL. */
@@ -83,6 +96,7 @@ export async function publishForm(page: Page, name: string, opts: PublishOptions
     if (opts.cvMaxSizeMb) {
         await properties(page).locator('[data-testid$=".maxSizeMb"]').fill(String(opts.cvMaxSizeMb))
     }
+    if (opts.withRole) await addRoleSelect(page)
     await saveDefinition(page)
 
     await page.getByTestId('form-tab-publish').click()

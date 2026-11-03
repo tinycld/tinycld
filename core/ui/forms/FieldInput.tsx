@@ -11,11 +11,11 @@ import { type ChecklistItem, resolveKind, tableColumnsOf } from '@tinycld/core/l
 import type { FormHost } from '@tinycld/core/lib/packages/derive-form-hosts'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import {
-    ButtonGroup,
     type Control,
     Controller,
     NumberInput,
     RadioInput,
+    SelectInput,
     TextAreaInput,
     TextInput,
     Toggle,
@@ -329,14 +329,16 @@ function SelectKind({
             />
         )
     }
+    // "dropdown", the default: a menu, not the options drawn in place.
     return (
-        <ButtonGroup
+        <SelectInput
             control={control}
             hideError
             name={field.key}
             label={label}
             options={opts}
             disabled={disabled}
+            placeholder="Choose…"
             wrapperProps={{ testID }}
         />
     )
