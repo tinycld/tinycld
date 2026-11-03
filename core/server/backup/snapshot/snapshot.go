@@ -26,14 +26,6 @@ import (
 	"tinycld.org/core/backup/hold"
 )
 
-// attrsSidecarExt is the suffix of the metadata file PocketBase's local storage
-// writes beside each stored file. A sidecar is archived, because a restore swaps
-// in the raw storage tree, but it is not counted: Verify counts through the
-// app's filesystem, which hides sidecars, so counting them failed the verify of
-// every restored org with a stored file. PocketBase refuses an upload with this
-// extension, so no stored file ends with it.
-const attrsSidecarExt = ".attrs"
-
 type StoredFile struct {
 	Key  string
 	Size int64
@@ -143,11 +135,9 @@ func FromDataDir(opts Options) (snap *Snapshot, err error) {
 	if closeFiles != nil {
 		cleanups = append(cleanups, closeFiles)
 	}
+	m.Counts.Files = len(files)
 	for _, f := range files {
 		m.Counts.Bytes += f.Size
-		if !strings.HasSuffix(f.Key, attrsSidecarExt) {
-			m.Counts.Files++
-		}
 	}
 
 	var once sync.Once
