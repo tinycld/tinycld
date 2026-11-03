@@ -1,6 +1,8 @@
 package webforms
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -21,26 +23,41 @@ func pruneSubmissions(app core.App, now time.Time) (int, error) {
 		return 0, err
 	}
 	deleted := 0
+	var errs []error
 	for _, pub := range pubs {
 		cutoff, _ := types.ParseDateTime(now.Add(-time.Duration(pub.GetInt("retention_days")) * 24 * time.Hour))
+		// Submissions that failed to delete stay in the query's results, so
+		// each batch reads past them and skips them.
+		failed := map[string]bool{}
 		for {
-			old, err := app.FindRecordsByFilter(submissionsName, "publication = {:p} && created < {:c}", "created", pruneBatch, 0,
+			limit := pruneBatch + len(failed)
+			old, err := app.FindRecordsByFilter(submissionsName, "publication = {:p} && created < {:c}", "created", limit, 0,
 				map[string]any{"p": pub.Id, "c": cutoff.String()})
 			if err != nil {
-				return deleted, err
+				errs = append(errs, err)
+				break
 			}
+			progressed := false
 			for _, rec := range old {
+				if failed[rec.Id] {
+					continue
+				}
+				// One submission that cannot go must not keep every other
+				// publication's old submissions past their retention.
 				if err := app.Delete(rec); err != nil {
-					return deleted, err
+					failed[rec.Id] = true
+					errs = append(errs, fmt.Errorf("delete submission %s: %w", rec.Id, err))
+					continue
 				}
 				deleted++
+				progressed = true
 			}
-			if len(old) < pruneBatch {
+			if !progressed || len(old) < limit {
 				break
 			}
 		}
 	}
-	return deleted, nil
+	return deleted, errors.Join(errs...)
 }
 
 func scheduleRetention(app core.App) {
@@ -48,8 +65,7 @@ func scheduleRetention(app core.App) {
 	if err := app.Cron().Add(retentionJobID, retentionSchedule, func() {
 		n, err := pruneSubmissions(app, time.Now())
 		if err != nil {
-			log.Error("prune web form submissions", "err", err)
-			return
+			log.Error("prune web form submissions", "deleted", n, "err", err)
 		}
 		if n > 0 {
 			log.Info("pruned web form submissions", "count", n)
