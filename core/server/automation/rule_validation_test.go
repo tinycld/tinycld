@@ -71,3 +71,13 @@ func TestRuleValidationSkipsAnUpdateThatKeepsTheActions(t *testing.T) {
 		t.Fatal("changing its actions is checked")
 	}
 }
+
+func TestRuleValidationNamesNoParamsAsNone(t *testing.T) {
+	app, _, u := engineApp(t)
+	defs := &Defs{Packages: []PackageDefs{{Slug: "gizmos", Actions: []ActionDef{{ID: "ping", Kind: "native"}}}}}
+	BindRuleValidation(app, defs)
+	_, err := saveRule(t, app, u.Id, `[{"ref":"gizmos:ping","params":{"x":1}}]`)
+	if err == nil || !strings.Contains(err.Error(), "Params: none") {
+		t.Fatalf("got %v", err)
+	}
+}

@@ -218,6 +218,15 @@ func fieldIndexOf(path string) (int, bool) {
 	return i, err == nil
 }
 
+func sortedBoolKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func listOrNone(items []string) string {
 	if len(items) == 0 {
 		return "none"
@@ -437,7 +446,7 @@ func duplicateOptionError(options []Option, path ...any) validation.Errors {
 	seen := map[string]bool{}
 	for oi, o := range options {
 		if seen[o.Value] {
-			return defErr("duplicate option value "+o.Value, append(append([]any{}, path...), oi, "value")...)
+			return defErr("duplicate option value "+o.Value+". Each option value must be unique.", append(append([]any{}, path...), oi, "value")...)
 		}
 		seen[o.Value] = true
 	}
@@ -450,22 +459,22 @@ func actionError(a Action, kinds map[string]string, pages map[string]bool, requi
 	case "show", "hide":
 		if a.Page != "" {
 			if !pages[a.Page] {
-				return defErr("unknown page "+a.Page, at("page")...)
+				return defErr("unknown page "+a.Page+". Pages: "+listOrNone(sortedBoolKeys(pages))+".", at("page")...)
 			}
 			if held := requiredOnPage[a.Page]; a.Action == "hide" && len(held) > 0 {
-				return defErr("page "+a.Page+" holds required field "+held[0], at("page")...)
+				return defErr("page "+a.Page+" holds required field "+held[0]+", so it cannot be hidden. Hide its other fields one by one instead.", at("page")...)
 			}
 			return nil
 		}
 		if _, ok := kinds[a.Field]; !ok {
-			return defErr("unknown field "+a.Field, at("field")...)
+			return defErr("unknown field "+a.Field+". Fields: "+listOrNone(sortedKeys(kinds))+".", at("field")...)
 		}
 		if b := host.Builtin(a.Field); a.Action == "hide" && b != nil && b.Required {
-			return defErr("cannot hide required field "+a.Field, at("field")...)
+			return defErr("cannot hide required field "+a.Field+". The record needs it, so it must stay visible.", at("field")...)
 		}
 	case "require", "set_options", "set_value":
 		if _, ok := kinds[a.Field]; !ok {
-			return defErr("unknown field "+a.Field, at("field")...)
+			return defErr("unknown field "+a.Field+". Fields: "+listOrNone(sortedKeys(kinds))+".", at("field")...)
 		}
 		if a.Action == "set_options" && len(a.Options) == 0 {
 			return defErr("set_options needs at least one option", at("options")...)
@@ -474,7 +483,7 @@ func actionError(a Action, kinds map[string]string, pages map[string]bool, requi
 			return errs
 		}
 		if a.Action == "set_value" && !validExpression(a.Value) {
-			return defErr("the value of "+a.Field+" is not a value or a supported expression", at("value")...)
+			return defErr(`the value of `+a.Field+` is not a value or a supported expression. Use a literal, {"today":[]}, {"me":[]} or {"addDays":[<date or {"today":[]}>, <whole days>]}.`, at("value")...)
 		}
 	default:
 		return defErr(fmt.Sprintf("%q is not a form rule action. Actions: show, hide, require, set_options, set_value.", a.Action), at("action")...)

@@ -168,3 +168,47 @@ func TestValidateDefinitionCrossFieldPathsKeepTheirIndex(t *testing.T) {
 		t.Fatalf("no problem at %s; got %v", want, got)
 	}
 }
+
+// The remaining refusals also say what is allowed.
+func TestValidateDefinitionMessagesNameTheAllowedSet(t *testing.T) {
+	e := newTestEnv(t)
+	cases := []struct {
+		name, want string
+		edit       func(def map[string]any)
+	}{
+		{"rule action on an unknown field", "Fields: ", func(def map[string]any) {
+			def["rules"] = []any{map[string]any{"key": "r1", "match": "all",
+				"when":    []any{map[string]any{"field": "name", "op": "is_empty"}},
+				"actions": []any{map[string]any{"action": "require", "field": "ghost"}}}}
+		}},
+		{"rule action on an unknown page", "Pages: main", func(def map[string]any) {
+			def["rules"] = []any{map[string]any{"key": "r1", "match": "all",
+				"when":    []any{map[string]any{"field": "name", "op": "is_empty"}},
+				"actions": []any{map[string]any{"action": "show", "page": "nope"}}}}
+		}},
+		{"unknown column kind", "Kinds: ", func(def map[string]any) {
+			def["fields"] = append(def["fields"].([]any), map[string]any{"key": "lines", "kind": "table", "page": "main", "label": "Lines",
+				"columns": []any{map[string]any{"key": "c", "kind": "colour", "label": "C"}}})
+		}},
+		{"formula on an unknown field", "Fields: ", func(def map[string]any) {
+			def["fields"] = append(def["fields"].([]any), map[string]any{"key": "total", "kind": "computed", "page": "main", "label": "Total",
+				"decimals": 0, "expression": map[string]any{"mul": []any{map[string]any{"var": "ghost"}, 2}}})
+		}},
+		{"decimals out of range", "Use 0 to 6", func(def map[string]any) {
+			def["fields"] = append(def["fields"].([]any), map[string]any{"key": "total", "kind": "computed", "page": "main", "label": "Total",
+				"decimals": 9, "expression": 1})
+		}},
+	}
+	for _, c := range cases {
+		got := problemsOf(t, e, withDef(t, e, c.edit))
+		found := false
+		for _, msg := range got {
+			if strings.Contains(msg, c.want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: no message contains %q: %v", c.name, c.want, got)
+		}
+	}
+}

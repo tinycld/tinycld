@@ -91,7 +91,7 @@ func ValidateRuleActions(app core.App, defs *Defs, raw any) validation.Errors {
 		for _, k := range given {
 			if _, ok := declared[k]; !ok {
 				errs[at+".params."+k] = validation.NewError(codeInvalidAction, fmt.Sprintf(
-					"%q is not a param of %s. Params: %s.", k, a.Ref, strings.Join(keys, ", ")))
+					"%q is not a param of %s. Params: %s.", k, a.Ref, paramList(keys)))
 			}
 		}
 		for _, p := range def.Params {
@@ -122,4 +122,11 @@ func paramHint(p ParamDef, isRelation bool) string {
 	default:
 		return "It is " + p.Type + "."
 	}
+}
+
+func paramList(keys []string) string {
+	if len(keys) == 0 {
+		return "none"
+	}
+	return strings.Join(keys, ", ")
 }
