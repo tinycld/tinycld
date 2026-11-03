@@ -13,7 +13,7 @@ import { ChevronDown, ChevronRight, X } from 'lucide-react-native'
 import { type ReactNode, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import type { ReportViewModel } from '../hooks/useReportView'
-import { mergeHidden } from '../lib/format'
+import { headingText, mergeHidden } from '../lib/format'
 import { REPORT_TAP_TARGET } from './ReportHeader'
 
 const NEGATIVE_OPTIONS = [
@@ -43,7 +43,7 @@ function useDisplayForm(model: ReportViewModel) {
         negativeRed: model.display.negativeRed,
         columns: model.allColumns.slice(1).map(column => ({
             id: column.id,
-            label: column.label,
+            label: headingText(column, model.display),
             isShown: !model.display.hidden.includes(column.id),
         })),
     }
@@ -211,7 +211,7 @@ function CustomizeSheet({ model }: { model: ReportViewModel }) {
 
 // Wide: inline beside the report, which updates behind it. Tablet: an overlay.
 function CustomizeDrawer({ model }: { model: ReportViewModel }) {
-    const isInline = model.breakpoint === 'desktop'
+    const isInline = model.panelSurface === 'inline'
     const presentation = isInline ? 'inline' : 'overlay'
     const role = isInline ? 'complementary' : 'dialog'
     return (
@@ -244,6 +244,6 @@ function CustomizeDrawer({ model }: { model: ReportViewModel }) {
 /** Customize: a sheet on a phone, a panel beside or over the report on wider screens. */
 export function ReportCustomizePanel({ model }: { model: ReportViewModel }) {
     if (model.isEditing) return null
-    if (model.breakpoint === 'mobile') return <CustomizeSheet model={model} />
+    if (model.panelSurface === 'sheet') return <CustomizeSheet model={model} />
     return <CustomizeDrawer model={model} />
 }

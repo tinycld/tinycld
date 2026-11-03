@@ -1,8 +1,11 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { type Control, SelectInput } from '@tinycld/core/ui/form'
+import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
 import { type LucideIcon, Trash2 } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
+import { firstTextField } from '../../lib/builder/columns'
 import type { BuilderDraft, FormulaDraft } from '../../lib/builder/draft'
+import type { CatalogSource } from '../../lib/types'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 
 // Small parts every builder section shares.
@@ -34,7 +37,7 @@ export function IconButton({ label, testID, isVisible, icon: Icon, onPress }: Ic
 }
 
 /** A new formula column or computed row starts at 0, which the engine reads as a number. */
-export const NEW_FORMULA: FormulaDraft = { kind: 'editable', expr: 0 }
+export const NEW_FORMULA: FormulaDraft = { kind: 'editable', node: { value: 0 } }
 
 interface FixedFormulaProps {
     testID: string
@@ -42,7 +45,7 @@ interface FixedFormulaProps {
 }
 
 /**
- * A stored formula with parts the formula editor cannot show (R15): read-only and
+ * A stored formula with parts the formula editor cannot show (R17): read-only and
  * saved unchanged, or removed to start a new formula.
  */
 export function FixedFormula({ testID, onRemove }: FixedFormulaProps) {
@@ -80,10 +83,17 @@ interface BucketSelectProps {
     name: 'pivot.bucket' | `groups.${number}.bucket`
     control: Control<BuilderDraft>
     testID: string
+    onValueChange?: () => void
 }
 
 /** A date's bucket; only a date field has one. */
-export function BucketSelect({ isVisible, name, control, testID }: BucketSelectProps) {
+export function BucketSelect({
+    isVisible,
+    name,
+    control,
+    testID,
+    onValueChange,
+}: BucketSelectProps) {
     if (!isVisible) return null
     return (
         <SelectInput
@@ -92,6 +102,54 @@ export function BucketSelect({ isVisible, name, control, testID }: BucketSelectP
             label="By"
             options={BUCKET_OPTIONS}
             testID={testID}
+            onValueChange={onValueChange}
         />
+    )
+}
+
+interface RecordLabelFieldProps {
+    /** The record the values point at; nothing is shown without one. */
+    target: CatalogSource | undefined
+    labelField: string
+    purpose: string
+    testID: string
+    onChange: (labelField: string) => void
+}
+
+/**
+ * "Show as": the field a record is named by where its values show, a link column's
+ * cells or a pivot's columns (R31, F22). '' is the record's first text field.
+ */
+export function RecordLabelField({
+    target,
+    labelField,
+    purpose,
+    testID,
+    onChange,
+}: RecordLabelFieldProps) {
+    if (!target) return null
+    const first = firstTextField(target)
+    const items: PickItem[] = [
+        {
+            id: ':first',
+            label: first ? `${first.label} (first text field)` : target.label,
+            isSelected: labelField === '',
+            onSelect: () => onChange(''),
+        },
+        ...target.fields
+            .filter(f => f.key !== 'id')
+            .map(f => ({
+                id: f.key,
+                label: f.label,
+                isSelected: f.key === labelField,
+                onSelect: () => onChange(f.key),
+            })),
+    ]
+    const shown = items.find(i => i.isSelected)?.label ?? `${labelField} (missing)`
+    return (
+        <View className="flex-row items-center gap-2">
+            <Text className="text-xs text-muted-foreground">Show as</Text>
+            <PickMenu label={shown} purpose={purpose} items={items} testID={testID} />
+        </View>
     )
 }

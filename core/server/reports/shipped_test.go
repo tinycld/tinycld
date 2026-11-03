@@ -152,3 +152,30 @@ func TestAShippedReportIsUnpublishedNotDeleted(t *testing.T) {
 	shippedMu.Unlock()
 	s.expect(t, "ad", http.MethodDelete, reportURL(row.Id), "", http.StatusNoContent)
 }
+
+// An unpublished shipped report is created unpublished and stays so on a
+// new revision; its package shares it, and it still cannot be deleted.
+func TestAnUnpublishedShippedReportIsNeverPublished(t *testing.T) {
+	s := newSavedZoo(t)
+	r1 := feedCosts(1, "Feed costs")
+	r1.Unpublished = true
+	RegisterShipped(r1)
+	if err := ReconcileShipped(s.app); err != nil {
+		t.Fatal(err)
+	}
+	row := shippedRow(t, s, "zoo.feed_costs")
+	if row.GetBool("published") || row.GetString("published_by") != "" || row.GetString("owner") != s.id("ad") {
+		t.Fatalf("created: %v", row.PublicExport())
+	}
+	r2 := feedCosts(2, "Feed costs 2")
+	r2.Unpublished = true
+	RegisterShipped(r2)
+	if err := ReconcileShipped(s.app); err != nil {
+		t.Fatal(err)
+	}
+	row = shippedRow(t, s, "zoo.feed_costs")
+	if row.GetBool("published") || row.GetString("title") != "Feed costs 2" {
+		t.Fatalf("revised: %v", row.PublicExport())
+	}
+	s.expect(t, "ad", http.MethodDelete, reportURL(row.Id), "", http.StatusBadRequest, `"shipped_key":{"code":"shipped"`)
+}

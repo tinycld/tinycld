@@ -43,6 +43,20 @@ type plan struct {
 	layout []*LayoutItem
 	// nest is the chain of nested child rows, outermost first.
 	nest []*nestLevel
+	// lookups holds each lookup node's decoded value (lookupOf).
+	lookups map[*Node]decodedLookup
+	// options binds each choice param whose options come from a source, by
+	// param id.
+	options map[string]*optionsPlan
+}
+
+// optionsPlan is a choice param's options source bound to the registry: its
+// value, label and (optional) group paths on src.
+type optionsPlan struct {
+	def                 *ParamDef
+	at                  string
+	src                 *Source
+	value, label, group *pathPlan
 }
 
 type hopPlan struct {
@@ -56,6 +70,11 @@ type pathPlan struct {
 	hops  []hopPlan
 	field *Field
 	src   *Source // the source the field is on
+	// target is the source a relation value points at: the linked source of
+	// a path that ends at a to-one link, or the source whose id it reads.
+	target *Source
+	// endsAtLink is true for a path whose last step is a link.
+	endsAtLink bool
 }
 
 // key names a path's links; equal keys share one join.
@@ -92,9 +111,13 @@ type pivotPlan struct {
 	max   int
 }
 
+// sortPlan is a sort key: a column (col) or a formula; at is where its
+// errors are reported.
 type sortPlan struct {
-	col  *colPlan
-	desc bool
+	col     *colPlan
+	formula *Node
+	at      string
+	desc    bool
 }
 
 // nestLevel is one level of nested child rows: the hops from its parent's
@@ -168,18 +191,56 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 		b.missing("source", "unknown_source", fmt.Sprintf("the source %q does not exist", spec.Source))
 		return nil, b.err()
 	}
-	p := &plan{app: app, spec: spec, base: base, byID: map[string]*colPlan{}}
+	p := &plan{app: app, spec: spec, base: base, byID: map[string]*colPlan{}, lookups: map[*Node]decodedLookup{}}
 	b.merge(checkParamDefs(spec.Params))
+	b.optionSources(p)
 	b.columns(p)
+	b.lookups(p)
 	b.formulaSizes(p)
 	b.nestChain(p)
 	b.sorts(p)
 	b.groupsAndPivot(p)
 	b.layout(p)
+	switch d := spec.Detail; {
+	case d == nil:
+	case d.Label == nil:
+		b.bad("detail", "detail has a label")
+	case spec.Pivot != nil:
+		b.bad("detail.label", "a pivot report has no detail rows to label")
+	}
+	b.display(p)
 	if err := b.err(); err != nil {
 		return nil, err
 	}
 	return p, nil
+}
+
+// optionSources binds each choice param's options source: its value, label
+// and group paths, to-one only.
+func (b *binder) optionSources(p *plan) {
+	p.options = map[string]*optionsPlan{}
+	for i := range p.spec.Params {
+		d := &p.spec.Params[i]
+		if d.Type != ParamChoice || d.OptionsFrom == nil {
+			continue
+		}
+		at := fmt.Sprintf("params.%d.optionsFrom", i)
+		of := d.OptionsFrom
+		src := lookupSource(b.app, of.Source)
+		if src == nil {
+			b.missing(at+".source", "unknown_source", fmt.Sprintf("the source %q does not exist", of.Source))
+			continue
+		}
+		op := &optionsPlan{def: d, at: at, src: src}
+		op.value = b.path(src, of.Value, at+".value", pathValue, "")
+		op.label = b.path(src, of.Label, at+".label", pathValue, "")
+		if of.Group != nil {
+			op.group = b.path(src, of.Group, at+".group", pathValue, "")
+		}
+		if op.value != nil && op.label != nil {
+			p.options[d.ID] = op
+		}
+	}
 }
 
 func (b *binder) columns(p *plan) {
@@ -201,6 +262,9 @@ func (b *binder) columns(p *plan) {
 		}
 		if len(c.Label) > maxLabel || len(c.Format) > maxFormat {
 			b.bad(at, fmt.Sprintf("a label has at most %d characters and a format %d", maxLabel, maxFormat))
+		}
+		if c.Total != "" && c.Total != TotalRecompute && c.Total != TotalRows {
+			b.bad(at+".total", "total is recompute or rows")
 		}
 		if (c.Path == nil) == (c.Formula == nil) {
 			b.bad(at, "a column has a path or a formula")
@@ -253,10 +317,10 @@ func (b *binder) pathColumn(p *plan, cp *colPlan) {
 // counts twice.
 type formulaSize struct{ nodes, depth int }
 
-// formulaSizes refuses a formula column or a filter that passes the formula
-// limits once the formula columns it reads are inlined. Each column's size is
-// counted once, so a chain of columns that each read the one before twice is
-// refused without compiling it.
+// formulaSizes refuses a formula column, a filter or a group label that
+// passes the formula limits once the formula columns it reads are inlined.
+// Each column's size is counted once, so a chain of columns that each read
+// the one before twice is refused without compiling it.
 func (b *binder) formulaSizes(p *plan) {
 	memo := map[string]formulaSize{}
 	check := func(at string, sz formulaSize) {
@@ -271,6 +335,25 @@ func (b *binder) formulaSizes(p *plan) {
 	}
 	if f := p.spec.Filter; f != nil {
 		check("filter", p.nodeSize(f, memo, map[string]bool{}, true))
+	}
+	for i := range p.spec.Groups {
+		if l := p.spec.Groups[i].Label; l != nil {
+			check(fmt.Sprintf("groups.%d.label", i), p.nodeSize(l, memo, map[string]bool{}, true))
+		}
+		if f := p.spec.Groups[i].Fill; f != nil && f.Where != nil {
+			check(fmt.Sprintf("groups.%d.fill.where", i), p.nodeSize(f.Where, memo, map[string]bool{}, true))
+		}
+		if h := p.spec.Groups[i].Having; h != nil {
+			check(fmt.Sprintf("groups.%d.having", i), p.nodeSize(h, memo, map[string]bool{}, true))
+		}
+	}
+	for i, s := range p.spec.Sort {
+		if s.Formula != nil {
+			check(fmt.Sprintf("sort.%d.formula", i), p.nodeSize(s.Formula, memo, map[string]bool{}, true))
+		}
+	}
+	if d := p.spec.Detail; d != nil && d.Label != nil {
+		check("detail.label", p.nodeSize(d.Label, memo, map[string]bool{}, true))
 	}
 }
 
@@ -309,8 +392,17 @@ func (p *plan) nodeSize(n *Node, memo map[string]formulaSize, visiting map[strin
 	for _, a := range n.Args {
 		add(a, inline)
 	}
-	// A where reads the linked rows' paths, never report columns.
-	add(n.Where, false)
+	// A lookup's where and value read report columns through the row the
+	// lookup sits on, and so does an exists inside a lookup's where, so the
+	// columns any where reads count inlined. (An exists in the filter is
+	// refused a report column when it compiles.)
+	add(n.Where, inline)
+	if n.Op == "lookup" {
+		// bind has refused a value that does not decode.
+		if v, err := p.lookupOf(n, ""); err == nil {
+			add(v, inline)
+		}
+	}
 	return sz
 }
 
@@ -367,6 +459,9 @@ func (b *binder) path(src *Source, path Path, at string, kind pathKind, agg Aggr
 				b.bad(hat, "mode and with belong to a link step")
 				return nil
 			}
+			if out.field.Key == idField.Key {
+				out.target = src
+			}
 			return out
 		}
 		links++
@@ -404,8 +499,16 @@ func (b *binder) path(src *Source, path Path, at string, kind pathKind, agg Aggr
 		src = target
 	}
 	if kind != pathLinks {
-		b.bad(at, "a path ends with a field")
-		return nil
+		last := out.hops[len(out.hops)-1]
+		if last.link.Cardinality != ToOne {
+			b.bad(at, "a path ends with a field, or with a link to one row")
+			return nil
+		}
+		// A path that ends at a to-one link reads the linked row's id through
+		// the join: a relation to the target, blank when the reader cannot
+		// see that row.
+		out.field, out.src, out.target, out.endsAtLink = src.field(idField.Key), src, src, true
+		return out
 	}
 	out.src = src
 	return out
@@ -508,10 +611,19 @@ func (b *binder) sorts(p *plan) {
 	}
 	for i, s := range p.spec.Sort {
 		at := fmt.Sprintf("sort.%d", i)
-		cp := b.column(p, s.Col, at+".col")
 		if s.Dir != "" && s.Dir != "asc" && s.Dir != "desc" {
 			b.bad(at+".dir", "dir is asc or desc")
 		}
+		desc := s.Dir == "desc"
+		if (s.Col == "") == (s.Formula == nil) {
+			b.bad(at, "a sort key is a column or a formula")
+			continue
+		}
+		if s.Formula != nil {
+			p.sort = append(p.sort, sortPlan{formula: s.Formula, at: at + ".formula", desc: desc})
+			continue
+		}
+		cp := b.column(p, s.Col, at+".col")
 		if cp == nil {
 			continue
 		}
@@ -519,7 +631,7 @@ func (b *binder) sorts(p *plan) {
 			b.bad(at+".col", "child rows keep their own order")
 			continue
 		}
-		p.sort = append(p.sort, sortPlan{col: cp, desc: s.Dir == "desc"})
+		p.sort = append(p.sort, sortPlan{col: cp, at: at + ".col", desc: desc})
 	}
 }
 
@@ -568,6 +680,13 @@ func (b *binder) groupsAndPivot(p *plan) {
 		b.bad("pivot.maxColumns", fmt.Sprintf("maxColumns is 1 to %d", maxPivotColumns))
 	}
 	pp.path = b.path(p.base, pv.Path, "pivot.path", pathValue, "")
+	if pp.path != nil && pv.LabelField != "" {
+		if pp.path.target == nil {
+			b.bad("pivot.labelField", "only a pivot over a link to a record shows a label field")
+		} else {
+			b.merge(checkLabel(pp.path.target, pv.LabelField, "pivot.labelField"))
+		}
+	}
 	if pp.path != nil && pv.Bucket != "" {
 		if !slices.Contains(buckets, pv.Bucket) {
 			b.bad("pivot.bucket", fmt.Sprintf("bucket is one of %v", buckets))
@@ -607,6 +726,9 @@ func (b *binder) layout(p *plan) {
 	}
 	if len(p.spec.Groups) == 0 {
 		b.bad("layout", "a layout selects rows by the first group, so it needs a group")
+	}
+	if len(p.spec.Groups) > 0 && p.spec.Groups[0].Having != nil {
+		b.bad("groups.0.having", "a layout's sections are fixed rows: hide rows on a deeper group")
 	}
 	seen := map[string]bool{}
 	keys := map[string]bool{}

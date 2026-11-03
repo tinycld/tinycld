@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_DISPLAY } from '../format'
+import type { ParamValue } from '../params'
 import type { ParamDef } from '../spec'
 import { parseViewOptions, reportLink, serializeViewOptions, type ViewOptions } from '../view-url'
 
@@ -75,6 +76,48 @@ describe('the view URL', () => {
             preset: 'lastQuarter',
         })
         expect(parseViewOptions(DEFS, { 'p-period': '2026-03-31..2026-01-01' }).params).toEqual({})
+    })
+
+    it('writes an amount as the amount and its currency', () => {
+        const BUDGET: ParamDef = { id: 'b', type: 'amount' }
+        const budget = { kind: 'amount', cents: 150000, currency: 'USD' } as const
+        const parsed = parseViewOptions([BUDGET], { 'p-b': '1500.00 USD' })
+        expect(parsed.params.b).toEqual(budget)
+        expect(serializeViewOptions([BUDGET], parsed)['p-b']).toBe('1500.00 USD')
+        expect(parseViewOptions([BUDGET], { 'p-b': '12' }).params.b).toEqual({
+            kind: 'amount',
+            cents: 1200,
+            currency: '',
+        })
+        expect(
+            serializeViewOptions([BUDGET], {
+                params: { b: { kind: 'amount', cents: 1200, currency: '' } },
+                display: DEFAULT_DISPLAY,
+            })['p-b']
+        ).toBe('12.00')
+        for (const bad of ['12 usd', '12.345 USD', 'USD', '1 2 USD', ''])
+            expect(parseViewOptions([BUDGET], { 'p-b': bad }).params).toEqual({})
+    })
+
+    it('keeps a whole group picked from a source in the address', () => {
+        const TEAMS: ParamDef = {
+            id: 'teams',
+            type: 'choice',
+            multiple: true,
+            optionsFrom: {
+                source: 's',
+                value: [{ field: 'id' }],
+                label: [{ field: 'name' }],
+                group: [{ field: 'region' }],
+            },
+        }
+        const picked: ParamValue = { kind: 'choice', values: ['a1'], groups: ['north'] }
+        const search = serializeViewOptions([TEAMS], {
+            params: { teams: picked },
+            display: DEFAULT_DISPLAY,
+        })
+        expect(search['p-teams']).toBe('["a1",{"group":"north"}]')
+        expect(parseViewOptions([TEAMS], search).params.teams).toEqual(picked)
     })
 
     it('builds a full link the reader can copy', () => {

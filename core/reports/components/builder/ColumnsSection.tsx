@@ -1,6 +1,6 @@
-import { FormulaEditor } from '@tinycld/core/components/forms-builder/FormulaEditor'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { SelectInput, TextInput, useWatch } from '@tinycld/core/ui/form'
+import { Switch } from '@tinycld/core/ui/switch'
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react-native'
 import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
@@ -13,13 +13,15 @@ import {
     nextColumnId,
     pathLabel,
 } from '../../lib/builder/columns'
-import { type ColumnDraft, columnChoices, type FormulaDraft } from '../../lib/builder/draft'
-import { formulaOperands } from '../../lib/builder/formula'
+import { type ColumnDraft, type FormulaDraft, showsDetailLabel } from '../../lib/builder/draft'
+import { linkTarget, rowsTotalColumns } from '../../lib/builder/formula-context'
 import type { SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnPicker } from './ColumnPicker'
-import { FixedFormula, IconButton, NEW_FORMULA } from './parts'
+import { IconButton, NEW_FORMULA, RecordLabelField } from './parts'
+import { ReportFormula, useColumnChoices } from './report-formula'
+import { HopJoins } from './report-formula-paths'
 
 const FORMAT_OPTIONS = [
     { value: '', label: 'Number' },
@@ -56,8 +58,14 @@ function columnSummary(builder: ReportBuilder, column: ColumnDraft): string {
     return info.mode === 'aggregate' ? `${pathLabel(info)} · total` : pathLabel(info)
 }
 
-function isNumberColumn(builder: ReportBuilder, column: ColumnDraft): boolean {
-    if (column.kind === 'formula') return true
+// A formula column is shown as a number or a percent when it gives a number; a
+// formula giving text or a date has no such choice.
+function isNumberColumn(
+    builder: ReportBuilder,
+    column: ColumnDraft,
+    numericIds: ReadonlySet<string>
+): boolean {
+    if (column.kind === 'formula') return numericIds.has(column.id)
     return describePath(builder.catalog, builder.base.key, column.path)?.field.type === 'number'
 }
 
@@ -65,9 +73,14 @@ interface ColumnRowProps {
     builder: ReportBuilder
     columns: ColumnDraft[]
     index: number
+    /** The columns whose cells are numbers, amounts or percents. */
+    numericIds: ReadonlySet<string>
+    /** The columns whose total may add the rows shown (levels.go detailCell). */
+    rowsTotalIds: ReadonlySet<string>
 }
 
-function ColumnRow({ builder, columns, index }: ColumnRowProps) {
+function ColumnRow({ builder, columns, index, numericIds, rowsTotalIds }: ColumnRowProps) {
+    const source = useWatch({ control: builder.form.control, name: 'source' })
     const column = columns[index]
     if (!column) return null
     const { control } = builder.form
@@ -108,15 +121,187 @@ function ColumnRow({ builder, columns, index }: ColumnRowProps) {
                 testID={`${testID}-label`}
                 maxLength={200}
             />
+            <ColumnHops builder={builder} columns={columns} index={index} source={source} />
             <SelectInput
                 name={`columns.${index}.aggregate`}
                 control={control}
-                label="Total"
+                label="Summarize"
                 options={aggregateOptions(builder, column)}
                 testID={`${testID}-aggregate`}
+                onValueChange={builder.validateLists}
             />
-            <FormatField builder={builder} column={column} index={index} />
+            <FormatField builder={builder} column={column} index={index} numericIds={numericIds} />
+            <TotalField
+                isVisible={rowsTotalIds.has(column.id) || column.total === 'rows'}
+                builder={builder}
+                index={index}
+            />
+            <LinkLabelField builder={builder} columns={columns} index={index} source={source} />
             <ColumnFormula builder={builder} columns={columns} index={index} />
+        </View>
+    )
+}
+
+// A to-many hop turned into child rows has no total per row; one turned into a total
+// starts at the field's usual total.
+function withPath(
+    builder: ReportBuilder,
+    source: string,
+    column: Extract<ColumnDraft, { kind: 'path' }>,
+    path: SpecHop[]
+): ColumnDraft {
+    const before = describePath(builder.catalog, source, column.path)?.mode
+    const info = describePath(builder.catalog, source, path)
+    if (!info || info.mode === before) return { ...column, path }
+    const aggregate = info.mode === 'aggregate' ? defaultAggregate(info.field, true) : ''
+    const total = info.mode === 'nest' ? 'recompute' : column.total
+    return { ...column, path, aggregate, scale: null, total }
+}
+
+interface ColumnPartProps {
+    builder: ReportBuilder
+    columns: ColumnDraft[]
+    index: number
+    source: string
+}
+
+// Each link of a path column: rows without it kept or dropped, and its one to-many
+// link a total or child rows (no-limits ruling: every path is editable).
+function ColumnHops({ builder, columns, index, source }: ColumnPartProps) {
+    const column = columns[index]
+    if (column?.kind !== 'path' || !column.path.some(hop => hop.link !== undefined)) return null
+    const onChange = (path: SpecHop[]) =>
+        builder.setColumns(
+            columns.map((c, i) =>
+                i === index && c.kind === 'path' ? withPath(builder, source, c, path) : c
+            )
+        )
+    return (
+        <View className="flex-row flex-wrap items-center gap-1.5">
+            <HopJoins
+                catalog={builder.catalog}
+                baseKey={source}
+                hops={column.path}
+                onChange={onChange}
+                id={`report-builder-column-${index}`}
+                where={` in ${column.label}`}
+            />
+        </View>
+    )
+}
+
+const TOTAL_OPTIONS = [
+    { value: 'recompute', label: 'Recompute from all rows' },
+    { value: 'rows', label: 'Add the rows shown' },
+]
+
+/**
+ * A number or amount column totals all rows, or only the rows the report shows (E2).
+ * A running value, a percent or child rows are not added up; a column that became
+ * one after "Add the rows shown" keeps the choice in view, so it can be set back.
+ */
+function TotalField({
+    isVisible,
+    builder,
+    index,
+}: {
+    isVisible: boolean
+    builder: ReportBuilder
+    index: number
+}) {
+    if (!isVisible) return null
+    return (
+        <SelectInput
+            name={`columns.${index}.total`}
+            control={builder.form.control}
+            label="Total"
+            options={TOTAL_OPTIONS}
+            testID={`report-builder-column-${index}-total`}
+            onValueChange={builder.validateLists}
+        />
+    )
+}
+
+/** "Show as": the field of a link column's record its cells show (R31, F22). */
+function LinkLabelField({ builder, columns, index, source }: ColumnPartProps) {
+    const groups = useWatch({ control: builder.form.control, name: 'groups' })
+    const column = columns[index]
+    if (!column) return null
+    const target = linkTarget({ source, columns, groups }, builder.catalog, column)
+    const setField = (labelField: string) =>
+        builder.setColumns(columns.map((c, i) => (i === index ? { ...c, labelField } : c)))
+    return (
+        <RecordLabelField
+            target={target}
+            labelField={column.labelField}
+            purpose={`${column.label} shown as`}
+            testID={`report-builder-column-${index}-label-field`}
+            onChange={setField}
+        />
+    )
+}
+
+function DetailFormula({
+    builder,
+    formula,
+    testID,
+}: {
+    builder: ReportBuilder
+    formula: FormulaDraft | null
+    testID: string
+}) {
+    if (!formula) return null
+    return (
+        <ReportFormula
+            builder={builder}
+            place={{ kind: 'detail' }}
+            formula={formula}
+            onChange={builder.setDetailLabel}
+            testID={testID}
+        />
+    )
+}
+
+function DetailLabelError({ message }: { message: string | undefined }) {
+    if (!message) return null
+    return (
+        <Text
+            testID="report-builder-detail-label-error"
+            role="alert"
+            className="text-xs text-danger"
+        >
+            {message}
+        </Text>
+    )
+}
+
+/**
+ * "Row label": opened rows are labelled by the first column, or by a formula (E7). A
+ * pivot report has no opened rows (bind.go detail.label); a label set before the
+ * pivot stays in view with its refusal, so it can be turned off.
+ */
+function DetailLabelCard({ builder }: { builder: ReportBuilder }) {
+    const control = builder.form.control
+    const label = useWatch({ control, name: 'detailLabel' })
+    const pivot = useWatch({ control, name: 'pivot' })
+    if (!showsDetailLabel({ pivot, detailLabel: label })) return null
+    const error = builder.form.getFieldState('detailLabel', builder.form.formState).error
+    const testID = 'report-builder-detail-label'
+    return (
+        <View testID={`${testID}-card`} className="gap-1.5 rounded-lg border border-border p-2">
+            <DetailLabelError message={error?.message} />
+            <View className="flex-row items-center gap-2">
+                <Switch
+                    value={label !== null}
+                    onValueChange={on => builder.setDetailLabel(on ? NEW_FORMULA : null)}
+                    accessibilityLabel="Label opened rows with a formula"
+                    testID={`${testID}-on`}
+                />
+                <Text className="flex-1 text-sm text-foreground">
+                    Label opened rows with a formula
+                </Text>
+            </View>
+            <DetailFormula builder={builder} formula={label} testID={testID} />
         </View>
     )
 }
@@ -125,12 +310,14 @@ function FormatField({
     builder,
     column,
     index,
+    numericIds,
 }: {
     builder: ReportBuilder
     column: ColumnDraft
     index: number
+    numericIds: ReadonlySet<string>
 }) {
-    if (!isNumberColumn(builder, column)) return null
+    if (!isNumberColumn(builder, column, numericIds)) return null
     return (
         <SelectInput
             name={`columns.${index}.format`}
@@ -138,33 +325,27 @@ function FormatField({
             label="Show as"
             options={FORMAT_OPTIONS}
             testID={`report-builder-column-${index}-format`}
+            onValueChange={builder.validateLists}
         />
     )
 }
 
-// The forms engine's formula editor (spec §4): parts picked from menus, reading the
-// other numeric columns (R15). Child rows have no single value on the row to read.
-function ColumnFormula({ builder, columns, index }: ColumnRowProps) {
+// The report formula editor (OQ2): every operator the engine has, its parts
+// picked from menus, reading the other columns, fields, group records and params.
+function ColumnFormula({ builder, columns, index }: Omit<ColumnPartProps, 'source'>) {
     const column = columns[index]
     if (column?.kind !== 'formula') return null
-    const testID = `report-builder-column-${index}-formula`
     const setFormula = (formula: FormulaDraft) =>
         builder.setColumns(
             columns.map((c, i) => (i === index && c.kind === 'formula' ? { ...c, formula } : c))
         )
-    if (column.formula.kind === 'fixed') {
-        return <FixedFormula testID={`${testID}-fixed`} onRemove={() => setFormula(NEW_FORMULA)} />
-    }
-    const choices = columnChoices({ source: builder.base.key, columns }, builder.catalog).filter(
-        choice => !choice.isNested
-    )
     return (
-        <FormulaEditor
-            value={column.formula.expr}
-            onChange={expr => setFormula({ kind: 'editable', expr })}
-            operands={formulaOperands(choices, column.id)}
-            valueNoun="Column"
-            testID={testID}
+        <ReportFormula
+            builder={builder}
+            place={{ kind: 'column', selfKey: column.id }}
+            formula={column.formula}
+            onChange={setFormula}
+            testID={`report-builder-column-${index}-formula`}
         />
     )
 }
@@ -177,6 +358,9 @@ export function ColumnsSection({
     problems: Problem[]
 }) {
     const columns = useWatch({ control: builder.form.control, name: 'columns' })
+    const choices = useColumnChoices(builder)
+    const numericIds = new Set(choices.filter(choice => choice.isNumeric).map(choice => choice.key))
+    const rowsTotalIds = rowsTotalColumns(choices, columns)
     const onPick = (path: SpecHop[]) => {
         const info = describePath(builder.catalog, builder.base.key, path)
         if (!info) return
@@ -191,6 +375,9 @@ export function ColumnsSection({
             aggregate: info.mode === 'aggregate' ? defaultAggregate(info.field, true) : '',
             scale: null,
             format: '',
+            total: 'recompute',
+            explicitTotal: false,
+            labelField: '',
         }
         builder.setColumns([...columns, column])
     }
@@ -208,10 +395,20 @@ export function ColumnsSection({
                 aggregate: '',
                 scale: null,
                 format: '',
+                total: 'recompute',
+                explicitTotal: false,
+                labelField: '',
             },
         ])
     const rows = columns.map((column, index) => (
-        <ColumnRow key={column.id} builder={builder} columns={columns} index={index} />
+        <ColumnRow
+            key={column.id}
+            builder={builder}
+            columns={columns}
+            index={index}
+            numericIds={numericIds}
+            rowsTotalIds={rowsTotalIds}
+        />
     ))
     return (
         <BuilderSection title="Columns" section="columns" problems={problems} isOpenAtStart>
@@ -223,6 +420,7 @@ export function ColumnsSection({
                     onPick={onPick}
                     label="Add column"
                     testID="report-builder-add-column"
+                    allowLinkEnd
                 />
                 <Button
                     testID="report-builder-add-formula"
@@ -233,6 +431,7 @@ export function ColumnsSection({
                     <ButtonText>Add formula</ButtonText>
                 </Button>
             </View>
+            <DetailLabelCard builder={builder} />
         </BuilderSection>
     )
 }

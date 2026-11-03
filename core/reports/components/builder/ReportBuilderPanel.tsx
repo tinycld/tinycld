@@ -1,10 +1,6 @@
 import { useLeaveGuard } from '@tinycld/core/components/forms-builder/use-leave-guard'
 import { HelpIcon } from '@tinycld/core/components/help/HelpIcon'
-import {
-    type Breakpoint,
-    useBreakpoint,
-    useWindowHeight,
-} from '@tinycld/core/components/workspace/useBreakpoint'
+import { useWindowHeight } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
@@ -27,7 +23,9 @@ import type { ReportViewModel } from '../../hooks/useReportView'
 import type { Problem } from '../../lib/types'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 import { ReportNotices } from '../ReportNotices'
+import { ReportUpdating } from '../ReportUpdating'
 import { ReportBody } from '../ReportView'
+import { ArrangeSection } from './ArrangeSection'
 import { ColumnsSection } from './ColumnsSection'
 import { DetailsSection } from './DetailsSection'
 import { FilterSection } from './FilterSection'
@@ -70,7 +68,15 @@ function PanelTitle({ builder }: { builder: ReportBuilder }) {
 }
 
 // The sections, in the order a report is designed.
-function Sections({ builder, problems }: { builder: ReportBuilder; problems: Problem[] }) {
+function Sections({
+    builder,
+    problems,
+    preview,
+}: {
+    builder: ReportBuilder
+    problems: Problem[]
+    preview: ReportViewModel
+}) {
     return (
         <View>
             <DetailsSection builder={builder} problems={problems} />
@@ -79,6 +85,11 @@ function Sections({ builder, problems }: { builder: ReportBuilder; problems: Pro
             <GroupSortSection builder={builder} problems={problems} />
             <PivotSection builder={builder} problems={problems} />
             <LayoutSection builder={builder} problems={problems} />
+            <ArrangeSection
+                builder={builder}
+                problems={problems}
+                resultColumns={preview.allColumns}
+            />
         </View>
     )
 }
@@ -92,9 +103,11 @@ function SaveAsButton({ isVisible, onPress }: { isVisible: boolean; onPress: () 
     )
 }
 
+// Full width, so its top rule spans the panel in the drawer's footer too (that
+// footer is a row that would size it to its buttons).
 function Footer({ builder, onSaveAs }: { builder: ReportBuilder; onSaveAs: () => void }) {
     return (
-        <View className="flex-row justify-end gap-2 border-t border-border p-3">
+        <View className="w-full flex-row justify-end gap-2 border-t border-border p-3">
             <SaveAsButton isVisible={builder.mode === 'edit'} onPress={onSaveAs} />
             <ServerActionButton
                 testID="report-builder-save"
@@ -114,16 +127,19 @@ interface SurfaceProps {
     onSaveAs: () => void
 }
 
+// Over the report (a tablet's drawer) the panel covers the report header's
+// "Updating…" slot, so it shows its own beside Close (the report's goes silent).
+// Beside the report (a desktop) the report's slot stays in view.
+function OverlayUpdating({ isVisible, isUpdating }: { isVisible: boolean; isUpdating: boolean }) {
+    if (!isVisible) return null
+    return <ReportUpdating isUpdating={isUpdating} />
+}
+
 // Beside the report on a desktop; over it, from the right, on a tablet. The panel
 // belongs to its route, so it does not close on a URL change: its close navigates,
 // and a close fired by the next push would undo that push.
-function DrawerSurface({
-    builder,
-    problems,
-    onSaveAs,
-    breakpoint,
-}: SurfaceProps & { breakpoint: Breakpoint }) {
-    const isInline = breakpoint === 'desktop'
+function DrawerSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
+    const isInline = preview.panelSurface === 'inline'
     const presentation = isInline ? 'inline' : 'overlay'
     const role = isInline ? 'complementary' : 'dialog'
     return (
@@ -144,10 +160,13 @@ function DrawerSurface({
             >
                 <DrawerHeader className="border-b border-border">
                     <PanelTitle builder={builder} />
-                    <CloseButton onPress={builder.onClose} />
+                    <View className="flex-row items-center gap-1">
+                        <OverlayUpdating isVisible={!isInline} isUpdating={preview.isUpdating} />
+                        <CloseButton onPress={builder.onClose} />
+                    </View>
                 </DrawerHeader>
                 <DrawerBody style={{ flexShrink: 1 }}>
-                    <Sections builder={builder} problems={problems} />
+                    <Sections builder={builder} problems={problems} preview={preview} />
                 </DrawerBody>
                 <DrawerFooter>
                     <Footer builder={builder} onSaveAs={onSaveAs} />
@@ -225,18 +244,21 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
             testID="report-builder"
         >
             <View style={{ height }}>
-                <View className="flex-row items-center justify-between px-3">
+                <View className="flex-row items-center justify-between gap-2 px-3">
                     <PanelTitle builder={builder} />
-                    <CloseButton onPress={builder.onClose} />
+                    <View className="flex-row items-center gap-1">
+                        <ReportUpdating isUpdating={preview.isUpdating} />
+                        <CloseButton onPress={builder.onClose} />
+                    </View>
                 </View>
                 <ModeSwitch mode={mode} onChange={setMode} />
                 <ModeBody isVisible={mode === 'design'}>
                     <ScrollView contentContainerClassName="px-3">
-                        <Sections builder={builder} problems={problems} />
+                        <Sections builder={builder} problems={problems} preview={preview} />
                     </ScrollView>
                 </ModeBody>
                 <ModeBody isVisible={mode === 'preview'}>
-                    <ReportNotices notices={preview.notices} isUpdating={preview.isUpdating} />
+                    <ReportNotices notices={preview.notices} />
                     <ReportBody model={preview} />
                 </ModeBody>
                 <Footer builder={builder} onSaveAs={onSaveAs} />
@@ -245,10 +267,11 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
     )
 }
 
+// The surface comes from the view's model, so the panel covers exactly what the
+// view gives up to it (its body under the sheet, its "Updating…" slot).
 function BuilderSurface(props: SurfaceProps) {
-    const breakpoint = useBreakpoint()
-    if (breakpoint === 'mobile') return <SheetSurface {...props} />
-    return <DrawerSurface {...props} breakpoint={breakpoint} />
+    if (props.preview.panelSurface === 'sheet') return <SheetSurface {...props} />
+    return <DrawerSurface {...props} />
 }
 
 export function ReportBuilderPanel({

@@ -1,15 +1,30 @@
-import { expect, type Locator, type Page } from '@playwright/test'
+import { type ElementHandle, expect, type Locator, type Page } from '@playwright/test'
+import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import PocketBase from 'pocketbase'
-import { navigateToPackage } from './helpers'
+import { loginAs, navigateToPackage } from './helpers'
+
+export {
+    cellOf,
+    chooseParamOption,
+    hubRow,
+    openReportsHub,
+    pressToolbar,
+    rowOf,
+} from './report-view-helpers'
 
 // Helpers for the reports specs. Fixture names come from the salesstub package
 // (tests/scripts/scaffold-reports-stub.ts): sources salesstub.sales ("Stub sales":
-// customer, amount, cost, quantity, currency, day, status; link team) and
-// salesstub.teams ("Stub teams": name; to-many link sales), and the shipped report
-// "Stub larger side" over sales (reports-stub/server/register.go.txt).
+// customer, amount, cost, quantity, currency, day, booked (a day kept as text),
+// status; link team) and salesstub.teams ("Stub teams": name, region; to-many link
+// sales), both headed "Stub Sales Co", and the shipped reports "Stub larger side"
+// (published) and "Stub team totals" (unpublished) over sales
+// (reports-stub/server/register.go.txt).
 export const SALES_SOURCE = 'salesstub.sales'
 export const TEAMS_SOURCE = 'salesstub.teams'
 export const SHIPPED_TITLE = 'Stub larger side'
+export const TEAM_TOTALS_TITLE = 'Stub team totals'
+/** The heading the stub's sources print above a report's title. */
+export const STUB_HEADING = 'Stub Sales Co'
 /** The shipped report's formula column (index 3, id `larger`), as register.go.txt has it. */
 export const SHIPPED_FORMULA = {
     op: 'if',
@@ -32,8 +47,13 @@ export async function openReportStub(page: Page) {
     await navigateToPackage(page, 'salesstub', { waitFor: page.getByTestId('salesstub-landing') })
 }
 
-export async function addTeam(page: Page, name: string) {
+export async function addTeam(page: Page, name: string, region: 'north' | 'south' = 'north') {
     await page.getByTestId('salesstub-team-name').fill(name)
+    // The team form's radios come first on the screen, so the first match is its own.
+    await page
+        .getByRole('radio', { name: region === 'north' ? 'North' : 'South', exact: true })
+        .first()
+        .click()
     await page.getByTestId('salesstub-team-create').click()
     await expect(page.getByTestId('salesstub-team-saved')).toHaveText(`Saved ${name}`)
 }
@@ -64,14 +84,6 @@ export async function addSale(page: Page, sale: StubSale) {
     await expect(page.getByTestId('salesstub-sale-saved')).toHaveText(`Saved ${sale.customer}`)
 }
 
-export async function openReportsHub(page: Page) {
-    await navigateToPackage(page, 'reports', { waitFor: page.getByTestId('reports-hub') })
-}
-
-export function hubRow(page: Page, title: string): Locator {
-    return page.locator('[data-testid^="reports-hub-row-"]').filter({ hasText: title })
-}
-
 /** New report → pick a source → the builder opens on a draft. */
 export async function startReport(page: Page, sourceKey: string) {
     await page.getByTestId('reports-hub-new').click()
@@ -97,6 +109,43 @@ export async function addColumn(page: Page, keys: string[], mode?: 'total' | 'ne
     await expect(picker).toBeHidden()
 }
 
+/** Holds every report run until the returned release is called. */
+export async function holdRuns(page: Page): Promise<() => void> {
+    let release = () => {}
+    const held = new Promise<void>(resolve => {
+        release = resolve
+    })
+    await page.route('**/api/reports/run', async route => {
+        await held
+        await route.continue()
+    })
+    return release
+}
+
+/** The report list's own scroller: the row's nearest vertical (overflow-y: auto) ancestor. */
+export async function listScroller(row: Locator): Promise<ElementHandle<HTMLElement>> {
+    return row.evaluateHandle(element => {
+        let scroller = element.parentElement
+        while (scroller && getComputedStyle(scroller).overflowY !== 'auto') {
+            scroller = scroller.parentElement
+        }
+        if (!scroller) throw new Error('the row has no vertical scroller')
+        return scroller
+    })
+}
+
+/** Scrolls the report list so the row's top edge lands `below` px under the list's top edge. */
+export async function scrollRowTo(row: Locator, below = 0) {
+    const scroller = await listScroller(row)
+    await row.evaluate(
+        (element, { list, offset }) => {
+            const top = element.getBoundingClientRect().top - list.getBoundingClientRect().top
+            list.scrollTop += top - offset
+        },
+        { list: scroller, offset: below }
+    )
+}
+
 export async function chooseOption(page: Page, selectTestId: string, value: string) {
     await page.getByTestId(selectTestId).click()
     await page.getByTestId(`${selectTestId}-${value}`).click()
@@ -111,39 +160,8 @@ export async function saveNewReport(page: Page, title: string) {
     await expect(page.getByTestId('report-title')).toHaveText(title)
 }
 
-/**
- * A toolbar action, folded into "More actions" when the row is narrow. The toolbar
- * draws after the report loads, so wait for the button or the More button before
- * choosing a branch.
- */
-export async function pressToolbar(page: Page, testId: string, label: string) {
-    const button = page.getByTestId(testId)
-    const more = page.getByTestId('toolbar-more-button')
-    await expect(button.or(more).first()).toBeVisible()
-    if (await button.isVisible()) await button.click()
-    else {
-        await more.click()
-        await page.getByRole('menuitem', { name: label }).click()
-    }
-}
-
-/** The label cell of the row whose label is `label` (a group row's is its toggle). */
-export function rowOf(page: Page, label: string): Locator {
-    return page
-        .getByTestId('report-table')
-        .locator('[data-testid^="report-row-"]')
-        .filter({ has: page.getByText(label, { exact: true }) })
-        .first()
-}
-
-/** The cell of `columnId` (not the first column) in the row whose label is `label`. */
-export async function cellOf(page: Page, columnId: string, label: string): Promise<Locator> {
-    const labelCell = rowOf(page, label)
-    await expect(labelCell).toBeVisible()
-    const testId = await labelCell.getAttribute('data-testid')
-    if (!testId) throw new Error(`no row labelled ${label}`)
-    return page.getByTestId(`report-cell-${columnId}-${testId.replace('report-row-', '')}`)
-}
+const ADMIN_LOGIN = process.env.ADMIN_USER_LOGIN || 'admin@tinycld.org'
+const ADMIN_PASSWORD = process.env.ADMIN_USER_PW || 'AdminPass1234!'
 
 // A PocketBase client signed in as the e2e server's superuser, for the one fixture
 // reports-share.spec.ts seeds (its header says why). scripts/e2e-serve.ts creates
@@ -151,11 +169,17 @@ export async function cellOf(page: Page, columnId: string, label: string): Promi
 export async function superuserClient(): Promise<PocketBase> {
     const pb = new PocketBase(`http://127.0.0.1:${process.env.E2E_PORT ?? 7200}`)
     pb.autoCancellation(false)
-    await pb
-        .collection('_superusers')
-        .authWithPassword(
-            process.env.ADMIN_USER_LOGIN || 'admin@tinycld.org',
-            process.env.ADMIN_USER_PW || 'AdminPass1234!'
-        )
+    await pb.collection('_superusers').authWithPassword(ADMIN_LOGIN, ADMIN_PASSWORD)
     return pb
+}
+
+/**
+ * Signs in as the owner of the shipped reports: the oldest active owner
+ * (shipped.go firstAdmin), which is the seed's admin app user (scripts/seed-db.ts
+ * ensureAdminAppUser), created before the shared test user. It signs in by its
+ * username, which the seed derives from the email: the e2e server's users sign in
+ * by username.
+ */
+export async function loginAsShippedOwner(page: Page) {
+    await loginAs(page, deriveUsername(ADMIN_LOGIN), ADMIN_PASSWORD)
 }

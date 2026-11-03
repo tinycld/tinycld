@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { ParamDef } from '../../spec'
+import { type ColumnDraft, emptyDraft, keptParams } from '../draft'
 import {
     addFilterItem,
     emptyCondition,
     emptyGroup,
     filterItemKeys,
-    filterParams,
     type GroupDraft,
     removeFilterItem,
     setMatchAt,
     updateFilterItem,
 } from '../filter'
+import { CATALOG, SALES_KEY } from './catalog-fixture'
 
 const condition = (field: string) => emptyCondition([{ field }])
 
@@ -101,20 +102,36 @@ describe('filter tree edits', () => {
             { id: 'rate', type: 'number' },
         ]
         const ids = (list: ParamDef[]) => list.map(p => p.id)
+        const sales = CATALOG.get(SALES_KEY)
+        if (!sales) throw new Error('fixture')
+        const rate: ColumnDraft = {
+            kind: 'formula',
+            id: 'rated',
+            label: 'Rated',
+            aggregate: '',
+            scale: null,
+            format: '',
+            total: 'recompute',
+            explicitTotal: false,
+            labelField: '',
+            formula: { kind: 'fixed', node: { param: 'rate' } },
+        }
+        const draftOf = (filter: GroupDraft, columns = [rate]) => ({
+            ...emptyDraft(sales),
+            params,
+            filter,
+            columns,
+        })
         // A related row or a nested group takes its asked values with it; a param a
         // column formula reads stays.
         const noRelated = removeFilterItem(before, [1])
-        expect(ids(filterParams(params, noRelated, new Set(['rate'])))).toEqual([
-            'day',
-            'customer',
-            'rate',
-        ])
+        expect(ids(keptParams(draftOf(noRelated)))).toEqual(['day', 'customer', 'rate'])
         const noGroup = removeFilterItem(before, [2])
-        expect(ids(filterParams(params, noGroup, new Set()))).toEqual(['day', 'status'])
+        expect(ids(keptParams(draftOf(noGroup, [])))).toEqual(['day', 'status'])
         // A new asked value joins the list.
         const added: ParamDef = { id: 'day2', type: 'asOf' }
         const withAdded = addFilterItem(before, [], asked('day', 'day2'))
-        expect(ids(filterParams(params, withAdded, new Set(), added))).toEqual([
+        expect(ids(keptParams(draftOf(withAdded, []), added))).toEqual([
             'day',
             'status',
             'customer',

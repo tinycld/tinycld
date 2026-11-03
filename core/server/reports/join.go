@@ -51,6 +51,9 @@ type joinCtx struct {
 	src      *Source
 	isFilter bool
 	visiting map[string]bool
+	// records reads a group's record by its group key, which w holds once its
+	// group keys are in: a carried currency's key is read so (valueCurrencies).
+	records bool
 }
 
 func (j *joinCtx) col(id, at string) (expr, error) {
@@ -66,16 +69,66 @@ func (j *joinCtx) col(id, at string) (expr, error) {
 		return expr{}, err
 	}
 	defer done()
+	if j.records && cp.path == nil && cp.nest == 0 && cp.col.Aggregate == "" {
+		inner := j.r.join(false)
+		inner.visiting, inner.records = j.visiting, true
+		return compileFormula(inner, cp.col.Formula, cp.at+".formula")
+	}
 	return j.r.rowValue(cp, at, j.visiting)
 }
 
+// path reads a field after the scope's prefix. An amount carries its currency
+// (amountCurrency), which comparisons and amount params are checked in
+// (currencyGuard).
 func (j *joinCtx) path(p Path, at string) (expr, error) {
 	bound, err := bindValuePath(j.r.c.p.app, j.src, p, at, pathValue)
 	if err != nil {
 		return expr{}, err
 	}
 	hops := append(append([]hopPlan{}, j.prefix...), bound.hops...)
-	return j.sc.value(&pathPlan{hops: hops, field: bound.field}), nil
+	e := j.sc.value(&pathPlan{hops: hops, field: bound.field, target: bound.target})
+	return withCurrency(e, j.amountCurrency(hops, bound)), nil
+}
+
+// amountCurrency is the currency of a money path: its currency field, by the
+// currency key w keeps for it (rows() keeps one for every amount the report's
+// columns, labels, havings and sorts read, so the two combine), else read
+// beside it; or its source's fixed currency.
+func (j *joinCtx) amountCurrency(hops []hopPlan, bound *pathPlan) currency {
+	sql, fixed := amountCurrencyOf(j.sc, hops, bound)
+	switch {
+	case sql != "":
+		if name, ok := j.r.byExpr[sql]; ok && j.sc == j.r.root {
+			return currency{key: name}
+		}
+		return currency{sql: sql, id: "row:" + sql}
+	case fixed != nil:
+		return currency{fixed: fixed}
+	}
+	return currency{}
+}
+
+// record is refused: the filter, a group key and a fill read base rows
+// before any group has a record (R21). A currency key reads it by the
+// group key's own expression.
+func (j *joinCtx) record(group string, p Path, at string) (expr, error) {
+	if !j.records {
+		return expr{}, invalid(at, "the filter, a group key and a fill read rows before they are grouped: read the field through a path")
+	}
+	c := j.r.c
+	gi, target, err := c.recordOf(group, at)
+	if err != nil {
+		return expr{}, err
+	}
+	bound, err := bindRecordPath(c.p.app, target, p, at)
+	if err != nil {
+		return expr{}, err
+	}
+	key := j.r.inner(fmt.Sprintf("w.k%d", gi))
+	e := recordExpr(bound)
+	e.sql = recordSQL(j.r.s, target, bound, key)
+	e.cur = recordCurrency(j.r.s, target, bound, key, recordCurrencyID(group, p))
+	return e, nil
 }
 
 func (j *joinCtx) param(id, at string) (expr, error) {
@@ -83,7 +136,7 @@ func (j *joinCtx) param(id, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return paramExpr(j, v), nil
+	return paramLeaf(j.r.c, j.sc.s, j, id, v)
 }
 
 func (j *joinCtx) aggregate(op Aggregate, _ *Node, _ int, at string) (expr, error) {
@@ -112,6 +165,14 @@ func (j *joinCtx) exists(n *Node, at string) (expr, error) {
 	return j.sc.exists(j.prefix, link, n.Where, mk, at)
 }
 
-func (j *joinCtx) bind(v any) string   { return j.sc.s.bind(v) }
-func (j *joinCtx) fiscalStart() string { return j.bind(int64(j.r.c.fiscal)) }
-func (j *joinCtx) filter() bool        { return j.isFilter }
+func (j *joinCtx) bind(v any) string                       { return j.sc.s.bind(v) }
+func (j *joinCtx) fiscalStart() string                     { return j.bind(int64(j.r.c.fiscal)) }
+func (j *joinCtx) filter() bool                            { return j.isFilter }
+func (j *joinCtx) label(e expr) string                     { return j.r.c.textOf(j.sc.s, e) }
+func (j *joinCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(j, j.r, n, at) }
+
+// currencySQL reads a currency key by its expression: the context compiles
+// inside w's own select.
+func (j *joinCtx) currencySQL(cur currency) string {
+	return currencyCode(j, j.r.c.app, cur, func(key string) string { return j.r.inner("w." + key) })
+}

@@ -84,6 +84,10 @@ type Field struct {
 	Currency string
 	// Options label a Select field's values.
 	Options []Option
+	// TextDay, on a Date field, reads a text column that holds a day as
+	// YYYY-MM-DD, for a package that stores days as text. The engine reads its
+	// first ten characters, as it reads a date column's day.
+	TextDay bool
 }
 
 // Link is a path from one source to another.
@@ -117,6 +121,14 @@ type Source struct {
 	// FiscalStartMonth (1-12) drives fiscalYear, fiscalPeriod and the
 	// fiscal period presets when this source is a report's base. nil means 1.
 	FiscalStartMonth func(app core.App) int
+	// Heading is the name a report on this base source prints above its
+	// title (a business name), read at each run. nil prints the
+	// organization's name.
+	Heading func(app core.App) string
+	// Watch names the collections Heading, FiscalStartMonth and Currency
+	// read. A run that reads this source subscribes to them too, so a
+	// settings change runs an open report again.
+	Watch []string
 }
 
 var (
@@ -172,6 +184,11 @@ func validateSource(src *Source) error {
 	if src.PrimaryKey != "" && src.PrimaryKey != "id" {
 		return fmt.Errorf("primary key must be id: PocketBase relations point at id")
 	}
+	for _, w := range src.Watch {
+		if w == "" {
+			return fmt.Errorf("a watched collection needs a name")
+		}
+	}
 	keys := map[string]bool{}
 	claim := func(key string) error {
 		if !memberKeyRe.MatchString(key) {
@@ -222,6 +239,9 @@ func validateField(src *Source, f *Field) error {
 	case Text, Number, Money, Date, DateTime, Bool, Select, Relation:
 	default:
 		return fmt.Errorf("unknown type %q", f.Type)
+	}
+	if f.TextDay && f.Type != Date {
+		return fmt.Errorf("only a date field reads a text day")
 	}
 	numeric := f.Type == Number || f.Type == Money
 	for _, a := range f.Aggregates {

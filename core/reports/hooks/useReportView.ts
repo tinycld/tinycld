@@ -6,10 +6,12 @@ import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import * as Clipboard from 'expo-clipboard'
 import { router, useFocusEffect, useIsFocused, useLocalSearchParams } from 'expo-router'
-import { useCallback, useEffectEvent } from 'react'
+import { useCallback, useEffectEvent, useMemo } from 'react'
 import type { ReportAccess } from '../lib/access'
 import { todayIso } from '../lib/dates'
 import { DEFAULT_DISPLAY, type DisplayOptions, shownColumns } from '../lib/format'
+import { panelSurface } from '../lib/panel-surface'
+import { chipLabelAsks } from '../lib/param-options'
 import {
     controlItems,
     emptyAction,
@@ -21,18 +23,24 @@ import {
     withoutOptional,
 } from '../lib/params'
 import {
+    DEFAULT_EXPANSION,
     type Expansion,
     expansionOptions,
     foldAllLabel,
     foldAllTarget,
     hasRows,
-    NO_EXPANSION,
     toggleGroup,
     visibleRows,
 } from '../lib/rows'
 import type { RunBody } from '../lib/run-client'
-import { type BrokenMark, brokenProblems, type ParamDef, type ReportSpec } from '../lib/spec'
-import type { Notice, ResolvedParam, ResultColumn, ResultRow } from '../lib/types'
+import {
+    type BrokenMark,
+    brokenProblems,
+    type DisplayLayout,
+    type ParamDef,
+    type ReportSpec,
+} from '../lib/spec'
+import type { Notice, ResolvedParam, ResultColumn, ResultRow, RunResult } from '../lib/types'
 import {
     parseViewOptions,
     reportLink,
@@ -40,6 +48,7 @@ import {
     type ViewOptions,
 } from '../lib/view-url'
 import { useReportUIStore } from '../stores/report-ui-store'
+import { type OptionsSource, useParamOptionLabels } from './useParamOptions'
 import { type ReportRun, useReportRun } from './useReportRun'
 
 export type ViewSource = { kind: 'saved'; reportId: string } | { kind: 'draft'; spec: ReportSpec }
@@ -57,6 +66,7 @@ export type ViewState =
 const NO_COLUMNS: ResultColumn[] = []
 const NO_NOTICES: Notice[] = []
 const NO_ROWS: ResultRow[] = []
+const NO_LAYOUTS: readonly DisplayLayout[] = []
 
 function viewState(input: {
     source: ViewSource | null
@@ -90,6 +100,20 @@ function runBody(
         : { spec: source.spec, ...common }
 }
 
+// The source's heading (E9), else the organization's name. Which one is known only
+// once a run answers, so the line stays empty until then rather than showing the
+// organization's name and then changing.
+function headingOf(result: RunResult | undefined, orgName: string | undefined): string {
+    if (!result) return ''
+    return result.heading || orgName || ''
+}
+
+// A param's options are read against what the view runs: the saved report, or the draft.
+function optionsSourceOf(source: ViewSource | null): OptionsSource | null {
+    if (!source) return null
+    return source.kind === 'saved' ? { reportId: source.reportId } : { spec: source.spec }
+}
+
 export interface ReportViewInput {
     /** Keys the open groups: the report id, or NEW_REPORT_KEY for an unsaved draft. */
     reportKey: string
@@ -105,6 +129,8 @@ export interface ReportViewInput {
     missingNote?: string | null
     onShare?(): void
     onSaveAs?(): void
+    /** The report's line layouts per width (E14): the saved spec's, or the draft's. */
+    layouts?: readonly DisplayLayout[]
 }
 
 export function useReportView(input: ReportViewInput) {
@@ -112,11 +138,13 @@ export function useReportView(input: ReportViewInput) {
     const { user } = useAuth()
     const search = useLocalSearchParams()
     const options = parseViewOptions(defs, search)
-    const expansion = useReportUIStore(s => s.expansion[reportKey]) ?? NO_EXPANSION
+    const expansion = useReportUIStore(s => s.expansion[reportKey]) ?? DEFAULT_EXPANSION
     const setExpansion = useReportUIStore(s => s.setExpansion)
     const body = broken && !isEditing ? null : runBody(source, defs, options, expansion)
     const run = useReportRun({ body, userId: user.id })
     const breakpoint = useBreakpoint()
+    // The builder and Customize draw on this surface; the view reads it too.
+    const panel = panelSurface(breakpoint)
     const { org } = useOrgInfo()
     // A tab left for another package stays mounted (frozen); only the focused
     // screen draws surfaces.
@@ -137,6 +165,13 @@ export function useReportView(input: ReportViewInput) {
     const period = firstDateParam(defs)
     const periodResolved = period ? resolved[period.id] : undefined
     const action = emptyAction(defs, options.params)
+    const optionsSource = optionsSourceOf(source)
+    const posted = postedParams(defs, options.params)
+    const optionLabels = useParamOptionLabels(
+        optionsSource,
+        chipLabelAsks(defs, options.params),
+        posted
+    )
 
     // setParams replaces the history entry, so a change adds none; defaults are left out.
     const write = (next: ViewOptions) => router.setParams(serializeViewOptions(defs, next))
@@ -197,6 +232,14 @@ export function useReportView(input: ReportViewInput) {
     })
     useFocusEffect(useCallback(() => () => closeOnBlur(), []))
 
+    // Kept while the run's rows and the open groups stay, so the table redraws
+    // its rows only when they change.
+    const shownRows = useMemo(() => visibleRows(rows), [rows])
+    const onToggleGroup = useCallback(
+        (row: ResultRow) => setExpansion(reportKey, toggleGroup(expansion, row, rows)),
+        [setExpansion, reportKey, expansion, rows]
+    )
+
     return {
         title: input.title,
         access: input.access,
@@ -211,16 +254,25 @@ export function useReportView(input: ReportViewInput) {
         state: viewState({ source, broken, isEditing, run }),
         // On a phone the builder's full-height sheet shows the report in its Preview,
         // so the view under it does not draw a second copy.
-        isBodyShown: !(isEditing && breakpoint === 'mobile'),
+        isBodyShown: !(isEditing && panel === 'sheet'),
         problems: broken && !isEditing ? brokenProblems(broken) : run.problems,
         run,
-        rows: visibleRows(rows, allColumns),
+        rows: shownRows,
         columns: shownColumns(allColumns, options.display.hidden),
         allColumns,
         notices: run.result?.notices ?? NO_NOTICES,
         isUpdating: run.isUpdating,
+        // While the builder lies over the view (a sheet on a phone, a drawer on a
+        // tablet) it shows "Updating…" in its own header; the view's slot then
+        // stays, empty and silent, so one live region speaks.
+        isUpdatingInBuilder: isEditing && panel !== 'inline',
         breakpoint,
-        orgName: org?.name ?? '',
+        panelSurface: panel,
+        layouts: input.layouts ?? NO_LAYOUTS,
+        heading: headingOf(run.result, org?.name),
+        optionsSource,
+        postedParams: posted,
+        optionLabels,
         periodWords: periodWords(period, periodResolved),
         emptyMessage: emptyMessage(period, periodResolved),
         emptyAction: action,
@@ -230,8 +282,7 @@ export function useReportView(input: ReportViewInput) {
         resolved,
         foldAllLabel: foldAllLabel(rows),
         onFoldAll: () => setExpansion(reportKey, foldAllTarget(rows)),
-        onToggleGroup: (row: ResultRow) =>
-            setExpansion(reportKey, toggleGroup(expansion, row, rows)),
+        onToggleGroup,
         surface: isFocused ? storedSurface : null,
         onOpenSurface: openSurface,
         onCloseSurface: closeSurface,

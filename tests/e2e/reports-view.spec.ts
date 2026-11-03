@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
 import { createInvitedUser, loginAs, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
@@ -6,6 +6,7 @@ import {
     addTeam,
     cellOf,
     chooseOption,
+    holdRuns,
     hubRow,
     openReportStub,
     openReportsHub,
@@ -31,7 +32,34 @@ import {
  */
 const YEAR = new Date().getFullYear()
 
-async function makeReport(page: Page, label: string, askDay: boolean) {
+async function topOf(locator: Locator): Promise<number> {
+    return (await locator.boundingBox())?.y ?? -1
+}
+
+type Box = { x: number; y: number; width: number; height: number } | null
+
+function overlaps(a: Box, b: Box): boolean {
+    if (!a || !b) return false
+    return (
+        a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+    )
+}
+
+// "Updating…" shows in its own slot in the header: a status live region that is
+// always there, so the table does not move and nothing is covered while it shows.
+async function expectUpdatingInItsSlot(p: Page, tableTop: number) {
+    const slot = p.getByTestId('report-updating-slot')
+    await expect(slot).toHaveAttribute('role', 'status')
+    await expect(slot).toHaveAttribute('aria-live', 'polite')
+    await expect(slot.getByTestId('report-updating')).toHaveText('Updating…')
+    expect(await topOf(p.getByTestId('report-table'))).toBe(tableTop)
+    const box = await slot.boundingBox()
+    for (const id of ['report-back', 'report-title']) {
+        expect(overlaps(box, await p.getByTestId(id).boundingBox()), id).toBe(false)
+    }
+}
+
+async function makeReport(page: Page, label: string, askDay: boolean, title = uniqueName('View')) {
     const invited = await createInvitedUser(page, label)
     const p = invited.inviteePage
     const team = uniqueName('Team')
@@ -63,8 +91,30 @@ async function makeReport(page: Page, label: string, askDay: boolean) {
         await chooseOption(p, 'report-builder-filter-1-op', 'contains')
         await p.getByTestId('report-builder-filter-1-ask').click()
     }
-    await saveNewReport(p, uniqueName('View'))
+    await saveNewReport(p, title)
     return invited
+}
+
+// The title ends before the first action starts, on one line; only a title too
+// long for its room is cut, and it ends in "…".
+async function expectTitleBeforeActions(p: Page, isCut: boolean) {
+    const title = p.getByTestId('report-title')
+    const customize = p.getByTestId('report-customize-open')
+    await expect
+        .poll(async () => {
+            const titleBox = await title.boundingBox()
+            const customizeBox = await customize.boundingBox()
+            if (!titleBox || !customizeBox) return null
+            return title.evaluate(
+                (element, gap) => ({
+                    isClear: gap >= 0,
+                    isCut: element.scrollWidth > element.clientWidth,
+                    overflow: getComputedStyle(element).textOverflow,
+                }),
+                customizeBox.x - (titleBox.x + titleBox.width)
+            )
+        })
+        .toEqual({ isClear: true, isCut, overflow: 'ellipsis' })
 }
 
 async function addCustomerFilter(p: Page, text: string) {
@@ -348,22 +398,57 @@ test.describe('the report view', () => {
             await expect(await cellOf(p, 'amount', 'Open')).toHaveText('10.00')
 
             // The expanded run is held, so the figures in view while it loads can be read.
-            let release = () => {}
-            const held = new Promise<void>(resolve => {
-                release = resolve
-            })
-            await p.route('**/api/reports/run', async route => {
-                await held
-                await route.continue()
-            })
+            let tableTop = await topOf(table)
+            let release = await holdRuns(p)
             await rowOf(p, 'Open').click()
-            await expect(p.getByTestId('report-updating')).toHaveText('Updating…')
+            await expectUpdatingInItsSlot(p, tableTop)
             await expect(await cellOf(p, 'amount', 'Open')).toHaveText('10.00')
             await expect(table.getByText('Alpha', { exact: true })).toHaveCount(0)
             release()
             await p.unrouteAll({ behavior: 'wait' })
             await expect(table.getByText('Alpha', { exact: true })).toBeVisible()
             await expect(p.getByTestId('report-updating')).toHaveCount(0)
+            expect(await topOf(table)).toBe(tableTop)
+
+            // The same on a phone, where the header row is narrow.
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect(rowOf(p, 'Open')).toHaveAttribute('aria-expanded', 'true')
+            tableTop = await topOf(table)
+            release = await holdRuns(p)
+            // The open group's stuck copy lies over its row at the top, so fold from
+            // the toolbar.
+            await pressToolbar(p, 'report-fold-all', 'Collapse all')
+            await expectUpdatingInItsSlot(p, tableTop)
+            release()
+            await p.unrouteAll({ behavior: 'wait' })
+            await expect(table.getByText('Alpha', { exact: true })).toHaveCount(0)
+            await expect(p.getByTestId('report-updating')).toHaveCount(0)
+
+            // The builder sheet has the same slot in its header, beside Close.
+            await pressToolbar(p, 'report-edit-open', 'Edit report')
+            const sheet = p.getByTestId('report-builder')
+            await expect(sheet).toBeVisible()
+            await p.getByTestId('report-builder-section-group').click()
+            release = await holdRuns(p)
+            await p.getByTestId('report-builder-group-0-subtotals').click()
+            const sheetSlot = sheet.getByTestId('report-updating-slot')
+            await expect(sheetSlot).toHaveAttribute('role', 'status')
+            // The report's own slot, under the sheet, is silent: one live region speaks.
+            await expect(
+                p.locator('[data-testid="report-updating-slot"][role="status"]')
+            ).toHaveCount(1)
+            await expect(sheetSlot.getByTestId('report-updating')).toHaveText('Updating…')
+            const closeBox = await p.getByTestId('report-builder-close').boundingBox()
+            expect(overlaps(await sheetSlot.boundingBox(), closeBox)).toBe(false)
+            release()
+            await p.unrouteAll({ behavior: 'wait' })
+            await expect(sheetSlot.getByTestId('report-updating')).toHaveCount(0)
+            await p.getByTestId('report-builder-close').click()
+            await p.getByText('Discard', { exact: true }).click()
+            await expect(sheet).toBeHidden()
+            await p.setViewportSize({ width: 1280, height: 720 })
+            await rowOf(p, 'Open').click()
+            await expect(table.getByText('Alpha', { exact: true })).toBeVisible()
 
             await p.getByTestId('report-back').click()
             await hubRow(p, title).click()
@@ -391,6 +476,12 @@ test.describe('the report view', () => {
             await p.getByTestId('report-builder-section-group').click()
             await p.getByTestId('report-builder-group-add').click()
             await chooseOption(p, 'report-builder-group-0-col', 'status')
+            // The notices' live region is there, empty, before any notice, so the
+            // notice that appears in it is announced.
+            const region = p.getByTestId('report-notices-region')
+            await expect(region).toHaveAttribute('role', 'status')
+            await expect(region).toHaveAttribute('aria-live', 'polite')
+            await expect(region).toHaveText('')
             await p.getByTestId('report-builder-section-pivot').click()
             await p.getByTestId('report-builder-pivot-on').click()
             await p.getByTestId('report-builder-pivot-field').click()
@@ -401,7 +492,7 @@ test.describe('the report view', () => {
             await chooseOption(p, 'report-builder-pivot-bucket', 'month')
             await chooseOption(p, 'report-builder-pivot-cell', 'amount')
             await p.getByTestId('report-builder-pivot-max').fill('1')
-            await expect(p.getByTestId('report-notice-pivotCap')).toHaveText(
+            await expect(region.getByTestId('report-notice-pivotCap')).toHaveText(
                 'The pivot shows its first 1 columns; 1 more are left out.'
             )
         } finally {
@@ -410,9 +501,12 @@ test.describe('the report view', () => {
     })
 
     test('on a phone the chips open sheets and Customize is a sheet', async ({ page }) => {
-        const { inviteePage: p, close } = await makeReport(page, 'rptviewphone', true)
+        // A short title, which the phone header shows whole; the invited member's
+        // reports are their own, so it need not be unique.
+        const { inviteePage: p, close } = await makeReport(page, 'rptviewphone', true, 'Sales')
         try {
             await p.setViewportSize({ width: 390, height: 844 })
+            await expectTitleBeforeActions(p, false)
             const table = p.getByTestId('report-table')
             await addCustomerFilter(p, 'Gam')
             await expect(table.getByText('Gamma', { exact: true })).toBeVisible()
@@ -434,6 +528,20 @@ test.describe('the report view', () => {
             await p.getByTestId('report-customize-close').click()
             await expect(p.getByTestId('report-customize')).toBeHidden()
             await expect.poll(() => p.url()).toContain('nocents=1')
+        } finally {
+            await close()
+        }
+    })
+
+    test('a long title ends in "…" before the actions, on a desktop and a phone', async ({
+        page,
+    }) => {
+        const title = `${uniqueName('Long')} sales by customer, team and month for every region this year`
+        const { inviteePage: p, close } = await makeReport(page, 'rptviewlong', false, title)
+        try {
+            await expectTitleBeforeActions(p, true)
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expectTitleBeforeActions(p, true)
         } finally {
             await close()
         }

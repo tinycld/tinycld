@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/changesignal"
@@ -54,7 +56,10 @@ type Result struct {
 	Rows    []Row          `json:"rows"`
 	Notices []Notice       `json:"notices"`
 	Topics  []string       `json:"topics"`
-	Page    *Page          `json:"page"`
+	// Heading is what the report prints above its title: the base source's
+	// Heading, or "" for the organization's name.
+	Heading string `json:"heading,omitempty"`
+	Page    *Page  `json:"page"`
 	// Params are the report's params as this run resolved them, in spec
 	// order, so the shell shows the period the server ran.
 	Params []ResolvedParam `json:"params"`
@@ -76,6 +81,14 @@ type ResultColumn struct {
 	CurrencyCell  string       `json:"currencyCell,omitempty"`
 	MixedCurrency bool         `json:"mixedCurrency,omitempty"`
 	Pivot         *PivotColumn `json:"pivot,omitempty"`
+	// LabelCell names the cell that holds the label of the record a link
+	// column's value points at (<id>@label), so no cell shows a raw id. The
+	// label is its label field's stored value, of type LabelType (a select's
+	// option label and a source's name are text), formatted as a cell of
+	// that type; an amount's currency is in LabelCurrencyCell.
+	LabelCell         string    `json:"labelCell,omitempty"`
+	LabelType         FieldType `json:"labelType,omitempty"`
+	LabelCurrencyCell string    `json:"labelCurrencyCell,omitempty"`
 }
 
 // PivotColumn marks a pivot cell column: the cell column it splits, and
@@ -83,6 +96,12 @@ type ResultColumn struct {
 type PivotColumn struct {
 	Cell string `json:"cell"`
 	Key  any    `json:"key"`
+	// LabelType, LabelValue and LabelCurrency type a pivot over a link's
+	// column label as Row's do: the record label's typed value, which the
+	// column's Label holds as plain text.
+	LabelType     FieldType `json:"labelType,omitempty"`
+	LabelValue    any       `json:"labelValue,omitempty"`
+	LabelCurrency string    `json:"labelCurrency,omitempty"`
 }
 
 // Row kinds.
@@ -99,6 +118,9 @@ type Row struct {
 	Kind  string `json:"kind"`
 	Depth int    `json:"depth"`
 	Label string `json:"label"`
+	// LabelColumn names the column whose cell the label repeats, so the
+	// client can leave that cell out; "" when the label is no cell's value.
+	LabelColumn string `json:"labelColumn,omitempty"`
 	// Section is the group row this row belongs to.
 	Section string `json:"section,omitempty"`
 	// Parent is the row a nested child row hangs under.
@@ -109,6 +131,15 @@ type Row struct {
 	// innermost group), so the client never repeats that rule.
 	CanExpand bool           `json:"canExpand,omitempty"`
 	Cells     map[string]any `json:"cells"`
+	// LabelType is set when a group row's label (and its subtotal's), or a
+	// detail row's record label or label formula, is a value that is not
+	// text: an amount, a number, a percent, a date or a yes/no. LabelValue is that value as a cell of the type holds it (an
+	// amount in integer cents, a yes/no as true or false) and LabelCurrency
+	// is an amount's currency, so the client formats the label as it formats
+	// a cell; Label is its plain text (a subtotal's is "Total " + it).
+	LabelType     FieldType `json:"labelType,omitempty"`
+	LabelValue    any       `json:"labelValue,omitempty"`
+	LabelCurrency string    `json:"labelCurrency,omitempty"`
 }
 
 type Notice struct {
@@ -162,32 +193,35 @@ type runner struct {
 	expand *expansion
 	res    *Result
 	topics map[string]bool
-	// pivotValues are the pivot's columns, from its first pass.
-	pivotValues []any
+	// pivotValues are the pivot's columns, from its first pass, and
+	// pivotLabels their records' labels for a pivot over a link.
+	pivotValues []pivotValue
+	pivotLabels []rowLabel
 }
 
 // Run runs a report for its reader. The statements read only rows the
 // reader's list rules allow; they never write.
 func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
-	if req.Auth == nil || req.Auth.IsSuperuser() {
-		return nil, ErrNoReader
-	}
-	p, specErr := bind(app, req.Spec)
-	if specErr != nil {
-		return nil, specErr
-	}
-	today, err := todayOf(req.Options.Today)
+	c, err := readerCompiler(app, req.Spec, req.Auth, req.Headers, req.Params, req.Options.Today, "options.today")
 	if err != nil {
 		return nil, err
 	}
-	params, specErr := resolveParams(p.spec.Params, req.Params, periodContext{today: today, fiscalStart: fiscalStartOf(p.base, app)})
-	if specErr != nil {
-		return nil, specErr
-	}
-	c := newCompiler(p, app, listRequestInfo(req.Auth, req.Headers), params)
+	p, params := c.p, c.params
 	expand, err := parseExpansion(req.Options)
 	if err != nil {
 		return nil, err
+	}
+	// No expansion state at all (expand absent, no expandAll): the levels
+	// marked open expand, down to the first level that is not open: a level
+	// under a closed ancestor shows nothing, so it is not fetched.
+	// expand: [] is a choice to open nothing.
+	if req.Options.Expand == nil && !req.Options.ExpandAll {
+		for i, g := range p.groups {
+			if !g.group.Open {
+				break
+			}
+			expand.open[i+1] = true
+		}
 	}
 	rn := &runner{
 		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand,
@@ -201,15 +235,42 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 		return nil, err
 	}
 	rn.res.Params = resolvedParams(p.spec.Params, params)
+	if h := p.base.Heading; h != nil {
+		rn.res.Heading = strings.TrimSpace(h(app))
+	}
 	return rn.res, nil
 }
 
-func todayOf(s string) (time.Time, error) {
+// readerCompiler binds a spec for its reader and resolves its params for the
+// reader's day (today, given at todayAt): what every read of a report, a run
+// or a param's options, starts from. A report never reads as a superuser or
+// as nobody.
+func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[string]string, given map[string]json.RawMessage, today, todayAt string) (*compiler, error) {
+	if auth == nil || auth.IsSuperuser() {
+		return nil, ErrNoReader
+	}
+	p, specErr := bind(app, spec)
+	if specErr != nil {
+		return nil, specErr
+	}
+	day, err := todayOf(today, todayAt)
+	if err != nil {
+		return nil, err
+	}
+	params, specErr := resolveParams(p.spec.Params, given, periodContext{today: day, fiscalStart: fiscalStartOf(p.base, app)})
+	if specErr != nil {
+		return nil, specErr
+	}
+	return newCompiler(p, app, listRequestInfo(auth, headers), params), nil
+}
+
+// todayOf reads the reader's day, given at at in the request.
+func todayOf(s, at string) (time.Time, error) {
 	if s == "" {
 		return time.Now().UTC().Truncate(24 * time.Hour), nil
 	}
 	if !isDay(s) {
-		return time.Time{}, invalid("options.today", "today is YYYY-MM-DD")
+		return time.Time{}, invalid(at, "today is YYYY-MM-DD")
 	}
 	return time.Parse(time.DateOnly, s)
 }
@@ -249,7 +310,7 @@ func (rn *runner) run() error {
 		return err
 	}
 	var details []map[string]any
-	if rn.c.p.pivot == nil && (len(rn.c.p.groups) == 0 || len(rn.expand.keys) > 0 || rn.expand.all) {
+	if rn.c.p.pivot == nil && (len(rn.c.p.groups) == 0 || len(rn.expand.keys) > 0 || rn.expand.all || rn.expand.open[len(rn.c.p.groups)]) {
 		details, err = rn.detailPass()
 		if err != nil {
 			return err
@@ -267,6 +328,15 @@ func (rn *runner) run() error {
 	rn.res.Columns = rn.columns()
 	rn.markCurrencies(groupRows)
 	rn.assemble(groupRows, details, nested)
+	// A source's Go hooks read collections no statement reads, so their
+	// topics are added by name.
+	for _, src := range Sources(rn.app) {
+		if rn.topics[changesignal.Topic(src.Collection)] {
+			for _, w := range src.Watch {
+				rn.topics[changesignal.Topic(w)] = true
+			}
+		}
+	}
 	rn.res.Topics = make([]string, 0, len(rn.topics))
 	for t := range rn.topics {
 		rn.res.Topics = append(rn.res.Topics, t)
@@ -285,36 +355,54 @@ func (rn *runner) detailTypes() error {
 	if err != nil {
 		return err
 	}
-	_, _, err = rn.c.detailSelect(r)
+	_, _, err = rn.c.detailSelect(r, "w")
 	return err
+}
+
+// observeRead, when a test sets it, receives every read statement and its
+// params before it runs, so a test can prepare each one as the run does.
+// Nothing else sets it.
+var observeRead func(sql string, params dbx.Params)
+
+// readRows runs one read statement with the rule CTEs and ctes under the run
+// time limit; with topics, it also returns the change-signal topics of every
+// collection the statement reads.
+func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body string, topics bool) ([]map[string]any, []string, error) {
+	with, err := s.with(ctes...)
+	if err != nil {
+		return nil, nil, err
+	}
+	sql := with + body
+	if observeRead != nil {
+		observeRead(sql, s.params)
+	}
+	ctx, cancel := context.WithTimeout(ctx, runLimits.timeout)
+	defer cancel()
+	var read []string
+	if topics {
+		if read, err = changesignal.TopicsRead(ctx, app, sql, s.params); err != nil {
+			return nil, nil, mapRunError(err)
+		}
+	}
+	rows, err := app.DB().NewQuery(sql).Bind(s.params).WithContext(ctx).Rows()
+	if err != nil {
+		return nil, nil, mapRunError(err)
+	}
+	out, err := scanRows(rows)
+	if err != nil {
+		return nil, nil, mapRunError(err)
+	}
+	return out, read, nil
 }
 
 // query runs one statement under the time limit and records the topics of
 // every collection it reads.
 func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, error) {
-	with, err := s.with(ctes...)
-	if err != nil {
-		return nil, err
-	}
-	sql := with + body
-	ctx, cancel := context.WithTimeout(rn.ctx, runLimits.timeout)
-	defer cancel()
-	topics, err := changesignal.TopicsRead(ctx, rn.app, sql, s.params)
-	if err != nil {
-		return nil, mapRunError(err)
-	}
+	rows, topics, err := readRows(rn.ctx, rn.app, s, ctes, body, true)
 	for _, t := range topics {
 		rn.topics[t] = true
 	}
-	rows, err := rn.app.DB().NewQuery(sql).Bind(s.params).WithContext(ctx).Rows()
-	if err != nil {
-		return nil, mapRunError(err)
-	}
-	out, err := scanRows(rows)
-	if err != nil {
-		return nil, mapRunError(err)
-	}
-	return out, nil
+	return rows, err
 }
 
 func mapRunError(err error) error {
@@ -381,29 +469,66 @@ func notASortKey(at string) error {
 
 // groupStatement is the UNION ALL of every level's rows (the children of
 // expanded groups only) and the layout's computed rows.
-func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []any, limit int64) ([]string, string, error) {
+func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64) ([]string, string, error) {
 	var ctes, legs []string
-	c.levelTypes = map[string]FieldType{}
+	c.levelTypes, c.sectionCur, c.fillSets = map[string]FieldType{}, map[string]currency{}, map[int]string{}
+	// readsSums is true when the level above adds this level's "rows" cells
+	// (childSum), which rt<L> then holds.
+	readsSums := false
+	// Each level's o<L> renders once every leg's cells are known: a helper
+	// column no leg has a value for is left out of all of them.
+	type levelRows struct {
+		lv            *level
+		cells, totals []string
+		own           string
+	}
+	var levels []levelRows
 	for n := 0; n <= len(c.p.groups); n++ {
-		lv, err := c.level(r, n)
+		lv, err := c.level(r, n, expand)
 		if err != nil {
 			return nil, "", err
 		}
 		cells := make([]string, 0, len(c.p.cols))
+		labels := make([]string, 0, len(c.p.cols))
+		carried := make([]string, 0, len(c.p.cols))
 		for idx, cp := range c.p.cols {
 			e, err := lv.cell(cp)
 			if err != nil {
 				return nil, "", err
 			}
-			cells = append(cells, fmt.Sprintf("%s AS v%d", e.sql, idx))
+			cells = append(cells, fmt.Sprintf("%s AS v%d", cellSQL(e), idx))
+			ref, _ := c.columnLabel(lv.labels, cp, e)
+			labels = append(labels, ref.cells(idx)...)
+			carried = append(carried, c.carriedCell(s, cp, e, idx))
 			c.levelTypes[cp.col.ID] = e.typ
+			if n == 1 {
+				c.sectionCur[cp.col.ID] = e.cur
+			}
 		}
 		pivotCells, err := c.pivotCells(lv, pivot)
 		if err != nil {
 			return nil, "", err
 		}
-		cells = append(cells, pivotCells...)
-		ctes = append(ctes, lv.render(cells)...)
+		// The labels, then the carried currencies, follow the pivot cells, as in
+		// every leg of the union.
+		cells = append(append(append(cells, pivotCells...), labels...), carried...)
+		// The having's aggregates join a<L>, so it compiles before render.
+		own, err := lv.own()
+		if err != nil {
+			return nil, "", err
+		}
+		lv.countShownKids()
+		var totals []string
+		if readsSums {
+			if totals, err = lv.rowsCells(); err != nil {
+				return nil, "", err
+			}
+			if pv := c.p.pivot; pv != nil && pv.cell.col.Total == TotalRows {
+				totals = append(totals, pivotCells...)
+			}
+		}
+		levels = append(levels, levelRows{lv: lv, cells: cells, totals: totals, own: own})
+		readsSums = len(lv.childCells) > 0
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
 			leg += " WHERE " + expand.where(c, s, n-1, "")
@@ -414,16 +539,132 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 	if err != nil {
 		return nil, "", err
 	}
+	all := make([][]string, 0, len(levels)+len(computed))
+	for _, l := range levels {
+		all = append(all, l.cells)
+	}
+	for _, leg := range computed {
+		all = append(all, leg.cells)
+	}
+	unread := unreadHelpers(all)
+	// A layout's section chunks read o1.vcur<idx> by name for every column
+	// whose first-level currency has SQL (layoutLegs, lc.cellNames), so that
+	// cell stays even when its SQL is the text NULL.
+	for idx, cp := range c.p.cols {
+		if c.sectionCur[cp.col.ID].sql != "" {
+			delete(unread, fmt.Sprintf("vcur%d", idx))
+		}
+	}
+	for _, l := range levels {
+		ctes = append(ctes, l.lv.render(withoutCells(l.cells, unread), l.own, l.totals)...)
+	}
 	ctes = append(ctes, layoutCTEs...)
 	// The limit applies to the level rows only: computed rows sort last, so a
 	// limit on the whole statement would drop them first.
-	levels := fmt.Sprintf("SELECT * FROM (%s\nORDER BY __level, __ord LIMIT %s)", strings.Join(legs, "\nUNION ALL\n"), s.bind(limit))
-	all := append([]string{levels}, computed...)
-	return ctes, strings.Join(all, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
+	body := []string{fmt.Sprintf("SELECT * FROM (%s\nORDER BY __level, __ord LIMIT %s)", strings.Join(legs, "\nUNION ALL\n"), limitSQL(limit))}
+	for _, leg := range computed {
+		body = append(body, "SELECT "+strings.Join(withoutCells(leg.cells, unread), ", ")+" FROM "+leg.from)
+	}
+	return ctes, strings.Join(body, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
+}
+
+// unionLeg is one select of the group statement's UNION ALL: its cells
+// ("expr AS name", in the union's column order) and its FROM.
+type unionLeg struct {
+	cells []string
+	from  string
+}
+
+// helperCell matches a row's record label (vl<idx>), its label's currency
+// (vc<idx>) and a value's carried currency (vcur<idx>).
+var helperCell = regexp.MustCompile(`^(?:vl|vc|vcur)\d+$`)
+
+// unreadHelpers are the helper cells that are NULL in every leg of a union:
+// no row has a label or a carried currency there, and assembly reads a missing
+// cell as NULL, so the statement leaves them out. Every leg selects the same
+// cells in the same order. The one reader inside the statement is a layout's
+// section chunks, which read o1.vcur<idx> by name (layout.go, lc.cellNames and
+// sectionSlot.column); groupStatement keeps those cells.
+func unreadHelpers(legs [][]string) map[string]bool {
+	unread := map[string]bool{}
+	for _, cells := range legs {
+		for _, cell := range cells {
+			expr, name := splitCell(cell)
+			if !helperCell.MatchString(name) {
+				continue
+			}
+			if _, seen := unread[name]; !seen {
+				unread[name] = true
+			}
+			if expr != "NULL" {
+				unread[name] = false
+			}
+		}
+	}
+	return unread
+}
+
+// withoutCells drops the cells named in drop.
+func withoutCells(cells []string, drop map[string]bool) []string {
+	out := make([]string, 0, len(cells))
+	for _, cell := range cells {
+		if _, name := splitCell(cell); !drop[name] {
+			out = append(out, cell)
+		}
+	}
+	return out
+}
+
+// splitCell splits "expr AS name" at its last " AS ".
+func splitCell(cell string) (string, string) {
+	i := strings.LastIndex(cell, " AS ")
+	if i < 0 {
+		return cell, ""
+	}
+	return cell[:i], cell[i+len(" AS "):]
+}
+
+// shownLevels returns the CTEs that select the shown rows of the deepest level
+// whose group has a having (s<m>), and m; m is 0 when no group has one. The
+// detail statement reads only the base rows under them. It compiles levels 1
+// to m, and past m each next level whose rt<L> the level before it reads (any
+// "rows" sum a compiled level reads: in its having, its sort keys or its own
+// rt cells); no others.
+func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, error) {
+	m := c.havingAbove(len(c.p.groups) + 1)
+	if m == 0 {
+		return nil, 0, nil
+	}
+	c.fillSets = map[int]string{}
+	var ctes []string
+	readsSums := false
+	for n := 1; n <= m || readsSums; n++ {
+		lv, err := c.level(r, n, expand)
+		if err != nil {
+			return nil, 0, err
+		}
+		own, err := lv.own()
+		if err != nil {
+			return nil, 0, err
+		}
+		var totals []string
+		if readsSums {
+			if totals, err = lv.rowsCells(); err != nil {
+				return nil, 0, err
+			}
+		}
+		base, _ := lv.base(own, totals)
+		ctes = append(ctes, base...)
+		readsSums = len(lv.childCells) > 0
+	}
+	return ctes, m, nil
 }
 
 // detailPass runs the detail statement: one row per base row, a page at a
-// time without groups, or the rows of the expanded innermost groups.
+// time without groups, or the rows of the expanded innermost groups. Rows
+// under a hidden group are left out before any running value reads them, so
+// they neither take a place under the row cap nor add to a shown row's
+// running value or percent.
 func (rn *runner) detailPass() ([]map[string]any, error) {
 	c := rn.c
 	s := newStmt(rn.app, c.info)
@@ -431,7 +672,16 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	sel, order, err := c.detailSelect(r)
+	shown, m, err := c.shownLevels(r, rn.expand)
+	if err != nil {
+		return nil, err
+	}
+	table := "w"
+	if m > 0 {
+		table = "ws"
+		shown = append(shown, "ws AS (SELECT w.* FROM w WHERE "+c.inShown(m, "w")+")")
+	}
+	sel, order, err := c.detailSelect(r, table)
 	if err != nil {
 		return nil, err
 	}
@@ -451,8 +701,8 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 		where = rn.expand.where(c, s, len(c.p.groups), "d.")
 	}
 	body := fmt.Sprintf("SELECT * FROM (%s) d WHERE %s ORDER BY %s LIMIT %s",
-		sel, where, orderBy(order), s.bind(int64(limit+1)))
-	rows, err := rn.query(s, []string{r.render()}, body)
+		sel, where, orderBy(order), limitSQL(int64(limit+1)))
+	rows, err := rn.query(s, append([]string{r.render()}, shown...), body)
 	if err != nil {
 		return nil, err
 	}
@@ -471,8 +721,44 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 	return rows, nil
 }
 
-// detailSelect is the select of detail rows over w and their sort keys.
-func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
+// shownOrder is what a select's value (or a mix of a select's values and
+// other text) sorts by first: the label a row shows, as group rows of it
+// read (levels.go shownKey), so one column has one order on every row; the
+// stored value follows it. ok is false for any other value.
+func shownOrder(bind func(any) string, e expr) (string, bool) {
+	if e.shown == "" && len(e.options) == 0 {
+		return "", false
+	}
+	return showSQL(bind, e), true
+}
+
+// detailSortValue is a sort key's value on a detail row, and the name its
+// cursor fingerprint records: the column's id, or the formula itself, so a
+// cursor from another sort is refused.
+func detailSortValue(ctx *rowsCtx, s sortPlan) (expr, string, error) {
+	var e expr
+	var err error
+	key := ""
+	if s.formula != nil {
+		e, err = compileFormula(ctx, s.formula, s.at)
+		raw, _ := json.Marshal(s.formula)
+		key = "=" + string(raw)
+	} else {
+		e, err = ctx.col(s.col.col.ID, s.at)
+		key = s.col.col.ID
+	}
+	if err != nil {
+		return expr{}, "", err
+	}
+	if e.win {
+		return expr{}, "", notASortKey(s.at)
+	}
+	return e, key, nil
+}
+
+// detailSelect is the select of detail rows over table (w, or ws: w's rows
+// under shown groups) and their sort keys. table is read as w.
+func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, error) {
 	keys := make([]string, 0)
 	for i := range c.p.groups {
 		keys = append(keys, fmt.Sprintf("w.k%d", i))
@@ -482,31 +768,49 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 		total:  prefixed("w.", c.currencies),
 	}
 	visiting := map[string]bool{}
+	labels := newLabelRefs(r.s, frame, "w")
 	var order []sortKey
 	sel := []string{"w.__id AS __id"}
 	for _, k := range append(keys, prefixed("w.", c.currencies)...) {
 		sel = append(sel, k+" AS "+strings.TrimPrefix(k, "w."))
 	}
 	for i, s := range c.p.sort {
-		ctx := &rowsCtx{r: r, visiting: visiting, detail: frame}
-		e, err := ctx.col(s.col.col.ID, fmt.Sprintf("sort.%d.col", i))
+		e, col, err := detailSortValue(&rowsCtx{r: r, visiting: visiting, detail: frame}, s)
 		if err != nil {
 			return "", nil, err
 		}
-		if e.win {
-			return "", nil, notASortKey(fmt.Sprintf("sort.%d.col", i))
-		}
 		name := fmt.Sprintf("s%d", i)
+		// A record sorts by its label's typed value, then by its id so equal
+		// labels keep one order. A label key holds a value of the label
+		// field's type or a no-name record's text, so its cursor value may be
+		// either (typ "").
+		if ref, ok := c.sortLabel(labels, s, e); ok {
+			key := labelOrder(r.s, ref.value)
+			sel = append(sel, key+" AS "+name)
+			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@label"})
+			frame.order = append(frame.order, "("+key+" IS NULL)", key+dirOf(s.desc))
+			name = name + "_id"
+		} else if key, ok := shownOrder(r.s.bind, e); ok {
+			sel = append(sel, key+" AS "+name)
+			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@shown", typ: Text})
+			frame.order = append(frame.order, "("+key+" IS NULL)", key+dirOf(s.desc))
+			name = name + "_value"
+		}
 		sel = append(sel, e.sql+" AS "+name)
-		order = append(order, sortKey{name: name, desc: s.desc, col: s.col.col.ID, typ: e.typ})
+		order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: e.typ})
 		frame.order = append(frame.order, "("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
 	}
 	frame.order = append(frame.order, "w.__id")
 	order = append(order, sortKey{name: "__id"})
-	c.detailTypes = map[string]FieldType{}
+	c.detailTypes, c.formulaOptions = map[string]FieldType{}, map[string][]Option{}
 	for idx, cp := range c.p.cols {
 		if cp.nest > 0 {
-			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx))
+			// A child row column's label is read with its child rows.
+			if err := c.checkLabelField(cp, cp.path.target); err != nil {
+				return "", nil, err
+			}
+			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx), noCarriedCell(idx))
+			sel = append(sel, labelRef{}.cells(idx)...)
 			c.detailTypes[cp.col.ID] = cp.path.field.Type
 			continue
 		}
@@ -515,18 +819,49 @@ func (c *compiler) detailSelect(r *rowsCTE) (string, []sortKey, error) {
 		if err != nil {
 			return "", nil, err
 		}
-		sel = append(sel, fmt.Sprintf("%s AS v%d", e.sql, idx))
+		if err := c.checkLabelField(cp, e.target); err != nil {
+			return "", nil, err
+		}
+		ref, _ := c.columnLabel(labels, cp, e)
+		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(r.s, cp, e, idx))
+		sel = append(sel, ref.cells(idx)...)
 		c.detailTypes[cp.col.ID] = e.typ
 		if cp.path == nil {
 			// A formula's amount has the currency of the amounts it reads.
 			c.currencyOf[cp.col.ID] = e.cur
+			c.formulaOptions[cp.col.ID] = e.options
 		}
+	}
+	if d := c.p.spec.Detail; d != nil && d.Label != nil {
+		ref, err := c.compileDetailLabel(&rowsCtx{r: r, visiting: visiting, detail: frame}, labels, d.Label)
+		if err != nil {
+			return "", nil, err
+		}
+		sel = append(sel, ref.value+" AS __label", ref.currency+" AS __labelcur")
 	}
 	if len(c.p.nest) > 0 {
 		sel = append(sel, r.nestParent()+" AS __n0")
 	}
-	return "SELECT " + strings.Join(sel, ", ") + " FROM w", order, nil
+	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"), order, nil
 }
+
+// carriedCell is the currency a column's value e carries on a row (a record's
+// or a looked-up row's own, or an amount param's code: vcur<idx>), NULL when
+// it carries none. A column that carries one has the cell <id>@currency.
+func (c *compiler) carriedCell(s *stmt, cp *colPlan, e expr, idx int) string {
+	cur := e.cur.sql
+	if e.cur.param != "" {
+		// An amount param's currency is its own posted code.
+		cur = s.bind(e.cur.param)
+	}
+	if cur == "" {
+		return noCarriedCell(idx)
+	}
+	c.carried[cp.col.ID] = true
+	return fmt.Sprintf("%s AS vcur%d", cur, idx)
+}
+
+func noCarriedCell(idx int) string { return fmt.Sprintf("NULL AS vcur%d", idx) }
 
 // sortKey is one ORDER BY column of the detail select: s<i> for a sort
 // column, then __id, which is unique and never NULL.
@@ -566,32 +901,30 @@ type expansion struct {
 	// set holds each key as keyString gives it, which keeps the type: the
 	// text "1" is not the number 1.
 	set map[string]bool
+	// open holds the levels (1 for the first group) that open because the
+	// run said nothing.
+	open map[int]bool
+	// encoded holds each key's values as sqlJSON writes them, in the order
+	// of keys.
+	encoded [][]string
 }
 
-// maxExpandValues bounds the values options.expand binds into one statement
-// (each key's group values and currency keys), under SQLite's limit of
-// 32,766 variables with room for the statement's other params.
-const maxExpandValues = 30000
-
 // parseExpansion reads options.expand: at most rowCap keys, since a run
-// shows no more group rows than that, and at most maxExpandValues values.
+// shows no more group rows than that. The keys' values need no cap of their
+// own: a read binds them as one JSON parameter (where), a key longer than a
+// group row's matches nothing, and the request body's size limit bounds
+// what a caller can send.
 func parseExpansion(opts Options) (*expansion, error) {
-	e := &expansion{all: opts.ExpandAll, set: map[string]bool{}}
+	e := &expansion{all: opts.ExpandAll, set: map[string]bool{}, open: map[int]bool{}}
 	if len(opts.Expand) > runLimits.rowCap {
 		return nil, invalid("options.expand", fmt.Sprintf("a run expands at most %d groups", runLimits.rowCap))
-	}
-	values := 0
-	for _, key := range opts.Expand {
-		values += len(key)
-	}
-	if values > maxExpandValues {
-		return nil, invalid("options.expand", fmt.Sprintf("the expanded group keys hold at most %d values: expand fewer groups, or use expandAll", maxExpandValues))
 	}
 	for i, key := range opts.Expand {
 		if len(key) == 0 {
 			return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key is a group row's groupKey")
 		}
 		norm := make([]any, len(key))
+		encoded := make([]string, len(key))
 		for j, v := range key {
 			switch x := v.(type) {
 			case nil, string, bool:
@@ -607,20 +940,31 @@ func parseExpansion(opts Options) (*expansion, error) {
 			default:
 				return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key holds text, numbers, true, false or null")
 			}
+			text, err := sqlJSON(norm[j])
+			if err != nil {
+				return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key holds text, numbers, true, false or null")
+			}
+			encoded[j] = text
 		}
 		e.keys = append(e.keys, norm)
+		e.encoded = append(e.encoded, encoded)
 		e.set[keyString(norm)] = true
 	}
 	return e, nil
 }
 
 // where matches rows whose first depth group keys and currency keys equal
-// an expanded group key. The keys are a VALUES list the row is looked up
-// in: an OR per key would make SQLite parse one level deeper per key (it
-// refuses past 1,000) and plan in time that grows with the square of the
-// keys.
+// an expanded group key, value by value as IS compares them. A key's blank
+// values match by IS NULL, and the rest by one IN over the keys with the
+// same blanks, bound as one JSON parameter: "(k0, ck0) IN (SELECT …)". IN
+// builds its lookup once, where a correlated lookup per row (EXISTS over the
+// keys) takes time that grows with rows times keys. IN compares with =,
+// which never matches NULL, hence the split by blanks. The json_extract
+// columns carry no affinity, so the row's key keeps its own as it does in
+// IS, and COLLATE BINARY keeps IS's collation: the key list is the left
+// operand there.
 func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string {
-	if e.all {
+	if e.all || e.open[depth] {
 		return "1"
 	}
 	cols := make([]string, 0, depth+len(c.currencies))
@@ -630,32 +974,68 @@ func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string
 	for _, ck := range c.currencies {
 		cols = append(cols, prefix+ck)
 	}
-	var rows []string
-	for _, key := range e.keys {
+	// blanks marks a key's blank values ("10" is a set first value, a
+	// blank second); rowsOf holds each pattern's keys, set values only.
+	var blanks []string
+	rowsOf := map[string][]string{}
+	for i, key := range e.keys {
 		if len(key) != len(cols) {
 			continue
 		}
-		values := make([]string, len(key))
-		for i, v := range key {
-			values[i] = s.bind(v)
+		mask := make([]byte, len(key))
+		var set []string
+		for j, text := range e.encoded[i] {
+			mask[j] = '0'
+			// null is nil, or a NaN, which SQLite binds as NULL.
+			if text == "null" {
+				mask[j] = '1'
+				continue
+			}
+			set = append(set, text)
 		}
-		rows = append(rows, "("+strings.Join(values, ", ")+")")
+		if _, seen := rowsOf[string(mask)]; !seen {
+			blanks = append(blanks, string(mask))
+		}
+		rowsOf[string(mask)] = append(rowsOf[string(mask)], "["+strings.Join(set, ",")+"]")
 	}
-	if len(rows) == 0 {
+	if len(blanks) == 0 {
 		return "0"
 	}
-	match := make([]string, len(cols))
-	for i, col := range cols {
-		match[i] = fmt.Sprintf("x.column%d IS %s", i+1, col)
+	terms := make([]string, len(blanks))
+	for i, mask := range blanks {
+		var conds, left, picks []string
+		for j, col := range cols {
+			if mask[j] == '1' {
+				conds = append(conds, col+" IS NULL")
+				continue
+			}
+			picks = append(picks, fmt.Sprintf("json_extract(value, '$[%d]')", len(left)))
+			left = append(left, col+" COLLATE BINARY")
+		}
+		if len(left) > 0 {
+			keys := s.bind("[" + strings.Join(rowsOf[mask], ",") + "]")
+			conds = append(conds, fmt.Sprintf("(%s) IN (SELECT %s FROM json_each(%s))",
+				strings.Join(left, ", "), strings.Join(picks, ", "), keys))
+		}
+		terms[i] = "(" + strings.Join(conds, " AND ") + ")"
 	}
-	return fmt.Sprintf("EXISTS (SELECT 1 FROM (VALUES %s) x WHERE %s)", strings.Join(rows, ", "), strings.Join(match, " AND "))
+	return anyOf(terms)
 }
 
-func (e *expansion) has(key []any) bool {
-	if e.all {
-		return true
+// anyOf joins conditions with OR as a balanced tree: SQLite's parser goes a
+// level deeper per OR of a chain and refuses past 1,000, and the keys may
+// hold more patterns of blanks than that.
+func anyOf(conds []string) string {
+	if len(conds) == 1 {
+		return conds[0]
 	}
-	return e.set[keyString(key)]
+	mid := len(conds) / 2
+	return "(" + anyOf(conds[:mid]) + " OR " + anyOf(conds[mid:]) + ")"
+}
+
+// has is true when the level-n group with key opens.
+func (e *expansion) has(key []any, n int) bool {
+	return e.all || e.open[n] || e.set[keyString(key)]
 }
 
 // compileDry compiles every statement of a plan without a database, so a
@@ -668,15 +1048,24 @@ func compileDry(p *plan) error {
 	if err != nil {
 		return err
 	}
-	if _, _, err := c.detailSelect(r); err != nil {
+	if _, _, err := c.detailSelect(r, "w"); err != nil {
 		return err
 	}
-	var pivot []any
+	var pivot []pivotValue
 	if p.pivot != nil {
 		// As many cells as Run compiles at the cap, so Validate and Run
 		// refuse the same layouts.
-		pivot = make([]any, p.pivot.max)
+		pivot = make([]pivotValue, p.pivot.max)
 	}
-	_, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1)
-	return err
+	if _, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1); err != nil {
+		return err
+	}
+	for _, d := range p.spec.Params {
+		if op := p.options[d.ID]; op != nil {
+			if _, err := c.optionsSelect(newStmt(nil, nil), op); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

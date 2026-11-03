@@ -1,5 +1,5 @@
 import type { SpecHop } from '../spec'
-import type { Aggregate, CatalogField, CatalogSource, FieldType } from '../types'
+import type { Aggregate, CatalogField, CatalogLink, CatalogSource, FieldType } from '../types'
 
 // Columns as the builder offers them: a path of link hops ending in a field, as
 // the catalog describes it. The engine's limits are repeated here only to stop a
@@ -14,9 +14,8 @@ export const MAX_PARAMS = 20
 export const MAX_GROUP_LEVELS = 6
 export const MAX_SORT_KEYS = 10
 export const MAX_LAYOUT_ITEMS = 200
-// A formula reads columns by id, and the forms formula editor reads only its own
-// keys (lowercase snake_case, at most 40 characters), so the builder makes ids of
-// that shape.
+// A formula reads columns by id; the builder makes ids of the forms key shape
+// (lowercase snake_case, at most 40 characters, F2).
 const MAX_ID = 40
 
 export type Catalog = ReadonlyMap<string, CatalogSource>
@@ -42,6 +41,8 @@ export interface PathInfo {
     /** The to-many hop's mode: a total per row, or child rows. */
     mode: 'aggregate' | 'nest' | undefined
     labels: string[]
+    /** The source a relation value points at (a path ending at a to-one link, or at id). */
+    target?: CatalogSource
 }
 
 export function describePath(
@@ -53,11 +54,13 @@ export function describePath(
     const labels: string[] = []
     let viaToMany = false
     let mode: PathInfo['mode']
+    let lastLink: CatalogLink | undefined
     for (const hop of path) {
         if (!source) return null
         if (hop.link) {
             const link = source.links.find(l => l.key === hop.link)
             if (!link) return null
+            lastLink = link
             labels.push(link.label)
             if (link.cardinality === 'toMany') {
                 viaToMany = true
@@ -67,13 +70,82 @@ export function describePath(
             continue
         }
         const field = source.fields.find(f => f.key === hop.field)
-        return field ? { field, source, viaToMany, mode, labels: [...labels, field.label] } : null
+        if (!field) return null
+        const target = field.key === 'id' ? source : undefined
+        return { field, source, viaToMany, mode, labels: [...labels, field.label], target }
+    }
+    // A path that ends at a to-one link reads the linked record's id; only that last
+    // link must be to-one (bind.go path).
+    if (lastLink?.cardinality === 'toOne' && source) {
+        const label = labels[labels.length - 1] ?? source.label
+        const field: CatalogField = {
+            key: 'id',
+            label,
+            type: 'relation',
+            aggregates: ['count', 'countDistinct'],
+        }
+        return { field, source, target: source, viaToMany, mode, labels }
     }
     return null
 }
 
+/** The field a record is named by: its first text field other than id. */
+export function firstTextField(source: CatalogSource): CatalogField | undefined {
+    return source.fields.find(f => f.type === 'text' && f.key !== 'id')
+}
+
 export function pathLabel(info: PathInfo): string {
     return info.labels.join(' › ')
+}
+
+/**
+ * A link hop that keeps the rows without its linked record (the default), or keeps
+ * only the rows that have one (`with: required`, an inner join). Other hops and the
+ * hop's mode are kept.
+ */
+export function withHopJoin(hops: readonly SpecHop[], index: number, required: boolean): SpecHop[] {
+    return hops.map((hop, i) => {
+        if (i !== index || hop.link === undefined) return hop
+        const kept: SpecHop = hop.mode ? { link: hop.link, mode: hop.mode } : { link: hop.link }
+        return required ? { ...kept, with: 'required' } : kept
+    })
+}
+
+/**
+ * A column's to-many hop read as a total per row, or as child rows. Child rows show
+ * the linked rows there are, so a nest hop has no join (bind.go hopProblem).
+ */
+export function withHopMode(
+    hops: readonly SpecHop[],
+    index: number,
+    mode: 'aggregate' | 'nest'
+): SpecHop[] {
+    return hops.map((hop, i) => {
+        if (i !== index || hop.link === undefined) return hop
+        if (mode === 'nest') return { link: hop.link, mode }
+        return hop.with ? { link: hop.link, mode, with: hop.with } : { link: hop.link, mode }
+    })
+}
+
+/**
+ * The index of the one to-many hop a column path crosses, whose mode may switch; null
+ * when it crosses none, or more than one (then every one nests: a total crosses one
+ * to-many link, bind.go hopProblem).
+ */
+export function switchableModeHop(
+    catalog: Catalog,
+    baseKey: string,
+    hops: readonly SpecHop[]
+): number | null {
+    let source = catalog.get(baseKey)
+    const many: number[] = []
+    hops.forEach((hop, index) => {
+        if (hop.link === undefined) return
+        const link = source?.links.find(l => l.key === hop.link)
+        if (link?.cardinality === 'toMany') many.push(index)
+        source = link ? catalog.get(link.target) : undefined
+    })
+    return many.length === 1 ? (many[0] ?? null) : null
 }
 
 /** The source a list of link hops reaches (an exists filter's target), or null. */
@@ -106,8 +178,17 @@ export function defaultAggregate(field: CatalogField, viaToMany: boolean): Aggre
     return offered.includes('count') ? 'count' : (offered[0] ?? '')
 }
 
-export function aggregateResultType(aggregate: Aggregate | '', fieldType: FieldType): FieldType {
-    return aggregate === 'count' || aggregate === 'countDistinct' ? 'number' : fieldType
+/**
+ * The type of a column's cells: a count is a number, any other total keeps the
+ * value's type. A formula that is always empty has no type ('', formula-type.ts):
+ * its cells read as text.
+ */
+export function aggregateResultType(
+    aggregate: Aggregate | '',
+    fieldType: FieldType | ''
+): FieldType {
+    if (aggregate === 'count' || aggregate === 'countDistinct') return 'number'
+    return fieldType === '' ? 'text' : fieldType
 }
 
 /** An average needs a scale: whole cents for amounts, two places for numbers. */

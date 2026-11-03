@@ -1,4 +1,4 @@
-import { ResponsiveToolbar, type ToolbarItem } from '@tinycld/core/components/ResponsiveToolbar'
+import type { ToolbarItem } from '@tinycld/core/components/ResponsiveToolbar'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
@@ -130,6 +130,7 @@ function TableBody({ model }: { model: ReportViewModel }) {
             rows={model.rows}
             format={model.display}
             breakpoint={model.breakpoint}
+            layouts={model.layouts}
             onToggleGroup={model.onToggleGroup}
             onNearEnd={model.run.loadMore}
             isLoadingMore={model.run.isLoadingMore}
@@ -143,15 +144,20 @@ function ViewBody({ model }: { model: ReportViewModel }) {
 }
 
 export function ReportView({ model, side }: { model: ReportViewModel; side?: ReactNode }) {
-    const toolbar = <ResponsiveToolbar items={toolbarItems(model)} />
     return (
         <View testID="report-screen" className="flex-1 flex-row bg-background">
             <View className="min-w-0 flex-1">
-                <ReportHeader title={model.title} onBack={model.onBack} toolbar={toolbar} />
+                <ReportHeader
+                    title={model.title}
+                    onBack={model.onBack}
+                    actions={toolbarItems(model)}
+                    isUpdating={model.isUpdating}
+                    isUpdatingLive={!model.isUpdatingInBuilder}
+                />
                 <ReportControls model={model} />
-                <ReportNotices notices={model.notices} isUpdating={model.isUpdating} />
+                <ReportNotices notices={model.notices} isLive={model.isBodyShown} />
                 <ReportDocumentHeader
-                    orgName={model.orgName}
+                    heading={model.heading}
                     title={model.title}
                     periodWords={model.periodWords}
                     isThousands={model.display.divideBy1000}

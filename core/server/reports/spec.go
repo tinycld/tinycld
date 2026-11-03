@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -13,12 +14,19 @@ import (
 
 // CurrentVersion is the spec version this engine writes. Load upgrades an
 // older spec one version at a time with upgradeSteps.
-const CurrentVersion = 1
+const CurrentVersion = 2
 
 // upgradeSteps[v] turns a version v document into version v+1. upgrade sets
 // the version, not each step. Add a step whenever the spec format changes,
 // and raise CurrentVersion with it.
-var upgradeSteps = map[int]upgradeStep{}
+//
+// 1 → 2 adds only optional parts (column totals, group having, labels, fill
+// and open, formula sort keys, the detail label, options from a source, the
+// record and lookup formulas, display layouts), so a version 1 document is
+// already a valid version 2 document.
+var upgradeSteps = map[int]upgradeStep{
+	1: func(map[string]any) error { return nil },
+}
 
 type upgradeStep func(doc map[string]any) error
 
@@ -33,6 +41,39 @@ type Spec struct {
 	Groups  []Group      `json:"groups,omitempty"`
 	Pivot   *Pivot       `json:"pivot,omitempty"`
 	Layout  []LayoutItem `json:"layout,omitempty"`
+	Detail  *Detail      `json:"detail,omitempty"`
+	Display *Display     `json:"display,omitempty"`
+}
+
+// Display is how the report table lays its columns out per width (E14).
+// The engine checks it and otherwise leaves it to the client.
+type Display struct {
+	Layouts []DisplayLayout `json:"layouts,omitempty"`
+}
+
+// DisplayLayout places columns on lines of Tracks equal tracks at one width
+// (mobile, tablet or desktop). A column it does not list is not shown there.
+type DisplayLayout struct {
+	Width  string        `json:"width"`
+	Tracks int           `json:"tracks"`
+	Cells  []DisplayCell `json:"cells"`
+}
+
+// DisplayCell puts a column on Line (from 1), at Start (0 places it in the
+// first free tracks), Span tracks wide (1) and Lines lines tall (1).
+type DisplayCell struct {
+	Col     string `json:"col"`
+	Line    int    `json:"line"`
+	Start   int    `json:"start,omitempty"`
+	Span    int    `json:"span,omitempty"`
+	Lines   int    `json:"lines,omitempty"`
+	Justify string `json:"justify,omitempty"`
+}
+
+// Detail shapes detail rows: Label is a formula on a detail row that labels
+// it (the first column's value without it).
+type Detail struct {
+	Label *Node `json:"label,omitempty"`
 }
 
 // Hop is one step of a path: a link to follow, or the field to read last.
@@ -60,11 +101,27 @@ type Column struct {
 	Scale *int `json:"scale,omitempty"`
 	// Format is the client's display format, returned as given.
 	Format string `json:"format,omitempty"`
+	// Total is how the column's group, subtotal and total cells are made:
+	// "recompute" (the default) from every base row under them, or "rows",
+	// the sum of the cells of the rows the result shows directly under them.
+	Total string `json:"total,omitempty"`
+	// LabelField is the field a column whose values point at records shows
+	// each record by, in place of its id. Empty: the record's first text
+	// field, else its first other field but its id, else its source's name.
+	// A formula that is a column shows that column's label field.
+	LabelField string `json:"labelField,omitempty"`
 }
 
+// Column.Total values.
+const (
+	TotalRecompute = "recompute"
+	TotalRows      = "rows"
+)
+
 // Node is a formula or filter tree: an operator with arguments, or a leaf
-// (col, path, param, value, subtotal). exists and notExists carry a link path
-// and an optional where.
+// (col, path, param, value, subtotal, record). exists and notExists carry a
+// link path and an optional where; lookup carries a source, an optional
+// where, a value and a pick.
 type Node struct {
 	Op       string          `json:"op,omitempty"`
 	Args     []*Node         `json:"args,omitempty"`
@@ -74,13 +131,24 @@ type Node struct {
 	Param    string          `json:"param,omitempty"`
 	Value    json.RawMessage `json:"value,omitempty"`
 	Subtotal string          `json:"subtotal,omitempty"`
-	Link     Path            `json:"link,omitempty"`
-	Where    *Node           `json:"where,omitempty"`
+	// Record names a group whose key is a link: the leaf reads Path from the
+	// linked record, on that group's rows and every row below them.
+	Record string `json:"record,omitempty"`
+	Link   Path   `json:"link,omitempty"`
+	Where  *Node  `json:"where,omitempty"`
+	// Source and Pick belong to lookup: the source it reads, and "min" (the
+	// default) or "max" of the matching rows' value. A lookup's Value is a
+	// formula node over that source, not a literal.
+	Source string `json:"source,omitempty"`
+	Pick   string `json:"pick,omitempty"`
 }
 
+// SortKey sorts by a column or by a formula ("asc" by default). On a group
+// level a formula is a cell of that level; on detail rows a row value.
 type SortKey struct {
-	Col string `json:"col"`
-	Dir string `json:"dir,omitempty"` // "asc" (default) or "desc"
+	Col     string `json:"col,omitempty"`
+	Formula *Node  `json:"formula,omitempty"`
+	Dir     string `json:"dir,omitempty"`
 }
 
 type Group struct {
@@ -88,6 +156,27 @@ type Group struct {
 	Col       string `json:"col"`
 	Bucket    string `json:"bucket,omitempty"` // a date column's bucket
 	Subtotals bool   `json:"subtotals,omitempty"`
+	// Open opens the level in a run with no expansion state (the first
+	// open); once a run sends keys, its list wins. It opens only when every
+	// shallower level is open too.
+	Open bool `json:"open,omitempty"`
+	// Label is a formula on the group's level that labels its rows (a
+	// record's label when its value points at one). Without it a record
+	// group is labelled as its column shows the record (labelFieldOf), any
+	// other group by its key.
+	Label *Node `json:"label,omitempty"`
+	// Fill adds the linked records that have no rows, under each parent group.
+	Fill *Fill `json:"fill,omitempty"`
+	// Having is a condition on the group's level; a group that fails it is
+	// hidden with every row under it.
+	Having *Node `json:"having,omitempty"`
+}
+
+// Fill is a record group's "show every record": the target's records that
+// match Where (all it may list when Where is nil) and have no base rows, under
+// each parent group and currency.
+type Fill struct {
+	Where *Node `json:"where,omitempty"`
 }
 
 type Pivot struct {
@@ -95,6 +184,9 @@ type Pivot struct {
 	Bucket     string `json:"bucket,omitempty"`
 	Cell       string `json:"cell"`
 	MaxColumns int    `json:"maxColumns,omitempty"`
+	// LabelField is the field a pivot over a link names its columns by, as
+	// Column.LabelField.
+	LabelField string `json:"labelField,omitempty"`
 }
 
 // LayoutItem is a section (section, title, key: the first group's key it
@@ -109,12 +201,26 @@ type LayoutItem struct {
 }
 
 type ParamDef struct {
-	ID       string          `json:"id"`
-	Type     string          `json:"type"`
-	Label    string          `json:"label,omitempty"`
-	Default  json.RawMessage `json:"default,omitempty"`
-	Options  []Option        `json:"options,omitempty"`
-	Multiple bool            `json:"multiple,omitempty"`
+	ID      string          `json:"id"`
+	Type    string          `json:"type"`
+	Label   string          `json:"label,omitempty"`
+	Default json.RawMessage `json:"default,omitempty"`
+	Options []Option        `json:"options,omitempty"`
+	// OptionsFrom names the source a choice param's options come from, in
+	// place of Options.
+	OptionsFrom *OptionsFrom `json:"optionsFrom,omitempty"`
+	Multiple    bool         `json:"multiple,omitempty"`
+}
+
+// OptionsFrom reads a choice param's options from a source, under the
+// reader's list rules: Value is what the param holds, Label what the picker
+// shows, Group (optional) how it groups them, Where which rows count.
+type OptionsFrom struct {
+	Source string `json:"source"`
+	Value  Path   `json:"value"`
+	Label  Path   `json:"label"`
+	Group  Path   `json:"group,omitempty"`
+	Where  *Node  `json:"where,omitempty"`
 }
 
 // LoadInfo says what Load changed: the version it upgraded from (0 when it
@@ -182,7 +288,9 @@ func loadWith(raw []byte, steps map[int]upgradeStep, target int) (*Spec, *LoadIn
 		return nil, nil, invalid("spec", "the spec is not valid: "+err.Error())
 	}
 	info := &LoadInfo{Aliased: resolveAliases(&spec)}
-	if from != target {
+	// The notice says the report changed; a step that changed nothing (1 → 2)
+	// gives none.
+	if from != target && !sameExceptVersion(raw, upgraded) {
 		info.UpgradedFrom = from
 	}
 	return &spec, info, nil
@@ -229,76 +337,20 @@ func upgrade(raw []byte, steps map[int]upgradeStep, target int) ([]byte, int, er
 	return out, from, err
 }
 
-// resolveAliases replaces an aliased link or field key on every path with
-// its current key. It reads every registered source, refused or not: Load
-// has no app, and bind refuses a source the app refused. A key it cannot
-// place (an unknown source, a link that does not exist) is left for Validate
-// to report.
-func resolveAliases(spec *Spec) []Alias {
-	base := lookupRegistered(spec.Source)
-	if base == nil {
-		return nil
-	}
-	var out []Alias
-	for i := range spec.Columns {
-		aliasPath(base, spec.Columns[i].Path, &out)
-		aliasNode(base, spec.Columns[i].Formula, &out)
-	}
-	aliasNode(base, spec.Filter, &out)
-	if spec.Pivot != nil {
-		aliasPath(base, spec.Pivot.Path, &out)
-	}
-	return out
-}
-
-// aliasPath resolves a path's keys in place and returns the source the path
-// ends on, or nil when a hop cannot be followed.
-func aliasPath(src *Source, path Path, out *[]Alias) *Source {
-	for i := range path {
-		if src == nil {
-			return nil
+// sameExceptVersion reports whether two spec documents differ only in their
+// version. Numbers stay json.Number, so a large integer compares exactly.
+func sameExceptVersion(a, b []byte) bool {
+	read := func(raw []byte) (map[string]any, bool) {
+		var doc map[string]any
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		if dec.Decode(&doc) != nil {
+			return nil, false
 		}
-		hop := &path[i]
-		if hop.Link != "" {
-			hop.Link = aliasKey(src, hop.Link, out)
-			l := src.link(hop.Link)
-			if l == nil {
-				return nil
-			}
-			src = lookupRegistered(l.Target)
-			if src == nil {
-				return nil
-			}
-		}
-		if hop.Field != "" {
-			hop.Field = aliasKey(src, hop.Field, out)
-		}
+		delete(doc, "version")
+		return doc, true
 	}
-	return src
-}
-
-func aliasKey(src *Source, key string, out *[]Alias) string {
-	if src.field(key) != nil || src.link(key) != nil {
-		return key
-	}
-	to, ok := src.Aliases[key]
-	if !ok {
-		return key
-	}
-	*out = append(*out, Alias{Source: src.Key, From: key, To: to})
-	return to
-}
-
-func aliasNode(src *Source, n *Node, out *[]Alias) {
-	if n == nil {
-		return
-	}
-	aliasPath(src, n.Path, out)
-	for _, a := range n.Args {
-		aliasNode(src, a, out)
-	}
-	if n.Link != nil {
-		// A where clause reads the source the link path ends on.
-		aliasNode(aliasPath(src, n.Link, out), n.Where, out)
-	}
+	da, okA := read(a)
+	db, okB := read(b)
+	return okA && okB && reflect.DeepEqual(da, db)
 }

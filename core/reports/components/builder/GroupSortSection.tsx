@@ -1,26 +1,24 @@
 import { Button, ButtonText } from '@tinycld/core/ui/button'
-import { ButtonGroup, SelectInput, Toggle, useWatch } from '@tinycld/core/ui/form'
+import { SelectInput, Toggle, useWatch } from '@tinycld/core/ui/form'
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react-native'
 import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
-import { MAX_GROUP_LEVELS, MAX_SORT_KEYS, nextColumnId } from '../../lib/builder/columns'
-import { type BuilderDraft, columnChoices } from '../../lib/builder/draft'
+import { MAX_GROUP_LEVELS, nextColumnId } from '../../lib/builder/columns'
+import { type BuilderDraft, type GroupLevelDraft, groupTarget } from '../../lib/builder/draft'
+import { aboveOf, emptyGroup } from '../../lib/builder/filter'
+import {
+    type ColumnChoice as Choice,
+    columnTarget,
+    readsColumn,
+} from '../../lib/builder/formula-context'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { moved } from './ColumnsSection'
+import type { AboveChoice } from './ConditionTree'
+import { GroupFill, GroupHaving, GroupLabel, setLevel } from './GroupLevelParts'
 import { BucketSelect, IconButton } from './parts'
-
-const DIR_OPTIONS = [
-    { value: 'asc', label: 'A to Z' },
-    { value: 'desc', label: 'Z to A' },
-]
-
-type Choice = ReturnType<typeof columnChoices>[number]
-
-function useChoices(builder: ReportBuilder) {
-    const columns = useWatch({ control: builder.form.control, name: 'columns' })
-    return columnChoices({ source: builder.base.key, columns }, builder.catalog)
-}
+import { useColumnChoices } from './report-formula'
+import { SortRows } from './SortRows'
 
 const asOption = (choice: Choice) => ({ value: choice.key, label: choice.label })
 
@@ -57,18 +55,45 @@ interface GroupRowProps {
 }
 
 function GroupRow({ builder, groups, index, choices }: GroupRowProps) {
-    const { control, setValue } = builder.form
+    const { control } = builder.form
+    const source = useWatch({ control, name: 'source' })
+    const columns = useWatch({ control, name: 'columns' })
     const group = groups[index]
     if (!group) return null
+    const { catalog } = builder
     const testID = `report-builder-group-${index}`
-    const isDate = (key: string) => choices.find(choice => choice.key === key)?.isDate === true
+    const choiceOf = (key: string) => choices.find(choice => choice.key === key)
+    const isDate = (key: string) => choiceOf(key)?.isDate === true
     const options = choices.filter(choice => !choice.isNested).map(asOption)
-    // A bucket left from a date column would reach the engine on a column that has none.
+    const draft = { source, columns, groups }
+    const target = groupTarget(draft, catalog, group)
+    // A bucket left from a date column would reach the engine on a column that has
+    // none; a label or fill of another record reads fields it no longer has, and a
+    // label reading the old column reads a value the level no longer has.
     const onColumn = (key: string) => {
-        if (!isDate(key)) setValue(`groups.${index}.bucket`, '', { shouldDirty: true })
+        const nextTarget = groupTarget(draft, catalog, { col: key })
+        const sameRecord = nextTarget?.key === target?.key
+        const dropsLabel = !sameRecord || readsColumn(group.label?.node, group.col)
+        const patch: Partial<GroupLevelDraft> = {
+            col: key,
+            bucket: isDate(key) ? group.bucket : '',
+            ...(dropsLabel ? { label: null } : {}),
+            ...(sameRecord ? {} : { fill: { on: false, where: emptyGroup() } }),
+        }
+        setLevel(builder, groups, index, patch)
     }
+    // A group above is typed as its column's cells: a relation by the source it
+    // points at, a select by its options.
+    const above: AboveChoice[] = aboveOf(groups, index, columns).map(g => {
+        const choice = choiceOf(g.col)
+        const target = columnTarget(draft, catalog, g.col)?.key
+        const options = choice?.options.map(o => o.value)
+        return { ...g, type: choice?.type ?? 'text', target, options }
+    })
+    const labelField = columns.find(c => c.id === group.col)?.labelField ?? ''
+    const part = { builder, groups, index, target }
     return (
-        <View testID={testID} className="gap-1 rounded-lg border border-border p-2">
+        <View testID={testID} className="gap-2 rounded-lg border border-border p-2">
             <View className="flex-row items-center">
                 <Text className="flex-1 text-xs text-muted-foreground">{`Level ${index + 1}`}</Text>
                 <IconButton
@@ -106,12 +131,24 @@ function GroupRow({ builder, groups, index, choices }: GroupRowProps) {
                 name={`groups.${index}.bucket`}
                 control={control}
                 testID={`${testID}-bucket`}
+                onValueChange={builder.validateLists}
             />
             <Toggle
                 name={`groups.${index}.subtotals`}
                 control={control}
                 label="Subtotals"
                 testID={`${testID}-subtotals`}
+                onValueChange={builder.validateLists}
+            />
+            <GroupLabel {...part} labelField={labelField} />
+            <GroupFill {...part} above={above} />
+            <GroupHaving builder={builder} groups={groups} index={index} />
+            <Toggle
+                name={`groups.${index}.open`}
+                control={control}
+                label="Open when the report opens"
+                testID={`${testID}-open`}
+                onValueChange={builder.validateLists}
             />
         </View>
     )
@@ -119,7 +156,7 @@ function GroupRow({ builder, groups, index, choices }: GroupRowProps) {
 
 function GroupRows({ builder }: { builder: ReportBuilder }) {
     const groups = useWatch({ control: builder.form.control, name: 'groups' })
-    const choices = useChoices(builder)
+    const choices = useColumnChoices(builder)
     const rows = groups.map((group, index) => (
         <GroupRow
             key={group.id}
@@ -141,6 +178,10 @@ function GroupRows({ builder }: { builder: ReportBuilder }) {
                 col: first?.key ?? '',
                 bucket: '',
                 subtotals: true,
+                open: false,
+                label: null,
+                having: emptyGroup(),
+                fill: { on: false, where: emptyGroup() },
             },
         ])
     return (
@@ -150,77 +191,6 @@ function GroupRows({ builder }: { builder: ReportBuilder }) {
                 isVisible={groups.length < MAX_GROUP_LEVELS}
                 label="Add group level"
                 testID="report-builder-group-add"
-                onPress={add}
-            />
-        </View>
-    )
-}
-
-interface SortRowProps {
-    builder: ReportBuilder
-    sort: BuilderDraft['sort']
-    index: number
-    options: { value: string; label: string }[]
-}
-
-function SortRow({ builder, sort, index, options }: SortRowProps) {
-    const { control } = builder.form
-    const testID = `report-builder-sort-${index}`
-    return (
-        <View testID={testID} className="gap-1 rounded-lg border border-border p-2">
-            <View className="flex-row items-center">
-                <Text className="flex-1 text-xs text-muted-foreground">{`Sort ${index + 1}`}</Text>
-                <IconButton
-                    label="Remove sort"
-                    testID={`${testID}-remove`}
-                    isVisible
-                    icon={Trash2}
-                    onPress={() => builder.setSort(sort.filter((_, i) => i !== index))}
-                />
-            </View>
-            <SelectInput
-                name={`sort.${index}.col`}
-                control={control}
-                label="Sort by"
-                options={options}
-                testID={`${testID}-col`}
-            />
-            <ButtonGroup
-                name={`sort.${index}.dir`}
-                control={control}
-                label="Order"
-                horizontal
-                options={DIR_OPTIONS}
-            />
-        </View>
-    )
-}
-
-// A sort key has no id: its column and how many earlier keys sort on the same
-// column name it, so removing a key does not hand its row to the next one.
-function sortRowKeys(sort: BuilderDraft['sort']): string[] {
-    const seen = new Map<string, number>()
-    return sort.map(key => {
-        const n = seen.get(key.col) ?? 0
-        seen.set(key.col, n + 1)
-        return `${key.col}#${n}`
-    })
-}
-
-function SortRows({ builder }: { builder: ReportBuilder }) {
-    const sort = useWatch({ control: builder.form.control, name: 'sort' })
-    const options = useChoices(builder).map(asOption)
-    const rows = sortRowKeys(sort).map((rowKey, index) => (
-        <SortRow key={rowKey} builder={builder} sort={sort} index={index} options={options} />
-    ))
-    const add = () => builder.setSort([...sort, { col: options[0]?.value ?? '', dir: 'asc' }])
-    return (
-        <View className="gap-2">
-            {rows}
-            <AddButton
-                isVisible={sort.length < MAX_SORT_KEYS}
-                label="Add sort"
-                testID="report-builder-sort-add"
                 onPress={add}
             />
         </View>

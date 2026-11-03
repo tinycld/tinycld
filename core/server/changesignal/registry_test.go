@@ -87,3 +87,53 @@ func TestCoreRegistersNoViews(t *testing.T) {
 		t.Fatalf("core registered views: %v", got)
 	}
 }
+
+// SQLite compares table names without case, so the registry keys a virtual
+// table by its lowercased name.
+func TestRegisterVirtualTableUnionsRepeatedCalls(t *testing.T) {
+	ResetForTesting()
+	t.Cleanup(ResetForTesting)
+	RegisterVirtualTable("fts_zoo", "zoo_keepers")
+	RegisterVirtualTable("FTS_Zoo", "zoo_animals", "zoo_keepers")
+	want := map[string][]string{"fts_zoo": {"zoo_animals", "zoo_keepers"}}
+	if got := RegisteredVirtualTables(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("RegisteredVirtualTables = %v, want %v", got, want)
+	}
+}
+
+func TestRegisterVirtualTableRefusesMalformedDeclarations(t *testing.T) {
+	cases := map[string]func(){
+		"blank table":      func() { RegisterVirtualTable("", "zoo_animals") },
+		"no collections":   func() { RegisterVirtualTable("fts_zoo") },
+		"blank collection": func() { RegisterVirtualTable("fts_zoo", "") },
+		"maps itself":      func() { RegisterVirtualTable("fts_zoo", "FTS_ZOO") },
+	}
+	for name, register := range cases {
+		t.Run(name, func(t *testing.T) {
+			ResetForTesting()
+			t.Cleanup(ResetForTesting)
+			defer func() {
+				if recover() == nil {
+					t.Fatal("RegisterVirtualTable did not panic")
+				}
+			}()
+			register()
+		})
+	}
+}
+
+func TestResetForTestingEmptiesTheVirtualTables(t *testing.T) {
+	RegisterVirtualTable("fts_zoo", "zoo_keepers")
+	ResetForTesting()
+	if got := RegisteredVirtualTables(); len(got) != 0 {
+		t.Fatalf("RegisteredVirtualTables = %v", got)
+	}
+}
+
+// Core itself maps no virtual table: an index belongs to a package, which
+// registers it (fts.RegisterSync does it for a full-text index).
+func TestCoreRegistersNoVirtualTables(t *testing.T) {
+	if got := RegisteredVirtualTables(); len(got) != 0 {
+		t.Fatalf("core registered virtual tables: %v", got)
+	}
+}

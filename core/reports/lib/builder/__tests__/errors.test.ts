@@ -11,6 +11,8 @@ describe('builder errors', () => {
         expect(sectionOf('sort.0.col')).toBe('group')
         expect(sectionOf('pivot.cell')).toBe('pivot')
         expect(sectionOf('layout.3.formula')).toBe('layout')
+        expect(sectionOf('detail.label')).toBe('columns')
+        expect(sectionOf('display.layouts.0.cells.1')).toBe('arrange')
         expect(sectionOf('source')).toBe('details')
         expect(sectionOf('title')).toBe('details')
     })
@@ -26,6 +28,12 @@ describe('builder errors', () => {
         expect(
             describeProblem({ path: 'groups.0.col', code: 'invalid', message: 'pick one' })
         ).toBe('Group 1: pick one')
+        expect(
+            describeProblem({ path: 'display.layouts.0', code: 'invalid', message: 'overlaps' })
+        ).toBe('Arrangement 1: overlaps')
+        expect(describeProblem({ path: 'detail.label', code: 'invalid', message: 'no' })).toBe(
+            'Row label: no'
+        )
         expect(describeProblem({ path: 'source', code: 'unknown_source', message: 'gone' })).toBe(
             'gone'
         )

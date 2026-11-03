@@ -283,19 +283,28 @@ export async function signInAsCollaborator(page: Page): Promise<{
 // depends on. Runs in its own context so the owner's auth doesn't leak in and
 // the returned page can be used (or discarded) independently.
 //
-// The credentials are unique per call (Date.now() + a caller label) because the
-// e2e DB is reset across runs but NOT between tests. Pass an `email` so the
-// account can drive email-addressed flows (e.g. password reset by email).
+// The credentials are unique per call because the e2e DB is reset across runs but
+// NOT between tests: a caller label, Date.now(), the worker index and a per-worker
+// counter (two workers running the same test can start in the same millisecond).
+// Usernames stay within 32 characters. Pass an `email` so the account can drive
+// email-addressed flows (e.g. password reset by email). Pass a `name` when a spec
+// finds the invitee by name (a share candidate).
+let invitedCount = 0
+
 export async function createInvitedUser(
     page: Page,
-    label: string
+    label: string,
+    options: { name?: string } = {}
 ): Promise<{ user: InvitedUser; inviteePage: Page; close: () => Promise<void> }> {
-    const stamp = Date.now()
+    invitedCount += 1
+    const stamp = `${Date.now()}-${process.env.TEST_WORKER_INDEX ?? '0'}-${invitedCount}`
     const user: InvitedUser = {
         username: `${label}${stamp}`,
         email: `${label}-${stamp}@example.com`,
         password: 'InvitedPass1!',
     }
+    // A longer one is refused by the invite form, and the test then fails far from here.
+    expect(user.username.length, `username ${user.username}`).toBeLessThanOrEqual(32)
 
     // --- Owner sends the invite (username + email) from Settings → Members ---
     await login(page)
@@ -332,7 +341,7 @@ export async function createInvitedUser(
     await expect(inviteePage.getByText("You're invited", { exact: true })).toBeVisible({
         timeout: 10_000,
     })
-    await inviteePage.getByTestId('name').fill('Invited Tester')
+    await inviteePage.getByTestId('name').fill(options.name ?? 'Invited Tester')
     await inviteePage.getByTestId('password').fill(user.password)
     await inviteePage.getByTestId('confirmPassword').fill(user.password)
     await inviteePage.getByText(/Set password and sign in/i).click()

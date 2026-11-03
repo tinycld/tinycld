@@ -38,6 +38,7 @@ function NewReport({ catalog, base, onBack }: NewReportProps) {
         broken: null,
         isEditing: true,
         onBack,
+        layouts: builder.previewSpec?.display?.layouts,
     })
     return (
         <ReportView model={model} side={<ReportBuilderPanel builder={builder} preview={model} />} />

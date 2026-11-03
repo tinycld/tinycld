@@ -27,6 +27,7 @@ migrate(
             deleteRule: SIGNED_IN,
             fields: [
                 { id: 'salesstub_teams_name', name: 'name', type: 'text', required: true, max: 200 },
+                { id: 'salesstub_teams_region', name: 'region', type: 'select', values: ['north', 'south'], maxSelect: 1 },
                 ...stamps('salesstub_teams'),
             ],
         })
@@ -50,6 +51,7 @@ migrate(
                 { id: 'salesstub_sales_quantity', name: 'quantity', type: 'number', onlyInt: true },
                 { id: 'salesstub_sales_currency', name: 'currency', type: 'text', max: 3 },
                 { id: 'salesstub_sales_day', name: 'day', type: 'date' },
+                { id: 'salesstub_sales_booked_on', name: 'booked_on', type: 'text', max: 10 },
                 { id: 'salesstub_sales_status', name: 'status', type: 'select', values: ['open', 'paid'], maxSelect: 1 },
                 ...stamps('salesstub_sales'),
             ],

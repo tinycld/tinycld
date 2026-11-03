@@ -15,11 +15,13 @@ import {
     builderSchema,
     draftFromSpec,
     emptyDraft,
+    type FormulaDraft,
+    keptParams,
     specFromDraft,
 } from '../lib/builder/draft'
 import { problemsFromError } from '../lib/builder/errors'
 import { forgetSavedRuns } from '../lib/run-client'
-import { parseSpec, type ReportSpec } from '../lib/spec'
+import { type ParamDef, parseSpec, type ReportSpec } from '../lib/spec'
 import type { CatalogSource } from '../lib/types'
 import { EDIT_KEY } from '../lib/view-url'
 import type { SavedReport } from './useReportRecord'
@@ -40,7 +42,18 @@ export interface BuilderInput {
 }
 
 type SaveInput = { draft: BuilderDraft; asCopy: boolean; title: string }
-const LIST_CHANGE = { shouldDirty: true, shouldValidate: true } as const
+const LIST_CHANGE = { shouldDirty: true } as const
+const LIST_NAMES = [
+    'params',
+    'columns',
+    'filter',
+    'groups',
+    'sort',
+    'pivot',
+    'layout',
+    'detailLabel',
+    'display',
+] as const
 
 // The draft as the preview runs it: the spec text of the last valid draft, so a
 // draft that is invalid for a moment keeps the last valid preview in view. It is
@@ -87,6 +100,19 @@ export function useReportBuilder(input: BuilderInput) {
     )
     // The Discard confirm of an edit: local UI state.
     const [isConfirmingDiscard, setConfirmingDiscard] = useState(false)
+
+    // Every change that can drop the last reader of a param recomputes the params
+    // in the same edit (R20), validated once by the list change that follows.
+    const keep = (patch: Partial<BuilderDraft>, added: readonly ParamDef[] = []) =>
+        form.setValue('params', keptParams({ ...form.getValues(), ...patch }, ...added), {
+            shouldDirty: true,
+        })
+    // setValue's shouldValidate reaches only registered fields, and a condition tree
+    // or a sort formula has none; one list's change can also make another refuse (a
+    // removed column leaves a group or a condition without it). So every list is
+    // validated again, and its refusals show before Save (title and description are
+    // fields of their own, validated as they are typed).
+    const validateLists = () => void form.trigger([...LIST_NAMES])
 
     const exit = () => {
         if (mode === 'edit') router.setParams({ [EDIT_KEY]: undefined })
@@ -169,25 +195,57 @@ export function useReportBuilder(input: BuilderInput) {
         },
         isConfirmingDiscard,
         onKeepEditing: () => setConfirmingDiscard(false),
+        /** A registered control's edit (a total, a sort order) can change what another refuses. */
+        validateLists,
         onDiscard: () => {
             setConfirmingDiscard(false)
             form.reset(defaults)
             exit()
         },
         // Each replaces a whole list as one change, so a move or a removal is one edit.
-        setColumns: (items: BuilderDraft['columns']) =>
-            form.setValue('columns', items, LIST_CHANGE),
-        setGroups: (items: BuilderDraft['groups']) => form.setValue('groups', items, LIST_CHANGE),
-        setSort: (items: BuilderDraft['sort']) => form.setValue('sort', items, LIST_CHANGE),
-        setLayout: (items: BuilderDraft['layout']) => form.setValue('layout', items, LIST_CHANGE),
-        // A filter change carries the params it asks for: one edit, validated once.
-        setFilter: (filter: BuilderDraft['filter'], params: BuilderDraft['params']) => {
-            form.setValue('params', params, { shouldDirty: true })
-            form.setValue('filter', filter, LIST_CHANGE)
+        // `added` are the params a change newly asks for.
+        setColumns: (items: BuilderDraft['columns']) => {
+            keep({ columns: items })
+            form.setValue('columns', items, LIST_CHANGE)
+            validateLists()
         },
-        setParams: (params: BuilderDraft['params']) => form.setValue('params', params, LIST_CHANGE),
-        setPivotPath: (path: BuilderDraft['pivot']['path']) =>
-            form.setValue('pivot.path', path, LIST_CHANGE),
+        setGroups: (items: BuilderDraft['groups'], ...added: ParamDef[]) => {
+            keep({ groups: items }, added)
+            form.setValue('groups', items, LIST_CHANGE)
+            validateLists()
+        },
+        setSort: (items: BuilderDraft['sort'], ...added: ParamDef[]) => {
+            keep({ sort: items }, added)
+            form.setValue('sort', items, LIST_CHANGE)
+            validateLists()
+        },
+        setLayout: (items: BuilderDraft['layout']) => {
+            keep({ layout: items })
+            form.setValue('layout', items, LIST_CHANGE)
+            validateLists()
+        },
+        setFilter: (filter: BuilderDraft['filter'], ...added: ParamDef[]) => {
+            keep({ filter }, added)
+            form.setValue('filter', filter, LIST_CHANGE)
+            validateLists()
+        },
+        setDetailLabel: (label: FormulaDraft | null) => {
+            keep({ detailLabel: label })
+            form.setValue('detailLabel', label, LIST_CHANGE)
+            validateLists()
+        },
+        setDisplay: (display: BuilderDraft['display']) => {
+            form.setValue('display', display, LIST_CHANGE)
+            validateLists()
+        },
+        setParams: (params: BuilderDraft['params']) => {
+            form.setValue('params', params, LIST_CHANGE)
+            validateLists()
+        },
+        setPivotPath: (path: BuilderDraft['pivot']['path']) => {
+            form.setValue('pivot.path', path, LIST_CHANGE)
+            validateLists()
+        },
     }
 }
 

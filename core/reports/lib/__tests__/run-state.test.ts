@@ -49,6 +49,15 @@ describe('runView', () => {
         expect(view.topics).toEqual(['collection/sales'])
     })
 
+    it('keeps one result, rows and all, while the pages stay the same', () => {
+        const pages = [ok()]
+        const shown = runView(query({ pages }))
+        // A changed run starts loading: the same pages stay in view.
+        const updating = runView(query({ pages, isPlaceholderData: true }))
+        expect(updating.result).toBe(shown.result)
+        expect(runView(query({ pages: [ok()] })).result).not.toBe(shown.result)
+    })
+
     it('keeps the previous figures in view, marked updating, while a changed run loads', () => {
         const view = runView(query({ pages: [ok()], isPlaceholderData: true }))
         expect(view.state).toBe('ready')

@@ -2,42 +2,55 @@ import { NumberInput, SelectInput, Toggle, useWatch } from '@tinycld/core/ui/for
 import { View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { describePath, MAX_PIVOT_COLUMNS, pathLabel } from '../../lib/builder/columns'
-import { columnChoices } from '../../lib/builder/draft'
 import type { SpecHop } from '../../lib/spec'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnPicker } from './ColumnPicker'
-import { BucketSelect } from './parts'
+import { BucketSelect, RecordLabelField } from './parts'
+import { useColumnChoices } from './report-formula'
 
 function usePivotFields(builder: ReportBuilder) {
     const { catalog, base, form } = builder
     const pivot = useWatch({ control: form.control, name: 'pivot' })
-    const columns = useWatch({ control: form.control, name: 'columns' })
+    const choices = useColumnChoices(builder)
     const isDatePath = (path: readonly SpecHop[]) => {
         const type = describePath(catalog, base.key, path)?.field.type
         return type === 'date' || type === 'datetime'
     }
     const info = describePath(catalog, base.key, pivot.path)
-    const cells = columnChoices({ source: base.key, columns }, catalog)
+    const cells = choices
         .filter(choice => choice.hasAggregate)
         .map(choice => ({ value: choice.key, label: choice.label }))
-    // A bucket left from a date field would reach the engine on a field that has none.
+    // A bucket left from a date field would reach the engine on a field that has
+    // none, and a label field left from another record names a field it lacks.
     const onPick = (path: SpecHop[]) => {
         if (!isDatePath(path)) form.setValue('pivot.bucket', '', { shouldDirty: true })
+        const target = describePath(catalog, base.key, path)?.target
+        if (target?.key !== info?.target?.key) {
+            form.setValue('pivot.labelField', '', { shouldDirty: true })
+        }
         builder.setPivotPath(path)
+    }
+    const setLabelField = (labelField: string) => {
+        form.setValue('pivot.labelField', labelField, { shouldDirty: true })
+        builder.validateLists()
     }
     return {
         isOn: pivot.on,
         fieldLabel: info ? pathLabel(info) : 'Choose a field',
         isDate: isDatePath(pivot.path),
+        target: info?.target,
+        labelField: pivot.labelField,
         cells,
         onPick,
+        setLabelField,
     }
 }
 
 function PivotFields({ builder }: { builder: ReportBuilder }) {
     const { control } = builder.form
-    const { isOn, fieldLabel, isDate, cells, onPick } = usePivotFields(builder)
+    const { isOn, fieldLabel, isDate, target, labelField, cells, onPick, setLabelField } =
+        usePivotFields(builder)
     if (!isOn) return null
     return (
         <View className="gap-2">
@@ -49,8 +62,16 @@ function PivotFields({ builder }: { builder: ReportBuilder }) {
                     label={fieldLabel}
                     testID="report-builder-pivot-field"
                     toOneOnly
+                    allowLinkEnd
                 />
             </View>
+            <RecordLabelField
+                target={target}
+                labelField={labelField}
+                purpose="Pivot columns shown as"
+                testID="report-builder-pivot-label-field"
+                onChange={setLabelField}
+            />
             <BucketSelect
                 isVisible={isDate}
                 name="pivot.bucket"
@@ -63,6 +84,7 @@ function PivotFields({ builder }: { builder: ReportBuilder }) {
                 label="Cells show"
                 options={cells}
                 testID="report-builder-pivot-cell"
+                onValueChange={builder.validateLists}
             />
             <NumberInput
                 name="pivot.maxColumns"
@@ -77,7 +99,7 @@ function PivotFields({ builder }: { builder: ReportBuilder }) {
 }
 
 // A pivot spreads a column with a total across one column per value of a field
-// (a month, a status). It needs a group level.
+// (a month, a status) or per linked record (a team). It needs a group level.
 export function PivotSection({
     builder,
     problems,
@@ -92,6 +114,7 @@ export function PivotSection({
                 control={builder.form.control}
                 label="Pivot by a field"
                 testID="report-builder-pivot-on"
+                onValueChange={builder.validateLists}
             />
             <PivotFields builder={builder} />
         </BuilderSection>

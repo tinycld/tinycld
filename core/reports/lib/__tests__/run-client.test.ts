@@ -1,7 +1,19 @@
 import { QueryClient } from '@tanstack/react-query'
 import { ClientResponseError } from 'pocketbase'
-import { describe, expect, it } from 'vitest'
-import { forgetSavedRuns, isTransientRunError, RUN_QUERY_KEY, refusalOf } from '../run-client'
+import { describe, expect, it, vi } from 'vitest'
+import {
+    fetchParamOptions,
+    forgetSavedRuns,
+    isTransientRunError,
+    PARAM_OPTIONS_PATH,
+    RUN_QUERY_KEY,
+    refusalOf,
+} from '../run-client'
+
+const send = vi.fn()
+vi.mock('@tinycld/core/lib/pocketbase', () => ({
+    pb: { send: (...args: unknown[]) => send(...args) },
+}))
 
 const refused = (status: number, body: Record<string, unknown> = {}) =>
     new ClientResponseError({ status, response: { status, ...body } })
@@ -65,6 +77,28 @@ describe('isTransientRunError', () => {
         expect(isTransientRunError(refused(500))).toBe(true)
         expect(isTransientRunError(refused(404))).toBe(false)
         expect(isTransientRunError(new Error('boom'))).toBe(false)
+    })
+})
+
+describe('fetchParamOptions', () => {
+    it('posts the request to the param-options route and returns the page', async () => {
+        const page = {
+            options: [{ value: 'a', label: 'Bank', group: 'cash' }],
+            groups: [{ value: 'cash', label: 'Cash' }],
+            groupsCut: true,
+            next: 'c1',
+        }
+        send.mockResolvedValueOnce(page)
+        const signal = new AbortController().signal
+        const body = { reportId: 'r1', param: 'accounts', search: 'ba', today: '2026-11-01' }
+        await expect(fetchParamOptions(body, signal)).resolves.toEqual(page)
+        expect(send).toHaveBeenCalledWith(PARAM_OPTIONS_PATH, {
+            method: 'POST',
+            body,
+            signal,
+            requestKey: null,
+        })
+        expect(PARAM_OPTIONS_PATH).toBe('/api/reports/param-options')
     })
 })
 

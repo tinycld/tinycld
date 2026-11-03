@@ -1,82 +1,22 @@
-import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { NumberInput, TextInput, useForm, useWatch, zodResolver } from '@tinycld/core/ui/form'
 import { Popover } from '@tinycld/core/ui/popover'
-import { Check } from 'lucide-react-native'
 import type { ReactElement } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { ScrollView, View } from 'react-native'
+import type { OptionsSource } from '../hooks/useParamOptions'
+import { textFromCents } from '../lib/money'
 import {
+    type AmountValue,
+    amountParamValue,
+    amountValueSchema,
     choicesSchema,
     type NumberValue,
     numberValueSchema,
     textValueSchema,
 } from '../lib/param-forms'
-import type { ParamValue } from '../lib/params'
-import type { ParamDef } from '../lib/spec'
-import { REPORT_TAP_TARGET } from './ReportHeader'
+import { ApplyButton, type BodyProps, LIST_STYLE, OptionRow } from './ParamPickerParts'
+import { SourceChoiceBody } from './SourceChoicePicker'
 
 const PICKER_WIDTH = 340
-const LIST_STYLE = { maxHeight: 360 }
-const TARGET_STYLE = { minHeight: REPORT_TAP_TARGET }
-
-function ApplyButton({ isDisabled, onPress }: { isDisabled: boolean; onPress: () => void }) {
-    return (
-        <View className="border-t border-border pt-2">
-            <Button
-                testID="report-filter-apply"
-                style={TARGET_STYLE}
-                isDisabled={isDisabled}
-                onPress={onPress}
-            >
-                <ButtonText>Apply</ButtonText>
-            </Button>
-        </View>
-    )
-}
-
-function CheckMark({ isVisible }: { isVisible: boolean }) {
-    const color = useThemeColor('primary-foreground')
-    if (!isVisible) return null
-    return <Check size={14} color={color} />
-}
-
-interface OptionRowProps {
-    value: string
-    label: string
-    isChecked: boolean
-    isRadio: boolean
-    onPress: () => void
-}
-
-function OptionRow({ value, label, isChecked, isRadio, onPress }: OptionRowProps) {
-    const tone = isChecked ? 'border-primary bg-primary' : 'border-border bg-transparent'
-    const shape = isRadio ? 'rounded-full' : 'rounded'
-    const role = isRadio ? 'radio' : 'checkbox'
-    return (
-        <Pressable
-            testID={`report-filter-option-${value}`}
-            accessibilityRole={role}
-            accessibilityState={{ checked: isChecked }}
-            aria-checked={isChecked}
-            onPress={onPress}
-            className="flex-row items-center gap-3 rounded-md px-2"
-            style={TARGET_STYLE}
-        >
-            <View className={`h-5 w-5 items-center justify-center border ${shape} ${tone}`}>
-                <CheckMark isVisible={isChecked} />
-            </View>
-            <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground">
-                {label}
-            </Text>
-        </Pressable>
-    )
-}
-
-interface BodyProps {
-    def: ParamDef
-    value: ParamValue | null
-    onApply(value: ParamValue): void
-}
 
 // One choice applies when it is pressed.
 function SingleChoiceBody({ def, value, onApply }: BodyProps) {
@@ -179,11 +119,59 @@ function NumberBody({ def, value, onApply }: BodyProps) {
     )
 }
 
-function PickerBody({ isVisible, ...props }: BodyProps & { isVisible: boolean }) {
+// An amount in a currency (R29): a blank currency compares with an amount in any.
+function AmountBody({ def, value, onApply }: BodyProps) {
+    const current = value?.kind === 'amount' ? value : null
+    const form = useForm<AmountValue>({
+        resolver: zodResolver(amountValueSchema),
+        mode: 'onChange',
+        defaultValues: {
+            amount: current ? textFromCents(current.cents) : '',
+            currency: current?.currency ?? '',
+        },
+    })
+    const apply = () => void form.handleSubmit(submitted => onApply(amountParamValue(submitted)))()
+    return (
+        <View className="gap-2">
+            <TextInput
+                name="amount"
+                control={form.control}
+                label={def.label ?? 'Amount'}
+                keyboardType="decimal-pad"
+                testID="report-filter-value"
+                onSubmitEditing={apply}
+            />
+            <TextInput
+                name="currency"
+                control={form.control}
+                label="Currency"
+                autoCapitalize="characters"
+                placeholder="Any currency"
+                maxLength={3}
+                testID="report-filter-currency"
+                onSubmitEditing={apply}
+            />
+            <ApplyButton isDisabled={!form.formState.isValid} onPress={apply} />
+        </View>
+    )
+}
+
+interface PickerBodyProps extends BodyProps {
+    isVisible: boolean
+    source: OptionsSource | null
+    params: Record<string, unknown>
+}
+
+function PickerBody({ isVisible, source, params, ...props }: PickerBodyProps) {
     if (!isVisible) return null
-    if (props.def.type === 'choice' && props.def.multiple) return <MultiChoiceBody {...props} />
-    if (props.def.type === 'choice') return <SingleChoiceBody {...props} />
-    if (props.def.type === 'number') return <NumberBody {...props} />
+    const { def } = props
+    if (def.type === 'choice' && def.optionsFrom && source) {
+        return <SourceChoiceBody {...props} source={source} params={params} />
+    }
+    if (def.type === 'choice' && def.multiple) return <MultiChoiceBody {...props} />
+    if (def.type === 'choice') return <SingleChoiceBody {...props} />
+    if (def.type === 'amount') return <AmountBody {...props} />
+    if (def.type === 'number') return <NumberBody {...props} />
     return <TextBody {...props} />
 }
 
@@ -191,16 +179,22 @@ interface ParamPickerProps extends BodyProps {
     trigger: ReactElement
     isOpen: boolean
     onOpenChange(open: boolean): void
+    /** Where a choice from a source reads its options; null while the report loads. */
+    source: OptionsSource | null
+    /** The run's other params, which an options filter may read. */
+    params: Record<string, unknown>
+    title?: string
 }
 
-// The picker of a choice, text or number param. Closing without Apply changes nothing.
-export function ParamPicker({ trigger, isOpen, onOpenChange, ...body }: ParamPickerProps) {
+// The picker of a choice, text, number or amount param. Closing without Apply
+// changes nothing. On a phone it is a bottom sheet.
+export function ParamPicker({ trigger, isOpen, onOpenChange, title, ...body }: ParamPickerProps) {
     return (
         <Popover
             trigger={trigger}
             isOpen={isOpen}
             onOpenChange={onOpenChange}
-            title={body.def.label ?? 'Filter'}
+            title={title ?? body.def.label ?? 'Filter'}
             sheetSide="bottom"
             width={PICKER_WIDTH}
             testID="report-filter-picker"
@@ -208,4 +202,9 @@ export function ParamPicker({ trigger, isOpen, onOpenChange, ...body }: ParamPic
             <PickerBody isVisible={isOpen} {...body} />
         </Popover>
     )
+}
+
+/** The searching record picker over a source, for the builder's record values (R19). */
+export function SourcePicker(props: ParamPickerProps & { source: OptionsSource }) {
+    return <ParamPicker {...props} />
 }

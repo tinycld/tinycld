@@ -20,14 +20,65 @@ type compiler struct {
 	// currencyOf maps a money column's id to its currency: a currency key
 	// of w, or a source's fixed currency.
 	currencyOf map[string]currency
+	// valueCur maps a carried currency's id (a record's or a looked-up row's
+	// own currency) to the currency key of w that holds it, for every such
+	// amount read inside a total.
+	valueCur map[string]string
+	// valueCurErr is why a carried currency read inside a total got no key:
+	// its record leaf or lookup does not compile.
+	valueCurErr map[string]error
+	// sectionCur is each column's currency on a first-level group row, which
+	// a layout's section subtotal reads.
+	sectionCur map[string]currency
+	// carried holds the columns whose cells carry their own currency on some
+	// row (vcur<idx>, the cell <id>@currency).
+	carried map[string]bool
 	// detailTypes and levelTypes are each column's type on detail rows
 	// and on group, subtotal and total rows.
 	detailTypes map[string]FieldType
 	levelTypes  map[string]FieldType
+	// groupTargets is the source each group's key links to (nil for a group
+	// that is not by a link).
+	groupTargets []*Source
+	// groupOptions are the options of each group whose key is a select's
+	// value; groupShown marks a group whose key mixes a select's values with
+	// other text, whose shown form w holds as kl<n>. Such groups are shown,
+	// and ordered, by their option labels.
+	groupOptions [][]Option
+	groupShown   []bool
+	// labels is each group's label as it compiled: its type and, for an
+	// amount, its currency. It outlives a statement (assembly reads it after
+	// every pass), so rows() leaves it.
+	labels []labelPlan
+	// formulaOptions holds the options of each formula column whose value is
+	// a select's, so its cells and group labels show option labels.
+	formulaOptions map[string][]Option
+	// detailLabel is what the report's detail label compiled to (the detail
+	// select's __label); nil when the first column labels detail rows.
+	detailLabel *labelPlan
+	// labelTypes holds the type of the record label of each column whose
+	// values point at a record (vl<idx>, the cell <id>@label).
+	labelTypes map[string]FieldType
+	// fillSets names the keyset CTE (f<L>) of each level whose group fills in
+	// its records (fillKeys); the level below joins its records to its rows.
+	fillSets map[int]string
+	// expanding holds the params whose group references are being expanded,
+	// so options whose where reads such a param back are refused, not
+	// expanded forever.
+	expanding map[string]bool
+}
+
+// labelPlan is what a group's label compiled to. recordCurrency says an
+// amount label carries its own currency (a record's, or a looked-up row's),
+// which each row holds (__labelcur).
+type labelPlan struct {
+	typ            FieldType
+	cur            currency
+	recordCurrency bool
 }
 
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
-	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}}
+	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, valueCur: map[string]string{}, valueCurErr: map[string]error{}, sectionCur: map[string]currency{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}, expanding: map[string]bool{}}
 	if app != nil {
 		c.fiscal = fiscalStartOf(p.base, app)
 	}
@@ -67,32 +118,12 @@ type rowsCTE struct {
 
 func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	// Each statement builds its own w; the currency keys come out the same.
-	c.currencies, c.currencyOf = nil, map[string]currency{}
+	c.currencies, c.currencyOf, c.valueCur, c.valueCurErr = nil, map[string]currency{}, map[string]string{}, map[string]error{}
 	r := &rowsCTE{c: c, s: s, root: newScope(s, c.p.base), raw: map[string]string{}, byExpr: map[string]string{}}
 	r.add("__id", q(r.root.alias, "id"))
-	if f := c.p.spec.Filter; f != nil {
-		e, err := compileFormula(r.join(true), f, "filter")
-		if err != nil {
-			return nil, err
-		}
-		if e.typ != Bool {
-			return nil, invalid("filter", "the filter is a condition")
-		}
-		r.filter = e.sql
-	}
-	for i, g := range c.p.groups {
-		e, err := r.rowValue(g.col, g.at+".col", map[string]bool{})
-		if err != nil {
-			return nil, err
-		}
-		if g.group.Bucket != "" {
-			if e.typ != Date && e.typ != DateTime {
-				return nil, invalid(g.at+".bucket", "only a date column has a bucket")
-			}
-			e.sql = bucketSQL(r.join(false), g.group.Bucket, e.sql)
-		}
-		r.add(fmt.Sprintf("k%d", i), e.sql)
-	}
+	// The currency keys of the amounts the report reads by path come first, so
+	// a group key, the filter and a fill that read one of them have its key
+	// (joinCtx.path).
 	for _, cp := range c.p.cols {
 		if cp.path == nil || cp.nest > 0 {
 			continue
@@ -110,41 +141,202 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	for _, cp := range c.p.cols {
 		r.formulaCurrencies(cp.col.Formula)
 	}
+	for _, g := range c.p.groups {
+		r.formulaCurrencies(g.group.Label)
+		r.formulaCurrencies(g.group.Having)
+	}
+	for _, s := range c.p.sort {
+		r.formulaCurrencies(s.formula)
+	}
+	if d := c.p.spec.Detail; d != nil {
+		r.formulaCurrencies(d.Label)
+	}
+	c.groupTargets = make([]*Source, len(c.p.groups))
+	c.groupOptions, c.groupShown = make([][]Option, len(c.p.groups)), make([]bool, len(c.p.groups))
+	for i, g := range c.p.groups {
+		e, err := r.rowValue(g.col, g.at+".col", map[string]bool{})
+		if err != nil {
+			return nil, err
+		}
+		if g.group.Bucket != "" {
+			if e.typ != Date && e.typ != DateTime {
+				return nil, invalid(g.at+".bucket", "only a date column has a bucket")
+			}
+			e.sql = bucketSQL(r.join(false), g.group.Bucket, e.sql)
+		}
+		if g.group.Bucket == "" {
+			c.groupTargets[i], c.groupOptions[i] = e.target, e.options
+			// A key that mixes a select's values with other text is shown, and
+			// its groups ordered, by its shown form, which w keeps beside it.
+			if e.shown != "" {
+				r.add(fmt.Sprintf("kl%d", i), e.shown)
+				c.groupShown[i] = true
+			}
+		}
+		// A group by an amount that carries its own currency (a looked-up
+		// row's, or a path's read beside it) groups by that currency too: 300
+		// USD and 300 EUR are two groups.
+		if e.typ == Money && e.cur.sql != "" && e.cur.id != "" {
+			r.currencyKey(e.cur.id, e.cur.sql)
+		}
+		r.add(fmt.Sprintf("k%d", i), e.sql)
+	}
+	// The filter compiles once the currency keys are known, so an amount it
+	// reads by path has the key a column of it has (joinCtx.path).
+	if f := c.p.spec.Filter; f != nil {
+		e, err := compileFormula(r.join(true), f, "filter")
+		if err != nil {
+			return nil, err
+		}
+		if e.typ != Bool {
+			return nil, invalid("filter", "the filter is a condition")
+		}
+		r.filter = e.sql
+	}
+	r.valueCurrencies()
 	r.pivotKey()
 	return r, nil
+}
+
+// valueCurrencies adds a currency key to w for every record or looked-up
+// amount with a per-row currency read inside a total (an aggregate, a running
+// value or a percent, directly or through a column it reads): a total groups
+// by its currency as by a path amount's (R3). Read outside a total, such an
+// amount carries its currency by subquery and needs no key. A record key reads
+// the group key's own expression, so the group keys are in w by now.
+func (r *rowsCTE) valueCurrencies() {
+	seen := map[string]bool{}
+	var walk func(n *Node, at string, inTotal bool)
+	walk = func(n *Node, at string, inTotal bool) {
+		if n == nil {
+			return
+		}
+		switch {
+		case inTotal && (n.Record != "" || n.Op == "lookup"):
+			r.valueCurrencyKey(n, at)
+		case inTotal && n.Col != "" && !seen[n.Col]:
+			// A formula column read inside a total is read per base row.
+			if cp := r.c.p.byID[n.Col]; cp != nil && cp.col.Formula != nil && cp.col.Aggregate == "" {
+				seen[n.Col] = true
+				walk(cp.col.Formula, cp.at+".formula", true)
+			}
+		}
+		inTotal = inTotal || aggregateOp(n) || windowOp(n)
+		for i, a := range n.Args {
+			walk(a, fmt.Sprintf("%s.args.%d", at, i), inTotal)
+		}
+	}
+	// A "rows" column adds its cells up, so it is a total too.
+	for _, cp := range r.c.p.cols {
+		walk(cp.col.Formula, cp.at+".formula", cp.col.Aggregate != "" || cp.col.Total == TotalRows)
+	}
+	for _, g := range r.c.p.groups {
+		walk(g.group.Label, g.at+".label", false)
+		walk(g.group.Having, g.at+".having", false)
+	}
+	for _, s := range r.c.p.sort {
+		walk(s.formula, s.at, false)
+	}
+	if d := r.c.p.spec.Detail; d != nil {
+		walk(d.Label, "detail.label", false)
+	}
+}
+
+// windowOp is true for an operator that sums the rows a report shows.
+func windowOp(n *Node) bool {
+	switch n.Op {
+	case "runningSum", "percentOfParent", "percentOfTotal":
+		return true
+	}
+	return false
+}
+
+// valueCurrencyKey compiles a record leaf or a lookup (at) inside w and keeps
+// its carried currency as a currency key. One that does not compile is
+// reported by the compile that follows, where it is; its error is kept, so a
+// total that then finds no key for its currency names the real cause
+// (totalCurrency).
+func (r *rowsCTE) valueCurrencyKey(n *Node, at string) {
+	id := lookupCurrencyID(n)
+	if n.Record != "" {
+		id = recordCurrencyID(n.Record, n.Path)
+	}
+	if _, seen := r.c.valueCur[id]; seen {
+		return
+	}
+	j := r.join(false)
+	j.records = true
+	e, err := compileFormula(j, n, at)
+	if err != nil {
+		r.c.valueCurErr[id] = err
+		return
+	}
+	if e.typ == Money && e.cur.sql != "" && e.cur.id == id {
+		r.currencyKey(id, e.cur.sql)
+	}
+}
+
+// currencyKey keeps a carried currency (id) in w as a currency key every
+// total groups by, once.
+func (r *rowsCTE) currencyKey(id, sql string) {
+	if _, seen := r.c.valueCur[id]; seen {
+		return
+	}
+	r.c.valueCur[id] = r.currencyColumn(sql)
+}
+
+// currencyColumn is the currency key of w that holds sql, added once: one
+// currency read the same way is one key, however it was reached.
+func (r *rowsCTE) currencyColumn(sql string) string {
+	if name, seen := r.byExpr[sql]; seen {
+		return name
+	}
+	name := fmt.Sprintf("ck%d", len(r.c.currencies))
+	r.byExpr[sql] = name
+	r.add(name, sql)
+	r.c.currencies = append(r.c.currencies, name)
+	return name
 }
 
 // pathCurrency is the currency of a to-one path's amount: its currency
 // field, kept in w as a currency key every total groups by, or its source's
 // fixed currency.
 func (r *rowsCTE) pathCurrency(p *pathPlan) currency {
-	f := p.field
+	sql, fixed := amountCurrencyOf(r.root, p.hops, p)
 	switch {
-	case f.Type != Money:
-		return currency{}
-	case f.Currency != "":
-		sql := fieldSQL(r.root.join(p.hops), p.src.field(f.Currency))
-		name, seen := r.byExpr[sql]
-		if !seen {
-			name = fmt.Sprintf("ck%d", len(r.c.currencies))
-			r.byExpr[sql] = name
-			r.add(name, sql)
-			r.c.currencies = append(r.c.currencies, name)
-		}
-		return currency{key: name}
-	case p.src.Currency != nil:
-		return currency{fixed: p.src}
+	case sql != "":
+		return currency{key: r.currencyColumn(sql)}
+	case fixed != nil:
+		return currency{fixed: fixed}
 	}
 	return currency{}
 }
 
+// amountCurrencyOf is where the currency of p's amount, read in sc after hops,
+// comes from: the SQL of its currency field read beside it, or its source's
+// fixed currency. Neither for a value that is not an amount, or an amount
+// with no currency.
+func amountCurrencyOf(sc *scope, hops []hopPlan, p *pathPlan) (string, *Source) {
+	f := p.field
+	switch {
+	case f.Type != Money:
+		return "", nil
+	case f.Currency != "":
+		return fieldSQL(sc.join(hops), p.src.field(f.Currency)), nil
+	case p.src.Currency != nil:
+		return "", p.src
+	}
+	return "", nil
+}
+
 // formulaCurrencies adds the currency key of every amount a formula reads by
-// path. A path that does not bind is reported when the formula compiles.
+// path. A path that does not bind is reported when the formula compiles. A
+// record leaf's path is on its group's target, not on the base source.
 func (r *rowsCTE) formulaCurrencies(n *Node) {
 	if n == nil {
 		return
 	}
-	if n.Path != nil {
+	if n.Path != nil && n.Record == "" {
 		if bound, err := bindValuePath(r.c.p.app, r.c.p.base, n.Path, "", pathValue); err == nil {
 			r.pathCurrency(bound)
 		}
@@ -174,6 +366,9 @@ func (r *rowsCTE) colValue(cp *colPlan) expr {
 		typ = aggregateType(cp.col.Aggregate, typ, cp.scale)
 	}
 	ref := withCurrency(expr{sql: "w." + name, typ: typ}, r.c.currencyOf[cp.col.ID])
+	if cp.tm < 0 {
+		ref.target, ref.options = cp.path.target, optionsOf(cp.path.field)
+	}
 	if _, ok := r.raw[name]; ok {
 		return ref
 	}

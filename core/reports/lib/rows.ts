@@ -1,4 +1,4 @@
-import type { CellValue, Notice, ResultColumn, ResultRow, RunResult } from './types'
+import type { CellValue, Notice, ResultRow, RunResult } from './types'
 
 // The rows of a run as the table draws them. Groups load lazily on the server
 // (options.expand), so a closed group's children are simply not in the result:
@@ -14,28 +14,27 @@ export type VisibleRow = {
 
 const NO_CELLS: Record<string, CellValue> = {}
 
-// The engine labels a nested child row with its nest level's first column: the first
-// result column the row has a cell for. That cell would repeat the label, so it is
-// left out. Every result column counts, hidden or not, as it does for the engine.
-function childCells(row: ResultRow, columns: readonly ResultColumn[]) {
-    const labelColumn = columns.find(column => column.id in row.cells)
+// The engine names the column whose cell a detail row's label repeats
+// (labelColumn): the first column, a child row's level's first column, or the
+// column a detail label of exactly {col} reads. The label already shows it, so
+// that cell is left out. A label that repeats no cell (any other detail label
+// formula) leaves every cell.
+function unlabelledCells(row: ResultRow) {
+    const { labelColumn } = row
     if (!labelColumn) return row.cells
-    return Object.fromEntries(Object.entries(row.cells).filter(([id]) => id !== labelColumn.id))
+    return Object.fromEntries(Object.entries(row.cells).filter(([id]) => id !== labelColumn))
 }
 
-function rowCells(row: ResultRow, columns: readonly ResultColumn[], withSubtotal: Set<string>) {
+function rowCells(row: ResultRow, withSubtotal: Set<string>) {
     if (row.kind === 'group' && withSubtotal.has(row.id)) return NO_CELLS
-    if (row.parent !== undefined) return childCells(row, columns)
+    if (row.kind === 'detail') return unlabelledCells(row)
     return row.cells
 }
 
 // A figure is never shown twice (the report shell's rule): a group row that its own
 // subtotal row follows shows no figures (a closed group with no subtotal row keeps
-// its figures), and a child row shows its label once, not again in a cell.
-export function visibleRows(
-    rows: readonly ResultRow[],
-    columns: readonly ResultColumn[]
-): VisibleRow[] {
+// its figures), and a detail row shows its label once, not again in a cell.
+export function visibleRows(rows: readonly ResultRow[]): VisibleRow[] {
     const withSubtotal = new Set(
         rows.flatMap(row => (row.kind === 'subtotal' && row.section ? [row.section] : []))
     )
@@ -43,16 +42,21 @@ export function visibleRows(
         const isGroup = row.kind === 'group'
         return {
             row,
-            cells: rowCells(row, columns, withSubtotal),
+            cells: rowCells(row, withSubtotal),
             isToggle: isGroup && row.canExpand === true,
             isOpen: isGroup && row.expanded === true,
         }
     })
 }
 
-/** Which groups a run opens: every one, or those whose group keys are listed. */
-export type Expansion = { all: boolean; keys: readonly unknown[][] }
+/**
+ * Which groups a run opens: every one, those whose keys are listed, or — on the
+ * first run, before any press — the levels the report marks open (the engine's
+ * default, sent as no expand at all).
+ */
+export type Expansion = { all: boolean; keys: readonly unknown[][]; isDefault?: boolean }
 
+export const DEFAULT_EXPANSION: Expansion = { all: false, keys: [], isDefault: true }
 export const NO_EXPANSION: Expansion = { all: false, keys: [] }
 export const EXPAND_ALL: Expansion = { all: true, keys: [] }
 
@@ -77,8 +81,9 @@ export function toggleGroup(
     row: ResultRow,
     rows: readonly ResultRow[]
 ): Expansion {
-    // Under Expand all, the open groups are the ones the result shows open.
-    const current = expansion.all ? openGroupKeys(rows) : [...expansion.keys]
+    // Under Expand all, or the levels the report marks open, the open groups are the
+    // ones the result shows open.
+    const current = expansion.all || expansion.isDefault ? openGroupKeys(rows) : [...expansion.keys]
     const key = row.groupKey ?? []
     if (!row.expanded) {
         const text = keyText(key)
@@ -106,8 +111,10 @@ export function expansionOptions(expansion: Expansion): {
     expand?: unknown[][]
     expandAll?: boolean
 } {
+    if (expansion.isDefault) return {}
     if (expansion.all) return { expandAll: true }
-    return expansion.keys.length > 0 ? { expand: [...expansion.keys] } : {}
+    // An explicit empty list opens nothing, groups marked open included.
+    return { expand: [...expansion.keys] }
 }
 
 /** A result with no detail row and no group row is empty: totals alone do not count. */

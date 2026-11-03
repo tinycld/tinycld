@@ -1,0 +1,192 @@
+{
+    "cases": [
+        {
+            "name": "flows cells into the first free tracks of their line",
+            "tracks": 3,
+            "cells": [
+                { "col": "a", "line": 1, "span": 3 },
+                { "col": "b", "line": 2 },
+                { "col": "c", "line": 2 },
+                { "col": "d", "line": 3 }
+            ],
+            "placed": [
+                { "start": 1, "span": 3, "line": 1, "lines": 1 },
+                { "start": 1, "span": 1, "line": 2, "lines": 1 },
+                { "start": 2, "span": 1, "line": 2, "lines": 1 },
+                { "start": 1, "span": 1, "line": 3, "lines": 1 }
+            ]
+        },
+        {
+            "name": "a flowing cell skips tracks a taller cell above still holds",
+            "tracks": 2,
+            "cells": [
+                { "col": "a", "line": 1, "lines": 2 },
+                { "col": "b", "line": 1 },
+                { "col": "c", "line": 2 }
+            ],
+            "placed": [
+                { "start": 1, "span": 1, "line": 1, "lines": 2 },
+                { "start": 2, "span": 1, "line": 1, "lines": 1 },
+                { "start": 2, "span": 1, "line": 2, "lines": 1 }
+            ]
+        },
+        {
+            "name": "a zero span and zero lines count as one",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "span": 0, "lines": 0 }],
+            "placed": [{ "start": 1, "span": 1, "line": 1, "lines": 1 }]
+        },
+        {
+            "name": "no cells place nothing",
+            "tracks": 2,
+            "cells": [],
+            "placed": []
+        },
+        {
+            "name": "a cell with no room on its line",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "span": 2 }, { "col": "b", "line": 1 }],
+            "problem": { "index": 1, "message": "no room on line 1" }
+        },
+        {
+            "name": "a cell at a start another cell holds",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "lines": 2 }, { "col": "b", "line": 2, "start": 1 }],
+            "problem": { "index": 1, "message": "the cell overlaps another" }
+        },
+        {
+            "name": "a line past the last",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 9 }],
+            "problem": { "index": 0, "message": "line is 1 to 8" }
+        },
+        {
+            "name": "line zero",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 0 }],
+            "problem": { "index": 0, "message": "line is 1 to 8" }
+        },
+        {
+            "name": "negative lines",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "lines": -1 }],
+            "problem": { "index": 0, "message": "lines is 1 to 8" }
+        },
+        {
+            "name": "too many lines",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "lines": 9 }],
+            "problem": { "index": 0, "message": "lines is 1 to 8" }
+        },
+        {
+            "name": "a cell that ends past the last line",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 8, "lines": 2 }],
+            "problem": { "index": 0, "message": "a cell ends by line 8" }
+        },
+        {
+            "name": "a negative span",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "span": -1 }],
+            "problem": { "index": 0, "message": "span is 1 to 2" }
+        },
+        {
+            "name": "a span wider than the tracks",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "span": 3 }],
+            "problem": { "index": 0, "message": "span is 1 to 2" }
+        },
+        {
+            "name": "a start past the last track",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "start": 3 }],
+            "problem": { "index": 0, "message": "the cell does not fit its line" }
+        },
+        {
+            "name": "a start whose span runs past the last track",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "start": 2, "span": 2 }],
+            "problem": { "index": 0, "message": "the cell does not fit its line" }
+        },
+        {
+            "name": "a negative start",
+            "tracks": 2,
+            "cells": [{ "col": "a", "line": 1, "start": -1 }],
+            "problem": { "index": 0, "message": "the cell does not fit its line" }
+        },
+        {
+            "name": "a mid-row cell spanning two lines cuts into side blocks",
+            "tracks": 3,
+            "cells": [
+                { "col": "a", "line": 1 },
+                { "col": "m", "line": 1, "start": 2, "lines": 2 },
+                { "col": "b", "line": 1, "start": 3 },
+                { "col": "c", "line": 2, "start": 1 },
+                { "col": "d", "line": 2, "start": 3 }
+            ],
+            "placed": [
+                { "start": 1, "span": 1, "line": 1, "lines": 1 },
+                { "start": 2, "span": 1, "line": 1, "lines": 2 },
+                { "start": 3, "span": 1, "line": 1, "lines": 1 },
+                { "start": 1, "span": 1, "line": 2, "lines": 1 },
+                { "start": 3, "span": 1, "line": 2, "lines": 1 }
+            ]
+        },
+        {
+            "name": "a pinwheel is refused at its first cell",
+            "tracks": 3,
+            "cells": [
+                { "col": "a", "line": 1, "start": 1, "span": 2 },
+                { "col": "b", "line": 1, "start": 3, "lines": 2 },
+                { "col": "c", "line": 3, "start": 2, "span": 2 },
+                { "col": "d", "line": 2, "start": 1, "lines": 2 },
+                { "col": "e", "line": 2, "start": 2 }
+            ],
+            "problem": {
+                "index": 0,
+                "message": "These cells overlap in a way that can't be laid out; move one cell."
+            }
+        },
+        {
+            "name": "a pinwheel below a cuttable line is refused at its own first cell",
+            "tracks": 3,
+            "cells": [
+                { "col": "h", "line": 1, "span": 3 },
+                { "col": "a", "line": 2, "start": 1, "span": 2 },
+                { "col": "b", "line": 2, "start": 3, "lines": 2 },
+                { "col": "c", "line": 4, "start": 2, "span": 2 },
+                { "col": "d", "line": 3, "start": 1, "lines": 2 },
+                { "col": "e", "line": 3, "start": 2 }
+            ],
+            "problem": {
+                "index": 1,
+                "message": "These cells overlap in a way that can't be laid out; move one cell."
+            }
+        },
+        {
+            "name": "a pinwheel beside a cuttable track is refused at its own first cell",
+            "tracks": 4,
+            "cells": [
+                { "col": "z", "line": 1, "start": 1, "lines": 3 },
+                { "col": "a", "line": 1, "start": 2, "span": 2 },
+                { "col": "b", "line": 1, "start": 4, "lines": 2 },
+                { "col": "c", "line": 3, "start": 3, "span": 2 },
+                { "col": "d", "line": 2, "start": 2, "lines": 2 },
+                { "col": "e", "line": 2, "start": 3 }
+            ],
+            "problem": {
+                "index": 1,
+                "message": "These cells overlap in a way that can't be laid out; move one cell."
+            }
+        },
+        {
+            "name": "a cell may end exactly on the last track",
+            "tracks": 3,
+            "cells": [{ "col": "a", "line": 1, "start": 2, "span": 2 }, { "col": "b", "line": 1 }],
+            "placed": [
+                { "start": 2, "span": 2, "line": 1, "lines": 1 },
+                { "start": 1, "span": 1, "line": 1, "lines": 1 }
+            ]
+        }
+    ]
+}

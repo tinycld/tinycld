@@ -1,4 +1,5 @@
 import { dayWords, isIsoDay, rangeChipText, rangeWords, shortDay } from './dates'
+import { formatMoney } from './money'
 import type { ParamDef } from './spec'
 import type { ResolvedParam } from './types'
 
@@ -46,15 +47,42 @@ export const PRESET_LABELS: Record<Preset, string> = {
     endOfLastFiscalYear: 'End of last fiscal year',
 }
 export const CUSTOM_LABEL = 'Custom'
+/** The most UTF-8 bytes a text param, a choice id or a group value holds (params.go maxParamText). */
 export const MAX_TEXT_PARAM = 500
+/** The most values a multiple choice holds (params.go maxChoiceValues). */
+export const MAX_CHOICE_VALUES = 1000
+/** The most whole groups a choice from a source names (options.go maxOptionGroups). */
+export const MAX_OPTION_GROUPS = 200
 
 export type ParamValue =
     | { kind: 'preset'; preset: Preset }
     | { kind: 'day'; day: string }
     | { kind: 'range'; from: string; to: string }
-    | { kind: 'choice'; values: string[] }
+    // `groups`: whole groups of a choice from a source, by group value, which the
+    // server expands under the reader's rules.
+    | { kind: 'choice'; values: string[]; groups?: string[] }
     | { kind: 'text'; text: string }
     | { kind: 'number'; number: number }
+    // Whole cents in a currency; currency '' is an amount in any currency.
+    | { kind: 'amount'; cents: number; currency: string }
+
+/**
+ * The length of text in UTF-8 bytes, as the engine counts it (Go's len). A lone
+ * surrogate counts 3, as the U+FFFD that JSON decoding puts in its place.
+ */
+export function utf8Length(text: string): number {
+    let bytes = 0
+    for (const char of text) {
+        const code = char.codePointAt(0) ?? 0
+        if (code < 0x80) bytes += 1
+        else if (code < 0x800) bytes += 2
+        else if (code < 0x10000) bytes += 3
+        else bytes += 4
+    }
+    return bytes
+}
+
+const fitsTextParam = (text: string) => utf8Length(text) <= MAX_TEXT_PARAM
 
 /** The values the reader set; a param that is not here takes its default, or is unset. */
 export type ParamValues = Readonly<Record<string, ParamValue>>
@@ -79,12 +107,64 @@ function presetValue(def: ParamDef, raw: unknown): ParamValue | null {
     return preset ? { kind: 'preset', preset } : null
 }
 
+const CURRENCY_CODE = /^[A-Z]{3}$/
+
+/** An amount in a currency, or with currency '' in any: null for cents that are not whole. */
+export function amountValue(cents: number, currency: string): ParamValue | null {
+    if (!Number.isSafeInteger(cents)) return null
+    if (currency !== '' && !CURRENCY_CODE.test(currency)) return null
+    return { kind: 'amount', cents, currency }
+}
+
+// The engine's amount JSON (params.go amountValue): whole cents, or
+// { amount, currency } with the currency optional.
+function amountFromJson(raw: unknown): ParamValue | null {
+    if (typeof raw === 'number') return amountValue(raw, '')
+    if (!isRecord(raw) || typeof raw.amount !== 'number') return null
+    const keys = Object.keys(raw)
+    if (keys.length === 1) return amountValue(raw.amount, '')
+    if (keys.length !== 2 || typeof raw.currency !== 'string' || raw.currency === '') return null
+    return amountValue(raw.amount, raw.currency)
+}
+
 export function rangeValue(from: string, to: string): ParamValue | null {
     return isIsoDay(from) && isIsoDay(to) && from <= to ? { kind: 'range', from, to } : null
 }
 
+const isSourceId = (item: unknown): item is string =>
+    typeof item === 'string' && item.length > 0 && fitsTextParam(item)
+
+// A whole group is posted as {"group": "<group value>"}; '' is the blank group.
+function isGroupRef(item: unknown): item is { group: string } {
+    return (
+        isRecord(item) &&
+        Object.keys(item).length === 1 &&
+        typeof item.group === 'string' &&
+        fitsTextParam(item.group)
+    )
+}
+
+// Its options live in a source the reader's rules filter, so a value is checked by
+// type only; a group reference needs options that have groups (params.go choiceValue).
+function sourceChoiceValue(def: ParamDef, raw: unknown[]): ParamValue | null {
+    const ids: string[] = []
+    const groups: string[] = []
+    const canGroup = (def.optionsFrom?.group?.length ?? 0) > 0
+    for (const item of raw) {
+        if (isSourceId(item)) ids.push(item)
+        else if (canGroup && isGroupRef(item)) groups.push(item.group)
+        else return null
+    }
+    if (ids.length > MAX_CHOICE_VALUES || groups.length > MAX_OPTION_GROUPS) return null
+    if (!def.multiple && (ids.length !== 1 || groups.length > 0)) return null
+    const values = [...new Set(ids)]
+    if (groups.length === 0) return { kind: 'choice', values }
+    return { kind: 'choice', values, groups: [...new Set(groups)] }
+}
+
 function choiceValue(def: ParamDef, raw: unknown): ParamValue | null {
     if (!Array.isArray(raw) || raw.length === 0) return null
+    if (def.optionsFrom) return sourceChoiceValue(def, raw)
     const offered = (def.options ?? []).map(option => option.value)
     if (!raw.every(item => typeof item === 'string' && offered.includes(item))) return null
     const values = offered.filter(value => raw.includes(value))
@@ -112,13 +192,15 @@ export function valueFromJson(def: ParamDef, raw: unknown): ParamValue | null {
         case 'choice':
             return choiceValue(def, def.multiple ? raw : [raw])
         case 'text':
-            return typeof raw === 'string' && raw.length <= MAX_TEXT_PARAM
+            return typeof raw === 'string' && fitsTextParam(raw)
                 ? { kind: 'text', text: raw }
                 : null
         case 'number':
             return typeof raw === 'number' && Number.isFinite(raw)
                 ? { kind: 'number', number: raw }
                 : null
+        case 'amount':
+            return amountFromJson(raw)
     }
 }
 
@@ -132,11 +214,16 @@ export function valueToJson(def: ParamDef, value: ParamValue): unknown {
         case 'range':
             return { from: value.from, to: value.to }
         case 'choice':
-            return def.multiple ? value.values : value.values[0]
+            if (!def.multiple) return value.values[0]
+            return [...value.values, ...(value.groups ?? []).map(group => ({ group }))]
         case 'text':
             return value.text
         case 'number':
             return value.number
+        case 'amount':
+            return value.currency === ''
+                ? value.cents
+                : { amount: value.cents, currency: value.currency }
     }
 }
 
@@ -206,17 +293,49 @@ function resolvedDates(resolved: ResolvedParam | undefined): string | null {
     return null
 }
 
-function choiceLabels(def: ParamDef, values: readonly string[]): string {
-    const labels = values.map(
-        value => def.options?.find(option => option.value === value)?.label ?? value
+/**
+ * The shown labels of a choice from a source, which the picker reads from the server:
+ * by value, and a whole group's under `group:<group value>`.
+ */
+export type ChoiceLabels = ReadonlyMap<string, string>
+
+export const groupLabelKey = (group: string) => `group:${group}`
+
+/** A chip names up to this many choices; more are counted ("3 selected"). */
+export const NAMED_CHOICES = 2
+
+/** How many choices a choice value holds: its values and its whole groups. */
+export function choiceCount(value: { values: readonly string[]; groups?: readonly string[] }) {
+    return value.values.length + (value.groups?.length ?? 0)
+}
+
+function choiceLabels(
+    def: ParamDef,
+    value: { values: readonly string[]; groups?: readonly string[] },
+    labels: ChoiceLabels | undefined
+): string {
+    const count = choiceCount(value)
+    const named = value.values.map(
+        item => labels?.get(item) ?? def.options?.find(option => option.value === item)?.label
     )
-    return labels.length <= 2 ? labels.join(', ') : `${labels.length} selected`
+    const groups = (value.groups ?? []).map(group => {
+        const label = labels?.get(groupLabelKey(group))
+        return label === undefined ? undefined : `All ${label}`
+    })
+    const all = [...named, ...groups]
+    // A record of a source is never shown by its id: until its label is read (or
+    // when the reader can no longer list it), the choices are counted.
+    if (count > NAMED_CHOICES || all.some(label => label === undefined)) {
+        return `${count} selected`
+    }
+    return all.join(', ')
 }
 
 export function valueText(
     def: ParamDef,
     value: ParamValue | null,
-    resolved: ResolvedParam | undefined
+    resolved: ResolvedParam | undefined,
+    labels?: ChoiceLabels
 ): string {
     if (!value) return 'Any'
     switch (value.kind) {
@@ -229,20 +348,29 @@ export function valueText(
         case 'range':
             return rangeChipText(value.from, value.to)
         case 'choice':
-            return choiceLabels(def, value.values)
+            return choiceLabels(def, value, labels)
         case 'text':
             return `“${value.text}”`
         case 'number':
             return String(value.number)
+        case 'amount':
+            return amountText(value.cents, value.currency)
     }
+}
+
+// The amount with its currency code before it ("USD 1,500.00"), the amount alone in any currency.
+function amountText(cents: number, currency: string): string {
+    const amount = formatMoney(cents, '')
+    return currency === '' ? amount : `${currency} ${amount}`
 }
 
 export function chipText(
     def: ParamDef,
     value: ParamValue | null,
-    resolved: ResolvedParam | undefined
+    resolved: ResolvedParam | undefined,
+    labels?: ChoiceLabels
 ): string {
-    const text = valueText(def, value, resolved)
+    const text = valueText(def, value, resolved, labels)
     return def.label ? `${def.label}: ${text}` : text
 }
 

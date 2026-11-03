@@ -22,7 +22,15 @@ export type RowKind = 'detail' | 'group' | 'subtotal' | 'computed' | 'total'
 
 export type CellValue = number | string | boolean | null
 
-export const PARAM_TYPES = ['date', 'asOf', 'dateRange', 'choice', 'text', 'number'] as const
+export const PARAM_TYPES = [
+    'date',
+    'asOf',
+    'dateRange',
+    'choice',
+    'text',
+    'number',
+    'amount',
+] as const
 export type ParamType = (typeof PARAM_TYPES)[number]
 
 export interface SelectOption {
@@ -44,7 +52,23 @@ export interface ResultColumn {
     /** The cell that holds each row's currency instead (`<id>@currency`). */
     currencyCell?: string
     mixedCurrency?: boolean
-    pivot?: { cell: string; key: unknown }
+    pivot?: {
+        cell: string
+        key: unknown
+        /** A pivot over a link: its column label typed, as a row's `labelType`. */
+        labelType?: FieldType
+        labelValue?: CellValue
+        labelCurrency?: string
+    }
+    /**
+     * A link column's cell that holds the label of the record each value points at
+     * (`<id>@label`); null for a blank link or a record the reader cannot see. The
+     * label is the label field's stored value, of type `labelType`, formatted as a
+     * cell of that type; an amount's currency is in `labelCurrencyCell`.
+     */
+    labelCell?: string
+    labelType?: FieldType
+    labelCurrencyCell?: string
 }
 
 export interface ResultRow {
@@ -52,6 +76,8 @@ export interface ResultRow {
     kind: RowKind
     depth: number
     label: string
+    /** The column whose cell the label repeats (a child row leaves that cell out). */
+    labelColumn?: string
     /** The group row this row belongs to. */
     section?: string
     /** The row a nested child row hangs under. */
@@ -60,6 +86,15 @@ export interface ResultRow {
     expanded?: boolean
     canExpand?: boolean
     cells: Record<string, CellValue>
+    /**
+     * Set when a group row's label (and its subtotal's), or a detail row's record
+     * label, is not text: format
+     * `labelValue` as a cell of this type (an amount in integer cents, in
+     * `labelCurrency`); `label` is its plain text.
+     */
+    labelType?: FieldType
+    labelValue?: CellValue
+    labelCurrency?: string
 }
 
 export interface Notice {
@@ -77,8 +112,10 @@ export interface ResolvedParam {
     id: string
     type: ParamType
     unset?: boolean
-    value?: string | number
+    value?: string | number | { amount: number; currency: string }
     list?: string[]
+    /** The whole groups a choice from a source picked, by group value; the run expanded them. */
+    groups?: string[]
     from?: string
     to?: string
 }
@@ -93,8 +130,45 @@ export interface RunResult {
     rows: ResultRow[]
     notices: Notice[]
     topics: string[]
+    /** The source's heading, printed above the title; absent: the organization's name. */
+    heading?: string
     page: RunPage | null
     params: ResolvedParam[]
+}
+
+/**
+ * One option of a choice param from a source: the value a run takes, its shown label
+ * and its group's value ('' and absent are the blank group). A typed label (a number,
+ * amount, percent or date) is formatted as a cell of `type`, an amount in `currency`.
+ */
+export interface ParamOption {
+    value: string
+    label: string
+    type?: FieldType
+    currency?: string
+    group?: string
+}
+
+/**
+ * One group of a choice param's options, its label typed as an option's is. A group
+ * read from an amount has the value "<amount> <currency>" (e.g. "300 EUR").
+ */
+export interface ParamOptionGroup {
+    value: string
+    label: string
+    type?: FieldType
+    currency?: string
+}
+
+/** One page of a choice param's options from a source (POST /api/reports/param-options). */
+export interface ParamOptionsPage {
+    options: ParamOption[]
+    /** The groups of every matching option; sent with the first page only. */
+    groups: ParamOptionGroup[]
+    /** The group list stops at the server's cap. */
+    groupsCut?: boolean
+    /** The cursor of the next page; absent on the last. */
+    next?: string
 }
 
 export interface CatalogField {

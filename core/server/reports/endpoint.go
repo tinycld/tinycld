@@ -35,16 +35,18 @@ func sortedKeys(refused map[string]string) []string {
 // refuses, so a broken source never reaches a user; then it ships the
 // packages' reports (ReconcileShipped) and marks every saved report that
 // cannot run (checkSavedAtStart). It serves POST /api/reports/run to
-// signed-in users: a draft spec, or a saved report the caller can view; and
+// signed-in users: a draft spec, or a saved report the caller can view;
+// POST /api/reports/param-options, the options of a choice param read from a
+// source (ReadParamOptions), for the same draft or saved report; and
 // GET /api/reports/sources, the catalog the builder offers (Catalog).
 // Saved reports and their shares are bound by RegisterSharing.
 //
-// The run endpoint is a read endpoint by POST because a draft spec does not
-// fit in a URL. It reads only rows the caller's list rules allow and
-// writes nothing. An OAuth bearer token cannot call it: oauth classifies no
-// scope for it, so it is session-only by default-deny, because a report
-// reads across every package's collections and a token's scopes cover
-// only some.
+// The run and param-options endpoints are read endpoints by POST because a
+// draft spec does not fit in a URL. They read only rows the caller's list
+// rules allow and write nothing. An OAuth bearer token cannot call them:
+// oauth classifies no scope for them, so they are session-only by
+// default-deny, because a report reads across every package's collections
+// and a token's scopes cover only some.
 func Register(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		if err := CheckSources(e.App); err != nil {
@@ -58,6 +60,8 @@ func Register(app core.App) {
 		}
 		checkSavedAtStart(e.App)
 		e.Router.POST("/api/reports/run", handleRun).
+			Bind(apis.RequireAuth("users"), apis.BodyLimit(maxRunBody))
+		e.Router.POST("/api/reports/param-options", handleParamOptions).
 			Bind(apis.RequireAuth("users"), apis.BodyLimit(maxRunBody))
 		e.Router.GET("/api/reports/sources", handleSources).
 			Bind(apis.RequireAuth("users"))
@@ -103,27 +107,14 @@ type runBody struct {
 
 func handleRun(re *core.RequestEvent) error {
 	var body runBody
-	dec := json.NewDecoder(re.Request.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil {
-		return re.BadRequestError("The request is not a report run: "+err.Error(), nil)
+	if err := decodeStrict(re, &body, "a report run"); err != nil {
+		return err
 	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return re.BadRequestError("The request is not a report run: it has data after the first object.", nil)
+	raw, err := requestSpec(re, body.Spec, body.ReportID)
+	if err != nil {
+		return err
 	}
-	raw := []byte(body.Spec)
 	saved := body.ReportID != ""
-	switch {
-	case saved && body.Spec != nil:
-		return re.BadRequestError("The request has a spec or a reportId, not both.", nil)
-	case saved:
-		var err error
-		if raw, err = viewableSpec(re, body.ReportID); err != nil {
-			return err
-		}
-	case body.Spec == nil:
-		return re.BadRequestError("The request has no spec and no reportId.", nil)
-	}
 	spec, loaded, err := Load(raw)
 	if err != nil {
 		return runError(re, err)
@@ -139,6 +130,34 @@ func handleRun(re *core.RequestEvent) error {
 		res.Topics = withSavedTopics(res.Topics)
 	}
 	return re.JSON(http.StatusOK, res)
+}
+
+// decodeStrict reads one JSON object with no unknown field and nothing after
+// it, answering 400 naming what the request should have been.
+func decodeStrict(re *core.RequestEvent, into any, what string) error {
+	dec := json.NewDecoder(re.Request.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(into); err != nil {
+		return re.BadRequestError("The request is not "+what+": "+err.Error(), nil)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return re.BadRequestError("The request is not "+what+": it has data after the first object.", nil)
+	}
+	return nil
+}
+
+// requestSpec is a request's spec: the posted draft, or a saved report's
+// spec read through its view rule. Never both.
+func requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, error) {
+	switch {
+	case reportID != "" && spec != nil:
+		return nil, re.BadRequestError("The request has a spec or a reportId, not both.", nil)
+	case reportID != "":
+		return viewableSpec(re, reportID)
+	case spec == nil:
+		return nil, re.BadRequestError("The request has no spec and no reportId.", nil)
+	}
+	return []byte(spec), nil
 }
 
 const noAccess = "You cannot view this report."

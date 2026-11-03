@@ -55,6 +55,21 @@ function numberFormat(currency: string): Intl.NumberFormat {
     return format
 }
 
+/** Whole cents from an amount typed as "1234.5" or "-0.07"; null for anything else. */
+export function centsFromText(text: string): number | null {
+    const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(text.trim())
+    if (!match) return null
+    const cents = Number(match[2]) * 100 + Number((match[3] ?? '').padEnd(2, '0'))
+    return match[1] ? -cents : cents
+}
+
+/** Whole cents as an amount to type: "1234.50", with no grouping. */
+export function textFromCents(cents: number): string {
+    const magnitude = Math.abs(cents)
+    const text = `${Math.floor(magnitude / 100)}.${String(magnitude % 100).padStart(2, '0')}`
+    return cents < 0 ? `-${text}` : text
+}
+
 export function formatMoney(cents: number, currency: string): string {
     if (!Number.isFinite(cents)) {
         warnOnce('non-finite', 'non-finite amount', { cents })

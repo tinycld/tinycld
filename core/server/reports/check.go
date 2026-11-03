@@ -88,6 +88,17 @@ func checkSource(app core.App, src *Source) []string {
 			problems = append(problems, fmt.Sprintf("link %q: %s", l.Key, msg))
 		}
 	}
+	for _, w := range src.Watch {
+		wc, err := app.FindCollectionByNameOrId(w)
+		switch {
+		case err != nil:
+			problems = append(problems, fmt.Sprintf("watched collection %q does not exist", w))
+		case wc.Name != w:
+			problems = append(problems, fmt.Sprintf("watched collection %q must be named %q, not by id", w, wc.Name))
+		case wc.System:
+			problems = append(problems, fmt.Sprintf("watched collection %q is a system collection", w))
+		}
+	}
 	if msg := checkRule(app, col); msg != "" {
 		problems = append(problems, msg)
 	}
@@ -113,7 +124,11 @@ func checkField(col *core.Collection, f Field) string {
 	if pf.GetHidden() {
 		return fmt.Sprintf("column %q is hidden from the API", f.Column)
 	}
-	if !slices.Contains(compatible[f.Type], pf.Type()) {
+	want := compatible[f.Type]
+	if f.TextDay {
+		want = []string{core.FieldTypeText}
+	}
+	if !slices.Contains(want, pf.Type()) {
 		return fmt.Sprintf("column %q is a %s field, which a %s field cannot read", f.Column, pf.Type(), f.Type)
 	}
 	switch x := pf.(type) {

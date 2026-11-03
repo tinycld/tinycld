@@ -49,22 +49,16 @@ func distinct(rows []map[string]any, key string) []any {
 	return out
 }
 
-// maxNestParents is the most parent ids one nest statement binds. SQLite
-// refuses more than 32,766 variables; the rest are left for the statement's
-// other parameters. The default row cap and page sizes stay under it.
-const maxNestParents = 30000
-
 // nestLevel reads one level's child rows from the child collection's rule
 // CTE (through newScope), under the run's time limit (through rn.query).
 // The level keeps its first rowCap rows in parent id order, so at the cap
-// the children of the highest parent ids are the ones left out.
+// the children of the highest parent ids are the ones left out. The parents
+// are the rows of the page or of the level above, which rowCap bounds, and
+// they bind as one parameter (jsonList), so they need no cap of their own.
 func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) {
 	p := rn.c.p
 	if len(parents) == 0 {
 		return nil, nil
-	}
-	if len(parents) > maxNestParents {
-		return nil, invalid("columns", fmt.Sprintf("the report nests child rows under %d rows; the most is %d: filter the report or lower its row limit", len(parents), maxNestParents))
 	}
 	nl := p.nest[level]
 	link := nl.hops[len(nl.hops)-1]
@@ -77,6 +71,16 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 		rest := &pathPlan{hops: cp.path.hops[len(nl.hops):], field: cp.path.field}
 		v := sc.value(rest).sql
 		sel = append(sel, fmt.Sprintf("%s AS v%d", v, p.index(cp)))
+		if _, ok := rn.c.labelTypes[cp.col.ID]; ok {
+			// Child rows of records read in their labels' order, then by id.
+			// The order reads the selected label by name, so each row's label
+			// is computed once.
+			t, idx := cp.path.target, p.index(cp)
+			f := labelFieldOf(t, p.labelFieldName(cp))
+			sel = append(sel, fmt.Sprintf("%s AS vl%d", labelValueSQL(s, t, f, v), idx), fmt.Sprintf("%s AS vc%d", labelCurrencySQL(s, t, f, v), idx))
+			key := labelOrder(s, fmt.Sprintf("vl%d", idx))
+			order = append(order, "("+key+" IS NULL)", key)
+		}
 		order = append(order, "("+v+" IS NULL)", v)
 		if cur := p.nestCurrency(cp); cur.key != "" {
 			field := cp.path.src.field(cp.path.field.Currency)
@@ -87,13 +91,13 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 		next := p.nest[level+1].hops
 		sel = append(sel, q(sc.join(next[len(nl.hops):len(next)-1]), "id")+" AS __next")
 	}
-	ids := make([]string, len(parents))
-	for i, id := range parents {
-		ids[i] = s.bind(id)
+	ids, err := jsonList(s.bind, parents)
+	if err != nil {
+		return nil, err
 	}
-	body := fmt.Sprintf("SELECT %s\n%s\nWHERE %s IN (%s)\nORDER BY __parent, %s LIMIT %s",
-		strings.Join(sel, ", "), sc.render(), back, strings.Join(ids, ", "),
-		strings.Join(append(order, "__id"), ", "), s.bind(int64(runLimits.rowCap+1)))
+	body := fmt.Sprintf("SELECT %s\n%s\nWHERE %s IN %s\nORDER BY __parent, %s LIMIT %s",
+		strings.Join(sel, ", "), sc.render(), back, ids,
+		strings.Join(append(order, "__id"), ", "), limitSQL(int64(runLimits.rowCap+1)))
 	rows, err := rn.query(s, nil, body)
 	if err != nil {
 		return nil, err
@@ -135,8 +139,13 @@ func (rn *runner) nestedRows(t *tree, level int, parentKey any, parentID, sectio
 			if cur := rn.c.p.nestCurrency(cp); cur.key != "" {
 				cells[cp.col.ID+"@currency"] = row[cur.key]
 			}
+			rn.labelCell(cells, cp, row)
 		}
-		rn.push(Row{ID: id, Kind: KindDetail, Depth: depth, Label: rn.firstLabel(cols, row), Section: section, Parent: parentID, Cells: cells})
+		label := rn.firstLabel(cols, row)
+		rn.push(Row{
+			ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: cols[0].col.ID, Section: section, Parent: parentID, Cells: cells,
+			LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
+		})
 		rn.nestedRows(t, level+1, row["__next"], id, section, depth+1)
 	}
 }

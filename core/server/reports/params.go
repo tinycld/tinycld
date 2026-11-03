@@ -11,7 +11,8 @@ import (
 
 // Param types. date and asOf hold one day (asOf offers as-of presets),
 // dateRange a from and a to day, choice one option (or several with
-// Multiple), text a string, number a number.
+// Multiple), text a string, number a number, amount a whole number of cents
+// in a currency (or in any currency).
 const (
 	ParamDate      = "date"
 	ParamAsOf      = "asOf"
@@ -19,11 +20,14 @@ const (
 	ParamChoice    = "choice"
 	ParamText      = "text"
 	ParamNumber    = "number"
+	ParamAmount    = "amount"
 )
 
 const (
 	maxParams    = 20
 	maxParamText = 500
+	// maxChoiceValues is the most values a multiple choice holds.
+	maxChoiceValues = 1000
 )
 
 var idRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
@@ -43,10 +47,16 @@ type paramValue struct {
 	typ      string
 	multiple bool
 	unset    bool
-	value    any      // a day, a text, a number or one choice
+	value    any      // a day, a text, a number, an amount's cents or one choice
 	list     []string // a multiple choice
-	from     string   // a date range
-	to       string
+	// groups are a multiple choice's group references (R30): every option
+	// of these groups the reader may list, expanded where the param is read
+	// (paramLeaf).
+	groups []string
+	from   string // a date range
+	to     string
+	// currency is an amount's currency code; "" is an amount in any currency.
+	currency string
 }
 
 // periodContext is what a preset is resolved against.
@@ -71,13 +81,13 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 		}
 		seen[d.ID] = true
 		switch d.Type {
-		case ParamDate, ParamAsOf, ParamDateRange, ParamText, ParamNumber:
-			if len(d.Options) > 0 || d.Multiple {
+		case ParamDate, ParamAsOf, ParamDateRange, ParamText, ParamNumber, ParamAmount:
+			if len(d.Options) > 0 || d.OptionsFrom != nil || d.Multiple {
 				return invalid(at, "only a choice param has options")
 			}
 		case ParamChoice:
-			if len(d.Options) == 0 {
-				return invalid(at+".options", "a choice param lists its options")
+			if (len(d.Options) == 0) == (d.OptionsFrom == nil) {
+				return invalid(at+".options", "a choice param lists its options, or names the source they come from")
 			}
 		default:
 			return invalid(at+".type", fmt.Sprintf("unknown param type %q", d.Type))
@@ -127,8 +137,11 @@ type ResolvedParam struct {
 	// omitempty leaves out only a nil interface: a resolved 0 or "" is kept.
 	Value any      `json:"value,omitempty"`
 	List  []string `json:"list,omitempty"`
-	From  string   `json:"from,omitempty"`
-	To    string   `json:"to,omitempty"`
+	// Groups are the group references of a multiple choice from a source,
+	// by group value (R30); the run expanded them under the reader's rules.
+	Groups []string `json:"groups,omitempty"`
+	From   string   `json:"from,omitempty"`
+	To     string   `json:"to,omitempty"`
 }
 
 // resolvedParams lists defs in order with the values a run resolved for them.
@@ -137,8 +150,12 @@ func resolvedParams(defs []ParamDef, values map[string]paramValue) []ResolvedPar
 	for _, d := range defs {
 		v := values[d.ID]
 		rp := ResolvedParam{ID: d.ID, Type: d.Type, Unset: v.unset}
-		if !v.unset {
-			rp.Value, rp.List, rp.From, rp.To = v.value, v.list, v.from, v.to
+		switch {
+		case v.unset:
+		case v.typ == ParamAmount:
+			rp.Value = map[string]any{"amount": v.value, "currency": v.currency}
+		default:
+			rp.Value, rp.List, rp.Groups, rp.From, rp.To = v.value, v.list, v.groups, v.from, v.to
 		}
 		out = append(out, rp)
 	}
@@ -182,15 +199,59 @@ func parseParam(d ParamDef, raw json.RawMessage, pc periodContext, at string) (p
 			return out, invalid(at, "the value is a number")
 		}
 		out.value = numberValue(n)
+	case ParamAmount:
+		cents, cur, ok := amountValue(v)
+		if !ok {
+			return out, invalid(at, `an amount is a whole number of cents up to 2^53-1, or {"amount": cents, "currency": "USD"}`)
+		}
+		out.value, out.currency = cents, cur
 	case ParamChoice:
 		return choiceValue(d, v, at)
 	}
 	return out, nil
 }
 
+var currencyCodeRe = regexp.MustCompile(`^[A-Z]{3}$`)
+
+// maxAmountCents is the largest amount an amount param holds: 2^53-1 cents,
+// the largest whole number a stored amount (a float64) or the shell keeps
+// exact.
+const maxAmountCents = 1<<53 - 1
+
+// amountValue reads an amount param's value: whole cents in any currency, or
+// {"amount": cents, "currency": code} (the amount alone is in any currency).
+func amountValue(v any) (int64, string, bool) {
+	whole := func(n any) (int64, bool) {
+		num, ok := n.(json.Number)
+		if !ok {
+			return 0, false
+		}
+		i, err := num.Int64()
+		return i, err == nil && i >= -maxAmountCents && i <= maxAmountCents
+	}
+	if i, ok := whole(v); ok {
+		return i, "", true
+	}
+	m, ok := v.(map[string]any)
+	if !ok || len(m) > 2 {
+		return 0, "", false
+	}
+	i, ok := whole(m["amount"])
+	cur, _ := m["currency"].(string)
+	if !ok || (len(m) == 2 && !currencyCodeRe.MatchString(cur)) {
+		return 0, "", false
+	}
+	return i, cur, true
+}
+
 func choiceValue(d ParamDef, v any, at string) (paramValue, *SpecError) {
 	out := paramValue{typ: d.Type, multiple: d.Multiple}
 	valid := func(s string) bool {
+		if d.OptionsFrom != nil {
+			// Its options live in a source the reader's rules filter: a run
+			// checks the value's type only (R13).
+			return s != "" && len(s) <= maxParamText
+		}
 		return slices.ContainsFunc(d.Options, func(o Option) bool { return o.Value == s })
 	}
 	if !d.Multiple {
@@ -206,14 +267,37 @@ func choiceValue(d ParamDef, v any, at string) (paramValue, *SpecError) {
 		return out, invalid(at, "the value is a list of the param's options")
 	}
 	for _, item := range items {
+		// A whole group of options from a source is posted as its group's
+		// value; the run expands it, so it has no cap of its own (R30).
+		if m, ok := item.(map[string]any); ok && d.OptionsFrom != nil {
+			g, ok := m["group"].(string)
+			if !ok || len(m) != 1 || len(g) > maxParamText {
+				return out, invalid(at, `a group is {"group": "<group value>"}`)
+			}
+			if len(d.OptionsFrom.Group) == 0 {
+				return out, invalid(at, "the param's options have no groups")
+			}
+			out.groups = append(out.groups, g)
+			continue
+		}
 		s, ok := item.(string)
 		if !ok || !valid(s) {
 			return out, invalid(at, "the value is a list of the param's options")
 		}
 		out.list = append(out.list, s)
 	}
+	if len(out.list) > maxChoiceValues {
+		msg := fmt.Sprintf("the value is a list of at most %d choices", maxChoiceValues)
+		if d.OptionsFrom != nil && len(d.OptionsFrom.Group) > 0 {
+			msg += "; pick a whole group instead"
+		}
+		return out, invalid(at, msg)
+	}
+	if len(out.groups) > maxOptionGroups {
+		return out, invalid(at, fmt.Sprintf("the value holds at most %d groups", maxOptionGroups))
+	}
 	// An empty list is a cleared chip: it filters nothing, as an unset param does.
-	out.unset = len(out.list) == 0
+	out.unset = len(out.list) == 0 && len(out.groups) == 0
 	return out, nil
 }
 
@@ -341,39 +425,35 @@ func asOfDay(preset string, pc periodContext) string {
 }
 
 // paramExpr is a resolved param as a formula leaf.
-func paramExpr(c fctx, v paramValue) expr {
+func paramExpr(c fctx, v paramValue) (expr, error) {
 	switch v.typ {
 	case ParamDateRange:
 		if v.unset {
-			return expr{rng: true, lo: "NULL", hi: "NULL", unset: true}
+			return expr{rng: true, lo: "NULL", hi: "NULL", unset: true}, nil
 		}
-		return expr{rng: true, lo: c.bind(v.from), hi: c.bind(v.to)}
+		return expr{rng: true, lo: c.bind(v.from), hi: c.bind(v.to)}, nil
 	case ParamChoice:
 		if v.multiple {
-			parts := make([]any, len(v.list))
-			for i, s := range v.list {
-				parts[i] = s
+			list, err := jsonList(c.bind, texts(v.list))
+			if err != nil {
+				return expr{}, err
 			}
-			return expr{sql: bindList(c, parts), typ: Text, list: true, unset: v.unset}
+			return expr{sql: list, typ: Text, list: true, unset: v.unset}, nil
 		}
+	case ParamAmount:
+		if v.unset {
+			return expr{sql: "NULL", typ: Money, unset: true}, nil
+		}
+		e := expr{sql: c.bind(v.value), typ: Money}
+		// An amount in any currency has none, as a plain number has none.
+		if v.currency != "" {
+			e.cur = currency{param: v.currency, id: "param:" + v.currency}
+		}
+		return e, nil
 	}
 	typ := map[string]FieldType{ParamDate: Date, ParamAsOf: Date, ParamText: Text, ParamNumber: Number, ParamChoice: Text}[v.typ]
 	if v.unset {
-		return expr{sql: "NULL", typ: typ, unset: true}
+		return expr{sql: "NULL", typ: typ, unset: true}, nil
 	}
-	return expr{sql: c.bind(v.value), typ: typ}
-}
-
-func bindList(c fctx, values []any) string {
-	if len(values) == 0 {
-		return "()"
-	}
-	out := "("
-	for i, v := range values {
-		if i > 0 {
-			out += ", "
-		}
-		out += c.bind(v)
-	}
-	return out + ")"
+	return expr{sql: c.bind(v.value), typ: typ}, nil
 }

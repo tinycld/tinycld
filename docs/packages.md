@@ -913,6 +913,7 @@ runtime. The registries that exist:
 | how to move ownership a flat FK rewrite cannot settle on offboarding | `offboard.RegisterHandler` |
 | which collections to audit-log | `audit.RegisterCollection` |
 | which view collections stay live, and the collections their SQL reads | `changesignal.RegisterView` |
+| which collections a stored virtual table holds (a full-text index), so a report or a view may read it | `changesignal.RegisterVirtualTable` (`fts.RegisterSync` calls it for each index) |
 | which of its collections reports may read, with their fields and links (see "Report sources" below) | `reports.RegisterSource` |
 | the reports it ships, published to every user (see "Shipped and saved reports" below) | `reports.RegisterShipped` |
 | a package membership table that carries group grants | `groups.RegisterGrantTable` |
@@ -1067,6 +1068,39 @@ when its bytecode opens a table, or an index of a table, that the
 registration does not cover. It also fails when the view or a source is
 registered by an id or by a spelling other than the collection's name.
 
+**Virtual tables.** A report or a view may read a table-valued function
+such as `json_each` or `json_tree`. It holds no stored rows, so it adds no
+topic. A stored virtual table, such as an FTS5 index, is different: its rows
+change when its source collection changes. Map it to that collection from
+the package's `Register(app)`:
+
+```go
+changesignal.RegisterVirtualTable("fts_zoo_animals", "zoo_animals")
+```
+
+`RegisterVirtualTable(table, collections...)` follows the same rules as
+`RegisterView`: it takes collection names, not ids, and the list you give is
+authoritative. A statement that reads the table reads those collections, so a
+live report gets their topics, and a view over it must list them in
+`RegisterView`. `fts` registers each index automatically, so a package with an
+`fts` config has nothing to add.
+
+Report and view SQL may read table-valued functions such as `json_each`. A
+stored virtual table must be mapped, or the query is refused with an error
+that names the table. Temp and attached virtual tables are covered only when
+the check and the statement run in one transaction.
+
+SQLite's bytecode does not name the virtual table it opens, so the check
+reads names. When a statement opens a virtual table, every identifier in
+its SQL, and in the SQL of each view it names, is compared with the stored
+virtual tables in the schema of every database the connection holds (main,
+temp and each attached one; temp views count too). A name inside a dbx
+`{{table}}` or `[[alias.column]]` marker is read whole, as dbx quotes it.
+The scan is conservative: a column or an
+alias spelled like a stored virtual table counts as a read of it. A false
+hit makes the statement need the mapping (or be refused); it never misses a
+topic.
+
 ### Report sources
 
 Core's report engine (`tinycld.org/core/reports`) runs reports over every
@@ -1106,6 +1140,27 @@ reports.RegisterSource(reports.Source{
   (`"old": "new"`). Saved reports then keep working.
 - `FiscalStartMonth` (1 to 12) sets the fiscal year for the source's reports:
   the fiscal presets, `fiscalYear` and `fiscalPeriod`.
+- `Heading` returns the name a report on this base source prints above its
+  title. The result carries it as `heading` (trimmed); nil leaves it empty,
+  and the shell prints the organization's name. Every reader of the report
+  sees it: `Heading` runs with the app, not under the reader's rules, so it
+  must return no data that some readers may not see.
+- `Watch` names the collections that `Heading`, `FiscalStartMonth` and
+  `Currency` read. A run that reads this source also subscribes to them, so a
+  change there runs an open report again. The start check refuses a watched
+  collection that does not exist, is named by id, or is a system collection.
+- `Field.TextDay` makes a `Date` field read a text column that holds a day as
+  `YYYY-MM-DD`. Filters, buckets, presets and pivots treat it as a date.
+  `CheckSources` refuses `TextDay` on any other type, and on a column that is
+  not text.
+- A path that ends at a to-one link, or at the `id` field, is a relation
+  value: it carries the target source. A formula, filter or column may use it
+  as a value (the linked record's id; blank when the reader cannot see it).
+- A group whose column is a relation value is a record group. Its row shows
+  the record's label: by default the target's first text field, else its
+  first other field that is not a relation or `id`, else the source's own
+  name. Set the column's `labelField` or a `groups[].label` formula to show
+  another field.
 
 When the server starts, core checks every source against the database:
 
@@ -1168,8 +1223,6 @@ away before the run ends.
   are inlined. All computed rows together hold at most 20,000 (counted for
   every cell column). If a statement hits a cap, reference fewer earlier rows
   or split the statement.
-- A nested report refuses more than 30,000 parent rows. Filter the report or
-  lower its row limit.
 - The package slug `reports` is refused by the OAuth registry: its
   `/api/reports/` routes belong to core.
 
@@ -1195,6 +1248,40 @@ away before the run ends.
   and `or` leave that condition out. A `not`, or an `exists` whose `where` is
   only such conditions, also matches every row. A parameter with a default
   takes the default when nothing is posted.
+
+**Spec version 2.** `reports.CurrentVersion` is 2. Every new field is
+optional, and a stored version 1 spec loads unchanged (the upgrade step
+changes nothing). A version 2 spec sent to an older server is refused by its
+version.
+
+| Field | What it does |
+|---|---|
+| `columns[].total` | `"recompute"` (default) totals every row the filter keeps. `"rows"` adds the rows the result shows, after `having`. Only for number and amount columns. |
+| `columns[].labelField` | The field of a relation column's record that its cells show. |
+| `groups[].having` | A condition on the level's totals, columns and record fields. A hidden group hides its children. Refused on the first group of a layout report. |
+| `groups[].label` | A formula that labels the group's row. |
+| `groups[].fill` | `{ where? }` lists the target's records that have no rows, on any level, under each parent group. |
+| `groups[].open` | The level is open when the report opens and no expansion state is sent. |
+| `sort[]` | `{ col, dir }` or `{ formula, dir }`. A formula sort key that reads a row's fields sorts detail rows only; group levels skip it. |
+| `detail.label` | A formula that labels each detail row. Default: the first column. |
+| `params[].optionsFrom` | `{ source, value, label, group?, where? }`: a choice param reads its options from a source, under the reader's rules. |
+| formula leaf `{ record, path }` | Reads a field of a record group's record. |
+| operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: one value (`min` by default, or `max`) from the rows of another source that the reader may see. |
+| `pivot.labelField` | The field of a link's record that a pivot over that link names its columns by. |
+| `display.layouts[]` | `{ width, tracks, cells: [{ col, line, start?, span?, lines?, justify? }] }`: where each column goes on a narrow screen. |
+
+A param of type `amount` holds cents and a currency. A multiple choice param
+may hold a whole group as `{"group": "<value>"}`; the server expands it under
+the reader's rules at run time. Report option lists and group keys bind as one
+JSON parameter, so there is no SQL variable limit on them.
+
+**Param options.** `POST /api/reports/param-options` reads one page of a
+choice param's options for a draft `spec` or a saved `reportId` the caller can
+view. It sends `param`, and optionally `search`, `group`, `after`, `limit`
+(default 50), `params` and `today`; `values` instead asks for the labels of
+those values alone. It answers `options`, `groups` (with the first page only),
+`groupsCut` and `next`. It reads under the reader's list rules and writes
+nothing.
 
 ### Shipped and saved reports
 
@@ -1227,6 +1314,15 @@ reports.RegisterShipped(reports.Shipped{
 - A shipped spec that does not validate against the sources is logged and
   skipped. Pin the spec in the package's tests: call `reports.CheckSources`,
   then `reports.Load` and `reports.Validate`.
+- Set `Unpublished: true` for a report only some people should see. Core
+  creates it unpublished and never publishes it, also on a new revision. The
+  package shares it itself: bind `app.OnRecordAfterCreateSuccess("reports")`
+  and add `report_shares` rows for each new row with the package's
+  `shipped_key` (the `app.Save` in `ReconcileShipped` fires this hook), and
+  reconcile again when the server starts, after `ReconcileShipped`, to cover
+  reports that already exist. Both run for one report, so the share code must
+  be idempotent: add only the shares that are missing. Core has no share API
+  for this.
 - A shipped report cannot be deleted while the package ships it. The
   server answers "This report ships with a package. An admin who owns or
   edits it can unpublish it instead." Only an admin with update access (the
@@ -1255,6 +1351,12 @@ In every mode, a published or shipped report goes to the heir and is never
 deleted. The heir is the successor, else the admin who offboards the user,
 else the first admin. When no heir exists, the offboard is refused and
 nothing changes.
+
+#### Report e2e helpers
+
+A package's e2e opens core's report view with `openReportsHub`, `hubRow`,
+`rowOf`, `cellOf`, `pressToolbar` and `chooseParamOption`, all from
+`@tinycld/core/e2e-helpers`.
 
 #### Linking to a package's reports
 

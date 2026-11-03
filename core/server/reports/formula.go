@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // expr is one compiled formula node: its SQL and what the compiler knows
@@ -27,26 +29,56 @@ type expr struct {
 	win   bool // contains a window function
 	// cur is where a money value's currency comes from.
 	cur currency
+	// target is the source a relation value points at, nil for any other
+	// value. A group by such a value is a record group.
+	target *Source
+	// col is the column a {col} leaf reads, whose label field shows the
+	// record a relation value points at.
+	col string
+	// options are a select value's options: a label or a text operator shows
+	// a stored value by its option's label.
+	options []Option
+	// shown is how a value that mixes a select's values with other text is
+	// shown (each select value by its option's label); sql keeps the stored
+	// values, which conditions compare. "" for any other value.
+	shown string
+	// text is a text literal's value.
+	text *string
 }
 
 // currency is where a money value's currency comes from: a currency key of w
-// (the ck<n> that holds each row's currency) or a source's fixed currency.
-// The zero value is a value that is not money, or a section subtotal, which
-// a layout reads in one currency at a time.
+// (the ck<n> that holds each row's currency), a source's fixed currency, or a
+// subquery that reads the currency where the value is read (sql: a record's or
+// a looked-up row's own currency). id names a carried currency for combining:
+// two values combine only when their currencies come from the same place (R3).
+// A carried currency read inside a total is a currency key that keeps its id,
+// so it still combines with the same value read outside one. The zero value is
+// a value that is not money, or a section subtotal, which a layout reads in one
+// currency at a time. param is an amount param's own currency code (R29): it
+// holds against another amount only where that amount's currency is the same
+// (currencyGuard).
 type currency struct {
 	key   string
 	fixed *Source
+	sql   string
+	id    string
+	param string
 }
 
-func (a currency) none() bool { return a.key == "" && a.fixed == nil }
+func (a currency) none() bool { return a.key == "" && a.fixed == nil && a.sql == "" && a.param == "" }
 
-// same is true for one currency source: a key equals itself, a fixed
-// currency the same source's.
+// same is true for one currency source: one carried value, a key equals
+// itself, a fixed currency the same source's.
 func (a currency) same(b currency) bool {
-	if a.key != b.key || (a.fixed == nil) != (b.fixed == nil) {
-		return false
+	switch {
+	case a.id != "" && a.id == b.id:
+		return true
+	case a.key != "" || b.key != "":
+		return a.key == b.key
+	case a.fixed != nil || b.fixed != nil:
+		return a.fixed != nil && b.fixed != nil && a.fixed.Key == b.fixed.Key
 	}
-	return a.fixed == nil || a.fixed.Key == b.fixed.Key
+	return a.id == b.id
 }
 
 // withCurrency gives a money value its currency; any other value has none.
@@ -58,11 +90,20 @@ func withCurrency(e expr, cur currency) expr {
 }
 
 // combined is the currency of an amount made of values: refused when two of
-// them have different currencies, which would add EUR to USD cents.
+// them have different currencies, which would add EUR to USD cents. An amount
+// param's currency is known only when the report runs, so it is not refused
+// here: currencyGuard blanks the amount where it differs. It is the amount's
+// currency only when no other value has one.
 func combined(values []expr, at string) (currency, error) {
-	var out currency
+	var out, param currency
 	for _, v := range values {
-		if v.cur.none() {
+		switch {
+		case v.cur.param != "":
+			if param.none() {
+				param = v.cur
+			}
+			continue
+		case v.cur.none():
 			continue
 		}
 		if !out.none() && !out.same(v.cur) {
@@ -70,7 +111,76 @@ func combined(values []expr, at string) (currency, error) {
 		}
 		out = v.cur
 	}
+	if out.none() {
+		return param, nil
+	}
 	return out, nil
+}
+
+// currencyGuard is the operation e (op) on values under the money rules: it
+// holds where every amount among them is in one currency. An amount param's
+// currency is known only when the report runs (R29), and a comparison or a
+// ratio does not combine (combined refuses other amounts in two currencies
+// only for an amount), so the currencies are checked on each row. Where they
+// are known and differ, a comparison compares the amount AND the currency (ne
+// is true, every other comparison false) and anything else is blank. A missing
+// currency (an empty link, a record outside its group) is not a second
+// currency: the comparison is as within one. sql is e's unchanged when the
+// values are in one currency source, or when neither a param with a currency,
+// a comparison nor a ratio is among them.
+func currencyGuard(c fctx, op string, values []expr, sql string) string {
+	var curs []currency
+	param := false
+	for _, v := range values {
+		if v.cur.none() || slices.ContainsFunc(curs, v.cur.same) {
+			continue
+		}
+		curs = append(curs, v.cur)
+		param = param || v.cur.param != ""
+	}
+	if len(curs) < 2 || !(param || conditionOps[op] || op == "div") {
+		return sql
+	}
+	codes := make([]string, len(curs))
+	for i, cur := range curs {
+		codes[i] = c.currencySQL(cur)
+	}
+	same := make([]string, 0, len(codes)-1)
+	for _, code := range codes[1:] {
+		same = append(same, codes[0]+" IS "+code)
+	}
+	one := strings.Join(same, " AND ")
+	if !conditionOps[op] {
+		return "(CASE WHEN " + one + " THEN " + sql + " END)"
+	}
+	known := make([]string, len(codes))
+	for i, code := range codes {
+		known[i] = code + " IS NOT NULL"
+	}
+	apart := "0"
+	if op == "ne" {
+		apart = "1"
+	}
+	return fmt.Sprintf("(CASE WHEN %s AND NOT (%s) THEN %s ELSE %s END)", strings.Join(known, " AND "), one, apart, sql)
+}
+
+// currencyCode is the SQL of a money value's currency code where c compiles,
+// with key the SQL of a currency key there: a fixed currency's code ("" when
+// dry), a carried currency's subquery, an amount param's own code.
+func currencyCode(c fctx, app core.App, cur currency, key func(string) string) string {
+	switch {
+	case cur.key != "":
+		return key(cur.key)
+	case cur.fixed != nil && app == nil:
+		return c.bind("")
+	case cur.fixed != nil:
+		return c.bind(cur.fixed.Currency(app))
+	case cur.sql != "":
+		return cur.sql
+	case cur.param != "":
+		return c.bind(cur.param)
+	}
+	return "NULL"
 }
 
 // fctx says what a formula's leaves and context-bound operators mean where
@@ -84,6 +194,11 @@ type fctx interface {
 	aggregate(op Aggregate, arg *Node, scale int, at string) (expr, error)
 	window(op string, arg *Node, scale int, at string) (expr, error)
 	exists(n *Node, at string) (expr, error)
+	// lookup compiles a lookup node: a value from another source's rows.
+	lookup(n *Node, at string) (expr, error)
+	// record compiles a record leaf: path read from the linked record of
+	// the group named group.
+	record(group string, p Path, at string) (expr, error)
 	// bind adds a value to the statement's parameters and returns its
 	// placeholder.
 	bind(v any) string
@@ -91,6 +206,13 @@ type fctx interface {
 	fiscalStart() string
 	// filter is true while compiling a filter.
 	filter() bool
+	// label is a relation value read as text: the label of the record it
+	// points at, empty text for a blank link or a record the reader cannot
+	// see.
+	label(e expr) string
+	// currencySQL is the SQL of a money value's currency code on the row
+	// being compiled (currencyCode).
+	currencySQL(cur currency) string
 }
 
 // aggregate and window receive the operator node's path; the value they
@@ -116,12 +238,22 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	if depth > maxFormulaDepth || *count > maxFormulaNodes {
 		return expr{}, invalid(at, fmt.Sprintf("a formula has at most %d levels and %d nodes", maxFormulaDepth, maxFormulaNodes))
 	}
+	if n.Op == "lookup" {
+		return c.lookup(n, at)
+	}
+	if n.Source != "" || n.Pick != "" {
+		return expr{}, invalid(at, "only lookup takes a source and a pick")
+	}
 	if kinds := nodeKinds(n); kinds != 1 {
-		return expr{}, invalid(at, "a formula node is one of op, col, path, param, value or subtotal")
+		return expr{}, invalid(at, errNodeKind)
 	}
 	switch {
+	case n.Record != "":
+		return c.record(n.Record, n.Path, at)
 	case n.Col != "":
-		return c.col(n.Col, at)
+		e, err := c.col(n.Col, at)
+		e.col = n.Col
+		return e, err
 	case n.Path != nil:
 		return c.path(n.Path, at+".path")
 	case n.Param != "":
@@ -185,9 +317,15 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	return e, nil
 }
 
+// errNodeKind refuses a node that is not exactly one kind of node.
+const errNodeKind = "a formula node is one of op, col, path, param, value, subtotal or record"
+
 func nodeKinds(n *Node) int {
 	kinds := 0
-	for _, set := range []bool{n.Op != "", n.Col != "", n.Path != nil, n.Param != "", n.Value != nil, n.Subtotal != ""} {
+	// A record leaf's path is part of it. (A lookup, whose value is a
+	// formula, is compiled before nodes are counted.)
+	path := n.Path != nil && n.Record == ""
+	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Param != "", n.Value != nil, n.Subtotal != "", n.Record != ""} {
 		if set {
 			kinds++
 		}
@@ -234,25 +372,29 @@ func literal(c fctx, raw json.RawMessage, at string) (expr, error) {
 	case bool:
 		return expr{sql: c.bind(x), typ: Bool}, nil
 	case string:
-		return expr{sql: c.bind(x), typ: Text}, nil
+		return expr{sql: c.bind(x), typ: Text, text: &x}, nil
 	case json.Number:
 		return expr{sql: c.bind(numberValue(x)), typ: Number}, nil
 	case []any:
-		parts := make([]string, 0, len(x))
+		values := make([]any, 0, len(x))
 		var typ FieldType
 		for _, item := range x {
 			switch y := item.(type) {
 			case string:
-				parts = append(parts, c.bind(y))
+				values = append(values, y)
 				typ = Text
 			case json.Number:
-				parts = append(parts, c.bind(numberValue(y)))
+				values = append(values, numberValue(y))
 				typ = Number
 			default:
 				return expr{}, invalid(at, "a value list holds text or numbers")
 			}
 		}
-		return expr{sql: "(" + strings.Join(parts, ", ") + ")", typ: typ, list: true}, nil
+		list, err := jsonList(c.bind, values)
+		if err != nil {
+			return expr{}, err
+		}
+		return expr{sql: list, typ: typ, list: true}, nil
 	}
 	return expr{}, invalid(at, "a value is text, a number, true, false, null or a list")
 }
@@ -297,10 +439,99 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{}, err
 		}
 	}
+	// Amounts are compared, divided, and combined with an amount param only
+	// in one currency (R29): a USD budget never compares with EUR cents.
+	e.sql = currencyGuard(c, n.Op, args, e.sql)
 	if c.filter() && conditionOps[n.Op] && slices.ContainsFunc(args, func(a expr) bool { return a.unset }) {
 		return unsetCondition, nil
 	}
 	return e, nil
+}
+
+// asText is a value a text operator reads: a relation as the label of the
+// record it points at, never its id, and a select as its option's label.
+func asText(c fctx, a expr) string {
+	if a.target != nil && a.sql != "NULL" {
+		return c.label(a)
+	}
+	return showSQL(c.bind, a)
+}
+
+// showSQL is a value as a label, a text operator or a cell shows it: a
+// select's stored value as its option's label, a value that mixes selects
+// with other text by its shown form, any other value as it is.
+func showSQL(bind func(any) string, e expr) string {
+	if e.shown != "" {
+		return e.shown
+	}
+	return optionLabelSQL(bind, e.options, e.sql)
+}
+
+// asShown is a value as a label shows it: a select's (or a mix's) as text.
+func asShown(bind func(any) string, e expr) expr {
+	if e.shown == "" && len(e.options) == 0 {
+		return e
+	}
+	e.sql, e.typ, e.options, e.shown = showSQL(bind, e), Text, nil, ""
+	return e
+}
+
+// selectResults reads the results of an if, a case or a coalesce: the options
+// of results that are all one select's values (or blanks, or a text literal
+// that is one of its stored values), which the result keeps; or mixed when
+// they mix a select's values with other options or other text, so the result
+// is text shown by each result's own shown form (showSQL).
+func selectResults(results []expr) (options []Option, mixed bool) {
+	for _, r := range results {
+		switch {
+		case len(r.options) == 0:
+		case options == nil:
+			options = r.options
+		case !slices.Equal(options, r.options):
+			mixed = true
+		}
+	}
+	for _, r := range results {
+		switch {
+		case r.typ == "" || len(r.options) > 0:
+		case r.shown != "":
+			mixed = true
+		case options == nil:
+		case r.text != nil && slices.ContainsFunc(options, func(o Option) bool { return o.Value == *r.text }):
+		default:
+			mixed = true
+		}
+	}
+	if mixed {
+		return nil, true
+	}
+	return options, false
+}
+
+// sqlOf is a value's stored form, as conditions compare it.
+func sqlOf(e expr) string { return e.sql }
+
+// cellSQL is a value as its cell holds it: a mix of a select's values and
+// other text as shown; a select's stored value, which the column's options
+// show; any other value as it is.
+func cellSQL(e expr) string {
+	if e.shown != "" {
+		return e.shown
+	}
+	return e.sql
+}
+
+// withResults gives the result of an if, a case or a coalesce the options
+// its results share, or, when they mix, its shown form (render over each
+// result's shown form) and the type text.
+func withResults(out expr, bind func(any) string, results []expr, render func(func(expr) string) string) expr {
+	options, mixed := selectResults(results)
+	out.options = options
+	if mixed {
+		out.shown = render(func(e expr) string { return showSQL(bind, e) })
+		out.typ = Text
+	}
+	return out
 }
 
 func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
@@ -486,22 +717,23 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		}
 		parts := make([]string, len(args))
 		for i, a := range args {
-			parts[i] = "COALESCE(" + a.sql + ", '')"
+			parts[i] = "COALESCE(" + asText(c, a) + ", '')"
 		}
 		return expr{sql: "(" + strings.Join(parts, " || ") + ")", typ: Text}, nil
 	case "upper", "lower":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err
 		}
-		return expr{sql: n.Op + "(" + args[0].sql + ")", typ: Text}, nil
+		return expr{sql: n.Op + "(" + asText(c, args[0]) + ")", typ: Text}, nil
 	case "contains", "startsWith":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err
 		}
+		text, part := asText(c, args[0]), asText(c, args[1])
 		if n.Op == "contains" {
-			return expr{sql: "(instr(lower(" + args[0].sql + "), lower(" + args[1].sql + ")) > 0)", typ: Bool}, nil
+			return expr{sql: "(instr(lower(" + text + "), lower(" + part + ")) > 0)", typ: Bool}, nil
 		}
-		return expr{sql: "(substr(lower(" + args[0].sql + "), 1, length(" + args[1].sql + ")) = lower(" + args[1].sql + "))", typ: Bool}, nil
+		return expr{sql: "(substr(lower(" + text + "), 1, length(" + part + ")) = lower(" + part + "))", typ: Bool}, nil
 	case "year", "quarter", "month", "fiscalYear", "fiscalPeriod":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err
@@ -541,31 +773,54 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if !ok {
 			return expr{}, invalid(at, "both results of if are of one kind")
 		}
-		return wholeCents(expr{sql: "(CASE WHEN " + args[0].sql + " THEN " + args[1].sql + " ELSE " + args[2].sql + " END)", typ: typ}, args[1:]), nil
+		target, err := oneTarget(args[1:], "if", at)
+		if err != nil {
+			return expr{}, err
+		}
+		render := func(value func(expr) string) string {
+			return "(CASE WHEN " + args[0].sql + " THEN " + value(args[1]) + " ELSE " + value(args[2]) + " END)"
+		}
+		out := wholeCents(expr{sql: render(sqlOf), typ: typ}, args[1:])
+		out.target = target
+		return withResults(out, c.bind, args[1:], render), nil
 	case "case":
 		if err := argc(2, -1); err != nil {
 			return expr{}, err
 		}
-		var b strings.Builder
-		b.WriteString("(CASE")
+		// The results are the odd args, then an else (the last of an odd count).
 		results := []expr{}
 		for i := 0; i+1 < len(args); i += 2 {
 			if args[i].typ != Bool {
 				return expr{}, invalid(fmt.Sprintf("%s.args.%d", at, i), "case takes condition and result pairs")
 			}
-			b.WriteString(" WHEN " + args[i].sql + " THEN " + args[i+1].sql)
 			results = append(results, args[i+1])
 		}
 		if len(args)%2 == 1 {
-			b.WriteString(" ELSE " + args[len(args)-1].sql)
 			results = append(results, args[len(args)-1])
 		}
-		b.WriteString(" END)")
 		typ, ok := commonType(results...)
 		if !ok {
 			return expr{}, invalid(at, "every result of case is of one kind")
 		}
-		return wholeCents(expr{sql: b.String(), typ: typ}, results), nil
+		target, err := oneTarget(results, "case", at)
+		if err != nil {
+			return expr{}, err
+		}
+		render := func(value func(expr) string) string {
+			var b strings.Builder
+			b.WriteString("(CASE")
+			for i := 0; i+1 < len(args); i += 2 {
+				b.WriteString(" WHEN " + args[i].sql + " THEN " + value(args[i+1]))
+			}
+			if len(args)%2 == 1 {
+				b.WriteString(" ELSE " + value(args[len(args)-1]))
+			}
+			b.WriteString(" END)")
+			return b.String()
+		}
+		out := wholeCents(expr{sql: render(sqlOf), typ: typ}, results)
+		out.target = target
+		return withResults(out, c.bind, results, render), nil
 	case "coalesce":
 		if err := argc(1, -1); err != nil {
 			return expr{}, err
@@ -574,14 +829,26 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if !ok {
 			return expr{}, invalid(at, "coalesce takes values of one kind")
 		}
-		if len(args) == 1 {
-			return expr{sql: args[0].sql, typ: typ}, nil
+		target, err := oneTarget(args, "coalesce", at)
+		if err != nil {
+			return expr{}, err
 		}
-		parts := make([]string, len(args))
-		for i, a := range args {
-			parts[i] = a.sql
+		render := func(value func(expr) string) string {
+			if len(args) == 1 {
+				return value(args[0])
+			}
+			parts := make([]string, len(args))
+			for i, a := range args {
+				parts[i] = value(a)
+			}
+			return "COALESCE(" + strings.Join(parts, ", ") + ")"
 		}
-		return wholeCents(expr{sql: "COALESCE(" + strings.Join(parts, ", ") + ")", typ: typ}, args), nil
+		out := expr{sql: render(sqlOf), typ: typ}
+		if len(args) > 1 {
+			out = wholeCents(out, args)
+		}
+		out.target = target
+		return withResults(out, c.bind, args, render), nil
 	case "isEmpty":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err
@@ -589,6 +856,23 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		return expr{sql: "(" + args[0].sql + " IS NULL OR " + args[0].sql + " = '')", typ: Bool}, nil
 	}
 	return expr{}, invalid(at, fmt.Sprintf("unknown operator %q", n.Op))
+}
+
+// oneTarget is the source the relations among values point at; two that
+// point at different sources are refused, since a record group could not
+// read both.
+func oneTarget(values []expr, op, at string) (*Source, error) {
+	var out *Source
+	for _, v := range values {
+		if v.target == nil {
+			continue
+		}
+		if out != nil && out.Key != v.target.Key {
+			return nil, invalid(at, fmt.Sprintf("the results of %s link to different sources", op))
+		}
+		out = v.target
+	}
+	return out, nil
 }
 
 // conditionOps match every row in a filter when one of their values is an
@@ -601,6 +885,12 @@ var conditionOps = map[string]bool{
 var comparisons = map[string]string{"lt": "<", "lte": "<=", "gt": ">", "gte": ">="}
 
 func between(args []expr, at string) (expr, error) {
+	// A date range has no single value to compare: it is only ever the bounds.
+	for i, a := range args {
+		if a.rng && (len(args) != 2 || i != 1) {
+			return expr{}, invalid(fmt.Sprintf("%s.args.%d", at, i), "a date range param is the second of two between values")
+		}
+	}
 	switch {
 	case len(args) == 2 && args[1].rng:
 		x := args[0]
@@ -764,6 +1054,14 @@ func (ctxBase) subtotal(_, at string) (expr, error) {
 
 func (ctxBase) exists(n *Node, at string) (expr, error) {
 	return expr{}, invalid(at, n.Op+" belongs in the filter")
+}
+
+func (ctxBase) lookup(_ *Node, at string) (expr, error) {
+	return expr{}, invalid(at, "a lookup is read in a column, the filter, a group, a sort or a label")
+}
+
+func (ctxBase) record(_ string, _ Path, at string) (expr, error) {
+	return expr{}, invalid(at, "a record field is read on a group's rows, the rows below them, a sort, a label or a having")
 }
 
 // aggregateArg compiles an aggregate's argument over one base row and

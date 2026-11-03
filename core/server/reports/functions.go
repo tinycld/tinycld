@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"time"
 
+	"golang.org/x/text/cases"
 	sqlite "modernc.org/sqlite"
 
 	"tinycld.org/core/forms"
@@ -24,6 +25,24 @@ func init() {
 	sqlite.MustRegisterDeterministicScalarFunction("tc_fiscal_year", 2, sqlFiscalYear)
 	sqlite.MustRegisterDeterministicScalarFunction("tc_fiscal_period", 2, sqlFiscalPeriod)
 	sqlite.MustRegisterDeterministicScalarFunction("tc_add_months", 2, sqlAddMonths)
+	sqlite.MustRegisterDeterministicScalarFunction("tc_fold", 1, sqlFold)
+}
+
+// sqlFold is tc_fold(text): text case-folded for a caseless match, by the
+// Unicode full case folding (golang.org/x/text/cases Fold), not SQLite's
+// lower(), which folds ASCII only, nor a per-rune ToLower, which misses
+// folds that change length ("Straße" matches "STRASSE"). NULL in, NULL out;
+// a value that is not text folds as its text.
+func sqlFold(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+	switch x := args[0].(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return cases.Fold().String(x), nil
+	case []byte:
+		return cases.Fold().String(string(x)), nil
+	}
+	return cases.Fold().String(fmt.Sprint(args[0])), nil
 }
 
 // errOverflow has the text SQLite's own sum() uses, so the run maps both to

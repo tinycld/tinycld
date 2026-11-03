@@ -1,16 +1,15 @@
-import { FormulaEditor } from '@tinycld/core/components/forms-builder/FormulaEditor'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { SelectInput, TextInput, useWatch } from '@tinycld/core/ui/form'
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react-native'
 import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { MAX_LAYOUT_ITEMS, nextColumnId } from '../../lib/builder/columns'
-import { columnChoices, type FormulaDraft, type LayoutItemDraft } from '../../lib/builder/draft'
-import { formulaOperands } from '../../lib/builder/formula'
+import type { FormulaDraft, LayoutItemDraft } from '../../lib/builder/draft'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { moved } from './ColumnsSection'
-import { FixedFormula, IconButton, NEW_FORMULA } from './parts'
+import { IconButton, NEW_FORMULA } from './parts'
+import { ReportFormula, useColumnChoices } from './report-formula'
 
 const KIND_LABELS = { section: 'Section', row: 'Computed row' } as const
 
@@ -56,32 +55,24 @@ function SectionKey({ builder, index, keyOptions }: ItemProps) {
     )
 }
 
-// A computed row reads the sections and computed rows above it, by id.
+// A computed row reads the sections and computed rows above it, by id, and may
+// look values up (F16).
 function RowFormula({ builder, items, index }: ItemProps) {
     const item = items[index]
     if (item?.kind !== 'row') return null
-    const testID = `report-builder-layout-${index}-formula`
     const setFormula = (formula: FormulaDraft) =>
         builder.setLayout(
             items.map((other, i) =>
                 i === index && other.kind === 'row' ? { ...other, formula } : other
             )
         )
-    if (item.formula.kind === 'fixed') {
-        return <FixedFormula testID={`${testID}-fixed`} onRemove={() => setFormula(NEW_FORMULA)} />
-    }
-    const earlier = items.slice(0, index).map(other => ({
-        key: other.id,
-        label: other.kind === 'section' ? other.title : other.label,
-        isNumeric: true,
-    }))
     return (
-        <FormulaEditor
-            value={item.formula.expr}
-            onChange={expr => setFormula({ kind: 'editable', expr })}
-            operands={formulaOperands(earlier, item.id)}
-            valueNoun="Section or row"
-            testID={testID}
+        <ReportFormula
+            builder={builder}
+            place={{ kind: 'layout', index }}
+            formula={item.formula}
+            onChange={setFormula}
+            testID={`report-builder-layout-${index}-formula`}
         />
     )
 }
@@ -161,10 +152,7 @@ function useLayout(builder: ReportBuilder) {
     const { control } = builder.form
     const items = useWatch({ control, name: 'layout' })
     const groups = useWatch({ control, name: 'groups' })
-    const columns = useWatch({ control, name: 'columns' })
-    const firstGroup = columnChoices({ source: builder.base.key, columns }, builder.catalog).find(
-        choice => choice.key === groups[0]?.col
-    )
+    const firstGroup = useColumnChoices(builder).find(choice => choice.key === groups[0]?.col)
     const ids = items.map(item => item.id)
     return {
         items,

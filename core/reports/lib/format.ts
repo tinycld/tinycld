@@ -139,6 +139,32 @@ function dayText(value: string): string {
     return isIsoDay(day) ? shortDay(day) : value
 }
 
+export const BLANK_LINK_LABEL = '(none)'
+
+// A link cell shows its record's label, never the record's id: the label field's
+// typed value, formatted as a cell of its type. A detail row's blank link (or a
+// record the reader cannot see) reads (none); a group or total row with no value in
+// the column shows nothing.
+function linkDisplay(
+    column: ResultColumn,
+    labelCell: string,
+    row: ResultRow,
+    value: CellValue,
+    format: NumberFormat
+): CellDisplay {
+    const label = row.cells[labelCell]
+    if (label === null || label === undefined || label === '') {
+        return plainDisplay(value === null && row.kind !== 'detail' ? '' : BLANK_LINK_LABEL, 'left')
+    }
+    const labelColumn: ResultColumn = {
+        id: labelCell,
+        label: column.label,
+        type: column.labelType ?? 'text',
+        currencyCell: column.labelCurrencyCell,
+    }
+    return { ...cellDisplay(labelColumn, row, label, format), align: 'left' }
+}
+
 export function cellDisplay(
     column: ResultColumn,
     row: ResultRow,
@@ -147,7 +173,11 @@ export function cellDisplay(
 ): CellDisplay {
     const type = cellType(column, row)
     const align = RIGHT_TYPES.includes(type) ? 'right' : 'left'
-    if (value === null || value === undefined) return plainDisplay('', align)
+    if (value === undefined) return plainDisplay('', align)
+    if (column.labelCell && type === 'relation') {
+        return linkDisplay(column, column.labelCell, row, value, format)
+    }
+    if (value === null) return plainDisplay('', align)
     if (type === 'money' && typeof value === 'number')
         return moneyDisplay(column, row, value, format)
     if (typeof value === 'number' && (type === 'percent' || column.format === 'percent')) {
@@ -162,6 +192,43 @@ export function cellDisplay(
         return plainDisplay(column.options?.find(o => o.value === value)?.label ?? value, align)
     }
     return plainDisplay(value, align)
+}
+
+const LABEL_ROW: ResultRow = { id: '', kind: 'detail', depth: 0, label: '', cells: {} }
+
+// A typed label (a row's, a pivot heading's, a param option's) formatted as a cell
+// of its type. An amount always shows its currency, so 300 EUR and 300 USD read apart.
+export function typedLabelText(
+    type: FieldType,
+    value: CellValue,
+    currency: string,
+    format: NumberFormat
+): string {
+    if (type === 'money' && typeof value === 'number') {
+        return formatReportAmount(value, currency, format, { withSymbol: true })
+    }
+    return cellDisplay({ id: '', label: '', type, currency }, LABEL_ROW, value, format).text
+}
+
+/**
+ * A row's label as the table shows it. The engine types a label that is not text
+ * (an amount, a date, a yes/no) and writes `label` as its plain text; a subtotal's
+ * label is "Total " and its group's label.
+ */
+export function rowLabelText(row: ResultRow, format: NumberFormat): string {
+    const { labelType, labelValue } = row
+    if (!labelType || labelValue === undefined || labelValue === null) return row.label
+    const text = typedLabelText(labelType, labelValue, row.labelCurrency ?? '', format)
+    return row.kind === 'subtotal' ? `Total ${text}` : text
+}
+
+/** A column's heading: a pivot column over typed values by its typed label. */
+export function headingText(column: ResultColumn, format: NumberFormat): string {
+    const pivot = column.pivot
+    if (!pivot?.labelType || pivot.labelValue === undefined || pivot.labelValue === null) {
+        return column.label
+    }
+    return typedLabelText(pivot.labelType, pivot.labelValue, pivot.labelCurrency ?? '', format)
 }
 
 /**

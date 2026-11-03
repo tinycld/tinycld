@@ -24,6 +24,11 @@ type formulaCase struct {
 	Types       map[string]FieldType `json:"types"`
 	Values      map[string]any       `json:"values"`
 	Rows        []map[string]any     `json:"rows"`
+	LookupTypes map[string]FieldType `json:"lookupTypes"`
+	LookupRows  []map[string]any     `json:"lookupRows"`
+	// RecordTypes and Record are the group record a record leaf reads.
+	RecordTypes map[string]FieldType `json:"recordTypes"`
+	Record      map[string]any       `json:"record"`
 	FiscalStart int                  `json:"fiscalStart"`
 	Formula     *Node                `json:"formula"`
 	Forms       any                  `json:"forms"`
@@ -54,9 +59,15 @@ func loadFormulaCases(t *testing.T) []formulaCase {
 // column x of t, and aggregates run over all of t's rows, as a group row's
 // aggregates run over the group's rows.
 type tableCtx struct {
-	types  map[string]FieldType
-	params dbx.Params
-	fiscal int
+	types       map[string]FieldType
+	params      dbx.Params
+	fiscal      int
+	lookupTypes map[string]FieldType
+	lookupRows  []map[string]any
+	// recordTypes and recordRow are the case's group record; the row is not
+	// named record, which is the method.
+	recordTypes map[string]FieldType
+	recordRow   map[string]any
 }
 
 func (c *tableCtx) col(id, at string) (expr, error) {
@@ -84,6 +95,26 @@ func (c *tableCtx) exists(*Node, string) (expr, error) {
 }
 func (c *tableCtx) filter() bool { return false }
 
+// label: the formula table reads no records.
+func (c *tableCtx) label(e expr) string { return e.sql }
+
+// currencySQL: the table has no currency keys.
+func (c *tableCtx) currencySQL(cur currency) string {
+	return currencyCode(c, nil, cur, func(string) string { return "NULL" })
+}
+
+// record reads a field of the case's record, whichever group it names.
+func (c *tableCtx) record(_ string, p Path, at string) (expr, error) {
+	if len(p) != 1 || p[0].Field == "" {
+		return expr{}, invalid(at, "a record path is one field here")
+	}
+	typ, ok := c.recordTypes[p[0].Field]
+	if !ok {
+		return expr{}, invalid(at, "unknown record field "+p[0].Field)
+	}
+	return expr{sql: c.bind(jsonValue(c.recordRow[p[0].Field])), typ: typ}, nil
+}
+
 func (c *tableCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (expr, error) {
 	e, err := compileFormula(c, arg, at+".args.0")
 	if err != nil {
@@ -108,6 +139,92 @@ func (c *tableCtx) fiscalStart() string {
 	return c.bind(int64(c.fiscal))
 }
 
+// lookup reads the case's lookupRows as the looked-up source: a path is one
+// of their columns, a column the table's own row.
+func (c *tableCtx) lookup(n *Node, at string) (expr, error) {
+	value, err := lookupValue(n, at)
+	if err != nil {
+		return expr{}, err
+	}
+	inner := &tableLookupCtx{outer: c}
+	v, err := compileFormula(inner, value, at+".value")
+	if err != nil {
+		return expr{}, err
+	}
+	where := "1"
+	if n.Where != nil {
+		w, err := compileFormula(inner, n.Where, at+".where")
+		if err != nil {
+			return expr{}, err
+		}
+		where = "COALESCE(" + w.sql + ", 0)"
+	}
+	pick := "min"
+	if n.Pick == "max" {
+		pick = "max"
+	}
+	return expr{sql: fmt.Sprintf("(SELECT %s(%s) FROM (%s) l WHERE %s)", pick, v.sql, c.lookupTable(), where), typ: v.typ}, nil
+}
+
+func (c *tableCtx) lookupTable() string {
+	cols := make([]string, 0, len(c.lookupTypes))
+	for name := range c.lookupTypes {
+		cols = append(cols, name)
+	}
+	sort.Strings(cols)
+	if len(c.lookupRows) == 0 {
+		parts := make([]string, len(cols))
+		for i, name := range cols {
+			parts[i] = "NULL AS " + name
+		}
+		return "SELECT " + strings.Join(parts, ", ") + " WHERE 0"
+	}
+	selects := make([]string, 0, len(c.lookupRows))
+	for _, row := range c.lookupRows {
+		parts := make([]string, len(cols))
+		for i, name := range cols {
+			parts[i] = c.bind(jsonValue(row[name])) + " AS " + name
+		}
+		selects = append(selects, "SELECT "+strings.Join(parts, ", "))
+	}
+	return strings.Join(selects, " UNION ALL ")
+}
+
+type tableLookupCtx struct {
+	ctxBase
+	outer *tableCtx
+}
+
+func (l *tableLookupCtx) col(id, at string) (expr, error) { return l.outer.col(id, at) }
+func (l *tableLookupCtx) path(p Path, at string) (expr, error) {
+	if len(p) != 1 || p[0].Field == "" {
+		return expr{}, invalid(at, "a lookup row path is one field")
+	}
+	typ, ok := l.outer.lookupTypes[p[0].Field]
+	if !ok {
+		return expr{}, invalid(at, "unknown lookup column "+p[0].Field)
+	}
+	return expr{sql: "l." + p[0].Field, typ: typ}, nil
+}
+func (l *tableLookupCtx) param(string, string) (expr, error) { return expr{}, fmt.Errorf("no params") }
+func (l *tableLookupCtx) aggregate(Aggregate, *Node, int, string) (expr, error) {
+	return expr{}, fmt.Errorf("no totals in a lookup")
+}
+func (l *tableLookupCtx) window(string, *Node, int, string) (expr, error) {
+	return expr{}, fmt.Errorf("no windows")
+}
+func (l *tableLookupCtx) lookup(n *Node, at string) (expr, error) { return l.outer.lookup(n, at) }
+func (l *tableLookupCtx) record(g string, p Path, at string) (expr, error) {
+	return l.outer.record(g, p, at)
+}
+func (l *tableLookupCtx) bind(v any) string   { return l.outer.bind(v) }
+func (l *tableLookupCtx) fiscalStart() string { return l.outer.fiscalStart() }
+func (l *tableLookupCtx) filter() bool        { return false }
+func (l *tableLookupCtx) label(e expr) string { return l.outer.label(e) }
+func (l *tableLookupCtx) currencySQL(cur currency) string {
+	return l.outer.currencySQL(cur)
+}
+
 // jsonValue turns a decoded case value into what SQLite binds: a whole
 // number binds as an integer.
 func jsonValue(v any) any {
@@ -119,7 +236,11 @@ func jsonValue(v any) any {
 
 func runFormulaCase(t *testing.T, app core.App, c formulaCase) (any, error) {
 	t.Helper()
-	ctx := &tableCtx{types: c.Types, params: dbx.Params{}, fiscal: c.FiscalStart}
+	ctx := &tableCtx{
+		types: c.Types, params: dbx.Params{}, fiscal: c.FiscalStart,
+		lookupTypes: c.LookupTypes, lookupRows: c.LookupRows,
+		recordTypes: c.RecordTypes, recordRow: c.Record,
+	}
 	e, err := compileFormula(ctx, c.Formula, "formula")
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -184,10 +305,14 @@ func sameValue(got, want any) bool {
 }
 
 // onlyFormsOps is true when every operator is one the forms engine has. count is left out: the
-// report's count(col) skips blanks and the forms count(rows) counts every row.
+// report's count(col) skips blanks and the forms count(rows) counts every row. A form has
+// no groups, so it has no record leaf.
 func onlyFormsOps(n *Node) bool {
 	if n == nil {
 		return true
+	}
+	if n.Record != "" {
+		return false
 	}
 	if n.Op != "" {
 		switch n.Op {

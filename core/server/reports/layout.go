@@ -12,7 +12,7 @@ import (
 // computed row (and currency), whose cells compute the row's formula from
 // the first-level group rows its sections name. A formula reads sections
 // and earlier computed rows by name, never by row position.
-func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err error) {
+func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs []unionLeg, err error) {
 	if len(c.p.layout) == 0 {
 		return nil, nil, nil
 	}
@@ -33,6 +33,13 @@ func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err er
 	for j := range pivot {
 		lc.cellNames = append(lc.cellNames, fmt.Sprintf("pv%d", j))
 	}
+	// A section whose cell carries its own currency (a record's) is read
+	// with that currency.
+	for idx, cp := range c.p.cols {
+		if c.sectionCur[cp.col.ID].sql != "" {
+			lc.cellNames = append(lc.cellNames, fmt.Sprintf("vcur%d", idx))
+		}
+	}
 	lc.perChunk = max(1, chunkColumns/max(1, len(lc.cellNames)))
 	sizes := map[string]int{}
 	compiled := 0
@@ -46,7 +53,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err er
 		// A formula that reads an earlier row is compiled with that row
 		// inside it, so its size grows with every reference, and it is
 		// compiled once for every cell.
-		sizes[item.Row] = expandedSize(item.Formula, sizes)
+		sizes[item.Row] = c.p.expandedSize(item.Formula, sizes)
 		compiled += sizes[item.Row] * (len(c.p.cols) + len(pivot))
 		if sizes[item.Row] > maxLayoutNodes || compiled > maxLayoutCompiled {
 			return nil, nil, invalid(at, "the layout's computed rows are too large; reference fewer earlier rows")
@@ -64,31 +71,40 @@ func (c *compiler) layoutLegs(s *stmt, pivot []any) (ctes, legs []string, err er
 		if _, err := lc.row(item, at+".formula"); err != nil {
 			return nil, nil, err
 		}
+		carried := make([]string, 0, len(c.p.cols))
 		for idx, cp := range c.p.cols {
 			if !isNumeric(c.levelTypes[cp.col.ID]) || c.levelTypes[cp.col.ID] == Bool {
 				cells = append(cells, fmt.Sprintf("NULL AS v%d", idx))
+				carried = append(carried, noCarriedCell(idx))
 				continue
 			}
-			lc.cell, lc.typ = fmt.Sprintf("v%d", idx), c.levelTypes[cp.col.ID]
+			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("v%d", idx), c.levelTypes[cp.col.ID], cp, idx
 			e, err := lc.row(item, at+".formula")
 			if err != nil {
 				return nil, nil, err
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
+			carried = append(carried, lc.carriedCell(cp, e, idx))
 		}
 		for j := range pivot {
-			lc.cell, lc.typ = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID]
+			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1
 			e, err := lc.row(item, at+".formula")
 			if err != nil {
 				return nil, nil, err
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
 		}
-		cells = append(cells, fmt.Sprintf("%d AS __ord", i))
+		// A computed row points at no record: no column has a label.
+		for idx := range c.p.cols {
+			cells = append(cells, labelRef{}.cells(idx)...)
+		}
+		cells = append(cells, carried...)
+		// The level rows' last columns, so every leg of the union has the same.
+		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n", "NULL AS __kids")
 		if len(lc.used) > maxJoinedChunks {
 			return nil, nil, invalid(at, "a computed row reads too many sections")
 		}
-		legs = append(legs, "SELECT "+strings.Join(cells, ", ")+" FROM "+cur+lc.joins())
+		legs = append(legs, unionLeg{cells: cells, from: cur + lc.joins()})
 		lc.items[item.Row] = item
 	}
 	return lc.chunkCTEs(), legs, nil
@@ -129,6 +145,10 @@ type layoutCtx struct {
 	// typ is the type of that column's cells, which a subtotal keeps so the
 	// money rules apply to a computed row.
 	typ FieldType
+	// col is that column (the pivot's cell column for a pivot cell), and idx
+	// its index, -1 for a pivot cell.
+	column *colPlan
+	idx    int
 	// The sections a computed row reads are grouped in chunks, one CTE each
 	// (see chunkCTEs), so a SELECT stays under SQLite's column limit. chunkOf
 	// and keys are by section id; used lists the chunks the computed row
@@ -170,13 +190,21 @@ const errLayoutKey = "a section key is text, a number, true, false or null"
 
 // expandedSize counts a formula's nodes with each earlier row it reads
 // counted in full.
-func expandedSize(n *Node, rows map[string]int) int {
+func (p *plan) expandedSize(n *Node, rows map[string]int) int {
 	if n == nil {
 		return 0
 	}
 	size := 1 + rows[n.Subtotal]
 	for _, a := range n.Args {
-		size += expandedSize(a, rows)
+		size += p.expandedSize(a, rows)
+	}
+	// A lookup's where and value are compiled with it; bind has refused a
+	// value that does not decode.
+	size += p.expandedSize(n.Where, rows)
+	if n.Op == "lookup" {
+		if v, err := p.lookupOf(n, ""); err == nil {
+			size += p.expandedSize(v, rows)
+		}
 	}
 	return size
 }
@@ -219,7 +247,34 @@ func (lc *layoutCtx) subtotal(id, at string) (expr, error) {
 		lc.used = append(lc.used, slot.chunk)
 	}
 	// An empty section counts as zero.
-	return expr{sql: fmt.Sprintf("COALESCE(ls%d.%s, 0)", slot.chunk, slot.column(lc.cell)), typ: lc.typ}, nil
+	e := expr{sql: fmt.Sprintf("COALESCE(ls%d.%s, 0)", slot.chunk, slot.column(lc.cell)), typ: lc.typ}
+	return withCurrency(e, lc.sectionCurrency(id, slot)), nil
+}
+
+// sectionCurrency is the currency of a section's cell in the column being
+// compiled: the column's on a first-level group row. A currency key is the
+// row's currency, which the computed row is in (one row per currency); a
+// currency the section's cell carries is read from the section beside the
+// cell and is that section's alone, so it combines with no other section.
+func (lc *layoutCtx) sectionCurrency(id string, slot sectionSlot) currency {
+	cur := lc.c.sectionCur[lc.column.col.ID]
+	if cur.sql == "" || lc.idx < 0 {
+		return cur
+	}
+	return currency{sql: fmt.Sprintf("ls%d.%s", slot.chunk, slot.column(fmt.Sprintf("vcur%d", lc.idx))), id: "sub:" + id + ":" + cur.id}
+}
+
+// carriedCell is a computed row's currency in a column, when it is not the
+// row's own (the currency key the computed row is in): one its amount carries
+// (a looked-up row's, a section's record), or a source's fixed currency that
+// is not the column's.
+func (lc *layoutCtx) carriedCell(cp *colPlan, e expr, idx int) string {
+	fixed := e.cur.fixed
+	if fixed == nil || lc.c.sectionCur[cp.col.ID].same(e.cur) || lc.c.app == nil {
+		return lc.c.carriedCell(lc.s, cp, e, idx)
+	}
+	lc.c.carried[cp.col.ID] = true
+	return fmt.Sprintf("%s AS vcur%d", lc.s.bind(fixed.Currency(lc.c.app)), idx)
 }
 
 // chunkCTEs renders one CTE per chunk of sections. Each has one row per
@@ -271,9 +326,16 @@ func layoutKey(raw json.RawMessage) (any, error) {
 	return nil, fmt.Errorf("not a scalar")
 }
 
-func (lc *layoutCtx) col(_, at string) (expr, error)       { return expr{}, lc.only(at) }
+// col is refused: a computed row's cell in a column is its own formula, so
+// a column read from it (even inside a lookup) would read itself.
+func (lc *layoutCtx) col(id, at string) (expr, error) {
+	return expr{}, invalid(at, fmt.Sprintf("a computed row reads sections' subtotals, earlier rows, values and lookups: its cell in %q is this formula, so reading the column would read itself", id))
+}
 func (lc *layoutCtx) path(_ Path, at string) (expr, error) { return expr{}, lc.only(at) }
-func (lc *layoutCtx) param(_, at string) (expr, error)     { return expr{}, lc.only(at) }
+func (lc *layoutCtx) record(_ string, _ Path, at string) (expr, error) {
+	return expr{}, lc.only(at)
+}
+func (lc *layoutCtx) param(_, at string) (expr, error) { return expr{}, lc.only(at) }
 func (lc *layoutCtx) aggregate(_ Aggregate, _ *Node, _ int, at string) (expr, error) {
 	return expr{}, lc.only(at)
 }
@@ -281,12 +343,25 @@ func (lc *layoutCtx) window(_ string, _ *Node, _ int, at string) (expr, error) {
 	return expr{}, lc.only(at)
 }
 func (lc *layoutCtx) exists(_ *Node, at string) (expr, error) { return expr{}, lc.only(at) }
+
+// lookup reads its source's rule CTE in the layout statement. There is no
+// report row to read: a column inside it is refused as above, and a param
+// resolves in the lookup itself.
+func (lc *layoutCtx) lookup(n *Node, at string) (expr, error) {
+	return lookupIn(lc, &rowsCTE{c: lc.c, s: lc.s}, n, at)
+}
 func (lc *layoutCtx) only(at string) error {
-	return invalid(at, "a computed row reads sections' subtotals, earlier rows and values")
+	return invalid(at, "a computed row reads sections' subtotals, earlier rows, values and lookups")
 }
 func (lc *layoutCtx) bind(v any) string   { return lc.s.bind(v) }
 func (lc *layoutCtx) fiscalStart() string { return lc.bind(int64(lc.c.fiscal)) }
 func (lc *layoutCtx) filter() bool        { return false }
+func (lc *layoutCtx) label(e expr) string { return lc.c.textOf(lc.s, e) }
+
+// currencySQL reads a currency key from the computed row's currency (cur).
+func (lc *layoutCtx) currencySQL(cur currency) string {
+	return currencyCode(lc, lc.c.app, cur, func(key string) string { return "cur." + key })
+}
 
 // layoutRows emits the rows for one currency: each section's group row
 // (titled, always with its subtotal) and each computed row, in the layout's
@@ -316,6 +391,6 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 			}
 		}
 		groupKey := rn.rowKey(row, 1)
-		rn.groupWithLabel(t, row, 1, "", "g:"+keyString(groupKey), item.Title, groupKey, true)
+		rn.groupWithLabel(t, row, 1, "", "g:"+keyString(groupKey), rowLabel{text: item.Title}, groupKey, true)
 	}
 }

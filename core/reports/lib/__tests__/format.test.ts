@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+    BLANK_LINK_LABEL,
     cellCurrency,
     cellDisplay,
     DEFAULT_DISPLAY,
     formatReportAmount,
     formatReportPercent,
+    headingText,
     mergeHidden,
     type NumberFormat,
     REPORT_AMOUNT_ERROR,
+    rowLabelText,
     shownColumns,
 } from '../format'
 import { MAX_STORED_AMOUNT } from '../money'
@@ -124,7 +127,68 @@ describe('formatReportPercent', () => {
     })
 })
 
+const ANIMAL: ResultColumn = {
+    id: 'animal',
+    label: 'Animal',
+    type: 'relation',
+    labelCell: 'animal@label',
+}
+
 describe('cellDisplay', () => {
+    it('shows a link cell by its record’s label, never its id', () => {
+        const leo = row('detail', { animal: 'r1', 'animal@label': 'Leo' })
+        expect(cellDisplay(ANIMAL, leo, 'r1', PLAIN)).toEqual({
+            text: 'Leo',
+            align: 'left',
+            isRed: false,
+            isError: false,
+        })
+        expect(cellDisplay(ANIMAL, row('group', { 'animal@label': 'Leo' }), 'r1', PLAIN).text).toBe(
+            'Leo'
+        )
+    })
+
+    it('formats a typed link label as a cell of its type', () => {
+        const priced: ResultColumn = {
+            ...ANIMAL,
+            labelType: 'money',
+            labelCurrencyCell: 'animal@labelCurrency',
+        }
+        const eur = { animal: 'r1', 'animal@label': 150000, 'animal@labelCurrency': 'EUR' }
+        expect(cellDisplay(priced, row('detail', eur), 'r1', PLAIN)).toEqual({
+            text: '1,500.00',
+            align: 'left',
+            isRed: false,
+            isError: false,
+        })
+        expect(cellDisplay(priced, row('subtotal', eur), 'r1', PLAIN).text).toBe('€1,500.00')
+        const nameless = row('detail', { animal: 'r2', 'animal@label': '(no name)' })
+        expect(cellDisplay(priced, nameless, 'r2', PLAIN).text).toBe('(no name)')
+        const born: ResultColumn = { ...ANIMAL, labelType: 'date' }
+        const may = row('detail', { animal: 'r1', 'animal@label': '2020-05-01' })
+        expect(cellDisplay(born, may, 'r1', PLAIN).text).toBe('May 1, 2020')
+        const active: ResultColumn = { ...ANIMAL, labelType: 'bool' }
+        const no = row('detail', { animal: 'r1', 'animal@label': false })
+        expect(cellDisplay(active, no, 'r1', PLAIN).text).toBe('No')
+        const weight: ResultColumn = { ...ANIMAL, labelType: 'number' }
+        const heavy = row('detail', { animal: 'r1', 'animal@label': 1900 })
+        expect(cellDisplay(weight, heavy, 'r1', PLAIN).text).toBe('1,900')
+    })
+
+    it('shows (none) for a blank link on a detail row, nothing on a total row', () => {
+        const blank = row('detail', { animal: null, 'animal@label': null })
+        expect(cellDisplay(ANIMAL, blank, null, PLAIN).text).toBe(BLANK_LINK_LABEL)
+        const unseen = row('detail', { animal: 'r9', 'animal@label': null })
+        expect(cellDisplay(ANIMAL, unseen, 'r9', PLAIN).text).toBe(BLANK_LINK_LABEL)
+        expect(cellDisplay(ANIMAL, row('total', { animal: null }), null, PLAIN).text).toBe('')
+        expect(cellDisplay(ANIMAL, row('group'), undefined, PLAIN).text).toBe('')
+    })
+
+    it('shows a count of a link column’s records as a number on total rows', () => {
+        const counted: ResultColumn = { ...ANIMAL, aggregate: 'count', totalType: 'number' }
+        expect(cellDisplay(counted, row('total', { animal: 4 }), 4, PLAIN).text).toBe('4')
+    })
+
     it('reads each row’s currency from its currency cell, or the fixed one', () => {
         const eur = row('detail', { cost: 500, 'cost@currency': 'EUR' })
         expect(cellCurrency(MONEY, eur)).toBe('EUR')
@@ -209,6 +273,72 @@ describe('cellDisplay', () => {
     it('shows nothing for a blank cell', () => {
         expect(cellDisplay(MONEY, row('detail'), null, PLAIN).text).toBe('')
         expect(cellDisplay(MONEY, row('detail'), undefined, PLAIN).text).toBe('')
+    })
+})
+
+describe('typed labels', () => {
+    const labelled = (extra: Partial<ResultRow>): ResultRow => ({ ...row('group'), ...extra })
+
+    it('shows a money label in its currency, so 300 EUR and 300 USD differ', () => {
+        const eur = labelled({
+            label: '30000',
+            labelType: 'money',
+            labelValue: 30000,
+            labelCurrency: 'EUR',
+        })
+        const usd = { ...eur, labelCurrency: 'USD' }
+        expect(rowLabelText(eur, PLAIN)).toBe('€300.00')
+        expect(rowLabelText(usd, PLAIN)).toBe('$300.00')
+        expect(rowLabelText({ ...eur, kind: 'detail' }, PLAIN)).toBe('€300.00')
+        expect(rowLabelText(eur, WITHOUT_CENTS)).toBe('€300')
+    })
+
+    it('shows a date and a yes/no label as a cell of that type', () => {
+        const born = labelled({ label: '2019-02-10', labelType: 'date', labelValue: '2019-02-10' })
+        expect(rowLabelText(born, PLAIN)).toBe('Feb 10, 2019')
+        const no = labelled({ label: 'false', labelType: 'bool', labelValue: false })
+        expect(rowLabelText(no, PLAIN)).toBe('No')
+    })
+
+    it('keeps "Total" before a subtotal row’s typed label', () => {
+        const subtotal = labelled({
+            kind: 'subtotal',
+            label: 'Total 30000',
+            labelType: 'money',
+            labelValue: 30000,
+            labelCurrency: 'EUR',
+        })
+        expect(rowLabelText(subtotal, PLAIN)).toBe('Total €300.00')
+    })
+
+    it('shows a text label, or a blank typed one, as the engine wrote it', () => {
+        expect(rowLabelText(labelled({ label: 'Leo' }), PLAIN)).toBe('Leo')
+        const blank = labelled({ label: '(none)', labelType: 'money', labelValue: null })
+        expect(rowLabelText(blank, PLAIN)).toBe('(none)')
+    })
+
+    it('shows a pivot column over amounts by its typed heading', () => {
+        const pivot = (currency: string): ResultColumn => ({
+            id: 'cost.p0',
+            label: '30000',
+            type: 'money',
+            pivot: {
+                cell: 'cost',
+                key: 'k',
+                labelType: 'money',
+                labelValue: 30000,
+                labelCurrency: currency,
+            },
+        })
+        expect(headingText(pivot('EUR'), PLAIN)).toBe('€300.00')
+        expect(headingText(pivot('USD'), PLAIN)).toBe('$300.00')
+        expect(headingText(MONEY, PLAIN)).toBe('Cost')
+        const month: ResultColumn = {
+            ...MONEY,
+            label: '2026-01',
+            pivot: { cell: 'cost', key: '2026-01' },
+        }
+        expect(headingText(month, PLAIN)).toBe('2026-01')
     })
 })
 

@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
+import type { SpecHop } from '../../spec'
 import {
     aggregatesFor,
     columnHint,
     defaultAggregate,
     describePath,
+    firstTextField,
     nextColumnId,
     pathLabel,
     sourceAtLinks,
+    switchableModeHop,
+    withHopJoin,
+    withHopMode,
 } from '../columns'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 
@@ -32,11 +37,87 @@ describe('describePath', () => {
         expect(describePath(CATALOG, 'zoo.gone', [{ field: 'name' }])).toBeNull()
     })
 
+    it('reads a path that ends at a to-one link as a relation to its target', () => {
+        const teams = CATALOG.get(TEAMS_KEY)
+        expect(describePath(CATALOG, SALES_KEY, [{ link: 'team' }])).toEqual({
+            field: {
+                key: 'id',
+                label: 'Team',
+                type: 'relation',
+                aggregates: ['count', 'countDistinct'],
+            },
+            source: teams,
+            target: teams,
+            viaToMany: false,
+            mode: undefined,
+            labels: ['Team'],
+        })
+        expect(describePath(CATALOG, TEAMS_KEY, [{ link: 'sales' }])).toBeNull()
+        // Only the last link must be to-one: a total column may cross a to-many link first.
+        const viaSales = describePath(CATALOG, TEAMS_KEY, [
+            { link: 'sales', mode: 'aggregate' },
+            { link: 'team' },
+        ])
+        expect(viaSales).toMatchObject({ viaToMany: true, mode: 'aggregate', target: teams })
+        expect(viaSales?.field).toMatchObject({ key: 'id', label: 'Team', type: 'relation' })
+        expect(describePath(CATALOG, SALES_KEY, [{ field: 'id' }])?.target?.key).toBe(SALES_KEY)
+        expect(describePath(CATALOG, SALES_KEY, [{ field: 'amount' }])?.target).toBeUndefined()
+    })
+
+    it('names a record by its first text field', () => {
+        const teams = CATALOG.get(TEAMS_KEY)
+        expect(teams && firstTextField(teams)?.key).toBe('name')
+    })
+
     it('finds the source a list of links reaches', () => {
         expect(sourceAtLinks(CATALOG, SALES_KEY, [{ link: 'team' }, { link: 'sales' }])?.key).toBe(
             SALES_KEY
         )
         expect(sourceAtLinks(CATALOG, SALES_KEY, [{ link: 'nope' }])).toBeNull()
+    })
+})
+
+describe('hop joins and modes', () => {
+    it('requires a link, and keeps rows without it again, keeping the mode', () => {
+        const hops: SpecHop[] = [{ link: 'sales', mode: 'aggregate' }, { field: 'quantity' }]
+        const required = withHopJoin(hops, 0, true)
+        expect(required).toEqual([
+            { link: 'sales', mode: 'aggregate', with: 'required' },
+            { field: 'quantity' },
+        ])
+        expect(withHopJoin(required, 0, false)).toEqual(hops)
+        // A field step has no join.
+        expect(withHopJoin(hops, 1, true)).toEqual(hops)
+        expect(hops[0]).toEqual({ link: 'sales', mode: 'aggregate' })
+    })
+
+    it('turns a total into child rows, which have no join', () => {
+        const hops: SpecHop[] = [
+            { link: 'sales', mode: 'aggregate', with: 'required' },
+            { field: 'quantity' },
+        ]
+        expect(withHopMode(hops, 0, 'nest')).toEqual([
+            { link: 'sales', mode: 'nest' },
+            { field: 'quantity' },
+        ])
+        expect(withHopMode([{ link: 'sales', mode: 'nest' }], 0, 'aggregate')).toEqual([
+            { link: 'sales', mode: 'aggregate' },
+        ])
+    })
+
+    it('lets the mode switch only on a path that crosses one to-many link', () => {
+        const once = [{ link: 'sales', mode: 'aggregate' as const }, { field: 'quantity' }]
+        expect(switchableModeHop(CATALOG, TEAMS_KEY, once)).toBe(0)
+        expect(switchableModeHop(CATALOG, SALES_KEY, [{ link: 'team' }, { field: 'name' }])).toBe(
+            null
+        )
+        const twice = [
+            { link: 'sales', mode: 'nest' as const },
+            { link: 'team' },
+            { link: 'sales', mode: 'nest' as const },
+            { field: 'quantity' },
+        ]
+        expect(switchableModeHop(CATALOG, TEAMS_KEY, twice)).toBeNull()
     })
 })
 

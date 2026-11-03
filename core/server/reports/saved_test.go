@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/rlstest"
 )
 
 func createBody(owner, extra string) string {
@@ -60,7 +62,7 @@ func TestASpecIsCheckedAndSavedLoaded(t *testing.T) {
 	s.expect(t, "ann", http.MethodPost, reportsURL,
 		fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":1,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}}`, ann),
 		http.StatusUnprocessableEntity, `"source":{"code":"unknown_source"`)
-	s.expect(t, "ann", http.MethodPost, reportsURL, fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":2}}`, ann),
+	s.expect(t, "ann", http.MethodPost, reportsURL, fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":3}}`, ann),
 		http.StatusBadRequest, `"version":{"code":"invalid"`)
 	body := s.expect(t, "ann", http.MethodPost, reportsURL,
 		fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":1,"source":"zoo.animals","columns":[{"id":"m","path":[{"field":"mass"}],"aggregate":"sum"}]}}`, ann),
@@ -142,7 +144,7 @@ func TestASuperuserIsNotGuarded(t *testing.T) {
 	}
 	su := core.NewRecord(superusers)
 	su.SetEmail("root@zoo.test")
-	su.SetPassword("password123")
+	rlstest.SetPassword(su, "password123")
 	if err := s.app.Save(su); err != nil {
 		t.Fatal(err)
 	}

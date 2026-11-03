@@ -6,134 +6,210 @@ import {
     describeFormula,
     exprAt,
     type FormulaOperands,
-    type FormulaPart,
     type FormulaPath,
+    isFormulaPart,
     isVariadic,
     PART_LABELS,
     partOf,
     partsFor,
     removeOperand,
-    replaceAt,
     setAggregateColumn,
     setAggregateTable,
     setPlaces,
+    withChildren,
     withPart,
 } from '@tinycld/core/lib/forms/builder'
+import {
+    type FormulaTree,
+    replaceTreeAt,
+    treeAt,
+} from '@tinycld/core/lib/forms/builder/formula-tree'
 import type { ComputeExpr } from '@tinycld/core/lib/forms/expression'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
+import { Fragment, type ReactNode } from 'react'
 import { Text, View } from 'react-native'
 import { NumberText, type PickItem, PickMenu, RemoveButton } from './rule-parts'
 
 const PLACES = [0, 1, 2, 3, 4, 5, 6]
 
-export interface FormulaEditorProps {
+/** What a leaf's controls get: the part, how to replace it, and its test id stem. */
+export interface FormulaLeafProps<E> {
+    root: E
+    path: FormulaPath
+    expr: E
+    set: (next: E) => void
+    id: string
+    /** ", part 1.2" for a screen reader; "" for the whole formula. */
+    where: string
+}
+
+/**
+ * The parts a formula editor offers and how each behaves. Forms leave it out and
+ * get Number, Field, the arithmetic and the table totals (computeOperators); the
+ * report builder passes the report operators.
+ */
+export interface FormulaOperators<E> extends FormulaTree<E> {
+    parse(value: unknown): E
+    partOf(expr: E): string
+    partsAt(root: E, path: FormulaPath): readonly string[]
+    label(part: string): string
+    /**
+     * The part at `path` changed to another kind: returns the replacement for that
+     * part (operands carried over where they can be), not a new root. The editor
+     * puts it in place with `replaceTreeAt`.
+     */
+    withPart(root: E, path: FormulaPath, part: string): E
+    /** A caption above a part ("When", "Then"), or null. */
+    slotLabel(expr: E, index: number): string | null
+    isVariadic(expr: E): boolean
+    canRemove(expr: E): boolean
+    addOperand(expr: E): E
+    removeOperand(expr: E, index: number): E
+    describe(expr: E): string
+    /**
+     * The controls beside a part's menu. Called as a function, not drawn as a
+     * component: an operator set is rebuilt each render, and a new component
+     * type would remount its inputs and drop the caret while typing.
+     */
+    renderLeaf(props: FormulaLeafProps<E>): ReactNode
+}
+
+interface Common {
     /** The stored formula; a draft holds it untyped. */
     value: unknown
-    onChange: (expr: ComputeExpr) => void
-    operands: FormulaOperands
-    /** What a Field part is called: "Field", or "Column" in a column's formula. */
-    valueNoun: string
     testID: string
 }
 
-/** Every edit replaces one part of the formula by its path; see lib/forms/builder/formula.ts. */
-function formulaApi({
+/** Without `operators`, today's forms editor; with them, that operator set's own tree (R16). */
+export type FormulaEditorProps<E = ComputeExpr> =
+    | (Common & {
+          operators?: undefined
+          onChange: (expr: ComputeExpr) => void
+          operands: FormulaOperands
+          /** What a Field part is called: "Field", or "Column" in a column's formula. */
+          valueNoun: string
+      })
+    | (Common & {
+          operators: FormulaOperators<E>
+          onChange: (expr: E) => void
+          // The operator set says what a part reads; the forms props would be ignored.
+          operands?: never
+          valueNoun?: never
+      })
+
+// The leaf views both operator sets draw (F15): a typed number, a value
+// picked from a list, and decimal places.
+
+/** A number typed into a formula part. A cleared number is 0, the value the engines read for nothing. */
+export function FormulaNumberInput({
     value,
     onChange,
-    operands,
-}: Omit<FormulaEditorProps, 'valueNoun' | 'testID'>) {
-    const expr = asExpr(value)
-    const at = (path: FormulaPath) => exprAt(expr, path) ?? 0
-    const set = (path: FormulaPath, next: ComputeExpr) => onChange(replaceAt(expr, path, next))
-    return {
-        expr,
-        operands,
-        summary: describeFormula(expr, operands),
-        parts: partsFor(operands),
-        at,
-        set,
-        setPart: (path: FormulaPath, part: FormulaPart) =>
-            set(path, withPart(at(path), part, operands)),
-        addPart: (path: FormulaPath) => set(path, addOperand(at(path))),
-        removePart: (path: FormulaPath, index: number) => set(path, removeOperand(at(path), index)),
-        setPlaces: (path: FormulaPath, places: number) => set(path, setPlaces(at(path), places)),
-        setTable: (path: FormulaPath, key: string) =>
-            set(path, setAggregateTable(at(path), key, operands)),
-        setColumn: (path: FormulaPath, key: string) => set(path, setAggregateColumn(at(path), key)),
-    }
-}
-
-type Formula = ReturnType<typeof formulaApi>
-
-const idOf = (testID: string, path: FormulaPath) =>
-    `${testID}-${path.length ? path.join('-') : 'root'}`
-
-const partLabel = (part: FormulaPart, valueNoun: string) =>
-    part === 'field' ? valueNoun : PART_LABELS[part]
-
-/** A part's place, for a screen reader: "2", or "1.2" for the second part of the first. */
-const placeOf = (path: FormulaPath) => path.map(i => i + 1).join('.')
-
-/** Repeated controls read the same; this suffix tells them apart. The whole formula has none. */
-const whereOf = (path: FormulaPath) => (path.length ? `, part ${placeOf(path)}` : '')
-
-interface PartProps {
-    formula: Formula
-    path: FormulaPath
-    expr: ComputeExpr
-    valueNoun: string
-    id: string
-}
-
-function NumberPart({ formula, path, expr, id }: PartProps) {
-    if (typeof expr !== 'number') return null
-    // A cleared number is 0, the value the engine reads for nothing.
+    label,
+    testID,
+}: {
+    value: number
+    onChange: (n: number) => void
+    label: string
+    testID: string
+}) {
     return (
         <NumberText
-            value={expr}
-            onChange={n => formula.set(path, n ?? 0)}
-            label={`Number${whereOf(path)}`}
+            value={value}
+            onChange={n => onChange(n ?? 0)}
+            label={label}
             placeholder="0"
             emptyAs={0}
+            testID={testID}
+        />
+    )
+}
+
+/** A value a part reads: a field, a column or a section, by key. */
+export function FormulaValuePick({
+    choices,
+    selected,
+    onChange,
+    purpose,
+    testID,
+}: {
+    choices: readonly { key: string; label: string }[]
+    selected: string
+    onChange: (key: string) => void
+    purpose: string
+    testID: string
+}) {
+    const items: PickItem[] = choices.map(c => ({
+        id: c.key,
+        label: c.label,
+        isSelected: c.key === selected,
+        onSelect: () => onChange(c.key),
+    }))
+    const label = choices.find(c => c.key === selected)?.label ?? `${selected} (missing)`
+    return <PickMenu label={label} purpose={purpose} items={items} testID={testID} />
+}
+
+/**
+ * The decimal places of a part that keeps a scale: a forms Round, or a report
+ * formula's Round, Divide, Average or percent. A forms Divide has no places.
+ */
+export function FormulaPlacesPick({
+    places,
+    onChange,
+    purpose,
+    testID,
+}: {
+    places: number
+    onChange: (n: number) => void
+    purpose: string
+    testID: string
+}) {
+    const items: PickItem[] = PLACES.map(n => ({
+        id: String(n),
+        label: String(n),
+        isSelected: n === places,
+        onSelect: () => onChange(n),
+    }))
+    const label = places === 1 ? '1 place' : `${places} places`
+    return <PickMenu label={label} purpose={purpose} items={items} testID={testID} />
+}
+
+type ComputeLeafProps = FormulaLeafProps<ComputeExpr> & {
+    operands: FormulaOperands
+    valueNoun: string
+}
+
+function NumberPart({ expr, set, id, where }: ComputeLeafProps) {
+    if (typeof expr !== 'number') return null
+    return (
+        <FormulaNumberInput
+            value={expr}
+            onChange={set}
+            label={`Number${where}`}
             testID={`${id}-number`}
         />
     )
 }
 
-function ValuePick({ formula, path, expr, valueNoun, id }: PartProps) {
+function ValuePick({ expr, set, id, where, operands, valueNoun }: ComputeLeafProps) {
     if (typeof expr !== 'object' || !('var' in expr)) return null
-    const items: PickItem[] = formula.operands.values.map(v => ({
-        id: v.key,
-        label: v.label,
-        isSelected: v.key === expr.var,
-        onSelect: () => formula.set(path, { var: v.key }),
-    }))
-    const label =
-        formula.operands.values.find(v => v.key === expr.var)?.label ?? `${expr.var} (missing)`
     return (
-        <PickMenu
-            label={label}
-            purpose={`${valueNoun}${whereOf(path)}`}
-            items={items}
+        <FormulaValuePick
+            choices={operands.values}
+            selected={expr.var}
+            onChange={key => set({ var: key })}
+            purpose={`${valueNoun}${where}`}
             testID={`${id}-field`}
         />
     )
 }
 
-function PlacesPick({ formula, path, expr, id }: PartProps) {
+function PlacesPick({ expr, set, id, where }: ComputeLeafProps) {
     if (typeof expr !== 'object' || !('round' in expr)) return null
-    const places = expr.round[1]
-    const items: PickItem[] = PLACES.map(n => ({
-        id: String(n),
-        label: String(n),
-        isSelected: n === places,
-        onSelect: () => formula.setPlaces(path, n),
-    }))
     return (
-        <PickMenu
-            label={`${places} places`}
-            purpose={`Decimal places${whereOf(path)}`}
-            items={items}
+        <FormulaPlacesPick
+            places={expr.round[1]}
+            onChange={n => set(setPlaces(expr, n))}
+            purpose={`Decimal places${where}`}
             testID={`${id}-places`}
         />
     )
@@ -157,25 +233,25 @@ function ColumnPick({
 }
 
 /** Sum of a column: its table and column. Number of rows: its table. */
-function TotalPick({ formula, path, expr, id }: PartProps) {
+function TotalPick({ expr, set, id, where, operands }: ComputeLeafProps) {
     if (typeof expr !== 'object' || !('sumOf' in expr || 'count' in expr)) return null
     const isSum = 'sumOf' in expr
     const tableKey = isSum ? expr.sumOf[0].var : expr.count[0].var
     const columnKey = isSum ? expr.sumOf[1] : ''
-    const { tables } = formula.operands
+    const { tables } = operands
     const table = tables.find(t => t.key === tableKey)
     const offered = isSum ? tables.filter(t => t.columns.length > 0) : tables
     const tableItems: PickItem[] = offered.map(t => ({
         id: t.key,
         label: t.label,
         isSelected: t.key === tableKey,
-        onSelect: () => formula.setTable(path, t.key),
+        onSelect: () => set(setAggregateTable(expr, t.key, operands)),
     }))
     const columnItems: PickItem[] = (table?.columns ?? []).map(c => ({
         id: c.key,
         label: c.label,
         isSelected: c.key === columnKey,
-        onSelect: () => formula.setColumn(path, c.key),
+        onSelect: () => set(setAggregateColumn(expr, c.key)),
     }))
     const columnLabel =
         table?.columns.find(c => c.key === columnKey)?.label ?? `${columnKey} (missing)`
@@ -183,20 +259,78 @@ function TotalPick({ formula, path, expr, id }: PartProps) {
         <>
             <PickMenu
                 label={table?.label ?? `${tableKey} (missing)`}
-                purpose={`Table${whereOf(path)}`}
+                purpose={`Table${where}`}
                 items={tableItems}
                 testID={`${id}-table`}
             />
             <ColumnPick
                 isVisible={isSum}
                 label={columnLabel}
-                purpose={`Column${whereOf(path)}`}
+                purpose={`Column${where}`}
                 items={columnItems}
                 testID={`${id}-column`}
             />
         </>
     )
 }
+
+function ComputeLeaf(props: ComputeLeafProps) {
+    return (
+        <>
+            <NumberPart {...props} />
+            <ValuePick {...props} />
+            <PlacesPick {...props} />
+            <TotalPick {...props} />
+        </>
+    )
+}
+
+/** The forms engine's parts: Number, Field, the arithmetic and the table totals. */
+export function computeOperators(
+    operands: FormulaOperands,
+    valueNoun: string
+): FormulaOperators<ComputeExpr> {
+    const label = (part: string) => {
+        if (part === 'field') return valueNoun
+        return isFormulaPart(part) ? PART_LABELS[part] : part
+    }
+    return {
+        parse: asExpr,
+        partOf,
+        childrenOf,
+        withChildren,
+        partsAt: () => partsFor(operands),
+        label,
+        withPart: (root, path, part) => {
+            const current = exprAt(root, path) ?? 0
+            return isFormulaPart(part) ? withPart(current, part, operands) : current
+        },
+        slotLabel: () => null,
+        isVariadic,
+        canRemove: canRemoveOperand,
+        addOperand,
+        removeOperand,
+        describe: expr => describeFormula(expr, operands),
+        renderLeaf: props => <ComputeLeaf {...props} operands={operands} valueNoun={valueNoun} />,
+    }
+}
+
+/** Every edit replaces one part of the formula by its path; see lib/forms/builder/formula-tree.ts. */
+interface Tree<E> {
+    operators: FormulaOperators<E>
+    root: E
+    testID: string
+    set: (path: FormulaPath, next: E) => void
+}
+
+const idOf = (testID: string, path: FormulaPath) =>
+    `${testID}-${path.length ? path.join('-') : 'root'}`
+
+/** A part's place, for a screen reader: "2", or "1.2" for the second part of the first. */
+const placeOf = (path: FormulaPath) => path.map(i => i + 1).join('.')
+
+/** Repeated controls read the same; this suffix tells them apart. The whole formula has none. */
+const whereOf = (path: FormulaPath) => (path.length ? `, part ${placeOf(path)}` : '')
 
 /** Removes a part from the one that holds it; `label` names both. */
 interface Removal {
@@ -235,51 +369,60 @@ function AddPart({
     )
 }
 
+function SlotLabel({ text }: { text: string | null }) {
+    if (!text) return null
+    return <Text className="text-xs text-muted-foreground">{text}</Text>
+}
+
 /**
  * The parts a part holds, as nodes. A part has no id: its path is its
  * identity. The count and the part are in the key, so a removal or a new kind
  * of part remounts the inputs below rather than keeping a neighbour's typed text.
  */
-function operandNodes(expr: ComputeExpr, path: FormulaPath, testID: string) {
-    const parts = childrenOf(expr)
-    return parts.map((part, index) => {
-        const childPath = [...path, index]
-        return {
-            path: childPath,
-            index,
-            key: `${idOf(testID, childPath)}:${partOf(part)}:${parts.length}`,
-        }
-    })
-}
-
-function Operands({ formula, path, expr, valueNoun, id, testID }: PartProps & { testID: string }) {
-    const nodes = operandNodes(expr, path, testID)
-    if (nodes.length === 0) return null
-    const canRemove = canRemoveOperand(expr)
-    const holder = partLabel(partOf(expr), valueNoun)
-    const removalOf = (node: (typeof nodes)[number]): Removal | null => {
+function Operands<E>({
+    tree,
+    path,
+    expr,
+    id,
+}: {
+    tree: Tree<E>
+    path: FormulaPath
+    expr: E
+    id: string
+}) {
+    const { operators } = tree
+    const parts = operators.childrenOf(expr)
+    if (parts.length === 0) return null
+    const holder = operators.label(operators.partOf(expr))
+    const canRemove = operators.canRemove(expr)
+    const removalOf = (index: number, childPath: FormulaPath): Removal | null => {
         if (!canRemove) return null
         return {
-            onPress: () => formula.removePart(path, node.index),
-            label: `Remove part ${placeOf(node.path)} of ${holder}`,
+            onPress: () => tree.set(path, operators.removeOperand(expr, index)),
+            label: `Remove part ${placeOf(childPath)} of ${holder}`,
         }
     }
+    const nodes = parts.map((part, index) => {
+        const childPath = [...path, index]
+        return {
+            childPath,
+            removal: removalOf(index, childPath),
+            slot: operators.slotLabel(expr, index),
+            key: `${idOf(tree.testID, childPath)}:${operators.partOf(part)}:${parts.length}`,
+        }
+    })
     const items = nodes.map(node => (
-        <FormulaNode
-            key={node.key}
-            formula={formula}
-            path={node.path}
-            valueNoun={valueNoun}
-            testID={testID}
-            removal={removalOf(node)}
-        />
+        <Fragment key={node.key}>
+            <SlotLabel text={node.slot} />
+            <FormulaNode tree={tree} path={node.childPath} removal={node.removal} />
+        </Fragment>
     ))
     return (
         <View className="pl-3 border-l border-border gap-1.5">
             {items}
             <AddPart
-                isVisible={isVariadic(expr)}
-                onPress={() => formula.addPart(path)}
+                isVisible={operators.isVariadic(expr)}
+                onPress={() => tree.set(path, operators.addOperand(expr))}
                 label={`Add part to ${holder}${whereOf(path)}`}
                 testID={`${id}-add`}
             />
@@ -287,76 +430,108 @@ function Operands({ formula, path, expr, valueNoun, id, testID }: PartProps & { 
     )
 }
 
-interface NodeProps {
-    formula: Formula
+function FormulaNode<E>({
+    tree,
+    path,
+    removal,
+}: {
+    tree: Tree<E>
     path: FormulaPath
-    valueNoun: string
-    testID: string
     /** Null where this part cannot go. */
     removal: Removal | null
-}
-
-function FormulaNode({ formula, path, valueNoun, testID, removal }: NodeProps) {
-    const expr = formula.at(path)
-    const part = partOf(expr)
-    const id = idOf(testID, path)
-    const partItems: PickItem[] = formula.parts.map(p => ({
+}) {
+    const expr = treeAt(tree.operators, tree.root, path)
+    if (expr === undefined) return null
+    const { operators } = tree
+    const part = operators.partOf(expr)
+    const id = idOf(tree.testID, path)
+    const partItems: PickItem[] = operators.partsAt(tree.root, path).map(p => ({
         id: p,
-        label: partLabel(p, valueNoun),
+        label: operators.label(p),
         isSelected: p === part,
-        onSelect: () => formula.setPart(path, p),
+        onSelect: () => tree.set(path, operators.withPart(tree.root, path, p)),
     }))
-    const props: PartProps = { formula, path, expr, valueNoun, id }
+    const leaf = operators.renderLeaf({
+        root: tree.root,
+        path,
+        expr,
+        set: next => tree.set(path, next),
+        id,
+        where: whereOf(path),
+    })
+    const purpose = path.length ? `Part ${placeOf(path)}` : 'Formula part'
     return (
         <View className="gap-1.5" testID={id}>
             <View className="flex-row flex-wrap items-center gap-1.5">
                 <PickMenu
-                    label={partLabel(part, valueNoun)}
-                    purpose={path.length ? `Part ${placeOf(path)}` : 'Formula part'}
+                    label={operators.label(part)}
+                    purpose={purpose}
                     items={partItems}
                     testID={`${id}-part`}
                 />
-                <NumberPart {...props} />
-                <ValuePick {...props} />
-                <PlacesPick {...props} />
-                <TotalPick {...props} />
+                {leaf}
                 <RemovePart removal={removal} testID={`${id}-remove`} />
             </View>
-            <Operands {...props} testID={testID} />
+            <Operands tree={tree} path={path} expr={expr} id={id} />
+        </View>
+    )
+}
+
+function FormulaTreeEditor<E>({
+    operators,
+    value,
+    onChange,
+    testID,
+}: {
+    operators: FormulaOperators<E>
+    value: unknown
+    onChange: (expr: E) => void
+    testID: string
+}) {
+    const root = operators.parse(value)
+    const tree: Tree<E> = {
+        operators,
+        root,
+        testID,
+        set: (path, next) => onChange(replaceTreeAt(operators, root, path, next)),
+    }
+    const summary = operators.describe(root)
+    return (
+        <View className="mb-3 gap-1.5" testID={testID}>
+            <Text className="text-sm font-semibold text-foreground">Formula</Text>
+            <Text
+                className="text-sm text-foreground"
+                accessibilityLabel={`Formula: ${summary}`}
+                testID={`${testID}-summary`}
+            >
+                {`= ${summary}`}
+            </Text>
+            <FormulaNode key={operators.partOf(root)} tree={tree} path={[]} removal={null} />
         </View>
     )
 }
 
 /**
  * A formula built from parts picked from menus: no formula is typed, only a
- * number where a Number part is picked. The line on top reads it back as text.
+ * number (or a text) where such a part is picked. The line on top reads it back.
  */
-export function FormulaEditor({
-    value,
-    onChange,
-    operands,
-    valueNoun,
-    testID,
-}: FormulaEditorProps) {
-    const formula = formulaApi({ value, onChange, operands })
-    return (
-        <View className="mb-3 gap-1.5" testID={testID}>
-            <Text className="text-sm font-semibold text-foreground">Formula</Text>
-            <Text
-                className="text-sm text-foreground"
-                accessibilityLabel={`Formula: ${formula.summary}`}
-                testID={`${testID}-summary`}
-            >
-                {`= ${formula.summary}`}
-            </Text>
-            <FormulaNode
-                key={partOf(formula.expr)}
-                formula={formula}
-                path={[]}
-                valueNoun={valueNoun}
-                testID={testID}
-                removal={null}
+export function FormulaEditor<E = ComputeExpr>(props: FormulaEditorProps<E>) {
+    if (props.operators === undefined) {
+        return (
+            <FormulaTreeEditor
+                operators={computeOperators(props.operands, props.valueNoun)}
+                value={props.value}
+                onChange={props.onChange}
+                testID={props.testID}
             />
-        </View>
+        )
+    }
+    return (
+        <FormulaTreeEditor
+            operators={props.operators}
+            value={props.value}
+            onChange={props.onChange}
+            testID={props.testID}
+        />
     )
 }
