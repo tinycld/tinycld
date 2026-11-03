@@ -32,9 +32,7 @@ type FieldsOf<S, C extends keyof S> = S[C] extends { type: infer T } ? keyof T &
  * `markdown` marks a column that already holds markdown (a card description),
  * so a markdown param copies it as it is instead of escaping it.
  */
-export type FieldRef<F extends string = string> =
-    | F
-    | { key: F; label: string; markdown?: boolean }
+export type FieldRef<F extends string = string> = F | { key: F; label: string; markdown?: boolean }
 
 export interface RecordTriggerDefBase<C extends string, F extends string> {
     id: string
