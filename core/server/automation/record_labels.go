@@ -33,6 +33,8 @@ type TemplateEnv struct {
 	App     core.App
 	Labels  map[string]RecordLabelDecl
 	OwnerID string
+	// Dynamic holds a run's "fields.<key>" values.
+	Dynamic map[string]any
 }
 
 // recordNamer names related records for one template substitution. It looks

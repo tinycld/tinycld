@@ -3,10 +3,15 @@ import { useLiveQuery } from '@tanstack/react-db'
 import { EmptyState } from '@tinycld/core/components/EmptyState'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
 import { emptyDraft, recordToDraft } from '@tinycld/core/lib/automation/draft'
+import { extendCatalogForDraft } from '@tinycld/core/lib/automation/form-trigger'
 import { useAutomationCatalog } from '@tinycld/core/lib/automation/use-automation-catalog'
 import { useRuleDraft } from '@tinycld/core/lib/automation/use-rule-draft'
 import { useRuleMutations } from '@tinycld/core/lib/automation/use-rule-mutations'
+import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
+import type { FormDefinition } from '@tinycld/core/lib/forms/definition'
+import { useFormRow } from '@tinycld/core/lib/forms/use-forms-of-host'
 import { useStore } from '@tinycld/core/lib/pocketbase'
+import type { BuilderPreset } from '@tinycld/core/lib/stores/rules-ui-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonSpinner, ButtonText } from '@tinycld/core/ui/button'
 import { Dialog } from '@tinycld/core/ui/dialog'
@@ -31,6 +36,8 @@ export interface RuleBuilderProps {
      * loaded record's own order wins). Callers compute max(existing order) +
      * 1 so ties can't cause display/execution divergence; see RulesPanel. */
     nextOrder?: number
+    /** Seeds a NEW rule's trigger and config (ignored when editing). */
+    preset?: BuilderPreset
 }
 
 // Loads the record being edited (if any). Returns `isReady: true` for the
@@ -50,13 +57,23 @@ function useEditingRecord(ruleId: string | undefined) {
 
 // presetPkg only narrows the trigger picker's package group inside
 // TriggerCard's menu (see TriggerCard.triggersForPreset) — it isn't a
-// trigger ref itself, so it plays no part in seeding the draft.
+// trigger ref itself, so it plays no part in seeding the draft. preset does:
+// it names the trigger and its config ("Add destination" on a web form).
 function initialDraft(
     scope: 'personal' | 'org',
     record: ReturnType<typeof useEditingRecord>['record'],
-    nextOrder: number
+    nextOrder: number,
+    preset?: BuilderPreset
 ): RuleDraft {
-    return record ? recordToDraft(record) : emptyDraft(scope, nextOrder)
+    if (record) return recordToDraft(record)
+    const draft = emptyDraft(scope, nextOrder)
+    if (!preset) return draft
+    return {
+        ...draft,
+        name: preset.name ?? draft.name,
+        trigger: preset.trigger,
+        triggerConfig: preset.triggerConfig,
+    }
 }
 
 function BuilderContent({
@@ -65,6 +82,7 @@ function BuilderContent({
     ruleId,
     presetPkg,
     nextOrder = 0,
+    preset,
     sessionKey,
 }: Omit<RuleBuilderProps, 'isOpen'> & { sessionKey: number }) {
     const { record, isReady: recordReady } = useEditingRecord(ruleId)
@@ -102,11 +120,11 @@ function BuilderContent({
             onClose={onClose}
             scope={scope}
             presetPkg={presetPkg}
-            initial={initialDraft(scope, record, nextOrder)}
+            initial={initialDraft(scope, record, nextOrder, preset)}
             catalog={catalog}
             isLocked={Boolean(ruleId)}
             isSaving={save.isPending}
-            onSave={draft => save.mutate(draft, { onSuccess: onClose })}
+            onSave={(draft, onError) => save.mutate(draft, { onSuccess: onClose, onError })}
         />
     )
 }
@@ -140,7 +158,8 @@ interface RuleBuilderFormProps {
     catalog: NonNullable<ReturnType<typeof useAutomationCatalog>['catalog']>
     isLocked: boolean
     isSaving: boolean
-    onSave: (draft: RuleDraft) => void
+    /** onError puts the server's field errors (a refused rule) on the form. */
+    onSave: (draft: RuleDraft, onError: (error: unknown) => void) => void
 }
 
 function RuleBuilderForm({
@@ -152,7 +171,14 @@ function RuleBuilderForm({
     isSaving,
     onSave,
 }: RuleBuilderFormProps) {
-    const form = useRuleDraft(initial, catalog)
+    // The picked form's definition is read through a ref: useFormRow needs
+    // the draft's form id, which useRuleDraft only gives after it runs.
+    const formDefinition = useRef<FormDefinition | undefined>(undefined)
+    const form = useRuleDraft(initial, catalog, (c, d) =>
+        extendCatalogForDraft(c, d, formDefinition.current)
+    )
+    const { row: formRow } = useFormRow(form.draft.triggerConfig.form)
+    formDefinition.current = formRow?.definition
     const { control, draft, setFocus } = form
 
     // Naming the rule is the first thing every new rule needs, so start there
@@ -171,7 +197,11 @@ function RuleBuilderForm({
         return () => cancelAnimationFrame(raf)
     }, [shouldFocusName, setFocus])
 
-    const handleSave = form.handleSubmit(onSave)
+    const onServerError = handleMutationErrorsWithForm({
+        setError: form.setError,
+        getValues: form.getValues,
+    })
+    const handleSave = form.handleSubmit(draft => onSave(draft, onServerError))
 
     return (
         <>
@@ -196,27 +226,31 @@ function RuleBuilderForm({
                 <TriggerCard
                     control={control}
                     draft={draft}
-                    catalog={catalog}
+                    catalog={form.catalog}
                     onSelectTrigger={form.selectTrigger}
                     isLocked={isLocked}
                     presetPkg={presetPkg}
                 />
                 <ConditionsCard
                     draft={draft}
-                    catalog={catalog}
+                    catalog={form.catalog}
                     onChangeConditions={form.setConditions}
                 />
                 <ActionsCard
                     triggerRef={draft.trigger}
                     actionRows={form.actionRows}
-                    catalog={catalog}
+                    catalog={form.catalog}
                     onAdd={form.addAction}
                     onMove={form.moveAction}
                     onRemove={form.removeAction}
                     onChangeParams={form.setActionParams}
                 />
                 {/* Phase-4 candidate: dry-run resolver-aware scoping (see endpoints.go) */}
-                <DryRunPanel draft={draft} catalog={catalog} isVisible={Boolean(draft.trigger)} />
+                <DryRunPanel
+                    draft={draft}
+                    catalog={form.catalog}
+                    isVisible={Boolean(draft.trigger)}
+                />
             </Dialog.Body>
 
             <BuilderErrors errors={form.errors} isEnabled={form.isSubmitted} />
@@ -292,6 +326,7 @@ export function RuleBuilder({
     ruleId,
     presetPkg,
     nextOrder,
+    preset,
 }: RuleBuilderProps) {
     // Dialog content can outlive a close (close animation, or a
     // caller — Task 7's panel — that mounts one RuleBuilder instance and just
@@ -320,6 +355,7 @@ export function RuleBuilder({
                 ruleId={ruleId}
                 presetPkg={presetPkg}
                 nextOrder={nextOrder}
+                preset={preset}
                 sessionKey={session.current.count}
             />
         </Dialog>

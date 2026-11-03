@@ -38,7 +38,8 @@ migrate(
                     type: 'relation',
                     required: true,
                     collectionId: pubs.id,
-                    cascadeDelete: true,
+                    // No cascade: deleting a publication must not silently delete its submissions.
+                    cascadeDelete: false,
                     maxSelect: 1,
                 },
                 { id: 'fsub_values', name: 'values', type: 'json', maxSize: 1000000 },

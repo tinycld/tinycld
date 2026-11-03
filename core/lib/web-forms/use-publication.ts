@@ -5,11 +5,13 @@ import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { embedCode } from '@tinycld/core/lib/web-forms/embed-code'
+import { browserCanSolvePow } from '@tinycld/core/lib/web-forms/pow-capability'
 import {
     PUBLICATION_DEFAULTS,
     type PublicationValues,
     publicationSchema,
 } from '@tinycld/core/lib/web-forms/publication-schema'
+import type { FormPublications } from '@tinycld/core/types/pbSchema'
 import { useForm, zodResolver } from '@tinycld/core/ui/form'
 import * as Clipboard from 'expo-clipboard'
 import { newRecordId } from 'pbtsdb/core'
@@ -24,14 +26,15 @@ function formsOrigin(): string {
     return PB_SERVER_ADDR
 }
 
-interface PublicationColumns {
-    enabled: boolean
-    allowed_domains: string
-    require_pow: boolean
-    confirmation: string
-    retention_days: number
-    max_upload_mb: number
-}
+type PublicationColumns = Pick<
+    FormPublications,
+    | 'enabled'
+    | 'allowed_domains'
+    | 'require_pow'
+    | 'confirmation'
+    | 'retention_days'
+    | 'max_upload_mb'
+>
 
 function toValues(row: PublicationColumns | undefined): PublicationValues {
     if (!row) return PUBLICATION_DEFAULTS
@@ -114,6 +117,9 @@ export function usePublication(formId: string, formName: string) {
     return {
         row,
         isReady: Boolean(isReady),
+        // Saving before the row loads would create a second publication.
+        canSave: Boolean(isReady),
+        powAvailable: browserCanSolvePow(),
         form,
         save: () => {
             void form.handleSubmit(v => save.mutate(v))()

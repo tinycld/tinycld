@@ -88,6 +88,10 @@ func findPublication(app core.App, token string) (*core.Record, error) {
 // token names an enabled publication of an active web form; nil records
 // otherwise, with a nil error for "not live".
 func livePublication(app core.App, token string) (*core.Record, *core.Record, *forms.Definition, error) {
+	if forms.HostFor(app, WebFormHostKey) == nil {
+		log.Error("web form host is not registered; refusing to serve web forms")
+		return nil, nil, nil, nil
+	}
 	pub, err := findPublication(app, token)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, nil, nil

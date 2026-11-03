@@ -99,7 +99,7 @@ func TestActionWritesNothingAfterCancel(t *testing.T) {
 
 	t.Run("record-op update", func(t *testing.T) {
 		err := ExecuteActionContext(ctx, app, defs, "things:set-status",
-			map[string]any{"status": "filed"}, rule, openTrigger, rec, 0)
+			map[string]any{"status": "filed"}, rule, openTrigger, rec, 0, nil)
 		if err == nil {
 			t.Fatal("a cancelled record-op update must fail")
 		}
@@ -114,7 +114,7 @@ func TestActionWritesNothingAfterCancel(t *testing.T) {
 
 	t.Run("record-op create", func(t *testing.T) {
 		err := ExecuteActionContext(ctx, app, defs, "core:apply-label",
-			map[string]any{"label": "Finance"}, rule, openTrigger, rec, 0)
+			map[string]any{"label": "Finance"}, rule, openTrigger, rec, 0, nil)
 		if err == nil {
 			t.Fatal("a cancelled record-op create must fail")
 		}
@@ -136,7 +136,7 @@ func TestActionWritesNothingAfterCancel(t *testing.T) {
 				return a.Save(made)
 			})
 		})
-		if err := ExecuteActionContext(ctx, app, defs, "things:stamp", nil, rule, openTrigger, rec, 0); err == nil {
+		if err := ExecuteActionContext(ctx, app, defs, "things:stamp", nil, rule, openTrigger, rec, 0, nil); err == nil {
 			t.Fatal("a cancelled native write must fail")
 		}
 		if wrote {
@@ -221,7 +221,7 @@ func TestCoreActionsHonourTheActionContext(t *testing.T) {
 			Actions: []ActionDef{{ID: "notify", Kind: "native", Params: []ParamDef{{Key: "title"}}}},
 		}}}
 		err := ExecuteActionContext(ctx, app, defs, "core:notify",
-			map[string]any{"title": "x"}, rule, TriggerDef{}, nil, 0)
+			map[string]any{"title": "x"}, rule, TriggerDef{}, nil, 0, nil)
 		if err == nil {
 			t.Fatal("core:notify must refuse to write after its context ends")
 		}

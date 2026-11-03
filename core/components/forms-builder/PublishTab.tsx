@@ -5,6 +5,7 @@ import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
 import { FormErrorSummary, NumberInput, TextInput, Toggle } from '@tinycld/core/ui/form'
 import { useState } from 'react'
 import { Text, View } from 'react-native'
+import { DestinationsSection } from './DestinationsSection'
 
 interface EmbedCodeProps {
     code: string | null
@@ -73,6 +74,9 @@ export function PublishTab({ isVisible, ...rest }: PublishTabProps) {
 function PublishPanel({ formId, formName }: Omit<PublishTabProps, 'isVisible'>) {
     const t = usePublishTab(formId, formName)
     const { control, formState } = t.p.form
+    const powHint = t.p.powAvailable
+        ? "The visitor's browser does about one second of work before it sends. Stops bulk spam."
+        : 'Needs this server on https.'
     return (
         <View className="gap-4 max-w-2xl" testID="web-form-publish">
             <View className="flex-row items-center gap-2">
@@ -98,7 +102,8 @@ function PublishPanel({ formId, formName }: Omit<PublishTabProps, 'isVisible'>) 
                 control={control}
                 name="requirePow"
                 label="Ask the browser to prove it is not a bot"
-                hint="The visitor's browser does about one second of work before it sends. Stops bulk spam."
+                hint={powHint}
+                disabled={!t.p.powAvailable}
                 testID="web-form-pow"
             />
             <TextInput
@@ -126,7 +131,7 @@ function PublishPanel({ formId, formName }: Omit<PublishTabProps, 'isVisible'>) 
             />
             <Button
                 onPress={t.p.save}
-                isDisabled={t.p.isSaving}
+                isDisabled={t.p.isSaving || !t.p.canSave}
                 className="self-start"
                 testID="web-form-save"
             >
@@ -138,6 +143,7 @@ function PublishPanel({ formId, formName }: Omit<PublishTabProps, 'isVisible'>) 
                 onCopy={t.p.copy}
                 onRegenerate={t.askRegenerate}
             />
+            <DestinationsSection formId={formId} formName={formName} />
             <ConfirmDialog
                 isOpen={t.isConfirming}
                 title="Regenerate the link?"

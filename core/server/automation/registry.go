@@ -39,6 +39,8 @@ type ActionRequest struct {
 	// it through Context(), which never returns nil. See ActionHandler for
 	// what a handler must do with it.
 	Ctx context.Context
+	// Fields are the run's dynamic fields (a web form's answers); nil for most triggers.
+	Fields []DynamicField
 }
 
 // Context returns the action's context, or context.Background() for a
@@ -115,10 +117,13 @@ type namedSendGuard struct {
 }
 
 var (
-	registryMu     sync.RWMutex
-	actionHandlers = map[string]ActionHandler{}
-	ownerResolvers = map[string]OwnerResolver{}
-	triggerFilters = map[string]TriggerFilter{}
+	registryMu      sync.RWMutex
+	actionHandlers  = map[string]ActionHandler{}
+	ownerResolvers  = map[string]OwnerResolver{}
+	triggerFilters  = map[string]TriggerFilter{}
+	fieldsResolvers = map[string]FieldsResolver{}
+	ruleFilters     = map[string]RuleFilter{}
+	runObservers    = map[string][]RunObserver{}
 	// actionRef -> paramKey -> authorizer
 	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
 	// actionRef -> authorizer
@@ -262,9 +267,16 @@ func ResetRegistriesForTest() {
 	actionHandlers = map[string]ActionHandler{}
 	ownerResolvers = map[string]OwnerResolver{}
 	triggerFilters = map[string]TriggerFilter{}
+	fieldsResolvers = map[string]FieldsResolver{}
+	ruleFilters = map[string]RuleFilter{}
+	runObservers = map[string][]RunObserver{}
 	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
 	triggerRecordAuthorizers = map[string]TriggerRecordAuthorizer{}
 	sendGuards = map[string][]namedSendGuard{}
+
+	filesMu.Lock()
+	defer filesMu.Unlock()
+	filesProviders = map[string]FilesProvider{}
 }
 
 var autoOwnerFields = []string{"user", "owner", "author"}

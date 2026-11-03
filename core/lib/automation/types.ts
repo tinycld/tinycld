@@ -105,6 +105,13 @@ export interface TypedParamDef {
      */
     required?: boolean
     /**
+     * The param names who a message is sent to (an email address). Web forms
+     * refuse a recipient filled from a form's answers (`{{fields.…}}`) unless
+     * the form asks for proof of work: otherwise a bot could make the server
+     * send mail to any address. Declare it on every such param.
+     */
+    recipient?: boolean
+    /**
      * Required when `type` is 'relation' (validateDefinitions enforces both
      * directions): the target collection NAME the record picker lists. A
      * column-referencing param inherits its target from the column instead;

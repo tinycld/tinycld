@@ -29,9 +29,12 @@ function usePowSolution(token: string, enabled: boolean) {
         enabled,
         staleTime: Number.POSITIVE_INFINITY,
         queryFn: async () => {
-            const c = await pb.send<PowChallenge>(`/api/forms/public/${token}/challenge`, {
-                method: 'GET',
-            })
+            const c = await pb.send<PowChallenge>(
+                `/api/forms/public/${encodeURIComponent(token)}/challenge`,
+                {
+                    method: 'GET',
+                }
+            )
             return { solution: await solveChallenge(c), solvedAt: Date.now() }
         },
     })
@@ -134,7 +137,10 @@ export function usePublicSubmit(o: {
                 honeypot: honeypot.current,
                 pow: await freshPow(),
             })
-            await pb.send(`/api/forms/public/${o.token}/submit`, { method: 'POST', body })
+            await pb.send(`/api/forms/public/${encodeURIComponent(o.token)}/submit`, {
+                method: 'POST',
+                body,
+            })
         },
         onSuccess: () => {
             usePendingFiles.getState().clear()

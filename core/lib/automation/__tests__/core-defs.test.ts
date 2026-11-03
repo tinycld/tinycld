@@ -12,8 +12,23 @@ describe('CORE_AUTOMATION', () => {
     it('declares the built-in triggers and actions from the spec', () => {
         const triggerIds = (CORE_AUTOMATION.triggers ?? []).map(t => t.id)
         const actionIds = (CORE_AUTOMATION.actions ?? []).map(a => a.id)
-        expect(triggerIds).toEqual(['schedule', 'manual', 'user-added'])
+        expect(triggerIds).toEqual(['schedule', 'manual', 'user-added', 'form-submitted'])
         expect(actionIds).toEqual(['apply-label', 'notify', 'post-webhook', 'send-email'])
+    })
+
+    it("marks send-email's recipient, so web forms can refuse one filled from a form", () => {
+        const sendEmail = CORE_AUTOMATION.actions?.find(a => a.id === 'send-email')
+        const to = sendEmail?.params?.find(p => p.key === 'to')
+        expect(to).toMatchObject({ recipient: true })
+    })
+
+    it('declares the web form trigger on submissions, exposing only the time', () => {
+        const t = CORE_AUTOMATION.triggers?.find(x => x.id === 'form-submitted')
+        expect(t).toMatchObject({
+            collection: 'form_submissions',
+            on: 'create',
+            fields: [{ key: 'created', label: 'Sent at' }],
+        })
     })
 
     // users carries password and tokenKey. The engine's exposure rules filter

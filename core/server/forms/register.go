@@ -71,4 +71,6 @@ func BindHooks(app core.App, defs *Defs) {
 	}
 	bindFormsHooks(app, defs)
 	bindHostHooks(app, defs)
+	defsKey.Set(app, defs)
+	registerFilesProviders(defs)
 }

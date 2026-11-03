@@ -28,6 +28,7 @@ require (
 	github.com/emersion/go-smtp v0.24.0
 	github.com/emersion/go-vcard v0.0.0-20260618161152-d854b7e0e2d3
 	github.com/emersion/go-webdav v0.7.0
+	github.com/gabriel-vasile/mimetype v1.4.15
 	github.com/ganigeorgiev/fexpr v0.6.0
 	github.com/getsentry/sentry-go v0.44.1
 	github.com/go-webauthn/webauthn v0.18.2
@@ -43,6 +44,7 @@ require (
 	github.com/pocketbase/pocketbase v0.40.4
 	github.com/pquerna/otp v1.5.0
 	github.com/skyterra/y-crdt v0.0.0-20260224023949-c0cb10d3f33e
+	github.com/spf13/cast v1.10.0
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/crypto v0.58.0
@@ -74,7 +76,6 @@ require (
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/x v0.3.1 // indirect
@@ -88,7 +89,6 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/teambition/rrule-go v1.8.2 // indirect

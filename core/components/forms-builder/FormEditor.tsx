@@ -22,18 +22,23 @@ import { FieldProperties } from './FieldProperties'
 import { PreviewDialog } from './PreviewDialog'
 import { PublishTab } from './PublishTab'
 import { RulesTab } from './RulesTab'
+import { SubmissionsTab } from './SubmissionsTab'
 import type { CanvasDrag } from './use-canvas-drag'
 import { useEditorForm } from './use-editor-form'
 import { useLeaveGuard } from './use-leave-guard'
 
 type Editor = ReturnType<typeof useEditorForm>
-type Tab = 'fields' | 'rules' | 'publish'
+type Tab = 'fields' | 'rules' | 'publish' | 'submissions'
 
 const BASE_TABS = [
     { value: 'fields', label: 'Fields' },
     { value: 'rules', label: 'Rules' },
 ] as const
-const WEB_FORM_TABS = [...BASE_TABS, { value: 'publish', label: 'Publish' }] as const
+const WEB_FORM_TABS = [
+    ...BASE_TABS,
+    { value: 'publish', label: 'Publish' },
+    { value: 'submissions', label: 'Submissions' },
+] as const
 
 // Only a web form is published; other hosts' forms live inside their package.
 function tabsFor(host: FormHost) {
@@ -262,6 +267,11 @@ function LoadedEditor({ row, host }: { row: FormRow; host: FormHost }) {
                         formId={row.id}
                         formName={row.name}
                         isVisible={s.tab === 'publish'}
+                    />
+                    <SubmissionsTab
+                        formId={row.id}
+                        definition={row.definition}
+                        isVisible={s.tab === 'submissions'}
                     />
                 </ScrollView>
                 <EditorPanel isOpen={isPanelOpen} onClose={() => editor.select(null)} title="Field">

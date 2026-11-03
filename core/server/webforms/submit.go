@@ -8,13 +8,16 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/filesystem"
+	"tinycld.org/core/appstate"
 	"tinycld.org/core/forms"
 	"tinycld.org/core/logging"
 	"tinycld.org/core/ratelimit"
@@ -35,17 +38,41 @@ const (
 
 var (
 	log        = logging.ForPackage("webforms")
-	preLimiter = ratelimit.New(preParseLimit, 10*time.Minute)
-	ipLimiter  = ratelimit.New(5, 10*time.Minute)
-	pubLimiter = ratelimit.New(200, time.Hour)
-	spentPow   = newPowLedger()
+	preLimiter = ratelimit.NewPerApp("webforms.submit.pre", preParseLimit, 10*time.Minute)
+	ipLimiter  = ratelimit.NewPerApp("webforms.submit.ip", 5, 10*time.Minute)
+	pubLimiter = ratelimit.NewPerApp("webforms.submit.publication", 200, time.Hour)
+	powKey     = appstate.NewKey[*powLedger]("webforms.pow")
 )
 
-func resetLimitersForTesting() {
-	preLimiter.Reset()
-	ipLimiter.Reset()
-	pubLimiter.Reset()
-	spentPow = newPowLedger()
+// spentPowFor is app's ledger of spent proof-of-work solutions; like the
+// limiters, it is per app, so one app's traffic never touches another's.
+func spentPowFor(app core.App) *powLedger {
+	return powKey.GetOrInit(app, newPowLedger)
+}
+
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
+
+// safeFileName keeps a name within the column's 255 bytes, keeping its
+// extension, on a character boundary.
+func safeFileName(name string) string {
+	if len(name) <= 255 {
+		return name
+	}
+	ext := filepath.Ext(name)
+	if len(ext) > 16 {
+		ext = ""
+	}
+	base := strings.TrimSuffix(name, ext)
+	for len(base)+len(ext) > 255 {
+		_, size := utf8.DecodeLastRuneInString(base)
+		base = base[:len(base)-size]
+	}
+	return base + ext
 }
 
 func bindSubmitRoute(app core.App, se *core.ServeEvent) {
@@ -71,7 +98,8 @@ func sameOrigin(app core.App, r *http.Request) bool {
 	hosts := []string{r.Host}
 	for _, h := range app.Settings().TrustedProxy.Headers {
 		if strings.EqualFold(h, "X-Forwarded-Host") {
-			hosts = append(hosts, r.Header.Get("X-Forwarded-Host"))
+			first := strings.TrimSpace(strings.SplitN(r.Header.Get("X-Forwarded-Host"), ",", 2)[0])
+			hosts = append(hosts, first)
 		}
 	}
 	for _, h := range hosts {
@@ -112,7 +140,7 @@ func handleSubmit(app core.App, re *core.RequestEvent) error {
 		return re.ForbiddenError("", nil)
 	}
 	ip := re.RealIP()
-	if !preLimiter.AllowOrLog(ip, "webforms.submit.pre") {
+	if !preLimiter.For(app).AllowOrLog(ip, "webforms.submit.pre") {
 		return re.TooManyRequestsError("Please wait and try again", nil)
 	}
 	limit := bodyCap(pub)
@@ -144,7 +172,7 @@ func handleSubmit(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("Please reload the form and try again", fieldError("stamp", "validation_invalid_stamp", "Please reload the form and try again"))
 	}
 
-	if !ipLimiter.AllowOrLog(pub.Id+"|"+ip, "webforms.submit.ip") || !pubLimiter.AllowOrLog(pub.Id, "webforms.submit.publication") {
+	if !ipLimiter.For(app).AllowOrLog(pub.Id+"|"+ip, "webforms.submit.ip") || !pubLimiter.For(app).AllowOrLog(pub.Id, "webforms.submit.publication") {
 		return re.TooManyRequestsError("Please wait and try again", nil)
 	}
 
@@ -173,7 +201,7 @@ func handleSubmit(app core.App, re *core.RequestEvent) error {
 	}
 	refuse := func(e error) error {
 		if powSignature != "" {
-			spentPow.release(powSignature)
+			spentPowFor(app).release(powSignature)
 		}
 		return e
 	}
@@ -232,7 +260,7 @@ func checkPow(app core.App, encoded, pubID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := spentPow.verify(key, s, pubID, time.Now()); err != nil {
+	if err := spentPowFor(app).verify(key, s, pubID, time.Now()); err != nil {
 		return "", err
 	}
 	return s.Signature, nil
@@ -263,9 +291,7 @@ func store(app core.App, pub, form *core.Record, def *forms.Definition, values m
 			values[key] = ids[0]
 		}
 	}
-	if len(userAgent) > maxUserAgent {
-		userAgent = userAgent[:maxUserAgent]
-	}
+	userAgent = truncateRunes(userAgent, maxUserAgent)
 	return app.RunInTransaction(func(tx core.App) error {
 		subs, err := tx.FindCollectionByNameOrId(submissionsName)
 		if err != nil {
@@ -296,7 +322,7 @@ func store(app core.App, pub, form *core.Record, def *forms.Definition, values m
 			rec.Set("field", p.key)
 			rec.Set("file", file)
 			rec.Set("size", p.header.Size)
-			rec.Set("name", p.header.Filename)
+			rec.Set("name", safeFileName(p.header.Filename))
 			if err := tx.Save(rec); err != nil {
 				return err
 			}

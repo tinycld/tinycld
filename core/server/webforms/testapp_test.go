@@ -1,10 +1,15 @@
 package webforms
 
 import (
+	"encoding/json"
+	"strconv"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/automation"
 	"tinycld.org/core/forms"
 	"tinycld.org/core/rlstest"
 )
@@ -27,13 +32,36 @@ type fixture struct {
 // definition is def.
 func newFixture(t *testing.T, def string) *fixture {
 	t.Helper()
-	resetLimitersForTesting()
+	return buildFixture(t, def, true)
+}
+
+// newFixtureWithoutHost is newFixture on an app where no package bound the
+// web form host, so its hooks (validation, files) are absent.
+func newFixtureWithoutHost(t *testing.T, def string) *fixture {
+	t.Helper()
+	return buildFixture(t, def, false)
+}
+
+func buildFixture(t *testing.T, def string, bindHost bool) *fixture {
+	t.Helper()
 	app := rlstest.NewAssembledApp(t)
-	defs, err := forms.ParseHosts([]byte(webFormHostJSON))
-	if err != nil {
-		t.Fatal(err)
+	if bindHost {
+		defs, err := forms.ParseHosts([]byte(webFormHostJSON))
+		if err != nil {
+			t.Fatal(err)
+		}
+		forms.BindHooks(app, defs)
 	}
-	forms.BindHooks(app, defs)
+	// The action catalog the safety rule reads: core's send-email and a
+	// fictional package's send action, both with a recipient param.
+	automation.NewEngine(app, &automation.Defs{Packages: []automation.PackageDefs{
+		{Slug: "core", Actions: []automation.ActionDef{{ID: "send-email", Kind: "native", Params: []automation.ParamDef{
+			{Key: "to", Type: "text", Recipient: true}, {Key: "subject", Type: "text"},
+		}}}},
+		{Slug: "gizmos", Actions: []automation.ActionDef{{ID: "dispatch", Kind: "native", Params: []automation.ParamDef{
+			{Key: "recipient", Type: "text", Recipient: true}, {Key: "note", Type: "text"},
+		}}}},
+	}})
 	Register(app)
 
 	formsCol, _ := app.FindCollectionByNameOrId("forms")
@@ -61,3 +89,19 @@ const contactDef = `{"version":1,"pages":[{"key":"main","title":"Main"}],"fields
 {"key":"name","page":"main","label":"Name","kind":"text","required":true},
 {"key":"cv","page":"main","label":"CV","kind":"file","accept":["application/pdf"],"maxSizeMb":1},
 {"key":"docs","page":"main","label":"Docs","kind":"file","multiple":true}]}`
+
+// storeForTest submits through the public endpoint and returns the stored row.
+func storeForTest(t *testing.T, f *fixture, values map[string]any, uploads ...upload) *core.Record {
+	t.Helper()
+	raw, _ := json.Marshal(values)
+	id := "store-" + strconv.Itoa(int(time.Now().UnixNano()%1e9))
+	fields := map[string]string{"values": string(raw), "client_id": id, "stamp": oldStamp(t, f), "_hp": ""}
+	submit(t, f, "store", fields, 200, []string{`"ok":true`}, uploads...)
+	rec, err := f.app.FindFirstRecordByData("form_submissions", "client_id", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+func utf8ValidString(s string) bool { return utf8.ValidString(s) }

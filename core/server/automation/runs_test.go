@@ -3,6 +3,7 @@ package automation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -112,5 +113,37 @@ func TestAutoDisableAfterConsecutiveFailures(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("auto-disable notification was not sent")
+	}
+}
+
+func TestWriteRunRecordsTheTriggerRecord(t *testing.T) {
+	app, _, u := engineApp(t)
+	tickets, _ := app.FindCollectionByNameOrId("tickets")
+	rec := core.NewRecord(tickets)
+	rec.Set("title", "hello")
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	rule := makeRule(t, app, u.Id, "org", nil, nil, 0, false)
+	trigger := TriggerDef{ID: "ticket-created", Collection: "tickets", On: "create"}
+
+	WriteRun(app, rule, rec, trigger, RunOutcome{Matched: true, Fields: map[string]any{"fields.email": "a@b.c"}})
+
+	run, err := app.FindFirstRecordByFilter("rule_runs", "rule = {:r}", map[string]any{"r": rule.Id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.GetString("record_id") != rec.Id || run.GetString("collection") != "tickets" {
+		t.Fatalf("record not stored: %v", run.FieldsData())
+	}
+	var summary map[string]any
+	_ = json.Unmarshal([]byte(run.GetString("trigger_summary")), &summary)
+	if summary["title"] != "hello" {
+		t.Fatalf("summary must hold the trigger's columns: %v", summary)
+	}
+	// A web form's answers live on the submission, which retention and
+	// Delete remove; a copy in run history would outlive both.
+	if _, ok := summary["fields.email"]; ok {
+		t.Fatalf("summary must not copy dynamic values: %v", summary)
 	}
 }

@@ -62,6 +62,7 @@ type Engine struct {
 }
 
 func NewEngine(app core.App, defs *Defs) *Engine {
+	defsKey.Set(app, defs)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{
 		app: app, defs: defs,
@@ -387,27 +388,33 @@ func (e *Engine) dispatch(ctx context.Context, ev event) {
 		if ev.Record != nil && rule.GetString("scope") == "personal" && !ownerSet[rule.GetString("owner")] {
 			continue
 		}
+		config := ruleConfig(rule)
+		if !ruleAllowed(e.app, ev.TriggerRef, config, ev.Record) {
+			continue // not this rule's record (another form): no run row
+		}
+		fields := dynamicFields(e.app, ev.TriggerRef, config, ev.Record)
+		dyn := dynamicValues(fields)
 		start := time.Now()
 
 		ast, err := DecodeConditions(rule.Get("conditions"))
 		if err != nil {
-			WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Err: "invalid conditions: " + err.Error(), Duration: time.Since(start)})
+			e.logRun(rule, ev, RunOutcome{Err: "invalid conditions: " + err.Error(), Duration: time.Since(start), Fields: dyn})
 			continue
 		}
-		if !EvaluateConditions(ast, ev.Record, ev.Trigger) {
-			WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Matched: false, Duration: time.Since(start)})
+		if !EvaluateConditionsWith(ast, ev.Record, ev.Trigger, dyn) {
+			e.logRun(rule, ev, RunOutcome{Matched: false, Duration: time.Since(start), Fields: dyn})
 			continue
 		}
 
 		actions, err := decodeActions(rule.Get("actions"))
 		if err != nil {
-			WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Matched: true, Err: "invalid actions: " + err.Error(), Duration: time.Since(start)})
+			e.logRun(rule, ev, RunOutcome{Matched: true, Err: "invalid actions: " + err.Error(), Duration: time.Since(start), Fields: dyn})
 			continue
 		}
 		results := make([]ActionResult, 0, len(actions))
 		failed := 0
 		for _, a := range actions {
-			res := actionResult(a.Ref, e.runActionWithTimeout(ctx, a, rule, ev))
+			res := actionResult(a.Ref, e.runActionWithTimeout(ctx, a, rule, ev, fields))
 			if res.Status == "error" {
 				failed++
 			}
@@ -420,7 +427,7 @@ func (e *Engine) dispatch(ctx context.Context, ev event) {
 		if ctx.Err() == nil {
 			recordRunResult(e.app, rule, len(actions) > 0 && failed == len(actions))
 		}
-		WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Matched: true, Results: results, Duration: time.Since(start)})
+		e.logRun(rule, ev, RunOutcome{Matched: true, Results: results, Duration: time.Since(start), Fields: dyn})
 
 		if rule.GetBool("stop_processing") {
 			if rule.GetString("scope") == "org" {
@@ -433,6 +440,12 @@ func (e *Engine) dispatch(ctx context.Context, ev event) {
 			}
 		}
 	}
+}
+
+// logRun writes one run row and then tells the trigger's run observers.
+func (e *Engine) logRun(rule *core.Record, ev event, outcome RunOutcome) {
+	WriteRun(e.app, rule, ev.Record, ev.Trigger, outcome)
+	notifyRunObservers(e.app, ev.TriggerRef, rule, ev.Record, outcome)
 }
 
 // actionResult is the run-history entry for one action's outcome. A skip is
@@ -464,7 +477,7 @@ var errShuttingDown = errors.New("action cancelled: server is shutting down")
 // record-op path and MarkEngineWrite refuse a write after the context ends,
 // which closes that gap for every write that goes through them. The goroutine
 // is counted in e.actions, so the terminate waits for it.
-func (e *Engine) runActionWithTimeout(ctx context.Context, a storedAction, rule *core.Record, ev event) error {
+func (e *Engine) runActionWithTimeout(ctx context.Context, a storedAction, rule *core.Record, ev event, fields []DynamicField) error {
 	if ctx.Err() != nil {
 		return errShuttingDown
 	}
@@ -485,7 +498,7 @@ func (e *Engine) runActionWithTimeout(ctx context.Context, a storedAction, rule 
 				done <- fmt.Errorf("action %s panicked: %v", a.Ref, r)
 			}
 		}()
-		done <- ExecuteActionContext(actionCtx, e.app, e.defs, a.Ref, a.Params, rule, ev.Trigger, ev.Record, ev.Depth)
+		done <- ExecuteActionContext(actionCtx, e.app, e.defs, a.Ref, a.Params, rule, ev.Trigger, ev.Record, ev.Depth, fields)
 	}()
 	select {
 	case err := <-done:

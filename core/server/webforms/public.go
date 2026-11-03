@@ -35,6 +35,7 @@ func handlePublicForm(app core.App, re *core.RequestEvent) error {
 	if err != nil {
 		return re.InternalServerError("", err)
 	}
+	re.Response.Header().Set("Cache-Control", "no-store")
 	return re.JSON(http.StatusOK, publicForm{
 		Name:         form.GetString("name"),
 		Confirmation: pub.GetString("confirmation"),
@@ -63,6 +64,7 @@ func handleChallenge(app core.App, re *core.RequestEvent) error {
 	if err != nil {
 		return re.InternalServerError("", err)
 	}
+	re.Response.Header().Set("Cache-Control", "no-store")
 	return re.JSON(http.StatusOK, c)
 }
 

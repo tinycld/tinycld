@@ -8,7 +8,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-var placeholderRe = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_]+)\s*\}\}`)
+var placeholderRe = regexp.MustCompile(`\{\{\s*((?:fields\.)?[a-zA-Z0-9_]+)\s*\}\}`)
 
 // exposedFields returns the set of field keys rule templates/conditions may
 // see for this trigger: the declared allowlist, or (when the declaration
@@ -68,6 +68,13 @@ func SubstituteTemplates(s string, record *core.Record, trigger TriggerDef, env 
 	namer := &recordNamer{env: env}
 	return placeholderRe.ReplaceAllStringFunc(s, func(m string) string {
 		key := placeholderRe.FindStringSubmatch(m)[1]
+		if strings.HasPrefix(key, DynamicPrefix) {
+			v, ok := env.Dynamic[key]
+			if !ok {
+				return ""
+			}
+			return normalize(v)
+		}
 		if !exposed[key] {
 			return ""
 		}

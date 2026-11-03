@@ -53,6 +53,11 @@ type RunOutcome struct {
 	Results  []ActionResult
 	Err      string
 	Duration time.Duration
+	// Fields holds the run's dynamic values ("fields.<key>"), from the
+	// trigger's fields resolver, for run observers. They are not written to
+	// the run row: a web form's answers live on the submission, which
+	// retention and Delete remove, and a copy here would outlive both.
+	Fields map[string]any
 }
 
 func triggerSummary(record *core.Record, trigger TriggerDef) map[string]any {
@@ -82,6 +87,10 @@ func WriteRun(app core.App, rule *core.Record, record *core.Record, trigger Trig
 	run.Set("fired_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
 	run.Set("matched", outcome.Matched)
 	run.Set("trigger_summary", triggerSummary(record, trigger))
+	if record != nil {
+		run.Set("record_id", record.Id)
+		run.Set("collection", record.Collection().Name)
+	}
 	if len(outcome.Results) > 0 {
 		b, _ := json.Marshal(outcome.Results)
 		run.Set("results", json.RawMessage(b))
