@@ -30,6 +30,9 @@ type ActionRequest struct {
 	OwnerID string
 	Params  map[string]string
 	Record  *core.Record
+	// Trigger is the definition of the trigger that fired. TriggerRow reads it
+	// to label the record's exposed fields.
+	Trigger TriggerDef
 	// Depth is how many engine writes deep this firing already is. A handler
 	// that writes to a trigger-bound collection must pass the request to
 	// MarkEngineWrite so its output carries this provenance forward and the

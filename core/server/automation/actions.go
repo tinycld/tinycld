@@ -289,7 +289,7 @@ func ExecuteActionContext(ctx context.Context, app core.App, defs *Defs, ref str
 	}
 	env := TemplateEnv{App: app, Labels: defs.RecordLabels, OwnerID: ownerID, Dynamic: dynamicValues(fields)}
 	params := substituteParams(action, rawParams, record, trigger, relationKeys, env)
-	req := ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record, Depth: depth, Ctx: ctx, Fields: fields}
+	req := ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record, Trigger: trigger, Depth: depth, Ctx: ctx, Fields: fields}
 
 	// Both kinds pass the relation-id gates: a record-op's superuser Save
 	// bypasses collection rules just as thoroughly as a native handler's
