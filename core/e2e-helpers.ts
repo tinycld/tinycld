@@ -14,4 +14,5 @@ export * from '../tests/e2e/auth-key-helpers.ts'
 export * from '../tests/e2e/helpers.ts'
 // The generic report view helpers (E11): a package's report e2e opens core's view with them.
 export * from '../tests/e2e/report-view-helpers.ts'
+export * from '../tests/e2e/web-forms-helpers.ts'
 export * from './e2e-setup-helpers.ts'

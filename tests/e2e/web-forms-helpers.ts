@@ -1,0 +1,139 @@
+import * as path from 'node:path'
+import { type Browser, expect, type Locator, type Page } from '@playwright/test'
+import { authStorageKey } from './auth-key-helpers'
+import { login } from './helpers'
+
+/**
+ * Shared steps of the web form specs: an admin builds a form under the core
+ * "Web form" host and publishes it; an anonymous visitor fills it.
+ */
+
+const HOST_ROW_TEST_ID = 'forms-host-core:web_form'
+// From this file, not the working directory: package specs run from their own.
+const FILE = path.join(import.meta.dirname, 'fixtures', 'resume.pdf')
+
+async function answerPrompt(page: Page, title: string, value: string) {
+    const input = page.getByLabel(title, { exact: true })
+    await expect(input).toBeVisible()
+    await input.fill(value)
+    await input.press('Enter')
+    await expect(input).toBeHidden()
+}
+
+function properties(page: Page): Locator {
+    return page.getByTestId('form-properties')
+}
+
+async function openWebForms(page: Page) {
+    await page.getByTestId('nav-settings').click()
+    await page.getByText('Forms', { exact: true }).first().click()
+    const hostRow = page.getByTestId(HOST_ROW_TEST_ID)
+    const newForm = page.getByTestId('forms-new')
+    await expect(hostRow.or(newForm)).toBeVisible()
+    if (await hostRow.count()) await hostRow.click()
+    await expect(newForm).toBeVisible()
+}
+
+async function addField(page: Page, kind: string, label: string) {
+    await page.locator('[data-testid^="form-add-field-"]').first().click()
+    await page.getByTestId(`form-kind-${kind}`).click()
+    await answerPrompt(page, 'Field label', label)
+}
+
+async function saveDefinition(page: Page) {
+    const stored = page.waitForResponse(
+        r => r.url().includes('/api/collections/forms/records/') && r.request().method() === 'PATCH'
+    )
+    await page.getByTestId('form-save').click()
+    expect((await stored).ok()).toBe(true)
+}
+
+export async function savePublication(page: Page) {
+    const stored = page.waitForResponse(
+        r =>
+            r.url().includes('/api/collections/form_publications/records') &&
+            ['POST', 'PATCH'].includes(r.request().method())
+    )
+    await page.getByTestId('web-form-save').click()
+    expect((await stored).ok()).toBe(true)
+}
+
+interface PublishOptions {
+    domains?: string
+    pow?: boolean
+    cvMaxSizeMb?: number
+}
+
+/** Logs in, then builds and publishes a form; returns its public URL. */
+export async function buildAndPublish(page: Page, name: string, opts: PublishOptions = {}) {
+    await login(page)
+    return await publishForm(page, name, opts)
+}
+
+/** Builds and publishes one more form in a session already logged in. */
+export async function publishForm(page: Page, name: string, opts: PublishOptions = {}) {
+    await openWebForms(page)
+    await page.getByTestId('forms-new').click()
+    await answerPrompt(page, 'New form', name)
+    await expect(page.getByTestId('form-editor')).toBeVisible()
+
+    await addField(page, 'text', 'Name')
+    await properties(page).locator('[data-testid$=".required"]').click()
+    await addField(page, 'file', 'CV')
+    if (opts.cvMaxSizeMb) {
+        await properties(page).locator('[data-testid$=".maxSizeMb"]').fill(String(opts.cvMaxSizeMb))
+    }
+    await saveDefinition(page)
+
+    await page.getByTestId('form-tab-publish').click()
+    await page.getByTestId('web-form-enabled').click()
+    if (opts.domains) await page.getByTestId('web-form-domains').fill(opts.domains)
+    if (opts.pow) await page.getByTestId('web-form-pow').click()
+    await savePublication(page)
+    const code = page.getByTestId('web-form-embed-code')
+    await expect(code).toContainText('/p/forms/')
+    const text = (await code.textContent()) ?? ''
+    const url = /src="([^"]+\/p\/forms\/[^"]+)"/.exec(text)?.[1]
+    if (!url) throw new Error(`no URL in embed code: ${text}`)
+    return url
+}
+
+export async function visitAnonymously(
+    browser: Browser,
+    url: string,
+    viewport?: { width: number; height: number }
+) {
+    const context = await browser.newContext(viewport ? { viewport } : {})
+    const page = await context.newPage()
+    // The one legitimate goto: the first load of a new, anonymous context.
+    await page.goto(url)
+    return page
+}
+
+export async function fillAndSend(
+    visitor: Page | ReturnType<Page['frameLocator']>,
+    chooserPage: Page,
+    name: string
+) {
+    await visitor.getByLabel('Name', { exact: true }).fill(name)
+    const chooser = chooserPage.waitForEvent('filechooser')
+    await visitor.locator('[data-testid$="-pick"]').click()
+    await (await chooser).setFiles(FILE)
+    await expect(visitor.getByText('resume.pdf')).toBeVisible()
+    await visitor.getByTestId('form-wizard-next').click()
+}
+
+export async function submissionsNamed(page: Page, name: string) {
+    // Read-only assertion through the admin's own session token.
+    const key = await authStorageKey(page)
+    const token = await page.evaluate(k => JSON.parse(localStorage.getItem(k) ?? '{}').token, key)
+    const res = await page.request.get(
+        '/api/collections/form_submissions/records?sort=-created&perPage=100',
+        {
+            headers: { Authorization: token },
+        }
+    )
+    expect(res.ok()).toBe(true)
+    const items = (await res.json()).items as { values: Record<string, unknown> }[]
+    return items.filter(i => i.values.name === name)
+}

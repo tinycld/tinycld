@@ -7,6 +7,7 @@ import {
     referencesOf,
     removeField,
 } from '@tinycld/core/lib/forms/builder'
+import { WEB_FORM_HOST_KEY } from '@tinycld/core/lib/forms/core-hosts'
 import { FIELD_WIDTHS, type FieldWidth } from '@tinycld/core/lib/forms/definition'
 import { findBuiltin } from '@tinycld/core/lib/forms/host'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
@@ -71,6 +72,30 @@ interface KindSectionProps {
     kind: string
     operands: FormulaOperands
     isVisible: boolean
+}
+
+// Only a web form enforces the size limit today (its public upload checks it);
+// the signed-in file field of other hosts does not, so it is not offered there.
+function MaxFileSize({
+    control,
+    index,
+    isVisible,
+}: {
+    control: Editor['form']['control']
+    index: number
+    isVisible: boolean
+}) {
+    if (!isVisible) return null
+    return (
+        <NumberInput
+            control={control}
+            name={`fields.${index}.maxSizeMb`}
+            label="Largest file (MB)"
+            isCompact
+            min={1}
+            max={100}
+        />
+    )
 }
 
 function KindSection({ editor, index, fieldKey, kind, operands, isVisible }: KindSectionProps) {
@@ -161,6 +186,11 @@ function KindSection({ editor, index, fieldKey, kind, operands, isVisible }: Kin
                         name={`fields.${index}.acceptText`}
                         label="Accepted types"
                         hint="Comma separated, e.g. image/*, application/pdf"
+                    />
+                    <MaxFileSize
+                        control={control}
+                        index={index}
+                        isVisible={editor.host?.key === WEB_FORM_HOST_KEY}
                     />
                 </>
             )

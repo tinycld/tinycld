@@ -11,12 +11,19 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/appstate"
 )
 
 // FieldRef decodes both wire forms: "subject" and {"key":..., "label":...}.
 type FieldRef struct {
 	Key   string
 	Label string
+	// Markdown marks a column whose value is already markdown (a card
+	// description), so a markdown param copies it as it is instead of
+	// escaping its formatting into raw characters.
+	Markdown bool
 }
 
 func (f *FieldRef) UnmarshalJSON(b []byte) error {
@@ -24,13 +31,14 @@ func (f *FieldRef) UnmarshalJSON(b []byte) error {
 		return json.Unmarshal(b, &f.Key)
 	}
 	var obj struct {
-		Key   string `json:"key"`
-		Label string `json:"label"`
+		Key      string `json:"key"`
+		Label    string `json:"label"`
+		Markdown bool   `json:"markdown"`
 	}
 	if err := json.Unmarshal(b, &obj); err != nil {
 		return err
 	}
-	f.Key, f.Label = obj.Key, obj.Label
+	f.Key, f.Label, f.Markdown = obj.Key, obj.Label, obj.Markdown
 	return nil
 }
 
@@ -87,6 +95,15 @@ type ParamDef struct {
 	// because most legitimately accept an empty string. core:notify's title
 	// does not — it becomes notifications.title, which the schema requires.
 	Required bool `json:"required"`
+	// Recipient marks a param that names who a message is sent to (an email
+	// address). Web forms refuse a recipient filled from a form's answers
+	// unless the form asks for proof of work: otherwise a bot could make the
+	// server send mail to any address.
+	Recipient bool `json:"recipient"`
+	// Markdown marks a param whose value is rendered as markdown (a card
+	// description). Every value a template puts into it is escaped, so a
+	// form answer or a record's text reads as text, never as markup.
+	Markdown bool `json:"markdown"`
 }
 
 type ActionDef struct {
@@ -190,4 +207,27 @@ func (d *Defs) TriggersFor(collection, op string) []QualifiedTrigger {
 		}
 	}
 	return out
+}
+
+var defsKey = appstate.NewKey[*Defs]("automation.defs")
+
+// RecipientParams returns the keys of an action's params that name who a
+// message goes to (ParamDef.Recipient), as app's engine declares them; none
+// when the action or the engine is unknown.
+func RecipientParams(app core.App, ref string) []string {
+	defs, ok := defsKey.GetOk(app)
+	if !ok || defs == nil {
+		return nil
+	}
+	action, _, ok := defs.Action(ref)
+	if !ok {
+		return nil
+	}
+	var keys []string
+	for _, p := range action.Params {
+		if p.Recipient {
+			keys = append(keys, p.Key)
+		}
+	}
+	return keys
 }

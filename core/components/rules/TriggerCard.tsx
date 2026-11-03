@@ -1,6 +1,7 @@
 import type { CatalogResponse, CatalogTrigger } from '@tinycld/core/lib/automation/api'
 import { orderGroupsByUserPreference } from '@tinycld/core/lib/automation/condition-helpers'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
+import { FORM_SUBMITTED_TRIGGER } from '@tinycld/core/lib/automation/form-trigger'
 import { parseRefSafe } from '@tinycld/core/lib/automation/helpers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
@@ -9,6 +10,7 @@ import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
+import { FormPickerRow } from './FormPickerRow'
 import { RuleCard } from './RuleCard'
 
 export interface TriggerCardProps {
@@ -198,6 +200,7 @@ export function TriggerCard({
                 />
             )}
             {isSchedule ? <ScheduleRow control={control} /> : null}
+            <FormPickerRow control={control} isVisible={draft.trigger === FORM_SUBMITTED_TRIGGER} />
         </RuleCard>
     )
 }

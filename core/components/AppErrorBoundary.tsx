@@ -2,9 +2,9 @@ import type { ErrorBoundaryProps } from 'expo-router'
 import { AlertTriangle } from 'lucide-react-native'
 import { useEffect } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
-import { captureException } from '../lib/errors'
 import { symbolicateStack } from '../lib/symbolicate-stack'
 import { useThemeColor } from '../lib/use-app-theme'
+import { reportBoundaryError } from '../lib/use-chunk-load-recovery'
 
 // Root error boundary. Exported as `ErrorBoundary` from app/_layout.tsx, which
 // makes Expo Router wrap the whole route subtree (<Slot />) in it — so any
@@ -13,7 +13,8 @@ import { useThemeColor } from '../lib/use-app-theme'
 //
 // On a caught error it:
 //   1. Reports to Sentry via captureException (Sentry symbolicates the minified
-//      stack server-side using the emitted sourcemaps).
+//      stack server-side using the emitted sourcemaps). On web, a route chunk
+//      that did not load reloads the page instead (reportBoundaryError).
 //   2. Symbolicates the stack CLIENT-SIDE against the served `.map` files and
 //      console.logs the readable, original-source stack — so a developer
 //      watching the console sees `…/crash-test.tsx:30` instead of
@@ -29,7 +30,7 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
     // effect on `error` runs it exactly once per crash (and not on unrelated
     // re-renders).
     useEffect(() => {
-        captureException('app.errorBoundary', error)
+        reportBoundaryError(error)
         if (!error.stack) return
         symbolicateStack(error.stack)
             .then(clean => {
@@ -42,7 +43,7 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
                 // `expo export` bundle. `log.*` writes to the console only under
                 // __DEV__, so migrating this line would silence it exactly where
                 // it is needed. Sentry already has the error itself via the
-                // captureException above; this is the human-readable companion.
+                // reportBoundaryError above; this is the human-readable companion.
                 // The file is exempt from noConsole in biome.json.
                 console.log(`[error-boundary] ${clean}`)
             })

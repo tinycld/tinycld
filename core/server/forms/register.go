@@ -39,7 +39,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	if len(defs.Hosts) == 0 {
 		return
 	}
-	registerCore(app, defs)
+	BindHooks(app, defs)
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		if err := SeedDefaults(se.App, defs); err != nil {
 			log.Error("seed default forms failed", "err", err)
@@ -63,10 +63,14 @@ func resolveHosts(opts Options) (*Defs, error) {
 	return defs, nil
 }
 
-func registerCore(app core.App, defs *Defs) {
+// BindHooks binds the forms and host-record hooks for defs. Register calls it,
+// and a package test calls it to give a test app the hooks a served install has.
+func BindHooks(app core.App, defs *Defs) {
 	if len(defs.Hosts) == 0 {
 		return
 	}
 	bindFormsHooks(app, defs)
 	bindHostHooks(app, defs)
+	defsKey.Set(app, defs)
+	registerFilesProviders(defs)
 }

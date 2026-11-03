@@ -129,6 +129,7 @@ export function ConditionRow({ condition, fields, onChange, onRemove }: Conditio
                     op={condition.op}
                     value={condition.value}
                     onChange={v => onChange({ value: v })}
+                    accessibilityLabel="Condition value"
                 />
             ) : null}
             <RemoveButton onRemove={onRemove} />

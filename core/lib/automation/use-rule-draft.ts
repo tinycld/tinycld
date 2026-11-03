@@ -9,7 +9,7 @@
 // first character. After that they re-validate on every edit.
 import { useForm, zodResolver } from '@tinycld/core/ui/form'
 import { newRecordId } from 'pbtsdb/core'
-import { useMemo } from 'react'
+import { useRef } from 'react'
 import { useFieldArray } from 'react-hook-form'
 import type { CatalogResponse } from './api'
 import type { RuleDraft } from './draft'
@@ -18,7 +18,13 @@ import { ruleDraftSchemaFor } from './rule-draft-schema'
 type ActionParams = RuleDraft['actions'][number]['params']
 
 export function useRuleDraft(initial: RuleDraft, catalog: CatalogResponse) {
-    const schema = useMemo(() => ruleDraftSchemaFor(catalog), [catalog])
+    // The resolver reads the newest schema: picking a form adds its fields,
+    // and a condition on one must validate against them at once.
+    const schemaRef = useRef(ruleDraftSchemaFor(catalog))
+    // The catalog the schema was last built from, so a render that passes the
+    // same catalog does not rebuild it (the builder re-renders on every
+    // keystroke).
+    const schemaFor = useRef(catalog)
     const {
         control,
         watch,
@@ -27,10 +33,23 @@ export function useRuleDraft(initial: RuleDraft, catalog: CatalogResponse) {
         trigger: validate,
         handleSubmit,
         setFocus,
+        setError,
         formState: { errors, isSubmitted },
-    } = useForm({ resolver: zodResolver(schema), defaultValues: initial })
+    } = useForm({
+        resolver: (values, context, options) =>
+            zodResolver(schemaRef.current)(values, context, options),
+        defaultValues: initial,
+    })
     const actionFields = useFieldArray({ control, name: 'actions' })
     const draft = watch()
+
+    // Called during render by the owner of the catalog (the rule builder
+    // extends it with the picked form's fields once that form loads).
+    const setCatalog = (next: CatalogResponse) => {
+        if (next === schemaFor.current) return
+        schemaFor.current = next
+        schemaRef.current = ruleDraftSchemaFor(next)
+    }
 
     // A cross-field edit (a new trigger invalidates conditions, actions and
     // the cron) can change errors anywhere in the draft, so re-run the whole
@@ -100,6 +119,8 @@ export function useRuleDraft(initial: RuleDraft, catalog: CatalogResponse) {
     return {
         control,
         draft,
+        setError,
+        getValues,
         errors,
         isSubmitted,
         setFocus,
@@ -111,5 +132,6 @@ export function useRuleDraft(initial: RuleDraft, catalog: CatalogResponse) {
         moveAction,
         removeAction,
         setActionParams,
+        setCatalog,
     }
 }

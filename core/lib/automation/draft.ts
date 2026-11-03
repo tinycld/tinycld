@@ -13,7 +13,7 @@ export interface RuleDraft {
     name: string
     scope: 'personal' | 'org'
     trigger: string // qualified ref; '' = unset
-    triggerConfig: { cron?: string }
+    triggerConfig: { cron?: string; form?: string }
     conditions: ConditionsAstDraft
     actions: RuleDraftAction[]
     enabled: boolean
@@ -93,10 +93,13 @@ function toActions(value: unknown): RuleDraftAction[] {
     return ensureActionUids(actions)
 }
 
-function toTriggerConfig(value: unknown): { cron?: string } {
+function toTriggerConfig(value: unknown): RuleDraft['triggerConfig'] {
     if (!value || typeof value !== 'object') return {}
-    const cron = (value as { cron?: unknown }).cron
-    return typeof cron === 'string' ? { cron } : {}
+    const { cron, form } = value as { cron?: unknown; form?: unknown }
+    return {
+        ...(typeof cron === 'string' ? { cron } : {}),
+        ...(typeof form === 'string' ? { form } : {}),
+    }
 }
 
 export function recordToDraft(record: Rules): RuleDraft {

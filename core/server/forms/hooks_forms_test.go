@@ -45,7 +45,7 @@ func newTestEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registerCore(app, defs)
+	BindHooks(app, defs)
 	return &env{app: app, defs: defs, host: defs.Host("gizmos:widget")}
 }
 

@@ -6,6 +6,7 @@
 import { z } from 'zod'
 import type { CatalogAction, CatalogResponse, CatalogTrigger } from './api'
 import type { RuleDraft } from './draft'
+import { FORM_SUBMITTED_TRIGGER } from './form-trigger'
 import { OPERATORS_BY_TYPE } from './helpers'
 import type { ConditionOp } from './types'
 
@@ -79,6 +80,12 @@ function triggerIssues(draft: RuleDraft, trigger: CatalogTrigger | undefined): I
         issues.push({
             message: 'Schedule trigger requires a cron expression',
             path: ['triggerConfig', 'cron'],
+        })
+    }
+    if (draft.trigger === FORM_SUBMITTED_TRIGGER && !draft.triggerConfig.form) {
+        issues.push({
+            message: 'Pick the form these submissions come from',
+            path: ['triggerConfig', 'form'],
         })
     }
     return issues
@@ -180,7 +187,7 @@ export function ruleDraftSchemaFor(
             name: z.string().trim().min(1, 'Name is required'),
             scope: z.enum(['personal', 'org']),
             trigger: z.string().min(1, 'Trigger is required'),
-            triggerConfig: z.object({ cron: z.string().optional() }),
+            triggerConfig: z.object({ cron: z.string().optional(), form: z.string().optional() }),
             conditions: z.custom<RuleDraft['conditions']>(),
             actions: z
                 .array(z.custom<RuleDraft['actions'][number]>())

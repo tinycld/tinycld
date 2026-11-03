@@ -13,7 +13,7 @@ export interface RunHistoryProps {
     onClose: () => void
 }
 
-interface RunActionResult {
+export interface RunActionResult {
     ref: string
     status: string
     message?: string
@@ -135,7 +135,7 @@ function keyActionResults(results: RunActionResult[]): (RunActionResult & { key:
     })
 }
 
-function ActionResultsList({ results }: { results: RunActionResult[] }) {
+export function ActionResultsList({ results }: { results: RunActionResult[] }) {
     if (results.length === 0) return null
     return (
         <View className="gap-1">
@@ -181,12 +181,12 @@ function RunActionMessage({ message }: { message?: string }) {
     return <Text className="text-xs text-muted-foreground">{message}</Text>
 }
 
-function RunError({ error }: { error: string }) {
+export function RunError({ error }: { error: string }) {
     if (!error) return null
     return <Text className="text-xs text-danger">{error}</Text>
 }
 
-function parseResults(value: unknown): RunActionResult[] {
+export function parseResults(value: unknown): RunActionResult[] {
     if (!Array.isArray(value)) return []
     const results: RunActionResult[] = []
     for (const item of value) {

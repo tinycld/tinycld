@@ -1,4 +1,5 @@
 import { captureException } from '@tinycld/core/lib/errors'
+import { log } from '@tinycld/core/lib/logger'
 import { useEffect } from 'react'
 import { Platform } from 'react-native'
 
@@ -39,11 +40,21 @@ export function useChunkLoadRecovery() {
     }, [])
 }
 
+// A lazy route chunk that fails to load reaches the route error boundary, not
+// the window listeners: React handles the rejected import itself.
+export function reportBoundaryError(error: Error) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && isChunkLoadError(error)) {
+        recover('errorBoundary', error)
+        return
+    }
+    captureException('app.errorBoundary', error)
+}
+
 // Exported for unit testing.
 export function isChunkLoadError(error: unknown, message?: string): boolean {
     if (error && typeof error === 'object') {
         const e = error as { name?: unknown; message?: unknown }
-        if (typeof e.name === 'string' && e.name === 'ChunkLoadError') return true
+        if (e.name === 'ChunkLoadError' || e.name === 'AsyncRequireError') return true
         if (typeof e.message === 'string' && messageLooksLikeChunkLoad(e.message)) return true
     }
     if (typeof message === 'string' && messageLooksLikeChunkLoad(message)) return true
@@ -54,10 +65,12 @@ export function isChunkLoadError(error: unknown, message?: string): boolean {
 // import 404s. Webpack/Metro emit "Loading chunk N failed" or
 // "ChunkLoadError"; native browser failures show as
 // "Failed to fetch dynamically imported module" (Chrome/Firefox) or
-// "Importing a module script failed" (Safari).
+// "Importing a module script failed" (Safari). Expo's web async-require
+// throws "Loading module <url> failed.".
 function messageLooksLikeChunkLoad(msg: string): boolean {
     return (
         msg.includes('Loading chunk') ||
+        (msg.startsWith('Loading module ') && msg.includes(' failed.')) ||
         msg.includes('ChunkLoadError') ||
         msg.includes('Failed to fetch dynamically imported module') ||
         msg.includes('Importing a module script failed') ||
@@ -65,7 +78,7 @@ function messageLooksLikeChunkLoad(msg: string): boolean {
     )
 }
 
-function recover(source: 'error' | 'unhandledrejection', error: unknown) {
+function recover(source: 'error' | 'unhandledrejection' | 'errorBoundary', error: unknown) {
     const lastReloadAt = readThrottle()
     const now = Date.now()
     if (lastReloadAt && now - lastReloadAt < RELOAD_THROTTLE_MS) {
@@ -78,7 +91,11 @@ function recover(source: 'error' | 'unhandledrejection', error: unknown) {
         })
         return
     }
-    captureException('chunk-load failure', error, { source })
+    // Expected after a deploy, and the reload recovers it.
+    log.info('chunk-load', 'reloading after a chunk-load failure', {
+        source,
+        message: error instanceof Error ? error.message : String(error),
+    })
     writeThrottle(now)
     window.location.reload()
 }

@@ -26,7 +26,7 @@ import {
     type CliPkg,
 } from './gen-cli'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
-import { emitFormHosts, loadFormHosts, mergeFormHosts } from './gen-form-hosts'
+import { emitFormHosts, loadFormHosts, mergeAllFormHosts } from './gen-form-hosts'
 import {
     buildHelpSource,
     collectHelpImages,
@@ -136,7 +136,7 @@ type Feature = { name: string; dir: string; manifest: PackageManifest }
 // and core functionality (the device-consent screen for the OAuth authorization
 // server), not a per-package public-route dir. It has no manifest and must
 // survive a generate run even when no package declares publicRoutes.
-const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>(['oauth'])
+const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>(['oauth', 'forms'])
 
 function emitFeatureRoutes(features: Feature[]) {
     fs.mkdirSync(ROUTES_BASE, { recursive: true })
@@ -588,7 +588,7 @@ async function main() {
                 hosts: await loadFormHosts(f.dir, f.name, f.manifest.forms!.hosts),
             }))
     )
-    emitFormHosts(mergeFormHosts(formFeatures))
+    emitFormHosts(mergeAllFormHosts(formFeatures))
 
     // --- 1c. @tinycld/app-generated package manifest -----------------------
     // Makes lib/generated/ a real, name-resolvable package so `@tinycld/app-generated/*`

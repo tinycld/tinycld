@@ -173,3 +173,53 @@ describe('useRuleDraft', () => {
         expect(actionError?.params?.title?.message).toBe("Action 'Retired' requires 'Title'")
     })
 })
+
+describe('setCatalog', () => {
+    const withAnswer: CatalogResponse = {
+        ...catalog,
+        triggers: catalog.triggers.map(t =>
+            t.ref === 'cat:item-created'
+                ? {
+                      ...t,
+                      fields: [
+                          ...(t.fields ?? []),
+                          { key: 'fields.answer', label: 'Answer', type: 'text' },
+                      ],
+                  }
+                : t
+        ),
+    }
+    const initial: RuleDraft = {
+        ...emptyDraft('org'),
+        name: 'r',
+        trigger: 'cat:item-created',
+        conditions: {
+            match: 'all',
+            groups: [
+                {
+                    uid: 'g1',
+                    match: 'all',
+                    conditions: [{ uid: 'c1', field: 'fields.answer', op: 'contains', value: 'x' }],
+                },
+            ],
+        },
+        actions: [{ uid: 'a1', ref: 'core:ping', params: {} }],
+    }
+
+    it('validates against the catalog given in the latest render', async () => {
+        const { result, rerender } = renderHook(
+            ({ c }) => {
+                const form = useRuleDraft(initial, catalog)
+                form.setCatalog(c)
+                return form
+            },
+            { initialProps: { c: catalog } }
+        )
+        const refused = await save(result)
+        expect(refused).not.toHaveBeenCalled()
+
+        rerender({ c: withAnswer })
+        const accepted = await save(result)
+        expect(accepted).toHaveBeenCalled()
+    })
+})

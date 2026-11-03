@@ -182,7 +182,9 @@ export const hostDefSchema = z
         fieldsColumn: z.string().min(1),
         /** Every column of the collection, so a custom key can never shadow one. */
         columns: z.array(z.string().min(1)),
-        builtin: z.array(builtinSchema).min(1),
+        builtin: z.array(builtinSchema),
+        /** The custom kinds this host allows; absent means every kind. */
+        kinds: z.array(z.enum(CUSTOM_KINDS)).optional(),
         files: z
             .object({
                 collection: z.string().min(1),

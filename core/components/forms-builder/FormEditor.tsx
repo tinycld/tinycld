@@ -2,6 +2,7 @@ import { HelpIcon } from '@tinycld/core/components/help/HelpIcon'
 import { SetupTabs } from '@tinycld/core/components/setup/wizard/SetupTabs'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { toDateString } from '@tinycld/core/lib/dates'
+import { WEB_FORM_HOST_KEY } from '@tinycld/core/lib/forms/core-hosts'
 import type { EvalContext } from '@tinycld/core/lib/forms/logic'
 import { type FormHost, useFormHost } from '@tinycld/core/lib/forms/use-form-hosts'
 import { type FormRow, useFormRow } from '@tinycld/core/lib/forms/use-forms-of-host'
@@ -19,18 +20,30 @@ import { EditorPanel } from './EditorPanel'
 import { describePath, errorLeaves } from './editor-errors'
 import { FieldProperties } from './FieldProperties'
 import { PreviewDialog } from './PreviewDialog'
+import { PublishTab } from './PublishTab'
 import { RulesTab } from './RulesTab'
+import { SubmissionsTab } from './SubmissionsTab'
 import type { CanvasDrag } from './use-canvas-drag'
 import { useEditorForm } from './use-editor-form'
 import { useLeaveGuard } from './use-leave-guard'
 
 type Editor = ReturnType<typeof useEditorForm>
-type Tab = 'fields' | 'rules'
+type Tab = 'fields' | 'rules' | 'publish' | 'submissions'
 
-const TABS = [
+const BASE_TABS = [
     { value: 'fields', label: 'Fields' },
     { value: 'rules', label: 'Rules' },
 ] as const
+const WEB_FORM_TABS = [
+    ...BASE_TABS,
+    { value: 'publish', label: 'Publish' },
+    { value: 'submissions', label: 'Submissions' },
+] as const
+
+// Only a web form is published; other hosts' forms live inside their package.
+function tabsFor(host: FormHost) {
+    return host.key === WEB_FORM_HOST_KEY ? WEB_FORM_TABS : BASE_TABS
+}
 
 function useFormEditor(row: FormRow, host: FormHost) {
     const editor = useEditorForm(row, host)
@@ -225,7 +238,12 @@ function LoadedEditor({ row, host }: { row: FormRow; host: FormHost }) {
                 onSave={s.save}
             />
             <View className="px-5">
-                <SetupTabs tabs={TABS} value={s.tab} onChange={s.setTab} testID="form-tab" />
+                <SetupTabs
+                    tabs={tabsFor(host)}
+                    value={s.tab}
+                    onChange={s.setTab}
+                    testID="form-tab"
+                />
                 <ChangedElsewhere isVisible={editor.isChangedElsewhere} onReload={editor.reload} />
                 <EditorErrors editor={editor} />
                 <Notice text={editor.notice} onDismiss={editor.dismissNotice} />
@@ -245,6 +263,16 @@ function LoadedEditor({ row, host }: { row: FormRow; host: FormHost }) {
                         isVisible={s.tab === 'fields'}
                     />
                     <RulesTab editor={editor} isVisible={s.tab === 'rules'} />
+                    <PublishTab
+                        formId={row.id}
+                        formName={row.name}
+                        isVisible={s.tab === 'publish'}
+                    />
+                    <SubmissionsTab
+                        formId={row.id}
+                        definition={row.definition}
+                        isVisible={s.tab === 'submissions'}
+                    />
                 </ScrollView>
                 <EditorPanel isOpen={isPanelOpen} onClose={() => editor.select(null)} title="Field">
                     <SelectedProperties editor={editor} />

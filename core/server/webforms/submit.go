@@ -1,0 +1,332 @@
+package webforms
+
+import (
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"mime/multipart"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	validation "github.com/pocketbase/ozzo-validation/v4"
+	"github.com/pocketbase/pocketbase/apis"
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/filesystem"
+	"tinycld.org/core/appstate"
+	"tinycld.org/core/forms"
+	"tinycld.org/core/logging"
+	"tinycld.org/core/ratelimit"
+)
+
+const (
+	// The route allows the largest publication cap; each publication's own
+	// cap is checked against the parsed parts.
+	maxBodyBytes    = 101 << 20
+	multipartMemory = 8 << 20
+	maxClientID     = 64
+	maxUserAgent    = 300
+	// The values part is text the visitor typed; 1 MB is the column's maxSize.
+	maxValuesBytes = 1 << 20
+	// A coarse per-IP budget checked before the body is read.
+	preParseLimit = 30
+)
+
+var (
+	log        = logging.ForPackage("webforms")
+	preLimiter = ratelimit.NewPerApp("webforms.submit.pre", preParseLimit, 10*time.Minute)
+	ipLimiter  = ratelimit.NewPerApp("webforms.submit.ip", 5, 10*time.Minute)
+	pubLimiter = ratelimit.NewPerApp("webforms.submit.publication", 200, time.Hour)
+	powKey     = appstate.NewKey[*powLedger]("webforms.pow")
+)
+
+// spentPowFor is app's ledger of spent proof-of-work solutions; like the
+// limiters, it is per app, so one app's traffic never touches another's.
+func spentPowFor(app core.App) *powLedger {
+	return powKey.GetOrInit(app, newPowLedger)
+}
+
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
+
+// safeFileName keeps a name within the column's 255 bytes, keeping its
+// extension, on a character boundary.
+func safeFileName(name string) string {
+	if len(name) <= 255 {
+		return name
+	}
+	ext := filepath.Ext(name)
+	if len(ext) > 16 {
+		ext = ""
+	}
+	base := strings.TrimSuffix(name, ext)
+	for len(base)+len(ext) > 255 {
+		_, size := utf8.DecodeLastRuneInString(base)
+		base = base[:len(base)-size]
+	}
+	return base + ext
+}
+
+func bindSubmitRoute(app core.App, se *core.ServeEvent) {
+	se.Router.POST("/api/forms/public/{token}/submit", func(re *core.RequestEvent) error {
+		return handleSubmit(app, re)
+	}).Bind(apis.BodyLimit(maxBodyBytes))
+}
+
+func fieldError(key, code, msg string) validation.Errors {
+	return validation.Errors{key: validation.NewError(code, msg)}
+}
+
+// sameOrigin: the page posts from inside the iframe, so a real submit's
+// Origin is this server. Another site posting from a visitor's browser is not.
+// Behind a proxy that rewrites Host, X-Forwarded-Host counts only when the
+// admin lists it as a trusted proxy header (passkey's rp.go does the same);
+// otherwise a client could name any host it likes.
+func sameOrigin(app core.App, r *http.Request) bool {
+	u, err := url.Parse(r.Header.Get("Origin"))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	hosts := []string{r.Host}
+	for _, h := range app.Settings().TrustedProxy.Headers {
+		if strings.EqualFold(h, "X-Forwarded-Host") {
+			first := strings.TrimSpace(strings.SplitN(r.Header.Get("X-Forwarded-Host"), ",", 2)[0])
+			hosts = append(hosts, first)
+		}
+	}
+	for _, h := range hosts {
+		if h != "" && strings.EqualFold(u.Host, h) {
+			return true
+		}
+	}
+	return false
+}
+
+func ok(re *core.RequestEvent) error {
+	return re.JSON(http.StatusOK, map[string]bool{"ok": true})
+}
+
+// bodyCap is the largest body a publication accepts: its upload cap plus
+// room for the values part and the small text fields.
+func bodyCap(pub *core.Record) int64 {
+	return int64(pub.GetInt("max_upload_mb"))<<20 + maxValuesBytes + 64<<10
+}
+
+func tooLarge(re *core.RequestEvent) error {
+	return re.Error(http.StatusRequestEntityTooLarge, "The files are too large", nil)
+}
+
+// handleSubmit runs the checks cheapest first and stops at the first failure.
+// Nothing reads the body before the origin, the coarse per-IP limit and the
+// publication's size cap have passed.
+func handleSubmit(app core.App, re *core.RequestEvent) error {
+	ctx := re.Request.Context()
+	pub, form, def, err := livePublication(app, re.Request.PathValue("token"))
+	if err != nil {
+		return re.InternalServerError("", err)
+	}
+	if pub == nil {
+		return re.NotFoundError("This form is not available", nil)
+	}
+	if !sameOrigin(app, re.Request) {
+		return re.ForbiddenError("", nil)
+	}
+	ip := re.RealIP()
+	if !preLimiter.For(app).AllowOrLog(ip, "webforms.submit.pre") {
+		return re.TooManyRequestsError("Please wait and try again", nil)
+	}
+	limit := bodyCap(pub)
+	if re.Request.ContentLength > limit {
+		return tooLarge(re)
+	}
+	re.Request.Body = http.MaxBytesReader(re.Response, re.Request.Body, limit)
+	if err := re.Request.ParseMultipartForm(multipartMemory); err != nil {
+		var big *http.MaxBytesError
+		if errors.As(err, &big) {
+			return tooLarge(re)
+		}
+		return re.BadRequestError("The submission could not be read", nil)
+	}
+	r := re.Request
+	if r.FormValue("_hp") != "" {
+		log.InfoContext(ctx, "honeypot filled, submission dropped", "publication", pub.Id)
+		return ok(re)
+	}
+
+	stampKey, err := subkey(app, stampLabel)
+	if err != nil {
+		return re.InternalServerError("", err)
+	}
+	switch err := checkStamp(stampKey, r.FormValue("stamp"), pub.Id, time.Now()); {
+	case errors.Is(err, errTooFast):
+		return re.BadRequestError("Please wait and try again", fieldError("stamp", "validation_too_fast", "Please wait and try again"))
+	case err != nil:
+		return re.BadRequestError("Please reload the form and try again", fieldError("stamp", "validation_invalid_stamp", "Please reload the form and try again"))
+	}
+
+	if !ipLimiter.For(app).AllowOrLog(pub.Id+"|"+ip, "webforms.submit.ip") || !pubLimiter.For(app).AllowOrLog(pub.Id, "webforms.submit.publication") {
+		return re.TooManyRequestsError("Please wait and try again", nil)
+	}
+
+	// Before the proof of work: a retry of a stored submission (its response
+	// was lost) carries a spent solution and must still get ok.
+	clientID := r.FormValue("client_id")
+	if clientID == "" || len(clientID) > maxClientID {
+		return re.BadRequestError("The submission could not be read", nil)
+	}
+	_, err = app.FindFirstRecordByFilter(submissionsName, "publication = {:p} && client_id = {:c}",
+		map[string]any{"p": pub.Id, "c": clientID})
+	if err == nil {
+		return ok(re)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return re.InternalServerError("", err)
+	}
+
+	var powSignature string
+	if pub.GetBool("require_pow") {
+		sig, err := checkPow(app, r.FormValue("pow"), pub.Id)
+		if err != nil {
+			return re.BadRequestError("Please wait and try again", fieldError("pow", "validation_invalid_pow", "Please wait and try again"))
+		}
+		powSignature = sig
+	}
+	refuse := func(e error) error {
+		if powSignature != "" {
+			spentPowFor(app).release(powSignature)
+		}
+		return e
+	}
+
+	uploads, ferrs := checkFiles(def, r.MultipartForm.File, pub.GetInt("max_upload_mb"))
+	if ferrs != nil {
+		return refuse(re.BadRequestError("The form has errors", ferrs))
+	}
+	raw := r.FormValue("values")
+	if len(raw) > maxValuesBytes {
+		return refuse(re.BadRequestError("The form has errors", fieldError("values", "validation_values_too_large", "The answers are too long")))
+	}
+	values := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return refuse(re.BadRequestError("The submission could not be read", nil))
+	}
+	ipHash, err := hashIP(app, ip)
+	if err != nil {
+		return refuse(re.InternalServerError("", err))
+	}
+	if err := store(app, pub, form, def, ownFields(def, values), uploads, clientID, ipHash, r.UserAgent()); err != nil {
+		var verrs validation.Errors
+		if errors.As(err, &verrs) {
+			return refuse(re.BadRequestError("The form has errors", verrs))
+		}
+		return refuse(re.InternalServerError("", err))
+	}
+	return ok(re)
+}
+
+// ownFields keeps only this form's non-file fields. A key from another form
+// or a removed field is dropped here, so the host validation never searches
+// the other forms for it; file keys are set by store from the uploads.
+func ownFields(def *forms.Definition, values map[string]any) map[string]any {
+	out := make(map[string]any, len(values))
+	for key, v := range values {
+		if f := def.Field(key); f != nil && f.Kind != "file" && f.Kind != "builtin" {
+			out[key] = v
+		}
+	}
+	return out
+}
+
+// checkPow verifies and reserves a solution, and returns its signature so a
+// refused submit can release it.
+func checkPow(app core.App, encoded, pubID string) (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", errPow
+	}
+	var s Solution
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", errPow
+	}
+	key, err := subkey(app, powLabel)
+	if err != nil {
+		return "", err
+	}
+	if err := spentPowFor(app).verify(key, s, pubID, time.Now()); err != nil {
+		return "", err
+	}
+	return s.Signature, nil
+}
+
+// store writes the submission and its files in one transaction. File-row ids
+// are made first and written into values, so the host-record validation sees
+// a required file field as filled; a single file field holds one id string.
+// values holds no file keys (ownFields drops them), so a visitor cannot point
+// a file field at another submission's file.
+func store(app core.App, pub, form *core.Record, def *forms.Definition, values map[string]any,
+	uploads map[string][]*multipart.FileHeader, clientID, ipHash, userAgent string) error {
+	type pending struct {
+		id, key string
+		header  *multipart.FileHeader
+	}
+	var files []pending
+	for key, headers := range uploads {
+		ids := make([]any, 0, len(headers))
+		for _, h := range headers {
+			id := core.GenerateDefaultRandomId()
+			ids = append(ids, id)
+			files = append(files, pending{id: id, key: key, header: h})
+		}
+		if def.Field(key).Multiple {
+			values[key] = ids
+		} else {
+			values[key] = ids[0]
+		}
+	}
+	userAgent = truncateRunes(userAgent, maxUserAgent)
+	return app.RunInTransaction(func(tx core.App) error {
+		subs, err := tx.FindCollectionByNameOrId(submissionsName)
+		if err != nil {
+			return err
+		}
+		sub := core.NewRecord(subs)
+		sub.Set("form", form.Id)
+		sub.Set("publication", pub.Id)
+		sub.Set("values", values)
+		sub.Set("client_id", clientID)
+		sub.Set("ip_hash", ipHash)
+		sub.Set("user_agent", userAgent)
+		if err := tx.Save(sub); err != nil {
+			return err
+		}
+		filesCol, err := tx.FindCollectionByNameOrId(submissionFilesName)
+		if err != nil {
+			return err
+		}
+		for _, p := range files {
+			file, err := filesystem.NewFileFromMultipart(p.header)
+			if err != nil {
+				return err
+			}
+			rec := core.NewRecord(filesCol)
+			rec.Id = p.id
+			rec.Set("submission", sub.Id)
+			rec.Set("field", p.key)
+			rec.Set("file", file)
+			rec.Set("size", p.header.Size)
+			rec.Set("name", safeFileName(p.header.Filename))
+			if err := tx.Save(rec); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}

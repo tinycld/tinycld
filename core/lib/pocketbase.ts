@@ -422,6 +422,27 @@ const forms = newCollection('forms', {
     ...indexing,
 })
 
+const form_publications = newCollection('form_publications', {
+    omitOnInsert: ['created', 'updated'],
+    ...onDemand,
+    relations: { form: forms },
+    ...indexing,
+})
+
+const form_submissions = newCollection('form_submissions', {
+    omitOnInsert: ['created'],
+    ...onDemand,
+    relations: { form: forms, publication: form_publications },
+    ...indexing,
+})
+
+const form_submission_files = newCollection('form_submission_files', {
+    omitOnInsert: ['created'],
+    ...onDemand,
+    relations: { submission: form_submissions },
+    ...indexing,
+})
+
 const rule_runs = newCollection('rule_runs', {
     omitOnInsert: ['created', 'updated'],
     ...onDemand,
@@ -522,6 +543,9 @@ const coreStores = {
     rules,
     rule_runs,
     forms,
+    form_publications,
+    form_submissions,
+    form_submission_files,
     automation_catalog,
     system_settings,
     autoupgrade_state,
