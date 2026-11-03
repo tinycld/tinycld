@@ -376,21 +376,25 @@ func literal(c fctx, raw json.RawMessage, at string) (expr, error) {
 	case json.Number:
 		return expr{sql: c.bind(numberValue(x)), typ: Number}, nil
 	case []any:
-		parts := make([]string, 0, len(x))
+		values := make([]any, 0, len(x))
 		var typ FieldType
 		for _, item := range x {
 			switch y := item.(type) {
 			case string:
-				parts = append(parts, c.bind(y))
+				values = append(values, y)
 				typ = Text
 			case json.Number:
-				parts = append(parts, c.bind(numberValue(y)))
+				values = append(values, numberValue(y))
 				typ = Number
 			default:
 				return expr{}, invalid(at, "a value list holds text or numbers")
 			}
 		}
-		return expr{sql: "(" + strings.Join(parts, ", ") + ")", typ: typ, list: true}, nil
+		list, err := jsonList(c.bind, values)
+		if err != nil {
+			return expr{}, err
+		}
+		return expr{sql: list, typ: typ, list: true}, nil
 	}
 	return expr{}, invalid(at, "a value is text, a number, true, false, null or a list")
 }

@@ -792,11 +792,14 @@ type expansion struct {
 	// open holds the levels (1 for the first group) that open because the
 	// run said nothing.
 	open map[int]bool
+	// encoded holds each key's values as sqlJSON writes them, in the order
+	// of keys.
+	encoded [][]string
 }
 
-// maxExpandValues bounds the values options.expand binds into one statement
-// (each key's group values and currency keys), under SQLite's limit of
-// 32,766 variables with room for the statement's other params.
+// maxExpandValues bounds the values options.expand holds (each key's group
+// values and currency keys). A read binds the keys as one JSON parameter
+// (where), so the bound is on a request's size, not on SQLite's variables.
 const maxExpandValues = 30000
 
 // parseExpansion reads options.expand: at most rowCap keys, since a run
@@ -818,6 +821,7 @@ func parseExpansion(opts Options) (*expansion, error) {
 			return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key is a group row's groupKey")
 		}
 		norm := make([]any, len(key))
+		encoded := make([]string, len(key))
 		for j, v := range key {
 			switch x := v.(type) {
 			case nil, string, bool:
@@ -833,18 +837,29 @@ func parseExpansion(opts Options) (*expansion, error) {
 			default:
 				return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key holds text, numbers, true, false or null")
 			}
+			text, err := sqlJSON(norm[j])
+			if err != nil {
+				return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key holds text, numbers, true, false or null")
+			}
+			encoded[j] = text
 		}
 		e.keys = append(e.keys, norm)
+		e.encoded = append(e.encoded, encoded)
 		e.set[keyString(norm)] = true
 	}
 	return e, nil
 }
 
 // where matches rows whose first depth group keys and currency keys equal
-// an expanded group key. The keys are a VALUES list the row is looked up
-// in: an OR per key would make SQLite parse one level deeper per key (it
-// refuses past 1,000) and plan in time that grows with the square of the
-// keys.
+// an expanded group key, value by value as IS compares them. A key's blank
+// values match by IS NULL, and the rest by one IN over the keys with the
+// same blanks, bound as one JSON parameter: "(k0, ck0) IN (SELECT …)". IN
+// builds its lookup once, where a correlated lookup per row (EXISTS over the
+// keys) takes time that grows with rows times keys. IN compares with =,
+// which never matches NULL, hence the split by blanks. The json_extract
+// columns carry no affinity, so the row's key keeps its own as it does in
+// IS, and COLLATE BINARY keeps IS's collation: the key list is the left
+// operand there.
 func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string {
 	if e.all || e.open[depth] {
 		return "1"
@@ -856,27 +871,63 @@ func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string
 	for _, ck := range c.currencies {
 		cols = append(cols, prefix+ck)
 	}
-	var rows []string
-	for _, key := range e.keys {
+	// blanks marks a key's blank values ("10" is a set first value, a
+	// blank second); rowsOf holds each pattern's keys, set values only.
+	var blanks []string
+	rowsOf := map[string][]string{}
+	for i, key := range e.keys {
 		if len(key) != len(cols) {
 			continue
 		}
-		values := make([]string, len(key))
-		for i, v := range key {
-			values[i] = s.bind(v)
+		mask := make([]byte, len(key))
+		var set []string
+		for j, text := range e.encoded[i] {
+			mask[j] = '0'
+			// null is nil, or a NaN, which SQLite binds as NULL.
+			if text == "null" {
+				mask[j] = '1'
+				continue
+			}
+			set = append(set, text)
 		}
-		rows = append(rows, "("+strings.Join(values, ", ")+")")
+		if _, seen := rowsOf[string(mask)]; !seen {
+			blanks = append(blanks, string(mask))
+		}
+		rowsOf[string(mask)] = append(rowsOf[string(mask)], "["+strings.Join(set, ",")+"]")
 	}
-	if len(rows) == 0 {
+	if len(blanks) == 0 {
 		return "0"
 	}
-	// The VALUES list has a name no statement alias uses, so a key column
-	// never resolves to an outer row by mistake.
-	match := make([]string, len(cols))
-	for i, col := range cols {
-		match[i] = fmt.Sprintf("ek.column%d IS %s", i+1, col)
+	terms := make([]string, len(blanks))
+	for i, mask := range blanks {
+		var conds, left, picks []string
+		for j, col := range cols {
+			if mask[j] == '1' {
+				conds = append(conds, col+" IS NULL")
+				continue
+			}
+			picks = append(picks, fmt.Sprintf("json_extract(value, '$[%d]')", len(left)))
+			left = append(left, col+" COLLATE BINARY")
+		}
+		if len(left) > 0 {
+			keys := s.bind("[" + strings.Join(rowsOf[mask], ",") + "]")
+			conds = append(conds, fmt.Sprintf("(%s) IN (SELECT %s FROM json_each(%s))",
+				strings.Join(left, ", "), strings.Join(picks, ", "), keys))
+		}
+		terms[i] = "(" + strings.Join(conds, " AND ") + ")"
 	}
-	return fmt.Sprintf("EXISTS (SELECT 1 FROM (VALUES %s) ek WHERE %s)", strings.Join(rows, ", "), strings.Join(match, " AND "))
+	return anyOf(terms)
+}
+
+// anyOf joins conditions with OR as a balanced tree: SQLite's parser goes a
+// level deeper per OR of a chain and refuses past 1,000, and the keys may
+// hold more patterns of blanks than that.
+func anyOf(conds []string) string {
+	if len(conds) == 1 {
+		return conds[0]
+	}
+	mid := len(conds) / 2
+	return "(" + anyOf(conds[:mid]) + " OR " + anyOf(conds[mid:]) + ")"
 }
 
 // has is true when the level-n group with key opens.

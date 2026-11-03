@@ -15,14 +15,16 @@ import (
 // when its bytecode opens a table, or an index of a table, that the view's
 // registration does not cover. Each OpenRead opcode names a root page, and
 // sqlite_schema maps every root page to its table, so a read hidden in a
-// subquery, an EXISTS, a CTE or a covering index is still seen. Call it from
-// a package's tests after the package's migrations apply.
+// subquery, an EXISTS, a CTE or a covering index is still seen. A view that
+// reads a stored virtual table must declare the collections
+// RegisterVirtualTable maps it to (see the package comment). Call it from a
+// package's tests after the package's migrations apply.
 func CheckViews(app core.App) error {
 	registered := RegisteredViews()
 	if len(registered) == 0 {
 		return nil
 	}
-	pages, err := rootPages(context.Background(), app)
+	s, err := readSchema(context.Background(), app)
 	if err != nil {
 		return err
 	}
@@ -33,7 +35,7 @@ func CheckViews(app core.App) error {
 	sort.Strings(names)
 	var problems []string
 	for _, name := range names {
-		problems = append(problems, checkView(app, pages, name, registered[name])...)
+		problems = append(problems, checkView(app, s, name, registered[name])...)
 	}
 	if len(problems) > 0 {
 		return errors.New("changesignal: " + strings.Join(problems, "; "))
@@ -41,7 +43,7 @@ func CheckViews(app core.App) error {
 	return nil
 }
 
-func checkView(app core.App, pages map[int64]string, view string, sources []string) []string {
+func checkView(app core.App, s *schema, view string, sources []string) []string {
 	col, err := app.FindCollectionByNameOrId(view)
 	if err != nil {
 		return []string{fmt.Sprintf("view %q is not a collection", view)}
@@ -65,7 +67,7 @@ func checkView(app core.App, pages map[int64]string, view string, sources []stri
 			problems = append(problems, fmt.Sprintf("view %q declares %q, which is not the collection name %q", view, source, sourceCol.Name))
 		}
 	}
-	read, err := tablesRead(context.Background(), app, pages, "SELECT * FROM {{"+col.Name+"}}", nil)
+	read, err := tablesRead(context.Background(), app, s, "SELECT * FROM {{"+col.Name+"}}", nil)
 	if err != nil {
 		return append(problems, fmt.Sprintf("view %q: %v", view, err))
 	}
@@ -78,29 +80,17 @@ func checkView(app core.App, pages map[int64]string, view string, sources []stri
 	return problems
 }
 
-func rootPages(ctx context.Context, app core.App) (map[int64]string, error) {
-	var rows []struct {
-		RootPage int64  `db:"rootpage"`
-		Table    string `db:"tbl_name"`
-	}
-	err := app.DB().
-		NewQuery("SELECT rootpage, tbl_name FROM sqlite_schema WHERE rootpage > 0").
-		WithContext(ctx).
-		All(&rows)
-	if err != nil {
-		return nil, fmt.Errorf("changesignal: read sqlite_schema: %w", err)
-	}
-	pages := make(map[int64]string, len(rows))
-	for _, row := range rows {
-		pages[row.RootPage] = row.Table
-	}
-	return pages, nil
-}
-
 // tablesRead lists, sorted, the tables of the main database that query
-// opens for reading. params binds the query's placeholders; EXPLAIN only
-// compiles the statement, so their values do not change the result.
-func tablesRead(ctx context.Context, app core.App, pages map[int64]string, query string, params dbx.Params) ([]string, error) {
+// opens for reading, and the collections of each stored virtual table it
+// may read. params binds the query's placeholders; EXPLAIN only compiles the
+// statement, so their values do not change the result.
+//
+// A VOpen opcode names no table. When the query reaches no stored virtual
+// table by name (virtualTablesReached), every VOpen is a table-valued
+// function such as json_each, which holds no stored rows and adds nothing.
+// Otherwise each stored virtual table it reaches must be mapped with
+// RegisterVirtualTable, and adds its collections.
+func tablesRead(ctx context.Context, app core.App, s *schema, query string, params dbx.Params) ([]string, error) {
 	var ops []struct {
 		Opcode string `db:"opcode"`
 		P2     int64  `db:"p2"`
@@ -110,20 +100,32 @@ func tablesRead(ctx context.Context, app core.App, pages map[int64]string, query
 		return nil, fmt.Errorf("explain: %w", err)
 	}
 	seen := map[string]bool{}
+	opensVirtual := false
 	for _, op := range ops {
 		switch op.Opcode {
 		case "VOpen":
-			return nil, errors.New("reads a virtual table, which this check cannot map to a collection")
+			opensVirtual = true
 		case "OpenRead":
 			if op.P3 != 0 {
 				continue // not the main database
 			}
-			table, ok := pages[op.P2]
+			table, ok := s.pages[op.P2]
 			if !ok {
 				return nil, fmt.Errorf("opens root page %d, which no table or index owns", op.P2)
 			}
 			if !strings.HasPrefix(table, "sqlite_") {
 				seen[table] = true
+			}
+		}
+	}
+	if opensVirtual {
+		for _, table := range s.virtualTablesReached(query) {
+			collections, err := mappedCollections(app, table)
+			if err != nil {
+				return nil, err
+			}
+			for _, collection := range collections {
+				seen[collection] = true
 			}
 		}
 	}
@@ -133,4 +135,23 @@ func tablesRead(ctx context.Context, app core.App, pages map[int64]string, query
 	}
 	sort.Strings(tables)
 	return tables, nil
+}
+
+// mappedCollections returns the collections RegisterVirtualTable maps a
+// stored virtual table to, each checked to be a collection by its name.
+func mappedCollections(app core.App, table string) ([]string, error) {
+	collections, ok := virtualTableCollections(table)
+	if !ok {
+		return nil, fmt.Errorf("reads virtual table %q, which RegisterVirtualTable does not map to collections", table)
+	}
+	for _, collection := range collections {
+		col, err := app.FindCachedCollectionByNameOrId(collection)
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("virtual table %q maps %q, which is not a collection", table, collection)
+		case col.Name != collection:
+			return nil, fmt.Errorf("virtual table %q maps %q, which is not the collection name %q", table, collection, col.Name)
+		}
+	}
+	return collections, nil
 }

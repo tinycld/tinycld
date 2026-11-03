@@ -913,6 +913,7 @@ runtime. The registries that exist:
 | how to move ownership a flat FK rewrite cannot settle on offboarding | `offboard.RegisterHandler` |
 | which collections to audit-log | `audit.RegisterCollection` |
 | which view collections stay live, and the collections their SQL reads | `changesignal.RegisterView` |
+| which collections a stored virtual table holds (a full-text index), so a report or a view may read it | `changesignal.RegisterVirtualTable` (`fts.RegisterSync` calls it for each index) |
 | which of its collections reports may read, with their fields and links (see "Report sources" below) | `reports.RegisterSource` |
 | the reports it ships, published to every user (see "Shipped and saved reports" below) | `reports.RegisterShipped` |
 | a package membership table that carries group grants | `groups.RegisterGrantTable` |
@@ -1066,6 +1067,31 @@ if err := changesignal.CheckViews(app); err != nil {
 when its bytecode opens a table, or an index of a table, that the
 registration does not cover. It also fails when the view or a source is
 registered by an id or by a spelling other than the collection's name.
+
+**Virtual tables.** A report or a view may read a table-valued function
+such as `json_each` or `json_tree`. It holds no stored rows, so it adds no
+topic. A stored virtual table, such as an FTS5 index, is different: its rows
+change when its source collection changes. Map it to that collection from
+the package's `Register(app)`:
+
+```go
+changesignal.RegisterVirtualTable("fts_zoo_animals", "zoo_animals")
+```
+
+`fts.RegisterSync` (and `fts.Register`, which calls it) does this for each
+index it keeps in step, so a package with an `fts` config has nothing to
+add. A statement that reads a mapped table reads its collections: a live
+report gets their topics, and a view over it must list them in
+`RegisterView`. A statement that reads an unmapped stored virtual table is
+refused with an error that names the table.
+
+SQLite's bytecode does not name the virtual table it opens, so the check
+reads names. When a statement opens a virtual table, every identifier in
+its SQL, and in the SQL of each view it names, is compared with the stored
+virtual tables in `sqlite_schema`. The scan is conservative: a column or an
+alias spelled like a stored virtual table counts as a read of it. A false
+hit makes the statement need the mapping (or be refused); it never misses a
+topic.
 
 ### Report sources
 

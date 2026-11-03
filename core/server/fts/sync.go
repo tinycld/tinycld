@@ -6,6 +6,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/changesignal"
 	"tinycld.org/core/logging"
 )
 
@@ -14,8 +15,12 @@ var log = logging.ForPackage("fts")
 // RegisterSync binds the FTS index-sync record hooks for one collection. On
 // every create/update it does an idempotent delete-then-insert; on delete it
 // removes the row. Core registers this itself (from the manifest `fts` block) so
-// the sync never depends on package TS and can't be skipped.
+// the sync never depends on package TS and can't be skipped. Because the
+// index's rows follow the collection's, it also maps the index to the
+// collection for the change signal: a report or a view may read the index
+// and stays live on the collection's topic.
 func RegisterSync(app *pocketbase.PocketBase, cfg Config) {
+	changesignal.RegisterVirtualTable(cfg.Table, cfg.Collection)
 	app.OnRecordAfterCreateSuccess(cfg.Collection).BindFunc(func(e *core.RecordEvent) error {
 		syncRecord(app, cfg, e.Record, false)
 		return e.Next()

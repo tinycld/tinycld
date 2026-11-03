@@ -49,9 +49,10 @@ func distinct(rows []map[string]any, key string) []any {
 	return out
 }
 
-// maxNestParents is the most parent ids one nest statement binds. SQLite
-// refuses more than 32,766 variables; the rest are left for the statement's
-// other parameters. The default row cap and page sizes stay under it.
+// maxNestParents is the most parent ids one nest statement reads. The ids
+// are one JSON parameter (jsonList), so SQLite's limit of variables does
+// not apply; the bound keeps one nest statement's work in reach. The
+// default row cap and page sizes stay under it.
 const maxNestParents = 30000
 
 // nestLevel reads one level's child rows from the child collection's rule
@@ -97,12 +98,12 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 		next := p.nest[level+1].hops
 		sel = append(sel, q(sc.join(next[len(nl.hops):len(next)-1]), "id")+" AS __next")
 	}
-	ids := make([]string, len(parents))
-	for i, id := range parents {
-		ids[i] = s.bind(id)
+	ids, err := jsonList(s.bind, parents)
+	if err != nil {
+		return nil, err
 	}
-	body := fmt.Sprintf("SELECT %s\n%s\nWHERE %s IN (%s)\nORDER BY __parent, %s LIMIT %s",
-		strings.Join(sel, ", "), sc.render(), back, strings.Join(ids, ", "),
+	body := fmt.Sprintf("SELECT %s\n%s\nWHERE %s IN %s\nORDER BY __parent, %s LIMIT %s",
+		strings.Join(sel, ", "), sc.render(), back, ids,
 		strings.Join(append(order, "__id"), ", "), s.bind(int64(runLimits.rowCap+1)))
 	rows, err := rn.query(s, nil, body)
 	if err != nil {

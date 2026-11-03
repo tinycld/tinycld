@@ -59,26 +59,25 @@ func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 // groups, plus the explicit values. A group compares by the text the options
 // select gives it, the value the picker listed (an amount group's names its
 // currency too), so a group the reader cannot list matches nothing. The
-// explicit values are one VALUES term, which SQLite does not count against
-// its 500 terms of a compound select (a UNION per value would). json_each
-// would bind them once, but it is a virtual table, which the change-signal
-// topic check refuses to map.
+// groups and the explicit values are each one JSON parameter read through
+// json_each (jsonSelect): one select term of the compound, where a UNION
+// per value would pass SQLite's 500 terms, and one variable each.
 func (c *compiler) groupListSQL(s *stmt, op *optionsPlan, values, groups []string) (string, error) {
 	inner, err := c.optionsSelect(s, op)
 	if err != nil {
 		return "", err
 	}
-	marks := make([]string, len(groups))
-	for i, g := range groups {
-		marks[i] = s.bind(g)
+	groupList, err := jsonList(s.bind, texts(groups))
+	if err != nil {
+		return "", err
 	}
-	sql := fmt.Sprintf("SELECT o.v FROM (%s) o WHERE o.g IN (%s)", inner, strings.Join(marks, ", "))
+	sql := fmt.Sprintf("SELECT o.v FROM (%s) o WHERE o.g IN %s", inner, groupList)
 	if len(values) > 0 {
-		rows := make([]string, len(values))
-		for i, v := range values {
-			rows[i] = "(" + s.bind(v) + ")"
+		valueRows, err := jsonSelect(s.bind, texts(values))
+		if err != nil {
+			return "", err
 		}
-		sql += " UNION SELECT column1 FROM (VALUES " + strings.Join(rows, ", ") + ")"
+		sql += " UNION " + valueRows
 	}
 	return "(" + sql + ")", nil
 }
@@ -88,7 +87,7 @@ func (c *compiler) groupListSQL(s *stmt, op *optionsPlan, values, groups []strin
 // reads a param being expanded would expand themselves, so they are refused.
 func paramLeaf(c *compiler, s *stmt, f fctx, id string, v paramValue) (expr, error) {
 	if len(v.groups) == 0 {
-		return paramExpr(f, v), nil
+		return paramExpr(f, v)
 	}
 	op := c.p.options[id]
 	if op == nil {
@@ -296,11 +295,11 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 	conds := optionConds(s, req.Search, req.Group)
 	switch {
 	case len(req.Values) > 0:
-		marks := make([]string, len(req.Values))
-		for i, v := range req.Values {
-			marks[i] = s.bind(v)
+		values, err := jsonList(s.bind, texts(req.Values))
+		if err != nil {
+			return err
 		}
-		conds = append(conds, "o.v IN ("+strings.Join(marks, ", ")+")")
+		conds = append(conds, "o.v IN "+values)
 	case req.After != "":
 		label, value, err := readOptionsCursor(req.After)
 		if err != nil {

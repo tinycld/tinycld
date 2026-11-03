@@ -1,8 +1,11 @@
 package reports
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/pocketbase/dbx"
@@ -31,6 +34,82 @@ func (s *stmt) bind(v any) string {
 	name := fmt.Sprintf("rp%d", len(s.params))
 	s.params[name] = v
 	return "{:" + name + "}"
+}
+
+// jsonList is a list of values as "x IN <list>" reads it: jsonSelect in
+// parentheses, or "()" for an empty list, which IN reads as no values.
+func jsonList(bind func(any) string, values []any) (string, error) {
+	if len(values) == 0 {
+		return "()", nil
+	}
+	sel, err := jsonSelect(bind, values)
+	if err != nil {
+		return "", err
+	}
+	return "(" + sel + ")", nil
+}
+
+// jsonSelect binds a list as one JSON array and selects it back, a row per
+// value: a statement binds one parameter however long the list is and
+// however often it reads it, where a placeholder per value would pass
+// SQLite's 32,766 variables. "+value" drops the BLOB affinity of
+// json_each's value column, so IN applies the left side's affinity to each
+// value as it does in "x IN (?, ?)".
+func jsonSelect(bind func(any) string, values []any) (string, error) {
+	parts := make([]string, len(values))
+	for i, v := range values {
+		text, err := sqlJSON(v)
+		if err != nil {
+			return "", err
+		}
+		parts[i] = text
+	}
+	return "SELECT +value FROM json_each(" + bind("["+strings.Join(parts, ",")+"]") + ")", nil
+}
+
+// texts is a list of text values as jsonList and jsonSelect take it.
+func texts(values []string) []any {
+	items := make([]any, len(values))
+	for i, v := range values {
+		items[i] = v
+	}
+	return items
+}
+
+// sqlJSON writes v as JSON that SQLite reads back as the value a bound v
+// holds: the same type and, for a number, the same bits. A float keeps a
+// point or an exponent, so it does not read back as an integer; an
+// infinity is written past a double's range, which SQLite reads as that
+// infinity; NaN is null, as SQLite binds it.
+func sqlJSON(v any) (string, error) {
+	switch x := v.(type) {
+	case nil:
+		return "null", nil
+	case bool:
+		return strconv.FormatBool(x), nil
+	case string:
+		b, err := json.Marshal(x)
+		return string(b), err
+	case int:
+		return strconv.Itoa(x), nil
+	case int64:
+		return strconv.FormatInt(x, 10), nil
+	case float64:
+		switch {
+		case math.IsNaN(x):
+			return "null", nil
+		case math.IsInf(x, 1):
+			return "9e999", nil
+		case math.IsInf(x, -1):
+			return "-9e999", nil
+		}
+		text := strconv.FormatFloat(x, 'g', -1, 64)
+		if !strings.ContainsAny(text, ".e") {
+			text += ".0"
+		}
+		return text, nil
+	}
+	return "", fmt.Errorf("reports: a list holds text, numbers, true, false or null, not %T", v)
 }
 
 func (s *stmt) alias(prefix string) string {

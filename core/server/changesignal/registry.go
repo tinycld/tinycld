@@ -14,8 +14,25 @@
 //     view parser reads only the outer FROM and JOIN, so the declared list is
 //     authoritative; CheckViews proves it against SQLite's bytecode in the
 //     package's tests.
+//   - RegisterVirtualTable declares the collections a stored virtual table
+//     holds (a full-text index kept in step with its collection; fts does
+//     it for each index it syncs), so a report or a view may read it.
 //   - Touch signals a collection after a raw-SQL write, which runs no model
 //     hook.
+//
+// TopicsRead and CheckViews find what a statement reads in SQLite's
+// bytecode. A table's OpenRead names its root page, but a virtual table's
+// VOpen carries only a pointer, so a table-valued function (json_each,
+// json_tree: no stored rows, nothing to signal) and a stored virtual table
+// (an FTS5 index, whose rows change with its collection) look alike. The
+// check then reads names: every identifier in the statement's SQL, and in
+// the SQL of each view it names, through views of views. When none is a
+// stored virtual table, each VOpen is a table-valued function and adds
+// nothing. Otherwise each stored virtual table named must be mapped with
+// RegisterVirtualTable, and adds its collections; an unmapped one is
+// refused. The scan is conservative: a column or alias spelled like a
+// stored virtual table counts as a read of it, so a false hit costs a
+// refusal or a mapping, and a read is never missed.
 //
 // Core names no package; tests use fictional zoo_* collections.
 package changesignal
@@ -24,6 +41,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -37,6 +55,9 @@ func Topic(collection string) string {
 var (
 	mu    sync.RWMutex
 	views = map[string][]string{}
+	// vtabs maps a stored virtual table, by lowercased name, to the
+	// collections whose rows it holds.
+	vtabs = map[string][]string{}
 )
 
 // RegisterView declares the collections that the view collection's SQL
@@ -125,9 +146,65 @@ func coveredBy(view string) map[string]bool {
 	return covered
 }
 
-// ResetForTesting empties the registry. Tests register their own views.
+// RegisterVirtualTable declares the collections whose rows a stored virtual
+// table holds, such as a full-text index kept in step with its collection.
+// A query that reads the table then reads those collections, so a report
+// over it gets their topics, and a view over it must declare them. The
+// table is matched without case, as SQLite matches names; the collections
+// are collection names, not ids. Calling it again for the same table adds
+// collections. A blank name, no collections, or a table that lists itself
+// panics at boot, because a read of such a table could never be live.
+func RegisterVirtualTable(table string, collections ...string) {
+	if table == "" || len(collections) == 0 {
+		panic(fmt.Sprintf("changesignal.RegisterVirtualTable(%q): a virtual table needs a name and at least one collection", table))
+	}
+	key := strings.ToLower(table)
+	mu.Lock()
+	defer mu.Unlock()
+	set := map[string]bool{}
+	for _, collection := range vtabs[key] {
+		set[collection] = true
+	}
+	for _, collection := range collections {
+		if collection == "" || strings.ToLower(collection) == key {
+			panic(fmt.Sprintf("changesignal.RegisterVirtualTable(%q): invalid collection %q", table, collection))
+		}
+		set[collection] = true
+	}
+	merged := make([]string, 0, len(set))
+	for collection := range set {
+		merged = append(merged, collection)
+	}
+	sort.Strings(merged)
+	vtabs[key] = merged
+}
+
+// RegisteredVirtualTables returns a copy of the virtual-table registry:
+// lowercased table name to sorted collections.
+func RegisteredVirtualTables() map[string][]string {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := make(map[string][]string, len(vtabs))
+	for table, collections := range vtabs {
+		out[table] = slices.Clone(collections)
+	}
+	return out
+}
+
+// virtualTableCollections returns the collections a stored virtual table
+// holds, and false when it is not registered.
+func virtualTableCollections(table string) ([]string, bool) {
+	mu.RLock()
+	defer mu.RUnlock()
+	collections, ok := vtabs[strings.ToLower(table)]
+	return slices.Clone(collections), ok
+}
+
+// ResetForTesting empties the registries. Tests register their own views
+// and virtual tables.
 func ResetForTesting() {
 	mu.Lock()
 	defer mu.Unlock()
 	views = map[string][]string{}
+	vtabs = map[string][]string{}
 }

@@ -425,49 +425,35 @@ func asOfDay(preset string, pc periodContext) string {
 }
 
 // paramExpr is a resolved param as a formula leaf.
-func paramExpr(c fctx, v paramValue) expr {
+func paramExpr(c fctx, v paramValue) (expr, error) {
 	switch v.typ {
 	case ParamDateRange:
 		if v.unset {
-			return expr{rng: true, lo: "NULL", hi: "NULL", unset: true}
+			return expr{rng: true, lo: "NULL", hi: "NULL", unset: true}, nil
 		}
-		return expr{rng: true, lo: c.bind(v.from), hi: c.bind(v.to)}
+		return expr{rng: true, lo: c.bind(v.from), hi: c.bind(v.to)}, nil
 	case ParamChoice:
 		if v.multiple {
-			parts := make([]any, len(v.list))
-			for i, s := range v.list {
-				parts[i] = s
+			list, err := jsonList(c.bind, texts(v.list))
+			if err != nil {
+				return expr{}, err
 			}
-			return expr{sql: bindList(c, parts), typ: Text, list: true, unset: v.unset}
+			return expr{sql: list, typ: Text, list: true, unset: v.unset}, nil
 		}
 	case ParamAmount:
 		if v.unset {
-			return expr{sql: "NULL", typ: Money, unset: true}
+			return expr{sql: "NULL", typ: Money, unset: true}, nil
 		}
 		e := expr{sql: c.bind(v.value), typ: Money}
 		// An amount in any currency has none, as a plain number has none.
 		if v.currency != "" {
 			e.cur = currency{param: v.currency, id: "param:" + v.currency}
 		}
-		return e
+		return e, nil
 	}
 	typ := map[string]FieldType{ParamDate: Date, ParamAsOf: Date, ParamText: Text, ParamNumber: Number, ParamChoice: Text}[v.typ]
 	if v.unset {
-		return expr{sql: "NULL", typ: typ, unset: true}
+		return expr{sql: "NULL", typ: typ, unset: true}, nil
 	}
-	return expr{sql: c.bind(v.value), typ: typ}
-}
-
-func bindList(c fctx, values []any) string {
-	if len(values) == 0 {
-		return "()"
-	}
-	out := "("
-	for i, v := range values {
-		if i > 0 {
-			out += ", "
-		}
-		out += c.bind(v)
-	}
-	return out + ")"
+	return expr{sql: c.bind(v.value), typ: typ}, nil
 }
