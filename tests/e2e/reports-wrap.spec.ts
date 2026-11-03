@@ -5,6 +5,7 @@ import {
     addSale,
     addTeam,
     chooseOption,
+    listScroller,
     openReportStub,
     openReportsHub,
     rowOf,
@@ -486,13 +487,35 @@ test.describe('report rows on a touch phone', () => {
         await seed(page, 16)
         await wideReport(page, uniqueName('Touch'), false)
         await page.setViewportSize({ width: 390, height: 844 })
+        // The swipe goes to the phone layout only: the table is the phone's width and
+        // its headings have wrapped, the figures on the line under the label.
+        const table = page.getByTestId('report-table')
+        await expect
+            .poll(async () => Math.abs(((await table.boundingBox())?.width ?? 0) - 390))
+            .toBeLessThanOrEqual(1)
+        await expect
+            .poll(async () => {
+                const label = await page.getByTestId('report-heading-customer').boundingBox()
+                const amount = await page.getByTestId('report-heading-amount').boundingBox()
+                return label && amount ? amount.y >= label.y + label.height - 1 : false
+            })
+            .toBe(true)
+        const headingBottom = await bottomOf(page.getByTestId('report-heading-row'))
+
         // The shared sign-in also owns other specs' sales, which sort before or after
-        // these, so the row to swipe away is the table's first, not a named one.
-        const first = page
-            .getByTestId('report-table')
-            .locator('[data-testid^="report-row-"]')
-            .first()
-        await expect(first).toBeVisible()
+        // these, so the row to swipe away is the table's first, not a named one. It is
+        // held by its own test id: a later lookup of "the first row" finds another.
+        const firstId =
+            (await table
+                .locator('[data-testid^="report-row-"]')
+                .first()
+                .getAttribute('data-testid')) ?? ''
+        const first = page.getByTestId(firstId)
+        await expect
+            .poll(async () => Math.abs(((await first.boundingBox())?.y ?? 0) - headingBottom))
+            .toBeLessThanOrEqual(1)
+        const scroller = await listScroller(first)
+        expect(await scroller.evaluate(list => list.scrollHeight > list.clientHeight)).toBe(true)
 
         // Nothing from a row up to the table turns touch gestures (zoom, pan) off.
         const blocked = await first.evaluate(element => {
@@ -507,16 +530,20 @@ test.describe('report rows on a touch phone', () => {
         })
         expect(blocked).toEqual([])
 
-        const headingBottom = await bottomOf(page.getByTestId('report-heading-row'))
-        const table = await page.getByTestId('report-table').boundingBox()
+        const bounds = await table.boundingBox()
         const cdp = await page.context().newCDPSession(page)
         await cdp.send('Input.synthesizeScrollGesture', {
-            x: (table?.x ?? 0) + 100,
-            y: (table?.y ?? 0) + 500,
+            x: (bounds?.x ?? 0) + 100,
+            y: (bounds?.y ?? 0) + 500,
             yDistance: -400,
             gestureSourceType: 'touch',
         })
         await cdp.detach()
+        await expect
+            .poll(() => scroller.evaluate(list => list.scrollTop), {
+                message: 'the swipe scrolls the list',
+            })
+            .toBeGreaterThan(0)
         await expect.poll(() => isScrolledAway(first, headingBottom)).toBe(true)
     })
 })
