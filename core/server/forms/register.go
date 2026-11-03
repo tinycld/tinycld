@@ -73,4 +73,5 @@ func BindHooks(app core.App, defs *Defs) {
 	bindHostHooks(app, defs)
 	defsKey.Set(app, defs)
 	registerFilesProviders(defs)
+	BindHostsRoute(app, defs)
 }
