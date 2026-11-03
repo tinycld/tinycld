@@ -45,6 +45,28 @@ func RegisterRuleFilter(triggerRef string, f RuleFilter) {
 	ruleFilters[triggerRef] = f
 }
 
+// RuleScope narrows the records a dry run reads to the ones a rule can match,
+// from its trigger_config, as a PocketBase filter: a web form rule reads its
+// own form's submissions, not the newest of every form. Param names start
+// with "scope" so they cannot collide with the dry run's own.
+type RuleScope func(config map[string]any) (filter string, params map[string]any)
+
+func RegisterRuleScope(triggerRef string, s RuleScope) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	ruleScopes[triggerRef] = s
+}
+
+func ruleScope(triggerRef string, config map[string]any) (string, map[string]any) {
+	registryMu.RLock()
+	s := ruleScopes[triggerRef]
+	registryMu.RUnlock()
+	if s == nil {
+		return "", nil
+	}
+	return s(config)
+}
+
 func ruleConfig(rule *core.Record) map[string]any {
 	out := map[string]any{}
 	b, err := json.Marshal(rule.Get("trigger_config"))

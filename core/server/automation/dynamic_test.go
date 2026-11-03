@@ -153,3 +153,23 @@ func TestMarkdownParamEscapesSubstitutedValues(t *testing.T) {
 		t.Fatalf("a plain param is not escaped: %q", got.Params["plain"])
 	}
 }
+
+func TestDryRunReadsOnlyTheScopedRecords(t *testing.T) {
+	_, eng, u, save := dynamicApp(t)
+	RegisterRuleScope("posts:post-created", func(cfg map[string]any) (string, map[string]any) {
+		return "channel = {:scopeChannel}", map[string]any{"scopeChannel": cfg["channel"]}
+	})
+	save("a", "the one")
+	for i := 0; i < 60; i++ {
+		save("b", "noise")
+	}
+	u.Set("role", "admin")
+	ast, _ := DecodeConditions(nil)
+	res, err := eng.dryRun(u, "posts:post-created", map[string]any{"channel": "a"}, ast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 1 || len(res.Matches) != 1 {
+		t.Fatalf("the dry run must read channel a only, got total %d matches %d", res.Total, len(res.Matches))
+	}
+}

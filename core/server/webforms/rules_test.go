@@ -128,3 +128,19 @@ func TestAutoReplyThroughAPackageSendActionNeedsProofOfWork(t *testing.T) {
 		t.Fatalf("a fixed recipient is safe even when another param reads the form: %v", err)
 	}
 }
+
+func TestFormScopeLimitsTheDryRunToItsForm(t *testing.T) {
+	f := newFixture(t, rulesDef)
+	storeForTest(t, f, map[string]any{"name": "Mine"})
+	other := secondPublication(t, f, 90)
+	storeForTest(t, other, map[string]any{"name": "Theirs"})
+
+	filter, params := formScope(map[string]any{"form": f.form.Id})
+	rows, err := f.app.FindRecordsByFilter("form_submissions", filter, "", 0, 0, params)
+	if err != nil || len(rows) != 1 || rows[0].GetString("form") != f.form.Id {
+		t.Fatalf("the scope reads this form's submissions only: %d %v", len(rows), err)
+	}
+	if filter, _ := formScope(map[string]any{}); filter != "id = ''" {
+		t.Fatalf("a rule with no form reads nothing, got %q", filter)
+	}
+}

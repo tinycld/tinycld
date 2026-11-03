@@ -105,3 +105,28 @@ func storeForTest(t *testing.T, f *fixture, values map[string]any, uploads ...up
 }
 
 func utf8ValidString(s string) bool { return utf8.ValidString(s) }
+
+// secondPublication publishes a second form in the fixture's app, with its
+// own retention, and returns a fixture that submits to it.
+func secondPublication(t *testing.T, f *fixture, retentionDays int) *fixture {
+	t.Helper()
+	formsCol, _ := f.app.FindCollectionByNameOrId("forms")
+	form := core.NewRecord(formsCol)
+	form.Set("host", WebFormHostKey)
+	form.Set("name", "Second")
+	form.Set("slug", "second")
+	form.Set("definition", f.form.Get("definition"))
+	form.Set("order", 2)
+	if err := f.app.Save(form); err != nil {
+		t.Fatal(err)
+	}
+	pubs, _ := f.app.FindCollectionByNameOrId("form_publications")
+	pub := core.NewRecord(pubs)
+	pub.Set("form", form.Id)
+	pub.Set("enabled", true)
+	pub.Set("retention_days", retentionDays)
+	if err := f.app.Save(pub); err != nil {
+		t.Fatal(err)
+	}
+	return &fixture{app: f.app, form: form, pub: pub, token: pub.GetString("token")}
+}
