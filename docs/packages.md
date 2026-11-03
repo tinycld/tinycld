@@ -1078,9 +1078,12 @@ the package's `Register(app)`:
 changesignal.RegisterVirtualTable("fts_zoo_animals", "zoo_animals")
 ```
 
-`fts.RegisterSync` (and `fts.Register`, which calls it) does this for each
-index it keeps in step, so a package with an `fts` config has nothing to
-add. A statement that reads a mapped table reads its collections: a live
+`RegisterVirtualTable(table, collections...)` follows the same rules as
+`RegisterView`. `fts` registers each index automatically, so a package with an
+`fts` config has nothing to add. Report and view SQL may read table-valued
+functions such as `json_each`. A stored virtual table must be mapped, or the
+query is refused. Temp and attached virtual tables are covered only when the
+check and the statement run in one transaction. A statement that reads a mapped table reads its collections: a live
 report gets their topics, and a view over it must list them in
 `RegisterView`. A statement that reads an unmapped stored virtual table is
 refused with an error that names the table.
@@ -1142,6 +1145,17 @@ reports.RegisterSource(reports.Source{
   `Currency` read. A run that reads this source also subscribes to them, so a
   change there runs an open report again. The start check refuses a watched
   collection that does not exist, is named by id, or is a system collection.
+- `Field.TextDay` makes a `Date` field read a text column that holds a day as
+  `YYYY-MM-DD`. Filters, buckets, presets and pivots treat it as a date.
+  `CheckSources` refuses `TextDay` on any other type, and on a column that is
+  not text.
+- A path that ends at a to-one link, or at the `id` field, is a relation
+  value: it carries the target source. A formula, filter or column may use it
+  as a value (the linked record's id; blank when the reader cannot see it).
+- A group whose column is a relation value is a record group. Its row shows
+  the record's label: by default the target's first text field. A target with
+  no text field has no default, so the label is `(none)`: give that group a
+  label formula.
 
 When the server starts, core checks every source against the database:
 
@@ -1230,6 +1244,39 @@ away before the run ends.
   only such conditions, also matches every row. A parameter with a default
   takes the default when nothing is posted.
 
+**Spec version 2.** `reports.CurrentVersion` is 2. Every new field is
+optional, and a stored version 1 spec loads unchanged (the upgrade step
+changes nothing). A version 2 spec sent to an older server is refused by its
+version.
+
+| Field | What it does |
+|---|---|
+| `columns[].total` | `"recompute"` (default) totals every row the filter keeps. `"rows"` adds the rows the result shows, after `having`. Only for number and amount columns. |
+| `columns[].labelField` | The field of a relation column's record that its cells show. |
+| `groups[].having` | A condition on the level's totals, columns and record fields. A hidden group hides its children. Refused on the first group of a layout report. |
+| `groups[].label` | A formula that labels the group's row. |
+| `groups[].fill` | `{ where? }` lists the target's records that have no rows, on any level, under each parent group. |
+| `groups[].open` | The level is open when the report opens and no expansion state is sent. |
+| `sort[]` | `{ col, dir }` or `{ formula, dir }`. A formula sort key that reads a row's fields sorts detail rows only; group levels skip it. |
+| `detail.label` | A formula that labels each detail row. Default: the first column. |
+| `params[].optionsFrom` | `{ source, value, label, group?, where? }`: a choice param reads its options from a source, under the reader's rules. |
+| formula leaf `{ record, path }` | Reads a field of a record group's record. |
+| operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: one value (`min` by default, or `max`) from the rows of another source that the reader may see. |
+| `display.layouts[]` | `{ width, tracks, cells: [{ col, line, start?, span?, lines?, justify? }] }`: where each column goes on a narrow screen. |
+
+A param of type `amount` holds cents and a currency. A multiple choice param
+may hold a whole group as `{"group": "<value>"}`; the server expands it under
+the reader's rules at run time. Report option lists and group keys bind as one
+JSON parameter, so there is no SQL variable limit on them.
+
+**Param options.** `POST /api/reports/param-options` reads one page of a
+choice param's options for a draft `spec` or a saved `reportId` the caller can
+view. It sends `param`, and optionally `search`, `group`, `after`, `limit`
+(default 50), `params` and `today`; `values` instead asks for the labels of
+those values alone. It answers `options`, `groups` (with the first page only),
+`groupsCut` and `next`. It reads under the reader's list rules and writes
+nothing.
+
 ### Shipped and saved reports
 
 People save reports in core's `reports` collection and share them through
@@ -1263,10 +1310,11 @@ reports.RegisterShipped(reports.Shipped{
   then `reports.Load` and `reports.Validate`.
 - Set `Unpublished: true` for a report only some people should see. Core
   creates it unpublished and never publishes it, also on a new revision. The
-  package shares it itself: add `report_shares` rows from
-  `app.OnRecordAfterCreateSuccess("reports")` for a new shipped copy, and
-  again when the server starts (after `ReconcileShipped`) to cover reports
-  that already exist. Core has no share API for this.
+  package shares it itself: bind `app.OnRecordAfterCreateSuccess("reports")`
+  and add `report_shares` rows for each new row with the package's
+  `shipped_key` (the `app.Save` in `ReconcileShipped` fires this hook), and
+  reconcile again when the server starts, after `ReconcileShipped`, to cover
+  reports that already exist. Core has no share API for this.
 - A shipped report cannot be deleted while the package ships it. The
   server answers "This report ships with a package. An admin who owns or
   edits it can unpublish it instead." Only an admin with update access (the
@@ -1295,6 +1343,12 @@ In every mode, a published or shipped report goes to the heir and is never
 deleted. The heir is the successor, else the admin who offboards the user,
 else the first admin. When no heir exists, the offboard is refused and
 nothing changes.
+
+#### Report e2e helpers
+
+A package's e2e opens core's report view with `openReportsHub`, `hubRow`,
+`rowOf`, `cellOf`, `pressToolbar` and `chooseParamOption`, all from
+`@tinycld/core/e2e-helpers`.
 
 #### Linking to a package's reports
 

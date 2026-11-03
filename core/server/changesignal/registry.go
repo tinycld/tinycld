@@ -14,9 +14,12 @@
 //     view parser reads only the outer FROM and JOIN, so the declared list is
 //     authoritative; CheckViews proves it against SQLite's bytecode in the
 //     package's tests.
-//   - RegisterVirtualTable declares the collections a stored virtual table
-//     holds (a full-text index kept in step with its collection; fts does
-//     it for each index it syncs), so a report or a view may read it.
+//   - RegisterVirtualTable(table, collections...) follows the same rules as
+//     RegisterView. fts registers each index automatically. Report and view
+//     SQL may read table-valued functions such as json_each. A stored
+//     virtual table must be mapped, or the query is refused. Temp and
+//     attached virtual tables are covered only when the check and the
+//     statement run in one transaction.
 //   - Touch signals a collection after a raw-SQL write, which runs no model
 //     hook.
 //
