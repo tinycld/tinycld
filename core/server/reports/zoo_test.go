@@ -222,7 +222,7 @@ func (z *zoo) user(t testing.TB, name string) *core.Record {
 	}
 	u := core.NewRecord(users)
 	u.SetEmail(name + "@zoo.test")
-	u.SetPassword("password123")
+	rlstest.SetPassword(u, "password123")
 	u.Set("role", "member")
 	u.Set("name", name)
 	u.Set("username", name)

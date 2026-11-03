@@ -49,7 +49,7 @@ func TestReportsValidateListsBrokenReportsWithTheirOwner(t *testing.T) {
 	}
 	ann := core.NewRecord(users)
 	ann.SetEmail("ann@zoo.test")
-	ann.SetPassword("password123")
+	rlstest.SetPassword(ann, "password123")
 	ann.Set("name", "Ann")
 	ann.Set("username", "ann")
 	ann.Set("role", "member")
