@@ -108,7 +108,10 @@ test('a turned-off destination shows Off instead of Retry', async ({ page, brows
     await fillAndSend(visitor, visitor, 'Off Visitor')
     await expect(visitor.getByTestId('web-form-confirmation')).toBeVisible()
 
-    await page.getByTestId('web-form-destinations').getByLabel(/^Disable /).click()
+    await page
+        .getByTestId('web-form-destinations')
+        .getByLabel(/^Disable /)
+        .click()
     await expect(page.getByTestId('web-form-destinations').getByLabel(/^Enable /)).toBeVisible()
     await page.getByTestId('form-tab-submissions').click()
     const row = submissionRows(page).first()
