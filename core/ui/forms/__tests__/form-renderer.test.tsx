@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { OverlayProvider } from '@tinycld/core/ui/overlay'
 import type { MutableRefObject } from 'react'
 import { useForm } from 'react-hook-form'
 import { TextInput } from 'react-native'
@@ -101,18 +102,20 @@ function Harness(props: HarnessProps) {
     const { form, schemaRef } = useHarnessForm(definition, initialValues)
     if (formRef) formRef.current = form
     return (
-        <FormRenderer
-            host={host}
-            ui={null}
-            definition={definition}
-            layout={layout}
-            form={form}
-            schemaRef={schemaRef}
-            context={ctx}
-            onSubmit={props.onSubmit}
-            recordId={props.recordId}
-            readOnly={props.readOnly}
-        />
+        <OverlayProvider>
+            <FormRenderer
+                host={host}
+                ui={null}
+                definition={definition}
+                layout={layout}
+                form={form}
+                schemaRef={schemaRef}
+                context={ctx}
+                onSubmit={props.onSubmit}
+                recordId={props.recordId}
+                readOnly={props.readOnly}
+            />
+        </OverlayProvider>
     )
 }
 
@@ -140,6 +143,13 @@ function byTestId(container: HTMLElement, id: string) {
     return container.querySelector(`[testID="${id}"]`)
 }
 
+// A dropdown's trigger, by the accessible name the react-native stub writes as
+// an attribute.
+const trigger = (name: string) =>
+    document.body.querySelector(
+        `[accessibilityLabel="${name}"], [aria-label="${name}"]`
+    ) as HTMLElement
+
 describe('FormRenderer sections', () => {
     it('renders every page title and every visible field', () => {
         const { getByText, container } = render(<Harness layout="sections" />)
@@ -151,6 +161,8 @@ describe('FormRenderer sections', () => {
     it('marks steps required when severity becomes high', async () => {
         const { getByText, container } = render(<Harness layout="sections" />)
         expect(byTestId(container, 'form-field-steps')?.textContent).not.toContain('*')
+        // Severity is a dropdown: open it, then pick.
+        fireEvent.click(trigger('Severity: Low'))
         fireEvent.click(getByText('High'))
         await waitFor(() =>
             expect(byTestId(container, 'form-field-steps')?.textContent).toContain('*')
@@ -215,6 +227,8 @@ describe('FormRenderer rules and modes', () => {
         const { getByText } = render(
             <Harness layout="sections" definition={ruleDef} formRef={formRef} />
         )
+        // Severity is a dropdown: open it, then pick.
+        fireEvent.click(trigger('Severity: Low'))
         fireEvent.click(getByText('High'))
         await waitFor(() => expect(formRef.current?.getValues('note')).toBe('escalated'))
     })
