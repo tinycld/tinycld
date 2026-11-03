@@ -21,15 +21,18 @@ type Option struct {
 }
 
 type Field struct {
-	Key           string   `json:"key"`
-	Kind          string   `json:"kind"`
-	Page          string   `json:"page"`
-	Label         string   `json:"label"`
-	Width         string   `json:"width,omitempty"`
-	Required      bool     `json:"required"`
-	Hidden        bool     `json:"hidden"`
-	Options       []Option `json:"options,omitempty"`
-	Multiple      bool     `json:"multiple,omitempty"`
+	Key      string   `json:"key"`
+	Kind     string   `json:"kind"`
+	Page     string   `json:"page"`
+	Label    string   `json:"label"`
+	Width    string   `json:"width,omitempty"`
+	Required bool     `json:"required"`
+	Hidden   bool     `json:"hidden"`
+	Options  []Option `json:"options,omitempty"`
+	Multiple bool     `json:"multiple,omitempty"`
+	// Display picks a select's control: "dropdown" (the default), "radio"
+	// or "checkbox". definitionSchema's select display.
+	Display       string   `json:"display,omitempty"`
 	Collaborative bool     `json:"collaborative,omitempty"`
 	Min           *float64 `json:"min,omitempty"`
 	Max           *float64 `json:"max,omitempty"`
@@ -180,6 +183,9 @@ func defErr(msg string, path ...any) validation.Errors {
 	}
 	return validation.Errors{strings.Join(parts, "."): validation.NewError(invalidDefinition, msg)}
 }
+
+// selectDisplays mirrors the select display enum in core/lib/forms/definition.ts.
+var selectDisplays = []string{"dropdown", "radio", "checkbox"}
 
 const keyRule = "Use 1 to 40 lowercase letters, digits or _, starting with a letter."
 
@@ -333,6 +339,10 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 		}
 		if host.HasColumn(f.Key) {
 			p.add(fmt.Sprintf("%s is a column of the record and cannot be a custom field. Use another key.", f.Key), at("key")...)
+			continue
+		}
+		if f.Kind == "select" && f.Display != "" && !slices.Contains(selectDisplays, f.Display) {
+			p.add(fmt.Sprintf("%q is not a select display. Use: %s.", f.Display, strings.Join(selectDisplays, ", ")), at("display")...)
 			continue
 		}
 		if errs := duplicateOptionError(f.Options, "fields", i, "options"); errs != nil {

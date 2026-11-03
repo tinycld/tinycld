@@ -19,7 +19,9 @@ starting with a letter, and is unique in its list.
   kind is one of: text, textarea, richtext, markdown, number, date, toggle,
   select, user, checklist, file, computed, table. A host may allow fewer:
   run `tinycld form hosts`. Options by kind:
-    select:  "options": [{"value": "dev", "label": "Developer"}], "multiple": true
+    select:  "options": [{"value": "dev", "label": "Developer"}] (at least one),
+             "display": "dropdown" (default) | "radio" | "checkbox",
+             "multiple": true (people may pick more than one; shown as checkboxes)
     number:  "min": 0, "max": 10, "decimals": 2
     text, textarea: "maxLength": 200
     file:    "accept": ["application/pdf", ".docx"], "maxSizeMb": 10, "multiple": true

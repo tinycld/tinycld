@@ -226,3 +226,21 @@ func TestValidateDefinitionUnknownKindListsTheHostKinds(t *testing.T) {
 		t.Fatalf("msg = %q", msg)
 	}
 }
+
+// A select's display picks its control: dropdown, radio or checkbox.
+func TestValidateDefinitionRefusesAnUnknownSelectDisplay(t *testing.T) {
+	e := newTestEnv(t)
+	got := problemsOf(t, e, withDef(t, e, func(def map[string]any) {
+		def["fields"] = append(def["fields"].([]any), map[string]any{"key": "role", "kind": "select", "page": "main", "label": "Role",
+			"display": "tiles", "options": []any{map[string]any{"value": "a", "label": "A"}}})
+	}))
+	var msg string
+	for k, v := range got {
+		if strings.HasSuffix(k, ".display") {
+			msg = v
+		}
+	}
+	if !strings.Contains(msg, `"tiles"`) || !strings.Contains(msg, "dropdown, radio, checkbox") {
+		t.Fatalf("display problem = %q (all: %v)", msg, got)
+	}
+}
