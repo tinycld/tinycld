@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -212,6 +213,18 @@ func (d *Defs) Action(ref string) (ActionDef, string, bool) {
 		}
 	}
 	return ActionDef{}, "", false
+}
+
+// ActionRefs lists every declared action ref ("<pkg>:<id>"), sorted.
+func (d *Defs) ActionRefs() []string {
+	var out []string
+	for _, p := range d.Packages {
+		for _, a := range p.Actions {
+			out = append(out, p.Slug+":"+a.ID)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (d *Defs) TriggersFor(collection, op string) []QualifiedTrigger {
