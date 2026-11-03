@@ -797,24 +797,15 @@ type expansion struct {
 	encoded [][]string
 }
 
-// maxExpandValues bounds the values options.expand holds (each key's group
-// values and currency keys). A read binds the keys as one JSON parameter
-// (where), so the bound is on a request's size, not on SQLite's variables.
-const maxExpandValues = 30000
-
 // parseExpansion reads options.expand: at most rowCap keys, since a run
-// shows no more group rows than that, and at most maxExpandValues values.
+// shows no more group rows than that. The keys' values need no cap of their
+// own: a read binds them as one JSON parameter (where), a key longer than a
+// group row's matches nothing, and the request body's size limit bounds
+// what a caller can send.
 func parseExpansion(opts Options) (*expansion, error) {
 	e := &expansion{all: opts.ExpandAll, set: map[string]bool{}, open: map[int]bool{}}
 	if len(opts.Expand) > runLimits.rowCap {
 		return nil, invalid("options.expand", fmt.Sprintf("a run expands at most %d groups", runLimits.rowCap))
-	}
-	values := 0
-	for _, key := range opts.Expand {
-		values += len(key)
-	}
-	if values > maxExpandValues {
-		return nil, invalid("options.expand", fmt.Sprintf("the expanded group keys hold at most %d values: expand fewer groups, or use expandAll", maxExpandValues))
 	}
 	for i, key := range opts.Expand {
 		if len(key) == 0 {

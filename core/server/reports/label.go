@@ -1,6 +1,8 @@
 package reports
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -110,17 +112,42 @@ func selectLabelSQL(s *stmt, f *Field, value string) string {
 
 // optionLabelSQL is a select's stored value shown by its option's label; a
 // value no option names shows as stored.
+//
+// The options are one JSON parameter however many there are (a CASE with a
+// WHEN per option binds two per option and per read, past SQLite's 32,766
+// variables for a long list). The object's keys are "k" and the hex of each
+// value's UTF-8 bytes, so any value is one key that a JSON path can name;
+// hex(value) builds the same key in SQL. The value stays outside any
+// subquery, so an aggregate or a window function in it keeps its meaning.
+//
+// It matches as "CASE value WHEN ? THEN ? … ELSE value END" does: a value
+// has no affinity at every caller (a select's NULLIF read, a group key from
+// one, an if/case/coalesce result) and no collation, so a WHEN matches
+// exactly a text value with the same bytes; a number, a blank or any other
+// type matches none. The first option of a value wins, as the first WHEN
+// does.
 func optionLabelSQL(bind func(any) string, options []Option, value string) string {
 	if len(options) == 0 {
 		return value
 	}
-	var b strings.Builder
-	b.WriteString("(CASE " + value)
+	labels := bind(optionLabelsJSON(options))
+	return fmt.Sprintf("(CASE WHEN typeof(%[1]s) = 'text' THEN COALESCE(json_extract(%[2]s, '$.k' || hex(%[1]s)), %[1]s) ELSE %[1]s END)", value, labels)
+}
+
+// optionLabelsJSON is {"k<HEX of value>": label, …}, the first option of each
+// value only.
+func optionLabelsJSON(options []Option) string {
+	seen := map[string]bool{}
+	parts := make([]string, 0, len(options))
 	for _, o := range options {
-		b.WriteString(" WHEN " + bind(o.Value) + " THEN " + bind(o.Label))
+		if seen[o.Value] {
+			continue
+		}
+		seen[o.Value] = true
+		label, _ := json.Marshal(o.Label) // a string always encodes
+		parts = append(parts, `"k`+strings.ToUpper(hex.EncodeToString([]byte(o.Value)))+`":`+string(label))
 	}
-	b.WriteString(" ELSE " + value + " END)")
-	return b.String()
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 // optionsOf is a select field's options; nil for any other field.

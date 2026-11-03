@@ -64,15 +64,14 @@ func deepKeys(n int) [][]any {
 	return keys
 }
 
-// The keys an expand binds stay under SQLite's limit of 32,766 variables:
-// 5,000 keys of 7 values each would bind 35,000, a 400 here and not a 500
-// from the database. 1,200 keys run: more keys than SQLite's expression
-// depth of 1,000 still compile.
-func TestExpandBindsAtMost30000Values(t *testing.T) {
+// The row cap is the one bound on an expand: as many of the deepest keys
+// as a run shows rows run (5,000 keys of 7 values bind 35,000 values, as one
+// parameter per read), and one more key is refused.
+func TestExpandTakesTheRowCapOfTheDeepestKeys(t *testing.T) {
 	z := newZoo(t)
-	_, err := z.try(t, "ann", sixLevels, Options{Expand: deepKeys(5000)}, nil)
-	requireSpecError(t, err, 400, "options.expand", "30000 values")
-	z.run(t, "ann", sixLevels, Options{Expand: deepKeys(1200)}, nil)
+	z.run(t, "ann", sixLevels, Options{Expand: deepKeys(runLimits.rowCap)}, nil)
+	_, err := z.try(t, "ann", sixLevels, Options{Expand: deepKeys(runLimits.rowCap + 1)}, nil)
+	requireSpecError(t, err, 400, "options.expand", fmt.Sprintf("at most %d groups", runLimits.rowCap))
 }
 
 // An expanded key matches by IS, so a blank group key opens too.

@@ -148,6 +148,96 @@ func TestIdentifiersReadsEveryWayToNameATable(t *testing.T) {
 	}
 }
 
+// dbx quotes the whole text of {{name}} and each dot-separated part of
+// [[alias.column]], so a name with a character a bare word cannot hold is
+// read whole.
+func TestIdentifiersReadDbxMarkersWhole(t *testing.T) {
+	got := identifiers("SELECT [[fts-zoo.record-id]] FROM {{FTS-Zoo}}")
+	for _, want := range []string{"fts-zoo", "record-id"} {
+		if !got[want] {
+			t.Errorf("identifiers has no %q: %v", want, got)
+		}
+	}
+}
+
+func TestTopicsReadFindsAVirtualTableNamedInADbxMarker(t *testing.T) {
+	app := newZooApp(t, time.Second)
+	createIndex(t, app, `CREATE VIRTUAL TABLE "fts-zoo" USING fts5(record_id UNINDEXED, name)`)
+	query := "SELECT [[f.record_id]] FROM {{fts-zoo}} f"
+	requireRefused(t, app, query, `reads virtual table "fts-zoo", which RegisterVirtualTable does not map`)
+	RegisterVirtualTable("fts-zoo", "zoo_keepers")
+	requireTopics(t, app, query, nil, "collection/zoo_keepers")
+}
+
+// inTx runs fn on one connection: a temp table, a temp view and an attached
+// database live on the connection that made them, and a transaction keeps
+// the check's reads on that connection.
+func inTx(t *testing.T, app core.App, fn func(tx core.App)) {
+	t.Helper()
+	err := app.RunInTransaction(func(tx core.App) error {
+		fn(tx)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func txRefused(t *testing.T, tx core.App, query, want string) {
+	t.Helper()
+	_, err := TopicsRead(context.Background(), tx, query, nil)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("TopicsRead(%s) = %v, want an error with %q", query, err, want)
+	}
+}
+
+func txTopics(t *testing.T, tx core.App, query string, want ...string) {
+	t.Helper()
+	got, err := TopicsRead(context.Background(), tx, query, nil)
+	if err != nil {
+		t.Fatalf("TopicsRead(%s): %v", query, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("TopicsRead(%s) = %v, want %v", query, got, want)
+	}
+}
+
+func TestTopicsReadFindsATempVirtualTable(t *testing.T) {
+	app := newZooApp(t, time.Second)
+	inTx(t, app, func(tx core.App) {
+		createIndex(t, tx, "CREATE VIRTUAL TABLE temp.fts_scratch USING fts5(record_id UNINDEXED, name)")
+		txRefused(t, tx, "SELECT record_id FROM fts_scratch", `reads virtual table "fts_scratch"`)
+		RegisterVirtualTable("fts_scratch", "zoo_keepers")
+		txTopics(t, tx, "SELECT record_id FROM fts_scratch", "collection/zoo_keepers")
+	})
+}
+
+func TestTopicsReadFindsAVirtualTableThroughATempView(t *testing.T) {
+	app := indexApp(t)
+	inTx(t, app, func(tx core.App) {
+		createIndex(t, tx, "CREATE TEMP VIEW zoo_scratch AS SELECT record_id FROM fts_zoo")
+		txRefused(t, tx, "SELECT record_id FROM zoo_scratch", unmappedFTS)
+		RegisterVirtualTable("fts_zoo", "zoo_keepers")
+		txTopics(t, tx, "SELECT record_id FROM zoo_scratch", "collection/zoo_keepers")
+	})
+}
+
+func TestTopicsReadFindsAnAttachedVirtualTable(t *testing.T) {
+	app := newZooApp(t, time.Second)
+	// A transaction runs on the one connection of NonconcurrentDB, which
+	// attaches the database (ATTACH is refused inside a transaction).
+	if _, err := app.NonconcurrentDB().NewQuery("ATTACH DATABASE ':memory:' AS zoo_side").Execute(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = app.NonconcurrentDB().NewQuery("DETACH DATABASE zoo_side").Execute() })
+	inTx(t, app, func(tx core.App) {
+		createIndex(t, tx, "CREATE VIRTUAL TABLE zoo_side.fts_side USING fts5(record_id UNINDEXED, name)")
+		txRefused(t, tx, "SELECT record_id FROM zoo_side.fts_side", `reads virtual table "fts_side"`)
+		RegisterVirtualTable("fts_side", "zoo_keepers")
+		txTopics(t, tx, "SELECT record_id FROM zoo_side.fts_side", "collection/zoo_keepers")
+	})
+}
+
 func TestCheckViewsCountsTheCollectionsOfAMappedVirtualTable(t *testing.T) {
 	app := indexApp(t)
 	saveView(t, app, "zoo_found", `SELECT a.id, a.name FROM zoo_animals a WHERE a.id IN (SELECT record_id FROM fts_zoo)`)

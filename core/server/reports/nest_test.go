@@ -2,7 +2,6 @@ package reports
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -134,9 +133,11 @@ func TestNestedRowsOfAGroupedReportSitUnderTheirDetailRow(t *testing.T) {
 	}
 }
 
-func TestNestedParentsAboveTheLimitAreRefusedClearly(t *testing.T) {
+// A nest level binds its parents as one parameter, so it reads any number
+// of them: past SQLite's 32,766 variables, and past any row cap a run sets
+// (the run's rows bound the parents; the level has no bound of its own).
+func TestANestLevelReadsAnyNumberOfParents(t *testing.T) {
 	z := newZoo(t)
-	withLimits(t, func(l *limits) { l.rowCap = maxNestParents + 1 })
 	spec, _, err := Load([]byte(sitesWithAnimals))
 	if err != nil {
 		t.Fatal(err)
@@ -149,19 +150,23 @@ func TestNestedParentsAboveTheLimitAreRefusedClearly(t *testing.T) {
 		ctx: context.Background(), app: z.app, c: newCompiler(p, z.app, z.as("ann"), nil),
 		res: &Result{Rows: []Row{}, Notices: []Notice{}}, topics: map[string]bool{},
 	}
-	parents := make([]any, maxNestParents+1)
-	for i := range parents {
-		parents[i] = fmt.Sprintf("p%d", i)
+	parents := []any{z.id("north")}
+	for i := range 40000 {
+		parents = append(parents, fmt.Sprintf("p%d", i))
 	}
-	_, err = rn.nestLevel(0, parents)
-	var specE *SpecError
-	if !errors.As(err, &specE) || specE.Status != 400 || strings.Contains(err.Error(), "too many SQL variables") {
-		t.Fatalf("err = %v", err)
+	rows, err := rn.nestLevel(0, parents)
+	if err != nil {
+		t.Fatalf("nestLevel: %v", err)
 	}
-}
-
-func TestDefaultLimitsStayUnderTheNestParentLimit(t *testing.T) {
-	if runLimits.rowCap > maxNestParents || runLimits.maxPage > maxNestParents || runLimits.pageSize > maxNestParents {
-		t.Fatalf("limits %+v exceed maxNestParents %d", runLimits, maxNestParents)
+	var names []string
+	for _, row := range rows {
+		if row["__parent"] != z.id("north") {
+			t.Fatalf("row under %v", row["__parent"])
+		}
+		names = append(names, fmt.Sprint(row["v1"]))
+	}
+	// Ann lists Leo, the one North animal she may see.
+	if !reflect.DeepEqual(names, []string{"Leo"}) {
+		t.Fatalf("children = %v", names)
 	}
 }

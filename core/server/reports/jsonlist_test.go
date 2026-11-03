@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/pocketbase/dbx"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // manyReads is animalsParam with n formula columns that each read the param.
@@ -146,6 +147,40 @@ func TestExpandedKeysWithManyPatternsOfBlanks(t *testing.T) {
 	if row.N != 3 {
 		t.Fatalf("matched %d rows, want 3", row.N)
 	}
+}
+
+// A select's options bind as one parameter per read, however many there
+// are: 20,003 options would bind 40,006 values in a CASE. A value is looked
+// up whole, whatever characters it holds, and the first option with a value
+// names it, as CASE takes the first WHEN that matches.
+func TestASelectWithManyOptionsShowsItsLabels(t *testing.T) {
+	z := newZoo(t)
+	odd := `a"b.c[0] \ é`
+	menu := core.NewBaseCollection("zoo_menu")
+	menu.ListRule = rule(`@request.auth.id != ""`)
+	menu.Fields.Add(&core.TextField{Name: "note"}, &core.SelectField{Name: "kind", Values: []string{"apple", "zebra", odd}, MaxSelect: 1})
+	z.save(t, menu)
+	z.rec(t, "m1", "zoo_menu", map[string]any{"note": "m1", "kind": "apple"})
+	z.rec(t, "m2", "zoo_menu", map[string]any{"note": "m2", "kind": "zebra"})
+	z.rec(t, "m3", "zoo_menu", map[string]any{"note": "m3", "kind": odd})
+	options := []Option{{Value: "apple", Label: "Zest"}}
+	for i := range 20000 {
+		options = append(options, Option{Value: fmt.Sprintf("x%d", i), Label: fmt.Sprintf("X %d", i)})
+	}
+	options = append(options, Option{Value: "zebra", Label: "Apricot"}, Option{Value: odd, Label: "Odd"}, Option{Value: "apple", Label: "Later"})
+	RegisterSource(Source{
+		Key: "zoo.menu", Collection: "zoo_menu", Label: "Menu",
+		Fields: []Field{
+			{Key: "note", Label: "Note", Type: Text, Aggregates: CountOnly},
+			{Key: "kind", Label: "Kind", Type: Select, Options: options},
+		},
+	})
+	grouped := z.run(t, "ann", `{"version":2,"source":"zoo.menu","columns":[{"id":"kind","path":[{"field":"kind"}]},
+		{"id":"n","path":[{"field":"note"}],"aggregate":"count"}],"groups":[{"id":"g","col":"kind"}]}`, Options{}, nil)
+	requireRows(t, grouped, "label", "Apricot", "Odd", "Zest", "Total")
+	shown := z.run(t, "ann", `{"version":2,"source":"zoo.menu","columns":[{"id":"note","path":[{"field":"note"}]},
+		{"id":"low","formula":{"op":"lower","args":[{"path":[{"field":"kind"}]}]}}],"sort":[{"col":"note"}]}`, Options{}, nil)
+	requireRows(t, shown, "low", "zest", "apricot", "odd", nil)
 }
 
 // A list compares as a list of bound values does: the left side's affinity

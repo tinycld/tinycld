@@ -26,7 +26,9 @@
 // json_tree: no stored rows, nothing to signal) and a stored virtual table
 // (an FTS5 index, whose rows change with its collection) look alike. The
 // check then reads names: every identifier in the statement's SQL, and in
-// the SQL of each view it names, through views of views. When none is a
+// the SQL of each view it names, through views of views, against the
+// stored virtual tables and views of every database the connection holds
+// (main, temp and each attached one). When none is a
 // stored virtual table, each VOpen is a table-valued function and adds
 // nothing. Otherwise each stored virtual table named must be mapped with
 // RegisterVirtualTable, and adds its collections; an unmapped one is

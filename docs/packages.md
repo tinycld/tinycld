@@ -1088,7 +1088,10 @@ refused with an error that names the table.
 SQLite's bytecode does not name the virtual table it opens, so the check
 reads names. When a statement opens a virtual table, every identifier in
 its SQL, and in the SQL of each view it names, is compared with the stored
-virtual tables in `sqlite_schema`. The scan is conservative: a column or an
+virtual tables in the schema of every database the connection holds (main,
+temp and each attached one; temp views count too). A name inside a dbx
+`{{table}}` or `[[alias.column]]` marker is read whole, as dbx quotes it.
+The scan is conservative: a column or an
 alias spelled like a stored virtual table counts as a read of it. A false
 hit makes the statement need the mapping (or be refused); it never misses a
 topic.
@@ -1201,8 +1204,6 @@ away before the run ends.
   are inlined. All computed rows together hold at most 20,000 (counted for
   every cell column). If a statement hits a cap, reference fewer earlier rows
   or split the statement.
-- A nested report refuses more than 30,000 parent rows. Filter the report or
-  lower its row limit.
 - The package slug `reports` is refused by the OAuth registry: its
   `/api/reports/` routes belong to core.
 

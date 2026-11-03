@@ -49,23 +49,16 @@ func distinct(rows []map[string]any, key string) []any {
 	return out
 }
 
-// maxNestParents is the most parent ids one nest statement reads. The ids
-// are one JSON parameter (jsonList), so SQLite's limit of variables does
-// not apply; the bound keeps one nest statement's work in reach. The
-// default row cap and page sizes stay under it.
-const maxNestParents = 30000
-
 // nestLevel reads one level's child rows from the child collection's rule
 // CTE (through newScope), under the run's time limit (through rn.query).
 // The level keeps its first rowCap rows in parent id order, so at the cap
-// the children of the highest parent ids are the ones left out.
+// the children of the highest parent ids are the ones left out. The parents
+// are the rows of the page or of the level above, which rowCap bounds, and
+// they bind as one parameter (jsonList), so they need no cap of their own.
 func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) {
 	p := rn.c.p
 	if len(parents) == 0 {
 		return nil, nil
-	}
-	if len(parents) > maxNestParents {
-		return nil, invalid("columns", fmt.Sprintf("the report nests child rows under %d rows; the most is %d: filter the report or lower its row limit", len(parents), maxNestParents))
 	}
 	nl := p.nest[level]
 	link := nl.hops[len(nl.hops)-1]
