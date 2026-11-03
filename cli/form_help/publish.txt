@@ -1,0 +1,18 @@
+publish turns a web form on for visitors, and creates its publication on
+first use. Flags you leave out keep their stored value (on first use, the
+server default).
+
+  --domain <origin>          a website that may embed the form, e.g.
+                             https://example.com. Repeat it, or separate
+                             with commas; at most the server's limit. Leave
+                             it out to allow any website.
+  --pow / --no-pow           ask the browser to prove it is not a bot.
+                             Turning it off is refused while a destination
+                             emails an address a visitor types.
+  --confirmation-file <md>   the message shown after a submission (markdown,
+                             up to 4000 characters). Default: "Thank you. We
+                             received your submission."
+  --retention-days <n>       keep submissions n days (1 to 3650). Default 90.
+  --max-upload-mb <n>        largest upload per submission (1 to 100). Default 25.
+
+Then run `tinycld form embed <form>` for the code to paste into a website.

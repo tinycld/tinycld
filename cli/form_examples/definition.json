@@ -1,0 +1,15 @@
+{
+    "version": 1,
+    "pages": [{ "key": "main", "title": "Apply" }],
+    "fields": [
+        { "key": "name", "kind": "text", "page": "main", "label": "Name", "required": true },
+        { "key": "email", "kind": "text", "page": "main", "label": "Email", "required": true },
+        { "key": "role", "kind": "select", "page": "main", "label": "Role",
+          "options": [{ "value": "dev", "label": "Developer" }, { "value": "design", "label": "Designer" }] },
+        { "key": "message", "kind": "textarea", "page": "main", "label": "Message" },
+        { "key": "cv", "kind": "file", "page": "main", "label": "CV", "accept": ["application/pdf"], "maxSizeMb": 5 }
+    ],
+    "rules": [],
+    "defaults": {},
+    "submit": { "required": [] }
+}

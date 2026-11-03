@@ -1,0 +1,32 @@
+--from is a JSON file that holds what the destination does for each
+submission:
+
+  {
+    "actions":    [ {"ref": "<package>:<action>", "params": {"<key>": <value>}} ],
+    "conditions": { "match": "all", "groups": [ <group>, ... ] }    optional
+  }
+
+actions run in order. `tinycld form destination actions` lists every
+installed action, its params, which are required, and their types and
+options. A relation param takes a record id.
+
+A text param may use placeholders:
+  {{fields.<key>}}   a visitor's answer; `tinycld form fields <form>` lists them
+A param that sends email to {{fields.<key>}} needs proof of work on the
+form: `tinycld form publish <form> --pow`.
+
+conditions decide when the actions run. With none, they run for every
+submission.
+  match: "all" (every group) or "any" (one group)
+  <group>: {"match": "all" | "any", "conditions": [ <condition>, ... ]}
+  <condition>: {"field": "fields.<key>", "op": "<op>", "value": <value>}
+  op by type:
+    text: contains, not_contains, equals, starts_with
+    number: eq, neq, gt, lt
+    boolean: is_true, is_false
+    date: before, after, within_last_days
+    relation: is, is_not, is_empty
+    select: is, is_not
+  is_true, is_false and is_empty take no value.
+
+Start from `tinycld form example destination`.
