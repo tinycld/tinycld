@@ -1,13 +1,12 @@
 import { expect, type Page, test } from '@playwright/test'
-import { login } from './helpers'
+import { login, openSettingsItem } from './helpers'
 
 // Element-gated settings navigation, mirroring mail's
 // navigateToMailboxSettings (mail/tests/helpers.ts): click the rail's
 // settings button, then click into the "Rules" link by its visible text —
 // never page.goto(), which would tear down the SPA mid-navigation.
 async function navigateToRulesSettings(page: Page) {
-    await page.getByTestId('nav-settings').click()
-    await page.getByText('Rules', { exact: true }).first().click()
+    await openSettingsItem(page, 'Rules')
     await expect(page.getByText('My rules', { exact: true })).toBeVisible()
 }
 

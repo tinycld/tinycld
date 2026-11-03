@@ -146,6 +146,7 @@ func newRootCmd(d *deps) *cobra.Command {
 		newAuthCmd(d),
 		newSearchCmd(d),
 		newBackupCmd(d),
+		newFormCmd(d),
 	)
 	return root
 }

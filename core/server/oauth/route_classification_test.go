@@ -34,6 +34,12 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 		{"PATCH", "/api/org-backups/restore/abc123", "a fresh URL for an expired presigned source"},
 		{"GET", "/api/collections/backups/records", "`tinycld backup list` reads the ledger"},
 		{"GET", "/api/collections/backups/records/abc123", "one ledger row by id"},
+		// Core's forms and automation, for `tinycld form`.
+		{"GET", "/api/forms/hosts", "`tinycld form hosts`"},
+		{"GET", "/api/collections/forms/records", "`tinycld form list`"},
+		{"GET", "/api/files/form_submission_files/rec123/cv_ab12cd34ef.pdf", "`tinycld form submission download`"},
+		{"POST", "/api/automation/rules/abc/records/def/run", "`tinycld form submission retry`"},
+		{"GET", "/api/collections/automation_catalog/records", "`tinycld form destination actions`"},
 		// A package's routes: its record collections, its stored files, its
 		// bespoke endpoints. Each real package pins its own CLI-reachable
 		// routes in its own tests; these are the fixture package's.

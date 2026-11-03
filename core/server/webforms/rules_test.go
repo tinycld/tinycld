@@ -144,3 +144,28 @@ func TestFormScopeLimitsTheDryRunToItsForm(t *testing.T) {
 		t.Fatalf("a rule with no form reads nothing, got %q", filter)
 	}
 }
+
+// Deleting the publication and creating it again without proof of work must
+// not get around the safety rule while an auto-reply destination is on.
+func TestRecreatedPublicationStillNeedsProofOfWork(t *testing.T) {
+	f := newFixture(t, rulesDef)
+	f.pub.Set("require_pow", true)
+	if err := f.app.Save(f.pub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := autoReplyRule(t, f, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.Delete(f.pub); err != nil {
+		t.Fatal(err)
+	}
+	pubs, _ := f.app.FindCollectionByNameOrId("form_publications")
+	again := core.NewRecord(pubs)
+	again.Set("form", f.form.Id)
+	again.Set("enabled", true)
+	again.Set("require_pow", false)
+	err := f.app.Save(again)
+	if err == nil || !strings.Contains(err.Error(), "require_pow") || !strings.Contains(err.Error(), "Auto reply") {
+		t.Fatalf("the new publication is refused and names the rule, got %v", err)
+	}
+}

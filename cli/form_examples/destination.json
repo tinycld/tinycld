@@ -1,0 +1,9 @@
+{
+    "actions": [
+        { "ref": "core:notify", "params": { "title": "New application from {{fields.name}}", "body": "{{fields.message}}" } }
+    ],
+    "conditions": {
+        "match": "all",
+        "groups": [{ "match": "all", "conditions": [{ "field": "fields.role", "op": "is", "value": "dev" }] }]
+    }
+}

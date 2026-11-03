@@ -89,7 +89,7 @@ func withEmptyRegistry(t *testing.T) {
 func TestCoreDeclaresNoPackageScopes(t *testing.T) {
 	withEmptyRegistry(t)
 
-	coreScopes := []string{ScopeProfile, ScopeBackups}
+	coreScopes := []string{ScopeProfile, ScopeBackups, ScopeForms, ScopeAutomation}
 	if got := AllScopes(); strings.Join(got, " ") != strings.Join(coreScopes, " ") {
 		t.Fatalf("an empty registry must expose only %v, got %v", coreScopes, got)
 	}
@@ -119,7 +119,7 @@ func TestCoreDeclaresNoPackageScopes(t *testing.T) {
 }
 
 func TestRegisterPackageBuildsCatalog(t *testing.T) {
-	want := []string{ScopeProfile, ScopeBackups, scopeNotesRead, scopeNotesWrite, scopeWidgetsRead, scopeWidgetsWrite}
+	want := []string{ScopeProfile, ScopeBackups, ScopeForms, ScopeAutomation, scopeNotesRead, scopeNotesWrite, scopeWidgetsRead, scopeWidgetsWrite}
 	if got := AllScopes(); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("AllScopes = %v, want %v (profile first, packages by slug, scopes in declaration order)", got, want)
 	}
@@ -144,8 +144,8 @@ func TestRegisterPackageIsIdempotentPerSlug(t *testing.T) {
 	delete(narrowed.Collections, "notes_folder_counts")
 	RegisterPackage(narrowed)
 
-	if got := AllScopes(); len(got) != 4 {
-		t.Errorf("AllScopes after re-registration = %v, want core's two + notes' two", got)
+	if got := AllScopes(); len(got) != 6 {
+		t.Errorf("AllScopes after re-registration = %v, want core's four + notes' two", got)
 	}
 	if got := ScopeForRoute("GET", "/api/collections/notes_folder_counts/records"); len(got) != 0 {
 		t.Errorf("a collection dropped by the re-registration must no longer be classified, got %v", got)
@@ -213,8 +213,8 @@ func TestRegisterPackageRejectsMalformedRegistrations(t *testing.T) {
 			RegisterPackage(c.pkg)
 		})
 	}
-	if got := AllScopes(); len(got) != 2 {
-		t.Errorf("a rejected registration must leave the registry untouched, got %v", got)
+	if got := AllScopes(); len(got) != 4 {
+		t.Errorf("a rejected registration must leave the registry untouched (core's four), got %v", got)
 	}
 }
 
@@ -289,5 +289,25 @@ func TestBackupRoutesCarryTheBackupsScope(t *testing.T) {
 	// A write verb the API does not serve is not opened by the read prefix.
 	if got := ScopeForRoute("DELETE", "/api/org-backups/abc123"); len(got) != 0 {
 		t.Errorf("DELETE /api/org-backups/{id} = %v, want default-deny", got)
+	}
+}
+
+func TestPackageSlugCannotClaimCoreFormsOrAutomation(t *testing.T) {
+	for _, slug := range []string{"forms", "automation"} {
+		err := validatePackage(Package{Slug: slug, Scopes: []Scope{{ID: slug + ":read", Label: "Read"}}})
+		if err == nil || !strings.Contains(err.Error(), "core route family") {
+			t.Errorf("slug %q: got %v, want a core route family error", slug, err)
+		}
+	}
+}
+
+// A forms token reaches no rule, and an automation token reaches no
+// submission: each scope opens only its own collections.
+func TestFormsAndAutomationScopesStaySeparate(t *testing.T) {
+	if ScopeForRoute("POST", "/api/collections/rules/records").SatisfiedBy([]string{ScopeForms}) {
+		t.Error("a forms token must not write rules")
+	}
+	if ScopeForRoute("GET", "/api/collections/form_submissions/records").SatisfiedBy([]string{ScopeAutomation}) {
+		t.Error("an automation token must not read submissions")
 	}
 }

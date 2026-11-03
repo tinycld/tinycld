@@ -46,7 +46,11 @@ export default function SettingsIndex() {
     const router = useRouter()
 
     return (
-        <ScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
+        <ScrollView
+            className="flex-1 bg-background"
+            contentContainerStyle={{ flexGrow: 1 }}
+            testID="settings-index"
+        >
             <View className="p-5 max-w-[600px] w-full">
                 <Text className="mb-4 text-foreground text-[28px] font-bold">Settings</Text>
 

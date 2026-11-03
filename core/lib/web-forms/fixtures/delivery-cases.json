@@ -1,0 +1,62 @@
+[
+    {
+        "name": "newest run per destination",
+        "destinations": ["a", "b"],
+        "runs": [
+            {
+                "rule": "a",
+                "fired_at": "2026-11-01 10:00:00.000Z",
+                "error": "",
+                "results": [{ "status": "error" }]
+            },
+            {
+                "rule": "a",
+                "fired_at": "2026-11-01 11:00:00.000Z",
+                "error": "",
+                "results": [{ "status": "ok" }]
+            },
+            {
+                "rule": "b",
+                "fired_at": "2026-11-01 10:00:00.000Z",
+                "error": "",
+                "results": [{ "status": "ok" }]
+            },
+            {
+                "rule": "b",
+                "fired_at": "2026-11-01 11:00:00.000Z",
+                "error": "",
+                "results": [{ "status": "error" }]
+            }
+        ],
+        "delivered": 1,
+        "total": 2
+    },
+    {
+        "name": "a run error is not delivered",
+        "destinations": ["a"],
+        "runs": [
+            {
+                "rule": "a",
+                "fired_at": "2026-11-01 10:00:00.000Z",
+                "error": "invalid actions",
+                "results": [{ "status": "ok" }]
+            }
+        ],
+        "delivered": 0,
+        "total": 1
+    },
+    {
+        "name": "a destination with no run is left out",
+        "destinations": ["a", "b"],
+        "runs": [
+            {
+                "rule": "a",
+                "fired_at": "2026-11-01 10:00:00.000Z",
+                "error": "",
+                "results": [{ "status": "ok" }]
+            }
+        ],
+        "delivered": 1,
+        "total": 1
+    }
+]

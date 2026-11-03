@@ -3,6 +3,7 @@ package webforms
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/core"
@@ -44,7 +45,8 @@ func bindPublicationHooks(app core.App) {
 			e.Record.Set("token", security.RandomString(tokenLength))
 		case stored.GetString("token"):
 		default:
-			return validation.Errors{"token": validation.NewError("validation_token_server_owned", "The server sets the link token")}
+			return validation.Errors{"token": validation.NewError("validation_token_server_owned",
+				"The server sets the link token. Leave token out to keep it, or send an empty token to make a new one.")}
 		}
 		if err := preparePublication(e.App, e.Record); err != nil {
 			return err
@@ -71,8 +73,12 @@ func preparePublication(app core.App, rec *core.Record) error {
 	}
 	rec.Set("allowed_domains", origins)
 	form, err := app.FindRecordById("forms", rec.GetString("form"))
-	if err != nil || form.GetString("host") != WebFormHostKey {
-		return validation.Errors{"form": validation.NewError("validation_not_web_form", "Only a web form can be published")}
+	if err != nil {
+		return validation.Errors{"form": validation.NewError("validation_not_web_form", "No form has this id.")}
+	}
+	if form.GetString("host") != WebFormHostKey {
+		return validation.Errors{"form": validation.NewError("validation_not_web_form",
+			fmt.Sprintf("Only a web form (host %s) can be published. This form's host is %q.", WebFormHostKey, form.GetString("host")))}
 	}
 	return nil
 }

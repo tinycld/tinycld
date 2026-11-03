@@ -34,6 +34,16 @@ const saleSchema = z.object({
     status: z.enum(['open', 'paid']),
 })
 type SaleValues = z.infer<typeof saleSchema>
+const manySalesSchema = z.object({
+    team: z.string().min(1, 'Choose a team'),
+    prefix: z.string().trim().min(1).max(190),
+    count: z.number().int().min(1).max(100),
+    firstDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date as YYYY-MM-DD'),
+    firstAmount: z.number().int(),
+    cost: z.number().int(),
+    quantity: z.number().int(),
+})
+type ManySalesValues = z.infer<typeof manySalesSchema>
 
 const REGION_OPTIONS = [
     { value: 'north', label: 'North' },
@@ -100,13 +110,9 @@ function TeamForm() {
 
 function SaleForm() {
     const { user } = useAuth()
-    const [teams, sales] = useStore('salesstub_teams', 'salesstub_sales')
+    const [sales] = useStore('salesstub_sales')
     const [saved, setSaved] = useState('')
-    const { data: teamRows } = useLiveQuery({
-        queryKey: ['salesstub.teams'],
-        query: q => q.from({ team: teams }).orderBy(({ team }) => team.name),
-    })
-    const teamOptions = (teamRows ?? []).map(team => ({ value: team.id, label: team.name }))
+    const teamOptions = useTeamOptions()
     const form = useForm<SaleValues>({
         resolver: zodResolver(saleSchema),
         mode: 'onChange',
@@ -201,6 +207,125 @@ function SaleForm() {
     )
 }
 
+// The day `offset` days after `first` (YYYY-MM-DD), in UTC.
+function dayAfter(first: string, offset: number): string {
+    const [y, m, d] = first.split('-').map(Number)
+    return new Date(Date.UTC(y, m - 1, d + offset)).toISOString().slice(0, 10)
+}
+
+function useTeamOptions() {
+    const [teams] = useStore('salesstub_teams')
+    const { data: teamRows } = useLiveQuery({
+        queryKey: ['salesstub.teams'],
+        query: q => q.from({ team: teams }).orderBy(({ team }) => team.name),
+    })
+    return (teamRows ?? []).map(team => ({ value: team.id, label: team.name }))
+}
+
+// Many open sales in one save, for a spec that needs a long list: customers
+// "<prefix> 00", "<prefix> 01", …, one day apart, each amount one more.
+function ManySalesForm() {
+    const { user } = useAuth()
+    const [sales] = useStore('salesstub_sales')
+    const [saved, setSaved] = useState('')
+    const teamOptions = useTeamOptions()
+    const form = useForm<ManySalesValues>({
+        resolver: zodResolver(manySalesSchema),
+        mode: 'onChange',
+        defaultValues: {
+            team: '',
+            prefix: '',
+            count: 1,
+            firstDay: '',
+            firstAmount: 0,
+            cost: 0,
+            quantity: 0,
+        },
+    })
+    const create = useMutation({
+        mutationFn: function* (values: ManySalesValues) {
+            const rows = Array.from({ length: values.count }, (_, i) => {
+                const day = dayAfter(values.firstDay, i)
+                return sales.insert({
+                    id: newRecordId(),
+                    owner: user.id,
+                    team: values.team,
+                    customer: `${values.prefix} ${String(i).padStart(2, '0')}`,
+                    amount: values.firstAmount + i,
+                    cost: values.cost,
+                    quantity: values.quantity,
+                    currency: 'USD',
+                    day: `${day} 00:00:00.000Z`,
+                    booked_on: day,
+                    status: 'open',
+                })
+            })
+            yield rows
+        },
+        onSuccess: (_data, values) => setSaved(`Saved ${values.count} sales`),
+    })
+    const onCreate = () => {
+        void form.handleSubmit(values => create.mutate(values))()
+    }
+    return (
+        <View className="gap-2">
+            <Text className="text-base font-semibold text-foreground">Many sales</Text>
+            <SelectInput
+                name="team"
+                control={form.control}
+                label="Team"
+                options={teamOptions}
+                testID="salesstub-sales-team"
+            />
+            <TextInput
+                name="prefix"
+                control={form.control}
+                label="Customer prefix"
+                testID="salesstub-sales-prefix"
+            />
+            <NumberInput
+                name="count"
+                control={form.control}
+                label="How many"
+                testID="salesstub-sales-count"
+            />
+            <TextInput
+                name="firstDay"
+                control={form.control}
+                label="First day"
+                placeholder="YYYY-MM-DD"
+                testID="salesstub-sales-first-day"
+            />
+            <NumberInput
+                name="firstAmount"
+                control={form.control}
+                label="First amount (cents)"
+                testID="salesstub-sales-first-amount"
+            />
+            <NumberInput
+                name="cost"
+                control={form.control}
+                label="Cost (cents)"
+                testID="salesstub-sales-cost"
+            />
+            <NumberInput
+                name="quantity"
+                control={form.control}
+                label="Quantity"
+                testID="salesstub-sales-quantity"
+            />
+            <Button
+                onPress={onCreate}
+                isDisabled={create.isPending}
+                testID="salesstub-sales-create"
+            >
+                <ButtonText>Add sales</ButtonText>
+            </Button>
+            <SavedNote text={saved} testID="salesstub-sales-saved" />
+        </View>
+    )
+}
+
 export default function ReportStubIndex() {
     return (
         <ScrollView className="flex-1 bg-background" contentContainerClassName="gap-6 p-4">
@@ -209,6 +334,7 @@ export default function ReportStubIndex() {
             </Text>
             <TeamForm />
             <SaleForm />
+            <ManySalesForm />
         </ScrollView>
     )
 }

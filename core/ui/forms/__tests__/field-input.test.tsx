@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render } from '@testing-library/react'
+import { OverlayProvider } from '@tinycld/core/ui/overlay'
 import { useForm, useWatch } from 'react-hook-form'
 import { Text } from 'react-native'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -46,7 +47,7 @@ function Harness({
     })
     const value = useWatch({ control, name: field.key })
     return (
-        <>
+        <OverlayProvider>
             <Text testID="value">{String(value)}</Text>
             <FieldInput
                 host={host}
@@ -58,7 +59,7 @@ function Harness({
                 recordId={recordId}
                 collab={collab}
             />
-        </>
+        </OverlayProvider>
     )
 }
 
@@ -77,6 +78,13 @@ const select = {
 }
 
 const base = { page: 'main', label: 'L', width: 'full' as const, required: false, hidden: false }
+
+// A dropdown's trigger, by the accessible name the react-native stub writes as
+// an attribute.
+const trigger = (name: string) =>
+    document.body.querySelector(
+        `[accessibilityLabel="${name}"], [aria-label="${name}"]`
+    ) as HTMLElement
 
 describe('FieldInput', () => {
     it('renders a text input for text', () => {
@@ -184,6 +192,8 @@ describe('FieldInput', () => {
     it.each(['dropdown', 'radio'] as const)('changes a %s value in create mode', display => {
         const field: FormField = { ...base, ...select, display }
         const create = render(<Harness field={field} mode="create" />)
+        // A dropdown shows its options only once it is opened.
+        if (display === 'dropdown') fireEvent.click(trigger('L: Choose…'))
         fireEvent.click(create.getByText('Ex'))
         expect(byTestId(create.container, 'value').textContent).toBe('x')
     })

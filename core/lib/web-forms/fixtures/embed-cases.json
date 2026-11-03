@@ -1,0 +1,9 @@
+[
+    {
+        "origin": "https://acme.example",
+        "token": "tok",
+        "title": "Jobs & \"Careers\" <now>",
+        "url": "https://acme.example/p/forms/tok",
+        "code": "<iframe src=\"https://acme.example/p/forms/tok\" data-tinycld-form title=\"Jobs &amp; &quot;Careers&quot; &lt;now>\" style=\"width:100%;border:0\" loading=\"lazy\"></iframe>\n<script src=\"https://acme.example/forms-embed.js\" async></script>"
+    }
+]

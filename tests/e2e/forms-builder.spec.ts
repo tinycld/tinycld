@@ -373,7 +373,9 @@ test.describe('Forms builder', () => {
         await dialog.getByTestId('form-preview-desktop').click()
         await expect(frame).toHaveCount(0)
         await dialog.getByTestId('form-input-name').fill('Crash on save')
-        await dialog.getByTestId('form-input-severity').getByText('High', { exact: true }).click()
+        // A select is a dropdown: open it, then pick the option.
+        await dialog.getByTestId('form-input-severity').getByLabel('Severity: Choose…').click()
+        await page.getByRole('menuitem', { name: 'High', exact: true }).click()
         await dialog.getByTestId('form-wizard-next').click()
         const steps = dialog.getByTestId('form-field-steps')
         await expect(steps).toBeVisible()

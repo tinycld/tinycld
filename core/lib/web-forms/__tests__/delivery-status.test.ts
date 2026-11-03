@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { deliveryStatus } from '../delivery-status'
+import cases from '../fixtures/delivery-cases.json'
 
 const run = (rule: string, fired_at: string, status: string, error = '') => ({
     rule,
@@ -29,5 +30,13 @@ describe('deliveryStatus', () => {
     it('leaves out a destination with no run for the submission', () => {
         const runs = [run('a', '2026-11-01 10:00:00.000Z', 'ok')]
         expect(deliveryStatus(['a', 'later'], runs)).toEqual({ delivered: 1, total: 1 })
+    })
+})
+describe('deliveryStatus shared fixture', () => {
+    it.each(cases)('$name', c => {
+        expect(deliveryStatus(c.destinations, c.runs)).toEqual({
+            delivered: c.delivered,
+            total: c.total,
+        })
     })
 })

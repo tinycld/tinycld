@@ -125,6 +125,15 @@ func (d *Defs) Host(key string) *Host {
 	return nil
 }
 
+// BuiltinKeys lists the host's built-in field keys in declaration order.
+func (h *Host) BuiltinKeys() []string {
+	out := make([]string, 0, len(h.Builtins))
+	for _, b := range h.Builtins {
+		out = append(out, b.Key)
+	}
+	return out
+}
+
 func (h *Host) Builtin(key string) *Builtin {
 	for i := range h.Builtins {
 		if h.Builtins[i].Key == key {

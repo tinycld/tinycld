@@ -2,6 +2,7 @@ package webforms
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -156,7 +157,7 @@ func checkAutoReply(app core.App, rule *core.Record) error {
 		return nil
 	}
 	return validation.Errors{"actions": validation.NewError("validation_unsafe_auto_reply",
-		`An email to an address from the form needs "Ask the browser to prove it is not a bot" on the form's Publish tab.`)}
+		`This rule sends email to an address a visitor types into the form. Turn on "Ask the browser to prove it is not a bot" (require_pow) for the form first, or send to a fixed address.`)}
 }
 
 func configFormOf(rule *core.Record) string {
@@ -177,7 +178,7 @@ func checkPowStillNeeded(app core.App, pub *core.Record) error {
 	for _, r := range rules {
 		if configFormOf(r) == pub.GetString("form") && sendsToFormAddress(app, r) {
 			return validation.Errors{"require_pow": validation.NewError("validation_auto_reply_needs_pow",
-				"A rule sends email to an address from this form. Turn that rule off first.")}
+				fmt.Sprintf(`The enabled rule %q sends email to an address a visitor types into this form. Turn that rule off, or make it send to a fixed address, before you turn off "Ask the browser to prove it is not a bot" (require_pow).`, r.GetString("name")))}
 		}
 	}
 	return nil
@@ -197,6 +198,14 @@ func bindSafetyHooks(app core.App) {
 		return e.Next()
 	})
 	app.OnRecordUpdate(publicationsName).BindFunc(func(e *core.RecordEvent) error {
+		if err := checkPowStillNeeded(e.App, e.Record); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+	// On create too: deleting the publication and making a new one without
+	// proof of work must not get around the rule above.
+	app.OnRecordCreate(publicationsName).BindFunc(func(e *core.RecordEvent) error {
 		if err := checkPowStillNeeded(e.App, e.Record); err != nil {
 			return err
 		}

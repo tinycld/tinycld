@@ -44,6 +44,17 @@ const ScopeProfile = "profile"
 // session could not already do.
 const ScopeBackups = "backups"
 
+// ScopeForms lets a token manage forms, publish web forms and read or delete
+// their submissions. Core's own: forms span every package that hosts one.
+// The collection rules still apply (admin to write, admin to read
+// submissions).
+const ScopeForms = "forms"
+
+// ScopeAutomation lets a token read and write rules, read their runs and the
+// action catalog, and run or retry a rule. The collection rules still apply:
+// only an admin writes an organization rule.
+const ScopeAutomation = "automation"
+
 var (
 	// ErrInvalidGrant covers a missing, malformed, or expired grant. Maps to 401.
 	ErrInvalidGrant = errors.New("oauth: invalid grant")

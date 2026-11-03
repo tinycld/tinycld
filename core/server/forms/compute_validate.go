@@ -1,6 +1,7 @@
 package forms
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -180,7 +181,7 @@ func fieldComputeErrors(f Field, i int) validation.Errors {
 			return defErr(msg, "fields", i, "expression")
 		}
 		if f.Decimals < 0 || f.Decimals > 6 {
-			return defErr("decimals is 0 to 6", "fields", i, "decimals")
+			return defErr(fmt.Sprintf("decimals %d is out of range. Use 0 to 6.", f.Decimals), "fields", i, "decimals")
 		}
 	case "table":
 		if len(f.Columns) == 0 {
@@ -196,17 +197,17 @@ func columnErrors(cols []Column, path ...any) validation.Errors {
 	for ci, c := range cols {
 		at := func(leaf string) []any { return append(append([]any{}, path...), ci, leaf) }
 		if !keyRe.MatchString(c.Key) {
-			return defErr("invalid column key "+c.Key, at("key")...)
+			return defErr("invalid column key "+c.Key+". "+keyRule, at("key")...)
 		}
 		if c.Key == "id" {
 			return defErr("id is reserved for the row id", at("key")...)
 		}
 		if _, dup := seen[c.Key]; dup {
-			return defErr("duplicate column key "+c.Key, at("key")...)
+			return defErr("duplicate column key "+c.Key+". Each column key must be unique.", at("key")...)
 		}
 		seen[c.Key] = c.Kind
 		if !columnKinds[c.Kind] {
-			return defErr("unknown column kind "+c.Kind, at("kind")...)
+			return defErr("unknown column kind "+c.Kind+". Kinds: "+strings.Join(sortedBoolKeys(columnKinds), ", ")+".", at("kind")...)
 		}
 		label := strings.TrimSpace(c.Label)
 		if label == "" {
@@ -236,7 +237,7 @@ func columnErrors(cols []Column, path ...any) validation.Errors {
 				return defErr("a column formula cannot sum or count a table", at("expression")...)
 			}
 			if c.Decimals < 0 || c.Decimals > 6 {
-				return defErr("decimals is 0 to 6", at("decimals")...)
+				return defErr(fmt.Sprintf("decimals %d is out of range. Use 0 to 6.", c.Decimals), at("decimals")...)
 			}
 		}
 	}
@@ -250,10 +251,10 @@ func columnErrors(cols []Column, path ...any) validation.Errors {
 		for _, v := range refs.vars {
 			kind, ok := seen[v]
 			if !ok {
-				return defErr("unknown column "+v, append(append([]any{}, path...), ci, "expression")...)
+				return defErr("unknown column "+v+". Columns: "+listOrNone(sortedKeys(seen))+".", append(append([]any{}, path...), ci, "expression")...)
 			}
 			if !numericKind(kind) {
-				return defErr(v+" is a "+kind+" column and cannot be used in a formula", append(append([]any{}, path...), ci, "expression")...)
+				return defErr(v+" is a "+kind+" column and cannot be used in a formula. Use a number, computed or toggle column.", append(append([]any{}, path...), ci, "expression")...)
 			}
 		}
 		deps[c.Key] = refs.vars
@@ -299,19 +300,19 @@ func computeCrossErrors(def *Definition, host *Host) validation.Errors {
 		for _, v := range refs.vars {
 			s, ok := byKey[v]
 			if !ok {
-				return defErr("unknown field "+v, "fields", i, "expression")
+				return defErr("unknown field "+v+". Fields: "+listOrNone(sourceKeys(byKey))+".", "fields", i, "expression")
 			}
 			if !numericKind(s.kind) {
-				return defErr(v+" is a "+s.kind+" field and cannot be used in a formula", "fields", i, "expression")
+				return defErr(v+" is a "+s.kind+" field and cannot be used in a formula. Use a number, computed or toggle field.", "fields", i, "expression")
 			}
 		}
 		for _, a := range refs.aggs {
 			s, ok := byKey[a.table]
 			if !ok {
-				return defErr("unknown field "+a.table, "fields", i, "expression")
+				return defErr("unknown field "+a.table+". Fields: "+listOrNone(sourceKeys(byKey))+".", "fields", i, "expression")
 			}
 			if s.kind != "table" {
-				return defErr(a.table+" is not a table", "fields", i, "expression")
+				return defErr(a.table+" is not a table. sumOf and countOf read a table field.", "fields", i, "expression")
 			}
 			if a.column == "" {
 				continue
@@ -323,11 +324,11 @@ func computeCrossErrors(def *Definition, host *Host) validation.Errors {
 				}
 				found = true
 				if c.Kind != "number" && c.Kind != "computed" {
-					return defErr("column "+a.column+" is not numeric", "fields", i, "expression")
+					return defErr("column "+a.column+" is not numeric. Use a number or computed column.", "fields", i, "expression")
 				}
 			}
 			if !found {
-				return defErr("unknown column "+a.column, "fields", i, "expression")
+				return defErr("unknown column "+a.column+". Columns: "+listOrNone(columnKeys(s.cols))+".", "fields", i, "expression")
 			}
 		}
 		deps[f.Key] = refs.vars
@@ -336,4 +337,21 @@ func computeCrossErrors(def *Definition, host *Host) validation.Errors {
 		return defErr("formula cycle: "+strings.Join(cyc, " → "), "fields", index[cyc[0]], "expression")
 	}
 	return nil
+}
+
+func sourceKeys[T any](m map[string]T) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func columnKeys(cols []Column) []string {
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = c.Key
+	}
+	return out
 }

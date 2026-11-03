@@ -34,6 +34,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	registerCoreNativeActions()
 
 	engine := NewEngine(app, defs)
+	BindRuleValidation(app, defs)
 	registerEndpoints(app, engine)
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		engine.Start()

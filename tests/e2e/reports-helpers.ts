@@ -84,6 +84,37 @@ export async function addSale(page: Page, sale: StubSale) {
     await expect(page.getByTestId('salesstub-sale-saved')).toHaveText(`Saved ${sale.customer}`)
 }
 
+export interface StubSales {
+    team: string
+    /** Customers are named `${customerPrefix} 00`, `${customerPrefix} 01`, … */
+    customerPrefix: string
+    count: number
+    /** The first sale's day; each next sale is one day later. */
+    firstDay: string
+    /** The first sale's amount; each next sale's is one more. */
+    firstAmount: number
+    cost: number
+    quantity: number
+}
+
+/**
+ * Adds `count` open sales in one save through the stub's "Many sales" form: one
+ * form, not `count` rounds of the single-sale form, which took most of a spec's
+ * time budget.
+ */
+export async function addSales(page: Page, sales: StubSales) {
+    await page.getByTestId('salesstub-sales-team').click()
+    await page.getByRole('menuitem', { name: sales.team, exact: true }).click()
+    await page.getByTestId('salesstub-sales-prefix').fill(sales.customerPrefix)
+    await page.getByTestId('salesstub-sales-count').fill(String(sales.count))
+    await page.getByTestId('salesstub-sales-first-day').fill(sales.firstDay)
+    await page.getByTestId('salesstub-sales-first-amount').fill(String(sales.firstAmount))
+    await page.getByTestId('salesstub-sales-cost').fill(String(sales.cost))
+    await page.getByTestId('salesstub-sales-quantity').fill(String(sales.quantity))
+    await page.getByTestId('salesstub-sales-create').click()
+    await expect(page.getByTestId('salesstub-sales-saved')).toHaveText(`Saved ${sales.count} sales`)
+}
+
 /** New report → pick a source → the builder opens on a draft. */
 export async function startReport(page: Page, sourceKey: string) {
     await page.getByTestId('reports-hub-new').click()

@@ -6,6 +6,8 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
@@ -19,15 +21,18 @@ type Option struct {
 }
 
 type Field struct {
-	Key           string   `json:"key"`
-	Kind          string   `json:"kind"`
-	Page          string   `json:"page"`
-	Label         string   `json:"label"`
-	Width         string   `json:"width,omitempty"`
-	Required      bool     `json:"required"`
-	Hidden        bool     `json:"hidden"`
-	Options       []Option `json:"options,omitempty"`
-	Multiple      bool     `json:"multiple,omitempty"`
+	Key      string   `json:"key"`
+	Kind     string   `json:"kind"`
+	Page     string   `json:"page"`
+	Label    string   `json:"label"`
+	Width    string   `json:"width,omitempty"`
+	Required bool     `json:"required"`
+	Hidden   bool     `json:"hidden"`
+	Options  []Option `json:"options,omitempty"`
+	Multiple bool     `json:"multiple,omitempty"`
+	// Display picks a select's control: "dropdown" (the default), "radio"
+	// or "checkbox". definitionSchema's select display.
+	Display       string   `json:"display,omitempty"`
 	Collaborative bool     `json:"collaborative,omitempty"`
 	Min           *float64 `json:"min,omitempty"`
 	Max           *float64 `json:"max,omitempty"`
@@ -179,137 +184,275 @@ func defErr(msg string, path ...any) validation.Errors {
 	return validation.Errors{strings.Join(parts, "."): validation.NewError(invalidDefinition, msg)}
 }
 
+// selectDisplays mirrors the select display enum in core/lib/forms/definition.ts.
+var selectDisplays = []string{"dropdown", "radio", "checkbox"}
+
+const keyRule = "Use 1 to 40 lowercase letters, digits or _, starting with a letter."
+
+// problems collects every definition problem, keyed by its path, so one
+// refused save lists all of them. The first problem at a path wins: it is
+// the one the others usually follow from.
+type problems validation.Errors
+
+func (p problems) add(msg string, path ...any) {
+	p.merge(defErr(msg, path...))
+}
+
+func (p problems) merge(errs validation.Errors) {
+	for k, v := range errs {
+		if _, seen := p[k]; !seen {
+			p[k] = v
+		}
+	}
+}
+
+func (p problems) result() validation.Errors {
+	if len(p) == 0 {
+		return nil
+	}
+	return validation.Errors(p)
+}
+
+// fieldIndexOf reads n from a "definition.fields.<n>…" problem path.
+func fieldIndexOf(path string) (int, bool) {
+	rest, ok := strings.CutPrefix(path, "definition.fields.")
+	if !ok {
+		return 0, false
+	}
+	n, _, _ := strings.Cut(rest, ".")
+	i, err := strconv.Atoi(n)
+	return i, err == nil
+}
+
+func sortedBoolKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func listOrNone(items []string) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	return strings.Join(items, ", ")
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ValidateDefinition mirrors definitionSchema + validateDefinitionForHost in
-// core/lib/forms. It returns the first problem as a field error keyed by its
-// path inside the definition (see defErr), so the builder shows it on the
-// part of the form that is wrong.
+// core/lib/forms. It returns every problem as a field error keyed by its
+// path inside the definition (see defErr), so the builder shows each on the
+// part of the form that is wrong and a client that writes the JSON itself
+// (the CLI) can fix them all from one refusal. Each message names the bad
+// value and what is allowed.
 func ValidateDefinition(def *Definition, host *Host) validation.Errors {
+	p := problems{}
 	if def.Version != 1 {
-		return defErr("unsupported definition version", "version")
+		p.add(fmt.Sprintf("version %d is not supported. Use 1.", def.Version), "version")
 	}
 	if len(def.Pages) == 0 {
-		return defErr("a form needs at least one page", "pages")
+		p.add(`a form needs at least one page, for example {"key":"main","title":"Main"}`, "pages")
+		return p.result()
 	}
 	pages := map[string]bool{}
-	for i, p := range def.Pages {
-		if !keyRe.MatchString(p.Key) {
-			return defErr("invalid page key "+p.Key, "pages", i, "key")
+	pageKeys := []string{}
+	for i, pg := range def.Pages {
+		if !keyRe.MatchString(pg.Key) {
+			p.add(fmt.Sprintf("%q is not a valid page key. %s", pg.Key, keyRule), "pages", i, "key")
+			continue
 		}
-		if pages[p.Key] {
-			return defErr("duplicate page key "+p.Key, "pages", i, "key")
+		if pages[pg.Key] {
+			p.add(fmt.Sprintf("page key %q is used twice. Each page key must be unique.", pg.Key), "pages", i, "key")
+			continue
 		}
-		pages[p.Key] = true
+		pages[pg.Key] = true
+		pageKeys = append(pageKeys, pg.Key)
 	}
 	kinds := map[string]string{}
+	// declared holds every field key the definition lists with a valid,
+	// unique key, even when the field itself has a problem: a reference to
+	// it is not a second problem, and a built-in in the list is not missing.
+	declared := map[string]bool{}
 	seenBuiltin := map[string]bool{}
 	// requiredOnPage lists, per page, the host-required built-ins placed on it.
 	requiredOnPage := map[string][]string{}
 	for i, f := range def.Fields {
+		at := func(leaf string) []any { return []any{"fields", i, leaf} }
 		if !keyRe.MatchString(f.Key) {
-			return defErr("invalid field key "+f.Key, "fields", i, "key")
+			p.add(fmt.Sprintf("%q is not a valid field key. %s", f.Key, keyRule), at("key")...)
+			continue
 		}
-		if _, dup := kinds[f.Key]; dup {
-			return defErr("duplicate field key "+f.Key, "fields", i, "key")
+		if declared[f.Key] {
+			p.add(fmt.Sprintf("field key %q is used twice. Each field key must be unique.", f.Key), at("key")...)
+			continue
+		}
+		declared[f.Key] = true
+		if f.Kind == "builtin" && host.Builtin(f.Key) != nil {
+			seenBuiltin[f.Key] = true
 		}
 		if !pages[f.Page] {
-			return defErr("unknown page "+f.Page, "fields", i, "page")
-		}
-		if f.Kind != "builtin" && len(host.Kinds) > 0 && !slices.Contains(host.Kinds, f.Kind) {
-			return defErr(f.Kind+" fields are not allowed in "+host.Label, "fields", i, "kind")
+			p.add(fmt.Sprintf("%q is not a page of this form. Pages: %s.", f.Page, listOrNone(pageKeys)), at("page")...)
+			continue
 		}
 		if f.Kind == "builtin" {
 			b := host.Builtin(f.Key)
 			if b == nil {
-				return defErr(f.Key+" is not a built-in field of "+host.Label, "fields", i, "key")
+				p.add(fmt.Sprintf("%q is not a built-in field of %s. Built-in fields: %s.", f.Key, host.Label, listOrNone(host.BuiltinKeys())), at("key")...)
+				continue
 			}
 			if b.Required && f.Hidden {
-				return defErr(f.Key+" is required by the record and cannot be hidden", "fields", i, "hidden")
+				p.add(fmt.Sprintf("%s is required by the record and cannot be hidden. Set hidden to false.", f.Key), at("hidden")...)
+				continue
 			}
 			if b.Required {
 				requiredOnPage[f.Page] = append(requiredOnPage[f.Page], f.Key)
 			}
 			kinds[f.Key] = b.Kind
-			seenBuiltin[f.Key] = true
 			continue
 		}
-		if _, ok := operatorsByKind[f.Kind]; !ok || f.Kind == "custom" || f.Kind == "section" {
-			return defErr("unknown field kind "+f.Kind, "fields", i, "kind")
+		if !slices.Contains(CustomKinds(), f.Kind) {
+			// The kinds this host takes, so the next try is not refused again.
+			allowed := host.Kinds
+			if len(allowed) == 0 {
+				allowed = CustomKinds()
+			}
+			p.add(fmt.Sprintf("%q is not a field kind. Kinds: %s; or builtin for a built-in field.", f.Kind, strings.Join(allowed, ", ")), at("kind")...)
+			continue
+		}
+		if len(host.Kinds) > 0 && !slices.Contains(host.Kinds, f.Kind) {
+			p.add(fmt.Sprintf("%s fields are not allowed in %s. Allowed: %s.", f.Kind, host.Label, strings.Join(host.Kinds, ", ")), at("kind")...)
+			continue
 		}
 		if host.Builtin(f.Key) != nil {
-			return defErr(f.Key+" is a built-in field and cannot be a custom field", "fields", i, "key")
+			p.add(fmt.Sprintf("%s is a built-in field and cannot be a custom field. Use kind builtin, or another key.", f.Key), at("key")...)
+			continue
 		}
 		if host.HasColumn(f.Key) {
-			return defErr(f.Key+" is a column of the record and cannot be a custom field", "fields", i, "key")
+			p.add(fmt.Sprintf("%s is a column of the record and cannot be a custom field. Use another key.", f.Key), at("key")...)
+			continue
+		}
+		if f.Kind == "select" && f.Display != "" && !slices.Contains(selectDisplays, f.Display) {
+			p.add(fmt.Sprintf("%q is not a select display. Use: %s.", f.Display, strings.Join(selectDisplays, ", ")), at("display")...)
+			continue
 		}
 		if errs := duplicateOptionError(f.Options, "fields", i, "options"); errs != nil {
-			return errs
+			p.merge(errs)
+			continue
 		}
 		if f.Kind == "number" && f.Min != nil && f.Max != nil && *f.Min > *f.Max {
-			return defErr("minimum is above maximum", "fields", i, "min")
+			p.add(fmt.Sprintf("minimum %g is above maximum %g.", *f.Min, *f.Max), at("min")...)
+			continue
 		}
 		if f.Collaborative && host.Collab == nil {
-			return defErr(host.Label+" does not support collaborative fields", "fields", i, "collaborative")
+			p.add(host.Label+" does not support collaborative fields. Set collaborative to false.", at("collaborative")...)
+			continue
 		}
 		if errs := fieldComputeErrors(f, i); errs != nil {
-			return errs
+			p.merge(errs)
+			continue
 		}
 		kinds[f.Key] = f.Kind
 	}
+	var missing []string
 	for _, b := range host.Builtins {
 		if !seenBuiltin[b.Key] {
-			return defErr("missing built-in field "+b.Key, "fields")
+			missing = append(missing, b.Key)
 		}
 	}
-	if errs := computeCrossErrors(def, host); errs != nil {
-		return errs
+	if len(missing) == 1 {
+		p.add(fmt.Sprintf("missing built-in field %s. Every built-in field of %s must be in fields, with kind builtin.", missing[0], host.Label), "fields")
+	} else if len(missing) > 1 {
+		p.add(fmt.Sprintf("missing built-in fields %s. Every built-in field of %s must be in fields, with kind builtin.", strings.Join(missing, ", "), host.Label), "fields")
+	}
+	// A field that failed its own checks already has its problem, so a
+	// cross-field problem at that field is not reported again. The paths keep
+	// each field's index in the definition.
+	for k, v := range computeCrossErrors(def, host) {
+		if i, ok := fieldIndexOf(k); ok && i < len(def.Fields) {
+			if _, valid := kinds[def.Fields[i].Key]; !valid {
+				continue
+			}
+		}
+		p.merge(validation.Errors{k: v})
+	}
+	// unusable reports a reference to a field that is declared but has its
+	// own problem: that reference is skipped, not reported again.
+	unusable := func(key string) bool {
+		_, ok := kinds[key]
+		return !ok && declared[key]
 	}
 	ruleKeys := map[string]bool{}
 	for ri, r := range def.Rules {
 		if !keyRe.MatchString(r.Key) {
-			return defErr("invalid rule key "+r.Key, "rules", ri, "key")
+			p.add(fmt.Sprintf("%q is not a valid rule key. %s", r.Key, keyRule), "rules", ri, "key")
+			continue
 		}
 		if ruleKeys[r.Key] {
-			return defErr("duplicate rule key "+r.Key, "rules", ri, "key")
+			p.add(fmt.Sprintf("rule key %q is used twice. Each rule key must be unique.", r.Key), "rules", ri, "key")
+			continue
 		}
 		ruleKeys[r.Key] = true
 		if len(r.When) == 0 {
-			return defErr("rule "+r.Key+" needs a condition and an action", "rules", ri, "when")
+			p.add("rule "+r.Key+" needs at least one condition in when.", "rules", ri, "when")
 		}
 		if len(r.Actions) == 0 {
-			return defErr("rule "+r.Key+" needs a condition and an action", "rules", ri, "actions")
+			p.add("rule "+r.Key+" needs at least one action.", "rules", ri, "actions")
 		}
 		for ci, c := range r.When {
+			if unusable(c.Field) {
+				continue
+			}
 			kind, ok := kinds[c.Field]
 			if !ok {
-				return defErr("unknown field "+c.Field, "rules", ri, "when", ci, "field")
+				p.add(fmt.Sprintf("%q is not a field of this form. Fields: %s.", c.Field, listOrNone(sortedKeys(kinds))), "rules", ri, "when", ci, "field")
+				continue
 			}
 			if !opAllowed(kind, c.Op) {
-				return defErr(c.Op+" is not valid for a "+kind+" field", "rules", ri, "when", ci, "op")
+				p.add(fmt.Sprintf("%s is not valid for a %s field. Use: %s.", c.Op, kind, listOrNone(operatorsByKind[kind])), "rules", ri, "when", ci, "op")
+				continue
 			}
 			if msg := conditionValueError(c); msg != "" {
-				return defErr(msg, "rules", ri, "when", ci, "value")
+				p.add(msg, "rules", ri, "when", ci, "value")
 			}
 		}
 		for ai, a := range r.Actions {
-			if errs := actionError(a, kinds, pages, requiredOnPage, host, "rules", ri, "actions", ai); errs != nil {
-				return errs
+			if a.Field != "" && unusable(a.Field) {
+				continue
 			}
+			p.merge(actionError(a, kinds, pages, requiredOnPage, host, "rules", ri, "actions", ai))
 		}
 	}
 	for k, v := range def.Defaults {
+		if unusable(k) {
+			continue
+		}
 		if _, ok := kinds[k]; !ok {
-			return defErr("unknown field "+k, "defaults", k)
+			p.add(fmt.Sprintf("%q is not a field of this form. Fields: %s.", k, listOrNone(sortedKeys(kinds))), "defaults", k)
+			continue
 		}
 		if !validExpression(v) {
-			return defErr("the default of "+k+" is not a value or a supported expression", "defaults", k)
+			p.add(`the default of `+k+` is not a value or a supported expression. Use a literal, {"today":[]}, {"me":[]} or {"addDays":[<date or {"today":[]}>, <whole days>]}.`, "defaults", k)
 		}
 	}
 	for i, k := range def.Submit.Required {
+		if unusable(k) {
+			continue
+		}
 		if _, ok := kinds[k]; !ok {
-			return defErr("unknown field "+k, "submit", "required", i)
+			p.add(fmt.Sprintf("%q is not a field of this form. Fields: %s.", k, listOrNone(sortedKeys(kinds))), "submit", "required", i)
 		}
 	}
-	return nil
+	return p.result()
 }
 
 // duplicateOptionError mirrors the schema's check on a select's options and a
@@ -318,7 +461,7 @@ func duplicateOptionError(options []Option, path ...any) validation.Errors {
 	seen := map[string]bool{}
 	for oi, o := range options {
 		if seen[o.Value] {
-			return defErr("duplicate option value "+o.Value, append(append([]any{}, path...), oi, "value")...)
+			return defErr("duplicate option value "+o.Value+". Each option value must be unique.", append(append([]any{}, path...), oi, "value")...)
 		}
 		seen[o.Value] = true
 	}
@@ -331,22 +474,22 @@ func actionError(a Action, kinds map[string]string, pages map[string]bool, requi
 	case "show", "hide":
 		if a.Page != "" {
 			if !pages[a.Page] {
-				return defErr("unknown page "+a.Page, at("page")...)
+				return defErr("unknown page "+a.Page+". Pages: "+listOrNone(sortedBoolKeys(pages))+".", at("page")...)
 			}
 			if held := requiredOnPage[a.Page]; a.Action == "hide" && len(held) > 0 {
-				return defErr("page "+a.Page+" holds required field "+held[0], at("page")...)
+				return defErr("page "+a.Page+" holds required field "+held[0]+", so it cannot be hidden. Hide its other fields one by one instead.", at("page")...)
 			}
 			return nil
 		}
 		if _, ok := kinds[a.Field]; !ok {
-			return defErr("unknown field "+a.Field, at("field")...)
+			return defErr("unknown field "+a.Field+". Fields: "+listOrNone(sortedKeys(kinds))+".", at("field")...)
 		}
 		if b := host.Builtin(a.Field); a.Action == "hide" && b != nil && b.Required {
-			return defErr("cannot hide required field "+a.Field, at("field")...)
+			return defErr("cannot hide required field "+a.Field+". The record needs it, so it must stay visible.", at("field")...)
 		}
 	case "require", "set_options", "set_value":
 		if _, ok := kinds[a.Field]; !ok {
-			return defErr("unknown field "+a.Field, at("field")...)
+			return defErr("unknown field "+a.Field+". Fields: "+listOrNone(sortedKeys(kinds))+".", at("field")...)
 		}
 		if a.Action == "set_options" && len(a.Options) == 0 {
 			return defErr("set_options needs at least one option", at("options")...)
@@ -355,10 +498,10 @@ func actionError(a Action, kinds map[string]string, pages map[string]bool, requi
 			return errs
 		}
 		if a.Action == "set_value" && !validExpression(a.Value) {
-			return defErr("the value of "+a.Field+" is not a value or a supported expression", at("value")...)
+			return defErr(`the value of `+a.Field+` is not a value or a supported expression. Use a literal, {"today":[]}, {"me":[]} or {"addDays":[<date or {"today":[]}>, <whole days>]}.`, at("value")...)
 		}
 	default:
-		return defErr("unknown action "+a.Action, at("action")...)
+		return defErr(fmt.Sprintf("%q is not a form rule action. Actions: show, hide, require, set_options, set_value.", a.Action), at("action")...)
 	}
 	return nil
 }

@@ -10,6 +10,7 @@ import { createInvitedUser, loginAs, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
     addSale,
+    addSales,
     addTeam,
     chooseOption,
     holdRuns,
@@ -53,16 +54,16 @@ async function groupedByDay(p: Page) {
     const team = uniqueName('Team')
     await openReportStub(p)
     await addTeam(p, team)
-    for (let i = 0; i < GROUPS; i++) {
-        await addSale(p, {
-            team,
-            customer: `Anchor ${String(i).padStart(2, '0')}`,
-            amount: 1000 + i,
-            cost: 400,
-            quantity: 3,
-            day: dayOf(i),
-        })
-    }
+    // Customers Anchor 00…39, amounts 1000…1039, one day apart from dayOf(0).
+    await addSales(p, {
+        team,
+        customerPrefix: 'Anchor',
+        count: GROUPS,
+        firstDay: dayOf(0),
+        firstAmount: 1000,
+        cost: 400,
+        quantity: 3,
+    })
     await openReportsHub(p)
     await startReport(p, SALES_SOURCE)
     await addColumn(p, ['amount'])

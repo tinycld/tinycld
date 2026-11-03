@@ -1,0 +1,14 @@
+Manage forms of every installed host, publish web forms, read their
+submissions and manage their destinations.
+
+<form> is a form id, slug or name. <rule> is a destination's id or name.
+
+Discover what you can use:
+  tinycld form hosts                     hosts, their field kinds and built-in fields
+  tinycld form example definition        a valid starting definition
+  tinycld form fields <form>             a form's field keys and {{fields.<key>}} placeholders
+  tinycld form destination actions       actions a destination can run, with their params
+  tinycld form example destination       a valid starting destination
+
+Every list and view honors --output table|json|csv. A refused change lists
+every problem with its path; fix them all, then send the file again.
