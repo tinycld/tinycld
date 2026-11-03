@@ -215,6 +215,33 @@ interface Frame {
     room: number
 }
 
+/** One render of the list: how many frames were recorded then, and its row count. */
+interface ListRender {
+    frame: number
+    rows: number
+}
+
+interface Recording {
+    frames: Frame[]
+    renders: ListRender[]
+    /** The list's row count when the recording started (the groups closed). */
+    rows: number
+}
+
+// React's own records of a component, as the page holds them (test-only reads).
+interface Hook {
+    memoizedState: unknown
+    next: Hook | null
+}
+interface Fiber {
+    memoizedState: unknown
+    return: Fiber | null
+}
+interface ListManager {
+    getRenderStack(): unknown
+    getDataLength(): number
+}
+
 /**
  * Scrolls the list down `step` px on every frame, the way a wheel does, until the
  * row first in view has scrolled away, and stops there, as a flick that just
@@ -222,22 +249,53 @@ interface Frame {
  * frames have passed). At the row change it calls `onCrossed` once (the page's
  * `reportRowCrossed`), so a held change lands in the moments after it, while the
  * list still counts the scroll as going on (until 100 ms without a scroll event).
+ *
+ * It also records each render of the list. FlashList's RecyclerView asks its
+ * manager for the render stack once in each of its renders, and takes the row to
+ * hold anew in the commit of each render; the manager's `getRenderStack` is
+ * wrapped for this. The manager is found through React's records of the row
+ * components (the first component above a row that holds one in its state).
  */
 async function scrollAndRecord(
     p: Page,
     list: ElementHandle<HTMLElement>,
     step: number,
     onCrossed: () => void
-): Promise<() => Promise<Frame[]>> {
+): Promise<() => Promise<Recording>> {
     await p.exposeFunction('reportRowCrossed', onCrossed)
     await p.evaluate(
         ({ scroller, by }) => {
+            const managerOf = (): ListManager | null => {
+                for (const cell of scroller.querySelectorAll('[data-testid^="report-row-"]')) {
+                    const records = cell as unknown as Record<string, Fiber | undefined>
+                    const key = Object.keys(cell).find(k => k.startsWith('__reactFiber$'))
+                    for (let fiber = key ? records[key] : null; fiber; fiber = fiber.return) {
+                        let hook = fiber.memoizedState as Hook | null
+                        while (hook && typeof hook === 'object' && 'next' in hook) {
+                            const value = hook.memoizedState as Partial<ListManager> | null
+                            if (typeof value?.getRenderStack === 'function')
+                                return value as ListManager
+                            hook = hook.next
+                        }
+                    }
+                }
+                return null
+            }
+            const manager = managerOf()
+            if (!manager) throw new Error('the list manager was not found')
             const frames: Frame[] = []
+            const renders: ListRender[] = []
+            const recording: Recording = { frames, renders, rows: manager.getDataLength() }
+            const renderStack = manager.getRenderStack
+            manager.getRenderStack = function (this: ListManager) {
+                renders.push({ frame: frames.length, rows: this.getDataLength() })
+                return renderStack.call(this)
+            }
             let openFor = 0
             let startFirst = ''
-            const state = { crossed: false, done: Promise.resolve(frames) }
+            const state = { crossed: false, done: Promise.resolve(recording) }
             const crossed = (window as unknown as { reportRowCrossed(): void }).reportRowCrossed
-            state.done = new Promise<Frame[]>(resolve => {
+            state.done = new Promise<Recording>(resolve => {
                 const frame = () => {
                     const box = scroller.getBoundingClientRect()
                     const tops: Record<string, number> = {}
@@ -264,7 +322,8 @@ async function scrollAndRecord(
                     frames.push({ tops, first, open, step: next, room })
                     if (open > 0) openFor += 1
                     if (openFor >= 30 || frames.length >= 600) {
-                        resolve(frames)
+                        manager.getRenderStack = renderStack
+                        resolve(recording)
                         return
                     }
                     scroller.scrollTop += next
@@ -276,7 +335,7 @@ async function scrollAndRecord(
         },
         { scroller: list, by: step }
     )
-    type Shared = { scrollRecording: { done: Promise<Frame[]> } }
+    type Shared = { scrollRecording: { done: Promise<Recording> } }
     return () => p.evaluate(() => (window as unknown as Shared).scrollRecording.done)
 }
 
@@ -382,7 +441,9 @@ test.describe('scroll position on web', () => {
             // At 844 px high the far end of the rows the list draws ahead crosses a row
             // edge on the same scroll step as the top of the view does; the list then
             // renders and takes the new first row anyway. At 800 px the two happen
-            // apart, so the step that changes the first row renders nothing.
+            // apart, so the step that changes the first row renders nothing. The test
+            // checks that it rendered nothing (below), so a geometry that closes that
+            // window fails the test.
             await p.setViewportSize({ width: 390, height: 800 })
             // The rows are drawn wrapped (by other code) before the list is used.
             const start = rowOf(p, dayOf(10))
@@ -417,12 +478,26 @@ test.describe('scroll position on web', () => {
                 WHEEL_STEP,
                 release
             )
-            const frames = await recorded()
+            const { frames, renders, rows } = await recorded()
             await p.unrouteAll({ behavior: 'wait' })
             const opened = frames.findIndex(frame => frame.open > 0)
             // The groups opened while the list was moving, not before or after.
             expect(opened).toBeGreaterThan(0)
             expect(frames.length - opened).toBeGreaterThanOrEqual(30)
+            // The list did not render from the step that changed the first row until
+            // the opened rows arrived: its first render after that step has more rows.
+            // A render there takes the new first row to hold, and a list that holds
+            // the row from the last render would then pass. So when other row heights
+            // or another window of rows drawn ahead make that step render, the test
+            // fails here.
+            const crossed = frames.findIndex(frame => frame.step === 0)
+            expect(crossed, 'the first row changed').toBeGreaterThan(0)
+            const sinceCrossed = renders.filter(render => render.frame >= crossed)
+            expect(sinceCrossed.length, 'the list rendered the opened rows').toBeGreaterThan(0)
+            expect(
+                sinceCrossed[0].rows,
+                'rows in the first render after the row change'
+            ).toBeGreaterThan(rows)
             const found = jumps(frames)
             // The frame the groups opened on was compared with the one before it, and
             // no compared step met the end of the list.

@@ -10,6 +10,7 @@ import { useCallback, useEffectEvent, useMemo } from 'react'
 import type { ReportAccess } from '../lib/access'
 import { todayIso } from '../lib/dates'
 import { DEFAULT_DISPLAY, type DisplayOptions, shownColumns } from '../lib/format'
+import { panelSurface } from '../lib/panel-surface'
 import { chipLabelAsks } from '../lib/param-options'
 import {
     controlItems,
@@ -142,6 +143,8 @@ export function useReportView(input: ReportViewInput) {
     const body = broken && !isEditing ? null : runBody(source, defs, options, expansion)
     const run = useReportRun({ body, userId: user.id })
     const breakpoint = useBreakpoint()
+    // The builder and Customize draw on this surface; the view reads it too.
+    const panel = panelSurface(breakpoint)
     const { org } = useOrgInfo()
     // A tab left for another package stays mounted (frozen); only the focused
     // screen draws surfaces.
@@ -251,7 +254,7 @@ export function useReportView(input: ReportViewInput) {
         state: viewState({ source, broken, isEditing, run }),
         // On a phone the builder's full-height sheet shows the report in its Preview,
         // so the view under it does not draw a second copy.
-        isBodyShown: !(isEditing && breakpoint === 'mobile'),
+        isBodyShown: !(isEditing && panel === 'sheet'),
         problems: broken && !isEditing ? brokenProblems(broken) : run.problems,
         run,
         rows: shownRows,
@@ -262,8 +265,9 @@ export function useReportView(input: ReportViewInput) {
         // While the builder lies over the view (a sheet on a phone, a drawer on a
         // tablet) it shows "Updating…" in its own header; the view's slot then
         // stays, empty and silent, so one live region speaks.
-        isUpdatingInBuilder: isEditing && breakpoint !== 'desktop',
+        isUpdatingInBuilder: isEditing && panel !== 'inline',
         breakpoint,
+        panelSurface: panel,
         layouts: input.layouts ?? NO_LAYOUTS,
         heading: headingOf(run.result, org?.name),
         optionsSource,

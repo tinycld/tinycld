@@ -211,7 +211,7 @@ function CustomizeSheet({ model }: { model: ReportViewModel }) {
 
 // Wide: inline beside the report, which updates behind it. Tablet: an overlay.
 function CustomizeDrawer({ model }: { model: ReportViewModel }) {
-    const isInline = model.breakpoint === 'desktop'
+    const isInline = model.panelSurface === 'inline'
     const presentation = isInline ? 'inline' : 'overlay'
     const role = isInline ? 'complementary' : 'dialog'
     return (
@@ -244,6 +244,6 @@ function CustomizeDrawer({ model }: { model: ReportViewModel }) {
 /** Customize: a sheet on a phone, a panel beside or over the report on wider screens. */
 export function ReportCustomizePanel({ model }: { model: ReportViewModel }) {
     if (model.isEditing) return null
-    if (model.breakpoint === 'mobile') return <CustomizeSheet model={model} />
+    if (model.panelSurface === 'sheet') return <CustomizeSheet model={model} />
     return <CustomizeDrawer model={model} />
 }

@@ -1,10 +1,6 @@
 import { useLeaveGuard } from '@tinycld/core/components/forms-builder/use-leave-guard'
 import { HelpIcon } from '@tinycld/core/components/help/HelpIcon'
-import {
-    type Breakpoint,
-    useBreakpoint,
-    useWindowHeight,
-} from '@tinycld/core/components/workspace/useBreakpoint'
+import { useWindowHeight } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
@@ -142,14 +138,8 @@ function OverlayUpdating({ isVisible, isUpdating }: { isVisible: boolean; isUpda
 // Beside the report on a desktop; over it, from the right, on a tablet. The panel
 // belongs to its route, so it does not close on a URL change: its close navigates,
 // and a close fired by the next push would undo that push.
-function DrawerSurface({
-    builder,
-    preview,
-    problems,
-    onSaveAs,
-    breakpoint,
-}: SurfaceProps & { breakpoint: Breakpoint }) {
-    const isInline = breakpoint === 'desktop'
+function DrawerSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
+    const isInline = preview.panelSurface === 'inline'
     const presentation = isInline ? 'inline' : 'overlay'
     const role = isInline ? 'complementary' : 'dialog'
     return (
@@ -277,10 +267,11 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
     )
 }
 
+// The surface comes from the view's model, so the panel covers exactly what the
+// view gives up to it (its body under the sheet, its "Updating…" slot).
 function BuilderSurface(props: SurfaceProps) {
-    const breakpoint = useBreakpoint()
-    if (breakpoint === 'mobile') return <SheetSurface {...props} />
-    return <DrawerSurface {...props} breakpoint={breakpoint} />
+    if (props.preview.panelSurface === 'sheet') return <SheetSurface {...props} />
+    return <DrawerSurface {...props} />
 }
 
 export function ReportBuilderPanel({
