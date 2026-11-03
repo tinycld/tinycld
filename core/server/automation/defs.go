@@ -95,6 +95,10 @@ type ParamDef struct {
 	// unless the form asks for proof of work: otherwise a bot could make the
 	// server send mail to any address.
 	Recipient bool `json:"recipient"`
+	// Markdown marks a param whose value is rendered as markdown (a card
+	// description). Every value a template puts into it is escaped, so a
+	// form answer or a record's text reads as text, never as markup.
+	Markdown bool `json:"markdown"`
 }
 
 type ActionDef struct {

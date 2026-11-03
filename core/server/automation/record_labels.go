@@ -35,6 +35,9 @@ type TemplateEnv struct {
 	OwnerID string
 	// Dynamic holds a run's "fields.<key>" values.
 	Dynamic map[string]any
+	// Escape, when set, is applied to every value a placeholder puts into
+	// the template (EscapeMarkdown for a markdown param).
+	Escape func(string) string
 }
 
 // recordNamer names related records for one template substitution. It looks

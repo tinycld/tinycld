@@ -112,6 +112,12 @@ export interface TypedParamDef {
      */
     recipient?: boolean
     /**
+     * The param is rendered as markdown (a card description). The server
+     * escapes every value a template puts into it, so a form answer reads as
+     * text and cannot add an image or a link.
+     */
+    markdown?: boolean
+    /**
      * Required when `type` is 'relation' (validateDefinitions enforces both
      * directions): the target collection NAME the record picker lists. A
      * column-referencing param inherits its target from the column instead;
