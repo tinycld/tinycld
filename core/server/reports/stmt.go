@@ -41,8 +41,9 @@ func (s *stmt) bind(v any) string {
 // parameter. SQLite marks a statement whose LIMIT is bound to be prepared
 // again once the value is bound (sqlite3ExprIsInteger sets its varmask), so
 // a bound limit costs every run a second prepare of the whole statement, and
-// of the EXPLAIN that finds its change topics. The limits are the engine's
-// own integers, never text from a request.
+// of the EXPLAIN that finds its change topics. A limit is an integer bounded
+// by the engine: its own caps, or a request's page size or a spec's
+// maxColumns, both typed ints checked against a cap before they get here.
 func limitSQL(n int64) string { return strconv.FormatInt(n, 10) }
 
 // jsonList is a list of values as "x IN <list>" reads it: jsonSelect in

@@ -13,7 +13,7 @@ import (
 //	f<L>  a fill's keyset: the level's base keys and its fill records
 //	a<L>  aggregates w by the level's keys, then adds a fill's records with
 //	      no rows (fillRows)
-//	d<L>_<idx>  the to-many totals over one link (named by its first
+//	d<L>_<idx>  the to-many totals of one parent row (named by its first
 //	      column), once per parent row (aggregate locality)
 //	rs<L>  the sums of "rows" cells over the next level's rows (childSum)
 //	g<L>  a<L> with its to-many totals and its rows' sums (g<L>_<i> before
@@ -28,7 +28,7 @@ type level struct {
 	keys     []string // w columns the level groups by
 	aggs     []string // a<L> values, "expr AS name"
 	aggNames map[string]bool
-	tms      []*tmGroup // d<L> CTEs, one per link
+	tms      []*tmGroup // d<L> CTEs, one per parent row
 	tmCols   []tmCol    // g<L> values taken from d<L>
 	// childCells are the cells of the next level whose sums the level reads
 	// (childSum), all in one CTE rs<L>.
@@ -124,8 +124,9 @@ func (lv *level) toManyTotal(cp *colPlan) string {
 		total = fmt.Sprintf("COALESCE(sum(c%d), 0)", idx)
 		zero = true
 	}
-	// Totals over one link have one parent per base row, so they share one
-	// CTE: each parent's row carries every total's per-parent value.
+	// Totals whose parent row is the same (the same p<idx> SQL, whatever link
+	// below it they read) share one CTE: each value is per parent row, so one
+	// distinct parent row carries every such total's value once.
 	parent := lv.r.raw[fmt.Sprintf("p%d", idx)]
 	i := slices.IndexFunc(lv.tms, func(g *tmGroup) bool { return g.parent == parent })
 	if i < 0 {
@@ -139,8 +140,8 @@ func (lv *level) toManyTotal(cp *colPlan) string {
 	return "a." + name
 }
 
-// tmGroup is one d<L> CTE: the to-many totals of the level that read one
-// parent (the same link), each parent's values once per group.
+// tmGroup is one d<L> CTE: the to-many totals of the level whose parent row
+// is the same, each parent row's values once per group.
 type tmGroup struct {
 	d, parent string
 	// cols are the values of w the distinct parent rows carry (the parent id

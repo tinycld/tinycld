@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"tinycld.org/core/oauth"
+	"tinycld.org/core/rlstest"
 )
 
 func (z *zoo) post(t *testing.T, name, token, body string, status int, want ...string) {
@@ -71,7 +72,7 @@ func TestRunEndpointRefusesASuperuser(t *testing.T) {
 	}
 	su := core.NewRecord(superusers)
 	su.SetEmail("root@zoo.test")
-	su.SetPassword("password123")
+	rlstest.SetPassword(su, "password123")
 	if err := z.app.Save(su); err != nil {
 		t.Fatal(err)
 	}

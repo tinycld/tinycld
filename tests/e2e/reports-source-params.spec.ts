@@ -225,12 +225,14 @@ test.describe('params from a source, headings and unpublished shipped reports', 
             .getByRole('radio', { name: `${stem} S1`, exact: true })
             .click()
         await expect(page.getByTestId('report-builder-filter-0-value')).toHaveText(`${stem} S1`)
-        // The user's earlier sales (other tests, other runs on this database)
-        // name Sol too, so the filtered state is the one where this stem's Nia
-        // is gone and exactly one Sol is left.
+        // Every seed of this user (other tests, other runs on this database)
+        // adds a Nia, a Ned and a Sol, so before the filter applies the preview
+        // shows several of them. Filtered to this stem's S1 team, the table
+        // shows exactly one of the three names: one Sol. One retrying
+        // assertion of that whole state, so neither a loading table nor the
+        // unfiltered one can pass it.
         const table = page.getByTestId('report-table')
-        await expect(table.getByText('Nia', { exact: true })).toHaveCount(0)
-        await expect(table.getByText('Sol', { exact: true })).toHaveCount(1)
+        await expect(table.getByText(/^(Sol|Nia|Ned)$/)).toHaveText(['Sol'])
 
         // "Is any of" shows each picked record as a chip that removes it.
         await chooseOption(page, 'report-builder-filter-0-op', 'in')

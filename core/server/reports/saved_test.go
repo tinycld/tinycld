@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/rlstest"
 )
 
 func createBody(owner, extra string) string {
@@ -142,7 +144,7 @@ func TestASuperuserIsNotGuarded(t *testing.T) {
 	}
 	su := core.NewRecord(superusers)
 	su.SetEmail("root@zoo.test")
-	su.SetPassword("password123")
+	rlstest.SetPassword(su, "password123")
 	if err := s.app.Save(su); err != nil {
 		t.Fatal(err)
 	}

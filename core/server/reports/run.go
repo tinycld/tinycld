@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/changesignal"
@@ -358,6 +359,11 @@ func (rn *runner) detailTypes() error {
 	return err
 }
 
+// observeRead, when a test sets it, receives every read statement and its
+// params before it runs, so a test can prepare each one as the run does.
+// Nothing else sets it.
+var observeRead func(sql string, params dbx.Params)
+
 // readRows runs one read statement with the rule CTEs and ctes under the run
 // time limit; with topics, it also returns the change-signal topics of every
 // collection the statement reads.
@@ -367,6 +373,9 @@ func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body st
 		return nil, nil, err
 	}
 	sql := with + body
+	if observeRead != nil {
+		observeRead(sql, s.params)
+	}
 	ctx, cancel := context.WithTimeout(ctx, runLimits.timeout)
 	defer cancel()
 	var read []string
@@ -537,6 +546,14 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		all = append(all, leg.cells)
 	}
 	unread := unreadHelpers(all)
+	// A layout's section chunks read o1.vcur<idx> by name for every column
+	// whose first-level currency has SQL (layoutLegs, lc.cellNames), so that
+	// cell stays even when its SQL is the text NULL.
+	for idx, cp := range c.p.cols {
+		if c.sectionCur[cp.col.ID].sql != "" {
+			delete(unread, fmt.Sprintf("vcur%d", idx))
+		}
+	}
 	for _, l := range levels {
 		ctes = append(ctes, l.lv.render(withoutCells(l.cells, unread), l.own, l.totals)...)
 	}
@@ -564,7 +581,9 @@ var helperCell = regexp.MustCompile(`^(?:vl|vc|vcur)\d+$`)
 // unreadHelpers are the helper cells that are NULL in every leg of a union:
 // no row has a label or a carried currency there, and assembly reads a missing
 // cell as NULL, so the statement leaves them out. Every leg selects the same
-// cells in the same order.
+// cells in the same order. The one reader inside the statement is a layout's
+// section chunks, which read o1.vcur<idx> by name (layout.go, lc.cellNames and
+// sectionSlot.column); groupStatement keeps those cells.
 func unreadHelpers(legs [][]string) map[string]bool {
 	unread := map[string]bool{}
 	for _, cells := range legs {

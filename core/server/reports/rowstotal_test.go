@@ -244,9 +244,9 @@ func TestRowsTotalsOnMorePivotCellsThanAJoinHolds(t *testing.T) {
 	requireRows(t, res, "shown.p73", int64(1), int64(0), int64(1))
 }
 
-// Many to-many totals and "rows" columns: the level's joins are split so no
-// select joins more tables than SQLite allows.
-func TestManyToManyTotalsAndRowsColumns(t *testing.T) {
+// Seventy "rows" columns, each adding a to-many total of the same parent row:
+// every group row and the total add the rows under them, column by column.
+func TestManyRowsColumnsOverOneParentAddTheirRows(t *testing.T) {
 	z := newZoo(t)
 	cols := []string{`{"id":"region","path":[{"field":"region"}]}`, `{"id":"name","path":[{"field":"name"}]}`}
 	for i := range 70 {
@@ -259,11 +259,13 @@ func TestManyToManyTotalsAndRowsColumns(t *testing.T) {
 	requireRows(t, res, "w69", int64(190), int64(300), int64(490))
 }
 
-// More recompute to-many totals than one select may join, beside a "rows"
-// column: the level's joins are split into chunks. The having hides the North
-// site (190), so the rows total adds South only while the recompute total
-// adds both.
-func TestManyToManyTotalsJoinInChunks(t *testing.T) {
+// Sixty-five recompute to-many totals of one parent row beside a "rows"
+// column, under a having. The having hides the North site (190), so the rows
+// total adds South only while the recompute totals add both. The totals of
+// one parent row share one CTE per level (statement_test.go); more distinct
+// parents than one select may join are tested by
+// TestSidesPastTheJoinLimitAreJoinedInChunks.
+func TestManyRecomputeTotalsOverOneParentUnderAHaving(t *testing.T) {
 	z := newZoo(t)
 	cols := []string{`{"id":"region","path":[{"field":"region"}]}`, `{"id":"name","path":[{"field":"name"}]}`,
 		`{"id":"shown","path":[{"link":"animals","mode":"aggregate"},{"field":"weight"}],"aggregate":"sum","total":"rows"}`}
@@ -300,4 +302,54 @@ func TestRowsTotalIsRefusedWhereItMeansNothing(t *testing.T) {
 		}
 		requireSpecError(t, Validate(app, spec), 400, c.at, c.want)
 	}
+}
+
+// The to-many totals of one parent row share one CTE per level, each parent's
+// values counted once. Sites East and West have the same animals' weights, so
+// a CTE that lost the parent would count one of them once instead of twice.
+// Site Empty has no animals: its sum is 0 and its min, max and average are
+// blank beside the others. Price is an amount in the animals' fixed currency.
+// The second report fills in the sites with no animal (a fill row) on a level
+// whose two feeding totals share one CTE: their sum is 0 and their max blank.
+func TestToManyTotalsOfOneParentRowShareOneCTE(t *testing.T) {
+	z := newZoo(t)
+	ann := z.recs["ann"]
+	east := z.rec(t, "east", "zoo_sites", map[string]any{"name": "East", "region": "north"})
+	west := z.rec(t, "west", "zoo_sites", map[string]any{"name": "West", "region": "north"})
+	z.rec(t, "empty", "zoo_sites", map[string]any{"name": "Empty", "region": "north"})
+	for _, a := range []struct {
+		key           string
+		site          string
+		weight, price int
+	}{{"ada", east.Id, 10, 1000}, {"bea", east.Id, 30, 3000}, {"cid", west.Id, 10, 1000}, {"dee", west.Id, 30, 3000}} {
+		z.rec(t, a.key, "zoo_animals", map[string]any{"name": a.key, "species": "owl", "site": a.site, "owner": ann.Id, "weight": a.weight, "price": a.price})
+	}
+	total := func(id, aggregate, field string) string {
+		return fmt.Sprintf(`{"id":%q,"path":[{"link":"animals","mode":"aggregate"},{"field":%q}],"aggregate":%q}`, id, field, aggregate)
+	}
+	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[{"id":"region","path":[{"field":"region"}]},`+
+		strings.Join([]string{total("sum", "sum", "weight"), total("min", "min", "weight"), total("max", "max", "weight"),
+			strings.Replace(total("avg", "avg", "weight"), `"avg"}`, `"avg","scale":0}`, 1), total("price", "sum", "price")}, ",")+`],
+		"groups":[{"id":"g","col":"region"}],"sort":[{"col":"region"}]}`, Options{}, nil)
+	requireRows(t, res, "label", "North", "South", "Total")
+	// North: North (Leo 190), East (10, 30), West (10, 30), Empty (none).
+	requireRows(t, res, "sum", int64(270), int64(300), int64(570))
+	requireRows(t, res, "min", int64(10), int64(300), int64(10))
+	requireRows(t, res, "max", int64(190), int64(300), int64(300))
+	// The average of every animal under the row: 270 / 5, 300 / 1, 570 / 6.
+	requireRows(t, res, "avg", int64(54), int64(300), int64(95))
+	requireRows(t, res, "price", int64(508000), int64(120000), int64(628000))
+	// A fixed currency is the column's, not a cell's.
+	if c := res.Columns[5]; c.ID != "price" || c.Currency != "USD" || c.CurrencyCell != "" {
+		t.Fatalf("price column = %+v", c)
+	}
+
+	// Ann keeps Leo and Zed, so she reads only their feedings.
+	filled := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[{"id":"site","path":[{"link":"site"}]},
+		{"id":"grams","path":[{"link":"feedings","mode":"aggregate"},{"field":"grams"}],"aggregate":"sum"},
+		{"id":"most","path":[{"link":"feedings","mode":"aggregate"},{"field":"grams"}],"aggregate":"max"}],
+		"groups":[{"id":"g","col":"site","fill":{}}],"sort":[{"col":"site"}]}`, Options{}, nil)
+	requireRows(t, filled, "label", "East", "Empty", "North", "South", "West", "(none)", "Total")
+	requireRows(t, filled, "grams", int64(0), int64(0), int64(1300), int64(400), int64(0), int64(0), int64(1700))
+	requireRows(t, filled, "most", nil, nil, int64(800), int64(300), nil, nil, int64(800))
 }

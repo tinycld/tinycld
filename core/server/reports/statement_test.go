@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
 	"strings"
@@ -97,7 +98,9 @@ func rawStatement(t *testing.T, stmt string, params dbx.Params) (string, []any) 
 
 // preparedStmt receives sqlite3_prepare_v2's statement handle. A package
 // variable, because the C side writes it through a raw address and a global
-// never moves.
+// never moves. It is shared, so it is safe only while no test in this
+// package calls t.Parallel (none does): two parallel firstRow calls would
+// write it at once.
 var preparedStmt uintptr
 
 // reprepares is how many times SQLite prepared stmt again after its first
@@ -219,8 +222,9 @@ func TestABoundLimitPreparesTheStatementAgain(t *testing.T) {
 	}
 }
 
-// wideSpec is TestManyToManyTotalsJoinInChunks's report: 65 recompute
-// to-many totals and a "rows" column, all over the sites' animals.
+// wideSpec is TestManyRecomputeTotalsOverOneParentUnderAHaving's report: 65
+// recompute to-many totals and a "rows" column, all of one parent row (the
+// site) over its animals.
 func wideSpec() string {
 	cols := []string{`{"id":"region","path":[{"field":"region"}]}`, `{"id":"name","path":[{"field":"name"}]}`,
 		`{"id":"shown","path":[{"link":"animals","mode":"aggregate"},{"field":"weight"}],"aggregate":"sum","total":"rows"}`}
@@ -232,9 +236,9 @@ func wideSpec() string {
 		"sort":[{"col":"region"}]}`
 }
 
-// Every to-many total a level reads over one link is in one CTE: the wide
-// report's three levels have three, and no level needs its joins split.
-func TestToManyTotalsOverOneLinkShareOneCTEPerLevel(t *testing.T) {
+// Every to-many total a level reads of one parent row is in one CTE: the
+// wide report's three levels have three, and no level needs its joins split.
+func TestToManyTotalsOfOneParentRowShareOneCTEPerLevel(t *testing.T) {
 	z := newZoo(t)
 	stmt, _ := z.groupStatementOf(t, "ann", wideSpec(), Options{ExpandAll: true})
 	var totals, chunks []string
@@ -251,10 +255,10 @@ func TestToManyTotalsOverOneLinkShareOneCTEPerLevel(t *testing.T) {
 	}
 }
 
-// More side CTEs than one select may join (to-many totals over many links)
-// are joined maxSideJoins at a time, and every value arrives. One link's
-// totals share a CTE, so a report reaches this only with that many links;
-// the join is built directly here.
+// More side CTEs than one select may join (to-many totals of that many
+// distinct parent rows) are joined maxSideJoins at a time, and every value
+// arrives. The totals of one parent row share a CTE, so a report reaches
+// this only with that many parent rows; the join is built directly here.
 func TestSidesPastTheJoinLimitAreJoinedInChunks(t *testing.T) {
 	z := newZoo(t)
 	lv := &level{n: 0, keys: []string{"k0"}}
@@ -298,23 +302,93 @@ func TestHelperColumnsOnlyForColumnsThatHaveThem(t *testing.T) {
 	}
 }
 
-// Every statement a run sends, and the EXPLAIN that finds its change topics,
-// is prepared once.
-func TestAReportStatementIsPreparedOnce(t *testing.T) {
+// readStatement is one statement a run or an options read sent.
+type readStatement struct {
+	sql    string
+	params dbx.Params
+}
+
+// observeReads collects every read statement until the test ends.
+func observeReads(t *testing.T) *[]readStatement {
+	t.Helper()
+	var seen []readStatement
+	observeRead = func(sql string, params dbx.Params) {
+		seen = append(seen, readStatement{sql: sql, params: maps.Clone(params)})
+	}
+	t.Cleanup(func() { observeRead = nil })
+	return &seen
+}
+
+// Every statement the engine sends (group, detail, nest, pivot, options and
+// option groups), and the EXPLAIN that finds a run's change topics, is
+// prepared once. The engine's own SQL binds nothing SQLite plans by; a rule
+// CTE is PocketBase's SQL (TestAPocketBaseRuleLikePreparesTheStatementAgain).
+func TestEveryReportStatementIsPreparedOnce(t *testing.T) {
 	z := newZoo(t)
 	db := readPool(t, z)
-	for name, spec := range map[string]string{
-		"grouped": `{"version":2,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"w","path":[{"field":"weight"}],"aggregate":"sum"}],
-			"groups":[{"id":"g","col":"name"}],"sort":[{"col":"name"}]}`,
-		"wide": wideSpec(),
-	} {
-		stmt, params := z.groupStatementOf(t, "ann", spec, Options{ExpandAll: true})
-		raw, args := rawStatement(t, stmt, params)
+	seen := observeReads(t)
+	z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"w","path":[{"field":"weight"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"name"}],"sort":[{"col":"name"}]}`, Options{ExpandAll: true}, nil)
+	z.run(t, "ann", wideSpec(), Options{ExpandAll: true}, nil)
+	z.run(t, "ann", sitesWithAnimals, Options{}, nil)
+	z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[{"id":"name","path":[{"link":"animal"},{"field":"name"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"name"}],"pivot":{"path":[{"field":"note"}],"cell":"c"}}`, Options{}, nil)
+	z.options(t, "ann", animalsParam, OptionsRequest{Param: "animals"})
+	kinds := map[string]bool{}
+	for _, st := range *seen {
+		switch {
+		case strings.Contains(st.sql, "__parent"):
+			kinds["nest"] = true
+		case strings.Contains(st.sql, "COUNT(*) OVER () AS __n"):
+			kinds["pivot"] = true
+		case strings.Contains(st.sql, "GROUP BY o.g"):
+			kinds["option groups"] = true
+		case strings.Contains(st.sql, "o.l <> ''"):
+			kinds["options"] = true
+		case strings.Contains(st.sql, "__level"):
+			kinds["group"] = true
+		default:
+			kinds["detail"] = true
+		}
+		raw, args := rawStatement(t, st.sql, st.params)
 		if n := reprepares(t, db, "EXPLAIN "+raw, args); n != 0 {
-			t.Errorf("%s: EXPLAIN of the group statement: %d reprepares, want 0", name, n)
+			t.Errorf("EXPLAIN %d reprepares, want 0:\n%.300s", n, st.sql)
 		}
 		if n := reprepares(t, db, raw, args); n != 0 {
-			t.Errorf("%s: group statement: %d reprepares, want 0", name, n)
+			t.Errorf("%d reprepares, want 0:\n%.300s", n, st.sql)
 		}
+	}
+	for _, k := range []string{"group", "detail", "nest", "pivot", "options", "option groups"} {
+		if !kinds[k] {
+			t.Errorf("no %s statement was read (%v)", k, kinds)
+		}
+	}
+}
+
+// A PocketBase list rule with ~ compiles to LIKE with a bound pattern, and
+// SQLite plans a LIKE by its pattern's value (isLikeOrGlob sets the
+// statement's varmask), so a report statement that holds that rule's CTE is
+// prepared again at its first step. The SQL is PocketBase's; this pins the
+// one known exception to TestEveryReportStatementIsPreparedOnce.
+func TestAPocketBaseRuleLikePreparesTheStatementAgain(t *testing.T) {
+	z := newZoo(t)
+	sites, err := z.app.FindCollectionByNameOrId("zoo_sites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A text pattern binds as a parameter (a rule that reads the reader's own
+	// field joins it instead, and binds nothing SQLite plans by).
+	sites.ListRule = rule(`name ~ "or"`)
+	z.save(t, sites)
+	sql, params, err := ruleSelect(z.app, sites, listRequestInfo(z.recs["ann"], nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sql, "LIKE") {
+		t.Fatalf("the rule compiled without LIKE: %s", sql)
+	}
+	raw, args := rawStatement(t, "SELECT * FROM ("+sql+")", params)
+	if n := reprepares(t, readPool(t, z), raw, args); n != 1 {
+		t.Fatalf("a rule LIKE: %d reprepares, want 1\n%s\n%v", n, raw, args)
 	}
 }
