@@ -72,6 +72,16 @@ function checkActionParams(
                 `${pkgSlug}: action '${action.id}' param '${p.key}' declares relationTarget but is type '${p.type}'`
             )
         }
+        if (p.type !== 'relation' && (p.relationMatch || p.relationCreate)) {
+            errors.push(
+                `${pkgSlug}: action '${action.id}' param '${p.key}' declares relationMatch or relationCreate but is type '${p.type}'`
+            )
+        }
+        if (p.relationCreate && !p.relationCreate.nameField) {
+            errors.push(
+                `${pkgSlug}: action '${action.id}' param '${p.key}' relationCreate needs a nameField`
+            )
+        }
     }
     return paramKeys
 }

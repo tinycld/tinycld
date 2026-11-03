@@ -17,12 +17,14 @@ import (
 )
 
 type catalogField struct {
-	Key            string   `json:"key"`
-	Label          string   `json:"label"`
-	Type           string   `json:"type"` // text|number|boolean|date|select|relation
-	Options        []string `json:"options,omitempty"`
-	RelationTarget string   `json:"relationTarget,omitempty"` // collection NAME
-	DisplayField   string   `json:"displayField,omitempty"`   // for relation targets
+	Key            string          `json:"key"`
+	Label          string          `json:"label"`
+	Type           string          `json:"type"` // text|number|boolean|date|select|relation
+	Options        []string        `json:"options,omitempty"`
+	RelationTarget string          `json:"relationTarget,omitempty"` // collection NAME
+	DisplayField   string          `json:"displayField,omitempty"`   // for relation targets
+	RelationMatch  map[string]any  `json:"relationMatch,omitempty"`
+	RelationCreate *RelationCreate `json:"relationCreate,omitempty"`
 }
 
 type catalogTrigger struct {
@@ -251,6 +253,8 @@ func resolveParam(app core.App, col *core.Collection, p ParamDef) catalogParam {
 			if target, err := app.FindCachedCollectionByNameOrId(p.RelationTarget); err == nil {
 				out.Field.RelationTarget = target.Name
 				out.Field.DisplayField = displayFieldFor(target)
+				out.Field.RelationMatch = p.RelationMatch
+				out.Field.RelationCreate = p.RelationCreate
 			}
 		}
 	}

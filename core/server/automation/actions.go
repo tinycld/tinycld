@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/spf13/cast"
 
 	"tinycld.org/core/pkgaccess"
 )
@@ -156,6 +157,9 @@ func authorizeRelationParams(app core.App, ref string, action ActionDef, req Act
 		if err != nil {
 			return fmt.Errorf("relation param %q: no %s record %q", p.Key, target, id)
 		}
+		if !recordMatches(rec, p.RelationMatch) {
+			return fmt.Errorf("relation param %q: the picked record is not one this action can use", p.Key)
+		}
 		if owner == nil {
 			owner, err = app.FindRecordById("users", req.OwnerID)
 			if err != nil {
@@ -178,6 +182,17 @@ func authorizeRelationParams(app core.App, ref string, action ActionDef, req Act
 		}
 	}
 	return nil
+}
+
+// recordMatches reports whether rec's fields equal match's values, compared
+// as text so a JSON number and a stored int agree.
+func recordMatches(rec *core.Record, match map[string]any) bool {
+	for k, v := range match {
+		if cast.ToString(rec.Get(k)) != cast.ToString(v) {
+			return false
+		}
+	}
+	return true
 }
 
 // authorizeTriggerRecordWrite gates a record-op that mutates or deletes the

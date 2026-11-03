@@ -318,3 +318,14 @@ func TestSyncCatalogReconciles(t *testing.T) {
 		t.Fatalf("expected only core:manual to remain, got %d rows: %+v", len(rows), rows)
 	}
 }
+
+func TestCatalogCarriesRelationMatchAndCreate(t *testing.T) {
+	app, _, _ := engineApp(t)
+	p := resolveParam(app, nil, ParamDef{Key: "ticket", Type: "relation", RelationTarget: "tickets",
+		RelationMatch:  map[string]any{"status": "open"},
+		RelationCreate: &RelationCreate{Label: "New ticket", NameField: "title", OwnerField: "user", Values: map[string]any{"status": "open"}},
+	})
+	if p.Field.RelationMatch["status"] != "open" || p.Field.RelationCreate == nil || p.Field.RelationCreate.NameField != "title" {
+		t.Fatalf("catalog field lost the relation options: %+v", p.Field)
+	}
+}
