@@ -1142,7 +1142,9 @@ reports.RegisterSource(reports.Source{
   the fiscal presets, `fiscalYear` and `fiscalPeriod`.
 - `Heading` returns the name a report on this base source prints above its
   title. The result carries it as `heading` (trimmed); nil leaves it empty,
-  and the shell prints the organization's name.
+  and the shell prints the organization's name. Every reader of the report
+  sees it: `Heading` runs with the app, not under the reader's rules, so it
+  must return no data that some readers may not see.
 - `Watch` names the collections that `Heading`, `FiscalStartMonth` and
   `Currency` read. A run that reads this source also subscribes to them, so a
   change there runs an open report again. The start check refuses a watched
@@ -1157,7 +1159,8 @@ reports.RegisterSource(reports.Source{
 - A group whose column is a relation value is a record group. Its row shows
   the record's label: by default the target's first text field, else its
   first other field that is not a relation or `id`, else the source's own
-  name. Set `labelField` or a `groups[].label` formula to show another field.
+  name. Set the column's `labelField` or a `groups[].label` formula to show
+  another field.
 
 When the server starts, core checks every source against the database:
 
@@ -1317,7 +1320,9 @@ reports.RegisterShipped(reports.Shipped{
   and add `report_shares` rows for each new row with the package's
   `shipped_key` (the `app.Save` in `ReconcileShipped` fires this hook), and
   reconcile again when the server starts, after `ReconcileShipped`, to cover
-  reports that already exist. Core has no share API for this.
+  reports that already exist. Both run for one report, so the share code must
+  be idempotent: add only the shares that are missing. Core has no share API
+  for this.
 - A shipped report cannot be deleted while the package ships it. The
   server answers "This report ships with a package. An admin who owns or
   edits it can unpublish it instead." Only an admin with update access (the

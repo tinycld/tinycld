@@ -26,7 +26,8 @@ device.
    - **Group and sort**: add group levels, each with or without subtotals, and the
      order of the rows.
    - **Pivot**: spread a column with a total across one column per value, such as
-     one column per month.
+     one column per month, or one column per linked record, such as one column per
+     team. Under **Show as**, choose the record's field that names its columns.
    - **Add formula**: build a calculated column from parts picked from menus.
    - **Layout**: for statements, show each value of the first group level as a
      section, and add computed rows such as "Income less expenses".
@@ -57,11 +58,11 @@ To read one value from another kind of record, add a formula column and pick **L
 
 ## Opened rows
 
-When you open a group, its rows are labelled by the first column. To label them another way, turn on **Label opened rows with a formula** in **Columns**. A pivot report has no opened rows, so it does not show this choice.
+When you open a group, its rows are labelled by the first column. To label them another way, turn on **Label opened rows with a formula** in **Columns**. The formula's label takes the first column's place, so opened rows do not show that column's value. A pivot report has no opened rows, so it does not show this choice.
 
 ## Filters that list records
 
-A condition on a linked record lets you pick records by name. Turn on **Ask when the report runs**: the reader picks records from a list, can type in **Search** to narrow it, and can pick a whole group at once with **All** and the group's name.
+A condition on a linked record lets you pick records by name. Turn on **Ask when the report runs**: the reader picks records from a list and can type in **Search** to narrow it. To list the records in groups, choose a field under **Group the list by** (for example a team's region). The reader can then pick a whole group at once with **All** and the group's name.
 
 ## Fold groups
 
