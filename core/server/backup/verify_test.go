@@ -30,13 +30,20 @@ func TestVerifyWithoutARestoreRow(t *testing.T) {
 	}
 }
 
-func TestVerifyComparesTheRestoredManifest(t *testing.T) {
+// Verify runs after the restored app has booted, when migrations, package boot
+// hooks and scheduled jobs may already have added or removed rows and files. A
+// count that differs from the manifest is therefore reported but is not a
+// failure: the exact check runs on the staged copy, before any of that code
+// runs (arm.CheckCounts), and the transports checksum every byte.
+func TestVerifyReportsCountDifferencesWithoutFailing(t *testing.T) {
 	app := newTestApp(t)
 	makeUser(t, app, "owner@example.com", "owner")
 
 	row := newRow(app, KindRestore, "", "")
 	row.Set("status", "succeeded")
-	row.Set("manifest", format.Manifest{Counts: format.Counts{Collections: map[string]int{"users": 5}, Files: 9}})
+	// users: fewer live rows than the manifest; files: fewer live files.
+	// pkg_registry: more live rows than the manifest.
+	row.Set("manifest", format.Manifest{Counts: format.Counts{Collections: map[string]int{"users": 5, "pkg_registry": 0}, Files: 9}})
 	if err := app.Save(row); err != nil {
 		t.Fatal(err)
 	}
@@ -48,8 +55,8 @@ func TestVerifyComparesTheRestoredManifest(t *testing.T) {
 	if !rep.IntegrityOK {
 		t.Fatal("the live database failed its integrity check")
 	}
-	if rep.OK {
-		t.Fatalf("a mismatched count must not report OK: %+v", rep)
+	if !rep.OK {
+		t.Fatalf("a count difference after boot must not fail the verify: %+v", rep)
 	}
 	got, ok := rep.Collections["users"]
 	if !ok {
@@ -88,20 +95,14 @@ func TestVerifyAgreesWithTheRealCounts(t *testing.T) {
 	if !rep.OK {
 		t.Fatalf("report %+v", rep)
 	}
-	// The ledger is REPORTED but bounded, not omitted. Omitting it would hide a
-	// shortfall in it; the bound is what lets it be over the manifest (the row
-	// the finalize just wrote) without being allowed to be under.
-	got, ok := rep.Collections[collection]
-	if !ok {
-		t.Fatalf("the ledger is missing from the report; a bounded collection is still reported: %+v", rep.Collections)
-	}
-	if got[1] < got[0] {
-		t.Fatalf("ledger = %v; the live count must never be BELOW the manifest's", got)
+	if _, ok := rep.Collections[collection]; !ok {
+		t.Fatalf("the ledger is missing from the report: %+v", rep.Collections)
 	}
 }
 
-// An unknown collection cannot be counted. It must show as a mismatch rather
-// than fail the whole report, so the operator sees which one is missing.
+// An unknown collection cannot be counted. It shows as -1 so the operator sees
+// which one is missing. It is not a failure: a migration that ran at boot can
+// drop a collection.
 func TestVerifyReportsAMissingCollection(t *testing.T) {
 	app := newTestApp(t)
 	row := newRow(app, KindRestore, "", "")
@@ -114,8 +115,8 @@ func TestVerifyReportsAMissingCollection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.OK {
-		t.Fatal("a collection the restored data does not have must not report OK")
+	if !rep.OK {
+		t.Fatalf("an uncountable collection after boot must not fail the verify: %+v", rep)
 	}
 	if rep.Collections["gone"] != [2]int{2, -1} {
 		t.Fatalf("gone %v, want [2 -1]", rep.Collections["gone"])
@@ -264,12 +265,8 @@ func TestFinalizeRestoreRecordsTheRestoredArchive(t *testing.T) {
 	if rep.Collections["users"][0] != 4 {
 		t.Fatalf("verify %+v", rep)
 	}
-	// This fixture's manifest counts only "users", so the collections the finalize
-	// wrote into are not in it and are not reported — the loop reports what the
-	// MANIFEST counted, nothing more. That they are above their own backup-time
-	// counts, and bounded rather than skipped, is asserted where a manifest
-	// actually carries them: TestVerifyReportsOKAfterAFinalizedRestore and
-	// TestVerifyReportsAShortfallInASelfWrittenCollection.
+	// This fixture's manifest counts only "users", so the loop reports only
+	// "users": it reports what the MANIFEST counted, nothing more.
 	if _, ok := rep.Collections["users"]; !ok {
 		t.Errorf("users is missing from the report, so nothing was compared at all: %+v", rep.Collections)
 	}
@@ -315,8 +312,8 @@ func TestVerifyReportsOKAfterAFinalizedRestore(t *testing.T) {
 	}
 
 	// The finalize really did write into all three, or this test would pass for
-	// the wrong reason — on a build where nothing is written, an exclusion is
-	// untested.
+	// the wrong reason: on a build where nothing is written, the rows a restore
+	// adds after the manifest are untested.
 	for _, q := range []struct{ collection, filter string }{
 		{collection, "kind = 'restore' && status = 'succeeded'"},
 		{"notifications", "type = 'core.restore.succeeded'"},
@@ -327,7 +324,7 @@ func TestVerifyReportsOKAfterAFinalizedRestore(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(rows) == 0 {
-			t.Fatalf("the finalize wrote no %s row, so this test does not exercise the exclusion", q.collection)
+			t.Fatalf("the finalize wrote no %s row, so this test does not exercise the rows it adds", q.collection)
 		}
 	}
 
@@ -585,104 +582,6 @@ func TestFinalizeRestoreReportsARollbackOnlyOnce(t *testing.T) {
 	}
 	if len(rows) != 1 {
 		t.Fatalf("failed restore rows %d, want 1", len(rows))
-	}
-}
-
-// A collection the restore writes into is held to a LOWER BOUND, not skipped.
-//
-// The bound is what keeps real loss visible. Those collections are always at
-// least one row ahead of the manifest through the restore's own doing, so equality
-// is unachievable — but rows can still be MISSING from them, and a short audit log
-// or notification history is loss on exactly the collections an operator would
-// later go to for evidence of what happened. Skipping them reported that as fine.
-func TestVerifyBoundsTheCollectionsARestoreWritesInto(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		collection string
-		want, live int
-		ok         bool
-	}{
-		// Ahead of the manifest: the restore's own rows. Fine.
-		{"ledger ahead", collection, 3, 4, true},
-		{"notifications ahead", "notifications", 2, 5, true},
-		{"audit ahead", "audit_logs", 1, 2, true},
-		// Exactly equal is also within the bound.
-		{"audit equal", "audit_logs", 4, 4, true},
-		// SHORT of the manifest: rows that did not come across. Not fine — this
-		// is the case a skip reported as healthy.
-		{"audit short", "audit_logs", 4, 3, false},
-		{"notifications short", "notifications", 2, 0, false},
-		{"ledger short", collection, 3, 1, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := countAgrees(tc.collection, tc.want, tc.live); got != tc.ok {
-				t.Fatalf("countAgrees(%q, want=%d, live=%d) = %v, want %v",
-					tc.collection, tc.want, tc.live, got, tc.ok)
-			}
-		})
-	}
-
-	// An ordinary collection is still equality in both directions: the restore
-	// replaced the whole database, so a row either way is data that disagrees.
-	if countAgrees("users", 4, 5) {
-		t.Error("an ordinary collection ABOVE the manifest must not pass; the restore replaced the whole database")
-	}
-	if countAgrees("users", 4, 3) {
-		t.Error("an ordinary collection below the manifest must not pass")
-	}
-
-	// -1 is the "could not be counted" marker and must fail every test,
-	// including the bound: unreadable is a stronger signal than wrong, not a
-	// weaker one. Without this, an uncountable self-written collection would
-	// pass any manifest count of 0.
-	for _, name := range []string{"users", "audit_logs", collection} {
-		if countAgrees(name, 0, -1) {
-			t.Errorf("an uncountable %s passed; -1 means unreadable, which is worse than a wrong number", name)
-		}
-	}
-}
-
-// The bound has to hold end to end, not just in the helper: a real finalized
-// restore whose audit log came back SHORT must not report ok.
-func TestVerifyReportsAShortfallInASelfWrittenCollection(t *testing.T) {
-	app := newTestApp(t)
-	makeUser(t, app, "owner@example.com", "owner")
-
-	// A manifest claiming more audit rows than the live data will ever hold. The
-	// finalize adds one of its own, so the live count lands well under 50 — which
-	// is precisely the shortfall the bound exists to catch.
-	manifest := liveManifest(t, app, KindManual)
-	manifest.Counts.Collections["audit_logs"] = 50
-	manifest.Counts.Files = 1
-
-	raw, err := json.Marshal(armed{ID: "r1", Pending: pendingDir(app, "r1"), Manifest: manifest})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(swappedPath(app)), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(swappedPath(app), raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	setRestoring(app, true)
-	if err := FinalizeRestore(app); err != nil {
-		t.Fatal(err)
-	}
-
-	rep, err := Verify(app)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rep.OK {
-		t.Fatalf("a restore that lost audit rows must not report OK: %+v", rep)
-	}
-	got, ok := rep.Collections["audit_logs"]
-	if !ok {
-		t.Fatalf("audit_logs is missing from the report; a bounded collection must still be REPORTED: %+v", rep.Collections)
-	}
-	if got[0] != 50 || got[1] >= 50 {
-		t.Fatalf("audit_logs = %v, want [50, <50] — the shortfall is the finding", got)
 	}
 }
 

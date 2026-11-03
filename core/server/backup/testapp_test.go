@@ -100,6 +100,11 @@ func newTestApp(t *testing.T) *tests.TestApp {
 	)
 	mustCreate(audit)
 
+	// A notification also sends a web push, which reads this collection.
+	pushSubs := core.NewBaseCollection("push_subscriptions")
+	pushSubs.Fields.Add(&core.RelationField{Name: "user", CollectionId: users.Id, MaxSelect: 1})
+	mustCreate(pushSubs)
+
 	// A file in local storage so the walk has something to copy.
 	storageDir := filepath.Join(app.DataDir(), "storage", "col1", "rec1")
 	if err := os.MkdirAll(storageDir, 0o755); err != nil {
