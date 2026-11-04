@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,7 @@ type putState struct {
 
 type Repository struct {
 	cfg     Config
+	server  string // host:port, as the diagnostics name it
 	client  *gopbs.Client
 	current atomic.Pointer[putState]
 }
@@ -65,9 +67,14 @@ func Open(raw json.RawMessage) (repo.Repository, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Repository{cfg: cfg}
+	u, err := url.Parse(cfg.baseURL())
+	if err != nil {
+		return nil, err
+	}
+	r := &Repository{cfg: cfg, server: u.Host}
 	client, err := gopbs.NewClient(gopbs.Config{
 		BaseURL:     cfg.baseURL(),
+		Dial:        dial,
 		Auth:        gopbs.TokenAuth{AuthID: cfg.AuthID, Secret: cfg.Secret},
 		Fingerprint: cfg.Fingerprint,
 		Datastore:   cfg.Datastore,
@@ -126,6 +133,8 @@ func (r *Repository) parseRef(ref repo.Ref) (gopbs.SnapshotRef, error) {
 }
 
 func (r *Repository) Put(ctx context.Context, s *snapshot.Snapshot, progress func(int64)) (res repo.PutResult, err error) {
+	ctx, end := r.observe(ctx, "backup")
+	defer func() { end(err) }()
 	r.current.Store(&putState{progress: progress})
 	defer r.current.Store(nil)
 
@@ -246,6 +255,8 @@ func (r *Repository) reader(ctx context.Context, ref repo.Ref) (*gopbs.ReaderSes
 // the restore that called them would hold the interlock, and from phase 4 on
 // keep every request behind the maintenance 503.
 func (r *Repository) Manifest(ctx context.Context, ref repo.Ref) (m format.Manifest, err error) {
+	ctx, end := r.observe(ctx, "manifest")
+	defer func() { end(err) }()
 	ctx, watchdog := format.Watch(ctx)
 	defer watchdog.Stop()
 	defer func() { err = watchdog.Err(err) }()
@@ -270,6 +281,8 @@ func (r *Repository) Manifest(ctx context.Context, ref repo.Ref) (m format.Manif
 }
 
 func (r *Repository) Fetch(ctx context.Context, ref repo.Ref, dir string) (err error) {
+	ctx, end := r.observe(ctx, "fetch")
+	defer func() { end(err) }()
 	ctx, watchdog := format.Watch(ctx)
 	defer watchdog.Stop()
 	defer func() { err = watchdog.Err(err) }()
@@ -298,7 +311,9 @@ func (r *Repository) Fetch(ctx context.Context, ref repo.Ref, dir string) (err e
 	return arm.ExtractTar(watchdog.Reader(st), filepath.Join(dir, "storage"))
 }
 
-func (r *Repository) List(ctx context.Context) ([]repo.SnapshotInfo, error) {
+func (r *Repository) List(ctx context.Context) (_ []repo.SnapshotInfo, err error) {
+	ctx, end := r.observe(ctx, "list")
+	defer func() { end(err) }()
 	snaps, err := r.client.ListSnapshots(ctx, backupType, r.cfg.BackupID)
 	if err != nil {
 		return nil, err
