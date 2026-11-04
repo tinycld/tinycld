@@ -25,6 +25,11 @@ const EMPTY: Record<HubTab, string> = {
     published: 'No reports are published.',
 }
 
+function emptyMessage(hub: ReportsHubModel): string {
+    if (hub.view !== 'package') return EMPTY[hub.view]
+    return `There are no reports from ${hub.packageLabel} that you can open. Use New report to make one.`
+}
+
 function TabPill({
     item,
     isSelected,
@@ -50,7 +55,18 @@ function TabPill({
     )
 }
 
-function Tabs({ tab, onChange }: { tab: HubTab; onChange: (tab: HubTab) => void }) {
+// A package view lists every report of the package the reader can open, so it has
+// no tabs to choose between.
+function Tabs({
+    isVisible,
+    tab,
+    onChange,
+}: {
+    isVisible: boolean
+    tab: HubTab
+    onChange: (tab: HubTab) => void
+}) {
+    if (!isVisible) return null
     const pills = HUB_TABS.map(item => (
         <TabPill key={item.id} item={item} isSelected={item.id === tab} onChange={onChange} />
     ))
@@ -127,7 +143,7 @@ export function ReportsHubView({ hub, menuFor, banner }: ReportsHubViewProps) {
                 message="Could not load the kinds of report, so New report is not available"
                 action={retryCatalog}
             />
-            <Tabs tab={hub.tab} onChange={hub.setTab} />
+            <Tabs isVisible={hub.view !== 'package'} tab={hub.tab} onChange={hub.setTab} />
             <Loading isVisible={hub.state === 'loading'} />
             <MessageBody
                 isVisible={hub.state === 'error'}
@@ -135,7 +151,11 @@ export function ReportsHubView({ hub, menuFor, banner }: ReportsHubViewProps) {
                 message="Could not load reports"
                 action={retry}
             />
-            <MessageBody isVisible={isEmpty} testID="reports-hub-empty" message={EMPTY[hub.tab]} />
+            <MessageBody
+                isVisible={isEmpty}
+                testID="reports-hub-empty"
+                message={emptyMessage(hub)}
+            />
             <HubList
                 hub={hub}
                 isPhone={breakpoint === 'mobile'}
