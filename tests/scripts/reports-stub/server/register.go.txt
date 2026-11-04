@@ -71,10 +71,11 @@ func Register(_ core.App) error {
 	})
 	// An unpublished shipped report (E10) that uses the v2 parts: a record
 	// group with a label, a total of the rows shown, a sort formula, a detail
-	// label, a text-day filter and a choice from a source grouped by region.
+	// label, a text-day filter and a choice from a source grouped by region,
+	// whose group pick has its own text ("All North teams").
 	// The e2e owner shares it to show who sees it (reports-source-params.spec.ts).
 	reports.RegisterShipped(reports.Shipped{
-		Key: "salesstub.team_totals", Title: "Stub team totals", Revision: 1, Unpublished: true,
+		Key: "salesstub.team_totals", Title: "Stub team totals", Revision: 2, Unpublished: true,
 		Description: "Each team's sales booked on or before a day.",
 		Spec: json.RawMessage(`{
 			"version": 2,
@@ -82,7 +83,7 @@ func Register(_ core.App) error {
 			"params": [
 				{"id": "asOf", "type": "asOf", "label": "As of", "default": {"preset": "today"}},
 				{"id": "teams", "type": "choice", "label": "Teams", "multiple": true,
-				 "optionsFrom": {"source": "salesstub.teams", "value": [{"field": "id"}], "label": [{"field": "name"}], "group": [{"field": "region"}]}}
+				 "optionsFrom": {"source": "salesstub.teams", "value": [{"field": "id"}], "label": [{"field": "name"}], "group": [{"field": "region"}], "groupLabel": "All {group} teams"}}
 			],
 			"columns": [
 				{"id": "team", "label": "Team", "path": [{"link": "team"}]},
