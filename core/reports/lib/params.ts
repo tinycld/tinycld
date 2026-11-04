@@ -1,6 +1,6 @@
 import { dayWords, isIsoDay, rangeChipText, rangeWords, shortDay } from './dates'
 import { formatMoney } from './money'
-import type { ParamDef } from './spec'
+import { GROUP_LABEL_TOKEN, type ParamDef } from './spec'
 import type { ResolvedParam } from './types'
 
 // A report's params as the shell edits them: the period chip and the filter chips.
@@ -304,6 +304,18 @@ export const groupLabelKey = (group: string) => `group:${group}`
 /** A chip names up to this many choices; more are counted ("3 selected"). */
 export const NAMED_CHOICES = 2
 
+const DEFAULT_GROUP_PICK = `All ${GROUP_LABEL_TOKEN}`
+
+/**
+ * The text of a whole-group pick, on the picker and the chip: the param's
+ * `optionsFrom.groupLabel` with the group's label in place of each `{group}`, or
+ * "All <group>". split/join, not replace: a label is text, never a pattern.
+ */
+export function groupPickText(def: ParamDef, groupLabel: string): string {
+    const text = def.optionsFrom?.groupLabel || DEFAULT_GROUP_PICK
+    return text.split(GROUP_LABEL_TOKEN).join(groupLabel)
+}
+
 /** How many choices a choice value holds: its values and its whole groups. */
 export function choiceCount(value: { values: readonly string[]; groups?: readonly string[] }) {
     return value.values.length + (value.groups?.length ?? 0)
@@ -320,7 +332,7 @@ function choiceLabels(
     )
     const groups = (value.groups ?? []).map(group => {
         const label = labels?.get(groupLabelKey(group))
-        return label === undefined ? undefined : `All ${label}`
+        return label === undefined ? undefined : groupPickText(def, label)
     })
     const all = [...named, ...groups]
     // A record of a source is never shown by its id: until its label is read (or

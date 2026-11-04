@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -89,6 +90,9 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 			if (len(d.Options) == 0) == (d.OptionsFrom == nil) {
 				return invalid(at+".options", "a choice param lists its options, or names the source they come from")
 			}
+			if err := checkGroupLabel(d.OptionsFrom, at+".optionsFrom.groupLabel"); err != nil {
+				return err
+			}
 		default:
 			return invalid(at+".type", fmt.Sprintf("unknown param type %q", d.Type))
 		}
@@ -98,6 +102,22 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// checkGroupLabel refuses a group pick text that has no group to name, or
+// that would show the same text for every group.
+func checkGroupLabel(of *OptionsFrom, at string) *SpecError {
+	switch {
+	case of == nil || of.GroupLabel == "":
+		return nil
+	case len(of.Group) == 0:
+		return invalid(at, "a group pick's text needs optionsFrom.group")
+	case !strings.Contains(of.GroupLabel, GroupLabelToken):
+		return invalid(at, "a group pick's text names the group with "+GroupLabelToken)
+	case len(of.GroupLabel) > maxLabel:
+		return invalid(at, fmt.Sprintf("a group pick's text has at most %d characters", maxLabel))
 	}
 	return nil
 }

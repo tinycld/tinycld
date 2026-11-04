@@ -64,15 +64,20 @@ const optionSchema = z.strictObject({ value: z.string(), label: z.string() })
 /**
  * A choice param's options read from a source under the reader's list rules: `value`
  * is what the param holds, `label` what the picker shows, `group` how it groups them,
- * `where` which rows count.
+ * `groupLabel` the text of a whole-group pick (`GROUP_LABEL_TOKEN` stands for the
+ * group's label; absent or empty: "All {group}"), `where` which rows count.
  */
 export const optionsFromSchema = z.strictObject({
     source: z.string(),
     value: z.array(specHopSchema),
     label: z.array(specHopSchema),
     group: z.array(specHopSchema).optional(),
+    groupLabel: z.string().optional(),
     where: specNodeSchema.optional(),
 })
+
+/** Stands for the group's label in `optionsFrom.groupLabel` (spec.go GroupLabelToken). */
+export const GROUP_LABEL_TOKEN = '{group}'
 export type OptionsFrom = z.infer<typeof optionsFromSchema>
 
 export const paramDefSchema = z.strictObject({

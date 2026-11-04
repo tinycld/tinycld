@@ -199,6 +199,15 @@ func TestCheckParamDefsRefusesBadDeclarations(t *testing.T) {
 		"choice options": {[]ParamDef{{ID: "a", Type: ParamChoice}}, "params.0.options", "lists its options"},
 		"text options":   {[]ParamDef{{ID: "a", Type: ParamText, Options: []Option{{Value: "x", Label: "X"}}}}, "params.0", "only a choice param"},
 		"bad default":    {[]ParamDef{{ID: "a", Type: ParamDateRange, Default: json.RawMessage(`{"preset":"someday"}`)}}, "params.0.default", "the preset is one of"},
+		"group label without group": {
+			[]ParamDef{groupedTeams("All {group} teams", nil)}, "params.0.optionsFrom.groupLabel", "needs optionsFrom.group",
+		},
+		"group label without placeholder": {
+			[]ParamDef{groupedTeams("Every team", Path{{Field: "region"}})}, "params.0.optionsFrom.groupLabel", "{group}",
+		},
+		"long group label": {
+			[]ParamDef{groupedTeams("{group}"+strings.Repeat("x", maxLabel), Path{{Field: "region"}})}, "params.0.optionsFrom.groupLabel", "at most 200",
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -208,4 +217,14 @@ func TestCheckParamDefsRefusesBadDeclarations(t *testing.T) {
 	if err := checkParamDefs(zooParams); err != nil {
 		t.Fatalf("zoo params: %v", err)
 	}
+	if err := checkParamDefs([]ParamDef{groupedTeams("All {group} teams", Path{{Field: "region"}})}); err != nil {
+		t.Fatalf("a group label with its group: %v", err)
+	}
+}
+
+// groupedTeams is a multiple choice of records whose group pick reads label.
+func groupedTeams(label string, group Path) ParamDef {
+	return ParamDef{ID: "teams", Type: ParamChoice, Multiple: true, OptionsFrom: &OptionsFrom{
+		Source: "zoo.teams", Value: Path{{Field: "id"}}, Label: Path{{Field: "name"}}, Group: group, GroupLabel: label,
+	}}
 }

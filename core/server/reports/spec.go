@@ -215,13 +215,20 @@ type ParamDef struct {
 // OptionsFrom reads a choice param's options from a source, under the
 // reader's list rules: Value is what the param holds, Label what the picker
 // shows, Group (optional) how it groups them, Where which rows count.
+// GroupLabel (optional, with Group) is the text of a whole-group pick, with
+// GroupLabelToken where the group's label goes; empty means "All {group}".
+// The client writes the text; the engine only checks it.
 type OptionsFrom struct {
-	Source string `json:"source"`
-	Value  Path   `json:"value"`
-	Label  Path   `json:"label"`
-	Group  Path   `json:"group,omitempty"`
-	Where  *Node  `json:"where,omitempty"`
+	Source     string `json:"source"`
+	Value      Path   `json:"value"`
+	Label      Path   `json:"label"`
+	Group      Path   `json:"group,omitempty"`
+	GroupLabel string `json:"groupLabel,omitempty"`
+	Where      *Node  `json:"where,omitempty"`
 }
+
+// GroupLabelToken stands for the group's label in OptionsFrom.GroupLabel.
+const GroupLabelToken = "{group}"
 
 // LoadInfo says what Load changed: the version it upgraded from (0 when it
 // did not upgrade) and every alias it resolved.
