@@ -10,6 +10,11 @@ tabs: **Mine** (reports you own), **Shared with me**, and **Published** (reports
 admin published for everyone). **Last run** shows when you last ran a report on this
 device.
 
+A package can open the hub for its own reports (for example from its sidebar). The
+hub then shows "Showing reports from" and the package's name, and one list of every
+report of that package you can open: your own, the ones shared with you, and the
+published ones. To see all reports in the tabs again, select **Show all reports**.
+
 ## Make a report
 
 1. Select **New report** and choose what to report on.
@@ -62,7 +67,7 @@ When you open a group, its rows are labelled by the first column. To label them 
 
 ## Filters that list records
 
-A condition on a linked record lets you pick records by name. Turn on **Ask when the report runs**: the reader picks records from a list and can type in **Search** to narrow it. To list the records in groups, choose a field under **Group the list by** (for example a team's region). The reader can then pick a whole group at once with **All** and the group's name.
+A condition on a linked record lets you pick records by name. Turn on **Ask when the report runs**: the reader picks records from a list and can type in **Search** to narrow it. To list the records in groups, choose a field under **Group the list by** (for example a team's region). The reader can then pick a whole group at once with **All** and the group's name. To use other words for that choice, type them in **Whole group text**, with `{group}` where the group's name goes. For example, `All {group} teams` shows "All North teams".
 
 ## Fold groups
 

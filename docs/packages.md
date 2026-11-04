@@ -1264,7 +1264,7 @@ version.
 | `groups[].open` | The level is open when the report opens and no expansion state is sent. |
 | `sort[]` | `{ col, dir }` or `{ formula, dir }`. A formula sort key that reads a row's fields sorts detail rows only; group levels skip it. |
 | `detail.label` | A formula that labels each detail row. Default: the first column. |
-| `params[].optionsFrom` | `{ source, value, label, group?, where? }`: a choice param reads its options from a source, under the reader's rules. |
+| `params[].optionsFrom` | `{ source, value, label, group?, groupLabel?, where? }`: a choice param reads its options from a source, under the reader's rules. `groupLabel` (with `group`) is the text of a whole-group pick, with `{group}` where the group's label goes (`"All {group} accounts"`); absent: `All {group}`. |
 | formula leaf `{ record, path }` | Reads a field of a record group's record. |
 | operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: one value (`min` by default, or `max`) from the rows of another source that the reader may see. |
 | `pivot.labelField` | The field of a link's record that a pivot over that link names its columns by. |
@@ -1367,8 +1367,10 @@ report sources (for a sidebar "Reports" entry), link to it with your slug:
 router.push(orgHref('reports', { package: '<slug>' }))
 ```
 
-The hub then lists the saved reports and offers the sources whose key starts with
-`<slug>.` — so give every source a key that starts with your slug. The builder reads
+The hub then lists, in one list with no tabs, every saved report the reader can
+open whose source key starts with `<slug>.` (their own, shared with them, and
+published), and offers only those sources — so give every source a key that starts
+with your slug. The builder reads
 the sources from `GET /api/reports/sources` (signed-in users, not API tokens): each
 source's fields with their types and aggregates, and its links. It shows no record
 data.
