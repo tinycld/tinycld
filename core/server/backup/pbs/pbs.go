@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,7 @@ type putState struct {
 
 type Repository struct {
 	cfg     Config
+	server  string // host:port, as the diagnostics name it
 	client  *gopbs.Client
 	current atomic.Pointer[putState]
 }
@@ -65,37 +67,57 @@ func Open(raw json.RawMessage) (repo.Repository, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Repository{cfg: cfg}
-	client, err := gopbs.NewClient(gopbs.Config{
-		BaseURL:     cfg.baseURL(),
-		Auth:        gopbs.TokenAuth{AuthID: cfg.AuthID, Secret: cfg.Secret},
-		Fingerprint: cfg.Fingerprint,
-		Datastore:   cfg.Datastore,
-		Namespace:   cfg.Namespace,
-		Crypt:       crypt,
-		// Progress reports the logical bytes indexed so far: the sum of
-		// UploadStats.Size across the two upload streams (data.db and the
-		// storage tar), not bytes actually sent over the wire — a
-		// deduplicated chunk still advances this total.
-		OnUploadProgress: func(name string, st gopbs.UploadStats, _ bool) {
-			st2 := r.current.Load()
-			if st2 == nil {
-				return
-			}
-			st2.sizes.Store(name, st.Size)
-			if st2.progress == nil {
-				return
-			}
-			var total uint64
-			st2.sizes.Range(func(_, v any) bool { total += v.(uint64); return true })
-			st2.progress(int64(total))
-		},
-	})
+	u, err := url.Parse(cfg.baseURL())
+	if err != nil {
+		return nil, err
+	}
+	r := &Repository{cfg: cfg, server: u.Host}
+	client, err := gopbs.NewClient(clientConfig(cfg, crypt, r.onUploadProgress))
 	if err != nil {
 		return nil, err
 	}
 	r.client = client
 	return r, nil
+}
+
+// responseTimeout is how long the client waits for each answer. A datastore
+// on disks that spin down answers its first request after a quiet period only
+// once they are up; on production that took about 50 s (a USB bridge is reset
+// while the disks spin up), longer than gopbs's 30 s defaults, so the first
+// operation after idle always failed. A transfer that really stops is still
+// ended by the stall watchdog (format.StallDeadline).
+const responseTimeout = 2 * time.Minute
+
+func clientConfig(cfg Config, crypt *gopbs.CryptConfig, onProgress func(string, gopbs.UploadStats, bool)) gopbs.Config {
+	return gopbs.Config{
+		BaseURL:          cfg.baseURL(),
+		Dial:             dial,
+		ResponseTimeout:  responseTimeout,
+		Auth:             gopbs.TokenAuth{AuthID: cfg.AuthID, Secret: cfg.Secret},
+		Fingerprint:      cfg.Fingerprint,
+		Datastore:        cfg.Datastore,
+		Namespace:        cfg.Namespace,
+		Crypt:            crypt,
+		OnUploadProgress: onProgress,
+	}
+}
+
+// onUploadProgress reports the logical bytes indexed so far: the sum of
+// UploadStats.Size across the two upload streams (data.db and the storage
+// tar), not bytes actually sent over the wire — a deduplicated chunk still
+// advances this total.
+func (r *Repository) onUploadProgress(name string, st gopbs.UploadStats, _ bool) {
+	st2 := r.current.Load()
+	if st2 == nil {
+		return
+	}
+	st2.sizes.Store(name, st.Size)
+	if st2.progress == nil {
+		return
+	}
+	var total uint64
+	st2.sizes.Range(func(_, v any) bool { total += v.(uint64); return true })
+	st2.progress(int64(total))
 }
 
 func (r *Repository) Kind() string { return Kind }
@@ -126,6 +148,8 @@ func (r *Repository) parseRef(ref repo.Ref) (gopbs.SnapshotRef, error) {
 }
 
 func (r *Repository) Put(ctx context.Context, s *snapshot.Snapshot, progress func(int64)) (res repo.PutResult, err error) {
+	ctx, end := r.observe(ctx, "backup")
+	defer func() { end(err) }()
 	r.current.Store(&putState{progress: progress})
 	defer r.current.Store(nil)
 
@@ -246,6 +270,8 @@ func (r *Repository) reader(ctx context.Context, ref repo.Ref) (*gopbs.ReaderSes
 // the restore that called them would hold the interlock, and from phase 4 on
 // keep every request behind the maintenance 503.
 func (r *Repository) Manifest(ctx context.Context, ref repo.Ref) (m format.Manifest, err error) {
+	ctx, end := r.observe(ctx, "manifest")
+	defer func() { end(err) }()
 	ctx, watchdog := format.Watch(ctx)
 	defer watchdog.Stop()
 	defer func() { err = watchdog.Err(err) }()
@@ -270,6 +296,8 @@ func (r *Repository) Manifest(ctx context.Context, ref repo.Ref) (m format.Manif
 }
 
 func (r *Repository) Fetch(ctx context.Context, ref repo.Ref, dir string) (err error) {
+	ctx, end := r.observe(ctx, "fetch")
+	defer func() { end(err) }()
 	ctx, watchdog := format.Watch(ctx)
 	defer watchdog.Stop()
 	defer func() { err = watchdog.Err(err) }()
@@ -298,7 +326,9 @@ func (r *Repository) Fetch(ctx context.Context, ref repo.Ref, dir string) (err e
 	return arm.ExtractTar(watchdog.Reader(st), filepath.Join(dir, "storage"))
 }
 
-func (r *Repository) List(ctx context.Context) ([]repo.SnapshotInfo, error) {
+func (r *Repository) List(ctx context.Context) (_ []repo.SnapshotInfo, err error) {
+	ctx, end := r.observe(ctx, "list")
+	defer func() { end(err) }()
 	snaps, err := r.client.ListSnapshots(ctx, backupType, r.cfg.BackupID)
 	if err != nil {
 		return nil, err

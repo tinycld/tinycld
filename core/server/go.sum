@@ -134,8 +134,8 @@ github.com/mrz1836/postmark v1.9.0 h1:7MDfX+Kyy+rkWs1bfKOnIj8cULxU/txfNaRaz0uA9o
 github.com/mrz1836/postmark v1.9.0/go.mod h1:FGjqkTsuJsTWt8TQqjdB+H7qa31u169LFupMOxCmGrc=
 github.com/nathanstitt/go-webdav v0.7.1-0.20261001184608-67abd707e045 h1:PU9PaivD1N79zBtjL4ot6C9G0m2EcXFOEuVnyxY4fVM=
 github.com/nathanstitt/go-webdav v0.7.1-0.20261001184608-67abd707e045/go.mod h1:/CletBm2Vo0CX6I20VQsoRkkX1CzzNCK1PNCqKW//iQ=
-github.com/nathanstitt/gopbs v1.0.1 h1:rGbTtegXNu5yoNRNaDviQ+YOF5icyp3a0kSVYEnxB7M=
-github.com/nathanstitt/gopbs v1.0.1/go.mod h1:8sLWqNW3jyE3t5otnzaqqP4hpI/swnYziMmoLl/7qtM=
+github.com/nathanstitt/gopbs v1.0.2 h1:St80S3xOLD1oefaXYSb2C8hr1tqiS1+1nAkanTE/5Hc=
+github.com/nathanstitt/gopbs v1.0.2/go.mod h1:8sLWqNW3jyE3t5otnzaqqP4hpI/swnYziMmoLl/7qtM=
 github.com/nathanstitt/omnidoc v1.1.2 h1:7so06UNN1XzuSrgL0ZKGqL39FFpjPYYxP2qTuub7JQU=
 github.com/nathanstitt/omnidoc v1.1.2/go.mod h1:CZWyEFemXEqhmv8aaq+Z/my91pUO0NpMrbi+GNyRJ5o=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
