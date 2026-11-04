@@ -259,3 +259,20 @@ func TestDiagnosticsLogAFinishedOperation(t *testing.T) {
 		t.Fatal("a finished operation logged a failure or ran a probe")
 	}
 }
+
+// The PBS datastore's disks spin down, and the first request after a quiet
+// period waits about 50 s for them. The client must wait longer than that
+// for every answer, or the first operation after idle always fails.
+func TestClientWaitsForASleepingDatastore(t *testing.T) {
+	cfg, err := ParseConfig(configFor(t, pbstest.NewServer(t), ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := clientConfig(cfg, nil, nil)
+	if c.ResponseTimeout < 90*time.Second {
+		t.Fatalf("ResponseTimeout %v: shorter than a disk spin-up with margin", c.ResponseTimeout)
+	}
+	if c.Dial == nil {
+		t.Fatal("the client does not dial through the diagnostics")
+	}
+}

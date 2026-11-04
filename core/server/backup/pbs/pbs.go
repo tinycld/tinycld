@@ -72,37 +72,52 @@ func Open(raw json.RawMessage) (repo.Repository, error) {
 		return nil, err
 	}
 	r := &Repository{cfg: cfg, server: u.Host}
-	client, err := gopbs.NewClient(gopbs.Config{
-		BaseURL:     cfg.baseURL(),
-		Dial:        dial,
-		Auth:        gopbs.TokenAuth{AuthID: cfg.AuthID, Secret: cfg.Secret},
-		Fingerprint: cfg.Fingerprint,
-		Datastore:   cfg.Datastore,
-		Namespace:   cfg.Namespace,
-		Crypt:       crypt,
-		// Progress reports the logical bytes indexed so far: the sum of
-		// UploadStats.Size across the two upload streams (data.db and the
-		// storage tar), not bytes actually sent over the wire — a
-		// deduplicated chunk still advances this total.
-		OnUploadProgress: func(name string, st gopbs.UploadStats, _ bool) {
-			st2 := r.current.Load()
-			if st2 == nil {
-				return
-			}
-			st2.sizes.Store(name, st.Size)
-			if st2.progress == nil {
-				return
-			}
-			var total uint64
-			st2.sizes.Range(func(_, v any) bool { total += v.(uint64); return true })
-			st2.progress(int64(total))
-		},
-	})
+	client, err := gopbs.NewClient(clientConfig(cfg, crypt, r.onUploadProgress))
 	if err != nil {
 		return nil, err
 	}
 	r.client = client
 	return r, nil
+}
+
+// responseTimeout is how long the client waits for each answer. A datastore
+// on disks that spin down answers its first request after a quiet period only
+// once they are up; on production that took about 50 s (a USB bridge is reset
+// while the disks spin up), longer than gopbs's 30 s defaults, so the first
+// operation after idle always failed. A transfer that really stops is still
+// ended by the stall watchdog (format.StallDeadline).
+const responseTimeout = 2 * time.Minute
+
+func clientConfig(cfg Config, crypt *gopbs.CryptConfig, onProgress func(string, gopbs.UploadStats, bool)) gopbs.Config {
+	return gopbs.Config{
+		BaseURL:          cfg.baseURL(),
+		Dial:             dial,
+		ResponseTimeout:  responseTimeout,
+		Auth:             gopbs.TokenAuth{AuthID: cfg.AuthID, Secret: cfg.Secret},
+		Fingerprint:      cfg.Fingerprint,
+		Datastore:        cfg.Datastore,
+		Namespace:        cfg.Namespace,
+		Crypt:            crypt,
+		OnUploadProgress: onProgress,
+	}
+}
+
+// onUploadProgress reports the logical bytes indexed so far: the sum of
+// UploadStats.Size across the two upload streams (data.db and the storage
+// tar), not bytes actually sent over the wire — a deduplicated chunk still
+// advances this total.
+func (r *Repository) onUploadProgress(name string, st gopbs.UploadStats, _ bool) {
+	st2 := r.current.Load()
+	if st2 == nil {
+		return
+	}
+	st2.sizes.Store(name, st.Size)
+	if st2.progress == nil {
+		return
+	}
+	var total uint64
+	st2.sizes.Range(func(_, v any) bool { total += v.(uint64); return true })
+	st2.progress(int64(total))
 }
 
 func (r *Repository) Kind() string { return Kind }

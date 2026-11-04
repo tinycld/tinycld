@@ -101,7 +101,7 @@ require (
 	modernc.org/memory v1.12.0 // indirect
 )
 
-replace github.com/osshield/gopbs => github.com/nathanstitt/gopbs v1.0.2-0.20261104020152-fd8b2d3f55be
+replace github.com/osshield/gopbs => github.com/nathanstitt/gopbs v1.0.2-0.20261104031036-74e3ffe79cbc
 
 // go-webdav's CalDAV PropPatch fails the whole request with 501, which macOS
 // Calendar reads as the collection not supporting PROPPATCH — it writes
