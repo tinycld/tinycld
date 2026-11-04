@@ -1,6 +1,7 @@
 import { FormulaPlacesPick } from '@tinycld/core/components/forms-builder/FormulaEditor'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
+import { TextInput } from '@tinycld/core/ui/form'
 import { DateField } from '@tinycld/core/ui/forms/fields/DateField'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
@@ -12,6 +13,7 @@ import {
     avgScaleFor,
     columnHint,
     describePath,
+    MAX_LABEL,
     MAX_PARAMS,
     nextColumnId,
     pathLabel,
@@ -32,7 +34,13 @@ import {
     PRESET_LABELS,
     presetsFor,
 } from '../../lib/params'
-import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec, type SpecHop } from '../../lib/spec'
+import {
+    CURRENT_SPEC_VERSION,
+    GROUP_LABEL_TOKEN,
+    type ParamDef,
+    type ReportSpec,
+    type SpecHop,
+} from '../../lib/spec'
 import type { CatalogSource } from '../../lib/types'
 import { useReportUIStore } from '../../stores/report-ui-store'
 import { SourcePicker } from '../ParamPickers'
@@ -405,6 +413,29 @@ function OptionsGroup({ ctx, item, path }: ValueProps) {
     )
 }
 
+// The text of a whole-group pick (D1), as "All {group} teams": a report names its
+// groups in its own words. Empty keeps "All <group>". The builder's schema checks
+// it (draft.ts paramIssues) and the field shows the refusal.
+function GroupPickField({ ctx, item, path }: ValueProps) {
+    const index = ctx.params.findIndex(p => p.id === item.param)
+    const isGrouped = (ctx.params[index]?.optionsFrom?.group?.length ?? 0) > 0
+    if (!isGrouped) return null
+    return (
+        <View className="basis-full">
+            <TextInput
+                name={`params.${index}.optionsFrom.groupLabel`}
+                control={ctx.builder.form.control}
+                label="Whole group text"
+                placeholder={`All ${GROUP_LABEL_TOKEN}`}
+                hint={`${GROUP_LABEL_TOKEN} is the group’s name`}
+                testID={`${itemTestId(ctx, path)}-group-label`}
+                maxLength={MAX_LABEL}
+                autoCorrect={false}
+            />
+        </View>
+    )
+}
+
 // "Ask when run" turns the value into a param the reader sets from a chip (R16); a
 // range of numbers or amounts asks both ends (F18). Yes/no cannot be asked. A
 // read-back condition that already asks stays switchable off even when its
@@ -447,6 +478,7 @@ export function AskToggle(props: ValueProps) {
             <Text className="text-sm text-foreground">Ask when the report runs</Text>
             <DefaultPreset {...props} />
             <OptionsGroup {...props} />
+            <GroupPickField {...props} />
         </View>
     )
 }

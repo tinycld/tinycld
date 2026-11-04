@@ -1103,3 +1103,63 @@ describe('a no-op save keeps what the spec says', () => {
         expect(specFromDraft(twelve, CATALOG).pivot?.maxColumns).toBe(12)
     })
 })
+
+// D1: a grouped param from a source can name its group pick, "{group}" standing for
+// the group's label.
+describe('the group pick text of a param from a source', () => {
+    const teamsParam = (groupLabel: string | undefined, grouped = true): ParamDef => ({
+        id: 'teams',
+        type: 'choice',
+        label: 'Teams',
+        optionsFrom: {
+            source: TEAMS_KEY,
+            value: [{ field: 'id' }],
+            label: [{ field: 'name' }],
+            ...(grouped ? { group: [{ field: 'region' }] } : {}),
+            ...(groupLabel === undefined ? {} : { groupLabel }),
+            where: { value: true },
+        },
+        multiple: true,
+    })
+    const specWith = (param: ParamDef): ReportSpec => ({
+        version: 2,
+        source: SALES_KEY,
+        params: [param],
+        columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
+        filter: { op: 'in', args: [{ path: [{ link: 'team' }] }, { param: 'teams' }] },
+    })
+    const issues = (param: ParamDef) => {
+        const draft = draftFromSpec(specWith(param), META, CATALOG)
+        const parsed = builderSchema(CATALOG).safeParse(draft)
+        return parsed.success
+            ? []
+            : parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`)
+    }
+
+    it('accepts a text that names the group, or none', () => {
+        expect(issues(teamsParam('All {group} teams'))).toEqual([])
+        expect(issues(teamsParam(''))).toEqual([])
+        expect(issues(teamsParam(undefined))).toEqual([])
+    })
+
+    it('refuses what the engine refuses (params.go checkGroupLabel)', () => {
+        expect(issues(teamsParam('Every team'))).toEqual([
+            'params.0.optionsFrom.groupLabel: Write {group} where the group’s name goes',
+        ])
+        expect(issues(teamsParam(`{group}${'é'.repeat(97)}`))).toEqual([
+            'params.0.optionsFrom.groupLabel: Use at most 200 characters',
+        ])
+        expect(issues(teamsParam('All {group}', false))).toEqual([
+            'params.0.optionsFrom.groupLabel: Group the list to name its groups',
+        ])
+    })
+
+    it('saves a set text in the spec’s key order and leaves out an empty one', () => {
+        const set = specWith(teamsParam('All {group} teams'))
+        expect(JSON.stringify(specFromDraft(draftFromSpec(set, META, CATALOG), CATALOG))).toBe(
+            JSON.stringify(set)
+        )
+        const empty = draftFromSpec(specWith(teamsParam('')), META, CATALOG)
+        expect(specFromDraft(empty, CATALOG)).toEqual(specWith(teamsParam(undefined)))
+    })
+})

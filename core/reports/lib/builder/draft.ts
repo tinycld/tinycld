@@ -1,10 +1,12 @@
 import { z } from '@tinycld/core/ui/form'
+import { utf8Length } from '../params'
 import {
     BUCKETS,
     CURRENT_SPEC_VERSION,
     DISPLAY_WIDTHS,
     type DisplayLayout,
     displayLayoutSchema,
+    GROUP_LABEL_TOKEN,
     type ParamDef,
     paramDefSchema,
     type ReportSpec,
@@ -46,6 +48,7 @@ import {
     nodeToFilter,
     paramsInGroup,
     paramsInNode,
+    tidyParam,
 } from './filter'
 import {
     type ColumnsOf,
@@ -309,13 +312,35 @@ export function showsDetailLabel(draft: Pick<BuilderDraft, 'pivot' | 'detailLabe
 }
 
 export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
-    const issues = [...columnIssues(draft, catalog), ...groupingIssues(draft, catalog)]
+    const issues = [
+        ...paramIssues(draft.params),
+        ...columnIssues(draft, catalog),
+        ...groupingIssues(draft, catalog),
+    ]
     const [firstProblem] = conditionProblems(draft.filter, catalog, draft.source)
     if (firstProblem) issues.push({ path: ['filter'], message: firstProblem })
     if (draft.pivot.on && draft.detailLabel !== null)
         issues.push({ path: ['detailLabel'], message: PIVOT_DETAIL })
     const columnIds = draft.columns.map(column => column.id)
     return [...issues, ...levelIssues(draft, catalog), ...displayIssues(draft.display, columnIds)]
+}
+
+// The group pick text the engine refuses (params.go checkGroupLabel), in its order.
+// Its limit counts UTF-8 bytes, as the engine's maxLabel does.
+function paramIssues(params: readonly ParamDef[]): Issue[] {
+    return params.flatMap((param, i): Issue[] => {
+        const from = param.optionsFrom
+        if (!from?.groupLabel) return []
+        const path = ['params', i, 'optionsFrom', 'groupLabel']
+        if (!from.group?.length) return [{ path, message: 'Group the list to name its groups' }]
+        if (!from.groupLabel.includes(GROUP_LABEL_TOKEN)) {
+            return [{ path, message: `Write ${GROUP_LABEL_TOKEN} where the group’s name goes` }]
+        }
+        if (utf8Length(from.groupLabel) > MAX_LABEL) {
+            return [{ path, message: `Use at most ${MAX_LABEL} characters` }]
+        }
+        return []
+    })
 }
 
 // What the engine refuses in each display layout, in its order
@@ -781,7 +806,7 @@ function specPivot(pivot: BuilderDraft['pivot']): NonNullable<ReportSpec['pivot'
 // the spec it read.
 export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec {
     const types = columnTypes(draft, catalog)
-    const params = keptParams(draft)
+    const params = keptParams(draft).map(tidyParam)
     const spec: ReportSpec = {
         version: CURRENT_SPEC_VERSION,
         source: draft.source,

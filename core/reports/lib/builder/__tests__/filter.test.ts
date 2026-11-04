@@ -140,6 +140,24 @@ describe('asking when run', () => {
             'where',
         ])
         expect(withOptionsGroup(grouped, null)).toEqual(withWhere)
+
+        // D1: the group pick text stays with a new group, in the spec's key order,
+        // and leaves with the groups it names.
+        const named = {
+            ...grouped,
+            optionsFrom: { ...asked.optionsFrom, where, groupLabel: 'All {group}s' },
+        }
+        const regrouped = withOptionsGroup(named, [{ field: 'name' }])
+        expect(Object.keys(regrouped.optionsFrom ?? {})).toEqual([
+            'source',
+            'value',
+            'label',
+            'group',
+            'groupLabel',
+            'where',
+        ])
+        expect(regrouped.optionsFrom?.groupLabel).toBe('All {group}s')
+        expect(withOptionsGroup(named, null)).toEqual(withWhere)
         // A param with its own options has no records to group.
         const own = askParamFor(field('status'), 'in', 's')
         if (!own) throw new Error('own')
