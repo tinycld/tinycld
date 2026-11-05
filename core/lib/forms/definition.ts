@@ -168,6 +168,7 @@ const customFieldSchema = z.discriminatedUnion('kind', [
         ...base,
         kind: z.literal('textarea'),
         rows: z.number().int().min(1).max(40).optional(),
+        maxLength: z.number().int().positive().max(10000).optional(),
     }),
     z.object({
         ...base,
@@ -210,7 +211,10 @@ export type CustomField = z.infer<typeof customFieldSchema>
 const builtinRefSchema = z.object({ ...base, kind: z.literal('builtin') })
 export type BuiltinFieldRef = z.infer<typeof builtinRefSchema>
 
-const fieldSchema = z.union([customFieldSchema, builtinRefSchema])
+// One discriminated union, not a union of two: zod then checks only the option the
+// kind names, so a bad property is reported at its own path (fields.0.maxLength),
+// not as "Invalid input" on the whole field.
+const fieldSchema = z.discriminatedUnion('kind', [...customFieldSchema.options, builtinRefSchema])
 export type FormField = z.infer<typeof fieldSchema>
 
 const pageSchema = z.object({

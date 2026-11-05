@@ -73,7 +73,7 @@
                 "fields": {
                     "first": { "width": "half" },
                     "last": { "width": "half" },
-                    "notes": { "page": "more" }
+                    "notes": { "page": "more", "description": "Seen by the whole team." }
                 },
                 "rules": [
                     {

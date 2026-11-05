@@ -10,6 +10,11 @@ export type SelectOption = {
      * every other. ButtonGroup and MultiSelectInput ignore it.
      */
     indent?: number
+    /**
+     * The heading this option sits under in a select's menu, for options that
+     * come in groups. Menu only; ButtonGroup and MultiSelectInput ignore it.
+     */
+    section?: string
 }
 
 export type ButtonGroupProps<T extends FieldValues = Record<string, unknown>> = {

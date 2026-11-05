@@ -1,10 +1,11 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ChevronDown } from 'lucide-react-native'
-import { useCallback, useRef } from 'react'
+import { Fragment, useCallback, useRef } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import { Pressable, Text, View, type ViewInstance, type ViewProps } from 'react-native'
 import type { SelectOption } from './ButtonGroup'
+import { selectSections } from './select-sections'
 
 export type SelectInputProps<T extends FieldValues = Record<string, unknown>> = {
     name: Path<T>
@@ -66,6 +67,27 @@ export function SelectInput<T extends FieldValues = Record<string, unknown>>({
         if (changed) onValueChange?.(value)
     }
 
+    const itemOf = (option: SelectOption) => (
+        <Menu.Item
+            key={option.value}
+            label={option.label}
+            indent={option.indent}
+            isSelected={option.value === field.value}
+            onSelect={() => choose(option.value)}
+            testID={testID ? `${testID}-${option.value}` : undefined}
+        />
+    )
+
+    const menuRows = selectSections(options).map((run, index) => {
+        const key = `run-${index}`
+        if (run.label === null) return <Fragment key={key}>{run.options.map(itemOf)}</Fragment>
+        return (
+            <Menu.Section key={key} label={run.label}>
+                {run.options.map(itemOf)}
+            </Menu.Section>
+        )
+    })
+
     const trigger = (
         <Pressable
             ref={focusOnMount}
@@ -88,16 +110,7 @@ export function SelectInput<T extends FieldValues = Record<string, unknown>>({
                 <Text className="text-sm font-semibold text-foreground">{label}</Text>
             ) : null}
             <Menu presentation="popover" trigger={trigger}>
-                {options.map(option => (
-                    <Menu.Item
-                        key={option.value}
-                        label={option.label}
-                        indent={option.indent}
-                        isSelected={option.value === field.value}
-                        onSelect={() => choose(option.value)}
-                        testID={testID ? `${testID}-${option.value}` : undefined}
-                    />
-                ))}
+                {menuRows}
             </Menu>
             {hint && !hasError ? <Text className="text-xs text-muted">{hint}</Text> : null}
             {showError ? <Text className="text-xs text-danger">{error.message}</Text> : null}

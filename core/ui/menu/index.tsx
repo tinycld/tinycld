@@ -532,8 +532,11 @@ function MenuSection({
     testID?: string
 }) {
     const { isSheet } = usePopoverContext()
+    // A screen reader announces the rows as one named group, so a row's
+    // heading is heard with it. Roving focus still finds the rows: it reads
+    // every row under the menu, not only its direct children.
     return (
-        <View>
+        <View role="group" aria-label={label}>
             <Text
                 testID={testID}
                 className={`uppercase text-muted-foreground ${isSheet ? 'px-5 pt-3 pb-1' : 'px-3 py-1'}`}

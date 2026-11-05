@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf16"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
 )
@@ -21,15 +23,17 @@ type Option struct {
 }
 
 type Field struct {
-	Key      string   `json:"key"`
-	Kind     string   `json:"kind"`
-	Page     string   `json:"page"`
-	Label    string   `json:"label"`
-	Width    string   `json:"width,omitempty"`
-	Required bool     `json:"required"`
-	Hidden   bool     `json:"hidden"`
-	Options  []Option `json:"options,omitempty"`
-	Multiple bool     `json:"multiple,omitempty"`
+	Key   string `json:"key"`
+	Kind  string `json:"kind"`
+	Page  string `json:"page"`
+	Label string `json:"label"`
+	// Description is the help text the renderer draws with the field.
+	Description string   `json:"description,omitempty"`
+	Width       string   `json:"width,omitempty"`
+	Required    bool     `json:"required"`
+	Hidden      bool     `json:"hidden"`
+	Options     []Option `json:"options,omitempty"`
+	Multiple    bool     `json:"multiple,omitempty"`
 	// Display picks a select's control: "dropdown" (the default), "radio"
 	// or "checkbox". definitionSchema's select display.
 	Display       string   `json:"display,omitempty"`
@@ -304,6 +308,10 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 			p.add(fmt.Sprintf("%q is not a page of this form. Pages: %s.", f.Page, listOrNone(pageKeys)), at("page")...)
 			continue
 		}
+		if errs := fieldTextLengthErrors(f, i); errs != nil {
+			p.merge(errs)
+			continue
+		}
 		if f.Kind == "builtin" {
 			b := host.Builtin(f.Key)
 			if b == nil {
@@ -451,6 +459,38 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 		if _, ok := kinds[k]; !ok {
 			p.add(fmt.Sprintf("%q is not a field of this form. Fields: %s.", k, listOrNone(sortedKeys(kinds))), "submit", "required", i)
 		}
+	}
+	return p.result()
+}
+
+// Limits of a field's label and description in definitionSchema's base.
+const (
+	maxLabelLength       = 120
+	maxDescriptionLength = 500
+)
+
+// jsLength counts a string as JavaScript's length does (UTF-16 code units),
+// so a limit here refuses exactly what zod's .max() refuses.
+func jsLength(s string) int {
+	return len(utf16.Encode([]rune(s)))
+}
+
+// jsTrim trims what String.prototype.trim trims (zod's .trim()): white space
+// and the byte order mark.
+func jsTrim(s string) string {
+	const byteOrderMark = 0xFEFF
+	return strings.TrimFunc(s, func(r rune) bool { return unicode.IsSpace(r) || r == byteOrderMark })
+}
+
+// fieldTextLengthErrors mirrors definitionSchema's label and description
+// limits, so a definition the server stores is one the client can read.
+func fieldTextLengthErrors(f Field, i int) validation.Errors {
+	p := problems{}
+	if n := jsLength(jsTrim(f.Label)); n > maxLabelLength {
+		p.add(fmt.Sprintf("label has %d characters. Use at most %d.", n, maxLabelLength), "fields", i, "label")
+	}
+	if n := jsLength(f.Description); n > maxDescriptionLength {
+		p.add(fmt.Sprintf("description has %d characters. Use at most %d.", n, maxDescriptionLength), "fields", i, "description")
 	}
 	return p.result()
 }
