@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
 import { createInvitedUser, login, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
@@ -60,6 +60,107 @@ async function expectNotPublished(p: Page) {
     await p.getByTestId('reports-hub-tab-published').click()
     await expect(hubRow(p, SHIPPED_TITLE)).toBeVisible()
     await expect(hubRow(p, TEAM_TOTALS_TITLE)).toHaveCount(0)
+}
+
+const ENTRANCE_FRAMES = 10
+// The exit watch stops counting here, so a sheet that never leaves fails the
+// test instead of hanging it (the animated close keeps it ~300 ms, ~18 frames).
+const EXIT_FRAME_CAP = 30
+
+type SheetEntrance = { offsets: number[]; opacities: string[]; backdropFound: boolean[] }
+type SheetWatch = { entrance?: Promise<SheetEntrance>; exit?: Promise<number> }
+
+// Waits for the sheet surface with this test id to enter the DOM, then reads it
+// once after each of the next frames is painted (a rAF, then a task). Each read
+// is the surface's offset from its resting place: its drawn top minus its laid
+// out top (offsetTop ignores a transform), so a slide shows as a non-zero
+// offset whatever the sheet's height. The backdrop is the layer before the
+// surface's (core/ui/sheet draws the backdrop, then the surface), found by the
+// Close press it holds, and read for its opacity. Awaited before the press that
+// opens the sheet, so the watch is in place first; readSheetEntrance collects it.
+function watchSheetEntrance(p: Page, testId: string) {
+    return p.evaluate(
+        ({ testId, frames }) => {
+            const watch = window as unknown as SheetWatch
+            watch.entrance = new Promise(resolve => {
+                const seen: SheetEntrance = { offsets: [], opacities: [], backdropFound: [] }
+                const read = (surface: HTMLElement) => {
+                    const layer = surface.offsetParent as HTMLElement
+                    const restTop =
+                        layer.getBoundingClientRect().top + layer.clientTop + surface.offsetTop
+                    seen.offsets.push(Math.round(surface.getBoundingClientRect().top - restTop))
+                    const backdrop = layer.previousElementSibling as HTMLElement
+                    seen.backdropFound.push(
+                        backdrop.querySelector('[role="button"][aria-label="Close"]') !== null
+                    )
+                    seen.opacities.push(getComputedStyle(backdrop).opacity)
+                }
+                const next = (surface: HTMLElement) =>
+                    requestAnimationFrame(() =>
+                        setTimeout(() => {
+                            read(surface)
+                            if (seen.offsets.length < frames) next(surface)
+                            else resolve(seen)
+                        })
+                    )
+                const selector = `[data-testid="${testId}"]`
+                const observer = new MutationObserver(() => {
+                    const surface = document.querySelector<HTMLElement>(selector)
+                    if (!surface) return
+                    observer.disconnect()
+                    next(surface)
+                })
+                observer.observe(document.body, { childList: true, subtree: true })
+            })
+        },
+        { testId, frames: ENTRANCE_FRAMES }
+    )
+}
+
+// Counts the frames painted after the next Escape keydown while the sheet's
+// surface or its backdrop is still in the DOM (0: both gone by the first frame).
+function watchSheetExit(sheet: Locator) {
+    return sheet.evaluate((surface, cap) => {
+        const backdrop = (surface as HTMLElement).offsetParent?.previousElementSibling
+        const watch = window as unknown as SheetWatch
+        watch.exit = new Promise(resolve => {
+            let frames = 0
+            const tick = () => {
+                if (!surface.isConnected && !backdrop?.isConnected) return resolve(frames)
+                frames += 1
+                if (frames >= cap) return resolve(frames)
+                requestAnimationFrame(tick)
+            }
+            // On window in the capture phase: the overlay's Escape handler sits
+            // on the document and stops the key there.
+            const onKey = (event: KeyboardEvent) => {
+                if (event.key !== 'Escape') return
+                window.removeEventListener('keydown', onKey, true)
+                requestAnimationFrame(tick)
+            }
+            window.addEventListener('keydown', onKey, true)
+        })
+    }, EXIT_FRAME_CAP)
+}
+
+function readSheetEntrance(p: Page) {
+    return p.evaluate(() => (window as unknown as SheetWatch).entrance)
+}
+
+function readSheetExit(p: Page) {
+    return p.evaluate(() => (window as unknown as SheetWatch).exit)
+}
+
+// Opens a sheet with a press, watching its entrance: it must stand at rest, its
+// backdrop fully shown, on every frame from the first.
+async function expectSheetOpensAtRest(p: Page, testId: string, open: () => Promise<void>) {
+    await watchSheetEntrance(p, testId)
+    await open()
+    const entrance = await readSheetEntrance(p)
+    expect(entrance?.offsets).toHaveLength(ENTRANCE_FRAMES)
+    expect(entrance?.backdropFound).toEqual(Array(ENTRANCE_FRAMES).fill(true))
+    expect(entrance?.offsets).toEqual(Array(ENTRANCE_FRAMES).fill(0))
+    expect(entrance?.opacities).toEqual(Array(ENTRANCE_FRAMES).fill('1'))
 }
 
 test.describe('params from a source, headings and unpublished shipped reports', () => {
@@ -155,6 +256,52 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         await expect
             .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
             .toBeLessThanOrEqual(390)
+    })
+
+    // Reduced motion (the e2e config's `reducedMotion: 'reduce'`, the OS setting
+    // for a person): a sheet is drawn at rest from its first frame, with its
+    // backdrop fully shown, so Playwright never waits for it to stop moving.
+    // Closed, it leaves at once and a press beneath it lands.
+    test('on a phone with reduced motion the sheet does not slide, and closed it lets a press through', async ({
+        page,
+    }) => {
+        await loginAsShippedOwner(page)
+        await openTeamTotals(page)
+        await page.setViewportSize({ width: 390, height: 844 })
+        expect(
+            await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
+        ).toBe(true)
+
+        // The "Add filter" menu is a bottom sheet on a phone.
+        const addFilter = page.getByTestId('report-add-filter')
+        const menu = page.getByTestId('report-add-filter-menu')
+        await expectSheetOpensAtRest(page, 'report-add-filter-menu', () => addFilter.click())
+        await expect(menu.getByTestId('report-add-filter-teams')).toBeVisible()
+
+        // Closed, the menu stays mounted (only its open state changes), so the
+        // sheet itself decides when it leaves: at once, backdrop and all.
+        await watchSheetExit(menu)
+        await page.keyboard.press('Escape')
+        expect(await readSheetExit(page)).toBeLessThanOrEqual(1)
+        await expect(menu).toHaveCount(0)
+        // A raw press, with no actionability wait or retry: it reaches the
+        // chip only if nothing of the sheet still covers it.
+        const chip = await addFilter.boundingBox()
+        expect(chip).not.toBeNull()
+        await page.mouse.click(
+            (chip?.x ?? 0) + (chip?.width ?? 0) / 2,
+            (chip?.y ?? 0) + (chip?.height ?? 0) / 2
+        )
+        await expect(menu.getByTestId('report-add-filter-teams')).toBeVisible()
+
+        // The source picker, opened from the menu, is a bottom sheet too.
+        const picker = page.getByTestId('report-filter-picker')
+        await expectSheetOpensAtRest(page, 'report-filter-picker', () =>
+            menu.getByTestId('report-add-filter-teams').click()
+        )
+        await expect(picker.getByTestId('sheet-handle')).toBeVisible()
+        await page.keyboard.press('Escape')
+        await expect(picker).toHaveCount(0)
     })
 
     test('scrolling to the end of the options loads the next page once, with no repeats', async ({
