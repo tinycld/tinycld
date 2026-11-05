@@ -47,8 +47,9 @@ To total only what a report shows, open the column in **Columns** and set **Tota
 
 With **Add the rows shown**, the group levels above the lowest one and the Total row add the rows you see. A group that is hidden adds nothing. The lowest group level computes the column from its own rows if one of these is true:
 
+- The column's **Summarize** choice is not **None**, for example **Sum** or **Largest**. A field that you add with **Add as total** also has this choice.
 - The column's formula has a total part, such as **Sum of**.
-- The formula reads a column that has a total part.
+- The formula reads a column that has a **Summarize** choice or a total part.
 - The formula reads a column that is set to **Add the rows shown**.
 
 If none is true, the lowest group level adds the values of its rows.
