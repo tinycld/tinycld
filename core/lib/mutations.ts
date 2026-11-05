@@ -1,5 +1,6 @@
 import type { Transaction } from '@tanstack/react-db'
 import {
+    type MutationFunction,
     type UseMutationOptions,
     type UseMutationResult,
     useMutation as useTanStackMutation,
@@ -95,6 +96,28 @@ type AsyncMutationOptions<TData = unknown, TError = Error, TVariables = void> = 
     TError,
     TVariables
 >
+
+// Decides generator-vs-async by INVOKING the fn once and inspecting what it
+// returns — not by the fragile constructor.name of the fn itself. The fn is
+// called exactly once per mutation run (no double-invocation of a
+// non-idempotent async fn): a generator's call is side-effect free until
+// driven, so calling it here to test the result is safe, and an async fn's
+// returned promise is awaited directly.
+// This is a function declaration, not an async arrow in useMutation's
+// ternary: @babel/parser 7.29.13 refuses `c ? async (v: T): R => …` with
+// "Did not expect a type annotation here", which breaks the Metro bundle.
+async function runMutationFn<TData, TVariables>(
+    mutationFn: GeneratorMutationFn<TData, TVariables> | MutationFunction<TData, TVariables>,
+    variables: TVariables
+): Promise<TData> {
+    const result = (
+        mutationFn as (v: TVariables) => ReturnType<GeneratorMutationFn<TData, TVariables>>
+    )(variables)
+    if (isTransactionGenerator(result)) {
+        return drainTransactions(result) as Promise<TData>
+    }
+    return result as unknown as Promise<TData>
+}
 
 /**
  * Converts a generator function into an async function that awaits
@@ -192,24 +215,8 @@ export function useMutation<TData = unknown, TError = Error, TVariables = void>(
 ): UseMutationResult<TData, TError, TVariables> {
     const { mutationFn, ...restOptions } = options
 
-    // A single wrapper that decides generator-vs-async by INVOKING the fn once
-    // and inspecting what it returns — not by the fragile constructor.name of
-    // the fn itself. The fn is called exactly once per mutation run (no
-    // double-invocation of a non-idempotent async fn): a generator's call is
-    // side-effect free until driven, so calling it here to test the result is
-    // safe, and an async fn's returned promise is awaited directly.
     const wrappedMutationFn = mutationFn
-        ? async (variables: TVariables): Promise<TData> => {
-              const result = (
-                  mutationFn as (
-                      v: TVariables
-                  ) => ReturnType<GeneratorMutationFn<TData, TVariables>>
-              )(variables)
-              if (isTransactionGenerator(result)) {
-                  return drainTransactions(result) as Promise<TData>
-              }
-              return result as unknown as Promise<TData>
-          }
+        ? (variables: TVariables) => runMutationFn<TData, TVariables>(mutationFn, variables)
         : undefined
 
     return useTanStackMutation({
