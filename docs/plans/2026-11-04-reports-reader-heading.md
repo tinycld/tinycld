@@ -59,7 +59,7 @@ New file `core/server/reports/reader.go`:
 func FindViewableRecord(app core.App, reader *core.RequestInfo, collection, id string) (*core.Record, error)
 ```
 
-Implementation outline: `app.FindRecordById(collection, id)` (its error returned as is: `sql.ErrNoRows` when missing, a collection lookup error otherwise), then `app.CanAccessRecord(rec, reader, rec.Collection().ViewRule)` (third_party/pocketbase/core/record_query.go:599); `false` → `nil, sql.ErrNoRows`; an error → that error.
+Implementation outline: first `app.FindCachedCollectionByNameOrId(collection)`; a collection that does not exist is a wiring mistake in the package, so it returns an error that is NOT `sql.ErrNoRows` (and does not wrap it), e.g. `fmt.Errorf("reports: collection %q does not exist", collection)` — PocketBase answers `sql.ErrNoRows` for an unknown collection, which would otherwise read as "not viewable". Then `app.FindRecordById(col, id)` (`sql.ErrNoRows` when missing; other errors as is), then `app.CanAccessRecord(rec, reader, rec.Collection().ViewRule)` (third_party/pocketbase/core/record_query.go:599); `false` → `nil, sql.ErrNoRows`; an error → that error.
 
 `core/server/reports/rows.go`: `fiscalStartOf(src *Source, app core.App, reader *core.RequestInfo) int` (1 when the source has none or returns a value outside 1-12). `newCompiler`'s signature does not change; it computes the fiscal start only when both `app` and `info` are non-nil. `readerCompiler` calls `FiscalStartMonth` once and uses the value for the presets and the compiler (split an internal constructor that takes the fiscal start; `newCompiler` wraps it). `Run` calls `Heading(app, c.info)` once.
 
