@@ -78,7 +78,10 @@ type labelPlan struct {
 }
 
 // newCompiler reads the fiscal start month for info's reader. A dry compile
-// (nil app or nil info) has no reader to read it for, so its start is 1.
+// (nil app or nil info) has no reader to read it for, so its start is 1. A
+// read of a report builds its compiler through readerCompiler, which reads
+// the month once for the presets and the formulas; do not call newCompiler
+// on a read path, or the month is read twice and the two can disagree.
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
 	fiscal := 1
 	if app != nil && info != nil {

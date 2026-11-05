@@ -1150,19 +1150,24 @@ reports.RegisterSource(reports.Source{
   that value everywhere in the read. A param's options call only
   `FiscalStartMonth`. Both functions run with the app, not under the
   reader's rules. They must return only what that reader may see.
+- The reader is read-only. The run's list rules use the same request, so a
+  change to the reader changes what the whole run may read.
 - To read a record for the reader, use `reports.FindViewableRecord`. It
   applies the collection's view rule. It returns `sql.ErrNoRows` when the
   record does not exist or the reader may not view it. Any other error is a
   fault, for example an unknown collection or a rule that cannot be built.
 
   ```go
+  log := logging.ForPackage("zoo") // tinycld.org/core/logging
+
   Heading: func(app core.App, reader *core.RequestInfo) string {
       rec, err := reports.FindViewableRecord(app, reader, "zoo_office", officeID)
       if errors.Is(err, sql.ErrNoRows) {
           return "" // the reader may not view the office row
       }
       if err != nil {
-          log.Error("zoo office heading", "error", err)
+          // A fault, but the report still runs with the organization's name.
+          log.Warn("zoo office heading", "error", err)
           return ""
       }
       return rec.GetString("name")

@@ -125,9 +125,11 @@ type Source struct {
 	// Heading is the name a report on this base source prints above its title
 	// (a business name), read once per run for the run's reader. reader is the
 	// signed-in user the run is for (never nil, never a superuser) with the
-	// request's headers, as the run's list rules see them. Return only what
-	// that reader may see: read through FindViewableRecord. nil prints the
-	// organization's name.
+	// request's headers, as the run's list rules see them. reader is
+	// read-only: the run's list rules use the same request, so a change to it
+	// changes what the whole run may read. Return only what that reader may
+	// see: read through FindViewableRecord. nil prints the organization's
+	// name.
 	Heading func(app core.App, reader *core.RequestInfo) string
 	// Watch names the collections Heading, FiscalStartMonth and Currency
 	// read. A run that reads this source subscribes to them too, so a
