@@ -137,6 +137,11 @@ jobs:
           file: ws/tinycld/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.labels.outputs.labels }}
+          # A new value on each run forces the Dockerfile's runtime-base apt
+          # layer to rebuild, so the release gets the current Debian security
+          # updates instead of a cached layer's old packages.
+          build-args: |
+            SECURITY_UPDATES_REFRESH=${{ github.run_id }}
           # Cache scoped per-platform so the two jobs don't trample each
           # other's layers. Cache hit speeds repeat builds dramatically.
           cache-from: type=gha,scope=${{ matrix.cache_scope }}
