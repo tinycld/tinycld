@@ -61,13 +61,13 @@ func TestAFilterKeepsAnAmountParamToTheRowsCurrency(t *testing.T) {
 	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 5000, "currency": "EUR",
 		"fed": "2026-01-07 00:00:00.000Z", "grams": 10, "note": "f7", "due": "2026-01-07"})
 	usd := z.run(t, "ann", costFloor, Options{}, map[string]string{"floor": `{"amount":1000,"currency":"USD"}`})
-	requireRows(t, usd, "label", "f1", "f2", "Total")
+	requireOrderedRows(t, costFloor, usd, "label", "f1", "f2", "Total")
 	eur := z.run(t, "ann", costFloor, Options{}, map[string]string{"floor": `{"amount":1000,"currency":"EUR"}`})
 	requireRows(t, eur, "label", "f7", "Total")
 	anyCurrency := z.run(t, "ann", costFloor, Options{}, map[string]string{"floor": `1000`})
-	requireRows(t, anyCurrency, "label", "f1", "f2", "f7", "Total", "Total")
+	requireOrderedRows(t, costFloor, anyCurrency, "label", "f1", "f2", "f7", "Total", "Total")
 	unset := z.run(t, "ann", costFloor, Options{}, nil)
-	requireRows(t, unset, "label", "f1", "f2", "f3", "f4", "f7", "Total", "Total")
+	requireOrderedRows(t, costFloor, unset, "label", "f1", "f2", "f3", "f4", "f7", "Total", "Total")
 }
 
 // A column that shows an amount param shows it in the param's currency, and
@@ -103,13 +103,13 @@ const animalsOver = `{"version":2,"source":"zoo.animals","params":[{"id":"over",
 func TestAFilterKeepsAnAmountParamToAFieldOrFixedCurrency(t *testing.T) {
 	z := newZoo(t)
 	all := z.run(t, "ann", animalsOver, Options{}, nil)
-	requireRows(t, all, "label", "Kit", "Leo", "Zed", "Total")
+	requireOrderedRows(t, animalsOver, all, "label", "Kit", "Leo", "Zed", "Total")
 	eur := z.run(t, "ann", animalsOver, Options{}, map[string]string{"over": `{"amount":100,"currency":"EUR"}`})
 	requireRows(t, eur, "label", "Leo", "Total")
 	usd := z.run(t, "ann", animalsOver, Options{}, map[string]string{"over": `{"amount":200000,"currency":"USD"}`})
 	requireRows(t, usd, "label", "Leo", "Total")
 	usdFee := z.run(t, "ann", animalsOver, Options{}, map[string]string{"over": `{"amount":5000,"currency":"USD"}`})
-	requireRows(t, usdFee, "label", "Kit", "Leo", "Zed", "Total")
+	requireOrderedRows(t, animalsOver, usdFee, "label", "Kit", "Leo", "Zed", "Total")
 }
 
 // withEuroLeo adds f7: a EUR feeding of leo that ann reads.
@@ -131,13 +131,14 @@ func TestAComparisonAcrossCurrenciesIsDefinite(t *testing.T) {
 	z := newZoo(t)
 	withEuroLeo(t, z, 1000)
 	usd := map[string]string{"floor": `{"amount":1000,"currency":"USD"}`}
-	res := z.run(t, "ann", fmt.Sprintf(costCompared, ""), Options{}, usd)
-	requireRows(t, res, "label", "f1", "f2", "f3", "f4", "f7", "Total", "Total")
-	requireRows(t, res, "over", true, true, false, false, false, nil, nil)
-	requireRows(t, res, "same", true, false, false, false, false, nil, nil)
-	ne := `"filter":{"op":"ne","args":[{"path":[{"field":"cost"}]},{"param":"floor"}]},`
-	notFloor := z.run(t, "ann", fmt.Sprintf(costCompared, ne), Options{}, usd)
-	requireRows(t, notFloor, "label", "f2", "f3", "f4", "f7", "Total", "Total")
+	spec := fmt.Sprintf(costCompared, "")
+	res := z.run(t, "ann", spec, Options{}, usd)
+	requireOrderedRows(t, spec, res, "label", "f1", "f2", "f3", "f4", "f7", "Total", "Total")
+	requireOrderedRows(t, spec, res, "over", true, true, false, false, false, nil, nil)
+	requireOrderedRows(t, spec, res, "same", true, false, false, false, false, nil, nil)
+	ne := fmt.Sprintf(costCompared, `"filter":{"op":"ne","args":[{"path":[{"field":"cost"}]},{"param":"floor"}]},`)
+	notFloor := z.run(t, "ann", ne, Options{}, usd)
+	requireOrderedRows(t, ne, notFloor, "label", "f2", "f3", "f4", "f7", "Total", "Total")
 }
 
 // Two amounts in different currencies compare as unequal, whatever their
@@ -148,14 +149,16 @@ const feeAgainstPrice = `{"version":2,"source":"zoo.animals","params":[{"id":"x"
 
 func TestAmountsInTwoCurrenciesCompareAsUnequal(t *testing.T) {
 	z := newZoo(t)
-	lt := z.run(t, "ann", fmt.Sprintf(feeAgainstPrice, `{"op":"lt","args":[{"path":[{"field":"fee"}]},{"path":[{"field":"price"}]}]}`), Options{}, nil)
-	requireRows(t, lt, "label", "Kit", "Zed", "Total")
-	ne := z.run(t, "ann", fmt.Sprintf(feeAgainstPrice, `{"op":"ne","args":[{"path":[{"field":"fee"}]},{"path":[{"field":"price"}]}]}`), Options{}, nil)
-	requireRows(t, ne, "label", "Kit", "Leo", "Zed", "Total")
+	ltSpec := fmt.Sprintf(feeAgainstPrice, `{"op":"lt","args":[{"path":[{"field":"fee"}]},{"path":[{"field":"price"}]}]}`)
+	lt := z.run(t, "ann", ltSpec, Options{}, nil)
+	requireOrderedRows(t, ltSpec, lt, "label", "Kit", "Zed", "Total")
+	neSpec := fmt.Sprintf(feeAgainstPrice, `{"op":"ne","args":[{"path":[{"field":"fee"}]},{"path":[{"field":"price"}]}]}`)
+	ne := z.run(t, "ann", neSpec, Options{}, nil)
+	requireOrderedRows(t, neSpec, ne, "label", "Kit", "Leo", "Zed", "Total")
 	// between checks every amount's currency, not only one of them.
 	between := fmt.Sprintf(feeAgainstPrice, `{"op":"between","args":[{"param":"x"},{"path":[{"field":"fee"}]},{"path":[{"field":"price"}]}]}`)
 	res := z.run(t, "ann", between, Options{}, map[string]string{"x": `{"amount":1000,"currency":"USD"}`})
-	requireRows(t, res, "label", "Kit", "Zed", "Total")
+	requireOrderedRows(t, between, res, "label", "Kit", "Zed", "Total")
 }
 
 // A missing amount is not one in another currency: with no animal, its fee
@@ -171,27 +174,31 @@ func TestAMissingCurrencyIsNotAnotherCurrency(t *testing.T) {
 	fee := `{"path":[{"link":"animal"},{"field":"fee"}]}`
 	price := `{"path":[{"link":"animal"},{"field":"price"}]}`
 	weight := `{"path":[{"link":"animal"},{"field":"weight"}]}`
-	apart := z.run(t, "ann", fmt.Sprintf(keepersCompared, `{"op":"ne","args":[`+fee+`,`+price+`]}`), Options{}, nil)
-	oneKind := z.run(t, "ann", fmt.Sprintf(keepersCompared, `{"op":"ne","args":[`+price+`,`+weight+`]}`), Options{}, nil)
-	requireRows(t, apart, "label", "Leo", "Zed", "Total")
-	requireRows(t, oneKind, "label", "Leo", "Zed", "Total")
+	apartSpec := fmt.Sprintf(keepersCompared, `{"op":"ne","args":[`+fee+`,`+price+`]}`)
+	oneKindSpec := fmt.Sprintf(keepersCompared, `{"op":"ne","args":[`+price+`,`+weight+`]}`)
+	apart := z.run(t, "ann", apartSpec, Options{}, nil)
+	oneKind := z.run(t, "ann", oneKindSpec, Options{}, nil)
+	requireOrderedRows(t, apartSpec, apart, "label", "Leo", "Zed", "Total")
+	requireOrderedRows(t, oneKindSpec, oneKind, "label", "Leo", "Zed", "Total")
 	// Against a value, a blank is not equal to it, in the one currency.
-	toValue := z.run(t, "ann", fmt.Sprintf(keepersCompared, `{"op":"ne","args":[`+price+`,{"value":5}]}`), Options{}, nil)
-	requireRows(t, toValue, "label", "Leo", "Zed", blankLabel, "Total")
+	toValueSpec := fmt.Sprintf(keepersCompared, `{"op":"ne","args":[`+price+`,{"value":5}]}`)
+	toValue := z.run(t, "ann", toValueSpec, Options{}, nil)
+	requireOrderedRows(t, toValueSpec, toValue, "label", "Leo", "Zed", blankLabel, "Total")
 }
 
 // A ratio of two amounts holds only in one currency: Leo's fee is in EUR,
 // his price in USD.
 func TestARatioOfAmountsKeepsToOneCurrency(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	const spec = `{"version":2,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"share","formula":{"op":"div","scale":4,"args":[{"path":[{"field":"fee"}]},{"path":[{"field":"price"}]}]}}],
-		"sort":[{"col":"name"}]}`, Options{}, nil)
+		"sort":[{"col":"name"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
 	// The fee's currency splits the totals (EUR, USD); a ratio of row values
 	// has no figure there.
-	requireRows(t, res, "label", "Kit", "Leo", "Zed", "Total", "Total")
-	requireRows(t, res, "share", 0.01, nil, 0.0025, nil, nil)
+	requireOrderedRows(t, spec, res, "label", "Kit", "Leo", "Zed", "Total", "Total")
+	requireOrderedRows(t, spec, res, "share", 0.01, nil, 0.0025, nil, nil)
 }
 
 // Two amount params in different currencies hold against nothing; in one,

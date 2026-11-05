@@ -22,7 +22,7 @@ func TestHavingHidesGroupsAndAnUnsetParamHidesNone(t *testing.T) {
 	requireRows(t, all, "label", "lion", "zebra", "Total")
 	some := z.run(t, "ann", speciesHaving, Options{ExpandAll: true}, map[string]string{"min": "1500"})
 	requireRows(t, some, "label", "lion", "lion", "lion", "Total")
-	requireRows(t, some, "cost", int64(3500), int64(1000), int64(2500), int64(4500))
+	requireOrderedRows(t, speciesHaving, some, "cost", int64(3500), int64(1000), int64(2500), int64(4500))
 }
 
 const hiddenParent = `{"version":2,"source":"zoo.feedings","columns":[
@@ -65,7 +65,7 @@ func TestHiddenRowsTakeNoPlaceUnderTheRowCap(t *testing.T) {
 	z := newZoo(t)
 	withLimits(t, func(l *limits) { l.rowCap = 3 })
 	res := z.run(t, "ann", lionHidden, Options{ExpandAll: true}, nil)
-	requireRows(t, res, "note", nil, "f3", "f4", nil)
+	requireOrderedRows(t, lionHidden, res, "note", nil, "f3", "f4", nil)
 	if len(res.Notices) != 0 {
 		t.Fatalf("notices = %+v", res.Notices)
 	}
@@ -76,10 +76,10 @@ func TestHiddenRowsTakeNoPlaceUnderTheRowCap(t *testing.T) {
 func TestRunningValuesReadTheShownRowsOnly(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", lionHidden, Options{ExpandAll: true}, nil)
-	requireRows(t, res, "note", nil, "f3", "f4", nil)
-	requireRows(t, res, "running", int64(1000), int64(700), int64(1000), int64(4500))
-	requireRows(t, res, "ofParent", 100.0, 70.0, 30.0, 100.0)
-	requireRows(t, res, "ofTotal", 100.0, 70.0, 30.0, 100.0)
+	requireOrderedRows(t, lionHidden, res, "note", nil, "f3", "f4", nil)
+	requireOrderedRows(t, lionHidden, res, "running", int64(1000), int64(700), int64(1000), int64(4500))
+	requireOrderedRows(t, lionHidden, res, "ofParent", 100.0, 70.0, 30.0, 100.0)
+	requireOrderedRows(t, lionHidden, res, "ofTotal", 100.0, 70.0, 30.0, 100.0)
 }
 
 // A having on a deeper group hides its rows, but its parent's subtotal still

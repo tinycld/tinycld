@@ -15,8 +15,9 @@ const regionPath = `{"path":[{"link":"animal"},{"link":"site"},{"field":"region"
 
 func TestADetailLabelThatReadsASelectShowsItsOptionLabel(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", withDetailLabel(regionPath), Options{}, nil)
-	requireRows(t, res, "label", "North", "North", "South", "South", "Total")
+	spec := withDetailLabel(regionPath)
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "North", "North", "South", "South", "Total")
 	// The option label is text: the row's label, untyped.
 	text := [3]any{FieldType(""), nil, ""}
 	requireLabels(t, res, text, text, text, text)
@@ -31,13 +32,14 @@ func TestAGroupLabelThatReadsASelectShowsItsOptionLabel(t *testing.T) {
 
 func TestTextOperatorsReadASelectsOptionLabel(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},
-		{"id":"where","formula":{"op":"concat","args":[`+regionPath+`,{"value":" / "},{"col":"note"}]}},
-		{"id":"loud","formula":{"op":"upper","args":[`+regionPath+`]}},
-		{"id":"north","formula":{"op":"startsWith","args":[`+regionPath+`,{"value":"Nor"}]}}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "where", "North / f1", "North / f2", "South / f3", "South / f4", nil)
-	requireRows(t, res, "loud", "NORTH", "NORTH", "SOUTH", "SOUTH", nil)
-	requireRows(t, res, "north", true, true, false, false, nil)
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},
+		{"id":"where","formula":{"op":"concat","args":[` + regionPath + `,{"value":" / "},{"col":"note"}]}},
+		{"id":"loud","formula":{"op":"upper","args":[` + regionPath + `]}},
+		{"id":"north","formula":{"op":"startsWith","args":[` + regionPath + `,{"value":"Nor"}]}}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "where", "North / f1", "North / f2", "South / f3", "South / f4", nil)
+	requireOrderedRows(t, spec, res, "loud", "NORTH", "NORTH", "SOUTH", "SOUTH", nil)
+	requireOrderedRows(t, spec, res, "north", true, true, false, false, nil)
 }
 
 // A result that mixes a select with other text shows the select by its
@@ -45,8 +47,9 @@ func TestTextOperatorsReadASelectsOptionLabel(t *testing.T) {
 // them describes its options and a group by it is labelled by them.
 func TestIfAndCoalesceOverASelectShowItsOptionLabels(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", withDetailLabel(`{"op":"if","args":[{"op":"gt","args":[{"path":[{"field":"cost"}]},{"value":800}]},`+regionPath+`,{"value":"cheap"}]}`), Options{}, nil)
-	requireRows(t, res, "label", "North", "North", "cheap", "cheap", "Total")
+	spec := withDetailLabel(`{"op":"if","args":[{"op":"gt","args":[{"path":[{"field":"cost"}]},{"value":800}]},` + regionPath + `,{"value":"cheap"}]}`)
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "North", "North", "cheap", "cheap", "Total")
 
 	grouped := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"region","formula":{"op":"coalesce","args":[`+regionPath+`]}},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -61,11 +64,13 @@ func TestIfAndCoalesceOverASelectShowItsOptionLabels(t *testing.T) {
 func TestACaseOverASelectShowsItsOptionLabels(t *testing.T) {
 	z := newZoo(t)
 	cased := `{"op":"case","args":[{"op":"gt","args":[{"path":[{"field":"cost"}]},{"value":800}]},` + regionPath + `,{"value":"cheap"}]}`
-	res := z.run(t, "ann", withDetailLabel(cased), Options{}, nil)
-	requireRows(t, res, "label", "North", "North", "cheap", "cheap", "Total")
+	spec := withDetailLabel(cased)
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "North", "North", "cheap", "cheap", "Total")
 	// The case's value is still the stored one, which a filter compares.
-	filtered := z.run(t, "ann", strings.TrimSuffix(withDetailLabel(cased), "}")+`,"filter":{"op":"eq","args":[`+cased+`,{"value":"north"}]}}`, Options{}, nil)
-	requireRows(t, filtered, "note", "f1", "f2", nil)
+	north := strings.TrimSuffix(spec, "}") + `,"filter":{"op":"eq","args":[` + cased + `,{"value":"north"}]}}`
+	filtered := z.run(t, "ann", north, Options{}, nil)
+	requireOrderedRows(t, north, filtered, "note", "f1", "f2", nil)
 }
 
 // A mix of a select's values and other text is shown by option labels, but
@@ -75,20 +80,23 @@ func TestAConditionComparesAMixsStoredValues(t *testing.T) {
 	spec := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}],
 		"params":[{"id":"p","type":"choice","options":[{"value":"north","label":"North"},{"value":"south","label":"South"}]}],"filter":FILTER}`
 	blankOr := `{"op":"eq","args":[{"op":"coalesce","args":[` + regionPath + `,{"value":""}]},{"value":"north"}]}`
-	requireRows(t, z.run(t, "ann", strings.Replace(spec, "FILTER", blankOr, 1), Options{}, nil), "note", "f1", "f2", nil)
+	blankSpec := strings.Replace(spec, "FILTER", blankOr, 1)
+	requireOrderedRows(t, blankSpec, z.run(t, "ann", blankSpec, Options{}, nil), "note", "f1", "f2", nil)
 	mixed := `{"op":"eq","args":[{"op":"if","args":[{"op":"gt","args":[{"path":[{"field":"cost"}]},{"value":800}]},` + regionPath + `,{"value":"x"}]},{"param":"p"}]}`
-	requireRows(t, z.run(t, "ann", strings.Replace(spec, "FILTER", mixed, 1), Options{}, map[string]string{"p": `"north"`}), "note", "f1", "f2", nil)
+	mixedSpec := strings.Replace(spec, "FILTER", mixed, 1)
+	requireOrderedRows(t, mixedSpec, z.run(t, "ann", mixedSpec, Options{}, map[string]string{"p": `"north"`}), "note", "f1", "f2", nil)
 }
 
 // A text literal that is one of the select's stored values keeps the select:
 // Kit, with no site, reads "north", shown as North like Leo's.
 func TestACoalesceWithAStoredValueShowsItConsistently(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
+	const spec = `{"version":2,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"region","formula":{"op":"coalesce","args":[{"path":[{"link":"site"},{"field":"region"}]},{"value":"north"}]}}],
-		"sort":[{"col":"name"}],"detail":{"label":{"col":"region"}}}`, Options{}, nil)
-	requireRows(t, res, "label", "North", "North", "South", "Total")
-	requireRows(t, res, "region", "north", "north", "south", nil)
+		"sort":[{"col":"name"}],"detail":{"label":{"col":"region"}}}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "North", "North", "South", "Total")
+	requireOrderedRows(t, spec, res, "region", "north", "north", "south", nil)
 	if res.Columns[1].Type != Select || len(res.Columns[1].Options) != 2 {
 		t.Fatalf("region column = %+v", res.Columns[1])
 	}
@@ -160,10 +168,11 @@ func TestALookedUpMixShowsItsOptionLabels(t *testing.T) {
 	spec := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"region","formula":` + region + `}],"sort":[{"col":"note"}],"detail":{"label":` + region + `}`
 	res := z.run(t, "ann", spec+`}`, Options{}, nil)
-	requireRows(t, res, "region", "North", "North", "South", "South", nil)
-	requireRows(t, res, "label", "North", "North", "South", "South", "Total")
-	filtered := z.run(t, "ann", spec+`,"filter":{"op":"eq","args":[`+region+`,{"value":"north"}]}}`, Options{}, nil)
-	requireRows(t, filtered, "note", "f1", "f2", nil)
+	requireOrderedRows(t, spec+`}`, res, "region", "North", "North", "South", "South", nil)
+	requireOrderedRows(t, spec+`}`, res, "label", "North", "North", "South", "South", "Total")
+	north := spec + `,"filter":{"op":"eq","args":[` + region + `,{"value":"north"}]}}`
+	filtered := z.run(t, "ann", north, Options{}, nil)
+	requireOrderedRows(t, north, filtered, "note", "f1", "f2", nil)
 	// A max pick shows the row it picks: the largest stored value, south.
 	top := `{"op":"lookup","source":"zoo.animals","pick":"max","value":{"op":"coalesce","args":[{"path":[{"link":"site"},{"field":"region"}]},{"value":""}]}}`
 	requireRows(t, z.run(t, "ann", withDetailLabel(top), Options{}, nil), "label", "South", "South", "South", "South", "Total")
@@ -180,8 +189,9 @@ func TestADetailLabelIsRefusedOnAPivot(t *testing.T) {
 // Child rows keep their own first column's label under a labelled detail row.
 func TestADetailLabelLeavesChildRowsTheirLabels(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", strings.TrimSuffix(sitesWithAnimals, "}")+`,"detail":{"label":{"op":"upper","args":[{"col":"site"}]}}}`, Options{}, nil)
-	requireRows(t, res, "label", "NORTH", "Leo", "2026-01-05", "2026-02-10", "SOUTH", "Zed", "2026-01-20", "2026-03-03", "Total")
+	spec := strings.TrimSuffix(sitesWithAnimals, "}") + `,"detail":{"label":{"op":"upper","args":[{"col":"site"}]}}}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "NORTH", "Leo", "2026-01-05", "2026-02-10", "SOUTH", "Zed", "2026-01-20", "2026-03-03", "Total")
 	var columns []string
 	for _, r := range res.Rows {
 		columns = append(columns, r.LabelColumn)

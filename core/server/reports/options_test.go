@@ -27,11 +27,11 @@ const animalsParam = `{"version":2,"source":"zoo.feedings",
 func TestARunTakesAnyIDForAnOptionsFromSourceParam(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `["` + z.id("leo") + `"]`})
-	requireRows(t, res, "note", "f1", "f2", nil)
+	requireOrderedRows(t, animalsParam, res, "note", "f1", "f2", nil)
 	res = z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `["not-an-animal"]`})
 	requireRows(t, res, "note", nil)
 	all := z.run(t, "ann", animalsParam, Options{}, nil)
-	requireRows(t, all, "note", "f1", "f2", "f3", "f4", nil)
+	requireOrderedRows(t, animalsParam, all, "note", "f1", "f2", "f3", "f4", nil)
 	many := make([]string, maxChoiceValues+1)
 	for i := range many {
 		many[i] = fmt.Sprintf("%q", fmt.Sprint("x", i))
@@ -533,9 +533,9 @@ func TestParamOptionLabelsOfTypedFields(t *testing.T) {
 func TestAGroupReferenceExpandsOnTheServer(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `[{"group":"zebra"}]`})
-	requireRows(t, res, "note", "f3", "f4", nil)
+	requireOrderedRows(t, animalsParam, res, "note", "f3", "f4", nil)
 	res = z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `["` + z.id("leo") + `",{"group":"zebra"}]`})
-	requireRows(t, res, "note", "f1", "f2", "f3", "f4", nil)
+	requireOrderedRows(t, animalsParam, res, "note", "f1", "f2", "f3", "f4", nil)
 	if p := res.Params[0]; len(p.Groups) != 1 || p.Groups[0] != "zebra" || len(p.List) != 1 {
 		t.Fatalf("resolved = %+v", p)
 	}
@@ -549,7 +549,7 @@ func TestAGroupReferenceExpandsOnTheServer(t *testing.T) {
 		values = append(values, fmt.Sprintf("%q", fmt.Sprint("x", i)))
 	}
 	res = z.run(t, "ann", animalsParam, Options{}, map[string]string{"animals": `[{"group":"zebra"},` + strings.Join(values, ",") + "]"})
-	requireRows(t, res, "note", "f1", "f2", "f3", "f4", nil)
+	requireOrderedRows(t, animalsParam, res, "note", "f1", "f2", "f3", "f4", nil)
 }
 
 // A group expands to the options the reader may list, never to a value the
@@ -574,7 +574,7 @@ func TestAGroupReferenceReadsUnderTheReadersRules(t *testing.T) {
 	// Leo's vault is hidden, so Leo is in the blank group, and the vault's id
 	// is no group at all.
 	byVault := withGroup(`[{"link":"vault"}]`)
-	requireRows(t, z.run(t, "ann", byVault, Options{}, map[string]string{"animals": `[{"group":""}]`}), "note", "f1", "f2", "f3", "f4", nil)
+	requireOrderedRows(t, byVault, z.run(t, "ann", byVault, Options{}, map[string]string{"animals": `[{"group":""}]`}), "note", "f1", "f2", "f3", "f4", nil)
 	requireRows(t, z.run(t, "ann", byVault, Options{}, map[string]string{"animals": `[{"group":"` + z.id("v1") + `"}]`}), "note", nil)
 }
 
@@ -598,8 +598,9 @@ func TestAGroupReferenceOfATypedGroup(t *testing.T) {
 		{`[{"field":"active"}]`, "0", []any{"f7", nil}},
 		{`[{"field":"active"}]`, "1", []any{"f1", "f2", "f3", "f4", nil}},
 	} {
-		res := z.run(t, "ann", withGroup(c.group), Options{}, map[string]string{"animals": `[{"group":"` + c.value + `"}]`})
-		requireRows(t, res, "note", c.want...)
+		spec := withGroup(c.group)
+		res := z.run(t, "ann", spec, Options{}, map[string]string{"animals": `[{"group":"` + c.value + `"}]`})
+		requireOrderedRows(t, spec, res, "note", c.want...)
 	}
 }
 
@@ -614,8 +615,8 @@ func TestAGroupReferenceInEveryContext(t *testing.T) {
 			{"id":"picked","formula":{"op":"in","args":[{"path":[{"link":"animal"}]},{"param":"animals"}]}},
 			{"id":"name","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"in","args":[{"path":[{"field":"id"}]},{"param":"animals"}]},"value":{"path":[{"field":"name"}]}}}],`, 1)
 	res := z.run(t, "ann", picked, Options{}, zebras)
-	requireRows(t, res, "note", "f1", "f2", "f3", "f4", nil)
-	requireRows(t, res, "picked", false, false, true, true, nil)
+	requireOrderedRows(t, picked, res, "note", "f1", "f2", "f3", "f4", nil)
+	requireOrderedRows(t, picked, res, "picked", false, false, true, true, nil)
 	requireRows(t, res, "name", "Zed", "Zed", "Zed", "Zed", "Zed")
 
 	having := strings.Replace(animalsParam, `"columns":[{"id":"note","path":[{"field":"note"}]}],
@@ -661,7 +662,7 @@ func TestAGroupReferenceRefusals(t *testing.T) {
 	// group of them would need the options to read themselves.
 	selfish := withGroup(`[{"field":"species"}],"where":{"op":"in","args":[{"path":[{"field":"id"}]},{"param":"animals"}]}`)
 	res := z.run(t, "ann", selfish, Options{}, map[string]string{"animals": `["` + z.id("leo") + `"]`})
-	requireRows(t, res, "note", "f1", "f2", nil)
+	requireOrderedRows(t, selfish, res, "note", "f1", "f2", nil)
 	_, err = z.try(t, "ann", selfish, Options{}, map[string]string{"animals": `[{"group":"zebra"}]`})
 	requireSpecError(t, err, 400, "params.0.optionsFrom.where", "read a group picked from them")
 }

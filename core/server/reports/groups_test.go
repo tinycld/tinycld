@@ -27,7 +27,7 @@ func TestGroupsLoadLazily(t *testing.T) {
 
 	open := z.run(t, "ann", feedingsBySpecies, Options{Expand: [][]any{lion.GroupKey}}, nil)
 	requireRows(t, open, "kind", "group", "detail", "detail", "subtotal", "group", "total")
-	requireRows(t, open, "note", nil, "f1", "f2", nil, nil, nil)
+	requireOrderedRows(t, feedingsBySpecies, open, "note", nil, "f1", "f2", nil, nil, nil)
 	requireRows(t, open, "label", "lion", "lion", "lion", "Total lion", "zebra", "Total")
 	if !open.Rows[0].Expanded || open.Rows[1].Section != lion.ID || open.Rows[1].Depth != 1 || open.Rows[3].Section != lion.ID {
 		t.Fatalf("rows = %+v", open.Rows[:4])
@@ -117,7 +117,7 @@ func TestTwoGroupLevels(t *testing.T) {
 
 	all := z.run(t, "bob", spec, Options{ExpandAll: true}, nil)
 	requireRows(t, all, "kind", "group", "group", "detail", "subtotal", "group", "group", "detail", "detail", "subtotal", "total")
-	requireRows(t, all, "note", nil, nil, "f5", nil, nil, nil, "f3", "f4", nil, nil)
+	requireOrderedRows(t, spec, all, "note", nil, nil, "f5", nil, nil, nil, "f3", "f4", nil, nil)
 }
 
 func TestAToManyTotalCountsEachParentOnce(t *testing.T) {
@@ -191,7 +191,7 @@ func TestGroupByAFormulaColumn(t *testing.T) {
 
 	open := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
 	requireRows(t, open, "kind", "group", "detail", "subtotal", "group", "detail", "detail", "subtotal", "group", "detail", "subtotal", "total")
-	requireRows(t, open, "note", nil, "f4", nil, nil, "f1", "f3", nil, nil, "f2", nil, nil)
+	requireOrderedRows(t, spec, open, "note", nil, "f4", nil, nil, "f1", "f3", nil, nil, "f2", nil, nil)
 	requireRows(t, open, "bucket", int64(0), int64(0), int64(0), int64(1), int64(1), int64(1), int64(1), int64(2), int64(2), int64(2), nil)
 }
 
@@ -229,13 +229,14 @@ func TestAFormulaOverAmountsTotalsEachCurrencyApart(t *testing.T) {
 	z.rec(t, "f7", "zoo_feedings", map[string]any{
 		"animal": z.id("zed"), "cost": 400, "currency": "EUR", "fed": "2026-03-10 00:00:00.000Z", "grams": 10, "note": "f7",
 	})
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	const spec = `{"version":1,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"t","formula":{"op":"sum","args":[{"op":"add","args":[{"path":[{"field":"cost"}]},{"value":0}]}]}}],
-		"sort":[{"col":"note"}]}`, Options{}, nil)
+		"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
 	requireRows(t, res, "kind", "detail", "detail", "detail", "detail", "detail", "total", "total")
-	requireRows(t, res, "t", int64(1000), int64(2500), int64(700), int64(300), int64(400), int64(400), int64(4500))
-	requireRows(t, res, "t@currency", "USD", "USD", "USD", "USD", "EUR", "EUR", "USD")
+	requireOrderedRows(t, spec, res, "t", int64(1000), int64(2500), int64(700), int64(300), int64(400), int64(400), int64(4500))
+	requireOrderedRows(t, spec, res, "t@currency", "USD", "USD", "USD", "USD", "EUR", "EUR", "USD")
 	if c := res.Columns[1]; c.CurrencyCell != "t@currency" || !c.MixedCurrency {
 		t.Fatalf("t column = %+v", c)
 	}
@@ -277,15 +278,16 @@ func TestAFormulaRefusesToCombineCurrencies(t *testing.T) {
 // child row holds it.
 func TestANestedAmountCarriesItsCurrency(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.animals","columns":[
+	const spec = `{"version":1,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"cost","path":[{"link":"feedings","mode":"nest"},{"field":"cost"}]}],
-		"sort":[{"col":"name"}]}`, Options{}, nil)
+		"sort":[{"col":"name"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
 	if c := res.Columns[1]; c.CurrencyCell != "cost@currency" {
 		t.Fatalf("cost column = %+v", c)
 	}
-	requireRows(t, res, "label", "Kit", "Leo", "1000", "2500", "Zed", "300", "700", "Total")
-	requireRows(t, res, "cost@currency", nil, nil, "USD", "USD", nil, "USD", "USD", nil)
+	requireOrderedRows(t, spec, res, "label", "Kit", "Leo", "1000", "2500", "Zed", "300", "700", "Total")
+	requireOrderedRows(t, spec, res, "cost@currency", nil, nil, "USD", "USD", nil, "USD", "USD", nil)
 }
 
 func TestGroupRowsStopAtTheRowCap(t *testing.T) {
@@ -299,19 +301,20 @@ func TestGroupRowsStopAtTheRowCap(t *testing.T) {
 
 func TestRunningValuesAndPercents(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	const spec = `{"version":1,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"running","formula":{"op":"runningSum","args":[{"col":"cost"}]}},
 		{"id":"ofParent","formula":{"op":"percentOfParent","args":[{"col":"cost"}],"scale":1}},
 		{"id":"ofTotal","formula":{"op":"percentOfTotal","args":[{"col":"cost"}],"scale":1}}],
-		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`, Options{ExpandAll: true}, nil)
-	requireRows(t, res, "note", nil, "f1", "f2", nil, "f3", "f4", nil)
+		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
+	requireOrderedRows(t, spec, res, "note", nil, "f1", "f2", nil, "f3", "f4", nil)
 	// Running sums restart in each group; group rows run across groups.
-	requireRows(t, res, "running", int64(3500), int64(1000), int64(3500), int64(4500), int64(700), int64(1000), int64(4500))
-	requireRows(t, res, "ofParent", 77.8, 28.6, 71.4, 22.2, 70.0, 30.0, 100.0)
-	requireRows(t, res, "ofTotal", 77.8, 22.2, 55.6, 22.2, 15.6, 6.7, 100.0)
+	requireOrderedRows(t, spec, res, "running", int64(3500), int64(1000), int64(3500), int64(4500), int64(700), int64(1000), int64(4500))
+	requireOrderedRows(t, spec, res, "ofParent", 77.8, 28.6, 71.4, 22.2, 70.0, 30.0, 100.0)
+	requireOrderedRows(t, spec, res, "ofTotal", 77.8, 22.2, 55.6, 22.2, 15.6, 6.7, 100.0)
 }
 
 func TestARunningValueIsNotASortKey(t *testing.T) {

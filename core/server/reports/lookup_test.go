@@ -33,21 +33,23 @@ func TestALookupReadsAnotherSourceUnderTheReadersRules(t *testing.T) {
 // A lookup that reads a report column is correlated: each row looks up its own.
 func TestALookupMayReadTheRowsColumns(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"weight","formula":{"op":"lookup","source":"zoo.animals",
 			"where":{"op":"eq","args":[{"path":[{"field":"id"}]},{"col":"animal"}]},
-			"value":{"path":[{"field":"weight"}]}}}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "weight", int64(190), int64(190), int64(300), int64(300), nil)
+			"value":{"path":[{"field":"weight"}]}}}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "weight", int64(190), int64(190), int64(300), int64(300), nil)
 }
 
 func TestALookupInTheFilterPicksMinOrMaxAndIsBlankWithNoMatch(t *testing.T) {
 	z := newZoo(t)
 	zedID := `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Zed"}]},"value":{"path":[{"field":"id"}]}}`
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
-		"filter":{"op":"eq","args":[{"path":[{"link":"animal"}]},`+zedID+`]},"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "note", "f3", "f4", nil)
+	zeds := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+		"filter":{"op":"eq","args":[{"path":[{"link":"animal"}]},` + zedID + `]},"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", zeds, Options{}, nil)
+	requireOrderedRows(t, zeds, res, "note", "f3", "f4", nil)
 
 	heaviest := `{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"weight"}]},"pick":"max"}`
 	none := `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Nobody"}]},"value":{"path":[{"field":"weight"}]}}`
@@ -106,17 +108,18 @@ func TestACorrelatedLookupOnAGroupRowReadsTheGroupsKey(t *testing.T) {
 // fit 300, 700 and 1000 but she cannot list Mo).
 func TestALookupReadsATotalColumnOnEveryRow(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"spent","formula":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}},
 		{"id":"fits","formula":{"op":"lookup","source":"zoo.animals","pick":"max",
 			"where":{"op":"lte","args":[{"op":"mul","args":[{"path":[{"field":"weight"}]},{"value":10}]},{"col":"spent"}]},
 			"value":{"path":[{"field":"weight"}]}}}],
-		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`, Options{ExpandAll: true}, nil)
+		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
 	requireRows(t, res, "kind", "group", "detail", "detail", "group", "detail", "detail", "total")
-	requireRows(t, res, "spent", int64(3500), int64(1000), int64(2500), int64(1000), int64(700), int64(300), int64(4500))
-	requireRows(t, res, "fits", int64(300), int64(4), int64(190), int64(4), int64(4), int64(4), int64(300))
+	requireOrderedRows(t, spec, res, "spent", int64(3500), int64(1000), int64(2500), int64(1000), int64(700), int64(300), int64(4500))
+	requireOrderedRows(t, spec, res, "fits", int64(300), int64(4), int64(190), int64(4), int64(4), int64(4), int64(300))
 }
 
 // A lookup may read a running value: the outer select computes it before the
@@ -127,7 +130,7 @@ func TestALookupReadsATotalColumnOnEveryRow(t *testing.T) {
 // is the heaviest one lighter than fits.
 func TestALookupReadsARunningValue(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -138,12 +141,13 @@ func TestALookupReadsARunningValue(t *testing.T) {
 		{"id":"lighter","formula":{"op":"lookup","source":"zoo.animals","pick":"max",
 			"where":{"op":"lt","args":[{"path":[{"field":"weight"}]},{"col":"fits"}]},
 			"value":{"path":[{"field":"weight"}]}}}],
-		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`, Options{ExpandAll: true}, nil)
+		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
 	requireRows(t, res, "kind", "group", "detail", "detail", "group", "detail", "detail", "total")
-	requireRows(t, res, "run", int64(3500), int64(1000), int64(3500), int64(4500), int64(700), int64(1000), int64(4500))
-	requireRows(t, res, "fits", int64(190), int64(4), int64(190), int64(300), int64(4), int64(4), int64(300))
+	requireOrderedRows(t, spec, res, "run", int64(3500), int64(1000), int64(3500), int64(4500), int64(700), int64(1000), int64(4500))
+	requireOrderedRows(t, spec, res, "fits", int64(190), int64(4), int64(190), int64(300), int64(4), int64(4), int64(300))
 	// A lookup of that lookup reads it computed too.
-	requireRows(t, res, "lighter", int64(4), nil, int64(4), int64(190), nil, nil, int64(190))
+	requireOrderedRows(t, spec, res, "lighter", int64(4), nil, int64(4), int64(190), nil, nil, int64(190))
 }
 
 // A computed layout row may look a value up (F16): here a section's cost

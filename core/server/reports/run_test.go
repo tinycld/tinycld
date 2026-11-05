@@ -66,6 +66,27 @@ func requireRows(t *testing.T, res *Result, what string, want ...any) {
 	}
 }
 
+// requireOrderedRows is requireRows for an assert on the order of detail
+// rows. A report with no sort returns detail rows in record-id order, and
+// record ids are random, so such an order means nothing: the spec must sort.
+func requireOrderedRows(t testing.TB, spec string, res *Result, what string, want ...any) {
+	t.Helper()
+	var s struct {
+		Sort []json.RawMessage `json:"sort"`
+	}
+	if err := json.Unmarshal([]byte(spec), &s); err != nil {
+		t.Fatalf("spec: %v", err)
+		return
+	}
+	if len(s.Sort) == 0 {
+		t.Fatalf("%s: the spec has no sort; a report with no sort returns detail rows in record-id order, so their order is not defined", what)
+		return
+	}
+	if got := rowsOf(res, what); !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s = %#v\nwant   %#v", what, got, want)
+	}
+}
+
 const feedingsByDay = `{"version":1,"source":"zoo.feedings","columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"fed","path":[{"field":"fed"}]},
@@ -78,26 +99,27 @@ func TestRunDetailRowsAndTheTotal(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", feedingsByDay, Options{}, nil)
 	requireRows(t, res, "kind", "detail", "detail", "detail", "detail", "total")
-	requireRows(t, res, "note", "f1", "f3", "f2", "f4", nil)
-	requireRows(t, res, "fed", "2026-01-05", "2026-01-20", "2026-02-10", "2026-03-03", nil)
+	requireOrderedRows(t, feedingsByDay, res, "note", "f1", "f3", "f2", "f4", nil)
+	requireOrderedRows(t, feedingsByDay, res, "fed", "2026-01-05", "2026-01-20", "2026-02-10", "2026-03-03", nil)
 	requireRows(t, res, "active", true, true, true, true, nil)
-	requireRows(t, res, "cost", int64(1000), int64(700), int64(2500), int64(300), int64(4500))
-	requireRows(t, res, "label", "f1", "f3", "f2", "f4", "Total")
+	requireOrderedRows(t, feedingsByDay, res, "cost", int64(1000), int64(700), int64(2500), int64(300), int64(4500))
+	requireOrderedRows(t, feedingsByDay, res, "label", "f1", "f3", "f2", "f4", "Total")
 	if res.Rows[0].ID != "d:"+z.id("f1") || res.Rows[4].ID != `total:["USD"]` {
 		t.Fatalf("ids = %s, %s", res.Rows[0].ID, res.Rows[4].ID)
 	}
 	bob := z.run(t, "bob", feedingsByDay, Options{}, nil)
-	requireRows(t, bob, "note", "f3", "f5", "f4", nil)
-	requireRows(t, bob, "cost", int64(700), int64(150), int64(300), int64(1150))
+	requireOrderedRows(t, feedingsByDay, bob, "note", "f3", "f5", "f4", nil)
+	requireOrderedRows(t, feedingsByDay, bob, "cost", int64(700), int64(150), int64(300), int64(1150))
 }
 
 func TestRunDescribesItsColumns(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.animals","columns":[
+	const spec = `{"version":1,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}],"aggregate":"count","format":"plain"},
 		{"id":"region","label":"Where","path":[{"link":"site"},{"field":"region"}]},
 		{"id":"price","path":[{"field":"price"}],"aggregate":"sum"}],
-		"sort":[{"col":"name"}]}`, Options{}, nil)
+		"sort":[{"col":"name"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
 	want := []ResultColumn{
 		{ID: "name", Label: "Name", Type: Text, TotalType: Number, Aggregate: Count, Format: "plain"},
 		{ID: "region", Label: "Where", Type: Select, Options: []Option{{Value: "north", Label: "North"}, {Value: "south", Label: "South"}}},
@@ -106,7 +128,7 @@ func TestRunDescribesItsColumns(t *testing.T) {
 	if !reflect.DeepEqual(res.Columns, want) {
 		t.Fatalf("columns = %+v", res.Columns)
 	}
-	requireRows(t, res, "name", "Kit", "Leo", "Zed", int64(3))
+	requireOrderedRows(t, spec, res, "name", "Kit", "Leo", "Zed", int64(3))
 }
 
 func TestRunTotalsMoneyExactly(t *testing.T) {
@@ -183,7 +205,8 @@ func TestRunReturnsSpecErrors(t *testing.T) {
 
 func TestRunNoticesRenamedFieldsAndAnUpgrade(t *testing.T) {
 	z := newZoo(t)
-	spec, info, err := Load([]byte(`{"version":1,"source":"zoo.animals","columns":[{"id":"w","path":[{"field":"mass"}],"aggregate":"sum"}],"sort":[{"col":"w"}]}`))
+	const raw = `{"version":1,"source":"zoo.animals","columns":[{"id":"w","path":[{"field":"mass"}],"aggregate":"sum"}],"sort":[{"col":"w"}]}`
+	spec, info, err := Load([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +225,7 @@ func TestRunNoticesRenamedFieldsAndAnUpgrade(t *testing.T) {
 	if res.Notices[0].FromVersion != 1 || res.Notices[0].Count != 0 {
 		t.Fatalf("upgrade notice = %+v", res.Notices[0])
 	}
-	requireRows(t, res, "w", int64(4), int64(190), int64(300), int64(494))
+	requireOrderedRows(t, raw, res, "w", int64(4), int64(190), int64(300), int64(494))
 }
 
 func TestRunResolvesPresetsWithTheReadersDay(t *testing.T) {
@@ -212,27 +235,28 @@ func TestRunResolvesPresetsWithTheReadersDay(t *testing.T) {
 		"columns":[{"id":"note","path":[{"field":"note"}]}],
 		"filter":{"op":"between","args":[{"path":[{"field":"fed"}]},{"param":"period"}]},
 		"sort":[{"col":"note"}]}`
-	requireRows(t, z.run(t, "ann", spec, Options{Today: "2026-01-15"}, nil), "note", "f1", "f3", nil)
+	requireOrderedRows(t, spec, z.run(t, "ann", spec, Options{Today: "2026-01-15"}, nil), "note", "f1", "f3", nil)
 	requireRows(t, z.run(t, "ann", spec, Options{Today: "2026-02-15"}, nil), "note", "f2", nil)
-	requireRows(t, z.run(t, "ann", spec, Options{Today: "2026-02-15"}, map[string]string{"period": `{"preset":"lastMonth"}`}), "note", "f1", "f3", nil)
+	requireOrderedRows(t, spec, z.run(t, "ann", spec, Options{Today: "2026-02-15"}, map[string]string{"period": `{"preset":"lastMonth"}`}), "note", "f1", "f3", nil)
 }
 
 func TestRunFormulasOnDetailRowsAndTotals(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	const spec = `{"version":1,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
 		{"id":"double","formula":{"op":"mul","args":[{"col":"cost"},{"value":2}]},"aggregate":"sum"},
 		{"id":"perGram","formula":{"op":"div","args":[{"col":"cost"},{"col":"grams"}],"scale":0}},
 		{"id":"largest","formula":{"op":"max","args":[{"path":[{"field":"cost"}]}]}}],
-		"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "double", int64(2000), int64(5000), int64(1400), int64(600), int64(9000))
+		"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "double", int64(2000), int64(5000), int64(1400), int64(600), int64(9000))
 	// A formula with no aggregate is computed again from each row's
 	// values: the total's is 4500 / 1700, not a sum of the rows'.
-	requireRows(t, res, "perGram", int64(2), int64(3), int64(2), int64(3), int64(3))
+	requireOrderedRows(t, spec, res, "perGram", int64(2), int64(3), int64(2), int64(3), int64(3))
 	// An aggregate in a formula is the aggregate of one detail row.
-	requireRows(t, res, "largest", int64(1000), int64(2500), int64(700), int64(300), int64(2500))
+	requireOrderedRows(t, spec, res, "largest", int64(1000), int64(2500), int64(700), int64(300), int64(2500))
 }
 
 // A Bool column's count is a number wherever it is totalled: a group, a
@@ -342,17 +366,19 @@ func TestAFormulaPathIsBlankOnGroupAndTotalRows(t *testing.T) {
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
 		{"id":"perGram","formula":{"op":"div","args":[{"col":"cost"},{"col":"grams"}],"scale":0}}]`
-	grouped := z.run(t, "ann", `{"version":1,"source":"zoo.feedings",`+columns+`,
-		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`, Options{ExpandAll: true}, nil)
+	const bySpecies = `{"version":1,"source":"zoo.feedings",` + columns + `,
+		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`
+	grouped := z.run(t, "ann", bySpecies, Options{ExpandAll: true}, nil)
 	requireRows(t, grouped, "kind", "group", "detail", "detail", "group", "detail", "detail", "total")
 	// A formula that reads a row's value is blank as a whole on group and
 	// total rows, not computed from a blank (which would show 0).
-	requireRows(t, grouped, "same", nil, int64(1000), int64(2500), nil, int64(700), int64(300), nil)
-	requireRows(t, grouped, "double", nil, int64(2000), int64(5000), nil, int64(1400), int64(600), nil)
+	requireOrderedRows(t, bySpecies, grouped, "same", nil, int64(1000), int64(2500), nil, int64(700), int64(300), nil)
+	requireOrderedRows(t, bySpecies, grouped, "double", nil, int64(2000), int64(5000), nil, int64(1400), int64(600), nil)
 	// A formula over totals is still computed for each group.
-	requireRows(t, grouped, "perGram", int64(3), int64(2), int64(3), int64(3), int64(2), int64(3), int64(3))
-	flat := z.run(t, "ann", `{"version":1,"source":"zoo.feedings",`+columns+`,"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, flat, "same", int64(1000), int64(2500), int64(700), int64(300), nil)
+	requireOrderedRows(t, bySpecies, grouped, "perGram", int64(3), int64(2), int64(3), int64(3), int64(2), int64(3), int64(3))
+	const plain = `{"version":1,"source":"zoo.feedings",` + columns + `,"sort":[{"col":"note"}]}`
+	flat := z.run(t, "ann", plain, Options{}, nil)
+	requireOrderedRows(t, plain, flat, "same", int64(1000), int64(2500), int64(700), int64(300), nil)
 
 	_, err := z.try(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
 		{"id":"bad","formula":{"op":"mul","args":[{"path":[{"field":"nope"}]},{"value":2}]}}]}`, Options{}, nil)
