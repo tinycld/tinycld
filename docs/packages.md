@@ -1132,7 +1132,7 @@ reports.RegisterSource(reports.Source{
   `DateTime`, `Bool`, `Select` (with `Options` for the labels) and
   `Relation`. A money field names a `Currency` text field of the same source,
   or the source sets `Source.Currency`, a function that gives one fixed
-  currency. A money field with neither panics in `RegisterSource`: the
+  currency for the reader (see below). A money field with neither panics in `RegisterSource`: the
   engine never adds amounts it cannot tell apart. A field offers the aggregates in `Aggregates` (`SumAll`,
   `MinMax`, `CountOnly`); with none it can be counted. Every source also
   offers `id`.
@@ -1144,12 +1144,15 @@ reports.RegisterSource(reports.Source{
 - `Heading` returns the name a report on this base source prints above its
   title. The result carries it as `heading` (trimmed); nil leaves it empty,
   and the shell prints the organization's name.
-- `FiscalStartMonth` and `Heading` get the reader: the signed-in user of the
-  read, with the request's headers. The reader is never nil and never a
-  superuser. Each read of a report calls each function one time, and uses
-  that value everywhere in the read. A param's options call only
-  `FiscalStartMonth`. Both functions run with the app, not under the
-  reader's rules. They must return only what that reader may see.
+- `Heading`, `FiscalStartMonth` and `Currency` get the reader: the signed-in
+  user of the read, with the request's headers. The reader is never nil and
+  never a superuser. Each read of a report calls `Heading` and
+  `FiscalStartMonth` one time. It calls `Currency` at most one time for each
+  source, and only when the read shows or compares an amount in that
+  source's fixed currency. The read uses that one value everywhere. A
+  param's options do not call `Heading`. `Validate` calls none of the three.
+  The functions run with the app, not under the reader's rules. They must
+  return only what that reader may see.
 - The reader is read-only. The run's list rules use the same request, so a
   change to the reader changes what the whole run may read.
 - To read a record for the reader, use `reports.FindViewableRecord`. It
