@@ -116,15 +116,22 @@ type Source struct {
 	// report keeps working after a rename.
 	Aliases map[string]string
 	// Currency is the fixed currency of Money fields that name no Currency
-	// field. nil means the currency is unknown to the engine.
-	Currency func(app core.App) string
-	// FiscalStartMonth (1-12) drives fiscalYear, fiscalPeriod and the
-	// fiscal period presets when this source is a report's base. nil means 1.
-	FiscalStartMonth func(app core.App) int
-	// Heading is the name a report on this base source prints above its
-	// title (a business name), read at each run. nil prints the
-	// organization's name.
-	Heading func(app core.App) string
+	// field, read for the reader (see Heading), at most once per source in one
+	// read of a report. nil means the currency is unknown to the engine.
+	Currency func(app core.App, reader *core.RequestInfo) string
+	// FiscalStartMonth (1-12) drives fiscalYear, fiscalPeriod and the fiscal
+	// period presets when this source is a report's base. nil means 1. It runs
+	// once per read of a report, for that read's reader (see Heading).
+	FiscalStartMonth func(app core.App, reader *core.RequestInfo) int
+	// Heading is the name a report on this base source prints above its title
+	// (a business name), read once per run for the run's reader. reader is the
+	// signed-in user the run is for (never nil, never a superuser) with the
+	// request's headers, as the run's list rules see them. reader is
+	// read-only: the run's list rules use the same request, so a change to it
+	// changes what the whole run may read. Return only what that reader may
+	// see: read through FindViewableRecord. nil prints the organization's
+	// name.
+	Heading func(app core.App, reader *core.RequestInfo) string
 	// Watch names the collections Heading, FiscalStartMonth and Currency
 	// read. A run that reads this source subscribes to them too, so a
 	// settings change runs an open report again.

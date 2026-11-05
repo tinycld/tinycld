@@ -236,7 +236,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	}
 	rn.res.Params = resolvedParams(p.spec.Params, params)
 	if h := p.base.Heading; h != nil {
-		rn.res.Heading = strings.TrimSpace(h(app))
+		rn.res.Heading = strings.TrimSpace(h(app, c.info))
 	}
 	return rn.res, nil
 }
@@ -257,11 +257,15 @@ func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[str
 	if err != nil {
 		return nil, err
 	}
-	params, specErr := resolveParams(p.spec.Params, given, periodContext{today: day, fiscalStart: fiscalStartOf(p.base, app)})
+	info := listRequestInfo(auth, headers)
+	// One read of the fiscal start month serves the presets and the
+	// formulas, so a settings change mid-read cannot make them disagree.
+	fiscal := fiscalStartOf(p.base, app, info)
+	params, specErr := resolveParams(p.spec.Params, given, periodContext{today: day, fiscalStart: fiscal})
 	if specErr != nil {
 		return nil, specErr
 	}
-	return newCompiler(p, app, listRequestInfo(auth, headers), params), nil
+	return newCompilerWithFiscal(p, app, info, params, fiscal), nil
 }
 
 // todayOf reads the reader's day, given at at in the request.
@@ -768,7 +772,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		total:  prefixed("w.", c.currencies),
 	}
 	visiting := map[string]bool{}
-	labels := newLabelRefs(r.s, frame, "w")
+	labels := newLabelRefs(c, r.s, frame, "w")
 	var order []sortKey
 	sel := []string{"w.__id AS __id"}
 	for _, k := range append(keys, prefixed("w.", c.currencies)...) {

@@ -77,7 +77,7 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 			// is computed once.
 			t, idx := cp.path.target, p.index(cp)
 			f := labelFieldOf(t, p.labelFieldName(cp))
-			sel = append(sel, fmt.Sprintf("%s AS vl%d", labelValueSQL(s, t, f, v), idx), fmt.Sprintf("%s AS vc%d", labelCurrencySQL(s, t, f, v), idx))
+			sel = append(sel, fmt.Sprintf("%s AS vl%d", labelValueSQL(s, t, f, v), idx), fmt.Sprintf("%s AS vc%d", rn.c.labelCurrencySQL(s, t, f, v), idx))
 			key := labelOrder(s, fmt.Sprintf("vl%d", idx))
 			order = append(order, "("+key+" IS NULL)", key)
 		}

@@ -127,14 +127,14 @@ func (c *compiler) amountGroupSQL(s *stmt, sc *scope, p *pathPlan) string {
 // beside it, or its source's fixed currency; NULL for anything else.
 func (c *compiler) shownCurrencySQL(s *stmt, sc *scope, p *pathPlan, e expr) string {
 	if e.target != nil && p.field.Type == Relation {
-		return labelCurrencySQL(s, e.target, labelFieldOf(e.target, ""), e.sql)
+		return c.labelCurrencySQL(s, e.target, labelFieldOf(e.target, ""), e.sql)
 	}
 	sql, fixed := amountCurrencyOf(sc, p.hops, p)
 	switch {
 	case sql != "":
 		return sql
-	case fixed != nil && c.app != nil:
-		return s.bind(fixed.Currency(c.app))
+	case fixed != nil && !c.dry():
+		return s.bind(c.fixedCurrency(fixed))
 	}
 	return "NULL"
 }
@@ -345,7 +345,7 @@ func (c *compiler) optionGroups(ctx context.Context, op *optionsPlan, search str
 		// A link's group shows the record's label, and its currency when the
 		// label is an amount; an amount's own group carries its currency in
 		// its value (amountGroupSQL).
-		cur = labelCurrencySQL(s, key.target, labelFieldOf(key.target, ""), "o.g")
+		cur = c.labelCurrencySQL(s, key.target, labelFieldOf(key.target, ""), "o.g")
 	}
 	// The blank group comes first; a number orders by its value, not its
 	// text ("4" before "190").

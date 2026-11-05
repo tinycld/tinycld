@@ -174,5 +174,5 @@ func (j *joinCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(j, 
 // currencySQL reads a currency key by its expression: the context compiles
 // inside w's own select.
 func (j *joinCtx) currencySQL(cur currency) string {
-	return currencyCode(j, j.r.c.app, cur, func(key string) string { return j.r.inner("w." + key) })
+	return currencyCode(j, j.r.c, cur, func(key string) string { return j.r.inner("w." + key) })
 }

@@ -62,7 +62,7 @@ func (rn *runner) pivotPass() ([]pivotValue, error) {
 	switch t := pv.path.target; {
 	case t != nil:
 		f := labelFieldOf(t, pv.pivot.LabelField)
-		label, cur = labelValueSQL(s, t, f, "pk"), labelCurrencySQL(s, t, f, "pk")
+		label, cur = labelValueSQL(s, t, f, "pk"), c.labelCurrencySQL(s, t, f, "pk")
 		key := labelOrder(s, "__label")
 		order = "(pk IS NULL), (" + key + " IS NULL), " + key + ", pk"
 		typ = labelTypeOf(f)
@@ -72,7 +72,7 @@ func (rn *runner) pivotPass() ([]pivotValue, error) {
 	case pv.path.field.Type == Money:
 		label, typ = "pk", Money
 		if pv.path.src.Currency != nil {
-			cur = s.bind(pv.path.src.Currency(rn.app))
+			cur = s.bind(c.fixedCurrency(pv.path.src))
 		}
 	}
 	body := fmt.Sprintf("SELECT pk, __label, __labelcur, COUNT(*) OVER () AS __n FROM (SELECT pk, %s AS __label, %s AS __labelcur FROM (SELECT DISTINCT %s FROM w)) ORDER BY %s LIMIT %s",
