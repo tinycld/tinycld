@@ -77,11 +77,21 @@ type labelPlan struct {
 	recordCurrency bool
 }
 
+// newCompiler reads the fiscal start month for info's reader. A dry compile
+// (nil app or nil info) has no reader to read it for, so its start is 1.
 func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue) *compiler {
-	c := &compiler{p: p, app: app, info: info, params: params, fiscal: 1, currencyOf: map[string]currency{}, valueCur: map[string]string{}, valueCurErr: map[string]error{}, sectionCur: map[string]currency{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}, expanding: map[string]bool{}}
-	if app != nil {
-		c.fiscal = fiscalStartOf(p.base, app)
+	fiscal := 1
+	if app != nil && info != nil {
+		fiscal = fiscalStartOf(p.base, app, info)
 	}
+	return newCompilerWithFiscal(p, app, info, params, fiscal)
+}
+
+// newCompilerWithFiscal is newCompiler with a fiscal start month the caller
+// already read, so a read that also resolves period presets uses one value
+// for both.
+func newCompilerWithFiscal(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue, fiscal int) *compiler {
+	c := &compiler{p: p, app: app, info: info, params: params, fiscal: fiscal, currencyOf: map[string]currency{}, valueCur: map[string]string{}, valueCurErr: map[string]error{}, sectionCur: map[string]currency{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}, expanding: map[string]bool{}}
 	if params == nil {
 		// Dry: each param has its default, as in a run that posts none; bind
 		// has checked the defaults.
@@ -90,12 +100,13 @@ func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[strin
 	return c
 }
 
-// fiscalStartOf is the source's fiscal start month, 1 when it has none.
-func fiscalStartOf(src *Source, app core.App) int {
+// fiscalStartOf is the source's fiscal start month for reader, 1 when it has
+// none or gives a month outside 1-12.
+func fiscalStartOf(src *Source, app core.App, reader *core.RequestInfo) int {
 	if src.FiscalStartMonth == nil {
 		return 1
 	}
-	if m := src.FiscalStartMonth(app); m >= 1 && m <= 12 {
+	if m := src.FiscalStartMonth(app, reader); m >= 1 && m <= 12 {
 		return m
 	}
 	return 1
