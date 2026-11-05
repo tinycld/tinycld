@@ -278,12 +278,109 @@ func TestParamOptionsReadAFixedCurrencyOnceForTheirReader(t *testing.T) {
 func TestValidateNeverReadsAFixedCurrency(t *testing.T) {
 	z := newZoo(t)
 	readers := withOfficeCurrency(t, z)
-	for _, spec := range []string{animalsWorth, animalsByPrice, feedingsByAnimalPrice, animalsPriceOptions} {
+	for _, spec := range []string{animalsWorth, animalsByPrice, feedingsByAnimalPrice, animalsPriceOptions,
+		zebrasWithZedsPrice, zebraPricesWithF3sCost, sitesByFedAnimalPrice} {
 		if err := Validate(z.app, loadSpec(t, spec)); err != nil {
 			t.Fatalf("Validate: %v\n%s", err, spec)
 		}
 	}
 	if len(*readers) != 0 {
 		t.Fatalf("Validate called Currency %d times, readers %v", len(*readers), readerIDs(*readers))
+	}
+}
+
+// zebrasWithZedsPrice is the zebras' feedings (f3, f4: 1000 USD) in a
+// section, then a computed row with Zed's price: an amount in the animals'
+// fixed currency in a column whose currency is each feeding's own, so the
+// computed row's currency cell carries the fixed code (layout carriedCell).
+const zebrasWithZedsPrice = `{"version":2,"source":"zoo.feedings","columns":[
+	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+	"groups":[{"id":"g","col":"species"}],
+	"layout":[{"section":"zebras","title":"Zebras","key":"zebra"},
+		{"row":"price","label":"Zed price","formula":{"op":"lookup","source":"zoo.animals",
+			"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Zed"}]},"value":{"path":[{"field":"price"}]}}}]}`
+
+// zebraPricesWithF3sCost is the zebras' prices (Zed: 120000) in a section,
+// then a computed row with feeding f3's cost (700 USD), which carries its own
+// currency: the price column names a currency cell, and every row that
+// carries none shows the fixed code there.
+const zebraPricesWithF3sCost = `{"version":2,"source":"zoo.animals","columns":[
+	{"id":"species","path":[{"field":"species"}]},
+	{"id":"price","path":[{"field":"price"}],"aggregate":"sum"}],
+	"groups":[{"id":"g","col":"species"}],
+	"layout":[{"section":"zebras","title":"Zebras","key":"zebra"},
+		{"row":"f3","label":"f3 cost","formula":{"op":"lookup","source":"zoo.feedings",
+			"where":{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"f3"}]},"value":{"path":[{"field":"cost"}]}}}]}`
+
+// sitesByFedAnimalPrice nests each site's animals and their feedings, each
+// feeding labelled by its animal's price: a child row's amount label in the
+// animals' fixed currency.
+const sitesByFedAnimalPrice = `{"version":2,"source":"zoo.sites","columns":[
+	{"id":"site","path":[{"field":"name"}]},
+	{"id":"name","path":[{"link":"animals","mode":"nest"},{"field":"name"}]},
+	{"id":"fed","path":[{"link":"animals","mode":"nest"},{"link":"feedings","mode":"nest"},{"link":"animal"}],"labelField":"price"}],
+	"sort":[{"col":"site"}]}`
+
+// Review follow-up (Part 2): a fixed currency carried into a currency cell,
+// by a computed row in another currency's column or beside a computed row
+// that carries its own, is the reader's; bob never gets the office's code.
+// Each run reads it once.
+func TestACarriedFixedCurrencyFollowsTheReader(t *testing.T) {
+	z := newZoo(t)
+	readers := withOfficeCurrency(t, z)
+	for _, c := range currencyReaders {
+		*readers = nil
+		priced := z.run(t, c.user, zebrasWithZedsPrice, Options{ExpandAll: true}, nil)
+		requireRows(t, priced, "label", "Zebras", "zebra", "zebra", "Total Zebras", "Zed price")
+		requireRows(t, priced, "cost", int64(1000), int64(700), int64(300), int64(1000), int64(120000))
+		requireRows(t, priced, "cost@currency", "USD", "USD", "USD", "USD", c.want)
+		requireNoCurrency(t, c.user+"'s Zed price", priced, c.never)
+		if got, want := readerIDs(*readers), []string{z.id(c.user)}; !slices.Equal(got, want) {
+			t.Fatalf("%s: Zed price: Currency readers = %v, want %v", c.user, got, want)
+		}
+
+		*readers = nil
+		costed := z.run(t, c.user, zebraPricesWithF3sCost, Options{ExpandAll: true}, nil)
+		requireRows(t, costed, "kind", "group", "detail", "subtotal", "computed")
+		requireRows(t, costed, "price", int64(120000), int64(120000), int64(120000), int64(700))
+		requireRows(t, costed, "price@currency", c.want, c.want, c.want, "USD")
+		if col := costed.Columns[1]; col.ID != "price" || col.CurrencyCell != "price@currency" || col.Currency != "" {
+			t.Fatalf("%s: price column = %+v, want the currency cell", c.user, col)
+		}
+		requireNoCurrency(t, c.user+"'s f3 cost", costed, c.never)
+		if got, want := readerIDs(*readers), []string{z.id(c.user)}; !slices.Equal(got, want) {
+			t.Fatalf("%s: f3 cost: Currency readers = %v, want %v", c.user, got, want)
+		}
+	}
+}
+
+// Review follow-up (Part 2): a nested child row's amount label is in the
+// reader's fixed currency, in its label cell and its row label.
+func TestANestedAmountLabelsFixedCurrencyFollowsTheReader(t *testing.T) {
+	z := newZoo(t)
+	readers := withOfficeCurrency(t, z)
+	feedings := map[string]int{"ann": 4, "bob": 3} // ann: f1, f2 (Leo), f3, f4 (Zed); bob: f5 (Mo), f3, f4 (Zed)
+	for _, c := range currencyReaders {
+		*readers = nil
+		res := z.run(t, c.user, sitesByFedAnimalPrice, Options{ExpandAll: true}, nil)
+		n := 0
+		for _, row := range res.Rows {
+			if row.Depth != 2 {
+				continue
+			}
+			n++
+			if row.Parent == "" || row.Cells["fed@labelCurrency"] != c.want || row.LabelType != Money || row.LabelCurrency != c.want {
+				t.Fatalf("%s: child row %s: parent %q, cell %#v, label %v %q, want an amount in %s",
+					c.user, row.ID, row.Parent, row.Cells["fed@labelCurrency"], row.LabelType, row.LabelCurrency, c.want)
+			}
+		}
+		if n != feedings[c.user] {
+			t.Fatalf("%s: %d nested feedings, want %d", c.user, n, feedings[c.user])
+		}
+		requireNoCurrency(t, c.user+"'s nested labels", res, c.never)
+		if got, want := readerIDs(*readers), []string{z.id(c.user)}; !slices.Equal(got, want) {
+			t.Fatalf("%s: Currency readers = %v, want %v", c.user, got, want)
+		}
 	}
 }
