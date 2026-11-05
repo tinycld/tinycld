@@ -1287,7 +1287,7 @@ version.
 
 | Field | What it does |
 |---|---|
-| `columns[].total` | `"recompute"` (default) totals every row the filter keeps. `"rows"` adds the rows the result shows, after `having`. Only for number and amount columns. |
+| `columns[].total` | `"recompute"` (default) totals every row the filter keeps. `"rows"`: the innermost group level computes the column from its own base rows, as `"recompute"` does; the levels above it and the Total add the cells of the rows the result shows, after `having`, per currency. A column with no aggregate (neither `aggregate` nor an aggregate operator in its formula) adds its detail cells on the innermost level. With no groups, the Total adds the detail cells. Pivot cells follow the same rule. Only for number and amount columns, and not on a running value or percent. |
 | `columns[].labelField` | The field of a relation column's record that its cells show. |
 | `groups[].having` | A condition on the level's totals, columns and record fields. A hidden group hides its children. Refused on the first group of a layout report. |
 | `groups[].label` | A formula that labels the group's row. |

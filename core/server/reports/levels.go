@@ -642,20 +642,27 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	return lc.recompute(cp, at)
 }
 
-// rowsTotal is a "rows" column's cell on this level (R8): the sum of the cells
-// of the shown rows directly under the row. Above the innermost group those
-// are the next level's rows that pass their own having (childSum); on the
-// innermost group, or the total of a report with no groups, the detail rows,
-// whatever the column's aggregate (an average adds its detail cells too). A
-// group column keeps its key on the levels that group by it.
+// rowsTotal is a "rows" column's cell on this level (E2, R8). Above the
+// innermost group it is the sum of the cells of the next level's rows that
+// pass their own having (childSum), so a group and the total add the rows
+// shown. On the innermost group a column with an aggregate (its aggregate
+// field, or an aggregate operator in its formula) computes from the group's
+// base rows: a detail cell holds that formula over one row, so a sum of them
+// is a different figure (a trial balance's Debit is the account's net when
+// positive, not the sum of the positive entries). A column with no aggregate
+// adds its detail cells there (F17), as does the total of a report with no
+// groups. A group column keeps its key on the levels that group by it.
 func (lc *levelCtx) rowsTotal(cp *colPlan) (expr, error) {
 	lv := lc.lv
 	at := cp.at + ".total"
+	// Read on every level, so a column that cannot be added is refused even
+	// where its cell is not a sum.
 	d, err := lv.detailCell(cp, at)
 	if err != nil {
 		return expr{}, err
 	}
-	if lv.groupKey(cp) != "" {
+	innermost := lv.n >= 1 && lv.n == len(lv.c.p.groups)
+	if lv.groupKey(cp) != "" || innermost && totalsRows(cp.col) {
 		return lc.recompute(cp, cp.at)
 	}
 	cur, err := lv.c.totalCurrency(d, at)
@@ -811,6 +818,19 @@ func (lc *levelCtx) formulaGroupColumn(cp *colPlan, at string) (expr, error) {
 		e.cur = currency{key: ck, id: e.cur.id}
 	}
 	return e, nil
+}
+
+// totalsRows is true for a column that totals rows: it has an aggregate, or
+// an aggregate operator anywhere in its formula.
+func totalsRows(col *Column) bool {
+	return col.Aggregate != "" || holdsAggregateOp(col.Formula)
+}
+
+func holdsAggregateOp(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	return aggregateOp(n) || slices.ContainsFunc(n.Args, holdsAggregateOp)
 }
 
 // aggregateOp is true for an operator that totals rows (min and max with one
