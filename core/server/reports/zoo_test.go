@@ -178,7 +178,7 @@ func registerZooSources() {
 			{Key: "keepers", Label: "Keepers", Target: "zoo.keepers", Cardinality: ToMany, BackField: "animal"},
 		},
 		Aliases:  map[string]string{"mass": "weight"},
-		Currency: func(core.App) string { return "USD" },
+		Currency: func(core.App, *core.RequestInfo) string { return "USD" },
 	})
 	RegisterSource(Source{
 		Key: "zoo.feedings", Collection: "zoo_feedings", Label: "Feedings",

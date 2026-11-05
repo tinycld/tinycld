@@ -36,7 +36,7 @@ func TestCheckSourcesRefusesASourceThatDoesNotMatchTheSchema(t *testing.T) {
 		},
 		"wrong type": {
 			Source{Key: "zoo.x", Collection: "zoo_animals", Label: "X", Fields: []Field{{Key: "name", Label: "Name", Type: Money}},
-				Currency: func(core.App) string { return "USD" }},
+				Currency: func(core.App, *core.RequestInfo) string { return "USD" }},
 			`column "name" is a text field, which a money field cannot read`,
 		},
 		"select option not in the schema": {

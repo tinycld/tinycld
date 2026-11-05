@@ -48,10 +48,12 @@ func TestCheckSourcesRefusesAWatchedCollectionItCannotSignal(t *testing.T) {
 }
 
 // officeName is the heading the zoo office row gives a reader who may view
-// it; officeFiscalMonth its fiscal start month.
+// it; officeFiscalMonth its fiscal start month; officeCurrency its home
+// currency (currency_reader_test.go).
 const (
 	officeName        = "Zoo Office"
 	officeFiscalMonth = 7
+	officeCurrency    = "NZD"
 )
 
 // officeReads holds the reader of each call of the office source's Heading
@@ -62,7 +64,7 @@ type officeReads struct {
 }
 
 // addOffice gives the zoo a settings row only its owner, ann, may view
-// (zoo_office: name, fiscal_month; view and list rule: the owner).
+// (zoo_office: name, fiscal_month, currency; view and list rule: the owner).
 func addOffice(t *testing.T, z *zoo) *core.Record {
 	t.Helper()
 	users, err := z.app.FindCollectionByNameOrId("users")
@@ -75,10 +77,11 @@ func addOffice(t *testing.T, z *zoo) *core.Record {
 	office.Fields.Add(
 		&core.TextField{Name: "name"},
 		&core.NumberField{Name: "fiscal_month"},
+		&core.TextField{Name: "currency"},
 		&core.RelationField{Name: "owner", CollectionId: users.Id, MaxSelect: 1},
 	)
 	z.save(t, office)
-	return z.rec(t, "office", "zoo_office", map[string]any{"name": officeName, "fiscal_month": officeFiscalMonth, "owner": z.id("ann")})
+	return z.rec(t, "office", "zoo_office", map[string]any{"name": officeName, "fiscal_month": officeFiscalMonth, "currency": officeCurrency, "owner": z.id("ann")})
 }
 
 // withOffice adds the office row and re-registers zoo.feedings with a
