@@ -14,6 +14,8 @@ export interface DateFieldProps {
     disabled?: boolean
     testID?: string
     accessibilityLabel?: string
+    /** Focuses the text input when it mounts, so a data-entry form can start on it. */
+    autoFocus?: boolean
 }
 
 // MiniCalendar's day columns are percentage widths, so it has no natural width
@@ -41,6 +43,7 @@ export function DateField({
     disabled,
     testID,
     accessibilityLabel = 'Date',
+    autoFocus = false,
 }: DateFieldProps) {
     const [isOpen, setIsOpen] = useState(false)
     const fg = useThemeColor('foreground')
@@ -59,6 +62,7 @@ export function DateField({
                 placeholderTextColor={muted}
                 style={{ color: fg, flex: 1 }}
                 editable={!disabled}
+                autoFocus={autoFocus && !disabled}
                 accessibilityLabel={accessibilityLabel}
                 testID={testID}
             />
