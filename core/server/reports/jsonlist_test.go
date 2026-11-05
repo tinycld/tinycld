@@ -39,9 +39,10 @@ func fullList(z *zoo, groups ...string) string {
 // 32,766 variables.
 func TestALongChoiceListReadManyTimesRuns(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", manyReads(40), Options{}, map[string]string{"animals": fullList(z)})
-	requireRows(t, res, "note", "f1", "f2", "f3", "f4", nil)
-	requireRows(t, res, "in39", true, true, false, false, nil)
+	spec := manyReads(40)
+	res := z.run(t, "ann", spec, Options{}, map[string]string{"animals": fullList(z)})
+	requireOrderedRows(t, spec, res, "note", "f1", "f2", "f3", "f4", nil)
+	requireOrderedRows(t, spec, res, "in39", true, true, false, false, nil)
 }
 
 // A group reference beside a full list of values, read many times.
@@ -178,9 +179,10 @@ func TestASelectWithManyOptionsShowsItsLabels(t *testing.T) {
 	grouped := z.run(t, "ann", `{"version":2,"source":"zoo.menu","columns":[{"id":"kind","path":[{"field":"kind"}]},
 		{"id":"n","path":[{"field":"note"}],"aggregate":"count"}],"groups":[{"id":"g","col":"kind"}]}`, Options{}, nil)
 	requireRows(t, grouped, "label", "Apricot", "Odd", "Zest", "Total")
-	shown := z.run(t, "ann", `{"version":2,"source":"zoo.menu","columns":[{"id":"note","path":[{"field":"note"}]},
-		{"id":"low","formula":{"op":"lower","args":[{"path":[{"field":"kind"}]}]}}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, shown, "low", "zest", "apricot", "odd", nil)
+	const lowSpec = `{"version":2,"source":"zoo.menu","columns":[{"id":"note","path":[{"field":"note"}]},
+		{"id":"low","formula":{"op":"lower","args":[{"path":[{"field":"kind"}]}]}}],"sort":[{"col":"note"}]}`
+	shown := z.run(t, "ann", lowSpec, Options{}, nil)
+	requireOrderedRows(t, lowSpec, shown, "low", "zest", "apricot", "odd", nil)
 }
 
 // A list compares as a list of bound values does: the left side's affinity
@@ -194,9 +196,9 @@ func TestAListComparesAsBoundValues(t *testing.T) {
 		{"id":"byGrams","formula":{"op":"in","args":[{"path":[{"field":"grams"}]},{"value":["800","7.0",1e400]}]}}],
 		"sort":[{"col":"note"}]}`
 	res := z.run(t, "ann", spec, Options{}, nil)
-	requireRows(t, res, "note", "500", "f1", "f2", "f3", "f4", nil)
-	requireRows(t, res, "byNote", true, true, false, false, false, nil)
-	requireRows(t, res, "byGrams", true, false, true, false, false, nil)
+	requireOrderedRows(t, spec, res, "note", "500", "f1", "f2", "f3", "f4", nil)
+	requireOrderedRows(t, spec, res, "byNote", true, true, false, false, false, nil)
+	requireOrderedRows(t, spec, res, "byGrams", true, false, true, false, false, nil)
 }
 
 // sqlJSON writes each value as JSON that SQLite reads back as the value a

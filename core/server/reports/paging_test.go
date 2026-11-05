@@ -19,17 +19,17 @@ func TestDetailRowsPageByKeyset(t *testing.T) {
 	z.rec(t, "f8", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 50, "currency": "USD", "note": "f8"})
 
 	first := z.run(t, "ann", feedingsPaged, Options{Limit: 2}, nil)
-	requireRows(t, first, "note", "f4", "f2", nil)
+	requireOrderedRows(t, feedingsPaged, first, "note", "f4", "f2", nil)
 	if first.Page == nil || first.Page.Size != 2 || first.Page.Next == "" {
 		t.Fatalf("page = %+v", first.Page)
 	}
 	// Every page ends in the total of every row, not of the page.
-	requireRows(t, first, "cost", int64(300), int64(2500), int64(4550))
+	requireOrderedRows(t, feedingsPaged, first, "cost", int64(300), int64(2500), int64(4550))
 
 	second := z.run(t, "ann", feedingsPaged, Options{Limit: 2, Cursor: first.Page.Next}, nil)
-	requireRows(t, second, "note", "f3", "f1", nil)
+	requireOrderedRows(t, feedingsPaged, second, "note", "f3", "f1", nil)
 	// A running sum runs over every row, across pages.
-	requireRows(t, second, "running", int64(3500), int64(4500), int64(4550))
+	requireOrderedRows(t, feedingsPaged, second, "running", int64(3500), int64(4500), int64(4550))
 
 	third := z.run(t, "ann", feedingsPaged, Options{Limit: 2, Cursor: second.Page.Next}, nil)
 	requireRows(t, third, "note", "f8", nil)
@@ -45,7 +45,7 @@ func TestAPageStartsAfterItsCursorWhenRowsChange(t *testing.T) {
 	// order) would shift an offset-based page, so f2 would show twice.
 	z.feeding(t, "f9", z.recs["leo"], 10, "2026-03-31", 1)
 	second := z.run(t, "ann", feedingsPaged, Options{Limit: 2, Cursor: first.Page.Next}, nil)
-	requireRows(t, second, "note", "f3", "f1", nil)
+	requireOrderedRows(t, feedingsPaged, second, "note", "f3", "f1", nil)
 }
 
 func TestACursorThisReportDidNotGiveIsRefused(t *testing.T) {
@@ -140,7 +140,7 @@ func TestARowRemovedBetweenPagesSkipsNoOther(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := z.run(t, "ann", feedingsPaged, Options{Limit: 2, Cursor: first.Page.Next}, nil)
-	requireRows(t, second, "note", "f3", "f1", nil)
+	requireOrderedRows(t, feedingsPaged, second, "note", "f3", "f1", nil)
 }
 
 func encodeCursor(raw string) string { return base64.RawURLEncoding.EncodeToString([]byte(raw)) }

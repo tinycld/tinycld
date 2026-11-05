@@ -10,12 +10,13 @@ func TestADetailLabelIsAFormula(t *testing.T) {
 	spec := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"sort":[{"col":"note"}]`
 	plain := z.run(t, "ann", spec+`}`, Options{}, nil)
-	requireRows(t, plain, "label", "f1", "f2", "f3", "f4", "Total")
+	requireOrderedRows(t, spec+`}`, plain, "label", "f1", "f2", "f3", "f4", "Total")
 	if plain.Rows[0].LabelColumn != "note" {
 		t.Fatalf("labelColumn = %q", plain.Rows[0].LabelColumn)
 	}
-	labelled := z.run(t, "ann", spec+`,"detail":{"label":{"op":"concat","args":[{"path":[{"field":"fed"}]},{"value":" · "},{"path":[{"field":"note"}]}]}}}`, Options{}, nil)
-	requireRows(t, labelled, "label", "2026-01-05 · f1", "2026-02-10 · f2", "2026-01-20 · f3", "2026-03-03 · f4", "Total")
+	withLabel := spec + `,"detail":{"label":{"op":"concat","args":[{"path":[{"field":"fed"}]},{"value":" · "},{"path":[{"field":"note"}]}]}}}`
+	labelled := z.run(t, "ann", withLabel, Options{}, nil)
+	requireOrderedRows(t, withLabel, labelled, "label", "2026-01-05 · f1", "2026-02-10 · f2", "2026-01-20 · f3", "2026-03-03 · f4", "Total")
 	if labelled.Rows[0].LabelColumn != "" {
 		t.Fatalf("a label that is no cell names none: %q", labelled.Rows[0].LabelColumn)
 	}
@@ -25,13 +26,15 @@ func TestADetailLabelIsAFormula(t *testing.T) {
 // names it; a formula over the column repeats no cell.
 func TestADetailLabelThatIsAColumnNamesIt(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", withDetailLabel(`{"col":"animal"}`), Options{}, nil)
-	requireRows(t, res, "label", "Leo", "Leo", "Zed", "Zed", "Total")
+	spec := withDetailLabel(`{"col":"animal"}`)
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "Leo", "Leo", "Zed", "Zed", "Total")
 	if res.Rows[0].LabelColumn != "animal" {
 		t.Fatalf("labelColumn = %q, want animal", res.Rows[0].LabelColumn)
 	}
-	wrapped := z.run(t, "ann", withDetailLabel(`{"op":"concat","args":[{"col":"note"},{"value":"!"}]}`), Options{}, nil)
-	requireRows(t, wrapped, "label", "f1!", "f2!", "f3!", "f4!", "Total")
+	spec = withDetailLabel(`{"op":"concat","args":[{"col":"note"},{"value":"!"}]}`)
+	wrapped := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, wrapped, "label", "f1!", "f2!", "f3!", "f4!", "Total")
 	if wrapped.Rows[0].LabelColumn != "" {
 		t.Fatalf("a formula over a column names none: %q", wrapped.Rows[0].LabelColumn)
 	}
@@ -87,8 +90,9 @@ func withDetailLabel(label string) string { return strings.Replace(feedingsByNot
 // amount or its currency (F5: the label's path adds its currency key).
 func TestADetailLabelThatIsAnAmountIsTyped(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", withDetailLabel(`{"path":[{"field":"cost"}]}`), Options{}, nil)
-	requireRows(t, res, "label", "1000", "2500", "700", "300", "Total")
+	spec := withDetailLabel(`{"path":[{"field":"cost"}]}`)
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "1000", "2500", "700", "300", "Total")
 	requireLabels(t, res,
 		[3]any{Money, 1000, "USD"}, [3]any{Money, 2500, "USD"}, [3]any{Money, 700, "USD"}, [3]any{Money, 300, "USD"})
 	if res.Rows[0].LabelColumn != "" {
@@ -101,19 +105,21 @@ func TestADetailLabelThatIsADateOrAYesNoIsTyped(t *testing.T) {
 	res := z.run(t, "ann", withDetailLabel(`{"path":[{"link":"animal"},{"field":"born"}]}`), Options{}, nil)
 	requireLabels(t, res,
 		[3]any{Date, "2020-05-01", ""}, [3]any{Date, "2020-05-01", ""}, [3]any{Date, "2019-02-10", ""}, [3]any{Date, "2019-02-10", ""})
-	yes := z.run(t, "ann", withDetailLabel(`{"op":"gt","args":[{"path":[{"field":"cost"}]},{"value":800}]}`), Options{}, nil)
-	requireRows(t, yes, "label", "Yes", "Yes", "No", "No", "Total")
+	yesSpec := withDetailLabel(`{"op":"gt","args":[{"path":[{"field":"cost"}]},{"value":800}]}`)
+	yes := z.run(t, "ann", yesSpec, Options{}, nil)
+	requireOrderedRows(t, yesSpec, yes, "label", "Yes", "Yes", "No", "No", "Total")
 	requireLabels(t, yes, [3]any{Bool, true, ""}, [3]any{Bool, true, ""}, [3]any{Bool, false, ""}, [3]any{Bool, false, ""})
 }
 
 // A label that points at a record shows the record's label, never its id.
 func TestADetailLabelThatReadsALinkShowsItsRecord(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", withDetailLabel(`{"path":[{"link":"animal"}]}`), Options{}, nil)
-	requireRows(t, res, "label", "Leo", "Leo", "Zed", "Zed", "Total")
+	spec := withDetailLabel(`{"path":[{"link":"animal"}]}`)
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "Leo", "Leo", "Zed", "Zed", "Total")
 	// Through a column, by that column's label field.
 	species := strings.Replace(withDetailLabel(`{"col":"animal"}`), `{"link":"animal"}]`, `{"link":"animal"}],"labelField":"species"`, 1)
-	requireRows(t, z.run(t, "ann", species, Options{}, nil), "label", "lion", "lion", "zebra", "zebra", "Total")
+	requireOrderedRows(t, species, z.run(t, "ann", species, Options{}, nil), "label", "lion", "lion", "zebra", "zebra", "Total")
 }
 
 // A looked-up amount carries its own row's currency into the label (Leo's fee

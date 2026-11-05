@@ -117,16 +117,22 @@ func (c *compiler) pivotCells(lv *level, values []pivotValue) ([]string, error) 
 	if err := checkAggregate(cell.col.Aggregate, typ, cell.scale, "pivot.cell"); err != nil {
 		return nil, err
 	}
-	// A "rows" cell adds the cells of the shown rows directly under it, as the
-	// column's own cell does: the next level's pivot cells, or on the
-	// innermost group its detail cells with the pivot value.
+	// A "rows" cell follows the column's own cell (rowsTotal): above the
+	// innermost group it adds the next level's pivot cells. A cell column
+	// always has an aggregate, so on the innermost group it computes from the
+	// group's base rows with the pivot value; only the total of a report with
+	// no groups adds its detail cells.
 	agg, scale := cell.col.Aggregate, cell.scale
 	if cell.col.Total == TotalRows && lv.n == len(c.p.groups) {
+		// Read on the innermost group too, so a cell that cannot be added is
+		// refused there.
 		d, err := lv.detailCell(cell, cell.at+".total")
 		if err != nil {
 			return nil, err
 		}
-		arg, agg, scale = d.sql, Sum, 0
+		if lv.n == 0 {
+			arg, agg, scale = d.sql, Sum, 0
+		}
 	}
 	out := make([]string, 0, len(values))
 	for j, v := range values {

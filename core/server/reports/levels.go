@@ -642,20 +642,27 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	return lc.recompute(cp, at)
 }
 
-// rowsTotal is a "rows" column's cell on this level (R8): the sum of the cells
-// of the shown rows directly under the row. Above the innermost group those
-// are the next level's rows that pass their own having (childSum); on the
-// innermost group, or the total of a report with no groups, the detail rows,
-// whatever the column's aggregate (an average adds its detail cells too). A
-// group column keeps its key on the levels that group by it.
+// rowsTotal is a "rows" column's cell on this level (E2, R8). Above the
+// innermost group it is the sum of the cells of the next level's rows that
+// pass their own having (childSum), so a group and the total add the rows
+// shown. On the innermost group a column that reads an aggregate
+// (readsAnAggregate) computes from the group's base rows: a detail cell holds
+// that formula over one row, so a sum of them is a different figure (a trial
+// balance's Debit is the account's net when positive, not the sum of the
+// positive entries). A column with no aggregate adds its detail cells there
+// (F17), as does the total of a report with no groups. A group column keeps
+// its key on the levels that group by it.
 func (lc *levelCtx) rowsTotal(cp *colPlan) (expr, error) {
 	lv := lc.lv
 	at := cp.at + ".total"
+	// Read on every level, so a column that cannot be added is refused even
+	// where its cell is not a sum.
 	d, err := lv.detailCell(cp, at)
 	if err != nil {
 		return expr{}, err
 	}
-	if lv.groupKey(cp) != "" {
+	innermost := lv.n >= 1 && lv.n == len(lv.c.p.groups)
+	if lv.groupKey(cp) != "" || innermost && lv.c.p.readsAnAggregate(cp, map[string]bool{}) {
 		return lc.recompute(cp, cp.at)
 	}
 	cur, err := lv.c.totalCurrency(d, at)
@@ -811,6 +818,40 @@ func (lc *levelCtx) formulaGroupColumn(cp *colPlan, at string) (expr, error) {
 		e.cur = currency{key: ck, id: e.cur.id}
 	}
 	return e, nil
+}
+
+// readsAnAggregate is true for a column whose cell on a group is computed
+// over the group's rows: it has an aggregate (a to-many total always has
+// one), or its formula reads one (formulaReadsAnAggregate). Such a column has
+// no F17 sum of detail cells on the innermost group. seen guards a cycle of
+// columns, which bind refuses elsewhere.
+func (p *plan) readsAnAggregate(cp *colPlan, seen map[string]bool) bool {
+	if cp.col.Aggregate != "" {
+		return true
+	}
+	if seen[cp.col.ID] {
+		return false
+	}
+	seen[cp.col.ID] = true
+	return p.formulaReadsAnAggregate(cp.col.Formula, seen)
+}
+
+// formulaReadsAnAggregate is true when a formula holds an aggregate operator
+// or reads ({col}) a column that reads one or is a "rows" column: on a group
+// that column's cell is a figure over the group's rows, so the formula is
+// one too. It does not enter a lookup: its value and where read the rows of
+// another source, one value per report row, not a total of the group's rows.
+func (p *plan) formulaReadsAnAggregate(n *Node, seen map[string]bool) bool {
+	if n == nil || n.Op == "lookup" {
+		return false
+	}
+	if aggregateOp(n) {
+		return true
+	}
+	if cp := p.byID[n.Col]; cp != nil && (cp.col.Total == TotalRows || p.readsAnAggregate(cp, seen)) {
+		return true
+	}
+	return slices.ContainsFunc(n.Args, func(a *Node) bool { return p.formulaReadsAnAggregate(a, seen) })
 }
 
 // aggregateOp is true for an operator that totals rows (min and max with one

@@ -336,7 +336,7 @@ func TestACarriedFixedCurrencyFollowsTheReader(t *testing.T) {
 		*readers = nil
 		priced := z.run(t, c.user, zebrasWithZedsPrice, Options{ExpandAll: true}, nil)
 		requireRows(t, priced, "label", "Zebras", "zebra", "zebra", "Total Zebras", "Zed price")
-		requireRows(t, priced, "cost", int64(1000), int64(700), int64(300), int64(1000), int64(120000))
+		requireOrderedRows(t, zebrasWithZedsPrice, priced, "cost", int64(1000), int64(700), int64(300), int64(1000), int64(120000))
 		requireRows(t, priced, "cost@currency", "USD", "USD", "USD", "USD", c.want)
 		requireNoCurrency(t, c.user+"'s Zed price", priced, c.never)
 		if got, want := readerIDs(*readers), []string{z.id(c.user)}; !slices.Equal(got, want) {

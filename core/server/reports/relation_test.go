@@ -11,14 +11,15 @@ import (
 // A path that ends at a to-one link reads the linked row's id.
 func TestAPathEndingAtALinkReadsTheLinkedRowsID(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
-		{"id":"animal","path":[{"link":"animal"}]}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "animal", z.id("leo"), z.id("leo"), z.id("zed"), z.id("zed"), nil)
+		{"id":"animal","path":[{"link":"animal"}]}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "animal", z.id("leo"), z.id("leo"), z.id("zed"), z.id("zed"), nil)
 	if c := res.Columns[1]; c.Type != Relation || c.Label != "Animal" {
 		t.Fatalf("animal column = %+v", c)
 	}
-	requireRows(t, res, "animal@label", "Leo", "Leo", "Zed", "Zed", nil)
+	requireOrderedRows(t, spec, res, "animal@label", "Leo", "Leo", "Zed", "Zed", nil)
 	if c := res.Columns[1]; c.LabelCell != "animal@label" {
 		t.Fatalf("animal column = %+v", c)
 	}
@@ -30,20 +31,22 @@ func TestAPathEndingAtALinkReadsTheLinkedRowsID(t *testing.T) {
 // A linked row the reader cannot see reads blank, as every to-one value does.
 func TestALinkToAHiddenRowReadsBlank(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	const spec = `{"version":2,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
-		{"id":"vault","path":[{"link":"vault"}]}],"sort":[{"col":"name"}]}`, Options{}, nil)
-	requireRows(t, res, "name", "Kit", "Leo", "Zed", nil)
+		{"id":"vault","path":[{"link":"vault"}]}],"sort":[{"col":"name"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "name", "Kit", "Leo", "Zed", nil)
 	requireRows(t, res, "vault", nil, nil, nil, nil)
 	requireRows(t, res, "vault@label", nil, nil, nil, nil)
 }
 
 func TestAFilterComparesARelation(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
-		"filter":{"op":"eq","args":[{"path":[{"link":"animal"}]},{"value":"`+z.id("zed")+`"}]},
-		"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "note", "f3", "f4", nil)
+	spec := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+		"filter":{"op":"eq","args":[{"path":[{"link":"animal"}]},{"value":"` + z.id("zed") + `"}]},
+		"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "note", "f3", "f4", nil)
 }
 
 func TestIfOverRelationsNeedsOneTarget(t *testing.T) {
@@ -69,10 +72,11 @@ func TestATotalAcrossAToManyLinkStillEndsWithAField(t *testing.T) {
 // shows its source's name, never an id.
 func TestALinkColumnShowsTheChosenLabelField(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const species = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
-		{"id":"animal","path":[{"link":"animal"}],"labelField":"species"}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "animal@label", "lion", "lion", "zebra", "zebra", nil)
+		{"id":"animal","path":[{"link":"animal"}],"labelField":"species"}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", species, Options{}, nil)
+	requireOrderedRows(t, species, res, "animal@label", "lion", "lion", "zebra", "zebra", nil)
 	keepers := z.run(t, "ann", `{"version":2,"source":"zoo.keepers","columns":[{"id":"k","path":[{"field":"id"}]}]}`, Options{}, nil)
 	requireRows(t, keepers, "k@label", "Keepers", "Keepers", nil)
 	requireRows(t, keepers, "label", "Keepers", "Keepers", "Total")
@@ -104,18 +108,20 @@ func TestALabelFieldIsRefusedWhereItCannotLabel(t *testing.T) {
 // A select label field shows its option's label, not the stored value.
 func TestALinkLabelFieldThatIsASelectShowsItsOptionLabel(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
-		{"id":"site","path":[{"link":"animal"},{"link":"site"}],"labelField":"region"}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "site@label", "North", "North", "South", "South", nil)
+		{"id":"site","path":[{"link":"animal"},{"link":"site"}],"labelField":"region"}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "site@label", "North", "North", "South", "South", nil)
 }
 
 // A link column first in the report labels its detail rows by the record.
 func TestADetailRowIsLabelledByItsLinkedRecord(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
-		{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "label", "Leo", "Leo", "Zed", "Zed", "Total")
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "Leo", "Leo", "Zed", "Zed", "Total")
 }
 
 // A visible record whose label field is blank shows (no name); a blank link
@@ -128,10 +134,11 @@ func TestALinkedRecordWithABlankLabelShowsNoName(t *testing.T) {
 	if err := z.app.Save(kit); err != nil {
 		t.Fatal(err)
 	}
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
-		{"id":"site","path":[{"link":"site"}]},{"id":"name","path":[{"field":"name"}]}],"sort":[{"col":"name"}]}`, Options{}, nil)
-	requireRows(t, res, "site@label", "(no name)", "North", "South", nil)
-	requireRows(t, res, "label", "(no name)", "North", "South", "Total")
+	const spec = `{"version":2,"source":"zoo.animals","columns":[
+		{"id":"site","path":[{"link":"site"}]},{"id":"name","path":[{"field":"name"}]}],"sort":[{"col":"name"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "site@label", "(no name)", "North", "South", nil)
+	requireOrderedRows(t, spec, res, "label", "(no name)", "North", "South", "Total")
 }
 
 // A label is read through the target's rule: a record the reader cannot see
@@ -172,11 +179,12 @@ func TestALabelNeverReadsARecordTheReaderCannotSee(t *testing.T) {
 // labels the child row when it is the nest level's first column.
 func TestAChildRowLinkShowsItsRecordsLabel(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	const spec = `{"version":2,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
-		{"id":"keeper","path":[{"link":"keepers","mode":"nest"},{"link":"user"}]}],"sort":[{"col":"name"}]}`, Options{}, nil)
-	requireRows(t, res, "label", "Kit", "Leo", "ann", "Zed", "ann", "Total")
-	requireRows(t, res, "keeper@label", nil, nil, "ann", nil, "ann", nil)
+		{"id":"keeper","path":[{"link":"keepers","mode":"nest"},{"link":"user"}]}],"sort":[{"col":"name"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "label", "Kit", "Leo", "ann", "Zed", "ann", "Total")
+	requireOrderedRows(t, spec, res, "keeper@label", nil, nil, "ann", nil, "ann", nil)
 	if c := res.Columns[1]; c.LabelCell != "keeper@label" {
 		t.Fatalf("keeper column = %+v", c)
 	}
@@ -210,10 +218,11 @@ func TestALabelFieldFollowsItsAlias(t *testing.T) {
 	if spec.Columns[1].LabelField != "weight" || len(info.Aliased) != 1 {
 		t.Fatalf("labelField = %q, aliased = %+v", spec.Columns[1].LabelField, info.Aliased)
 	}
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const aliased = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
-		{"id":"animal","path":[{"link":"animal"}],"labelField":"mass"}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "animal@label", int64(190), int64(190), int64(300), int64(300), nil)
+		{"id":"animal","path":[{"link":"animal"}],"labelField":"mass"}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", aliased, Options{}, nil)
+	requireOrderedRows(t, aliased, res, "animal@label", int64(190), int64(190), int64(300), int64(300), nil)
 }
 
 // A record shown by a field that is not text is labelled by that field's
@@ -236,10 +245,11 @@ func TestALabelFieldOfAnyTypeIsTyped(t *testing.T) {
 		"born":   {Date, []any{"2020-05-01", "2020-05-01", "2019-02-10", "2019-02-10", nil}},
 	} {
 		t.Run(field, func(t *testing.T) {
-			res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
-				{"id":"animal","path":[{"link":"animal"}],"labelField":"`+field+`"},
-				{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`, Options{}, nil)
-			requireRows(t, res, "animal@label", c.want...)
+			spec := `{"version":2,"source":"zoo.feedings","columns":[
+				{"id":"animal","path":[{"link":"animal"}],"labelField":"` + field + `"},
+				{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`
+			res := z.run(t, "ann", spec, Options{}, nil)
+			requireOrderedRows(t, spec, res, "animal@label", c.want...)
 			if col := res.Columns[0]; col.LabelType != c.typ {
 				t.Fatalf("animal column = %+v", col)
 			}
@@ -270,10 +280,11 @@ func TestALabelFieldOfAnyTypeIsTyped(t *testing.T) {
 func TestAnAmountLabelReadsItsRecordsCurrency(t *testing.T) {
 	z := newZoo(t)
 	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("zed"), "cost": 400, "currency": "EUR", "fed": "2026-03-10 00:00:00.000Z", "note": "f7"})
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
-		{"id":"f","path":[{"field":"id"}],"labelField":"cost"},{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "f@label", int64(1000), int64(2500), int64(700), int64(300), int64(400), nil)
-	requireRows(t, res, "f@labelCurrency", "USD", "USD", "USD", "USD", "EUR", nil)
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"f","path":[{"field":"id"}],"labelField":"cost"},{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "f@label", int64(1000), int64(2500), int64(700), int64(300), int64(400), nil)
+	requireOrderedRows(t, spec, res, "f@labelCurrency", "USD", "USD", "USD", "USD", "EUR", nil)
 	if row := res.Rows[4]; row.LabelType != Money || row.LabelValue != int64(400) || row.LabelCurrency != "EUR" {
 		t.Fatalf("f7 label = %+v", row)
 	}
@@ -283,11 +294,12 @@ func TestAnAmountLabelReadsItsRecordsCurrency(t *testing.T) {
 // does.
 func TestAFormulaOfALinkColumnShowsItsLabelField(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"animal","path":[{"link":"animal"}],"labelField":"species"},
-		{"id":"again","formula":{"col":"animal"}}],"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "again@label", "lion", "lion", "zebra", "zebra", nil)
+		{"id":"again","formula":{"col":"animal"}}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "again@label", "lion", "lion", "zebra", "zebra", nil)
 }
 
 // A pivot over a link may name its columns by a label field, typed and in
@@ -366,9 +378,9 @@ func TestSortingByALinkColumnSortsByItsLabel(t *testing.T) {
 	const spec = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"animal","dir":"%s"},{"col":"note"}]}`
 	res := z.run(t, "ann", fmt.Sprintf(spec, "asc"), Options{}, nil)
-	requireRows(t, res, "label", "Abe", "Leo", "Leo", "Zara", "Zed", "Zed", "Total")
+	requireOrderedRows(t, fmt.Sprintf(spec, "asc"), res, "label", "Abe", "Leo", "Leo", "Zara", "Zed", "Zed", "Total")
 	desc := z.run(t, "ann", fmt.Sprintf(spec, "desc"), Options{}, nil)
-	requireRows(t, desc, "label", "Zed", "Zed", "Zara", "Leo", "Leo", "Abe", "Total")
+	requireOrderedRows(t, fmt.Sprintf(spec, "desc"), desc, "label", "Zed", "Zed", "Zara", "Leo", "Leo", "Abe", "Total")
 	var paged []string
 	opts := Options{Limit: 1}
 	for range 10 {
@@ -399,10 +411,11 @@ func TestGroupsAndChildRowsSortByTheirRecordsLabel(t *testing.T) {
 	requireRows(t, asc, "label", "Abe", "Leo", "Zara", "Zed", "Total")
 	desc := z.run(t, "ann", fmt.Sprintf(spec, "desc"), Options{}, nil)
 	requireRows(t, desc, "label", "Zed", "Zara", "Leo", "Abe", "Total")
-	nested := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[
+	const children = `{"version":2,"source":"zoo.sites","columns":[
 		{"id":"site","path":[{"field":"name"}]},
-		{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"id"}]}],"sort":[{"col":"site"}]}`, Options{}, nil)
-	requireRows(t, nested, "label", "North", "Abe", "Leo", "Zara", "South", "Zed", "Total")
+		{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"id"}]}],"sort":[{"col":"site"}]}`
+	nested := z.run(t, "ann", children, Options{}, nil)
+	requireOrderedRows(t, children, nested, "label", "North", "Abe", "Leo", "Zara", "South", "Zed", "Total")
 }
 
 // A text operator reads a relation as its record's label: concat, upper and
@@ -410,7 +423,7 @@ func TestGroupsAndChildRowsSortByTheirRecordsLabel(t *testing.T) {
 // reads as empty text.
 func TestTextOperatorsReadARelationAsItsLabel(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"animal","path":[{"link":"animal"}],"labelField":"species"},
 		{"id":"fed","formula":{"op":"concat","args":[{"path":[{"link":"animal"}]},{"value":" fed"}]}},
@@ -418,15 +431,17 @@ func TestTextOperatorsReadARelationAsItsLabel(t *testing.T) {
 		{"id":"vault","formula":{"op":"concat","args":[{"value":"["},{"path":[{"link":"animal"},{"link":"vault"}]},{"value":"]"}]}},
 		{"id":"site","formula":{"op":"lower","args":[{"path":[{"link":"animal"},{"link":"site"}]}]}}],
 		"filter":{"op":"startsWith","args":[{"path":[{"link":"animal"}]},{"value":"l"}]},
-		"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "note", "f1", "f2", nil)
+		"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "note", "f1", "f2", nil)
 	requireRows(t, res, "fed", "Leo fed", "Leo fed", nil)
 	requireRows(t, res, "shout", "LION", "LION", nil)
 	requireRows(t, res, "vault", "[]", "[]", nil)
 	requireRows(t, res, "site", "north", "north", nil)
-	zed := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
-		"filter":{"op":"contains","args":[{"path":[{"link":"animal"}]},{"value":"ED"}]},"sort":[{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, zed, "note", "f3", "f4", nil)
+	const zeds = `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+		"filter":{"op":"contains","args":[{"path":[{"link":"animal"}]},{"value":"ED"}]},"sort":[{"col":"note"}]}`
+	zed := z.run(t, "ann", zeds, Options{}, nil)
+	requireOrderedRows(t, zeds, zed, "note", "f3", "f4", nil)
 	label := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal","label":{"op":"concat","args":[{"col":"animal"},{"value":" at "},{"record":"g","path":[{"link":"site"}]}]}}],
@@ -471,7 +486,7 @@ func TestALinkColumnSortsByItsTypedLabel(t *testing.T) {
 				{"id":"name","path":[{"link":"animal"},{"field":"name"}]},{"id":"animal","path":[{"link":"animal"}],"labelField":"%s"}],
 				"sort":[{"col":"animal","dir":"%%s"},{"col":"name"}]}`, field)
 			res := z.run(t, "ann", fmt.Sprintf(detail, "asc"), Options{}, nil)
-			requireRows(t, res, "label", append(slices.Clone(want), "Total")...)
+			requireOrderedRows(t, fmt.Sprintf(detail, "asc"), res, "label", append(slices.Clone(want), "Total")...)
 			if got := pageLabels(t, z, fmt.Sprintf(detail, "asc")); !reflect.DeepEqual(got, want) {
 				t.Fatalf("pages = %v", got)
 			}
@@ -492,10 +507,11 @@ func TestALinkColumnSortsByItsTypedLabel(t *testing.T) {
 		})
 	}
 	// Child rows: Zara 5, Leo 190, Abe 500 in the north.
-	nested := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[
+	const children = `{"version":2,"source":"zoo.sites","columns":[
 		{"id":"site","path":[{"field":"name"}]},
-		{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"id"}],"labelField":"weight"}],"sort":[{"col":"site"}]}`, Options{}, nil)
-	requireRows(t, nested, "label", "North", "5", "190", "500", "South", "300", "Total")
+		{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"id"}],"labelField":"weight"}],"sort":[{"col":"site"}]}`
+	nested := z.run(t, "ann", children, Options{}, nil)
+	requireOrderedRows(t, children, nested, "label", "North", "5", "190", "500", "South", "300", "Total")
 	if row := nested.Rows[1]; row.LabelType != Number || row.LabelValue != int64(5) {
 		t.Fatalf("child row label = %+v", row)
 	}

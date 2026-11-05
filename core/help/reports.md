@@ -43,7 +43,18 @@ copy of any report you can see, select **Save as…**.
 
 ## Totals
 
-To total only what a report shows, open the column in **Columns** and set **Total** to **Add the rows shown**. This choice is only for number and amount columns. Group rows, subtotals and the Total row then add the rows you see. A group that is hidden adds nothing. **Recompute from all rows** (the default) totals every row the filter keeps.
+To total only what a report shows, open the column in **Columns** and set **Total** to **Add the rows shown**. This choice is only for number and amount columns. **Recompute from all rows** (the default) totals every row the filter keeps.
+
+With **Add the rows shown**, the group levels above the lowest one and the Total row add the rows you see. A group that is hidden adds nothing. The lowest group level computes the column from its own rows if one of these is true:
+
+- The column's **Summarize** choice is not **None**, for example **Sum** or **Largest**. A field that you add with **Add as total** also has this choice.
+- The column's formula has a total part, such as **Sum of**.
+- The formula reads a column that has a **Summarize** choice or a total part.
+- The formula reads a column that is set to **Add the rows shown**.
+
+If none is true, the lowest group level adds the values of its rows.
+
+For example, a Debit column shows an account's balance when the balance is above zero. Each account row shows its own balance. The Total adds the account rows.
 
 ## Hide groups
 

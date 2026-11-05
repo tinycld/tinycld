@@ -19,11 +19,11 @@ func TestSortByAFormula(t *testing.T) {
 	byGrams := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"sort":[{"formula":{"op":"sub","args":[{"value":0},{"path":[{"field":"grams"}]}]}}]}`
 	res = z.run(t, "ann", byGrams, Options{}, nil)
-	requireRows(t, res, "note", "f2", "f1", "f3", "f4", nil)
+	requireOrderedRows(t, byGrams, res, "note", "f2", "f1", "f3", "f4", nil)
 	first := z.run(t, "ann", byGrams, Options{Limit: 2}, nil)
-	requireRows(t, first, "note", "f2", "f1", nil)
+	requireOrderedRows(t, byGrams, first, "note", "f2", "f1", nil)
 	next := z.run(t, "ann", byGrams, Options{Limit: 2, Cursor: first.Page.Next}, nil)
-	requireRows(t, next, "note", "f3", "f4", nil)
+	requireOrderedRows(t, byGrams, next, "note", "f3", "f4", nil)
 }
 
 func TestASortKeyIsAColumnOrAFormula(t *testing.T) {
@@ -72,10 +72,11 @@ func TestAFormulaSortKeyPagesWithBlanksLast(t *testing.T) {
 // Prices order Zed (120,000) before Leo (500,000), the reverse of their names.
 func TestAFormulaReadingALinkSortsByTheRecordsLabel(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const byPrice = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},{"id":"animal","path":[{"link":"animal"}],"labelField":"price"}],
-		"sort":[{"formula":{"col":"animal"}},{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "note", "f3", "f4", "f1", "f2", nil)
+		"sort":[{"formula":{"col":"animal"}},{"col":"note"}]}`
+	res := z.run(t, "ann", byPrice, Options{}, nil)
+	requireOrderedRows(t, byPrice, res, "note", "f3", "f4", "f1", "f2", nil)
 
 	res = z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}],"labelField":"price"},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -87,12 +88,13 @@ func TestAFormulaReadingALinkSortsByTheRecordsLabel(t *testing.T) {
 // their label order and the formula sorts the detail rows inside them.
 func TestAFormulaReadingARowValueSortsOnlyDetailRows(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const byGrams = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],
-		"sort":[{"formula":{"op":"sub","args":[{"value":0},{"path":[{"field":"grams"}]}]}}]}`, Options{ExpandAll: true}, nil)
-	requireRows(t, res, "cost", int64(3500), int64(2500), int64(1000), int64(1000), int64(700), int64(300), int64(4500))
+		"sort":[{"formula":{"op":"sub","args":[{"value":0},{"path":[{"field":"grams"}]}]}}]}`
+	res := z.run(t, "ann", byGrams, Options{ExpandAll: true}, nil)
+	requireOrderedRows(t, byGrams, res, "cost", int64(3500), int64(2500), int64(1000), int64(1000), int64(700), int64(300), int64(4500))
 	// Leo's costs total 3,500 and Zed's 1,000, but the key also reads grams,
 	// so a group row has none and the groups stay in label order.
 	res = z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
@@ -106,12 +108,13 @@ func TestAFormulaReadingARowValueSortsOnlyDetailRows(t *testing.T) {
 // A lookup in a sort formula is decoded and compiled like one in a column.
 func TestASortFormulaMayLookUp(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	const byWeight = `{"version":2,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},{"id":"animal","path":[{"link":"animal"}]}],
 		"sort":[{"formula":{"op":"lookup","source":"zoo.animals",
 			"where":{"op":"eq","args":[{"path":[{"field":"id"}]},{"col":"animal"}]},
-			"value":{"path":[{"field":"weight"}]}},"dir":"desc"},{"col":"note"}]}`, Options{}, nil)
-	requireRows(t, res, "note", "f3", "f4", "f1", "f2", nil)
+			"value":{"path":[{"field":"weight"}]}},"dir":"desc"},{"col":"note"}]}`
+	res := z.run(t, "ann", byWeight, Options{}, nil)
+	requireOrderedRows(t, byWeight, res, "note", "f3", "f4", "f1", "f2", nil)
 
 	// bind refuses a lookup value that does not decode where it is, with the
 	// spec's other problems, before anything compiles.
