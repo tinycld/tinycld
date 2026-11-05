@@ -1,8 +1,9 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ChevronDown } from 'lucide-react-native'
+import { useCallback, useRef } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
-import { Pressable, Text, View, type ViewProps } from 'react-native'
+import { Pressable, Text, View, type ViewInstance, type ViewProps } from 'react-native'
 import type { SelectOption } from './ButtonGroup'
 
 export type SelectInputProps<T extends FieldValues = Record<string, unknown>> = {
@@ -23,6 +24,13 @@ export type SelectInputProps<T extends FieldValues = Record<string, unknown>> = 
     placeholder?: string
     /** Item test ids are `${testID}-${value}`. */
     testID?: string
+    /**
+     * Focuses the trigger once when it mounts, without opening the menu, so a
+     * data-entry form can start on it. Web only in practice: React Native
+     * focuses a non-text view only while its `enableImperativeFocus` feature
+     * flag is on (off by default), so on native this does nothing.
+     */
+    autoFocus?: boolean
 }
 
 export function SelectInput<T extends FieldValues = Record<string, unknown>>({
@@ -38,8 +46,11 @@ export function SelectInput<T extends FieldValues = Record<string, unknown>>({
     wrapperProps = {},
     placeholder = '',
     testID,
+    autoFocus = false,
 }: SelectInputProps<T>) {
     const muted = useThemeColor('muted-foreground')
+    // A disabled trigger keeps tabIndex -1 on web, which focus() still reaches.
+    const focusOnMount = useFocusOnMount(autoFocus && !disabled)
     const {
         field,
         fieldState: { error },
@@ -57,6 +68,7 @@ export function SelectInput<T extends FieldValues = Record<string, unknown>>({
 
     const trigger = (
         <Pressable
+            ref={focusOnMount}
             className={`flex-row items-center justify-between gap-2 border rounded-md px-3 ${showError ? 'border-danger' : 'border-border'}`}
             style={{ minHeight: 44 }}
             accessibilityLabel={`${label}: ${shown}`}
@@ -91,4 +103,16 @@ export function SelectInput<T extends FieldValues = Record<string, unknown>>({
             {showError ? <Text className="text-xs text-danger">{error.message}</Text> : null}
         </View>
     )
+}
+
+// The prop is read once, at mount, as HTML's autofocus is: turning it on later
+// or re-attaching the trigger never moves focus again. A ref, not a DOM query,
+// so it reaches the same element on web and native.
+function useFocusOnMount(autoFocus: boolean) {
+    const pending = useRef(autoFocus)
+    return useCallback((node: ViewInstance | null) => {
+        if (!node || !pending.current) return
+        pending.current = false
+        node.focus()
+    }, [])
 }
