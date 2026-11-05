@@ -410,7 +410,7 @@ The canonical config excludes generated artifacts — `server`, `lib/generated`,
 
 - **`npm-audit`** — `pnpm audit` on production npm dependencies, against a lockfile generated in CI. No lockfile is committed anywhere in the ecosystem (the workspace root is bootstrap-assembled per developer), so the job assembles `tinycld` + `core`, installs, and audits the tree that install produced.
 - **`go-vuln`** — `govulncheck` per Go module. It does reachability analysis: it reports a vulnerability only if our code can actually reach the affected symbol, not every advisory in the module graph. This is what makes it safe to block on.
-- **`image-scan`** — Trivy in `image` mode against the *runtime* stage's base image, resolved from the Dockerfile's `FROM ... AS runtime` line. `scan-type: config` was tried and rejected: it scans the Dockerfile text for misconfigurations and reports zero CVEs, because it never looks at what the base image contains.
+- **`image-scan`** — builds the Dockerfile's `runtime-base` stage (the Debian base, our OS packages with Debian security updates, Node, and npm 11) and runs Trivy in `image` mode on the result. The scan covers the OS packages and global Node tooling we ship, not the upstream image, which can lag Debian's security fixes by weeks. `scan-type: config` was tried and rejected: it scans the Dockerfile text for misconfigurations and reports zero CVEs, because it never looks at what the base image contains.
 - **`fork-drift`** — checks review windows on the forked dependencies no scanner above can see at all. See below.
 
 ### Adopting the scan in a package

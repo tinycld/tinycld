@@ -346,36 +346,19 @@ RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
     CGO_ENABLED=0 GOOS=linux go build -o tinycld .
 
 
-# Final runtime stage
-FROM debian:trixie-slim AS runtime
+# Runtime OS layer: the Debian base plus every OS package the runtime needs.
+# It is its own stage so security.yml's image-scan job can build exactly this
+# layer (`--target runtime-base`) and scan the OS packages we ship, without
+# building the whole app.
+FROM debian:trixie-slim AS runtime-base
 
-ENV SENTRY_DSN=""
-# Domain / TLS config consumed by entrypoint.sh:
-#   PRIMARY_DOMAIN      canonical domain (cert primary SAN + user-facing URLs)
-#   ADDITIONAL_DOMAINS  comma-separated extra cert domains
-#   AUTOCERT_ENABLED    true/false — provision Let's Encrypt + bind :80/:443
-#   PUBLIC_SCHEME       http|https for the user-facing URL in reverse-proxy mode
-#                       (default https; ignored when autocert is on)
-# Autocert turns on only when AUTOCERT_ENABLED=true AND PRIMARY_DOMAIN is set;
-# otherwise the server runs plain HTTP on :7090 (reverse-proxy / local-demo).
-ENV PRIMARY_DOMAIN=""
-ENV ADDITIONAL_DOMAINS=""
-ENV AUTOCERT_ENABLED=""
-ENV PUBLIC_SCHEME=""
-
-# Heap limit for the Node processes the in-app package installer spawns —
-# primarily `expo export` (web + the native OTA bundles). The full-ecosystem
-# bundle (every member's screens/sidebars) plus `--source-maps external` blows
-# past Node's default old-space ceiling and OOM-aborts the export (SIGABRT,
-# "Ineffective mark-compacts near heap limit"); dev.ts and the EAS production
-# build already run this same export at 8192 for that reason. The web-builder
-# stage sets its own NODE_OPTIONS, which does NOT carry into this runtime stage,
-# so the runtime installer previously ran with no limit. 4096 fits the bundle on
-# a typical server container; raise it (or lower to match a smaller box) via
-# `dokku config:set <app> NODE_OPTIONS=--max-old-space-size=<MB>`, which overrides
-# this default. Must be <= the container's memory limit or the kernel OOM-kills
-# the process before V8's soft limit ever applies.
-ENV NODE_OPTIONS="--max-old-space-size=4096"
+# Docker Hub rebuilds the trixie-slim tag only every few weeks, so the tag can
+# carry a package that Debian fixed in trixie-security days earlier. The
+# `apt-get upgrade` below applies those fixes at build time. A cached layer
+# would keep the old packages, so docker-publish.yml sets this arg to a new
+# value on each run, which forces the apt layer to rebuild. Builds that leave
+# it empty keep normal layer caching.
+ARG SECURITY_UPDATES_REFRESH=""
 
 # Install runtime dependencies + Node for runtime tasks. Cron jobs in bin/
 # invoke `pnpm exec tsx scripts/<x>.ts` (reset-demo, seed-db), so Node must be on
@@ -404,10 +387,53 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
     && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ca-certificates libffi8 libcap2-bin curl git sqlite3 gnupg gosu tini \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y
+
+# The npm bundled with Node 22 (10.x) ships dependencies with known HIGH CVEs
+# (pacote, sigstore, brace-expansion, ...) that the npm 10 line does not fix;
+# the fixes need npm 11's dependency majors. The runtime only runs `npm pack`
+# (the in-app package installer), and the development Node (.node-version)
+# already ships npm 11. Track the npm 11 line, not one exact version, so each
+# rebuild takes its latest security fixes, as the apt upgrade above does. The
+# cache mount keeps npm's download cache out of the layer.
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm install -g npm@11 \
+    && npm --version
+
+# Final runtime stage
+FROM runtime-base AS runtime
+
+ENV SENTRY_DSN=""
+# Domain / TLS config consumed by entrypoint.sh:
+#   PRIMARY_DOMAIN      canonical domain (cert primary SAN + user-facing URLs)
+#   ADDITIONAL_DOMAINS  comma-separated extra cert domains
+#   AUTOCERT_ENABLED    true/false — provision Let's Encrypt + bind :80/:443
+#   PUBLIC_SCHEME       http|https for the user-facing URL in reverse-proxy mode
+#                       (default https; ignored when autocert is on)
+# Autocert turns on only when AUTOCERT_ENABLED=true AND PRIMARY_DOMAIN is set;
+# otherwise the server runs plain HTTP on :7090 (reverse-proxy / local-demo).
+ENV PRIMARY_DOMAIN=""
+ENV ADDITIONAL_DOMAINS=""
+ENV AUTOCERT_ENABLED=""
+ENV PUBLIC_SCHEME=""
+
+# Heap limit for the Node processes the in-app package installer spawns —
+# primarily `expo export` (web + the native OTA bundles). The full-ecosystem
+# bundle (every member's screens/sidebars) plus `--source-maps external` blows
+# past Node's default old-space ceiling and OOM-aborts the export (SIGABRT,
+# "Ineffective mark-compacts near heap limit"); dev.ts and the EAS production
+# build already run this same export at 8192 for that reason. The web-builder
+# stage sets its own NODE_OPTIONS, which does NOT carry into this runtime stage,
+# so the runtime installer previously ran with no limit. 4096 fits the bundle on
+# a typical server container; raise it (or lower to match a smaller box) via
+# `dokku config:set <app> NODE_OPTIONS=--max-old-space-size=<MB>`, which overrides
+# this default. Must be <= the container's memory limit or the kernel OOM-kills
+# the process before V8's soft limit ever applies.
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 # Make `pnpm` available on PATH for the in-app package installer, which runs
 # `pnpm install` at the workspace root (step 7 of the install pipeline). Node
