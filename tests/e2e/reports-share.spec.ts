@@ -16,6 +16,7 @@ import {
     openReportsHub,
     pressToolbar,
     SALES_SOURCE,
+    SHIPPED_TITLE,
     saveNewReport,
     startReport,
     superuserClient,
@@ -269,5 +270,44 @@ test.describe('sharing reports', () => {
         await page.keyboard.press('Escape')
         await page.getByTestId('reports-hub-show-all').click()
         await expect(page.getByTestId('reports-hub-filter')).toHaveCount(0)
+        await expect(page.getByTestId('reports-hub-tab-mine')).toBeVisible()
+    })
+
+    // D2: a package's link lists every report of the package its reader can open
+    // (shared with them, published, their own) in one list, with no tab to press. A
+    // share made while the list is open shows at once. The phone hub draws its rows as
+    // cards (HubList isPhone), so the list is read at a phone width too.
+    test('a package link lists the package’s shared and published reports with no tabs', async ({
+        page,
+    }) => {
+        const title = await ownerReport(page, uniqueName('Package customer'))
+        const { page: c, close } = await signInAsCollaborator(page, {
+            startAt: '/a/reports?package=salesstub',
+        })
+        try {
+            await expect(c.getByTestId('reports-hub-filter')).toContainText('Sales Stub')
+            await expect(c.getByTestId('reports-hub-tab-mine')).toHaveCount(0)
+            await expect(hubRow(c, SHIPPED_TITLE)).toBeVisible()
+            await expect(hubRow(c, title)).toHaveCount(0)
+
+            await openShare(page)
+            await page.getByTestId('report-share-search').fill(TEST_COLLABORATOR_NAME.slice(0, 6))
+            await page
+                .getByTestId('report-share-dialog')
+                .locator('[data-testid^="report-share-candidate-"]')
+                .filter({ hasText: TEST_COLLABORATOR_NAME })
+                .click()
+            await page.getByTestId('report-share-done').click()
+            await expect(hubRow(c, title)).toBeVisible()
+
+            await c.setViewportSize({ width: 390, height: 844 })
+            await expect(hubRow(c, title)).toBeVisible()
+            await expect(hubRow(c, SHIPPED_TITLE)).toBeVisible()
+            await expect(c.getByTestId('reports-hub-tab-shared')).toHaveCount(0)
+            await hubRow(c, title).click()
+            await expect(c.getByTestId('report-title')).toHaveText(title)
+        } finally {
+            await close()
+        }
     })
 })

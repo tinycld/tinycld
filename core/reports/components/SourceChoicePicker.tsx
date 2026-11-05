@@ -20,7 +20,8 @@ import {
     optionText,
     toggleGroup,
 } from '../lib/param-options'
-import type { ParamValue } from '../lib/params'
+import { groupPickText, type ParamValue } from '../lib/params'
+import type { ParamDef } from '../lib/spec'
 import type { ParamOption } from '../lib/types'
 import { isNearEnd } from './near-end'
 import {
@@ -41,18 +42,18 @@ function AllOfGroup({
     isVisible,
     isPicked,
     value,
-    label,
+    text,
     onPress,
 }: {
     isVisible: boolean
     isPicked: boolean
     value: string
-    label: string
+    text: string
     onPress: () => void
 }) {
     if (!isVisible) return null
     const tone = isPicked ? 'border-primary bg-primary' : 'border-border bg-transparent'
-    const text = isPicked ? 'text-primary-foreground' : 'text-primary'
+    const textTone = isPicked ? 'text-primary-foreground' : 'text-primary'
     return (
         <Pressable
             testID={`report-filter-group-${value}`}
@@ -61,22 +62,27 @@ function AllOfGroup({
             aria-checked={isPicked}
             onPress={onPress}
             style={TARGET_STYLE}
-            className={`justify-center rounded-full border px-3 ${tone}`}
+            className={`shrink justify-center rounded-full border px-3 ${tone}`}
         >
-            <Text className={`text-sm ${text}`}>{`All ${label}`}</Text>
+            <Text numberOfLines={1} className={`text-sm ${textTone}`}>
+                {text}
+            </Text>
         </Pressable>
     )
 }
 
-// A group's head, with "All <group>" on a multiple choice. The options of groups
-// the server did not list share an Other head, which cannot be picked whole: its
-// groups have no label to show on the chip.
+// A group's head, with its whole-group pick ("All <group>", or the param's own
+// text) on a multiple choice. The options of groups the server did not list share
+// an Other head, which cannot be picked whole: its groups have no label to show on
+// the chip.
 function SectionHead({
+    def,
     section,
     isPicked,
     canPickAll,
     onPickAll,
 }: {
+    def: ParamDef
     section: OptionSection
     isPicked: boolean
     canPickAll: boolean
@@ -97,7 +103,7 @@ function SectionHead({
                 isVisible={canPickAll && group !== null}
                 isPicked={isPicked}
                 value={group?.value ?? ''}
-                label={label}
+                text={groupPickText(def, label)}
                 onPress={() => onPickAll(group?.value ?? '')}
             />
         </View>
@@ -256,6 +262,7 @@ export function SourceChoiceBody({ def, value, onApply, source, params }: Source
         return (
             <View key={section.isOther ? ':other' : `g:${section.group?.value ?? ''}`}>
                 <SectionHead
+                    def={def}
                     section={section}
                     isPicked={isGroupPicked}
                     canPickAll={isMultiple}

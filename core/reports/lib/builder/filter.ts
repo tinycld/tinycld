@@ -296,17 +296,30 @@ function relationParam(
 /**
  * A param that lists records, grouped by `group` (a path on the records' source) so
  * the reader picks a whole group with "All <group>" (R30), or ungrouped with null.
- * A param with its own options has no records to group and is returned as it is.
- * The keys keep the spec's order, so a save writes what the engine reads back.
+ * The group pick's own text (D1) names groups, so it leaves with them. A param with
+ * its own options has no records to group and is returned as it is.
  */
 export function withOptionsGroup(param: ParamDef, group: SpecHop[] | null): ParamDef {
+    const from = param.optionsFrom
+    if (!from) return param
+    const grouped = group ? { group } : { group: undefined, groupLabel: undefined }
+    return tidyParam({ ...param, optionsFrom: { ...from, ...grouped } })
+}
+
+/**
+ * A param as a save writes it: optionsFrom's keys in the spec's order (spec.go
+ * OptionsFrom), so a save writes what the engine reads back, and an empty group
+ * pick text (a cleared field, which means "All <group>") left out.
+ */
+export function tidyParam(param: ParamDef): ParamDef {
     const from = param.optionsFrom
     if (!from) return param
     const optionsFrom = {
         source: from.source,
         value: from.value,
         label: from.label,
-        ...(group ? { group } : {}),
+        ...(from.group ? { group: from.group } : {}),
+        ...(from.groupLabel ? { groupLabel: from.groupLabel } : {}),
         ...(from.where ? { where: from.where } : {}),
     }
     return { ...param, optionsFrom }

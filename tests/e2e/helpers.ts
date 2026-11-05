@@ -254,14 +254,17 @@ export const TEST_COLLABORATOR_PASSWORD =
  *     const { page: bobPage, user: bob, close } = await signInAsCollaborator(page)
  *     try { ... } finally { await close() }
  */
-export async function signInAsCollaborator(page: Page): Promise<{
+export async function signInAsCollaborator(
+    page: Page,
+    options: { startAt?: string } = {}
+): Promise<{
     page: Page
     user: InvitedUser
     close: () => Promise<void>
 }> {
     const context = await page.context().browser()!.newContext()
     const collaboratorPage = await context.newPage()
-    await loginAs(collaboratorPage, TEST_COLLABORATOR_USERNAME, TEST_COLLABORATOR_PASSWORD)
+    await loginAs(collaboratorPage, TEST_COLLABORATOR_USERNAME, TEST_COLLABORATOR_PASSWORD, options)
     return {
         page: collaboratorPage,
         user: {
@@ -364,10 +367,16 @@ export async function clearSession(page: Page) {
 }
 
 // Sign in as a specific (non-fixture) user by identifier + password. Mirrors
-// login() but for accounts minted via createInvitedUser.
-export async function loginAs(page: Page, identifier: string, password: string) {
+// login() but for accounts minted via createInvitedUser. `startAt`, as in
+// login(), begins at a deep route that the sign-in lands back on.
+export async function loginAs(
+    page: Page,
+    identifier: string,
+    password: string,
+    options: { startAt?: string } = {}
+) {
     await clearSession(page)
-    await page.goto('/')
+    await page.goto(options.startAt ?? '/')
     await page.getByTestId('identifier').fill(identifier)
     await page.getByPlaceholder('Password').fill(password)
     await page.getByText('Sign in', { exact: true }).last().click()

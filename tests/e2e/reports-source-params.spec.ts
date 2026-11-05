@@ -116,9 +116,16 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         await expect(page.getByTestId('report-param-teams')).toHaveText(`Teams: ${stem} N1`)
         const rows = page.getByTestId('report-table').locator('[data-testid^="report-row-g:"]')
         await expect(rows).toHaveText([`${stem} N1`])
+        // The report names its group pick (optionsFrom.groupLabel "All {group} teams").
+        await page.getByTestId('report-param-teams').click()
+        const picker = page.getByTestId('report-filter-picker')
+        await picker.getByTestId('report-filter-search').fill(stem)
+        await expect(picker.getByTestId('report-filter-group-north')).toHaveText('All North teams')
+        await page.keyboard.press('Escape')
+        await expect(picker).toBeHidden()
         await chooseParamOption(page, 'teams', { from: 'chip', search: stem, group: 'north' })
         await expect(page.getByTestId('report-param-teams')).toHaveText(
-            `Teams: ${stem} N1, All North`
+            `Teams: ${stem} N1, All North teams`
         )
         await expect(rowOf(page, `${stem} N2`)).toBeVisible()
         await expect(rows.filter({ hasText: `${stem} S1` })).toHaveCount(0)
@@ -297,10 +304,19 @@ test.describe('params from a source, headings and unpublished shipped reports', 
             await expect(table.getByText('Ned', { exact: true })).toBeVisible()
             await expect(table.getByText('Sol', { exact: true })).toHaveCount(0)
 
+            // The group pick can have its own text, with {group} for the group's name.
+            const groupText = p.getByTestId('report-builder-filter-0-group-label')
+            await groupText.fill('Every team')
+            await expect(p.getByText('Write {group} where the group’s name goes')).toBeVisible()
+            await groupText.fill('Every {group} team')
+            await expect(p.getByText('Write {group} where the group’s name goes')).toHaveCount(0)
+            await expect(p.getByTestId('report-param-team')).toHaveText('Team: Every North team')
+
             // Without groups a whole-group pick no longer fits the param (view-url.ts
             // reads each value against its param), so the filter is unset again.
             await p.getByTestId('report-builder-filter-0-options-group-clear').click()
             await expect(grouping).toHaveText('No groups')
+            await expect(groupText).toHaveCount(0)
             await expect(table.getByText('Sol', { exact: true })).toBeVisible()
         } finally {
             await close()

@@ -5,6 +5,7 @@ import {
     defaultValueOf,
     emptyAction,
     emptyMessage,
+    groupPickText,
     isOptional,
     MAX_CHOICE_VALUES,
     MAX_OPTION_GROUPS,
@@ -241,6 +242,40 @@ describe('a whole group of options from a source', () => {
             'Teams: N1, All North'
         )
         expect(chipText({ ...def, label: 'Teams' }, picked, undefined)).toBe('Teams: 2 selected')
+    })
+
+    // D1: a report names its group pick ("All Expense accounts").
+    const named = (groupLabel: string): ParamDef => ({
+        ...def,
+        label: 'Teams',
+        optionsFrom: {
+            source: 's',
+            value: [{ field: 'id' }],
+            label: [{ field: 'name' }],
+            group: [{ field: 'region' }],
+            groupLabel,
+        },
+    })
+
+    it('writes the group pick with the param’s own text, or All <group>', () => {
+        expect(groupPickText(def, 'North')).toBe('All North')
+        expect(groupPickText(named(''), 'North')).toBe('All North')
+        expect(groupPickText(named('All {group} teams'), 'North')).toBe('All North teams')
+        expect(groupPickText(named('{group} · every {group} team'), 'North')).toBe(
+            'North · every North team'
+        )
+        // A label is text, never a pattern: $ and $& in it stay as they are.
+        expect(groupPickText(named('All {group} teams'), 'Q$&')).toBe('All Q$& teams')
+    })
+
+    it('names the whole group on the chip with the param’s text', () => {
+        const labels = new Map([
+            ['a1', 'N1'],
+            ['group:north', 'North'],
+        ])
+        expect(chipText(named('All {group} teams'), picked, undefined, labels)).toBe(
+            'Teams: N1, All North teams'
+        )
     })
 })
 
