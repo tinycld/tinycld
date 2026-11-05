@@ -10,7 +10,12 @@ import {
 } from 'react'
 import type { Scope } from './types'
 
-const stack: { id: number; scope: Scope }[] = []
+export interface ScopeEntry {
+    id: number
+    scope: Scope
+}
+
+const stack: ScopeEntry[] = []
 let nextId = 1
 
 export function pushScope(scope: Scope): number {
@@ -39,6 +44,28 @@ export function topScope(): Scope | null {
  */
 export function topScopeId(): number | null {
     return stack.length > 0 ? stack[stack.length - 1].id : null
+}
+
+/**
+ * The id the next scope instance will be assigned, without taking it. Ids only
+ * grow, so every scope pushed after this call has an id at or above it — which
+ * is how the shortcut help overlay tells its own `modal` entry apart from the
+ * stack of the screen it was opened over.
+ */
+export function nextScopeId(): number {
+    return nextId
+}
+
+/**
+ * The top entry whose id is below `floor`, or the live top when no floor is
+ * given. Null when no such entry is on the stack.
+ */
+export function topScopeEntry(floor?: number): ScopeEntry | null {
+    for (let i = stack.length - 1; i >= 0; i -= 1) {
+        const entry = stack[i]
+        if (floor === undefined || entry.id < floor) return { ...entry }
+    }
+    return null
 }
 
 /** The id a scope-bound shortcut registered under, for `Shortcut.scopeId`. */

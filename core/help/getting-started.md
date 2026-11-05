@@ -17,7 +17,7 @@ This app is built from a small **core** plus a set of optional **feature package
 
 ## Keyboard shortcuts
 
-Press `t` followed by a single letter to jump between packages (the letter is shown in each package's docs). Press `?` anywhere to open this help.
+Press `t` followed by a single letter to jump between packages (the letter is shown in each package's docs). Press ⇧? to see the keyboard shortcuts of the screen you are on (not while the cursor is in a text box).
 
 ## Where to go next
 

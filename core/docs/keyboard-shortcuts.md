@@ -103,9 +103,15 @@ Shortcuts live under `lib/shortcuts/`. The system is intentionally small and avo
 - `lib/shortcuts/registry.ts` — a Zustand store holding `Map<id, Shortcut>`.
 - `lib/shortcuts/scopes.ts` — a stack of active scopes (`global`, `list`, `thread`, `compose`, `modal`) pushed by `useShortcutScope`.
 - `lib/shortcuts/matcher.ts` — the sequence state machine. A 1-second inter-key timeout matches the tinykeys default. Both providers feed raw atoms into the same matcher so web and native share behaviour.
-- `lib/shortcuts/provider.web.tsx` — wires single atoms to `window` via [tinykeys](https://github.com/jamiebuilds/tinykeys). Tinykeys handles `$mod` (⌘ on macOS, Ctrl elsewhere) and key normalization.
+- `lib/shortcuts/provider.web.tsx` — wires single atoms to `window` via [tinykeys](https://github.com/jamiebuilds/tinykeys), twice: once in the capture phase and once in the bubble phase. Tinykeys handles `$mod` (⌘ on macOS, Ctrl elsewhere) and key normalization. `lib/shortcuts/dispatch.ts` (`keyPhase`, `handleKey`) decides which phase feeds each shortcut a key, so no shortcut is offered one key twice:
+  - **capture** — a key typed in a text field, and a key held with Ctrl, ⌘ or Alt. react-native-web stops every key in a `TextInput`, and Enter (with any modifiers) and Space on a focused Pressable, before a bubble listener sees it, so these must be read first. A matched key is consumed with `preventDefault` + `stopPropagation`, so the focused element never sees it; any other key reaches it unchanged.
+  - **bubble** — every other key (no modifier, or Shift only, outside a text field). The focused element answers it first, as it should: Enter and Space press a focused button, an open menu keeps its arrows and typeahead letters, `g i` sequences work.
+  - **while a menu, popover or search palette is open** (any non-modal layer on top) — every key goes to bubble. A menu pushes no shortcut scope, so the screen's keys stay active under it; the bubble path lets the menu's search field and its focused trigger keep their keys, as before.
+  - **`global` shortcuts and a key typed in a text field** — capture feeds such a key only to scoped shortcuts; `global` ones get it in bubble, as before. A global shortcut stays registered by a screen the user has left (`freezeOnBlur`), so reading it first would let that screen take keys from every field in the app.
+  - **Escape while a layer is open** — neither. The layer stack (`ui/overlay/layer-stack.ts`) closes the top menu, dialog or sheet from its own capture listener on `document`, which runs after the window capture listener; the provider yields Escape to it so a screen's Escape never fires on the same press.
+- `lib/shortcuts/dispatch.ts` — the pure phase decision (`keyPhase`, `handleKey`), unit-tested.
 - `lib/shortcuts/provider.native.tsx` — wraps the app in `KeyboardExtendedView` from [`react-native-external-keyboard`](https://github.com/dorian-marchal/react-native-external-keyboard) and translates native `KeyPress` events to the same atom format.
-- `lib/shortcuts/help.tsx` + `ui/Kbd.tsx` — the `?` overlay and key badge component. The overlay lists only shortcuts whose scope is currently active (`isScopeActive`), not everything registered: a screen shadowed by an inner scope, or one left mounted by `freezeOnBlur`, still has its shortcuts in the registry but none of them can fire.
+- `lib/shortcuts/help.tsx` + `lib/shortcuts/help-list.ts` + `ui/Kbd.tsx` — the `?` overlay, its store and list, and the key badge component. The overlay lists only shortcuts whose scope is active (`isScopeActive`), not everything registered: a screen shadowed by an inner scope, or one left mounted by `freezeOnBlur`, still has its shortcuts in the registry but none of them can fire. Activity is judged against the stack below the overlay's own `modal` entry: opening the overlay records `nextScopeId()` as `scopeFloor`, and `helpGroups` reads `topScopeEntry(scopeFloor)`, so the list shows the keys of the screen (or dialog) it was opened over.
 
 The matcher dispatches a shortcut only when:
 
@@ -113,7 +119,7 @@ The matcher dispatches a shortcut only when:
 2. `allowInInputs` is true, **or** focus is not currently in a text input / contenteditable / ProseMirror surface, and
 3. Its optional `when()` guard (if any) returns true.
 
-Opening a modal pushes the `modal` scope, which silences list/thread/compose shortcuts until the modal closes. `Escape` is registered in the `modal` scope with `allowInInputs: true` so it closes the dialog even from a focused input.
+Opening a dialog, a sheet or a search palette pushes the `modal` scope (its `LayerEscape`), which silences list/thread/compose shortcuts until it closes. A menu or popover pushes no scope. `Escape` is registered in the `modal` scope with `allowInInputs: true` for the help list; on web the layer stack closes the layer, even from a focused input.
 
 ## Registering shortcuts
 
@@ -174,12 +180,12 @@ Letters in use: `c` calendar, `d` drive, `b` boards, `m` mail, `o` contacts, `s`
 
 ## Testing
 
-Unit tests for the matcher live at `tests/unit/shortcuts.test.ts` and cover single combos, `$mod` combos, sequences, the 1 s timeout, scope gating, the input-field gate, and `when()` guards. Run with `pnpm run test:unit`.
+Unit tests for the matcher live at `tests/unit/shortcuts.test.ts` and cover single combos, `$mod` combos, sequences, the 1 s timeout, scope gating, the input-field gate, `when()` guards, the web phase decision (`keyPhase`, `handleKey`), and the help list's scope floor. Run with `pnpm run test:unit`.
 
 End-to-end coverage on a real browser lives at `tests/e2e/keyboard-shortcuts.spec.ts` and exercises `?`, `t o`/`t m` jumps, and `j`/`k`/`Enter` on the mail list.
 
 ## Platform notes
 
-- **Web** — tinykeys binds to `window`. `$mod` resolves to `Meta` (⌘) on macOS and `Control` elsewhere.
+- **Web** — tinykeys binds to `window`, in the capture and the bubble phase (see "How it works"). `$mod` resolves to `Meta` (⌘) on macOS and `Control` elsewhere. An `allowInInputs` shortcut fires from a react-native-web text field too, because the capture listener reads the key before the field stops it.
 - **iPad / Catalyst** — the route-level `KeyboardExtendedView` receives hardware key events. Per-row focusable rows using the library's `Pressable` are a future enhancement; today the route-level wrapper covers the declared shortcut set.
 - **Android** — the same native provider works in principle but has seen less testing. If route-level key capture proves unreliable on any platform, the fallback is to register shortcuts only on web; the public API is unchanged.

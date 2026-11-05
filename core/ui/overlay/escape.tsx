@@ -8,9 +8,10 @@ let instance = 0
  * Rendered inside an open layer: puts the `modal` shortcut scope on top of
  * the stack, which is what mutes the screen's own shortcuts (a list's j/k, a
  * board's letters) while the layer is up, and registers Escape there for the
- * shortcut help. The Escape that actually closes the layer is the engine's
- * capture-phase listener (layer-stack.ts) — it sees the key even from inside
- * a text field, which the shortcut system does not.
+ * shortcut help. On web the Escape that actually closes the layer is the
+ * engine's capture-phase listener (layer-stack.ts); the shortcut dispatch
+ * leaves Escape to it while the layer is open (`keyPhase`,
+ * lib/shortcuts/dispatch.ts), in or out of a text field.
  *
  * `useShortcutScope` joins the stack on MOUNT, which is why this is a
  * component the layer renders only while open — a hook in an always-mounted
