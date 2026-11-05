@@ -270,11 +270,11 @@ func (lc *layoutCtx) sectionCurrency(id string, slot sectionSlot) currency {
 // is not the column's.
 func (lc *layoutCtx) carriedCell(cp *colPlan, e expr, idx int) string {
 	fixed := e.cur.fixed
-	if fixed == nil || lc.c.sectionCur[cp.col.ID].same(e.cur) || lc.c.app == nil {
+	if fixed == nil || lc.c.sectionCur[cp.col.ID].same(e.cur) || lc.c.dry() {
 		return lc.c.carriedCell(lc.s, cp, e, idx)
 	}
 	lc.c.carried[cp.col.ID] = true
-	return fmt.Sprintf("%s AS vcur%d", lc.s.bind(fixed.Currency(lc.c.app)), idx)
+	return fmt.Sprintf("%s AS vcur%d", lc.s.bind(lc.c.fixedCurrency(fixed)), idx)
 }
 
 // chunkCTEs renders one CTE per chunk of sections. Each has one row per
@@ -360,7 +360,7 @@ func (lc *layoutCtx) label(e expr) string { return lc.c.textOf(lc.s, e) }
 
 // currencySQL reads a currency key from the computed row's currency (cur).
 func (lc *layoutCtx) currencySQL(cur currency) string {
-	return currencyCode(lc, lc.c.app, cur, func(key string) string { return "cur." + key })
+	return currencyCode(lc, lc.c, cur, func(key string) string { return "cur." + key })
 }
 
 // layoutRows emits the rows for one currency: each section's group row

@@ -116,8 +116,9 @@ type Source struct {
 	// report keeps working after a rename.
 	Aliases map[string]string
 	// Currency is the fixed currency of Money fields that name no Currency
-	// field. nil means the currency is unknown to the engine.
-	Currency func(app core.App) string
+	// field, read for the reader (see Heading), at most once per source in one
+	// read of a report. nil means the currency is unknown to the engine.
+	Currency func(app core.App, reader *core.RequestInfo) string
 	// FiscalStartMonth (1-12) drives fiscalYear, fiscalPeriod and the fiscal
 	// period presets when this source is a report's base. nil means 1. It runs
 	// once per read of a report, for that read's reader (see Heading).

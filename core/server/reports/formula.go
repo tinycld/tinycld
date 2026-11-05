@@ -7,8 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // expr is one compiled formula node: its SQL and what the compiler knows
@@ -165,16 +163,15 @@ func currencyGuard(c fctx, op string, values []expr, sql string) string {
 }
 
 // currencyCode is the SQL of a money value's currency code where c compiles,
-// with key the SQL of a currency key there: a fixed currency's code ("" when
-// dry), a carried currency's subquery, an amount param's own code.
-func currencyCode(c fctx, app core.App, cur currency, key func(string) string) string {
+// with key the SQL of a currency key there: a fixed currency's code for comp's
+// reader ("" when dry), a carried currency's subquery, an amount param's own
+// code.
+func currencyCode(c fctx, comp *compiler, cur currency, key func(string) string) string {
 	switch {
 	case cur.key != "":
 		return key(cur.key)
-	case cur.fixed != nil && app == nil:
-		return c.bind("")
 	case cur.fixed != nil:
-		return c.bind(cur.fixed.Currency(app))
+		return c.bind(comp.fixedCurrency(cur.fixed))
 	case cur.sql != "":
 		return cur.sql
 	case cur.param != "":

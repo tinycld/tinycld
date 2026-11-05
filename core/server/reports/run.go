@@ -772,7 +772,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		total:  prefixed("w.", c.currencies),
 	}
 	visiting := map[string]bool{}
-	labels := newLabelRefs(r.s, frame, "w")
+	labels := newLabelRefs(c, r.s, frame, "w")
 	var order []sortKey
 	sel := []string{"w.__id AS __id"}
 	for _, k := range append(keys, prefixed("w.", c.currencies)...) {

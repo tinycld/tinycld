@@ -74,7 +74,7 @@ func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
 		parent = append(parent, fmt.Sprintf("k%d", i))
 	}
 	lv.frame = &windowFrame{parent: prefixed("a.", parent), total: prefixed("a.", c.currencies)}
-	lv.labels = newLabelRefs(r.s, lv.frame, "a")
+	lv.labels = newLabelRefs(c, r.s, lv.frame, "a")
 	if err := lv.labelSQL(); err != nil {
 		return nil, err
 	}
@@ -976,7 +976,7 @@ func (lc *levelCtx) filter() bool                            { return lc.cond }
 func (lc *levelCtx) label(e expr) string                     { return lc.lv.c.textOf(lc.lv.r.s, e) }
 func (lc *levelCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(lc, lc.lv.r, n, at) }
 func (lc *levelCtx) currencySQL(cur currency) string {
-	return currencyCode(lc, lc.lv.c.app, cur, func(key string) string { return "a." + key })
+	return currencyCode(lc, lc.lv.c, cur, func(key string) string { return "a." + key })
 }
 
 // hoist computes a running value a lookup reads below the level's select.

@@ -14,6 +14,9 @@ type compiler struct {
 	info   *core.RequestInfo
 	params map[string]paramValue
 	fiscal int
+	// fixedCur is each source's fixed currency as this read's reader got it
+	// (fixedCurrency). It outlives a statement, so rows() leaves it.
+	fixedCur map[string]string
 	// currencies names w's currency keys; every total groups by them, so
 	// amounts in different currencies are never added together.
 	currencies []string
@@ -94,7 +97,7 @@ func newCompiler(p *plan, app core.App, info *core.RequestInfo, params map[strin
 // already read, so a read that also resolves period presets uses one value
 // for both.
 func newCompilerWithFiscal(p *plan, app core.App, info *core.RequestInfo, params map[string]paramValue, fiscal int) *compiler {
-	c := &compiler{p: p, app: app, info: info, params: params, fiscal: fiscal, currencyOf: map[string]currency{}, valueCur: map[string]string{}, valueCurErr: map[string]error{}, sectionCur: map[string]currency{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}, expanding: map[string]bool{}}
+	c := &compiler{p: p, app: app, info: info, params: params, fiscal: fiscal, fixedCur: map[string]string{}, currencyOf: map[string]currency{}, valueCur: map[string]string{}, valueCurErr: map[string]error{}, sectionCur: map[string]currency{}, carried: map[string]bool{}, labels: make([]labelPlan, len(p.groups)), labelTypes: map[string]FieldType{}, expanding: map[string]bool{}}
 	if params == nil {
 		// Dry: each param has its default, as in a run that posts none; bind
 		// has checked the defaults.
@@ -113,6 +116,31 @@ func fiscalStartOf(src *Source, app core.App, reader *core.RequestInfo) int {
 		return m
 	}
 	return 1
+}
+
+// dry is true for a compile with no reader (Validate): no statement runs, and
+// no source function may be called.
+func (c *compiler) dry() bool {
+	return c.app == nil || c.info == nil
+}
+
+// fixedCurrency is src's fixed currency for this read's reader, "" when src
+// has none or the compile is dry. It calls src.Currency the first time the
+// read needs it and keeps the code for the rest of the read (the compiler
+// lives for one Run or one ReadParamOptions): read per column, row or label,
+// a concurrent change of the package's setting could put two codes in one
+// result. The compiler is used from one goroutine only, so the memo has no
+// lock.
+func (c *compiler) fixedCurrency(src *Source) string {
+	if src.Currency == nil || c.dry() {
+		return ""
+	}
+	if code, ok := c.fixedCur[src.Key]; ok {
+		return code
+	}
+	code := src.Currency(c.app, c.info)
+	c.fixedCur[src.Key] = code
+	return code
 }
 
 // rowsCTE is the CTE `w`: one row per base row the reader may list that

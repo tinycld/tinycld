@@ -159,5 +159,5 @@ func (f *fillCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(f, 
 
 // currencySQL reads a currency key on the parent row p, as col reads its keys.
 func (f *fillCtx) currencySQL(cur currency) string {
-	return currencyCode(f, f.r.c.app, cur, func(key string) string { return "p." + key })
+	return currencyCode(f, f.r.c, cur, func(key string) string { return "p." + key })
 }
