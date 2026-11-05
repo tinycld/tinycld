@@ -91,15 +91,16 @@ func labelValueSQL(s *stmt, target *Source, f *Field, key string) string {
 }
 
 // labelCurrencySQL is the currency of an amount label: the record's own
-// currency field, or its source's fixed currency; NULL for any other label.
-func labelCurrencySQL(s *stmt, target *Source, f *Field, key string) string {
+// currency field, or its source's fixed currency for c's reader; NULL for any
+// other label, and for a fixed currency when dry.
+func (c *compiler) labelCurrencySQL(s *stmt, target *Source, f *Field, key string) string {
 	switch {
 	case f == nil || f.Type != Money:
 		return "NULL"
 	case f.Currency != "":
 		return recordCurrencySQL(s, target, nil, target, f, key)
-	case target.Currency != nil && s.app != nil:
-		return s.bind(target.Currency(s.app))
+	case target.Currency != nil && !c.dry():
+		return s.bind(c.fixedCurrency(target))
 	}
 	return "NULL"
 }
@@ -180,6 +181,7 @@ type labelRef struct {
 // hoisting it below the select), however many cells, sort keys and window
 // orders read it.
 type labelRefs struct {
+	c     *compiler
 	s     *stmt
 	frame *windowFrame
 	alias string
@@ -196,8 +198,8 @@ func (ref labelRef) cells(idx int) []string {
 	return []string{fmt.Sprintf("%s AS vl%d", value, idx), fmt.Sprintf("%s AS vc%d", currency, idx)}
 }
 
-func newLabelRefs(s *stmt, frame *windowFrame, alias string) *labelRefs {
-	return &labelRefs{s: s, frame: frame, alias: alias, refs: map[string]labelRef{}}
+func newLabelRefs(c *compiler, s *stmt, frame *windowFrame, alias string) *labelRefs {
+	return &labelRefs{c: c, s: s, frame: frame, alias: alias, refs: map[string]labelRef{}}
 }
 
 // of is the label of the record key points at, read from f.
@@ -211,7 +213,7 @@ func (lr *labelRefs) of(target *Source, f *Field, key string) labelRef {
 		return ref
 	}
 	ref := labelRef{value: lr.frame.hoist(lr.alias, labelValueSQL(lr.s, target, f, key)), currency: "NULL"}
-	if cur := labelCurrencySQL(lr.s, target, f, key); cur != "NULL" {
+	if cur := lr.c.labelCurrencySQL(lr.s, target, f, key); cur != "NULL" {
 		ref.currency = lr.frame.hoist(lr.alias, cur)
 	}
 	lr.refs[id] = ref

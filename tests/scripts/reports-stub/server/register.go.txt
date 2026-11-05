@@ -103,4 +103,4 @@ func Register(_ core.App) error {
 }
 
 // stubHeading is the business name the stub's reports print above their title (E9).
-func stubHeading(core.App) string { return "Stub Sales Co" }
+func stubHeading(core.App, *core.RequestInfo) string { return "Stub Sales Co" }

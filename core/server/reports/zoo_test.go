@@ -178,7 +178,7 @@ func registerZooSources() {
 			{Key: "keepers", Label: "Keepers", Target: "zoo.keepers", Cardinality: ToMany, BackField: "animal"},
 		},
 		Aliases:  map[string]string{"mass": "weight"},
-		Currency: func(core.App) string { return "USD" },
+		Currency: func(core.App, *core.RequestInfo) string { return "USD" },
 	})
 	RegisterSource(Source{
 		Key: "zoo.feedings", Collection: "zoo_feedings", Label: "Feedings",
@@ -191,7 +191,7 @@ func registerZooSources() {
 			{Key: "due", Label: "Due", Type: Date, TextDay: true, Aggregates: MinMax},
 		},
 		Links:            []Link{{Key: "animal", Label: "Animal", Target: "zoo.animals", Cardinality: ToOne, Field: "animal"}},
-		FiscalStartMonth: func(core.App) int { return zooFiscalStart },
+		FiscalStartMonth: func(core.App, *core.RequestInfo) int { return zooFiscalStart },
 	})
 	RegisterSource(Source{
 		Key: "zoo.keepers", Collection: "zoo_keepers", Label: "Keepers",

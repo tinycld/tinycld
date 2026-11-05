@@ -71,7 +71,7 @@ func (rn *runner) currencyOfColumn(cp *colPlan, rc *ResultColumn) {
 	case cur.key != "" || rn.c.carried[cp.col.ID]:
 		rc.CurrencyCell = cp.col.ID + "@currency"
 	case cur.fixed != nil:
-		rc.Currency = cur.fixed.Currency(rn.app)
+		rc.Currency = rn.c.fixedCurrency(cur.fixed)
 	}
 }
 
@@ -286,8 +286,8 @@ func (rn *runner) currencyOf(row map[string]any, cur currency) string {
 	case cur.key != "":
 		s, _ := row[cur.key].(string)
 		return s
-	case cur.fixed != nil && rn.app != nil:
-		return cur.fixed.Currency(rn.app)
+	case cur.fixed != nil:
+		return rn.c.fixedCurrency(cur.fixed)
 	}
 	return ""
 }
