@@ -293,10 +293,13 @@ func TestValidateNeverReadsAFixedCurrency(t *testing.T) {
 // section, then a computed row with Zed's price: an amount in the animals'
 // fixed currency in a column whose currency is each feeding's own, so the
 // computed row's currency cell carries the fixed code (layout carriedCell).
+// With no sort, detail rows read in record id order, which is random, so the
+// spec sorts the feedings by cost (f3 700, then f4 300).
 const zebrasWithZedsPrice = `{"version":2,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 	"groups":[{"id":"g","col":"species"}],
+	"sort":[{"col":"cost","dir":"desc"}],
 	"layout":[{"section":"zebras","title":"Zebras","key":"zebra"},
 		{"row":"price","label":"Zed price","formula":{"op":"lookup","source":"zoo.animals",
 			"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Zed"}]},"value":{"path":[{"field":"price"}]}}}]}`
