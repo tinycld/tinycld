@@ -1,5 +1,5 @@
 import { getShortcuts } from './registry'
-import { topScope, topScopeId } from './scopes'
+import { type ScopeEntry, topScopeEntry } from './scopes'
 import type { Shortcut } from './types'
 
 const SEQUENCE_TIMEOUT_MS = 1000
@@ -26,16 +26,26 @@ export function atomsForShortcuts(shortcuts: Iterable<Shortcut>): string[] {
 
 export interface MatcherContext {
     inInput: boolean
+    /**
+     * Consider only shortcuts of a scope (`'scoped'`) or only `global` ones
+     * (`'global'`). The web provider splits a key typed in a text field this
+     * way; see `handleKey` (dispatch.ts).
+     */
+    only?: 'scoped' | 'global'
 }
 
 /**
  * Is this shortcut's scope the one currently holding the keyboard? Exported so
  * the help overlay lists exactly what can fire, rather than restating this and
- * drifting from it.
+ * drifting from it. `top` is the scope entry to judge against: the live top by
+ * default; the overlay passes the top entry below its own.
  */
-export function isScopeActive(shortcut: Shortcut): boolean {
+export function isScopeActive(
+    shortcut: Shortcut,
+    top: ScopeEntry | null = topScopeEntry()
+): boolean {
     if (shortcut.scope === 'global') return true
-    if (shortcut.scope !== topScope()) return false
+    if (!top || shortcut.scope !== top.scope) return false
     // A blurred screen stays mounted and keeps its shortcuts registered (on web
     // `freezeOnBlur` only hides the subtree), so the live screen is not the only
     // owner of its scope's keys — mail's list and a Boards board both register
@@ -53,10 +63,12 @@ export function isScopeActive(shortcut: Shortcut): boolean {
     // `scopeId === undefined` means the shortcut was registered with no scope
     // owner at all; it keeps the original scope-only behavior.
     if (shortcut.scopeId === undefined) return true
-    return shortcut.scopeId === topScopeId()
+    return shortcut.scopeId === top.id
 }
 
 function matches(shortcut: Shortcut, ctx: MatcherContext): boolean {
+    if (ctx.only === 'scoped' && shortcut.scope === 'global') return false
+    if (ctx.only === 'global' && shortcut.scope !== 'global') return false
     if (!isScopeActive(shortcut)) return false
     if (ctx.inInput && !shortcut.allowInInputs) return false
     if (shortcut.when && !shortcut.when()) return false

@@ -173,9 +173,11 @@ function now(): number {
  * system: react-native-web's TextInput swallows Escape in its own bubble
  * handler, so a key pressed with a field focused — the search box in a
  * picker, the rule name in a dialog — never reached a bubble-phase listener
- * and the layer stayed open. Stopping propagation here keeps the key from
- * reaching the shortcut system, which would otherwise close the next layer
- * down with the same press.
+ * and the layer stayed open. The shortcut system's own capture listener sits
+ * on `window` and so runs before this one; it leaves Escape alone while a
+ * layer that dismisses on Escape is open (`keyPhase`, lib/shortcuts/dispatch.ts),
+ * so this is the only handler for that press. Stopping propagation here keeps
+ * the key from the field and from the bubble phase.
  */
 function onKeyDown(event: KeyboardEvent) {
     if (event.key !== 'Escape') return

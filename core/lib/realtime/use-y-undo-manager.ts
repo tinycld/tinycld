@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { Platform } from 'react-native'
 import * as Y from 'yjs'
 import type { Shortcut } from '../shortcuts/types'
 import { useRegisterShortcuts } from '../shortcuts/use-register'
@@ -29,6 +30,14 @@ export interface UndoManagerState {
     undo: () => void
     redo: () => void
 }
+
+// Whether undo/redo may fire while a text field has focus. Not on web: the
+// keys are global and the sheet that registers them stays registered after
+// the user leaves it (`freezeOnBlur`), and web shortcuts read a key typed in a
+// field before the field does. Taking ⌘Z there would undo the hidden sheet and
+// cancel the field's own undo in every package. A web field has always kept its
+// own undo; iOS keeps firing the doc's undo from a native field, as before.
+const UNDO_IN_INPUTS = Platform.OS !== 'web'
 
 // Frozen empty snapshot for SSR / no-doc cases. Module-level so
 // useSyncExternalStore's getServerSnapshot returns a stable reference.
@@ -69,11 +78,10 @@ export function computeNextSnapshot(
 // for the canonical pattern.
 //
 // Shortcuts register through the shared shortcut registry (powered by
-// tinykeys via ShortcutsProvider) with `allowInInputs: true` and
-// `scope: 'global'` so undo/redo fires regardless of focus — including
-// while the user is typing in a TextInput. On native the registry
-// provider is a no-op, which is fine: there's no hardware keyboard to
-// listen for and the toolbar buttons are the in-app alternative.
+// tinykeys via ShortcutsProvider) with `scope: 'global'`, so no caller
+// has to wrap its screen in a useShortcutScope. They fire from a text
+// field on iOS only; see UNDO_IN_INPUTS. The toolbar buttons are the
+// in-app alternative where no hardware keyboard is attached.
 export function useYUndoManager(
     doc: Y.Doc | null,
     options: UseYUndoManagerOptions
@@ -170,8 +178,7 @@ export function useYUndoManager(
     }, [])
 
     // Register Cmd-Z / Cmd-Shift-Z / Cmd-Y through the shared shortcut
-    // registry. allowInInputs lets undo fire while a TextInput has
-    // focus (the formula bar / cell editor in calc); scope: 'global'
+    // registry (allowInInputs: see UNDO_IN_INPUTS); scope: 'global'
     // means no caller has to wrap the consuming screen in a
     // useShortcutScope. The shortcuts memo depends only on the stable
     // undo/redo callbacks so it re-registers exactly once per mount.
@@ -183,7 +190,7 @@ export function useYUndoManager(
                 scope: 'global',
                 group: 'Edit',
                 description: 'Undo',
-                allowInInputs: true,
+                allowInInputs: UNDO_IN_INPUTS,
                 run: undo,
             },
             {
@@ -192,7 +199,7 @@ export function useYUndoManager(
                 scope: 'global',
                 group: 'Edit',
                 description: 'Redo',
-                allowInInputs: true,
+                allowInInputs: UNDO_IN_INPUTS,
                 run: redo,
             },
             {
@@ -201,7 +208,7 @@ export function useYUndoManager(
                 scope: 'global',
                 group: 'Edit',
                 description: 'Redo (Windows alt)',
-                allowInInputs: true,
+                allowInInputs: UNDO_IN_INPUTS,
                 run: redo,
             },
         ],
