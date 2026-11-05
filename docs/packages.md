@@ -1121,7 +1121,7 @@ reports.RegisterSource(reports.Source{
     Links: []reports.Link{
         {Key: "animal", Label: "Animal", Target: "zoo.animals", Cardinality: reports.ToOne, Field: "animal"},
     },
-    FiscalStartMonth: func(app core.App) int { return 1 },
+    FiscalStartMonth: func(app core.App, reader *core.RequestInfo) int { return 1 },
 })
 ```
 
@@ -1139,12 +1139,35 @@ reports.RegisterSource(reports.Source{
 - To rename or remove a field or a link, keep the old key in `Aliases`
   (`"old": "new"`). Saved reports then keep working.
 - `FiscalStartMonth` (1 to 12) sets the fiscal year for the source's reports:
-  the fiscal presets, `fiscalYear` and `fiscalPeriod`.
+  the fiscal presets, `fiscalYear` and `fiscalPeriod`. A value outside 1 to
+  12 counts as 1.
 - `Heading` returns the name a report on this base source prints above its
   title. The result carries it as `heading` (trimmed); nil leaves it empty,
-  and the shell prints the organization's name. Every reader of the report
-  sees it: `Heading` runs with the app, not under the reader's rules, so it
-  must return no data that some readers may not see.
+  and the shell prints the organization's name.
+- `FiscalStartMonth` and `Heading` get the reader: the signed-in user of the
+  read, with the request's headers. The reader is never nil and never a
+  superuser. Each read of a report calls each function one time, and uses
+  that value everywhere in the read. A param's options call only
+  `FiscalStartMonth`. Both functions run with the app, not under the
+  reader's rules. They must return only what that reader may see.
+- To read a record for the reader, use `reports.FindViewableRecord`. It
+  applies the collection's view rule. It returns `sql.ErrNoRows` when the
+  record does not exist or the reader may not view it. Any other error is a
+  fault, for example an unknown collection or a rule that cannot be built.
+
+  ```go
+  Heading: func(app core.App, reader *core.RequestInfo) string {
+      rec, err := reports.FindViewableRecord(app, reader, "zoo_office", officeID)
+      if errors.Is(err, sql.ErrNoRows) {
+          return "" // the reader may not view the office row
+      }
+      if err != nil {
+          log.Error("zoo office heading", "error", err)
+          return ""
+      }
+      return rec.GetString("name")
+  },
+  ```
 - `Watch` names the collections that `Heading`, `FiscalStartMonth` and
   `Currency` read. A run that reads this source also subscribes to them, so a
   change there runs an open report again. The start check refuses a watched
