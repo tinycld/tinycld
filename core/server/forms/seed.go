@@ -35,7 +35,7 @@ func defaultDefinition(host *Host) *Definition {
 	}
 	first := def.Pages[0].Key
 	for _, b := range host.Builtins {
-		page, width := first, "full"
+		page, width, description := first, "full", ""
 		if layout != nil {
 			placed := layout.Fields[b.Key]
 			if placed.Page != "" {
@@ -44,14 +44,30 @@ func defaultDefinition(host *Host) *Definition {
 			if placed.Width != "" {
 				width = placed.Width
 			}
+			description = placed.Description
 		}
-		def.Fields = append(def.Fields, builtinRef(b, page, width))
+		def.Fields = append(def.Fields, builtinRef(b, page, width, description))
 	}
 	return def
 }
 
-func builtinRef(b Builtin, page, width string) Field {
-	return Field{Key: b.Key, Kind: "builtin", Page: page, Label: b.Label, Width: width, Required: b.Required}
+// builtinRef is a form field that places built-in b. A host's help text for a
+// built-in (its layout description) reaches every form seeded from the host,
+// and a stored form that gains the built-in later.
+func builtinRef(b Builtin, page, width, description string) Field {
+	return Field{
+		Key: b.Key, Kind: "builtin", Page: page, Label: b.Label, Description: description,
+		Width: width, Required: b.Required,
+	}
+}
+
+// layoutDescription is the help text a host's layout gives built-in key, or
+// "" when the host has no layout or the layout gives it none.
+func layoutDescription(host *Host, key string) string {
+	if host.Layout == nil {
+		return ""
+	}
+	return host.Layout.Fields[key].Description
 }
 
 func slugOf(label string) string {
@@ -206,11 +222,15 @@ func reconcileDefinition(def map[string]any, host *Host) (added, removed []strin
 		if present[b.Key] {
 			continue
 		}
-		ref := builtinRef(b, page, "full")
-		kept = append(kept, map[string]any{
+		ref := builtinRef(b, page, "full", layoutDescription(host, b.Key))
+		field := map[string]any{
 			"key": ref.Key, "kind": ref.Kind, "page": ref.Page, "label": ref.Label,
 			"width": ref.Width, "required": ref.Required, "hidden": false,
-		})
+		}
+		if ref.Description != "" {
+			field["description"] = ref.Description
+		}
+		kept = append(kept, field)
 		added = append(added, b.Key)
 	}
 	def["fields"] = kept

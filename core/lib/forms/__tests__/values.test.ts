@@ -438,3 +438,63 @@ describe('buildSchema, host component schemas', () => {
         expect(schemaFor(values, schemas).safeParse(values).success).toBe(true)
     })
 })
+
+describe('buildSchema for a text built-in with a maxLength', () => {
+    const plaque = hostDefSchema.parse({
+        key: 'gizmos:plaque',
+        label: 'Plaque',
+        collection: 'gizmos_plaques',
+        formColumn: 'form',
+        fieldsColumn: 'fields',
+        columns: ['serial', 'memo', 'form', 'fields'],
+        builtin: [
+            { key: 'serial', label: 'Serial', kind: 'text', storage: 'column', maxLength: 40 },
+            { key: 'memo', label: 'Memo', kind: 'text', storage: 'column' },
+        ],
+    })
+    const plaqueDef = definitionSchema.parse(defaultDefinitionFor(plaque))
+    const schema = buildSchema(plaqueDef, plaque, evaluate(plaqueDef, {}, ctx))
+
+    it('refuses one character over the limit on that built-in and accepts the limit', () => {
+        const over = schema.safeParse({ serial: 'x'.repeat(41) })
+        expect(over.success).toBe(false)
+        expect(over.error?.issues.map(i => i.path.join('.'))).toEqual(['serial'])
+        expect(schema.safeParse({ serial: 'x'.repeat(40) }).success).toBe(true)
+    })
+
+    it('puts no limit on a text built-in without a maxLength', () => {
+        expect(schema.safeParse({ memo: 'x'.repeat(5000) }).success).toBe(true)
+    })
+
+    it('says the built-in is too long, as the server does', () => {
+        const over = schema.safeParse({ serial: 'x'.repeat(41) })
+        expect(over.error?.issues.find(i => i.path[0] === 'serial')?.message).toBe(
+            'Serial is too long'
+        )
+    })
+})
+
+describe('buildSchema for custom text fields with a maxLength', () => {
+    const lengthDef = definitionSchema.parse({
+        ...defaultDefinitionFor(widgetHost),
+        fields: [
+            ...defaultDefinitionFor(widgetHost).fields,
+            { key: 'nick', kind: 'text', page: 'main', label: 'Nick', maxLength: 10 },
+            { key: 'bio', kind: 'textarea', page: 'main', label: 'Bio', maxLength: 20 },
+        ],
+    })
+    const schema = buildSchema(lengthDef, widgetHost, evaluate(lengthDef, {}, ctx))
+    const messageAt = (values: Record<string, unknown>, key: string) =>
+        schema.safeParse({ name: 'n', ...values }).error?.issues.find(i => i.path[0] === key)
+            ?.message
+
+    it('says a custom text field over its maxLength is too long, as the server does', () => {
+        expect(messageAt({ nick: 'x'.repeat(11) }, 'nick')).toBe('Nick is too long')
+        expect(schema.safeParse({ name: 'n', nick: 'x'.repeat(10) }).success).toBe(true)
+    })
+
+    it('refuses a textarea value over its maxLength with the same message', () => {
+        expect(messageAt({ bio: 'x'.repeat(21) }, 'bio')).toBe('Bio is too long')
+        expect(schema.safeParse({ name: 'n', bio: 'x'.repeat(20) }).success).toBe(true)
+    })
+})

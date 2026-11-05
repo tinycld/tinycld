@@ -3,11 +3,24 @@ import { cleanup, fireEvent, render } from '@testing-library/react'
 import { useForm } from 'react-hook-form'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { OverlayProvider } from '../../overlay'
+import type { SelectOption } from '../ButtonGroup'
 import { SelectInput } from '../SelectInput'
 
 afterEach(cleanup)
 
 let latest: () => string = () => ''
+
+const plainOptions: SelectOption[] = [
+    { value: 'x', label: 'Ex' },
+    { value: 'y', label: 'Why' },
+]
+
+const sectionedOptions: SelectOption[] = [
+    { value: '', label: 'None' },
+    { value: 'a', label: 'Apple', section: 'Fruit' },
+    { value: 'b', label: 'Banana', section: 'Fruit' },
+    { value: 'c', label: 'Carrot', section: 'Roots' },
+]
 
 function Harness({
     disabled = false,
@@ -15,7 +28,9 @@ function Harness({
     hint,
     placeholder,
     onValueChange,
+    options = plainOptions,
 }: {
+    options?: SelectOption[]
     disabled?: boolean
     initial?: string
     hint?: string
@@ -35,10 +50,7 @@ function Harness({
                 placeholder={placeholder}
                 disabled={disabled}
                 onValueChange={onValueChange}
-                options={[
-                    { value: 'x', label: 'Ex' },
-                    { value: 'y', label: 'Why' },
-                ]}
+                options={options}
             />
         </OverlayProvider>
     )
@@ -46,8 +58,25 @@ function Harness({
 
 const q = (id: string) =>
     document.body.querySelector(`[testID="${id}"], [data-testid="${id}"]`) as HTMLElement | null
+/** The text of every leaf element outside the trigger, in document order: the open menu's headings and items. */
+const menuTexts = () =>
+    Array.from(document.body.querySelectorAll('*'))
+        .filter(el => el.children.length === 0 && !q('pick')?.contains(el))
+        .map(el => el.textContent?.trim() ?? '')
+        .filter(text => text !== '' && text !== 'Pick')
 const labelOf = (el: HTMLElement | null) =>
     el?.getAttribute('accessibilityLabel') ?? el?.getAttribute('aria-label')
+/** The element a screen reader announces as a group with this name: by its own label, or the heading it is labelled by. */
+const groupNamed = (name: string) =>
+    Array.from(document.body.querySelectorAll<HTMLElement>('*')).find(el => {
+        const role = el.getAttribute('role') ?? el.getAttribute('accessibilityRole')
+        if (role !== 'group') return false
+        const by = el.getAttribute('aria-labelledby')
+        const heading = by
+            ? document.body.querySelector(`[id="${by}"], [nativeID="${by}"]`)?.textContent?.trim()
+            : undefined
+        return (labelOf(el) ?? heading) === name
+    })
 
 describe('SelectInput', () => {
     it('renders a trigger, not a radio group', () => {
@@ -116,5 +145,43 @@ describe('SelectInput', () => {
     it('renders the hint', () => {
         render(<Harness hint="Cannot change" />)
         expect(document.body.textContent).toContain('Cannot change')
+    })
+
+    it('draws each section heading before its items, and none over options without a section', () => {
+        render(<Harness options={sectionedOptions} initial="" />)
+        fireEvent.click(q('pick') as HTMLElement)
+        expect(menuTexts()).toEqual(['None', 'Fruit', 'Apple', 'Banana', 'Roots', 'Carrot'])
+    })
+
+    it('sets the value of an option under a heading and shows only its label in the trigger', () => {
+        render(<Harness options={sectionedOptions} initial="" />)
+        fireEvent.click(q('pick') as HTMLElement)
+        fireEvent.click(q('pick-b') as HTMLElement)
+        expect(latest()).toBe('b')
+        expect(q('pick')?.textContent).toContain('Banana')
+        expect(q('pick')?.textContent).not.toContain('Fruit')
+        expect(labelOf(q('pick'))).toBe('Pick: Banana')
+    })
+
+    it('wraps each section in a group named by its heading, and the arrow keys still cross sections', () => {
+        render(<Harness options={sectionedOptions} initial="" />)
+        fireEvent.click(q('pick') as HTMLElement)
+        const fruit = groupNamed('Fruit')
+        expect(fruit?.contains(q('pick-a'))).toBe(true)
+        expect(fruit?.contains(q('pick-b'))).toBe(true)
+        expect(fruit?.contains(q('pick-c'))).toBe(false)
+        expect(fruit?.contains(q('pick-'))).toBe(false)
+        expect(groupNamed('Roots')?.contains(q('pick-c'))).toBe(true)
+
+        const banana = q('pick-b') as HTMLElement
+        banana.focus()
+        fireEvent.keyDown(banana, { key: 'ArrowDown' })
+        expect(document.activeElement).toBe(q('pick-c'))
+    })
+
+    it('draws no heading when no option has a section', () => {
+        render(<Harness />)
+        fireEvent.click(q('pick') as HTMLElement)
+        expect(menuTexts()).toEqual(['Ex', 'Why'])
     })
 })

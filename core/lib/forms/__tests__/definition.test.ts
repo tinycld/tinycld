@@ -291,3 +291,24 @@ describe('host kinds allowlist', () => {
         expect(def.fields[0]).toMatchObject({ kind: 'file', maxSizeMb: 10, accept: [] })
     })
 })
+
+describe('textarea maxLength', () => {
+    const withBio = (maxLength: number) => ({
+        version: 1,
+        pages: [{ key: 'main', title: 'Main' }],
+        fields: [{ key: 'bio', page: 'main', label: 'Bio', kind: 'textarea', maxLength }],
+    })
+
+    it('keeps the maxLength of a textarea field', () => {
+        expect(definitionSchema.parse(withBio(200)).fields[0]).toMatchObject({
+            kind: 'textarea',
+            maxLength: 200,
+        })
+    })
+
+    it.each([0, 10001, 2.5])('refuses a textarea maxLength of %s, as for a text field', value => {
+        const r = definitionSchema.safeParse(withBio(value))
+        expect(r.success).toBe(false)
+        expect(r.error?.issues.map(i => i.path.join('.'))).toContain('fields.0.maxLength')
+    })
+})

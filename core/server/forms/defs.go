@@ -26,6 +26,10 @@ type Builtin struct {
 	Expression any      `json:"expression,omitempty"`
 	Decimals   int      `json:"decimals,omitempty"`
 	Columns    []Column `json:"columns,omitempty"`
+	// MaxLength is a text built-in's most characters (core/lib/forms/host.ts
+	// refuses it on any other kind). validateHostRecord checks a changed value
+	// against it, so every writer gets the refusal the form shows.
+	MaxLength *int `json:"maxLength,omitempty"`
 }
 
 type Files struct {
@@ -77,10 +81,12 @@ type HostLayout struct {
 }
 
 // LayoutField places one built-in; an empty value means the first page, or
-// full width.
+// full width. Description is the built-in's help text on the seeded field;
+// empty means none.
 type LayoutField struct {
-	Page  string `json:"page,omitempty"`
-	Width string `json:"width,omitempty"`
+	Page        string `json:"page,omitempty"`
+	Width       string `json:"width,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type Defs struct {

@@ -16,6 +16,9 @@ starting with a letter, and is unique in its list.
   {"key": "email", "kind": "text", "page": "main", "label": "Email",
    "required": true, "hidden": false, "width": "full"}
 
+  "description": "We reply here." is optional help text shown with the
+  field (at most 500 characters).
+
   kind is one of: text, textarea, richtext, markdown, number, date, toggle,
   select, user, checklist, file, computed, table. A host may allow fewer:
   run `tinycld form hosts`. Options by kind:

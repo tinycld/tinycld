@@ -251,3 +251,40 @@ describe('the default definition of a host with a layout', () => {
         expect(gadgetHost.layout?.rules).toEqual([hideDue])
     })
 })
+
+describe('a form host layout field with a description', () => {
+    const serialBase = {
+        ...gadgetBase,
+        columns: [...gadgetBase.columns, 'serial'],
+        builtin: [
+            ...gadgetBase.builtin,
+            { key: 'serial', label: 'Serial', kind: 'text', storage: 'column' },
+        ],
+    }
+    const serialLayout = {
+        ...gadgetLayout,
+        fields: { ...gadgetLayout.fields, serial: { description: 'Printed on the back.' } },
+    }
+
+    it('parses, and seeds the description on that field only', () => {
+        const parsed = hostDefSchema.safeParse({ ...serialBase, layout: serialLayout })
+        expect(parsed.error?.issues ?? []).toEqual([])
+        const fields = defaultDefinitionFor(
+            hostDefSchema.parse({ ...serialBase, layout: serialLayout })
+        ).fields
+        expect(fields.find(f => f.key === 'serial')?.description).toBe('Printed on the back.')
+        expect(fields.filter(f => f.key !== 'serial').filter(f => 'description' in f)).toEqual([])
+    })
+
+    it('refuses a description longer than 500 characters', () => {
+        const long = {
+            ...serialLayout,
+            fields: { ...gadgetLayout.fields, serial: { description: 'x'.repeat(501) } },
+        }
+        const parsed = hostDefSchema.safeParse({ ...serialBase, layout: long })
+        expect(parsed.success).toBe(false)
+        expect((parsed.error?.issues ?? []).map(issue => issue.path.join('.'))).toContain(
+            'layout.fields.serial.description'
+        )
+    })
+})

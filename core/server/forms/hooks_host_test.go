@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pocketbase/dbx"
+	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 )
@@ -483,5 +485,86 @@ func TestHostHook_CreateRequestKeepsTheCollaborativeValue(t *testing.T) {
 	e.request(t, http.MethodPost, "/api/collections/gizmos_widgets/records", `{"id":"wcreate00000001","name":"w","form":"`+bug.Id+`","fields":{"body":"first"}}`)
 	if got := e.storedFields(t, "wcreate00000001"); got["body"] != "first" {
 		t.Fatalf("create is not room-owned: body = %v", got["body"])
+	}
+}
+
+// withSerial gives the fictional widget host a `serial` text column and a
+// text built-in for it limited to 40 characters, and a default form with it.
+func (e *env) withSerial(t *testing.T) {
+	t.Helper()
+	widgets, err := e.app.FindCollectionByNameOrId("gizmos_widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	widgets.Fields.Add(&core.TextField{Name: "serial"})
+	if err := e.app.Save(widgets); err != nil {
+		t.Fatal(err)
+	}
+	limit := 40
+	e.host.Columns = append(e.host.Columns, "serial")
+	e.host.Builtins = append(e.host.Builtins, Builtin{Key: "serial", Label: "Serial", Kind: "text", Storage: "column", MaxLength: &limit})
+	e.newForm(t, "widget", withField(widgetDefault, `{"key":"serial","kind":"builtin","page":"main","label":"Serial","width":"full","required":false,"hidden":false}`), true)
+}
+
+func (e *env) serialWidget(t *testing.T, serial string) (*core.Record, error) {
+	t.Helper()
+	col, err := e.app.FindCollectionByNameOrId("gizmos_widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := core.NewRecord(col)
+	r.Set("name", "w")
+	r.Set("serial", serial)
+	return r, e.app.Save(r)
+}
+
+func TestHostHook_TextBuiltinMaxLengthRefusesALongerValue(t *testing.T) {
+	e := newTestEnv(t)
+	e.withSerial(t)
+	_, err := e.serialWidget(t, strings.Repeat("x", 41))
+	var verrs validation.Errors
+	if !errors.As(err, &verrs) {
+		t.Fatalf("want validation errors, got %v", err)
+	}
+	got, ok := verrs["serial"]
+	if !ok || got.Error() != "Serial is too long" {
+		t.Fatalf("want serial refused with %q, got %v", "Serial is too long", verrs)
+	}
+	if verr, ok := got.(validation.Error); !ok || verr.Code() != "validation_wrong_kind" {
+		t.Fatalf("want code validation_wrong_kind, got %#v", got)
+	}
+	w, err := e.serialWidget(t, strings.Repeat("x", 40))
+	if err != nil {
+		t.Fatalf("40 characters must save, got %v", err)
+	}
+	stored, err := e.app.FindRecordById("gizmos_widgets", w.Id)
+	if err != nil || stored.GetString("serial") != strings.Repeat("x", 40) {
+		t.Fatalf("stored serial = %q, err %v", stored.GetString("serial"), err)
+	}
+}
+
+func TestHostHook_TextBuiltinMaxLengthLeavesAnUnchangedStoredValue(t *testing.T) {
+	e := newTestEnv(t)
+	e.withSerial(t)
+	w, err := e.serialWidget(t, "short")
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("x", 41)
+	if _, err := e.app.DB().NewQuery("UPDATE gizmos_widgets SET serial = {:v} WHERE id = {:id}").
+		Bind(dbx.Params{"v": long, "id": w.Id}).Execute(); err != nil {
+		t.Fatal(err)
+	}
+	w, err = e.app.FindRecordById("gizmos_widgets", w.Id)
+	if err != nil || w.GetString("serial") != long {
+		t.Fatalf("raw write did not land: %q %v", w.GetString("serial"), err)
+	}
+	w.Set("name", "renamed")
+	if err := e.app.Save(w); err != nil {
+		t.Fatalf("an update that leaves the stored serial unchanged must pass, got %v", err)
+	}
+	w.Set("serial", strings.Repeat("y", 41))
+	if err := e.app.Save(w); err == nil || !strings.Contains(err.Error(), "serial") {
+		t.Fatalf("changing serial to 41 characters must be refused, got %v", err)
 	}
 }

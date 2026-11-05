@@ -244,3 +244,47 @@ func TestValidateDefinitionRefusesAnUnknownSelectDisplay(t *testing.T) {
 		t.Fatalf("display problem = %q (all: %v)", msg, got)
 	}
 }
+
+// A field's help text and label have the limits definitionSchema gives them
+// (description 500, label 120 after trimming, both counted in characters), so
+// the CLI cannot store a form the client then refuses.
+func TestValidateDefinitionRefusesAnOverLongDescriptionOrLabel(t *testing.T) {
+	e := newTestEnv(t)
+	var at int
+	got := problemsOf(t, e, withDef(t, e, func(def map[string]any) {
+		fields := def["fields"].([]any)
+		fields[0].(map[string]any)["description"] = strings.Repeat("d", 501)
+		at = len(fields)
+		fields = append(fields,
+			map[string]any{"key": "nick", "kind": "text", "page": "main", "label": "Nick", "description": strings.Repeat("d", 501)},
+			map[string]any{"key": "alias", "kind": "text", "page": "main", "label": strings.Repeat("l", 121)})
+		def["fields"] = fields
+	}))
+	want := map[string]string{
+		"definition.fields.0.description":                        "500",
+		"definition.fields." + strconv.Itoa(at) + ".description": "500",
+		"definition.fields." + strconv.Itoa(at+1) + ".label":     "120",
+	}
+	for path, limit := range want {
+		if !strings.Contains(got[path], limit) {
+			t.Errorf("want a problem at %s naming the limit %s; got %v", path, limit, got)
+		}
+	}
+}
+
+func TestValidateDefinitionAcceptsADescriptionAndLabelAtTheLimit(t *testing.T) {
+	e := newTestEnv(t)
+	got := problemsOf(t, e, withDef(t, e, func(def map[string]any) {
+		fields := def["fields"].([]any)
+		fields[0].(map[string]any)["description"] = strings.Repeat("d", 500)
+		def["fields"] = append(fields,
+			// 500 characters of two bytes each: the limit counts characters, as zod does.
+			map[string]any{"key": "nick", "kind": "text", "page": "main", "label": "Nick", "description": strings.Repeat("é", 500)},
+			map[string]any{"key": "alias", "kind": "text", "page": "main", "label": strings.Repeat("l", 120)},
+			// zod trims a label before it counts it.
+			map[string]any{"key": "pad", "kind": "text", "page": "main", "label": "  " + strings.Repeat("p", 120) + "  "})
+	}))
+	if len(got) != 0 {
+		t.Fatalf("a description of 500 and a label of 120 characters are allowed: %v", got)
+	}
+}

@@ -303,6 +303,30 @@ func enforcedBuiltin(host *Host, key string) bool {
 	return b != nil && b.Storage == "column" && !b.Collaborative && b.Kind != "section"
 }
 
+// checkBuiltinLimits refuses a column text built-in whose value the write
+// changes to more characters than its MaxLength, keyed by the column. A host's
+// text column has a length the database enforces; the form says so before
+// the save, and every other writer gets the same refusal. As with the custom
+// fields, an update that leaves a stored value as it was is not checked again.
+func checkBuiltinLimits(host *Host, def *Definition, values, prevValues map[string]any, isCreate bool, errs validation.Errors) {
+	for _, f := range def.Fields {
+		if f.Kind != "builtin" {
+			continue
+		}
+		b := host.Builtin(f.Key)
+		if b == nil || b.Kind != "text" || b.Storage != "column" || b.MaxLength == nil {
+			continue
+		}
+		v := values[f.Key]
+		if !isCreate && reflect.DeepEqual(prevValues[f.Key], v) {
+			continue
+		}
+		if msg := checkKind(&Field{Key: b.Key, Kind: "text", Label: f.Label, MaxLength: b.MaxLength}, v); msg != "" {
+			errs[f.Key] = validation.NewError("validation_wrong_kind", msg)
+		}
+	}
+}
+
 func validateHostRecord(app core.App, host *Host, e *core.RecordEvent, isCreate bool) error {
 	formID := e.Record.GetString(host.FormColumn)
 	if formID == "" {
@@ -399,6 +423,7 @@ func validateHostRecord(app core.App, host *Host, e *core.RecordEvent, isCreate 
 			errs[host.FieldsColumn+"."+key] = validation.NewError("validation_wrong_kind", msg)
 		}
 	}
+	checkBuiltinLimits(host, def, values, prevValues, isCreate, errs)
 	if len(errs) > 0 {
 		return errs
 	}
