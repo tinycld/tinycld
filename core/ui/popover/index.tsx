@@ -268,7 +268,9 @@ type PressableChildProps = { onPress?: (e: unknown) => void; ref?: React.Ref<Vie
  * static element with a click handler. The child is always handed an
  * `onPress`, because a trigger may branch on that prop to decide whether it
  * is interactive at all (boards' card values render as inert text without
- * one).
+ * one). The anchor ref is merged with the child's own ref rather than
+ * replacing it, so the trigger's owner can still reach the same element (a
+ * SelectInput focuses it on mount).
  */
 function useTriggerElement(
     trigger: ReactElement | undefined,
@@ -279,17 +281,43 @@ function useTriggerElement(
     const isOpenRef = useRef(isOpen)
     isOpenRef.current = isOpen
     const toggle = useCallback(() => setOpen(!isOpenRef.current), [setOpen])
+    const child = trigger as ReactElement<PressableChildProps> | undefined
+    const ref = useMergedRef(triggerRef, child?.props.ref)
 
-    if (!trigger) return null
-    const child = trigger as ReactElement<PressableChildProps>
+    if (!child) return null
     const childOnPress = child.props.onPress
     return React.cloneElement(child, {
-        ref: triggerRef as React.Ref<ViewInstance>,
+        ref,
         onPress: (e: unknown) => {
             childOnPress?.(e)
             toggle()
         },
     })
+}
+
+// Stable while both refs are, so React does not detach and re-attach an
+// unchanged trigger on every render. Returns a cleanup (React 19), so where
+// React calls it (native) a child callback ref's own cleanup runs. On web,
+// react-native-web's ref merge drops the cleanup and calls with null, which
+// this also handles.
+function useMergedRef(
+    own: React.MutableRefObject<ViewInstance | null>,
+    other: React.Ref<ViewInstance> | undefined
+) {
+    return useCallback(
+        (node: ViewInstance | null) => {
+            own.current = node
+            const cleanup = typeof other === 'function' ? other(node) : undefined
+            if (other && typeof other !== 'function') other.current = node
+            return () => {
+                own.current = null
+                if (typeof cleanup === 'function') cleanup()
+                else if (typeof other === 'function') other(null)
+                else if (other) other.current = null
+            }
+        },
+        [own, other]
+    )
 }
 
 interface PopoverLayerProps {
