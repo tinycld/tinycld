@@ -562,6 +562,27 @@ func TestARowsTotalOfAnAggregateBesideARowValue(t *testing.T) {
 	requireOrderedRows(t, spec, res, "mix", nil, int64(1500), int64(3300), nil, int64(1000), int64(400), int64(0))
 }
 
+// A "rows" column that reads another "rows" column through a nonlinear
+// formula (grams capped at 600). F17 is silent here: neither column has an
+// aggregate, so a literal F17 reading adds the capped detail cells (lion 500
+// + 600 = 1100). The ruling counts a read of a "rows" column as an aggregate,
+// so the innermost group computes the formula over its own cells: lion's
+// grams 500 + 800 = 1300 caps to 600, zebra's 300 + 100 = 400 stays 400. The
+// Total adds the shown group cells (1000).
+func TestARowsTotalOverACappedRowsColumn(t *testing.T) {
+	z := newZoo(t)
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"grams","path":[{"field":"grams"}],"total":"rows"},
+		{"id":"capped","formula":{"op":"if","args":[{"op":"gt","args":[{"col":"grams"},{"value":600}]},{"value":600},{"col":"grams"}]},"total":"rows"}],
+		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"species"},{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
+	requireOrderedRows(t, spec, res, "note", nil, "f1", "f2", nil, "f3", "f4", nil)
+	requireOrderedRows(t, spec, res, "grams", int64(1300), int64(500), int64(800), int64(400), int64(300), int64(100), int64(1700))
+	requireOrderedRows(t, spec, res, "capped", int64(600), int64(500), int64(600), int64(400), int64(300), int64(100), int64(1000))
+}
+
 func TestRowsTotalIsRefusedWhereItMeansNothing(t *testing.T) {
 	app := withZooRegistry(t)
 	for _, c := range []struct{ spec, at, want string }{
