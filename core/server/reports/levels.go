@@ -647,11 +647,11 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 // pass their own having (childSum), so a group and the total add the rows
 // shown. On the innermost group a column that reads an aggregate
 // (readsAnAggregate) computes from the group's base rows: a detail cell holds
-// that formula over one row, so a sum of them
-// is a different figure (a trial balance's Debit is the account's net when
-// positive, not the sum of the positive entries). A column with no aggregate
-// adds its detail cells there (F17), as does the total of a report with no
-// groups. A group column keeps its key on the levels that group by it.
+// that formula over one row, so a sum of them is a different figure (a trial
+// balance's Debit is the account's net when positive, not the sum of the
+// positive entries). A column with no aggregate adds its detail cells there
+// (F17), as does the total of a report with no groups. A group column keeps
+// its key on the levels that group by it.
 func (lc *levelCtx) rowsTotal(cp *colPlan) (expr, error) {
 	lv := lc.lv
 	at := cp.at + ".total"

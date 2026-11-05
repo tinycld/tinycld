@@ -43,7 +43,17 @@ copy of any report you can see, select **Save as…**.
 
 ## Totals
 
-To total only what a report shows, open the column in **Columns** and set **Total** to **Add the rows shown**. This choice is only for number and amount columns. The lowest group level computes the column from its own rows. The group levels above it and the Total row add the rows you see. A group that is hidden adds nothing. For example, a Debit column shows an account's balance when the balance is above zero. Each account row shows its own balance. The Total adds the account rows. Some columns have no total part, such as **Sum of**, in their formula. They also do not read another column that has one. For such a column, the lowest group level adds the values of its rows. **Recompute from all rows** (the default) totals every row the filter keeps.
+To total only what a report shows, open the column in **Columns** and set **Total** to **Add the rows shown**. This choice is only for number and amount columns. **Recompute from all rows** (the default) totals every row the filter keeps.
+
+With **Add the rows shown**, the group levels above the lowest one and the Total row add the rows you see. A group that is hidden adds nothing. The lowest group level computes the column from its own rows if one of these is true:
+
+- The column's formula has a total part, such as **Sum of**.
+- The formula reads a column that has a total part.
+- The formula reads a column that is set to **Add the rows shown**.
+
+If none is true, the lowest group level adds the values of its rows.
+
+For example, a Debit column shows an account's balance when the balance is above zero. Each account row shows its own balance. The Total adds the account rows.
 
 ## Hide groups
 
