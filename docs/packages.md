@@ -1132,10 +1132,10 @@ reports.RegisterSource(reports.Source{
   `DateTime`, `Bool`, `Select` (with `Options` for the labels) and
   `Relation`. A money field names a `Currency` text field of the same source,
   or the source sets `Source.Currency`, a function that gives one fixed
-  currency for the reader (see below). A money field with neither panics in `RegisterSource`: the
-  engine never adds amounts it cannot tell apart. A field offers the aggregates in `Aggregates` (`SumAll`,
-  `MinMax`, `CountOnly`); with none it can be counted. Every source also
-  offers `id`.
+  currency for the reader (see below). A money field with neither panics
+  in `RegisterSource`: the engine never adds amounts it cannot tell apart.
+  A field offers the aggregates in `Aggregates` (`SumAll`, `MinMax`,
+  `CountOnly`); with none it can be counted. Every source also offers `id`.
 - To rename or remove a field or a link, keep the old key in `Aliases`
   (`"old": "new"`). Saved reports then keep working.
 - `FiscalStartMonth` (1 to 12) sets the fiscal year for the source's reports:
