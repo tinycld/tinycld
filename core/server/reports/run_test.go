@@ -69,6 +69,8 @@ func requireRows(t *testing.T, res *Result, what string, want ...any) {
 // requireOrderedRows is requireRows for an assert on the order of detail
 // rows. A report with no sort returns detail rows in record-id order, and
 // record ids are random, so such an order means nothing: the spec must sort.
+// It checks only that the spec has a sort, not that the sort orders the
+// detail rows: a sort on a group column only, or on a key with ties, passes.
 func requireOrderedRows(t testing.TB, spec string, res *Result, what string, want ...any) {
 	t.Helper()
 	var s struct {

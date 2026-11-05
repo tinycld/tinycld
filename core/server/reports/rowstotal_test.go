@@ -484,6 +484,84 @@ func TestALayoutSectionOfARowsColumnUnderTheRule(t *testing.T) {
 	requireRows(t, two, "credit", int64(300), int64(300), int64(2700), int64(2700), int64(3000))
 }
 
+// ledgerSidesOfNet are ledgerSides written over a column (net) instead of an
+// inline sum: Debit is "if Net > 0 then Net".
+const ledgerSidesOfNet = `
+	{"id":"debit","formula":{"op":"if","args":[{"op":"gt","args":[{"col":"net"},{"value":0}]},{"col":"net"},{"value":null}]},"total":"rows"},
+	{"id":"credit","formula":{"op":"if","args":[{"op":"lt","args":[{"col":"net"},{"value":0}]},
+		{"op":"mul","args":[{"col":"net"},{"value":-1}]},{"value":null}]},"total":"rows"}`
+
+// E2: a column that reads an aggregated column ({col}) has an aggregate too,
+// so the innermost group computes it from its base rows, as the inline-sum
+// form does: each animal's net on one side, the Total adding the shown cells.
+// net is a sum, recomputed or itself a "rows" column.
+func TestARowsTotalOverAnAggregatedColumnComputesFromBaseRows(t *testing.T) {
+	z := newZoo(t)
+	withLedger(t, z)
+	for _, total := range []string{"", `,"total":"rows"`} {
+		res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+			{"id":"animal","path":[{"link":"animal"}]},
+			{"id":"net","path":[{"field":"cost"}],"aggregate":"sum"`+total+`},`+ledgerSidesOfNet+`],
+			"groups":[{"id":"g","col":"animal"}],
+			"sort":[{"formula":{"record":"g","path":[{"field":"name"}]}}]}`, Options{}, nil)
+		requireRows(t, res, "label", "Leo", "Lia", "Zed", "Total")
+		requireRows(t, res, "net", int64(3000), int64(-300), int64(-2700), int64(0))
+		requireRows(t, res, "debit", int64(3000), nil, nil, int64(3000))
+		requireRows(t, res, "credit", nil, int64(300), int64(2700), int64(3000))
+	}
+}
+
+// E2: a "rows" column that reads another "rows" column (again = debit) shows
+// that column's cells on every level: detail rows, the innermost group (from
+// its base rows), the outer group and the Total (their shown rows).
+func TestARowsColumnReadingARowsColumnShowsItsCells(t *testing.T) {
+	z := newZoo(t)
+	withLedger(t, z)
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"note","path":[{"field":"note"}]},` + ledgerSides + `,
+		{"id":"again","formula":{"col":"debit"},"total":"rows"}],
+		"groups":[{"id":"s","col":"species"},{"id":"a","col":"animal"}],
+		"sort":[{"col":"species"},{"formula":{"record":"a","path":[{"field":"name"}]}},{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
+	requireOrderedRows(t, spec, res, "note", nil, nil, "c1", "f1", "f2", nil, "c3", "c4", nil, nil, "c2", "f3", "f4", nil)
+	debit := []any{int64(3000), int64(3000), nil, int64(1000), int64(2500), nil, int64(200), nil,
+		int64(0), nil, nil, int64(700), int64(300), int64(3000)}
+	requireOrderedRows(t, spec, res, "debit", debit...)
+	requireOrderedRows(t, spec, res, "again", debit...)
+}
+
+// E2 with R6 and E3 on one level: a fill row (Eli, no rows) and a having
+// (net at most 0, which hides Leo and keeps Eli's 0) on the same record group.
+// The fill row is blank on both sides; the Total adds the shown rows only.
+func TestARowsTotalWithFillAndHavingOnOneLevel(t *testing.T) {
+	z := newZoo(t)
+	withLedger(t, z)
+	res := z.run(t, "ann", fmt.Sprintf(ledgerByAnimal,
+		`,"fill":{"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Eli"}]}},
+		"having":{"op":"lte","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":0}]}`), Options{}, nil)
+	requireRows(t, res, "label", "Eli", "Lia", "Zed", "Total")
+	requireRows(t, res, "debit", nil, nil, nil, int64(0))
+	requireRows(t, res, "credit", nil, int64(300), int64(2700), int64(3000))
+}
+
+// A formula with an aggregate that also reads a row value outside it has no
+// value for a group of rows: blank on each innermost group (recompute blanks
+// it, levels.go), and the Total adds those blank cells as 0 (childSum). Each
+// detail row is its cost plus its grams.
+func TestARowsTotalOfAnAggregateBesideARowValue(t *testing.T) {
+	z := newZoo(t)
+	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"mix","formula":{"op":"add","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"path":[{"field":"grams"}]}]},"total":"rows"}],
+		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"species"},{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
+	requireOrderedRows(t, spec, res, "note", nil, "f1", "f2", nil, "f3", "f4", nil)
+	requireOrderedRows(t, spec, res, "mix", nil, int64(1500), int64(3300), nil, int64(1000), int64(400), int64(0))
+}
+
 func TestRowsTotalIsRefusedWhereItMeansNothing(t *testing.T) {
 	app := withZooRegistry(t)
 	for _, c := range []struct{ spec, at, want string }{
