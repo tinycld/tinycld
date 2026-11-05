@@ -146,24 +146,21 @@ jobs:
             - uses: actions/checkout@v5
             # `scan-type: config` reads the Dockerfile for misconfigurations —
             # it never looks at what the base image actually contains, so it
-            # would report nothing, forever, while showing green. The runtime
-            # stage is what ships, so resolve ITS base image from the
-            # Dockerfile and scan that image's OS packages for CVEs.
-            - name: Resolve runtime base image
-              id: base
-              run: |
-                  image="$(awk '/^FROM/ && /AS runtime/ {print $2}' Dockerfile)"
-                  if [ -z "$image" ]; then
-                      echo "::error::Could not find a 'FROM ... AS runtime' line in Dockerfile"
-                      exit 1
-                  fi
-                  echo "Runtime base image: $image"
-                  echo "image=$image" >> "$GITHUB_OUTPUT"
+            # would report nothing, forever, while showing green. The OS
+            # packages and the global Node and npm that ship come from the
+            # Dockerfile's runtime-base stage, which also applies Debian
+            # security updates. Scanning the
+            # upstream image instead would report CVEs that our build already
+            # fixed, and would not see the packages our build adds. So build
+            # that stage here and scan the result. The stage copies nothing
+            # from the build context, so the repo checkout is enough.
+            - name: Build runtime base image
+              run: docker build --pull --target runtime-base -t tinycld-runtime-base:scan .
             - name: Scan runtime base image
               uses: aquasecurity/trivy-action@v0.36.0
               with:
                   scan-type: image
-                  image-ref: ${{ steps.base.outputs.image }}
+                  image-ref: tinycld-runtime-base:scan
                   severity: HIGH,CRITICAL
                   # A Debian CVE with no fixed package available cannot be
                   # actioned from this repo: there is no version to move to.
