@@ -191,7 +191,7 @@ func registerZooSources() {
 			{Key: "due", Label: "Due", Type: Date, TextDay: true, Aggregates: MinMax},
 		},
 		Links:            []Link{{Key: "animal", Label: "Animal", Target: "zoo.animals", Cardinality: ToOne, Field: "animal"}},
-		FiscalStartMonth: func(core.App) int { return zooFiscalStart },
+		FiscalStartMonth: func(core.App, *core.RequestInfo) int { return zooFiscalStart },
 	})
 	RegisterSource(Source{
 		Key: "zoo.keepers", Collection: "zoo_keepers", Label: "Keepers",

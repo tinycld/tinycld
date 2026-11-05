@@ -72,7 +72,7 @@ func (z *zoo) tableSource(t *testing.T, n int, c formulaCase, fiscal *int) (sour
 	RegisterSource(Source{
 		Key: source, Collection: collection, Label: "Case", Fields: fields, Links: links,
 		Currency:         func(core.App) string { return "USD" },
-		FiscalStartMonth: func(core.App) int { return *fiscal },
+		FiscalStartMonth: func(core.App, *core.RequestInfo) int { return *fiscal },
 	})
 	return source, names
 }
