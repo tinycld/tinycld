@@ -85,6 +85,17 @@ func TestFindViewableRecordReadsTheReadersHeaders(t *testing.T) {
 	requireNotViewable(t, "without the header", rec, err)
 }
 
+// A collection that does not exist is a package wiring mistake, not a
+// record the reader may not view: PocketBase answers sql.ErrNoRows for it,
+// which a caller would read as "hidden" and silently fall back.
+func TestFindViewableRecordReturnsAnErrorForAnUnknownCollection(t *testing.T) {
+	z := newZoo(t)
+	rec, err := FindViewableRecord(z.app, z.as("ann"), "zoo_nothing", z.id("f1"))
+	if err == nil || errors.Is(err, sql.ErrNoRows) || rec != nil {
+		t.Fatalf("record %v, err %v; want an error that is not sql.ErrNoRows", rec, err)
+	}
+}
+
 // Review Focus 3: a rule that cannot be built is a fault, not "no such
 // record", or the caller would silently fall back to a wrong value.
 func TestFindViewableRecordReturnsAFaultyRulesError(t *testing.T) {
