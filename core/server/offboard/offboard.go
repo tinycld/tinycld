@@ -55,6 +55,22 @@ type Plan struct {
 
 const deletedEmailDomain = "@deleted.tinycld.org"
 
+// sentinelEmail is the email anonymizeUser writes for a user id.
+func sentinelEmail(id string) string {
+	return "deleted-" + id + deletedEmailDomain
+}
+
+// IsOffboarded reports whether user has been anonymized by OffboardUser or
+// AnonymizeUser. A package hook that grants rows from a users update
+// (OnRecordAfterUpdateSuccess("users")) must skip an offboarded user:
+// PocketBase runs that hook at commit, after the offboard handlers removed the
+// leaver's rows, so a grant there would restore them. The check is the
+// sentinel email bound to the record id, so an email copied from another user
+// does not match. A nil record is not offboarded.
+func IsOffboarded(user *core.Record) bool {
+	return user != nil && user.Email() == sentinelEmail(user.Id)
+}
+
 // ErrInvalidPlan is returned by OffboardUser when the caller's plan is
 // internally inconsistent (reassign without a successor, successor missing, etc.).
 var ErrInvalidPlan = errors.New("invalid offboard plan")
@@ -288,12 +304,11 @@ func anonymizeUser(app core.App, userID string) error {
 	if err != nil {
 		return err
 	}
-	sentinelEmail := fmt.Sprintf("deleted-%s%s", userID, deletedEmailDomain)
 	randomPwd, err := randomHex(32)
 	if err != nil {
 		return err
 	}
-	user.SetEmail(sentinelEmail)
+	user.SetEmail(sentinelEmail(userID))
 	user.Set("name", "Deleted user")
 	user.Set("avatar", "")
 	user.SetVerified(false)

@@ -960,6 +960,13 @@ resource first. This is how a no-plan delete is refused while the user solely
 owns shared resources; core itself names no package. A handler can also delete
 what must not outlive the account (mail deletes the leaver's personal mailbox).
 
+A package hook that grants rows from a users update
+(`app.OnRecordAfterUpdateSuccess("users")`) must call `offboard.IsOffboarded(e.Record)`
+and, when it is true, `return e.Next()` without granting. PocketBase runs
+after-update hooks at commit, after the offboard handlers removed the leaver's
+rows, so a grant there gives them back. `IsOffboarded` stays true on every later
+save of the record.
+
 The OAuth registry is the reference shape. A package declares its scopes with
 consent copy, the collections each scope reads and writes, its bespoke
 endpoints, and per-record route families — and nothing else in the system
