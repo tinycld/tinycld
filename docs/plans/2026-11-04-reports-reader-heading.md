@@ -111,3 +111,46 @@ Test cases (assert values only after reading the code that produces them):
 ### Task 3: Review (reviewer subagent)
 
 Review the branch diff against this plan: contract, no nil reader, call-once, helper error semantics, docs, no package names in core, test soundness (tests unchanged by the implementer: `git diff <task1-commit>..HEAD -- '*_test.go'` empty).
+
+---
+
+## Part 2: `Source.Currency` runs for the reader (human approved, same PR)
+
+**Problem (verified):** `Source.Currency func(app core.App) string` (registry.go:120) runs with the app only, from seven call sites, each hit once per compiled column, statement or row, so one read calls it many times:
+
+- `assemble.go:74` (result column currency), `assemble.go:290` (`runner.currencyOf`, once per row)
+- `formula.go:177` (`currencyCode`), `label.go:102` (`labelCurrencySQL`), `layout.go:277` (section currency), `options.go:137` (`shownCurrencySQL`, the param-options path), `pivot.go:75`
+
+A package that reads a home currency from a rule-guarded collection leaks it, as with Heading.
+
+**Interfaces (exact):**
+
+```go
+// Currency is the fixed currency of Money fields that name no Currency
+// field, read for the reader (see Heading), at most once per source in one
+// read of a report. nil means the currency is unknown to the engine.
+Currency func(app core.App, reader *core.RequestInfo) string
+```
+
+- Every call site reads the fixed currency through ONE compiler method, `func (c *compiler) fixedCurrency(src *Source) string`, that calls `src.Currency(c.app, c.info)` the first time a source's currency is needed in that read and keeps the value per source key for the rest of the read (the compiler lives for exactly one read: one `Run` or one `ReadParamOptions`). A source whose fixed currency the read never needs is not called.
+- With a nil app or nil info (dry compile, `Validate`, unit tests) it never calls `Currency`; the call sites keep today's dry behaviour (`""` in `currencyCode`, `NULL` / `""` elsewhere).
+- Stub template `tests/scripts/reports-stub/server/register.go.txt` and the workspace `salesstub/` copy (re-run the scaffold) use the new signature if they set Currency.
+- `docs/packages.md`: the `Source.Currency` sentence and the reader bullet say all three functions (`Heading`, `FiscalStartMonth`, `Currency`) get the reader and must return only what that reader may see; Heading and FiscalStartMonth run once per read, Currency at most once per source per read.
+
+**Review Focus (Part 2):** a fixed currency read per row would let one result mix two values across a concurrent settings change (pinned by the call count); a reader who may not view the row must never get the guarded code in a column, a cell's currency, a pivot or a param option label; dry compile must not call it.
+
+### Task 4: Currency tests (fresh test-writer subagent; RED before any non-test code)
+
+- Update every `_test.go` that sets `Currency` to `func(core.App, *core.RequestInfo) string` (check_test.go:39, formula_run_test.go:74, zoo_test.go:181 at least; grep).
+- Fixture: a rule-guarded row (reuse the Part 1 office fixture pattern, e.g. a `currency` text field on `zoo_office`) read through `FindViewableRecord`; a fictional source copy whose Money field names no Currency field, so it uses `Source.Currency`; fallback for a reader who may not view: a different code the test chooses (or "").
+- Cases: ann (may view) gets the guarded code in the result column's `Currency` (`ResultColumn.Currency`) and in each money row's currency where the run carries it; bob gets the fallback and never the guarded code; the reader passed is the run's (`Auth.Id`, never nil); one `Run` calls Currency once for that source however many money columns and rows it has (use at least two money columns and several rows); one `ReadParamOptions` over a money-labelled option calls it at most once; `Validate` calls it zero times.
+- RED: `go test ./reports/...` fails to compile on the old signature. Commit `test(reports): fixed currency follows the reader`.
+
+### Task 5: Currency implementation (fresh implementer; never edits `_test.go`)
+
+- registry.go signature + doc comment; `compiler.fixedCurrency` memo; all seven call sites through it (the runner and stmt reach the compiler; read how each gets `app`); stub template + scaffold re-run; packages.md.
+- Checks: `go test ./reports/...`, `go build ./...`, `go vet ./reports/`, `gofmt -l reports` in core/server; `pnpm run checks` in tinycld. Commit `feat(reports): fixed currency runs for the reader` (+ docs commit).
+
+### Task 6: Review (fresh reviewer subagent)
+
+Same checklist as Task 3, over the Part 2 diff.
