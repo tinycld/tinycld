@@ -67,9 +67,17 @@ function absent(missing: string) {
     }
 }
 
-function textSchema({ custom, required, missing }: KindSchemaInput): ZodTypeAny {
+function textLimit({ custom, builtin }: KindSchemaInput): number | undefined {
+    if (custom?.kind === 'text' || custom?.kind === 'textarea') return custom.maxLength
+    return builtin?.kind === 'text' ? builtin.maxLength : undefined
+}
+
+function textSchema(input: KindSchemaInput): ZodTypeAny {
+    const { required, missing, label } = input
     let t = z.string(absent(missing))
-    if (custom?.kind === 'text' && custom.maxLength) t = t.max(custom.maxLength)
+    const limit = textLimit(input)
+    // Same words as the server's refusal (checkKind), so a refusal reads the same either way.
+    if (limit) t = t.max(limit, `${label} is too long`)
     return required ? t.trim().min(1, missing) : t.nullable()
 }
 

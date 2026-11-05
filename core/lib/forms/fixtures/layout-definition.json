@@ -52,6 +52,7 @@
             "kind": "builtin",
             "page": "more",
             "label": "Notes",
+            "description": "Seen by the whole team.",
             "width": "full",
             "required": false,
             "hidden": false

@@ -214,3 +214,70 @@ func TestSeedDefaults_PromotesANonArchivedForm(t *testing.T) {
 		t.Fatal("the non-archived form must be promoted")
 	}
 }
+
+func TestDefaultDefinition_WritesALayoutDescriptionOnItsFieldOnly(t *testing.T) {
+	rawHosts, err := os.ReadFile(layoutHostsFixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs, err := ParseHosts(rawHosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := defaultDefinition(defs.Host("gizmos:gadget"))
+	for _, f := range def.Fields {
+		want := ""
+		if f.Key == "notes" {
+			want = "Seen by the whole team."
+		}
+		if f.Description != want {
+			t.Fatalf("field %s description = %q, want %q", f.Key, f.Description, want)
+		}
+	}
+}
+
+func TestSeedDefaults_AppendsABuiltinWithItsLayoutDescription(t *testing.T) {
+	e := newTestEnv(t)
+	var older []Builtin
+	for _, b := range e.host.Builtins {
+		if b.Key != "owner" && b.Key != "due" {
+			older = append(older, b)
+		}
+	}
+	var form *core.Record
+	e.withBuiltins(t, older, func() {
+		def := strings.Replace(widgetDefault, `{"key":"owner","kind":"builtin","page":"main","label":"Owner","width":"full","required":false,"hidden":false},`, "", 1)
+		def = strings.Replace(def, `{"key":"due","kind":"builtin","page":"main","label":"Due","width":"full","required":false,"hidden":false},`, "", 1)
+		form = e.newForm(t, "widget", def, true)
+	})
+	e.host.Layout = &HostLayout{
+		Pages:  []Page{{Key: "main", Title: "Widget"}},
+		Fields: map[string]LayoutField{"owner": {Description: "Who answers for it."}},
+		Rules:  []Rule{},
+	}
+	if err := SeedDefaults(e.app, e.defs); err != nil {
+		t.Fatal(err)
+	}
+	form, _ = e.app.FindRecordById("forms", form.Id)
+	var def struct {
+		Fields []map[string]any `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(form.GetString("definition")), &def); err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]map[string]any{}
+	for _, f := range def.Fields {
+		key, _ := f["key"].(string)
+		byKey[key] = f
+	}
+	owner, due := byKey["owner"], byKey["due"]
+	if owner == nil || due == nil {
+		t.Fatalf("both built-ins must be appended, got fields %v", def.Fields)
+	}
+	if owner["description"] != "Who answers for it." {
+		t.Fatalf("owner description = %v, want the layout's", owner["description"])
+	}
+	if _, has := due["description"]; has {
+		t.Fatalf("a built-in with no layout description must have no description key, got %v", due)
+	}
+}

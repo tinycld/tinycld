@@ -199,3 +199,49 @@ describe('host kinds and built-ins', () => {
         expect(r.success).toBe(false)
     })
 })
+
+describe('a text built-in with a maxLength', () => {
+    const plaque = {
+        key: 'gizmos:plaque',
+        label: 'Plaque',
+        collection: 'gizmos_plaques',
+        formColumn: 'form',
+        fieldsColumn: 'fields',
+        columns: ['serial', 'lit', 'form', 'fields'],
+    }
+    const serial = { key: 'serial', label: 'Serial', kind: 'text', storage: 'column' }
+    const lit = { key: 'lit', label: 'Lit', kind: 'toggle', storage: 'column' }
+    const issuePaths = (builtin: unknown[]) =>
+        (hostDefSchema.safeParse({ ...plaque, builtin }).error?.issues ?? []).map(issue =>
+            issue.path.join('.')
+        )
+
+    it('parses and keeps the limit on a text built-in', () => {
+        const parsed = hostDefSchema.parse({
+            ...plaque,
+            builtin: [{ ...serial, maxLength: 40 }, lit],
+        })
+        expect(parsed.builtin[0].maxLength).toBe(40)
+    })
+
+    it('refuses a maxLength on a toggle built-in at that built-in', () => {
+        const r = hostDefSchema.safeParse({
+            ...plaque,
+            builtin: [serial, { ...lit, maxLength: 40 }],
+        })
+        expect(r.success).toBe(false)
+        expect(r.error?.issues).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    path: ['builtin', 1, 'maxLength'],
+                    message: 'maxLength is for a text built-in',
+                }),
+            ])
+        )
+    })
+
+    it('refuses a maxLength of 0 and of 10001', () => {
+        expect(issuePaths([{ ...serial, maxLength: 0 }])).toContain('builtin.0.maxLength')
+        expect(issuePaths([{ ...serial, maxLength: 10001 }])).toContain('builtin.0.maxLength')
+    })
+})

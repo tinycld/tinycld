@@ -40,8 +40,20 @@ const builtinSchema = z
         decimals: z.number().int().min(0).max(6).default(0),
         /** A table built-in: its columns. Rows live in the host's own collection. */
         columns: z.array(hostColumnSchema).min(1).optional(),
+        /**
+         * A text built-in's most characters. A host's text column has a length
+         * the database enforces; the form says so before the save, and the
+         * server gives every other writer the same refusal.
+         */
+        maxLength: z.number().int().positive().max(10000).optional(),
     })
     .superRefine((b, ctx) => {
+        if (b.maxLength !== undefined && b.kind !== 'text')
+            ctx.addIssue({
+                code: 'custom',
+                path: ['maxLength'],
+                message: 'maxLength is for a text built-in',
+            })
         if (b.kind === 'section' && b.storage !== 'none')
             ctx.addIssue({ code: 'custom', path: ['storage'], message: 'a section has no storage' })
         if (b.kind === 'section' && !b.component)
@@ -106,7 +118,8 @@ const builtinSchema = z
 
 /**
  * The host's default form: its pages, a page and width per built-in (absent
- * means the first page, full width), and its rules. It seeds the first default
+ * means the first page, full width), an optional help text per built-in (the
+ * seeded field's `description`), and its rules. It seeds the first default
  * form, and every new form an admin starts from Settings → Forms → New form
  * (use-form-admin.ts starts from `defaultDefinitionFor`). Mirrored in Go
  * (server/forms HostLayout). A page has no description, because the Go page
@@ -117,7 +130,11 @@ export const hostLayoutSchema = z.object({
     fields: z
         .record(
             keySchema,
-            z.object({ page: keySchema.optional(), width: z.enum(FIELD_WIDTHS).optional() })
+            z.object({
+                page: keySchema.optional(),
+                width: z.enum(FIELD_WIDTHS).optional(),
+                description: z.string().max(500).optional(),
+            })
         )
         .default({}),
     rules: z.array(ruleSchema).default([]),
@@ -282,6 +299,7 @@ export function defaultDefinitionFor(host: FormHostDef): FormDefinition {
                 kind: 'builtin',
                 page: placed?.page ?? first,
                 label: b.label,
+                ...(placed?.description ? { description: placed.description } : {}),
                 width: placed?.width ?? 'full',
                 required: b.required,
                 hidden: false,
