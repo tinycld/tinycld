@@ -85,6 +85,26 @@ func TestFindViewableRecordReadsTheReadersHeaders(t *testing.T) {
 	requireNotViewable(t, "without the header", rec, err)
 }
 
+// Review Focus 3: a database fault while the record is read is a fault, not
+// "no such record". The fault is the table renamed away under the cached
+// collection: the collection lookup reads the app's cache and still finds
+// zoo_office, so the fault reaches the record read. (A closed test app
+// answers sql.ErrNoRows, so it cannot stand in for a fault.)
+func TestFindViewableRecordReturnsADatabaseFault(t *testing.T) {
+	z := newZoo(t)
+	office := addOffice(t, z)
+	if _, err := z.app.DB().NewQuery("ALTER TABLE zoo_office RENAME TO gone_zoo_office").Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := z.app.FindCachedCollectionByNameOrId("zoo_office"); err != nil {
+		t.Fatalf("the cached collection is gone too: %v", err)
+	}
+	rec, err := FindViewableRecord(z.app, z.as("ann"), "zoo_office", office.Id)
+	if err == nil || errors.Is(err, sql.ErrNoRows) || rec != nil {
+		t.Fatalf("record %v, err %v; want the database fault", rec, err)
+	}
+}
+
 // A collection that does not exist is a package wiring mistake, not a
 // record the reader may not view: PocketBase answers sql.ErrNoRows for it,
 // which a caller would read as "hidden" and silently fall back.
