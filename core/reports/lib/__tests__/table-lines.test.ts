@@ -565,6 +565,22 @@ describe('the table layout per width', () => {
             )
         ).toBe(layout)
     })
+    // E2: an opened row with no No. cell (blank on detail rows) keeps the phone lines,
+    // so No. is an empty slot under its heading and the amounts stay in their tracks.
+    it('keeps the wrapped lines of a detail row whose No. is blank', () => {
+        const layout = tableLines({
+            columns: COLS,
+            width: 390,
+            breakpoint: 'mobile',
+            layouts: [],
+            oneLineFits: false,
+        })
+        const row = { id: 'd:1', kind: 'detail' as const, depth: 1, label: 'Sale', cells: {} }
+        const cells = { debit: 250, credit: null }
+        expect(rowLayout({ row, cells, isToggle: false, isOpen: false }, layout, 'account')).toBe(
+            layout
+        )
+    })
     it('starts an arrangement from the columns', () => {
         expect(startingLayout('mobile', [{ id: 'a' }, { id: 'b' }, { id: 'c' }])).toEqual({
             width: 'mobile',

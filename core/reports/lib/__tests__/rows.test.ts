@@ -89,6 +89,21 @@ describe('visibleRows', () => {
         expect(shown[1].cells).toEqual({ amount: 100, 'amount@currency': 'USD' })
     })
 
+    // E2: the engine sends no cell for a column blank on detail rows; the row draws
+    // what it was sent, so that column's slot stays empty and its group keeps the value.
+    it('keeps a detail row without the cell of a column blank on detail rows', () => {
+        const opened = group('g:a', ['a'], { expanded: true, cells: { no: 1000, cost: 100 } })
+        const line: ResultRow = {
+            ...detail('d:1', 'g:a'),
+            labelColumn: 'name',
+            cells: { name: 'Team A', cost: 50 },
+        }
+        const shown = visibleRows([opened, line])
+        expect(shown[0].cells).toEqual({ no: 1000, cost: 100 })
+        expect(shown[1].cells).toEqual({ cost: 50 })
+        expect(shown[1].cells).not.toHaveProperty('no')
+    })
+
     it('leaves out the column a detail label of exactly {col} repeats', () => {
         // The engine names it (detail.label {col: 'cost'}); any other label names none.
         const byCost: ResultRow = {

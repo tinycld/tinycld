@@ -13,6 +13,7 @@ import {
     keptParams,
     labelStart,
     levelScope,
+    offersDetailBlank,
     offersHaving,
     showsDetailLabel,
     showsHaving,
@@ -1219,6 +1220,86 @@ describe('the group order of a param from a source', () => {
         ])
         expect(issuePaths(teamsParam({ by: 'label' }, []))).toContain(
             'params.0.optionsFrom.groupOrder'
+        )
+    })
+})
+
+// E2: a column that only names its group (the team's region on each of the team's
+// rows) is left blank on opened rows (spec.go Column.Detail, "blank").
+describe('a column blank on opened rows', () => {
+    const BLANK_REGION: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        columns: [
+            { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+            {
+                id: 'region',
+                label: 'Region',
+                formula: { record: 'byTeam', path: [{ field: 'region' }] },
+                detail: 'blank',
+            },
+            { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+        ],
+        groups: [{ id: 'byTeam', col: 'team' }],
+    }
+    const issuePaths = (draft: BuilderDraft) => {
+        const parsed = builderSchema(CATALOG).safeParse(draft)
+        return parsed.success ? [] : parsed.error.issues.map(issue => issue.path.join('.'))
+    }
+    const labelled = (node: SpecNode): FormulaDraft => ({ kind: 'editable', node })
+    const offered = (draft: BuilderDraft) =>
+        draft.columns.map((_, index) => offersDetailBlank(draft, index))
+
+    it('keeps a blank column through the draft and back, and a shown one says nothing', () => {
+        const draft = draftFromSpec(BLANK_REGION, META, CATALOG)
+        expect(draft.columns.map(column => column.detail)).toEqual(['show', 'blank', 'show'])
+        expect(issuePaths(draft)).toEqual([])
+        const saved = specFromDraft(draft, CATALOG)
+        expect(saved).toEqual(BLANK_REGION)
+        expect(saved.columns[0]).not.toHaveProperty('detail')
+        expect(saved.columns[2]).not.toHaveProperty('detail')
+        const shown = {
+            ...draft,
+            columns: draft.columns.map(column => ({ ...column, detail: 'show' as const })),
+        }
+        for (const column of specFromDraft(shown, CATALOG).columns) {
+            expect(column).not.toHaveProperty('detail')
+        }
+    })
+
+    it('starts a new report’s column shown on opened rows', () => {
+        const source = CATALOG.get(SALES_KEY)
+        if (!source) throw new Error('fixture')
+        expect(emptyDraft(source).columns.map(column => column.detail)).toEqual(['show'])
+    })
+
+    // Offered where the engine accepts it: a grouped report, on any column but the one
+    // that names opened rows (the first column with no row label, or the column a row
+    // label of exactly {col} is).
+    it('offers Leave blank on a grouped report, never on the column that names opened rows', () => {
+        const draft = draftFromSpec(BLANK_REGION, META, CATALOG)
+        expect(offered(draft)).toEqual([false, true, true])
+        expect(offered({ ...draft, groups: [] })).toEqual([false, false, false])
+        expect(offered({ ...draft, detailLabel: labelled({ col: 'region' }) })).toEqual([
+            true,
+            false,
+            true,
+        ])
+        const overTeam = labelled({ op: 'concat', args: [{ col: 'team' }, { value: '!' }] })
+        expect(offered({ ...draft, detailLabel: overTeam })).toEqual([true, true, true])
+        const byCustomer = labelled({ path: [{ field: 'customer' }] })
+        expect(offered({ ...draft, detailLabel: byCustomer })).toEqual([true, true, true])
+    })
+
+    it('refuses a blank column where the engine refuses it (bind.go columns.N.detail)', () => {
+        const draft = draftFromSpec(BLANK_REGION, META, CATALOG)
+        expect(issuePaths({ ...draft, groups: [] })).toContain('columns.1.detail')
+        const first = draft.columns.map((column, i) =>
+            i === 0 ? { ...column, detail: 'blank' as const } : column
+        )
+        expect(issuePaths({ ...draft, columns: first })).toContain('columns.0.detail')
+        expect(issuePaths({ ...draft, detailLabel: labelled({ col: 'region' }) })).toContain(
+            'columns.1.detail'
         )
     })
 })

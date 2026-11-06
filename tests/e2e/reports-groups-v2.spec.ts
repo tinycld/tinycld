@@ -6,6 +6,7 @@ import {
     addTeam,
     cellOf,
     chooseOption,
+    groupWithTeamRegion,
     openReportStub,
     openReportsHub,
     pressToolbar,
@@ -13,6 +14,7 @@ import {
     SALES_SOURCE,
     saveNewReport,
     startReport,
+    startTeamSales,
     TEAMS_SOURCE,
     uniqueName,
 } from './reports-helpers'
@@ -80,6 +82,19 @@ async function groupByTeam(p: Page, stem: string) {
 
 const groupRows = (p: Page) =>
     p.getByTestId('report-table').locator('[data-testid^="report-row-g:"]')
+
+// The team's opened rows are shown with their own figures, and only the group row
+// shows the region: the opened rows' region cells are there and empty.
+async function expectRegionOnGroupOnly(p: Page, team: string) {
+    await expect(await cellOf(p, 'amount', 'Ada')).toHaveText('10.00')
+    await expect(await cellOf(p, 'amount', 'Abe')).toHaveText('5.00')
+    await expect(await cellOf(p, 'formula', team)).toHaveText('South')
+    for (const customer of ['Ada', 'Abe']) {
+        const region = await cellOf(p, 'formula', customer)
+        await expect(region).toBeVisible()
+        await expect(region).toHaveText('')
+    }
+}
 
 test.describe('group levels', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
@@ -424,6 +439,49 @@ test.describe('group levels', () => {
                 `${stem} S1`,
             ])
             await expect(rowOf(p, `${stem} N2`)).not.toHaveAttribute('aria-expanded')
+        } finally {
+            await close()
+        }
+    })
+
+    // E2: a column that only names its group (the team's region) can be left blank on
+    // opened rows; its group row keeps the value. The builder offers it only on a
+    // grouped report and never on the first column, which names opened rows.
+    test('a column left blank on opened rows is empty there while its group row shows it', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptblank')
+        try {
+            const team = uniqueName('Blank')
+            await openReportStub(p)
+            await addTeam(p, team, 'south')
+            await addSale(p, { team, customer: 'Ada', amount: 1000, cost: 0, day: '2026-01-05' })
+            await addSale(p, { team, customer: 'Abe', amount: 500, cost: 0, day: '2026-01-06' })
+            await openReportsHub(p)
+            await startTeamSales(p)
+            await expect(p.getByTestId('report-builder-column-2')).toBeVisible()
+            await expect(p.getByTestId('report-builder-column-2-detail')).toHaveCount(0)
+            await groupWithTeamRegion(p)
+            await expect(p.getByTestId('report-builder-column-0')).toBeVisible()
+            await expect(p.getByTestId('report-builder-column-0-detail')).toHaveCount(0)
+            await expect(p.getByTestId('report-builder-column-2-detail')).toBeVisible()
+
+            await rowOf(p, team).click()
+            await expect(rowOf(p, team)).toHaveAttribute('aria-expanded', 'true')
+            await expect(await cellOf(p, 'formula', 'Ada')).toHaveText('South')
+            await chooseOption(p, 'report-builder-column-3-detail', 'blank')
+            await expectRegionOnGroupOnly(p, team)
+
+            await saveNewReport(p, uniqueName('Blank region'))
+            await rowOf(p, team).click()
+            await expect(rowOf(p, team)).toHaveAttribute('aria-expanded', 'true')
+            await expectRegionOnGroupOnly(p, team)
+
+            // Shown on opened rows again.
+            await pressToolbar(p, 'report-edit-open', 'Edit report')
+            await chooseOption(p, 'report-builder-column-3-detail', 'show')
+            await expect(await cellOf(p, 'formula', 'Ada')).toHaveText('South')
+            await expect(await cellOf(p, 'formula', 'Abe')).toHaveText('South')
         } finally {
             await close()
         }

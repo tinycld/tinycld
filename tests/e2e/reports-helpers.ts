@@ -185,6 +185,43 @@ export async function chooseOption(page: Page, selectTestId: string, value: stri
     await page.getByTestId(`${selectTestId}-${value}`).click()
 }
 
+/**
+ * A new report over sales with columns customer (0, which names opened rows), the
+ * team record (1, id `team`) and the amount summed (2). The builder stays open.
+ */
+export async function startTeamSales(page: Page) {
+    await startReport(page, SALES_SOURCE)
+    await page.getByTestId('report-builder-add-column').click()
+    await page
+        .getByTestId('report-builder-picker')
+        .getByTestId('report-builder-pick-record-team')
+        .click()
+    await addColumn(page, ['amount'])
+    await chooseOption(page, 'report-builder-column-2-aggregate', 'sum')
+}
+
+/**
+ * Groups startTeamSales's draft by team and adds the team's region, read from the
+ * group's record (formula column 3, id `formula`): the group row and every opened
+ * row of the team show it. The group has no subtotals.
+ */
+export async function groupWithTeamRegion(page: Page) {
+    await page.getByTestId('report-builder-section-group').click()
+    await page.getByTestId('report-builder-group-add').click()
+    await chooseOption(page, 'report-builder-group-0-col', 'team')
+    // No subtotal rows (they start on), so an open group's row keeps its figures.
+    await page.getByTestId('report-builder-group-0-subtotals').click()
+    await page.getByTestId('report-builder-add-formula').click()
+    const f = 'report-builder-column-3-formula'
+    await chooseOption(page, `${f}-root-part`, 'record')
+    await expect(page.getByTestId(`${f}-root-record-group`)).toHaveText('Team')
+    await page.getByTestId(`${f}-root-record-field`).click()
+    await page
+        .getByTestId('report-builder-picker')
+        .getByTestId('report-builder-pick-field-region')
+        .click()
+}
+
 /** Saves a new report and waits for its own view (the builder closes, the URL changes). */
 export async function saveNewReport(page: Page, title: string) {
     await page.getByTestId('report-builder-title').fill(title)
