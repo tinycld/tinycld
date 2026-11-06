@@ -13,7 +13,7 @@
 // them server-side; AppErrorBoundary symbolicates client-side; the sourcemaps
 // e2e spec verifies they're present + correct).
 
-import { spawnSync } from 'node:child_process'
+import { type StdioOptions, spawnSync } from 'node:child_process'
 import * as path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
@@ -32,7 +32,10 @@ function flagValue(name: string): string | null {
 // poll; a caller (e2e-serve) that promotes the bundle passes the SAME id it
 // writes to release-id.txt so boot-id == served-id. When unset it's cosmetic
 // (the poll just has nothing to compare), so a standalone build is fine without.
-export function exportWeb(releaseId?: string): void {
+//
+// `stdio` is where the export's own output goes: the terminal by default, or a
+// log file when e2e-serve keeps the test output quiet.
+export function exportWeb(releaseId?: string, stdio: StdioOptions = 'inherit'): void {
     const env: NodeJS.ProcessEnv = {
         ...process.env,
         EXPO_PUBLIC_ENV: 'web',
@@ -54,7 +57,7 @@ export function exportWeb(releaseId?: string): void {
     const result = spawnSync(
         'pnpm',
         ['exec', 'expo', 'export', '--platform', 'web', '--source-maps', 'external'],
-        { cwd: ROOT, stdio: 'inherit', env }
+        { cwd: ROOT, stdio, env }
     )
     if (result.status !== 0) {
         throw new Error(`expo export exited ${result.status}`)
