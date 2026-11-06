@@ -124,6 +124,19 @@ describe('parseIgnores', () => {
     })
 })
 
+describe('parseIgnores and forkExemptions', () => {
+    it('accepts a forkExemptions key at the top level', () => {
+        const { valid, errors } = parseIgnores(
+            'ignores:\n  - id: GHSA-aaaa-aaaa-aaaa\n    reason: Fine.\n    expires: 2026-12-01\n' +
+                'forkExemptions:\n  - fork: example/fork\n    reason: Vendored in-tree.\n',
+            TODAY
+        )
+        expect(errors).toEqual([])
+        expect(valid).toHaveLength(1)
+        expect(valid[0].id).toBe('GHSA-aaaa-aaaa-aaaa')
+    })
+})
+
 describe('parseAuditJson', () => {
     it('returns no findings for a clean audit', () => {
         expect(parseAuditJson(fixture('pnpm-audit-clean.json'))).toEqual([])
