@@ -338,12 +338,28 @@ func (rn *runner) detail(t *tree, row map[string]any, section string, depth int)
 		label, labelColumn = rn.groupLabel(row, *lp), repeatedColumn(rn.c.p.spec.Detail.Label)
 	}
 	rn.push(Row{
-		ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: labelColumn, Section: section, Cells: rn.cells(row),
+		ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: labelColumn, Section: section, Cells: rn.detailCells(rn.cells(row)),
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
 	})
 	if len(t.nested) > 0 {
 		rn.nestedRows(t, 0, row["__n0"], id, section, depth+1)
 	}
+}
+
+// detailCells is a detail row's cells without those of the columns blank on
+// detail rows (Column.Detail): their value, currency and record label.
+func (rn *runner) detailCells(cells map[string]any) map[string]any {
+	for _, cp := range rn.c.p.cols {
+		if cp.col.Detail != DetailBlank {
+			continue
+		}
+		id := cp.col.ID
+		delete(cells, id)
+		delete(cells, id+"@currency")
+		delete(cells, id+"@label")
+		delete(cells, id+"@labelCurrency")
+	}
+	return cells
 }
 
 // repeatedColumn is the column a detail label of exactly {col} repeats: the

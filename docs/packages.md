@@ -1296,6 +1296,7 @@ version.
 |---|---|
 | `columns[].total` | `"recompute"` (default) totals every row the filter keeps. `"rows"`: the innermost group level computes the column from its own base rows, as `"recompute"` does; the levels above it and the Total add the cells of the rows the result shows, after `having`, per currency. A column has an aggregate when it sets `aggregate`, or its formula holds an aggregate operator, or its formula reads (`{col}`) a column that has an aggregate or is a `"rows"` column, at any depth (a lookup's `value` and `where` do not count: they read another source). A column with no aggregate adds its detail cells on the innermost level. With no groups, the Total adds the detail cells. Pivot cells follow the same rule. Layout sections add their shown rows; computed rows are unchanged. Only for number and amount columns, and not on a running value or percent. |
 | `columns[].labelField` | The field of a relation column's record that its cells show. |
+| `columns[].detail` | `"blank"`: the column has no cell (and no `@currency` or `@label` cell) on any detail row, nested child rows included. Group, subtotal and total rows are unchanged. Refused (`columns.N.detail`) for any other value, in a report with no groups, and on the column that labels detail rows (the first column when `detail.label` is not set, or the column a `detail.label` of exactly `{ col }` names). Use it on a column that reads the group's record (a `record` formula): a plain path column that is not the group key has no value on group rows, so with `"blank"` it shows nowhere. |
 | `groups[].having` | A condition on the level's totals, columns and record fields. A hidden group hides its children. Refused on the first group of a layout report. |
 | `groups[].label` | A formula that labels the group's row. |
 | `groups[].fill` | `{ where? }` lists the target's records that have no rows, on any level, under each parent group. |
@@ -1335,6 +1336,29 @@ Accounts filter's groups in that order, not A–Z:
 
 To order the types by a number the source keeps instead, use
 `"groupOrder": { "by": "path", "path": [{ "field": "sort" }] }`.
+
+For example, a ledger of lines (`zoo.lines`) grouped by account shows each
+account's number on the account's row and leaves it out of the opened lines,
+which the memo labels:
+
+```json
+{
+  "version": 2,
+  "source": "zoo.lines",
+  "columns": [
+    { "id": "name", "path": [{ "link": "account" }] },
+    {
+      "id": "no",
+      "label": "No.",
+      "formula": { "record": "byAccount", "path": [{ "field": "number" }] },
+      "detail": "blank"
+    },
+    { "id": "debit", "path": [{ "field": "amount" }], "aggregate": "sum" }
+  ],
+  "groups": [{ "id": "byAccount", "col": "name" }],
+  "detail": { "label": { "path": [{ "field": "memo" }] } }
+}
+```
 
 **Param options.** `POST /api/reports/param-options` reads one page of a
 choice param's options for a draft `spec` or a saved `reportId` the caller can

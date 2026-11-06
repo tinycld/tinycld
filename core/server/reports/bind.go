@@ -293,6 +293,7 @@ func (b *binder) columns(p *plan) {
 		if c.Total != "" && c.Total != TotalRecompute && c.Total != TotalRows {
 			b.bad(at+".total", "total is recompute or rows")
 		}
+		b.detailBlank(p.spec, i)
 		if (c.Path == nil) == (c.Formula == nil) {
 			b.bad(at, "a column has a path or a formula")
 		}
@@ -303,6 +304,35 @@ func (b *binder) columns(p *plan) {
 			b.scaleOf(cp, c.Aggregate)
 		}
 	}
+}
+
+// detailBlank refuses a column blank on detail rows where its value shows
+// nowhere else (a report with no groups) or where it names the detail rows: a
+// blank label would leave a row with no name.
+func (b *binder) detailBlank(spec *Spec, i int) {
+	c := &spec.Columns[i]
+	at := fmt.Sprintf("columns.%d.detail", i)
+	switch {
+	case c.Detail == "":
+	case c.Detail != DetailBlank:
+		b.bad(at, `detail is "blank"`)
+	case len(spec.Groups) == 0:
+		b.bad(at, "a column can be blank on detail rows only in a report with groups")
+	case c.ID != "" && c.ID == detailLabelColumn(spec):
+		b.bad(at, "this column labels the detail rows, so it cannot be blank on them")
+	}
+}
+
+// detailLabelColumn is the column whose cell labels each detail row: the first
+// column, or the one a detail label of exactly {col} repeats. "" for none.
+func detailLabelColumn(spec *Spec) string {
+	if d := spec.Detail; d != nil && d.Label != nil {
+		return repeatedColumn(d.Label)
+	}
+	if len(spec.Columns) == 0 {
+		return ""
+	}
+	return spec.Columns[0].ID
 }
 
 func (b *binder) pathColumn(p *plan, cp *colPlan) {

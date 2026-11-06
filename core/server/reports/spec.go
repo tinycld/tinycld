@@ -110,7 +110,14 @@ type Column struct {
 	// field, else its first other field but its id, else its source's name.
 	// A formula that is a column shows that column's label field.
 	LabelField string `json:"labelField,omitempty"`
+	// Detail "blank" leaves the column's cells out of every detail row, so a
+	// column that names the open group (a value read from the group's record)
+	// shows on the group row only. Empty: the column shows on detail rows.
+	Detail string `json:"detail,omitempty"`
 }
+
+// DetailBlank is the one Column.Detail value.
+const DetailBlank = "blank"
 
 // Column.Total values.
 const (

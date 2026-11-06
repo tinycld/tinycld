@@ -105,6 +105,8 @@ const columnFields = {
     explicitTotal: z.boolean(),
     /** The field a link column shows its record by; '' takes the first text field (R31). */
     labelField: z.string(),
+    /** On opened (detail) rows: the column's value, or left blank; absent reads as shown. */
+    detail: z.enum(['show', 'blank']).optional(),
 }
 export const columnDraftSchema = z.union([
     z.object({
@@ -312,11 +314,47 @@ export function showsDetailLabel(draft: Pick<BuilderDraft, 'pivot' | 'detailLabe
     return !draft.pivot.on || draft.detailLabel !== null
 }
 
+/**
+ * The column whose cell names each opened row: the first column, or the column a row
+ * label of exactly {col} repeats (assemble.go repeatedColumn). undefined for none.
+ */
+function detailLabelColumn(draft: Pick<BuilderDraft, 'columns' | 'detailLabel'>) {
+    const node = draft.detailLabel?.node
+    if (!node) return draft.columns[0]?.id
+    const keys = Object.entries(node).filter(([, value]) => value !== undefined)
+    return keys.length === 1 && keys[0]?.[0] === 'col' ? node.col : undefined
+}
+
+/**
+ * "Leave blank" on opened rows is offered on a grouped report, on every column but the
+ * one that names opened rows (bind.go detailBlank).
+ */
+export function offersDetailBlank(
+    draft: Pick<BuilderDraft, 'groups' | 'columns' | 'detailLabel'>,
+    index: number
+): boolean {
+    const column = draft.columns[index]
+    if (!column || draft.groups.length === 0) return false
+    return column.id !== detailLabelColumn(draft)
+}
+
+function detailBlankIssues(draft: BuilderDraft): Issue[] {
+    return draft.columns.flatMap((column, i): Issue[] => {
+        if (column.detail !== 'blank' || offersDetailBlank(draft, i)) return []
+        const message =
+            draft.groups.length === 0
+                ? 'Group the report to leave a column blank on opened rows'
+                : 'This column names opened rows: show it on them'
+        return [{ path: ['columns', i, 'detail'], message }]
+    })
+}
+
 export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues = [
         ...paramIssues(draft.params),
         ...groupOrderIssues(draft.params, catalog),
         ...columnIssues(draft, catalog),
+        ...detailBlankIssues(draft),
         ...groupingIssues(draft, catalog),
     ]
     const [firstProblem] = conditionProblems(draft.filter, catalog, draft.source)
@@ -435,6 +473,7 @@ export function emptyDraft(source: CatalogSource): BuilderDraft {
                   total: 'recompute',
                   explicitTotal: false,
                   labelField: '',
+                  detail: 'show',
               },
           ]
         : []
@@ -479,6 +518,7 @@ function columnDraft(
         total: column.total ?? 'recompute',
         explicitTotal: column.total !== undefined,
         labelField: column.labelField ?? '',
+        detail: column.detail ?? 'show',
     } as const
     if (column.formula) {
         return {
@@ -632,6 +672,7 @@ function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecC
         if (column.format !== '' && showsFormat(column, types)) out.format = column.format
         if (column.total === 'rows' || column.explicitTotal) out.total = column.total
         if (column.labelField !== '') out.labelField = column.labelField
+        if (column.detail === 'blank') out.detail = 'blank'
         return out
     })
 }

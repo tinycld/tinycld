@@ -76,6 +76,8 @@ To read one value from another kind of record, add a formula column and pick **L
 
 When you open a group, its rows are labelled by the first column. To label them another way, turn on **Label opened rows with a formula** in **Columns**. The formula's label takes the first column's place, so opened rows do not show that column's value. A pivot report has no opened rows, so it does not show this choice.
 
+Some columns only name the group, for example an account's number on each line of the account. To show such a column on the group row only, set **On opened rows** to **Leave blank** for that column in **Columns**. The opened rows then show an empty cell, also on a phone. This choice shows only when the report has a group level. It does not show for the column that labels the opened rows. Use it for a column that reads a field of the group's record (a **Group field** formula). Other columns have no value on the group row, so a blank column shows nothing at all.
+
 ## Filters that list records
 
 A condition on a linked record lets you pick records by name. Turn on **Ask when the report runs**: the reader picks records from a list and can type in **Search** to narrow it. To list the records in groups, choose a field under **Group the list by** (for example a team's region). The reader can then pick a whole group at once with **All** and the group's name. To use other words for that choice, type them in **Whole group text**, with `{group}` where the group's name goes. For example, `All {group} teams` shows "All North teams".

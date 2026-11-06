@@ -119,6 +119,9 @@ export const specColumnSchema = z.strictObject({
     total: z.enum(['recompute', 'rows']).optional(),
     // The field a link column shows each record by; absent: the record's first text field.
     labelField: z.string().optional(),
+    // 'blank': the column has no cell on detail rows, so a value read from the group's
+    // record shows on the group row only. Absent: shown on detail rows.
+    detail: z.literal('blank').optional(),
 })
 export type SpecColumn = z.infer<typeof specColumnSchema>
 

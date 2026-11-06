@@ -13,7 +13,12 @@ import {
     nextColumnId,
     pathLabel,
 } from '../../lib/builder/columns'
-import { type ColumnDraft, type FormulaDraft, showsDetailLabel } from '../../lib/builder/draft'
+import {
+    type ColumnDraft,
+    type FormulaDraft,
+    offersDetailBlank,
+    showsDetailLabel,
+} from '../../lib/builder/draft'
 import { linkTarget, rowsTotalColumns } from '../../lib/builder/formula-context'
 import type { SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
@@ -136,6 +141,7 @@ function ColumnRow({ builder, columns, index, numericIds, rowsTotalIds }: Column
                 builder={builder}
                 index={index}
             />
+            <DetailField builder={builder} columns={columns} index={index} />
             <LinkLabelField builder={builder} columns={columns} index={index} source={source} />
             <ColumnFormula builder={builder} columns={columns} index={index} />
         </View>
@@ -217,6 +223,35 @@ function TotalField({
             label="Total"
             options={TOTAL_OPTIONS}
             testID={`report-builder-column-${index}-total`}
+            onValueChange={builder.validateLists}
+        />
+    )
+}
+
+const DETAIL_OPTIONS = [
+    { value: 'show', label: 'Show' },
+    { value: 'blank', label: 'Leave blank' },
+]
+
+/**
+ * "On opened rows": a column that names its group (a value from the group's record)
+ * can be left blank on the group's opened rows. Offered on a grouped report, never on
+ * the column that names opened rows (bind.go detailBlank); a column left blank before
+ * that keeps the choice in view, so it can be set back.
+ */
+function DetailField({ builder, columns, index }: Omit<ColumnPartProps, 'source'>) {
+    const control = builder.form.control
+    const groups = useWatch({ control, name: 'groups' })
+    const detailLabel = useWatch({ control, name: 'detailLabel' })
+    const isBlank = columns[index]?.detail === 'blank'
+    if (!isBlank && !offersDetailBlank({ groups, columns, detailLabel }, index)) return null
+    return (
+        <SelectInput
+            name={`columns.${index}.detail`}
+            control={control}
+            label="On opened rows"
+            options={DETAIL_OPTIONS}
+            testID={`report-builder-column-${index}-detail`}
             onValueChange={builder.validateLists}
         />
     )
@@ -378,6 +413,7 @@ export function ColumnsSection({
             total: 'recompute',
             explicitTotal: false,
             labelField: '',
+            detail: 'show',
         }
         builder.setColumns([...columns, column])
     }
@@ -398,6 +434,7 @@ export function ColumnsSection({
                 total: 'recompute',
                 explicitTotal: false,
                 labelField: '',
+                detail: 'show',
             },
         ])
     const rows = columns.map((column, index) => (
