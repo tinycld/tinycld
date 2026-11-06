@@ -325,27 +325,45 @@ function detailLabelColumn(draft: Pick<BuilderDraft, 'columns' | 'detailLabel'>)
     return keys.length === 1 && keys[0]?.[0] === 'col' ? node.col : undefined
 }
 
+/** The count of nest hops on a column's path: 0 for a column of the report's own rows. */
+const nestDepth = (column: ColumnDraft) =>
+    column.kind === 'path' ? column.path.filter(hop => hop.mode === 'nest').length : 0
+
+/** A nest level's first column names that level's child rows (nest.go firstLabel). */
+function labelsChildRows(columns: readonly ColumnDraft[], index: number) {
+    const column = columns[index]
+    const depth = column ? nestDepth(column) : 0
+    if (depth === 0) return false
+    return columns.findIndex(other => nestDepth(other) === depth) === index
+}
+
+type DetailBlankDraft = Pick<BuilderDraft, 'groups' | 'columns' | 'detailLabel' | 'pivot'>
+
+/** Why a column cannot be blank on opened rows (bind.go detailBlank), or undefined. */
+function detailBlankRefusal(draft: DetailBlankDraft, index: number) {
+    if (draft.groups.length === 0) return 'Group the report to leave a column blank on opened rows'
+    if (draft.pivot.on) return 'A pivot report has no opened rows: show the column on them'
+    if (draft.columns[index]?.id === detailLabelColumn(draft))
+        return 'This column names opened rows: show it on them'
+    if (labelsChildRows(draft.columns, index))
+        return 'This column names child rows: show it on them'
+    return undefined
+}
+
 /**
- * "Leave blank" on opened rows is offered on a grouped report, on every column but the
- * one that names opened rows (bind.go detailBlank).
+ * "Leave blank" on opened rows is offered on a grouped report that does not pivot, on
+ * every column but one that names opened rows or a nest level's child rows.
  */
-export function offersDetailBlank(
-    draft: Pick<BuilderDraft, 'groups' | 'columns' | 'detailLabel'>,
-    index: number
-): boolean {
-    const column = draft.columns[index]
-    if (!column || draft.groups.length === 0) return false
-    return column.id !== detailLabelColumn(draft)
+export function offersDetailBlank(draft: DetailBlankDraft, index: number): boolean {
+    if (!draft.columns[index]) return false
+    return detailBlankRefusal(draft, index) === undefined
 }
 
 function detailBlankIssues(draft: BuilderDraft): Issue[] {
     return draft.columns.flatMap((column, i): Issue[] => {
-        if (column.detail !== 'blank' || offersDetailBlank(draft, i)) return []
-        const message =
-            draft.groups.length === 0
-                ? 'Group the report to leave a column blank on opened rows'
-                : 'This column names opened rows: show it on them'
-        return [{ path: ['columns', i, 'detail'], message }]
+        if (column.detail !== 'blank') return []
+        const message = detailBlankRefusal(draft, i)
+        return message ? [{ path: ['columns', i, 'detail'], message }] : []
     })
 }
 

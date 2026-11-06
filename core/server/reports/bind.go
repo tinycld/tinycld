@@ -202,6 +202,7 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	b.lookups(p)
 	b.formulaSizes(p)
 	b.nestChain(p)
+	b.nestLabelBlanks(p)
 	b.sorts(p)
 	b.groupsAndPivot(p)
 	b.layout(p)
@@ -307,8 +308,9 @@ func (b *binder) columns(p *plan) {
 }
 
 // detailBlank refuses a column blank on detail rows where its value shows
-// nowhere else (a report with no groups) or where it names the detail rows: a
-// blank label would leave a row with no name.
+// nowhere else (a report with no groups), where there are no detail rows (a
+// pivot report) or where it names the detail rows: a blank label would leave
+// a row with no name.
 func (b *binder) detailBlank(spec *Spec, i int) {
 	c := &spec.Columns[i]
 	at := fmt.Sprintf("columns.%d.detail", i)
@@ -318,8 +320,24 @@ func (b *binder) detailBlank(spec *Spec, i int) {
 		b.bad(at, `detail is "blank"`)
 	case len(spec.Groups) == 0:
 		b.bad(at, "a column can be blank on detail rows only in a report with groups")
+	case spec.Pivot != nil:
+		b.bad(at, "a pivot report has no detail rows")
 	case c.ID != "" && c.ID == detailLabelColumn(spec):
 		b.bad(at, "this column labels the detail rows, so it cannot be blank on them")
+	}
+}
+
+// nestLabelBlanks refuses a blank on the first column of a nest level: that
+// column labels the level's child rows (nest.go), so a blank changes nothing.
+// It runs after nestChain, which records the levels.
+func (b *binder) nestLabelBlanks(p *plan) {
+	for _, level := range p.nest {
+		if len(level.cols) == 0 {
+			continue
+		}
+		if first := level.cols[0]; first.col.Detail == DetailBlank {
+			b.bad(first.at+".detail", "this column labels the child rows, so it cannot be blank on them")
+		}
 	}
 }
 

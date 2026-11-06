@@ -235,16 +235,18 @@ const DETAIL_OPTIONS = [
 
 /**
  * "On opened rows": a column that names its group (a value from the group's record)
- * can be left blank on the group's opened rows. Offered on a grouped report, never on
- * the column that names opened rows (bind.go detailBlank); a column left blank before
- * that keeps the choice in view, so it can be set back.
+ * can be left blank on the group's opened rows. Offered on a grouped report that does
+ * not pivot, never on a column that names opened rows or a nest level's child rows
+ * (bind.go detailBlank); a column left blank before that keeps the choice in view, so
+ * it can be set back.
  */
 function DetailField({ builder, columns, index }: Omit<ColumnPartProps, 'source'>) {
     const control = builder.form.control
     const groups = useWatch({ control, name: 'groups' })
     const detailLabel = useWatch({ control, name: 'detailLabel' })
+    const pivot = useWatch({ control, name: 'pivot' })
     const isBlank = columns[index]?.detail === 'blank'
-    if (!isBlank && !offersDetailBlank({ groups, columns, detailLabel }, index)) return null
+    if (!isBlank && !offersDetailBlank({ groups, columns, detailLabel, pivot }, index)) return null
     return (
         <SelectInput
             name={`columns.${index}.detail`}
