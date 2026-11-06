@@ -10,7 +10,8 @@
 // has no runtime import of @playwright/test: a caller that installs its own
 // Playwright can load it without Playwright's "required a second time" error,
 // which the full e2e-helpers would trigger by resolving core's copy.
-import { expect, type Locator, type Page } from '@playwright/test'
+// So it waits with locator.waitFor, never expect: expect is a runtime import.
+import type { Locator, Page } from '@playwright/test'
 import {
     CORE_STEP_IDS,
     SETUP_CONTINUE_TEST_ID,
@@ -62,17 +63,17 @@ export async function completeSetupBySkipping(page: Page) {
     const skip = page.getByTestId(SETUP_SKIP_TEST_ID)
     // Bounded: a wizard has a handful of steps, and each Skip moves past one.
     for (let i = 0; i < 20; i++) {
-        await expect(done.or(skip)).toBeVisible()
+        await done.or(skip).waitFor({ state: 'visible' })
         if (await done.isVisible()) break
         const step = page.getByTestId(/^setup-step-/).first()
         const stepId = await step.getAttribute('data-testid')
         await skip.click()
         // Wait for the skipped step to leave before pressing Skip again, so
         // one press never skips two steps.
-        await expect(page.getByTestId(stepId ?? '')).toHaveCount(0)
+        await page.getByTestId(stepId ?? '').waitFor({ state: 'detached' })
     }
     await done.getByTestId(SETUP_DONE_OPEN_TEST_ID).click()
-    await expect(page.getByTestId('nav-settings')).toBeVisible()
+    await page.getByTestId('nav-settings').waitFor({ state: 'visible' })
 }
 
 /** The organization step's name field. */
