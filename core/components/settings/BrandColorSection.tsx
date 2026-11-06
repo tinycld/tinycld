@@ -60,8 +60,12 @@ function useBrandColorEditor() {
 }
 
 export function BrandColorSection({ isVisible }: { isVisible: boolean }) {
-    const editor = useBrandColorEditor()
     if (!isVisible) return null
+    return <BrandColorEditor />
+}
+
+function BrandColorEditor() {
+    const editor = useBrandColorEditor()
     return (
         <View className="gap-3">
             <Text className="text-foreground text-xl font-bold">Brand color</Text>

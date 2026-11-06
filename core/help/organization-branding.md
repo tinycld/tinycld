@@ -34,5 +34,7 @@ that the apps print, such as PDF files, use this color for the heading, the rule
 and the table header. Choose **Use default** and **Save** to go back to the
 default teal (#0d9488).
 
-Your own picture is set separately — see
-[Personalizing your avatar](help://core:personalizing-your-avatar).
+## Your own picture
+
+The logo and color belong to the whole organization. Your own picture is set
+separately — see [Personalizing your avatar](help://core:personalizing-your-avatar).

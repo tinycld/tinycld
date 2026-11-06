@@ -93,9 +93,20 @@ func readLogo(app core.App, record *core.Record, name string) ([]byte, string) {
 		return nil, ""
 	}
 	kind := mimetype.Detect(data)
-	if t := kind.String(); IsLogoType(t) {
+	if t := logoTypeOf(kind); t != "" {
 		return data, t
 	}
 	log.Warn("the logo is not an image a document can embed", "file", name, "type", kind.String())
 	return nil, ""
+}
+
+// logoTypeOf returns the entry of logoTypes that kind is, or "" when it is none.
+// kind.Is also matches a type's aliases, so the result is always the canonical name.
+func logoTypeOf(kind *mimetype.MIME) string {
+	for _, t := range logoTypes {
+		if kind.Is(t) {
+			return t
+		}
+	}
+	return ""
 }

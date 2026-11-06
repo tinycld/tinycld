@@ -109,6 +109,46 @@ func TestLoad_UnreadableLogoFileDegrades(t *testing.T) {
 	}
 }
 
+// A stored file the field's rules would have refused (a raw write, or a rule
+// changed later) still must not reach a renderer.
+func saveLogoUnvalidated(t *testing.T, app core.App, logo []byte, logoName string) {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("org_branding")
+	if err != nil {
+		t.Fatalf("find org_branding: %v", err)
+	}
+	f, err := filesystem.NewFileFromBytes(logo, logoName)
+	if err != nil {
+		t.Fatalf("file: %v", err)
+	}
+	r := core.NewRecord(col)
+	r.Set("brand_color", "#1e40af")
+	r.Set("logo", f)
+	if err := app.SaveNoValidate(r); err != nil {
+		t.Fatalf("save branding: %v", err)
+	}
+}
+
+func TestLoad_LogoThatIsNotAnImageIsOmitted(t *testing.T) {
+	app := newApp(t)
+	saveLogoUnvalidated(t, app, []byte("this is plain text, not an image"), "logo.png")
+	org := Load(app)
+	if org.Logo != nil || org.LogoType != "" || org.Color != "#1e40af" {
+		t.Errorf("Load = %s, %d bytes, %s; want no logo and the stored color", org.LogoType, len(org.Logo), org.Color)
+	}
+}
+
+func TestLoad_LogoOverTwoMegabytesIsOmitted(t *testing.T) {
+	app := newApp(t)
+	// A real PNG followed by padding, so only the size can reject it.
+	big := append(pngBytes(t), make([]byte, maxLogoBytes)...)
+	saveLogoUnvalidated(t, app, big, "logo.png")
+	org := Load(app)
+	if org.Logo != nil || org.LogoType != "" || org.Color != "#1e40af" {
+		t.Errorf("Load = %s, %d bytes, %s; want no logo and the stored color", org.LogoType, len(org.Logo), org.Color)
+	}
+}
+
 // A color that bypassed validation (a raw SQL write) never reaches a renderer.
 func TestLoad_IgnoresAStoredColorThatIsNotHex(t *testing.T) {
 	app := newApp(t)

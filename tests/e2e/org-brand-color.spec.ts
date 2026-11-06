@@ -1,9 +1,14 @@
 import { expect, type Page, test } from '@playwright/test'
+import { authStorageKey } from './auth-key-helpers'
 import { login, openSettingsItem } from './helpers'
 
 // The brand color is set through the real Organization branding screen; no raw
 // PocketBase writes. The e2e database is shared, so every test leaves the color
 // empty (the default) when it ends.
+//
+// Server proof: after a save the spec also reads the org_branding row over
+// PocketBase REST with the user's own token (read-only), because the remounted
+// screen may be served from the client store.
 //
 // Persistence check: there is no page reload. After a save the spec opens another Settings
 // section (Profile), then opens Branding again, so the Branding section
@@ -31,6 +36,18 @@ async function leaveAndReturn(page: Page) {
     await expect(page.getByTestId('brand-color-input')).toBeVisible()
 }
 
+// The color the server holds ('' when the row is absent or the color is empty).
+async function serverColor(page: Page) {
+    const key = await authStorageKey(page)
+    const token = await page.evaluate(k => JSON.parse(localStorage.getItem(k) ?? '{}').token, key)
+    const res = await page.request.get('/api/collections/org_branding/records?perPage=1', {
+        headers: { Authorization: token },
+    })
+    expect(res.ok()).toBe(true)
+    const items = (await res.json()).items as { brand_color?: string }[]
+    return items[0]?.brand_color ?? ''
+}
+
 async function saveColor(page: Page) {
     await page.getByTestId('brand-color-save').click()
     await expect(page.getByTestId('brand-color-save')).toBeDisabled()
@@ -54,6 +71,7 @@ test.describe('org-brand-color:', () => {
 
         await input.fill('#1e40af')
         await saveColor(page)
+        await expect.poll(() => serverColor(page)).toBe('#1e40af')
         await leaveAndReturn(page)
         await expect(page.getByTestId('brand-color-input')).toHaveValue('#1e40af')
 
@@ -63,6 +81,7 @@ test.describe('org-brand-color:', () => {
         await page.getByLabel('Use default', { exact: true }).click()
         await expect(input).toHaveValue('')
         await saveColor(page)
+        await expect.poll(() => serverColor(page)).toBe('')
         await leaveAndReturn(page)
         await expect(page.getByTestId('brand-color-input')).toHaveValue('')
     })
