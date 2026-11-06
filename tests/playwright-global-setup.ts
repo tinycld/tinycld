@@ -18,6 +18,7 @@
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { openE2eOutput, printLogTail } from '../scripts/e2e-output'
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..')
 export const TMP_DIR = path.join(PROJECT_ROOT, 'tmp')
@@ -28,7 +29,12 @@ const SECOND_PORT = Number(process.env.E2E_PORT_2 ?? 7201)
 
 function seedFixtures(port: number): Promise<void> {
     const url = `http://127.0.0.1:${port}`
-    process.stdout.write(`[global-setup] seeding fixtures → ${url}\n`)
+    // The seed prints a line per record and the sign-in box; off CI that goes
+    // to a log file (scripts/e2e-output.ts) and only a failure shows its end.
+    const { stdio, logPath } = openE2eOutput(`e2e-seed-${port}`)
+    process.stdout.write(
+        `[global-setup] seeding fixtures → ${url}${logPath ? ` (output: ${logPath})` : ''}\n`
+    )
     return new Promise((resolve, reject) => {
         // tsx loads through node, not npx: this cwd is a workspace member, so
         // npx warns on each run that it ignores the member's .npmrc.
@@ -47,7 +53,7 @@ function seedFixtures(port: number): Promise<void> {
             ],
             {
                 cwd: PROJECT_ROOT,
-                stdio: 'inherit',
+                stdio,
                 // Sibling packages link in via symlinks; without
                 // --preserve-symlinks Node resolves the seed to its realpath
                 // inside the sibling repo and cannot find peer deps in the app
@@ -56,11 +62,11 @@ function seedFixtures(port: number): Promise<void> {
             }
         )
         child.on('error', reject)
-        child.on('close', code =>
-            code === 0
-                ? resolve()
-                : reject(new Error(`global-setup: seeding ${url} failed with code ${code}`))
-        )
+        child.on('close', code => {
+            if (code === 0) return resolve()
+            printLogTail(logPath)
+            reject(new Error(`global-setup: seeding ${url} failed with code ${code}`))
+        })
     })
 }
 

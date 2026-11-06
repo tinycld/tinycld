@@ -245,6 +245,7 @@ message prefixes — the `pkg` attribute replaces them.
 - `pnpm run test:e2e` and `pnpm run test:server` cover the Playwright suite and supporting services.
    - never start or kill servers when running Playwright. It will manage it's own service and test data. If you see network errors or other issues, stop and ask for advice
 - `pnpm run test:e2e <test file>` will run a single test.  This will also start the dev server for testing.
+- Off CI, an e2e run prints one dot per test and then each failure in full. The output of the server, its build, the web export and the fixture seed goes to `tinycld/tmp/e2e-serve-<port>.log` and `tinycld/tmp/e2e-seed-<port>.log`, and the end of a log is printed when its step fails. `TINYCLD_E2E_VERBOSE=1` prints that output inline, and `--reporter=list` names each test. CI keeps the `list` reporter and the inline output.
 
 **Waiting in e2e: gate on the rendered screen, never on the URL.** A URL changes
 the moment the router *accepts* a navigation — before the target's lazy chunk has
