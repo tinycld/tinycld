@@ -122,12 +122,21 @@ export function ReportBody({ model }: { model: ReportViewModel }) {
     )
 }
 
+// The params of the run whose rows are shown: it changes when a run with new
+// params lands, not while that run loads behind the earlier rows, and not when a
+// live re-run of the same params answers.
+function shownRunParamsKey(model: ReportViewModel): string {
+    return JSON.stringify(model.run.result?.params ?? [])
+}
+
 function TableBody({ model }: { model: ReportViewModel }) {
     if (model.state !== 'ready') return null
+    const runParamsKey = shownRunParamsKey(model)
     return (
         <ReportTable
             columns={model.columns}
             rows={model.rows}
+            runParamsKey={runParamsKey}
             format={model.display}
             breakpoint={model.breakpoint}
             layouts={model.layouts}
