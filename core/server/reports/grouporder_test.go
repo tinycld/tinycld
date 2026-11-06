@@ -1,6 +1,8 @@
 package reports
 
 import (
+	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -289,6 +291,76 @@ func TestGroupOrderPathResolvesAliases(t *testing.T) {
 	res := z.options(t, "ann", aliased, OptionsRequest{Param: "accounts"})
 	if got := groupLabels(res); !slices.Equal(got, byPath.groups) {
 		t.Fatalf("aliased groups = %v, want %v", got, byPath.groups)
+	}
+}
+
+// A declared order over a select with many options pages as a short one
+// does: 11,000 options, read up to three times by a cursor page (a column,
+// the order and the cursor's condition), would bind 33,000 values, past
+// SQLite's 32,766 variables, if each option were a variable of its own (as
+// optionLabelSQL's one JSON parameter avoids). The bins' stored kinds are
+// declared Zinc, Moss, Alder, the reverse of A–Z, among the others.
+func TestGroupOrderDeclaredPagesOverALongOptionList(t *testing.T) {
+	z := newZoo(t)
+	bins := core.NewBaseCollection("zoo_bins")
+	bins.ListRule = rule(`@request.auth.id != ""`)
+	bins.Fields.Add(&core.TextField{Name: "name"}, &core.SelectField{Name: "kind", Values: []string{"alder", "moss", "zinc"}, MaxSelect: 1})
+	z.save(t, bins)
+	var options []Option
+	for i := range 11000 {
+		switch i {
+		case 5:
+			options = append(options, Option{Value: "zinc", Label: "Zinc"})
+		case 20:
+			options = append(options, Option{Value: "moss", Label: "Moss"})
+		case 10000:
+			options = append(options, Option{Value: "alder", Label: "Alder"})
+		default:
+			options = append(options, Option{Value: fmt.Sprintf("x%d", i), Label: fmt.Sprintf("X %d", i)})
+		}
+	}
+	RegisterSource(Source{
+		Key: "zoo.bins", Collection: "zoo_bins", Label: "Bins",
+		Fields: []Field{
+			{Key: "name", Label: "Name", Type: Text, Aggregates: MinMax},
+			{Key: "kind", Label: "Kind", Type: Select, Options: options},
+		},
+	})
+	for _, b := range []struct{ key, kind string }{
+		{"a1", "alder"}, {"a2", "alder"}, {"m1", "moss"}, {"m2", "moss"}, {"z1", "zinc"}, {"z2", "zinc"},
+	} {
+		z.rec(t, b.key, "zoo_bins", map[string]any{"name": strings.ToUpper(b.key), "kind": b.kind})
+	}
+	want := []string{"Z1", "Z2", "M1", "M2", "A1", "A2"}
+	spec := `{"version":2,"source":"zoo.bins",
+		"params":[{"id":"bins","type":"choice","multiple":true,
+			"optionsFrom":{"source":"zoo.bins","value":[{"field":"id"}],"label":[{"field":"name"}],"group":[{"field":"kind"}],"groupOrder":{"by":"declared"}}}],
+		"columns":[{"id":"name","path":[{"field":"name"}]}],
+		"filter":{"op":"in","args":[{"path":[{"field":"id"}]},{"param":"bins"}]}}`
+	loaded, _, err := Load([]byte(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	req := OptionsRequest{Spec: loaded, Param: "bins", Limit: 2, Auth: z.recs["ann"]}
+	for page := 1; page <= len(want); page++ {
+		res, err := ReadParamOptions(context.Background(), z.app, req)
+		if err != nil {
+			t.Fatalf("page %d: %v", page, err)
+		}
+		if page == 1 {
+			if labels := groupLabels(res); !slices.Equal(labels, []string{"Zinc", "Moss", "Alder"}) {
+				t.Fatalf("groups = %v, want Zinc, Moss, Alder", labels)
+			}
+		}
+		got = append(got, optionLabels(res)...)
+		if res.Next == "" {
+			break
+		}
+		req.After = res.Next
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("pages = %v, want %v", got, want)
 	}
 }
 
