@@ -218,10 +218,67 @@ func TestValidateRefusesABlankColumn(t *testing.T) {
 		// A detail label of exactly {col} is that column's cell.
 		{"the column the detail label is", strings.Replace(ledger(blankOnDetail),
 			`"detail":{"label":{"path":[{"field":"memo"}]}}`, `"detail":{"label":{"col":"no"}}`, 1), "columns.1.detail"},
+		// A pivot report has no detail rows, so a blank there does nothing.
+		{"a pivot report", pivotGramsBlank, "columns.2.detail"},
+		// A nest level's first column labels that level's child rows.
+		{"the first column of a nest level", feedingsFedBlank, "columns.2.detail"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			requireRefusal(t, Validate(app, loadSpec(t, c.spec)), 400, c.at, "invalid")
 		})
+	}
+}
+
+// pivotGramsBlank is feedings grouped by species, cost pivoted by month, and
+// grams blank on detail rows, which a pivot report never has.
+const pivotGramsBlank = `{"version":2,"source":"zoo.feedings","columns":[
+	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
+	{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum","detail":"blank"}],
+	"groups":[{"id":"g","col":"species"}],
+	"pivot":{"path":[{"field":"fed"}],"bucket":"month","cell":"cost"}}`
+
+// feedingsFedBlank is animalsWithFeedings with fed, the first column of the
+// nested level and so the label of its child rows, blank on detail rows.
+var feedingsFedBlank = strings.Replace(strings.Replace(animalsWithFeedings, "COST", "", 1),
+	`{"field":"fed"}]}`, `{"field":"fed"}],"detail":"blank"}`, 1)
+
+// twoNestLevels nests each feeding's animal's feedings under the feeding: a
+// second nest level, labelled by its own first column (again). AGAIN and
+// AGAINCOST are the detail members of the second level's two columns.
+const twoNestLevels = `{"version":2,"source":"zoo.animals","columns":[
+	{"id":"name","path":[{"field":"name"}]},
+	{"id":"site","path":[{"link":"site"}]},
+	{"id":"fed","path":[{"link":"feedings","mode":"nest"},{"field":"fed"}]},
+	{"id":"cost","path":[{"link":"feedings","mode":"nest"},{"field":"cost"}]},
+	{"id":"again","path":[{"link":"feedings","mode":"nest"},{"link":"animal"},{"link":"feedings","mode":"nest"},{"field":"fed"}]AGAIN},
+	{"id":"againCost","path":[{"link":"feedings","mode":"nest"},{"link":"animal"},{"link":"feedings","mode":"nest"},{"field":"cost"}]AGAINCOST}],
+	"groups":[{"id":"bySite","col":"site"}]}`
+
+func nestLevels(again, againCost string) string {
+	return strings.NewReplacer("AGAINCOST", againCost, "AGAIN", again).Replace(twoNestLevels)
+}
+
+// The second nest level's first column labels that level's child rows too.
+func TestValidateRefusesABlankOnASecondNestLevelsFirstColumn(t *testing.T) {
+	app := withZooRegistry(t)
+	requireRefusal(t, Validate(app, loadSpec(t, nestLevels(blankOnDetail, ""))), 400, "columns.4.detail", "invalid")
+}
+
+// Without the member, both refused shapes are valid reports, and a nest
+// level's later column may be blank: each refusal is the member's alone.
+func TestValidateAcceptsThePivotAndNestShapesWithNoBlank(t *testing.T) {
+	app := withZooRegistry(t)
+	for name, spec := range map[string]string{
+		"the pivot":                          strings.Replace(pivotGramsBlank, blankOnDetail, "", 1),
+		"the nested level":                   strings.Replace(feedingsFedBlank, blankOnDetail, "", 1),
+		"a nest level's second column blank": strings.Replace(animalsWithFeedings, "COST", blankOnDetail, 1),
+		"two nest levels":                    nestLevels("", ""),
+		"the second level's second column":   nestLevels("", blankOnDetail),
+	} {
+		if err := Validate(app, loadSpec(t, spec)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 

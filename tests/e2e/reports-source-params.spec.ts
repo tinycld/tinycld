@@ -538,6 +538,56 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         await expectGroupHeads(page, stem, declared)
     })
 
+    // E1: "A field" orders the regions by the smallest value of a field among each
+    // region's teams; a new one starts at the options' label field, the name
+    // (ConditionValues.tsx orderFor). A region's smallest value is read over every
+    // team it holds, not only the searched ones (options.go rankedOptionsSQL), and
+    // every signed-in user reads every stub team (salesstub_teams listRule). So these
+    // names start with '!', which sorts before the letter every other spec's team
+    // name starts with (uniqueName): each region's smallest name is then this
+    // test's, or the same test's from an earlier run, whose names hold the same
+    // order. A to Z by name puts South (A) first, then East (B), then North (C),
+    // which neither the regions' names nor their declared order give.
+    test('Order the groups by a field lists the regions by their smallest name, in the preview and the saved report', async ({
+        page,
+    }) => {
+        await login(page)
+        const stem = uniqueName('PathOrd')
+        await openReportStub(page)
+        await addTeam(page, `!${stem} A`, 'south')
+        await addTeam(page, `!${stem} B`, 'east')
+        await addTeam(page, `!${stem} C`, 'north')
+        await askTeamsByRegion(page)
+        const byName = ['All East', 'All North', 'All South']
+        const bySmallestName = ['All South', 'All East', 'All North']
+        await expectGroupHeads(page, stem, byName)
+
+        await chooseOption(page, GROUP_ORDER, 'path')
+        const orderField = page.getByTestId(`${GROUP_ORDER}-field`)
+        await expect(orderField).toHaveText('Name')
+        await expectGroupHeads(page, stem, bySmallestName)
+
+        // By the smallest region, each region comes by its own value, A to Z.
+        await orderField.click()
+        await page
+            .getByTestId('report-builder-picker')
+            .getByTestId('report-builder-pick-field-region')
+            .click()
+        await expect(orderField).toHaveText('Region')
+        await expectGroupHeads(page, stem, ['All East', 'All North', 'All South'])
+
+        await orderField.click()
+        await page
+            .getByTestId('report-builder-picker')
+            .getByTestId('report-builder-pick-field-name')
+            .click()
+        await expect(orderField).toHaveText('Name')
+        await expectGroupHeads(page, stem, bySmallestName)
+
+        await saveNewReport(page, uniqueName('Regions by name'))
+        await expectGroupHeads(page, stem, bySmallestName)
+    })
+
     // A field that is not a select has no order of its own: grouped by the team's
     // name, the field's own order is not offered and a chosen one is cleared.
     test('grouping the list by a field that is not a select clears the field’s own order', async ({

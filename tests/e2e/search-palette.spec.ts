@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { readFirstFrame, watchFirstFrame } from './first-frame-helpers'
 import { login, navigateToPackage } from './helpers'
 
 /**
@@ -211,5 +212,19 @@ test.describe('Search palette', () => {
 
         await expect(paletteDialog(page)).toHaveCount(0)
         expect(page.url()).toBe(url)
+    })
+
+    // The canonical config emulates reduced motion (playwright.config.ts), as a user
+    // who turned motion off: the panel then opens at rest. Its open animation is set
+    // inline (PaletteCard), so it runs only where its @keyframes are defined.
+    test('with reduced motion the palette opens with no animation', async ({ page }) => {
+        await login(page)
+        await navigateToPackage(page, ALPHA)
+        await watchFirstFrame(page, '[role="dialog"][aria-label="Search"]')
+        await openPalette(page)
+        const frame = await readFirstFrame(page)
+        expect(frame.reducedMotion).toBe(true)
+        expect(frame.animationName).toBe('tinycld-search-palette-in')
+        expect(frame.animations).toEqual([])
     })
 })

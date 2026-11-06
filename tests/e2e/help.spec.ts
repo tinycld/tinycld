@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { readFirstFrame, watchFirstFrame } from './first-frame-helpers'
 import { login } from './helpers'
 
 test.describe('Help', () => {
@@ -36,5 +37,22 @@ test.describe('Help', () => {
             .poll(() => image.evaluate((el: HTMLImageElement) => el.naturalWidth))
             .toBeGreaterThan(0)
         await expect(image).not.toHaveAttribute('src', /^data:/)
+    })
+
+    // The canonical config emulates reduced motion (playwright.config.ts), as a user
+    // who turned motion off: the help palette then opens at rest. Its open animation
+    // is set inline (HelpSearchPalette.web.tsx PaletteCard), so it runs only where its
+    // @keyframes are defined. ⌘/ opens it (use-help-search-shortcut.ts).
+    test('with reduced motion the help search palette opens with no animation', async ({
+        page,
+    }) => {
+        await login(page)
+        await watchFirstFrame(page, '[data-tinycld-help-palette="true"]')
+        await page.keyboard.press('ControlOrMeta+/')
+        await expect(page.getByRole('dialog', { name: 'Search help' })).toBeVisible()
+        const frame = await readFirstFrame(page)
+        expect(frame.reducedMotion).toBe(true)
+        expect(frame.animationName).toBe('tinycld-help-palette-in')
+        expect(frame.animations).toEqual([])
     })
 })

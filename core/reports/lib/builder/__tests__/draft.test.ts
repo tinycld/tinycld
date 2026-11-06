@@ -1303,4 +1303,97 @@ describe('a column blank on opened rows', () => {
             'columns.1.detail'
         )
     })
+
+    const issueAt = (draft: BuilderDraft, path: string) => {
+        const parsed = builderSchema(CATALOG).safeParse(draft)
+        if (parsed.success) return undefined
+        return parsed.error.issues.find(issue => issue.path.join('.') === path)?.message
+    }
+    const pivoted = (draft: BuilderDraft): BuilderDraft => ({
+        ...draft,
+        pivot: {
+            ...draft.pivot,
+            on: true,
+            path: [{ field: 'day' }],
+            bucket: 'month',
+            cell: 'amount',
+        },
+    })
+
+    // A pivot report has no opened rows (bind.go detailBlank, as detail.label), so Leave
+    // blank would do nothing there.
+    it('never offers Leave blank on a pivot report, and says why a blank is refused there', () => {
+        const draft = draftFromSpec(BLANK_REGION, META, CATALOG)
+        expect(offered(pivoted(draft))).toEqual([false, false, false])
+        expect(issueAt(pivoted(draft), 'columns.1.detail')).toBe(
+            'A pivot report has no opened rows: show the column on them'
+        )
+        expect(issueAt(draft, 'columns.1.detail')).toBeUndefined()
+    })
+
+    // Teams by region, each team's sales nested under it as child rows. A nest level's
+    // child rows are named by that level's first column (nest.go firstLabel, cols[0]),
+    // whatever the row label says, so that column cannot be blank on them; the level's
+    // later columns can.
+    const NESTED_SALES: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: TEAMS_KEY,
+        columns: [
+            { id: 'region', label: 'Region', path: [{ field: 'region' }] },
+            { id: 'name', label: 'Name', path: [{ field: 'name' }] },
+            {
+                id: 'customer',
+                label: 'Customer',
+                path: [{ link: 'sales', mode: 'nest' }, { field: 'customer' }],
+            },
+            {
+                id: 'amount',
+                label: 'Amount',
+                path: [{ link: 'sales', mode: 'nest' }, { field: 'amount' }],
+            },
+            {
+                id: 'again',
+                label: 'Same team’s customer',
+                path: [
+                    { link: 'sales', mode: 'nest' },
+                    { link: 'team' },
+                    { link: 'sales', mode: 'nest' },
+                    { field: 'customer' },
+                ],
+            },
+            {
+                id: 'againAmount',
+                label: 'Same team’s amount',
+                path: [
+                    { link: 'sales', mode: 'nest' },
+                    { link: 'team' },
+                    { link: 'sales', mode: 'nest' },
+                    { field: 'amount' },
+                ],
+            },
+        ],
+        groups: [{ id: 'byRegion', col: 'region' }],
+    }
+
+    it('never offers Leave blank on the first column of a nest level', () => {
+        const draft = draftFromSpec(NESTED_SALES, META, CATALOG)
+        expect(offered(draft)).toEqual([false, true, false, true, false, true])
+        const byName = labelled({ path: [{ field: 'name' }] })
+        expect(offered({ ...draft, detailLabel: byName })).toEqual([
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+        ])
+        const blankCustomer = draft.columns.map((column, i) =>
+            i === 2 ? { ...column, detail: 'blank' as const } : column
+        )
+        expect(issueAt({ ...draft, columns: blankCustomer }, 'columns.2.detail')).toBeDefined()
+        const blankAmount = draft.columns.map((column, i) =>
+            i === 3 ? { ...column, detail: 'blank' as const } : column
+        )
+        expect(issueAt({ ...draft, columns: blankAmount }, 'columns.3.detail')).toBeUndefined()
+    })
 })
