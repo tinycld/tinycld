@@ -2,21 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Per task: a fresh TEST WRITER writes the tests and runs them RED, a fresh IMPLEMENTER makes them green without editing tests, a fresh REVIEWER checks the task against this plan and the brief. Steps use `- [ ]`.
 
-**Goal:** Four small core changes a package (a books-like ledger) needs: an exported "offboarded" predicate (D3), e2e and users with reduced motion get no sheet animation (D4), a source-backed choice param lists its groups in a defined order (E1), and a column can be blank on detail rows (E2).
+**Goal:** Four small core changes a ledger package needs: an exported "offboarded" predicate (D3), e2e and users with reduced motion get no sheet animation (D4), a source-backed choice param lists its groups in a defined order (E1), and a column can be blank on detail rows (E2).
 
 **Architecture:** D3 is Go only (`core/server/offboard`). D4 is the canonical Playwright config plus core's animated overlays (`core/ui/sheet`, and what it renders). E1 and E2 are report spec fields: Go spec + bind/validate + engine (`core/server/reports`), TS spec types (`core/reports/lib/spec.ts`), the builder (`core/reports/components/builder`), help (`core/help/reports.md`) and `docs/packages.md`.
 
 **Tech stack:** Go (PocketBase fork), TypeScript / React Native (web + native), react-native-reanimated 4.7.1, Playwright, vitest.
 
-**Spec:** the driver's brief (auto-helix lane `purchases`, unit `p5-trial-balance`, core changes D3, D4, E1, E2), quoted in each task below.
+**Spec:** the driver's brief (core changes D3, D4, E1, E2), quoted in each task below.
 
 ## Global Constraints
 
 - Core names no package: no feature slug, collection or route in any core file, test, help or doc. Use fictional sources in Go tests (`reports.RegisterSource` of a made-up key, as existing reports tests do) and core's stub packages (`tests/scripts/scaffold-reports-stub.ts` → `salesstub`) for e2e. The acceptance shape is "a chart of accounts": account types in a declared order, accounts with numbers, lines grouped by account.
 - Web and native both. No `any`, no biome-ignore, no `useState`+`useEffect` sync, minimal JSX, semantic tokens, zod for forms (CLAUDE.md).
 - Optional new spec fields only: no spec version bump, old specs load unchanged.
-- Read first, every agent: `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-trial-balance/memories.md` and the `## Memories` section of `/Users/nas/code/tinycld/docs/plans/auto-helix/p5-trial-balance.md` (read only).
-- E2E: `E2E_PORT=7210 E2E_PORT_2=7211` before every e2e command; one spec file at a time: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_PORT_2=7211 pnpm exec tinycld-pkg test:e2e -- <file>.spec.ts`; check ports first: `lsof -iTCP -sTCP:LISTEN -nP | grep -E ':(7210|7211)'`. No bumped timeouts, retries, serial runs or skips.
+- E2E: `E2E_PORT=7210 E2E_PORT_2=7211` before every e2e command; one spec file at a time, from the core repo root: `E2E_PORT=7210 E2E_PORT_2=7211 pnpm exec tinycld-pkg test:e2e -- <file>.spec.ts`; check ports first: `lsof -iTCP -sTCP:LISTEN -nP | grep -E ':(7210|7211)'`. No bumped timeouts, retries, serial runs or skips.
 - Go checks: `cd core/server && go test ./reports/... ./offboard/...`, `go build ./...`, `go vet` on changed packages, `gofmt -l`.
 - TS checks: `pnpm run checks` at the core repo root; vitest for changed TS (`pnpm exec vitest run <path>` from the core repo root).
 
