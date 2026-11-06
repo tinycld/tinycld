@@ -23,13 +23,17 @@ const PALETTE_TOP_OFFSET_PX = 96
 // Native's StyleSheet doesn't expose @keyframes, so the alternative
 // would be a JS-driven Animated value — but the animation runs once on
 // mount and never again, so a tiny static <style> tag is simpler and
-// avoids a re-render loop on every open. Guarded for SSR.
+// avoids a re-render loop on every open. Guarded for SSR. The keyframes
+// exist only when the reader allows motion, so under reduced motion the
+// inline animation name resolves to nothing and the palette opens at rest.
 if (typeof document !== 'undefined' && !document.getElementById('tinycld-help-palette-styles')) {
     const styleEl = document.createElement('style')
     styleEl.id = 'tinycld-help-palette-styles'
-    styleEl.textContent = `@keyframes tinycld-help-palette-in {
-        from { opacity: 0; transform: translateY(-4px); }
-        to { opacity: 1; transform: translateY(0); }
+    styleEl.textContent = `@media (prefers-reduced-motion: no-preference) {
+        @keyframes tinycld-help-palette-in {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     }`
     document.head.appendChild(styleEl)
 }
