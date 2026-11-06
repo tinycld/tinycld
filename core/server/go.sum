@@ -136,8 +136,8 @@ github.com/nathanstitt/go-webdav v0.7.1-0.20261001184608-67abd707e045 h1:PU9Paiv
 github.com/nathanstitt/go-webdav v0.7.1-0.20261001184608-67abd707e045/go.mod h1:/CletBm2Vo0CX6I20VQsoRkkX1CzzNCK1PNCqKW//iQ=
 github.com/nathanstitt/gopbs v1.0.2 h1:St80S3xOLD1oefaXYSb2C8hr1tqiS1+1nAkanTE/5Hc=
 github.com/nathanstitt/gopbs v1.0.2/go.mod h1:8sLWqNW3jyE3t5otnzaqqP4hpI/swnYziMmoLl/7qtM=
-github.com/nathanstitt/omnidoc v1.1.2 h1:7so06UNN1XzuSrgL0ZKGqL39FFpjPYYxP2qTuub7JQU=
-github.com/nathanstitt/omnidoc v1.1.2/go.mod h1:CZWyEFemXEqhmv8aaq+Z/my91pUO0NpMrbi+GNyRJ5o=
+github.com/nathanstitt/omnidoc v1.2.0 h1:TYagQ4DWUna34gJCcUc5jpYrj+Yr3sKFmiq/jgFA8Hk=
+github.com/nathanstitt/omnidoc v1.2.0/go.mod h1:tSqcMdvnkSHWxMkIxm6HrYoXeMKc2PUcmM+p79imw/0=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
