@@ -1,11 +1,13 @@
 package reports
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -24,6 +26,14 @@ import (
 // amount group with a currency is "<amount> <currency>" (amountGroupSQL). A
 // where on another param reads that param's value for the request.
 func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
+	return c.optionsSelectOf(s, op, false)
+}
+
+// optionsSelectOf is optionsSelect, and when ordered, with the option's
+// smallest value (k) of its group order's path, a blank text being no value.
+// Only a list read for the picker is ordered: a run that expands a group
+// reads no order path.
+func (c *compiler) optionsSelectOf(s *stmt, op *optionsPlan, ordered bool) (string, error) {
 	sc := newScope(s, op.src)
 	value := "CAST(" + sc.value(op.value).sql + " AS TEXT)"
 	lv := sc.value(op.label)
@@ -36,6 +46,10 @@ func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 	group := "NULL"
 	if op.group != nil {
 		group = "COALESCE(min(NULLIF(" + c.amountGroupSQL(s, sc, op.group) + ", '')), '')"
+	}
+	orderValue := "NULL"
+	if ordered && op.orderPath != nil {
+		orderValue = "min(NULLIF(" + sc.value(op.orderPath).sql + ", ''))"
 	}
 	where := "1"
 	if w := op.def.OptionsFrom.Where; w != nil {
@@ -50,8 +64,60 @@ func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 			where = "COALESCE(" + e.sql + ", 0)"
 		}
 	}
-	return fmt.Sprintf("SELECT %s AS v, %s AS l, %s AS lc, %s AS g\n%s\nWHERE %s AND %s IS NOT NULL\nGROUP BY 1",
-		value, label, labelCur, group, sc.render(), where, value), nil
+	return fmt.Sprintf("SELECT %s AS v, %s AS l, %s AS lc, %s AS g, %s AS k\n%s\nWHERE %s AND %s IS NOT NULL\nGROUP BY 1",
+		value, label, labelCur, group, orderValue, sc.render(), where, value), nil
+}
+
+// rankedOptionsSQL is the options select (o) with, for grouped options,
+// each option's group label (gl, glc) and the group's smallest order value
+// (gk) over all its options, so a search never moves a group. keys are the
+// group's sort keys over it, each never NULL: the blank group first, then
+// the group order, then the group's label and value. The groups list and
+// the options page both order by them, so a page only appends to what the
+// reader sees.
+func (c *compiler) rankedOptionsSQL(s *stmt, op *optionsPlan) (string, []string, error) {
+	inner, err := c.optionsSelectOf(s, op, true)
+	if err != nil || op.group == nil {
+		return inner, nil, err
+	}
+	key := pathExpr("o.g", op.group)
+	label, cur := "COALESCE("+optionLabelOf(s, key)+", '')", "NULL"
+	if key.target != nil {
+		// A link's group shows the record's label, and its currency when the
+		// label is an amount; an amount's own group carries its currency in
+		// its value (amountGroupSQL).
+		cur = c.labelCurrencySQL(s, key.target, labelFieldOf(key.target, ""), "o.g")
+	}
+	groupValue := "NULL"
+	if op.orderPath != nil {
+		groupValue = "min(o.k) OVER (PARTITION BY o.g)"
+	}
+	sql := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g, %s AS gl, %s AS glc, %s AS gk FROM (%s) o",
+		label, cur, groupValue, inner)
+	keys := []string{"o.g <> ''"}
+	switch op.orderBy {
+	case GroupOrderDeclared:
+		keys = append(keys, declaredOrderSQL(s, op.group.field.Options, "o.g"))
+	case GroupOrderPath:
+		keys = append(keys, "o.gk IS NULL", "COALESCE(o.gk, '')")
+	}
+	// A number label orders by its value, not its text ("4" before "190").
+	return sql, append(keys, orderKey(shownType(op.group), "o.gl"), "o.g"), nil
+}
+
+// declaredOrderSQL is a select value's place among its declared options; a
+// value no option names comes after them all.
+func declaredOrderSQL(s *stmt, options []Option, value string) string {
+	if len(options) == 0 {
+		return "0"
+	}
+	var b strings.Builder
+	b.WriteString("CASE " + value)
+	for i, o := range options {
+		fmt.Fprintf(&b, " WHEN %s THEN %d", s.bind(o.Value), i)
+	}
+	fmt.Fprintf(&b, " ELSE %d END", len(options))
+	return b.String()
 }
 
 // groupListSQL is a choice list with group references expanded under the
@@ -216,8 +282,9 @@ type OptionGroup struct {
 	Currency string    `json:"currency,omitempty"`
 }
 
-// ParamOptions is one page of options, ordered by label then value. Groups
-// are the groups of every option that matches the search, at most
+// ParamOptions is one page of options, ordered by label then value; grouped
+// options come group by group in the groups' order first. Groups are the
+// groups of every option that matches the search, in the group order, at most
 // maxOptionGroups of them (GroupsCut says the list stops there); they come
 // with the first page only (F9). Next is the cursor of the next page, "" on
 // the last.
@@ -284,10 +351,11 @@ func optionsLimit(req OptionsRequest) (int, error) {
 }
 
 // optionsPage reads the options of one page (or of the asked values) into
-// res, with the next page's cursor when there is one.
+// res, with the next page's cursor when there is one. Grouped options come
+// group by group, in the groups list's order, then by label, then value.
 func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req OptionsRequest, limit int, res *ParamOptions) error {
 	s := newStmt(c.app, c.info)
-	inner, err := c.optionsSelect(s, op)
+	ranked, keys, err := c.rankedOptionsSQL(s, op)
 	if err != nil {
 		return err
 	}
@@ -301,15 +369,24 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 		}
 		conds = append(conds, "o.v IN "+values)
 	case req.After != "":
-		label, value, err := readOptionsCursor(req.After)
+		after, label, value, err := readOptionsCursor(req.After, len(keys))
 		if err != nil {
 			return err
 		}
+		bound := make([]string, 0, len(after)+3)
+		for _, k := range after {
+			bound = append(bound, s.bind(k))
+		}
 		l := s.bind(label)
-		conds = append(conds, fmt.Sprintf("(o.l <> '', %s, o.v) > (%s <> '', %s, %s)", orderKey(typ, "o.l"), l, orderKey(typ, l), s.bind(value)))
+		bound = append(bound, l+" <> ''", orderKey(typ, l), s.bind(value))
+		conds = append(conds, fmt.Sprintf("(%s) > (%s)", strings.Join(optionOrder(keys, typ), ", "), strings.Join(bound, ", ")))
 	}
-	body := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g FROM (%s) o\nWHERE %s\nORDER BY o.l <> '', %s, o.v LIMIT %s",
-		inner, strings.Join(conds, " AND "), orderKey(typ, "o.l"), limitSQL(int64(limit+1)))
+	cols := ""
+	for i, k := range keys {
+		cols += fmt.Sprintf(", %s AS k%d", k, i)
+	}
+	body := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g%s FROM (%s) o\nWHERE %s\nORDER BY %s LIMIT %s",
+		cols, ranked, strings.Join(conds, " AND "), strings.Join(optionOrder(keys, typ), ", "), limitSQL(int64(limit+1)))
 	rows, _, err := readRows(ctx, c.app, s, nil, body, false)
 	if err != nil {
 		return err
@@ -324,33 +401,35 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 	}
 	if more {
 		last := rows[len(rows)-1]
-		res.Next = optionsCursor(textOf(last["l"]), textOf(last["v"]))
+		after := make([]any, len(keys))
+		for i := range keys {
+			after[i] = last[fmt.Sprintf("k%d", i)]
+		}
+		res.Next = optionsCursor(after, textOf(last["l"]), textOf(last["v"]))
 	}
 	return nil
 }
 
+// optionOrder is the options page's order over o: the group keys, then the
+// label (a blank one last, a number by its value), then the value.
+func optionOrder(keys []string, typ FieldType) []string {
+	return append(slices.Clone(keys), "o.l <> ''", orderKey(typ, "o.l"), "o.v")
+}
+
 // optionGroups reads into res the groups of the options that match search,
-// each shown by its label: a group read from a link shows the record's
-// label, never its id, and a select's its option's label.
+// in the group order, each shown by its label: a group read from a link
+// shows the record's label, never its id, and a select's its option's
+// label.
 func (c *compiler) optionGroups(ctx context.Context, op *optionsPlan, search string, res *ParamOptions) error {
 	s := newStmt(c.app, c.info)
-	inner, err := c.optionsSelect(s, op)
+	ranked, keys, err := c.rankedOptionsSQL(s, op)
 	if err != nil {
 		return err
 	}
 	typ := shownType(op.group)
 	key := pathExpr("o.g", op.group)
-	label, cur := "COALESCE("+optionLabelOf(s, key)+", '')", "NULL"
-	if key.target != nil {
-		// A link's group shows the record's label, and its currency when the
-		// label is an amount; an amount's own group carries its currency in
-		// its value (amountGroupSQL).
-		cur = c.labelCurrencySQL(s, key.target, labelFieldOf(key.target, ""), "o.g")
-	}
-	// The blank group comes first; a number orders by its value, not its
-	// text ("4" before "190").
-	body := fmt.Sprintf("SELECT o.g AS g, %s AS gl, %s AS glc FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY o.g <> '', %s, 1 LIMIT %s",
-		label, cur, inner, strings.Join(optionConds(s, search, nil), " AND "), orderKey(typ, "gl"), limitSQL(int64(maxOptionGroups+1)))
+	body := fmt.Sprintf("SELECT o.g AS g, o.gl AS gl, o.glc AS glc FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY %s LIMIT %s",
+		ranked, strings.Join(optionConds(s, search, nil), " AND "), strings.Join(keys, ", "), limitSQL(int64(maxOptionGroups+1)))
 	rows, _, err := readRows(ctx, c.app, s, nil, body, false)
 	if err != nil {
 		return err
@@ -445,23 +524,49 @@ func textOf(v any) string {
 	return fmt.Sprint(v)
 }
 
-// optionsCursor is the cursor after the option with this label and value.
-func optionsCursor(label, value string) string {
-	b, _ := json.Marshal([]string{label, value})
+// optionsCursor is the cursor after the option with these group keys
+// (rankedOptionsSQL; none for options with no group), label and value.
+func optionsCursor(keys []any, label, value string) string {
+	b, _ := json.Marshal(append(keys, label, value))
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func readOptionsCursor(text string) (string, string, error) {
+// readOptionsCursor reads a cursor of a list with n group keys. A key is a
+// text or a number, read back as the number it was (an integer stays exact).
+func readOptionsCursor(text string, n int) ([]any, string, string, error) {
 	bad := invalid("after", "the cursor is not one this list gave")
 	raw, err := base64.RawURLEncoding.DecodeString(text)
 	if err != nil {
-		return "", "", bad
+		return nil, "", "", bad
 	}
-	var parts []string
-	if json.Unmarshal(raw, &parts) != nil || len(parts) != 2 {
-		return "", "", bad
+	var parts []any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if dec.Decode(&parts) != nil || len(parts) != n+2 {
+		return nil, "", "", bad
 	}
-	return parts[0], parts[1], nil
+	label, okLabel := parts[n].(string)
+	value, okValue := parts[n+1].(string)
+	if !okLabel || !okValue {
+		return nil, "", "", bad
+	}
+	keys := parts[:n]
+	for i, k := range keys {
+		switch k := k.(type) {
+		case string:
+		case json.Number:
+			if v, err := k.Int64(); err == nil {
+				keys[i] = v
+			} else if v, err := k.Float64(); err == nil {
+				keys[i] = v
+			} else {
+				return nil, "", "", bad
+			}
+		default:
+			return nil, "", "", bad
+		}
+	}
+	return keys, label, value, nil
 }
 
 // paramOptionsBody is one param-options request: a draft spec, or the id of

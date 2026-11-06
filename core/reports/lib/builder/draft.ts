@@ -44,6 +44,7 @@ import {
     emptyGroup,
     filterGroupSchema,
     filterToNode,
+    groupOrderChoices,
     type LevelScope,
     nodeToFilter,
     paramsInGroup,
@@ -314,6 +315,7 @@ export function showsDetailLabel(draft: Pick<BuilderDraft, 'pivot' | 'detailLabe
 export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues = [
         ...paramIssues(draft.params),
+        ...groupOrderIssues(draft.params, catalog),
         ...columnIssues(draft, catalog),
         ...groupingIssues(draft, catalog),
     ]
@@ -338,6 +340,22 @@ function paramIssues(params: readonly ParamDef[]): Issue[] {
         }
         if (utf8Length(from.groupLabel) > MAX_LABEL) {
             return [{ path, message: `Use at most ${MAX_LABEL} characters` }]
+        }
+        return []
+    })
+}
+
+// The group orders the engine refuses (params.go checkGroupOrder, bind.go
+// groupOrder): an order with no groups, and the field's own order of a group
+// that is not a select.
+function groupOrderIssues(params: readonly ParamDef[], catalog: Catalog): Issue[] {
+    return params.flatMap((param, i): Issue[] => {
+        const from = param.optionsFrom
+        if (!from?.groupOrder) return []
+        const path = ['params', i, 'optionsFrom', 'groupOrder']
+        if (!from.group?.length) return [{ path, message: 'Group the list to order its groups' }]
+        if (!groupOrderChoices(catalog, from).includes(from.groupOrder.by)) {
+            return [{ path, message: 'Only a field with fixed choices has its own order' }]
         }
         return []
     })

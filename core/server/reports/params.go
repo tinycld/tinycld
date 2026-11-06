@@ -93,6 +93,9 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 			if err := checkGroupLabel(d.OptionsFrom, at+".optionsFrom.groupLabel"); err != nil {
 				return err
 			}
+			if err := checkGroupOrder(d.OptionsFrom, at+".optionsFrom.groupOrder"); err != nil {
+				return err
+			}
 		default:
 			return invalid(at+".type", fmt.Sprintf("unknown param type %q", d.Type))
 		}
@@ -118,6 +121,27 @@ func checkGroupLabel(of *OptionsFrom, at string) *SpecError {
 		return invalid(at, "a group pick's text names the group with "+GroupLabelToken)
 	case len(of.GroupLabel) > maxLabel:
 		return invalid(at, fmt.Sprintf("a group pick's text has at most %d characters", maxLabel))
+	}
+	return nil
+}
+
+// checkGroupOrder refuses a group order with no groups to order, an unknown
+// order, and a path where the order reads none. The binder checks what needs
+// the registry: a declared order's select, a path's fields.
+func checkGroupOrder(of *OptionsFrom, at string) *SpecError {
+	if of == nil || of.GroupOrder == nil {
+		return nil
+	}
+	o := of.GroupOrder
+	switch {
+	case len(of.Group) == 0:
+		return invalid(at, "a group order needs optionsFrom.group")
+	case o.By != GroupOrderLabel && o.By != GroupOrderDeclared && o.By != GroupOrderPath:
+		return invalid(at+".by", "a group order is by label, declared or path")
+	case o.By == GroupOrderPath && len(o.Path) == 0:
+		return invalid(at+".path", "a group order by path names the path")
+	case o.By != GroupOrderPath && len(o.Path) > 0:
+		return invalid(at+".path", "only a group order by path has a path")
 	}
 	return nil
 }

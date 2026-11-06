@@ -80,6 +80,14 @@ When you open a group, its rows are labelled by the first column. To label them 
 
 A condition on a linked record lets you pick records by name. Turn on **Ask when the report runs**: the reader picks records from a list and can type in **Search** to narrow it. To list the records in groups, choose a field under **Group the list by** (for example a team's region). The reader can then pick a whole group at once with **All** and the group's name. To use other words for that choice, type them in **Whole group text**, with `{group}` where the group's name goes. For example, `All {group} teams` shows "All North teams".
 
+To change the order of the groups, use **Order the groups by**:
+
+- **Name (A–Z)** lists the groups by name. This is the default.
+- **The field's own order** lists the groups in the order that the field gives its choices. For example, account types show as Assets, Liabilities, Equity, Income, Expense. This choice shows only when you group the list by a field with fixed choices.
+- **A field** lists the groups by a field that you choose. A group with the smallest value of that field comes first. For example, choose a sort number that each record has.
+
+Records with no group always show first. In each group, the records show by name.
+
 ## Fold groups
 
 To open a group level when the report opens, turn on **Open when the report opens** for that level. **Collapse all** closes the groups until you open them again.

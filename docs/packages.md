@@ -1302,7 +1302,7 @@ version.
 | `groups[].open` | The level is open when the report opens and no expansion state is sent. |
 | `sort[]` | `{ col, dir }` or `{ formula, dir }`. A formula sort key that reads a row's fields sorts detail rows only; group levels skip it. |
 | `detail.label` | A formula that labels each detail row. Default: the first column. |
-| `params[].optionsFrom` | `{ source, value, label, group?, groupLabel?, where? }`: a choice param reads its options from a source, under the reader's rules. `groupLabel` (with `group`) is the text of a whole-group pick, with `{group}` where the group's label goes (`"All {group} accounts"`); absent: `All {group}`. |
+| `params[].optionsFrom` | `{ source, value, label, group?, groupOrder?, groupLabel?, where? }`: a choice param reads its options from a source, under the reader's rules. `groupOrder` (with `group`) orders the groups: `{ "by": "label" }` (default) by the group's label, a number by its value; `{ "by": "declared" }` in the order the group's select field declares its options (refused unless `group` ends at a select field; a stored value no option names comes after the named ones, by label); `{ "by": "path", "path": [...] }` by the smallest value of `path` (a to-one path on the options source, bound as `group` is; a blank text is no value) over each group's options, with groups that have no value after the others. Ties and every order end by label; the blank group is always first. The options come group by group in that order, then by label, and a page's `next` carries the group, so each page only appends. `groupLabel` (with `group`) is the text of a whole-group pick, with `{group}` where the group's label goes (`"All {group} accounts"`); absent: `All {group}`. |
 | formula leaf `{ record, path }` | Reads a field of a record group's record. |
 | operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: one value (`min` by default, or `max`) from the rows of another source that the reader may see. |
 | `pivot.labelField` | The field of a link's record that a pivot over that link names its columns by. |
@@ -1312,6 +1312,29 @@ A param of type `amount` holds cents and a currency. A multiple choice param
 may hold a whole group as `{"group": "<value>"}`; the server expands it under
 the reader's rules at run time. Report option lists and group keys bind as one
 JSON parameter, so there is no SQL variable limit on them.
+
+For example, a chart of accounts source (`zoo.accounts`) whose `type` select
+declares its options as asset, liability, equity, income, expense lists an
+Accounts filter's groups in that order, not A–Z:
+
+```json
+{
+  "id": "accounts",
+  "type": "choice",
+  "multiple": true,
+  "optionsFrom": {
+    "source": "zoo.accounts",
+    "value": [{ "field": "id" }],
+    "label": [{ "field": "name" }],
+    "group": [{ "field": "type" }],
+    "groupOrder": { "by": "declared" },
+    "groupLabel": "All {group} accounts"
+  }
+}
+```
+
+To order the types by a number the source keeps instead, use
+`"groupOrder": { "by": "path", "path": [{ "field": "sort" }] }`.
 
 **Param options.** `POST /api/reports/param-options` reads one page of a
 choice param's options for a draft `spec` or a saved `reportId` the caller can

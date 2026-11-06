@@ -12,7 +12,7 @@ import {
 } from '../../lib/builder/formula-context'
 import type { FormulaRecord } from '../../lib/builder/formula-parts'
 import { bareRecordField, LevelFormula } from './GroupLevelParts'
-import { IconButton, NEW_FORMULA } from './parts'
+import { FieldError, IconButton, NEW_FORMULA } from './parts'
 import { useColumnChoices } from './report-formula'
 
 // The report's sort keys: a column, a field of a group's record (R9), or a formula.
@@ -22,15 +22,6 @@ const DIR_OPTIONS = [
     { value: 'asc', label: 'A to Z' },
     { value: 'desc', label: 'Z to A' },
 ]
-
-function FieldError({ message, testID }: { message: string | undefined; testID: string }) {
-    if (!message) return null
-    return (
-        <Text testID={testID} role="alert" className="text-xs text-danger">
-            {message}
-        </Text>
-    )
-}
 
 type SortKey = { kind: 'col'; col: string } | { kind: 'formula'; formula: FormulaDraft }
 

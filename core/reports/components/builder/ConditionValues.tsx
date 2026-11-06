@@ -23,7 +23,9 @@ import {
     askParamFor,
     type ConditionDraft,
     type FilterPath,
+    groupOrderChoices,
     needsValue,
+    tidyParam,
     withOptionsGroup,
 } from '../../lib/builder/filter'
 import { BLANK_LINK_LABEL } from '../../lib/format'
@@ -37,6 +39,9 @@ import {
 import {
     CURRENT_SPEC_VERSION,
     GROUP_LABEL_TOKEN,
+    type GroupOrder,
+    type GroupOrderBy,
+    type OptionsFrom,
     type ParamDef,
     type ReportSpec,
     type SpecHop,
@@ -53,7 +58,7 @@ import {
     itemTestId,
     setCondition,
 } from './condition-context'
-import { IconButton } from './parts'
+import { FieldError, IconButton } from './parts'
 
 // The value side of a condition row: the value (a choice, chips, a text, a number
 // or a date, or a range), Ask when run with a date's default, the group above a
@@ -387,7 +392,7 @@ function OptionsGroup({ ctx, item, path }: ValueProps) {
     const testID = `${itemTestId(ctx, path)}-options-group`
     const info = from.group ? describePath(ctx.catalog, from.source, from.group) : null
     const setGroup = (group: SpecHop[] | null) => {
-        const next = withOptionsGroup(param, group)
+        const next = withOptionsGroup(param, group, ctx.catalog)
         ctx.builder.setParams(ctx.params.map(p => (p.id === param.id ? next : p)))
     }
     return (
@@ -409,6 +414,101 @@ function OptionsGroup({ ctx, item, path }: ValueProps) {
                 icon={X}
                 onPress={() => setGroup(null)}
             />
+        </View>
+    )
+}
+
+const GROUP_ORDER_LABELS: Record<GroupOrderBy, string> = {
+    label: 'Name (A–Z)',
+    declared: 'The field’s own order',
+    path: 'A field',
+}
+
+// A new order by a field starts at the options' own label field: each group then
+// comes by its first option.
+function orderFor(by: GroupOrderBy, from: OptionsFrom): GroupOrder | undefined {
+    if (by === 'declared') return { by }
+    if (by === 'path') return { by, path: from.label }
+    return undefined
+}
+
+function pathOrderLabel(ctx: FilterContext, from: OptionsFrom): string {
+    const order = from.groupOrder
+    const info = order?.by === 'path' ? describePath(ctx.catalog, from.source, order.path) : null
+    return info ? pathLabel(info) : 'Choose a field'
+}
+
+// The field a group order by path reads, picked as the group field is.
+function GroupOrderField({
+    isVisible,
+    ctx,
+    from,
+    testID,
+    onPick,
+}: {
+    isVisible: boolean
+    ctx: FilterContext
+    from: OptionsFrom
+    testID: string
+    onPick: (path: SpecHop[]) => void
+}) {
+    if (!isVisible) return null
+    return (
+        <ColumnPicker
+            catalog={ctx.catalog}
+            baseKey={from.source}
+            onPick={onPick}
+            label={pathOrderLabel(ctx, from)}
+            testID={testID}
+            toOneOnly
+        />
+    )
+}
+
+// The order of a grouped list's groups (spec.go GroupOrder): by name, in the group
+// field's own order (only a select has one), or by the smallest value of a field
+// in each group. Name is the default, so it writes no order. The builder's schema
+// checks it (draft.ts groupOrderIssues) and the refusal shows below.
+function OptionsGroupOrder({ ctx, item, path }: ValueProps) {
+    const index = ctx.params.findIndex(p => p.id === item.param)
+    const param = ctx.params[index]
+    const from = param?.optionsFrom
+    if (!param || !from?.group?.length) return null
+    const testID = `${itemTestId(ctx, path)}-options-order`
+    const current = from.groupOrder?.by ?? 'label'
+    const setOrder = (groupOrder: GroupOrder | undefined) => {
+        const next = tidyParam({ ...param, optionsFrom: { ...from, groupOrder } })
+        ctx.builder.setParams(ctx.params.map(p => (p.id === param.id ? next : p)))
+    }
+    const items: PickItem[] = groupOrderChoices(ctx.catalog, from).map(by => ({
+        id: by,
+        label: GROUP_ORDER_LABELS[by],
+        isSelected: by === current,
+        onSelect: () => {
+            if (by !== current) setOrder(orderFor(by, from))
+        },
+    }))
+    const field = `params.${index}.optionsFrom.groupOrder` as const
+    const error = ctx.builder.form.getFieldState(field, ctx.builder.form.formState).error
+    return (
+        <View className="basis-full gap-1">
+            <View className="flex-row flex-wrap items-center gap-2">
+                <Text className="text-xs text-muted-foreground">Order the groups by</Text>
+                <PickMenu
+                    label={GROUP_ORDER_LABELS[current]}
+                    purpose="Order the groups by"
+                    items={items}
+                    testID={testID}
+                />
+                <GroupOrderField
+                    isVisible={current === 'path'}
+                    ctx={ctx}
+                    from={from}
+                    testID={`${testID}-field`}
+                    onPick={orderPath => setOrder({ by: 'path', path: orderPath })}
+                />
+            </View>
+            <FieldError message={error?.message} testID={`${testID}-error`} />
         </View>
     )
 }
@@ -478,6 +578,7 @@ export function AskToggle(props: ValueProps) {
             <Text className="text-sm text-foreground">Ask when the report runs</Text>
             <DefaultPreset {...props} />
             <OptionsGroup {...props} />
+            <OptionsGroupOrder {...props} />
             <GroupPickField {...props} />
         </View>
     )

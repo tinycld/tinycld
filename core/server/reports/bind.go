@@ -57,6 +57,10 @@ type optionsPlan struct {
 	at                  string
 	src                 *Source
 	value, label, group *pathPlan
+	// orderBy is the group order (GroupOrderLabel when the spec names none),
+	// orderPath its bound path when it orders by path.
+	orderBy   string
+	orderPath *pathPlan
 }
 
 type hopPlan struct {
@@ -215,8 +219,8 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	return p, nil
 }
 
-// optionSources binds each choice param's options source: its value, label
-// and group paths, to-one only.
+// optionSources binds each choice param's options source: its value, label,
+// group and group order paths, to-one only.
 func (b *binder) optionSources(p *plan) {
 	p.options = map[string]*optionsPlan{}
 	for i := range p.spec.Params {
@@ -231,16 +235,39 @@ func (b *binder) optionSources(p *plan) {
 			b.missing(at+".source", "unknown_source", fmt.Sprintf("the source %q does not exist", of.Source))
 			continue
 		}
-		op := &optionsPlan{def: d, at: at, src: src}
+		op := &optionsPlan{def: d, at: at, src: src, orderBy: GroupOrderLabel}
 		op.value = b.path(src, of.Value, at+".value", pathValue, "")
 		op.label = b.path(src, of.Label, at+".label", pathValue, "")
 		if of.Group != nil {
 			op.group = b.path(src, of.Group, at+".group", pathValue, "")
 		}
+		if op.group != nil && of.GroupOrder != nil {
+			b.groupOrder(src, op, of.GroupOrder, at+".groupOrder")
+		}
 		if op.value != nil && op.label != nil {
 			p.options[d.ID] = op
 		}
 	}
+}
+
+// groupOrder binds a grouped list's group order; checkGroupOrder has
+// already checked its shape.
+func (b *binder) groupOrder(src *Source, op *optionsPlan, o *GroupOrder, at string) {
+	switch o.By {
+	case GroupOrderDeclared:
+		if op.group.field.Type != Select {
+			b.bad(at, "declared order needs a select group field")
+			return
+		}
+	case GroupOrderPath:
+		if op.orderPath = b.path(src, o.Path, at+".path", pathValue, ""); op.orderPath == nil {
+			return
+		}
+	case GroupOrderLabel:
+	default:
+		return
+	}
+	op.orderBy = o.By
 }
 
 func (b *binder) columns(p *plan) {

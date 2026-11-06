@@ -36,6 +36,16 @@ export function IconButton({ label, testID, isVisible, icon: Icon, onPress }: Ic
     )
 }
 
+/** A refusal under the part it is about; nothing when there is none. */
+export function FieldError({ message, testID }: { message: string | undefined; testID: string }) {
+    if (!message) return null
+    return (
+        <Text testID={testID} role="alert" className="text-xs text-danger">
+            {message}
+        </Text>
+    )
+}
+
 /** A new formula column or computed row starts at 0, which the engine reads as a number. */
 export const NEW_FORMULA: FormulaDraft = { kind: 'editable', node: { value: 0 } }
 

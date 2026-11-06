@@ -62,16 +62,31 @@ export const specNodeSchema: z.ZodType<SpecNode, SpecNode> = z.lazy(() =>
 const optionSchema = z.strictObject({ value: z.string(), label: z.string() })
 
 /**
+ * The order of a choice param's option groups (spec.go GroupOrder): by the group's
+ * label, in the order the group's select field declares its options, or by the
+ * smallest value of `path` over each group's options. The blank group comes first.
+ */
+export const groupOrderSchema = z.union([
+    z.strictObject({ by: z.literal('label') }),
+    z.strictObject({ by: z.literal('declared') }),
+    z.strictObject({ by: z.literal('path'), path: z.array(specHopSchema) }),
+])
+export type GroupOrder = z.infer<typeof groupOrderSchema>
+export type GroupOrderBy = GroupOrder['by']
+
+/**
  * A choice param's options read from a source under the reader's list rules: `value`
  * is what the param holds, `label` what the picker shows, `group` how it groups them,
- * `groupLabel` the text of a whole-group pick (`GROUP_LABEL_TOKEN` stands for the
- * group's label; absent or empty: "All {group}"), `where` which rows count.
+ * `groupOrder` the order of the groups (absent: by label), `groupLabel` the text of a
+ * whole-group pick (`GROUP_LABEL_TOKEN` stands for the group's label; absent or empty:
+ * "All {group}"), `where` which rows count.
  */
 export const optionsFromSchema = z.strictObject({
     source: z.string(),
     value: z.array(specHopSchema),
     label: z.array(specHopSchema),
     group: z.array(specHopSchema).optional(),
+    groupOrder: groupOrderSchema.optional(),
     groupLabel: z.string().optional(),
     where: specNodeSchema.optional(),
 })

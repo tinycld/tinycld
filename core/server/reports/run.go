@@ -1066,7 +1066,8 @@ func compileDry(p *plan) error {
 	}
 	for _, d := range p.spec.Params {
 		if op := p.options[d.ID]; op != nil {
-			if _, err := c.optionsSelect(newStmt(nil, nil), op); err != nil {
+			// As the picker reads them: with the group order.
+			if _, _, err := c.rankedOptionsSQL(newStmt(nil, nil), op); err != nil {
 				return err
 			}
 		}
