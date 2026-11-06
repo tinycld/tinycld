@@ -1,7 +1,7 @@
 ---
 title: Organization branding
-summary: Upload a logo that identifies your organization throughout the app.
-tags: [branding, logo, organization, admin]
+summary: Upload a logo and pick a brand color that identify your organization.
+tags: [branding, logo, brand color, organization, admin]
 order: 30
 ---
 
@@ -25,6 +25,14 @@ background still looks correct in dark mode.
 **Reposition** reframes the logo you already uploaded without needing the file
 again. **Remove** clears it and returns the sidebar to your organization's
 initials.
+
+## Brand color
+
+Open **Settings → Branding**. Under **Brand color**, choose a swatch or type a
+color as # and six hex digits, such as #1e40af, then choose **Save**. Documents
+that the apps print, such as PDF files, use this color for the heading, the rules
+and the table header. Choose **Use default** and **Save** to go back to the
+default teal (#0d9488).
 
 Your own picture is set separately — see
 [Personalizing your avatar](help://core:personalizing-your-avatar).
