@@ -76,9 +76,19 @@ To read one value from another kind of record, add a formula column and pick **L
 
 When you open a group, its rows are labelled by the first column. To label them another way, turn on **Label opened rows with a formula** in **Columns**. The formula's label takes the first column's place, so opened rows do not show that column's value. A pivot report has no opened rows, so it does not show this choice.
 
+Some columns only name the group, for example an account's number on each line of the account. To show such a column only for the group, set **On opened rows** to **Leave blank** for that column in **Columns**. The value then shows on the group row, or on the group's subtotal row when the group is open and has subtotals. The opened rows show an empty cell, also on a phone. This choice shows only when the report has a group level and is not a pivot report. It does not show for the column that labels the opened rows. It also does not show for the first column of child rows (**Show as child rows**), because that column labels the child rows. Use it for a column that reads a field of the group's record (a **Group field** formula). A plain field that is not the group's field has no value on the group row, so a blank column of that kind shows nothing.
+
 ## Filters that list records
 
 A condition on a linked record lets you pick records by name. Turn on **Ask when the report runs**: the reader picks records from a list and can type in **Search** to narrow it. To list the records in groups, choose a field under **Group the list by** (for example a team's region). The reader can then pick a whole group at once with **All** and the group's name. To use other words for that choice, type them in **Whole group text**, with `{group}` where the group's name goes. For example, `All {group} teams` shows "All North teams".
+
+To change the order of the groups, use **Order the groups by**:
+
+- **Name (A–Z)** lists the groups by name. This is the default.
+- **The field’s own order** lists the groups in the order that the field gives its choices. For example, account types show as Assets, Liabilities, Equity, Income, Expense. This choice shows only when you group the list by a field with fixed choices.
+- **A field** lists the groups by a field that you choose. Each group takes the smallest value of that field among its records, and the smallest comes first. A group with no value comes last. For example, choose a sort number that each record has.
+
+Records with no group always show first. In each group, the records show by name.
 
 ## Fold groups
 

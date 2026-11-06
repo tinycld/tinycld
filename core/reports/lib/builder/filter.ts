@@ -1,7 +1,16 @@
 import { z } from '@tinycld/core/ui/form'
 import { isIsoDay } from '../dates'
 import { centsFromText, textFromCents } from '../money'
-import { type ParamDef, type SpecHop, type SpecNode, specHopSchema, specNodeSchema } from '../spec'
+import {
+    type GroupOrder,
+    type GroupOrderBy,
+    type OptionsFrom,
+    type ParamDef,
+    type SpecHop,
+    type SpecNode,
+    specHopSchema,
+    specNodeSchema,
+} from '../spec'
 import {
     AGGREGATES,
     type Aggregate,
@@ -296,14 +305,36 @@ function relationParam(
 /**
  * A param that lists records, grouped by `group` (a path on the records' source) so
  * the reader picks a whole group with "All <group>" (R30), or ungrouped with null.
- * The group pick's own text (D1) names groups, so it leaves with them. A param with
- * its own options has no records to group and is returned as it is.
+ * The group pick's own text (D1) and the group order name groups, so they leave with
+ * them; the field's own order leaves when the new group is not a select. A param
+ * with its own options has no records to group and is returned as it is.
  */
-export function withOptionsGroup(param: ParamDef, group: SpecHop[] | null): ParamDef {
+export function withOptionsGroup(
+    param: ParamDef,
+    group: SpecHop[] | null,
+    catalog: Catalog
+): ParamDef {
     const from = param.optionsFrom
     if (!from) return param
-    const grouped = group ? { group } : { group: undefined, groupLabel: undefined }
-    return tidyParam({ ...param, optionsFrom: { ...from, ...grouped } })
+    if (!group) {
+        const ungrouped = { group: undefined, groupOrder: undefined, groupLabel: undefined }
+        return tidyParam({ ...param, optionsFrom: { ...from, ...ungrouped } })
+    }
+    const regrouped = { ...from, group }
+    const keepsOrder = groupOrderChoices(catalog, regrouped).some(by => by === from.groupOrder?.by)
+    const groupOrder = keepsOrder ? from.groupOrder : undefined
+    return tidyParam({ ...param, optionsFrom: { ...regrouped, groupOrder } })
+}
+
+/**
+ * The orders a listed param's groups may take, in the order the builder lists them:
+ * by name, in the group field's own order (only a select declares one: bind.go
+ * groupOrder), or by a field. An ungrouped list has none.
+ */
+export function groupOrderChoices(catalog: Catalog, from: OptionsFrom): readonly GroupOrderBy[] {
+    if (!from.group?.length) return []
+    const isSelect = describePath(catalog, from.source, from.group)?.field.type === 'select'
+    return isSelect ? ['label', 'declared', 'path'] : ['label', 'path']
 }
 
 /**
@@ -319,10 +350,16 @@ export function tidyParam(param: ParamDef): ParamDef {
         value: from.value,
         label: from.label,
         ...(from.group ? { group: from.group } : {}),
+        ...(from.groupOrder ? { groupOrder: tidyGroupOrder(from.groupOrder) } : {}),
         ...(from.groupLabel ? { groupLabel: from.groupLabel } : {}),
         ...(from.where ? { where: from.where } : {}),
     }
     return { ...param, optionsFrom }
+}
+
+// A group order's keys in the spec's order (spec.go GroupOrder).
+function tidyGroupOrder(order: GroupOrder): GroupOrder {
+    return order.by === 'path' ? { by: order.by, path: order.path } : { by: order.by }
 }
 
 /** The second param a range of numbers or amounts asks: its high end. */

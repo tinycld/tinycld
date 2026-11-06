@@ -24,6 +24,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, {
     runOnJS,
     useAnimatedStyle,
+    useReducedMotion,
     useSharedValue,
     withSpring,
     withTiming,
@@ -102,6 +103,9 @@ function SheetRoot({
     const handleColor = useThemeColor('border')
     const insets = useDeviceInsets()
     const hasSheetHost = useHasSheetHost()
+    // The OS setting, read once at start as reanimated's own animations read
+    // it. Reduced, the sheet is drawn at rest and leaves at once.
+    const isReducedMotion = useReducedMotion()
 
     // Sign of the off-screen direction: a bottom sheet leaves downward
     // (positive translateY), a top sheet upward. Captured by the worklets
@@ -127,15 +131,22 @@ function SheetRoot({
             if (!mounted || seededDir.current !== dir) translateY.value = dir * INITIAL_OFFSCREEN
             seededDir.current = dir
             setMounted(true)
-            translateY.value = withSpring(0, SPRING_CONFIG)
-            backdropOpacity.value = withTiming(1, { duration: 200 })
+            translateY.value = isReducedMotion ? 0 : withSpring(0, SPRING_CONFIG)
+            backdropOpacity.value = isReducedMotion ? 1 : withTiming(1, { duration: 200 })
         } else if (mounted) {
+            // No slide-out to wait for: unmount now, so the closed sheet's
+            // nodes do not stay in the DOM (and the accessibility tree) for
+            // the exit window.
+            if (isReducedMotion) {
+                setMounted(false)
+                return
+            }
             translateY.value = withSpring(dir * sheetHeight.value, SPRING_CONFIG)
             backdropOpacity.value = withTiming(0, { duration: 150 })
             const timeout = setTimeout(() => setMounted(false), 300)
             return () => clearTimeout(timeout)
         }
-    }, [isOpen, translateY, backdropOpacity, mounted, sheetHeight, dir])
+    }, [isOpen, translateY, backdropOpacity, mounted, sheetHeight, dir, isReducedMotion])
 
     // The backdrop covers the host, so an outside press is a backdrop press;
     // the layer joins the stack for Escape and the Android back button only.

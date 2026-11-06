@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
 import { createInvitedUser, login, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
@@ -15,6 +15,7 @@ import {
     SALES_SOURCE,
     SHIPPED_TITLE,
     STUB_HEADING,
+    saveNewReport,
     startReport,
     TEAM_TOTALS_TITLE,
     uniqueName,
@@ -26,9 +27,9 @@ import {
  * stub's "Stub team totals" and a draft over sales. A shipped report is owned by
  * the first owner (shipped.go firstAdmin), the seed's admin app user, so the specs
  * that open it sign in as that user; it is unpublished, so no one else sees it
- * until it is shared. Each user reads only their own stub sales and teams, and a
- * user's sales are shared by several tests, so rows are found by team names
- * unique to the test.
+ * until it is shared. Each user reads only their own stub sales, but every
+ * signed-in user reads every stub team (salesstub_teams listRule), and both are
+ * shared by several tests, so rows are found by team names unique to the test.
  */
 
 async function seedRegions(p: Page, stem: string) {
@@ -43,6 +44,47 @@ async function seedRegions(p: Page, stem: string) {
     ] as const) {
         await addSale(p, { team, customer, amount: 100, cost: 0, day: '2026-01-05' })
     }
+}
+
+// A draft over sales whose team condition is asked when run as "is any of", its
+// teams listed by region (R30).
+async function askTeamsByRegion(p: Page) {
+    await openReportsHub(p)
+    await startReport(p, SALES_SOURCE)
+    await p.getByTestId('report-builder-section-filter').click()
+    await p.getByTestId('report-builder-filter-add-condition').click()
+    await p
+        .getByTestId('report-builder-picker')
+        .getByTestId('report-builder-pick-record-team')
+        .click()
+    await chooseOption(p, 'report-builder-filter-0-op', 'in')
+    await p.getByTestId('report-builder-filter-0-ask').click()
+    await expect(p.getByTestId(GROUP_ORDER)).toHaveCount(0)
+    await regroupTeams(p, 'region', 'Region')
+}
+
+const GROUP_ORDER = 'report-builder-filter-0-options-order'
+
+async function regroupTeams(p: Page, field: string, shown: string) {
+    const grouping = p.getByTestId('report-builder-filter-0-options-group')
+    await grouping.click()
+    await p
+        .getByTestId('report-builder-picker')
+        .getByTestId(`report-builder-pick-field-${field}`)
+        .click()
+    await expect(grouping).toHaveText(shown)
+}
+
+// The team picker's whole-group picks, one per section head and in its order, of
+// the teams this test made (searched by its stem).
+async function expectGroupHeads(p: Page, stem: string, heads: string[]) {
+    await p.getByTestId('report-add-filter').click()
+    await p.getByTestId('report-add-filter-team').click()
+    const picker = p.getByTestId('report-filter-picker')
+    await picker.getByTestId('report-filter-search').fill(stem)
+    await expect(picker.locator('[data-testid^="report-filter-group-"]')).toHaveText(heads)
+    await p.keyboard.press('Escape')
+    await expect(picker).toBeHidden()
 }
 
 async function openTeamTotals(p: Page) {
@@ -60,6 +102,107 @@ async function expectNotPublished(p: Page) {
     await p.getByTestId('reports-hub-tab-published').click()
     await expect(hubRow(p, SHIPPED_TITLE)).toBeVisible()
     await expect(hubRow(p, TEAM_TOTALS_TITLE)).toHaveCount(0)
+}
+
+const ENTRANCE_FRAMES = 10
+// The exit watch stops counting here, so a sheet that never leaves fails the
+// test instead of hanging it (the animated close keeps it ~300 ms, ~18 frames).
+const EXIT_FRAME_CAP = 30
+
+type SheetEntrance = { offsets: number[]; opacities: string[]; backdropFound: boolean[] }
+type SheetWatch = { entrance?: Promise<SheetEntrance>; exit?: Promise<number> }
+
+// Waits for the sheet surface with this test id to enter the DOM, then reads it
+// once after each of the next frames is painted (a rAF, then a task). Each read
+// is the surface's offset from its resting place: its drawn top minus its laid
+// out top (offsetTop ignores a transform), so a slide shows as a non-zero
+// offset whatever the sheet's height. The backdrop is the layer before the
+// surface's (core/ui/sheet draws the backdrop, then the surface), found by the
+// Close press it holds, and read for its opacity. Awaited before the press that
+// opens the sheet, so the watch is in place first; readSheetEntrance collects it.
+function watchSheetEntrance(p: Page, testId: string) {
+    return p.evaluate(
+        ({ testId, frames }) => {
+            const watch = window as unknown as SheetWatch
+            watch.entrance = new Promise(resolve => {
+                const seen: SheetEntrance = { offsets: [], opacities: [], backdropFound: [] }
+                const read = (surface: HTMLElement) => {
+                    const layer = surface.offsetParent as HTMLElement
+                    const restTop =
+                        layer.getBoundingClientRect().top + layer.clientTop + surface.offsetTop
+                    seen.offsets.push(Math.round(surface.getBoundingClientRect().top - restTop))
+                    const backdrop = layer.previousElementSibling as HTMLElement
+                    seen.backdropFound.push(
+                        backdrop.querySelector('[role="button"][aria-label="Close"]') !== null
+                    )
+                    seen.opacities.push(getComputedStyle(backdrop).opacity)
+                }
+                const next = (surface: HTMLElement) =>
+                    requestAnimationFrame(() =>
+                        setTimeout(() => {
+                            read(surface)
+                            if (seen.offsets.length < frames) next(surface)
+                            else resolve(seen)
+                        })
+                    )
+                const selector = `[data-testid="${testId}"]`
+                const observer = new MutationObserver(() => {
+                    const surface = document.querySelector<HTMLElement>(selector)
+                    if (!surface) return
+                    observer.disconnect()
+                    next(surface)
+                })
+                observer.observe(document.body, { childList: true, subtree: true })
+            })
+        },
+        { testId, frames: ENTRANCE_FRAMES }
+    )
+}
+
+// Counts the frames painted after the next Escape keydown while the sheet's
+// surface or its backdrop is still in the DOM (0: both gone by the first frame).
+function watchSheetExit(sheet: Locator) {
+    return sheet.evaluate((surface, cap) => {
+        const backdrop = (surface as HTMLElement).offsetParent?.previousElementSibling
+        const watch = window as unknown as SheetWatch
+        watch.exit = new Promise(resolve => {
+            let frames = 0
+            const tick = () => {
+                if (!surface.isConnected && !backdrop?.isConnected) return resolve(frames)
+                frames += 1
+                if (frames >= cap) return resolve(frames)
+                requestAnimationFrame(tick)
+            }
+            // On window in the capture phase: the overlay's Escape handler sits
+            // on the document and stops the key there.
+            const onKey = (event: KeyboardEvent) => {
+                if (event.key !== 'Escape') return
+                window.removeEventListener('keydown', onKey, true)
+                requestAnimationFrame(tick)
+            }
+            window.addEventListener('keydown', onKey, true)
+        })
+    }, EXIT_FRAME_CAP)
+}
+
+function readSheetEntrance(p: Page) {
+    return p.evaluate(() => (window as unknown as SheetWatch).entrance)
+}
+
+function readSheetExit(p: Page) {
+    return p.evaluate(() => (window as unknown as SheetWatch).exit)
+}
+
+// Opens a sheet with a press, watching its entrance: it must stand at rest, its
+// backdrop fully shown, on every frame from the first.
+async function expectSheetOpensAtRest(p: Page, testId: string, open: () => Promise<void>) {
+    await watchSheetEntrance(p, testId)
+    await open()
+    const entrance = await readSheetEntrance(p)
+    expect(entrance?.offsets).toHaveLength(ENTRANCE_FRAMES)
+    expect(entrance?.backdropFound).toEqual(Array(ENTRANCE_FRAMES).fill(true))
+    expect(entrance?.offsets).toEqual(Array(ENTRANCE_FRAMES).fill(0))
+    expect(entrance?.opacities).toEqual(Array(ENTRANCE_FRAMES).fill('1'))
 }
 
 test.describe('params from a source, headings and unpublished shipped reports', () => {
@@ -155,6 +298,52 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         await expect
             .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
             .toBeLessThanOrEqual(390)
+    })
+
+    // Reduced motion (the e2e config's `reducedMotion: 'reduce'`, the OS setting
+    // for a person): a sheet is drawn at rest from its first frame, with its
+    // backdrop fully shown, so Playwright never waits for it to stop moving.
+    // Closed, it leaves at once and a press beneath it lands.
+    test('on a phone with reduced motion the sheet does not slide, and closed it lets a press through', async ({
+        page,
+    }) => {
+        await loginAsShippedOwner(page)
+        await openTeamTotals(page)
+        await page.setViewportSize({ width: 390, height: 844 })
+        expect(
+            await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
+        ).toBe(true)
+
+        // The "Add filter" menu is a bottom sheet on a phone.
+        const addFilter = page.getByTestId('report-add-filter')
+        const menu = page.getByTestId('report-add-filter-menu')
+        await expectSheetOpensAtRest(page, 'report-add-filter-menu', () => addFilter.click())
+        await expect(menu.getByTestId('report-add-filter-teams')).toBeVisible()
+
+        // Closed, the menu stays mounted (only its open state changes), so the
+        // sheet itself decides when it leaves: at once, backdrop and all.
+        await watchSheetExit(menu)
+        await page.keyboard.press('Escape')
+        expect(await readSheetExit(page)).toBeLessThanOrEqual(1)
+        await expect(menu).toHaveCount(0)
+        // A raw press, with no actionability wait or retry: it reaches the
+        // chip only if nothing of the sheet still covers it.
+        const chip = await addFilter.boundingBox()
+        expect(chip).not.toBeNull()
+        await page.mouse.click(
+            (chip?.x ?? 0) + (chip?.width ?? 0) / 2,
+            (chip?.y ?? 0) + (chip?.height ?? 0) / 2
+        )
+        await expect(menu.getByTestId('report-add-filter-teams')).toBeVisible()
+
+        // The source picker, opened from the menu, is a bottom sheet too.
+        const picker = page.getByTestId('report-filter-picker')
+        await expectSheetOpensAtRest(page, 'report-filter-picker', () =>
+            menu.getByTestId('report-add-filter-teams').click()
+        )
+        await expect(picker.getByTestId('sheet-handle')).toBeVisible()
+        await page.keyboard.press('Escape')
+        await expect(picker).toHaveCount(0)
     })
 
     test('scrolling to the end of the options loads the next page once, with no repeats', async ({
@@ -321,6 +510,103 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         } finally {
             await close()
         }
+    })
+
+    // E1: "Order the groups by" orders the regions a team list is grouped in: by
+    // name (East, North, South), or in the region field's own order (North, South,
+    // East, as the stub declares them). The preview's picker follows each choice,
+    // and the saved report's picker keeps it.
+    test('Order the groups by lists the regions in the field’s own order, in the preview and the saved report', async ({
+        page,
+    }) => {
+        await login(page)
+        const stem = uniqueName('Ord')
+        await openReportStub(page)
+        await addTeam(page, `${stem} E1`, 'east')
+        await addTeam(page, `${stem} N1`, 'north')
+        await addTeam(page, `${stem} S1`, 'south')
+        await askTeamsByRegion(page)
+        const byName = ['All East', 'All North', 'All South']
+        const declared = ['All North', 'All South', 'All East']
+        await expectGroupHeads(page, stem, byName)
+        await chooseOption(page, GROUP_ORDER, 'declared')
+        await expectGroupHeads(page, stem, declared)
+        await chooseOption(page, GROUP_ORDER, 'label')
+        await expectGroupHeads(page, stem, byName)
+        await chooseOption(page, GROUP_ORDER, 'declared')
+        await saveNewReport(page, uniqueName('Regions in order'))
+        await expectGroupHeads(page, stem, declared)
+    })
+
+    // E1: "A field" orders the regions by the smallest value of a field among each
+    // region's teams; a new one starts at the options' label field, the name
+    // (ConditionValues.tsx orderFor). A region's smallest value is read over every
+    // team it holds, not only the searched ones (options.go rankedOptionsSQL), and
+    // every signed-in user reads every stub team (salesstub_teams listRule). So these
+    // names start with '!', which sorts before the letter every other spec's team
+    // name starts with (uniqueName): each region's smallest name is then this
+    // test's, or the same test's from an earlier run, whose names hold the same
+    // order. A to Z by name puts South (A) first, then East (B), then North (C),
+    // which neither the regions' names nor their declared order give.
+    test('Order the groups by a field lists the regions by their smallest name, in the preview and the saved report', async ({
+        page,
+    }) => {
+        await login(page)
+        const stem = uniqueName('PathOrd')
+        await openReportStub(page)
+        await addTeam(page, `!${stem} A`, 'south')
+        await addTeam(page, `!${stem} B`, 'east')
+        await addTeam(page, `!${stem} C`, 'north')
+        await askTeamsByRegion(page)
+        const byName = ['All East', 'All North', 'All South']
+        const bySmallestName = ['All South', 'All East', 'All North']
+        await expectGroupHeads(page, stem, byName)
+
+        await chooseOption(page, GROUP_ORDER, 'path')
+        const orderField = page.getByTestId(`${GROUP_ORDER}-field`)
+        await expect(orderField).toHaveText('Name')
+        await expectGroupHeads(page, stem, bySmallestName)
+
+        // By the smallest region, each region comes by its own value, A to Z.
+        await orderField.click()
+        await page
+            .getByTestId('report-builder-picker')
+            .getByTestId('report-builder-pick-field-region')
+            .click()
+        await expect(orderField).toHaveText('Region')
+        await expectGroupHeads(page, stem, ['All East', 'All North', 'All South'])
+
+        await orderField.click()
+        await page
+            .getByTestId('report-builder-picker')
+            .getByTestId('report-builder-pick-field-name')
+            .click()
+        await expect(orderField).toHaveText('Name')
+        await expectGroupHeads(page, stem, bySmallestName)
+
+        await saveNewReport(page, uniqueName('Regions by name'))
+        await expectGroupHeads(page, stem, bySmallestName)
+    })
+
+    // A field that is not a select has no order of its own: grouped by the team's
+    // name, the field's own order is not offered and a chosen one is cleared.
+    test('grouping the list by a field that is not a select clears the field’s own order', async ({
+        page,
+    }) => {
+        await login(page)
+        await askTeamsByRegion(page)
+        const order = page.getByTestId(GROUP_ORDER)
+        const byName = (await order.textContent()) ?? ''
+        expect(byName).not.toBe('')
+        await chooseOption(page, GROUP_ORDER, 'declared')
+        await expect(order).not.toHaveText(byName)
+        await regroupTeams(page, 'name', 'Name')
+        await expect(order).toHaveText(byName)
+        await order.click()
+        await expect(page.getByTestId(`${GROUP_ORDER}-label`)).toBeVisible()
+        await expect(page.getByTestId(`${GROUP_ORDER}-declared`)).toHaveCount(0)
+        await page.keyboard.press('Escape')
+        await expect(page.getByTestId(`${GROUP_ORDER}-label`)).toHaveCount(0)
     })
 
     test('a having on a money total asks an amount, kept to its currency', async ({ page }) => {

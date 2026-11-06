@@ -482,11 +482,12 @@ func TestParamOptionAmountGroupsKeepTheirCurrency(t *testing.T) {
 
 // An option label read from a yes/no, number, amount or date is typed as a
 // group label is: Yes or No, or a typed value (an amount with its currency)
-// the client formats; numbers order and page by value.
+// the client formats; numbers order and page by value. The options are not
+// grouped: grouped options come group by group (grouporder_test.go).
 func TestParamOptionLabelsOfTypedFields(t *testing.T) {
 	z := newZoo(t)
 	labelled := func(label string) string {
-		return strings.Replace(animalsParam, `"label":[{"field":"name"}]`, `"label":`+label, 1)
+		return strings.Replace(animalsParam, `"label":[{"field":"name"}],"group":[{"field":"species"}]`, `"label":`+label, 1)
 	}
 	strip := func(res *ParamOptions) []ParamOption {
 		out := []ParamOption{}

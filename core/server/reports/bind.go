@@ -57,6 +57,10 @@ type optionsPlan struct {
 	at                  string
 	src                 *Source
 	value, label, group *pathPlan
+	// orderBy is the group order (GroupOrderLabel when the spec names none),
+	// orderPath its bound path when it orders by path.
+	orderBy   string
+	orderPath *pathPlan
 }
 
 type hopPlan struct {
@@ -198,6 +202,7 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	b.lookups(p)
 	b.formulaSizes(p)
 	b.nestChain(p)
+	b.nestLabelBlanks(p)
 	b.sorts(p)
 	b.groupsAndPivot(p)
 	b.layout(p)
@@ -215,8 +220,8 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	return p, nil
 }
 
-// optionSources binds each choice param's options source: its value, label
-// and group paths, to-one only.
+// optionSources binds each choice param's options source: its value, label,
+// group and group order paths, to-one only.
 func (b *binder) optionSources(p *plan) {
 	p.options = map[string]*optionsPlan{}
 	for i := range p.spec.Params {
@@ -231,16 +236,39 @@ func (b *binder) optionSources(p *plan) {
 			b.missing(at+".source", "unknown_source", fmt.Sprintf("the source %q does not exist", of.Source))
 			continue
 		}
-		op := &optionsPlan{def: d, at: at, src: src}
+		op := &optionsPlan{def: d, at: at, src: src, orderBy: GroupOrderLabel}
 		op.value = b.path(src, of.Value, at+".value", pathValue, "")
 		op.label = b.path(src, of.Label, at+".label", pathValue, "")
 		if of.Group != nil {
 			op.group = b.path(src, of.Group, at+".group", pathValue, "")
 		}
+		if op.group != nil && of.GroupOrder != nil {
+			b.groupOrder(src, op, of.GroupOrder, at+".groupOrder")
+		}
 		if op.value != nil && op.label != nil {
 			p.options[d.ID] = op
 		}
 	}
+}
+
+// groupOrder binds a grouped list's group order; checkGroupOrder has
+// already checked its shape.
+func (b *binder) groupOrder(src *Source, op *optionsPlan, o *GroupOrder, at string) {
+	switch o.By {
+	case GroupOrderDeclared:
+		if op.group.field.Type != Select {
+			b.bad(at, "declared order needs a select group field")
+			return
+		}
+	case GroupOrderPath:
+		if op.orderPath = b.path(src, o.Path, at+".path", pathValue, ""); op.orderPath == nil {
+			return
+		}
+	case GroupOrderLabel:
+	default:
+		return
+	}
+	op.orderBy = o.By
 }
 
 func (b *binder) columns(p *plan) {
@@ -266,6 +294,7 @@ func (b *binder) columns(p *plan) {
 		if c.Total != "" && c.Total != TotalRecompute && c.Total != TotalRows {
 			b.bad(at+".total", "total is recompute or rows")
 		}
+		b.detailBlank(p.spec, i)
 		if (c.Path == nil) == (c.Formula == nil) {
 			b.bad(at, "a column has a path or a formula")
 		}
@@ -276,6 +305,52 @@ func (b *binder) columns(p *plan) {
 			b.scaleOf(cp, c.Aggregate)
 		}
 	}
+}
+
+// detailBlank refuses a column blank on detail rows where its value shows
+// nowhere else (a report with no groups), where there are no detail rows (a
+// pivot report) or where it names the detail rows: a blank label would leave
+// a row with no name.
+func (b *binder) detailBlank(spec *Spec, i int) {
+	c := &spec.Columns[i]
+	at := fmt.Sprintf("columns.%d.detail", i)
+	switch {
+	case c.Detail == "":
+	case c.Detail != DetailBlank:
+		b.bad(at, `detail is "blank"`)
+	case len(spec.Groups) == 0:
+		b.bad(at, "a column can be blank on detail rows only in a report with groups")
+	case spec.Pivot != nil:
+		b.bad(at, "a pivot report has no detail rows")
+	case c.ID != "" && c.ID == detailLabelColumn(spec):
+		b.bad(at, "this column labels the detail rows, so it cannot be blank on them")
+	}
+}
+
+// nestLabelBlanks refuses a blank on the first column of a nest level: that
+// column labels the level's child rows (nest.go), so a blank changes nothing.
+// It runs after nestChain, which records the levels.
+func (b *binder) nestLabelBlanks(p *plan) {
+	for _, level := range p.nest {
+		if len(level.cols) == 0 {
+			continue
+		}
+		if first := level.cols[0]; first.col.Detail == DetailBlank {
+			b.bad(first.at+".detail", "this column labels the child rows, so it cannot be blank on them")
+		}
+	}
+}
+
+// detailLabelColumn is the column whose cell labels each detail row: the first
+// column, or the one a detail label of exactly {col} repeats. "" for none.
+func detailLabelColumn(spec *Spec) string {
+	if d := spec.Detail; d != nil && d.Label != nil {
+		return repeatedColumn(d.Label)
+	}
+	if len(spec.Columns) == 0 {
+		return ""
+	}
+	return spec.Columns[0].ID
 }
 
 func (b *binder) pathColumn(p *plan, cp *colPlan) {

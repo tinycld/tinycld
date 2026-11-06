@@ -59,9 +59,10 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 const isExpired = (expires: string, today: Date) => expires < today.toISOString().slice(0, 10)
 
 // security-ignores.yml is shared by two scripts: this gate owns `ignores`,
-// check-fork-drift.ts owns `forkReviews`. Any other top-level key is a typo
-// (e.g. `ignorse:`) that would otherwise silently suppress nothing.
-const ALLOWED_TOP_LEVEL_KEYS = new Set(['ignores', 'forkReviews'])
+// check-fork-drift.ts owns `forkReviews` and `forkExemptions`. Any other
+// top-level key is a typo (e.g. `ignorse:`) that would otherwise silently
+// suppress nothing.
+const ALLOWED_TOP_LEVEL_KEYS = new Set(['ignores', 'forkReviews', 'forkExemptions'])
 
 export const parseIgnores = (
     raw: string,

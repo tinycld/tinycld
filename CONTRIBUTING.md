@@ -454,9 +454,11 @@ The file currently holds 2 real entries: `node-forge` and `braces` have no publi
 
 ### The fork blind spot
 
-Four dependencies are invisible to every scanner above, and this is the part most likely to be missed: a Go `replace` directive removes the upstream version from the module graph entirely, and an npm dependency pinned to a bare git SHA resolves to no published version. Neither `pnpm audit` nor `govulncheck` reports these as safe — they do not report them at all. If upstream ships a security fix for one of these forks, nothing else in this workflow says so.
+Five dependencies are invisible to every scanner above, and this is the part most likely to be missed: a Go `replace` directive removes the upstream version from the module graph entirely, and an npm dependency pinned to a bare git SHA resolves to no published version. Neither `pnpm audit` nor `govulncheck` reports these as safe — they do not report them at all. If upstream ships a security fix for one of these forks, nothing else in this workflow says so.
 
 That is what `fork-drift` exists for, and why a fully green scan is not full coverage. It cannot match an upstream advisory onto code that has since diverged, so instead of a CVE count it checks a review window: `forkReviews:` in `.github/security-ignores.yml` records who last compared a fork to upstream, and how many days that review is good for. The job fails when a window lapses, or when a new fork appears with no entry — never on vulnerability content it has no way to evaluate.
+
+A fork that is vendored in-tree and upgraded on purpose from pristine upstream releases has no separate fork to drift, so it goes under `forkExemptions:` instead, with a `reason`. PocketBase is the one such entry: it lives in `third_party/pocketbase` and is upgraded on the `vendor/pocketbase` branch (see `third_party/pocketbase/FORK.md`). An entry with no reason, an unknown field, or a fork that is also in `forkReviews` fails the job.
 
 ## In-app help
 - Packages contribute help via a `help/` directory of `<id>.md` files. Each file is a markdown document with a YAML frontmatter block (`title`, `summary` required; `tags: [..]` and `order: N` optional). The filename (without `.md`) is the topic ID. Declare it in `manifest.ts` with `help: { directory: 'help' }`. The generator writes `tinycld/lib/generated/package-help.ts`; topics surface in the global hub at `/a/help`, the per-package help screen, and the right-slide drawer.

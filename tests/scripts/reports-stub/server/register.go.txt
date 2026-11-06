@@ -39,8 +39,10 @@ func Register(_ core.App) error {
 		Key: "salesstub.teams", Collection: "salesstub_teams", Label: "Stub teams",
 		Fields: []reports.Field{
 			{Key: "name", Label: "Name", Type: reports.Text, Aggregates: reports.MinMax},
+			// Declared North, South, East: not A–Z, so a picker in the field's
+			// own order differs from one by name (optionsFrom.groupOrder).
 			{Key: "region", Label: "Region", Type: reports.Select, Options: []reports.Option{
-				{Value: "north", Label: "North"}, {Value: "south", Label: "South"},
+				{Value: "north", Label: "North"}, {Value: "south", Label: "South"}, {Value: "east", Label: "East"},
 			}},
 		},
 		Links: []reports.Link{

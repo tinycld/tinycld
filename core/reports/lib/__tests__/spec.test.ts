@@ -73,6 +73,58 @@ describe('parseSpec', () => {
         expect(parseSpec({ ...FEEDINGS, version: 3 })).toBeNull()
     })
 
+    // E1: optionsFrom.groupOrder (spec.go GroupOrder) is by label, declared, or a path.
+    it('reads a group order of each kind and refuses any other', () => {
+        const withOrder = (groupOrder: unknown) => ({
+            ...FEEDINGS,
+            version: 2,
+            params: [
+                {
+                    id: 'animals',
+                    type: 'choice',
+                    optionsFrom: {
+                        source: 'zoo.animals',
+                        value: [{ field: 'id' }],
+                        label: [{ field: 'name' }],
+                        group: [{ field: 'species' }],
+                        groupOrder,
+                    },
+                },
+            ],
+        })
+        for (const order of [
+            { by: 'label' },
+            { by: 'declared' },
+            { by: 'path', path: [{ field: 'weight' }] },
+        ]) {
+            expect(parseSpec(withOrder(order))?.params?.[0]?.optionsFrom?.groupOrder).toEqual(order)
+        }
+        for (const bad of [{ by: 'sideways' }, { by: 'path' }, {}, 'declared']) {
+            expect(parseSpec(withOrder(bad))).toBeNull()
+        }
+    })
+
+    // E2: columns[].detail "blank" (spec.go Column.Detail) leaves the column empty on
+    // detail rows; "blank" is its one value.
+    it('reads a column blank on detail rows and refuses any other detail', () => {
+        const withDetail = (detail: unknown) => ({
+            ...FEEDINGS,
+            version: 2,
+            columns: [
+                { id: 'note', path: [{ field: 'note' }] },
+                { id: 'species', path: [{ link: 'animal' }, { field: 'species' }], detail },
+            ],
+        })
+        expect(parseSpec(withDetail('blank'))?.columns[1]).toEqual({
+            id: 'species',
+            path: [{ link: 'animal' }, { field: 'species' }],
+            detail: 'blank',
+        })
+        for (const bad of ['hide', 'show', true, { label: 'x' }]) {
+            expect(parseSpec(withDetail(bad))).toBeNull()
+        }
+    })
+
     it('refuses a spec from a newer version of the app as unreadable', () => {
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION })).not.toBeNull()
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION + 1 })).toBeNull()

@@ -21,7 +21,7 @@ import { ScrollView, Text, View } from 'react-native'
 
 const teamSchema = z.object({
     name: z.string().trim().min(1).max(200),
-    region: z.enum(['north', 'south']),
+    region: z.enum(['north', 'south', 'east']),
 })
 type TeamValues = z.infer<typeof teamSchema>
 const saleSchema = z.object({
@@ -48,6 +48,7 @@ type ManySalesValues = z.infer<typeof manySalesSchema>
 const REGION_OPTIONS = [
     { value: 'north', label: 'North' },
     { value: 'south', label: 'South' },
+    { value: 'east', label: 'East' },
 ]
 
 const STATUS_OPTIONS = [

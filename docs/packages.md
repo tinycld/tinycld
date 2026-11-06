@@ -960,6 +960,13 @@ resource first. This is how a no-plan delete is refused while the user solely
 owns shared resources; core itself names no package. A handler can also delete
 what must not outlive the account (mail deletes the leaver's personal mailbox).
 
+A package hook that grants rows from a users update
+(`app.OnRecordAfterUpdateSuccess("users")`) must call `offboard.IsOffboarded(e.Record)`
+and, when it is true, `return e.Next()` without granting. PocketBase runs
+after-update hooks at commit, after the offboard handlers removed the leaver's
+rows, so a grant there gives them back. `IsOffboarded` stays true on every later
+save of the record.
+
 The OAuth registry is the reference shape. A package declares its scopes with
 consent copy, the collections each scope reads and writes, its bespoke
 endpoints, and per-record route families — and nothing else in the system
@@ -1289,13 +1296,14 @@ version.
 |---|---|
 | `columns[].total` | `"recompute"` (default) totals every row the filter keeps. `"rows"`: the innermost group level computes the column from its own base rows, as `"recompute"` does; the levels above it and the Total add the cells of the rows the result shows, after `having`, per currency. A column has an aggregate when it sets `aggregate`, or its formula holds an aggregate operator, or its formula reads (`{col}`) a column that has an aggregate or is a `"rows"` column, at any depth (a lookup's `value` and `where` do not count: they read another source). A column with no aggregate adds its detail cells on the innermost level. With no groups, the Total adds the detail cells. Pivot cells follow the same rule. Layout sections add their shown rows; computed rows are unchanged. Only for number and amount columns, and not on a running value or percent. |
 | `columns[].labelField` | The field of a relation column's record that its cells show. |
+| `columns[].detail` | `"blank"`: the column has no cell (and no `@currency` or `@label` cell) on any detail row, nested child rows included. Group, subtotal and total rows are unchanged. This is a column's string member, not the spec's top-level `detail` object (`detail.label`). Refused (`columns.N.detail`) for any other value, in a report with no groups, on a pivot report, on the column that labels detail rows (the first column when `detail.label` is not set, or the column a `detail.label` of exactly `{ col }` names), and on the first column of each nest level, which labels that level's child rows. Use it on a column that reads the group's record (a `record` formula): a plain path column that is not the group key has no value on group rows, so with `"blank"` it shows nowhere. |
 | `groups[].having` | A condition on the level's totals, columns and record fields. A hidden group hides its children. Refused on the first group of a layout report. |
 | `groups[].label` | A formula that labels the group's row. |
 | `groups[].fill` | `{ where? }` lists the target's records that have no rows, on any level, under each parent group. |
 | `groups[].open` | The level is open when the report opens and no expansion state is sent. |
 | `sort[]` | `{ col, dir }` or `{ formula, dir }`. A formula sort key that reads a row's fields sorts detail rows only; group levels skip it. |
 | `detail.label` | A formula that labels each detail row. Default: the first column. |
-| `params[].optionsFrom` | `{ source, value, label, group?, groupLabel?, where? }`: a choice param reads its options from a source, under the reader's rules. `groupLabel` (with `group`) is the text of a whole-group pick, with `{group}` where the group's label goes (`"All {group} accounts"`); absent: `All {group}`. |
+| `params[].optionsFrom` | `{ source, value, label, group?, groupOrder?, groupLabel?, where? }`: a choice param reads its options from a source, under the reader's rules. `groupOrder` (with `group`) orders the groups: `{ "by": "label" }` (default) by the group's label, a number by its value; `{ "by": "declared" }` in the order the group's select field declares its options (refused unless `group` ends at a select field; a stored value no option names comes after the named ones, by label); `{ "by": "path", "path": [...] }` by the smallest value of `path` (a to-one path on the options source, bound as `group` is; it reads the field's stored value, so a select orders by its stored value, not its label or declared place; a blank text is no value) over each group's options, with groups that have no value after the others. Ties and every order end by label; the blank group is always first. The options come group by group in that order, then by label, and a page's `next` carries the group, so each page only appends. `groupLabel` (with `group`) is the text of a whole-group pick, with `{group}` where the group's label goes (`"All {group} accounts"`); absent: `All {group}`. |
 | formula leaf `{ record, path }` | Reads a field of a record group's record. |
 | operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: one value (`min` by default, or `max`) from the rows of another source that the reader may see. |
 | `pivot.labelField` | The field of a link's record that a pivot over that link names its columns by. |
@@ -1305,6 +1313,52 @@ A param of type `amount` holds cents and a currency. A multiple choice param
 may hold a whole group as `{"group": "<value>"}`; the server expands it under
 the reader's rules at run time. Report option lists and group keys bind as one
 JSON parameter, so there is no SQL variable limit on them.
+
+For example, a chart of accounts source (`zoo.accounts`) whose `type` select
+declares its options as asset, liability, equity, income, expense lists an
+Accounts filter's groups in that order, not A–Z:
+
+```json
+{
+  "id": "accounts",
+  "type": "choice",
+  "multiple": true,
+  "optionsFrom": {
+    "source": "zoo.accounts",
+    "value": [{ "field": "id" }],
+    "label": [{ "field": "name" }],
+    "group": [{ "field": "type" }],
+    "groupOrder": { "by": "declared" },
+    "groupLabel": "All {group} accounts"
+  }
+}
+```
+
+To order the types by a number the source keeps instead, use
+`"groupOrder": { "by": "path", "path": [{ "field": "sort" }] }`.
+
+For example, a ledger of lines (`zoo.lines`) grouped by account shows each
+account's number on the account's row and leaves it out of the opened lines,
+which the memo labels:
+
+```json
+{
+  "version": 2,
+  "source": "zoo.lines",
+  "columns": [
+    { "id": "name", "path": [{ "link": "account" }] },
+    {
+      "id": "no",
+      "label": "No.",
+      "formula": { "record": "byAccount", "path": [{ "field": "number" }] },
+      "detail": "blank"
+    },
+    { "id": "debit", "path": [{ "field": "amount" }], "aggregate": "sum" }
+  ],
+  "groups": [{ "id": "byAccount", "col": "name" }],
+  "detail": { "label": { "path": [{ "field": "memo" }] } }
+}
+```
 
 **Param options.** `POST /api/reports/param-options` reads one page of a
 choice param's options for a draft `spec` or a saved `reportId` the caller can

@@ -116,6 +116,8 @@ function useDerivedValue(fn) { return { value: fn() } }
 function useAnimatedReaction() {}
 function cancelAnimation() {}
 function makeMutable(value) { return { value } }
+// Motion on, so a unit test sees the animated path, as most users do.
+function useReducedMotion() { return false }
 
 module.exports = {
     __esModule: true,
@@ -157,6 +159,7 @@ module.exports = {
     useAnimatedReaction,
     cancelAnimation,
     makeMutable,
+    useReducedMotion,
     sharedValueLog,
     interpolate: (v) => v,
     Extrapolation: { CLAMP: 'CLAMP', EXTEND: 'EXTEND', IDENTITY: 'IDENTITY' },

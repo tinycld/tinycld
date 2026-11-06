@@ -39,7 +39,7 @@ import {
     itemTestId,
     setCondition,
 } from './condition-context'
-import { IconButton } from './parts'
+import { FieldError, IconButton } from './parts'
 
 // A tree of conditions joined by All of / Any of / None of: the report filter, a
 // group level's "Show only groups where…" (having, R18) and a fill's conditions on
@@ -302,15 +302,6 @@ function GroupBody({
     )
 }
 
-function TreeError({ message, testID }: { message: string | undefined; testID: string }) {
-    if (!message) return null
-    return (
-        <Text testID={testID} role="alert" className="text-xs text-danger">
-            {message}
-        </Text>
-    )
-}
-
 /** A condition tree's editor: the filter, a level's having, or a fill's conditions. */
 export function ConditionTree({
     builder,
@@ -337,7 +328,7 @@ export function ConditionTree({
     }
     return (
         <View className="gap-1.5">
-            <TreeError message={error} testID={`${testID}-error`} />
+            <FieldError message={error} testID={`${testID}-error`} />
             <View testID={testID}>
                 <GroupBody ctx={ctx} group={root} path={[]} baseKey={baseKey} />
             </View>

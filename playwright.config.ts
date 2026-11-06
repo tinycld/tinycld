@@ -117,6 +117,10 @@ export default defineConfig({
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         video: 'retain-on-failure',
+        // Overlays honor the OS reduced-motion setting, so emulating it
+        // takes their slides and fades out of the run: a press inside a
+        // sliding sheet otherwise waits for the target to be stable.
+        reducedMotion: 'reduce',
     },
     webServer: [
         {

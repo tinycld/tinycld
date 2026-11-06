@@ -30,9 +30,6 @@ ignores:
 # days. CI fails when a window lapses, or when a new fork appears with no
 # entry at all.
 forkReviews:
-    - fork: github.com/pocketbase/pocketbase
-      reviewed: 2026-10-06
-      days: 30
     - fork: github.com/osshield/gopbs
       reviewed: 2026-10-06
       days: 90
@@ -45,3 +42,13 @@ forkReviews:
     - fork: '@shopify/flash-list'
       reviewed: 2026-10-29
       days: 90
+
+# Forks that need no review window, because no separate fork exists to drift
+# from upstream: the code is vendored in-tree and upgraded on purpose. Each
+# entry needs a reason. A fork listed here must not also be in forkReviews.
+forkExemptions:
+    - fork: github.com/pocketbase/pocketbase
+      reason: >-
+          Vendored in third_party/pocketbase and upgraded from pristine
+          upstream releases on the vendor/pocketbase branch (see
+          third_party/pocketbase/FORK.md), so no separate GitHub fork drifts.

@@ -274,6 +274,17 @@ describe('cellDisplay', () => {
         expect(cellDisplay(MONEY, row('detail'), null, PLAIN).text).toBe('')
         expect(cellDisplay(MONEY, row('detail'), undefined, PLAIN).text).toBe('')
     })
+
+    // E2: a column blank on detail rows has no cell there. It shows nothing, never
+    // "(none)" (a blank link) or the record's label, of any type.
+    it('shows nothing for the absent cell of a column blank on detail rows', () => {
+        const no: ResultColumn = { id: 'no', label: 'No.', type: 'number' }
+        expect(cellDisplay(no, row('detail', { cost: 5 }), undefined, PLAIN).text).toBe('')
+        const labelled = row('detail', { 'animal@label': 'Leo' })
+        expect(cellDisplay(ANIMAL, labelled, undefined, PLAIN).text).toBe('')
+        expect(cellDisplay(ANIMAL, row('detail'), undefined, PLAIN).text).not.toBe(BLANK_LINK_LABEL)
+        expect(cellDisplay(FIXED, row('detail'), undefined, PLAIN).text).toBe('')
+    })
 })
 
 describe('typed labels', () => {

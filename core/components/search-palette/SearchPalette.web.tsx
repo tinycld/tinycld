@@ -35,13 +35,17 @@ const PALETTE_TOP_OFFSET_PX = 96
 // the help palette's <style> tag so the two injections cannot collide. React
 // Native's StyleSheet doesn't expose @keyframes, so a tiny static <style> tag
 // is simpler than a JS-driven Animated value for an animation that runs once
-// on mount and never again. Guarded for SSR.
+// on mount and never again. Guarded for SSR. The keyframes exist only when
+// the reader allows motion, so under reduced motion the inline animation name
+// resolves to nothing and the palette opens at rest.
 if (typeof document !== 'undefined' && !document.getElementById('tinycld-search-palette-styles')) {
     const styleEl = document.createElement('style')
     styleEl.id = 'tinycld-search-palette-styles'
-    styleEl.textContent = `@keyframes tinycld-search-palette-in {
-        from { opacity: 0; transform: translateY(-4px); }
-        to { opacity: 1; transform: translateY(0); }
+    styleEl.textContent = `@media (prefers-reduced-motion: no-preference) {
+        @keyframes tinycld-search-palette-in {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     }`
     document.head.appendChild(styleEl)
 }

@@ -143,7 +143,7 @@ func (rn *runner) nestedRows(t *tree, level int, parentKey any, parentID, sectio
 		}
 		label := rn.firstLabel(cols, row)
 		rn.push(Row{
-			ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: cols[0].col.ID, Section: section, Parent: parentID, Cells: cells,
+			ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: cols[0].col.ID, Section: section, Parent: parentID, Cells: rn.detailCells(cells),
 			LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
 		})
 		rn.nestedRows(t, level+1, row["__next"], id, section, depth+1)

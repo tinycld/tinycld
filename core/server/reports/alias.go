@@ -61,6 +61,9 @@ func resolveAliases(spec *Spec) []Alias {
 			a.path(src, of.Value)
 			a.path(src, of.Label)
 			a.path(src, of.Group)
+			if of.GroupOrder != nil {
+				a.path(src, of.GroupOrder.Path)
+			}
 			a.node(src, of.Where)
 		}
 	}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SpecNode } from '../../spec'
+import type { OptionsFrom, ParamDef, SpecNode } from '../../spec'
 import type { CatalogField } from '../../types'
 import {
     aboveOf,
@@ -10,11 +10,13 @@ import {
     emptyCondition,
     filterToNode,
     type GroupDraft,
+    groupOrderChoices,
     type LevelScope,
     nodeToFilter,
     opsFor,
     opsShownFor,
     paramsInGroup,
+    tidyParam,
     withOptionsGroup,
 } from '../filter'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
@@ -124,7 +126,7 @@ describe('asking when run', () => {
         if (!asked?.optionsFrom) throw new Error('asked')
         const where: SpecNode = { value: true }
         const withWhere = { ...asked, optionsFrom: { ...asked.optionsFrom, where } }
-        const grouped = withOptionsGroup(withWhere, [{ field: 'region' }])
+        const grouped = withOptionsGroup(withWhere, [{ field: 'region' }], CATALOG)
         expect(grouped.optionsFrom).toEqual({
             source: TEAMS_KEY,
             value: [{ field: 'id' }],
@@ -139,7 +141,7 @@ describe('asking when run', () => {
             'group',
             'where',
         ])
-        expect(withOptionsGroup(grouped, null)).toEqual(withWhere)
+        expect(withOptionsGroup(grouped, null, CATALOG)).toEqual(withWhere)
 
         // D1: the group pick text stays with a new group, in the spec's key order,
         // and leaves with the groups it names.
@@ -147,7 +149,7 @@ describe('asking when run', () => {
             ...grouped,
             optionsFrom: { ...asked.optionsFrom, where, groupLabel: 'All {group}s' },
         }
-        const regrouped = withOptionsGroup(named, [{ field: 'name' }])
+        const regrouped = withOptionsGroup(named, [{ field: 'name' }], CATALOG)
         expect(Object.keys(regrouped.optionsFrom ?? {})).toEqual([
             'source',
             'value',
@@ -157,11 +159,11 @@ describe('asking when run', () => {
             'where',
         ])
         expect(regrouped.optionsFrom?.groupLabel).toBe('All {group}s')
-        expect(withOptionsGroup(named, null)).toEqual(withWhere)
+        expect(withOptionsGroup(named, null, CATALOG)).toEqual(withWhere)
         // A param with its own options has no records to group.
         const own = askParamFor(field('status'), 'in', 's')
         if (!own) throw new Error('own')
-        expect(withOptionsGroup(own, [{ field: 'region' }])).toBe(own)
+        expect(withOptionsGroup(own, [{ field: 'region' }], CATALOG)).toBe(own)
     })
 
     it('makes a param that fits the field and operator', () => {
@@ -215,6 +217,109 @@ describe('asking when run', () => {
             SALES_KEY
         )
         expect([...paramsInGroup(group, new Set())].sort()).toEqual(['period', 'raw'])
+    })
+})
+
+// E1: a grouped list's groups come in a chosen order (spec.go OptionsFrom.GroupOrder):
+// by name, in the group field's own order (a select's declared options), or by a field.
+describe('the order of a listed param’s groups', () => {
+    const teamsFrom = (extra: Partial<OptionsFrom>): OptionsFrom => ({
+        source: TEAMS_KEY,
+        value: [{ field: 'id' }],
+        label: [{ field: 'name' }],
+        ...extra,
+    })
+    const salesFrom = (extra: Partial<OptionsFrom>): OptionsFrom => ({
+        source: SALES_KEY,
+        value: [{ field: 'id' }],
+        label: [{ field: 'customer' }],
+        ...extra,
+    })
+
+    it('offers the field’s own order only for a group that ends at a select', () => {
+        expect(groupOrderChoices(CATALOG, teamsFrom({ group: [{ field: 'region' }] }))).toEqual([
+            'label',
+            'declared',
+            'path',
+        ])
+        expect(
+            groupOrderChoices(
+                CATALOG,
+                salesFrom({ group: [{ link: 'team' }, { field: 'region' }] })
+            )
+        ).toEqual(['label', 'declared', 'path'])
+        expect(groupOrderChoices(CATALOG, teamsFrom({ group: [{ field: 'name' }] }))).toEqual([
+            'label',
+            'path',
+        ])
+        // A group of linked records is ordered by name or by a field, never "declared".
+        expect(groupOrderChoices(CATALOG, salesFrom({ group: [{ link: 'team' }] }))).toEqual([
+            'label',
+            'path',
+        ])
+        // An ungrouped list has no groups to order.
+        expect(groupOrderChoices(CATALOG, teamsFrom({}))).toEqual([])
+    })
+
+    it('keeps the order with a new group, in the spec’s key order, and drops it with the groups', () => {
+        const where: SpecNode = { value: true }
+        const ordered: ParamDef = {
+            id: 'teams',
+            type: 'choice',
+            optionsFrom: teamsFrom({
+                group: [{ field: 'region' }],
+                groupOrder: { by: 'path', path: [{ field: 'name' }] },
+                groupLabel: 'All {group}',
+                where,
+            }),
+        }
+        const regrouped = withOptionsGroup(ordered, [{ field: 'name' }], CATALOG)
+        expect(regrouped.optionsFrom?.groupOrder).toEqual({ by: 'path', path: [{ field: 'name' }] })
+        expect(Object.keys(regrouped.optionsFrom ?? {})).toEqual([
+            'source',
+            'value',
+            'label',
+            'group',
+            'groupOrder',
+            'groupLabel',
+            'where',
+        ])
+        expect(Object.keys(tidyParam(ordered).optionsFrom ?? {})).toEqual([
+            'source',
+            'value',
+            'label',
+            'group',
+            'groupOrder',
+            'groupLabel',
+            'where',
+        ])
+        // groupOrder needs a group (params.go): it leaves with the groups it orders.
+        expect(withOptionsGroup(ordered, null, CATALOG).optionsFrom).toEqual(teamsFrom({ where }))
+    })
+
+    // A group that is not a select has no order of its own: the field's own order
+    // leaves with a select group, and a label or path order stays.
+    it('clears the field’s own order when the list is grouped by a field that is not a select', () => {
+        const grouped = (groupOrder: NonNullable<OptionsFrom['groupOrder']>): ParamDef => ({
+            id: 'teams',
+            type: 'choice',
+            optionsFrom: teamsFrom({ group: [{ field: 'region' }], groupOrder }),
+        })
+        const declared = grouped({ by: 'declared' })
+        expect(
+            withOptionsGroup(declared, [{ field: 'name' }], CATALOG).optionsFrom?.groupOrder
+        ).toBeUndefined()
+        expect(
+            Object.keys(withOptionsGroup(declared, [{ field: 'name' }], CATALOG).optionsFrom ?? {})
+        ).toEqual(['source', 'value', 'label', 'group'])
+        // Regrouped by a select, the field's own order stays.
+        expect(
+            withOptionsGroup(declared, [{ field: 'region' }], CATALOG).optionsFrom?.groupOrder
+        ).toEqual({ by: 'declared' })
+        expect(
+            withOptionsGroup(grouped({ by: 'label' }), [{ field: 'name' }], CATALOG).optionsFrom
+                ?.groupOrder
+        ).toEqual({ by: 'label' })
     })
 })
 

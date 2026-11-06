@@ -7,6 +7,7 @@ import { useInertExempt } from '@tinycld/core/ui/overlay/use-inert-exempt'
 import { AlertTriangle, CheckCircle, Info, X, XCircle } from 'lucide-react-native'
 import { useEffect, useRef } from 'react'
 import { Animated, Platform, Pressable, Text, View, type ViewStyle } from 'react-native'
+import { useReducedMotion } from 'react-native-reanimated'
 
 type ToastEdge = 'top' | 'bottom'
 
@@ -84,6 +85,11 @@ const VARIANT_ICONS = {
     error: XCircle,
 } as const
 
+function entranceOffset(edge: ToastEdge, isReducedMotion: boolean) {
+    if (isReducedMotion) return 0
+    return edge === 'top' ? -20 : 20
+}
+
 function ToastCard({ toast, edge }: { toast: ToastType; edge: ToastEdge }) {
     const removeToast = useToastStore(s => s.removeToast)
     const bgColor = useThemeColor('surface-secondary')
@@ -91,11 +97,20 @@ function ToastCard({ toast, edge }: { toast: ToastType; edge: ToastEdge }) {
     const mutedColor = useThemeColor('muted-foreground')
     const variantColor = useThemeColor(VARIANT_COLORS[toast.variant])
 
-    const opacity = useRef(new Animated.Value(0)).current
+    // RN Animated ignores the OS reduced-motion setting, so the card reads it
+    // (via reanimated, as the overlays do): reduced, it is drawn at rest and
+    // leaves at once.
+    const isReducedMotion = useReducedMotion()
+    const opacity = useRef(new Animated.Value(isReducedMotion ? 1 : 0)).current
     // Slide in from the edge the stack is pinned to.
-    const translateY = useRef(new Animated.Value(edge === 'top' ? -20 : 20)).current
+    const translateY = useRef(new Animated.Value(entranceOffset(edge, isReducedMotion))).current
 
     useEffect(() => {
+        if (isReducedMotion) {
+            const timer = setTimeout(() => removeToast(toast.id), toast.duration)
+            return () => clearTimeout(timer)
+        }
+
         Animated.parallel([
             Animated.timing(opacity, {
                 toValue: 1,
@@ -118,7 +133,7 @@ function ToastCard({ toast, edge }: { toast: ToastType; edge: ToastEdge }) {
         }, toast.duration)
 
         return () => clearTimeout(timer)
-    }, [opacity, translateY, toast.id, toast.duration, removeToast])
+    }, [opacity, translateY, toast.id, toast.duration, removeToast, isReducedMotion])
 
     const Icon = VARIANT_ICONS[toast.variant]
 

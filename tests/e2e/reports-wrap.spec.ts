@@ -4,7 +4,9 @@ import {
     addColumn,
     addSale,
     addTeam,
+    cellOf,
     chooseOption,
+    groupWithTeamRegion,
     listScroller,
     openReportStub,
     openReportsHub,
@@ -13,6 +15,7 @@ import {
     saveNewReport,
     scrollRowTo,
     startReport,
+    startTeamSales,
     uniqueName,
 } from './reports-helpers'
 
@@ -490,6 +493,53 @@ test.describe('report rows per width', () => {
             await saveNewReport(p, uniqueName('Pivot arrange'))
             await p.setViewportSize({ width: 390, height: 844 })
             await expect(p.getByTestId('report-layout-notice')).toBeVisible()
+        } finally {
+            await close()
+        }
+    })
+
+    // E2: in the wrapped phone rows (no arrangement), a column left blank on opened
+    // rows is an empty slot under its heading, on its line beside the amounts; the
+    // group row still shows the value.
+    test('on a phone a column left blank on opened rows keeps its empty slot', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptblankph')
+        try {
+            const team = uniqueName('BlankPh')
+            await openReportStub(p)
+            await addTeam(p, team, 'south')
+            await addSale(p, { team, customer: 'Ada', amount: 1000, cost: 0, day: '2026-01-05' })
+            await openReportsHub(p)
+            await startTeamSales(p)
+            await groupWithTeamRegion(p)
+            await expect(p.getByTestId('report-builder-column-3-detail')).toBeVisible()
+            await chooseOption(p, 'report-builder-column-3-detail', 'blank')
+            await saveNewReport(p, uniqueName('Blank phone'))
+            await p.setViewportSize({ width: 390, height: 844 })
+            await rowOf(p, team).click()
+            await expect(rowOf(p, team)).toHaveAttribute('aria-expanded', 'true')
+
+            const amount = await cellOf(p, 'amount', 'Ada')
+            const region = await cellOf(p, 'formula', 'Ada')
+            // Wrapped: the opened row's figures are on a line below its label.
+            await expect
+                .poll(async () => {
+                    const label = await rowOf(p, 'Ada').boundingBox()
+                    const figure = await amount.boundingBox()
+                    return label && figure ? figure.y >= label.y + label.height - 1 : false
+                })
+                .toBe(true)
+            await expect(amount).toHaveText('10.00')
+            await expect(await cellOf(p, 'formula', team)).toHaveText('South')
+            await expect(region).toBeVisible()
+            await expect(region).toHaveText('')
+            const heading = await p.getByTestId('report-heading-formula').boundingBox()
+            const slot = await region.boundingBox()
+            const figure = await amount.boundingBox()
+            expect(Math.abs((heading?.x ?? 0) - (slot?.x ?? -9))).toBeLessThanOrEqual(1)
+            expect(Math.abs((figure?.y ?? 0) - (slot?.y ?? -9))).toBeLessThanOrEqual(1)
+            expect(
+                await p.evaluate(() => document.documentElement.scrollWidth)
+            ).toBeLessThanOrEqual(390)
         } finally {
             await close()
         }

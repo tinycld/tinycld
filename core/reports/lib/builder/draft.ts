@@ -44,6 +44,7 @@ import {
     emptyGroup,
     filterGroupSchema,
     filterToNode,
+    groupOrderChoices,
     type LevelScope,
     nodeToFilter,
     paramsInGroup,
@@ -104,6 +105,8 @@ const columnFields = {
     explicitTotal: z.boolean(),
     /** The field a link column shows its record by; '' takes the first text field (R31). */
     labelField: z.string(),
+    /** On opened (detail) rows: the column's value, or left blank; absent reads as shown. */
+    detail: z.enum(['show', 'blank']).optional(),
 }
 export const columnDraftSchema = z.union([
     z.object({
@@ -311,10 +314,65 @@ export function showsDetailLabel(draft: Pick<BuilderDraft, 'pivot' | 'detailLabe
     return !draft.pivot.on || draft.detailLabel !== null
 }
 
+/**
+ * The column whose cell names each opened row: the first column, or the column a row
+ * label of exactly {col} repeats (assemble.go repeatedColumn). undefined for none.
+ */
+function detailLabelColumn(draft: Pick<BuilderDraft, 'columns' | 'detailLabel'>) {
+    const node = draft.detailLabel?.node
+    if (!node) return draft.columns[0]?.id
+    const keys = Object.entries(node).filter(([, value]) => value !== undefined)
+    return keys.length === 1 && keys[0]?.[0] === 'col' ? node.col : undefined
+}
+
+/** The count of nest hops on a column's path: 0 for a column of the report's own rows. */
+const nestDepth = (column: ColumnDraft) =>
+    column.kind === 'path' ? column.path.filter(hop => hop.mode === 'nest').length : 0
+
+/** A nest level's first column names that level's child rows (nest.go firstLabel). */
+function labelsChildRows(columns: readonly ColumnDraft[], index: number) {
+    const column = columns[index]
+    const depth = column ? nestDepth(column) : 0
+    if (depth === 0) return false
+    return columns.findIndex(other => nestDepth(other) === depth) === index
+}
+
+type DetailBlankDraft = Pick<BuilderDraft, 'groups' | 'columns' | 'detailLabel' | 'pivot'>
+
+/** Why a column cannot be blank on opened rows (bind.go detailBlank), or undefined. */
+function detailBlankRefusal(draft: DetailBlankDraft, index: number) {
+    if (draft.groups.length === 0) return 'Group the report to leave a column blank on opened rows'
+    if (draft.pivot.on) return 'A pivot report has no opened rows: show the column on them'
+    if (draft.columns[index]?.id === detailLabelColumn(draft))
+        return 'This column names opened rows: show it on them'
+    if (labelsChildRows(draft.columns, index))
+        return 'This column names child rows: show it on them'
+    return undefined
+}
+
+/**
+ * "Leave blank" on opened rows is offered on a grouped report that does not pivot, on
+ * every column but one that names opened rows or a nest level's child rows.
+ */
+export function offersDetailBlank(draft: DetailBlankDraft, index: number): boolean {
+    if (!draft.columns[index]) return false
+    return detailBlankRefusal(draft, index) === undefined
+}
+
+function detailBlankIssues(draft: BuilderDraft): Issue[] {
+    return draft.columns.flatMap((column, i): Issue[] => {
+        if (column.detail !== 'blank') return []
+        const message = detailBlankRefusal(draft, i)
+        return message ? [{ path: ['columns', i, 'detail'], message }] : []
+    })
+}
+
 export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues = [
         ...paramIssues(draft.params),
+        ...groupOrderIssues(draft.params, catalog),
         ...columnIssues(draft, catalog),
+        ...detailBlankIssues(draft),
         ...groupingIssues(draft, catalog),
     ]
     const [firstProblem] = conditionProblems(draft.filter, catalog, draft.source)
@@ -338,6 +396,22 @@ function paramIssues(params: readonly ParamDef[]): Issue[] {
         }
         if (utf8Length(from.groupLabel) > MAX_LABEL) {
             return [{ path, message: `Use at most ${MAX_LABEL} characters` }]
+        }
+        return []
+    })
+}
+
+// The group orders the engine refuses (params.go checkGroupOrder, bind.go
+// groupOrder): an order with no groups, and the field's own order of a group
+// that is not a select.
+function groupOrderIssues(params: readonly ParamDef[], catalog: Catalog): Issue[] {
+    return params.flatMap((param, i): Issue[] => {
+        const from = param.optionsFrom
+        if (!from?.groupOrder) return []
+        const path = ['params', i, 'optionsFrom', 'groupOrder']
+        if (!from.group?.length) return [{ path, message: 'Group the list to order its groups' }]
+        if (!groupOrderChoices(catalog, from).includes(from.groupOrder.by)) {
+            return [{ path, message: 'Only a field with fixed choices has its own order' }]
         }
         return []
     })
@@ -417,6 +491,7 @@ export function emptyDraft(source: CatalogSource): BuilderDraft {
                   total: 'recompute',
                   explicitTotal: false,
                   labelField: '',
+                  detail: 'show',
               },
           ]
         : []
@@ -461,6 +536,7 @@ function columnDraft(
         total: column.total ?? 'recompute',
         explicitTotal: column.total !== undefined,
         labelField: column.labelField ?? '',
+        detail: column.detail ?? 'show',
     } as const
     if (column.formula) {
         return {
@@ -614,6 +690,7 @@ function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecC
         if (column.format !== '' && showsFormat(column, types)) out.format = column.format
         if (column.total === 'rows' || column.explicitTotal) out.total = column.total
         if (column.labelField !== '') out.labelField = column.labelField
+        if (column.detail === 'blank') out.detail = 'blank'
         return out
     })
 }

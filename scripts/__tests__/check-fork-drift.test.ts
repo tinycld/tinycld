@@ -1,5 +1,8 @@
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { findGoForks, findNpmForks, staleForks } from '../check-fork-drift'
+import { parse as parseYaml } from 'yaml'
+import { findGoForks, findNpmForks, parseForkExemptions, staleForks } from '../check-fork-drift'
 
 const TODAY = new Date('2026-10-06T00:00:00Z')
 
@@ -234,5 +237,128 @@ describe('staleForks', () => {
     it('flags a fork with no review window at all', () => {
         const result = staleForks([fork], [], TODAY)
         expect(result.unreviewed).toEqual([fork.name])
+    })
+})
+
+describe('staleForks with exemptions', () => {
+    const vendored = {
+        name: 'github.com/pocketbase/pocketbase',
+        upstream: 'github.com/pocketbase/pocketbase',
+        pinnedAt: '../third_party/pocketbase',
+        kind: 'go' as const,
+    }
+    const other = {
+        name: 'github.com/emersion/go-webdav',
+        upstream: 'github.com/emersion/go-webdav',
+        pinnedAt: 'github.com/nathanstitt/go-webdav v0.7.1',
+        kind: 'go' as const,
+    }
+    const exemptions = [{ fork: vendored.name, reason: 'Vendored in third_party/pocketbase.' }]
+
+    it('skips an exempted fork that has no review window', () => {
+        const result = staleForks([vendored], [], TODAY, exemptions)
+        expect(result).toEqual({ stale: [], unreviewed: [] })
+    })
+
+    it('still flags an unlisted fork with no review window as unreviewed', () => {
+        const result = staleForks([vendored, other], [], TODAY, exemptions)
+        expect(result).toEqual({ stale: [], unreviewed: [other.name] })
+    })
+
+    it('still flags an unlisted fork whose review window has passed', () => {
+        const result = staleForks(
+            [vendored, other],
+            [{ fork: other.name, reviewed: '2026-01-01', days: 90 }],
+            TODAY,
+            exemptions
+        )
+        expect(result).toEqual({ stale: [other.name], unreviewed: [] })
+    })
+})
+
+describe('parseForkExemptions', () => {
+    const fork = 'github.com/pocketbase/pocketbase'
+    const reason = 'Vendored in third_party/pocketbase; upgraded per FORK.md.'
+
+    it('accepts an entry with a fork and a reason', () => {
+        const { exemptions, errors } = parseForkExemptions([{ fork, reason }], [])
+        expect(errors).toEqual([])
+        expect(exemptions).toEqual([{ fork, reason }])
+    })
+
+    it('returns nothing when the key is absent', () => {
+        expect(parseForkExemptions(undefined, [])).toEqual({ exemptions: [], errors: [] })
+        expect(parseForkExemptions(null, [])).toEqual({ exemptions: [], errors: [] })
+    })
+
+    it('refuses a value that is not a list', () => {
+        const { exemptions, errors } = parseForkExemptions({ fork, reason }, [])
+        expect(exemptions).toEqual([])
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toMatch(/forkExemptions/)
+    })
+
+    it('refuses an entry with no reason', () => {
+        const { exemptions, errors } = parseForkExemptions([{ fork }], [])
+        expect(exemptions).toEqual([])
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toContain(fork)
+        expect(errors[0]).toMatch(/reason/)
+    })
+
+    it('refuses an entry with a blank reason', () => {
+        const { exemptions, errors } = parseForkExemptions([{ fork, reason: '   ' }], [])
+        expect(exemptions).toEqual([])
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toContain(fork)
+        expect(errors[0]).toMatch(/reason/)
+    })
+
+    it('refuses an entry with no fork name', () => {
+        const { exemptions, errors } = parseForkExemptions([{ reason }], [])
+        expect(exemptions).toEqual([])
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toMatch(/forkExemptions entry 1/)
+        expect(errors[0]).toMatch(/fork name/)
+    })
+
+    it('refuses an entry with an unknown field', () => {
+        const { exemptions, errors } = parseForkExemptions([{ fork, reason, days: 30 }], [])
+        expect(exemptions).toEqual([])
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toContain(fork)
+        expect(errors[0]).toMatch(/days/)
+    })
+
+    it('refuses a fork that also has a forkReviews entry', () => {
+        const { errors } = parseForkExemptions(
+            [{ fork, reason }],
+            [{ fork, reviewed: '2026-10-01', days: 30 }]
+        )
+        expect(errors).toHaveLength(1)
+        expect(errors[0]).toContain(fork)
+        expect(errors[0]).toMatch(/forkReviews/)
+    })
+})
+
+describe('the real security-ignores.yml', () => {
+    const file = path.join(__dirname, '..', '..', '.github', 'security-ignores.yml')
+    const parsed = parseYaml(fs.readFileSync(file, 'utf8')) as {
+        forkReviews?: { fork: string; reviewed: string; days: number }[]
+        forkExemptions?: unknown
+    }
+    const pocketbase = 'github.com/pocketbase/pocketbase'
+
+    it('exempts the vendored PocketBase with a reason instead of a review window', () => {
+        const windows = (parsed.forkReviews ?? []).map(w => ({
+            ...w,
+            reviewed: String(w.reviewed),
+        }))
+        expect(windows.map(w => w.fork)).not.toContain(pocketbase)
+
+        const { exemptions, errors } = parseForkExemptions(parsed.forkExemptions, windows)
+        expect(errors).toEqual([])
+        const entry = exemptions.find(e => e.fork === pocketbase)
+        expect(entry?.reason.trim()).toBeTruthy()
     })
 })

@@ -13,6 +13,7 @@ import {
     keptParams,
     labelStart,
     levelScope,
+    offersDetailBlank,
     offersHaving,
     showsDetailLabel,
     showsHaving,
@@ -391,6 +392,7 @@ describe('emptyDraft', () => {
                 total: 'recompute',
                 explicitTotal: false,
                 labelField: '',
+                detail: 'show',
             },
         ])
         expect(specFromDraft({ ...draft, title: 'Teams' }, CATALOG)).toEqual({
@@ -1161,5 +1163,237 @@ describe('the group pick text of a param from a source', () => {
         )
         const empty = draftFromSpec(specWith(teamsParam('')), META, CATALOG)
         expect(specFromDraft(empty, CATALOG)).toEqual(specWith(teamsParam(undefined)))
+    })
+})
+
+// E1: a grouped param from a source orders its groups (spec.go OptionsFrom.GroupOrder):
+// by name, by the group field's declared options, or by a field of the source.
+describe('the group order of a param from a source', () => {
+    type Order = NonNullable<NonNullable<ParamDef['optionsFrom']>['groupOrder']>
+    const teamsParam = (groupOrder: Order, group = [{ field: 'region' }]): ParamDef => ({
+        id: 'teams',
+        type: 'choice',
+        label: 'Teams',
+        optionsFrom: {
+            source: TEAMS_KEY,
+            value: [{ field: 'id' }],
+            label: [{ field: 'name' }],
+            ...(group.length > 0 ? { group } : {}),
+            groupOrder,
+            groupLabel: 'All {group} teams',
+            where: { value: true },
+        },
+        multiple: true,
+    })
+    const specWith = (param: ParamDef): ReportSpec => ({
+        version: 2,
+        source: SALES_KEY,
+        params: [param],
+        columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
+        filter: { op: 'in', args: [{ path: [{ link: 'team' }] }, { param: 'teams' }] },
+    })
+    const issuePaths = (param: ParamDef) => {
+        const draft = draftFromSpec(specWith(param), META, CATALOG)
+        const parsed = builderSchema(CATALOG).safeParse(draft)
+        return parsed.success ? [] : parsed.error.issues.map(issue => issue.path.join('.'))
+    }
+    const orders: Order[] = [
+        { by: 'label' },
+        { by: 'declared' },
+        { by: 'path', path: [{ field: 'name' }] },
+    ]
+
+    it('saves each order as the spec holds it, through the draft and back', () => {
+        for (const order of orders) {
+            const spec = specWith(teamsParam(order))
+            expect(issuePaths(teamsParam(order))).toEqual([])
+            expect(JSON.stringify(specFromDraft(draftFromSpec(spec, META, CATALOG), CATALOG))).toBe(
+                JSON.stringify(spec)
+            )
+        }
+    })
+
+    // What the engine refuses (bind.go / params.go): the field's own order of a group
+    // that is not a select, and an order with no groups to order.
+    it('refuses what the engine refuses', () => {
+        expect(issuePaths(teamsParam({ by: 'declared' }, [{ field: 'name' }]))).toEqual([
+            'params.0.optionsFrom.groupOrder',
+        ])
+        expect(issuePaths(teamsParam({ by: 'label' }, []))).toContain(
+            'params.0.optionsFrom.groupOrder'
+        )
+    })
+})
+
+// E2: a column that only names its group (the team's region on each of the team's
+// rows) is left blank on opened rows (spec.go Column.Detail, "blank").
+describe('a column blank on opened rows', () => {
+    const BLANK_REGION: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        columns: [
+            { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+            {
+                id: 'region',
+                label: 'Region',
+                formula: { record: 'byTeam', path: [{ field: 'region' }] },
+                detail: 'blank',
+            },
+            { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+        ],
+        groups: [{ id: 'byTeam', col: 'team' }],
+    }
+    const issuePaths = (draft: BuilderDraft) => {
+        const parsed = builderSchema(CATALOG).safeParse(draft)
+        return parsed.success ? [] : parsed.error.issues.map(issue => issue.path.join('.'))
+    }
+    const labelled = (node: SpecNode): FormulaDraft => ({ kind: 'editable', node })
+    const offered = (draft: BuilderDraft) =>
+        draft.columns.map((_, index) => offersDetailBlank(draft, index))
+
+    it('keeps a blank column through the draft and back, and a shown one says nothing', () => {
+        const draft = draftFromSpec(BLANK_REGION, META, CATALOG)
+        expect(draft.columns.map(column => column.detail)).toEqual(['show', 'blank', 'show'])
+        expect(issuePaths(draft)).toEqual([])
+        const saved = specFromDraft(draft, CATALOG)
+        expect(saved).toEqual(BLANK_REGION)
+        expect(saved.columns[0]).not.toHaveProperty('detail')
+        expect(saved.columns[2]).not.toHaveProperty('detail')
+        const shown = {
+            ...draft,
+            columns: draft.columns.map(column => ({ ...column, detail: 'show' as const })),
+        }
+        for (const column of specFromDraft(shown, CATALOG).columns) {
+            expect(column).not.toHaveProperty('detail')
+        }
+    })
+
+    it('starts a new report’s column shown on opened rows', () => {
+        const source = CATALOG.get(SALES_KEY)
+        if (!source) throw new Error('fixture')
+        expect(emptyDraft(source).columns.map(column => column.detail)).toEqual(['show'])
+    })
+
+    // Offered where the engine accepts it: a grouped report, on any column but the one
+    // that names opened rows (the first column with no row label, or the column a row
+    // label of exactly {col} is).
+    it('offers Leave blank on a grouped report, never on the column that names opened rows', () => {
+        const draft = draftFromSpec(BLANK_REGION, META, CATALOG)
+        expect(offered(draft)).toEqual([false, true, true])
+        expect(offered({ ...draft, groups: [] })).toEqual([false, false, false])
+        expect(offered({ ...draft, detailLabel: labelled({ col: 'region' }) })).toEqual([
+            true,
+            false,
+            true,
+        ])
+        const overTeam = labelled({ op: 'concat', args: [{ col: 'team' }, { value: '!' }] })
+        expect(offered({ ...draft, detailLabel: overTeam })).toEqual([true, true, true])
+        const byCustomer = labelled({ path: [{ field: 'customer' }] })
+        expect(offered({ ...draft, detailLabel: byCustomer })).toEqual([true, true, true])
+    })
+
+    it('refuses a blank column where the engine refuses it (bind.go columns.N.detail)', () => {
+        const draft = draftFromSpec(BLANK_REGION, META, CATALOG)
+        expect(issuePaths({ ...draft, groups: [] })).toContain('columns.1.detail')
+        const first = draft.columns.map((column, i) =>
+            i === 0 ? { ...column, detail: 'blank' as const } : column
+        )
+        expect(issuePaths({ ...draft, columns: first })).toContain('columns.0.detail')
+        expect(issuePaths({ ...draft, detailLabel: labelled({ col: 'region' }) })).toContain(
+            'columns.1.detail'
+        )
+    })
+
+    const issueAt = (draft: BuilderDraft, path: string) => {
+        const parsed = builderSchema(CATALOG).safeParse(draft)
+        if (parsed.success) return undefined
+        return parsed.error.issues.find(issue => issue.path.join('.') === path)?.message
+    }
+    const pivoted = (draft: BuilderDraft): BuilderDraft => ({
+        ...draft,
+        pivot: {
+            ...draft.pivot,
+            on: true,
+            path: [{ field: 'day' }],
+            bucket: 'month',
+            cell: 'amount',
+        },
+    })
+
+    // A pivot report has no opened rows (bind.go detailBlank, as detail.label), so Leave
+    // blank would do nothing there.
+    it('never offers Leave blank on a pivot report, and says why a blank is refused there', () => {
+        const draft = draftFromSpec(BLANK_REGION, META, CATALOG)
+        expect(offered(pivoted(draft))).toEqual([false, false, false])
+        expect(issueAt(pivoted(draft), 'columns.1.detail')).toBe(
+            'A pivot report has no opened rows: show the column on them'
+        )
+        expect(issueAt(draft, 'columns.1.detail')).toBeUndefined()
+    })
+
+    // Teams by region, each team's sales nested under it as child rows. A nest level's
+    // child rows are named by that level's first column (nest.go firstLabel, cols[0]),
+    // whatever the row label says, so that column cannot be blank on them; the level's
+    // later columns can.
+    const NESTED_SALES: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: TEAMS_KEY,
+        columns: [
+            { id: 'region', label: 'Region', path: [{ field: 'region' }] },
+            { id: 'name', label: 'Name', path: [{ field: 'name' }] },
+            {
+                id: 'customer',
+                label: 'Customer',
+                path: [{ link: 'sales', mode: 'nest' }, { field: 'customer' }],
+            },
+            {
+                id: 'amount',
+                label: 'Amount',
+                path: [{ link: 'sales', mode: 'nest' }, { field: 'amount' }],
+            },
+            {
+                id: 'again',
+                label: 'Same team’s customer',
+                path: [
+                    { link: 'sales', mode: 'nest' },
+                    { link: 'team' },
+                    { link: 'sales', mode: 'nest' },
+                    { field: 'customer' },
+                ],
+            },
+            {
+                id: 'againAmount',
+                label: 'Same team’s amount',
+                path: [
+                    { link: 'sales', mode: 'nest' },
+                    { link: 'team' },
+                    { link: 'sales', mode: 'nest' },
+                    { field: 'amount' },
+                ],
+            },
+        ],
+        groups: [{ id: 'byRegion', col: 'region' }],
+    }
+
+    it('never offers Leave blank on the first column of a nest level', () => {
+        const draft = draftFromSpec(NESTED_SALES, META, CATALOG)
+        expect(offered(draft)).toEqual([false, true, false, true, false, true])
+        const byName = labelled({ path: [{ field: 'name' }] })
+        expect(offered({ ...draft, detailLabel: byName })).toEqual([
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+        ])
+        const blankCustomer = draft.columns.map((column, i) =>
+            i === 2 ? { ...column, detail: 'blank' as const } : column
+        )
+        expect(issueAt({ ...draft, columns: blankCustomer }, 'columns.2.detail')).toBeDefined()
+        const blankAmount = draft.columns.map((column, i) =>
+            i === 3 ? { ...column, detail: 'blank' as const } : column
+        )
+        expect(issueAt({ ...draft, columns: blankAmount }, 'columns.3.detail')).toBeUndefined()
     })
 })
