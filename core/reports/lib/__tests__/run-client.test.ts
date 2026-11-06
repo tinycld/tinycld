@@ -8,7 +8,9 @@ import {
     PARAM_OPTIONS_PATH,
     RUN_QUERY_KEY,
     refusalOf,
+    rowsKeyOf,
 } from '../run-client'
+import type { ReportSpec } from '../spec'
 
 const send = vi.fn()
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
@@ -116,5 +118,33 @@ describe('forgetSavedRuns', () => {
         expect(client.getQueryData(mineFiltered)).toBeUndefined()
         expect(client.getQueryData(other)).toBe('cached')
         expect(client.getQueryData(draft)).toBe('cached')
+    })
+})
+
+describe('rowsKeyOf', () => {
+    const spec: ReportSpec = { version: 1, source: 'a.b', columns: [] }
+    const options = { today: '2026-11-06' }
+
+    it('keys a saved report on its id, whatever its params or options', () => {
+        const key = rowsKeyOf({ reportId: 'r1', params: {}, options })
+        expect(
+            rowsKeyOf({
+                reportId: 'r1',
+                params: { day: 'x' },
+                options: { ...options, expandAll: true },
+            })
+        ).toBe(key)
+        expect(rowsKeyOf({ reportId: 'r2', params: {}, options })).not.toBe(key)
+    })
+
+    it('changes with a draft spec’s rows but not with its display or options', () => {
+        const key = rowsKeyOf({ spec, params: {}, options })
+        const display = { layouts: [{ width: 'mobile' as const, tracks: 1, cells: [] }] }
+        expect(rowsKeyOf({ spec: { ...spec, display }, params: {}, options })).toBe(key)
+        expect(
+            rowsKeyOf({ spec, params: {}, options: { ...options, cursor: 'c', limit: 200 } })
+        ).toBe(key)
+        const sorted = { ...spec, sort: [{ col: 'name', dir: 'desc' as const }] }
+        expect(rowsKeyOf({ spec: sorted, params: {}, options })).not.toBe(key)
     })
 })

@@ -16,10 +16,15 @@ import (
 // arrive ends with the stale row.
 //
 // A ResumableClient queues without blocking, so its messages are sent inline
-// and keep the order of the writes that produced them. Any other client is
-// sent to from a goroutine, as before.
+// and keep the order of the writes that produced them. A resume drain sends
+// through a realtimeDrainClient, which is sent to as the client it wraps: the
+// drain sends each deferred record in turn, and a goroutine per send would let
+// a later record reach the subscriber first. Any other client is sent to from
+// a goroutine, as before.
 func realtimeSend(client subscriptions.Client, messages ...subscriptions.Message) {
-	switch client.(type) {
+	switch c := client.(type) {
+	case *realtimeDrainClient:
+		realtimeSend(c.Client, messages...)
 	case *subscriptions.ResumableClient, *subscriptions.ResumableConn:
 		for _, msg := range messages {
 			client.Send(msg)

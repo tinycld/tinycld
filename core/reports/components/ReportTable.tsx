@@ -271,6 +271,8 @@ function TableList({ rows, onNearEnd, isLoadingMore, ...row }: TableListProps) {
 export interface ReportTableProps {
     columns: ResultColumn[]
     rows: VisibleRow[]
+    /** The design and params of the run whose rows are shown; a new value starts the list at the top. */
+    runKey: string
     format: NumberFormat
     breakpoint: Breakpoint
     layouts: readonly DisplayLayout[]
@@ -285,7 +287,7 @@ export interface ReportTableProps {
 // commit and again when the rows change, so a first page shorter than the view
 // asks for the next one too.
 export function ReportTable(props: ReportTableProps) {
-    const { rows, breakpoint, layouts, onToggleGroup, onNearEnd, isLoadingMore } = props
+    const { rows, runKey, breakpoint, layouts, onToggleGroup, onNearEnd, isLoadingMore } = props
     const columns = useStable(props.columns)
     const format = useStable(props.format)
     const windowWidth = useWindowWidth()
@@ -303,8 +305,12 @@ export function ReportTable(props: ReportTableProps) {
     )
     if (columns.length === 0) return null
     const isOneLine = layout.kind === 'one-line'
+    // FlashList keeps the row in view anchored when the rows change, which a live
+    // re-run of the same design and params needs; a run with a new design or new
+    // params is another report, so its list is a new one and starts at the top.
     const list = (scrollX: Animated.Value | null) => (
         <TableList
+            key={runKey}
             rows={rows}
             columns={columns}
             layout={layout}

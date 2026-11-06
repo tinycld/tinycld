@@ -1,13 +1,19 @@
-import { expect, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import { type Browser, expect, type Locator, type Page, test } from '@playwright/test'
+import { createInvitedUser, loginAs, skipWithoutReportsStub } from './helpers'
 import {
+    addColumn,
     addSale,
+    addSales,
     addTeam,
     chooseOption,
+    holdRuns,
+    listScroller,
     openReportStub,
     openReportsHub,
+    rowOf,
     SALES_SOURCE,
     saveNewReport,
+    scrollRowTo,
     startReport,
     TEAMS_SOURCE,
     uniqueName,
@@ -351,6 +357,325 @@ test.describe('filtering a report', () => {
             const table = p.getByTestId('report-table')
             await expect(table.getByText('Kept sale', { exact: true })).toBeVisible()
             await expect(table.getByText('Other sale', { exact: true })).toHaveCount(0)
+        } finally {
+            await close()
+        }
+    })
+})
+
+/**
+ * A run with new params starts at the top of the report; a live re-run of the same
+ * params keeps the reader's place. The report lists 40 sales (customers Top 00…39,
+ * amounts 10.00…10.39, sorted by customer) with an asked "amount at least" filter.
+ * The table stays mounted while a new run loads (the earlier figures stay in view),
+ * so its list keeps its scroll offset from one run to the next.
+ */
+
+const SALES = 40
+
+function topName(i: number): string {
+    return `Top ${String(i).padStart(2, '0')}`
+}
+
+function dayOf(i: number): string {
+    return new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10)
+}
+
+async function seedAskedAmount(p: Page) {
+    const team = uniqueName('Team')
+    await openReportStub(p)
+    await addTeam(p, team)
+    await addSales(p, {
+        team,
+        customerPrefix: 'Top',
+        count: SALES,
+        firstDay: dayOf(0),
+        firstAmount: 1000,
+        cost: 400,
+        quantity: 3,
+    })
+    await openReportsHub(p)
+    await startReport(p, SALES_SOURCE)
+    await addColumn(p, ['amount'])
+    await addColumn(p, ['cost'])
+    await addColumn(p, ['quantity'])
+    await p.getByTestId('report-builder-section-filter').click()
+    await p.getByTestId('report-builder-filter-add-condition').click()
+    await p
+        .getByTestId('report-builder-picker')
+        .getByTestId('report-builder-pick-field-amount')
+        .click()
+    await chooseOption(p, 'report-builder-filter-0-op', 'gte')
+    await p.getByTestId('report-builder-filter-0-ask').click()
+    await p.getByTestId('report-builder-section-group').click()
+    await chooseOption(p, 'report-builder-sort-add-menu', 'customer')
+    await saveNewReport(p, uniqueName('Top'))
+    await expect(rowOf(p, topName(0))).toBeVisible()
+    return team
+}
+
+/** Any row the list has drawn: the way to its scroller when the row looked for is not drawn. */
+function anyRow(p: Page): Locator {
+    return p.getByTestId('report-table').locator('[data-testid^="report-row-"]').first()
+}
+
+async function scrollOffset(p: Page): Promise<number> {
+    return (await listScroller(anyRow(p))).evaluate(scroller => scroller.scrollTop)
+}
+
+/** How far the row's top edge is under the list's top edge. */
+async function gapToListTop(row: Locator): Promise<number> {
+    const list = await listScroller(row)
+    return row.evaluate(
+        (element, scroller) =>
+            element.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+        list
+    )
+}
+
+// The list draws only the rows near its view (fewer ahead on a phone), so a row
+// further down is not in the page yet: scroll down half a view at a time until
+// the list draws it.
+async function revealRow(p: Page, row: Locator) {
+    const list = await listScroller(anyRow(p))
+    for (let step = 0; step < 40 && (await row.count()) === 0; step++) {
+        await list.evaluate(
+            scroller =>
+                new Promise(resolve => {
+                    scroller.scrollTop += scroller.clientHeight / 2
+                    requestAnimationFrame(() => requestAnimationFrame(resolve))
+                })
+        )
+    }
+    await expect(row, 'the list drew the row').toHaveCount(1)
+}
+
+async function toListTop(p: Page, row: Locator) {
+    await revealRow(p, row)
+    await scrollRowTo(row)
+    expect(Math.abs(await gapToListTop(row)), 'the row is at the list top').toBeLessThanOrEqual(1)
+}
+
+// Holds the run that `change` starts until "Updating…" shows, so the earlier
+// figures are still in view while it loads, then lets it land.
+async function landNewRun(p: Page, change: () => Promise<void>) {
+    const release = await holdRuns(p)
+    await change()
+    await expect(p.getByTestId('report-updating')).toBeVisible()
+    release()
+    await p.unrouteAll({ behavior: 'wait' })
+    await expect(p.getByTestId('report-updating')).toBeHidden()
+}
+
+async function setMinAmount(p: Page, amount: string) {
+    const chip = p.getByTestId('report-param-amount')
+    if (await chip.isVisible()) {
+        await chip.click()
+    } else {
+        await p.getByTestId('report-add-filter').click()
+        await p.getByTestId('report-add-filter-amount').click()
+    }
+    const picker = p.getByTestId('report-filter-picker')
+    await picker.getByTestId('report-filter-value').fill(amount)
+    await picker.getByTestId('report-filter-apply').click()
+    await expect(picker).toBeHidden()
+}
+
+// The list is at its top and the report's first row is the first row in view.
+async function expectAtTop(p: Page, first: number) {
+    await expect.poll(() => scrollOffset(p), 'the list scroll offset').toBeLessThanOrEqual(1)
+    const row = rowOf(p, topName(first))
+    await expect(row).toBeInViewport()
+    expect(
+        Math.abs(await gapToListTop(row)),
+        'the first row is at the list top'
+    ).toBeLessThanOrEqual(1)
+}
+
+// A row lower down is first in view; a narrower filter, a narrower one again and
+// then no filter each start the new run at the top. Each row scrolled to has 15
+// or more rows under it, so it can reach the list top, and stays in the next
+// run, so the earlier run's row is there to hold.
+async function expectNewParamsStartAtTop(p: Page) {
+    await toListTop(p, rowOf(p, topName(20)))
+    expect(await scrollOffset(p)).toBeGreaterThan(0)
+    await landNewRun(p, () => setMinAmount(p, '10.05'))
+    await expectAtTop(p, 5)
+
+    // Top 15 is row 10 of Top 05…39, and row 5 of the next run.
+    await toListTop(p, rowOf(p, topName(15)))
+    await landNewRun(p, () => setMinAmount(p, '10.10'))
+    await expectAtTop(p, 10)
+
+    // Widened: Top 25 is row 15 of Top 10…39, and row 23 of the next run.
+    await toListTop(p, rowOf(p, topName(25)))
+    await landNewRun(p, () => setMinAmount(p, '10.02'))
+    await expectAtTop(p, 2)
+
+    // Widened back to every sale: Top 20 is row 18 of Top 02…39, and row 20 after.
+    // The unfiltered run is the report's first one, still cached, so its rows
+    // land at once: no run loads and "Updating…" never shows.
+    await toListTop(p, rowOf(p, topName(20)))
+    await p.getByTestId('report-filter-remove-amount').click()
+    await expect(p.getByTestId('report-param-amount')).toHaveCount(0)
+    await expectAtTop(p, 0)
+}
+
+// The 40 sales in a new report's builder, sorted by customer, with no asked
+// value: every design change below runs the draft with the same (empty) params.
+async function seedBuilderDraft(p: Page) {
+    const team = uniqueName('Team')
+    await openReportStub(p)
+    await addTeam(p, team)
+    await addSales(p, {
+        team,
+        customerPrefix: 'Top',
+        count: SALES,
+        firstDay: dayOf(0),
+        firstAmount: 1000,
+        cost: 400,
+        quantity: 3,
+    })
+    await openReportsHub(p)
+    await startReport(p, SALES_SOURCE)
+    await addColumn(p, ['amount'])
+    // Amount cells are drawn only once the run with that column has landed, so
+    // the sort below has earlier figures to keep in view while it loads. The draft
+    // has no sort yet, so rows come in record-id order: wait on any amount cell,
+    // not one customer's row, which may sit outside the rows FlashList draws.
+    await expect(
+        p.getByTestId('report-table').locator('[data-testid^="report-cell-amount-"]').first()
+    ).toBeVisible()
+    await p.getByTestId('report-builder-section-group').click()
+    await landNewRun(p, () => chooseOption(p, 'report-builder-sort-add-menu', 'customer'))
+    await expect(rowOf(p, topName(0))).toBeVisible()
+}
+
+async function sortZtoA(p: Page) {
+    await p
+        .getByTestId('report-builder-sort-0')
+        .getByRole('radio', { name: 'Z to A', exact: true })
+        .click()
+}
+
+async function filterAmountFrom(p: Page, amount: string) {
+    await p.getByTestId('report-builder-section-filter').click()
+    await p.getByTestId('report-builder-filter-add-condition').click()
+    await p
+        .getByTestId('report-builder-picker')
+        .getByTestId('report-builder-pick-field-amount')
+        .click()
+    await chooseOption(p, 'report-builder-filter-0-op', 'gte')
+    await p.getByTestId('report-builder-filter-0-value').fill(amount)
+}
+
+async function addSaleElsewhere(
+    browser: Browser,
+    user: { username: string; password: string },
+    team: string
+) {
+    const other = await browser.newContext()
+    try {
+        const q = await other.newPage()
+        await loginAs(q, user.username, user.password)
+        await openReportStub(q)
+        await addSale(q, { team, customer: 'Earlier', amount: 2000, cost: 0, day: dayOf(0) })
+    } finally {
+        await other.close()
+    }
+}
+
+test.describe('where a report run starts', () => {
+    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+
+    test('a run with new params starts at the top of the report', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rpttop')
+        try {
+            await seedAskedAmount(p)
+            await expectNewParamsStartAtTop(p)
+        } finally {
+            await close()
+        }
+    })
+
+    test('on a phone a run with new params starts at the top of the report', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rpttopph')
+        try {
+            await seedAskedAmount(p)
+            await p.setViewportSize({ width: 390, height: 844 })
+            // The rows wrap on a phone: the amount sits under the label.
+            const first = rowOf(p, topName(0))
+            const id = ((await first.getAttribute('data-testid')) ?? '').replace('report-row-', '')
+            const amount = p.getByTestId(`report-cell-amount-${id}`)
+            await expect
+                .poll(async () => {
+                    const label = await first.boundingBox()
+                    const cell = await amount.boundingBox()
+                    return label && cell ? cell.y >= label.y + label.height - 1 : false
+                })
+                .toBe(true)
+            await expectNewParamsStartAtTop(p)
+        } finally {
+            await close()
+        }
+    })
+
+    // Top 20 has 19 or more rows under it in both runs below, so it can reach the
+    // list top and is there in the next run for the list to hold.
+    test('in the builder a new sort starts the preview at the top', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptbsort')
+        try {
+            await seedBuilderDraft(p)
+            await toListTop(p, rowOf(p, topName(20)))
+            expect(await scrollOffset(p)).toBeGreaterThan(0)
+            await landNewRun(p, () => sortZtoA(p))
+            await expectAtTop(p, 39)
+        } finally {
+            await close()
+        }
+    })
+
+    test('in the builder a new filter condition starts the preview at the top', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptbfilt')
+        try {
+            await seedBuilderDraft(p)
+            await toListTop(p, rowOf(p, topName(20)))
+            expect(await scrollOffset(p)).toBeGreaterThan(0)
+            await landNewRun(p, () => filterAmountFrom(p, '10.05'))
+            await expectAtTop(p, 5)
+            await expect(rowOf(p, topName(4))).toHaveCount(0)
+        } finally {
+            await close()
+        }
+    })
+
+    test('a live re-run of the same params keeps the row in view in place', async ({
+        page,
+        browser,
+    }) => {
+        const { inviteePage: p, user, close } = await createInvitedUser(page, 'rptkeep')
+        try {
+            const team = await seedAskedAmount(p)
+            await landNewRun(p, () => setMinAmount(p, '10.05'))
+            const target = rowOf(p, topName(20))
+            await toListTop(p, target)
+            const offset = await scrollOffset(p)
+            expect(offset).toBeGreaterThan(0)
+            const before = (await target.boundingBox())?.y ?? -1
+            // "Earlier" sorts before every Top sale and passes the filter, so the
+            // re-run adds a row above the one in view.
+            const rerun = p.waitForResponse('**/api/reports/run')
+            await addSaleElsewhere(browser, user, team)
+            await rerun
+            await expect
+                .poll(() => scrollOffset(p), 'the list moved down by the added row')
+                .toBeGreaterThan(offset)
+            await expect
+                .poll(async () => Math.abs(((await target.boundingBox())?.y ?? -999) - before))
+                .toBeLessThanOrEqual(2)
+            await expect(target).toBeInViewport()
         } finally {
             await close()
         }
