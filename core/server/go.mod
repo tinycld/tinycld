@@ -37,7 +37,7 @@ require (
 	github.com/grafana/sobek v0.0.0-20260915160442-8a431c44cd7b
 	github.com/klauspost/compress v1.20.2
 	github.com/mrz1836/postmark v1.9.0
-	github.com/nathanstitt/omnidoc v1.1.2
+	github.com/nathanstitt/omnidoc v1.2.0
 	github.com/osshield/gopbs v0.0.0-00010101000000-000000000000
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/ozzo-validation/v4 v4.3.0
