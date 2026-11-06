@@ -12,20 +12,22 @@ import (
 // its options in chart order (Assets, Liabilities, Equity, Income, Expense),
 // not A–Z. Two stored types no option names (holding, suspense) and one
 // blank type make groups of their own. sort is a number a package keeps to
-// order its types; rank is its old key.
+// order its types; rank is its old key. code is a text some accounts leave
+// blank: Equity, Income, holding and suspense have no code at all, and Assets
+// has one blank code beside its B.
 //
-//	key          number name        type       sort
-//	cash         1000   Cash        asset      10
+//	key          number name        type       sort code
+//	cash         1000   Cash        asset      10   B
 //	receivables  1200   Receivables asset      25
-//	payables     2000   Payables    liability  4
+//	payables     2000   Payables    liability  4    A
 //	card         2100   Card        liability  12
 //	overdraft    2200   Cash        liability  30
 //	capital      3000   Capital     equity     3
 //	sales        4000   Sales       income     9
-//	rent         5000   Rent        expense    1
+//	rent         5000   Rent        expense    1    C
 //	unapplied    9000   Unapplied   suspense   3
 //	escrow       9100   Escrow      holding    50
-//	unsorted     9999   Unsorted    (blank)    100
+//	unsorted     9999   Unsorted    (blank)    100  Z
 func withAccounts(t *testing.T, z *zoo) {
 	t.Helper()
 	accounts := core.NewBaseCollection("zoo_accounts")
@@ -36,25 +38,26 @@ func withAccounts(t *testing.T, z *zoo) {
 		&core.TextField{Name: "name"},
 		&core.SelectField{Name: "type", Values: []string{"asset", "liability", "equity", "income", "expense", "holding", "suspense"}, MaxSelect: 1},
 		&core.NumberField{Name: "sort"},
+		&core.TextField{Name: "code"},
 	)
 	z.save(t, accounts)
 	for _, a := range []struct {
-		key, name, typ string
-		number, sort   int
+		key, name, typ, code string
+		number, sort         int
 	}{
-		{"cash", "Cash", "asset", 1000, 10},
-		{"receivables", "Receivables", "asset", 1200, 25},
-		{"payables", "Payables", "liability", 2000, 4},
-		{"card", "Card", "liability", 2100, 12},
-		{"overdraft", "Cash", "liability", 2200, 30},
-		{"capital", "Capital", "equity", 3000, 3},
-		{"sales", "Sales", "income", 4000, 9},
-		{"rent", "Rent", "expense", 5000, 1},
-		{"unapplied", "Unapplied", "suspense", 9000, 3},
-		{"escrow", "Escrow", "holding", 9100, 50},
-		{"unsorted", "Unsorted", "", 9999, 100},
+		{"cash", "Cash", "asset", "B", 1000, 10},
+		{"receivables", "Receivables", "asset", "", 1200, 25},
+		{"payables", "Payables", "liability", "A", 2000, 4},
+		{"card", "Card", "liability", "", 2100, 12},
+		{"overdraft", "Cash", "liability", "", 2200, 30},
+		{"capital", "Capital", "equity", "", 3000, 3},
+		{"sales", "Sales", "income", "", 4000, 9},
+		{"rent", "Rent", "expense", "C", 5000, 1},
+		{"unapplied", "Unapplied", "suspense", "", 9000, 3},
+		{"escrow", "Escrow", "holding", "", 9100, 50},
+		{"unsorted", "Unsorted", "", "Z", 9999, 100},
 	} {
-		z.rec(t, a.key, "zoo_accounts", map[string]any{"number": a.number, "name": a.name, "type": a.typ, "sort": a.sort})
+		z.rec(t, a.key, "zoo_accounts", map[string]any{"number": a.number, "name": a.name, "type": a.typ, "sort": a.sort, "code": a.code})
 	}
 	registerAccountsSource()
 }
@@ -73,6 +76,7 @@ func registerAccountsSource() {
 				{Value: "expense", Label: "Expense"},
 			}},
 			{Key: "sort", Label: "Sort", Type: Number, Aggregates: MinMax},
+			{Key: "code", Label: "Code", Type: Text, Aggregates: MinMax},
 		},
 		Aliases: map[string]string{"rank": "sort"},
 	})
@@ -132,7 +136,7 @@ func requireRefusal(t *testing.T, err error, status int, at, code string) {
 	}
 }
 
-// The three ways a grouped list orders its groups, and the full first page of
+// The ways a grouped list orders its groups, and the full first page of
 // options each gives: group by group, by label then value inside a group.
 var accountOrders = []struct {
 	name, order string
@@ -154,6 +158,11 @@ var accountOrders = []struct {
 	// first though its sort is the largest.
 	{"path", `{"by":"path","path":[{"field":"sort"}]}`, []string{"(none)", "Expense", "Equity", "suspense", "Liabilities", "Income", "Assets", "holding"},
 		[]string{"unsorted", "rent", "capital", "unapplied", "card", "overdraft", "payables", "sales", "cash", "receivables", "escrow"}},
+	// By each group's smallest code, a blank code being no value (Assets is B,
+	// not its blank); the groups whose codes are all blank come after the
+	// groups with a code, by label; the blank group still first.
+	{"path with blanks", `{"by":"path","path":[{"field":"code"}]}`, []string{"(none)", "Liabilities", "Assets", "Expense", "Equity", "Income", "holding", "suspense"},
+		[]string{"unsorted", "card", "overdraft", "payables", "cash", "receivables", "rent", "capital", "sales", "escrow", "unapplied"}},
 }
 
 // optionsFrom.groupOrder orders a grouped list's groups, and the options come
@@ -247,6 +256,11 @@ func TestGroupOrderRefusals(t *testing.T) {
 		{"a path that does not bind", accountsBy(`{"by":"path","path":[{"field":"nope"}]}`),
 			"params.0.optionsFrom.groupOrder.path.0.field", "unknown_field", 422},
 		{"by path with no path", accountsBy(`{"by":"path"}`),
+			"params.0.optionsFrom.groupOrder.path", "invalid", 400},
+		// A path orders only by path.
+		{"a path with by label", accountsBy(`{"by":"label","path":[{"field":"sort"}]}`),
+			"params.0.optionsFrom.groupOrder.path", "invalid", 400},
+		{"a path with by declared", accountsBy(`{"by":"declared","path":[{"field":"sort"}]}`),
 			"params.0.optionsFrom.groupOrder.path", "invalid", 400},
 		{"a to-many path", withGroup(`[{"field":"species"}],"groupOrder":{"by":"path","path":[{"link":"feedings"},{"field":"grams"}]}`),
 			"params.0.optionsFrom.groupOrder.path.0", "invalid", 400},

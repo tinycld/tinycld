@@ -47,13 +47,16 @@ export async function openReportStub(page: Page) {
     await navigateToPackage(page, 'salesstub', { waitFor: page.getByTestId('salesstub-landing') })
 }
 
-export async function addTeam(page: Page, name: string, region: 'north' | 'south' = 'north') {
+const REGION_LABELS = { north: 'North', south: 'South', east: 'East' } as const
+
+export async function addTeam(
+    page: Page,
+    name: string,
+    region: keyof typeof REGION_LABELS = 'north'
+) {
     await page.getByTestId('salesstub-team-name').fill(name)
     // The team form's radios come first on the screen, so the first match is its own.
-    await page
-        .getByRole('radio', { name: region === 'north' ? 'North' : 'South', exact: true })
-        .first()
-        .click()
+    await page.getByRole('radio', { name: REGION_LABELS[region], exact: true }).first().click()
     await page.getByTestId('salesstub-team-create').click()
     await expect(page.getByTestId('salesstub-team-saved')).toHaveText(`Saved ${name}`)
 }

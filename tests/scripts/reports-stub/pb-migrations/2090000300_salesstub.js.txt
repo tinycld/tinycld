@@ -27,7 +27,7 @@ migrate(
             deleteRule: SIGNED_IN,
             fields: [
                 { id: 'salesstub_teams_name', name: 'name', type: 'text', required: true, max: 200 },
-                { id: 'salesstub_teams_region', name: 'region', type: 'select', values: ['north', 'south'], maxSelect: 1 },
+                { id: 'salesstub_teams_region', name: 'region', type: 'select', values: ['north', 'south', 'east'], maxSelect: 1 },
                 ...stamps('salesstub_teams'),
             ],
         })

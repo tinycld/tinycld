@@ -81,6 +81,7 @@ export const CATALOG = catalogOf([
                 options: [
                     { value: 'north', label: 'North' },
                     { value: 'south', label: 'South' },
+                    { value: 'east', label: 'East' },
                 ],
             },
         ],

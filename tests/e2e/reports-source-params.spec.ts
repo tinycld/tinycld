@@ -15,6 +15,7 @@ import {
     SALES_SOURCE,
     SHIPPED_TITLE,
     STUB_HEADING,
+    saveNewReport,
     startReport,
     TEAM_TOTALS_TITLE,
     uniqueName,
@@ -43,6 +44,47 @@ async function seedRegions(p: Page, stem: string) {
     ] as const) {
         await addSale(p, { team, customer, amount: 100, cost: 0, day: '2026-01-05' })
     }
+}
+
+// A draft over sales whose team condition is asked when run as "is any of", its
+// teams listed by region (R30).
+async function askTeamsByRegion(p: Page) {
+    await openReportsHub(p)
+    await startReport(p, SALES_SOURCE)
+    await p.getByTestId('report-builder-section-filter').click()
+    await p.getByTestId('report-builder-filter-add-condition').click()
+    await p
+        .getByTestId('report-builder-picker')
+        .getByTestId('report-builder-pick-record-team')
+        .click()
+    await chooseOption(p, 'report-builder-filter-0-op', 'in')
+    await p.getByTestId('report-builder-filter-0-ask').click()
+    await expect(p.getByTestId(GROUP_ORDER)).toHaveCount(0)
+    await regroupTeams(p, 'region', 'Region')
+}
+
+const GROUP_ORDER = 'report-builder-filter-0-options-order'
+
+async function regroupTeams(p: Page, field: string, shown: string) {
+    const grouping = p.getByTestId('report-builder-filter-0-options-group')
+    await grouping.click()
+    await p
+        .getByTestId('report-builder-picker')
+        .getByTestId(`report-builder-pick-field-${field}`)
+        .click()
+    await expect(grouping).toHaveText(shown)
+}
+
+// The team picker's whole-group picks, one per section head and in its order, of
+// the teams this test made (searched by its stem).
+async function expectGroupHeads(p: Page, stem: string, heads: string[]) {
+    await p.getByTestId('report-add-filter').click()
+    await p.getByTestId('report-add-filter-team').click()
+    const picker = p.getByTestId('report-filter-picker')
+    await picker.getByTestId('report-filter-search').fill(stem)
+    await expect(picker.locator('[data-testid^="report-filter-group-"]')).toHaveText(heads)
+    await p.keyboard.press('Escape')
+    await expect(picker).toBeHidden()
 }
 
 async function openTeamTotals(p: Page) {
@@ -468,6 +510,53 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         } finally {
             await close()
         }
+    })
+
+    // E1: "Order the groups by" orders the regions a team list is grouped in: by
+    // name (East, North, South), or in the region field's own order (North, South,
+    // East, as the stub declares them). The preview's picker follows each choice,
+    // and the saved report's picker keeps it.
+    test('Order the groups by lists the regions in the field’s own order, in the preview and the saved report', async ({
+        page,
+    }) => {
+        await login(page)
+        const stem = uniqueName('Ord')
+        await openReportStub(page)
+        await addTeam(page, `${stem} E1`, 'east')
+        await addTeam(page, `${stem} N1`, 'north')
+        await addTeam(page, `${stem} S1`, 'south')
+        await askTeamsByRegion(page)
+        const byName = ['All East', 'All North', 'All South']
+        const declared = ['All North', 'All South', 'All East']
+        await expectGroupHeads(page, stem, byName)
+        await chooseOption(page, GROUP_ORDER, 'declared')
+        await expectGroupHeads(page, stem, declared)
+        await chooseOption(page, GROUP_ORDER, 'label')
+        await expectGroupHeads(page, stem, byName)
+        await chooseOption(page, GROUP_ORDER, 'declared')
+        await saveNewReport(page, uniqueName('Regions in order'))
+        await expectGroupHeads(page, stem, declared)
+    })
+
+    // A field that is not a select has no order of its own: grouped by the team's
+    // name, the field's own order is not offered and a chosen one is cleared.
+    test('grouping the list by a field that is not a select clears the field’s own order', async ({
+        page,
+    }) => {
+        await login(page)
+        await askTeamsByRegion(page)
+        const order = page.getByTestId(GROUP_ORDER)
+        const byName = (await order.textContent()) ?? ''
+        expect(byName).not.toBe('')
+        await chooseOption(page, GROUP_ORDER, 'declared')
+        await expect(order).not.toHaveText(byName)
+        await regroupTeams(page, 'name', 'Name')
+        await expect(order).toHaveText(byName)
+        await order.click()
+        await expect(page.getByTestId(`${GROUP_ORDER}-label`)).toBeVisible()
+        await expect(page.getByTestId(`${GROUP_ORDER}-declared`)).toHaveCount(0)
+        await page.keyboard.press('Escape')
+        await expect(page.getByTestId(`${GROUP_ORDER}-label`)).toHaveCount(0)
     })
 
     test('a having on a money total asks an amount, kept to its currency', async ({ page }) => {
