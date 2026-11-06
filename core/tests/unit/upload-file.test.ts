@@ -1,6 +1,7 @@
 import type { PickedFile } from '@tinycld/core/file-viewer/picked-file'
 import {
     throttleProgress,
+    UploadError,
     uploadFormDataWithProgress,
     uploadRecordWithFile,
 } from '@tinycld/core/file-viewer/upload-file'
@@ -184,6 +185,29 @@ describe('uploadFormDataWithProgress', () => {
         })
         FakeXHR.last?.finish(400, { message: 'Failed to create record.' })
         await expect(promise).rejects.toThrow('Failed to create record.')
+    })
+
+    it('rejects with an UploadError that carries the status', async () => {
+        const promise = uploadFormDataWithProgress({
+            url: 'https://example.test/api/x',
+            formData: new FormData(),
+            authToken: 'tok',
+        })
+        FakeXHR.last?.finish(500, { message: 'Something went wrong.' })
+        const error = await promise.catch((e: unknown) => e)
+        expect(error).toBeInstanceOf(UploadError)
+        expect(error).toMatchObject({ status: 500, message: 'Something went wrong.' })
+    })
+
+    it('does not reject a transport error with an UploadError', async () => {
+        const promise = uploadFormDataWithProgress({
+            url: 'https://example.test/api/x',
+            formData: new FormData(),
+            authToken: 'tok',
+        })
+        FakeXHR.last?.onerror?.()
+        const error = await promise.catch((e: unknown) => e)
+        expect(error).not.toBeInstanceOf(UploadError)
     })
 
     it('falls back to the status code when the error body has no message', async () => {

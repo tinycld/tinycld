@@ -56,7 +56,23 @@ export async function uploadFormDataWithProgress(params: {
         typeof result.body.message === 'string'
             ? result.body.message
             : `Upload failed (${result.status})`
-    throw new Error(message)
+    throw new UploadError(message, result.status)
+}
+
+/**
+ * The server answered with an error status. Carries the status so a caller can
+ * tell a refusal it should show (4xx) from a server fault it should not (5xx).
+ * A transport failure rejects with a TypeError and an abort with an
+ * AbortError instead, so neither is an UploadError.
+ */
+export class UploadError extends Error {
+    readonly status: number
+
+    constructor(message: string, status: number) {
+        super(message)
+        this.name = 'UploadError'
+        this.status = status
+    }
 }
 
 export interface UploadRecordParams {
