@@ -392,6 +392,7 @@ describe('emptyDraft', () => {
                 total: 'recompute',
                 explicitTotal: false,
                 labelField: '',
+                detail: 'show',
             },
         ])
         expect(specFromDraft({ ...draft, title: 'Teams' }, CATALOG)).toEqual({
