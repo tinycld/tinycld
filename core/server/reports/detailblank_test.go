@@ -3,6 +3,7 @@ package reports
 import (
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -234,4 +235,69 @@ func TestRunRefusesABlankLabelColumn(t *testing.T) {
 		"groups":[{"id":"byAccount","col":"name"}]}`
 	_, err := z.try(t, "ann", spec, Options{ExpandAll: true}, nil)
 	requireRefusal(t, err, 400, "columns.0.detail", "invalid")
+}
+
+// animalsWithFeedings is animals grouped by site, each animal's feedings
+// nested under it as child rows (fed labels them); the feeding's cost, in its
+// row's currency, is a child row column. COST is its detail member.
+const animalsWithFeedings = `{"version":2,"source":"zoo.animals","columns":[
+	{"id":"name","path":[{"field":"name"}]},
+	{"id":"site","path":[{"link":"site"}]},
+	{"id":"fed","path":[{"link":"feedings","mode":"nest"},{"field":"fed"}]},
+	{"id":"cost","path":[{"link":"feedings","mode":"nest"},{"field":"cost"}]COST}],
+	"groups":[{"id":"bySite","col":"site","subtotals":true}],
+	"sort":[{"col":"name"}]}`
+
+// A child row (a nested level's row) is a detail row too: a blank column of
+// its level has no cell there, nor a currency cell. Every other row and cell
+// is what the same report gives without the member.
+func TestABlankColumnHasNoCellOnChildRows(t *testing.T) {
+	z := newZoo(t)
+	shownSpec := strings.Replace(animalsWithFeedings, "COST", "", 1)
+	blankSpec := strings.Replace(animalsWithFeedings, "COST", blankOnDetail, 1)
+	shown := z.run(t, "ann", shownSpec, Options{ExpandAll: true}, nil)
+	blank := z.run(t, "ann", blankSpec, Options{ExpandAll: true}, nil)
+	// The sort orders animals, not sites, so only which rows come is checked;
+	// the two runs read the same rows in the same order.
+	labels := []string{}
+	for _, r := range blank.Rows {
+		labels = append(labels, r.Label)
+	}
+	slices.Sort(labels)
+	if want := []string{"(none)", "2026-01-05", "2026-01-20", "2026-02-10", "2026-03-03", "Kit", "Leo", "North", "South",
+		"Total", "Total (none)", "Total North", "Total South", "Zed"}; !slices.Equal(labels, want) {
+		t.Fatalf("labels = %v\nwant     %v", labels, want)
+	}
+	for _, r := range blank.Rows {
+		_, hasCost := r.Cells["cost"]
+		_, hasCur := r.Cells["cost@currency"]
+		if r.Parent != "" && (hasCost || hasCur) {
+			t.Fatalf("child row %q: %v", r.Label, r.Cells)
+		}
+	}
+	if len(shown.Rows) != len(blank.Rows) {
+		t.Fatalf("rows: %d shown, %d blank", len(shown.Rows), len(blank.Rows))
+	}
+	children := 0
+	for i, want := range shown.Rows {
+		got := blank.Rows[i]
+		if want.Parent != "" {
+			children++
+			// Without the member a child row has the cost and its currency.
+			if want.Cells["cost"] == nil || want.Cells["cost@currency"] != "USD" {
+				t.Fatalf("child row %q without the member: %v", want.Label, want.Cells)
+			}
+		}
+		if want.Kind == KindDetail {
+			want.Cells = maps.Clone(want.Cells)
+			delete(want.Cells, "cost")
+			delete(want.Cells, "cost@currency")
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("row %d:\n got  %+v\n want %+v", i, got, want)
+		}
+	}
+	if children != 4 {
+		t.Fatalf("child rows = %d, want 4", children)
+	}
 }
