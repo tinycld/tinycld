@@ -157,6 +157,10 @@ function useAvatarEditor() {
         avatarColor: profile?.avatar_color ?? '',
         avatarEmoji: profile?.avatar_emoji ?? '',
         avatarImage,
+        // While new bytes are uploading, the row still names the previous
+        // photo, so Reposition would reopen the cropper on the photo being
+        // replaced (and a 404 once the server deletes it).
+        canReposition: !!profile?.avatar && !uploadPhotoBytes.isPending,
         isCropperOpen: cropperImageUri !== null,
         cropperImageUri,
         initialCrop: pendingUpload ? undefined : parseCrop(profile?.avatar_crop),
@@ -206,7 +210,10 @@ function AvatarPreviewRow({ editor }: { editor: ReturnType<typeof useAvatarEdito
                         label="Upload photo"
                         onPress={editor.startUpload}
                     />
-                    <RepositionButton isVisible={!!avatar} onPress={editor.startReposition} />
+                    <RepositionButton
+                        isVisible={editor.canReposition}
+                        onPress={editor.startReposition}
+                    />
                 </View>
                 <View className="flex-row gap-2">
                     <EmojiTrigger onPick={editor.pickEmoji} />
