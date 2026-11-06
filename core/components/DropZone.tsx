@@ -125,8 +125,10 @@ export function DropZone({
         >
             {children}
             {isDragging && isEnabled && (
+                // Opaque on purpose: a translucent tint let the zone's own
+                // text and buttons show through and collide with the label.
                 <View
-                    className="absolute top-0 left-0 right-0 bottom-0 items-center justify-center rounded-xl bg-accent/10"
+                    className="absolute top-0 left-0 right-0 bottom-0 items-center justify-center rounded-xl bg-accent"
                     style={{
                         borderWidth: 2,
                         borderStyle: 'dashed',
@@ -135,7 +137,10 @@ export function DropZone({
                     }}
                     pointerEvents="none"
                 >
-                    <Text className="text-accent" style={{ fontSize: 20, fontWeight: '600' }}>
+                    <Text
+                        className="text-accent-foreground"
+                        style={{ fontSize: 20, fontWeight: '600' }}
+                    >
                         {label}
                     </Text>
                 </View>

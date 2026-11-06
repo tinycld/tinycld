@@ -30,14 +30,14 @@ function EmptyStateAction({ action }: { action: EmptyStateActionPress | EmptySta
     if ('href' in action) {
         return (
             <Link href={action.href}>
-                <Text className="text-lg font-semibold text-accent">{action.label}</Text>
+                <Text className="text-lg font-semibold text-primary">{action.label}</Text>
             </Link>
         )
     }
 
     return (
         <Pressable onPress={action.onPress}>
-            <Text className="text-lg font-semibold text-accent">{action.label}</Text>
+            <Text className="text-lg font-semibold text-primary">{action.label}</Text>
         </Pressable>
     )
 }
