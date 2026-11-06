@@ -35,7 +35,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/grafana/sobek v0.0.0-20260915160442-8a431c44cd7b
-	github.com/klauspost/compress v1.20.0
+	github.com/klauspost/compress v1.20.2
 	github.com/mrz1836/postmark v1.9.0
 	github.com/nathanstitt/omnidoc v1.1.2
 	github.com/osshield/gopbs v0.0.0-00010101000000-000000000000
@@ -63,7 +63,7 @@ require (
 	github.com/adrg/strutil v0.2.2 // indirect
 	github.com/adrg/sysfont v0.1.2 // indirect
 	github.com/adrg/xdg v0.3.0 // indirect
-	github.com/andybalholm/brotli v1.2.1 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/beevik/etree v1.6.0 // indirect
 	github.com/benoitkugler/pstokenizer v1.0.1 // indirect

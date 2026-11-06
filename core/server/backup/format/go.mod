@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	filippo.io/age v1.3.2
-	github.com/klauspost/compress v1.20.0
+	github.com/klauspost/compress v1.20.2
 )
 
 require (
