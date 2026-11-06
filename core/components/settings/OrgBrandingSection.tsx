@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { Avatar, type AvatarImage } from '@tinycld/core/components/Avatar'
 import { AvatarCropper } from '@tinycld/core/components/AvatarCropper'
+import { BrandColorSection } from '@tinycld/core/components/settings/BrandColorSection'
 import {
     uploadFormDataWithProgress,
     uploadRecordWithFile,
@@ -220,8 +221,9 @@ export function OrgBrandingSection({ variant = 'section' }: { variant?: Branding
     const editor = useOrgBrandingEditor()
 
     return (
-        <View>
+        <View className="gap-6">
             <BrandingBody editor={editor} variant={variant} />
+            <BrandColorSection isVisible={variant === 'section'} />
             <CropperDialog editor={editor} />
         </View>
     )

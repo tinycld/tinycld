@@ -88,6 +88,51 @@ test('an uploaded photo replaces the initials circle', async ({ page }) => {
     await expect(page.getByTestId('avatar-preview-image')).toBeVisible()
 })
 
+// While new bytes upload, the row still names the previous photo: Reposition
+// would open the cropper on the photo being replaced, and Remove would be
+// undone when the upload lands. The upload request is held (not delayed by a
+// clock) until the spec has checked both buttons, so the race is forced
+// deterministically.
+test('Reposition and Remove stay hidden until a new photo finishes uploading', async ({ page }) => {
+    await login(page)
+    await openProfileSettings(page)
+
+    const png = {
+        name: 'avatar.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from(PNG_BASE64, 'base64'),
+    }
+    // A settled first photo makes both buttons visible before the race starts.
+    await attachAvatar(page, png)
+    await page.getByTestId('avatar-cropper-save').click()
+    await expect(page.getByTestId('avatar-reposition')).toBeVisible()
+    await expect(page.getByTestId('avatar-remove')).toBeVisible()
+
+    let releaseUpload = () => {}
+    const uploadHeld = new Promise<void>(resolve => {
+        releaseUpload = resolve
+    })
+    const isUpload = (contentType: string | undefined) =>
+        (contentType ?? '').startsWith('multipart/form-data')
+    const uploadArrived = page.waitForRequest(
+        req => req.method() === 'PATCH' && isUpload(req.headers()['content-type'])
+    )
+    await page.route('**/api/collections/users/records/*', async route => {
+        if (isUpload(route.request().headers()['content-type'])) await uploadHeld
+        await route.continue()
+    })
+
+    await attachAvatar(page, png)
+    await page.getByTestId('avatar-cropper-save').click()
+    await uploadArrived
+    await expect(page.getByTestId('avatar-reposition')).toHaveCount(0)
+    await expect(page.getByTestId('avatar-remove')).toHaveCount(0)
+
+    releaseUpload()
+    await expect(page.getByTestId('avatar-reposition')).toBeVisible()
+    await expect(page.getByTestId('avatar-remove')).toBeVisible()
+})
+
 // Regression coverage for the bug where Reposition fed the cropper the
 // already-thumbnailed (center-cropped-to-square) display URL instead of the
 // original upload. Re-editing on the thumbnail applies the stored crop rect
