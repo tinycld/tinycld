@@ -1163,3 +1163,62 @@ describe('the group pick text of a param from a source', () => {
         expect(specFromDraft(empty, CATALOG)).toEqual(specWith(teamsParam(undefined)))
     })
 })
+
+// E1: a grouped param from a source orders its groups (spec.go OptionsFrom.GroupOrder):
+// by name, by the group field's declared options, or by a field of the source.
+describe('the group order of a param from a source', () => {
+    type Order = NonNullable<NonNullable<ParamDef['optionsFrom']>['groupOrder']>
+    const teamsParam = (groupOrder: Order, group = [{ field: 'region' }]): ParamDef => ({
+        id: 'teams',
+        type: 'choice',
+        label: 'Teams',
+        optionsFrom: {
+            source: TEAMS_KEY,
+            value: [{ field: 'id' }],
+            label: [{ field: 'name' }],
+            ...(group.length > 0 ? { group } : {}),
+            groupOrder,
+            groupLabel: 'All {group} teams',
+            where: { value: true },
+        },
+        multiple: true,
+    })
+    const specWith = (param: ParamDef): ReportSpec => ({
+        version: 2,
+        source: SALES_KEY,
+        params: [param],
+        columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
+        filter: { op: 'in', args: [{ path: [{ link: 'team' }] }, { param: 'teams' }] },
+    })
+    const issuePaths = (param: ParamDef) => {
+        const draft = draftFromSpec(specWith(param), META, CATALOG)
+        const parsed = builderSchema(CATALOG).safeParse(draft)
+        return parsed.success ? [] : parsed.error.issues.map(issue => issue.path.join('.'))
+    }
+    const orders: Order[] = [
+        { by: 'label' },
+        { by: 'declared' },
+        { by: 'path', path: [{ field: 'name' }] },
+    ]
+
+    it('saves each order as the spec holds it, through the draft and back', () => {
+        for (const order of orders) {
+            const spec = specWith(teamsParam(order))
+            expect(issuePaths(teamsParam(order))).toEqual([])
+            expect(JSON.stringify(specFromDraft(draftFromSpec(spec, META, CATALOG), CATALOG))).toBe(
+                JSON.stringify(spec)
+            )
+        }
+    })
+
+    // What the engine refuses (bind.go / params.go): the field's own order of a group
+    // that is not a select, and an order with no groups to order.
+    it('refuses what the engine refuses', () => {
+        expect(issuePaths(teamsParam({ by: 'declared' }, [{ field: 'name' }]))).toEqual([
+            'params.0.optionsFrom.groupOrder',
+        ])
+        expect(issuePaths(teamsParam({ by: 'label' }, []))).toContain(
+            'params.0.optionsFrom.groupOrder'
+        )
+    })
+})

@@ -73,6 +73,37 @@ describe('parseSpec', () => {
         expect(parseSpec({ ...FEEDINGS, version: 3 })).toBeNull()
     })
 
+    // E1: optionsFrom.groupOrder (spec.go GroupOrder) is by label, declared, or a path.
+    it('reads a group order of each kind and refuses any other', () => {
+        const withOrder = (groupOrder: unknown) => ({
+            ...FEEDINGS,
+            version: 2,
+            params: [
+                {
+                    id: 'animals',
+                    type: 'choice',
+                    optionsFrom: {
+                        source: 'zoo.animals',
+                        value: [{ field: 'id' }],
+                        label: [{ field: 'name' }],
+                        group: [{ field: 'species' }],
+                        groupOrder,
+                    },
+                },
+            ],
+        })
+        for (const order of [
+            { by: 'label' },
+            { by: 'declared' },
+            { by: 'path', path: [{ field: 'weight' }] },
+        ]) {
+            expect(parseSpec(withOrder(order))?.params?.[0]?.optionsFrom?.groupOrder).toEqual(order)
+        }
+        for (const bad of [{ by: 'sideways' }, { by: 'path' }, {}, 'declared']) {
+            expect(parseSpec(withOrder(bad))).toBeNull()
+        }
+    })
+
     it('refuses a spec from a newer version of the app as unreadable', () => {
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION })).not.toBeNull()
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION + 1 })).toBeNull()
