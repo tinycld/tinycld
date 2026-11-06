@@ -29,22 +29,37 @@
 // Local fast iteration: pass --skip-export (or TINYCLD_E2E_SKIP_EXPORT=1) to
 // reuse an existing dist/ and skip the multi-minute export. CI never sets it.
 //
+// OUTPUT: off CI, the output of everything this script runs (the server
+// build, the export, PocketBase) goes to tmp/e2e-serve-<port>.log; this script
+// prints only its own phase lines, and the end of the log when a step fails.
+// See scripts/e2e-output.ts for why.
+//
 // Used by playwright.config.ts as the `webServer` command (via the `e2e:serve`
 // package.json script). dev.ts is intentionally left untouched — dev keeps
 // Metro + HMR; only e2e switches to static serving.
 
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { type ChildProcess, type StdioOptions, spawn, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
+import { openE2eOutput, printLogTail } from './e2e-output'
 import { exportWeb } from './export-web'
 import { promoteRelease } from './promote-release'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const PB_BINARY = path.join(ROOT, 'server', 'app')
 
-function log(msg: string) {
+// A line for whoever runs the tests: always printed.
+function say(msg: string) {
     process.stdout.write(`[e2e-serve] ${msg}\n`)
+}
+
+// A phase line. It goes where the children's output goes (see
+// scripts/e2e-output.ts): inline on CI, into the log file otherwise, so a
+// quiet run shows the test results and little else.
+let note: (line: string) => void = line => process.stdout.write(`${line}\n`)
+function log(msg: string) {
+    note(`[e2e-serve] ${msg}`)
 }
 
 // Pull a `--name value` flag out of process.argv. Returns null when absent.
@@ -127,7 +142,7 @@ async function waitForUpstream(port: number, label: string, timeoutMs: number): 
 // Fixtures are NOT written here. They go through the PocketBase API, which
 // needs a running server — so they are seeded by Playwright's globalSetup
 // against the one server this script starts. See tests/playwright-global-setup.ts.
-function resetDataDir(dataDir: string): void {
+function resetDataDir(dataDir: string, stdio: StdioOptions): void {
     // Build the server first: everything below runs it. This used to happen
     // inside reset-dev-db.ts, which the seed step called — that step is gone
     // (fixtures are seeded by globalSetup against the running server), so the
@@ -136,7 +151,7 @@ function resetDataDir(dataDir: string): void {
     log('phase 1/3: building the server')
     const built = spawnSync('go', ['build', '-o', 'app', '.'], {
         cwd: path.join(ROOT, 'server'),
-        stdio: 'inherit',
+        stdio,
     })
     if (built.status !== 0) throw new Error('e2e-serve: failed to build the server binary')
 
@@ -152,9 +167,7 @@ function resetDataDir(dataDir: string): void {
     const result = spawnSync(
         PB_BINARY,
         ['superuser', 'upsert', email, password, '--dir', dataDir],
-        {
-            stdio: 'inherit',
-        }
+        { stdio }
     )
     if (result.status !== 0) throw new Error('e2e-serve: failed to create the superuser')
 }
@@ -163,7 +176,7 @@ function resetDataDir(dataDir: string): void {
 // the export flags/env live in ONE place, shared with the CI action that
 // pre-builds the bundle). --skip-export reuses an existing dist/ — set in CI
 // (the action already built it) and for local fast iteration.
-function buildBundle(releaseId: string): void {
+function buildBundle(releaseId: string, stdio: StdioOptions): void {
     const indexHtml = path.join(ROOT, 'dist', 'index.html')
 
     if (skipExport) {
@@ -176,7 +189,7 @@ function buildBundle(releaseId: string): void {
         return
     }
     log(`phase 2/3: expo export (releaseId=${releaseId})`)
-    exportWeb(releaseId)
+    exportWeb(releaseId, stdio)
 }
 
 // Phase 3a — promote dist/ into the releases layout the Go server reads. The
@@ -199,7 +212,12 @@ function promote(distDir: string, releasesDir: string, releaseId: string): void 
 // file there changes — a generator run anywhere in the workspace would restart
 // this server mid-run and fail the requests in flight. A run serves the hooks
 // it started with.
-function serve(opts: { port: number; dataDir: string; releasesDir: string }): ChildProcess {
+function serve(opts: {
+    port: number
+    dataDir: string
+    releasesDir: string
+    stdio: StdioOptions
+}): ChildProcess {
     log(`serving: PB on http://localhost:${opts.port} (static, --releasesDir)`)
     const args = [
         '--dev',
@@ -235,7 +253,7 @@ function serve(opts: { port: number; dataDir: string; releasesDir: string }): Ch
         : { IMAP_ADDR: ':1193' }
     return spawn(PB_BINARY, args, {
         cwd: ROOT,
-        stdio: 'inherit',
+        stdio: opts.stdio,
         env: {
             ...process.env,
             // The backup API refuses a loopback or link-local target: the server
@@ -249,6 +267,10 @@ function serve(opts: { port: number; dataDir: string; releasesDir: string }): Ch
     })
 }
 
+// Set once the log file is open, so the top-level failure handler can print
+// its end whichever step threw.
+let failureLogPath: string | null = null
+
 async function main() {
     const port = resolvePort()
     const dataDir = resolveDir('--data-dir', path.join('server', 'pb_test_data'))
@@ -257,8 +279,13 @@ async function main() {
     // A monotonic-ish id. Date.now() is fine here (this is a launcher script,
     // not a workflow), and tests never pin the value.
     const releaseId = `e2e-${Date.now()}`
+    const output = openE2eOutput(`e2e-serve-${port}`)
+    const { stdio, logPath } = output
+    failureLogPath = logPath
+    note = output.note
+    if (logPath) say(`starting on :${port}; its output, the build and the export: ${logPath}`)
 
-    resetDataDir(dataDir)
+    resetDataDir(dataDir, stdio)
 
     if (mirrorReleasesFrom) {
         // Phases 2+3 collapse into a copy: the producer already exported and
@@ -271,11 +298,11 @@ async function main() {
         fs.rmSync(releasesDir, { recursive: true, force: true })
         fs.cpSync(sourceDir, releasesDir, { recursive: true, verbatimSymlinks: true })
     } else {
-        buildBundle(releaseId)
+        buildBundle(releaseId, stdio)
         promote(distDir, releasesDir, releaseId)
     }
 
-    const pb = serve({ port, dataDir, releasesDir })
+    const pb = serve({ port, dataDir, releasesDir, stdio })
 
     // Forward termination to the child and exit. Playwright kills the
     // webServer process group on teardown; relay it so PB shuts down cleanly
@@ -296,15 +323,17 @@ async function main() {
     pb.on('exit', code => {
         if (shuttingDown) return
         process.stderr.write(`[e2e-serve] PB exited unexpectedly (${code})\n`)
+        printLogTail(logPath)
         process.exit(code ?? 1)
     })
 
     // Readiness log (Playwright's own /api/health gate is the real signal).
     await waitForUpstream(port, 'pb', 60_000)
-    log(`ready on http://localhost:${port}`)
+    say(`ready on http://localhost:${port}`)
 }
 
 void main().catch(err => {
     process.stderr.write(`e2e-serve: ${err instanceof Error ? err.stack : String(err)}\n`)
+    printLogTail(failureLogPath)
     process.exit(1)
 })

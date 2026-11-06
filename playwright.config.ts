@@ -57,14 +57,20 @@ const SERVER_ENV: Record<string, string> = Object.fromEntries(
 )
 
 export default defineConfig({
-    // Override Playwright's CI default (the `dot` reporter, which prints a bare
-    // `·` per completed test — no name, so a long-running spec makes the run look
-    // frozen). In non-TTY CI, `list` prints a NAMED line as each test COMPLETES
-    // (`✓ 3 mail › opens thread (4.1s)`) — it doesn't stream a per-test "started"
-    // line (that's TTY-only), but the accruing named lines + durations show
-    // which tests have finished and that the run is progressing. Inherited by
-    // every package's playwright.config.ts.
-    reporter: 'list',
+    // `dot` off CI: one character per test, then each failure in full with its
+    // error and location. A local run is read for its failures, and a line per
+    // passing test is noise there (most of all for a coding agent, which pays
+    // for every line it reads). `--reporter=list` on the command line brings
+    // the names back.
+    //
+    // `list` on CI, overriding Playwright's CI default (`dot`, whose bare `·`
+    // per completed test names nothing, so a long-running spec makes the run
+    // look frozen). In non-TTY CI, `list` prints a NAMED line as each test
+    // COMPLETES (`✓ 3 mail › opens thread (4.1s)`) — it doesn't stream a
+    // per-test "started" line (that's TTY-only), but the accruing named lines
+    // + durations show which tests have finished and that the run is
+    // progressing. Inherited by every package's playwright.config.ts.
+    reporter: process.env.CI ? 'list' : 'dot',
     // No retries. A test must pass on its first attempt; a flake is a bug in the
     // test (or the code) to fix at the source, not to paper over by re-running
     // until it's green. Trace/video are retain-on-failure, so the failing
@@ -134,6 +140,11 @@ export default defineConfig({
             url: `http://localhost:${PORT}/api/health`,
             reuseExistingServer: !process.env.CI,
             timeout: 240_000,
+            // Off CI the script keeps its children's output in a log file and
+            // prints only its own phase lines and that file's path, so show
+            // them. On CI the children write inline, and their stdout (the
+            // export's file list) stays out of the job log as before.
+            stdout: process.env.CI ? 'ignore' : 'pipe',
             env: SERVER_ENV,
         },
         // The second deployment: its own data dir, its own releases dir, its
