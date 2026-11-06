@@ -35,6 +35,21 @@ export type RunRefusal =
 
 export type RunOutcome = { kind: 'ok'; result: RunResult } | RunRefusal
 
+/** One page of a run, tagged with the rows key of the body that asked for it. */
+export type RunPage = RunOutcome & { rowsKey: string }
+
+// What decides a run's rows, apart from its params (the server resolves those and
+// returns them on the result): the saved report, or the draft spec without its
+// display, which holds only line layouts per width. Options are left out, so a
+// group fold, the next page or a new day keeps the reader's place. The param
+// definitions (spec.params) stay in the key on purpose: a param-def edit is a
+// design edit.
+export function rowsKeyOf(body: RunBody): string {
+    if ('reportId' in body) return `report:${body.reportId}`
+    const { display: _display, ...rowsSpec } = body.spec
+    return `spec:${JSON.stringify(rowsSpec)}`
+}
+
 export function problemsOf(data: unknown): Problem[] {
     if (!isRecord(data)) return []
     const out: Problem[] = []

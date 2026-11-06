@@ -521,6 +521,54 @@ async function expectNewParamsStartAtTop(p: Page) {
     await expectAtTop(p, 0)
 }
 
+// The 40 sales in a new report's builder, sorted by customer, with no asked
+// value: every design change below runs the draft with the same (empty) params.
+async function seedBuilderDraft(p: Page) {
+    const team = uniqueName('Team')
+    await openReportStub(p)
+    await addTeam(p, team)
+    await addSales(p, {
+        team,
+        customerPrefix: 'Top',
+        count: SALES,
+        firstDay: dayOf(0),
+        firstAmount: 1000,
+        cost: 400,
+        quantity: 3,
+    })
+    await openReportsHub(p)
+    await startReport(p, SALES_SOURCE)
+    await addColumn(p, ['amount'])
+    // Amount cells are drawn only once the run with that column has landed, so
+    // the sort below has earlier figures to keep in view while it loads. The draft
+    // has no sort yet, so rows come in record-id order: wait on any amount cell,
+    // not one customer's row, which may sit outside the rows FlashList draws.
+    await expect(
+        p.getByTestId('report-table').locator('[data-testid^="report-cell-amount-"]').first()
+    ).toBeVisible()
+    await p.getByTestId('report-builder-section-group').click()
+    await landNewRun(p, () => chooseOption(p, 'report-builder-sort-add-menu', 'customer'))
+    await expect(rowOf(p, topName(0))).toBeVisible()
+}
+
+async function sortZtoA(p: Page) {
+    await p
+        .getByTestId('report-builder-sort-0')
+        .getByRole('radio', { name: 'Z to A', exact: true })
+        .click()
+}
+
+async function filterAmountFrom(p: Page, amount: string) {
+    await p.getByTestId('report-builder-section-filter').click()
+    await p.getByTestId('report-builder-filter-add-condition').click()
+    await p
+        .getByTestId('report-builder-picker')
+        .getByTestId('report-builder-pick-field-amount')
+        .click()
+    await chooseOption(p, 'report-builder-filter-0-op', 'gte')
+    await p.getByTestId('report-builder-filter-0-value').fill(amount)
+}
+
 async function addSaleElsewhere(
     browser: Browser,
     user: { username: string; password: string },
@@ -567,6 +615,37 @@ test.describe('where a report run starts', () => {
                 })
                 .toBe(true)
             await expectNewParamsStartAtTop(p)
+        } finally {
+            await close()
+        }
+    })
+
+    // Top 20 has 19 or more rows under it in both runs below, so it can reach the
+    // list top and is there in the next run for the list to hold.
+    test('in the builder a new sort starts the preview at the top', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptbsort')
+        try {
+            await seedBuilderDraft(p)
+            await toListTop(p, rowOf(p, topName(20)))
+            expect(await scrollOffset(p)).toBeGreaterThan(0)
+            await landNewRun(p, () => sortZtoA(p))
+            await expectAtTop(p, 39)
+        } finally {
+            await close()
+        }
+    })
+
+    test('in the builder a new filter condition starts the preview at the top', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptbfilt')
+        try {
+            await seedBuilderDraft(p)
+            await toListTop(p, rowOf(p, topName(20)))
+            expect(await scrollOffset(p)).toBeGreaterThan(0)
+            await landNewRun(p, () => filterAmountFrom(p, '10.05'))
+            await expectAtTop(p, 5)
+            await expect(rowOf(p, topName(4))).toHaveCount(0)
         } finally {
             await close()
         }
