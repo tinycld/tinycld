@@ -19,6 +19,11 @@ import { parse as parseYaml } from 'yaml'
 // within the last N days" is a claim CI can actually check, and it puts the
 // judgement where only a human can make it.
 //
+// A fork vendored in-tree and upgraded on purpose from pristine upstream
+// releases has no separate fork to drift, so a review window would only nag.
+// Such a fork takes a `forkExemptions` entry instead, and the entry must say
+// why — an exemption without a reason is how a real fork would go unwatched.
+//
 // The governing rule for every parser below: input we cannot classify must
 // fail CLOSED (an errors[] entry that fails the job) and say why. Silently
 // skipping an unrecognised line is how a fork goes unreported — which, for
@@ -36,6 +41,11 @@ export interface ReviewWindow {
     fork: string
     reviewed: string
     days: number
+}
+
+export interface ForkExemption {
+    fork: string
+    reason: string
 }
 
 // Our own modules are replaced for local workspace wiring, not because they are
@@ -225,13 +235,16 @@ const daysBetween = (from: string, today: Date) =>
 export const staleForks = (
     forks: Fork[],
     windows: ReviewWindow[],
-    today: Date
+    today: Date,
+    exemptions: ForkExemption[] = []
 ): { stale: string[]; unreviewed: string[] } => {
     const byFork = new Map(windows.map(w => [w.fork, w]))
+    const exempt = new Set(exemptions.map(e => e.fork))
     const stale: string[] = []
     const unreviewed: string[] = []
 
     for (const fork of forks) {
+        if (exempt.has(fork.name)) continue
         const window = byFork.get(fork.name)
         if (!window) {
             unreviewed.push(fork.name)
@@ -241,6 +254,57 @@ export const staleForks = (
     }
 
     return { stale, unreviewed }
+}
+
+const EXEMPTION_FIELDS = new Set(['fork', 'reason'])
+
+export const parseForkExemptions = (
+    raw: unknown,
+    windows: ReviewWindow[]
+): { exemptions: ForkExemption[]; errors: string[] } => {
+    if (raw === null || raw === undefined) return { exemptions: [], errors: [] }
+    if (!Array.isArray(raw)) {
+        return { exemptions: [], errors: ['`forkExemptions` must be a list of entries'] }
+    }
+
+    const reviewed = new Set(windows.map(w => w.fork))
+    const exemptions: ForkExemption[] = []
+    const errors: string[] = []
+
+    for (const [index, entry] of raw.entries()) {
+        const where = `forkExemptions entry ${index + 1}`
+        if (typeof entry !== 'object' || entry === null) {
+            errors.push(`${where}: must be a mapping with fork and reason`)
+            continue
+        }
+        const record = entry as Record<string, unknown>
+        if (typeof record.fork !== 'string' || !record.fork.trim()) {
+            errors.push(`${where}: needs a fork name`)
+            continue
+        }
+        const fork = record.fork.trim()
+        // An unknown field is most likely a review-window field (`days`,
+        // `reviewed`) put on the wrong list; ignoring it would hide that the
+        // author expected the fork to be watched.
+        const unknown = Object.keys(record).filter(key => !EXEMPTION_FIELDS.has(key))
+        if (unknown.length > 0) {
+            errors.push(`${fork}: unknown field(s) ${unknown.join(', ')} in forkExemptions`)
+            continue
+        }
+        if (typeof record.reason !== 'string' || !record.reason.trim()) {
+            errors.push(`${fork}: an exemption needs a reason`)
+            continue
+        }
+        // Listed in both places, it is unclear whether the fork is meant to be
+        // watched; refuse rather than guess.
+        if (reviewed.has(fork)) {
+            errors.push(`${fork}: is in both forkExemptions and forkReviews; keep only one`)
+            continue
+        }
+        exemptions.push({ fork, reason: record.reason.trim() })
+    }
+
+    return { exemptions, errors }
 }
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -267,10 +331,12 @@ const discoverGoMods = (dir: string, out: string[] = []): string[] => {
 // job), but silent: the operator would be told the fork is unreviewed rather
 // than that their file is malformed. Task 2's gate had the mirror-image bug in
 // the fail-open direction; the lesson is the same either way.
-const readReviewWindows = (today: Date): { windows: ReviewWindow[]; errors: string[] } => {
+const readForkConfig = (
+    today: Date
+): { windows: ReviewWindow[]; exemptions: ForkExemption[]; errors: string[] } => {
     const file = path.join(REPO, '.github', 'security-ignores.yml')
     if (!fs.existsSync(file)) {
-        return { windows: [], errors: [`${file} does not exist`] }
+        return { windows: [], exemptions: [], errors: [`${file} does not exist`] }
     }
 
     let parsed: unknown
@@ -278,13 +344,33 @@ const readReviewWindows = (today: Date): { windows: ReviewWindow[]; errors: stri
         parsed = parseYaml(fs.readFileSync(file, 'utf8'))
     } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause)
-        return { windows: [], errors: [`security-ignores.yml is not valid YAML: ${message}`] }
+        return {
+            windows: [],
+            exemptions: [],
+            errors: [`security-ignores.yml is not valid YAML: ${message}`],
+        }
     }
 
     if (typeof parsed !== 'object' || parsed === null) {
-        return { windows: [], errors: ['security-ignores.yml must be a mapping'] }
+        return { windows: [], exemptions: [], errors: ['security-ignores.yml must be a mapping'] }
     }
-    const raw = (parsed as { forkReviews?: unknown }).forkReviews
+    const { forkReviews, forkExemptions } = parsed as {
+        forkReviews?: unknown
+        forkExemptions?: unknown
+    }
+    const { windows, errors } = parseReviewWindows(forkReviews, today)
+    const exempted = parseForkExemptions(forkExemptions, windows)
+    return {
+        windows,
+        exemptions: exempted.exemptions,
+        errors: [...errors, ...exempted.errors],
+    }
+}
+
+const parseReviewWindows = (
+    raw: unknown,
+    today: Date
+): { windows: ReviewWindow[]; errors: string[] } => {
     if (raw === null || raw === undefined) return { windows: [], errors: [] }
     if (!Array.isArray(raw)) {
         return { windows: [], errors: ['`forkReviews` must be a list of entries'] }
@@ -346,13 +432,19 @@ const main = () => {
     const forks = [...goResult.forks, ...npmResult.forks]
 
     const today = new Date()
-    const { windows, errors: windowErrors } = readReviewWindows(today)
-    const { stale, unreviewed } = staleForks(forks, windows, today)
-    const errors = [...goResult.errors, ...npmResult.errors, ...windowErrors]
+    const { windows, exemptions, errors: configErrors } = readForkConfig(today)
+    const { stale, unreviewed } = staleForks(forks, windows, today, exemptions)
+    const errors = [...goResult.errors, ...npmResult.errors, ...configErrors]
 
     process.stdout.write(`${forks.length} forked dependenc(ies) no scanner can see:\n`)
     for (const fork of forks) {
         process.stdout.write(`  ${fork.kind.padEnd(4)} ${fork.name} -> ${fork.pinnedAt}\n`)
+    }
+
+    const found = new Set(forks.map(f => f.name))
+    for (const exemption of exemptions) {
+        if (!found.has(exemption.fork)) continue
+        process.stdout.write(`\nEXEMPT  ${exemption.fork}: ${exemption.reason}\n`)
     }
 
     for (const name of unreviewed) {
@@ -371,7 +463,9 @@ const main = () => {
     }
 
     if (stale.length > 0 || unreviewed.length > 0 || errors.length > 0) process.exit(1)
-    process.stdout.write('\nEvery fork has been compared to upstream inside its window.\n')
+    process.stdout.write(
+        '\nEvery fork that is not exempt has been compared to upstream inside its window.\n'
+    )
 }
 
 // package.json sets "type": "module", so tsx runs this as real ESM: bare
