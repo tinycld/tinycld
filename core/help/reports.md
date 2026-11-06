@@ -83,7 +83,7 @@ A condition on a linked record lets you pick records by name. Turn on **Ask when
 To change the order of the groups, use **Order the groups by**:
 
 - **Name (A–Z)** lists the groups by name. This is the default.
-- **The field's own order** lists the groups in the order that the field gives its choices. For example, account types show as Assets, Liabilities, Equity, Income, Expense. This choice shows only when you group the list by a field with fixed choices.
+- **The field’s own order** lists the groups in the order that the field gives its choices. For example, account types show as Assets, Liabilities, Equity, Income, Expense. This choice shows only when you group the list by a field with fixed choices.
 - **A field** lists the groups by a field that you choose. A group with the smallest value of that field comes first. For example, choose a sort number that each record has.
 
 Records with no group always show first. In each group, the records show by name.

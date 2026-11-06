@@ -468,13 +468,19 @@ function GroupOrderField({
 // The order of a grouped list's groups (spec.go GroupOrder): by name, in the group
 // field's own order (only a select has one), or by the smallest value of a field
 // in each group. Name is the default, so it writes no order. The builder's schema
-// checks it (draft.ts groupOrderIssues) and the refusal shows below.
+// checks it (draft.ts groupOrderIssues) and the refusal shows below; a list with no
+// groups shows only the refusal of an order it keeps (a hand-written spec).
 function OptionsGroupOrder({ ctx, item, path }: ValueProps) {
     const index = ctx.params.findIndex(p => p.id === item.param)
     const param = ctx.params[index]
     const from = param?.optionsFrom
-    if (!param || !from?.group?.length) return null
+    if (!param || !from) return null
     const testID = `${itemTestId(ctx, path)}-options-order`
+    const field = `params.${index}.optionsFrom.groupOrder` as const
+    const error = ctx.builder.form.getFieldState(field, ctx.builder.form.formState).error
+    if (!from.group?.length) {
+        return <FieldError message={error?.message} testID={`${testID}-error`} />
+    }
     const current = from.groupOrder?.by ?? 'label'
     const setOrder = (groupOrder: GroupOrder | undefined) => {
         const next = tidyParam({ ...param, optionsFrom: { ...from, groupOrder } })
@@ -488,8 +494,6 @@ function OptionsGroupOrder({ ctx, item, path }: ValueProps) {
             if (by !== current) setOrder(orderFor(by, from))
         },
     }))
-    const field = `params.${index}.optionsFrom.groupOrder` as const
-    const error = ctx.builder.form.getFieldState(field, ctx.builder.form.formState).error
     return (
         <View className="basis-full gap-1">
             <View className="flex-row flex-wrap items-center gap-2">
@@ -515,20 +519,26 @@ function OptionsGroupOrder({ ctx, item, path }: ValueProps) {
 
 // The text of a whole-group pick (D1), as "All {group} teams": a report names its
 // groups in its own words. Empty keeps "All <group>". The builder's schema checks
-// it (draft.ts paramIssues) and the field shows the refusal.
+// it (draft.ts paramIssues) and the field shows the refusal; a list with no groups
+// shows only the refusal of a text it keeps (a hand-written spec).
 function GroupPickField({ ctx, item, path }: ValueProps) {
     const index = ctx.params.findIndex(p => p.id === item.param)
     const isGrouped = (ctx.params[index]?.optionsFrom?.group?.length ?? 0) > 0
-    if (!isGrouped) return null
+    const field = `params.${index}.optionsFrom.groupLabel` as const
+    const testID = `${itemTestId(ctx, path)}-group-label`
+    if (!isGrouped) {
+        const error = ctx.builder.form.getFieldState(field, ctx.builder.form.formState).error
+        return <FieldError message={error?.message} testID={`${testID}-error`} />
+    }
     return (
         <View className="basis-full">
             <TextInput
-                name={`params.${index}.optionsFrom.groupLabel`}
+                name={field}
                 control={ctx.builder.form.control}
                 label="Whole group text"
                 placeholder={`All ${GROUP_LABEL_TOKEN}`}
                 hint={`${GROUP_LABEL_TOKEN} is the group’s name`}
-                testID={`${itemTestId(ctx, path)}-group-label`}
+                testID={testID}
                 maxLength={MAX_LABEL}
                 autoCorrect={false}
             />

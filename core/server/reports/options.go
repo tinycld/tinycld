@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -70,11 +71,13 @@ func (c *compiler) optionsSelectOf(s *stmt, op *optionsPlan, ordered bool) (stri
 
 // rankedOptionsSQL is the options select (o) with, for grouped options,
 // each option's group label (gl, glc) and the group's smallest order value
-// (gk) over all its options, so a search never moves a group. keys are the
-// group's sort keys over it, each never NULL: the blank group first, then
-// the group order, then the group's label and value. The groups list and
-// the options page both order by them, so a page only appends to what the
-// reader sees.
+// (gk) over all its options, so a search never moves a group. Its columns
+// k0, k1, … are the group's sort keys, each never NULL: the blank group
+// first, then the group order, then the group's label and value; keys names
+// them. The groups list and the options page both order by them, so a page
+// only appends to what the reader sees. Each key is computed once per
+// option, so an order, a cursor's condition and a column read it without
+// binding its values again.
 func (c *compiler) rankedOptionsSQL(s *stmt, op *optionsPlan) (string, []string, error) {
 	inner, err := c.optionsSelectOf(s, op, true)
 	if err != nil || op.group == nil {
@@ -94,30 +97,44 @@ func (c *compiler) rankedOptionsSQL(s *stmt, op *optionsPlan) (string, []string,
 	}
 	sql := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g, %s AS gl, %s AS glc, %s AS gk FROM (%s) o",
 		label, cur, groupValue, inner)
-	keys := []string{"o.g <> ''"}
+	exprs := []string{"o.g <> ''"}
 	switch op.orderBy {
 	case GroupOrderDeclared:
-		keys = append(keys, declaredOrderSQL(s, op.group.field.Options, "o.g"))
+		exprs = append(exprs, declaredOrderSQL(s.bind, op.group.field.Options, "o.g"))
 	case GroupOrderPath:
-		keys = append(keys, "o.gk IS NULL", "COALESCE(o.gk, '')")
+		exprs = append(exprs, "o.gk IS NULL", "COALESCE(o.gk, '')")
 	}
 	// A number label orders by its value, not its text ("4" before "190").
-	return sql, append(keys, orderKey(shownType(op.group), "o.gl"), "o.g"), nil
+	exprs = append(exprs, orderKey(shownType(op.group), "o.gl"), "o.g")
+	cols, keys := make([]string, len(exprs)), make([]string, len(exprs))
+	for i, e := range exprs {
+		cols[i] = fmt.Sprintf("%s AS k%d", e, i)
+		keys[i] = fmt.Sprintf("o.k%d", i)
+	}
+	return fmt.Sprintf("SELECT o.*, %s FROM (%s) o", strings.Join(cols, ", "), sql), keys, nil
 }
 
-// declaredOrderSQL is a select value's place among its declared options; a
-// value no option names comes after them all.
-func declaredOrderSQL(s *stmt, options []Option, value string) string {
+// declaredOrderSQL is a select value's place among its declared options (the
+// first option of a value counts); a value no option names comes after them
+// all. The places are one JSON parameter, {"k<HEX of value>": place}, as
+// optionLabelSQL's labels are: a CASE with a WHEN per option would pass
+// SQLite's variable limit for a long list.
+func declaredOrderSQL(bind func(any) string, options []Option, value string) string {
 	if len(options) == 0 {
 		return "0"
 	}
-	var b strings.Builder
-	b.WriteString("CASE " + value)
+	seen := map[string]bool{}
+	parts := make([]string, 0, len(options))
 	for i, o := range options {
-		fmt.Fprintf(&b, " WHEN %s THEN %d", s.bind(o.Value), i)
+		if seen[o.Value] {
+			continue
+		}
+		seen[o.Value] = true
+		parts = append(parts, fmt.Sprintf(`"k%s":%d`, strings.ToUpper(hex.EncodeToString([]byte(o.Value))), i))
 	}
-	fmt.Fprintf(&b, " ELSE %d END", len(options))
-	return b.String()
+	places := bind("{" + strings.Join(parts, ",") + "}")
+	return fmt.Sprintf("(CASE WHEN typeof(%[1]s) = 'text' THEN COALESCE(json_extract(%[2]s, '$.k' || hex(%[1]s)), %[3]d) ELSE %[3]d END)",
+		value, places, len(options))
 }
 
 // groupListSQL is a choice list with group references expanded under the
