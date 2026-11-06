@@ -27,9 +27,9 @@ import {
  * stub's "Stub team totals" and a draft over sales. A shipped report is owned by
  * the first owner (shipped.go firstAdmin), the seed's admin app user, so the specs
  * that open it sign in as that user; it is unpublished, so no one else sees it
- * until it is shared. Each user reads only their own stub sales and teams, and a
- * user's sales are shared by several tests, so rows are found by team names
- * unique to the test.
+ * until it is shared. Each user reads only their own stub sales, but every
+ * signed-in user reads every stub team (salesstub_teams listRule), and both are
+ * shared by several tests, so rows are found by team names unique to the test.
  */
 
 async function seedRegions(p: Page, stem: string) {
