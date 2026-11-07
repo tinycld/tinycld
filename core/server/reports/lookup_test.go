@@ -329,6 +329,41 @@ func TestASumLookupOverTwoCurrenciesHasNoValueAndANotice(t *testing.T) {
 	}
 }
 
+// An aggregate over a sum lookup that met two currencies adds rows that have
+// no value: the group and total rows are blank too, and the notice names the
+// column even when no detail row is shown.
+func TestAnAggregateOverAMixedSumLookupHasNoValueAndANotice(t *testing.T) {
+	z := newZoo(t)
+	const lookup = `{"op":"lookup","source":"zoo.animals","pick":"sum",
+		"where":{"op":"ne","args":[{"path":[{"field":"species"}]},{"value":"lion"}]},
+		"value":{"path":[{"field":"fee"}]}}`
+	byName := `"groups":[{"id":"g","col":"name"}]`
+	byRegionAndName := `"groups":[{"id":"r","col":"region"},{"id":"g","col":"name"}]`
+	specs := map[string]string{
+		"aggregate":            `{"id":"usdFees","aggregate":"sum","formula":` + lookup + `}],` + byName,
+		"sum op":               `{"id":"usdFees","formula":{"op":"sum","args":[` + lookup + `]}}],` + byName,
+		"rows total":           `{"id":"usdFees","total":"rows","formula":` + lookup + `}],` + byName,
+		"rows total, 2 levels": `{"id":"usdFees","total":"rows","formula":` + lookup + `}],` + byRegionAndName,
+	}
+	want := []Notice{{Code: "mixedCurrency", Message: "A looked-up total mixes currencies, so it shows no value.", Columns: []string{"usdFees"}}}
+	for name, cols := range specs {
+		spec := `{"version":3,"source":"zoo.sites","columns":[
+			{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},` + cols + `,
+			"sort":[{"col":"name"}]}`
+		for _, opts := range []Options{{}, {ExpandAll: true}} {
+			res := z.run(t, "bob", spec, opts, nil)
+			for i, v := range rowsOf(res, "usdFees") {
+				if v != nil {
+					t.Errorf("%s, expand %v: row %d usdFees = %#v, want blank", name, opts.ExpandAll, i, v)
+				}
+			}
+			if !reflect.DeepEqual(res.Notices, want) {
+				t.Errorf("%s, expand %v: notices = %+v", name, opts.ExpandAll, res.Notices)
+			}
+		}
+	}
+}
+
 func TestAnEmptyMatchIsBlankForSumAndZeroForCount(t *testing.T) {
 	z := newZoo(t)
 	nobody := `"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Nobody"}]},"value":{"path":[{"field":"weight"}]}`

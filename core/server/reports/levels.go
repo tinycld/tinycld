@@ -461,7 +461,7 @@ func (lv *level) rowsCells() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, fmt.Sprintf("%s AS v%d", e.sql, idx))
+		out = append(out, fmt.Sprintf("%s AS v%d", e.sql, idx), mixedCell(e, idx))
 	}
 	return out, nil
 }
@@ -671,9 +671,18 @@ func (lc *levelCtx) rowsTotal(cp *colPlan) (expr, error) {
 	}
 	idx := lv.c.p.index(cp)
 	if lv.n < len(lv.c.p.groups) {
-		return withCurrency(expr{sql: lv.childSum(fmt.Sprintf("v%d", idx)), typ: d.typ}, cur), nil
+		total := expr{sql: lv.childSum(fmt.Sprintf("v%d", idx)), typ: d.typ}
+		if d.mixed != "" {
+			// A child row that is blank for mixed currencies makes its sum
+			// blank too (rowsCells gives each child row its vmx helper).
+			total.mixed = lv.childSum(fmt.Sprintf("vmx%d", idx)) + " > 0"
+			total.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", total.mixed, total.sql)
+		}
+		return withCurrency(total, cur), nil
 	}
-	return withCurrency(expr{sql: lv.agg(fmt.Sprintf("r%d", idx), "COALESCE(sum("+d.sql+"), 0)"), typ: d.typ}, cur), nil
+	name := fmt.Sprintf("r%d", idx)
+	total := expr{sql: lv.agg(name, "COALESCE(sum("+d.sql+"), 0)"), typ: d.typ}
+	return withCurrency(lv.mixedTotal(name, d, total), cur), nil
 }
 
 // detailCell is a "rows" column's cell on a detail row, which its totals add.
@@ -771,7 +780,22 @@ func (lc *levelCtx) recompute(cp *colPlan, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return withCurrency(expr{sql: lv.agg(name, aggregateSQL(cp.col.Aggregate, e.sql, cp.scale)), typ: aggregateType(cp.col.Aggregate, e.typ, cp.scale)}, totalCur), nil
+	total := expr{sql: lv.agg(name, aggregateSQL(cp.col.Aggregate, e.sql, cp.scale)), typ: aggregateType(cp.col.Aggregate, e.typ, cp.scale)}
+	return withCurrency(lv.mixedTotal(name, e, total), totalCur), nil
+}
+
+// mixedTotal is total, an aggregate over w of e, blank where a row it reads
+// is blank because a sum lookup in e met amounts in two currencies (R3): the
+// aggregate would read that row as no amount and show a wrong figure. Its
+// mixed check carries on to the row's vmx helper, so the notice names the
+// column on a group or total row as on a detail row.
+func (lv *level) mixedTotal(name string, e, total expr) expr {
+	if e.mixed == "" {
+		return total
+	}
+	total.mixed = lv.agg(name+"m", fmt.Sprintf("max(CASE WHEN %s THEN 1 END)", e.mixed)) + " IS NOT NULL"
+	total.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", total.mixed, total.sql)
+	return total
 }
 
 // totalCurrency is the currency of a total of e. A total groups by its
@@ -1000,7 +1024,8 @@ func (lc *levelCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (ex
 		return expr{}, err
 	}
 	name := fmt.Sprintf("y%d", len(lc.lv.aggs))
-	return withCurrency(expr{sql: lc.lv.agg(name, aggregateSQL(op, e.sql, scale)), typ: aggregateType(op, e.typ, scale)}, cur), nil
+	total := expr{sql: lc.lv.agg(name, aggregateSQL(op, e.sql, scale)), typ: aggregateType(op, e.typ, scale)}
+	return withCurrency(lc.lv.mixedTotal(name, e, total), cur), nil
 }
 
 func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, error) {

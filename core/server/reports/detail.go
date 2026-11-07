@@ -145,7 +145,12 @@ func (rc *rowsCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (exp
 	case Avg:
 		sql = fmt.Sprintf("tc_round(%s, %d)", e.sql, scale)
 	}
-	return withCurrency(expr{sql: sql, typ: aggregateType(op, e.typ, scale)}, e.cur), nil
+	if e.mixed != "" {
+		// A sum lookup that met two currencies has no value, so its total
+		// over the one row has none either (R3), not 0.
+		sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", e.mixed, sql)
+	}
+	return withCurrency(expr{sql: sql, typ: aggregateType(op, e.typ, scale), mixed: e.mixed}, e.cur), nil
 }
 
 func (rc *rowsCtx) window(op string, arg *Node, scale int, at string) (expr, error) {
