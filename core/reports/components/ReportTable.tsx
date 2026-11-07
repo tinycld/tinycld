@@ -1,15 +1,7 @@
 import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list'
 import { type Breakpoint, useWindowWidth } from '@tinycld/core/components/workspace/useBreakpoint'
-import { type ReactNode, useMemo, useRef, useState } from 'react'
-import {
-    ActivityIndicator,
-    Animated,
-    Platform,
-    ScrollView,
-    type ScrollViewInstance,
-    Text,
-    View,
-} from 'react-native'
+import { useMemo, useState } from 'react'
+import { ActivityIndicator, Platform, Text, View } from 'react-native'
 import { headingText, type NumberFormat } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import type { DisplayLayout } from '../lib/spec'
@@ -20,19 +12,22 @@ import {
     amountJustify,
     BlockView,
     cellBoxStyle,
-    FrozenLabel,
+    oneLineLabelStyle,
     type RenderCell,
     StickyGroup,
     TableRow,
     type TableRowProps,
 } from './ReportRow'
-import { type ReportTableLayout, reportTableLayout } from './report-table-layout'
 
 const TEXT_ALIGN: Record<Justify, string> = {
     start: 'text-left',
     center: 'text-center',
     end: 'text-right',
 }
+
+// The heading row and the list keep a scroll bar's gutter on web (scrollbar-gutter:
+// stable), so a line's tracks have the table's width less the gutter.
+const SCROLL_GUTTER = Platform.OS === 'web' ? 16 : 0
 
 // The value kept from an earlier render while it is equal in content, so a new
 // array or object with the same content does not redraw every row.
@@ -83,12 +78,11 @@ function LabelHeading({ column, format }: { column: ResultColumn; format: Number
 interface HeadingRowProps {
     columns: ResultColumn[]
     layout: LineLayout
-    oneLine: ReportTableLayout
     format: NumberFormat
-    scrollX: Animated.Value | null
 }
 
-function OneLineHeading({ columns, oneLine, format, scrollX }: HeadingRowProps) {
+function OneLineHeading({ columns, layout, format }: HeadingRowProps) {
+    if (layout.kind !== 'one-line') return null
     const [label, ...amounts] = columns
     if (!label) return null
     const cells = amounts.map((column, i) => (
@@ -96,15 +90,15 @@ function OneLineHeading({ columns, oneLine, format, scrollX }: HeadingRowProps) 
             key={column.id}
             column={column}
             justify={amountJustify(column, i + 1)}
-            width={oneLine.amountWidth}
+            width={layout.widths[column.id]}
             format={format}
         />
     ))
     return (
         <>
-            <FrozenLabel scrollX={scrollX} style={oneLine.labelStyle}>
+            <View style={oneLineLabelStyle(layout, label.id)}>
                 <LabelHeading column={label} format={format} />
-            </FrozenLabel>
+            </View>
             {cells}
         </>
     )
@@ -134,9 +128,8 @@ function HeadingCells(props: HeadingRowProps) {
     return <BlocksHeading {...props} />
 }
 
-// Above the list, outside its vertical scroll, so it always stays at the top; on
-// a desktop it shares the sideways scroller with the list, so it moves in step.
-// Both keep a scroll bar's gutter, so the heading's tracks match the rows'.
+// Above the list, outside its vertical scroll, so it always stays at the top. Both
+// keep a scroll bar's gutter, so the heading's tracks match the rows'.
 function HeadingRow(props: HeadingRowProps) {
     return (
         <View
@@ -166,53 +159,6 @@ function LayoutNotice({ text }: { text: string | undefined }) {
     )
 }
 
-interface SidewaysProps {
-    isEnabled: boolean
-    minWidth: number
-    /** Draws the table; the offset is null when the table does not scroll sideways. */
-    children(scrollX: Animated.Value | null): ReactNode
-}
-
-// A desktop table wider than its view scrolls sideways as a whole: the heading
-// row and the list sit in one horizontal scroller, and the list scrolls
-// vertically inside it. The scroller owns its sideways offset, which drives the
-// frozen label column. It stays mounted, and scrollable, when sideways scroll
-// turns off (a narrower width), so the list keeps its vertical position and the
-// page keeps the browser's touch gestures (a disabled scroller blocks them on
-// web); its content is then the view's width, so nothing moves sideways, and its
-// offset goes back to 0.
-function Sideways({ isEnabled, minWidth, children }: SidewaysProps) {
-    const scrollX = useRef(new Animated.Value(0)).current
-    const scrollerRef = useRef<ScrollViewInstance>(null)
-    const onScroll = Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], {
-        useNativeDriver: false,
-    })
-    const onContentSizeChange = () => {
-        if (isEnabled) return
-        scrollerRef.current?.scrollTo({ x: 0, animated: false })
-        scrollX.setValue(0)
-    }
-    const content = isEnabled
-        ? { width: '100%', minWidth, flexDirection: 'column' as const }
-        : { width: '100%', flexDirection: 'column' as const }
-    return (
-        <ScrollView
-            ref={scrollerRef}
-            horizontal
-            showsHorizontalScrollIndicator={isEnabled}
-            alwaysBounceHorizontal={false}
-            bounces={isEnabled}
-            className="min-h-0 flex-1"
-            contentContainerStyle={content}
-            onScroll={onScroll}
-            onContentSizeChange={onContentSizeChange}
-            scrollEventThrottle={16}
-        >
-            {children(isEnabled ? scrollX : null)}
-        </ScrollView>
-    )
-}
-
 // Everything a row draws from: FlashList's extraData, the one signal that redraws
 // the rows, so renderItem itself never changes.
 interface TableData extends Omit<TableRowProps, 'item'> {
@@ -236,21 +182,15 @@ interface TableListProps extends Omit<TableRowProps, 'item'> {
 }
 
 function TableList({ rows, onNearEnd, isLoadingMore, ...row }: TableListProps) {
-    const { columns, layout, oneLine, format, onToggleGroup, scrollX } = row
+    const { columns, layout, format, onToggleGroup } = row
     const sticky = useMemo(() => stickyIndices(rows), [rows])
     const extraData = useMemo<TableData>(
-        () => ({ columns, layout, oneLine, format, onToggleGroup, scrollX, rows }),
-        [columns, layout, oneLine, format, onToggleGroup, scrollX, rows]
+        () => ({ columns, layout, format, onToggleGroup, rows }),
+        [columns, layout, format, onToggleGroup, rows]
     )
     return (
         <>
-            <HeadingRow
-                columns={columns}
-                layout={layout}
-                oneLine={oneLine}
-                format={format}
-                scrollX={scrollX}
-            />
+            <HeadingRow columns={columns} layout={layout} format={format} />
             <FlashList
                 data={rows}
                 renderItem={renderTableItem}
@@ -285,7 +225,8 @@ export interface ReportTableProps {
 // gives them); onEndReached asks for the next page, through useReportRun's
 // guard (hasNextPage and not already fetching). FlashList checks it after each
 // commit and again when the rows change, so a first page shorter than the view
-// asks for the next one too.
+// asks for the next one too. The table never scrolls sideways (F10): its line is
+// fitted to its width, narrowed, or wrapped (tableLines).
 export function ReportTable(props: ReportTableProps) {
     const { rows, runKey, breakpoint, layouts, onToggleGroup, onNearEnd, isLoadingMore } = props
     const columns = useStable(props.columns)
@@ -293,35 +234,16 @@ export function ReportTable(props: ReportTableProps) {
     const windowWidth = useWindowWidth()
     // The table's own width (a builder drawer narrows it): local layout state from onLayout.
     const [width, setWidth] = useState(windowWidth)
-    const amountCount = Math.max(columns.length - 1, 0)
-    const oneLine = useMemo(
-        () => reportTableLayout({ breakpoint, amountCount }),
-        [breakpoint, amountCount]
-    )
+    const lineWidth = width - SCROLL_GUTTER
     const layout = useMemo(
-        () => tableLines({ columns, width, breakpoint, layouts }),
-        [columns, width, breakpoint, layouts]
+        () => tableLines({ columns, width: lineWidth, breakpoint, layouts }),
+        [columns, lineWidth, breakpoint, layouts]
     )
     if (columns.length === 0) return null
-    const isOneLine = layout.kind === 'one-line'
-    // FlashList keeps the row in view anchored when the rows change, which a live
-    // re-run of the same design and params needs; a run with a new design or new
-    // params is another report, so its list is a new one and starts at the top.
-    const list = (scrollX: Animated.Value | null) => (
-        <TableList
-            key={runKey}
-            rows={rows}
-            columns={columns}
-            layout={layout}
-            oneLine={oneLine}
-            format={format}
-            onToggleGroup={onToggleGroup}
-            scrollX={scrollX}
-            onNearEnd={onNearEnd}
-            isLoadingMore={isLoadingMore}
-        />
-    )
     const notice = layout.kind === 'blocks' ? layout.notice : undefined
+    // FlashList keeps the row in view anchored when the rows change, which a live
+    // re-run of the same design and params needs; a run with a new design, new
+    // params or a new sort is another list, so it starts at the top.
     return (
         <View
             testID="report-table"
@@ -329,12 +251,16 @@ export function ReportTable(props: ReportTableProps) {
             onLayout={e => setWidth(e.nativeEvent.layout.width)}
         >
             <LayoutNotice text={notice} />
-            <Sideways
-                isEnabled={isOneLine && oneLine.scrollsSideways}
-                minWidth={oneLine.labelMin + oneLine.amountContentMinWidth}
-            >
-                {list}
-            </Sideways>
+            <TableList
+                key={runKey}
+                rows={rows}
+                columns={columns}
+                layout={layout}
+                format={format}
+                onToggleGroup={onToggleGroup}
+                onNearEnd={onNearEnd}
+                isLoadingMore={isLoadingMore}
+            />
         </View>
     )
 }

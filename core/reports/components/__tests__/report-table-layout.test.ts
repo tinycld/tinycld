@@ -7,34 +7,8 @@ import {
     LABEL_MIN_WIDTH,
     PHONE_AMOUNT_WIDTH,
     PHONE_LABEL_WIDTH,
-    reportTableLayout,
     TEXT_FLOOR,
 } from '../report-table-layout'
-
-describe('reportTableLayout', () => {
-    it('gives the label the free space on a desktop and scrolls the table sideways', () => {
-        expect(reportTableLayout({ breakpoint: 'desktop', amountCount: 3 })).toEqual({
-            labelStyle: { flex: 1, minWidth: LABEL_MIN_WIDTH },
-            labelMin: LABEL_MIN_WIDTH,
-            amountWidth: AMOUNT_WIDTH,
-            scrollsSideways: true,
-            amountContentMinWidth: 3 * AMOUNT_WIDTH,
-        })
-    })
-
-    it('never scrolls a tablet or a phone sideways: their rows wrap where one line does not fit', () => {
-        expect(reportTableLayout({ breakpoint: 'tablet', amountCount: 3 })).toMatchObject({
-            amountWidth: AMOUNT_WIDTH,
-            scrollsSideways: false,
-        })
-        expect(reportTableLayout({ breakpoint: 'mobile', amountCount: 2 })).toMatchObject({
-            amountWidth: PHONE_AMOUNT_WIDTH,
-            scrollsSideways: false,
-            labelStyle: { flex: 1, minWidth: PHONE_LABEL_WIDTH },
-            labelMin: PHONE_LABEL_WIDTH,
-        })
-    })
-})
 
 // A wide report: the label, five text columns and three amounts. Its natural line
 // is 220 + 8 × 128 = 1244; narrowed to the floor it is 80 + 5 × 80 + 3 × 128 = 864.

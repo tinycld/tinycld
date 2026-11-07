@@ -1,13 +1,13 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import type { ReactNode } from 'react'
-import { Animated, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 import { type CellDisplay, cellDisplay, type NumberFormat, rowLabelText } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import { groupChain } from '../lib/sticky'
 import { type Block, type Justify, type LineLayout, rowLayout } from '../lib/table-lines'
 import type { ResultColumn, ResultRow, RowKind } from '../lib/types'
-import { columnAlign, INDENT, type ReportTableLayout, ROW_HEIGHT } from './report-table-layout'
+import { columnAlign, INDENT, ROW_HEIGHT } from './report-table-layout'
 
 // The rule above a row; it is drawn on the row's container, so it runs across
 // the whole row, wrapped lines included.
@@ -111,11 +111,16 @@ function GroupCaret({ isOpen }: { isOpen: boolean }) {
     return <Icon size={CARET_SIZE} color={color} />
 }
 
+// An opening row's label is a note before the group's own rows, so it is quieter.
+function labelTone(kind: RowKind): string {
+    return kind === 'opening' ? 'text-muted-foreground' : 'text-foreground'
+}
+
 function LabelText({ row, text }: { row: ResultRow; text: string }) {
     return (
         <Text
             numberOfLines={1}
-            className={`min-w-0 flex-1 text-sm text-foreground ${ROW_WEIGHT[row.kind]}`}
+            className={`min-w-0 flex-1 text-sm ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`}
         >
             {text}
         </Text>
@@ -131,8 +136,7 @@ interface RowLabelProps {
     isCopy?: boolean
 }
 
-// Child rows indent the label only, so the figures stay aligned.
-// It grows to fill its slot (or its frozen column), as a block cell does.
+// Child rows indent the label only, so the figures stay aligned. It grows to fill its slot, as a block cell does.
 function labelStyle(row: ResultRow, justify: Justify) {
     return {
         flexGrow: 1,
@@ -259,51 +263,28 @@ export function RowCell({
 }
 
 /**
- * Holds the label column at the left while a desktop table scrolls sideways
- * (R27): it follows the sideways offset. A table that does not scroll sideways
- * passes no offset, so nothing moves it.
+ * The label column's box on one line (F10): it takes the width the other columns
+ * leave, and never less than the width the line gave it.
  */
-export function FrozenLabel({
-    scrollX,
-    style,
-    children,
-}: {
-    scrollX: Animated.Value | null
-    style: ReportTableLayout['labelStyle']
-    children: ReactNode
-}) {
-    if (!scrollX) return <View style={style}>{children}</View>
-    return (
-        <Animated.View
-            className="z-10 bg-background"
-            style={[style, { transform: [{ translateX: scrollX }] }]}
-        >
-            {children}
-        </Animated.View>
-    )
+export function oneLineLabelStyle(layout: LineLayout, labelId: string | undefined) {
+    const minWidth = layout.kind === 'one-line' && labelId ? layout.widths[labelId] : undefined
+    return { flex: 1, minWidth }
 }
 
 export interface TableRowProps {
     item: VisibleRow
     columns: ResultColumn[]
     layout: LineLayout
-    oneLine: ReportTableLayout
     format: NumberFormat
     onToggleGroup(row: ResultRow): void
-    scrollX: Animated.Value | null
     isCopy?: boolean
 }
 
-function OneLineRow({
-    item,
-    columns,
-    oneLine,
-    format,
-    onToggleGroup,
-    scrollX,
-    isCopy,
-}: TableRowProps) {
-    const [, ...amounts] = columns
+// Each column at the width the line gave it; a cell too narrow for its text ends
+// in "…" (numberOfLines 1), so nothing runs past the table's edge.
+function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: TableRowProps) {
+    if (layout.kind !== 'one-line') return null
+    const [label, ...amounts] = columns
     const cells = amounts.map((column, i) => (
         <RowCell
             key={column.id}
@@ -312,20 +293,20 @@ function OneLineRow({
             format={format}
             justify={amountJustify(column, i + 1)}
             onToggleGroup={onToggleGroup}
-            width={oneLine.amountWidth}
+            width={layout.widths[column.id]}
             isCopy={isCopy}
         />
     ))
     return (
         <View className={`flex-row bg-background ${ROW_RULE[item.row.kind]}`}>
-            <FrozenLabel scrollX={scrollX} style={oneLine.labelStyle}>
+            <View style={oneLineLabelStyle(layout, label?.id)}>
                 <RowLabel
                     item={item}
                     format={format}
                     onToggleGroup={onToggleGroup}
                     isCopy={isCopy}
                 />
-            </FrozenLabel>
+            </View>
             {cells}
         </View>
     )
@@ -398,17 +379,17 @@ export function StickyGroup({ rows, index, ...props }: StickyGroupProps) {
     if (chain.length === 0) return null
     const stuck = rows[index]
     const own = chain[chain.length - 1] === stuck ? (stuck ?? null) : null
-    const frozenStyle = props.layout.kind === 'one-line' ? props.oneLine.labelStyle : { flex: 1 }
+    const labelBox = oneLineLabelStyle(props.layout, props.columns[0]?.id)
     const labels = (own ? chain.slice(0, -1) : chain).map(item => (
         <View key={item.row.id} className="flex-row bg-background">
-            <FrozenLabel scrollX={props.scrollX} style={frozenStyle}>
+            <View style={labelBox}>
                 <RowLabel
                     item={item}
                     format={props.format}
                     onToggleGroup={props.onToggleGroup}
                     isCopy
                 />
-            </FrozenLabel>
+            </View>
         </View>
     ))
     return (
