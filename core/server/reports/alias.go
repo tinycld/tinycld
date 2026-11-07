@@ -26,6 +26,7 @@ func resolveAliases(spec *Spec) []Alias {
 	a.findTargets(spec)
 	for i := range spec.Columns {
 		a.node(base, spec.Columns[i].Formula)
+		a.node(base, spec.Columns[i].Rollup)
 	}
 	a.node(base, spec.Filter)
 	for i := range spec.Groups {
@@ -35,6 +36,11 @@ func resolveAliases(spec *Spec) []Alias {
 		if g.Fill != nil {
 			// A fill's where reads the records the group links to.
 			a.node(a.targets[g.ID], g.Fill.Where)
+		}
+		if g.Opening != nil {
+			for _, id := range g.Opening.cellIDs() {
+				a.node(base, g.Opening.Cells[id])
+			}
 		}
 	}
 	for i := range spec.Sort {
@@ -145,6 +151,9 @@ func (a *aliaser) node(src *Source, n *Node) {
 	if n == nil {
 		return
 	}
+	// An outer path is on the report's row, whatever source the formula
+	// around it reads.
+	a.path(a.base, n.Outer)
 	switch {
 	case n.Op == "lookup":
 		a.lookup(n)
@@ -201,6 +210,8 @@ func (a *aliaser) nodeTarget(src *Source, n *Node, cols map[string]*Column, seen
 		return nil
 	case n.Record != "":
 		return pathTarget(a.targets[n.Record], n.Path)
+	case n.Outer != nil:
+		return pathTarget(a.base, n.Outer)
 	case n.Path != nil:
 		return pathTarget(src, n.Path)
 	case n.Col != "":

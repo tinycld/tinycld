@@ -1,8 +1,17 @@
 import type { Breakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
+import {
+    AMOUNT_WIDTH,
+    CARET_ROOM,
+    INDENT,
+    LABEL_MIN_WIDTH,
+    PHONE_AMOUNT_WIDTH,
+    PHONE_LABEL_WIDTH,
+    TEXT_FLOOR,
+} from '../components/report-table-layout'
 import { isRightAligned } from './format'
 import type { VisibleRow } from './rows'
-import type { DisplayCell, DisplayLayout, DisplayWidth } from './spec'
-import type { ResultColumn } from './types'
+import type { DisplayCell, DisplayLayout, DisplayWidth, SpecColumn } from './spec'
+import type { CellValue, FieldType, ResultColumn } from './types'
 
 // E14: a report row wraps onto more lines where its columns do not fit, after
 // Gridley: one cell renderer per column, and per width a layout that puts each
@@ -27,7 +36,10 @@ export type Block =
     | { kind: 'gap'; lines: number }
     | { kind: 'stack'; parts: Block[] }
     | { kind: 'side'; of: number; parts: { block: Block; tracks: number }[] }
-export type LineLayout = { kind: 'one-line' } | { kind: 'blocks'; root: Block; notice?: string }
+/** One line, each column at its width (the label's is its minimum: it takes what is left). */
+export type LineLayout =
+    | { kind: 'one-line'; widths: Record<string, number> }
+    | { kind: 'blocks'; root: Block; notice?: string }
 export type Placed = { start: number; span: number; line: number; lines: number }
 export type Placement = { placed: Placed[] } | { problem: { index: number; message: string } }
 
@@ -283,24 +295,198 @@ function authoredLines(
     return { kind: 'blocks', root: tree }
 }
 
-/** The lines of every row (and the heading) at this width. */
+// Aligned or fixed-length values an ellipsis would ruin: they keep their width (R12).
+const FIGURE_TYPES: ReadonlySet<FieldType> = new Set([
+    'number',
+    'money',
+    'percent',
+    'date',
+    'datetime',
+    'bool',
+])
+
+export function isFigureColumn(column: ResultColumn): boolean {
+    return FIGURE_TYPES.has(column.type)
+}
+
+/**
+ * How deep a report's rows go: its group levels and its levels of nested child
+ * rows. `pivot`: the last group level holds the pivot's cells, so its groups never
+ * open (assemble.go canOpen) and no row comes under them.
+ */
+export type RowLevels = { groups: number; nests: number; pivot?: boolean }
+/** A report with no groups and no child rows. */
+export const FLAT_LEVELS: RowLevels = { groups: 0, nests: 0 }
+
+/**
+ * A report's row levels, from its spec: one per group level, and one per `nest`
+ * hop of its deepest column (the engine nests one chain of child rows). The spec,
+ * not the loaded rows, so the layout does not change as groups open or pages load.
+ */
+export function rowLevelsOf(
+    spec: {
+        groups?: readonly unknown[] | null
+        columns: readonly Pick<SpecColumn, 'path'>[]
+        pivot?: unknown
+    } | null
+): RowLevels {
+    if (!spec) return FLAT_LEVELS
+    const nestsOf = (column: Pick<SpecColumn, 'path'>) =>
+        (column.path ?? []).filter(hop => hop.mode === 'nest').length
+    const levels = {
+        groups: spec.groups?.length ?? 0,
+        nests: Math.max(0, ...spec.columns.map(nestsOf)),
+    }
+    return spec.pivot ? { ...levels, pivot: true } : levels
+}
+
+// The left edge of a group row's label at a level (1 is the outermost): INDENT per
+// level above it, then its caret when the group can open (ReportRow labelStyle).
+const groupLabelStart = (level: number, canOpen: boolean) =>
+    (level - 1) * INDENT + (canOpen ? CARET_ROOM : 0)
+
+// The deepest label's left edge. A detail row sits at the group levels, a child
+// row one more per level. In a pivot report the last level's groups never open:
+// they draw no caret and hold no detail or child row.
+function deepestLabelStart({ groups, nests, pivot }: RowLevels): number {
+    if (groups === 0) return nests * INDENT
+    if (pivot) {
+        const pivotRows = groupLabelStart(groups, false)
+        return groups > 1 ? Math.max(pivotRows, groupLabelStart(groups - 1, true)) : pivotRows
+    }
+    return Math.max((groups + nests) * INDENT, groupLabelStart(groups, true))
+}
+
+/**
+ * The label column's floor on one line: TEXT_FLOOR for the text of its most
+ * indented label (deepestLabelStart).
+ */
+export function labelFloor(levels: RowLevels): number {
+    return TEXT_FLOOR + deepestLabelStart(levels)
+}
+
+/**
+ * The widths of one line at this width (F10, R12), or null when it does not fit:
+ * every column at its natural width; if that is too wide, the label narrows toward
+ * its floor (labelFloor), then the text columns are lowered to one cap (water-fill
+ * from the widest), each to TEXT_FLOOR at the least. Figure columns keep their width.
+ */
+export function fitOneLine(
+    columns: readonly ResultColumn[],
+    width: number,
+    breakpoint: Breakpoint,
+    levels: RowLevels = FLAT_LEVELS
+): Record<string, number> | null {
+    const [label, ...others] = columns
+    if (!label) return {}
+    const isPhone = breakpoint === 'mobile'
+    const labelFloorWidth = labelFloor(levels)
+    const labelMin = Math.max(isPhone ? PHONE_LABEL_WIDTH : LABEL_MIN_WIDTH, labelFloorWidth)
+    const cell = isPhone ? PHONE_AMOUNT_WIDTH : AMOUNT_WIDTH
+    const figures = others.filter(isFigureColumn)
+    const texts = others.filter(column => !isFigureColumn(column))
+    const figureWidth = figures.length * cell
+    const lineAt = (labelWidth: number, textWidth: number) => {
+        const widths: Record<string, number> = { [label.id]: labelWidth }
+        for (const column of others) widths[column.id] = isFigureColumn(column) ? cell : textWidth
+        return widths
+    }
+    const natural = labelMin + figureWidth + texts.length * cell
+    if (natural <= width) return lineAt(labelMin, cell)
+    const labelWidth = Math.max(labelFloorWidth, labelMin - (natural - width))
+    if (labelWidth + figureWidth + texts.length * cell <= width) return lineAt(labelWidth, cell)
+    if (texts.length === 0) return null
+    const cap = Math.floor((width - labelFloorWidth - figureWidth) / texts.length)
+    if (cap < TEXT_FLOOR) return null
+    return lineAt(labelFloorWidth, Math.min(cell, cap))
+}
+
+// The authored widths tried when this width has none and its line does not fit,
+// nearest first (R13).
+const NARROWER: Record<Breakpoint, readonly DisplayWidth[]> = {
+    desktop: ['tablet', 'mobile'],
+    tablet: ['mobile'],
+    mobile: [],
+}
+
+/**
+ * The lines of every row (and the heading) at this width (F10): the author's
+ * arrangement for this width (Q1); else one line, narrowed if it must be; else the
+ * nearest narrower arrangement; else the automatic lines. Never wider than `width`,
+ * so the table never scrolls sideways.
+ */
 export function tableLines(input: {
     columns: readonly ResultColumn[]
     width: number
     breakpoint: Breakpoint
     layouts: readonly DisplayLayout[]
-    oneLineFits: boolean
+    /** How deep the report's rows go (rowLevelsOf); absent: a flat report. */
+    levels?: RowLevels
 }): LineLayout {
-    const authored = input.layouts.find(l => l.width === input.breakpoint)
-    if (authored) return authoredLines(authored, input.columns, input.width)
-    if (input.breakpoint === 'desktop' || input.oneLineFits) return { kind: 'one-line' }
-    return autoLines(input.columns, input.width)
+    const { columns, width, breakpoint, layouts, levels } = input
+    const own = layouts.find(l => l.width === breakpoint)
+    if (own) return authoredLines(own, columns, width)
+    const widths = fitOneLine(columns, width, breakpoint, levels)
+    if (widths) return { kind: 'one-line', widths }
+    const narrower = NARROWER[breakpoint]
+        .map(w => layouts.find(l => l.width === w))
+        .find(layout => layout !== undefined)
+    if (narrower) return authoredLines(narrower, columns, width)
+    return autoLines(columns, width)
 }
 
-/** A row with no figures (a group its subtotal follows) draws only its label, across the row. */
+const hasValue = (value: CellValue | undefined) => value !== undefined && value !== null
+const LINE_GAP: Block = { kind: 'gap', lines: 1 }
+
+function hasCell(block: Block): boolean {
+    if (block.kind === 'cell') return true
+    if (block.kind === 'gap') return false
+    if (block.kind === 'stack') return block.parts.some(hasCell)
+    return block.parts.some(part => hasCell(part.block))
+}
+
+function blockColumns(block: Block): string[] {
+    if (block.kind === 'cell') return [block.col]
+    if (block.kind === 'gap') return []
+    if (block.kind === 'stack') return block.parts.flatMap(blockColumns)
+    return block.parts.flatMap(part => blockColumns(part.block))
+}
+
+// The block without the cells `keeps` refuses: in a side block a refused cell
+// leaves a gap, so the others keep their tracks; a stack line, or a side block,
+// left with no cell goes (R14). Null when nothing is left.
+function pruned(block: Block, keeps: (col: string) => boolean): Block | null {
+    if (block.kind === 'gap') return block
+    if (block.kind === 'cell') return keeps(block.col) ? block : null
+    if (block.kind === 'stack') {
+        const parts = block.parts.flatMap(part => {
+            const kept = pruned(part, keeps)
+            return kept && hasCell(kept) ? [kept] : []
+        })
+        return parts.length > 0 ? stackOf(parts) : null
+    }
+    const parts = block.parts.map(part => ({
+        block: pruned(part.block, keeps) ?? LINE_GAP,
+        tracks: part.tracks,
+    }))
+    return parts.some(part => hasCell(part.block)) ? { ...block, parts } : null
+}
+
+/**
+ * A row's lines. A row with no figures (a group its subtotal follows) draws only
+ * its label, across the row. A row that is not a detail row (group, opening,
+ * subtotal, total, computed) draws only the columns it has a value in, so a phone
+ * opening row is its label line, then its figures line (R14); a detail row keeps
+ * every line, so a field sits at the same place in each row.
+ */
 export function rowLayout(item: VisibleRow, layout: LineLayout, labelId: string): LineLayout {
-    if (layout.kind === 'one-line' || Object.keys(item.cells).length > 0) return layout
-    return { kind: 'blocks', root: { kind: 'cell', col: labelId, justify: 'start' } }
+    if (layout.kind === 'one-line') return layout
+    const labelOnly: Block = { kind: 'cell', col: labelId, justify: 'start' }
+    if (Object.keys(item.cells).length === 0) return { kind: 'blocks', root: labelOnly }
+    if (item.row.kind === 'detail') return layout
+    const keeps = (col: string) => col === labelId || hasValue(item.cells[col])
+    if (blockColumns(layout.root).every(keeps)) return layout
+    return { ...layout, root: pruned(layout.root, keeps) ?? labelOnly }
 }
 
 /** A first arrangement: the first column across line 1, the others in order on the lines below. */

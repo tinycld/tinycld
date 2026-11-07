@@ -1,32 +1,27 @@
 import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list'
 import { type Breakpoint, useWindowWidth } from '@tinycld/core/components/workspace/useBreakpoint'
-import { type ReactNode, useMemo, useRef, useState } from 'react'
-import {
-    ActivityIndicator,
-    Animated,
-    Platform,
-    ScrollView,
-    type ScrollViewInstance,
-    Text,
-    View,
-} from 'react-native'
+import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react-native'
+import { useMemo, useState } from 'react'
+import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native'
 import { headingText, type NumberFormat } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
+import type { ViewSort } from '../lib/run-client'
 import type { DisplayLayout } from '../lib/spec'
 import { stickyIndices } from '../lib/sticky'
-import { type Justify, type LineLayout, tableLines } from '../lib/table-lines'
+import { type Justify, type LineLayout, type RowLevels, tableLines } from '../lib/table-lines'
 import type { ResultColumn, ResultRow } from '../lib/types'
 import {
     amountJustify,
     BlockView,
     cellBoxStyle,
-    FrozenLabel,
+    JUSTIFY_CONTENT,
+    oneLineLabelStyle,
     type RenderCell,
     StickyGroup,
     TableRow,
     type TableRowProps,
 } from './ReportRow'
-import { fitsOnOneLine, type ReportTableLayout, reportTableLayout } from './report-table-layout'
 
 const TEXT_ALIGN: Record<Justify, string> = {
     start: 'text-left',
@@ -43,16 +38,98 @@ function useStable<T>(value: T): T {
     return value
 }
 
+/** The reader's sort the heading shows, and the press that changes it. */
+interface HeadingSort {
+    sort: ViewSort | null
+    onSortColumn(col: string): void
+}
+
+// One object while the sort is the same: the parent gives a new sort object on
+// every render, and a press handler that changes only with the sort.
+function useHeadingSort(sort: ViewSort | null, onSortColumn: (col: string) => void): HeadingSort {
+    const keptSort = useStable(sort)
+    return useMemo(() => ({ sort: keptSort, onSortColumn }), [keptSort, onSortColumn])
+}
+
+const SORT_ICON_SIZE = 12
+const SORT_ICONS = { asc: ArrowUp, desc: ArrowDown, none: ArrowUpDown } as const
+type SortIconKind = keyof typeof SORT_ICONS
+
+const sortIconOf = (sort: ViewSort | null, col: string): SortIconKind =>
+    sort?.col === col ? sort.dir : 'none'
+
+// The direction is in the button's name: a button has no other channel that both
+// web and native readers announce (aria-valuetext is for range roles only).
+const SORT_LABEL_SUFFIX: Record<SortIconKind, string> = {
+    asc: ', sorted ascending',
+    desc: ', sorted descending',
+    none: '',
+}
+
+const sortLabel = (text: string, kind: SortIconKind) => `Sort by ${text}${SORT_LABEL_SUFFIX[kind]}`
+
+function SortIcon({ kind, isVisible }: { kind: SortIconKind; isVisible: boolean }) {
+    const color = useThemeColor('muted-foreground')
+    if (!isVisible) return null
+    const Icon = SORT_ICONS[kind]
+    return <Icon size={SORT_ICON_SIZE} color={color} />
+}
+
+function HeadingText({ text, justify }: { text: string; justify: Justify }) {
+    return (
+        <Text
+            numberOfLines={1}
+            className={`shrink text-xs font-semibold uppercase text-muted-foreground ${TEXT_ALIGN[justify]}`}
+        >
+            {text}
+        </Text>
+    )
+}
+
+interface HeadingContentProps {
+    column: ResultColumn
+    text: string
+    justify: Justify
+    sorting: HeadingSort
+}
+
+// R15: a column the run can sort by (ResultColumn.sortable) has a heading that is a
+// button; each press cycles ascending → descending → the report's order. The icon
+// sits outside the text, so the ellipsis never hides it; in a right-aligned column
+// it comes first, so the text's right edge stays in line with the values. A
+// running value's heading is plain text.
+function HeadingContent({ column, text, justify, sorting }: HeadingContentProps) {
+    if (!column.sortable) return <HeadingText text={text} justify={justify} />
+    const kind = sortIconOf(sorting.sort, column.id)
+    const iconFirst = justify === 'end'
+    return (
+        <Pressable
+            testID={`report-sort-${column.id}`}
+            accessibilityRole="button"
+            accessibilityLabel={sortLabel(text, kind)}
+            onPress={() => sorting.onSortColumn(column.id)}
+            className="min-h-11 flex-1 flex-row items-center gap-1"
+            style={{ justifyContent: JUSTIFY_CONTENT[justify] }}
+        >
+            <SortIcon kind={kind} isVisible={iconFirst} />
+            <HeadingText text={text} justify={justify} />
+            <SortIcon kind={kind} isVisible={!iconFirst} />
+        </Pressable>
+    )
+}
+
 function HeadingCell({
     column,
     justify,
     width,
     format,
+    sorting,
 }: {
     column: ResultColumn
     justify: Justify
     width?: number
     format: NumberFormat
+    sorting: HeadingSort
 }) {
     const text = headingText(column, format)
     return (
@@ -61,21 +138,24 @@ function HeadingCell({
             className="justify-center px-3"
             style={cellBoxStyle(width)}
         >
-            <Text
-                numberOfLines={1}
-                className={`text-xs font-semibold uppercase text-muted-foreground ${TEXT_ALIGN[justify]}`}
-            >
-                {text}
-            </Text>
+            <HeadingContent column={column} text={text} justify={justify} sorting={sorting} />
         </View>
     )
 }
 
 // The label's heading sits over the label's text, which starts after the row's indent.
-function LabelHeading({ column, format }: { column: ResultColumn; format: NumberFormat }) {
+function LabelHeading({
+    column,
+    format,
+    sorting,
+}: {
+    column: ResultColumn
+    format: NumberFormat
+    sorting: HeadingSort
+}) {
     return (
         <View className="grow pl-1">
-            <HeadingCell column={column} justify="start" format={format} />
+            <HeadingCell column={column} justify="start" format={format} sorting={sorting} />
         </View>
     )
 }
@@ -83,12 +163,12 @@ function LabelHeading({ column, format }: { column: ResultColumn; format: Number
 interface HeadingRowProps {
     columns: ResultColumn[]
     layout: LineLayout
-    oneLine: ReportTableLayout
     format: NumberFormat
-    scrollX: Animated.Value | null
+    sorting: HeadingSort
 }
 
-function OneLineHeading({ columns, oneLine, format, scrollX }: HeadingRowProps) {
+function OneLineHeading({ columns, layout, format, sorting }: HeadingRowProps) {
+    if (layout.kind !== 'one-line') return null
     const [label, ...amounts] = columns
     if (!label) return null
     const cells = amounts.map((column, i) => (
@@ -96,15 +176,16 @@ function OneLineHeading({ columns, oneLine, format, scrollX }: HeadingRowProps) 
             key={column.id}
             column={column}
             justify={amountJustify(column, i + 1)}
-            width={oneLine.amountWidth}
+            width={layout.widths[column.id]}
             format={format}
+            sorting={sorting}
         />
     ))
     return (
         <>
-            <FrozenLabel scrollX={scrollX} style={oneLine.labelStyle}>
-                <LabelHeading column={label} format={format} />
-            </FrozenLabel>
+            <View style={oneLineLabelStyle(layout, label.id)}>
+                <LabelHeading column={label} format={format} sorting={sorting} />
+            </View>
             {cells}
         </>
     )
@@ -112,15 +193,16 @@ function OneLineHeading({ columns, oneLine, format, scrollX }: HeadingRowProps) 
 
 // The heading is drawn by the same blocks as the rows, so each heading sits over
 // its values and wraps the same way.
-function BlocksHeading({ columns, layout, format }: HeadingRowProps) {
+function BlocksHeading({ columns, layout, format, sorting }: HeadingRowProps) {
     if (layout.kind !== 'blocks') return null
     const byId = new Map(columns.map(column => [column.id, column]))
     const labelId = columns[0]?.id
     const renderCell: RenderCell = (col, justify) => {
         const column = byId.get(col)
         if (!column) return null
-        if (col === labelId) return <LabelHeading column={column} format={format} />
-        return <HeadingCell column={column} justify={justify} format={format} />
+        if (col === labelId)
+            return <LabelHeading column={column} format={format} sorting={sorting} />
+        return <HeadingCell column={column} justify={justify} format={format} sorting={sorting} />
     }
     return (
         <View className="flex-1">
@@ -134,9 +216,8 @@ function HeadingCells(props: HeadingRowProps) {
     return <BlocksHeading {...props} />
 }
 
-// Above the list, outside its vertical scroll, so it always stays at the top; on
-// a desktop it shares the sideways scroller with the list, so it moves in step.
-// Both keep a scroll bar's gutter, so the heading's tracks match the rows'.
+// Above the list, outside its vertical scroll, so it always stays at the top. Both
+// keep a scroll bar's gutter, so the heading's tracks match the rows'.
 function HeadingRow(props: HeadingRowProps) {
     return (
         <View
@@ -166,53 +247,6 @@ function LayoutNotice({ text }: { text: string | undefined }) {
     )
 }
 
-interface SidewaysProps {
-    isEnabled: boolean
-    minWidth: number
-    /** Draws the table; the offset is null when the table does not scroll sideways. */
-    children(scrollX: Animated.Value | null): ReactNode
-}
-
-// A desktop table wider than its view scrolls sideways as a whole: the heading
-// row and the list sit in one horizontal scroller, and the list scrolls
-// vertically inside it. The scroller owns its sideways offset, which drives the
-// frozen label column. It stays mounted, and scrollable, when sideways scroll
-// turns off (a narrower width), so the list keeps its vertical position and the
-// page keeps the browser's touch gestures (a disabled scroller blocks them on
-// web); its content is then the view's width, so nothing moves sideways, and its
-// offset goes back to 0.
-function Sideways({ isEnabled, minWidth, children }: SidewaysProps) {
-    const scrollX = useRef(new Animated.Value(0)).current
-    const scrollerRef = useRef<ScrollViewInstance>(null)
-    const onScroll = Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], {
-        useNativeDriver: false,
-    })
-    const onContentSizeChange = () => {
-        if (isEnabled) return
-        scrollerRef.current?.scrollTo({ x: 0, animated: false })
-        scrollX.setValue(0)
-    }
-    const content = isEnabled
-        ? { width: '100%', minWidth, flexDirection: 'column' as const }
-        : { width: '100%', flexDirection: 'column' as const }
-    return (
-        <ScrollView
-            ref={scrollerRef}
-            horizontal
-            showsHorizontalScrollIndicator={isEnabled}
-            alwaysBounceHorizontal={false}
-            bounces={isEnabled}
-            className="min-h-0 flex-1"
-            contentContainerStyle={content}
-            onScroll={onScroll}
-            onContentSizeChange={onContentSizeChange}
-            scrollEventThrottle={16}
-        >
-            {children(isEnabled ? scrollX : null)}
-        </ScrollView>
-    )
-}
-
 // Everything a row draws from: FlashList's extraData, the one signal that redraws
 // the rows, so renderItem itself never changes.
 interface TableData extends Omit<TableRowProps, 'item'> {
@@ -229,28 +263,41 @@ const rowKey = (item: VisibleRow) => item.row.id
 const rowType = (item: VisibleRow) => item.row.kind
 const STICKY_CONFIG = { useNativeDriver: Platform.OS !== 'web' }
 
+// A row's width: the list's content, which on web is the list less the scroll
+// bar's gutter (scrollbar-gutter: stable, any bar width, none for overlay bars),
+// and on native the whole list. The heading row keeps the same gutter.
+function RowWidthProbe({ onWidth }: { onWidth(width: number): void }) {
+    return <View onLayout={e => onWidth(e.nativeEvent.layout.width)} />
+}
+
 interface TableListProps extends Omit<TableRowProps, 'item'> {
     rows: VisibleRow[]
     onNearEnd(): void
     isLoadingMore: boolean
+    onRowWidth(width: number): void
+    sorting: HeadingSort
 }
 
-function TableList({ rows, onNearEnd, isLoadingMore, ...row }: TableListProps) {
-    const { columns, layout, oneLine, format, onToggleGroup, scrollX } = row
+function TableList({
+    rows,
+    onNearEnd,
+    isLoadingMore,
+    onRowWidth,
+    sorting,
+    ...row
+}: TableListProps) {
+    const { columns, layout, format, onToggleGroup } = row
     const sticky = useMemo(() => stickyIndices(rows), [rows])
     const extraData = useMemo<TableData>(
-        () => ({ columns, layout, oneLine, format, onToggleGroup, scrollX, rows }),
-        [columns, layout, oneLine, format, onToggleGroup, scrollX, rows]
+        () => ({ columns, layout, format, onToggleGroup, rows }),
+        [columns, layout, format, onToggleGroup, rows]
     )
+    // One element while the width setter stays, so FlashList keeps its header
+    // rather than rebuilding it on every render.
+    const header = useMemo(() => <RowWidthProbe onWidth={onRowWidth} />, [onRowWidth])
     return (
         <>
-            <HeadingRow
-                columns={columns}
-                layout={layout}
-                oneLine={oneLine}
-                format={format}
-                scrollX={scrollX}
-            />
+            <HeadingRow columns={columns} layout={layout} format={format} sorting={sorting} />
             <FlashList
                 data={rows}
                 renderItem={renderTableItem}
@@ -262,6 +309,7 @@ function TableList({ rows, onNearEnd, isLoadingMore, ...row }: TableListProps) {
                 onEndReached={onNearEnd}
                 onEndReachedThreshold={0.5}
                 className="web:[scrollbar-gutter:stable]"
+                ListHeaderComponent={header}
                 ListFooterComponent={<LoadingMore isVisible={isLoadingMore} />}
             />
         </>
@@ -276,66 +324,67 @@ export interface ReportTableProps {
     format: NumberFormat
     breakpoint: Breakpoint
     layouts: readonly DisplayLayout[]
+    /** How deep the report's rows go (rowLevelsOf): the label's floor on a narrowed line. */
+    rowLevels: RowLevels
     onToggleGroup(row: ResultRow): void
     onNearEnd(): void
     isLoadingMore: boolean
+    /** The reader's sort (the view URL's `s=`); null: the report's own order. */
+    sort: ViewSort | null
+    onSortColumn(col: string): void
 }
 
 // FlashList measures every row (wrapped rows have the heights their content
 // gives them); onEndReached asks for the next page, through useReportRun's
 // guard (hasNextPage and not already fetching). FlashList checks it after each
 // commit and again when the rows change, so a first page shorter than the view
-// asks for the next one too.
+// asks for the next one too. The table never scrolls sideways (F10): its line is
+// fitted to its width, narrowed, or wrapped (tableLines).
 export function ReportTable(props: ReportTableProps) {
     const { rows, runKey, breakpoint, layouts, onToggleGroup, onNearEnd, isLoadingMore } = props
     const columns = useStable(props.columns)
     const format = useStable(props.format)
+    const sorting = useHeadingSort(props.sort, props.onSortColumn)
     const windowWidth = useWindowWidth()
-    // The table's own width (a builder drawer narrows it): local layout state from onLayout.
-    const [width, setWidth] = useState(windowWidth)
-    const amountCount = Math.max(columns.length - 1, 0)
-    const oneLine = useMemo(
-        () => reportTableLayout({ breakpoint, amountCount }),
-        [breakpoint, amountCount]
-    )
-    const fits = fitsOnOneLine({ breakpoint, amountCount, width })
+    // The width the rows really get (a builder drawer narrows it), measured: local
+    // layout state from onLayout. It is kept here, not in the list, so a new run's
+    // list starts at the known width. Until the first measure the table is drawn
+    // hidden at the window's width, so a wrong first width is never seen.
+    const [rowWidth, setRowWidth] = useState<number>()
+    const lineWidth = rowWidth ?? windowWidth
+    const { groups, nests } = props.rowLevels
     const layout = useMemo(
-        () => tableLines({ columns, width, breakpoint, layouts, oneLineFits: fits }),
-        [columns, width, breakpoint, layouts, fits]
+        () =>
+            tableLines({
+                columns,
+                width: lineWidth,
+                breakpoint,
+                layouts,
+                levels: { groups, nests },
+            }),
+        [columns, lineWidth, breakpoint, layouts, groups, nests]
     )
     if (columns.length === 0) return null
-    const isOneLine = layout.kind === 'one-line'
-    // FlashList keeps the row in view anchored when the rows change, which a live
-    // re-run of the same design and params needs; a run with a new design or new
-    // params is another report, so its list is a new one and starts at the top.
-    const list = (scrollX: Animated.Value | null) => (
-        <TableList
-            key={runKey}
-            rows={rows}
-            columns={columns}
-            layout={layout}
-            oneLine={oneLine}
-            format={format}
-            onToggleGroup={onToggleGroup}
-            scrollX={scrollX}
-            onNearEnd={onNearEnd}
-            isLoadingMore={isLoadingMore}
-        />
-    )
     const notice = layout.kind === 'blocks' ? layout.notice : undefined
+    const visibility = rowWidth === undefined ? 'opacity-0' : ''
+    // FlashList keeps the row in view anchored when the rows change, which a live
+    // re-run of the same design and params needs; a run with a new design, new
+    // params or a new sort is another list, so it starts at the top.
     return (
-        <View
-            testID="report-table"
-            className="min-h-0 flex-1"
-            onLayout={e => setWidth(e.nativeEvent.layout.width)}
-        >
+        <View testID="report-table" className={`min-h-0 flex-1 ${visibility}`}>
             <LayoutNotice text={notice} />
-            <Sideways
-                isEnabled={isOneLine && oneLine.scrollsSideways}
-                minWidth={oneLine.labelMin + oneLine.amountContentMinWidth}
-            >
-                {list}
-            </Sideways>
+            <TableList
+                key={runKey}
+                rows={rows}
+                columns={columns}
+                layout={layout}
+                format={format}
+                onToggleGroup={onToggleGroup}
+                onNearEnd={onNearEnd}
+                isLoadingMore={isLoadingMore}
+                onRowWidth={setRowWidth}
+                sorting={sorting}
+            />
         </View>
     )
 }

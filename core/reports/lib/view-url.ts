@@ -12,6 +12,7 @@ import {
     valueFromJson,
     valueToJson,
 } from './params'
+import type { ViewSort } from './run-client'
 import type { ParamDef } from './spec'
 
 // A run's params and Customize options live in the route's search params, so a
@@ -27,11 +28,17 @@ const RANGE_SEPARATOR = '..'
 const LIST_SEPARATOR = ','
 const COLUMN_ID = /^[A-Za-z][A-Za-z0-9_.]*$/
 
+/** The reader's sort: `s=<column>:<asc|desc>` (F8). */
+export const SORT_KEY = 's'
+const SORT_SEPARATOR = ':'
+
 export type SearchParams = Record<string, string | string[] | undefined>
 
 export interface ViewOptions {
     params: Record<string, ParamValue>
     display: DisplayOptions
+    /** The reader's sort of the detail rows; null: the report's own order. */
+    sort: ViewSort | null
 }
 
 export function paramKey(id: string): string {
@@ -109,6 +116,20 @@ function parseHidden(raw: string | undefined): string[] {
     return [...new Set(raw.split(LIST_SEPARATOR).filter(id => COLUMN_ID.test(id)))]
 }
 
+export function encodeSort(sort: ViewSort): string {
+    return `${sort.col}${SORT_SEPARATOR}${sort.dir}`
+}
+
+// A sort of another shape is ignored, as a bad param value is: the report then
+// runs in its own order. A column the report no longer has is the server's to
+// refuse (the view offers Clear sort, R8).
+export function decodeSort(raw: string | undefined): ViewSort | null {
+    const [col, dir, extra] = (raw ?? '').split(SORT_SEPARATOR)
+    if (!col || !COLUMN_ID.test(col) || extra !== undefined) return null
+    if (dir !== 'asc' && dir !== 'desc') return null
+    return { col, dir }
+}
+
 export function parseViewOptions(defs: readonly ParamDef[], search: SearchParams): ViewOptions {
     const params: Record<string, ParamValue> = {}
     for (const def of defs) {
@@ -125,6 +146,7 @@ export function parseViewOptions(defs: readonly ParamDef[], search: SearchParams
             negativeRed: parseFlag(first(search.red), DEFAULT_DISPLAY.negativeRed),
             hidden: parseHidden(first(search.hide)),
         },
+        sort: decodeSort(first(search[SORT_KEY])),
     }
 }
 
@@ -152,6 +174,7 @@ export function serializeViewOptions(
     out.negative = display.negative === 'parens' ? 'parens' : undefined
     out.red = flag(display.negativeRed, DEFAULT_DISPLAY.negativeRed)
     out.hide = display.hidden.length > 0 ? display.hidden.join(LIST_SEPARATOR) : undefined
+    out[SORT_KEY] = options.sort ? encodeSort(options.sort) : undefined
     return out
 }
 
@@ -168,4 +191,10 @@ export function reportLink(
     }
     const text = query.toString()
     return `${origin}${appHref(`reports/${reportId}`)}${text ? `?${text}` : ''}`
+}
+
+/** The sort after a press on a column's heading: ascending, then descending, then the report's own order. */
+export function nextSort(current: ViewSort | null, col: string): ViewSort | null {
+    if (current?.col !== col) return { col, dir: 'asc' }
+    return current.dir === 'asc' ? { col, dir: 'desc' } : null
 }

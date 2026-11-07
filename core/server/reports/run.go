@@ -23,10 +23,14 @@ type Options struct {
 	// level and the children of each expanded group.
 	Expand    [][]any `json:"expand,omitempty"`
 	ExpandAll bool    `json:"expandAll,omitempty"`
-	// Cursor is the previous page's page.next; Limit is the page size of a
-	// report without groups.
+	// Cursor is the previous page's page.next; Limit is the page size (at
+	// most maxPage). A grouped report pages its detail rows in document
+	// order; its group rows come whole on every page (R9).
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
+	// Sort orders the detail rows before the report's own sort keys: the
+	// viewer's heading sort.
+	Sort []ViewSort `json:"sort,omitempty"`
 	// Today is the reader's day (YYYY-MM-DD) for period presets; the
 	// default is today in UTC.
 	Today string `json:"today,omitempty"`
@@ -34,6 +38,13 @@ type Options struct {
 	// columns). The server does not read them: formatting stays in the
 	// client.
 	Display json.RawMessage `json:"display,omitempty"`
+}
+
+// ViewSort is one key of a run's viewer sort: a column, and "asc" (the
+// default) or "desc".
+type ViewSort struct {
+	Col string `json:"col"`
+	Dir string `json:"dir,omitempty"`
 }
 
 // Request is one run: a loaded spec, the reader, and the run's inputs.
@@ -89,6 +100,11 @@ type ResultColumn struct {
 	LabelCell         string    `json:"labelCell,omitempty"`
 	LabelType         FieldType `json:"labelType,omitempty"`
 	LabelCurrencyCell string    `json:"labelCurrencyCell,omitempty"`
+	// Sortable says a run accepts the column as a viewer sort key
+	// (options.sort): not a running value or a percent, not a child row
+	// column, not in a pivot report; the first column by its detail label
+	// when the report has one.
+	Sortable bool `json:"sortable,omitempty"`
 }
 
 // PivotColumn marks a pivot cell column: the cell column it splits, and
@@ -108,6 +124,7 @@ type PivotColumn struct {
 const (
 	KindDetail   = "detail"
 	KindGroup    = "group"
+	KindOpening  = "opening"
 	KindSubtotal = "subtotal"
 	KindComputed = "computed"
 	KindTotal    = "total"
@@ -143,9 +160,17 @@ type Row struct {
 }
 
 type Notice struct {
-	Code    string   `json:"code"`
-	Message string   `json:"message"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Parts are the sentences of a message that has more than one, in its
+	// order (one per blank column, condition or sort key it names), so the
+	// pages of a run that share a sentence show it once; nil for a message
+	// of one sentence.
+	Parts   []string `json:"parts,omitempty"`
 	Columns []string `json:"columns,omitempty"`
+	// Conditions names, by spec path, each condition (the filter, a having,
+	// a fill's where) that read a looked-up total which mixes currencies.
+	Conditions []string `json:"conditions,omitempty"`
 	// Count is the number of rows a rowCap or nestCap notice kept.
 	Count int `json:"count,omitempty"`
 	// LeftOut is the number of pivot values a pivotCap notice left out.
@@ -197,6 +222,23 @@ type runner struct {
 	// pivotLabels their records' labels for a pivot over a link.
 	pivotValues []pivotValue
 	pivotLabels []rowLabel
+	// page is a grouped run's page: where its rows start and end in the
+	// document (pageWindow); nil when the run did not page grouped details.
+	page *groupedPage
+	// mixedRows holds, by row id, the columns whose cell on that row is
+	// blank because a sum lookup met two currencies (push).
+	mixedRows map[string][]string
+	// mixedConditions are the conditions that read such a sum on some row
+	// (probeConditions).
+	mixedConditions []string
+}
+
+// groupedPage is a grouped run's page: after is the open group the previous
+// page's last detail row was in (nil on page 1), last this page's last
+// detail row's id ("" on the last page).
+type groupedPage struct {
+	after []any
+	last  string
 }
 
 // Run runs a report for its reader. The statements read only rows the
@@ -207,6 +249,9 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 		return nil, err
 	}
 	p, params := c.p, c.params
+	if c.viewSort, err = viewSortPlans(c, req.Options.Sort); err != nil {
+		return nil, err
+	}
 	expand, err := parseExpansion(req.Options)
 	if err != nil {
 		return nil, err
@@ -304,20 +349,28 @@ func rowCapNotice() Notice {
 }
 
 func (rn *runner) run() error {
-	// A grouped report is capped, never paged, so options.limit does not
-	// apply to it either.
-	if len(rn.c.p.groups) > 0 && rn.opts.Cursor != "" {
-		return invalid("options.cursor", "a grouped report is not paged")
+	// A pivot report has no detail rows to page.
+	if rn.c.p.pivot != nil && rn.opts.Cursor != "" {
+		return badCursor()
 	}
 	groupRows, err := rn.groupPass()
 	if err != nil {
 		return err
 	}
 	var details []map[string]any
-	if rn.c.p.pivot == nil && (len(rn.c.p.groups) == 0 || len(rn.expand.keys) > 0 || rn.expand.all || rn.expand.open[len(rn.c.p.groups)]) {
-		details, err = rn.detailPass()
-		if err != nil {
-			return err
+	if rn.c.p.pivot == nil {
+		var leaves [][]any
+		grouped := len(rn.c.p.groups) > 0
+		if grouped {
+			leaves = rn.openGroups(groupRows)
+		}
+		// A cursor is read even with no open group, so one whose group shut
+		// is refused rather than answered with no rows.
+		if !grouped || len(leaves) > 0 || rn.opts.Cursor != "" {
+			details, err = rn.detailPass(leaves)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	// Column types come from the spec: a collapsed run compiles the detail
@@ -332,6 +385,8 @@ func (rn *runner) run() error {
 	rn.res.Columns = rn.columns()
 	rn.markCurrencies(groupRows)
 	rn.assemble(groupRows, details, nested)
+	rn.pageWindow()
+	rn.markMixedLookups()
 	// A source's Go hooks read collections no statement reads, so their
 	// topics are added by name.
 	for _, src := range Sources(rn.app) {
@@ -434,15 +489,129 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 	}
 	// A statement without its computed rows is wrong, not just short: the
 	// statement limits the level rows and adds the computed rows after.
+	c.condProbes, c.probed = nil, nil
+	if r.filterMixed != "" {
+		c.probe("filter", "SELECT 1 "+r.root.render()+"\nWHERE "+r.filterMixed)
+	}
+	r.probeWheres()
 	ctes, body, err := c.groupStatement(s, r, rn.expand, pivot, int64(runLimits.rowCap+1))
 	if err != nil {
 		return nil, err
 	}
-	rows, err := rn.query(s, append([]string{r.render()}, ctes...), body)
+	ctes = append([]string{r.render()}, ctes...)
+	rows, err := rn.query(s, ctes, body)
 	if err != nil {
 		return nil, err
 	}
+	if err := rn.readProbes(s, ctes, rows, c.condProbes); err != nil {
+		return nil, err
+	}
 	return rn.capLevelRows(rows), nil
+}
+
+// probesCTE is the CTE that computes, once, whether each condition probe
+// of the group statement found a row (__probe<i>, condProbe); every leg of
+// the statement reads it, so the probes cost no statement of their own.
+const probesCTE = "__probes"
+
+// probeCTE is the probes' CTE, "" with no probe.
+func (c *compiler) probeCTE() string {
+	if len(c.condProbes) == 0 {
+		return ""
+	}
+	cols := make([]string, len(c.condProbes))
+	for i, p := range c.condProbes {
+		cols[i] = fmt.Sprintf("EXISTS (%s) AS __probe%d", p.sql, i)
+	}
+	return fmt.Sprintf("%s AS MATERIALIZED (SELECT %s)", probesCTE, strings.Join(cols, ", "))
+}
+
+// probeCells are the cells a leg of the group statement reads the probes'
+// results into, one per probe.
+func (c *compiler) probeCells() []string {
+	out := make([]string, len(c.condProbes))
+	for i := range c.condProbes {
+		out[i] = fmt.Sprintf("(SELECT __probe%d FROM %s) AS __probe%d", i, probesCTE, i)
+	}
+	return out
+}
+
+// readProbes names the conditions whose probe found a row, read from the
+// group statement's first row, and takes the probe cells off every row. A
+// statement that returned no row carries no result, so its probes run in a
+// statement of their own.
+func (rn *runner) readProbes(s *stmt, ctes []string, rows []map[string]any, probes []condProbe) error {
+	if len(probes) == 0 {
+		return nil
+	}
+	if len(rows) == 0 {
+		return rn.probeConditions(s, ctes, probes)
+	}
+	for i, p := range probes {
+		name := fmt.Sprintf("__probe%d", i)
+		if toInt(rows[0][name]) != 0 && !slices.Contains(rn.mixedConditions, p.at) {
+			rn.mixedConditions = append(rn.mixedConditions, p.at)
+		}
+		for _, row := range rows {
+			delete(row, name)
+		}
+	}
+	return nil
+}
+
+// condProbe is a condition that reads a sum lookup which may meet two
+// currencies (expr.condMixed): sql selects a row where one did, among the
+// rows the condition decides on, inside the statement's CTEs. at is the
+// condition's spec path.
+type condProbe struct {
+	at, sql string
+}
+
+// probe adds a condition's probe; one that decides on the rows of several
+// levels (a sort key) is probed over each. A probe added again (a lookup's
+// where compiled once for each cell of a computed row) is probed once.
+func (c *compiler) probe(at, sql string) {
+	key := at + "\n" + sql
+	if c.probed[key] {
+		return
+	}
+	if c.probed == nil {
+		c.probed = map[string]bool{}
+	}
+	c.probed[key] = true
+	i := slices.IndexFunc(c.condProbes, func(p condProbe) bool { return p.at == at })
+	if i < 0 {
+		c.condProbes = append(c.condProbes, condProbe{at: at, sql: sql})
+		return
+	}
+	c.condProbes[i].sql += "\nUNION ALL\n" + sql
+}
+
+// probeConditions finds the conditions of a statement that read a sum
+// lookup which met two currencies on some row. Such a sum has no value, so
+// the condition was unknown there: it hid that group, dropped that row or
+// left out that record unless another term held; a sort key sorted it as
+// blank. A row a condition dropped is on no page, and a row a key sorted may
+// be on another, so the conditions are probed over the rows they decide on,
+// in a statement of their own.
+func (rn *runner) probeConditions(s *stmt, ctes []string, probes []condProbe) error {
+	if len(probes) == 0 {
+		return nil
+	}
+	cols := make([]string, len(probes))
+	for i, p := range probes {
+		cols[i] = fmt.Sprintf("EXISTS (%s) AS m%d", p.sql, i)
+	}
+	rows, err := rn.query(s, ctes, "SELECT "+strings.Join(cols, ", "))
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+	for i, p := range probes {
+		if toInt(rows[0][fmt.Sprintf("m%d", i)]) != 0 && !slices.Contains(rn.mixedConditions, p.at) {
+			rn.mixedConditions = append(rn.mixedConditions, p.at)
+		}
+	}
+	return nil
 }
 
 // capLevelRows drops the level row past the cap (the statement fetched one
@@ -471,11 +640,56 @@ func notASortKey(at string) error {
 	return invalid(at, "a running value or a percent is not a sort key")
 }
 
+// viewSortPlans checks a run's viewer sort (options.sort) and plans its keys.
+// It is a run input, not a spec part: a link outlives the report's columns,
+// so each key is checked against the report as it is now (R7). A key on the
+// first column of a report with a detail label sorts by that label. A running
+// value is refused where it compiles (detailSortValue).
+func viewSortPlans(c *compiler, keys []ViewSort) ([]sortPlan, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	if len(keys) > maxSort {
+		return nil, invalid("options.sort", fmt.Sprintf("a run sorts by at most %d columns", maxSort))
+	}
+	if c.p.pivot != nil {
+		return nil, invalid("options.sort", "a pivot report has no opened rows to sort")
+	}
+	seen := map[string]bool{}
+	out := make([]sortPlan, 0, len(keys))
+	for i, k := range keys {
+		at := fmt.Sprintf("options.sort.%d", i)
+		cp := c.p.byID[k.Col]
+		d := c.p.spec.Detail
+		// The first column of a report with a detail label sorts by that label,
+		// even when the column is a child row column (Sortable says the same).
+		byLabel := cp != nil && cp == c.p.cols[0] && d != nil && d.Label != nil
+		switch {
+		case cp == nil:
+			return nil, unknownColumn(at+".col", k.Col)
+		case seen[k.Col]:
+			return nil, invalid(at+".col", "a column sorts once")
+		case k.Dir != "" && k.Dir != "asc" && k.Dir != "desc":
+			return nil, invalid(at+".dir", "dir is asc or desc")
+		case cp.nest > 0 && !byLabel:
+			return nil, invalid(at+".col", "a child row column is not a sort key")
+		}
+		seen[k.Col] = true
+		s := sortPlan{col: cp, at: at + ".col", desc: k.Dir == "desc"}
+		if byLabel {
+			s = sortPlan{formula: d.Label, at: at + ".col", desc: s.desc}
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // groupStatement is the UNION ALL of every level's rows (the children of
 // expanded groups only) and the layout's computed rows.
 func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64) ([]string, string, error) {
 	var ctes, legs []string
 	c.levelTypes, c.sectionCur, c.fillSets = map[string]FieldType{}, map[string]currency{}, map[int]string{}
+	c.sectionMixed = map[string]bool{}
 	// readsSums is true when the level above adds this level's "rows" cells
 	// (childSum), which rt<L> then holds.
 	readsSums := false
@@ -496,26 +710,32 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		labels := make([]string, 0, len(c.p.cols))
 		carried := make([]string, 0, len(c.p.cols))
 		for idx, cp := range c.p.cols {
-			e, err := lv.cell(cp)
+			e, err := lv.cell(cp, lv.frame)
 			if err != nil {
 				return nil, "", err
 			}
 			cells = append(cells, fmt.Sprintf("%s AS v%d", cellSQL(e), idx))
 			ref, _ := c.columnLabel(lv.labels, cp, e)
 			labels = append(labels, ref.cells(idx)...)
-			carried = append(carried, c.carriedCell(s, cp, e, idx))
+			carried = append(carried, c.carriedCell(s, cp, e, idx), mixedCell(e, idx))
 			c.levelTypes[cp.col.ID] = e.typ
 			if n == 1 {
 				c.sectionCur[cp.col.ID] = e.cur
+				c.sectionMixed[cp.col.ID] = e.blankFor() != ""
 			}
 		}
-		pivotCells, err := c.pivotCells(lv, pivot)
+		pivotCells, pivotMixed, err := c.pivotCells(lv, pivot)
 		if err != nil {
 			return nil, "", err
 		}
-		// The labels, then the carried currencies, follow the pivot cells, as in
-		// every leg of the union.
-		cells = append(append(append(cells, pivotCells...), labels...), carried...)
+		opening, err := lv.openingCells()
+		if err != nil {
+			return nil, "", err
+		}
+		// The labels, the carried currencies, the pivot cells' mixed helpers,
+		// then the opening cells follow the pivot cells, as in every leg of the
+		// union.
+		cells = append(append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...), opening...)
 		// The having's aggregates join a<L>, so it compiles before render.
 		own, err := lv.own()
 		if err != nil {
@@ -528,7 +748,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 				return nil, "", err
 			}
 			if pv := c.p.pivot; pv != nil && pv.cell.col.Total == TotalRows {
-				totals = append(totals, pivotCells...)
+				totals = append(append(totals, pivotCells...), pivotMixed...)
 			}
 		}
 		levels = append(levels, levelRows{lv: lv, cells: cells, totals: totals, own: own})
@@ -563,11 +783,19 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		ctes = append(ctes, l.lv.render(withoutCells(l.cells, unread), l.own, l.totals)...)
 	}
 	ctes = append(ctes, layoutCTEs...)
+	// The conditions that may read a mixed sum are probed in this statement
+	// (readProbes), over the CTEs it computes anyway.
+	probes := c.probeCells()
+	if cte := c.probeCTE(); cte != "" {
+		ctes = append(ctes, cte)
+	}
 	// The limit applies to the level rows only: computed rows sort last, so a
 	// limit on the whole statement would drop them first.
-	body := []string{fmt.Sprintf("SELECT * FROM (%s\nORDER BY __level, __ord LIMIT %s)", strings.Join(legs, "\nUNION ALL\n"), limitSQL(limit))}
+	first := strings.Join(append([]string{"*"}, probes...), ", ")
+	body := []string{fmt.Sprintf("SELECT %s FROM (%s\nORDER BY __level, __ord LIMIT %s)", first, strings.Join(legs, "\nUNION ALL\n"), limitSQL(limit))}
 	for _, leg := range computed {
-		body = append(body, "SELECT "+strings.Join(withoutCells(leg.cells, unread), ", ")+" FROM "+leg.from)
+		cells := append(withoutCells(leg.cells, unread), probes...)
+		body = append(body, "SELECT "+strings.Join(cells, ", ")+" FROM "+leg.from)
 	}
 	return ctes, strings.Join(body, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
 }
@@ -580,8 +808,10 @@ type unionLeg struct {
 }
 
 // helperCell matches a row's record label (vl<idx>), its label's currency
-// (vc<idx>) and a value's carried currency (vcur<idx>).
-var helperCell = regexp.MustCompile(`^(?:vl|vc|vcur)\d+$`)
+// (vc<idx>), a value's carried currency (vcur<idx>), a looked-up total's
+// mixed check (vmx<idx>) and an opening row's cells (op<idx>, opcur<idx>,
+// opmx<idx>).
+var helperCell = regexp.MustCompile(`^(?:vl|vc|vcur|vmx|op|opcur|opmx)\d+$`)
 
 // unreadHelpers are the helper cells that are NULL in every leg of a union:
 // no row has a label or a carried currency there, and assembly reads a missing
@@ -665,11 +895,12 @@ func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, er
 }
 
 // detailPass runs the detail statement: one row per base row, a page at a
-// time without groups, or the rows of the expanded innermost groups. Rows
-// under a hidden group are left out before any running value reads them, so
-// they neither take a place under the row cap nor add to a shown row's
-// running value or percent.
-func (rn *runner) detailPass() ([]map[string]any, error) {
+// time. Without groups a page follows the detail order; with groups it holds
+// the rows of the open innermost groups (leaves) in document order: the
+// groups' order, then the detail order (R9b). Window values are computed
+// before the page is cut, so a running value goes on across pages. Rows under
+// a hidden group are left out before any running value reads them.
+func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	c := rn.c
 	s := newStmt(rn.app, c.info)
 	r, err := c.rows(s)
@@ -689,40 +920,133 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	where := "1"
-	limit := runLimits.rowCap
-	paged := len(c.p.groups) == 0
-	if paged {
-		limit = runLimits.pageSize
-		if rn.opts.Limit > 0 {
-			limit = min(rn.opts.Limit, runLimits.maxPage)
-		}
-		where, err = keysetAfter(s, order, rn.opts.Cursor)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		where = rn.expand.where(c, s, len(c.p.groups), "d.")
+	limit := runLimits.pageSize
+	if rn.opts.Limit > 0 {
+		limit = min(rn.opts.Limit, runLimits.maxPage)
 	}
-	body := fmt.Sprintf("SELECT * FROM (%s) d WHERE %s ORDER BY %s LIMIT %s",
-		sel, where, orderBy(order), limitSQL(int64(limit+1)))
-	rows, err := rn.query(s, append([]string{r.render()}, shown...), body)
+	ctes := append([]string{r.render()}, shown...)
+	grouped := len(c.p.groups) > 0
+	from, by, levels := "("+sel+") d", orderBy(order), ""
+	var where string
+	if grouped {
+		levels = c.groupLevels()
+		ctes = append(ctes, c.leafOrder(s, leaves))
+		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
+		by = "d.__g, " + by
+		rn.page = &groupedPage{}
+		where, rn.page.after, err = groupedAfter(s, levels, order, rn.opts.Cursor, leaves)
+	} else {
+		where, err = keysetAfter(s, order, rn.opts.Cursor)
+	}
 	if err != nil {
+		return nil, err
+	}
+	body := fmt.Sprintf("SELECT * FROM %s WHERE %s ORDER BY %s LIMIT %s", from, where, by, limitSQL(int64(limit+1)))
+	rows, err := rn.query(s, ctes, body)
+	if err != nil {
+		return nil, err
+	}
+	// The keys order every row the pages show, not just this page's.
+	probes := make([]condProbe, len(c.detailSortMixed))
+	for i, m := range c.detailSortMixed {
+		probes[i] = condProbe{at: m.at, sql: fmt.Sprintf("SELECT 1 FROM %s WHERE d.%s = 1", from, m.sql)}
+	}
+	if err := rn.probeConditions(s, ctes, probes); err != nil {
 		return nil, err
 	}
 	more := len(rows) > limit
 	if more {
 		rows = rows[:limit]
 	}
-	if paged {
-		rn.res.Page = &Page{Size: len(rows)}
-		if more {
-			rn.res.Page.Next = cursorOf(order, rows[len(rows)-1])
+	rn.res.Page = &Page{Size: len(rows)}
+	if more {
+		last := rows[len(rows)-1]
+		var group []any
+		if grouped {
+			group = rn.rowKey(last, len(c.p.groups))
+			rn.page.last = fmt.Sprintf("d:%v", last["__id"])
 		}
-	} else if more {
-		rn.noticeOnce(rowCapNotice())
+		rn.res.Page.Next = cursorOf(levels, order, last, group)
 	}
 	return rows, nil
+}
+
+// openGroups lists the open innermost groups in the order the report shows
+// them (R9a): the group rows that an assembly with no detail rows marks
+// expanded at the innermost depth. That assembly is thrown away.
+func (rn *runner) openGroups(groupRows []map[string]any) [][]any {
+	rows, notices := rn.res.Rows, rn.res.Notices
+	rn.res.Rows, rn.res.Notices = []Row{}, slices.Clone(notices)
+	rn.assemble(groupRows, nil, nil)
+	depth := len(rn.c.p.groups) - 1
+	var out [][]any
+	for _, r := range rn.res.Rows {
+		if r.Kind == KindGroup && r.Expanded && r.Depth == depth {
+			out = append(out, r.GroupKey)
+		}
+	}
+	rn.res.Rows, rn.res.Notices = rows, notices
+	return out
+}
+
+// groupLevels names the report's group levels (column and bucket) for a
+// grouped cursor's fingerprint: a cursor from another grouping is refused.
+func (c *compiler) groupLevels() string {
+	parts := make([]string, len(c.p.groups))
+	for i, g := range c.p.groups {
+		parts[i] = g.col.col.ID + "/" + g.group.Bucket
+	}
+	return strings.Join(parts, ";")
+}
+
+// leafOrder is the CTE gord: one row per open innermost group, __g its place
+// in document order (json_each's index), g<j> its key values (group keys,
+// then currency keys), bound as one JSON list as expansion.where binds keys.
+func (c *compiler) leafOrder(s *stmt, leaves [][]any) string {
+	encoded := make([]string, len(leaves))
+	for i, key := range leaves {
+		encoded[i] = keyString(key)
+	}
+	cols := []string{"key AS __g"}
+	for j := range len(c.p.groups) + len(c.currencies) {
+		cols = append(cols, fmt.Sprintf("json_extract(value, '$[%d]') AS g%d", j, j))
+	}
+	return fmt.Sprintf("gord AS (SELECT %s FROM json_each(%s))", strings.Join(cols, ", "), s.bind("["+strings.Join(encoded, ",")+"]"))
+}
+
+// leafJoin matches a detail row (d) to its open group by each key value with
+// IS, so a blank key matches a blank one, as a group row's key reads.
+func (c *compiler) leafJoin() string {
+	on := make([]string, 0, len(c.p.groups)+len(c.currencies))
+	for i := range c.p.groups {
+		on = append(on, fmt.Sprintf("d.k%d IS gord.g%d", i, i))
+	}
+	for j, ck := range c.currencies {
+		on = append(on, fmt.Sprintf("d.%s IS gord.g%d", ck, len(c.p.groups)+j))
+	}
+	return strings.Join(on, " AND ")
+}
+
+// groupedAfter selects the detail rows after a grouped report's cursor: the
+// rows of a later open group, or of the cursor's group after its sort values
+// (R9c), and returns the cursor's group, which the page starts after. A
+// cursor whose group no longer opens is refused; the client then reads from
+// page 1.
+func groupedAfter(s *stmt, levels string, keys []sortKey, text string, leaves [][]any) (string, []any, error) {
+	if text == "" {
+		return "1", nil, nil
+	}
+	cur, err := readCursor(levels, keys, text)
+	if err != nil {
+		return "", nil, err
+	}
+	want := keyString(cur.Group)
+	at := slices.IndexFunc(leaves, func(k []any) bool { return keyString(k) == want })
+	if at < 0 {
+		return "", nil, badCursor()
+	}
+	g := s.bind(int64(at))
+	return fmt.Sprintf("(d.__g > %s OR (d.__g = %s AND %s))", g, g, keysetCond(s, keys, cur.Values)), cur.Group, nil
 }
 
 // shownOrder is what a select's value (or a mix of a select's values and
@@ -744,7 +1068,7 @@ func detailSortValue(ctx *rowsCtx, s sortPlan) (expr, string, error) {
 	var err error
 	key := ""
 	if s.formula != nil {
-		e, err = compileFormula(ctx, s.formula, s.at)
+		e, err = ctx.formula(s.formula, s.at)
 		raw, _ := json.Marshal(s.formula)
 		key = "=" + string(raw)
 	} else {
@@ -773,17 +1097,28 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	}
 	visiting := map[string]bool{}
 	labels := newLabelRefs(c, r.s, frame, "w")
+	c.detailWheres = nil
 	var order []sortKey
 	sel := []string{"w.__id AS __id"}
 	for _, k := range append(keys, prefixed("w.", c.currencies)...) {
 		sel = append(sel, k+" AS "+strings.TrimPrefix(k, "w."))
 	}
-	for i, s := range c.p.sort {
+	// addKey selects one sort key's values as name and orders by them. A spec
+	// key also orders the window frame; a viewer key does not, so running
+	// values keep the report's order (R7), and its cursor column is view:<col>.
+	addKey := func(s sortPlan, name string, spec bool) error {
 		e, col, err := detailSortValue(&rowsCtx{r: r, visiting: visiting, detail: frame}, s)
 		if err != nil {
-			return "", nil, err
+			return err
 		}
-		name := fmt.Sprintf("s%d", i)
+		inFrame := func(parts ...string) {
+			if spec {
+				frame.order = append(frame.order, parts...)
+			}
+		}
+		if !spec {
+			col = "view:" + col
+		}
 		// A record sorts by its label's typed value, then by its id so equal
 		// labels keep one order. A label key holds a value of the label
 		// field's type or a no-name record's text, so its cursor value may be
@@ -792,28 +1127,47 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			key := labelOrder(r.s, ref.value)
 			sel = append(sel, key+" AS "+name)
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@label"})
-			frame.order = append(frame.order, "("+key+" IS NULL)", key+dirOf(s.desc))
+			inFrame("("+key+" IS NULL)", key+dirOf(s.desc))
 			name = name + "_id"
 		} else if key, ok := shownOrder(r.s.bind, e); ok {
 			sel = append(sel, key+" AS "+name)
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@shown", typ: Text})
-			frame.order = append(frame.order, "("+key+" IS NULL)", key+dirOf(s.desc))
+			inFrame("("+key+" IS NULL)", key+dirOf(s.desc))
 			name = name + "_value"
 		}
 		sel = append(sel, e.sql+" AS "+name)
 		order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: e.typ})
-		frame.order = append(frame.order, "("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
+		inFrame("("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
+		// A spec key over a sum that met two currencies sorts as blank there;
+		// a viewer key sorts by a column, whose blank cell is named already.
+		if m := e.blankFor(); spec && m != "" {
+			mx := fmt.Sprintf("__smx%d", len(c.detailSortMixed))
+			sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", m, mx))
+			c.detailSortMixed = append(c.detailSortMixed, condProbe{at: s.at, sql: mx})
+		}
+		return nil
+	}
+	c.detailSortMixed = nil
+	for i, s := range c.viewSort {
+		if err := addKey(s, fmt.Sprintf("vs%d", i), false); err != nil {
+			return "", nil, err
+		}
+	}
+	for i, s := range c.p.sort {
+		if err := addKey(s, fmt.Sprintf("s%d", i), true); err != nil {
+			return "", nil, err
+		}
 	}
 	frame.order = append(frame.order, "w.__id")
 	order = append(order, sortKey{name: "__id"})
-	c.detailTypes, c.formulaOptions = map[string]FieldType{}, map[string][]Option{}
+	c.detailTypes, c.formulaOptions, c.sortable = map[string]FieldType{}, map[string][]Option{}, map[string]bool{}
 	for idx, cp := range c.p.cols {
 		if cp.nest > 0 {
 			// A child row column's label is read with its child rows.
 			if err := c.checkLabelField(cp, cp.path.target); err != nil {
 				return "", nil, err
 			}
-			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx), noCarriedCell(idx))
+			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx), noCarriedCell(idx), noMixedCell(idx))
 			sel = append(sel, labelRef{}.cells(idx)...)
 			c.detailTypes[cp.col.ID] = cp.path.field.Type
 			continue
@@ -827,9 +1181,10 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			return "", nil, err
 		}
 		ref, _ := c.columnLabel(labels, cp, e)
-		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(r.s, cp, e, idx))
+		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(r.s, cp, e, idx), mixedCell(e, idx))
 		sel = append(sel, ref.cells(idx)...)
 		c.detailTypes[cp.col.ID] = e.typ
+		c.sortable[cp.col.ID] = !e.win
 		if cp.path == nil {
 			// A formula's amount has the currency of the amounts it reads.
 			c.currencyOf[cp.col.ID] = e.cur
@@ -837,14 +1192,23 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		}
 	}
 	if d := c.p.spec.Detail; d != nil && d.Label != nil {
-		ref, err := c.compileDetailLabel(&rowsCtx{r: r, visiting: visiting, detail: frame}, labels, d.Label)
+		ref, win, err := c.compileDetailLabel(&rowsCtx{r: r, visiting: visiting, detail: frame}, labels, d.Label)
 		if err != nil {
 			return "", nil, err
 		}
 		sel = append(sel, ref.value+" AS __label", ref.currency+" AS __labelcur")
+		// The first column sorts by the label: sortable when the label is.
+		c.sortable[c.p.cols[0].col.ID] = !win
 	}
 	if len(c.p.nest) > 0 {
 		sel = append(sel, r.nestParent()+" AS __n0")
+	}
+	// A lookup's where unknown on a row is probed over the rows the pages
+	// show, as a sort key over a mixed sum is.
+	for i, w := range c.detailWheres {
+		mx := fmt.Sprintf("__wmx%d", i)
+		sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", w.sql, mx))
+		c.detailSortMixed = append(c.detailSortMixed, condProbe{at: w.at, sql: mx})
 	}
 	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"), order, nil
 }
@@ -853,19 +1217,41 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 // or a looked-up row's own, or an amount param's code: vcur<idx>), NULL when
 // it carries none. A column that carries one has the cell <id>@currency.
 func (c *compiler) carriedCell(s *stmt, cp *colPlan, e expr, idx int) string {
-	cur := e.cur.sql
-	if e.cur.param != "" {
-		// An amount param's currency is its own posted code.
-		cur = s.bind(e.cur.param)
-	}
-	if cur == "" {
+	if e.cur.sql == "" && e.cur.param == "" {
 		return noCarriedCell(idx)
 	}
 	c.carried[cp.col.ID] = true
-	return fmt.Sprintf("%s AS vcur%d", cur, idx)
+	return fmt.Sprintf("%s AS vcur%d", carriedSQL(s, e), idx)
+}
+
+// carriedSQL is the currency a value carries on a row (a record's or a
+// looked-up row's own, or an amount param's code), "NULL" when it carries
+// none.
+func carriedSQL(s *stmt, e expr) string {
+	switch {
+	case e.cur.param != "":
+		// An amount param's currency is its own posted code.
+		return s.bind(e.cur.param)
+	case e.cur.sql != "":
+		return e.cur.sql
+	}
+	return "NULL"
 }
 
 func noCarriedCell(idx int) string { return fmt.Sprintf("NULL AS vcur%d", idx) }
+
+// mixedCell is a column cell's helper vmx<idx>: 1 on a row where the cell is
+// blank because a sum lookup it reads met amounts in two currencies
+// (expr.blankFor), NULL elsewhere.
+func mixedCell(e expr, idx int) string {
+	blank := e.blankFor()
+	if blank == "" {
+		return noMixedCell(idx)
+	}
+	return fmt.Sprintf("(CASE WHEN %s THEN 1 END) AS vmx%d", blank, idx)
+}
+
+func noMixedCell(idx int) string { return fmt.Sprintf("NULL AS vmx%d", idx) }
 
 // sortKey is one ORDER BY column of the detail select: s<i> for a sort
 // column, then __id, which is unique and never NULL.

@@ -4,6 +4,7 @@ import { type Catalog, describePath } from './columns'
 import {
     type FormulaParam,
     type FormulaRecord,
+    LOOKUP_PICKS,
     lookupValueNode,
     partOf,
     type ReportFormulaContext,
@@ -16,6 +17,8 @@ export type FormulaType = FieldType | ''
 export interface FormulaTypes {
     catalog: Catalog
     source: string | null
+    /** The report's source, which an {outer} path reads; absent reads as none. */
+    rowSource?: string | null
     col: (key: string) => FieldType | undefined
     records: readonly FormulaRecord[]
     params: readonly Pick<FormulaParam, 'id' | 'type' | 'multiple'>[]
@@ -25,6 +28,7 @@ export function typesOf(ctx: ReportFormulaContext): FormulaTypes {
     return {
         catalog: ctx.catalog,
         source: ctx.source,
+        rowSource: ctx.rowSource,
         col: key => ctx.values.find(v => v.key === key)?.type,
         records: ctx.records,
         params: ctx.params,
@@ -108,11 +112,20 @@ export function formulaType(node: SpecNode, types: FormulaTypes): FormulaType {
             const info = record ? describePath(types.catalog, record.source, node.path ?? []) : null
             return info?.field.type ?? ''
         }
-        case 'param': {
+        case 'param':
+        case 'bound': {
             const param = types.params.find(p => p.id === node.param)
             return param ? PARAM_TYPES[param.type] : ''
         }
+        case 'outer': {
+            const info = types.rowSource
+                ? describePath(types.catalog, types.rowSource, node.outer ?? [])
+                : null
+            return info?.field.type ?? ''
+        }
+        // lookup.go lookupIn: a count is a number; a sum keeps its value's type.
         case 'lookup':
+            if (node.pick === 'count') return 'number'
             return formulaType(lookupValueNode(node), { ...types, source: node.source ?? null })
         case 'add':
         case 'sub':
@@ -167,4 +180,16 @@ export function formulaType(node: SpecNode, types: FormulaTypes): FormulaType {
             return commonType(args)
     }
     return ''
+}
+
+const ADDABLE: ReadonlySet<FormulaType> = new Set(['number', 'money'])
+
+/**
+ * The matches a lookup may take: lookup.go lookupIn refuses Add up on a value that is
+ * not a number or an amount. Add up stays while it is the pick, so a refused pick
+ * still shows selected and can be changed.
+ */
+export function lookupPicks(node: SpecNode, types: FormulaTypes) {
+    const value = formulaType(lookupValueNode(node), { ...types, source: node.source ?? null })
+    return LOOKUP_PICKS.filter(p => p.value !== 'sum' || ADDABLE.has(value) || node.pick === 'sum')
 }

@@ -18,7 +18,7 @@ import {
     slotLabel,
     withPart,
 } from '../formula-ops'
-import { partOf, REPORT_TREE } from '../formula-parts'
+import { boundChoices, LOOKUP_PICKS, partOf, REPORT_TREE } from '../formula-parts'
 import { SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 import {
     CTX,
@@ -437,5 +437,66 @@ describe('what a leaf offers', () => {
             args: [{ op: 'avg', args: [{ col: 'amount' }], scale: 0 }, { value: 1 }],
         }
         expect(forcedScaleAt(CTX, avg, [0])).toBe(0)
+    })
+})
+
+describe('the v3 lookup and leaf parts', () => {
+    // Sales on the same day as the report's row (F1 count, F2 outer).
+    const SAME_DAY: SpecNode = {
+        op: 'lookup',
+        source: SALES_KEY,
+        where: { op: 'eq', args: [{ path: [{ field: 'day' }] }, { outer: [{ field: 'day' }] }] },
+        value: { path: [{ field: 'id' }] },
+        pick: 'count',
+    }
+
+    it('picks a lookup match as Smallest, Largest, Add up or Count', () => {
+        expect(LOOKUP_PICKS).toEqual([
+            { value: 'min', label: 'Smallest' },
+            { value: 'max', label: 'Largest' },
+            { value: 'sum', label: 'Add up' },
+            { value: 'count', label: 'Count' },
+        ])
+        expect(isEditableNode({ ...LOOKUP, pick: 'sum' }, PARAMS)).toBe(true)
+        expect(isEditableNode(SAME_DAY, PARAMS)).toBe(true)
+    })
+
+    it("offers This row's field only inside a lookup that a report row reads", () => {
+        expect(partsAt(CTX, { value: 0 }, [])).not.toContain('outer')
+        expect(partsAt(CTX, LOOKUP, [0, 1])).toContain('outer')
+        expect(partsAt(CTX, LOOKUP, [1])).toContain('outer')
+        // A computed layout row has no report row to read.
+        expect(partsAt(LAYOUT, LOOKUP, [0, 1])).not.toContain('outer')
+    })
+
+    it("edits This row's field inside a lookup and keeps one outside a lookup read-only", () => {
+        expect(partOf({ outer: [{ field: 'day' }] })).toBe('outer')
+        expect(isEditableNode({ outer: [{ field: 'day' }] }, PARAMS)).toBe(false)
+        expect(
+            isEditableNode(
+                { op: 'add', args: [{ outer: [{ field: 'amount' }] }, { value: 1 }] },
+                PARAMS
+            )
+        ).toBe(false)
+        expect(withPart(CTX, LOOKUP, [0, 1], 'outer')).toEqual({ outer: [{ field: 'customer' }] })
+    })
+
+    it('offers a start and an end for each date range param', () => {
+        expect(boundChoices(WITH_PERIOD.params)).toEqual([
+            { param: 'period', bound: 'from', label: 'Period start' },
+            { param: 'period', bound: 'to', label: 'Period end' },
+        ])
+        expect(boundChoices(CTX.params)).toEqual([])
+        expect(partsAt(WITH_PERIOD, { value: 0 }, [])).toContain('bound')
+        expect(partsAt(CTX, { value: 0 }, [])).not.toContain('bound')
+        // A period slot still takes the range itself, not one of its ends.
+        expect(partsAt(WITH_PERIOD, IN_PERIOD, [1])).toEqual(['param'])
+        expect(withPart(WITH_PERIOD, { value: 0 }, [], 'bound')).toEqual({
+            param: 'period',
+            bound: 'from',
+        })
+        expect(partOf({ param: 'period', bound: 'to' })).toBe('bound')
+        expect(isEditableNode({ param: 'period', bound: 'to' }, PARAMS)).toBe(true)
+        expect(isEditableNode({ param: 'asOf', bound: 'to' }, PARAMS)).toBe(false)
     })
 })

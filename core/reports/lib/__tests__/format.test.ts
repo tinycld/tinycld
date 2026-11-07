@@ -3,6 +3,7 @@ import {
     BLANK_LINK_LABEL,
     cellCurrency,
     cellDisplay,
+    cellType,
     DEFAULT_DISPLAY,
     formatReportAmount,
     formatReportPercent,
@@ -187,6 +188,17 @@ describe('cellDisplay', () => {
     it('shows a count of a link column’s records as a number on total rows', () => {
         const counted: ResultColumn = { ...ANIMAL, aggregate: 'count', totalType: 'number' }
         expect(cellDisplay(counted, row('total', { animal: 4 }), 4, PLAIN).text).toBe('4')
+    })
+
+    // R5(c): an opening cell has its column's detail type, never the total type.
+    it('reads an opening row’s cell as the column’s detail type', () => {
+        const counted: ResultColumn = { ...ANIMAL, aggregate: 'count', totalType: 'number' }
+        expect(cellType(counted, row('opening'))).toBe('relation')
+        expect(cellType(counted, row('subtotal'))).toBe('number')
+        expect(
+            cellDisplay(MONEY, row('opening', { cost: 1250, 'cost@currency': 'USD' }), 1250, PLAIN)
+                .text
+        ).toBe('12.50')
     })
 
     it('reads each row’s currency from its currency cell, or the fixed one', () => {

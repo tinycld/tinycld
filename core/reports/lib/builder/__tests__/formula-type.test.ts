@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { formulaType, typesOf } from '../formula-type'
-import { CATALOG, SALES_KEY } from './catalog-fixture'
+import { formulaType, lookupPicks, typesOf } from '../formula-type'
+import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 import { CTX, LARGER, LOOKUP, WITH_PERIOD } from './formula-fixture'
 
 describe('formulaType', () => {
@@ -52,5 +52,71 @@ describe('formulaType', () => {
     })
     it('reads the types a context offers', () => {
         expect(typesOf(CTX).col('qty')).toBe('number')
+    })
+})
+
+describe('formulaType of the v3 parts', () => {
+    const types = {
+        catalog: CATALOG,
+        source: SALES_KEY,
+        rowSource: SALES_KEY,
+        col: (k: string) => CTX.values.find(v => v.key === k)?.type,
+        records: CTX.records,
+        params: WITH_PERIOD.params,
+    }
+
+    it('types a count as a number, a sum as its value, a bound as a date', () => {
+        expect(formulaType({ ...LOOKUP, pick: 'count' }, types)).toBe('number')
+        const added = {
+            op: 'lookup',
+            source: SALES_KEY,
+            value: { path: [{ field: 'amount' }] },
+            pick: 'sum' as const,
+        }
+        expect(formulaType(added, types)).toBe('money')
+        expect(formulaType({ param: 'period', bound: 'from' }, types)).toBe('date')
+    })
+
+    it("types This row's field from the report's source inside a lookup on another source", () => {
+        const day = {
+            op: 'lookup',
+            source: TEAMS_KEY,
+            value: { outer: [{ field: 'day' }] },
+        }
+        expect(formulaType(day, types)).toBe('date')
+        expect(typesOf(CTX).rowSource).toBe(SALES_KEY)
+    })
+
+    it('types a bound from its param, as a param is typed', () => {
+        expect(formulaType({ param: 'period', bound: 'to' }, types)).toBe('date')
+        expect(formulaType({ param: 'gone', bound: 'from' }, types)).toBe('')
+        expect(formulaType({ param: 'statuses', bound: 'from' }, types)).toBe('text')
+    })
+
+    // lookup.go lookupIn: pick sum adds numbers or amounts, and refuses any other value.
+    it('offers Add up only on a lookup whose value is a number or an amount', () => {
+        const lookupOf = (field: string) => ({
+            op: 'lookup',
+            source: SALES_KEY,
+            value: { path: [{ field }] },
+            pick: 'min' as const,
+        })
+        const picksOf = (node: typeof LOOKUP) => lookupPicks(node, types).map(p => p.value)
+        expect(picksOf(lookupOf('amount'))).toEqual(['min', 'max', 'sum', 'count'])
+        expect(picksOf(lookupOf('quantity'))).toEqual(['min', 'max', 'sum', 'count'])
+        expect(picksOf(lookupOf('customer'))).toEqual(['min', 'max', 'count'])
+        expect(picksOf(lookupOf('day'))).toEqual(['min', 'max', 'count'])
+        expect(picksOf(LOOKUP)).toEqual(['min', 'max', 'count'])
+    })
+
+    // A pick read back on a value Add up refuses stays in the menu, so it shows selected.
+    it('keeps Add up in the menu while it is the pick', () => {
+        const stale = {
+            op: 'lookup',
+            source: SALES_KEY,
+            value: { path: [{ field: 'customer' }] },
+            pick: 'sum' as const,
+        }
+        expect(lookupPicks(stale, types).map(p => p.value)).toEqual(['min', 'max', 'sum', 'count'])
     })
 })

@@ -5,6 +5,7 @@ import { firstTextField, sourceAtLinks } from './columns'
 import { hasScale, onlyKeys } from './formula'
 import {
     ARITY,
+    boundChoices,
     type FormulaParam,
     INF,
     isRangeParam,
@@ -84,6 +85,13 @@ function editable(node: SpecNode, params: ParamTypes, inLookup: boolean): boolea
             return onlyKeys(node, ['record', 'path']) && isFieldPath(node.path ?? [])
         case 'param':
             return onlyKeys(node, ['param'])
+        // The report row's value is read only inside a lookup (formula.go ctxBase.outerPath).
+        case 'outer':
+            return inLookup && onlyKeys(node, ['outer']) && isFieldPath(node.outer ?? [])
+        case 'bound': {
+            const param = params.find(p => p.id === node.param)
+            return onlyKeys(node, ['param', 'bound']) && param !== undefined && isRangeParam(param)
+        }
         case 'lookup':
             return (
                 onlyKeys(node, ['op', 'source', 'where', 'value', 'pick']) &&
@@ -240,6 +248,8 @@ export function partsAt(
         if (part === 'field') return here.values.length > 0
         if (part === 'path') return here.source !== null
         if (part === 'record') return here.records.length > 0
+        if (part === 'outer') return here.inLookup === true && here.rowSource !== null
+        if (part === 'bound') return boundChoices(here.params).length > 0
         if (part === 'param') return hasParams
         if (part === 'inPeriod') return here.params.some(isRangeParam)
         if (part === 'lookup') return here.lookups && here.catalog.size > 0
@@ -319,6 +329,14 @@ function leafPart(
         case 'path': {
             const field = firstFieldOf(here, here.source)
             return field ? { path: [{ field }] } : current
+        }
+        case 'outer': {
+            const field = firstFieldOf(here, here.rowSource)
+            return field ? { outer: [{ field }] } : current
+        }
+        case 'bound': {
+            const [first] = boundChoices(here.params)
+            return first ? { param: first.param, bound: first.bound } : current
         }
         case 'record': {
             const record = here.records[0]

@@ -18,6 +18,9 @@ type expr struct {
 	// lo and hi hold a dateRange param's bounds; sql is empty for it.
 	rng    bool
 	lo, hi string
+	// all is a date range with no bounds (All dates): between it holds for
+	// every row.
+	all bool
 	// list is a list of values for in: sql is "(?, ?, …)".
 	list bool
 	// unset is a param with no value: in a filter, a condition on it
@@ -42,6 +45,28 @@ type expr struct {
 	shown string
 	// text is a text literal's value.
 	text *string
+	// mixed is SQL that is true where a sum lookup in the value met amounts
+	// in two currencies (R3), "" when none can.
+	mixed string
+	// unguarded is a lookup's value before its mixed check (expr.guarded):
+	// sql is blank where mixed holds, else unguarded. "" for any other value.
+	unguarded string
+	// condMixed is, on a condition, SQL that is true where a sum lookup the
+	// condition reads met amounts in two currencies: the condition is
+	// unknown there rather than blank, and the run names it in its
+	// mixedCurrency notice. "" when none can.
+	condMixed string
+	// link is, in a lookup's where, the stored relation column a path that
+	// ends at a to-one link follows to read sql; eq bounds that column too.
+	link storedLink
+}
+
+// storedLink is the stored relation column (col) a link path reads its
+// value (sql) through, in the lookup scope sc; a copy of the expr whose sql
+// changed no longer reads through it.
+type storedLink struct {
+	col, sql string
+	sc       *scope
 }
 
 // currency is where a money value's currency comes from: a currency key of w
@@ -61,13 +86,28 @@ type currency struct {
 	sql   string
 	id    string
 	param string
+	// field names the source field a carried currency is read from,
+	// "<source key>.<currency field key>" (R24): two amounts whose currencies
+	// come from one field combine, wherever each is read (the base row, a
+	// looked-up row, a total), and fieldGuard checks their codes on each row.
+	// "" for a fixed currency, a record's, a param's and a section subtotal.
+	field string
 }
 
 func (a currency) none() bool { return a.key == "" && a.fixed == nil && a.sql == "" && a.param == "" }
 
-// same is true for one currency source: one carried value, a key equals
-// itself, a fixed currency the same source's.
+// same is true for one currency source: one currency field (R24), or one
+// read of it (sameRead).
 func (a currency) same(b currency) bool {
+	if a.field != "" && a.field == b.field {
+		return true
+	}
+	return a.sameRead(b)
+}
+
+// sameRead is true for one read of a currency: one carried value, a key
+// equals itself, a fixed currency the same source's.
+func (a currency) sameRead(b currency) bool {
 	switch {
 	case a.id != "" && a.id == b.id:
 		return true
@@ -130,7 +170,7 @@ func currencyGuard(c fctx, op string, values []expr, sql string) string {
 	var curs []currency
 	param := false
 	for _, v := range values {
-		if v.cur.none() || slices.ContainsFunc(curs, v.cur.same) {
+		if v.cur.none() || slices.ContainsFunc(curs, v.cur.sameRead) {
 			continue
 		}
 		curs = append(curs, v.cur)
@@ -160,6 +200,43 @@ func currencyGuard(c fctx, op string, values []expr, sql string) string {
 		apart = "1"
 	}
 	return fmt.Sprintf("(CASE WHEN %s AND NOT (%s) THEN %s ELSE %s END)", strings.Join(known, " AND "), one, apart, sql)
+}
+
+// fieldGuard is an amount e made of values whose currencies are read from
+// one currency field in two or more places (a looked-up row's and the base
+// row's, say: R24). Where two of their codes are known and differ, e is
+// blank and mixed is true, which the run names in a mixedCurrency notice
+// (R3). Its currency is the first known code, so a lookup that matched
+// nothing takes the row's. e is unchanged with one read or none.
+func fieldGuard(c fctx, e expr, values []expr) expr {
+	var reads []currency
+	for _, v := range values {
+		if v.cur.field == "" || v.cur.field != e.cur.field || slices.ContainsFunc(reads, v.cur.sameRead) {
+			continue
+		}
+		reads = append(reads, v.cur)
+	}
+	if len(reads) < 2 {
+		return e
+	}
+	codes := make([]string, len(reads))
+	for i, cur := range reads {
+		codes[i] = c.currencySQL(cur)
+	}
+	var differ []string
+	for i, a := range codes {
+		for _, b := range codes[i+1:] {
+			differ = append(differ, fmt.Sprintf("(%s IS NOT NULL AND %s IS NOT NULL AND %s <> %s)", a, b, a, b))
+		}
+	}
+	mixed := "(" + strings.Join(differ, " OR ") + ")"
+	e.sql = "(CASE WHEN " + mixed + " THEN NULL ELSE " + e.sql + " END)"
+	e.mixed = orSQL(e.mixed, mixed)
+	// The id makes two different guarded amounts two reads (sameRead), so
+	// combining them is guarded again.
+	cur := "COALESCE(" + strings.Join(codes, ", ") + ")"
+	e.cur = currency{sql: cur, id: "any:" + cur, field: e.cur.field}
+	return e
 }
 
 // currencyCode is the SQL of a money value's currency code where c compiles,
@@ -196,6 +273,9 @@ type fctx interface {
 	// record compiles a record leaf: path read from the linked record of
 	// the group named group.
 	record(group string, p Path, at string) (expr, error)
+	// outerPath compiles an outer leaf: a path on the report's row, read
+	// from inside a lookup.
+	outerPath(p Path, at string) (expr, error)
 	// bind adds a value to the statement's parameters and returns its
 	// placeholder.
 	bind(v any) string
@@ -224,7 +304,27 @@ const (
 
 func compileFormula(c fctx, n *Node, at string) (expr, error) {
 	count := 0
-	return compileNode(c, n, at, 0, &count)
+	e, err := compileNode(c, n, at, 0, &count)
+	if err == nil && e.mixed != "" && n.Op != "lookup" {
+		// A sum lookup that met two currencies has no value, and an operator
+		// over it (coalesce, if) must not give it one (R3). A condition
+		// carries no mixed (mixedOver).
+		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", e.mixed, e.sql)
+	}
+	return e, err
+}
+
+// countedArg is what a count counts. A count is a number, never blank for
+// currencies: a row whose sum lookup met two currencies has a total, only
+// not one to show, so the count counts it.
+func countedArg(op Aggregate, e expr) expr {
+	blank := e.blankFor()
+	if op != Count || blank == "" {
+		return e
+	}
+	e.sql = fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE %s END)", blank, e.sql)
+	e.mixed, e.condMixed = "", ""
+	return e
 }
 
 func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error) {
@@ -235,11 +335,17 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	if depth > maxFormulaDepth || *count > maxFormulaNodes {
 		return expr{}, invalid(at, fmt.Sprintf("a formula has at most %d levels and %d nodes", maxFormulaDepth, maxFormulaNodes))
 	}
+	if t, ok := c.(leafTracker); ok {
+		t.compiled(n)
+	}
 	if n.Op == "lookup" {
 		return c.lookup(n, at)
 	}
 	if n.Source != "" || n.Pick != "" {
 		return expr{}, invalid(at, "only lookup takes a source and a pick")
+	}
+	if n.Bound != "" && n.Param == "" {
+		return expr{}, invalid(at, "bound goes with a param")
 	}
 	if kinds := nodeKinds(n); kinds != 1 {
 		return expr{}, invalid(at, errNodeKind)
@@ -251,10 +357,16 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 		e, err := c.col(n.Col, at)
 		e.col = n.Col
 		return e, err
+	case n.Outer != nil:
+		return c.outerPath(n.Outer, at)
 	case n.Path != nil:
 		return c.path(n.Path, at+".path")
 	case n.Param != "":
-		return c.param(n.Param, at)
+		e, err := c.param(n.Param, at)
+		if err != nil || n.Bound == "" {
+			return e, err
+		}
+		return rangeBound(e, n.Bound, at)
 	case n.Subtotal != "":
 		return c.subtotal(n.Subtotal, at)
 	case n.Value != nil:
@@ -311,18 +423,67 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 		e.agg = e.agg || a.agg
 		e.win = e.win || a.win
 	}
-	return e, nil
+	return mixedOver(e, args), nil
+}
+
+// mixedOver gives e, an operator over args, the mixed checks of its
+// arguments. A condition is unknown (NULL) where a value it reads directly
+// met two currencies, even through a coalesce or an if that would give that
+// value one; it carries no mixed, so an and, an or or a not over it decides
+// by three-valued logic, and a filter, a having or a fill keeps a row another
+// term holds for. Its condMixed says where it was unknown. Any other value
+// over a condition that was unknown has no value there (R3).
+func mixedOver(e expr, args []expr) expr {
+	direct, conds := "", ""
+	for _, a := range args {
+		direct = orSQL(direct, a.mixed)
+		conds = orSQL(conds, a.condMixed)
+	}
+	if e.typ != Bool {
+		e.mixed = orSQL(orSQL(e.mixed, direct), conds)
+		return e
+	}
+	if direct != "" {
+		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", direct, e.sql)
+	}
+	e.mixed, e.condMixed = "", orSQL(conds, direct)
+	return e
+}
+
+// blankFor is SQL that is true where e has no value because a sum lookup it
+// reads met amounts in two currencies (R3), "" when it cannot be: where it
+// is mixed, or where it is a condition that was unknown for that reason and
+// no other term decided it. Every helper that names a blank cell in the
+// mixedCurrency notice is built from it.
+func (e expr) blankFor() string {
+	if e.condMixed == "" {
+		return e.mixed
+	}
+	return orSQL(e.mixed, fmt.Sprintf("(%s AND (%s) IS NULL)", e.condMixed, e.sql))
+}
+
+// withoutValue is e with no value on any row, and so never blank for
+// currencies.
+func (e expr) withoutValue() expr {
+	e.sql, e.mixed, e.condMixed = "NULL", "", ""
+	return e
+}
+
+// leafTracker is a context told of every node compiled in it, before the
+// node compiles (lookupCtx.compiled).
+type leafTracker interface {
+	compiled(n *Node)
 }
 
 // errNodeKind refuses a node that is not exactly one kind of node.
-const errNodeKind = "a formula node is one of op, col, path, param, value, subtotal or record"
+const errNodeKind = "a formula node is one of op, col, path, outer, param, value, subtotal or record"
 
 func nodeKinds(n *Node) int {
 	kinds := 0
 	// A record leaf's path is part of it. (A lookup, whose value is a
 	// formula, is compiled before nodes are counted.)
 	path := n.Path != nil && n.Record == ""
-	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Param != "", n.Value != nil, n.Subtotal != "", n.Record != ""} {
+	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Outer != nil, n.Param != "", n.Value != nil, n.Subtotal != "", n.Record != ""} {
 		if set {
 			kinds++
 		}
@@ -416,6 +577,17 @@ func isDateLike(t FieldType) bool {
 // forms engine.
 func num(e expr) string { return "COALESCE(" + e.sql + ", 0)" }
 
+// orSQL joins two conditions with OR; an empty one is no condition.
+func orSQL(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return "(" + a + " OR " + b + ")"
+}
+
 // unsetCondition is a filter condition on an unset param: it matches every
 // row, and an and, or or not over it leaves it out.
 var unsetCondition = expr{sql: "1", typ: Bool, unset: true}
@@ -435,6 +607,7 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if e.cur, err = combined(args, at); err != nil {
 			return expr{}, err
 		}
+		e = fieldGuard(c, e, args)
 	}
 	// Amounts are compared, divided, and combined with an amount param only
 	// in one currency (R29): a USD budget never compares with EUR cents.
@@ -653,11 +826,13 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if !comparable(args[0].typ, args[1].typ) {
 			return expr{}, invalid(at, fmt.Sprintf("%s compares values of one kind, not %s and %s", n.Op, args[0].typ, args[1].typ))
 		}
-		op := " IS "
 		if n.Op == "ne" {
-			op = " IS NOT "
+			return expr{sql: "(" + args[0].sql + " IS NOT " + args[1].sql + ")", typ: Bool}, nil
 		}
-		return expr{sql: "(" + args[0].sql + op + args[1].sql + ")", typ: Bool}, nil
+		if sql := linkedEq(n, args); sql != "" {
+			return expr{sql: sql, typ: Bool}, nil
+		}
+		return expr{sql: "(" + args[0].sql + " IS " + args[1].sql + ")", typ: Bool}, nil
 	case "lt", "lte", "gt", "gte":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err
@@ -894,6 +1069,10 @@ func between(args []expr, at string) (expr, error) {
 		if !isDateLike(x.typ) {
 			return expr{}, invalid(at+".args.0", "a date range holds dates")
 		}
+		if args[1].all {
+			// All dates: every row, a row with no day too (R1).
+			return expr{sql: "1", typ: Bool}, nil
+		}
 		day := "substr(" + x.sql + ", 1, 10)"
 		return expr{sql: "(" + day + " >= " + args[1].lo + " AND " + day + " <= " + args[1].hi + ")", typ: Bool}, nil
 	case len(args) == 3:
@@ -1055,6 +1234,10 @@ func (ctxBase) exists(n *Node, at string) (expr, error) {
 
 func (ctxBase) lookup(_ *Node, at string) (expr, error) {
 	return expr{}, invalid(at, "a lookup is read in a column, the filter, a group, a sort or a label")
+}
+
+func (ctxBase) outerPath(_ Path, at string) (expr, error) {
+	return expr{}, invalid(at, "outer reads the report's row: use it inside a lookup")
 }
 
 func (ctxBase) record(_ string, _ Path, at string) (expr, error) {

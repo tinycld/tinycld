@@ -37,6 +37,14 @@ type level struct {
 	// rows (fillKeys), "" otherwise; render emits it as the CTE f<L>.
 	fill  string
 	frame *windowFrame
+	// sumsFrame holds the lookups the cells of rt<L> compute once per row
+	// (rowsCells), as frame holds o<L>'s.
+	sumsFrame *windowFrame
+	// wheres are the lookups' wheres compiled on the level's rows that may
+	// be unknown on one (levelCtx.probeWhere); render probes them.
+	wheres []levelWhere
+	// allRows holds the level's rows before any having hides one (base).
+	allRows string
 	// labels computes the record labels the level's rows read once per row.
 	labels *labelRefs
 	// label is the level's row label (labelSQL) and its currency; labelKey
@@ -51,6 +59,11 @@ type level struct {
 	visiting map[string]bool
 	// reads memoizes readsRowValue per formula column.
 	reads map[string]bool
+	// havingMixed is the having's condMixed (own).
+	havingMixed string
+	// sortMixed are the sort keys (sql: where the key met a mixed sum) that
+	// order the level's rows; render probes them over the rows it shows.
+	sortMixed []condProbe
 }
 
 // level prepares level n: its keys, its parent partition, and the order of
@@ -74,6 +87,7 @@ func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
 		parent = append(parent, fmt.Sprintf("k%d", i))
 	}
 	lv.frame = &windowFrame{parent: prefixed("a.", parent), total: prefixed("a.", c.currencies)}
+	lv.sumsFrame = &windowFrame{}
 	lv.labels = newLabelRefs(c, r.s, lv.frame, "a")
 	if err := lv.labelSQL(); err != nil {
 		return nil, err
@@ -175,9 +189,10 @@ func groupBy(keys []string) string {
 	return " GROUP BY " + strings.Join(keys, ", ")
 }
 
-// cell is a column's value on this level's rows.
-func (lv *level) cell(cp *colPlan) (expr, error) {
-	ctx := &levelCtx{lv: lv, visiting: lv.visiting}
+// cell is a column's value on this level's rows, for the select that reads
+// rows (levelCtx.rows), nil for one that reads the level's rows directly.
+func (lv *level) cell(cp *colPlan, rows *windowFrame) (expr, error) {
+	ctx := &levelCtx{lv: lv, visiting: lv.visiting, rows: rows}
 	return ctx.col(cp.col.ID, cp.at)
 }
 
@@ -195,6 +210,11 @@ func (lv *level) order() ([]string, error) {
 		}
 		if !ok {
 			continue
+		}
+		// A key over a sum that met two currencies is blank there (a
+		// condition only where no other term decided it), and sorts as blank.
+		if m := e.blankFor(); m != "" {
+			lv.sortMixed = append(lv.sortMixed, condProbe{at: s.at, sql: m})
 		}
 		// A record sorts by its label's typed value, then by its id; a select
 		// by its shown label, then by its stored value.
@@ -243,10 +263,10 @@ func (lv *level) sortKey(s sortPlan) (expr, bool, error) {
 }
 
 func (lv *level) sortValue(cp *colPlan, at string) (expr, bool, error) {
-	if cp.path != nil && cp.col.Aggregate == "" && cp.col.Total != TotalRows && lv.groupKey(cp) == "" {
+	if cp.path != nil && cp.col.Aggregate == "" && cp.col.Rollup == nil && cp.col.Total != TotalRows && lv.groupKey(cp) == "" {
 		return expr{}, false, nil
 	}
-	e, err := lv.cell(cp)
+	e, err := lv.cell(cp, nil)
 	if err != nil {
 		return expr{}, false, err
 	}
@@ -299,6 +319,12 @@ func (lv *level) isGroupColumn(cp *colPlan) bool {
 // a running value or a percent over its rows adds the shown rows only.
 func (lv *level) render(cells []string, own string, totals []string) []string {
 	ctes, g := lv.base(own, totals)
+	for _, m := range lv.sortMixed {
+		lv.c.probe(m.at, fmt.Sprintf("SELECT 1 FROM %s WHERE %s", lv.frame.from(g, "a"), m.sql))
+	}
+	for _, w := range lv.wheres {
+		lv.c.probe(w.at, fmt.Sprintf("SELECT 1 FROM %s WHERE %s", w.from(lv, g), w.sql))
+	}
 	out := []string{fmt.Sprintf("%d AS __level", lv.n), "NULL AS __row"}
 	for i := range lv.c.p.groups {
 		if i < lv.n {
@@ -363,18 +389,27 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 			sel = append(sel, "a."+k+" AS "+k)
 		}
 		sel = append(sel, totals...)
-		ctes = append(ctes, fmt.Sprintf("rt%d AS (SELECT %s FROM %s a WHERE %s)", lv.n, strings.Join(sel, ", "), g, own))
+		ctes = append(ctes, fmt.Sprintf("rt%d AS (SELECT %s FROM %s WHERE %s)", lv.n, strings.Join(sel, ", "), lv.sumsFrame.from(g, "a"), own))
 	}
 	conds := []string{}
-	if own != "1" {
-		conds = append(conds, own)
-	}
 	if m := lv.c.havingAbove(lv.n); m > 0 {
 		conds = append(conds, lv.c.inShown(m, "a"))
 	}
+	lv.allRows = g
+	if lv.havingMixed != "" {
+		// The level's rows under shown groups, before its having hides any.
+		probe := fmt.Sprintf("SELECT 1 FROM %s a WHERE %s", g, strings.Join(append(slices.Clone(conds), lv.havingMixed), " AND "))
+		lv.c.probe(lv.c.p.groups[lv.n-1].at+".having", probe)
+	}
+	if own != "1" {
+		conds = append([]string{own}, conds...)
+	}
 	if len(conds) > 0 {
 		s := fmt.Sprintf("s%d", lv.n)
-		ctes = append(ctes, fmt.Sprintf("%s AS (SELECT a.* FROM %s a WHERE %s)", s, g, strings.Join(conds, " AND ")))
+		// Materialized: inShown reads it once for every row below the
+		// level, and SQLite would otherwise total the level's rows and run
+		// its having again for each of them.
+		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (SELECT a.* FROM %s a WHERE %s)", s, g, strings.Join(conds, " AND ")))
 		g = s
 	}
 	return ctes, g
@@ -457,11 +492,11 @@ func (lv *level) rowsCells() ([]string, error) {
 		if cp.col.Total != TotalRows {
 			continue
 		}
-		e, err := lv.cell(cp)
+		e, err := lv.cell(cp, lv.sumsFrame)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, fmt.Sprintf("%s AS v%d", e.sql, idx))
+		out = append(out, fmt.Sprintf("%s AS v%d", e.sql, idx), mixedCell(e, idx))
 	}
 	return out, nil
 }
@@ -519,7 +554,62 @@ func (lv *level) own() (string, error) {
 	if e.unset {
 		return "1", nil
 	}
+	lv.havingMixed = e.condMixed
 	return "COALESCE(" + e.sql + ", 0)", nil
+}
+
+// openingCells are the level's opening row cells, three per column in column
+// order: op<idx>, the opening's formula for that column compiled on this level
+// (R5a); opcur<idx>, the currency that value carries; opmx<idx>, 1 where a sum
+// lookup in it met two currencies (R3). A column the opening names no cell
+// for, and every column of a level with no opening, has NULL in all three, so
+// each leg of the group statement has the same cells.
+func (lv *level) openingCells() ([]string, error) {
+	var opening *Opening
+	at := ""
+	if lv.n >= 1 {
+		g := lv.c.p.groups[lv.n-1]
+		opening, at = g.group.Opening, g.at+".opening.cells."
+	}
+	out := make([]string, 0, 3*len(lv.c.p.cols))
+	for idx, cp := range lv.c.p.cols {
+		var node *Node
+		if opening != nil {
+			node = opening.Cells[cp.col.ID]
+		}
+		if node == nil {
+			out = append(out, blankOpeningCells(idx)...)
+			continue
+		}
+		cellAt := at + cp.col.ID
+		wheres := len(lv.wheres)
+		e, err := compileFormula(&levelCtx{lv: lv, visiting: lv.visiting, rows: lv.frame}, node, cellAt)
+		if err != nil {
+			return nil, err
+		}
+		if err := lv.checkInColumn(cp, e, cellAt, "an opening cell"); err != nil {
+			return nil, err
+		}
+		// A cell that reads a value of one row (a path, a record of a group
+		// inside this one) has none on a group row, as a rollup has none (R6).
+		if lv.readsRowValue(node, false, map[string]bool{}) {
+			lv.unread(e, wheres)
+			out = append(out, blankOpeningCells(idx)...)
+			continue
+		}
+		mixed := "NULL"
+		if blank := e.blankFor(); blank != "" {
+			mixed = fmt.Sprintf("(CASE WHEN %s THEN 1 END)", blank)
+		}
+		out = append(out, fmt.Sprintf("%s AS op%d", cellSQL(e), idx), fmt.Sprintf("%s AS opcur%d", carriedSQL(lv.r.s, e), idx), fmt.Sprintf("%s AS opmx%d", mixed, idx))
+	}
+	return out, nil
+}
+
+// blankOpeningCells are column idx's opening cells on a row with no opening
+// value there.
+func blankOpeningCells(idx int) []string {
+	return []string{fmt.Sprintf("NULL AS op%d", idx), fmt.Sprintf("NULL AS opcur%d", idx), fmt.Sprintf("NULL AS opmx%d", idx)}
 }
 
 // labelSQL sets the label of the level's rows: the group's label formula
@@ -533,6 +623,7 @@ func (lv *level) labelSQL() error {
 	g := lv.c.p.groups[lv.n-1]
 	target, chosen, key := lv.c.groupTargets[lv.n-1], lv.c.p.labelFieldName(g.col), fmt.Sprintf("a.k%d", lv.n-1)
 	if g.group.Label != nil {
+		wheres := len(lv.wheres)
 		e, err := compileFormula(&levelCtx{lv: lv, visiting: lv.visiting}, g.group.Label, g.at+".label")
 		if err != nil {
 			return err
@@ -548,6 +639,7 @@ func (lv *level) labelSQL() error {
 		lv.c.labels[lv.n-1] = labelPlan{typ: e.typ, cur: e.cur}
 		// A label that reads a row's value has none for a group of rows.
 		if lv.readsRowValue(g.group.Label, false, map[string]bool{}) {
+			lv.unread(e, wheres)
 			return nil
 		}
 		if e.target == nil {
@@ -629,6 +721,11 @@ type levelCtx struct {
 	// cond is compiling a having: a condition on an unset param matches every
 	// group.
 	cond bool
+	// rows is the frame the select being compiled for reads the level's rows
+	// through: lv.frame for a cell of o<L>, lv.sumsFrame for one of rt<L>.
+	// A lookup is hoisted into it (lookup). nil for a select that reads the
+	// level's rows directly (a having, a sort key, a label).
+	rows *windowFrame
 }
 
 func (lc *levelCtx) col(id, at string) (expr, error) {
@@ -636,10 +733,59 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	if cp == nil {
 		return expr{}, unknownColumn(at, id)
 	}
+	if cp.col.Rollup != nil {
+		return lc.rollup(cp)
+	}
 	if cp.col.Total == TotalRows {
 		return lc.rowsTotal(cp)
 	}
 	return lc.recompute(cp, at)
+}
+
+// rollup is a column's cell on this level from its rollup formula (F6, R6),
+// in place of its total. A rollup that reads a value the level's rows have
+// none of (a record of a group the row is not inside, a bare path) is blank
+// as a whole, as a column's formula is.
+func (lc *levelCtx) rollup(cp *colPlan) (expr, error) {
+	lv := lc.lv
+	at := cp.at + ".rollup"
+	done, err := enter(lc.visiting, cp.col.ID, at)
+	if err != nil {
+		return expr{}, err
+	}
+	defer done()
+	wheres := len(lv.wheres)
+	e, err := compileFormula(&levelCtx{lv: lv, visiting: lc.visiting, rows: lc.rows}, cp.col.Rollup, at)
+	if err != nil {
+		return expr{}, err
+	}
+	if err := lv.checkInColumn(cp, e, at, "a rollup"); err != nil {
+		return expr{}, err
+	}
+	if lv.readsRowValue(cp.col.Rollup, false, map[string]bool{}) {
+		e = lv.unread(e, wheres)
+	}
+	return e, nil
+}
+
+// checkInColumn refuses a level formula drawn in a column's cell (a rollup,
+// an opening cell; what names it) whose value the column cannot show: its
+// type is the column's detail type (a blank value fits any), and an amount
+// is in the column's currency.
+func (lv *level) checkInColumn(cp *colPlan, e expr, at, what string) error {
+	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}, detail: &windowFrame{checking: true}}).col(cp.col.ID, cp.at)
+	if err != nil {
+		return err
+	}
+	if e.typ != "" && d.typ != "" && e.typ != d.typ {
+		return invalid(at, fmt.Sprintf("%s shows in its column: it must be %s", what, d.typ))
+	}
+	if e.typ == Money {
+		if _, err := combined([]expr{d, e}, at); err != nil {
+			return invalid(at, what+"'s amount is in another currency than its column's")
+		}
+	}
+	return nil
 }
 
 // rowsTotal is a "rows" column's cell on this level (E2, R8). Above the
@@ -671,9 +817,18 @@ func (lc *levelCtx) rowsTotal(cp *colPlan) (expr, error) {
 	}
 	idx := lv.c.p.index(cp)
 	if lv.n < len(lv.c.p.groups) {
-		return withCurrency(expr{sql: lv.childSum(fmt.Sprintf("v%d", idx)), typ: d.typ}, cur), nil
+		total := expr{sql: lv.childSum(fmt.Sprintf("v%d", idx)), typ: d.typ}
+		if d.blankFor() != "" {
+			// A child row that is blank for mixed currencies makes its sum
+			// blank too (rowsCells gives each child row its vmx helper).
+			total.mixed = lv.childSum(fmt.Sprintf("vmx%d", idx)) + " > 0"
+			total.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", total.mixed, total.sql)
+		}
+		return withCurrency(total, cur), nil
 	}
-	return withCurrency(expr{sql: lv.agg(fmt.Sprintf("r%d", idx), "COALESCE(sum("+d.sql+"), 0)"), typ: d.typ}, cur), nil
+	name := fmt.Sprintf("r%d", idx)
+	total := expr{sql: lv.agg(name, "COALESCE(sum("+d.sql+"), 0)"), typ: d.typ}
+	return withCurrency(lv.mixedTotal(name, d, total), cur), nil
 }
 
 // detailCell is a "rows" column's cell on a detail row, which its totals add.
@@ -686,7 +841,7 @@ func (lv *level) detailCell(cp *colPlan, at string) (expr, error) {
 	}
 	// With a frame a running value compiles, and is refused here by what it
 	// is; the frame's SQL is never used.
-	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}, detail: &windowFrame{}}).col(cp.col.ID, cp.at)
+	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}, detail: &windowFrame{checking: true}}).col(cp.col.ID, cp.at)
 	if err != nil {
 		return expr{}, err
 	}
@@ -748,14 +903,15 @@ func (lc *levelCtx) recompute(cp *colPlan, at string) (expr, error) {
 		// A column has the value its cell shows wherever it is read: a having
 		// that reads it does not make its conditions on an unset param match,
 		// as a filter that reads a column does not (rowValue).
-		e, err := compileFormula(&levelCtx{lv: lv, visiting: lc.visiting}, cp.col.Formula, cp.at+".formula")
+		wheres := len(lv.wheres)
+		e, err := compileFormula(&levelCtx{lv: lv, visiting: lc.visiting, rows: lc.rows}, cp.col.Formula, cp.at+".formula")
 		if err != nil {
 			return expr{}, err
 		}
 		// A formula that reads a row's value has none for a group of rows;
 		// computing it from blanks would show a wrong figure (0).
 		if lv.readsRowValue(cp.col.Formula, false, map[string]bool{}) {
-			e.sql = "NULL"
+			e = lv.unread(e, wheres)
 		}
 		return e, nil
 	}
@@ -771,7 +927,24 @@ func (lc *levelCtx) recompute(cp *colPlan, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
-	return withCurrency(expr{sql: lv.agg(name, aggregateSQL(cp.col.Aggregate, e.sql, cp.scale)), typ: aggregateType(cp.col.Aggregate, e.typ, cp.scale)}, totalCur), nil
+	e = countedArg(cp.col.Aggregate, e)
+	total := expr{sql: lv.agg(name, aggregateSQL(cp.col.Aggregate, e.sql, cp.scale)), typ: aggregateType(cp.col.Aggregate, e.typ, cp.scale)}
+	return withCurrency(lv.mixedTotal(name, e, total), totalCur), nil
+}
+
+// mixedTotal is total, an aggregate over w of e, blank where a row it reads
+// is blank because a sum lookup in e met amounts in two currencies (R3): the
+// aggregate would read that row as no amount and show a wrong figure. Its
+// mixed check carries on to the row's vmx helper, so the notice names the
+// column on a group or total row as on a detail row.
+func (lv *level) mixedTotal(name string, e, total expr) expr {
+	blank := e.blankFor()
+	if blank == "" {
+		return total
+	}
+	total.mixed = lv.agg(name+"m", fmt.Sprintf("max(CASE WHEN %s THEN 1 END)", blank)) + " IS NOT NULL"
+	total.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", total.mixed, total.sql)
+	return total
 }
 
 // totalCurrency is the currency of a total of e. A total groups by its
@@ -889,6 +1062,12 @@ func (lv *level) readsRowValue(n *Node, inAggregate bool, seen map[string]bool) 
 	}
 	if n.Col != "" && !inAggregate && !seen[n.Col] {
 		cp := lv.c.p.byID[n.Col]
+		// A column with a rollup shows the rollup on the level's rows.
+		if cp != nil && cp.col.Rollup != nil {
+			seen[n.Col] = true
+			defer delete(seen, n.Col)
+			return lv.readsRowValue(cp.col.Rollup, false, seen)
+		}
 		// A "rows" column adds the rows under each group, so it has a value
 		// on every level.
 		if cp == nil || cp.col.Aggregate != "" || cp.col.Total == TotalRows || lv.groupKey(cp) != "" {
@@ -932,6 +1111,9 @@ func (lv *level) lookupReadsRowValue(n *Node, inAggregate bool, seen map[string]
 			return false
 		case n.Col != "" || n.Record != "":
 			return lv.readsRowValue(n, inAggregate, seen)
+		case n.Outer != nil:
+			// The report's row: blank on a level's rows, as a path is.
+			return !inAggregate
 		case n.Path != nil:
 			return false
 		}
@@ -1000,7 +1182,9 @@ func (lc *levelCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (ex
 		return expr{}, err
 	}
 	name := fmt.Sprintf("y%d", len(lc.lv.aggs))
-	return withCurrency(expr{sql: lc.lv.agg(name, aggregateSQL(op, e.sql, scale)), typ: aggregateType(op, e.typ, scale)}, cur), nil
+	e = countedArg(op, e)
+	total := expr{sql: lc.lv.agg(name, aggregateSQL(op, e.sql, scale)), typ: aggregateType(op, e.typ, scale)}
+	return withCurrency(lc.lv.mixedTotal(name, e, total), cur), nil
 }
 
 func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, error) {
@@ -1011,14 +1195,64 @@ func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, er
 	return windowSQL(op, e, scale, lc.lv.frame, at)
 }
 
-func (lc *levelCtx) bind(v any) string                       { return lc.lv.r.s.bind(v) }
-func (lc *levelCtx) fiscalStart() string                     { return lc.bind(int64(lc.lv.c.fiscal)) }
-func (lc *levelCtx) filter() bool                            { return lc.cond }
-func (lc *levelCtx) label(e expr) string                     { return lc.lv.c.textOf(lc.lv.r.s, e) }
-func (lc *levelCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(lc, lc.lv.r, n, at) }
+func (lc *levelCtx) bind(v any) string   { return lc.lv.r.s.bind(v) }
+func (lc *levelCtx) fiscalStart() string { return lc.bind(int64(lc.lv.c.fiscal)) }
+func (lc *levelCtx) filter() bool        { return lc.cond }
+func (lc *levelCtx) label(e expr) string { return lc.lv.c.textOf(lc.lv.r.s, e) }
 func (lc *levelCtx) currencySQL(cur currency) string {
 	return currencyCode(lc, lc.lv.c, cur, func(key string) string { return "a." + key })
 }
 
 // hoist computes a running value a lookup reads below the level's select.
 func (lc *levelCtx) hoist(sql string) string { return lc.lv.frame.hoist("a", sql) }
+
+// levelWhere is a lookup's where to probe over a level's rows: sql is true on
+// a row where it was unknown. rows is the frame of the select the lookup was
+// compiled for (levelCtx.rows), cond a lookup in the level's having.
+type levelWhere struct {
+	at, sql string
+	rows    *windowFrame
+	cond    bool
+}
+
+// from is the rows a lookup's where is probed over: a having's, the level's
+// rows before the having hides any; any other's, the rows the level shows
+// (g), read through the frame the lookup was compiled for.
+func (w levelWhere) from(lv *level, g string) string {
+	switch {
+	case w.cond:
+		return lv.allRows + " a"
+	case w.rows != nil:
+		return w.rows.from(g, "a")
+	}
+	return lv.frame.from(g, "a")
+}
+
+// unread is e with no value, for a formula that reads a value of one row,
+// which a group of rows has none of: the lookups' wheres it compiled since
+// the level held wheres of them are not read either, so none is probed.
+func (lv *level) unread(e expr, wheres int) expr {
+	lv.wheres = lv.wheres[:wheres]
+	return e.withoutValue()
+}
+
+// probeWhere takes a lookup's where on the level's rows, which render
+// probes once the level's rows are known.
+func (lc *levelCtx) probeWhere(at, sql string) bool {
+	lc.lv.wheres = append(lc.lv.wheres, levelWhere{at: at, sql: sql, rows: lc.rows, cond: lc.cond})
+	return true
+}
+
+// lookup compiles a lookup on the level's rows. In a cell of o<L> or rt<L>
+// it is computed once per row in a layer of that select's frame, as its
+// parts (the value, its mixed check, its currency): the cell and its vmx
+// helper both read the mixed check, and SQLite runs a correlated subquery
+// again at each place the row reads it. A lookup that holds a total or a
+// running value stays where it is.
+func (lc *levelCtx) lookup(n *Node, at string) (expr, error) {
+	e, err := lookupIn(lc, lc.lv.r, n, at)
+	if err != nil || lc.rows == nil || e.agg || e.win {
+		return e, err
+	}
+	return hoistedLookup(lc.rows, "a", nil, e), nil
+}

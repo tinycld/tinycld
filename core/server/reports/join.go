@@ -99,9 +99,9 @@ func (j *joinCtx) amountCurrency(hops []hopPlan, bound *pathPlan) currency {
 	switch {
 	case sql != "":
 		if name, ok := j.r.byExpr[sql]; ok && j.sc == j.r.root {
-			return currency{key: name}
+			return currency{key: name, field: currencyField(bound)}
 		}
-		return currency{sql: sql, id: "row:" + sql}
+		return currency{sql: sql, id: "row:" + sql, field: currencyField(bound)}
 	case fixed != nil:
 		return currency{fixed: fixed}
 	}

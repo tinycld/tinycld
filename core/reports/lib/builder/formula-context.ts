@@ -188,6 +188,7 @@ export function columnTypes(draft: ColumnsOf, catalog: Catalog): ReadonlyMap<str
     const formulaTypes: FormulaTypes = {
         catalog,
         source: draft.source,
+        rowSource: draft.source,
         col: key => {
             const read = byId.get(key)
             return read ? typeOf(read) : undefined
@@ -424,6 +425,7 @@ function layoutContext(
         leaf: 'subtotal',
         values,
         source: null,
+        rowSource: null,
         records: [],
         params: [],
         lookupParams: formulaParams(draft),
@@ -473,6 +475,7 @@ export function formulaContext(
         leaf: 'col',
         values,
         source: draft.source,
+        rowSource: draft.source,
         records: recordGroups({ ...draft, groups }, catalog),
         params: formulaParams(draft),
         totals: true,

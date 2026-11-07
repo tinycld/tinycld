@@ -40,6 +40,12 @@ type compiler struct {
 	// and on group, subtotal and total rows.
 	detailTypes map[string]FieldType
 	levelTypes  map[string]FieldType
+	// sectionMixed marks the columns whose first-level cell may be blank
+	// because a sum lookup met two currencies (vmx<idx>), and pivotMixed the
+	// pivot cells that may be (pvm<j>): a computed layout row reads the
+	// helper beside the section's cell.
+	sectionMixed map[string]bool
+	pivotMixed   bool
 	// groupTargets is the source each group's key links to (nil for a group
 	// that is not by a link).
 	groupTargets []*Source
@@ -59,6 +65,12 @@ type compiler struct {
 	// detailLabel is what the report's detail label compiled to (the detail
 	// select's __label); nil when the first column labels detail rows.
 	detailLabel *labelPlan
+	// viewSort are the run's viewer sort keys (options.sort), which order
+	// detail rows before the spec's keys and never the window order.
+	viewSort []sortPlan
+	// sortable holds the columns a viewer may sort by, as detailSelect
+	// compiled them.
+	sortable map[string]bool
 	// labelTypes holds the type of the record label of each column whose
 	// values point at a record (vl<idx>, the cell <id>@label).
 	labelTypes map[string]FieldType
@@ -69,6 +81,20 @@ type compiler struct {
 	// so options whose where reads such a param back are refused, not
 	// expanded forever.
 	expanding map[string]bool
+	// condProbes are the conditions of the statement being built that read a
+	// sum lookup which may meet two currencies (condProbe).
+	condProbes []condProbe
+	// probed holds each probe condProbes has (at and sql), so one is added
+	// once.
+	probed map[string]bool
+	// detailSortMixed are the spec sort keys of the detail select that read
+	// such a sum, and the lookups' wheres on its rows that may (rowsCtx
+	// probeWhere): sql names the select's column that is 1 where one did.
+	detailSortMixed []condProbe
+	// detailWheres are the lookups' wheres the detail select being built
+	// probes on each of its rows (whereProber): sql is true on a row where
+	// one was unknown.
+	detailWheres []condProbe
 }
 
 // labelPlan is what a group's label compiled to. recordCurrency says an
@@ -156,6 +182,44 @@ type rowsCTE struct {
 	order  []string
 	byExpr map[string]string
 	filter string
+	// filterMixed is the filter's condMixed: true on a row where a sum
+	// lookup the filter reads met two currencies.
+	filterMixed string
+	// wheres are the lookups' wheres compiled on the report's base rows (in
+	// w or in the filter) that may be unknown on one (whereProber); the
+	// group statement probes them (probeWheres).
+	wheres []rowWhere
+}
+
+// rowWhere is a lookup's where to probe over the report's base rows: sql is
+// true on a row where it was unknown. inFilter is a lookup in the filter,
+// probed over the rows the filter decides on; any other, over the rows it
+// keeps.
+type rowWhere struct {
+	at, sql  string
+	inFilter bool
+}
+
+// probeWheres adds the probes of the lookups' wheres on the base rows.
+func (r *rowsCTE) probeWheres() {
+	for _, w := range r.wheres {
+		cond := w.sql
+		if !w.inFilter && r.filter != "" {
+			cond = "(" + r.filter + ") AND " + cond
+		}
+		r.c.probe(w.at, "SELECT 1 "+r.root.render()+"\nWHERE "+cond)
+	}
+}
+
+// probeWhere takes a lookup's where on the report's base row; a joined
+// row's (a fill's target, an exists' link) is not one, and its lookup is
+// left to show no value there.
+func (j *joinCtx) probeWhere(at, sql string) bool {
+	if j.sc != j.r.root {
+		return false
+	}
+	j.r.wheres = append(j.r.wheres, rowWhere{at: at, sql: sql, inFilter: j.isFilter})
+	return true
 }
 
 func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
@@ -233,7 +297,7 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 		if e.typ != Bool {
 			return nil, invalid("filter", "the filter is a condition")
 		}
-		r.filter = e.sql
+		r.filter, r.filterMixed = e.sql, e.condMixed
 	}
 	r.valueCurrencies()
 	r.pivotKey()
@@ -341,17 +405,27 @@ func (r *rowsCTE) currencyColumn(sql string) string {
 }
 
 // pathCurrency is the currency of a to-one path's amount: its currency
-// field, kept in w as a currency key every total groups by, or its source's
-// fixed currency.
+// field, kept in w as a currency key every total groups by and named for
+// combining (currencyField), or its source's fixed currency.
 func (r *rowsCTE) pathCurrency(p *pathPlan) currency {
 	sql, fixed := amountCurrencyOf(r.root, p.hops, p)
 	switch {
 	case sql != "":
-		return currency{key: r.currencyColumn(sql)}
+		return currency{key: r.currencyColumn(sql), field: currencyField(p)}
 	case fixed != nil:
 		return currency{fixed: fixed}
 	}
 	return currency{}
+}
+
+// currencyField names the currency field of p's amount for combining (R24):
+// "<source key>.<currency field key>", "" for a value that is not an amount
+// or an amount with no currency field.
+func currencyField(p *pathPlan) string {
+	if p.field.Type != Money || p.field.Currency == "" {
+		return ""
+	}
+	return p.src.Key + "." + p.field.Currency
 }
 
 // amountCurrencyOf is where the currency of p's amount, read in sc after hops,

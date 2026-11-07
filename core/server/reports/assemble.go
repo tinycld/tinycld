@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +40,7 @@ func (rn *runner) columns() []ResultColumn {
 				rc.LabelCurrencyCell = cp.col.ID + "@labelCurrency"
 			}
 		}
+		rc.Sortable = c.p.pivot == nil && c.sortable[cp.col.ID]
 		rn.currencyOfColumn(cp, &rc)
 		out = append(out, rc)
 	}
@@ -115,6 +117,138 @@ func (rn *runner) markCurrencies(groupRows []map[string]any) {
 	if len(cols) > 0 {
 		rn.notice(Notice{Code: "mixedCurrency", Message: "Amounts in different currencies are totalled apart, one row per currency.", Columns: cols})
 	}
+}
+
+// markMixedLookups names in a notice every column a row of this page shows
+// no value in because a sum lookup met amounts in two currencies, and every
+// condition that read such a sum (R3). With the totals' notice due too, the
+// two are one notice: its message, both columns.
+func (rn *runner) markMixedLookups() {
+	shown := map[string]bool{}
+	for _, r := range rn.res.Rows {
+		for _, id := range rn.mixedRows[r.ID] {
+			shown[id] = true
+		}
+	}
+	var cols []string
+	for _, cp := range rn.c.p.cols {
+		if shown[cp.col.ID] {
+			cols = append(cols, cp.col.ID)
+		}
+	}
+	conds := rn.mixedConditions
+	if len(cols) == 0 && len(conds) == 0 {
+		return
+	}
+	words := make([]string, len(conds))
+	for i, at := range conds {
+		words[i] = rn.c.conditionSentence(at)
+	}
+	for i := range rn.res.Notices {
+		if n := &rn.res.Notices[i]; n.Code == "mixedCurrency" {
+			for _, id := range cols {
+				if !slices.Contains(n.Columns, id) {
+					n.Columns = append(n.Columns, id)
+				}
+			}
+			n.Conditions = conds
+			n.Message, n.Parts = noticeText(append([]string{n.Message}, words...))
+			return
+		}
+	}
+	sentences := words
+	if len(cols) > 0 {
+		sentences = append([]string{"A looked-up total mixes currencies, so it shows no value."}, words...)
+	}
+	message, parts := noticeText(sentences)
+	rn.notice(Notice{Code: "mixedCurrency", Message: message, Parts: parts, Columns: cols, Conditions: conds})
+}
+
+// noticeText is a notice's message made of sentences, and its parts: the
+// sentences when there is more than one (Notice.Parts).
+func noticeText(sentences []string) (string, []string) {
+	if len(sentences) < 2 {
+		return strings.Join(sentences, " "), nil
+	}
+	return strings.Join(sentences, " "), sentences
+}
+
+// conditionSentence tells, for a notice, what a condition or sort key (by
+// its spec path) did with a looked-up total that mixes currencies.
+func (c *compiler) conditionSentence(at string) string {
+	for i, s := range c.p.sort {
+		if s.at != at {
+			continue
+		}
+		subject := fmt.Sprintf("The formula of sort key %d", i+1)
+		if s.col != nil {
+			subject = fmt.Sprintf("The sort by %q", columnName(s.col))
+		}
+		return subject + " reads a looked-up total that mixes currencies, so it sorts as blank there."
+	}
+	if owner := c.lookupWhereOwner(at); owner != "" {
+		return "The where of a lookup in " + owner + " reads a looked-up total that mixes currencies, so that total counts as unknown there."
+	}
+	return c.conditionWords(at) + " reads a looked-up total that mixes currencies, so that total counts as unknown there."
+}
+
+// lookupWhereOwner names the part of the spec a lookup's where (by its spec
+// path, which ends in .where) is in, "" for any other path.
+func (c *compiler) lookupWhereOwner(at string) string {
+	parts := strings.Split(at, ".")
+	if len(parts) < 2 || parts[len(parts)-1] != "where" {
+		return ""
+	}
+	i := -1
+	if n, err := strconv.Atoi(parts[1]); err == nil {
+		i = n
+	}
+	switch {
+	case parts[0] == "filter":
+		return "the filter"
+	case parts[0] == "detail":
+		return "the detail label"
+	case parts[0] == "columns" && i >= 0 && i < len(c.p.spec.Columns):
+		if cp := c.p.byID[c.p.spec.Columns[i].ID]; cp != nil {
+			return fmt.Sprintf("the %q column", columnName(cp))
+		}
+	case parts[0] == "sort" && i >= 0:
+		return fmt.Sprintf("sort key %d", i+1)
+	case parts[0] == "layout" && i >= 0 && i < len(c.p.spec.Layout):
+		return fmt.Sprintf("the computed row %q", c.p.spec.Layout[i].Row)
+	case parts[0] == "groups" && i >= 0 && i < len(c.p.groups) && len(parts) > 2:
+		// groups.<i>.fill.where is the fill's own where (conditionWords).
+		if parts[2] == "fill" && len(parts) == 4 {
+			return ""
+		}
+		whats := map[string]string{"having": "the having", "label": "the label", "fill": "the fill", "opening": "the opening row"}
+		if what, ok := whats[parts[2]]; ok {
+			return fmt.Sprintf("%s of the %q group", what, columnName(c.p.groups[i].col))
+		}
+	}
+	return ""
+}
+
+func columnName(cp *colPlan) string {
+	if cp.col.Label != "" {
+		return cp.col.Label
+	}
+	return cp.col.ID
+}
+
+// conditionWords names a condition by its spec path for a notice: the
+// filter, or a group's having or fill by the group's column.
+func (c *compiler) conditionWords(at string) string {
+	for i, g := range c.p.groups {
+		name := columnName(g.col)
+		switch at {
+		case fmt.Sprintf("groups.%d.having", i):
+			return fmt.Sprintf("The having of the %q group", name)
+		case fmt.Sprintf("groups.%d.fill.where", i):
+			return fmt.Sprintf("The fill of the %q group", name)
+		}
+	}
+	return "The filter"
 }
 
 func toInt(v any) int64 {
@@ -197,7 +331,7 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 		for _, g := range t.children[rn.currencyKey(total)] {
 			rn.group(t, g, 1, "")
 		}
-		rn.push(Row{ID: "total" + rn.currencySuffix(total), Kind: KindTotal, Label: "Total", Cells: rn.cells(total)})
+		rn.push(Row{ID: "total" + rn.currencySuffix(total), Kind: KindTotal, Label: "Total", Cells: rn.cells(total)}, total)
 	}
 }
 
@@ -208,7 +342,80 @@ func (rn *runner) currencySuffix(row map[string]any) string {
 	return ":" + rn.currencyKey(row)
 }
 
-func (rn *runner) push(row Row) { rn.res.Rows = append(rn.res.Rows, row) }
+// push emits a row made from raw, the statement's row (nil for a row that
+// shows no looked-up total), and keeps the columns whose cell on it is blank
+// because a sum lookup met two currencies: an opening row's opmx<idx>, any
+// other row's vmx<idx> (markMixedLookups).
+func (rn *runner) push(row Row, raw map[string]any) {
+	rn.res.Rows = append(rn.res.Rows, row)
+	var cols []string
+	for idx, cp := range rn.c.p.cols {
+		helper := fmt.Sprintf("vmx%d", idx)
+		if row.Kind == KindOpening {
+			helper = fmt.Sprintf("opmx%d", idx)
+		}
+		if raw[helper] != nil {
+			cols = append(cols, cp.col.ID)
+		}
+	}
+	if len(cols) == 0 {
+		return
+	}
+	if rn.mixedRows == nil {
+		rn.mixedRows = map[string][]string{}
+	}
+	rn.mixedRows[row.ID] = cols
+}
+
+func isEnd(r Row) bool { return r.Kind == KindTotal || r.Kind == KindComputed }
+
+// pageWindow keeps a grouped page's slice of the document (R9e): the rows
+// after the previous page's last detail row (after its group row and opening
+// row; from the start on page 1), up to and including this page's last detail
+// row and its child rows (to the end on the last page). A total or computed
+// row inside the slice keeps its place there (a Total per currency block, a
+// layout's computed rows between sections); those after the slice follow it,
+// as each page of a report without groups ends in its totals. Those before
+// the slice were on an earlier page.
+func (rn *runner) pageWindow() {
+	if rn.page == nil {
+		return
+	}
+	rows := rn.res.Rows
+	// A row the page names is always among its rows; were one missing, the
+	// page keeps the document from its start or to its end, which the
+	// client's merge of pages dedupes.
+	start := 0
+	if rn.page.after != nil {
+		id := "g:" + keyString(rn.page.after)
+		if i := slices.IndexFunc(rows, func(r Row) bool { return r.ID == id }); i >= 0 {
+			start = i + 1
+			if start < len(rows) && rows[start].Kind == KindOpening && rows[start].Section == id {
+				start++
+			}
+		} else {
+			log.WarnContext(rn.ctx, "page start group not among the rows", "group", id)
+		}
+	}
+	end := len(rows)
+	if rn.page.last != "" {
+		if i := slices.IndexFunc(rows, func(r Row) bool { return r.ID == rn.page.last }); i >= 0 {
+			end = i + 1
+			for end < len(rows) && rows[end].Parent != "" {
+				end++
+			}
+		} else {
+			log.WarnContext(rn.ctx, "page end row not among the rows", "row", rn.page.last)
+		}
+	}
+	out := slices.Clone(rows[start:end])
+	for _, r := range rows[end:] {
+		if isEnd(r) {
+			out = append(out, r)
+		}
+	}
+	rn.res.Rows = out
+}
 
 // group emits a level-n group row, its children when expanded, and its
 // subtotal.
@@ -296,21 +503,29 @@ func (rn *runner) currencyOf(row map[string]any, cur currency) string {
 // ends in a subtotal row (a layout section always does).
 func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id string, label rowLabel, key []any, subtotal bool) {
 	p := rn.c.p
+	opening := p.groups[n-1].group.Opening
 	canOpen := n < len(p.groups) || p.pivot == nil
-	// A fill record has no base rows: it opens only onto the next level's fill
-	// records. A layout section with no rows has no __n and keeps this rule.
-	if v, ok := row["__n"]; ok && v != nil && toInt(v) == 0 && !rn.c.nextFill(n) {
-		canOpen = false
-	}
-	// A group whose child groups the having hides, every one, opens onto nothing.
-	if v, ok := row["__kids"]; ok && v != nil && toInt(v) == 0 {
-		canOpen = false
+	// A level with an opening row opens even with nothing under it, so the
+	// opening row and the subtotal show (R5d). Without one: a fill record has
+	// no base rows and opens only onto the next level's fill records (a layout
+	// section with no rows has no __n and keeps this rule), and a group whose
+	// child groups the having hides, every one, opens onto nothing.
+	if opening == nil {
+		if v, ok := row["__n"]; ok && v != nil && toInt(v) == 0 && !rn.c.nextFill(n) {
+			canOpen = false
+		}
+		if v, ok := row["__kids"]; ok && v != nil && toInt(v) == 0 {
+			canOpen = false
+		}
 	}
 	expanded := canOpen && rn.expand.has(key, n)
 	rn.push(Row{
 		ID: id, Kind: KindGroup, Depth: n - 1, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
-	})
+	}, row)
+	if expanded && opening != nil {
+		rn.push(Row{ID: "opening:" + keyString(key), Kind: KindOpening, Depth: n, Label: opening.Label, Section: id, GroupKey: key, Cells: rn.openingCells(row, opening)}, row)
+	}
 	if expanded {
 		if n < len(p.groups) {
 			for _, child := range t.children[keyString(key)] {
@@ -326,7 +541,7 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 		rn.push(Row{
 			ID: "s:" + keyString(key), Kind: KindSubtotal, Depth: n - 1, Label: "Total " + label.text, Section: id, GroupKey: key, Cells: rn.cells(row),
 			LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
-		})
+		}, row)
 	}
 }
 
@@ -340,7 +555,7 @@ func (rn *runner) detail(t *tree, row map[string]any, section string, depth int)
 	rn.push(Row{
 		ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: labelColumn, Section: section, Cells: rn.detailCells(rn.cells(row)),
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
-	})
+	}, row)
 	if len(t.nested) > 0 {
 		rn.nestedRows(t, 0, row["__n0"], id, section, depth+1)
 	}
@@ -387,15 +602,11 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 		// A currency the value carries (a record's or a looked-up row's own)
 		// is its row's; else the column's currency key holds it. A column with
 		// a fixed currency that some row carries its own on names a currency
-		// cell, so every other row shows the fixed code there.
-		cur := rn.c.currencyOf[cp.col.ID]
-		switch v := row[fmt.Sprintf("vcur%d", idx)]; {
-		case v != nil:
-			out[cp.col.ID+"@currency"] = v
-		case cur.key != "":
-			out[cp.col.ID+"@currency"] = row[cur.key]
-		case cur.fixed != nil && rn.c.carried[cp.col.ID]:
-			out[cp.col.ID+"@currency"] = rn.currencyOf(row, cur)
+		// cell, so every other row shows the fixed code there. A cell that is
+		// not an amount on this row (a count) or is blank for currencies
+		// (vmx<idx>) names none.
+		if rn.typeOf(cp, grouped) == Money && row[fmt.Sprintf("vmx%d", idx)] == nil {
+			rn.currencyCell(out, cp, row, row[fmt.Sprintf("vcur%d", idx)])
 		}
 		rn.labelCell(out, cp, row)
 	}
@@ -404,6 +615,40 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 			if v, ok := row[fmt.Sprintf("pv%d", j)]; ok {
 				out[fmt.Sprintf("%s.p%d", pv.cell.col.ID, j)] = v
 			}
+		}
+	}
+	return out
+}
+
+// currencyCell puts a money cell's currency in <id>@currency: the one its
+// value carries, else the row's currency key of the column, else the column's
+// fixed code when some row carries its own.
+func (rn *runner) currencyCell(out map[string]any, cp *colPlan, row map[string]any, carried any) {
+	cur := rn.c.currencyOf[cp.col.ID]
+	switch {
+	case carried != nil:
+		out[cp.col.ID+"@currency"] = carried
+	case cur.key != "":
+		out[cp.col.ID+"@currency"] = row[cur.key]
+	case cur.fixed != nil && rn.c.carried[cp.col.ID]:
+		out[cp.col.ID+"@currency"] = rn.currencyOf(row, cur)
+	}
+}
+
+// openingCells are an opening row's cells: each column its level's opening
+// names, from the group row's op<idx>, typed as the column's detail cells,
+// with a money cell's currency as a group row's (currencyCell), none on a
+// cell blank for currencies (opmx<idx>). A column it names no cell for has
+// none, so it is blank.
+func (rn *runner) openingCells(row map[string]any, opening *Opening) map[string]any {
+	out := map[string]any{}
+	for idx, cp := range rn.c.p.cols {
+		if opening.Cells[cp.col.ID] == nil {
+			continue
+		}
+		out[cp.col.ID] = rn.cellValue(cp, row[fmt.Sprintf("op%d", idx)], false)
+		if row[fmt.Sprintf("opmx%d", idx)] == nil {
+			rn.currencyCell(out, cp, row, row[fmt.Sprintf("opcur%d", idx)])
 		}
 	}
 	return out
