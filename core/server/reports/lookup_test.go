@@ -364,6 +364,169 @@ func TestAnAggregateOverAMixedSumLookupHasNoValueAndANotice(t *testing.T) {
 	}
 }
 
+// mixedFees is bob's sum lookup of every fee but lions': zed's 300 USD and
+// mo's 20 GBP, which cannot be added.
+const mixedFees = `{"op":"lookup","source":"zoo.animals","pick":"sum",
+	"where":{"op":"ne","args":[{"path":[{"field":"species"}]},{"value":"lion"}]},
+	"value":{"path":[{"field":"fee"}]}}`
+
+var mixedFeesNotice = []Notice{{Code: "mixedCurrency", Message: "A looked-up total mixes currencies, so it shows no value.", Columns: []string{"usdFees"}}}
+
+// requireMixedFeesBlank runs spec as bob, collapsed and expanded, and wants
+// every usdFees cell (a pivot's cells too) blank, with the one notice.
+func requireMixedFeesBlank(t *testing.T, z *zoo, name, spec string) {
+	t.Helper()
+	for _, opts := range []Options{{}, {ExpandAll: true}} {
+		res := z.run(t, "bob", spec, opts, nil)
+		cells := 0
+		for i, r := range res.Rows {
+			for k, v := range r.Cells {
+				if k != "usdFees" && !strings.HasPrefix(k, "usdFees.p") {
+					continue
+				}
+				cells++
+				if pivotCellOfNoSite(r, k) {
+					continue
+				}
+				if v != nil {
+					t.Errorf("%s, expand %v: row %d (%s %v) %s = %#v, want blank", name, opts.ExpandAll, i, r.Kind, r.Label, k, v)
+				}
+			}
+		}
+		if cells == 0 {
+			t.Errorf("%s, expand %v: no usdFees cells", name, opts.ExpandAll)
+		}
+		if !reflect.DeepEqual(res.Notices, mixedFeesNotice) {
+			t.Errorf("%s, expand %v: notices = %+v", name, opts.ExpandAll, res.Notices)
+		}
+	}
+}
+
+// pivotCellOfNoSite is true for a pivot cell by region (p0 north, p1 south)
+// on a row of the other region's site: it adds no row, so it is 0, not
+// blank. The sites are named as their regions.
+func pivotCellOfNoSite(r Row, k string) bool {
+	label := r.Label
+	return (strings.Contains(label, "North") && k == "usdFees.p1") || (strings.Contains(label, "South") && k == "usdFees.p0")
+}
+
+// A pivot cell over a mixed sum lookup is blank, not 0, on the innermost
+// group, above it ("rows"), and on the total.
+func TestAPivotCellOverAMixedSumLookupHasNoValue(t *testing.T) {
+	z := newZoo(t)
+	specs := map[string]string{
+		"aggregate": `{"id":"usdFees","aggregate":"sum","formula":` + mixedFees + `}],
+			"groups":[{"id":"g","col":"name"}]`,
+		"rows total, 2 levels": `{"id":"usdFees","aggregate":"sum","total":"rows","formula":` + mixedFees + `}],
+			"groups":[{"id":"r","col":"region"},{"id":"g","col":"name"}]`,
+	}
+	for name, cols := range specs {
+		spec := `{"version":3,"source":"zoo.sites","columns":[
+			{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},` + cols + `,
+			"pivot":{"path":[{"field":"region"}],"cell":"usdFees"},"sort":[{"col":"name"}]}`
+		requireMixedFeesBlank(t, z, name, spec)
+	}
+}
+
+// A computed layout row that reads a mixed (blank) section is blank, in the
+// column's cell and in each pivot cell, not the section counted as 0.
+func TestALayoutRowOverAMixedSectionHasNoValue(t *testing.T) {
+	z := newZoo(t)
+	const layout = `"layout":[{"section":"n","title":"North","key":"north"},
+		{"row":"p","label":"North plus one","formula":{"op":"add","args":[{"subtotal":"n"},{"value":1}]}}]`
+	cols := `{"id":"region","path":[{"field":"region"}]},{"id":"usdFees","aggregate":"sum","formula":` + mixedFees + `}],
+		"groups":[{"id":"r","col":"region"}],`
+	requireMixedFeesBlank(t, z, "layout", `{"version":3,"source":"zoo.sites","columns":[`+cols+layout+`}`)
+	requireMixedFeesBlank(t, z, "layout with a pivot", `{"version":3,"source":"zoo.sites","columns":[`+cols+
+		`"pivot":{"path":[{"field":"name"}],"cell":"usdFees"},`+layout+`}`)
+}
+
+// A formula that wraps a mixed sum lookup (coalesce, if) does not turn its
+// blank into a value: the cell is blank on detail, group and total rows.
+func TestAFormulaOverAMixedSumLookupHasNoValue(t *testing.T) {
+	z := newZoo(t)
+	formulas := map[string]string{
+		"coalesce": `{"op":"coalesce","args":[` + mixedFees + `,{"value":0}]}`,
+		"if":       `{"op":"if","args":[{"value":true},{"op":"coalesce","args":[` + mixedFees + `,{"value":0}]},{"value":0}]}`,
+	}
+	for name, f := range formulas {
+		for _, groups := range []string{``, `,"groups":[{"id":"g","col":"name"}]`} {
+			for _, agg := range []string{``, `"aggregate":"sum",`} {
+				spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+					{"id":"usdFees",` + agg + `"formula":` + f + `}]` + groups + `,"sort":[{"col":"name"}]}`
+				requireMixedFeesBlank(t, z, name+groups+agg, spec)
+			}
+		}
+	}
+}
+
+// A count is a number, never blank for currencies: a count lookup counts
+// amounts in two currencies, and a count of a mixed sum lookup counts its
+// rows, with no notice.
+func TestACountIsNeverBlankForCurrencies(t *testing.T) {
+	z := newZoo(t)
+	const fees = `{"op":"lookup","source":"zoo.animals","pick":"count",
+		"where":{"op":"ne","args":[{"path":[{"field":"species"}]},{"value":"lion"}]},
+		"value":{"path":[{"field":"fee"}]}}`
+	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+		{"id":"n","formula":` + fees + `}],"sort":[{"col":"name"}]}`
+	res := z.run(t, "bob", spec, Options{}, nil)
+	requireRows(t, res, "n", int64(2), int64(2), int64(2))
+	if len(res.Notices) != 0 {
+		t.Fatalf("count lookup: notices = %+v", res.Notices)
+	}
+
+	byName := `"groups":[{"id":"g","col":"name"}]`
+	specs := map[string]string{
+		"aggregate": `{"id":"n","aggregate":"count","formula":` + mixedFees + `}],` + byName,
+		"count op":  `{"id":"n","formula":{"op":"count","args":[` + mixedFees + `]}}],` + byName,
+		"pivot":     `{"id":"n","aggregate":"count","formula":` + mixedFees + `}],` + byName + `,"pivot":{"path":[{"field":"region"}],"cell":"n"}`,
+	}
+	for name, cols := range specs {
+		spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},` + cols + `,"sort":[{"col":"name"}]}`
+		for _, opts := range []Options{{}, {ExpandAll: true}} {
+			res := z.run(t, "bob", spec, opts, nil)
+			// A detail row of an aggregate column shows the looked-up amount
+			// itself, which is blank with the notice; only its count is a
+			// number.
+			amountShown := name == "aggregate" && opts.ExpandAll
+			for i, r := range res.Rows {
+				var want any = int64(1)
+				switch {
+				case r.Kind == "total":
+					want = int64(2)
+				case r.Kind == "detail" && amountShown:
+					want = nil
+				}
+				if got := r.Cells["n"]; got != want {
+					t.Errorf("%s, expand %v: row %d (%s) n = %#v, want %d", name, opts.ExpandAll, i, r.Kind, got, want)
+				}
+				// The pivot cells count the row's sites by region.
+				var pivoted any = int64(0)
+				for k, v := range r.Cells {
+					if strings.HasPrefix(k, "n.p") {
+						if v == nil {
+							pivoted = nil
+							break
+						}
+						pivoted = pivoted.(int64) + v.(int64)
+					}
+				}
+				if name == "pivot" && pivoted != want {
+					t.Errorf("%s, expand %v: row %d pivot cells add to %#v, want %d", name, opts.ExpandAll, i, pivoted, want)
+				}
+			}
+			wantNotices := 0
+			if amountShown {
+				wantNotices = 1
+			}
+			if len(res.Notices) != wantNotices {
+				t.Errorf("%s, expand %v: notices = %+v", name, opts.ExpandAll, res.Notices)
+			}
+		}
+	}
+}
+
 func TestAnEmptyMatchIsBlankForSumAndZeroForCount(t *testing.T) {
 	z := newZoo(t)
 	nobody := `"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Nobody"}]},"value":{"path":[{"field":"weight"}]}`

@@ -227,7 +227,25 @@ const (
 
 func compileFormula(c fctx, n *Node, at string) (expr, error) {
 	count := 0
-	return compileNode(c, n, at, 0, &count)
+	e, err := compileNode(c, n, at, 0, &count)
+	if err == nil && e.mixed != "" && n.Op != "lookup" {
+		// A sum lookup that met two currencies has no value, and an operator
+		// over it (coalesce, if) must not give it one (R3).
+		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", e.mixed, e.sql)
+	}
+	return e, err
+}
+
+// countedArg is what a count counts. A count is a number, never blank for
+// currencies: a row whose sum lookup met two currencies has a total, only
+// not one to show, so the count counts it.
+func countedArg(op Aggregate, e expr) expr {
+	if op != Count || e.mixed == "" {
+		return e
+	}
+	e.sql = fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE %s END)", e.mixed, e.sql)
+	e.mixed = ""
+	return e
 }
 
 func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error) {

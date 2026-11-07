@@ -780,6 +780,7 @@ func (lc *levelCtx) recompute(cp *colPlan, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
+	e = countedArg(cp.col.Aggregate, e)
 	total := expr{sql: lv.agg(name, aggregateSQL(cp.col.Aggregate, e.sql, cp.scale)), typ: aggregateType(cp.col.Aggregate, e.typ, cp.scale)}
 	return withCurrency(lv.mixedTotal(name, e, total), totalCur), nil
 }
@@ -1024,6 +1025,7 @@ func (lc *levelCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (ex
 		return expr{}, err
 	}
 	name := fmt.Sprintf("y%d", len(lc.lv.aggs))
+	e = countedArg(op, e)
 	total := expr{sql: lc.lv.agg(name, aggregateSQL(op, e.sql, scale)), typ: aggregateType(op, e.typ, scale)}
 	return withCurrency(lc.lv.mixedTotal(name, e, total), cur), nil
 }

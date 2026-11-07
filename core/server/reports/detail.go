@@ -136,6 +136,7 @@ func (rc *rowsCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (exp
 	if err != nil {
 		return expr{}, err
 	}
+	e = countedArg(op, e)
 	sql := e.sql
 	switch op {
 	case Sum:

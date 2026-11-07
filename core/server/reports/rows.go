@@ -40,6 +40,12 @@ type compiler struct {
 	// and on group, subtotal and total rows.
 	detailTypes map[string]FieldType
 	levelTypes  map[string]FieldType
+	// sectionMixed marks the columns whose first-level cell may be blank
+	// because a sum lookup met two currencies (vmx<idx>), and pivotMixed the
+	// pivot cells that may be (pvm<j>): a computed layout row reads the
+	// helper beside the section's cell.
+	sectionMixed map[string]bool
+	pivotMixed   bool
 	// groupTargets is the source each group's key links to (nil for a group
 	// that is not by a link).
 	groupTargets []*Source

@@ -488,6 +488,7 @@ func notASortKey(at string) error {
 func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64) ([]string, string, error) {
 	var ctes, legs []string
 	c.levelTypes, c.sectionCur, c.fillSets = map[string]FieldType{}, map[string]currency{}, map[int]string{}
+	c.sectionMixed = map[string]bool{}
 	// readsSums is true when the level above adds this level's "rows" cells
 	// (childSum), which rt<L> then holds.
 	readsSums := false
@@ -519,15 +520,16 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			c.levelTypes[cp.col.ID] = e.typ
 			if n == 1 {
 				c.sectionCur[cp.col.ID] = e.cur
+				c.sectionMixed[cp.col.ID] = e.mixed != ""
 			}
 		}
-		pivotCells, err := c.pivotCells(lv, pivot)
+		pivotCells, pivotMixed, err := c.pivotCells(lv, pivot)
 		if err != nil {
 			return nil, "", err
 		}
-		// The labels, then the carried currencies, follow the pivot cells, as in
-		// every leg of the union.
-		cells = append(append(append(cells, pivotCells...), labels...), carried...)
+		// The labels, the carried currencies, then the pivot cells' mixed
+		// helpers follow the pivot cells, as in every leg of the union.
+		cells = append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...)
 		// The having's aggregates join a<L>, so it compiles before render.
 		own, err := lv.own()
 		if err != nil {
@@ -540,7 +542,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 				return nil, "", err
 			}
 			if pv := c.p.pivot; pv != nil && pv.cell.col.Total == TotalRows {
-				totals = append(totals, pivotCells...)
+				totals = append(append(totals, pivotCells...), pivotMixed...)
 			}
 		}
 		levels = append(levels, levelRows{lv: lv, cells: cells, totals: totals, own: own})

@@ -33,6 +33,16 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 	for j := range pivot {
 		lc.cellNames = append(lc.cellNames, fmt.Sprintf("pv%d", j))
 	}
+	for idx, cp := range c.p.cols {
+		if c.sectionMixed[cp.col.ID] {
+			lc.cellNames = append(lc.cellNames, fmt.Sprintf("vmx%d", idx))
+		}
+	}
+	for j := range pivot {
+		if c.pivotMixed {
+			lc.cellNames = append(lc.cellNames, fmt.Sprintf("pvm%d", j))
+		}
+	}
 	// A section whose cell carries its own currency (a record's) is read
 	// with that currency.
 	for idx, cp := range c.p.cols {
@@ -86,6 +96,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 			cells = append(cells, e.sql+" AS "+lc.cell)
 			carried = append(carried, lc.carriedCell(cp, e, idx), mixedCell(e, idx))
 		}
+		var pivotMixed []string
 		for j := range pivot {
 			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1
 			e, err := lc.row(item, at+".formula")
@@ -93,12 +104,15 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 				return nil, nil, err
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
+			if c.pivotMixed {
+				pivotMixed = append(pivotMixed, pivotMixedCell(e, j))
+			}
 		}
 		// A computed row points at no record: no column has a label.
 		for idx := range c.p.cols {
 			cells = append(cells, labelRef{}.cells(idx)...)
 		}
-		cells = append(cells, carried...)
+		cells = append(append(cells, carried...), pivotMixed...)
 		// The level rows' last columns, so every leg of the union has the same.
 		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n", "NULL AS __kids")
 		if len(lc.used) > maxJoinedChunks {
@@ -246,9 +260,39 @@ func (lc *layoutCtx) subtotal(id, at string) (expr, error) {
 	if !slices.Contains(lc.used, slot.chunk) {
 		lc.used = append(lc.used, slot.chunk)
 	}
-	// An empty section counts as zero.
+	// An empty section counts as zero; a section blank because a sum lookup
+	// met two currencies has no value, and neither has a row that reads it
+	// (R3).
 	e := expr{sql: fmt.Sprintf("COALESCE(ls%d.%s, 0)", slot.chunk, slot.column(lc.cell)), typ: lc.typ}
+	if helper := lc.mixedHelper(); helper != "" {
+		e.mixed = fmt.Sprintf("(ls%d.%s IS NOT NULL)", slot.chunk, slot.column(helper))
+		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", e.mixed, e.sql)
+	}
 	return withCurrency(e, lc.sectionCurrency(id, slot)), nil
+}
+
+// mixedHelper is the helper cell beside the cell being compiled that marks
+// a section's cell blank for mixed currencies, "" when it cannot be.
+func (lc *layoutCtx) mixedHelper() string {
+	if lc.idx < 0 {
+		if !lc.c.pivotMixed {
+			return ""
+		}
+		return "pvm" + strings.TrimPrefix(lc.cell, "pv")
+	}
+	if !lc.c.sectionMixed[lc.column.col.ID] {
+		return ""
+	}
+	return fmt.Sprintf("vmx%d", lc.idx)
+}
+
+// pivotMixedCell is a computed row's pvm<j>: 1 where its pivot cell j is
+// blank for mixed currencies.
+func pivotMixedCell(e expr, j int) string {
+	if e.mixed == "" {
+		return fmt.Sprintf("NULL AS pvm%d", j)
+	}
+	return fmt.Sprintf("(CASE WHEN %s THEN 1 END) AS pvm%d", e.mixed, j)
 }
 
 // sectionCurrency is the currency of a section's cell in the column being
