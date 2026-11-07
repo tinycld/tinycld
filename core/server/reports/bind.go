@@ -760,6 +760,9 @@ func (b *binder) groupsAndPivot(p *plan) {
 			b.bad(cp.at+".rollup", "a column a group is grouped by cannot have a rollup")
 		}
 		p.groups = append(p.groups, &groupPlan{group: g, col: cp, at: at})
+		if g.Opening != nil {
+			b.opening(p, g.Opening, at+".opening")
+		}
 	}
 	pv := spec.Pivot
 	if pv == nil {
@@ -798,6 +801,31 @@ func (b *binder) groupsAndPivot(p *plan) {
 		b.bad(pp.cell.at+".rollup", "a pivot's cell column is totalled by its pivot columns")
 	}
 	p.pivot = pp
+	// A pivot's innermost level never opens (its groups are the pivot's rows),
+	// so an opening row there could never show (R5e).
+	if last := len(spec.Groups) - 1; last >= 0 && spec.Groups[last].Opening != nil {
+		b.bad(fmt.Sprintf("groups.%d.opening", last), "this level never opens, so it has no opening row")
+	}
+}
+
+// opening checks a group's opening row: a label of 1 to maxLabel characters,
+// and cells only in the report's columns after the first, whose cell the
+// label fills, and not in a child row column. A cell's type and currency are
+// checked where it compiles, on its level (level.openingCells).
+func (b *binder) opening(p *plan, op *Opening, at string) {
+	if n := len(op.Label); n < 1 || n > maxLabel {
+		b.bad(at+".label", fmt.Sprintf("an opening row has a label of 1 to %d characters", maxLabel))
+	}
+	for _, id := range op.cellIDs() {
+		cellAt := at + ".cells." + id
+		switch cp := b.column(p, id, cellAt); {
+		case cp == nil:
+		case cp == p.cols[0]:
+			b.bad(cellAt, "the opening row's label fills the first column")
+		case cp.nest > 0:
+			b.bad(cellAt, "a child row column has no opening cell")
+		}
+	}
 }
 
 // layoutSectionKey refuses a section key that is not a scalar, or that

@@ -527,9 +527,14 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		if err != nil {
 			return nil, "", err
 		}
-		// The labels, the carried currencies, then the pivot cells' mixed
-		// helpers follow the pivot cells, as in every leg of the union.
-		cells = append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...)
+		opening, err := lv.openingCells()
+		if err != nil {
+			return nil, "", err
+		}
+		// The labels, the carried currencies, the pivot cells' mixed helpers,
+		// then the opening cells follow the pivot cells, as in every leg of the
+		// union.
+		cells = append(append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...), opening...)
 		// The having's aggregates join a<L>, so it compiles before render.
 		own, err := lv.own()
 		if err != nil {
@@ -594,9 +599,10 @@ type unionLeg struct {
 }
 
 // helperCell matches a row's record label (vl<idx>), its label's currency
-// (vc<idx>), a value's carried currency (vcur<idx>) and a looked-up total's
-// mixed check (vmx<idx>).
-var helperCell = regexp.MustCompile(`^(?:vl|vc|vcur|vmx)\d+$`)
+// (vc<idx>), a value's carried currency (vcur<idx>), a looked-up total's
+// mixed check (vmx<idx>) and an opening row's cells (op<idx>, opcur<idx>,
+// opmx<idx>).
+var helperCell = regexp.MustCompile(`^(?:vl|vc|vcur|vmx|op|opcur|opmx)\d+$`)
 
 // unreadHelpers are the helper cells that are NULL in every leg of a union:
 // no row has a label or a carried currency there, and assembly reads a missing
@@ -868,16 +874,25 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 // or a looked-up row's own, or an amount param's code: vcur<idx>), NULL when
 // it carries none. A column that carries one has the cell <id>@currency.
 func (c *compiler) carriedCell(s *stmt, cp *colPlan, e expr, idx int) string {
-	cur := e.cur.sql
-	if e.cur.param != "" {
-		// An amount param's currency is its own posted code.
-		cur = s.bind(e.cur.param)
-	}
-	if cur == "" {
+	if e.cur.sql == "" && e.cur.param == "" {
 		return noCarriedCell(idx)
 	}
 	c.carried[cp.col.ID] = true
-	return fmt.Sprintf("%s AS vcur%d", cur, idx)
+	return fmt.Sprintf("%s AS vcur%d", carriedSQL(s, e), idx)
+}
+
+// carriedSQL is the currency a value carries on a row (a record's or a
+// looked-up row's own, or an amount param's code), "NULL" when it carries
+// none.
+func carriedSQL(s *stmt, e expr) string {
+	switch {
+	case e.cur.param != "":
+		// An amount param's currency is its own posted code.
+		return s.bind(e.cur.param)
+	case e.cur.sql != "":
+		return e.cur.sql
+	}
+	return "NULL"
 }
 
 func noCarriedCell(idx int) string { return fmt.Sprintf("NULL AS vcur%d", idx) }

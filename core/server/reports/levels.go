@@ -522,6 +522,58 @@ func (lv *level) own() (string, error) {
 	return "COALESCE(" + e.sql + ", 0)", nil
 }
 
+// openingCells are the level's opening row cells, three per column in column
+// order: op<idx>, the opening's formula for that column compiled on this level
+// (R5a); opcur<idx>, the currency that value carries; opmx<idx>, 1 where a sum
+// lookup in it met two currencies (R3). A column the opening names no cell
+// for, and every column of a level with no opening, has NULL in all three, so
+// each leg of the group statement has the same cells.
+func (lv *level) openingCells() ([]string, error) {
+	var opening *Opening
+	at := ""
+	if lv.n >= 1 {
+		g := lv.c.p.groups[lv.n-1]
+		opening, at = g.group.Opening, g.at+".opening.cells."
+	}
+	out := make([]string, 0, 3*len(lv.c.p.cols))
+	for idx, cp := range lv.c.p.cols {
+		var node *Node
+		if opening != nil {
+			node = opening.Cells[cp.col.ID]
+		}
+		if node == nil {
+			out = append(out, blankOpeningCells(idx)...)
+			continue
+		}
+		cellAt := at + cp.col.ID
+		e, err := compileFormula(&levelCtx{lv: lv, visiting: lv.visiting}, node, cellAt)
+		if err != nil {
+			return nil, err
+		}
+		if err := lv.checkInColumn(cp, e, cellAt, "an opening cell"); err != nil {
+			return nil, err
+		}
+		// A cell that reads a value of one row (a path, a record of a group
+		// inside this one) has none on a group row, as a rollup has none (R6).
+		if lv.readsRowValue(node, false, map[string]bool{}) {
+			out = append(out, blankOpeningCells(idx)...)
+			continue
+		}
+		mixed := "NULL"
+		if e.mixed != "" {
+			mixed = fmt.Sprintf("(CASE WHEN %s THEN 1 END)", e.mixed)
+		}
+		out = append(out, fmt.Sprintf("%s AS op%d", cellSQL(e), idx), fmt.Sprintf("%s AS opcur%d", carriedSQL(lv.r.s, e), idx), fmt.Sprintf("%s AS opmx%d", mixed, idx))
+	}
+	return out, nil
+}
+
+// blankOpeningCells are column idx's opening cells on a row with no opening
+// value there.
+func blankOpeningCells(idx int) []string {
+	return []string{fmt.Sprintf("NULL AS op%d", idx), fmt.Sprintf("NULL AS opcur%d", idx), fmt.Sprintf("NULL AS opmx%d", idx)}
+}
+
 // labelSQL sets the label of the level's rows: the group's label formula
 // (the record's label when its value points at one), a record group's
 // record label, or none (the key labels the row).

@@ -121,15 +121,17 @@ func (rn *runner) markCurrencies(groupRows []map[string]any) {
 // markMixedLookups names in a notice every column a row of which shows no
 // value because a sum lookup met amounts in two currencies (R3). With the
 // totals' notice due too, the two are one notice: its message, both columns.
-func (rn *runner) markMixedLookups(rowSets ...[]map[string]any) {
+func (rn *runner) markMixedLookups(groupRows, details []map[string]any) {
 	marked := func(name string) bool {
-		return slices.ContainsFunc(rowSets, func(rows []map[string]any) bool {
+		return slices.ContainsFunc([][]map[string]any{groupRows, details}, func(rows []map[string]any) bool {
 			return slices.ContainsFunc(rows, func(row map[string]any) bool { return row[name] != nil })
 		})
 	}
+	// An opening cell shows in its column: a column named by both is named once.
+	opening := rn.openingMixed(groupRows)
 	var cols []string
 	for idx, cp := range rn.c.p.cols {
-		if slices.ContainsFunc(mixedHelpers(idx), marked) {
+		if slices.ContainsFunc(mixedHelpers(idx), marked) || slices.Contains(opening, cp.col.ID) {
 			cols = append(cols, cp.col.ID)
 		}
 	}
@@ -328,21 +330,29 @@ func (rn *runner) currencyOf(row map[string]any, cur currency) string {
 // ends in a subtotal row (a layout section always does).
 func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id string, label rowLabel, key []any, subtotal bool) {
 	p := rn.c.p
+	opening := p.groups[n-1].group.Opening
 	canOpen := n < len(p.groups) || p.pivot == nil
-	// A fill record has no base rows: it opens only onto the next level's fill
-	// records. A layout section with no rows has no __n and keeps this rule.
-	if v, ok := row["__n"]; ok && v != nil && toInt(v) == 0 && !rn.c.nextFill(n) {
-		canOpen = false
-	}
-	// A group whose child groups the having hides, every one, opens onto nothing.
-	if v, ok := row["__kids"]; ok && v != nil && toInt(v) == 0 {
-		canOpen = false
+	// A level with an opening row opens even with nothing under it, so the
+	// opening row and the subtotal show (R5d). Without one: a fill record has
+	// no base rows and opens only onto the next level's fill records (a layout
+	// section with no rows has no __n and keeps this rule), and a group whose
+	// child groups the having hides, every one, opens onto nothing.
+	if opening == nil {
+		if v, ok := row["__n"]; ok && v != nil && toInt(v) == 0 && !rn.c.nextFill(n) {
+			canOpen = false
+		}
+		if v, ok := row["__kids"]; ok && v != nil && toInt(v) == 0 {
+			canOpen = false
+		}
 	}
 	expanded := canOpen && rn.expand.has(key, n)
 	rn.push(Row{
 		ID: id, Kind: KindGroup, Depth: n - 1, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
 	})
+	if expanded && opening != nil {
+		rn.push(Row{ID: "opening:" + keyString(key), Kind: KindOpening, Depth: n, Label: opening.Label, Section: id, GroupKey: key, Cells: rn.openingCells(row, opening)})
+	}
 	if expanded {
 		if n < len(p.groups) {
 			for _, child := range t.children[keyString(key)] {
@@ -420,15 +430,7 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 		// is its row's; else the column's currency key holds it. A column with
 		// a fixed currency that some row carries its own on names a currency
 		// cell, so every other row shows the fixed code there.
-		cur := rn.c.currencyOf[cp.col.ID]
-		switch v := row[fmt.Sprintf("vcur%d", idx)]; {
-		case v != nil:
-			out[cp.col.ID+"@currency"] = v
-		case cur.key != "":
-			out[cp.col.ID+"@currency"] = row[cur.key]
-		case cur.fixed != nil && rn.c.carried[cp.col.ID]:
-			out[cp.col.ID+"@currency"] = rn.currencyOf(row, cur)
-		}
+		rn.currencyCell(out, cp, row, row[fmt.Sprintf("vcur%d", idx)])
 		rn.labelCell(out, cp, row)
 	}
 	if pv := rn.c.p.pivot; pv != nil {
@@ -436,6 +438,54 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 			if v, ok := row[fmt.Sprintf("pv%d", j)]; ok {
 				out[fmt.Sprintf("%s.p%d", pv.cell.col.ID, j)] = v
 			}
+		}
+	}
+	return out
+}
+
+// currencyCell puts a money cell's currency in <id>@currency: the one its
+// value carries, else the row's currency key of the column, else the column's
+// fixed code when some row carries its own.
+func (rn *runner) currencyCell(out map[string]any, cp *colPlan, row map[string]any, carried any) {
+	cur := rn.c.currencyOf[cp.col.ID]
+	switch {
+	case carried != nil:
+		out[cp.col.ID+"@currency"] = carried
+	case cur.key != "":
+		out[cp.col.ID+"@currency"] = row[cur.key]
+	case cur.fixed != nil && rn.c.carried[cp.col.ID]:
+		out[cp.col.ID+"@currency"] = rn.currencyOf(row, cur)
+	}
+}
+
+// openingCells are an opening row's cells: each column its level's opening
+// names, from the group row's op<idx>, typed as the column's detail cells,
+// with a money cell's currency as a group row's (currencyCell). A column it
+// names no cell for has none, so it is blank.
+func (rn *runner) openingCells(row map[string]any, opening *Opening) map[string]any {
+	out := map[string]any{}
+	for idx, cp := range rn.c.p.cols {
+		if opening.Cells[cp.col.ID] == nil {
+			continue
+		}
+		out[cp.col.ID] = rn.cellValue(cp, row[fmt.Sprintf("op%d", idx)], false)
+		rn.currencyCell(out, cp, row, row[fmt.Sprintf("opcur%d", idx)])
+	}
+	return out
+}
+
+// openingMixed lists, in column order, the columns whose opening cell met two
+// currencies in a sum lookup (opmx<idx>) on a group row that opens, so its
+// opening row shows.
+func (rn *runner) openingMixed(groupRows []map[string]any) []string {
+	var out []string
+	for idx, cp := range rn.c.p.cols {
+		name := fmt.Sprintf("opmx%d", idx)
+		if slices.ContainsFunc(groupRows, func(row map[string]any) bool {
+			n := int(toInt(row["__level"]))
+			return row["__row"] == nil && n >= 1 && row[name] != nil && rn.expand.has(rn.rowKey(row, n), n)
+		}) {
+			out = append(out, cp.col.ID)
 		}
 	}
 	return out

@@ -113,6 +113,10 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 			cells = append(cells, labelRef{}.cells(idx)...)
 		}
 		cells = append(append(cells, carried...), pivotMixed...)
+		// A computed row has no opening row: its opening cells are blank.
+		for idx := range c.p.cols {
+			cells = append(cells, blankOpeningCells(idx)...)
+		}
 		// The level rows' last columns, so every leg of the union has the same.
 		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n", "NULL AS __kids")
 		if len(lc.used) > maxJoinedChunks {
