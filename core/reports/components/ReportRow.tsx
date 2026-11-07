@@ -14,6 +14,7 @@ import { columnAlign, INDENT, type ReportTableLayout, ROW_HEIGHT } from './repor
 const ROW_RULE: Record<RowKind, string> = {
     group: '',
     detail: '',
+    opening: '',
     subtotal: 'border-t border-border',
     computed: 'border-t border-border',
     total: 'border-t-2 border-foreground',
@@ -22,6 +23,7 @@ const ROW_RULE: Record<RowKind, string> = {
 const ROW_WEIGHT: Record<RowKind, string> = {
     group: 'font-semibold',
     detail: '',
+    opening: '',
     subtotal: 'font-semibold',
     computed: 'font-semibold',
     total: 'font-semibold',

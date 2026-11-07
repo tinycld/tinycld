@@ -457,7 +457,7 @@ describe('builderSchema', () => {
 })
 
 const V2: ReportSpec = {
-    version: 2,
+    version: CURRENT_SPEC_VERSION,
     source: SALES_KEY,
     params: [
         { id: 'asOf', type: 'asOf', label: 'As of', default: { preset: 'endOfLastMonth' } },
@@ -659,7 +659,7 @@ describe('spec version 2 in the builder', () => {
 
     it('keeps the label field of a link column and of a pivot', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'team', label: 'Team', path: [{ link: 'team' }], labelField: 'region' },
@@ -683,7 +683,7 @@ describe('spec version 2 in the builder', () => {
 
     it('reads a fill condition that matches the group above, and writes it back', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'region', label: 'Region', path: [{ link: 'team' }, { field: 'region' }] },
@@ -718,7 +718,7 @@ describe('spec version 2 in the builder', () => {
 
     it('saves a fill with no conditions as an empty fill', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
             groups: [{ id: 'byTeam', col: 'team', fill: {} }],
@@ -736,7 +736,7 @@ describe('spec version 2 in the builder', () => {
             args: [{ path: [{ field: 'quantity' }] }, { value: 0 }],
         }
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'team', label: 'Team', path: [{ link: 'team' }] },
@@ -1021,7 +1021,7 @@ describe('spec version 2 in the builder', () => {
 describe('a no-op save keeps what the spec says', () => {
     it('keeps a param that only another param’s options read, through a chain', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             params: [
                 {
@@ -1071,7 +1071,7 @@ describe('a no-op save keeps what the spec says', () => {
 
     it('keeps defaults the spec spells out', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'status', label: 'Status', path: [{ field: 'status' }] },
@@ -1124,7 +1124,7 @@ describe('the group pick text of a param from a source', () => {
         multiple: true,
     })
     const specWith = (param: ParamDef): ReportSpec => ({
-        version: 2,
+        version: CURRENT_SPEC_VERSION,
         source: SALES_KEY,
         params: [param],
         columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
@@ -1186,7 +1186,7 @@ describe('the group order of a param from a source', () => {
         multiple: true,
     })
     const specWith = (param: ParamDef): ReportSpec => ({
-        version: 2,
+        version: CURRENT_SPEC_VERSION,
         source: SALES_KEY,
         params: [param],
         columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],

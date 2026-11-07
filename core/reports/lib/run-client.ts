@@ -14,11 +14,16 @@ export const RUN_PATH = '/api/reports/run'
 export const SOURCES_PATH = '/api/reports/sources'
 export const PARAM_OPTIONS_PATH = '/api/reports/param-options'
 
+/** One key of a reader's sort: a column of the result, ascending or descending. */
+export type ViewSort = { col: string; dir: 'asc' | 'desc' }
+
 export interface RunOptions {
     expand?: unknown[][]
     expandAll?: boolean
     cursor?: string
     limit?: number
+    /** The reader's sort, before the report's own; detail rows only, inside their groups. */
+    sort?: ViewSort[]
     /** The reader's day, which presets resolve against. */
     today: string
 }

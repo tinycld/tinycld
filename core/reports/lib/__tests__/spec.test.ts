@@ -67,10 +67,12 @@ describe('parseSpec', () => {
         ).toBeNull()
     })
 
-    it('reads a version 1 spec and a version 2 spec', () => {
+    it('reads a version 1, 2 and 3 spec and refuses version 4', () => {
         expect(parseSpec({ ...FEEDINGS, version: 1 })).not.toBeNull()
         expect(parseSpec({ ...FEEDINGS, version: 2 })).not.toBeNull()
-        expect(parseSpec({ ...FEEDINGS, version: 3 })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, version: 3 })).not.toBeNull()
+        expect(parseSpec({ ...FEEDINGS, version: 4 })).toBeNull()
+        expect(CURRENT_SPEC_VERSION).toBe(3)
     })
 
     // E1: optionsFrom.groupOrder (spec.go GroupOrder) is by label, declared, or a path.
@@ -258,5 +260,163 @@ describe('parseBroken', () => {
         expect(parseBroken(null)).toBeNull()
         expect(parseBroken(undefined)).toBeNull()
         expect(parseBroken({ status: 'bad' })).toBeNull()
+    })
+})
+
+// F1/F3 inside a lookup: the animal's cost before the period.
+const BEFORE_PERIOD = {
+    op: 'coalesce',
+    args: [
+        {
+            op: 'lookup',
+            source: 'zoo.feedings',
+            where: {
+                op: 'and',
+                args: [
+                    {
+                        op: 'eq',
+                        args: [
+                            { path: [{ link: 'animal' }] },
+                            { record: 'byAnimal', path: [{ field: 'id' }] },
+                        ],
+                    },
+                    {
+                        op: 'lt',
+                        args: [{ path: [{ field: 'fed' }] }, { param: 'period', bound: 'from' }],
+                    },
+                ],
+            },
+            value: { path: [{ field: 'cost' }] },
+            pick: 'sum',
+        },
+        { value: 0 },
+    ],
+}
+
+// The head's v3 example: every new part once.
+const V3 = {
+    version: 3,
+    source: 'zoo.feedings',
+    params: [{ id: 'period', type: 'dateRange', label: 'Period', default: { preset: 'allDates' } }],
+    columns: [
+        { id: 'animal', label: 'Animal', path: [{ link: 'animal' }] },
+        { id: 'fed', label: 'Fed', path: [{ field: 'fed' }] },
+        { id: 'cost', label: 'Cost', path: [{ field: 'cost' }], aggregate: 'sum' },
+        {
+            id: 'sameDay',
+            label: 'Same day',
+            formula: {
+                op: 'lookup',
+                source: 'zoo.feedings',
+                where: {
+                    op: 'and',
+                    args: [
+                        {
+                            op: 'eq',
+                            args: [{ path: [{ link: 'animal' }] }, { outer: [{ link: 'animal' }] }],
+                        },
+                        {
+                            op: 'eq',
+                            args: [{ path: [{ field: 'fed' }] }, { outer: [{ field: 'fed' }] }],
+                        },
+                    ],
+                },
+                value: { path: [{ field: 'id' }] },
+                pick: 'count',
+            },
+        },
+        {
+            id: 'balance',
+            label: 'Balance',
+            formula: {
+                op: 'add',
+                args: [BEFORE_PERIOD, { op: 'runningSum', args: [{ path: [{ field: 'cost' }] }] }],
+            },
+            rollup: {
+                op: 'add',
+                args: [{ op: 'sum', args: [{ path: [{ field: 'cost' }] }] }, { value: 0 }],
+            },
+        },
+    ],
+    filter: { op: 'between', args: [{ path: [{ field: 'fed' }] }, { param: 'period' }] },
+    groups: [
+        {
+            id: 'byAnimal',
+            col: 'animal',
+            open: true,
+            subtotals: true,
+            opening: { label: 'Before the period', cells: { balance: BEFORE_PERIOD } },
+        },
+    ],
+    sort: [{ col: 'fed' }],
+}
+
+describe('spec version 3', () => {
+    it('reads every v3 part as it is', () => {
+        expect(parseSpec(V3)).toEqual(V3)
+    })
+
+    it('reads a v3 spec with none of the new parts', () => {
+        expect(parseSpec({ ...FEEDINGS, version: 3 })).toEqual({ ...FEEDINGS, version: 3 })
+    })
+
+    it('reads an opening row with no cells', () => {
+        const groups = [{ id: 'g', col: 'species', opening: { label: 'Before' } }]
+        expect(parseSpec({ ...FEEDINGS, version: 3, groups })?.groups?.[0]?.opening).toEqual({
+            label: 'Before',
+        })
+    })
+
+    it('refuses a pick, a bound or an opening label the engine refuses', () => {
+        const lookup = (pick: string) => ({
+            ...FEEDINGS,
+            version: 3,
+            columns: [
+                {
+                    id: 'x',
+                    formula: {
+                        op: 'lookup',
+                        source: 'zoo.animals',
+                        value: { path: [{ field: 'weight' }] },
+                        pick,
+                    },
+                },
+            ],
+        })
+        for (const pick of ['min', 'max', 'sum', 'count'])
+            expect(parseSpec(lookup(pick))).not.toBeNull()
+        expect(parseSpec(lookup('avg'))).toBeNull()
+
+        const bound = (b: string) => ({
+            ...FEEDINGS,
+            version: 3,
+            filter: {
+                op: 'lt',
+                args: [{ path: [{ field: 'fed' }] }, { param: 'period', bound: b }],
+            },
+        })
+        expect(parseSpec(bound('to'))).not.toBeNull()
+        expect(parseSpec(bound('mid'))).toBeNull()
+
+        const opening = (label: string) => ({
+            ...FEEDINGS,
+            version: 3,
+            groups: [{ id: 'g', col: 'species', opening: { label } }],
+        })
+        expect(parseSpec(opening(''))).toBeNull()
+        expect(parseSpec(opening('x'.repeat(201)))).toBeNull()
+        expect(parseSpec(opening('x'.repeat(200)))).not.toBeNull()
+    })
+
+    it('refuses an outer leaf that is not a path of hops, and an opening part it does not know', () => {
+        const outer = (value: unknown) => ({
+            ...FEEDINGS,
+            version: 3,
+            columns: [{ id: 'x', formula: { outer: value } }],
+        })
+        expect(parseSpec(outer([{ field: 'fed' }]))).not.toBeNull()
+        expect(parseSpec(outer('fed'))).toBeNull()
+        const groups = [{ id: 'g', col: 'species', opening: { label: 'Before', rows: 2 } }]
+        expect(parseSpec({ ...FEEDINGS, version: 3, groups })).toBeNull()
     })
 })

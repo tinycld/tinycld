@@ -18,7 +18,7 @@ export type FieldType = (typeof FIELD_TYPES)[number]
 export const AGGREGATES = ['sum', 'count', 'countDistinct', 'min', 'max', 'avg'] as const
 export type Aggregate = (typeof AGGREGATES)[number]
 
-export type RowKind = 'detail' | 'group' | 'subtotal' | 'computed' | 'total'
+export type RowKind = 'detail' | 'group' | 'opening' | 'subtotal' | 'computed' | 'total'
 
 export type CellValue = number | string | boolean | null
 
@@ -69,6 +69,8 @@ export interface ResultColumn {
     labelCell?: string
     labelType?: FieldType
     labelCurrencyCell?: string
+    /** The run accepts this column as a reader's sort key (options.sort). */
+    sortable?: boolean
 }
 
 export interface ResultRow {
