@@ -1,12 +1,13 @@
 // Package stub is an E2E fixture: two report sources over its own collections,
 // so the app shell's reports e2e has a to-one link, a to-many link, money, a
 // number, a date, a day kept as text and selects with no real feature package
-// installed, a heading, and two shipped reports (one published, one not). See
+// installed, a heading, and three shipped reports (one published, two not). See
 // tinycld/tests/scripts/scaffold-reports-stub.ts for why.
 package stub
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
 
@@ -101,8 +102,71 @@ func Register(_ core.App) error {
 			"detail": {"label": {"op": "concat", "args": [{"path": [{"field": "customer"}]}, {"value": " · "}, {"path": [{"field": "booked"}]}]}}
 		}`),
 	})
+	// An unpublished shipped report over the spec v3 parts (R17): a team's sales
+	// before the period open each team (an opening row and a `sum` lookup before
+	// the period's start), a running balance continues from it, a `rollup` shows
+	// the team's ending balance on its Total row, a `count` lookup reads the
+	// row's own day and team (`outer`), and a tablet arrangement takes over when
+	// the nine columns do not fit (tests/e2e/reports-ledger-v3.spec.ts).
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.team_balance", Title: "Stub team balance", Revision: 1, Unpublished: true,
+		Description: "Each team's sales with a running balance from before the period.",
+		Spec: json.RawMessage(strings.ReplaceAll(`{
+			"version": 3,
+			"source": "salesstub.sales",
+			"params": [
+				{"id": "period", "type": "dateRange", "label": "Period", "default": {"preset": "thisFiscalYear"}},
+				{"id": "teams", "type": "choice", "label": "Teams", "multiple": true,
+				 "optionsFrom": {"source": "salesstub.teams", "value": [{"field": "id"}], "label": [{"field": "name"}]}}
+			],
+			"columns": [
+				{"id": "customer", "label": "Customer", "path": [{"field": "customer"}]},
+				{"id": "team", "label": "Team", "path": [{"link": "team"}], "detail": "blank"},
+				{"id": "day", "label": "Day", "path": [{"field": "day"}]},
+				{"id": "status", "label": "Status", "path": [{"field": "status"}]},
+				{"id": "amount", "label": "Amount", "path": [{"field": "amount"}], "aggregate": "sum"},
+				{"id": "cost", "label": "Cost", "path": [{"field": "cost"}], "aggregate": "sum"},
+				{"id": "quantity", "label": "Quantity", "path": [{"field": "quantity"}], "aggregate": "sum"},
+				{"id": "sameDay", "label": "Same day", "formula": {"op": "lookup", "source": "salesstub.sales",
+					"where": {"op": "and", "args": [
+						{"op": "eq", "args": [{"path": [{"link": "team"}]}, {"outer": [{"link": "team"}]}]},
+						{"op": "eq", "args": [{"path": [{"field": "day"}]}, {"outer": [{"field": "day"}]}]}]},
+					"value": {"path": [{"field": "id"}]}, "pick": "count"}},
+				{"id": "balance", "label": "Balance",
+					"formula": {"op": "add", "args": [OPENING, {"op": "runningSum", "args": [{"path": [{"field": "amount"}]}]}]},
+					"rollup": {"op": "add", "args": [OPENING, {"op": "coalesce", "args": [{"op": "sum", "args": [{"path": [{"field": "amount"}]}]}, {"value": 0}]}]}}
+			],
+			"filter": {"op": "and", "args": [
+				{"op": "between", "args": [{"path": [{"field": "day"}]}, {"param": "period"}]},
+				{"op": "in", "args": [{"path": [{"link": "team"}]}, {"param": "teams"}]}
+			]},
+			"groups": [{"id": "byTeam", "col": "team", "open": true, "subtotals": true,
+				"label": {"record": "byTeam", "path": [{"field": "name"}]},
+				"opening": {"label": "Before the period", "cells": {"balance": OPENING}}}],
+			"sort": [{"col": "day"}, {"col": "customer"}],
+			"display": {"layouts": [{"width": "tablet", "tracks": 12, "cells": [
+				{"col": "customer", "line": 1, "span": 4},
+				{"col": "day", "line": 1, "span": 2},
+				{"col": "status", "line": 1, "span": 2},
+				{"col": "amount", "line": 1, "span": 2},
+				{"col": "balance", "line": 1, "span": 2},
+				{"col": "cost", "line": 2, "span": 4},
+				{"col": "quantity", "line": 2, "span": 4},
+				{"col": "sameDay", "line": 2, "span": 4}
+			]}]}
+		}`, "OPENING", teamOpening)),
+	})
 	return nil
 }
 
 // stubHeading is the business name the stub's reports print above their title (E9).
 func stubHeading(core.App, *core.RequestInfo) string { return "Stub Sales Co" }
+
+// teamOpening is a team's sales before the period's first day, where the
+// report's running balance starts. It is 0 with no such sale, and on All dates,
+// whose start has no value (spec v3 F3).
+const teamOpening = `{"op": "coalesce", "args": [{"op": "lookup", "source": "salesstub.sales",
+	"where": {"op": "and", "args": [
+		{"op": "eq", "args": [{"path": [{"link": "team"}]}, {"record": "byTeam", "path": [{"field": "id"}]}]},
+		{"op": "lt", "args": [{"path": [{"field": "day"}]}, {"param": "period", "bound": "from"}]}]},
+	"value": {"path": [{"field": "amount"}]}, "pick": "sum"}, {"value": 0}]}`

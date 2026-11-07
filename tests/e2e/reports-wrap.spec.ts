@@ -23,8 +23,9 @@ import {
  * E14: on a phone a row too wide for one line wraps (the label on line 1, the
  * figures aligned on line 2 under headings that wrap the same way) and nothing
  * scrolls sideways; an open group's row sticks while its rows scroll under it.
- * Desktop keeps one line per row and the heading row stays at the top. An author
- * arrangement for phones places columns on chosen lines.
+ * Desktop keeps one line per row, narrowing text columns before it wraps, never
+ * scrolls sideways, and the heading row stays at the top. An author arrangement
+ * for phones places columns on chosen lines.
  */
 
 async function seed(p: Page, sales: number) {
@@ -382,7 +383,7 @@ test.describe('report rows per width', () => {
         }
     })
 
-    test('on a desktop a table wider than its view scrolls sideways with its labels held at the left', async ({
+    test('on a desktop a table wider than its view narrows its text columns and never scrolls sideways', async ({
         page,
     }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptside')
@@ -402,31 +403,52 @@ test.describe('report rows per width', () => {
             ]) {
                 await addColumn(p, keys)
             }
-            await saveNewReport(p, uniqueName('Sideways'))
+            await saveNewReport(p, uniqueName('Narrowed'))
             await p.setViewportSize({ width: 1100, height: 720 })
             const label = rowOf(p, 'Wrapco 00')
-            const id = (await label.getAttribute('data-testid'))?.replace('report-row-', '') ?? ''
+            await expect(label).toBeVisible()
+            const table = p.getByTestId('report-table')
+            // Every heading ends inside the table, on one line.
+            const headings = () =>
+                table.evaluate(element => {
+                    const box = element.getBoundingClientRect()
+                    const cells = [
+                        ...element.querySelectorAll('[data-testid^="report-heading-"]'),
+                    ].filter(el => el.getAttribute('data-testid') !== 'report-heading-row')
+                    const tops = new Set(
+                        cells.map(el => Math.round(el.getBoundingClientRect().top))
+                    )
+                    return {
+                        count: cells.length,
+                        outside: cells.filter(
+                            el => el.getBoundingClientRect().right > box.right + 1
+                        ).length,
+                        lines: tops.size,
+                    }
+                })
+            await expect.poll(async () => (await headings()).outside).toBe(0)
+            expect(await headings()).toMatchObject({ count: 9, lines: 1 })
+            // Nothing moves sideways.
             const x = async (testId: string) => (await p.getByTestId(testId).boundingBox())?.x ?? 0
-            const before = {
-                label: (await label.boundingBox())?.x ?? 0,
-                headLabel: await x('report-heading-customer'),
-                headAmount: await x('report-heading-amount'),
-            }
-            await p.getByTestId('report-table').hover()
+            const before = await x('report-heading-amount')
+            await table.hover()
             await p.mouse.wheel(300, 0)
+            expect(
+                await table.evaluate(element =>
+                    [element, ...element.querySelectorAll('*')].every(el => el.scrollLeft === 0)
+                )
+            ).toBe(true)
+            expect(Math.abs((await x('report-heading-amount')) - before)).toBeLessThanOrEqual(1)
+            // The label is cut short with "…"; the amount keeps its width.
+            const text = label.getByText('Wrapco 00', { exact: true })
+            expect(await text.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
             await expect
-                .poll(async () => before.headAmount - (await x('report-heading-amount')))
-                .toBeGreaterThan(100)
-            // The heading and the rows move in step; the label column stays put.
-            expect(
-                Math.abs((await x('report-heading-amount')) - (await x(`report-cell-amount-${id}`)))
-            ).toBeLessThanOrEqual(1)
-            expect(
-                Math.abs((await x('report-heading-customer')) - before.headLabel)
-            ).toBeLessThanOrEqual(1)
-            expect(
-                Math.abs(((await label.boundingBox())?.x ?? 0) - before.label)
-            ).toBeLessThanOrEqual(1)
+                .poll(async () =>
+                    Math.round(
+                        (await p.getByTestId('report-heading-amount').boundingBox())?.width ?? 0
+                    )
+                )
+                .toBe(128)
         } finally {
             await close()
         }
@@ -511,6 +533,9 @@ test.describe('report rows per width', () => {
             await openReportsHub(p)
             await startTeamSales(p)
             await groupWithTeamRegion(p)
+            // A fifth column: with four, R21 fits the row on one narrowed line at 390
+            // (80 + 108 + 2 × 93 = 374), and this test is about the wrapped rows.
+            await addColumn(p, ['cost'])
             await expect(p.getByTestId('report-builder-column-3-detail')).toBeVisible()
             await chooseOption(p, 'report-builder-column-3-detail', 'blank')
             await saveNewReport(p, uniqueName('Blank phone'))
