@@ -155,6 +155,7 @@ function TableBody({ model }: { model: ReportViewModel }) {
             isLoadingMore={model.run.isLoadingMore}
             sort={model.sort}
             onSortColumn={model.onSortColumn}
+            onTopRowIndex={model.run.onTopRowIndex}
         />
     )
 }

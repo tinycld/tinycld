@@ -133,8 +133,8 @@ export async function runReport(body: RunBody, signal?: AbortSignal): Promise<Ru
 
 /** The detail rows a run page asks for. */
 export const RUN_PAGE_SIZE = 200
-// The server holds a page at 1,000 detail rows (run.go runLimits.maxPage).
-const RUN_MAX_PAGE = 1000
+/** The most detail rows the server gives a page (run.go runLimits.maxPage). */
+export const RUN_MAX_PAGE = 1000
 
 export function withPage(body: RunBody, cursor: string, limit = RUN_PAGE_SIZE): RunBody {
     return {
@@ -155,10 +155,32 @@ export function lastGroupRowOf(results: readonly RunResult[]): string | undefine
 }
 
 /**
+ * The id of the group row at or above the row `rowId` in these results, in document
+ * order: the group the reader is in when that row is at the top of the view.
+ * Undefined when the results do not hold the row, or no group row comes before it.
+ */
+export function groupRowAt(
+    results: readonly RunResult[],
+    rowId: string | undefined
+): string | undefined {
+    if (rowId === undefined) return undefined
+    let group: string | undefined
+    for (const result of results) {
+        for (const row of result.rows) {
+            if (row.kind === 'group') group = row.id
+            if (row.id === rowId) return group
+        }
+    }
+    return undefined
+}
+
+/**
  * A run's first page, holding at least `target` detail rows and the row `untilRow`
  * when the run has them: the server's pages are fetched in turn and joined into one
  * (mergePages), and the next page follows from the last one's cursor. A target of 0
- * with no row is one page.
+ * with no row is one page. The first request asks for the usual page or the target;
+ * when a page has come and only the row is still missing, each next request asks
+ * for the server's most, so a row far down takes few requests.
  */
 export async function runFirstPage(
     body: RunBody,
@@ -171,7 +193,10 @@ export async function runFirstPage(
     let loaded = 0
     let holdsRow = !untilRow
     do {
-        const limit = Math.min(RUN_MAX_PAGE, Math.max(RUN_PAGE_SIZE, target - loaded))
+        const limit =
+            results.length > 0 && loaded >= target && !holdsRow
+                ? RUN_MAX_PAGE
+                : Math.min(RUN_MAX_PAGE, Math.max(RUN_PAGE_SIZE, target - loaded))
         const outcome = await runReport(withPage(body, cursor, limit), signal)
         if (outcome.kind !== 'ok') return outcome
         results.push(outcome.result)

@@ -1,4 +1,4 @@
-import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list'
+import { FlashList, type ListRenderItemInfo, type ViewToken } from '@shopify/flash-list'
 import { type Breakpoint, useWindowWidth } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react-native'
@@ -262,6 +262,34 @@ function renderTableItem({ item, index, target, extraData }: ListRenderItemInfo<
 const rowKey = (item: VisibleRow) => item.row.id
 const rowType = (item: VisibleRow) => item.row.kind
 const STICKY_CONFIG = { useNativeDriver: Platform.OS !== 'web' }
+// A row counts as in view from its first pixel, at once: a fold pressed just after a
+// scroll must read where the reader is now. The handler only writes a ref.
+const VIEWABILITY_CONFIG = { minimumViewTime: 0 }
+
+/** The index of the topmost row in view, or undefined when none is. */
+function topIndexOf(tokens: readonly ViewToken<VisibleRow>[]): number | undefined {
+    let top: number | undefined
+    for (const { index } of tokens) {
+        if (index !== null && (top === undefined || index < top)) top = index
+    }
+    return top
+}
+
+type ViewableChange = { viewableItems: ViewToken<VisibleRow>[] }
+
+// Tells the run the index of the row at the top of the view, so a fold keeps the
+// reader's group and loads no further (useReportRun). FlashList reports only when
+// the indices in view change, so the run reads the row at that index when it needs
+// it. One handler while onTopRowIndex stays.
+function useTopRowReport(onTopRowIndex: ((index: number) => void) | undefined) {
+    return useMemo(() => {
+        if (!onTopRowIndex) return undefined
+        return ({ viewableItems }: ViewableChange) => {
+            const top = topIndexOf(viewableItems)
+            if (top !== undefined) onTopRowIndex(top)
+        }
+    }, [onTopRowIndex])
+}
 
 // A row's width: the list's content, which on web is the list less the scroll
 // bar's gutter (scrollbar-gutter: stable, any bar width, none for overlay bars),
@@ -276,6 +304,7 @@ interface TableListProps extends Omit<TableRowProps, 'item'> {
     isLoadingMore: boolean
     onRowWidth(width: number): void
     sorting: HeadingSort
+    onTopRowIndex?(index: number): void
 }
 
 function TableList({
@@ -284,10 +313,12 @@ function TableList({
     isLoadingMore,
     onRowWidth,
     sorting,
+    onTopRowIndex,
     ...row
 }: TableListProps) {
     const { columns, layout, format, onToggleGroup } = row
     const sticky = useMemo(() => stickyIndices(rows), [rows])
+    const onViewableItemsChanged = useTopRowReport(onTopRowIndex)
     const extraData = useMemo<TableData>(
         () => ({ columns, layout, format, onToggleGroup, rows }),
         [columns, layout, format, onToggleGroup, rows]
@@ -308,6 +339,8 @@ function TableList({
                 stickyHeaderConfig={STICKY_CONFIG}
                 onEndReached={onNearEnd}
                 onEndReachedThreshold={0.5}
+                onViewableItemsChanged={onViewableItemsChanged}
+                viewabilityConfig={VIEWABILITY_CONFIG}
                 className="web:[scrollbar-gutter:stable]"
                 ListHeaderComponent={header}
                 ListFooterComponent={<LoadingMore isVisible={isLoadingMore} />}
@@ -332,6 +365,8 @@ export interface ReportTableProps {
     /** The reader's sort (the view URL's `s=`); null: the report's own order. */
     sort: ViewSort | null
     onSortColumn(col: string): void
+    /** Told the index (in `rows`) of the row at the top of the view whenever the indices in view change. */
+    onTopRowIndex?(index: number): void
 }
 
 // FlashList measures every row (wrapped rows have the heights their content
@@ -384,6 +419,7 @@ export function ReportTable(props: ReportTableProps) {
                 isLoadingMore={isLoadingMore}
                 onRowWidth={setRowWidth}
                 sorting={sorting}
+                onTopRowIndex={props.onTopRowIndex}
             />
         </View>
     )

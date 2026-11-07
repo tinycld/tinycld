@@ -182,3 +182,131 @@ describe('useReportRun', () => {
         expect(nextPages).toBe(1)
     })
 })
+
+// F11 and F7: a fold keeps the reader's place, and loads no further than that place.
+// With every group closed the first page holds every group row of the report; the
+// place is the group row in view (the list reports its top row), not the last one.
+describe('useReportRun after a fold', () => {
+    const collapsed: RunBody = {
+        reportId: 'r1',
+        params: {},
+        options: { today: '2026-11-07', expand: [] },
+    }
+    const expanded: RunBody = {
+        reportId: 'r1',
+        params: {},
+        options: { today: '2026-11-07', expandAll: true },
+    }
+    // Three groups of four detail rows; the server answers 2 detail rows a page.
+    const closedPage = result([
+        row('g:a', 'group'),
+        row('g:b', 'group'),
+        row('g:c', 'group'),
+        row('total', 'total'),
+    ])
+    const openPages = [
+        result([row('g:a', 'group'), row('d:a1'), row('d:a2')], 'c1'),
+        result([row('d:a3'), row('d:a4')], 'c2'),
+        result([row('s:a', 'subtotal'), row('g:b', 'group'), row('d:b1'), row('d:b2')], 'c3'),
+        result([row('d:b3'), row('d:b4')], 'c4'),
+        result([row('s:b', 'subtotal'), row('g:c', 'group'), row('d:c1'), row('d:c2')], 'c5'),
+        result([row('d:c3'), row('d:c4'), row('total', 'total')]),
+    ]
+    let sent: RunBody[] = []
+
+    // The closed pages the server answers in turn (the last one again after them).
+    function serve(closedPages: RunResult[] = [closedPage]) {
+        sent = []
+        let closedRuns = 0
+        answer = request => {
+            sent.push(request)
+            if (!request.options.expandAll) {
+                const at = Math.min(closedRuns, closedPages.length - 1)
+                closedRuns += 1
+                return Promise.resolve(closedPages[at])
+            }
+            const at = request.options.cursor ? Number(request.options.cursor.slice(1)) : 0
+            return Promise.resolve(openPages[at])
+        }
+    }
+
+    function renderFold() {
+        const queryClient = new QueryClient()
+        const wrapper = ({ children }: { children: ReactNode }) => (
+            <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        )
+        return renderHook(
+            ({ runBody }: { runBody: RunBody }) => useReportRun({ body: runBody, userId: 'u1' }),
+            { wrapper, initialProps: { runBody: collapsed } }
+        )
+    }
+
+    async function expandAll(fold: ReturnType<typeof renderFold>) {
+        sent = []
+        fold.rerender({ runBody: expanded })
+        await waitFor(() => expect(fold.result.current.result?.rows[1]?.id).toBe('d:a1'))
+        return fold.result.current
+    }
+
+    // The list reports the index of its top row in view (the rows' order on screen).
+    async function expandAllWithTopRow(topIndex: number | null) {
+        serve()
+        const fold = renderFold()
+        await waitFor(() =>
+            expect(rowIds(fold.result.current)).toEqual(rowIds({ result: closedPage }))
+        )
+        if (topIndex !== null) act(() => fold.result.current.onTopRowIndex?.(topIndex))
+        return expandAll(fold)
+    }
+
+    it('Expand all at the top of closed groups asks for one page', async () => {
+        const run = await expandAllWithTopRow(0)
+        expect(sent).toHaveLength(1)
+        expect(rowIds(run)).toEqual(['g:a', 'd:a1', 'd:a2'])
+        expect(run.hasMore).toBe(true)
+    })
+
+    it('Expand all joins pages up to the group in view, and no further', async () => {
+        const run = await expandAllWithTopRow(1)
+        expect(sent.map(request => request.options.cursor)).toEqual([undefined, 'c1', 'c2'])
+        expect(rowIds(run)).toEqual([
+            'g:a',
+            'd:a1',
+            'd:a2',
+            'd:a3',
+            'd:a4',
+            's:a',
+            'g:b',
+            'd:b1',
+            'd:b2',
+        ])
+    })
+
+    it('Expand all with no row reported in view asks for one page', async () => {
+        await expandAllWithTopRow(null)
+        expect(sent).toHaveLength(1)
+    })
+
+    it('a row in view that the shown pages do not hold adds nothing to the fold', async () => {
+        await expandAllWithTopRow(9)
+        expect(sent).toHaveLength(1)
+    })
+
+    // FlashList reports only when the indices in view change. A live rerun that
+    // changes the rows under the same indices reports nothing, so the place is the
+    // row now at the reported index, not the row that was there before.
+    it('takes the row now at the reported index when the rows change under it', async () => {
+        const before = result([row('g:a', 'group'), row('g:c', 'group'), row('total', 'total')])
+        serve([before, closedPage])
+        const fold = renderFold()
+        await waitFor(() => expect(rowIds(fold.result.current)).toEqual(['g:a', 'g:c', 'total']))
+        act(() => fold.result.current.onTopRowIndex?.(1))
+        await subscribed()
+        signal()
+        await waitFor(() =>
+            expect(rowIds(fold.result.current)).toEqual(rowIds({ result: closedPage }))
+        )
+        await expandAll(fold)
+        expect(sent.map(request => request.options.cursor)).toEqual([undefined, 'c1', 'c2'])
+    })
+})

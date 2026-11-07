@@ -5,6 +5,7 @@ import {
     fetchParamOptions,
     foldKeyOf,
     forgetSavedRuns,
+    groupRowAt,
     isTransientRunError,
     lastGroupRowOf,
     PARAM_OPTIONS_PATH,
@@ -337,6 +338,31 @@ describe('runFirstPage', () => {
         expect(send).toHaveBeenCalledTimes(2)
     })
 
+    // The first page is the usual one, as a fold at the top of the report needs no
+    // more. Once a page has come and only the row is missing, each request asks for
+    // the server's most, so a fold far down the report takes few requests.
+    it('asks for the server’s 1,000 rows a request while it looks for the row it must keep', async () => {
+        send.mockReset()
+        send.mockResolvedValueOnce(result([row('g:a', 'group'), row('d:1'), row('d:2')], 'c1'))
+            .mockResolvedValueOnce(result([row('d:3'), row('g:b', 'group')], 'c2'))
+            .mockResolvedValueOnce(result([row('d:4')], ''))
+        await runFirstPage(body, 0, undefined, 'g:b')
+        expect(sentOptions()).toEqual([
+            { limit: RUN_PAGE_SIZE, cursor: undefined },
+            { limit: 1000, cursor: 'c1' },
+        ])
+
+        send.mockReset()
+        send.mockResolvedValueOnce(result([row('g:a', 'group'), row('d:1'), row('d:2')], 'c1'))
+            .mockResolvedValueOnce(result([row('d:3'), row('g:b', 'group')], 'c2'))
+            .mockResolvedValueOnce(result([row('d:4')], ''))
+        await runFirstPage(body, 2, undefined, 'g:b')
+        expect(sentOptions()).toEqual([
+            { limit: RUN_PAGE_SIZE, cursor: undefined },
+            { limit: 1000, cursor: 'c1' },
+        ])
+    })
+
     it('stops at the end of the run when the row it must keep never comes', async () => {
         send.mockReset()
         send.mockResolvedValueOnce(
@@ -382,6 +408,45 @@ describe('lastGroupRowOf', () => {
     it('is undefined when no page has a group row', () => {
         expect(lastGroupRowOf([resultOf([rowOf('d:1', 'detail')])])).toBeUndefined()
         expect(lastGroupRowOf([])).toBeUndefined()
+    })
+})
+
+describe('groupRowAt', () => {
+    const rowOf = (id: string, kind: ResultRow['kind']): ResultRow => ({
+        id,
+        kind,
+        depth: 0,
+        label: id,
+        cells: {},
+    })
+    const resultOf = (rows: ResultRow[]): RunResult => ({
+        columns: [],
+        rows,
+        notices: [],
+        topics: [],
+        page: null,
+        params: [],
+    })
+    const pages = [
+        resultOf([rowOf('g:a', 'group'), rowOf('d:1', 'detail')]),
+        resultOf([rowOf('s:a', 'subtotal'), rowOf('g:b', 'group'), rowOf('d:2', 'detail')]),
+        resultOf([rowOf('g:c', 'group'), rowOf('total', 'total')]),
+    ]
+
+    it('is the row itself when it is a group row', () => {
+        expect(groupRowAt(pages, 'g:b')).toBe('g:b')
+    })
+
+    it('is the nearest group row above any other row, across the pages', () => {
+        expect(groupRowAt(pages, 'd:1')).toBe('g:a')
+        expect(groupRowAt(pages, 'd:2')).toBe('g:b')
+        expect(groupRowAt(pages, 'total')).toBe('g:c')
+    })
+
+    it('is undefined for a row the pages do not hold, or one before any group', () => {
+        expect(groupRowAt(pages, 'g:gone')).toBeUndefined()
+        expect(groupRowAt(pages, undefined)).toBeUndefined()
+        expect(groupRowAt([resultOf([rowOf('d:1', 'detail')])], 'd:1')).toBeUndefined()
     })
 })
 
