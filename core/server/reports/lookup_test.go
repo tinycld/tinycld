@@ -702,6 +702,27 @@ func TestALookupOnALinkSearchesAnIndexOfTheRelation(t *testing.T) {
 	}
 }
 
+// A link path of two hops reads its last link through a join, blank where
+// the middle row is blank (kit has no vault) or hidden (no reader may list
+// the vault): a blank looked-for value matches those rows, at the top of the
+// where and under or alike. Kit has no site, so its count finds every animal
+// ann may list; leo's and zed's sites match no animal's vault's animal.
+func TestALookupOnATwoHopLinkMatchesABlankMiddleRow(t *testing.T) {
+	z := newZoo(t)
+	match := `{"op":"eq","args":[{"path":[{"link":"vault"},{"link":"animal"}]},{"outer":[{"link":"site"}]}]}`
+	count := func(where string) string {
+		return `{"op":"lookup","source":"zoo.animals","pick":"count","value":{"path":[{"field":"id"}]},"where":` + where + `}`
+	}
+	spec := `{"version":3,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
+		{"id":"top","formula":` + count(match) + `},
+		{"id":"underOr","formula":` + count(`{"op":"or","args":[`+match+`,{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Nobody"}]}]}`) + `}],
+		"sort":[{"col":"name"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "name", "Kit", "Leo", "Zed", nil)
+	requireOrderedRows(t, spec, res, "top", int64(3), int64(0), int64(0), nil)
+	requireOrderedRows(t, spec, res, "underOr", int64(3), int64(0), int64(0), nil)
+}
+
 // A lookup on a detail row is computed once per row: a formula that reads a
 // sum lookup's value, its mixed check and its currency many times runs each
 // subquery once in the detail statement.

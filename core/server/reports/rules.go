@@ -35,7 +35,19 @@ func ruleSelect(app core.App, col *core.Collection, info *core.RequestInfo) (str
 		}
 	}
 	built := q.Build()
-	return built.SQL(), built.Params(), nil
+	if !q.Info().Distinct {
+		return built.SQL(), built.Params(), nil
+	}
+	// A rule that joined is a DISTINCT select, which SQLite cannot read in
+	// place: it copies the rows first, and a subquery run for every report
+	// row then reads that copy whole, with no index of the table. The ids
+	// the rule allows, read once, keep the same rows (id is the key) and
+	// leave the table itself to be read through its indexes. The unary +
+	// keeps SQLite from driving a read by that id list, which would visit
+	// every allowed row where an index of the table finds the few it needs.
+	table := app.DB().QuoteSimpleTableName(col.Name)
+	id := app.DB().QuoteSimpleColumnName("id")
+	return fmt.Sprintf("SELECT %s.* FROM %s WHERE +%s.%s IN (SELECT %s FROM (%s))", table, table, table, id, id, built.SQL()), built.Params(), nil
 }
 
 // mergeParams copies src into dst for a statement that holds several rule

@@ -2,6 +2,8 @@ package reports
 
 import (
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -25,10 +27,10 @@ type windowFrame struct {
 	parent []string
 	total  []string
 	order  []string
-	// hoisted are running values a lookup reads, computed in a select below
-	// the one over the frame's rows ("<sql> AS wh<n>"); hoistedAs names them
-	// by their SQL.
-	hoisted   []string
+	// hoisted are running values and lookups, computed in selects below the
+	// one over the frame's rows ("<sql> AS wh<n>"); hoistedAs names them by
+	// their SQL.
+	hoisted   []hoistLayer
 	hoistedAs map[string]string
 	// checking is a frame that only compiles a cell to check it: its
 	// hoisted values have no select below, so a lookup is not hoisted into
@@ -36,33 +38,76 @@ type windowFrame struct {
 	checking bool
 }
 
+// hoistLayer is one select below the frame's own: values ("<sql> AS
+// wh<n>") computed for each row, or, with keys, once for each distinct value
+// of those group key columns and joined back onto the rows by them.
+type hoistLayer struct {
+	cols  []string
+	names []string
+	keys  []string
+}
+
 // hoist keeps a running value to compute in the select below and returns
 // its reference under alias.
 func (f *windowFrame) hoist(alias, sql string) string {
-	if name, ok := f.hoistedAs[sql]; ok {
-		return alias + "." + name
-	}
+	return f.hoistLayer(alias, nil, sql)[0]
+}
+
+// hoistLayer adds one layer that computes sqls (once per distinct value of
+// keys, when there are keys) and returns their references under alias. A
+// value hoisted before keeps its name.
+func (f *windowFrame) hoistLayer(alias string, keys []string, sqls ...string) []string {
 	if f.hoistedAs == nil {
 		f.hoistedAs = map[string]string{}
 	}
-	name := fmt.Sprintf("wh%d", len(f.hoisted))
-	f.hoisted = append(f.hoisted, sql+" AS "+name)
-	f.hoistedAs[sql] = name
-	return alias + "." + name
+	refs := make([]string, len(sqls))
+	layer := hoistLayer{keys: keys}
+	for i, sql := range sqls {
+		name, ok := f.hoistedAs[sql]
+		if !ok {
+			name = fmt.Sprintf("wh%d", len(f.hoistedAs))
+			f.hoistedAs[sql] = name
+			layer.cols = append(layer.cols, sql+" AS "+name)
+			layer.names = append(layer.names, name)
+		}
+		refs[i] = alias + "." + name
+	}
+	if len(layer.cols) > 0 {
+		f.hoisted = append(f.hoisted, layer)
+	}
+	return refs
 }
 
 // from is what a select over table (as alias) reads: the table, or with
-// hoisted values, selects of the table's rows that add them one at a time
-// under the same alias, so every reference to alias still reads and a
+// hoisted values, selects of the table's rows that add them one layer at a
+// time under the same alias, so every reference to alias still reads and a
 // hoisted value may read one hoisted before it (a lookup of a lookup of a
-// running value).
+// running value). A keyed layer computes its values over table's rows
+// grouped by its keys, as alias, so its values read the keys as they read
+// them on a row; it reads nothing hoisted.
 func (f *windowFrame) from(table, alias string) string {
-	from := table + " " + alias
+	base := table + " " + alias
+	from := base
 	if len(f.hoisted) == 0 && table == alias {
 		from = table
 	}
-	for _, h := range f.hoisted {
-		from = fmt.Sprintf("(SELECT %s.*, %s FROM %s) %s", alias, h, from, alias)
+	for i, h := range f.hoisted {
+		if len(h.keys) == 0 {
+			from = fmt.Sprintf("(SELECT %s.*, %s FROM %s) %s", alias, strings.Join(h.cols, ", "), from, alias)
+			continue
+		}
+		g := fmt.Sprintf("wg%d", i)
+		names := make([]string, len(h.names))
+		on := make([]string, len(h.keys))
+		for j, n := range h.names {
+			names[j] = g + "." + n
+		}
+		for j, k := range h.keys {
+			on[j] = fmt.Sprintf("%s.%s IS %s.%s", g, k, alias, k)
+		}
+		keys := strings.Join(h.keys, ", ")
+		from = fmt.Sprintf("(SELECT %s.*, %s FROM %s LEFT JOIN (SELECT %s, %s FROM %s GROUP BY %s) %s ON %s) %s",
+			alias, strings.Join(names, ", "), from, keys, strings.Join(h.cols, ", "), base, keys, g, strings.Join(on, " AND "), alias)
 	}
 	return from
 }
@@ -198,8 +243,30 @@ func (rc *rowsCtx) hoist(sql string) string {
 // place the row reads it, and a currency guard (R24) reads a lookup's value,
 // code and mixed check many times over. A lookup that holds a total or a
 // running value stays where it is.
+//
+// A lookup that reads of the row only its group keys (a group record, with
+// params and constants) has one value for every row of a group: it is
+// computed once per group key instead (rowKeysRead).
 func (rc *rowsCtx) hoistLookup(e expr) expr {
 	if rc.detail == nil || rc.detail.checking || e.agg || e.win {
+		return e
+	}
+	if keys := rowKeysRead(e); len(keys) > 0 {
+		// The value keeps its mixed check inline: a keyed layer reads no
+		// value hoisted beside it.
+		parts := []*string{&e.sql, &e.mixed, &e.cur.sql, &e.shown}
+		var sqls []string
+		for _, p := range parts {
+			if *p != "" {
+				sqls = append(sqls, *p)
+			}
+		}
+		refs := rc.detail.hoistLayer("w", keys, sqls...)
+		for _, p := range parts {
+			if *p != "" {
+				*p, refs = refs[0], refs[1:]
+			}
+		}
 		return e
 	}
 	if e.mixed != "" {
@@ -217,6 +284,33 @@ func (rc *rowsCtx) hoistLookup(e expr) expr {
 	}
 	e.sql = rc.hoist(e.sql)
 	return e
+}
+
+// rowRef is a lookup's read of the report's row: every value of a base row
+// reads it as w.<column>.
+var rowRef = regexp.MustCompile(`\bw\.(\w+)`)
+
+// groupKeyCol is a group key column of w (k<group index>).
+var groupKeyCol = regexp.MustCompile(`^k\d+$`)
+
+// rowKeysRead is the group key columns a lookup reads of the report's row,
+// sorted, when those are all it reads of it; nil when it reads another
+// value of the row, or none (a lookup that reads nothing of the row is
+// computed once per statement as it is).
+func rowKeysRead(e expr) []string {
+	var keys []string
+	for _, sql := range []string{e.sql, e.mixed, e.cur.sql, e.shown} {
+		for _, m := range rowRef.FindAllStringSubmatch(sql, -1) {
+			if !groupKeyCol.MatchString(m[1]) {
+				return nil
+			}
+			if !slices.Contains(keys, m[1]) {
+				keys = append(keys, m[1])
+			}
+		}
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 // windowSQL is a running value or a percent over a frame. A running sum

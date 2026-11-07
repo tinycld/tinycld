@@ -21,11 +21,24 @@ import (
 //	zoo_ledger_entries   number, memo
 //	zoo_ledger_lines     entry, account, date (a text day), debit, credit,
 //	                     currency, posted, position
+//
+// Every ledger collection is listed through a grant row in a separate access
+// collection (zoo_ledger_access: user, can_read), the rule shape a package
+// that keeps its own members writes: PocketBase compiles it to a DISTINCT
+// join, so the plan check below covers a rule SQLite cannot read in place.
 func withBalanceZoo(t *testing.T, z *zoo) {
 	t.Helper()
-	signedIn := rule(`@request.auth.id != ""`)
+	access := core.NewBaseCollection("zoo_ledger_access")
+	access.Fields.Add(
+		&core.RelationField{Name: "user", CollectionId: z.recs["ann"].Collection().Id, MaxSelect: 1},
+		&core.BoolField{Name: "can_read"},
+	)
+	z.save(t, access)
+	z.rec(t, "annLedger", "zoo_ledger_access", map[string]any{"user": z.id("ann"), "can_read": true})
+	z.rec(t, "bobLedger", "zoo_ledger_access", map[string]any{"user": z.id("bob"), "can_read": false})
+	granted := rule(`@request.auth.id != "" && @collection.zoo_ledger_access:me.user ?= @request.auth.id && @collection.zoo_ledger_access:me.can_read ?= true`)
 	accounts := core.NewBaseCollection("zoo_ledger_accounts")
-	accounts.ListRule, accounts.ViewRule = signedIn, signedIn
+	accounts.ListRule, accounts.ViewRule = granted, granted
 	accounts.Fields.Add(
 		&core.TextField{Name: "number"},
 		&core.TextField{Name: "full_name"},
@@ -35,11 +48,11 @@ func withBalanceZoo(t *testing.T, z *zoo) {
 	)
 	z.save(t, accounts)
 	entries := core.NewBaseCollection("zoo_ledger_entries")
-	entries.ListRule, entries.ViewRule = signedIn, signedIn
+	entries.ListRule, entries.ViewRule = granted, granted
 	entries.Fields.Add(&core.TextField{Name: "number"}, &core.TextField{Name: "memo"})
 	z.save(t, entries)
 	lines := core.NewBaseCollection("zoo_ledger_lines")
-	lines.ListRule, lines.ViewRule = signedIn, signedIn
+	lines.ListRule, lines.ViewRule = granted, granted
 	lines.Fields.Add(
 		&core.RelationField{Name: "entry", CollectionId: entries.Id, MaxSelect: 1},
 		&core.RelationField{Name: "account", CollectionId: accounts.Id, MaxSelect: 1},
@@ -400,6 +413,51 @@ func TestABalanceShapedReportShowsQuietActiveGroupsOnAll(t *testing.T) {
 	}
 }
 
+// An open account cut at a page seam goes on on the next page: its running
+// balance carries over the seam, no row is repeated or lost, and the pages
+// merged as the client merges them equal the one-page run, filled accounts
+// included.
+func TestABalanceShapedReportCutAtAPageSeamGoesOnOnTheNextPage(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	params := map[string]string{"period": glJuly, "rows": `"all"`}
+	whole := runBalances(t, z, params)
+	opts := Options{Today: "2026-07-15", Limit: 1}
+	var pages []*Result
+	for range 100 {
+		res := z.run(t, "ann", balanceSpec(), opts, params)
+		pages = append(pages, res)
+		if res.Page == nil || res.Page.Next == "" {
+			break
+		}
+		opts.Cursor = res.Page.Next
+	}
+	if len(pages) < 2 {
+		t.Fatalf("%d pages, want the run cut into pages", len(pages))
+	}
+	_, first := balanceGroups(pages[0])
+	requireGroupRows(t, first, "1000 Cash", glOpeningRow(0), glDetailRow("2026-07-01", -10000, "Rent"))
+	// The group row came on page 1, so page 2's first row names it only by
+	// its section.
+	cash := pages[0].Rows[0]
+	next := pages[1].Rows[0]
+	got := glLine{next.Kind, next.Label, next.Cells["balance"], next.Cells["split"]}
+	if cash.Label != "1000 Cash" || next.Section != cash.ID || !reflect.DeepEqual(got, glDetailRow("2026-07-02", -7000, "-Split-")) {
+		t.Fatalf("page 2 starts with %#v in %s, want Cash's 2026-07-02 at -7000 in %s", got, next.Section, cash.ID)
+	}
+	merged := mergedRows(t, pages)
+	if !reflect.DeepEqual(merged, whole.Rows) {
+		t.Fatalf("merged pages differ from the one-page run:\n%#v\nwant\n%#v", merged, whole.Rows)
+	}
+	_, rows := balanceGroups(&Result{Rows: merged})
+	requireGroupRows(t, rows, "1000 Cash",
+		glOpeningRow(0),
+		glDetailRow("2026-07-01", -10000, "Rent"),
+		glDetailRow("2026-07-02", -7000, "-Split-"),
+		glSubtotalRow("1000 Cash", -7000))
+	requireGroupRows(t, rows, "1200 Petty cash", glOpeningRow(0), glSubtotalRow("1200 Petty cash", 0))
+}
+
 // On a detail row the opening's looked-up code is a subquery the currency
 // guard repeats (R24), and SQLite runs a correlated subquery for every row it
 // reads: a run over 2,000 lines costs little only while each such subquery
@@ -437,9 +495,16 @@ func TestABalanceShapedReportOverTwoThousandLinesSearchesLinesPerRow(t *testing.
 	for _, st := range *seen {
 		raw, args := rawStatement(t, st.sql, st.params)
 		plan := queryPlan(t, db, raw, args)
-		for _, step := range perRowReads(plan, "zoo_ledger_lines") {
-			if !indexSearch.MatchString(step) {
-				t.Fatalf("a subquery run for every row reads the lines table by %q:\n%s", step, strings.Join(plan, "\n"))
+		detail := !strings.Contains(st.sql, "__level")
+		for _, step := range perRowSteps(plan, ruleReaders(raw, "zoo_ledger_lines")...) {
+			if !declaredIndexSearch.MatchString(step.detail) {
+				t.Fatalf("a subquery run for every row reads the lines by %q:\n%s", step.detail, strings.Join(plan, "\n"))
+			}
+			// On a detail row, a read by account reads every line of the
+			// row's account, the same for every row of that account: a value
+			// of the group, computed once per group.
+			if detail && !step.perGroup() && strings.Contains(step.detail, "idx_zoo_ledger_lines_account_date") {
+				t.Fatalf("a subquery run for every detail row reads all of an account's lines by %q:\n%s", step.detail, strings.Join(plan, "\n"))
 			}
 			searched++
 		}
@@ -467,6 +532,29 @@ func TestABalanceShapedReportOverTwoThousandLinesSearchesLinesPerRow(t *testing.
 // indexSearch is a plan step that reads a table through an index.
 var indexSearch = regexp.MustCompile(`^SEARCH \S+ USING (?:(?:AUTOMATIC )?(?:PARTIAL )?(?:COVERING )?INDEX|INTEGER PRIMARY KEY)`)
 
+// declaredIndexSearch is a plan step that reads a table through an index of
+// the table, not one SQLite builds for the statement over a copy of the rows.
+var declaredIndexSearch = regexp.MustCompile(`^SEARCH \S+ USING (?:(?:COVERING )?INDEX \S+|INTEGER PRIMARY KEY)`)
+
+// ruleCTE is the start of a rule CTE and the table its first FROM reads.
+var ruleCTE = regexp.MustCompile("\\b(r\\d+) AS \\(SELECT .*?\\bFROM `(\\w+)`")
+
+// ruleReaders names what a plan step that reads table's rows calls it in a
+// raw statement: the table, where SQLite reads its rule CTE in place, and
+// each alias of the rule CTE, where SQLite reads a copy of the rule's rows.
+func ruleReaders(raw, table string) []string {
+	names := []string{table}
+	for _, m := range ruleCTE.FindAllStringSubmatch(raw, -1) {
+		if m[2] != table {
+			continue
+		}
+		for _, a := range regexp.MustCompile(`\b`+m[1]+` (t\d+)\b`).FindAllStringSubmatch(raw, -1) {
+			names = append(names, a[1])
+		}
+	}
+	return names
+}
+
 // queryPlan is SQLite's EXPLAIN QUERY PLAN of stmt, one step a line,
 // indented two spaces a level under its parent step.
 func queryPlan(t *testing.T, db *sql.DB, stmt string, args []any) []string {
@@ -493,13 +581,29 @@ func queryPlan(t *testing.T, db *sql.DB, stmt string, args []any) []string {
 	return out
 }
 
-// perRowReads lists the plan's steps that read table inside a correlated
-// subquery, which SQLite runs again for every row of the query around it. A
-// subquery that reads no column of an outer row (a plain SCALAR or LIST
-// SUBQUERY, or a MATERIALIZE) runs once per statement, wherever it sits, so
-// the steps under it are not listed.
-func perRowReads(plan []string, table string) []string {
-	var out, stack []string
+// perRowReads lists the plan's steps that read one of tables inside a
+// correlated subquery, which SQLite runs again for every row of the query
+// around it. A subquery that reads no column of an outer row (a plain SCALAR
+// or LIST SUBQUERY, or a MATERIALIZE) runs once per statement, wherever it
+// sits, so the steps under it are not listed.
+func perRowReads(plan []string, tables ...string) []string {
+	var out []string
+	for _, s := range perRowSteps(plan, tables...) {
+		out = append(out, s.detail)
+	}
+	return out
+}
+
+// planStep is a step of a query plan and the steps above it, nearest last.
+type planStep struct {
+	detail  string
+	parents []string
+}
+
+// perRowSteps is perRowReads with each step's parents.
+func perRowSteps(plan []string, tables ...string) []planStep {
+	var out []planStep
+	var stack []string
 	var indents []int
 	for _, line := range plan {
 		detail := strings.TrimLeft(line, " ")
@@ -507,12 +611,28 @@ func perRowReads(plan []string, table string) []string {
 		for len(indents) > 0 && indents[len(indents)-1] >= indent {
 			indents, stack = indents[:len(indents)-1], stack[:len(stack)-1]
 		}
-		if reads := strings.Fields(detail); len(reads) > 1 && reads[1] == table && underCorrelated(stack) {
-			out = append(out, detail)
+		if reads := strings.Fields(detail); len(reads) > 1 && slices.Contains(tables, reads[1]) && underCorrelated(stack) {
+			out = append(out, planStep{detail: detail, parents: slices.Clone(stack)})
 		}
 		indents, stack = append(indents, indent), append(stack, detail)
 	}
 	return out
+}
+
+// perGroup is true when the step runs inside a named table SQLite computes
+// once for the statement other than the report's rows (w, or ws, the rows
+// of the shown groups): a group-level CTE (a<L>, s<L>, f<L>) or the table
+// of a value computed once per group key (wg<n>). A correlated subquery
+// there runs once per group, not once per detail row. An unnamed one
+// (subquery-<n>) may be a select of the detail rows, so it is not.
+func (s planStep) perGroup() bool {
+	for _, p := range s.parents {
+		name, ok := strings.CutPrefix(p, "MATERIALIZE ")
+		if ok && name != "w" && name != "ws" && !strings.HasPrefix(name, "(") {
+			return true
+		}
+	}
+	return false
 }
 
 // underCorrelated is true when the nearest subquery among a step's parents

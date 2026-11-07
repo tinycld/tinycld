@@ -344,16 +344,20 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	return e, nil
 }
 
-// storedLinkCol is the stored relation column the last hop of a link path
-// follows, or "" where that column may hold NULL (a view's): a base
+// storedLinkCol is the stored relation column a one-hop link path follows,
+// on the lookup scope's own base row, or "" where that column may hold NULL:
+// a view's, or one read through a join (a longer path), which is NULL when
+// the middle row is blank or hidden while the path's value is blank. A base
 // collection stores a blank relation as ”.
 func (l *lookupCtx) storedLinkCol(hops []hopPlan) string {
-	last := hops[len(hops)-1]
-	col, err := l.r.c.p.app.FindCachedCollectionByNameOrId(last.from.Collection)
+	if len(hops) != 1 {
+		return ""
+	}
+	col, err := l.r.c.p.app.FindCachedCollectionByNameOrId(hops[0].from.Collection)
 	if err != nil || col.IsView() {
 		return ""
 	}
-	return q(l.sc.join(hops[:len(hops)-1]), last.link.Field)
+	return q(l.sc.alias, hops[0].link.Field)
 }
 
 // linkBound is an extra condition for eq when one side is a link path in a
