@@ -9,13 +9,7 @@ import type { VisibleRow } from '../lib/rows'
 import type { ViewSort } from '../lib/run-client'
 import type { DisplayLayout } from '../lib/spec'
 import { stickyIndices } from '../lib/sticky'
-import {
-    FLAT_LEVELS,
-    type Justify,
-    type LineLayout,
-    type RowLevels,
-    tableLines,
-} from '../lib/table-lines'
+import { type Justify, type LineLayout, type RowLevels, tableLines } from '../lib/table-lines'
 import type { ResultColumn, ResultRow } from '../lib/types'
 import {
     amountJustify,
@@ -330,8 +324,8 @@ export interface ReportTableProps {
     format: NumberFormat
     breakpoint: Breakpoint
     layouts: readonly DisplayLayout[]
-    /** How deep the report's rows go (rowLevelsOf): the label's floor on a narrowed line. Absent: flat. */
-    rowLevels?: RowLevels
+    /** How deep the report's rows go (rowLevelsOf): the label's floor on a narrowed line. */
+    rowLevels: RowLevels
     onToggleGroup(row: ResultRow): void
     onNearEnd(): void
     isLoadingMore: boolean
@@ -358,7 +352,7 @@ export function ReportTable(props: ReportTableProps) {
     // hidden at the window's width, so a wrong first width is never seen.
     const [rowWidth, setRowWidth] = useState<number>()
     const lineWidth = rowWidth ?? windowWidth
-    const { groups, nests } = props.rowLevels ?? FLAT_LEVELS
+    const { groups, nests } = props.rowLevels
     const layout = useMemo(
         () =>
             tableLines({

@@ -40,7 +40,7 @@ import {
     type ParamDef,
     type ReportSpec,
 } from '../lib/spec'
-import { type RowLevels, rowLevelsOf } from '../lib/table-lines'
+import { rowLevelsOf } from '../lib/table-lines'
 import type { Notice, ResolvedParam, ResultColumn, ResultRow, RunResult } from '../lib/types'
 import {
     decodeSort,
@@ -72,12 +72,6 @@ const NO_COLUMNS: ResultColumn[] = []
 const NO_NOTICES: Notice[] = []
 const NO_ROWS: ResultRow[] = []
 const NO_LAYOUTS: readonly DisplayLayout[] = []
-
-// How deep the shown spec's rows go; absent with no spec yet, and in a model a
-// caller builds by hand (a static reference), where the table reads a flat report.
-function rowLevelsPart(spec: ReportSpec | null | undefined): { rowLevels?: RowLevels } {
-    return spec ? { rowLevels: rowLevelsOf(spec) } : {}
-}
 
 function viewState(input: {
     source: ViewSource | null
@@ -302,7 +296,9 @@ export function useReportView(input: ReportViewInput) {
         breakpoint,
         panelSurface: panel,
         layouts: input.spec?.display?.layouts ?? NO_LAYOUTS,
-        ...rowLevelsPart(input.spec),
+        // Required in the model, so a model built by hand states its levels too
+        // (none would draw the label at a flat report's floor). No spec yet: flat.
+        rowLevels: rowLevelsOf(input.spec ?? null),
         heading: headingOf(run.result, org?.name),
         optionsSource,
         postedParams: posted,

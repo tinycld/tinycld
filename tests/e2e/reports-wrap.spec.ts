@@ -563,7 +563,8 @@ test.describe('report rows per width', () => {
             await startTeamSales(p)
             await groupWithTeamRegion(p)
             // A fifth column: with four, R21 fits the row on one narrowed line at 390
-            // (80 + 108 + 2 × 93 = 374), and this test is about the wrapped rows.
+            // (98 + 108 + 2 × 84 = 374; the label's floor is 80 plus its group row's
+            // caret, 18), and this test is about the wrapped rows.
             await addColumn(p, ['cost'])
             await expect(p.getByTestId('report-builder-column-3-detail')).toBeVisible()
             await chooseOption(p, 'report-builder-column-3-detail', 'blank')
