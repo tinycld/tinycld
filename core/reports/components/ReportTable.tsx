@@ -26,7 +26,7 @@ import {
     TableRow,
     type TableRowProps,
 } from './ReportRow'
-import { fitsOnOneLine, type ReportTableLayout, reportTableLayout } from './report-table-layout'
+import { type ReportTableLayout, reportTableLayout } from './report-table-layout'
 
 const TEXT_ALIGN: Record<Justify, string> = {
     start: 'text-left',
@@ -298,10 +298,9 @@ export function ReportTable(props: ReportTableProps) {
         () => reportTableLayout({ breakpoint, amountCount }),
         [breakpoint, amountCount]
     )
-    const fits = fitsOnOneLine({ breakpoint, amountCount, width })
     const layout = useMemo(
-        () => tableLines({ columns, width, breakpoint, layouts, oneLineFits: fits }),
-        [columns, width, breakpoint, layouts, fits]
+        () => tableLines({ columns, width, breakpoint, layouts }),
+        [columns, width, breakpoint, layouts]
     )
     if (columns.length === 0) return null
     const isOneLine = layout.kind === 'one-line'
