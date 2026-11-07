@@ -13,17 +13,20 @@ export const CTX: ReportFormulaContext = {
         { key: 'qty', label: 'Quantity', type: 'number' },
     ],
     source: SALES_KEY,
+    rowSource: SALES_KEY,
     records: [{ group: 'byTeam', label: 'Team', source: TEAMS_KEY }],
     params: [{ id: 'asOf', label: 'As of', type: 'asOf' }],
     totals: true,
     windows: true,
     lookups: true,
 }
-// A computed row looks values up (F16); only its lookups read params.
+// A computed row looks values up (F16); only its lookups read params. It has no
+// report row, so "This row's field" is not offered there.
 export const LAYOUT: ReportFormulaContext = {
     ...CTX,
     leaf: 'subtotal',
     source: null,
+    rowSource: null,
     records: [],
     params: [],
     lookupParams: CTX.params,

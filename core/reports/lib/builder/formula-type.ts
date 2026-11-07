@@ -16,6 +16,8 @@ export type FormulaType = FieldType | ''
 export interface FormulaTypes {
     catalog: Catalog
     source: string | null
+    /** The report's source, which an {outer} path reads; absent reads as none. */
+    rowSource?: string | null
     col: (key: string) => FieldType | undefined
     records: readonly FormulaRecord[]
     params: readonly Pick<FormulaParam, 'id' | 'type' | 'multiple'>[]
@@ -25,6 +27,7 @@ export function typesOf(ctx: ReportFormulaContext): FormulaTypes {
     return {
         catalog: ctx.catalog,
         source: ctx.source,
+        rowSource: ctx.rowSource,
         col: key => ctx.values.find(v => v.key === key)?.type,
         records: ctx.records,
         params: ctx.params,
@@ -112,7 +115,17 @@ export function formulaType(node: SpecNode, types: FormulaTypes): FormulaType {
             const param = types.params.find(p => p.id === node.param)
             return param ? PARAM_TYPES[param.type] : ''
         }
+        case 'outer': {
+            const info = types.rowSource
+                ? describePath(types.catalog, types.rowSource, node.outer ?? [])
+                : null
+            return info?.field.type ?? ''
+        }
+        case 'bound':
+            return 'date'
+        // lookup.go lookupIn: a count is a number; a sum keeps its value's type.
         case 'lookup':
+            if (node.pick === 'count') return 'number'
             return formulaType(lookupValueNode(node), { ...types, source: node.source ?? null })
         case 'add':
         case 'sub':

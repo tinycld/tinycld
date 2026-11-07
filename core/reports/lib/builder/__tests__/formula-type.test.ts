@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { formulaType, typesOf } from '../formula-type'
-import { CATALOG, SALES_KEY } from './catalog-fixture'
+import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 import { CTX, LARGER, LOOKUP, WITH_PERIOD } from './formula-fixture'
 
 describe('formulaType', () => {
@@ -52,5 +52,38 @@ describe('formulaType', () => {
     })
     it('reads the types a context offers', () => {
         expect(typesOf(CTX).col('qty')).toBe('number')
+    })
+})
+
+describe('formulaType of the v3 parts', () => {
+    const types = {
+        catalog: CATALOG,
+        source: SALES_KEY,
+        rowSource: SALES_KEY,
+        col: (k: string) => CTX.values.find(v => v.key === k)?.type,
+        records: CTX.records,
+        params: WITH_PERIOD.params,
+    }
+
+    it('types a count as a number, a sum as its value, a bound as a date', () => {
+        expect(formulaType({ ...LOOKUP, pick: 'count' }, types)).toBe('number')
+        const added = {
+            op: 'lookup',
+            source: SALES_KEY,
+            value: { path: [{ field: 'amount' }] },
+            pick: 'sum' as const,
+        }
+        expect(formulaType(added, types)).toBe('money')
+        expect(formulaType({ param: 'period', bound: 'from' }, types)).toBe('date')
+    })
+
+    it("types This row's field from the report's source inside a lookup on another source", () => {
+        const day = {
+            op: 'lookup',
+            source: TEAMS_KEY,
+            value: { outer: [{ field: 'day' }] },
+        }
+        expect(formulaType(day, types)).toBe('date')
+        expect(typesOf(CTX).rowSource).toBe(SALES_KEY)
     })
 })

@@ -91,6 +91,16 @@ function describeLeaf(here: ReportFormulaContext, n: SpecNode, part: ReportPart)
         }
         case 'param':
             return `{${here.params.find(p => p.id === n.param)?.label ?? n.param}}`
+        case 'outer': {
+            const info = here.rowSource
+                ? describePath(here.catalog, here.rowSource, n.outer ?? [])
+                : null
+            return info ? `this row's ${pathLabel(info)}` : "this row's field (missing)"
+        }
+        case 'bound': {
+            const name = here.params.find(p => p.id === n.param)?.label ?? n.param
+            return `{${name} ${n.bound === 'to' ? 'end' : 'start'}}`
+        }
     }
     return null
 }
@@ -115,8 +125,11 @@ export function describeNode(ctx: ReportFormulaContext, node: SpecNode): string 
                 const [condition] = REPORT_TREE.childrenOf(n)
                 const source = here.catalog.get(n.source ?? '')?.label ?? `${n.source} (missing)`
                 const where = whereText(condition, inside)
+                const value = say(lookupValueNode(n), inside, false)
+                if (n.pick === 'sum') return `add up ${value} in ${source}${where}`
+                if (n.pick === 'count') return `count ${value} in ${source}${where}`
                 const pick = n.pick === 'max' ? 'largest' : 'smallest'
-                return `look up ${say(lookupValueNode(n), inside, false)} in ${source}${where} (${pick})`
+                return `look up ${value} in ${source}${where} (${pick})`
             }
             case 'exists':
             case 'notExists': {

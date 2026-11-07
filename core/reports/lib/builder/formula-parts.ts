@@ -23,8 +23,10 @@ const VALUE_PARTS = [
     'list',
     'field',
     'path',
+    'outer',
     'record',
     'param',
+    'bound',
 ] as const
 const ARITHMETIC = ['add', 'sub', 'mul', 'div', 'round', 'min', 'max'] as const
 const TOTALS = ['sum', 'count', 'countDistinct', 'avg', 'smallest', 'largest'] as const
@@ -149,8 +151,10 @@ export const PART_LABELS: Record<ReportPart, string> = {
     list: 'List',
     field: 'Column',
     path: 'Field',
+    outer: "This row's field",
     record: 'Group field',
     param: 'Asked value',
+    bound: 'Range start or end',
     add: 'Add',
     sub: 'Subtract',
     mul: 'Multiply',
@@ -201,6 +205,15 @@ export const PART_LABELS: Record<ReportPart, string> = {
     lookup: 'Look up',
 }
 
+export type LookupPick = 'min' | 'max' | 'sum' | 'count'
+/** Which match a lookup takes (lookup.go lookupIn): one value, or all of them added up or counted. */
+export const LOOKUP_PICKS: readonly { value: LookupPick; label: string }[] = [
+    { value: 'min', label: 'Smallest' },
+    { value: 'max', label: 'Largest' },
+    { value: 'sum', label: 'Add up' },
+    { value: 'count', label: 'Count' },
+]
+
 export interface FormulaValue {
     key: string
     label: string
@@ -221,6 +234,11 @@ export interface ReportFormulaContext {
     values: readonly FormulaValue[]
     /** The source a {path} reads from; null where no path is read. */
     source: string | null
+    /**
+     * The report's source: what an {outer} path reads (lookup.go lookupCtx.outerPath).
+     * null where there is no report row, a layout computed row.
+     */
+    rowSource: string | null
     records: readonly FormulaRecord[]
     params: readonly FormulaParam[]
     /**
@@ -241,6 +259,17 @@ export const isReportPart = (part: string): part is ReportPart =>
 // A date range param is read only by between (formula.go between); every other
 // operator refuses it.
 export const isRangeParam = (param: Pick<ParamDef, 'type'>) => param.type === 'dateRange'
+
+/** The first and last day of each date range param (params.go paramExpr bound). */
+export function boundChoices(params: readonly FormulaParam[]) {
+    return params.filter(isRangeParam).flatMap(p => {
+        const name = p.label ?? p.id
+        return [
+            { param: p.id, bound: 'from' as const, label: `${name} start` },
+            { param: p.id, bound: 'to' as const, label: `${name} end` },
+        ]
+    })
+}
 
 /** A lookup's value is a formula over the looked-up source, stored in its `value`. */
 export function lookupValueNode(node: SpecNode): SpecNode {
@@ -296,7 +325,8 @@ export function partOf(node: SpecNode): ReportPart | 'unknown' {
     if (node.record !== undefined) return 'record'
     if (node.col !== undefined || node.subtotal !== undefined) return 'field'
     if (node.path !== undefined) return 'path'
-    if (node.param !== undefined) return 'param'
+    if (node.outer !== undefined) return 'outer'
+    if (node.param !== undefined) return node.bound !== undefined ? 'bound' : 'param'
     if (node.op === undefined) return valuePartOf(node.value)
     return operatorPartOf(node)
 }

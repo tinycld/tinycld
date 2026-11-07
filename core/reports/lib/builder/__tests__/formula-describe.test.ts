@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { describeNode } from '../formula-describe'
+import { SALES_KEY } from './catalog-fixture'
 import { CTX, IN_PERIOD, LARGER, LOOKUP, TEAM_WITH_SALES, WITH_PERIOD } from './formula-fixture'
 
 describe('describeNode', () => {
@@ -26,5 +27,33 @@ describe('describeNode', () => {
     })
     it('names a part it cannot show', () => {
         expect(describeNode(CTX, { op: 'shout', args: [] })).toBe('a part the editor cannot show')
+    })
+})
+
+describe('describeNode for the v3 parts', () => {
+    const sameDay = (pick: 'sum' | 'count', field: string) => ({
+        op: 'lookup',
+        source: SALES_KEY,
+        where: { op: 'eq', args: [{ path: [{ field: 'day' }] }, { outer: [{ field: 'day' }] }] },
+        value: { path: [{ field }] },
+        pick,
+    })
+
+    it("says add up, count and this row's field", () => {
+        expect(describeNode(CTX, sameDay('sum', 'amount'))).toBe(
+            "add up Amount in Stub sales where Day = this row's Day"
+        )
+        expect(describeNode(CTX, sameDay('count', 'id'))).toBe(
+            "count ID in Stub sales where Day = this row's Day"
+        )
+    })
+
+    it('says a range start or end by its param', () => {
+        const before = {
+            op: 'lt',
+            args: [{ path: [{ field: 'day' }] }, { param: 'period', bound: 'from' as const }],
+        }
+        expect(describeNode(WITH_PERIOD, before)).toBe('Day < {Period start}')
+        expect(describeNode(WITH_PERIOD, { param: 'period', bound: 'to' })).toBe('{Period end}')
     })
 })
