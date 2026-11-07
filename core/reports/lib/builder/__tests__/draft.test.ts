@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec, type SpecNode } from '../../spec'
+import { placeCells, startingLayout } from '../../table-lines'
 import { MAX_COLUMNS } from '../columns'
 import {
     type BuilderDraft,
     builderSchema,
     type ColumnDraft,
+    displayIssues,
     draftFromSpec,
     draftIssues,
     emptyDraft,
@@ -15,6 +17,7 @@ import {
     levelScope,
     offersDetailBlank,
     offersHaving,
+    openingCellRows,
     openingDraft,
     setOpeningCell,
     showsDetailLabel,
@@ -1686,6 +1689,79 @@ describe('spec version 3 in the builder', () => {
             path: ['groups', 0, 'opening', 'cells', 'amount'],
             message: 'A child row column has no opening cell',
         })
+    })
+})
+
+describe('the cells the builder shows on an opening row', () => {
+    const nestDraft = () =>
+        draftFromSpec(
+            {
+                version: CURRENT_SPEC_VERSION,
+                source: TEAMS_KEY,
+                columns: [
+                    { id: 'region', label: 'Region', path: [{ field: 'region' }] },
+                    { id: 'name', label: 'Name', path: [{ field: 'name' }] },
+                    {
+                        id: 'amount',
+                        label: 'Amount',
+                        path: [{ link: 'sales', mode: 'nest' }, { field: 'amount' }],
+                    },
+                ],
+            },
+            META,
+            CATALOG
+        )
+    const value: FormulaDraft = { kind: 'editable', node: { value: 0 } }
+
+    it('offers each own-row column after the first, and no child row column', () => {
+        expect(openingCellRows(nestDraft().columns, openingDraft('Before'))).toEqual([
+            { col: 'name', label: 'Name', isStale: false },
+        ])
+    })
+
+    // A cell Save refuses stays in view after the offered ones, so it can be removed.
+    it('keeps a cell in the first column, a child row column or a gone column as stale', () => {
+        const opening = ['region', 'amount', 'gone', 'name'].reduce(
+            (o, col) => setOpeningCell(o, col, value),
+            openingDraft('Before')
+        )
+        expect(openingCellRows(nestDraft().columns, opening)).toEqual([
+            { col: 'name', label: 'Name', isStale: false },
+            { col: 'region', label: 'Region', isStale: true },
+            { col: 'amount', label: 'Amount', isStale: true },
+            { col: 'gone', label: 'gone', isStale: true },
+        ])
+    })
+})
+
+describe('the desktop arrangement in the builder', () => {
+    it('starts a desktop layout that places every column', () => {
+        const layout = startingLayout('desktop', V3.columns)
+        expect(layout.width).toBe('desktop')
+        expect(layout.cells.map(c => c.col)).toEqual(V3.columns.map(c => c.id))
+        expect(placeCells(layout.tracks, layout.cells)).not.toHaveProperty('problem')
+    })
+
+    it('keeps a desktop layout through the draft as it keeps a tablet one', () => {
+        for (const width of ['desktop', 'tablet'] as const) {
+            const spec: ReportSpec = {
+                ...V3,
+                display: { layouts: [startingLayout(width, V3.columns)] },
+            }
+            expect(specFromDraft(draftFromSpec(spec, META, CATALOG), CATALOG)).toEqual(spec)
+        }
+    })
+
+    it('names a desktop problem at its layout as it does for a tablet', () => {
+        for (const width of ['desktop', 'tablet'] as const) {
+            const layout = { width, tracks: 3, cells: [{ col: 'nosuch', line: 1 }] }
+            expect(displayIssues({ layouts: [layout] }, ['team'])).toEqual([
+                {
+                    path: ['display', 'layouts', 0, 'cells', 0, 'col'],
+                    message: 'the report has no column "nosuch"',
+                },
+            ])
+        }
     })
 })
 

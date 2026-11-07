@@ -1,5 +1,6 @@
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { SelectInput, TextInput, useWatch } from '@tinycld/core/ui/form'
+import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
 import { Switch } from '@tinycld/core/ui/switch'
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react-native'
 import { Text, View } from 'react-native'
@@ -24,7 +25,8 @@ import type { SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnPicker } from './ColumnPicker'
-import { IconButton, NEW_FORMULA, RecordLabelField } from './parts'
+import { LevelFormula } from './GroupLevelParts'
+import { FieldError, IconButton, NEW_FORMULA, RecordLabelField } from './parts'
 import { ReportFormula, useColumnChoices } from './report-formula'
 import { HopJoins } from './report-formula-paths'
 
@@ -141,6 +143,7 @@ function ColumnRow({ builder, columns, index, numericIds, rowsTotalIds }: Column
                 builder={builder}
                 index={index}
             />
+            <ColumnRollup builder={builder} columns={columns} index={index} />
             <DetailField builder={builder} columns={columns} index={index} />
             <LinkLabelField builder={builder} columns={columns} index={index} source={source} />
             <ColumnFormula builder={builder} columns={columns} index={index} />
@@ -225,6 +228,66 @@ function TotalField({
             testID={`report-builder-column-${index}-total`}
             onValueChange={builder.validateLists}
         />
+    )
+}
+
+const COLUMN_TOTAL = "The column's total"
+const ROLLUP_FORMULA = 'A formula'
+
+/**
+ * "On group and total rows show" (F6): the column's total, or a formula worked out
+ * on those rows instead. Not with "Add the rows shown" (they cannot go together); a
+ * formula set before that choice stays in view, with its refusal, so it can be taken
+ * out.
+ */
+function ColumnRollup({ builder, columns, index }: Omit<ColumnPartProps, 'source'>) {
+    const column = columns[index]
+    if (!column) return null
+    const rollup = column.rollup ?? null
+    if (column.total === 'rows' && rollup === null) return null
+    const testID = `report-builder-column-${index}-rollup`
+    const state = builder.form.getFieldState(`columns.${index}.rollup`, builder.form.formState)
+    const setRollup = (next: FormulaDraft | null) =>
+        builder.setColumns(columns.map((c, i) => (i === index ? { ...c, rollup: next } : c)))
+    const items: PickItem[] = [
+        {
+            id: 'total',
+            label: COLUMN_TOTAL,
+            isSelected: rollup === null,
+            onSelect: () => setRollup(null),
+        },
+        {
+            // Not 'formula': the row's test id would be the editor's (`${testID}-formula`).
+            id: 'custom',
+            label: ROLLUP_FORMULA,
+            isSelected: rollup !== null,
+            onSelect: () => {
+                if (rollup === null) setRollup(NEW_FORMULA)
+            },
+        },
+    ]
+    const shown = rollup === null ? COLUMN_TOTAL : ROLLUP_FORMULA
+    return (
+        <View className="gap-1">
+            <View className="flex-row items-center gap-2">
+                <Text className="text-xs text-muted-foreground">On group and total rows show</Text>
+                <PickMenu
+                    label={shown}
+                    purpose={`On group and total rows of ${column.label} show`}
+                    items={items}
+                    testID={testID}
+                />
+            </View>
+            <FieldError message={state.error?.message} testID={`${testID}-error`} />
+            <LevelFormula
+                isVisible={rollup !== null}
+                builder={builder}
+                place={{ kind: 'level' }}
+                formula={rollup}
+                onChange={setRollup}
+                testID={`${testID}-formula`}
+            />
+        </View>
     )
 }
 

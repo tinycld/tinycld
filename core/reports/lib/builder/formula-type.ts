@@ -184,8 +184,12 @@ export function formulaType(node: SpecNode, types: FormulaTypes): FormulaType {
 
 const ADDABLE: ReadonlySet<FormulaType> = new Set(['number', 'money'])
 
-/** The matches a lookup may take: lookup.go lookupIn refuses Add up on a value that is not a number or an amount. */
+/**
+ * The matches a lookup may take: lookup.go lookupIn refuses Add up on a value that is
+ * not a number or an amount. Add up stays while it is the pick, so a refused pick
+ * still shows selected and can be changed.
+ */
 export function lookupPicks(node: SpecNode, types: FormulaTypes) {
     const value = formulaType(lookupValueNode(node), { ...types, source: node.source ?? null })
-    return LOOKUP_PICKS.filter(p => p.value !== 'sum' || ADDABLE.has(value))
+    return LOOKUP_PICKS.filter(p => p.value !== 'sum' || ADDABLE.has(value) || node.pick === 'sum')
 }

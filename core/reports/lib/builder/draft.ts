@@ -113,6 +113,28 @@ export function setOpeningCell(
     return { ...opening, cells: Object.fromEntries(cells) }
 }
 
+/**
+ * The cells an opening row's editor lists: each own-row column after the first
+ * (bind.go opening: the label fills the first, a child row column has none), then
+ * each cell Save refuses (its column gone, first or of child rows), stale, so it
+ * stays in view to be removed.
+ */
+export function openingCellRows(columns: readonly ColumnDraft[], opening: OpeningDraft) {
+    const offered = columns
+        .slice(1)
+        .filter(column => nestDepth(column) === 0)
+        .map(column => ({ col: column.id, label: column.label, isStale: false }))
+    const offeredIds = new Set(offered.map(row => row.col))
+    const stale = Object.keys(opening.cells)
+        .filter(col => !offeredIds.has(col))
+        .map(col => ({
+            col,
+            label: columns.find(column => column.id === col)?.label ?? col,
+            isStale: true,
+        }))
+    return [...offered, ...stale]
+}
+
 const columnFields = {
     id: idSchema,
     label: labelSchema,

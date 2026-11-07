@@ -108,4 +108,15 @@ describe('formulaType of the v3 parts', () => {
         expect(picksOf(lookupOf('day'))).toEqual(['min', 'max', 'count'])
         expect(picksOf(LOOKUP)).toEqual(['min', 'max', 'count'])
     })
+
+    // A pick read back on a value Add up refuses stays in the menu, so it shows selected.
+    it('keeps Add up in the menu while it is the pick', () => {
+        const stale = {
+            op: 'lookup',
+            source: SALES_KEY,
+            value: { path: [{ field: 'customer' }] },
+            pick: 'sum' as const,
+        }
+        expect(lookupPicks(stale, types).map(p => p.value)).toEqual(['min', 'max', 'sum', 'count'])
+    })
 })

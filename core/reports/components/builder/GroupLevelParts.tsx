@@ -1,6 +1,8 @@
-import { useWatch } from '@tinycld/core/ui/form'
+import { Button, ButtonText } from '@tinycld/core/ui/button'
+import { TextInput, useWatch } from '@tinycld/core/ui/form'
 import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
 import { Switch } from '@tinycld/core/ui/switch'
+import type { ReactNode } from 'react'
 import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { firstTextField } from '../../lib/builder/columns'
@@ -10,6 +12,10 @@ import {
     type GroupLevelDraft,
     labelStart,
     levelScope,
+    type OpeningDraft,
+    openingCellRows,
+    openingDraft,
+    setOpeningCell,
     showsHaving,
 } from '../../lib/builder/draft'
 import type { GroupDraft } from '../../lib/builder/filter'
@@ -17,6 +23,7 @@ import type { FormulaPlace } from '../../lib/builder/formula-context'
 import type { ParamDef, SpecNode } from '../../lib/spec'
 import type { CatalogSource } from '../../lib/types'
 import { type AboveChoice, ConditionTree } from './ConditionTree'
+import { FieldError, NEW_FORMULA } from './parts'
 import { ReportFormula } from './report-formula'
 
 // The parts of a group level after its column: its label, "Show every <record>"
@@ -242,6 +249,163 @@ export function GroupHaving({ builder, groups, index }: Omit<LevelPartProps, 'ta
                 onChange={(having, ...added) =>
                     setLevel(builder, groups, index, { having }, ...added)
                 }
+            />
+        </View>
+    )
+}
+
+interface TextActionProps {
+    isVisible: boolean
+    text: string
+    label: string
+    onPress: () => void
+    testID: string
+}
+
+function TextAction({ isVisible, text, label, onPress, testID }: TextActionProps) {
+    if (!isVisible) return null
+    return (
+        <Button
+            variant="outline"
+            size="sm"
+            onPress={onPress}
+            accessibilityLabel={label}
+            testID={testID}
+        >
+            <ButtonText>{text}</ButtonText>
+        </Button>
+    )
+}
+
+type OpeningCellRow = ReturnType<typeof openingCellRows>[number]
+
+interface OpeningCellProps {
+    builder: ReportBuilder
+    index: number
+    row: OpeningCellRow
+    opening: OpeningDraft
+    onChange: (opening: OpeningDraft) => void
+    testID: string
+}
+
+function openingCellCaption(row: OpeningCellRow, hasValue: boolean) {
+    if (!hasValue) return `${row.label}: No value`
+    return `${row.label}:`
+}
+
+// One column of the opening row: no value, or a formula worked out on the level's
+// rows (levels.go levelCtx: totals, group fields, lookups, asked values). A stale
+// cell (Save refuses it) shows its refusal and Remove only.
+function OpeningCell({ builder, index, row, opening, onChange, testID }: OpeningCellProps) {
+    const formula = opening.cells[row.col] ?? null
+    const set = (next: FormulaDraft | null) => onChange(setOpeningCell(opening, row.col, next))
+    const state = builder.form.getFieldState(
+        `groups.${index}.opening.cells.${row.col}`,
+        builder.form.formState
+    )
+    return (
+        <View testID={testID} className="gap-1">
+            <View className="flex-row items-center gap-2">
+                <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground">
+                    {openingCellCaption(row, formula !== null)}
+                </Text>
+                <TextAction
+                    isVisible={formula === null}
+                    text="Add a value"
+                    label={`Add a value for ${row.label}`}
+                    onPress={() => set(NEW_FORMULA)}
+                    testID={`${testID}-add`}
+                />
+                <TextAction
+                    isVisible={formula !== null}
+                    text="Remove"
+                    label={`Remove the value for ${row.label}`}
+                    onPress={() => set(null)}
+                    testID={`${testID}-remove`}
+                />
+            </View>
+            <FieldError message={state.error?.message} testID={`${testID}-error`} />
+            <LevelFormula
+                isVisible={!row.isStale}
+                builder={builder}
+                place={{ kind: 'level', index }}
+                formula={formula}
+                onChange={set}
+                testID={`${testID}-formula`}
+            />
+        </View>
+    )
+}
+
+interface OpeningFieldsProps {
+    isVisible: boolean
+    builder: ReportBuilder
+    index: number
+    testID: string
+    cells: ReactNode
+}
+
+function OpeningFields({ isVisible, builder, index, testID, cells }: OpeningFieldsProps) {
+    if (!isVisible) return null
+    return (
+        <View className="gap-1.5">
+            <TextInput
+                name={`groups.${index}.opening.label`}
+                control={builder.form.control}
+                label="Row label"
+                testID={`${testID}-label`}
+                maxLength={200}
+            />
+            {cells}
+        </View>
+    )
+}
+
+/**
+ * "Start each group with a row" (F5): a row first under each opened group of the
+ * level, with its own label and a value in any own-row column after the first (the
+ * label fills the first). It shows also under a group with no rows of its own.
+ */
+export function GroupOpening({ builder, groups, index }: Omit<LevelPartProps, 'target'>) {
+    const columns = useWatch({ control: builder.form.control, name: 'columns' })
+    const group = groups[index]
+    if (!group) return null
+    const testID = `report-builder-group-${index}-opening`
+    const opening = group.opening ?? null
+    const state = builder.form.getFieldState(`groups.${index}.opening`, builder.form.formState)
+    const setOpening = (next: OpeningDraft | null) =>
+        setLevel(builder, groups, index, { opening: next })
+    const cells = opening
+        ? openingCellRows(columns, opening).map(row => (
+              <OpeningCell
+                  key={row.col}
+                  builder={builder}
+                  index={index}
+                  row={row}
+                  opening={opening}
+                  onChange={setOpening}
+                  testID={`${testID}-cell-${row.col}`}
+              />
+          ))
+        : null
+    return (
+        <View className="gap-1.5">
+            <View className="flex-row items-center gap-2">
+                <Switch
+                    value={opening !== null}
+                    onValueChange={on => setOpening(on ? openingDraft('Opening') : null)}
+                    accessibilityLabel="Start each group with a row"
+                    testID={testID}
+                />
+                <Text className="flex-1 text-sm text-foreground">Start each group with a row</Text>
+            </View>
+            <FieldError message={state.error?.message} testID={`${testID}-error`} />
+            <OpeningFields
+                isVisible={opening !== null}
+                builder={builder}
+                index={index}
+                testID={testID}
+                cells={cells}
             />
         </View>
     )
