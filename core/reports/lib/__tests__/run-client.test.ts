@@ -147,4 +147,39 @@ describe('rowsKeyOf', () => {
         const sorted = { ...spec, sort: [{ col: 'name', dir: 'desc' as const }] }
         expect(rowsKeyOf({ spec: sorted, params: {}, options })).not.toBe(key)
     })
+
+    // R11: no sort keeps today's key, so no list resets; each sort is its own list.
+    it('adds the reader’s sort to the key, and only the sort', () => {
+        const desc = [{ col: 'amount', dir: 'desc' as const }]
+        expect(rowsKeyOf({ reportId: 'r1', params: {}, options })).toBe('report:r1')
+        expect(rowsKeyOf({ reportId: 'r1', params: {}, options: { ...options, sort: [] } })).toBe(
+            'report:r1'
+        )
+        const sorted = rowsKeyOf({
+            reportId: 'r1',
+            params: {},
+            options: { ...options, sort: desc },
+        })
+        expect(sorted).toBe('report:r1|sort:[{"col":"amount","dir":"desc"}]')
+        expect(
+            rowsKeyOf({
+                reportId: 'r1',
+                params: {},
+                options: { ...options, sort: [{ col: 'amount', dir: 'asc' }] },
+            })
+        ).not.toBe(sorted)
+        expect(
+            rowsKeyOf({
+                reportId: 'r1',
+                params: {},
+                options: { ...options, sort: desc, expand: [['open']], cursor: 'c' },
+            })
+        ).toBe(sorted)
+
+        const draft = rowsKeyOf({ spec, params: {}, options })
+        expect(draft).toBe(`spec:${JSON.stringify(spec)}`)
+        expect(rowsKeyOf({ spec, params: {}, options: { ...options, sort: desc } })).toBe(
+            `${draft}|sort:[{"col":"amount","dir":"desc"}]`
+        )
+    })
 })

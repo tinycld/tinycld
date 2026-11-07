@@ -45,14 +45,16 @@ export type RunPage = RunOutcome & { rowsKey: string }
 
 // What decides a run's rows, apart from its params (the server resolves those and
 // returns them on the result): the saved report, or the draft spec without its
-// display, which holds only line layouts per width. Options are left out, so a
-// group fold, the next page or a new day keeps the reader's place. The param
-// definitions (spec.params) stay in the key on purpose: a param-def edit is a
-// design edit.
+// display, which holds only line layouts per width, and the reader's sort. Other
+// options are left out, so a group fold, the next page or a new day keeps the
+// reader's place; a new sort is a new order, so its list starts at the top (F11).
+// Without a sort the key is as it always was (R11). The param definitions
+// (spec.params) stay in the key on purpose: a param-def edit is a design edit.
 export function rowsKeyOf(body: RunBody): string {
-    if ('reportId' in body) return `report:${body.reportId}`
+    const sort = body.options.sort?.length ? `|sort:${JSON.stringify(body.options.sort)}` : ''
+    if ('reportId' in body) return `report:${body.reportId}${sort}`
     const { display: _display, ...rowsSpec } = body.spec
-    return `spec:${JSON.stringify(rowsSpec)}`
+    return `spec:${JSON.stringify(rowsSpec)}${sort}`
 }
 
 export function problemsOf(data: unknown): Problem[] {

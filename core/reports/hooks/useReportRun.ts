@@ -34,8 +34,9 @@ function withPage(body: RunBody, cursor: string): RunBody {
     }
 }
 
-// Runs a report through POST /api/reports/run (R9). A report without groups pages
-// by keyset; a grouped one answers in one page. The result's topics keep it live.
+// Runs a report through POST /api/reports/run (R9). Every report pages by keyset; a
+// grouped one pages its detail rows in document order with the section rows between
+// them (mergePages joins the pages). The result's topics keep it live.
 export function useReportRun({
     body,
     userId,

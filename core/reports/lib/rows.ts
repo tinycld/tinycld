@@ -140,19 +140,40 @@ const EMPTY_RESULT: RunResult = {
     params: [],
 }
 
-// Only ungrouped reports page (core/server/reports); a grouped run is one page whose
-// rows are in tree order. Each page repeats the whole-report rows (total, computed),
-// which follow its detail rows, and only the newest page's figures are current, so the
-// earlier pages' detail rows go before the newest page's rows, kept as sent.
+const isWholeReportRow = (row: ResultRow) => row.kind === 'total' || row.kind === 'computed'
+
+// The rows of an earlier page without the whole-report rows the server appends
+// after the page's slice: those repeat on every page, and only the newest page's
+// figures are current.
+function withoutAppendedTotals(rows: readonly ResultRow[]): readonly ResultRow[] {
+    let end = rows.length
+    while (end > 0 && isWholeReportRow(rows[end - 1])) end--
+    return rows.slice(0, end)
+}
+
+// Every report pages by keyset (R9). A page holds its detail rows and, in a grouped
+// report, the group, opening and subtotal rows between them in document order. A
+// total or computed row inside the page's slice keeps its place there (a Total per
+// currency block, a layout's computed rows); the whole-report rows after the slice's
+// end are appended to every page. Pages are joined in order: each earlier page's
+// trailing run of total and computed rows goes, and a row whose id an earlier page
+// gave is kept once (R10), so a seam never shows a section's row twice.
 export function mergePages(pages: readonly RunResult[]): RunResult {
     const last = pages[pages.length - 1]
     if (!last) return EMPTY_RESULT
+    const seen = new Set<string>()
+    const rows: ResultRow[] = []
+    for (const page of pages) {
+        const pageRows = page === last ? page.rows : withoutAppendedTotals(page.rows)
+        for (const row of pageRows) {
+            if (seen.has(row.id)) continue
+            seen.add(row.id)
+            rows.push(row)
+        }
+    }
     return {
         ...last,
-        rows: [
-            ...pages.slice(0, -1).flatMap(page => page.rows.filter(row => row.kind === 'detail')),
-            ...last.rows,
-        ],
+        rows,
         notices: uniqueNotices(pages.flatMap(page => page.notices)),
     }
 }

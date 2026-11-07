@@ -302,4 +302,130 @@ describe('mergePages', () => {
     it('returns an empty result for no pages', () => {
         expect(mergePages([])).toMatchObject({ rows: [], notices: [], page: null })
     })
+
+    const opening = (key: string, section: string): ResultRow => ({
+        id: `opening:["${key}"]`,
+        kind: 'opening',
+        depth: 1,
+        label: 'Before the period',
+        section,
+        cells: { cost: 10 },
+    })
+
+    // R9/R10: a grouped page carries the sections between its detail rows.
+    it('appends the next grouped page’s sections after the first page’s rows', () => {
+        const first: RunResult = {
+            ...page([], 0),
+            rows: [
+                group('g:a', ['a'], { expanded: true }),
+                opening('a', 'g:a'),
+                detail('d:1', 'g:a'),
+                detail('d:2', 'g:a'),
+                { ...total, cells: { cost: 300 } },
+            ],
+            page: { size: 2, next: 'c1' },
+        }
+        const second: RunResult = {
+            ...page([], 0),
+            rows: [
+                detail('d:3', 'g:a'),
+                subtotal('s:a', 'g:a'),
+                group('g:b', ['b'], { expanded: true }),
+                opening('b', 'g:b'),
+                detail('d:4', 'g:b'),
+                subtotal('s:b', 'g:b'),
+                { ...total, cells: { cost: 400 } },
+            ],
+            page: { size: 2 },
+        }
+        const merged = mergePages([first, second])
+        expect(merged.rows.map(r => r.id)).toEqual([
+            'g:a',
+            'opening:["a"]',
+            'd:1',
+            'd:2',
+            'd:3',
+            's:a',
+            'g:b',
+            'opening:["b"]',
+            'd:4',
+            's:b',
+            'total',
+        ])
+        expect(merged.rows[merged.rows.length - 1]?.cells.cost).toBe(400)
+        expect(merged.page).toEqual({ size: 2 })
+    })
+
+    it('keeps one copy of an opening or subtotal row two pages both give', () => {
+        const first: RunResult = {
+            ...page([], 0),
+            rows: [
+                group('g:a', ['a'], { expanded: true }),
+                opening('a', 'g:a'),
+                detail('d:1', 'g:a'),
+                total,
+            ],
+        }
+        const second: RunResult = {
+            ...page([], 0),
+            rows: [
+                opening('a', 'g:a'),
+                detail('d:1', 'g:a'),
+                detail('d:2', 'g:a'),
+                subtotal('s:a', 'g:a'),
+                total,
+            ],
+        }
+        const third: RunResult = { ...page([], 0), rows: [subtotal('s:a', 'g:a'), total] }
+        expect(mergePages([first, second, third]).rows.map(r => r.id)).toEqual([
+            'g:a',
+            'opening:["a"]',
+            'd:1',
+            'd:2',
+            's:a',
+            'total',
+        ])
+    })
+
+    // The server keeps a total inside the page's slice in its place (one Total per
+    // currency block); only the totals it appends after the slice repeat on each page.
+    it('keeps an earlier currency’s Total that sits inside an earlier page', () => {
+        const usdTotal: ResultRow = { ...total, id: 'total:USD', cells: { cost: 100 } }
+        const gbpTotal = (cost: number): ResultRow => ({
+            ...total,
+            id: 'total:GBP',
+            cells: { cost },
+        })
+        const first: RunResult = {
+            ...page([], 0),
+            rows: [
+                group('g:usd', ['USD'], { expanded: true }),
+                detail('d:1', 'g:usd'),
+                subtotal('s:usd', 'g:usd'),
+                usdTotal,
+                group('g:gbp', ['GBP'], { expanded: true }),
+                detail('d:2', 'g:gbp'),
+                gbpTotal(50),
+            ],
+            page: { size: 2, next: 'c1' },
+        }
+        const second: RunResult = {
+            ...page([], 0),
+            rows: [detail('d:3', 'g:gbp'), subtotal('s:gbp', 'g:gbp'), gbpTotal(80)],
+            page: { size: 1 },
+        }
+        const merged = mergePages([first, second])
+        expect(merged.rows.map(r => r.id)).toEqual([
+            'g:usd',
+            'd:1',
+            's:usd',
+            'total:USD',
+            'g:gbp',
+            'd:2',
+            'd:3',
+            's:gbp',
+            'total:GBP',
+        ])
+        expect(merged.rows[merged.rows.length - 1]?.cells.cost).toBe(80)
+    })
 })
