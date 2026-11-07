@@ -2,7 +2,7 @@ import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list'
 import { type Breakpoint, useWindowWidth } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react-native'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native'
 import { headingText, type NumberFormat } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
@@ -44,6 +44,19 @@ interface HeadingSort {
     onSortColumn(col: string): void
 }
 
+// One object while the sort is the same: the parent gives a new sort object and a
+// new press handler on every render. The press calls the latest handler, which
+// closes over the reader's current view options.
+function useHeadingSort(sort: ViewSort | null, onSortColumn: (col: string) => void): HeadingSort {
+    const keptSort = useStable(sort)
+    const onSortColumnRef = useRef(onSortColumn)
+    onSortColumnRef.current = onSortColumn
+    return useMemo(
+        () => ({ sort: keptSort, onSortColumn: (col: string) => onSortColumnRef.current(col) }),
+        [keptSort]
+    )
+}
+
 const SORT_ICON_SIZE = 12
 const SORT_ICONS = { asc: ArrowUp, desc: ArrowDown, none: ArrowUpDown } as const
 type SortIconKind = keyof typeof SORT_ICONS
@@ -51,8 +64,15 @@ type SortIconKind = keyof typeof SORT_ICONS
 const sortIconOf = (sort: ViewSort | null, col: string): SortIconKind =>
     sort?.col === col ? sort.dir : 'none'
 
-function SortIcon({ kind }: { kind: SortIconKind }) {
+const SORT_STATE_TEXT: Record<SortIconKind, string | undefined> = {
+    asc: 'ascending',
+    desc: 'descending',
+    none: undefined,
+}
+
+function SortIcon({ kind, isVisible }: { kind: SortIconKind; isVisible: boolean }) {
     const color = useThemeColor('muted-foreground')
+    if (!isVisible) return null
     const Icon = SORT_ICONS[kind]
     return <Icon size={SORT_ICON_SIZE} color={color} />
 }
@@ -77,21 +97,27 @@ interface HeadingContentProps {
 
 // R15: a column the run can sort by (ResultColumn.sortable) has a heading that is a
 // button; each press cycles ascending → descending → the report's order. The icon
-// sits outside the text, so the ellipsis never hides it. A running value's
-// heading is plain text.
+// sits outside the text, so the ellipsis never hides it; in a right-aligned column
+// it comes first, so the text's right edge stays in line with the values. The
+// direction is the button's value (aria-valuetext: native and web), so the name
+// stays "Sort by <heading>". A running value's heading is plain text.
 function HeadingContent({ column, text, justify, sorting }: HeadingContentProps) {
     if (!column.sortable) return <HeadingText text={text} justify={justify} />
+    const kind = sortIconOf(sorting.sort, column.id)
+    const iconFirst = justify === 'end'
     return (
         <Pressable
             testID={`report-sort-${column.id}`}
             accessibilityRole="button"
             accessibilityLabel={`Sort by ${text}`}
+            aria-valuetext={SORT_STATE_TEXT[kind]}
             onPress={() => sorting.onSortColumn(column.id)}
             className="min-h-11 flex-1 flex-row items-center gap-1"
             style={{ justifyContent: JUSTIFY_CONTENT[justify] }}
         >
+            <SortIcon kind={kind} isVisible={iconFirst} />
             <HeadingText text={text} justify={justify} />
-            <SortIcon kind={sortIconOf(sorting.sort, column.id)} />
+            <SortIcon kind={kind} isVisible={!iconFirst} />
         </Pressable>
     )
 }
@@ -320,7 +346,7 @@ export function ReportTable(props: ReportTableProps) {
     const { rows, runKey, breakpoint, layouts, onToggleGroup, onNearEnd, isLoadingMore } = props
     const columns = useStable(props.columns)
     const format = useStable(props.format)
-    const sorting = { sort: props.sort, onSortColumn: props.onSortColumn }
+    const sorting = useHeadingSort(props.sort, props.onSortColumn)
     const windowWidth = useWindowWidth()
     // The width the rows really get (a builder drawer narrows it), measured: local
     // layout state from onLayout. It is kept here, not in the list, so a new run's
