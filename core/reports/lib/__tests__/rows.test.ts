@@ -258,29 +258,24 @@ describe('mergePages', () => {
         ])
     })
 
-    it('joins the columns, conditions and sentences one code names on each page', () => {
-        const having =
-            'The having of the "Team" group reads a looked-up total that mixes currencies, so that total counts as unknown there.'
-        const filter =
-            'The filter reads a looked-up total that mixes currencies, so that total counts as unknown there.'
+    it('joins the columns, conditions and distinct whole messages one code names on each page', () => {
+        // Each name holds ". ", so a message cut into sentences would lose
+        // part of the second one.
+        const having = (team: string) =>
+            `The having of the "No. ${team}" group reads a looked-up total that mixes currencies, so that total counts as unknown there.`
         const blank = 'A looked-up total mixes currencies, so it shows no value.'
         const first: Notice = {
             code: 'mixedCurrency',
-            message: having,
+            message: having('1'),
             conditions: ['groups.0.having'],
         }
         const second: Notice = {
             code: 'mixedCurrency',
-            message: `${blank} ${having} ${filter}`,
+            message: `${blank} ${having('2')}`,
             columns: ['balance'],
-            conditions: ['groups.0.having', 'filter'],
+            conditions: ['groups.1.having'],
         }
-        const third: Notice = {
-            code: 'mixedCurrency',
-            message: `${blank} ${having}`,
-            columns: ['opening', 'balance'],
-            conditions: ['groups.0.having'],
-        }
+        const third: Notice = { ...second, columns: ['opening', 'balance'] }
         const cap = { code: 'rowCap', message: 'The report shows its first 5000 rows.' }
         const merged = mergePages([
             page(['d:1'], 1, [first]),
@@ -290,9 +285,9 @@ describe('mergePages', () => {
         expect(merged.notices).toEqual([
             {
                 code: 'mixedCurrency',
-                message: `${having} ${blank} ${filter}`,
+                message: `${having('1')} ${blank} ${having('2')}`,
                 columns: ['balance', 'opening'],
-                conditions: ['groups.0.having', 'filter'],
+                conditions: ['groups.0.having', 'groups.1.having'],
             },
             cap,
         ])

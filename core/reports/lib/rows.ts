@@ -124,33 +124,36 @@ export function hasRows(rows: readonly ResultRow[]): boolean {
 
 const union = (a: readonly string[] = [], b: readonly string[] = []) => [...new Set([...a, ...b])]
 
-// The server writes a message as sentences, one per thing it names.
-function sentences(message: string): string[] {
-    const parts = message.split(/\.\s+/)
-    return parts.map((part, i) => (i < parts.length - 1 ? `${part}.` : part))
+interface JoinedNotice {
+    notice: Notice
+    messages: string[]
 }
 
 // A page names only what its own rows and conditions show (a mixedCurrency
 // notice names the columns blank on that page), so one code's notices from
-// several pages join: their columns, conditions and sentences, each once, in
-// the order the pages first name them.
-function joinNotices(a: Notice, b: Notice): Notice {
-    const joined: Notice = {
-        ...a,
-        message: union(sentences(a.message), sentences(b.message)).join(' '),
+// several pages join: their columns and conditions each once, and each
+// distinct message whole, in the order the pages first name them. The
+// message is the server's text, never parsed.
+function joinNotices(a: JoinedNotice, b: Notice): JoinedNotice {
+    const messages = union(a.messages, [b.message])
+    const notice: Notice = { ...a.notice, message: messages.join(' ') }
+    if (a.notice.columns || b.columns) notice.columns = union(a.notice.columns, b.columns)
+    if (a.notice.conditions || b.conditions) {
+        notice.conditions = union(a.notice.conditions, b.conditions)
     }
-    if (a.columns || b.columns) joined.columns = union(a.columns, b.columns)
-    if (a.conditions || b.conditions) joined.conditions = union(a.conditions, b.conditions)
-    return joined
+    return { notice, messages }
 }
 
 function uniqueNotices(notices: readonly Notice[]): Notice[] {
-    const byCode = new Map<string, Notice>()
+    const byCode = new Map<string, JoinedNotice>()
     for (const notice of notices) {
         const earlier = byCode.get(notice.code)
-        byCode.set(notice.code, earlier ? joinNotices(earlier, notice) : notice)
+        byCode.set(
+            notice.code,
+            earlier ? joinNotices(earlier, notice) : { notice, messages: [notice.message] }
+        )
     }
-    return [...byCode.values()]
+    return [...byCode.values()].map(joined => joined.notice)
 }
 
 const EMPTY_RESULT: RunResult = {
