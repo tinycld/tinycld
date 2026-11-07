@@ -33,6 +33,16 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 	for j := range pivot {
 		lc.cellNames = append(lc.cellNames, fmt.Sprintf("pv%d", j))
 	}
+	for idx, cp := range c.p.cols {
+		if c.sectionMixed[cp.col.ID] {
+			lc.cellNames = append(lc.cellNames, fmt.Sprintf("vmx%d", idx))
+		}
+	}
+	for j := range pivot {
+		if c.pivotMixed {
+			lc.cellNames = append(lc.cellNames, fmt.Sprintf("pvm%d", j))
+		}
+	}
 	// A section whose cell carries its own currency (a record's) is read
 	// with that currency.
 	for idx, cp := range c.p.cols {
@@ -49,7 +59,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 			lc.items[item.Section] = item
 			continue
 		}
-		lc.used = nil
+		lc.used, lc.wheres = nil, nil
 		// A formula that reads an earlier row is compiled with that row
 		// inside it, so its size grows with every reference, and it is
 		// compiled once for every cell.
@@ -75,7 +85,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		for idx, cp := range c.p.cols {
 			if !isNumeric(c.levelTypes[cp.col.ID]) || c.levelTypes[cp.col.ID] == Bool {
 				cells = append(cells, fmt.Sprintf("NULL AS v%d", idx))
-				carried = append(carried, noCarriedCell(idx))
+				carried = append(carried, noCarriedCell(idx), noMixedCell(idx))
 				continue
 			}
 			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("v%d", idx), c.levelTypes[cp.col.ID], cp, idx
@@ -84,27 +94,39 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 				return nil, nil, err
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
-			carried = append(carried, lc.carriedCell(cp, e, idx))
+			carried = append(carried, lc.carriedCell(cp, e, idx), mixedCell(e, idx))
 		}
+		var pivotMixed []string
 		for j := range pivot {
-			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1
+			lc.cell, lc.typ, lc.column, lc.idx, lc.pivotIdx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1, j
 			e, err := lc.row(item, at+".formula")
 			if err != nil {
 				return nil, nil, err
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
+			if c.pivotMixed {
+				pivotMixed = append(pivotMixed, pivotMixedCell(e, j))
+			}
 		}
 		// A computed row points at no record: no column has a label.
 		for idx := range c.p.cols {
 			cells = append(cells, labelRef{}.cells(idx)...)
 		}
-		cells = append(cells, carried...)
+		cells = append(append(cells, carried...), pivotMixed...)
+		// A computed row has no opening row: its opening cells are blank.
+		for idx := range c.p.cols {
+			cells = append(cells, blankOpeningCells(idx)...)
+		}
 		// The level rows' last columns, so every leg of the union has the same.
 		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n", "NULL AS __kids")
 		if len(lc.used) > maxJoinedChunks {
 			return nil, nil, invalid(at, "a computed row reads too many sections")
 		}
-		legs = append(legs, unionLeg{cells: cells, from: cur + lc.joins()})
+		from := cur + lc.joins()
+		for _, w := range lc.wheres {
+			c.probe(w.at, "SELECT 1 FROM "+from+" WHERE "+w.sql)
+		}
+		legs = append(legs, unionLeg{cells: cells, from: from})
 		lc.items[item.Row] = item
 	}
 	return lc.chunkCTEs(), legs, nil
@@ -146,9 +168,11 @@ type layoutCtx struct {
 	// money rules apply to a computed row.
 	typ FieldType
 	// col is that column (the pivot's cell column for a pivot cell), and idx
-	// its index, -1 for a pivot cell.
-	column *colPlan
-	idx    int
+	// its index, -1 for a pivot cell; pivotIdx is a pivot cell's index j
+	// (its cell pv<j>).
+	column   *colPlan
+	idx      int
+	pivotIdx int
 	// The sections a computed row reads are grouped in chunks, one CTE each
 	// (see chunkCTEs), so a SELECT stays under SQLite's column limit. chunkOf
 	// and keys are by section id; used lists the chunks the computed row
@@ -159,6 +183,16 @@ type layoutCtx struct {
 	used      []int
 	perChunk  int
 	cellNames []string
+	// wheres are the lookups' wheres the computed row being compiled reads
+	// that may be unknown (probeWhere), probed over its select's rows.
+	wheres []condProbe
+}
+
+// probeWhere takes a lookup's where on the computed row being compiled,
+// probed once the sections its select joins are known (layoutLegs).
+func (lc *layoutCtx) probeWhere(at, sql string) bool {
+	lc.wheres = append(lc.wheres, condProbe{at: at, sql: sql})
+	return true
 }
 
 // sectionSlot is where a section's cells are read: its chunk's CTE, and n,
@@ -246,9 +280,40 @@ func (lc *layoutCtx) subtotal(id, at string) (expr, error) {
 	if !slices.Contains(lc.used, slot.chunk) {
 		lc.used = append(lc.used, slot.chunk)
 	}
-	// An empty section counts as zero.
+	// An empty section counts as zero; a section blank because a sum lookup
+	// met two currencies has no value, and neither has a row that reads it
+	// (R3).
 	e := expr{sql: fmt.Sprintf("COALESCE(ls%d.%s, 0)", slot.chunk, slot.column(lc.cell)), typ: lc.typ}
+	if helper := lc.mixedHelper(); helper != "" {
+		e.mixed = fmt.Sprintf("(ls%d.%s IS NOT NULL)", slot.chunk, slot.column(helper))
+		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", e.mixed, e.sql)
+	}
 	return withCurrency(e, lc.sectionCurrency(id, slot)), nil
+}
+
+// mixedHelper is the helper cell beside the cell being compiled that marks
+// a section's cell blank for mixed currencies, "" when it cannot be.
+func (lc *layoutCtx) mixedHelper() string {
+	if lc.idx < 0 {
+		if !lc.c.pivotMixed {
+			return ""
+		}
+		return fmt.Sprintf("pvm%d", lc.pivotIdx)
+	}
+	if !lc.c.sectionMixed[lc.column.col.ID] {
+		return ""
+	}
+	return fmt.Sprintf("vmx%d", lc.idx)
+}
+
+// pivotMixedCell is a computed row's pvm<j>: 1 where its pivot cell j is
+// blank for mixed currencies.
+func pivotMixedCell(e expr, j int) string {
+	blank := e.blankFor()
+	if blank == "" {
+		return fmt.Sprintf("NULL AS pvm%d", j)
+	}
+	return fmt.Sprintf("(CASE WHEN %s THEN 1 END) AS pvm%d", blank, j)
 }
 
 // sectionCurrency is the currency of a section's cell in the column being
@@ -379,7 +444,7 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 				row = map[string]any{}
 			}
 			id := "c:" + item.Row + rn.currencySuffix(total)
-			rn.push(Row{ID: id, Kind: KindComputed, Label: item.Label, Cells: rn.cells(row)})
+			rn.push(Row{ID: id, Kind: KindComputed, Label: item.Label, Cells: rn.cells(row)}, row)
 			continue
 		}
 		key := sectionKey(item)

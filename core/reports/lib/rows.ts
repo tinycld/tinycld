@@ -25,16 +25,39 @@ function unlabelledCells(row: ResultRow) {
     return Object.fromEntries(Object.entries(row.cells).filter(([id]) => id !== labelColumn))
 }
 
-function rowCells(row: ResultRow, withSubtotal: Set<string>) {
+/** What visibleRows reads of the spec: which group rows end in a subtotal row. */
+export type SubtotalSpec = {
+    groups?: readonly { subtotals?: boolean }[] | null
+    layout?: readonly unknown[] | null
+}
+
+// Whether the engine ends this group row with its own subtotal row
+// (assemble.go groupWithLabel): an open group of a level with subtotals; in a
+// layout report every group of such a level, open or closed, and every layout
+// section (level 1). A paged run may send that subtotal row on a later page.
+function endsInSubtotal(row: ResultRow, spec: SubtotalSpec): boolean {
+    const isLayout = (spec.layout?.length ?? 0) > 0
+    const level = row.depth + 1
+    const hasSubtotals = (isLayout && level === 1) || spec.groups?.[level - 1]?.subtotals === true
+    return hasSubtotals && (row.expanded === true || isLayout)
+}
+
+function rowCells(row: ResultRow, withSubtotal: Set<string>, spec: SubtotalSpec | null) {
     if (row.kind === 'group' && withSubtotal.has(row.id)) return NO_CELLS
+    if (row.kind === 'group' && spec && endsInSubtotal(row, spec)) return NO_CELLS
     if (row.kind === 'detail') return unlabelledCells(row)
     return row.cells
 }
 
 // A figure is never shown twice (the report shell's rule): a group row that its own
 // subtotal row follows shows no figures (a closed group with no subtotal row keeps
-// its figures), and a detail row shows its label once, not again in a cell.
-export function visibleRows(rows: readonly ResultRow[]): VisibleRow[] {
+// its figures), and a detail row shows its label once, not again in a cell. With
+// the spec, a group row whose subtotal row has not loaded yet (it comes on a later
+// page) shows no figures either, so its figures never show and then go.
+export function visibleRows(
+    rows: readonly ResultRow[],
+    spec: SubtotalSpec | null = null
+): VisibleRow[] {
     const withSubtotal = new Set(
         rows.flatMap(row => (row.kind === 'subtotal' && row.section ? [row.section] : []))
     )
@@ -42,7 +65,7 @@ export function visibleRows(rows: readonly ResultRow[]): VisibleRow[] {
         const isGroup = row.kind === 'group'
         return {
             row,
-            cells: rowCells(row, withSubtotal),
+            cells: rowCells(row, withSubtotal, spec),
             isToggle: isGroup && row.canExpand === true,
             isOpen: isGroup && row.expanded === true,
         }
@@ -122,13 +145,32 @@ export function hasRows(rows: readonly ResultRow[]): boolean {
     return rows.some(row => row.kind === 'detail' || row.kind === 'group')
 }
 
+const union = (a: readonly string[] = [], b: readonly string[] = []) => [...new Set([...a, ...b])]
+
+// A notice's sentences as the server sent them: its parts, or its message as one.
+const sentencesOf = (notice: Notice): string[] => notice.parts ?? [notice.message]
+
+// A page names only what its own rows and conditions show (a mixedCurrency
+// notice names the columns blank on that page), so one code's notices from
+// several pages join: their columns, conditions and sentences each once, in
+// the order the pages first name them. A sentence is one of the server's
+// parts (or a whole message of one sentence), never cut from the text here.
+function joinNotices(a: Notice, b: Notice): Notice {
+    const parts = union(sentencesOf(a), sentencesOf(b))
+    const notice: Notice = { ...a, message: parts.join(' ') }
+    if (parts.length > 1) notice.parts = parts
+    if (a.columns || b.columns) notice.columns = union(a.columns, b.columns)
+    if (a.conditions || b.conditions) notice.conditions = union(a.conditions, b.conditions)
+    return notice
+}
+
 function uniqueNotices(notices: readonly Notice[]): Notice[] {
-    const seen = new Set<string>()
-    return notices.filter(notice => {
-        if (seen.has(notice.code)) return false
-        seen.add(notice.code)
-        return true
-    })
+    const byCode = new Map<string, Notice>()
+    for (const notice of notices) {
+        const earlier = byCode.get(notice.code)
+        byCode.set(notice.code, earlier ? joinNotices(earlier, notice) : notice)
+    }
+    return [...byCode.values()]
 }
 
 const EMPTY_RESULT: RunResult = {
@@ -140,19 +182,40 @@ const EMPTY_RESULT: RunResult = {
     params: [],
 }
 
-// Only ungrouped reports page (core/server/reports); a grouped run is one page whose
-// rows are in tree order. Each page repeats the whole-report rows (total, computed),
-// which follow its detail rows, and only the newest page's figures are current, so the
-// earlier pages' detail rows go before the newest page's rows, kept as sent.
+const isWholeReportRow = (row: ResultRow) => row.kind === 'total' || row.kind === 'computed'
+
+// The rows of an earlier page without the whole-report rows the server appends
+// after the page's slice: those repeat on every page, and only the newest page's
+// figures are current.
+function withoutAppendedTotals(rows: readonly ResultRow[]): readonly ResultRow[] {
+    let end = rows.length
+    while (end > 0 && isWholeReportRow(rows[end - 1])) end--
+    return rows.slice(0, end)
+}
+
+// Every report pages by keyset (R9). A page holds its detail rows and, in a grouped
+// report, the group, opening and subtotal rows between them in document order. A
+// total or computed row inside the page's slice keeps its place there (a Total per
+// currency block, a layout's computed rows); the whole-report rows after the slice's
+// end are appended to every page. Pages are joined in order: each earlier page's
+// trailing run of total and computed rows goes, and a row whose id an earlier page
+// gave is kept once (R10), so a seam never shows a section's row twice.
 export function mergePages(pages: readonly RunResult[]): RunResult {
     const last = pages[pages.length - 1]
     if (!last) return EMPTY_RESULT
+    const seen = new Set<string>()
+    const rows: ResultRow[] = []
+    for (const page of pages) {
+        const pageRows = page === last ? page.rows : withoutAppendedTotals(page.rows)
+        for (const row of pageRows) {
+            if (seen.has(row.id)) continue
+            seen.add(row.id)
+            rows.push(row)
+        }
+    }
     return {
         ...last,
-        rows: [
-            ...pages.slice(0, -1).flatMap(page => page.rows.filter(row => row.kind === 'detail')),
-            ...last.rows,
-        ],
+        rows,
         notices: uniqueNotices(pages.flatMap(page => page.notices)),
     }
 }

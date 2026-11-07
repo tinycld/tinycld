@@ -94,9 +94,13 @@ export function formatNumber(value: number): string {
 
 const SYMBOL_ROWS: readonly RowKind[] = ['subtotal', 'computed', 'total']
 
-/** Group, subtotal, computed and total cells take the column's total type when it has one. */
+/**
+ * Group, subtotal, computed and total cells take the column's total type when it
+ * has one; detail and opening cells have the column's own type (R5c).
+ */
 export function cellType(column: ResultColumn, row: ResultRow): FieldType {
-    return row.kind !== 'detail' && column.totalType ? column.totalType : column.type
+    const isTotalRow = row.kind !== 'detail' && row.kind !== 'opening'
+    return isTotalRow && column.totalType ? column.totalType : column.type
 }
 
 export function cellCurrency(column: ResultColumn, row: ResultRow): string {

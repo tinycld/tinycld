@@ -48,6 +48,8 @@ func rowsOf(res *Result, what string) []any {
 	out := make([]any, len(res.Rows))
 	for i, r := range res.Rows {
 		switch what {
+		case "id":
+			out[i] = r.ID
 		case "kind":
 			out[i] = r.Kind
 		case "label":
@@ -123,9 +125,9 @@ func TestRunDescribesItsColumns(t *testing.T) {
 		"sort":[{"col":"name"}]}`
 	res := z.run(t, "ann", spec, Options{}, nil)
 	want := []ResultColumn{
-		{ID: "name", Label: "Name", Type: Text, TotalType: Number, Aggregate: Count, Format: "plain"},
-		{ID: "region", Label: "Where", Type: Select, Options: []Option{{Value: "north", Label: "North"}, {Value: "south", Label: "South"}}},
-		{ID: "price", Label: "Price", Type: Money, Aggregate: Sum, Currency: "USD"},
+		{ID: "name", Label: "Name", Type: Text, TotalType: Number, Aggregate: Count, Format: "plain", Sortable: true},
+		{ID: "region", Label: "Where", Type: Select, Options: []Option{{Value: "north", Label: "North"}, {Value: "south", Label: "South"}}, Sortable: true},
+		{ID: "price", Label: "Price", Type: Money, Aggregate: Sum, Currency: "USD", Sortable: true},
 	}
 	if !reflect.DeepEqual(res.Columns, want) {
 		t.Fatalf("columns = %+v", res.Columns)
@@ -306,10 +308,10 @@ func TestColumnTypesDoNotDependOnWhetherRowsLoaded(t *testing.T) {
 		t.Fatalf("columns differ:\n%+v\n%+v", collapsed.Columns, open.Columns)
 	}
 	want := []ResultColumn{
-		{ID: "species", Label: "Species", Type: Text, TotalType: Number, Aggregate: Count},
-		{ID: "cost", Label: "Cost", Type: Money, CurrencyCell: "cost@currency", Aggregate: Sum},
+		{ID: "species", Label: "Species", Type: Text, TotalType: Number, Aggregate: Count, Sortable: true},
+		{ID: "cost", Label: "Cost", Type: Money, CurrencyCell: "cost@currency", Aggregate: Sum, Sortable: true},
 		{ID: "share", Label: "share", Type: Percent},
-		{ID: "notes", Label: "notes", Type: Text, TotalType: Number, Aggregate: Count},
+		{ID: "notes", Label: "notes", Type: Text, TotalType: Number, Aggregate: Count, Sortable: true},
 	}
 	if !reflect.DeepEqual(collapsed.Columns, want) {
 		t.Fatalf("columns = %+v", collapsed.Columns)
@@ -390,7 +392,7 @@ func TestAFormulaPathIsBlankOnGroupAndTotalRows(t *testing.T) {
 func TestTheRowCapNoticeIsGivenOnce(t *testing.T) {
 	z := newZoo(t)
 	withLimits(t, func(l *limits) { l.rowCap = 1 })
-	// Both the group statement (3 rows) and the detail statement (4) pass the cap.
+	// The group statement (3 rows) passes the cap; the detail pass pages and has no cap.
 	res := z.run(t, "ann", feedingsBySpecies, Options{ExpandAll: true}, nil)
 	n := 0
 	for _, notice := range res.Notices {

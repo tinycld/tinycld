@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec, type SpecNode } from '../../spec'
+import { placeCells, startingLayout } from '../../table-lines'
 import { MAX_COLUMNS } from '../columns'
 import {
     type BuilderDraft,
     builderSchema,
     type ColumnDraft,
+    displayIssues,
     draftFromSpec,
     draftIssues,
     emptyDraft,
@@ -15,6 +17,9 @@ import {
     levelScope,
     offersDetailBlank,
     offersHaving,
+    openingCellRows,
+    openingDraft,
+    setOpeningCell,
     showsDetailLabel,
     showsHaving,
     specFromDraft,
@@ -457,7 +462,7 @@ describe('builderSchema', () => {
 })
 
 const V2: ReportSpec = {
-    version: 2,
+    version: CURRENT_SPEC_VERSION,
     source: SALES_KEY,
     params: [
         { id: 'asOf', type: 'asOf', label: 'As of', default: { preset: 'endOfLastMonth' } },
@@ -659,7 +664,7 @@ describe('spec version 2 in the builder', () => {
 
     it('keeps the label field of a link column and of a pivot', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'team', label: 'Team', path: [{ link: 'team' }], labelField: 'region' },
@@ -683,7 +688,7 @@ describe('spec version 2 in the builder', () => {
 
     it('reads a fill condition that matches the group above, and writes it back', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'region', label: 'Region', path: [{ link: 'team' }, { field: 'region' }] },
@@ -718,7 +723,7 @@ describe('spec version 2 in the builder', () => {
 
     it('saves a fill with no conditions as an empty fill', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
             groups: [{ id: 'byTeam', col: 'team', fill: {} }],
@@ -736,7 +741,7 @@ describe('spec version 2 in the builder', () => {
             args: [{ path: [{ field: 'quantity' }] }, { value: 0 }],
         }
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'team', label: 'Team', path: [{ link: 'team' }] },
@@ -1021,7 +1026,7 @@ describe('spec version 2 in the builder', () => {
 describe('a no-op save keeps what the spec says', () => {
     it('keeps a param that only another param’s options read, through a chain', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             params: [
                 {
@@ -1071,7 +1076,7 @@ describe('a no-op save keeps what the spec says', () => {
 
     it('keeps defaults the spec spells out', () => {
         const spec: ReportSpec = {
-            version: 2,
+            version: CURRENT_SPEC_VERSION,
             source: SALES_KEY,
             columns: [
                 { id: 'status', label: 'Status', path: [{ field: 'status' }] },
@@ -1124,7 +1129,7 @@ describe('the group pick text of a param from a source', () => {
         multiple: true,
     })
     const specWith = (param: ParamDef): ReportSpec => ({
-        version: 2,
+        version: CURRENT_SPEC_VERSION,
         source: SALES_KEY,
         params: [param],
         columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
@@ -1186,7 +1191,7 @@ describe('the group order of a param from a source', () => {
         multiple: true,
     })
     const specWith = (param: ParamDef): ReportSpec => ({
-        version: 2,
+        version: CURRENT_SPEC_VERSION,
         source: SALES_KEY,
         params: [param],
         columns: [{ id: 'team', label: 'Team', path: [{ link: 'team' }] }],
@@ -1397,3 +1402,369 @@ describe('a column blank on opened rows', () => {
         expect(issueAt({ ...draft, columns: blankAmount }, 'columns.3.detail')).toBeUndefined()
     })
 })
+
+// A team's sales before the period: the opening of a running balance (F1 sum, F3 bound).
+const OPEN_BALANCE: SpecNode = {
+    op: 'coalesce',
+    args: [
+        {
+            op: 'lookup',
+            source: SALES_KEY,
+            where: {
+                op: 'and',
+                args: [
+                    {
+                        op: 'eq',
+                        args: [
+                            { path: [{ link: 'team' }] },
+                            { record: 'byTeam', path: [{ field: 'id' }] },
+                        ],
+                    },
+                    {
+                        op: 'lt',
+                        args: [{ path: [{ field: 'day' }] }, { param: 'period', bound: 'from' }],
+                    },
+                ],
+            },
+            value: { path: [{ field: 'amount' }] },
+            pick: 'sum',
+        },
+        { value: 0 },
+    ],
+}
+
+const V3: ReportSpec = {
+    version: CURRENT_SPEC_VERSION,
+    source: SALES_KEY,
+    params: [{ id: 'period', type: 'dateRange', label: 'Period', default: { preset: 'allDates' } }],
+    columns: [
+        { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+        { id: 'day', label: 'Day', path: [{ field: 'day' }] },
+        { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+        {
+            id: 'sameDay',
+            label: 'Same day',
+            formula: {
+                op: 'lookup',
+                source: SALES_KEY,
+                where: {
+                    op: 'eq',
+                    args: [{ path: [{ field: 'day' }] }, { outer: [{ field: 'day' }] }],
+                },
+                value: { path: [{ field: 'id' }] },
+                pick: 'count',
+            },
+        },
+        {
+            id: 'balance',
+            label: 'Balance',
+            formula: {
+                op: 'add',
+                args: [OPEN_BALANCE, { op: 'runningSum', args: [{ path: [{ field: 'amount' }] }] }],
+            },
+            rollup: {
+                op: 'add',
+                args: [OPEN_BALANCE, { op: 'sum', args: [{ path: [{ field: 'amount' }] }] }],
+            },
+        },
+    ],
+    filter: { op: 'between', args: [{ path: [{ field: 'day' }] }, { param: 'period' }] },
+    sort: [{ col: 'day' }],
+    groups: [
+        {
+            id: 'byTeam',
+            col: 'team',
+            subtotals: true,
+            open: true,
+            opening: { label: 'Before the period', cells: { balance: OPEN_BALANCE } },
+        },
+    ],
+}
+
+const BALANCE = 4
+
+describe('spec version 3 in the builder', () => {
+    it('keeps every v3 part through the draft and writes version 3', () => {
+        const draft = draftFromSpec(V3, META, CATALOG)
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        expect(draft.columns[3]).toMatchObject({ kind: 'formula', formula: { kind: 'editable' } })
+        expect(draft.columns[BALANCE]?.rollup).toEqual({
+            kind: 'editable',
+            node: V3.columns[BALANCE]?.rollup,
+        })
+        expect(draft.groups[0]?.opening).toEqual({
+            label: 'Before the period',
+            cells: { balance: { kind: 'editable', node: OPEN_BALANCE } },
+        })
+        const saved = specFromDraft(draft, CATALOG)
+        expect(saved.version).toBe(3)
+        expect(saved).toEqual(V3)
+        expect(JSON.stringify(saved)).toBe(JSON.stringify(V3))
+    })
+
+    it('keeps a rollup or an opening cell the editor cannot show read-only and saves it unchanged', () => {
+        const odd: SpecNode = { op: 'shout', args: [] }
+        const spec: ReportSpec = {
+            ...V3,
+            columns: V3.columns.map((c, i) => (i === BALANCE ? { ...c, rollup: odd } : c)),
+            groups: [
+                {
+                    ...(V3.groups?.[0] ?? { id: 'byTeam', col: 'team' }),
+                    opening: { label: 'Before', cells: { amount: odd } },
+                },
+            ],
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(draft.columns[BALANCE]?.rollup).toEqual({ kind: 'fixed', node: odd })
+        expect(draft.groups[0]?.opening?.cells.amount).toEqual({ kind: 'fixed', node: odd })
+        expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+    })
+
+    it('"Start each group with a row" writes the opening with its label and only the cells set', () => {
+        const draft = draftFromSpec(V3, META, CATALOG)
+        const off = { ...draft, groups: draft.groups.map(g => ({ ...g, opening: null })) }
+        expect(specFromDraft(off, CATALOG).groups?.[0]).not.toHaveProperty('opening')
+        const bare = openingDraft('Opening')
+        expect(bare).toEqual({ label: 'Opening', cells: {} })
+        const on = (opening: ReturnType<typeof openingDraft>) => ({
+            ...draft,
+            groups: draft.groups.map(g => ({ ...g, opening })),
+        })
+        expect(specFromDraft(on(bare), CATALOG).groups?.[0]?.opening).toEqual({ label: 'Opening' })
+        const withCell = setOpeningCell(bare, 'balance', { kind: 'editable', node: OPEN_BALANCE })
+        expect(specFromDraft(on(withCell), CATALOG).groups?.[0]?.opening).toEqual({
+            label: 'Opening',
+            cells: { balance: OPEN_BALANCE },
+        })
+        expect(setOpeningCell(withCell, 'balance', null)).toEqual(bare)
+    })
+
+    it('"A formula" on group and total rows writes the column rollup, and the total takes it out', () => {
+        const draft = draftFromSpec(V3, META, CATALOG)
+        const sum: SpecNode = { op: 'sum', args: [{ path: [{ field: 'amount' }] }] }
+        const withRollup = (rollup: FormulaDraft | null) => ({
+            ...draft,
+            columns: draft.columns.map((c, i) => (i === 2 ? { ...c, rollup } : c)),
+        })
+        expect(
+            specFromDraft(withRollup({ kind: 'editable', node: sum }), CATALOG).columns[2]
+        ).toEqual({
+            id: 'amount',
+            label: 'Amount',
+            path: [{ field: 'amount' }],
+            aggregate: 'sum',
+            rollup: sum,
+        })
+        expect(specFromDraft(withRollup(null), CATALOG).columns[2]).not.toHaveProperty('rollup')
+    })
+
+    it('flags a rollup with totals of the rows shown, an empty opening label and an opening cell on the first column', () => {
+        const draft = draftFromSpec(V3, META, CATALOG)
+        const rowsTotal = {
+            ...draft,
+            columns: draft.columns.map((c, i) =>
+                i === BALANCE ? { ...c, total: 'rows' as const } : c
+            ),
+        }
+        expect(draftIssues(rowsTotal, CATALOG)).toContainEqual({
+            path: ['columns', BALANCE, 'rollup'],
+            message:
+                "Totals that add the rows shown cannot also show a formula: choose Recompute from all rows, or the column's total",
+        })
+        const unlabelled = {
+            ...draft,
+            groups: draft.groups.map(g => ({ ...g, opening: { label: '', cells: {} } })),
+        }
+        const parsed = builderSchema(CATALOG).safeParse(unlabelled)
+        expect(parsed.success).toBe(false)
+        expect(parsed.error?.issues).toContainEqual(
+            expect.objectContaining({
+                path: ['groups', 0, 'opening', 'label'],
+                message: 'Enter a label',
+            })
+        )
+        const onLabel = {
+            ...draft,
+            groups: draft.groups.map(g => ({
+                ...g,
+                opening: setOpeningCell(openingDraft('Opening'), 'team', {
+                    kind: 'editable',
+                    node: { value: null },
+                }),
+            })),
+        }
+        expect(draftIssues(onLabel, CATALOG)).toContainEqual({
+            path: ['groups', 0, 'opening', 'cells', 'team'],
+            message: "The opening row's label fills the first column",
+        })
+    })
+
+    it('keeps a param that only a rollup, an opening cell or a range bound reads', () => {
+        const draft = draftFromSpec(V3, META, CATALOG)
+        const plain = (columns: typeof draft.columns) => columns.map(c => ({ ...c, rollup: null }))
+        const unread = {
+            ...draft,
+            filter: emptyGroup(),
+            columns: plain(draft.columns).filter(c => c.id !== 'balance'),
+            groups: draft.groups.map(g => ({ ...g, opening: null })),
+        }
+        expect(keptParams(unread)).toEqual([])
+        const balance = draft.columns[BALANCE]
+        if (balance?.kind !== 'formula') throw new Error('V3 has a balance formula column')
+        const byRollup = {
+            ...unread,
+            columns: [
+                ...unread.columns,
+                { ...balance, formula: { kind: 'editable' as const, node: { value: 0 } } },
+            ],
+        }
+        expect(keptParams(byRollup).map(p => p.id)).toEqual(['period'])
+        const byOpening = { ...unread, groups: draft.groups }
+        expect(keptParams(byOpening).map(p => p.id)).toEqual(['period'])
+        const bound: SpecNode = { param: 'period', bound: 'to' }
+        const byBound = {
+            ...unread,
+            detailLabel: { kind: 'editable' as const, node: bound },
+        }
+        expect(keptParams(byBound).map(p => p.id)).toEqual(['period'])
+    })
+
+    // bind.go groupsAndPivot: an unbucketed group's column names the group, so its
+    // group and total rows show the group, never a formula.
+    it('flags a rollup on a column a group is grouped by with no bucket', () => {
+        const byMonth = { id: 'byMonth', col: 'day', bucket: 'month' as const }
+        const draft = draftFromSpec(
+            { ...V3, groups: [...(V3.groups ?? []), byMonth] },
+            META,
+            CATALOG
+        )
+        const sum: FormulaDraft = { kind: 'editable', node: { value: 1 } }
+        const rollupOn = (index: number) => ({
+            ...draft,
+            columns: draft.columns.map((c, i) => (i === index ? { ...c, rollup: sum } : c)),
+        })
+        expect(draftIssues(rollupOn(0), CATALOG)).toContainEqual({
+            path: ['columns', 0, 'rollup'],
+            message: 'A column a group is grouped by shows the group on its total rows',
+        })
+        expect(issuePaths(rollupOn(1))).not.toContain('columns.1.rollup')
+    })
+
+    // bind.go opening: a child row column has no cell on its level's opening row.
+    it('flags an opening cell on a child row column', () => {
+        const spec: ReportSpec = {
+            version: CURRENT_SPEC_VERSION,
+            source: TEAMS_KEY,
+            columns: [
+                { id: 'region', label: 'Region', path: [{ field: 'region' }] },
+                { id: 'name', label: 'Name', path: [{ field: 'name' }] },
+                {
+                    id: 'amount',
+                    label: 'Amount',
+                    path: [{ link: 'sales', mode: 'nest' }, { field: 'amount' }],
+                },
+            ],
+            groups: [
+                {
+                    id: 'byRegion',
+                    col: 'region',
+                    open: true,
+                    opening: { label: 'Before', cells: { name: { value: 'x' } } },
+                },
+            ],
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(issuePaths(draft)).not.toContain('groups.0.opening.cells.name')
+        const nested = {
+            ...draft,
+            groups: draft.groups.map(g => ({
+                ...g,
+                opening: setOpeningCell(openingDraft('Before'), 'amount', {
+                    kind: 'editable',
+                    node: { value: 0 },
+                }),
+            })),
+        }
+        expect(draftIssues(nested, CATALOG)).toContainEqual({
+            path: ['groups', 0, 'opening', 'cells', 'amount'],
+            message: 'A child row column has no opening cell',
+        })
+    })
+})
+
+describe('the cells the builder shows on an opening row', () => {
+    const nestDraft = () =>
+        draftFromSpec(
+            {
+                version: CURRENT_SPEC_VERSION,
+                source: TEAMS_KEY,
+                columns: [
+                    { id: 'region', label: 'Region', path: [{ field: 'region' }] },
+                    { id: 'name', label: 'Name', path: [{ field: 'name' }] },
+                    {
+                        id: 'amount',
+                        label: 'Amount',
+                        path: [{ link: 'sales', mode: 'nest' }, { field: 'amount' }],
+                    },
+                ],
+            },
+            META,
+            CATALOG
+        )
+    const value: FormulaDraft = { kind: 'editable', node: { value: 0 } }
+
+    it('offers each own-row column after the first, and no child row column', () => {
+        expect(openingCellRows(nestDraft().columns, openingDraft('Before'))).toEqual([
+            { col: 'name', label: 'Name', isStale: false },
+        ])
+    })
+
+    // A cell Save refuses stays in view after the offered ones, so it can be removed.
+    it('keeps a cell in the first column, a child row column or a gone column as stale', () => {
+        const opening = ['region', 'amount', 'gone', 'name'].reduce(
+            (o, col) => setOpeningCell(o, col, value),
+            openingDraft('Before')
+        )
+        expect(openingCellRows(nestDraft().columns, opening)).toEqual([
+            { col: 'name', label: 'Name', isStale: false },
+            { col: 'region', label: 'Region', isStale: true },
+            { col: 'amount', label: 'Amount', isStale: true },
+            { col: 'gone', label: 'gone', isStale: true },
+        ])
+    })
+})
+
+describe('the desktop arrangement in the builder', () => {
+    it('starts a desktop layout that places every column', () => {
+        const layout = startingLayout('desktop', V3.columns)
+        expect(layout.width).toBe('desktop')
+        expect(layout.cells.map(c => c.col)).toEqual(V3.columns.map(c => c.id))
+        expect(placeCells(layout.tracks, layout.cells)).not.toHaveProperty('problem')
+    })
+
+    it('keeps a desktop layout through the draft as it keeps a tablet one', () => {
+        for (const width of ['desktop', 'tablet'] as const) {
+            const spec: ReportSpec = {
+                ...V3,
+                display: { layouts: [startingLayout(width, V3.columns)] },
+            }
+            expect(specFromDraft(draftFromSpec(spec, META, CATALOG), CATALOG)).toEqual(spec)
+        }
+    })
+
+    it('names a desktop problem at its layout as it does for a tablet', () => {
+        for (const width of ['desktop', 'tablet'] as const) {
+            const layout = { width, tracks: 3, cells: [{ col: 'nosuch', line: 1 }] }
+            expect(displayIssues({ layouts: [layout] }, ['team'])).toEqual([
+                {
+                    path: ['display', 'layouts', 0, 'cells', 0, 'col'],
+                    message: 'the report has no column "nosuch"',
+                },
+            ])
+        }
+    })
+})
+
+function issuePaths(draft: BuilderDraft) {
+    return draftIssues(draft, CATALOG).map(i => i.path.join('.'))
+}

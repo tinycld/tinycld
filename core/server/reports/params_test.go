@@ -58,6 +58,7 @@ func TestRangePresetsMatchTheShell(t *testing.T) {
 		{"lastFiscalYear", marchStart, "2024-03-01", "2025-02-28"},
 		{"lastMonth", marchStart, "2025-12-01", "2025-12-31"},
 		{"last12Months", marchStart, "2025-01-01", "2025-12-31"},
+		{"allDates", july, "", ""},
 	}
 	for _, c := range cases {
 		from, to := rangeDays(c.preset, c.pc)
@@ -227,4 +228,92 @@ func groupedTeams(label string, group Path) ParamDef {
 	return ParamDef{ID: "teams", Type: ParamChoice, Multiple: true, OptionsFrom: &OptionsFrom{
 		Source: "zoo.teams", Value: Path{{Field: "id"}}, Label: Path{{Field: "name"}}, Group: group, GroupLabel: label,
 	}}
+}
+
+// boundSpec reads the period's first and last day, compares each feeding's
+// day with the first, and sums ann's grams fed before it.
+const boundSpec = `{"version":3,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],"columns":[
+	{"id":"note","path":[{"field":"note"}]},
+	{"id":"from","formula":{"param":"period","bound":"from"}},
+	{"id":"to","formula":{"param":"period","bound":"to"}},
+	{"id":"before","formula":{"op":"lt","args":[{"path":[{"field":"fed"}]},{"param":"period","bound":"from"}]}},
+	{"id":"gramsBefore","formula":{"op":"coalesce","args":[{"op":"lookup","source":"zoo.feedings","pick":"sum",
+		"where":{"op":"lt","args":[{"path":[{"field":"fed"}]},{"param":"period","bound":"from"}]},
+		"value":{"path":[{"field":"grams"}]}},{"value":0}]}}],
+	"sort":[{"col":"note"}]}`
+
+func TestABoundReadsARangesFirstAndLastDay(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", boundSpec, Options{}, map[string]string{"period": `{"from":"2026-02-01","to":"2026-02-28"}`})
+	requireRows(t, res, "from", "2026-02-01", "2026-02-01", "2026-02-01", "2026-02-01", "2026-02-01")
+	requireRows(t, res, "to", "2026-02-28", "2026-02-28", "2026-02-28", "2026-02-28", "2026-02-28")
+	// f1 01-05, f2 02-10, f3 01-20, f4 03-03; the total has no one day.
+	requireOrderedRows(t, boundSpec, res, "before", true, false, true, false, nil)
+	// f1's 500 and f3's 300 grams were fed before February.
+	requireRows(t, res, "gramsBefore", int64(800), int64(800), int64(800), int64(800), int64(800))
+	for _, c := range res.Columns {
+		if (c.ID == "from" || c.ID == "to") && c.Type != Date {
+			t.Fatalf("%s column = %+v", c.ID, c)
+		}
+	}
+}
+
+// An unset range and All dates have no first day: a bound is blank, and a
+// comparison with it matches no row (R2), so nothing was fed before it.
+func TestABoundOfAnOpenRangeHasNoValue(t *testing.T) {
+	z := newZoo(t)
+	for name, period := range map[string]string{"unset": `null`, "all dates": `{"preset":"allDates"}`} {
+		t.Run(name, func(t *testing.T) {
+			res := z.run(t, "ann", boundSpec, Options{}, map[string]string{"period": period})
+			requireRows(t, res, "from", nil, nil, nil, nil, nil)
+			requireRows(t, res, "to", nil, nil, nil, nil, nil)
+			requireRows(t, res, "before", nil, nil, nil, nil, nil)
+			requireRows(t, res, "gramsBefore", int64(0), int64(0), int64(0), int64(0), int64(0))
+		})
+	}
+}
+
+// All dates keeps every row, one with no day too, in a filter, a formula
+// and a lookup, and resolves to a set range with no bounds.
+func TestAllDatesMatchesEveryRowAndResolvesWithNoBounds(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 5, "currency": "USD", "grams": 1, "note": "f7"})
+	inPeriod := `{"op":"between","args":[{"path":[{"field":"fed"}]},{"param":"period"}]}`
+	spec := `{"version":3,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange","default":{"preset":"allDates"}}],
+		"columns":[{"id":"note","path":[{"field":"note"}]},
+		{"id":"inPeriod","formula":` + inPeriod + `},
+		{"id":"counted","formula":{"op":"lookup","source":"zoo.feedings","pick":"count","where":` + inPeriod + `,"value":{"path":[{"field":"id"}]}}}],
+		"filter":` + inPeriod + `,"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "note", "f1", "f2", "f3", "f4", "f7", nil)
+	requireRows(t, res, "inPeriod", true, true, true, true, true, nil)
+	requireRows(t, res, "counted", int64(5), int64(5), int64(5), int64(5), int64(5), int64(5))
+	if want := []ResolvedParam{{ID: "period", Type: ParamDateRange}}; !reflect.DeepEqual(res.Params, want) {
+		t.Fatalf("params = %+v", res.Params)
+	}
+	// A set range drops the row with no day.
+	res = z.run(t, "ann", spec, Options{}, map[string]string{"period": `{"from":"2026-01-01","to":"2026-01-31"}`})
+	requireOrderedRows(t, spec, res, "note", "f1", "f3", nil)
+	requireRows(t, res, "counted", int64(2), int64(2), int64(2))
+}
+
+func TestABoundIsRefusedOffADateRange(t *testing.T) {
+	app := withZooRegistry(t)
+	spec := func(formula string) string {
+		return `{"version":3,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"},{"id":"day","type":"date"}],
+			"columns":[{"id":"x","formula":` + formula + `}]}`
+	}
+	cases := map[string]struct{ formula, want string }{
+		"a date param":       {`{"param":"day","bound":"from"}`, "bound reads a date range's start or end"},
+		"a bound mid":        {`{"param":"period","bound":"mid"}`, "bound is from or to"},
+		"a bound on a value": {`{"value":"2026-01-01","bound":"from"}`, "bound goes with a param"},
+		"a bound on a lookup": {`{"op":"lookup","source":"zoo.animals","bound":"from","value":{"path":[{"field":"born"}]}}`,
+			"one of op, col, path"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := Validate(app, loadSpec(t, spec(c.formula)))
+			requireSpecError(t, err, 400, "columns.0.formula", c.want)
+		})
+	}
 }

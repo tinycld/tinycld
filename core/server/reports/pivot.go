@@ -103,19 +103,22 @@ func (rn *runner) pivotPass() ([]pivotValue, error) {
 }
 
 // pivotCells adds one aggregate per pivot value to the level: the cell
-// column's aggregate over the rows with that value.
-func (c *compiler) pivotCells(lv *level, values []pivotValue) ([]string, error) {
+// column's aggregate over the rows with that value. Where the cell reads a
+// sum lookup that met two currencies, helpers holds pvm<j>, 1 where pivot
+// cell j is blank for it (R3), which the level above and a computed layout
+// row read.
+func (c *compiler) pivotCells(lv *level, values []pivotValue) (cells, helpers []string, err error) {
 	pv := c.p.pivot
 	if pv == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	cell := pv.cell
-	arg, typ, err := lv.cellArg(cell)
+	e, err := lv.cellArg(cell)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := checkAggregate(cell.col.Aggregate, typ, cell.scale, "pivot.cell"); err != nil {
-		return nil, err
+	if err := checkAggregate(cell.col.Aggregate, e.typ, cell.scale, "pivot.cell"); err != nil {
+		return nil, nil, err
 	}
 	// A "rows" cell follows the column's own cell (rowsTotal): above the
 	// innermost group it adds the next level's pivot cells. A cell column
@@ -128,37 +131,51 @@ func (c *compiler) pivotCells(lv *level, values []pivotValue) ([]string, error) 
 		// refused there.
 		d, err := lv.detailCell(cell, cell.at+".total")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if lv.n == 0 {
-			arg, agg, scale = d.sql, Sum, 0
+			e, agg, scale = d, Sum, 0
 		}
 	}
-	out := make([]string, 0, len(values))
+	e = countedArg(agg, e)
+	blank := e.blankFor()
+	c.pivotMixed = blank != ""
+	cells = make([]string, 0, len(values))
 	for j, v := range values {
+		var value, mixed string
 		if cell.col.Total == TotalRows && lv.n < len(c.p.groups) {
-			out = append(out, fmt.Sprintf("%s AS pv%d", lv.childSum(fmt.Sprintf("pv%d", j)), j))
+			value = lv.childSum(fmt.Sprintf("pv%d", j))
+			if c.pivotMixed {
+				mixed = lv.childSum(fmt.Sprintf("pvm%d", j)) + " > 0"
+			}
+		} else {
+			cond := "w.pk IS " + lv.r.s.bind(v.key)
+			if pv.byCurrency() {
+				cond += " AND w.pkc IS " + lv.r.s.bind(v.currency)
+			}
+			match := fmt.Sprintf("CASE WHEN %s THEN %s END", cond, e.sql)
+			value = lv.agg(fmt.Sprintf("q%d", j), aggregateSQL(agg, match, scale))
+			if c.pivotMixed {
+				mixed = lv.agg(fmt.Sprintf("q%dm", j), fmt.Sprintf("max(CASE WHEN %s AND %s THEN 1 END)", cond, blank)) + " IS NOT NULL"
+			}
+		}
+		if mixed == "" {
+			cells = append(cells, fmt.Sprintf("%s AS pv%d", value, j))
 			continue
 		}
-		cond := "w.pk IS " + lv.r.s.bind(v.key)
-		if pv.byCurrency() {
-			cond += " AND w.pkc IS " + lv.r.s.bind(v.currency)
-		}
-		match := fmt.Sprintf("CASE WHEN %s THEN %s END", cond, arg)
-		ref := lv.agg(fmt.Sprintf("q%d", j), aggregateSQL(agg, match, scale))
-		out = append(out, fmt.Sprintf("%s AS pv%d", ref, j))
+		cells = append(cells, fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END) AS pv%d", mixed, value, j))
+		helpers = append(helpers, fmt.Sprintf("(CASE WHEN %s THEN 1 END) AS pvm%d", mixed, j))
 	}
-	return out, nil
+	return cells, helpers, nil
 }
 
 // cellArg is what a column with an aggregate aggregates, as a value of w.
-func (lv *level) cellArg(cp *colPlan) (string, FieldType, error) {
+func (lv *level) cellArg(cp *colPlan) (expr, error) {
 	if cp.path != nil {
-		return fmt.Sprintf("w.c%d", lv.c.p.index(cp)), cp.path.field.Type, nil
+		return expr{sql: fmt.Sprintf("w.c%d", lv.c.p.index(cp)), typ: cp.path.field.Type}, nil
 	}
 	inner := &rowsCtx{r: lv.r, inAggregate: true, visiting: map[string]bool{}}
-	e, err := compileFormula(inner, cp.col.Formula, cp.at+".formula")
-	return e.sql, e.typ, err
+	return compileFormula(inner, cp.col.Formula, cp.at+".formula")
 }
 
 // pivotLabel is the j-th pivot value as a column label: a record's typed

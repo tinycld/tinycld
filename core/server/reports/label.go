@@ -290,11 +290,12 @@ func (c *compiler) chosenLabel(e expr) string {
 // is shown by the record's label, by the label field of the column it reads,
 // and a select by its option's label; any other value keeps its type, and an
 // amount its currency (a carried one beside it), so the client formats the
-// label as a cell (R9).
-func (c *compiler) compileDetailLabel(rc *rowsCtx, labels *labelRefs, n *Node) (labelRef, error) {
-	e, err := compileFormula(rc, n, "detail.label")
+// label as a cell (R9). win says the label is a running value or a percent,
+// which a viewer cannot sort by.
+func (c *compiler) compileDetailLabel(rc *rowsCtx, labels *labelRefs, n *Node) (_ labelRef, win bool, _ error) {
+	e, err := rc.formula(n, "detail.label")
 	if err != nil {
-		return labelRef{}, err
+		return labelRef{}, false, err
 	}
 	e = asShown(rc.bind, e)
 	if e.target == nil {
@@ -304,14 +305,14 @@ func (c *compiler) compileDetailLabel(rc *rowsCtx, labels *labelRefs, n *Node) (
 			ref.currency, lp.recordCurrency = e.cur.sql, true
 		}
 		c.detailLabel = &lp
-		return ref, nil
+		return ref, e.win, nil
 	}
 	f := labelFieldOf(e.target, c.chosenLabel(e))
 	c.detailLabel = &labelPlan{typ: labelTypeOf(f), recordCurrency: labelTypeOf(f) == Money}
 	if e.sql == "NULL" {
-		return labelRef{value: "NULL", currency: "NULL"}, nil
+		return labelRef{value: "NULL", currency: "NULL"}, e.win, nil
 	}
-	return labels.of(e.target, f, e.sql), nil
+	return labels.of(e.target, f, e.sql), e.win, nil
 }
 
 // textOf is a relation value read as text, by a text operator: the stored

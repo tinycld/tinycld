@@ -20,6 +20,7 @@ export const RANGE_PRESETS = [
     'lastQuarter',
     'lastFiscalYear',
     'last12Months',
+    'allDates',
 ] as const
 export const AS_OF_PRESETS = [
     'today',
@@ -42,6 +43,7 @@ export const PRESET_LABELS: Record<Preset, string> = {
     lastQuarter: 'Last quarter',
     lastFiscalYear: 'Last fiscal year',
     last12Months: 'Last 12 months',
+    allDates: 'All dates',
     endOfLastMonth: 'End of last month',
     endOfLastQuarter: 'End of last quarter',
     endOfLastFiscalYear: 'End of last fiscal year',
@@ -386,14 +388,19 @@ export function chipText(
     return def.label ? `${def.label}: ${text}` : text
 }
 
-/** The period in words for the document header: the days the server ran. */
+/**
+ * The period in words for the document header: the days the server ran. A set
+ * date range with no days is All dates (the server resolves it with none, R1).
+ */
 export function periodWords(
     def: ParamDef | undefined,
     resolved: ResolvedParam | undefined
 ): string | null {
     if (!def || !resolved || resolved.unset) return null
-    if (def.type === 'dateRange' && resolved.from && resolved.to)
-        return rangeWords(resolved.from, resolved.to)
+    if (def.type === 'dateRange')
+        return resolved.from && resolved.to
+            ? rangeWords(resolved.from, resolved.to)
+            : PRESET_LABELS.allDates
     if (typeof resolved.value !== 'string' || !isIsoDay(resolved.value)) return null
     return def.type === 'asOf' ? `As of ${dayWords(resolved.value)}` : dayWords(resolved.value)
 }
@@ -404,6 +411,7 @@ export function emptyMessage(
 ): string {
     const words = periodWords(def, resolved)
     if (!def || !words) return 'No rows'
+    if (words === PRESET_LABELS.allDates) return 'No rows for all dates'
     if (def.type === 'dateRange') return `No rows for ${words}`
     if (def.type === 'asOf') return `No rows as of ${words.replace(/^As of /, '')}`
     return `No rows on ${words}`
@@ -425,8 +433,11 @@ export function emptyAction(defs: readonly ParamDef[], values: ParamValues): Emp
               ? 'endOfLastFiscalYear'
               : null
     if (!target) return null
+    // All dates is the widest period: a narrower one has no rows either.
     const current = effectiveValue(period, values)
-    if (current?.kind === 'preset' && current.preset === target) return null
+    const isWidest =
+        current?.kind === 'preset' && (current.preset === target || current.preset === 'allDates')
+    if (isWidest) return null
     const label =
         target === 'thisFiscalYear' ? 'Show this fiscal year' : 'Show end of last fiscal year'
     return { kind: 'preset', paramId: period.id, preset: target, label }

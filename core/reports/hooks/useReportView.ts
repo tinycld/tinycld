@@ -32,7 +32,7 @@ import {
     toggleGroup,
     visibleRows,
 } from '../lib/rows'
-import type { RunBody } from '../lib/run-client'
+import { type RunBody, refusalSortProblem, type ViewSort } from '../lib/run-client'
 import {
     type BrokenMark,
     brokenProblems,
@@ -40,10 +40,15 @@ import {
     type ParamDef,
     type ReportSpec,
 } from '../lib/spec'
+import { rowLevelsOf } from '../lib/table-lines'
 import type { Notice, ResolvedParam, ResultColumn, ResultRow, RunResult } from '../lib/types'
 import {
+    decodeSort,
+    encodeSort,
+    nextSort,
     parseViewOptions,
     reportLink,
+    SORT_KEY,
     serializeViewOptions,
     type ViewOptions,
 } from '../lib/view-url'
@@ -84,6 +89,11 @@ function viewState(input: {
     return run.result && hasRows(run.result.rows) ? 'ready' : 'empty'
 }
 
+// The reader's sort goes before the report's own (F8); the client sends one key.
+function sortOptions(sort: ViewSort | null): { sort?: ViewSort[] } {
+    return sort ? { sort: [sort] } : {}
+}
+
 function runBody(
     source: ViewSource | null,
     defs: readonly ParamDef[],
@@ -93,7 +103,11 @@ function runBody(
     if (!source) return null
     const common = {
         params: postedParams(defs, options.params),
-        options: { today: todayIso(), ...expansionOptions(expansion) },
+        options: {
+            today: todayIso(),
+            ...expansionOptions(expansion),
+            ...sortOptions(options.sort),
+        },
     }
     return source.kind === 'saved'
         ? { reportId: source.reportId, ...common }
@@ -129,8 +143,12 @@ export interface ReportViewInput {
     missingNote?: string | null
     onShare?(): void
     onSaveAs?(): void
-    /** The report's line layouts per width (E14): the saved spec's, or the draft's. */
-    layouts?: readonly DisplayLayout[]
+    /**
+     * The spec whose rows the view draws (the saved report's, or the draft): its line
+     * layouts per width (E14), how deep its rows go, and which group rows end in a
+     * subtotal row.
+     */
+    spec?: ReportSpec | null
 }
 
 export function useReportView(input: ReportViewInput) {
@@ -233,11 +251,23 @@ export function useReportView(input: ReportViewInput) {
     useFocusEffect(useCallback(() => () => closeOnBlur(), []))
 
     // Kept while the run's rows and the open groups stay, so the table redraws
-    // its rows only when they change.
-    const shownRows = useMemo(() => visibleRows(rows), [rows])
+    // its rows only when they change. The spec says which group rows end in a
+    // subtotal row, also before a later page brings it.
+    const viewSpec = input.spec ?? null
+    const shownRows = useMemo(() => visibleRows(rows, viewSpec), [rows, viewSpec])
     const onToggleGroup = useCallback(
         (row: ResultRow) => setExpansion(reportKey, toggleGroup(expansion, row, rows)),
         [setExpansion, reportKey, expansion, rows]
+    )
+    // Changes only with the sort, so the table's headings redraw only then. setParams
+    // keeps the other params, so the press writes the sort key alone.
+    const sortText = options.sort ? encodeSort(options.sort) : undefined
+    const onSortColumn = useCallback(
+        (col: string) => {
+            const next = nextSort(decodeSort(sortText), col)
+            router.setParams({ [SORT_KEY]: next ? encodeSort(next) : undefined })
+        },
+        [sortText]
     )
 
     return {
@@ -268,7 +298,10 @@ export function useReportView(input: ReportViewInput) {
         isUpdatingInBuilder: isEditing && panel !== 'inline',
         breakpoint,
         panelSurface: panel,
-        layouts: input.layouts ?? NO_LAYOUTS,
+        layouts: input.spec?.display?.layouts ?? NO_LAYOUTS,
+        // Required in the model, so a model built by hand states its levels too
+        // (none would draw the label at a flat report's floor). No spec yet: flat.
+        rowLevels: rowLevelsOf(input.spec ?? null),
         heading: headingOf(run.result, org?.name),
         optionsSource,
         postedParams: posted,
@@ -295,6 +328,12 @@ export function useReportView(input: ReportViewInput) {
         onDisplayChange: (display: DisplayOptions) => write({ ...options, display }),
         // The reader's params stay for the run; only the number display goes back.
         onResetDisplay: () => write({ ...options, display: DEFAULT_DISPLAY }),
+        sort: options.sort,
+        // A new sort is a new rows key (rowsKeyOf), so the list starts at the top (F11).
+        onSortColumn,
+        onClearSort: () => write({ ...options, sort: null }),
+        // A run refused for the reader's sort offers Clear sort (R8).
+        sortProblem: refusalSortProblem(run.problems),
         onCopyLink,
     }
 }

@@ -321,6 +321,7 @@ function AuditLogList({
                     actorEmail: actor?.email,
                 }))
         },
+        queryKey: ['settings.audit-log', actionFilter, resourceFilter, term, page],
     })
 
     const rows = logs ?? []

@@ -67,6 +67,9 @@ async function groupedByDay(p: Page) {
     await openReportsHub(p)
     await startReport(p, SALES_SOURCE)
     await addColumn(p, ['amount'])
+    // Summed, so a phone group row keeps its figures line under the label: a wrapped
+    // group row drops each line that has no value on it.
+    await chooseOption(p, 'report-builder-column-1-aggregate', 'sum')
     await addColumn(p, ['cost'])
     await addColumn(p, ['quantity'])
     await addColumn(p, ['booked'])

@@ -18,7 +18,7 @@ export type FieldType = (typeof FIELD_TYPES)[number]
 export const AGGREGATES = ['sum', 'count', 'countDistinct', 'min', 'max', 'avg'] as const
 export type Aggregate = (typeof AGGREGATES)[number]
 
-export type RowKind = 'detail' | 'group' | 'subtotal' | 'computed' | 'total'
+export type RowKind = 'detail' | 'group' | 'opening' | 'subtotal' | 'computed' | 'total'
 
 export type CellValue = number | string | boolean | null
 
@@ -69,6 +69,8 @@ export interface ResultColumn {
     labelCell?: string
     labelType?: FieldType
     labelCurrencyCell?: string
+    /** The run accepts this column as a reader's sort key (options.sort). */
+    sortable?: boolean
 }
 
 export interface ResultRow {
@@ -100,7 +102,14 @@ export interface ResultRow {
 export interface Notice {
     code: string
     message: string
+    /**
+     * The message's sentences when it has more than one, in its order (one per
+     * blank column, condition or sort key it names); absent for one sentence.
+     */
+    parts?: string[]
     columns?: string[]
+    /** The conditions (by spec path) that read a mixed-currency total. */
+    conditions?: string[]
     count?: number
     leftOut?: number
     /** The spec version an `upgraded` notice came from. */

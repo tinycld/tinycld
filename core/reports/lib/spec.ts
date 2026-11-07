@@ -6,7 +6,7 @@ import { AGGREGATES, PARAM_TYPES, type Problem } from './types'
 // too. Null parts read as absent: a hand-written or shipped spec may say
 // "layout": null.
 
-export const CURRENT_SPEC_VERSION = 2
+export const CURRENT_SPEC_VERSION = 3
 export const BUCKETS = ['day', 'month', 'quarter', 'year', 'fiscalYear'] as const
 export type Bucket = (typeof BUCKETS)[number]
 
@@ -36,8 +36,18 @@ export type SpecNode = {
     where?: SpecNode
     /** The source a lookup reads; its `value` is a formula over that source. */
     source?: string
-    /** Which matching row's value a lookup takes: 'min' (the default) or 'max'. */
-    pick?: 'min' | 'max'
+    /**
+     * What a lookup takes from its matching rows' values: 'min' (the default) or
+     * 'max' of them, 'sum' adds them, 'count' counts those with a value.
+     */
+    pick?: 'min' | 'max' | 'sum' | 'count'
+    /**
+     * Inside a lookup: the report row's value of this to-one path from the report's
+     * own source (blank on a row with none, as a bare path is).
+     */
+    outer?: SpecHop[]
+    /** With `param` on a date range: its first ('from') or last ('to') day. */
+    bound?: 'from' | 'to'
 }
 
 // Input and output are one type, so a form schema built on this one types its values.
@@ -55,7 +65,9 @@ export const specNodeSchema: z.ZodType<SpecNode, SpecNode> = z.lazy(() =>
         link: z.array(specHopSchema).optional(),
         where: specNodeSchema.optional(),
         source: z.string().optional(),
-        pick: z.enum(['min', 'max']).optional(),
+        pick: z.enum(['min', 'max', 'sum', 'count']).optional(),
+        outer: z.array(specHopSchema).optional(),
+        bound: z.enum(['from', 'to']).optional(),
     })
 )
 
@@ -122,6 +134,9 @@ export const specColumnSchema = z.strictObject({
     // 'blank': the column has no cell on detail rows, so a value read from the group's
     // record shows on the group row only. Absent: shown on detail rows.
     detail: z.literal('blank').optional(),
+    // A formula shown on group, subtotal and total rows in place of the column's
+    // totals; detail rows keep `path` or `formula`.
+    rollup: specNodeSchema.optional(),
 })
 export type SpecColumn = z.infer<typeof specColumnSchema>
 
@@ -143,6 +158,14 @@ export const specGroupSchema = z.strictObject({
     fill: z.strictObject({ where: specNodeSchema.optional() }).optional(),
     // Opens the level on a run with no expansion state (the first open).
     open: z.boolean().optional(),
+    // A row first under each open group of this level: its label, and the cells
+    // it shows, each a formula on the group (absent cells are blank).
+    opening: z
+        .strictObject({
+            label: z.string().min(1).max(200),
+            cells: z.record(z.string(), specNodeSchema).optional(),
+        })
+        .optional(),
 })
 export type SpecGroup = z.infer<typeof specGroupSchema>
 

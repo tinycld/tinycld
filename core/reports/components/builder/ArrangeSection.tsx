@@ -352,6 +352,19 @@ function ArrangeFields({ arrange }: { arrange: Arrange }) {
     )
 }
 
+// F10: with no arrangement, a width fits its columns on one line, cutting long
+// text short; when they still do not fit, a narrower width's arrangement takes
+// over (tableLines NARROWER), and only without one do the rows wrap by themselves.
+function AutoCaption({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return (
+        <Text testID="report-builder-arrange-auto" className="text-xs text-muted-foreground">
+            Off: the columns fit on one line, with long text cut short. When they do not fit, the
+            next narrower width's arrangement is used, or the rows wrap if there is none.
+        </Text>
+    )
+}
+
 export function ArrangeSection({
     builder,
     problems,
@@ -380,6 +393,7 @@ export function ArrangeSection({
                     testID="report-builder-arrange-on"
                 />
             </View>
+            <AutoCaption isVisible={arrange.layout === undefined} />
             <Hint text={arrange.hint} />
             <ArrangeFields arrange={arrange} />
         </BuilderSection>

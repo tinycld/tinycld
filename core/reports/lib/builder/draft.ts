@@ -91,6 +91,50 @@ export function formulaDraft(node: SpecNode, params: readonly ParamDef[]): Formu
     return { kind: isEditableNode(node, params) ? 'editable' : 'fixed', node }
 }
 
+/** "Start each group with a row" (F5): its label and a formula per column it fills. */
+export const openingDraftSchema = z.object({
+    label: labelSchema,
+    cells: z.record(z.string(), formulaDraftSchema),
+})
+export type OpeningDraft = z.infer<typeof openingDraftSchema>
+
+export function openingDraft(label: string): OpeningDraft {
+    return { label, cells: {} }
+}
+
+/** The opening row with column `col` showing `formula`, or no value there when null. */
+export function setOpeningCell(
+    opening: OpeningDraft,
+    col: string,
+    formula: FormulaDraft | null
+): OpeningDraft {
+    const kept = Object.entries(opening.cells).filter(([key]) => key !== col)
+    const cells = formula ? [...kept, [col, formula] as const] : kept
+    return { ...opening, cells: Object.fromEntries(cells) }
+}
+
+/**
+ * The cells an opening row's editor lists: each own-row column after the first
+ * (bind.go opening: the label fills the first, a child row column has none), then
+ * each cell Save refuses (its column gone, first or of child rows), stale, so it
+ * stays in view to be removed.
+ */
+export function openingCellRows(columns: readonly ColumnDraft[], opening: OpeningDraft) {
+    const offered = columns
+        .slice(1)
+        .filter(column => nestDepth(column) === 0)
+        .map(column => ({ col: column.id, label: column.label, isStale: false }))
+    const offeredIds = new Set(offered.map(row => row.col))
+    const stale = Object.keys(opening.cells)
+        .filter(col => !offeredIds.has(col))
+        .map(col => ({
+            col,
+            label: columns.find(column => column.id === col)?.label ?? col,
+            isStale: true,
+        }))
+    return [...offered, ...stale]
+}
+
 const columnFields = {
     id: idSchema,
     label: labelSchema,
@@ -107,6 +151,8 @@ const columnFields = {
     labelField: z.string(),
     /** On opened (detail) rows: the column's value, or left blank; absent reads as shown. */
     detail: z.enum(['show', 'blank']).optional(),
+    /** On group, subtotal and total rows: a formula instead of the column's total (F6). */
+    rollup: formulaDraftSchema.nullable().optional(),
 }
 export const columnDraftSchema = z.union([
     z.object({
@@ -162,6 +208,8 @@ export const groupLevelSchema = z.object({
     having: filterGroupSchema,
     /** Show every linked record, even with no rows, of those `where` keeps (R6). */
     fill: z.object({ on: z.boolean(), where: filterGroupSchema }),
+    /** The row that starts each opened group of this level (F5); none when null or absent. */
+    opening: openingDraftSchema.nullable().optional(),
 })
 export type GroupLevelDraft = z.infer<typeof groupLevelSchema>
 
@@ -367,12 +415,60 @@ function detailBlankIssues(draft: BuilderDraft): Issue[] {
     })
 }
 
+const ROLLUP_ROWS =
+    "Totals that add the rows shown cannot also show a formula: choose Recompute from all rows, or the column's total"
+const ROLLUP_NESTED = 'A child row column has no totals to replace'
+const ROLLUP_PIVOT = "A pivot's cell column is totalled by its pivot columns"
+const OPENING_PIVOT = 'This level never opens, so it has no opening row'
+const ROLLUP_GROUPED = 'A column a group is grouped by shows the group on its total rows'
+const OPENING_LABEL_COLUMN = "The opening row's label fills the first column"
+const OPENING_NESTED = 'A child row column has no opening cell'
+
+// bind.go columns and groupsAndPivot: a rollup replaces a recomputed total of the
+// report's own rows, which an unbucketed group's column never has.
+function rollupIssues(draft: BuilderDraft): Issue[] {
+    const grouped = new Set(draft.groups.filter(g => g.bucket === '').map(g => g.col))
+    return draft.columns.flatMap((column, i): Issue[] => {
+        if (!column.rollup) return []
+        const path = ['columns', i, 'rollup']
+        if (column.total === 'rows') return [{ path, message: ROLLUP_ROWS }]
+        if (nestDepth(column) > 0) return [{ path, message: ROLLUP_NESTED }]
+        if (grouped.has(column.id)) return [{ path, message: ROLLUP_GROUPED }]
+        if (draft.pivot.on && draft.pivot.cell === column.id)
+            return [{ path, message: ROLLUP_PIVOT }]
+        return []
+    })
+}
+
+// bind.go groupsAndPivot: an opening row shows under a level that opens, in the
+// report's own-row columns, with its label in the first.
+function openingIssues(draft: BuilderDraft): Issue[] {
+    const first = draft.columns[0]?.id
+    const byId = new Map(draft.columns.map(column => [column.id, column]))
+    return draft.groups.flatMap((group, i): Issue[] => {
+        if (!group.opening) return []
+        const at = ['groups', i, 'opening']
+        if (draft.pivot.on && i === draft.groups.length - 1)
+            return [{ path: at, message: OPENING_PIVOT }]
+        return Object.keys(group.opening.cells).flatMap((col): Issue[] => {
+            const path = [...at, 'cells', col]
+            const column = byId.get(col)
+            if (!column) return [{ path, message: `The report has no column "${col}"` }]
+            if (col === first) return [{ path, message: OPENING_LABEL_COLUMN }]
+            if (nestDepth(column) > 0) return [{ path, message: OPENING_NESTED }]
+            return []
+        })
+    })
+}
+
 export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues = [
         ...paramIssues(draft.params),
         ...groupOrderIssues(draft.params, catalog),
         ...columnIssues(draft, catalog),
         ...detailBlankIssues(draft),
+        ...rollupIssues(draft),
+        ...openingIssues(draft),
         ...groupingIssues(draft, catalog),
     ]
     const [firstProblem] = conditionProblems(draft.filter, catalog, draft.source)
@@ -537,6 +633,7 @@ function columnDraft(
         explicitTotal: column.total !== undefined,
         labelField: column.labelField ?? '',
         detail: column.detail ?? 'show',
+        ...(column.rollup ? { rollup: formulaDraft(column.rollup, params) } : {}),
     } as const
     if (column.formula) {
         return {
@@ -637,6 +734,16 @@ interface LevelRead {
     above: readonly AboveGroup[]
 }
 
+function openingFromSpec(
+    opening: NonNullable<SpecGroup['opening']>,
+    params: readonly ParamDef[]
+): OpeningDraft {
+    const cells = Object.entries(opening.cells ?? {}).map(
+        ([col, node]) => [col, formulaDraft(node, params)] as const
+    )
+    return { label: opening.label, cells: Object.fromEntries(cells) }
+}
+
 // A fill on a group that is not by a link (refused by the server) reads against the
 // base source, so its conditions show as fixed parts or name missing fields.
 function groupLevelDraft(g: SpecGroup, read: LevelRead): GroupLevelDraft {
@@ -653,6 +760,7 @@ function groupLevelDraft(g: SpecGroup, read: LevelRead): GroupLevelDraft {
             on: g.fill !== undefined,
             where: nodeToFilter(g.fill?.where, catalog, read.fillSource, undefined, read.above),
         },
+        ...(g.opening ? { opening: openingFromSpec(g.opening, params) } : {}),
     }
 }
 
@@ -679,6 +787,7 @@ function specFormula(formula: FormulaDraft, ctx: ReportFormulaContext): SpecNode
 
 function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecColumn[] {
     const ctx = formulaContext(draft, catalog, { kind: 'column', selfKey: '' })
+    const levelCtx = formulaContext(draft, catalog, { kind: 'level' })
     return draft.columns.map(column => {
         const out: SpecColumn = { id: column.id, label: column.label }
         if (column.kind === 'path') out.path = column.path
@@ -691,6 +800,8 @@ function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecC
         if (column.total === 'rows' || column.explicitTotal) out.total = column.total
         if (column.labelField !== '') out.labelField = column.labelField
         if (column.detail === 'blank') out.detail = 'blank'
+        // A rollup is worked out on the level rows (levels.go levelCtx.col).
+        if (column.rollup) out.rollup = specFormula(column.rollup, levelCtx)
         return out
     })
 }
@@ -797,11 +908,15 @@ export function levelScope(draft: ColumnsOf, catalog: Catalog, index: number): L
 export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[] {
     const read = paramsInGroup(draft.filter, new Set<string>())
     const node = (n: SpecNode | undefined) => paramsInNode(n, read)
-    for (const column of draft.columns) if (column.kind === 'formula') node(column.formula.node)
+    for (const column of draft.columns) {
+        if (column.kind === 'formula') node(column.formula.node)
+        node(column.rollup?.node)
+    }
     for (const group of draft.groups) {
         paramsInGroup(group.having, read)
         if (group.fill.on) paramsInGroup(group.fill.where, read)
         node(group.label?.node)
+        for (const cell of Object.values(group.opening?.cells ?? {})) node(cell.node)
     }
     for (const key of draft.sort) if (key.kind === 'formula') node(key.formula.node)
     for (const item of draft.layout) if (item.kind === 'row') node(item.formula.node)
@@ -843,6 +958,13 @@ function specSort(draft: BuilderDraft, catalog: Catalog): SpecSortKey[] {
     })
 }
 
+function specOpening(opening: OpeningDraft, ctx: ReportFormulaContext) {
+    const cells = Object.entries(opening.cells)
+    if (cells.length === 0) return { label: opening.label }
+    const written = cells.map(([col, formula]) => [col, specFormula(formula, ctx)] as const)
+    return { label: opening.label, cells: Object.fromEntries(written) }
+}
+
 function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
     return draft.groups.map((g, index) => {
         const level = levelScope(draft, catalog, index)
@@ -862,6 +984,7 @@ function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
             ...(having ? { having } : {}),
             ...(g.fill.on ? { fill: where ? { where } : {} } : {}),
             ...(g.open ? { open: true } : {}),
+            ...(g.opening ? { opening: specOpening(g.opening, ctx) } : {}),
         }
     })
 }
