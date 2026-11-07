@@ -118,14 +118,25 @@ export function useReportRun({
         isError: query.isError,
         isPlaceholderData: query.isPlaceholderData,
     })
-    useLiveTopics(topics, () => query.refetch().then(() => undefined))
+    // A refetch and a next page cancel each other's fetch in flight. A live rerun
+    // that cancelled a next page would leave the list a page short for good: the list
+    // asks for more only when its rows change, and the rerun's rows are the same. A
+    // next page that cancelled a rerun would drop the rerun's figures. So each waits
+    // for the fetch in flight (cancelRefetch: false joins it) and then starts its own.
+    const inFlight = () =>
+        query.isFetching ? query.refetch({ cancelRefetch: false }) : Promise.resolve()
+    useLiveTopics(topics, async () => {
+        await inFlight()
+        await query.refetch()
+    })
     return {
         ...view,
         shownRowsKey: pages[0]?.rowsKey,
         hasMore: query.hasNextPage,
         isLoadingMore: query.isFetchingNextPage,
         loadMore: () => {
-            if (query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage()
+            if (!query.hasNextPage || query.isFetchingNextPage) return
+            void inFlight().then(() => query.fetchNextPage())
         },
         retry: () => void query.refetch(),
     }
