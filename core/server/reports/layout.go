@@ -427,7 +427,7 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 				row = map[string]any{}
 			}
 			id := "c:" + item.Row + rn.currencySuffix(total)
-			rn.push(Row{ID: id, Kind: KindComputed, Label: item.Label, Cells: rn.cells(row)})
+			rn.push(Row{ID: id, Kind: KindComputed, Label: item.Label, Cells: rn.cells(row)}, row)
 			continue
 		}
 		key := sectionKey(item)

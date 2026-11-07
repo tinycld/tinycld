@@ -15,6 +15,7 @@ const hoistSpec = `{"version":2,"source":"zoo.feedings",
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}]},
 		{"id":"run","formula":{"op":"runningSum","args":[{"col":"cost"}]}},
+		{"id":"five","formula":{"value":5}},
 		{"id":"kg","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"weight"}]},"pick":"max",
 			"where":WHERE}}],
 	"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"cost"}]}`
@@ -110,5 +111,38 @@ func TestALookupThatReadsOnlyTheGroupRecordAndParamsIsGroupInvariant(t *testing.
 				t.Fatalf("keyed layers = %v, want one by k0", keys)
 			}
 		})
+	}
+}
+
+// A lookup counts as group-invariant only when every leaf it compiled is of a
+// kind known to read nothing of the row but its group record: a column leaf
+// is not, even one whose formula is a constant and so records no read.
+func TestALeafThatRecordsNoReadIsStillARowRead(t *testing.T) {
+	where := `{"op":"and","args":[` + sameSpecies + `,{"op":"gt","args":[{"path":[{"field":"weight"}]},{"col":"five"}]}]}`
+	reads, frame := compileKgOnADetailRow(t, where)
+	if !reads.other {
+		t.Fatalf("the lookup's reads %+v miss its column leaf", reads)
+	}
+	if keys := keyedLayers(frame); len(keys) > 0 {
+		t.Fatalf("the lookup is computed once per group key %v", keys)
+	}
+}
+
+// A leaf of a kind the tracker does not know, as a future one would be,
+// counts as a read of the row.
+func TestALeafOfAnUnknownKindIsARowRead(t *testing.T) {
+	reads := &rowReads{}
+	l := &lookupCtx{outer: &rowsCtx{reads: reads}}
+	l.compiled(&Node{})
+	if !reads.other {
+		t.Fatalf("reads = %+v, want a row read", reads)
+	}
+	known := &rowReads{}
+	l = &lookupCtx{outer: &rowsCtx{reads: known}}
+	for _, n := range []*Node{{Param: "min"}, {Value: []byte("1")}, {Path: Path{{Field: "name"}}}, {Op: "add"}, {Op: "lookup"}} {
+		l.compiled(n)
+	}
+	if known.other {
+		t.Fatalf("reads = %+v, want none from row-free leaves", known)
 	}
 }

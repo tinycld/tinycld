@@ -163,6 +163,9 @@ type Notice struct {
 	Code    string   `json:"code"`
 	Message string   `json:"message"`
 	Columns []string `json:"columns,omitempty"`
+	// Conditions names, by spec path, each condition (the filter, a having,
+	// a fill's where) that read a looked-up total which mixes currencies.
+	Conditions []string `json:"conditions,omitempty"`
 	// Count is the number of rows a rowCap or nestCap notice kept.
 	Count int `json:"count,omitempty"`
 	// LeftOut is the number of pivot values a pivotCap notice left out.
@@ -217,6 +220,12 @@ type runner struct {
 	// page is a grouped run's page: where its rows start and end in the
 	// document (pageWindow); nil when the run did not page grouped details.
 	page *groupedPage
+	// mixedRows holds, by row id, the columns whose cell on that row is
+	// blank because a sum lookup met two currencies (push).
+	mixedRows map[string][]string
+	// mixedConditions are the conditions that read such a sum on some row
+	// (probeConditions).
+	mixedConditions []string
 }
 
 // groupedPage is a grouped run's page: after is the open group the previous
@@ -370,9 +379,9 @@ func (rn *runner) run() error {
 	}
 	rn.res.Columns = rn.columns()
 	rn.markCurrencies(groupRows)
-	rn.markMixedLookups(groupRows, details)
 	rn.assemble(groupRows, details, nested)
 	rn.pageWindow()
+	rn.markMixedLookups()
 	// A source's Go hooks read collections no statement reads, so their
 	// topics are added by name.
 	for _, src := range Sources(rn.app) {
@@ -475,15 +484,64 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 	}
 	// A statement without its computed rows is wrong, not just short: the
 	// statement limits the level rows and adds the computed rows after.
+	c.condProbes = nil
 	ctes, body, err := c.groupStatement(s, r, rn.expand, pivot, int64(runLimits.rowCap+1))
 	if err != nil {
 		return nil, err
 	}
-	rows, err := rn.query(s, append([]string{r.render()}, ctes...), body)
+	if r.filterMixed != "" {
+		c.probe("filter", "SELECT 1 "+r.root.render()+"\nWHERE "+r.filterMixed)
+	}
+	ctes = append([]string{r.render()}, ctes...)
+	rows, err := rn.query(s, ctes, body)
 	if err != nil {
 		return nil, err
 	}
+	if err := rn.probeConditions(s, ctes); err != nil {
+		return nil, err
+	}
 	return rn.capLevelRows(rows), nil
+}
+
+// condProbe is a condition that reads a sum lookup which may meet two
+// currencies (expr.condMixed): sql selects a row where one did, among the
+// rows the condition decides on, inside the statement's CTEs. at is the
+// condition's spec path.
+type condProbe struct {
+	at, sql string
+}
+
+func (c *compiler) probe(at, sql string) {
+	if !slices.ContainsFunc(c.condProbes, func(p condProbe) bool { return p.at == at }) {
+		c.condProbes = append(c.condProbes, condProbe{at: at, sql: sql})
+	}
+}
+
+// probeConditions finds the conditions of the group statement that read a
+// sum lookup which met two currencies on some row. Such a sum has no value,
+// so the condition was unknown there: it hid that group, dropped that row or
+// left out that record unless another term held. A row it dropped is on no
+// page, so the conditions are probed over the rows they decide on, in a
+// statement of their own.
+func (rn *runner) probeConditions(s *stmt, ctes []string) error {
+	probes := rn.c.condProbes
+	if len(probes) == 0 {
+		return nil
+	}
+	cols := make([]string, len(probes))
+	for i, p := range probes {
+		cols[i] = fmt.Sprintf("EXISTS (%s) AS m%d", p.sql, i)
+	}
+	rows, err := rn.query(s, ctes, "SELECT "+strings.Join(cols, ", "))
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+	for i, p := range probes {
+		if toInt(rows[0][fmt.Sprintf("m%d", i)]) != 0 {
+			rn.mixedConditions = append(rn.mixedConditions, p.at)
+		}
+	}
+	return nil
 }
 
 // capLevelRows drops the level row past the cap (the statement fetched one
@@ -924,7 +982,7 @@ func detailSortValue(ctx *rowsCtx, s sortPlan) (expr, string, error) {
 	var err error
 	key := ""
 	if s.formula != nil {
-		e, err = compileFormula(ctx, s.formula, s.at)
+		e, err = ctx.formula(s.formula, s.at)
 		raw, _ := json.Marshal(s.formula)
 		key = "=" + string(raw)
 	} else {
@@ -1039,17 +1097,13 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		}
 	}
 	if d := c.p.spec.Detail; d != nil && d.Label != nil {
-		ref, err := c.compileDetailLabel(&rowsCtx{r: r, visiting: visiting, detail: frame}, labels, d.Label)
+		ref, win, err := c.compileDetailLabel(&rowsCtx{r: r, visiting: visiting, detail: frame}, labels, d.Label)
 		if err != nil {
 			return "", nil, err
 		}
 		sel = append(sel, ref.value+" AS __label", ref.currency+" AS __labelcur")
 		// The first column sorts by the label: sortable when the label is.
-		le, err := compileFormula(&rowsCtx{r: r, visiting: visiting, detail: frame}, d.Label, "detail.label")
-		if err != nil {
-			return "", nil, err
-		}
-		c.sortable[c.p.cols[0].col.ID] = !le.win
+		c.sortable[c.p.cols[0].col.ID] = !win
 	}
 	if len(c.p.nest) > 0 {
 		sel = append(sel, r.nestParent()+" AS __n0")

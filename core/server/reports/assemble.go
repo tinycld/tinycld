@@ -119,25 +119,30 @@ func (rn *runner) markCurrencies(groupRows []map[string]any) {
 	}
 }
 
-// markMixedLookups names in a notice every column a row of which shows no
-// value because a sum lookup met amounts in two currencies (R3). With the
-// totals' notice due too, the two are one notice: its message, both columns.
-func (rn *runner) markMixedLookups(groupRows, details []map[string]any) {
-	marked := func(name string) bool {
-		return slices.ContainsFunc([][]map[string]any{groupRows, details}, func(rows []map[string]any) bool {
-			return slices.ContainsFunc(rows, func(row map[string]any) bool { return row[name] != nil })
-		})
+// markMixedLookups names in a notice every column a row of this page shows
+// no value in because a sum lookup met amounts in two currencies, and every
+// condition that read such a sum (R3). With the totals' notice due too, the
+// two are one notice: its message, both columns.
+func (rn *runner) markMixedLookups() {
+	shown := map[string]bool{}
+	for _, r := range rn.res.Rows {
+		for _, id := range rn.mixedRows[r.ID] {
+			shown[id] = true
+		}
 	}
-	// An opening cell shows in its column: a column named by both is named once.
-	opening := rn.openingMixed(groupRows)
 	var cols []string
-	for idx, cp := range rn.c.p.cols {
-		if slices.ContainsFunc(mixedHelpers(idx), marked) || slices.Contains(opening, cp.col.ID) {
+	for _, cp := range rn.c.p.cols {
+		if shown[cp.col.ID] {
 			cols = append(cols, cp.col.ID)
 		}
 	}
-	if len(cols) == 0 {
+	conds := rn.mixedConditions
+	if len(cols) == 0 && len(conds) == 0 {
 		return
+	}
+	words := make([]string, len(conds))
+	for i, at := range conds {
+		words[i] = rn.c.conditionWords(at) + " reads a looked-up total that mixes currencies, so that total counts as unknown there."
 	}
 	for i := range rn.res.Notices {
 		if n := &rn.res.Notices[i]; n.Code == "mixedCurrency" {
@@ -146,10 +151,34 @@ func (rn *runner) markMixedLookups(groupRows, details []map[string]any) {
 					n.Columns = append(n.Columns, id)
 				}
 			}
+			n.Conditions = conds
+			n.Message = strings.Join(append([]string{n.Message}, words...), " ")
 			return
 		}
 	}
-	rn.notice(Notice{Code: "mixedCurrency", Message: "A looked-up total mixes currencies, so it shows no value.", Columns: cols})
+	message := words
+	if len(cols) > 0 {
+		message = append([]string{"A looked-up total mixes currencies, so it shows no value."}, words...)
+	}
+	rn.notice(Notice{Code: "mixedCurrency", Message: strings.Join(message, " "), Columns: cols, Conditions: conds})
+}
+
+// conditionWords names a condition by its spec path for a notice: the
+// filter, or a group's having or fill by the group's column.
+func (c *compiler) conditionWords(at string) string {
+	for i, g := range c.p.groups {
+		name := g.col.col.Label
+		if name == "" {
+			name = g.col.col.ID
+		}
+		switch at {
+		case fmt.Sprintf("groups.%d.having", i):
+			return fmt.Sprintf("The having of the %q group", name)
+		case fmt.Sprintf("groups.%d.fill.where", i):
+			return fmt.Sprintf("The fill of the %q group", name)
+		}
+	}
+	return "The filter"
 }
 
 func toInt(v any) int64 {
@@ -232,7 +261,7 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 		for _, g := range t.children[rn.currencyKey(total)] {
 			rn.group(t, g, 1, "")
 		}
-		rn.push(Row{ID: "total" + rn.currencySuffix(total), Kind: KindTotal, Label: "Total", Cells: rn.cells(total)})
+		rn.push(Row{ID: "total" + rn.currencySuffix(total), Kind: KindTotal, Label: "Total", Cells: rn.cells(total)}, total)
 	}
 }
 
@@ -243,7 +272,30 @@ func (rn *runner) currencySuffix(row map[string]any) string {
 	return ":" + rn.currencyKey(row)
 }
 
-func (rn *runner) push(row Row) { rn.res.Rows = append(rn.res.Rows, row) }
+// push emits a row made from raw, the statement's row (nil for a row that
+// shows no looked-up total), and keeps the columns whose cell on it is blank
+// because a sum lookup met two currencies: an opening row's opmx<idx>, any
+// other row's vmx<idx> (markMixedLookups).
+func (rn *runner) push(row Row, raw map[string]any) {
+	rn.res.Rows = append(rn.res.Rows, row)
+	var cols []string
+	for idx, cp := range rn.c.p.cols {
+		helpers := mixedHelpers(idx)
+		if row.Kind == KindOpening {
+			helpers = []string{fmt.Sprintf("opmx%d", idx)}
+		}
+		if slices.ContainsFunc(helpers, func(name string) bool { return raw[name] != nil }) {
+			cols = append(cols, cp.col.ID)
+		}
+	}
+	if len(cols) == 0 {
+		return
+	}
+	if rn.mixedRows == nil {
+		rn.mixedRows = map[string][]string{}
+	}
+	rn.mixedRows[row.ID] = cols
+}
 
 func isEnd(r Row) bool { return r.Kind == KindTotal || r.Kind == KindComputed }
 
@@ -260,6 +312,9 @@ func (rn *runner) pageWindow() {
 		return
 	}
 	rows := rn.res.Rows
+	// A row the page names is always among its rows; were one missing, the
+	// page keeps the document from its start or to its end, which the
+	// client's merge of pages dedupes.
 	start := 0
 	if rn.page.after != nil {
 		id := "g:" + keyString(rn.page.after)
@@ -268,6 +323,8 @@ func (rn *runner) pageWindow() {
 			if start < len(rows) && rows[start].Kind == KindOpening && rows[start].Section == id {
 				start++
 			}
+		} else {
+			log.WarnContext(rn.ctx, "page start group not among the rows", "group", id)
 		}
 	}
 	end := len(rows)
@@ -277,6 +334,8 @@ func (rn *runner) pageWindow() {
 			for end < len(rows) && rows[end].Parent != "" {
 				end++
 			}
+		} else {
+			log.WarnContext(rn.ctx, "page end row not among the rows", "row", rn.page.last)
 		}
 	}
 	out := slices.Clone(rows[start:end])
@@ -393,9 +452,9 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 	rn.push(Row{
 		ID: id, Kind: KindGroup, Depth: n - 1, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
-	})
+	}, row)
 	if expanded && opening != nil {
-		rn.push(Row{ID: "opening:" + keyString(key), Kind: KindOpening, Depth: n, Label: opening.Label, Section: id, GroupKey: key, Cells: rn.openingCells(row, opening)})
+		rn.push(Row{ID: "opening:" + keyString(key), Kind: KindOpening, Depth: n, Label: opening.Label, Section: id, GroupKey: key, Cells: rn.openingCells(row, opening)}, row)
 	}
 	if expanded {
 		if n < len(p.groups) {
@@ -412,7 +471,7 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 		rn.push(Row{
 			ID: "s:" + keyString(key), Kind: KindSubtotal, Depth: n - 1, Label: "Total " + label.text, Section: id, GroupKey: key, Cells: rn.cells(row),
 			LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
-		})
+		}, row)
 	}
 }
 
@@ -426,7 +485,7 @@ func (rn *runner) detail(t *tree, row map[string]any, section string, depth int)
 	rn.push(Row{
 		ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: labelColumn, Section: section, Cells: rn.detailCells(rn.cells(row)),
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
-	})
+	}, row)
 	if len(t.nested) > 0 {
 		rn.nestedRows(t, 0, row["__n0"], id, section, depth+1)
 	}
@@ -514,23 +573,6 @@ func (rn *runner) openingCells(row map[string]any, opening *Opening) map[string]
 		}
 		out[cp.col.ID] = rn.cellValue(cp, row[fmt.Sprintf("op%d", idx)], false)
 		rn.currencyCell(out, cp, row, row[fmt.Sprintf("opcur%d", idx)])
-	}
-	return out
-}
-
-// openingMixed lists, in column order, the columns whose opening cell met two
-// currencies in a sum lookup (opmx<idx>) on a group row that opens, so its
-// opening row shows.
-func (rn *runner) openingMixed(groupRows []map[string]any) []string {
-	var out []string
-	for idx, cp := range rn.c.p.cols {
-		name := fmt.Sprintf("opmx%d", idx)
-		if slices.ContainsFunc(groupRows, func(row map[string]any) bool {
-			n := int(toInt(row["__level"]))
-			return row["__row"] == nil && n >= 1 && row[name] != nil && rn.expand.has(rn.rowKey(row, n), n)
-		}) {
-			out = append(out, cp.col.ID)
-		}
 	}
 	return out
 }

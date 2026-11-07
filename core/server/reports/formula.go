@@ -48,6 +48,11 @@ type expr struct {
 	// mixed is SQL that is true where a sum lookup in the value met amounts
 	// in two currencies (R3), "" when none can.
 	mixed string
+	// condMixed is, on a condition, SQL that is true where a sum lookup the
+	// condition reads met amounts in two currencies: the condition is
+	// unknown there rather than blank, and the run names it in its
+	// mixedCurrency notice. "" when none can.
+	condMixed string
 	// link is, in a lookup's where, the stored relation column a path that
 	// ends at a to-one link follows to read sql; eq bounds that column too.
 	link storedLink
@@ -298,7 +303,8 @@ func compileFormula(c fctx, n *Node, at string) (expr, error) {
 	e, err := compileNode(c, n, at, 0, &count)
 	if err == nil && e.mixed != "" && n.Op != "lookup" {
 		// A sum lookup that met two currencies has no value, and an operator
-		// over it (coalesce, if) must not give it one (R3).
+		// over it (coalesce, if) must not give it one (R3). A condition
+		// carries no mixed (mixedOver).
 		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", e.mixed, e.sql)
 	}
 	return e, err
@@ -323,6 +329,9 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	*count++
 	if depth > maxFormulaDepth || *count > maxFormulaNodes {
 		return expr{}, invalid(at, fmt.Sprintf("a formula has at most %d levels and %d nodes", maxFormulaDepth, maxFormulaNodes))
+	}
+	if t, ok := c.(leafTracker); ok {
+		t.compiled(n)
 	}
 	if n.Op == "lookup" {
 		return c.lookup(n, at)
@@ -408,9 +417,38 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	for _, a := range args {
 		e.agg = e.agg || a.agg
 		e.win = e.win || a.win
-		e.mixed = orSQL(e.mixed, a.mixed)
 	}
-	return e, nil
+	return mixedOver(e, args), nil
+}
+
+// mixedOver gives e, an operator over args, the mixed checks of its
+// arguments. A condition is unknown (NULL) where a value it reads directly
+// met two currencies, even through a coalesce or an if that would give that
+// value one; it carries no mixed, so an and, an or or a not over it decides
+// by three-valued logic, and a filter, a having or a fill keeps a row another
+// term holds for. Its condMixed says where it was unknown. Any other value
+// over a condition that was unknown has no value there (R3).
+func mixedOver(e expr, args []expr) expr {
+	direct, conds := "", ""
+	for _, a := range args {
+		direct = orSQL(direct, a.mixed)
+		conds = orSQL(conds, a.condMixed)
+	}
+	if e.typ != Bool {
+		e.mixed = orSQL(orSQL(e.mixed, direct), conds)
+		return e
+	}
+	if direct != "" {
+		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", direct, e.sql)
+	}
+	e.mixed, e.condMixed = "", orSQL(conds, direct)
+	return e
+}
+
+// leafTracker is a context told of every node compiled in it, before the
+// node compiles (lookupCtx.compiled).
+type leafTracker interface {
+	compiled(n *Node)
 }
 
 // errNodeKind refuses a node that is not exactly one kind of node.

@@ -354,7 +354,12 @@ func (l *lookupCtx) storedLinkCol(hops []hopPlan) string {
 		return ""
 	}
 	col, err := l.r.c.p.app.FindCachedCollectionByNameOrId(hops[0].from.Collection)
-	if err != nil || col.IsView() {
+	if err != nil {
+		// Without the bound the lookup is still right, only slower.
+		log.Warn("lookup link column not bounded", "collection", hops[0].from.Collection, "err", err)
+		return ""
+	}
+	if col.IsView() {
 		return ""
 	}
 	return q(l.sc.alias, hops[0].link.Field)
@@ -454,3 +459,55 @@ func (l *lookupCtx) label(e expr) string { return l.r.c.textOf(l.r.s, e) }
 // currencySQL reads a currency key on the report's row, as a column does:
 // through outer.
 func (l *lookupCtx) currencySQL(cur currency) string { return l.outer.currencySQL(cur) }
+
+// compiled is told of each node compiled in the lookup (leafTracker). A
+// lookup is computed once per group key only when every node it compiled is
+// of a kind known to read nothing of the report's row but the group record
+// (rowFreeNode); any other node, of a kind known to read the row or of a kind
+// not known here, counts as a read of the row, whether or not its leaf
+// records one.
+func (l *lookupCtx) compiled(n *Node) {
+	if rowFreeNode(n) {
+		return
+	}
+	var row fctx = l
+	for {
+		inner, ok := row.(*lookupCtx)
+		if !ok {
+			break
+		}
+		row = inner.outer
+	}
+	if rc, ok := row.(*rowsCtx); ok {
+		rc.reads.value()
+	}
+}
+
+// rowFreeNode is true for a node inside a lookup that reads nothing of the
+// report's row but its group record (which records its key): a record, a
+// param, a constant, a path (on the looked-up source), a lookup or an exists
+// (whose own nodes are told apart), and an operator over its arguments.
+func rowFreeNode(n *Node) bool {
+	switch {
+	case n.Op == "min" || n.Op == "max":
+		// One value is a total; two or more, the smallest or largest.
+		return len(n.Args) != 1
+	case n.Op != "":
+		return rowFreeOps[n.Op]
+	case n.Record != "", n.Param != "", n.Path != nil:
+		return true
+	}
+	return n.Value != nil && n.Col == "" && n.Outer == nil && n.Subtotal == ""
+}
+
+// rowFreeOps are the operators that compute from their arguments alone.
+var rowFreeOps = map[string]bool{
+	"lookup": true, "exists": true, "notExists": true,
+	"add": true, "sub": true, "mul": true, "div": true, "round": true,
+	"eq": true, "ne": true, "lt": true, "lte": true, "gt": true, "gte": true,
+	"between": true, "in": true, "and": true, "or": true, "not": true,
+	"concat": true, "upper": true, "lower": true, "contains": true, "startsWith": true,
+	"year": true, "quarter": true, "month": true, "fiscalYear": true, "fiscalPeriod": true,
+	"addDays": true, "addMonths": true, "diffDays": true,
+	"if": true, "case": true, "coalesce": true, "isEmpty": true,
+}

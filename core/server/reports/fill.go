@@ -62,7 +62,7 @@ func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (st
 		return "", invalid(at, "only a group by a link to one record shows records with no rows")
 	}
 	sc := newScope(r.s, target)
-	where := ""
+	where, mixed := "", ""
 	if w := c.p.groups[n-1].group.Fill.Where; w != nil {
 		j := &joinCtx{r: r, sc: sc, src: target, isFilter: true, visiting: map[string]bool{}}
 		e, err := compileWhere(&fillCtx{joinCtx: j, n: n}, w, at)
@@ -72,6 +72,9 @@ func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (st
 		// A blank condition is NULL, which WHERE drops as it drops false.
 		if !e.unset {
 			where = "\nWHERE " + e.sql
+		}
+		if e.condMixed != "" {
+			mixed = e.condMixed
 		}
 	}
 	keys := make([]string, 0, n+len(c.currencies))
@@ -87,8 +90,12 @@ func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (st
 		picked = append(picked, "p."+ck+" AS "+ck)
 	}
 	from := strings.TrimPrefix(sc.render(), "FROM ")
+	parents := c.parentKeys(r.s, n, expand)
+	if mixed != "" {
+		c.probe(c.p.groups[n-1].at+".fill.where", fmt.Sprintf("SELECT 1 FROM (%s) p\nJOIN %s\nWHERE %s", parents, from, mixed))
+	}
 	return fmt.Sprintf("SELECT %s FROM w UNION SELECT %s\nFROM (%s) p\nJOIN %s%s",
-		strings.Join(keys, ", "), strings.Join(picked, ", "), c.parentKeys(r.s, n, expand), from, where), nil
+		strings.Join(keys, ", "), strings.Join(picked, ", "), parents, from, where), nil
 }
 
 // nextFill is true when the group below level n fills in its records, so a

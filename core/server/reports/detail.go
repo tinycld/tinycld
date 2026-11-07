@@ -87,6 +87,8 @@ type windowFrame struct {
 	// hoisted values have no select below, so a lookup is not hoisted into
 	// it (a running value is refused where it is checked).
 	checking bool
+	// compiled holds the formulas compiled on the frame's rows (formula).
+	compiled map[*Node]expr
 }
 
 // hoistLayer is one select below the frame's own: values ("<sql> AS
@@ -183,7 +185,31 @@ func (rc *rowsCtx) col(id, at string) (expr, error) {
 		return expr{}, err
 	}
 	defer done()
-	return compileFormula(rc, cp.col.Formula, cp.at+".formula")
+	return rc.formula(cp.col.Formula, cp.at+".formula")
+}
+
+// formula compiles n on a detail row once for the frame: a column, a sort
+// key and the detail label that read one formula share one compile. Each
+// compile binds its own names, so a lookup compiled twice would be hoisted
+// and computed twice. Inside a lookup a formula compiles again, so the
+// lookup records what it reads of the row; a running value too, since it
+// reads the frame's order, which grows while the sort keys compile.
+func (rc *rowsCtx) formula(n *Node, at string) (expr, error) {
+	f := rc.detail
+	if f == nil || f.checking || rc.reads != nil {
+		return compileFormula(rc, n, at)
+	}
+	if e, ok := f.compiled[n]; ok {
+		return e, nil
+	}
+	e, err := compileFormula(rc, n, at)
+	if err == nil && !e.win {
+		if f.compiled == nil {
+			f.compiled = map[*Node]expr{}
+		}
+		f.compiled[n] = e
+	}
+	return e, err
 }
 
 func (rc *rowsCtx) path(p Path, at string) (expr, error) {

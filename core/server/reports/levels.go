@@ -51,6 +51,8 @@ type level struct {
 	visiting map[string]bool
 	// reads memoizes readsRowValue per formula column.
 	reads map[string]bool
+	// havingMixed is the having's condMixed (own).
+	havingMixed string
 }
 
 // level prepares level n: its keys, its parent partition, and the order of
@@ -366,11 +368,16 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 		ctes = append(ctes, fmt.Sprintf("rt%d AS (SELECT %s FROM %s a WHERE %s)", lv.n, strings.Join(sel, ", "), g, own))
 	}
 	conds := []string{}
-	if own != "1" {
-		conds = append(conds, own)
-	}
 	if m := lv.c.havingAbove(lv.n); m > 0 {
 		conds = append(conds, lv.c.inShown(m, "a"))
+	}
+	if lv.havingMixed != "" {
+		// The level's rows under shown groups, before its having hides any.
+		probe := fmt.Sprintf("SELECT 1 FROM %s a WHERE %s", g, strings.Join(append(slices.Clone(conds), lv.havingMixed), " AND "))
+		lv.c.probe(lv.c.p.groups[lv.n-1].at+".having", probe)
+	}
+	if own != "1" {
+		conds = append([]string{own}, conds...)
 	}
 	if len(conds) > 0 {
 		s := fmt.Sprintf("s%d", lv.n)
@@ -522,6 +529,7 @@ func (lv *level) own() (string, error) {
 	if e.unset {
 		return "1", nil
 	}
+	lv.havingMixed = e.condMixed
 	return "COALESCE(" + e.sql + ", 0)", nil
 }
 

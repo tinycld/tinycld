@@ -81,6 +81,9 @@ type compiler struct {
 	// so options whose where reads such a param back are refused, not
 	// expanded forever.
 	expanding map[string]bool
+	// condProbes are the conditions of the statement being built that read a
+	// sum lookup which may meet two currencies (condProbe).
+	condProbes []condProbe
 }
 
 // labelPlan is what a group's label compiled to. recordCurrency says an
@@ -168,6 +171,9 @@ type rowsCTE struct {
 	order  []string
 	byExpr map[string]string
 	filter string
+	// filterMixed is the filter's condMixed: true on a row where a sum
+	// lookup the filter reads met two currencies.
+	filterMixed string
 }
 
 func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
@@ -245,7 +251,7 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 		if e.typ != Bool {
 			return nil, invalid("filter", "the filter is a condition")
 		}
-		r.filter = e.sql
+		r.filter, r.filterMixed = e.sql, e.condMixed
 	}
 	r.valueCurrencies()
 	r.pivotKey()
