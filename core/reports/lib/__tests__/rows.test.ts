@@ -11,7 +11,7 @@ import {
     toggleGroup,
     visibleRows,
 } from '../rows'
-import type { ResultRow, RunResult } from '../types'
+import type { Notice, ResultRow, RunResult } from '../types'
 
 const group = (id: string, key: unknown[], extra: Partial<ResultRow> = {}): ResultRow => ({
     id,
@@ -256,6 +256,51 @@ describe('mergePages', () => {
         expect(mergePages([page(['d:1'], 1, [cap]), page(['d:2'], 2, [cap])]).notices).toEqual([
             cap,
         ])
+    })
+
+    it('joins the columns, conditions and sentences one code names on each page', () => {
+        const having =
+            'The having of the "Team" group reads a looked-up total that mixes currencies, so that total counts as unknown there.'
+        const filter =
+            'The filter reads a looked-up total that mixes currencies, so that total counts as unknown there.'
+        const blank = 'A looked-up total mixes currencies, so it shows no value.'
+        const first: Notice = {
+            code: 'mixedCurrency',
+            message: having,
+            conditions: ['groups.0.having'],
+        }
+        const second: Notice = {
+            code: 'mixedCurrency',
+            message: `${blank} ${having} ${filter}`,
+            columns: ['balance'],
+            conditions: ['groups.0.having', 'filter'],
+        }
+        const third: Notice = {
+            code: 'mixedCurrency',
+            message: `${blank} ${having}`,
+            columns: ['opening', 'balance'],
+            conditions: ['groups.0.having'],
+        }
+        const cap = { code: 'rowCap', message: 'The report shows its first 5000 rows.' }
+        const merged = mergePages([
+            page(['d:1'], 1, [first]),
+            page(['d:2'], 2, [second, cap]),
+            page(['d:3'], 3, [third]),
+        ])
+        expect(merged.notices).toEqual([
+            {
+                code: 'mixedCurrency',
+                message: `${having} ${blank} ${filter}`,
+                columns: ['balance', 'opening'],
+                conditions: ['groups.0.having', 'filter'],
+            },
+            cap,
+        ])
+    })
+
+    it('leaves a notice no later page repeats as the server sent it', () => {
+        const only: Notice = { code: 'mixedCurrency', message: 'One.', columns: ['cost'] }
+        expect(mergePages([page(['d:1'], 1, [only]), page(['d:2'], 2)]).notices).toEqual([only])
     })
 
     it('takes computed and total rows from the newest page only', () => {

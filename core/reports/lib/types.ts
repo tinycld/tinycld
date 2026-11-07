@@ -103,6 +103,8 @@ export interface Notice {
     code: string
     message: string
     columns?: string[]
+    /** The conditions (by spec path) that read a mixed-currency total. */
+    conditions?: string[]
     count?: number
     leftOut?: number
     /** The spec version an `upgraded` notice came from. */

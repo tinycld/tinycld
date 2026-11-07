@@ -53,6 +53,9 @@ type level struct {
 	reads map[string]bool
 	// havingMixed is the having's condMixed (own).
 	havingMixed string
+	// sortMixed are the sort keys (sql: where the key met a mixed sum) that
+	// order the level's rows; render probes them over the rows it shows.
+	sortMixed []condProbe
 }
 
 // level prepares level n: its keys, its parent partition, and the order of
@@ -198,6 +201,11 @@ func (lv *level) order() ([]string, error) {
 		if !ok {
 			continue
 		}
+		// A key over a sum that met two currencies is blank (unknown, on a
+		// condition) there, and sorts as blank.
+		if m := orSQL(e.mixed, e.condMixed); m != "" {
+			lv.sortMixed = append(lv.sortMixed, condProbe{at: s.at, sql: m})
+		}
 		// A record sorts by its label's typed value, then by its id; a select
 		// by its shown label, then by its stored value.
 		if ref, ok := lv.c.sortLabel(lv.labels, s, e); ok {
@@ -301,6 +309,9 @@ func (lv *level) isGroupColumn(cp *colPlan) bool {
 // a running value or a percent over its rows adds the shown rows only.
 func (lv *level) render(cells []string, own string, totals []string) []string {
 	ctes, g := lv.base(own, totals)
+	for _, m := range lv.sortMixed {
+		lv.c.probe(m.at, fmt.Sprintf("SELECT 1 FROM %s WHERE %s", lv.frame.from(g, "a"), m.sql))
+	}
 	out := []string{fmt.Sprintf("%d AS __level", lv.n), "NULL AS __row"}
 	for i := range lv.c.p.groups {
 		if i < lv.n {

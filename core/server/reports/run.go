@@ -497,7 +497,7 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := rn.probeConditions(s, ctes); err != nil {
+	if err := rn.probeConditions(s, ctes, c.condProbes); err != nil {
 		return nil, err
 	}
 	return rn.capLevelRows(rows), nil
@@ -511,20 +511,25 @@ type condProbe struct {
 	at, sql string
 }
 
+// probe adds a condition's probe; one that decides on the rows of several
+// levels (a sort key) is probed over each.
 func (c *compiler) probe(at, sql string) {
-	if !slices.ContainsFunc(c.condProbes, func(p condProbe) bool { return p.at == at }) {
+	i := slices.IndexFunc(c.condProbes, func(p condProbe) bool { return p.at == at })
+	if i < 0 {
 		c.condProbes = append(c.condProbes, condProbe{at: at, sql: sql})
+		return
 	}
+	c.condProbes[i].sql += "\nUNION ALL\n" + sql
 }
 
-// probeConditions finds the conditions of the group statement that read a
-// sum lookup which met two currencies on some row. Such a sum has no value,
-// so the condition was unknown there: it hid that group, dropped that row or
-// left out that record unless another term held. A row it dropped is on no
-// page, so the conditions are probed over the rows they decide on, in a
-// statement of their own.
-func (rn *runner) probeConditions(s *stmt, ctes []string) error {
-	probes := rn.c.condProbes
+// probeConditions finds the conditions of a statement that read a sum
+// lookup which met two currencies on some row. Such a sum has no value, so
+// the condition was unknown there: it hid that group, dropped that row or
+// left out that record unless another term held; a sort key sorted it as
+// blank. A row a condition dropped is on no page, and a row a key sorted may
+// be on another, so the conditions are probed over the rows they decide on,
+// in a statement of their own.
+func (rn *runner) probeConditions(s *stmt, ctes []string, probes []condProbe) error {
 	if len(probes) == 0 {
 		return nil
 	}
@@ -537,7 +542,7 @@ func (rn *runner) probeConditions(s *stmt, ctes []string) error {
 		return err
 	}
 	for i, p := range probes {
-		if toInt(rows[0][fmt.Sprintf("m%d", i)]) != 0 {
+		if toInt(rows[0][fmt.Sprintf("m%d", i)]) != 0 && !slices.Contains(rn.mixedConditions, p.at) {
 			rn.mixedConditions = append(rn.mixedConditions, p.at)
 		}
 	}
@@ -868,6 +873,14 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The keys order every row the pages show, not just this page's.
+	probes := make([]condProbe, len(c.detailSortMixed))
+	for i, m := range c.detailSortMixed {
+		probes[i] = condProbe{at: m.at, sql: fmt.Sprintf("SELECT 1 FROM %s WHERE d.%s = 1", from, m.sql)}
+	}
+	if err := rn.probeConditions(s, ctes, probes); err != nil {
+		return nil, err
+	}
 	more := len(rows) > limit
 	if more {
 		rows = rows[:limit]
@@ -1051,8 +1064,16 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		sel = append(sel, e.sql+" AS "+name)
 		order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: e.typ})
 		inFrame("("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
+		// A spec key over a sum that met two currencies sorts as blank there;
+		// a viewer key sorts by a column, whose blank cell is named already.
+		if m := orSQL(e.mixed, e.condMixed); spec && m != "" {
+			mx := fmt.Sprintf("__smx%d", len(c.detailSortMixed))
+			sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", m, mx))
+			c.detailSortMixed = append(c.detailSortMixed, condProbe{at: s.at, sql: mx})
+		}
 		return nil
 	}
+	c.detailSortMixed = nil
 	for i, s := range c.viewSort {
 		if err := addKey(s, fmt.Sprintf("vs%d", i), false); err != nil {
 			return "", nil, err

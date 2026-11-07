@@ -84,6 +84,9 @@ type compiler struct {
 	// condProbes are the conditions of the statement being built that read a
 	// sum lookup which may meet two currencies (condProbe).
 	condProbes []condProbe
+	// detailSortMixed are the spec sort keys of the detail select that read
+	// such a sum: sql names the select's column that is 1 where one did.
+	detailSortMixed []condProbe
 }
 
 // labelPlan is what a group's label compiled to. recordCurrency says an

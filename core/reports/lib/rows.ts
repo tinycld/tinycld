@@ -122,13 +122,35 @@ export function hasRows(rows: readonly ResultRow[]): boolean {
     return rows.some(row => row.kind === 'detail' || row.kind === 'group')
 }
 
+const union = (a: readonly string[] = [], b: readonly string[] = []) => [...new Set([...a, ...b])]
+
+// The server writes a message as sentences, one per thing it names.
+function sentences(message: string): string[] {
+    const parts = message.split(/\.\s+/)
+    return parts.map((part, i) => (i < parts.length - 1 ? `${part}.` : part))
+}
+
+// A page names only what its own rows and conditions show (a mixedCurrency
+// notice names the columns blank on that page), so one code's notices from
+// several pages join: their columns, conditions and sentences, each once, in
+// the order the pages first name them.
+function joinNotices(a: Notice, b: Notice): Notice {
+    const joined: Notice = {
+        ...a,
+        message: union(sentences(a.message), sentences(b.message)).join(' '),
+    }
+    if (a.columns || b.columns) joined.columns = union(a.columns, b.columns)
+    if (a.conditions || b.conditions) joined.conditions = union(a.conditions, b.conditions)
+    return joined
+}
+
 function uniqueNotices(notices: readonly Notice[]): Notice[] {
-    const seen = new Set<string>()
-    return notices.filter(notice => {
-        if (seen.has(notice.code)) return false
-        seen.add(notice.code)
-        return true
-    })
+    const byCode = new Map<string, Notice>()
+    for (const notice of notices) {
+        const earlier = byCode.get(notice.code)
+        byCode.set(notice.code, earlier ? joinNotices(earlier, notice) : notice)
+    }
+    return [...byCode.values()]
 }
 
 const EMPTY_RESULT: RunResult = {

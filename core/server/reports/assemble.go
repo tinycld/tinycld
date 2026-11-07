@@ -142,7 +142,7 @@ func (rn *runner) markMixedLookups() {
 	}
 	words := make([]string, len(conds))
 	for i, at := range conds {
-		words[i] = rn.c.conditionWords(at) + " reads a looked-up total that mixes currencies, so that total counts as unknown there."
+		words[i] = rn.c.conditionSentence(at)
 	}
 	for i := range rn.res.Notices {
 		if n := &rn.res.Notices[i]; n.Code == "mixedCurrency" {
@@ -163,14 +163,34 @@ func (rn *runner) markMixedLookups() {
 	rn.notice(Notice{Code: "mixedCurrency", Message: strings.Join(message, " "), Columns: cols, Conditions: conds})
 }
 
+// conditionSentence tells, for a notice, what a condition or sort key (by
+// its spec path) did with a looked-up total that mixes currencies.
+func (c *compiler) conditionSentence(at string) string {
+	for i, s := range c.p.sort {
+		if s.at != at {
+			continue
+		}
+		subject := fmt.Sprintf("The formula of sort key %d", i+1)
+		if s.col != nil {
+			subject = fmt.Sprintf("The sort by %q", columnName(s.col))
+		}
+		return subject + " reads a looked-up total that mixes currencies, so it sorts as blank there."
+	}
+	return c.conditionWords(at) + " reads a looked-up total that mixes currencies, so that total counts as unknown there."
+}
+
+func columnName(cp *colPlan) string {
+	if cp.col.Label != "" {
+		return cp.col.Label
+	}
+	return cp.col.ID
+}
+
 // conditionWords names a condition by its spec path for a notice: the
 // filter, or a group's having or fill by the group's column.
 func (c *compiler) conditionWords(at string) string {
 	for i, g := range c.p.groups {
-		name := g.col.col.Label
-		if name == "" {
-			name = g.col.col.ID
-		}
+		name := columnName(g.col)
 		switch at {
 		case fmt.Sprintf("groups.%d.having", i):
 			return fmt.Sprintf("The having of the %q group", name)
