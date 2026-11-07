@@ -5,10 +5,12 @@ import {
     useInfiniteQuery,
     useQueryClient,
 } from '@tanstack/react-query'
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
+import { mergePages } from '../lib/rows'
 import {
     detailRowCount,
     foldKeyOf,
+    groupRowAt,
     isTransientRunError,
     lastGroupRowOf,
     RUN_QUERY_KEY,
@@ -20,6 +22,7 @@ import {
     withPage,
 } from '../lib/run-client'
 import { type RunView, runView } from '../lib/run-state'
+import type { RunResult } from '../lib/types'
 import { useReportRecentStore } from '../stores/report-recent-store'
 import { useLiveTopics } from './useLiveTopics'
 
@@ -31,6 +34,13 @@ export interface ReportRun extends Omit<RunView, 'topics'> {
      * Without it, a design change does not reset the list to the top.
      */
     shownRowsKey?: string
+    /**
+     * The list reports the index of the row at the top of its view here (in the
+     * result's rows). A fold run keeps the group row at or above that row, and loads
+     * no further. Optional, because a hand-built ReportRun (a mockup) has no pages
+     * to fold.
+     */
+    onTopRowIndex?(index: number): void
     hasMore: boolean
     isLoadingMore: boolean
     loadMore(): void
@@ -41,23 +51,21 @@ const resultsOf = (pages: readonly RunPage[]) =>
     pages.flatMap(page => (page.kind === 'ok' ? [page.result] : []))
 
 /**
- * How far a run's first page loads: its detail rows, and the last group row it must
- * hold (with every group closed, the reader's place is a group row, not a detail row).
+ * How far a run's first page loads: its detail rows, and the group row it must hold
+ * (with every group closed, the reader's place is a group row, not a detail row).
  */
 type ReaderPlace = { detailRows: number; groupRow?: string }
 
-const placeOf = (pages: readonly RunPage[]): ReaderPlace => {
-    const results = resultsOf(pages)
-    return {
-        detailRows: results.reduce((n, result) => n + detailRowCount(result), 0),
-        groupRow: lastGroupRowOf(results),
-    }
-}
+const detailRowsOf = (results: readonly RunResult[]) =>
+    results.reduce((n, result) => n + detailRowCount(result), 0)
 
-/** The pages in view: the body they answer (its fold key) and the reader's place. */
-type ShownPages = { foldKey: string; place: ReaderPlace }
+/** The pages in view: the body they answer (its fold key) and their results. */
+type ShownPages = { foldKey: string; results: RunResult[] }
 
 const NO_PLACE: ReaderPlace = { detailRows: 0 }
+
+const rowIdAt = (result: RunResult, index: number | undefined) =>
+    index === undefined ? undefined : result.rows[index]?.id
 
 // Runs a report through POST /api/reports/run (R9). Every report pages by keyset; a
 // grouped one pages its detail rows in document order with the section rows between
@@ -73,17 +81,36 @@ export function useReportRun({
     // Read by the query function when a new run starts, so it is the pages that
     // were in view then (keepPreviousData keeps them until the new run lands).
     const shown = useRef<ShownPages | null>(null)
+    // The index of the row at the top of the list's view, as the list last reported
+    // it. An index, not a row id: the list reports only when the indices in view
+    // change, so when the rows change under the same indices, the row now at that
+    // index is the one in view, and an id kept from the old rows would be wrong.
+    const topRowIndex = useRef<number | undefined>(undefined)
+    const onTopRowIndex = useCallback((index: number) => {
+        topRowIndex.current = index
+    }, [])
     // How far a run's first page loads. A refetch of a run keeps its first page as
-    // long as it was. A new run whose only change is a fold (a group, Expand all,
-    // Collapse all) loads as far as the reader had: as many detail rows, and up to the
-    // last group row loaded, so the rows in view stay through the fold even when they
-    // were closed groups with no detail rows (F11). Any other new run starts with one
-    // page.
+    // long as it was, up to its own last group row. A new run whose only change is a
+    // fold (a group, Expand all, Collapse all) loads as many detail rows as the reader
+    // had, and up to the group row at or above the row at the top of the view, so the
+    // rows in view stay through the fold even when they were closed groups with no
+    // detail rows (F11). That group row must be in the shown pages, so the fold never
+    // loads past what was loaded; with none, the detail rows alone decide. Any other
+    // new run starts with one page.
     const firstPagePlace = (runBody: RunBody, queryKey: QueryKey): ReaderPlace => {
         const first = queryClient.getQueryData<InfiniteData<RunPage>>(queryKey)?.pages[0]
-        if (first) return placeOf([first])
+        if (first) {
+            const results = resultsOf([first])
+            return { detailRows: detailRowsOf(results), groupRow: lastGroupRowOf(results) }
+        }
         const before = shown.current
-        return before?.foldKey === foldKeyOf(runBody) ? before.place : NO_PLACE
+        if (before?.foldKey !== foldKeyOf(runBody)) return NO_PLACE
+        // The list draws the merged rows, so the reported index counts in them.
+        const merged = mergePages(before.results)
+        return {
+            detailRows: detailRowsOf(before.results),
+            groupRow: groupRowAt([merged], rowIdAt(merged, topRowIndex.current)),
+        }
     }
     const queryKey = [...RUN_QUERY_KEY, body]
     // The key of the run in view, read by a loadMore or rerun that waits across renders.
@@ -117,7 +144,7 @@ export function useReportRun({
         refetchOnWindowFocus: false,
     })
     const pages = query.data?.pages ?? []
-    shown.current = pages[0] ? { foldKey: pages[0].foldKey, place: placeOf(pages) } : null
+    shown.current = pages[0] ? { foldKey: pages[0].foldKey, results: resultsOf(pages) } : null
     const { topics, ...view } = runView({
         hasBody: body !== null,
         pages,
@@ -157,6 +184,7 @@ export function useReportRun({
     return {
         ...view,
         shownRowsKey: pages[0]?.rowsKey,
+        onTopRowIndex,
         hasMore: query.hasNextPage,
         isLoadingMore: query.isFetchingNextPage || isWaitingForMore,
         loadMore,

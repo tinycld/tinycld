@@ -16,6 +16,7 @@ import {
     rowOf,
     SALES_SOURCE,
     saveNewReport,
+    scrollRowTo,
     startTeamSales,
     uniqueName,
 } from './reports-helpers'
@@ -108,22 +109,32 @@ function detailLabels(page: Page) {
     return page.getByTestId('report-table').locator('[data-testid^="report-row-d:"]')
 }
 
+/** A run request as the client sent it, before the route below shrinks its page. */
+type SentRun = { cursor?: string; limit?: number }
+
+// The client's page sizes: its usual page (RUN_PAGE_SIZE) and the server's most
+// (RUN_MAX_PAGE), which a fold run asks for while it looks for the group in view.
+const USUAL_PAGE = 200
+const MAX_PAGE = 1000
+
 /**
- * Signs in, seeds two teams of six sales each (team A first) and opens the report
- * on them alone, in pages of 5 detail rows, so 12 sales page across team A's end.
- * Then scrolls until team B's Total row is drawn: every page is merged then.
+ * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
+ * teams of one sale each after them, and opens the report on them alone, in pages
+ * of 5 detail rows, so 12 sales page across team A's end. Then scrolls until the
+ * last team's Total row is drawn: every page is merged then.
  */
-async function pagedTeams(page: Page, prefix: string) {
+async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
     await loginAsShippedOwner(page)
     const stem = uniqueName(prefix)
-    const teams = [`${stem} A`, `${stem} B`]
+    const letters = 'ABCDEFGH'.slice(0, 2 + smallTeams)
+    const teams = [...letters].map(letter => `${stem} ${letter}`)
     await openReportStub(page)
     for (const [i, team] of teams.entries()) {
         await addTeam(page, team)
         await addSales(page, {
             team,
-            customerPrefix: `${stem}${'AB'[i]}`,
-            count: 6,
+            customerPrefix: `${stem}${letters[i]}`,
+            count: i < 2 ? 6 : 1,
             firstDay: `${YEAR}-02-01`,
             firstAmount: 100 * (i + 1),
             cost: 0,
@@ -131,13 +142,17 @@ async function pagedTeams(page: Page, prefix: string) {
         })
     }
     const cursors: string[] = []
+    const sent: SentRun[] = []
     await page.route('**/api/reports/run', async route => {
         const body = route.request().postDataJSON()
         if (body.options?.cursor) cursors.push(body.options.cursor)
-        // The client's usual page size (RUN_PAGE_SIZE, 200) becomes 5. A fold run
-        // asks for max(200, the detail rows in view), which is 200 here, so it also
-        // gets pages of 5 and joins them until it holds the rows that were in view.
-        const limit = body.options?.limit === 200 ? 5 : body.options?.limit
+        sent.push({ cursor: body.options?.cursor, limit: body.options?.limit })
+        // The client's page sizes become 5. A fold run asks for max(200, the detail
+        // rows in view), which is 200 here, and then the server's most while it looks
+        // for the group in view, so it also gets pages of 5 and joins them until it
+        // holds the rows that were in view.
+        const asked = body.options?.limit
+        const limit = asked === USUAL_PAGE || asked === MAX_PAGE ? 5 : asked
         await route.continue({
             postData: JSON.stringify({ ...body, options: { ...body.options, limit } }),
         })
@@ -162,11 +177,19 @@ async function pagedTeams(page: Page, prefix: string) {
             await scroller.evaluate(el => {
                 el.scrollTop = el.scrollHeight
             })
-            return rowOf(page, `Total ${teams[1]}`).count()
+            return rowOf(page, `Total ${teams[teams.length - 1]}`).count()
         })
         .toBe(1)
-    return { stem, teams, cursors }
+    return { stem, teams, cursors, sent }
 }
+
+/**
+ * The requests of a fold run: its first page (no cursor) and each page it joined
+ * while it looked for the group in view (those ask for the server's most). A next
+ * page the list asks for has a cursor and the usual size.
+ */
+const foldRequests = (sent: readonly SentRun[]) =>
+    sent.filter(run => !run.cursor || run.limit === MAX_PAGE)
 
 /**
  * Records, at every change of the page from now on, each of these row ids that is
@@ -283,36 +306,61 @@ test.describe('general-ledger: report engine v3', () => {
     })
 
     // F11: Expand all keeps the reader's place too. With every group closed the list
-    // holds no detail rows, so the reader's place is a group row. Expand all must
-    // not drop the list back to its first page (team A's first 5 rows), which does
-    // not reach team B's group row: that row stays in the list and in view at every
-    // moment from the press to the opened run.
+    // holds no detail rows, so the reader's place is the group row at the top of the
+    // view. F7: the run loads no further than that place. After Collapse all the first
+    // page holds every group row of the report, so a run that joined pages up to the
+    // last group row would load the whole report (team F's here). Scrolled to team B,
+    // Expand all joins pages up to team B's group row, which stays in the list and in
+    // view at every moment from the press to the opened run (team A's first page of 5
+    // rows does not reach it), and stops there. Expand all at the top (one request) is
+    // covered by the useReportRun unit test: here the list's own next pages have the
+    // same requests as a run that joins pages with the usual size.
     test('Expand all from closed groups keeps the reader at the group in view', async ({
         page,
     }) => {
-        const { stem, teams } = await pagedTeams(page, 'BalExpand')
+        const { stem, teams, sent } = await pagedTeams(page, 'BalExpand', 4)
+        const foldAll = page.getByTestId('report-fold-all')
         await pressToolbar(page, 'report-fold-all', 'Collapse all')
-        await expect(page.getByTestId('report-fold-all')).toHaveText('Expand all')
+        await expect(foldAll).toHaveText('Expand all')
         await expect(rowOf(page, `${stem}A 00`)).toHaveCount(0)
-        const groupB = (await rowIds(page)).filter(id => id.startsWith('g:'))[1] ?? ''
+        const groups = (await rowIds(page)).filter(id => id.startsWith('g:'))
+        expect(groups).toHaveLength(teams.length)
+        const groupA = page.getByTestId(`report-row-${groups[0]}`)
+        const groupB = groups[1] ?? ''
         const groupRow = page.getByTestId(`report-row-${groupB}`)
         await expect(groupRow).toHaveText(new RegExp(teams[1]))
         await expect(groupRow).toHaveAttribute('aria-expanded', 'false')
-        await groupRow.scrollIntoViewIfNeeded()
+
+        // A list three rows tall, scrolled so team B's group row is its top row.
+        const scroller = await listScroller(groupRow)
+        const listHeight = await scroller.evaluate(el => el.clientHeight)
+        const rowHeight = await groupRow.evaluate(el => el.getBoundingClientRect().height)
+        const viewport = page.viewportSize()
+        if (!viewport) throw new Error('the page has no viewport size')
+        await page.setViewportSize({
+            width: viewport.width,
+            height: Math.round(viewport.height - listHeight + 3 * rowHeight),
+        })
+        await expect.poll(() => scroller.evaluate(el => el.clientHeight)).toBeLessThan(listHeight)
+        await scrollRowTo(groupRow, -1)
+        await expect(groupA).not.toBeInViewport()
         await expect(groupRow).toBeInViewport()
 
         await recordDrops(page, [groupB])
+        sent.length = 0
         await pressToolbar(page, 'report-fold-all', 'Expand all')
 
-        // The opened run has landed once team A's first sale is drawn under its group.
-        await expect(page.getByTestId('report-fold-all')).toHaveText('Collapse all')
-        await expect(rowOf(page, `${stem}A 00`)).toBeVisible()
+        // The opened run has landed once team B's first sale is drawn under its group.
+        await expect(foldAll).toHaveText('Collapse all')
+        await expect(rowOf(page, `${stem}B 00`)).toHaveCount(1)
         await expect(groupRow).toHaveAttribute('aria-expanded', 'true')
         await expect(groupRow).toBeInViewport()
         expect(
             await recordedDrops(page),
             'rows the list dropped between Expand all and its run'
         ).toEqual([])
+        // Pages of 5: team A's first five sales, then its sixth and team B's group row.
+        expect(foldRequests(sent), 'requests of Expand all at team B').toHaveLength(2)
     })
 
     test('a heading sorts the rows inside their groups, and a copied link keeps it', async ({
