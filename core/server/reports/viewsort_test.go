@@ -134,6 +134,38 @@ func sortableOf(res *Result) map[string]bool {
 	return out
 }
 
+// A column says it sorts exactly when the run accepts a viewer sort on it,
+// including a child row first column that a detail label stands in for.
+func TestAColumnIsSortableExactlyWhenTheRunAcceptsItsSort(t *testing.T) {
+	z := newZoo(t)
+	const nestedFirstLabelled = `{"version":2,"source":"zoo.sites","columns":[
+		{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"name"}]},
+		{"id":"site","path":[{"field":"name"}]}],
+		"sort":[{"col":"site"}],"detail":{"label":{"path":[{"field":"name"}]}}}`
+	const firstLabelled = `{"version":2,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"fed","path":[{"field":"fed"}]}],"sort":[{"col":"fed"}],
+		"detail":{"label":{"path":[{"field":"note"}]}}}`
+	specs := map[string]string{
+		"a running value":        feedingsPaged,
+		"nested children":        sitesWithAnimals,
+		"a nested first, labels": nestedFirstLabelled,
+		"a labelled first":       firstLabelled,
+	}
+	for name, spec := range specs {
+		t.Run(name, func(t *testing.T) {
+			res := z.run(t, "ann", spec, Options{}, nil)
+			for _, c := range res.Columns {
+				_, err := z.try(t, "ann", spec, Options{Sort: []ViewSort{{Col: c.ID, Dir: "asc"}}}, nil)
+				if accepted := err == nil; accepted != c.Sortable {
+					t.Errorf("column %s: sortable = %v, run accepted = %v (err %v)", c.ID, c.Sortable, accepted, err)
+				}
+			}
+		})
+	}
+}
+
 func TestResultColumnsSayWhichSort(t *testing.T) {
 	z := newZoo(t)
 	paged := z.run(t, "ann", feedingsPaged, Options{}, nil)

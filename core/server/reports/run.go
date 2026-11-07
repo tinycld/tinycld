@@ -511,6 +511,10 @@ func viewSortPlans(c *compiler, keys []ViewSort) ([]sortPlan, error) {
 	for i, k := range keys {
 		at := fmt.Sprintf("options.sort.%d", i)
 		cp := c.p.byID[k.Col]
+		d := c.p.spec.Detail
+		// The first column of a report with a detail label sorts by that label,
+		// even when the column is a child row column (Sortable says the same).
+		byLabel := cp != nil && cp == c.p.cols[0] && d != nil && d.Label != nil
 		switch {
 		case cp == nil:
 			return nil, unknownColumn(at+".col", k.Col)
@@ -518,12 +522,12 @@ func viewSortPlans(c *compiler, keys []ViewSort) ([]sortPlan, error) {
 			return nil, invalid(at+".col", "a column sorts once")
 		case k.Dir != "" && k.Dir != "asc" && k.Dir != "desc":
 			return nil, invalid(at+".dir", "dir is asc or desc")
-		case cp.nest > 0:
+		case cp.nest > 0 && !byLabel:
 			return nil, invalid(at+".col", "a child row column is not a sort key")
 		}
 		seen[k.Col] = true
 		s := sortPlan{col: cp, at: at + ".col", desc: k.Dir == "desc"}
-		if d := c.p.spec.Detail; cp == c.p.cols[0] && d != nil && d.Label != nil {
+		if byLabel {
 			s = sortPlan{formula: d.Label, at: at + ".col", desc: s.desc}
 		}
 		out = append(out, s)
