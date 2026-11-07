@@ -172,10 +172,17 @@ test.describe('general-ledger: report engine v3', () => {
         // snapshot holds the whole merged list (the list draws only rows near the view).
         await page.setViewportSize({ width: 1280, height: 1600 })
         await openTeamBalance(page)
+        // The first run has no Teams filter, so it shows these sales too: no row
+        // tells the two runs apart. The new run's params change the list's key, so
+        // the list mounts again; once the first run's scroller has left the page,
+        // every row on it is the new run's.
+        await expect(detailLabels(page).first()).toBeVisible()
+        const firstRunScroller = await listScroller(detailLabels(page).first())
         await showTeams(page, stem, teams)
-        const firstDetail = detailLabels(page).first()
-        await expect(firstDetail).toBeVisible()
-        const scroller = await listScroller(firstDetail)
+        await expect.poll(() => firstRunScroller.evaluate(el => el.isConnected)).toBe(false)
+        const firstSale = rowOf(page, `${stem}A 00`)
+        await expect(firstSale).toBeVisible()
+        const scroller = await listScroller(firstSale)
         const lastSection = `Total ${teams[1]}`
         // Scroll until the last team's Total row is drawn: every page is merged then.
         await expect
@@ -190,9 +197,11 @@ test.describe('general-ledger: report engine v3', () => {
         // Each team's sixth sale: the running sum of six amounts, whichever page it is on.
         await expect(await cellOf(page, 'balance', `${stem}A 05`)).toHaveText('6.15')
         await expect(await cellOf(page, 'balance', `${stem}B 05`)).toHaveText('12.15')
-        // The merged rows: each team once, each opening its team, no row repeated,
-        // and a Total only at the end.
+        // The merged rows: every sale once, each team once, each opening its team,
+        // no row repeated, and the report's one Total at the end (the stub's spec
+        // has no statement layout, so the report ends in one Total per currency).
         const ids = await rowIds(page)
+        expect(occurrences(ids, 'd:')).toBe(12)
         expect(occurrences(ids, 'g:')).toBe(2)
         expect(occurrences(ids, 'opening:')).toBe(2)
         expect(occurrences(ids, 's:')).toBe(2)
@@ -200,9 +209,9 @@ test.describe('general-ledger: report engine v3', () => {
         for (const [i, id] of ids.entries()) {
             if (id.startsWith('g:')) expect(ids[i + 1]).toMatch(/^opening:/)
         }
-        const totals = occurrences(ids, 'total')
-        expect(totals).toBeLessThanOrEqual(1)
-        if (totals === 1) expect(ids[ids.length - 1]).toMatch(/^total/)
+        expect(occurrences(ids, 'total')).toBe(1)
+        // A report over amounts with a currency keys its Total by currency (total:["USD"]).
+        expect(ids[ids.length - 1]).toMatch(/^total/)
     })
 
     test('a heading sorts the rows inside their groups, and a copied link keeps it', async ({
