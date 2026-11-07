@@ -5,7 +5,7 @@ import {
     useInfiniteQuery,
     useQueryClient,
 } from '@tanstack/react-query'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import {
     detailRowCount,
     foldKeyOf,
@@ -85,8 +85,15 @@ export function useReportRun({
         const before = shown.current
         return before?.foldKey === foldKeyOf(runBody) ? before.place : NO_PLACE
     }
+    const queryKey = [...RUN_QUERY_KEY, body]
+    // The key of the run in view, read by a loadMore or rerun that waits across renders.
+    const runKey = useRef<QueryKey>(queryKey)
+    // Set at once by loadMore, so a second call while it waits starts nothing.
+    const waitingForMore = useRef(false)
+    // Shows the loading state while a next page waits for the fetch in flight.
+    const [isWaitingForMore, setIsWaitingForMore] = useState(false)
     const query = useInfiniteQuery({
-        queryKey: [...RUN_QUERY_KEY, body],
+        queryKey,
         enabled: body !== null,
         initialPageParam: '',
         queryFn: async ({ pageParam, signal, queryKey }): Promise<RunPage> => {
@@ -122,22 +129,37 @@ export function useReportRun({
     // that cancelled a next page would leave the list a page short for good: the list
     // asks for more only when its rows change, and the rerun's rows are the same. A
     // next page that cancelled a rerun would drop the rerun's figures. So each waits
-    // for the fetch in flight (cancelRefetch: false joins it) and then starts its own.
-    const inFlight = () =>
-        query.isFetching ? query.refetch({ cancelRefetch: false }) : Promise.resolve()
-    useLiveTopics(topics, async () => {
-        await inFlight()
-        await query.refetch()
-    })
+    // until no fetch of the run is in flight (cancelRefetch: false joins one) and then
+    // starts its own with no await between the last check and the start. A next page
+    // and a rerun can wait on the same fetch (a cached run's mount refetch, a reconnect
+    // refetch); the one that wakes first starts its fetch, and the other sees it and
+    // waits again. The query client is read, not the last render, because a render
+    // lags a fetch that just started.
+    runKey.current = queryKey
+    const isRunFetching = () => {
+        const state = queryClient.getQueryState(runKey.current)
+        return state !== undefined && state.fetchStatus !== 'idle'
+    }
+    const whenIdle = async (start: () => Promise<unknown>) => {
+        while (isRunFetching()) await query.refetch({ cancelRefetch: false })
+        await start()
+    }
+    useLiveTopics(topics, () => whenIdle(() => query.refetch()))
+    const loadMore = () => {
+        if (!query.hasNextPage || query.isFetchingNextPage || waitingForMore.current) return
+        waitingForMore.current = true
+        setIsWaitingForMore(true)
+        void whenIdle(() => query.fetchNextPage()).finally(() => {
+            waitingForMore.current = false
+            setIsWaitingForMore(false)
+        })
+    }
     return {
         ...view,
         shownRowsKey: pages[0]?.rowsKey,
         hasMore: query.hasNextPage,
-        isLoadingMore: query.isFetchingNextPage,
-        loadMore: () => {
-            if (!query.hasNextPage || query.isFetchingNextPage) return
-            void inFlight().then(() => query.fetchNextPage())
-        },
+        isLoadingMore: query.isFetchingNextPage || isWaitingForMore,
+        loadMore,
         retry: () => void query.refetch(),
     }
 }
