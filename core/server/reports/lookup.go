@@ -183,9 +183,9 @@ func summedLookup(outer fctx, r *rowsCTE, n *Node, v expr, sc *scope, where stri
 	out.mixed = fmt.Sprintf("((SELECT count(DISTINCT %s)\n%s\nWHERE %s) > 1)", v.cur.sql, from, matched)
 	out.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE (SELECT sum(%s)\n%s\nWHERE %s) END)", out.mixed, v.sql, from, where)
 	id := lookupCurrencyID(n)
-	out.cur = currency{sql: fmt.Sprintf("(SELECT min(%s)\n%s\nWHERE %s)", v.cur.sql, from, matched), id: id}
+	out.cur = currency{sql: fmt.Sprintf("(SELECT min(%s)\n%s\nWHERE %s)", v.cur.sql, from, matched), id: id, field: v.cur.field}
 	if ck, ok := r.c.valueCur[id]; ok && !inLevel(outer) {
-		out.cur = currency{key: ck, id: id}
+		out.cur = currency{key: ck, id: id, field: v.cur.field}
 	}
 	return out
 }
@@ -221,9 +221,9 @@ func pickedAmount(outer fctx, r *rowsCTE, n *Node, v expr, sc *scope, where stri
 	}
 	id := lookupCurrencyID(n)
 	out.sql = pickOne(v.sql)
-	out.cur = currency{sql: pickOne(v.cur.sql), id: id}
+	out.cur = currency{sql: pickOne(v.cur.sql), id: id, field: v.cur.field}
 	if ck, ok := r.c.valueCur[id]; ok && !inLevel(outer) {
-		out.cur = currency{key: ck, id: id}
+		out.cur = currency{key: ck, id: id, field: v.cur.field}
 	}
 	return out
 }
@@ -317,7 +317,7 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	// combining.
 	switch cur, fixed := amountCurrencyOf(l.sc, hops, bound); {
 	case cur != "":
-		e.cur = currency{sql: cur, id: "row:" + cur}
+		e.cur = currency{sql: cur, id: "row:" + cur, field: currencyField(bound)}
 	case fixed != nil:
 		e.cur = currency{fixed: fixed}
 	}

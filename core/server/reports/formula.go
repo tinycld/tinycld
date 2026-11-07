@@ -64,13 +64,28 @@ type currency struct {
 	sql   string
 	id    string
 	param string
+	// field names the source field a carried currency is read from,
+	// "<source key>.<currency field key>" (R24): two amounts whose currencies
+	// come from one field combine, wherever each is read (the base row, a
+	// looked-up row, a total), and fieldGuard checks their codes on each row.
+	// "" for a fixed currency, a record's, a param's and a section subtotal.
+	field string
 }
 
 func (a currency) none() bool { return a.key == "" && a.fixed == nil && a.sql == "" && a.param == "" }
 
-// same is true for one currency source: one carried value, a key equals
-// itself, a fixed currency the same source's.
+// same is true for one currency source: one currency field (R24), or one
+// read of it (sameRead).
 func (a currency) same(b currency) bool {
+	if a.field != "" && a.field == b.field {
+		return true
+	}
+	return a.sameRead(b)
+}
+
+// sameRead is true for one read of a currency: one carried value, a key
+// equals itself, a fixed currency the same source's.
+func (a currency) sameRead(b currency) bool {
 	switch {
 	case a.id != "" && a.id == b.id:
 		return true
@@ -133,7 +148,7 @@ func currencyGuard(c fctx, op string, values []expr, sql string) string {
 	var curs []currency
 	param := false
 	for _, v := range values {
-		if v.cur.none() || slices.ContainsFunc(curs, v.cur.same) {
+		if v.cur.none() || slices.ContainsFunc(curs, v.cur.sameRead) {
 			continue
 		}
 		curs = append(curs, v.cur)
@@ -163,6 +178,43 @@ func currencyGuard(c fctx, op string, values []expr, sql string) string {
 		apart = "1"
 	}
 	return fmt.Sprintf("(CASE WHEN %s AND NOT (%s) THEN %s ELSE %s END)", strings.Join(known, " AND "), one, apart, sql)
+}
+
+// fieldGuard is an amount e made of values whose currencies are read from
+// one currency field in two or more places (a looked-up row's and the base
+// row's, say: R24). Where two of their codes are known and differ, e is
+// blank and mixed is true, which the run names in a mixedCurrency notice
+// (R3). Its currency is the first known code, so a lookup that matched
+// nothing takes the row's. e is unchanged with one read or none.
+func fieldGuard(c fctx, e expr, values []expr) expr {
+	var reads []currency
+	for _, v := range values {
+		if v.cur.field == "" || v.cur.field != e.cur.field || slices.ContainsFunc(reads, v.cur.sameRead) {
+			continue
+		}
+		reads = append(reads, v.cur)
+	}
+	if len(reads) < 2 {
+		return e
+	}
+	codes := make([]string, len(reads))
+	for i, cur := range reads {
+		codes[i] = c.currencySQL(cur)
+	}
+	var differ []string
+	for i, a := range codes {
+		for _, b := range codes[i+1:] {
+			differ = append(differ, fmt.Sprintf("(%s IS NOT NULL AND %s IS NOT NULL AND %s <> %s)", a, b, a, b))
+		}
+	}
+	mixed := "(" + strings.Join(differ, " OR ") + ")"
+	e.sql = "(CASE WHEN " + mixed + " THEN NULL ELSE " + e.sql + " END)"
+	e.mixed = orSQL(e.mixed, mixed)
+	// The id makes two different guarded amounts two reads (sameRead), so
+	// combining them is guarded again.
+	cur := "COALESCE(" + strings.Join(codes, ", ") + ")"
+	e.cur = currency{sql: cur, id: "any:" + cur, field: e.cur.field}
+	return e
 }
 
 // currencyCode is the SQL of a money value's currency code where c compiles,
@@ -468,6 +520,7 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if e.cur, err = combined(args, at); err != nil {
 			return expr{}, err
 		}
+		e = fieldGuard(c, e, args)
 	}
 	// Amounts are compared, divided, and combined with an amount param only
 	// in one currency (R29): a USD budget never compares with EUR cents.

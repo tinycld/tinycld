@@ -347,17 +347,27 @@ func (r *rowsCTE) currencyColumn(sql string) string {
 }
 
 // pathCurrency is the currency of a to-one path's amount: its currency
-// field, kept in w as a currency key every total groups by, or its source's
-// fixed currency.
+// field, kept in w as a currency key every total groups by and named for
+// combining (currencyField), or its source's fixed currency.
 func (r *rowsCTE) pathCurrency(p *pathPlan) currency {
 	sql, fixed := amountCurrencyOf(r.root, p.hops, p)
 	switch {
 	case sql != "":
-		return currency{key: r.currencyColumn(sql)}
+		return currency{key: r.currencyColumn(sql), field: currencyField(p)}
 	case fixed != nil:
 		return currency{fixed: fixed}
 	}
 	return currency{}
+}
+
+// currencyField names the currency field of p's amount for combining (R24):
+// "<source key>.<currency field key>", "" for a value that is not an amount
+// or an amount with no currency field.
+func currencyField(p *pathPlan) string {
+	if p.field.Type != Money || p.field.Currency == "" {
+		return ""
+	}
+	return p.src.Key + "." + p.field.Currency
 }
 
 // amountCurrencyOf is where the currency of p's amount, read in sc after hops,
