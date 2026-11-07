@@ -138,7 +138,8 @@ func (c *compiler) pivotCells(lv *level, values []pivotValue) (cells, helpers []
 		}
 	}
 	e = countedArg(agg, e)
-	c.pivotMixed = e.mixed != ""
+	blank := e.blankFor()
+	c.pivotMixed = blank != ""
 	cells = make([]string, 0, len(values))
 	for j, v := range values {
 		var value, mixed string
@@ -155,7 +156,7 @@ func (c *compiler) pivotCells(lv *level, values []pivotValue) (cells, helpers []
 			match := fmt.Sprintf("CASE WHEN %s THEN %s END", cond, e.sql)
 			value = lv.agg(fmt.Sprintf("q%d", j), aggregateSQL(agg, match, scale))
 			if c.pivotMixed {
-				mixed = lv.agg(fmt.Sprintf("q%dm", j), fmt.Sprintf("max(CASE WHEN %s AND %s THEN 1 END)", cond, e.mixed)) + " IS NOT NULL"
+				mixed = lv.agg(fmt.Sprintf("q%dm", j), fmt.Sprintf("max(CASE WHEN %s AND %s THEN 1 END)", cond, blank)) + " IS NOT NULL"
 			}
 		}
 		if mixed == "" {

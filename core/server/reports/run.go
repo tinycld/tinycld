@@ -656,7 +656,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			c.levelTypes[cp.col.ID] = e.typ
 			if n == 1 {
 				c.sectionCur[cp.col.ID] = e.cur
-				c.sectionMixed[cp.col.ID] = e.mixed != ""
+				c.sectionMixed[cp.col.ID] = e.blankFor() != ""
 			}
 		}
 		pivotCells, pivotMixed, err := c.pivotCells(lv, pivot)
@@ -1159,13 +1159,15 @@ func carriedSQL(s *stmt, e expr) string {
 
 func noCarriedCell(idx int) string { return fmt.Sprintf("NULL AS vcur%d", idx) }
 
-// mixedCell is a column cell's helper vmx<idx>: 1 on a row where a sum
-// lookup the cell reads met amounts in two currencies, NULL elsewhere.
+// mixedCell is a column cell's helper vmx<idx>: 1 on a row where the cell is
+// blank because a sum lookup it reads met amounts in two currencies
+// (expr.blankFor), NULL elsewhere.
 func mixedCell(e expr, idx int) string {
-	if e.mixed == "" {
+	blank := e.blankFor()
+	if blank == "" {
 		return noMixedCell(idx)
 	}
-	return fmt.Sprintf("(CASE WHEN %s THEN 1 END) AS vmx%d", e.mixed, idx)
+	return fmt.Sprintf("(CASE WHEN %s THEN 1 END) AS vmx%d", blank, idx)
 }
 
 func noMixedCell(idx int) string { return fmt.Sprintf("NULL AS vmx%d", idx) }

@@ -314,11 +314,12 @@ func compileFormula(c fctx, n *Node, at string) (expr, error) {
 // currencies: a row whose sum lookup met two currencies has a total, only
 // not one to show, so the count counts it.
 func countedArg(op Aggregate, e expr) expr {
-	if op != Count || e.mixed == "" {
+	blank := e.blankFor()
+	if op != Count || blank == "" {
 		return e
 	}
-	e.sql = fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE %s END)", e.mixed, e.sql)
-	e.mixed = ""
+	e.sql = fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE %s END)", blank, e.sql)
+	e.mixed, e.condMixed = "", ""
 	return e
 }
 
@@ -442,6 +443,25 @@ func mixedOver(e expr, args []expr) expr {
 		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", direct, e.sql)
 	}
 	e.mixed, e.condMixed = "", orSQL(conds, direct)
+	return e
+}
+
+// blankFor is SQL that is true where e has no value because a sum lookup it
+// reads met amounts in two currencies (R3), "" when it cannot be: where it
+// is mixed, or where it is a condition that was unknown for that reason and
+// no other term decided it. Every helper that names a blank cell in the
+// mixedCurrency notice is built from it.
+func (e expr) blankFor() string {
+	if e.condMixed == "" {
+		return e.mixed
+	}
+	return orSQL(e.mixed, fmt.Sprintf("(%s AND (%s) IS NULL)", e.condMixed, e.sql))
+}
+
+// withoutValue is e with no value on any row, and so never blank for
+// currencies.
+func (e expr) withoutValue() expr {
+	e.sql, e.mixed, e.condMixed = "NULL", "", ""
 	return e
 }
 

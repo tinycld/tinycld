@@ -582,8 +582,8 @@ func (lv *level) openingCells() ([]string, error) {
 			continue
 		}
 		mixed := "NULL"
-		if e.mixed != "" {
-			mixed = fmt.Sprintf("(CASE WHEN %s THEN 1 END)", e.mixed)
+		if blank := e.blankFor(); blank != "" {
+			mixed = fmt.Sprintf("(CASE WHEN %s THEN 1 END)", blank)
 		}
 		out = append(out, fmt.Sprintf("%s AS op%d", cellSQL(e), idx), fmt.Sprintf("%s AS opcur%d", carriedSQL(lv.r.s, e), idx), fmt.Sprintf("%s AS opmx%d", mixed, idx))
 	}
@@ -739,7 +739,7 @@ func (lc *levelCtx) rollup(cp *colPlan) (expr, error) {
 		return expr{}, err
 	}
 	if lv.readsRowValue(cp.col.Rollup, false, map[string]bool{}) {
-		e.sql, e.mixed = "NULL", ""
+		e = e.withoutValue()
 	}
 	return e, nil
 }
@@ -794,7 +794,7 @@ func (lc *levelCtx) rowsTotal(cp *colPlan) (expr, error) {
 	idx := lv.c.p.index(cp)
 	if lv.n < len(lv.c.p.groups) {
 		total := expr{sql: lv.childSum(fmt.Sprintf("v%d", idx)), typ: d.typ}
-		if d.mixed != "" {
+		if d.blankFor() != "" {
 			// A child row that is blank for mixed currencies makes its sum
 			// blank too (rowsCells gives each child row its vmx helper).
 			total.mixed = lv.childSum(fmt.Sprintf("vmx%d", idx)) + " > 0"
@@ -886,7 +886,7 @@ func (lc *levelCtx) recompute(cp *colPlan, at string) (expr, error) {
 		// A formula that reads a row's value has none for a group of rows;
 		// computing it from blanks would show a wrong figure (0).
 		if lv.readsRowValue(cp.col.Formula, false, map[string]bool{}) {
-			e.sql, e.mixed = "NULL", ""
+			e = e.withoutValue()
 		}
 		return e, nil
 	}
@@ -913,10 +913,11 @@ func (lc *levelCtx) recompute(cp *colPlan, at string) (expr, error) {
 // mixed check carries on to the row's vmx helper, so the notice names the
 // column on a group or total row as on a detail row.
 func (lv *level) mixedTotal(name string, e, total expr) expr {
-	if e.mixed == "" {
+	blank := e.blankFor()
+	if blank == "" {
 		return total
 	}
-	total.mixed = lv.agg(name+"m", fmt.Sprintf("max(CASE WHEN %s THEN 1 END)", e.mixed)) + " IS NOT NULL"
+	total.mixed = lv.agg(name+"m", fmt.Sprintf("max(CASE WHEN %s THEN 1 END)", blank)) + " IS NOT NULL"
 	total.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", total.mixed, total.sql)
 	return total
 }

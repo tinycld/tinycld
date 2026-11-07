@@ -293,10 +293,11 @@ func (lc *layoutCtx) mixedHelper() string {
 // pivotMixedCell is a computed row's pvm<j>: 1 where its pivot cell j is
 // blank for mixed currencies.
 func pivotMixedCell(e expr, j int) string {
-	if e.mixed == "" {
+	blank := e.blankFor()
+	if blank == "" {
 		return fmt.Sprintf("NULL AS pvm%d", j)
 	}
-	return fmt.Sprintf("(CASE WHEN %s THEN 1 END) AS pvm%d", e.mixed, j)
+	return fmt.Sprintf("(CASE WHEN %s THEN 1 END) AS pvm%d", blank, j)
 }
 
 // sectionCurrency is the currency of a section's cell in the column being
