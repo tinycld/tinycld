@@ -245,6 +245,49 @@ func (rn *runner) currencySuffix(row map[string]any) string {
 
 func (rn *runner) push(row Row) { rn.res.Rows = append(rn.res.Rows, row) }
 
+func isEnd(r Row) bool { return r.Kind == KindTotal || r.Kind == KindComputed }
+
+// pageWindow keeps a grouped page's slice of the document (R9e): the rows
+// after the previous page's last detail row (after its group row and opening
+// row; from the start on page 1), up to and including this page's last detail
+// row and its child rows (to the end on the last page). A total or computed
+// row inside the slice keeps its place there (a Total per currency block, a
+// layout's computed rows between sections); those after the slice follow it,
+// as each page of a report without groups ends in its totals. Those before
+// the slice were on an earlier page.
+func (rn *runner) pageWindow() {
+	if rn.page == nil {
+		return
+	}
+	rows := rn.res.Rows
+	start := 0
+	if rn.page.after != nil {
+		id := "g:" + keyString(rn.page.after)
+		if i := slices.IndexFunc(rows, func(r Row) bool { return r.ID == id }); i >= 0 {
+			start = i + 1
+			if start < len(rows) && rows[start].Kind == KindOpening && rows[start].Section == id {
+				start++
+			}
+		}
+	}
+	end := len(rows)
+	if rn.page.last != "" {
+		if i := slices.IndexFunc(rows, func(r Row) bool { return r.ID == rn.page.last }); i >= 0 {
+			end = i + 1
+			for end < len(rows) && rows[end].Parent != "" {
+				end++
+			}
+		}
+	}
+	out := slices.Clone(rows[start:end])
+	for _, r := range rows[end:] {
+		if isEnd(r) {
+			out = append(out, r)
+		}
+	}
+	rn.res.Rows = out
+}
+
 // group emits a level-n group row, its children when expanded, and its
 // subtotal.
 func (rn *runner) group(t *tree, row map[string]any, n int, section string) {

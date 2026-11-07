@@ -59,15 +59,18 @@ const lionHidden = `{"version":2,"source":"zoo.feedings","columns":[
 		{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":2000}]}}],
 	"sort":[{"col":"species"},{"col":"note"}]}`
 
-// The rows of a hidden group take no place under the row cap: lion's two
-// feedings sort first, and with them a cap of 3 rows would cut zebra's.
-func TestHiddenRowsTakeNoPlaceUnderTheRowCap(t *testing.T) {
+// Regression guard: the rows of a hidden group take no place on a page:
+// lion's two feedings sort first, and with them a page of 2 rows would hold no
+// zebra row. Two filters keep them out (the detail pass reads only the open
+// groups the group pass shows, and only rows under shown groups), so the test
+// fails only when both stop working.
+func TestHiddenRowsTakeNoPlaceOnAPage(t *testing.T) {
 	z := newZoo(t)
-	withLimits(t, func(l *limits) { l.rowCap = 3 })
+	withLimits(t, func(l *limits) { l.pageSize = 2 })
 	res := z.run(t, "ann", lionHidden, Options{ExpandAll: true}, nil)
 	requireOrderedRows(t, lionHidden, res, "note", nil, "f3", "f4", nil)
-	if len(res.Notices) != 0 {
-		t.Fatalf("notices = %+v", res.Notices)
+	if len(res.Notices) != 0 || res.Page == nil || res.Page.Next != "" {
+		t.Fatalf("notices = %+v, page = %+v", res.Notices, res.Page)
 	}
 }
 

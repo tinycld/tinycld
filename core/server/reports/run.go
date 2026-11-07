@@ -23,8 +23,9 @@ type Options struct {
 	// level and the children of each expanded group.
 	Expand    [][]any `json:"expand,omitempty"`
 	ExpandAll bool    `json:"expandAll,omitempty"`
-	// Cursor is the previous page's page.next; Limit is the page size of a
-	// report without groups.
+	// Cursor is the previous page's page.next; Limit is the page size (at
+	// most maxPage). A grouped report pages its detail rows in document
+	// order; its group rows come whole on every page (R9).
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
 	// Sort orders the detail rows before the report's own sort keys: the
@@ -213,6 +214,17 @@ type runner struct {
 	// pivotLabels their records' labels for a pivot over a link.
 	pivotValues []pivotValue
 	pivotLabels []rowLabel
+	// page is a grouped run's page: where its rows start and end in the
+	// document (pageWindow); nil when the run did not page grouped details.
+	page *groupedPage
+}
+
+// groupedPage is a grouped run's page: after is the open group the previous
+// page's last detail row was in (nil on page 1), last this page's last
+// detail row's id ("" on the last page).
+type groupedPage struct {
+	after []any
+	last  string
 }
 
 // Run runs a report for its reader. The statements read only rows the
@@ -323,20 +335,28 @@ func rowCapNotice() Notice {
 }
 
 func (rn *runner) run() error {
-	// A grouped report is capped, never paged, so options.limit does not
-	// apply to it either.
-	if len(rn.c.p.groups) > 0 && rn.opts.Cursor != "" {
-		return invalid("options.cursor", "a grouped report is not paged")
+	// A pivot report has no detail rows to page.
+	if rn.c.p.pivot != nil && rn.opts.Cursor != "" {
+		return badCursor()
 	}
 	groupRows, err := rn.groupPass()
 	if err != nil {
 		return err
 	}
 	var details []map[string]any
-	if rn.c.p.pivot == nil && (len(rn.c.p.groups) == 0 || len(rn.expand.keys) > 0 || rn.expand.all || rn.expand.open[len(rn.c.p.groups)]) {
-		details, err = rn.detailPass()
-		if err != nil {
-			return err
+	if rn.c.p.pivot == nil {
+		var leaves [][]any
+		grouped := len(rn.c.p.groups) > 0
+		if grouped {
+			leaves = rn.openGroups(groupRows)
+		}
+		// A cursor is read even with no open group, so one whose group shut
+		// is refused rather than answered with no rows.
+		if !grouped || len(leaves) > 0 || rn.opts.Cursor != "" {
+			details, err = rn.detailPass(leaves)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	// Column types come from the spec: a collapsed run compiles the detail
@@ -352,6 +372,7 @@ func (rn *runner) run() error {
 	rn.markCurrencies(groupRows)
 	rn.markMixedLookups(groupRows, details)
 	rn.assemble(groupRows, details, nested)
+	rn.pageWindow()
 	// A source's Go hooks read collections no statement reads, so their
 	// topics are added by name.
 	for _, src := range Sources(rn.app) {
@@ -738,11 +759,12 @@ func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, er
 }
 
 // detailPass runs the detail statement: one row per base row, a page at a
-// time without groups, or the rows of the expanded innermost groups. Rows
-// under a hidden group are left out before any running value reads them, so
-// they neither take a place under the row cap nor add to a shown row's
-// running value or percent.
-func (rn *runner) detailPass() ([]map[string]any, error) {
+// time. Without groups a page follows the detail order; with groups it holds
+// the rows of the open innermost groups (leaves) in document order: the
+// groups' order, then the detail order (R9b). Window values are computed
+// before the page is cut, so a running value goes on across pages. Rows under
+// a hidden group are left out before any running value reads them.
+func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	c := rn.c
 	s := newStmt(rn.app, c.info)
 	r, err := c.rows(s)
@@ -762,24 +784,29 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	where := "1"
-	limit := runLimits.rowCap
-	paged := len(c.p.groups) == 0
-	if paged {
-		limit = runLimits.pageSize
-		if rn.opts.Limit > 0 {
-			limit = min(rn.opts.Limit, runLimits.maxPage)
-		}
-		where, err = keysetAfter(s, order, rn.opts.Cursor)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		where = rn.expand.where(c, s, len(c.p.groups), "d.")
+	limit := runLimits.pageSize
+	if rn.opts.Limit > 0 {
+		limit = min(rn.opts.Limit, runLimits.maxPage)
 	}
-	body := fmt.Sprintf("SELECT * FROM (%s) d WHERE %s ORDER BY %s LIMIT %s",
-		sel, where, orderBy(order), limitSQL(int64(limit+1)))
-	rows, err := rn.query(s, append([]string{r.render()}, shown...), body)
+	ctes := append([]string{r.render()}, shown...)
+	grouped := len(c.p.groups) > 0
+	from, by, levels := "("+sel+") d", orderBy(order), ""
+	var where string
+	if grouped {
+		levels = c.groupLevels()
+		ctes = append(ctes, c.leafOrder(s, leaves))
+		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
+		by = "d.__g, " + by
+		rn.page = &groupedPage{}
+		where, rn.page.after, err = groupedAfter(s, levels, order, rn.opts.Cursor, leaves)
+	} else {
+		where, err = keysetAfter(s, order, rn.opts.Cursor)
+	}
+	if err != nil {
+		return nil, err
+	}
+	body := fmt.Sprintf("SELECT * FROM %s WHERE %s ORDER BY %s LIMIT %s", from, where, by, limitSQL(int64(limit+1)))
+	rows, err := rn.query(s, ctes, body)
 	if err != nil {
 		return nil, err
 	}
@@ -787,15 +814,95 @@ func (rn *runner) detailPass() ([]map[string]any, error) {
 	if more {
 		rows = rows[:limit]
 	}
-	if paged {
-		rn.res.Page = &Page{Size: len(rows)}
-		if more {
-			rn.res.Page.Next = cursorOf(order, rows[len(rows)-1])
+	rn.res.Page = &Page{Size: len(rows)}
+	if more {
+		last := rows[len(rows)-1]
+		var group []any
+		if grouped {
+			group = rn.rowKey(last, len(c.p.groups))
+			rn.page.last = fmt.Sprintf("d:%v", last["__id"])
 		}
-	} else if more {
-		rn.noticeOnce(rowCapNotice())
+		rn.res.Page.Next = cursorOf(levels, order, last, group)
 	}
 	return rows, nil
+}
+
+// openGroups lists the open innermost groups in the order the report shows
+// them (R9a): the group rows that an assembly with no detail rows marks
+// expanded at the innermost depth. That assembly is thrown away.
+func (rn *runner) openGroups(groupRows []map[string]any) [][]any {
+	rows, notices := rn.res.Rows, rn.res.Notices
+	rn.res.Rows, rn.res.Notices = []Row{}, slices.Clone(notices)
+	rn.assemble(groupRows, nil, nil)
+	depth := len(rn.c.p.groups) - 1
+	var out [][]any
+	for _, r := range rn.res.Rows {
+		if r.Kind == KindGroup && r.Expanded && r.Depth == depth {
+			out = append(out, r.GroupKey)
+		}
+	}
+	rn.res.Rows, rn.res.Notices = rows, notices
+	return out
+}
+
+// groupLevels names the report's group levels (column and bucket) for a
+// grouped cursor's fingerprint: a cursor from another grouping is refused.
+func (c *compiler) groupLevels() string {
+	parts := make([]string, len(c.p.groups))
+	for i, g := range c.p.groups {
+		parts[i] = g.col.col.ID + "/" + g.group.Bucket
+	}
+	return strings.Join(parts, ";")
+}
+
+// leafOrder is the CTE gord: one row per open innermost group, __g its place
+// in document order (json_each's index), g<j> its key values (group keys,
+// then currency keys), bound as one JSON list as expansion.where binds keys.
+func (c *compiler) leafOrder(s *stmt, leaves [][]any) string {
+	encoded := make([]string, len(leaves))
+	for i, key := range leaves {
+		encoded[i] = keyString(key)
+	}
+	cols := []string{"key AS __g"}
+	for j := range len(c.p.groups) + len(c.currencies) {
+		cols = append(cols, fmt.Sprintf("json_extract(value, '$[%d]') AS g%d", j, j))
+	}
+	return fmt.Sprintf("gord AS (SELECT %s FROM json_each(%s))", strings.Join(cols, ", "), s.bind("["+strings.Join(encoded, ",")+"]"))
+}
+
+// leafJoin matches a detail row (d) to its open group by each key value with
+// IS, so a blank key matches a blank one, as a group row's key reads.
+func (c *compiler) leafJoin() string {
+	on := make([]string, 0, len(c.p.groups)+len(c.currencies))
+	for i := range c.p.groups {
+		on = append(on, fmt.Sprintf("d.k%d IS gord.g%d", i, i))
+	}
+	for j, ck := range c.currencies {
+		on = append(on, fmt.Sprintf("d.%s IS gord.g%d", ck, len(c.p.groups)+j))
+	}
+	return strings.Join(on, " AND ")
+}
+
+// groupedAfter selects the detail rows after a grouped report's cursor: the
+// rows of a later open group, or of the cursor's group after its sort values
+// (R9c), and returns the cursor's group, which the page starts after. A
+// cursor whose group no longer opens is refused; the client then reads from
+// page 1.
+func groupedAfter(s *stmt, levels string, keys []sortKey, text string, leaves [][]any) (string, []any, error) {
+	if text == "" {
+		return "1", nil, nil
+	}
+	cur, err := readCursor(levels, keys, text)
+	if err != nil {
+		return "", nil, err
+	}
+	want := keyString(cur.Group)
+	at := slices.IndexFunc(leaves, func(k []any) bool { return keyString(k) == want })
+	if at < 0 {
+		return "", nil, badCursor()
+	}
+	g := s.bind(int64(at))
+	return fmt.Sprintf("(d.__g > %s OR (d.__g = %s AND %s))", g, g, keysetCond(s, keys, cur.Values)), cur.Group, nil
 }
 
 // shownOrder is what a select's value (or a mix of a select's values and

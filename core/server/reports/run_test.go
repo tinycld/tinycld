@@ -48,6 +48,8 @@ func rowsOf(res *Result, what string) []any {
 	out := make([]any, len(res.Rows))
 	for i, r := range res.Rows {
 		switch what {
+		case "id":
+			out[i] = r.ID
 		case "kind":
 			out[i] = r.Kind
 		case "label":
@@ -390,7 +392,7 @@ func TestAFormulaPathIsBlankOnGroupAndTotalRows(t *testing.T) {
 func TestTheRowCapNoticeIsGivenOnce(t *testing.T) {
 	z := newZoo(t)
 	withLimits(t, func(l *limits) { l.rowCap = 1 })
-	// Both the group statement (3 rows) and the detail statement (4) pass the cap.
+	// The group statement (3 rows) passes the cap; the detail pass pages and has no cap.
 	res := z.run(t, "ann", feedingsBySpecies, Options{ExpandAll: true}, nil)
 	n := 0
 	for _, notice := range res.Notices {
