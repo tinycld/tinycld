@@ -42,9 +42,12 @@ import {
 } from '../lib/spec'
 import type { Notice, ResolvedParam, ResultColumn, ResultRow, RunResult } from '../lib/types'
 import {
+    decodeSort,
+    encodeSort,
     nextSort,
     parseViewOptions,
     reportLink,
+    SORT_KEY,
     serializeViewOptions,
     type ViewOptions,
 } from '../lib/view-url'
@@ -249,6 +252,16 @@ export function useReportView(input: ReportViewInput) {
         (row: ResultRow) => setExpansion(reportKey, toggleGroup(expansion, row, rows)),
         [setExpansion, reportKey, expansion, rows]
     )
+    // Changes only with the sort, so the table's headings redraw only then. setParams
+    // keeps the other params, so the press writes the sort key alone.
+    const sortText = options.sort ? encodeSort(options.sort) : undefined
+    const onSortColumn = useCallback(
+        (col: string) => {
+            const next = nextSort(decodeSort(sortText), col)
+            router.setParams({ [SORT_KEY]: next ? encodeSort(next) : undefined })
+        },
+        [sortText]
+    )
 
     return {
         title: input.title,
@@ -307,7 +320,7 @@ export function useReportView(input: ReportViewInput) {
         onResetDisplay: () => write({ ...options, display: DEFAULT_DISPLAY }),
         sort: options.sort,
         // A new sort is a new rows key (rowsKeyOf), so the list starts at the top (F11).
-        onSortColumn: (col: string) => write({ ...options, sort: nextSort(options.sort, col) }),
+        onSortColumn,
         onClearSort: () => write({ ...options, sort: null }),
         // A run refused for the reader's sort offers Clear sort (R8).
         sortProblem: refusalSortProblem(run.problems),

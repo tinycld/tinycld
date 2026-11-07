@@ -2,7 +2,7 @@ import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list'
 import { type Breakpoint, useWindowWidth } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react-native'
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native'
 import { headingText, type NumberFormat } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
@@ -44,17 +44,11 @@ interface HeadingSort {
     onSortColumn(col: string): void
 }
 
-// One object while the sort is the same: the parent gives a new sort object and a
-// new press handler on every render. The press calls the latest handler, which
-// closes over the reader's current view options.
+// One object while the sort is the same: the parent gives a new sort object on
+// every render, and a press handler that changes only with the sort.
 function useHeadingSort(sort: ViewSort | null, onSortColumn: (col: string) => void): HeadingSort {
     const keptSort = useStable(sort)
-    const onSortColumnRef = useRef(onSortColumn)
-    onSortColumnRef.current = onSortColumn
-    return useMemo(
-        () => ({ sort: keptSort, onSortColumn: (col: string) => onSortColumnRef.current(col) }),
-        [keptSort]
-    )
+    return useMemo(() => ({ sort: keptSort, onSortColumn }), [keptSort, onSortColumn])
 }
 
 const SORT_ICON_SIZE = 12
@@ -64,11 +58,15 @@ type SortIconKind = keyof typeof SORT_ICONS
 const sortIconOf = (sort: ViewSort | null, col: string): SortIconKind =>
     sort?.col === col ? sort.dir : 'none'
 
-const SORT_STATE_TEXT: Record<SortIconKind, string | undefined> = {
-    asc: 'ascending',
-    desc: 'descending',
-    none: undefined,
+// The direction is in the button's name: a button has no other channel that both
+// web and native readers announce (aria-valuetext is for range roles only).
+const SORT_LABEL_SUFFIX: Record<SortIconKind, string> = {
+    asc: ', sorted ascending',
+    desc: ', sorted descending',
+    none: '',
 }
+
+const sortLabel = (text: string, kind: SortIconKind) => `Sort by ${text}${SORT_LABEL_SUFFIX[kind]}`
 
 function SortIcon({ kind, isVisible }: { kind: SortIconKind; isVisible: boolean }) {
     const color = useThemeColor('muted-foreground')
@@ -98,9 +96,8 @@ interface HeadingContentProps {
 // R15: a column the run can sort by (ResultColumn.sortable) has a heading that is a
 // button; each press cycles ascending → descending → the report's order. The icon
 // sits outside the text, so the ellipsis never hides it; in a right-aligned column
-// it comes first, so the text's right edge stays in line with the values. The
-// direction is the button's value (aria-valuetext: native and web), so the name
-// stays "Sort by <heading>". A running value's heading is plain text.
+// it comes first, so the text's right edge stays in line with the values. A
+// running value's heading is plain text.
 function HeadingContent({ column, text, justify, sorting }: HeadingContentProps) {
     if (!column.sortable) return <HeadingText text={text} justify={justify} />
     const kind = sortIconOf(sorting.sort, column.id)
@@ -109,8 +106,7 @@ function HeadingContent({ column, text, justify, sorting }: HeadingContentProps)
         <Pressable
             testID={`report-sort-${column.id}`}
             accessibilityRole="button"
-            accessibilityLabel={`Sort by ${text}`}
-            aria-valuetext={SORT_STATE_TEXT[kind]}
+            accessibilityLabel={sortLabel(text, kind)}
             onPress={() => sorting.onSortColumn(column.id)}
             className="min-h-11 flex-1 flex-row items-center gap-1"
             style={{ justifyContent: JUSTIFY_CONTENT[justify] }}
