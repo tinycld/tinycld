@@ -404,10 +404,39 @@ test.describe('report rows per width', () => {
                 await addColumn(p, keys)
             }
             await saveNewReport(p, uniqueName('Narrowed'))
+            // A scroll bar wider than the usual 15-16 px: the line must fit the width
+            // the rows really get, whatever the gutter is.
+            await p.addStyleTag({ content: '::-webkit-scrollbar { width: 21px }' })
             await p.setViewportSize({ width: 1100, height: 720 })
             const label = rowOf(p, 'Wrapco 00')
             await expect(label).toBeVisible()
             const table = p.getByTestId('report-table')
+            // No heading and no row part reaches into its scroller's gutter.
+            const intoGutter = () =>
+                table.evaluate(element => {
+                    const past = (scroller: Element, parts: Element[]) => {
+                        const edge =
+                            scroller.getBoundingClientRect().left +
+                            scroller.clientLeft +
+                            scroller.clientWidth
+                        return parts.filter(el => el.getBoundingClientRect().right > edge + 0.5)
+                            .length
+                    }
+                    const headingRow = element.querySelector('[data-testid="report-heading-row"]')
+                    const firstRow = element.querySelector('[data-testid^="report-row-"]')
+                    let list = firstRow?.parentElement ?? null
+                    while (list && !['auto', 'scroll'].includes(getComputedStyle(list).overflowY)) {
+                        list = list.parentElement
+                    }
+                    if (!headingRow || !list) return -1
+                    return (
+                        past(headingRow, [...headingRow.querySelectorAll('*')]) +
+                        past(list, [...list.querySelectorAll('[data-testid^="report-row-"] *')])
+                    )
+                })
+            await expect.poll(intoGutter).toBe(0)
+            // The table is shown once the rows' width is measured.
+            await expect(table).toHaveCSS('opacity', '1')
             // Every heading ends inside the table, on one line.
             const headings = () =>
                 table.evaluate(element => {

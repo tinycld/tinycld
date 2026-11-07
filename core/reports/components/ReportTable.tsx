@@ -25,10 +25,6 @@ const TEXT_ALIGN: Record<Justify, string> = {
     end: 'text-right',
 }
 
-// The heading row and the list keep a scroll bar's gutter on web (scrollbar-gutter:
-// stable), so a line's tracks have the table's width less the gutter.
-const SCROLL_GUTTER = Platform.OS === 'web' ? 16 : 0
-
 // The value kept from an earlier render while it is equal in content, so a new
 // array or object with the same content does not redraw every row.
 function useStable<T>(value: T): T {
@@ -175,13 +171,21 @@ const rowKey = (item: VisibleRow) => item.row.id
 const rowType = (item: VisibleRow) => item.row.kind
 const STICKY_CONFIG = { useNativeDriver: Platform.OS !== 'web' }
 
+// A row's width: the list's content, which on web is the list less the scroll
+// bar's gutter (scrollbar-gutter: stable, any bar width, none for overlay bars),
+// and on native the whole list. The heading row keeps the same gutter.
+function RowWidthProbe({ onWidth }: { onWidth(width: number): void }) {
+    return <View onLayout={e => onWidth(e.nativeEvent.layout.width)} />
+}
+
 interface TableListProps extends Omit<TableRowProps, 'item'> {
     rows: VisibleRow[]
     onNearEnd(): void
     isLoadingMore: boolean
+    onRowWidth(width: number): void
 }
 
-function TableList({ rows, onNearEnd, isLoadingMore, ...row }: TableListProps) {
+function TableList({ rows, onNearEnd, isLoadingMore, onRowWidth, ...row }: TableListProps) {
     const { columns, layout, format, onToggleGroup } = row
     const sticky = useMemo(() => stickyIndices(rows), [rows])
     const extraData = useMemo<TableData>(
@@ -202,6 +206,7 @@ function TableList({ rows, onNearEnd, isLoadingMore, ...row }: TableListProps) {
                 onEndReached={onNearEnd}
                 onEndReachedThreshold={0.5}
                 className="web:[scrollbar-gutter:stable]"
+                ListHeaderComponent={<RowWidthProbe onWidth={onRowWidth} />}
                 ListFooterComponent={<LoadingMore isVisible={isLoadingMore} />}
             />
         </>
@@ -232,24 +237,24 @@ export function ReportTable(props: ReportTableProps) {
     const columns = useStable(props.columns)
     const format = useStable(props.format)
     const windowWidth = useWindowWidth()
-    // The table's own width (a builder drawer narrows it): local layout state from onLayout.
-    const [width, setWidth] = useState(windowWidth)
-    const lineWidth = width - SCROLL_GUTTER
+    // The width the rows really get (a builder drawer narrows it), measured: local
+    // layout state from onLayout. It is kept here, not in the list, so a new run's
+    // list starts at the known width. Until the first measure the table is drawn
+    // hidden at the window's width, so a wrong first width is never seen.
+    const [rowWidth, setRowWidth] = useState<number>()
+    const lineWidth = rowWidth ?? windowWidth
     const layout = useMemo(
         () => tableLines({ columns, width: lineWidth, breakpoint, layouts }),
         [columns, lineWidth, breakpoint, layouts]
     )
     if (columns.length === 0) return null
     const notice = layout.kind === 'blocks' ? layout.notice : undefined
+    const visibility = rowWidth === undefined ? 'opacity-0' : ''
     // FlashList keeps the row in view anchored when the rows change, which a live
     // re-run of the same design and params needs; a run with a new design, new
     // params or a new sort is another list, so it starts at the top.
     return (
-        <View
-            testID="report-table"
-            className="min-h-0 flex-1"
-            onLayout={e => setWidth(e.nativeEvent.layout.width)}
-        >
+        <View testID="report-table" className={`min-h-0 flex-1 ${visibility}`}>
             <LayoutNotice text={notice} />
             <TableList
                 key={runKey}
@@ -260,6 +265,7 @@ export function ReportTable(props: ReportTableProps) {
                 onToggleGroup={onToggleGroup}
                 onNearEnd={onNearEnd}
                 isLoadingMore={isLoadingMore}
+                onRowWidth={setRowWidth}
             />
         </View>
     )

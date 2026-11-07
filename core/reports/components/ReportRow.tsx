@@ -136,7 +136,8 @@ interface RowLabelProps {
     isCopy?: boolean
 }
 
-// Child rows indent the label only, so the figures stay aligned. It grows to fill its slot, as a block cell does.
+// Child rows indent the label only, so the figures stay aligned. It grows to fill
+// its slot, as a block cell does.
 function labelStyle(row: ResultRow, justify: Justify) {
     return {
         flexGrow: 1,
