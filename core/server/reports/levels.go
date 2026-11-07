@@ -374,7 +374,10 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	}
 	if len(conds) > 0 {
 		s := fmt.Sprintf("s%d", lv.n)
-		ctes = append(ctes, fmt.Sprintf("%s AS (SELECT a.* FROM %s a WHERE %s)", s, g, strings.Join(conds, " AND ")))
+		// Materialized: inShown reads it once for every row below the
+		// level, and SQLite would otherwise total the level's rows and run
+		// its having again for each of them.
+		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (SELECT a.* FROM %s a WHERE %s)", s, g, strings.Join(conds, " AND ")))
 		g = s
 	}
 	return ctes, g
@@ -727,7 +730,7 @@ func (lc *levelCtx) rollup(cp *colPlan) (expr, error) {
 // type is the column's detail type (a blank value fits any), and an amount
 // is in the column's currency.
 func (lv *level) checkInColumn(cp *colPlan, e expr, at, what string) error {
-	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}, detail: &windowFrame{}}).col(cp.col.ID, cp.at)
+	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}, detail: &windowFrame{checking: true}}).col(cp.col.ID, cp.at)
 	if err != nil {
 		return err
 	}
@@ -795,7 +798,7 @@ func (lv *level) detailCell(cp *colPlan, at string) (expr, error) {
 	}
 	// With a frame a running value compiles, and is refused here by what it
 	// is; the frame's SQL is never used.
-	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}, detail: &windowFrame{}}).col(cp.col.ID, cp.at)
+	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}, detail: &windowFrame{checking: true}}).col(cp.col.ID, cp.at)
 	if err != nil {
 		return expr{}, err
 	}

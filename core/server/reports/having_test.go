@@ -239,3 +239,15 @@ func TestAGroupWhoseChildrenAreAllHiddenDoesNotExpand(t *testing.T) {
 		}
 	}
 }
+
+// The shown groups of a level are computed once: the detail rows under them
+// do not total the level again for each row.
+func TestShownGroupsAreComputedOnce(t *testing.T) {
+	z := newZoo(t)
+	withPlainFeedingsRule(t, z)
+	seen := observeReads(t)
+	z.run(t, "ann", speciesHaving, Options{ExpandAll: true}, map[string]string{"min": "2000"})
+	if reads := perRowReadsOf(t, z, *seen, "zoo_feedings"); len(reads) != 0 {
+		t.Fatalf("a subquery reads the feedings for each row: %v", reads)
+	}
+}

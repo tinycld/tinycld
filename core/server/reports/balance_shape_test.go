@@ -1,0 +1,543 @@
+package reports
+
+import (
+	"database/sql"
+	"fmt"
+	"reflect"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/pocketbase/pocketbase/core"
+)
+
+// A fictional balance report with the spec shape the checkpoint brief names,
+// run against the whole engine: a chart of accounts, entries and their lines,
+// each line a debit or a credit on one account in the line's own currency (a
+// per-row currency field): every line is USD.
+//
+//	zoo_ledger_accounts  number, full_name, type, detail_type, inactive
+//	zoo_ledger_entries   number, memo
+//	zoo_ledger_lines     entry, account, date (a text day), debit, credit,
+//	                     currency, posted, position
+func withBalanceZoo(t *testing.T, z *zoo) {
+	t.Helper()
+	signedIn := rule(`@request.auth.id != ""`)
+	accounts := core.NewBaseCollection("zoo_ledger_accounts")
+	accounts.ListRule, accounts.ViewRule = signedIn, signedIn
+	accounts.Fields.Add(
+		&core.TextField{Name: "number"},
+		&core.TextField{Name: "full_name"},
+		&core.SelectField{Name: "type", Values: []string{"asset", "liability", "equity", "income", "expense"}, MaxSelect: 1},
+		&core.TextField{Name: "detail_type"},
+		&core.BoolField{Name: "inactive"},
+	)
+	z.save(t, accounts)
+	entries := core.NewBaseCollection("zoo_ledger_entries")
+	entries.ListRule, entries.ViewRule = signedIn, signedIn
+	entries.Fields.Add(&core.TextField{Name: "number"}, &core.TextField{Name: "memo"})
+	z.save(t, entries)
+	lines := core.NewBaseCollection("zoo_ledger_lines")
+	lines.ListRule, lines.ViewRule = signedIn, signedIn
+	lines.Fields.Add(
+		&core.RelationField{Name: "entry", CollectionId: entries.Id, MaxSelect: 1},
+		&core.RelationField{Name: "account", CollectionId: accounts.Id, MaxSelect: 1},
+		&core.TextField{Name: "date"},
+		&core.NumberField{Name: "debit"},
+		&core.NumberField{Name: "credit"},
+		&core.TextField{Name: "currency"},
+		&core.BoolField{Name: "posted"},
+		&core.NumberField{Name: "position"},
+	)
+	// The indexes a per-line source of this shape declares, so the time test
+	// measures the engine, not a full scan per looked-up row.
+	lines.AddIndex("idx_zoo_ledger_lines_account_date", false, "account, date", "")
+	lines.AddIndex("idx_zoo_ledger_lines_entry", false, "entry, position", "")
+	z.save(t, lines)
+
+	for _, a := range []struct {
+		key, number, name, typ, detail string
+		inactive                       bool
+	}{
+		{"cash", "1000", "Cash", "asset", "", false},
+		{"bank", "1100", "Bank", "asset", "", false},
+		{"petty", "1200", "Petty cash", "asset", "", false},
+		{"idle", "1300", "Idle", "asset", "", true},
+		{"loan", "2000", "Loan", "liability", "", false},
+		{"re", "3900", "Retained earnings", "equity", "retained_earnings", false},
+		{"sales", "4000", "Sales", "income", "", false},
+		{"rent", "5000", "Rent", "expense", "", false},
+	} {
+		z.rec(t, a.key, "zoo_ledger_accounts", map[string]any{
+			"number": a.number, "full_name": a.name, "type": a.typ, "detail_type": a.detail, "inactive": a.inactive,
+		})
+	}
+	for _, e := range []string{"J0", "J1", "J2", "J3"} {
+		z.rec(t, e, "zoo_ledger_entries", map[string]any{"number": e})
+	}
+	for _, l := range []struct {
+		key, entry, account, date string
+		debit, credit, position   int
+		posted                    bool
+	}{
+		{"j0a", "J0", "bank", "2025-12-15", 2000, 0, 1, true},
+		{"j0b", "J0", "sales", "2025-12-15", 0, 2000, 2, true},
+		{"j1a", "J1", "cash", "2026-07-01", 0, 10000, 1, true},
+		{"j1b", "J1", "rent", "2026-07-01", 10000, 0, 2, true},
+		{"j2a", "J2", "cash", "2026-07-02", 3000, 0, 1, true},
+		{"j2b", "J2", "loan", "2026-07-02", 0, 4500, 2, true},
+		{"j2c", "J2", "sales", "2026-07-02", 1500, 0, 3, true},
+		{"j3a", "J3", "cash", "2026-07-03", 99999, 0, 1, false},
+		{"j3b", "J3", "rent", "2026-07-03", 0, 99999, 2, false},
+	} {
+		z.rec(t, l.key, "zoo_ledger_lines", map[string]any{
+			"entry": z.id(l.entry), "account": z.id(l.account), "date": l.date,
+			"debit": l.debit, "credit": l.credit, "currency": "USD", "position": l.position, "posted": l.posted,
+		})
+	}
+
+	RegisterSource(Source{
+		Key: "zoo.ledger_accounts", Collection: "zoo_ledger_accounts", Label: "Ledger accounts",
+		Fields: []Field{
+			{Key: "number", Label: "Number", Type: Text, Aggregates: MinMax},
+			{Key: "full_name", Label: "Full name", Type: Text, Aggregates: MinMax},
+			{Key: "type", Label: "Type", Type: Select, Options: []Option{
+				{Value: "asset", Label: "Asset"}, {Value: "liability", Label: "Liability"}, {Value: "equity", Label: "Equity"},
+				{Value: "income", Label: "Income"}, {Value: "expense", Label: "Expense"},
+			}},
+			{Key: "detail_type", Label: "Detail type", Type: Text},
+			{Key: "inactive", Label: "Inactive", Type: Bool},
+		},
+		Links: []Link{{Key: "lines", Label: "Lines", Target: "zoo.ledger_lines", Cardinality: ToMany, BackField: "account"}},
+	})
+	RegisterSource(Source{
+		Key: "zoo.ledger_entries", Collection: "zoo_ledger_entries", Label: "Ledger entries",
+		Fields: []Field{
+			{Key: "number", Label: "Number", Type: Text, Aggregates: MinMax},
+			{Key: "memo", Label: "Memo", Type: Text},
+		},
+	})
+	RegisterSource(Source{
+		Key: "zoo.ledger_lines", Collection: "zoo_ledger_lines", Label: "Ledger lines",
+		Fields: []Field{
+			{Key: "date", Label: "Date", Type: Date, TextDay: true, Aggregates: MinMax},
+			{Key: "debit", Label: "Debit", Type: Money, Aggregates: SumAll, Currency: "currency"},
+			{Key: "credit", Label: "Credit", Type: Money, Aggregates: SumAll, Currency: "currency"},
+			{Key: "currency", Label: "Currency", Type: Text},
+			{Key: "posted", Label: "Posted", Type: Bool},
+			{Key: "position", Label: "Position", Type: Number, Aggregates: SumAll},
+		},
+		Links: []Link{
+			{Key: "entry", Label: "Entry", Target: "zoo.ledger_entries", Cardinality: ToOne, Field: "entry"},
+			{Key: "account", Label: "Account", Target: "zoo.ledger_accounts", Cardinality: ToOne, Field: "account"},
+		},
+	})
+}
+
+// The spec's named pieces, inlined as §5 inlines them. FROM is the period's
+// first day; NET a line's debit less credit; PL the profit and loss types.
+const (
+	glFrom = `{"param":"period","bound":"from"}`
+	glNet  = `{"op":"sub","args":[{"path":[{"field":"debit"}]},{"path":[{"field":"credit"}]}]}`
+	glPL   = `{"value":["income","expense"]}`
+	// opening: the account's posted net before the period (a P&L account only
+	// within the period's fiscal year), plus, on retained earnings, every P&L
+	// net of the fiscal years before it.
+	glOpening = `{"op":"add","args":[
+		{"op":"coalesce","args":[{"op":"lookup","source":"zoo.ledger_lines","where":{"op":"and","args":[
+			{"op":"eq","args":[{"path":[{"link":"account"}]},{"record":"byChartRow","path":[{"field":"id"}]}]},
+			{"op":"eq","args":[{"path":[{"field":"posted"}]},{"value":true}]},
+			{"op":"lt","args":[{"path":[{"field":"date"}]},FROM]},
+			{"op":"or","args":[
+				{"op":"not","args":[{"op":"in","args":[{"path":[{"link":"account"},{"field":"type"}]},PL]}]},
+				{"op":"gte","args":[{"op":"fiscalYear","args":[{"path":[{"field":"date"}]}]},{"op":"fiscalYear","args":[FROM]}]}]}]},
+			"value":NET,"pick":"sum"},{"value":0}]},
+		{"op":"if","args":[
+			{"op":"eq","args":[{"record":"byChartRow","path":[{"field":"detail_type"}]},{"value":"retained_earnings"}]},
+			{"op":"coalesce","args":[{"op":"lookup","source":"zoo.ledger_lines","where":{"op":"and","args":[
+				{"op":"eq","args":[{"path":[{"field":"posted"}]},{"value":true}]},
+				{"op":"in","args":[{"path":[{"link":"account"},{"field":"type"}]},PL]},
+				{"op":"lt","args":[{"op":"fiscalYear","args":[{"path":[{"field":"date"}]}]},{"op":"fiscalYear","args":[FROM]}]}]},
+				"value":NET,"pick":"sum"},{"value":0}]},
+			{"value":0}]}]}`
+	// byNormal(X): a credit-normal account shows the negated net.
+	glByNormal = `{"op":"if","args":[
+		{"op":"in","args":[{"record":"byChartRow","path":[{"field":"type"}]},{"value":["liability","equity","income"]}]},
+		{"op":"sub","args":[{"value":0},X]},X]}`
+	// The other line's account of a 2-line entry, "-Split-" for more.
+	glCount = `{"op":"lookup","source":"zoo.ledger_lines",
+		"where":{"op":"eq","args":[{"path":[{"link":"entry"}]},{"outer":[{"link":"entry"}]}]},
+		"value":{"path":[{"field":"id"}]},"pick":"count"}`
+	glSplit = `{"op":"case","args":[
+		{"op":"eq","args":[COUNT,{"value":2}]},
+		{"op":"lookup","source":"zoo.ledger_lines","where":{"op":"and","args":[
+			{"op":"eq","args":[{"path":[{"link":"entry"}]},{"outer":[{"link":"entry"}]}]},
+			{"op":"ne","args":[{"path":[{"field":"id"}]},{"outer":[{"field":"id"}]}]}]},
+			"value":{"path":[{"link":"account"},{"field":"full_name"}]},"pick":"min"},
+		{"op":"gt","args":[COUNT,{"value":2}]},{"value":"-Split-"},
+		{"value":null}]}`
+	glSpec = `{"version":3,"source":"zoo.ledger_lines",
+		"params":[
+			{"id":"period","type":"dateRange","label":"Period","default":{"preset":"thisMonthToDate"}},
+			{"id":"rows","type":"choice","label":"Rows","default":"active","options":[{"value":"active","label":"With activity"},{"value":"all","label":"All"}]},
+			{"id":"accounts","type":"choice","label":"Accounts","multiple":true,
+			 "optionsFrom":{"source":"zoo.ledger_accounts","value":[{"field":"id"}],"label":[{"field":"full_name"}]}}],
+		"columns":[
+			{"id":"account","label":"Account / Date","path":[{"link":"account"}],"labelField":"full_name"},
+			{"id":"number","label":"No.","path":[{"link":"entry"},{"field":"number"}]},
+			{"id":"split","label":"Split","formula":SPLIT},
+			{"id":"debit","label":"Debit","path":[{"field":"debit"}],"aggregate":"sum"},
+			{"id":"credit","label":"Credit","path":[{"field":"credit"}],"aggregate":"sum"},
+			{"id":"balance","label":"Balance",
+			 "formula":BALANCE,
+			 "rollup":ROLLUP}],
+		"filter":{"op":"and","args":[
+			{"op":"eq","args":[{"path":[{"field":"posted"}]},{"value":true}]},
+			{"op":"between","args":[{"path":[{"field":"date"}]},{"param":"period"}]},
+			{"op":"in","args":[{"col":"account"},{"param":"accounts"}]}]},
+		"groups":[{"id":"byChartRow","col":"account","open":true,"subtotals":true,
+			"label":{"op":"if","args":[
+				{"op":"isEmpty","args":[{"record":"byChartRow","path":[{"field":"number"}]}]},
+				{"record":"byChartRow","path":[{"field":"full_name"}]},
+				{"op":"concat","args":[{"record":"byChartRow","path":[{"field":"number"}]},{"value":" "},{"record":"byChartRow","path":[{"field":"full_name"}]}]}]},
+			"fill":{"where":{"op":"in","args":[{"path":[{"field":"id"}]},{"param":"accounts"}]}},
+			"having":{"op":"or","args":[
+				{"op":"gt","args":[{"op":"count","args":[{"path":[{"field":"id"}]}]},{"value":0}]},
+				{"op":"ne","args":[OPENING,{"value":0}]},
+				{"op":"and","args":[
+					{"op":"eq","args":[{"param":"rows"},{"value":"all"}]},
+					{"op":"eq","args":[{"record":"byChartRow","path":[{"field":"inactive"}]},{"value":false}]}]}]},
+			"opening":{"label":"Beginning balance","cells":{"balance":OPENING_BALANCE}}}],
+		"sort":[
+			{"formula":{"op":"case","args":[
+				{"op":"eq","args":[{"record":"byChartRow","path":[{"field":"type"}]},{"value":"asset"}]},{"value":1},
+				{"op":"eq","args":[{"record":"byChartRow","path":[{"field":"type"}]},{"value":"liability"}]},{"value":2},
+				{"op":"eq","args":[{"record":"byChartRow","path":[{"field":"type"}]},{"value":"equity"}]},{"value":3},
+				{"op":"eq","args":[{"record":"byChartRow","path":[{"field":"type"}]},{"value":"income"}]},{"value":4},
+				{"value":5}]}},
+			{"formula":{"record":"byChartRow","path":[{"field":"number"}]}},
+			{"formula":{"record":"byChartRow","path":[{"field":"full_name"}]}},
+			{"formula":{"path":[{"field":"date"}]}},
+			{"formula":{"path":[{"field":"position"}]}}],
+		"detail":{"label":{"path":[{"field":"date"}]}}}`
+)
+
+// balanceSpec fills the named pieces into the spec.
+func balanceSpec() string {
+	opening := strings.NewReplacer("FROM", glFrom, "NET", glNet, "PL", glPL).Replace(glOpening)
+	byNormal := func(x string) string { return strings.ReplaceAll(glByNormal, "X", x) }
+	running := `{"op":"add","args":[` + opening + `,{"op":"runningSum","args":[` + glNet + `]}]}`
+	total := `{"op":"add","args":[` + opening + `,{"op":"coalesce","args":[{"op":"sum","args":[` + glNet + `]},{"value":0}]}]}`
+	return strings.NewReplacer(
+		"SPLIT", strings.ReplaceAll(glSplit, "COUNT", glCount),
+		"OPENING_BALANCE", byNormal(opening),
+		"BALANCE", byNormal(running),
+		"ROLLUP", byNormal(total),
+		"OPENING", opening,
+	).Replace(glSpec)
+}
+
+// glLine is one row under an account: its kind, label, balance and split.
+type glLine struct {
+	Kind, Label    string
+	Balance, Split any
+}
+
+// balanceGroups lists the group rows' labels in order, and each
+// group's rows (opening, lines, subtotal) under its label.
+func balanceGroups(res *Result) ([]string, map[string][]glLine) {
+	var order []string
+	byID := map[string]string{}
+	rows := map[string][]glLine{}
+	for _, r := range res.Rows {
+		if r.Kind == KindGroup {
+			order = append(order, r.Label)
+			byID[r.ID] = r.Label
+			continue
+		}
+		if label, ok := byID[r.Section]; ok {
+			rows[label] = append(rows[label], glLine{r.Kind, r.Label, r.Cells["balance"], r.Cells["split"]})
+		}
+	}
+	return order, rows
+}
+
+func requireGroupRows(t *testing.T, rows map[string][]glLine, account string, want ...glLine) {
+	t.Helper()
+	if got := rows[account]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s rows = %#v\nwant %#v", account, got, want)
+	}
+}
+
+func glOpeningRow(balance int64) glLine {
+	return glLine{KindOpening, "Beginning balance", balance, nil}
+}
+
+func glSubtotalRow(account string, balance int64) glLine {
+	return glLine{KindSubtotal, "Total " + account, balance, nil}
+}
+
+func glDetailRow(day string, balance int64, split any) glLine {
+	return glLine{KindDetail, day, balance, split}
+}
+
+func runBalances(t *testing.T, z *zoo, params map[string]string) *Result {
+	t.Helper()
+	return z.run(t, "ann", balanceSpec(), Options{Today: "2026-07-15"}, params)
+}
+
+const glJuly = `{"from":"2026-07-01","to":"2026-07-31"}`
+
+func TestABalanceShapedSpecLoadsAndValidates(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	spec, info, err := Load([]byte(balanceSpec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Version != CurrentVersion || info.UpgradedFrom != 0 {
+		t.Fatalf("version %d, upgraded from %d", spec.Version, info.UpgradedFrom)
+	}
+	if err := Validate(z.app, spec); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+// A debit-normal account credited 100.00 then debited 30.00 shows −100.00,
+// −70.00 and ends at −70.00; a credit-normal account credited 45.00 shows
+// +45.00; Split names the other account of a 2-line entry and "-Split-" for 3.
+func TestABalanceShapedReportRunsBalancesByNormalSide(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	res := runBalances(t, z, map[string]string{"period": glJuly})
+	order, rows := balanceGroups(res)
+	want := []string{"1000 Cash", "1100 Bank", "2000 Loan", "3900 Retained earnings", "4000 Sales", "5000 Rent"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("accounts = %v\nwant %v", order, want)
+	}
+	requireGroupRows(t, rows, "1000 Cash",
+		glOpeningRow(0),
+		glDetailRow("2026-07-01", -10000, "Rent"),
+		glDetailRow("2026-07-02", -7000, "-Split-"),
+		glSubtotalRow("1000 Cash", -7000))
+	requireGroupRows(t, rows, "2000 Loan",
+		glOpeningRow(0),
+		glDetailRow("2026-07-02", 4500, "-Split-"),
+		glSubtotalRow("2000 Loan", 4500))
+	// The draft entry J3 is left out.
+	requireGroupRows(t, rows, "5000 Rent",
+		glOpeningRow(0),
+		glDetailRow("2026-07-01", 10000, "Cash"),
+		glSubtotalRow("5000 Rent", 10000))
+	// Last fiscal year's sale folds into retained earnings, not into Sales.
+	requireGroupRows(t, rows, "4000 Sales",
+		glOpeningRow(0),
+		glDetailRow("2026-07-02", -1500, "-Split-"),
+		glSubtotalRow("4000 Sales", -1500))
+	requireGroupRows(t, rows, "3900 Retained earnings", glOpeningRow(2000), glSubtotalRow("3900 Retained earnings", 2000))
+	requireGroupRows(t, rows, "1100 Bank", glOpeningRow(2000), glSubtotalRow("1100 Bank", 2000))
+	// The Total is in no account: its balance reads a record it does not have.
+	last := res.Rows[len(res.Rows)-1]
+	if last.Kind != KindTotal || last.Cells["balance"] != nil {
+		t.Fatalf("last row = %s %#v, want the Total with a blank balance", last.Kind, last.Cells["balance"])
+	}
+	// Every balance that is not 0 read at least one line, so it carries that
+	// line's currency (R24: the first known code of its reads).
+	for _, r := range res.Rows {
+		if b := r.Cells["balance"]; b != nil && b != int64(0) && r.Cells["balance@currency"] != "USD" {
+			t.Fatalf("%s %q balance %#v has currency %#v, want USD", r.Kind, r.Label, b, r.Cells["balance@currency"])
+		}
+	}
+}
+
+func TestABalanceShapedReportCarriesTheBalanceIntoALaterPeriod(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	res := runBalances(t, z, map[string]string{"period": `{"from":"2026-07-02","to":"2026-07-31"}`})
+	_, rows := balanceGroups(res)
+	requireGroupRows(t, rows, "1000 Cash",
+		glOpeningRow(-10000),
+		glDetailRow("2026-07-02", -7000, "-Split-"),
+		glSubtotalRow("1000 Cash", -7000))
+}
+
+func TestABalanceShapedReportUnderAllDatesBeginsAtZero(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	res := runBalances(t, z, map[string]string{"period": `{"preset":"allDates"}`})
+	order, rows := balanceGroups(res)
+	for _, account := range order {
+		if got := rows[account]; len(got) == 0 || !reflect.DeepEqual(got[0], glOpeningRow(0)) {
+			t.Fatalf("%s starts with %#v, want a 0.00 beginning balance", account, got)
+		}
+	}
+	requireGroupRows(t, rows, "1000 Cash",
+		glOpeningRow(0),
+		glDetailRow("2026-07-01", -10000, "Rent"),
+		glDetailRow("2026-07-02", -7000, "-Split-"),
+		glSubtotalRow("1000 Cash", -7000))
+	requireGroupRows(t, rows, "4000 Sales",
+		glOpeningRow(0),
+		glDetailRow("2025-12-15", 2000, "Bank"),
+		glDetailRow("2026-07-02", 500, "-Split-"),
+		glSubtotalRow("4000 Sales", 500))
+	if _, shown := rows["3900 Retained earnings"]; shown {
+		t.Fatalf("retained earnings has nothing before All dates, so the having hides it: %v", order)
+	}
+}
+
+func TestABalanceShapedReportShowsQuietActiveGroupsOnAll(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	res := runBalances(t, z, map[string]string{"period": glJuly, "rows": `"all"`})
+	order, rows := balanceGroups(res)
+	requireGroupRows(t, rows, "1200 Petty cash", glOpeningRow(0), glSubtotalRow("1200 Petty cash", 0))
+	for _, account := range order {
+		if account == "1300 Idle" {
+			t.Fatalf("an inactive account with nothing to show is hidden: %v", order)
+		}
+	}
+}
+
+// On a detail row the opening's looked-up code is a subquery the currency
+// guard repeats (R24), and SQLite runs a correlated subquery for every row it
+// reads: a run over 2,000 lines costs little only while each such subquery
+// searches the lines table by an index. Checked on SQLite's query plan of
+// every statement the run sends, not on a clock, so a busy machine cannot
+// fail it. The lines table is still read whole once per statement (the
+// report's own rows, and lookups that read no column of the row), as any
+// report over a period must.
+func TestABalanceShapedReportOverTwoThousandLinesSearchesLinesPerRow(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	accounts := []string{"cash", "bank", "petty", "loan", "re", "sales", "rent"}
+	for i := range 1000 {
+		entry := fmt.Sprintf("B%d", i)
+		z.rec(t, entry, "zoo_ledger_entries", map[string]any{"number": entry})
+		// Even entries fall before July, odd ones in it.
+		day := fmt.Sprintf("2026-%02d-%02d", 1+i%6, 1+i%28)
+		if i%2 == 1 {
+			day = fmt.Sprintf("2026-07-%02d", 1+i%28)
+		}
+		for j, side := range []struct {
+			account       string
+			debit, credit int
+		}{{accounts[i%7], 100, 0}, {accounts[(i+3)%7], 0, 100}} {
+			z.rec(t, fmt.Sprintf("%s-%d", entry, j), "zoo_ledger_lines", map[string]any{
+				"entry": z.id(entry), "account": z.id(side.account), "date": day,
+				"debit": side.debit, "credit": side.credit, "currency": "USD", "position": j + 1, "posted": true,
+			})
+		}
+	}
+	seen := observeReads(t)
+	res := runBalances(t, z, map[string]string{"period": glJuly})
+	db := readPool(t, z)
+	searched := 0
+	for _, st := range *seen {
+		raw, args := rawStatement(t, st.sql, st.params)
+		plan := queryPlan(t, db, raw, args)
+		for _, step := range perRowReads(plan, "zoo_ledger_lines") {
+			if !indexSearch.MatchString(step) {
+				t.Fatalf("a subquery run for every row reads the lines table by %q:\n%s", step, strings.Join(plan, "\n"))
+			}
+			searched++
+		}
+	}
+	if searched == 0 {
+		t.Fatal("no subquery searched the lines table for each row: the plan check checked nothing")
+	}
+	if len(res.Notices) != 0 {
+		t.Fatalf("notices = %+v", res.Notices)
+	}
+	details := 0
+	for _, r := range res.Rows {
+		if r.Kind == KindDetail {
+			details++
+			if r.Cells["balance"] == nil {
+				t.Fatalf("detail row %q has no balance", r.Label)
+			}
+		}
+	}
+	if details == 0 {
+		t.Fatal("the first page has no detail rows")
+	}
+}
+
+// indexSearch is a plan step that reads a table through an index.
+var indexSearch = regexp.MustCompile(`^SEARCH \S+ USING (?:(?:AUTOMATIC )?(?:PARTIAL )?(?:COVERING )?INDEX|INTEGER PRIMARY KEY)`)
+
+// queryPlan is SQLite's EXPLAIN QUERY PLAN of stmt, one step a line,
+// indented two spaces a level under its parent step.
+func queryPlan(t *testing.T, db *sql.DB, stmt string, args []any) []string {
+	t.Helper()
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+stmt, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	depth := map[int]int{}
+	var out []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		depth[id] = depth[parent] + 1
+		out = append(out, strings.Repeat("  ", depth[id]-1)+detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// perRowReads lists the plan's steps that read table inside a correlated
+// subquery, which SQLite runs again for every row of the query around it. A
+// subquery that reads no column of an outer row (a plain SCALAR or LIST
+// SUBQUERY, or a MATERIALIZE) runs once per statement, wherever it sits, so
+// the steps under it are not listed.
+func perRowReads(plan []string, table string) []string {
+	var out, stack []string
+	var indents []int
+	for _, line := range plan {
+		detail := strings.TrimLeft(line, " ")
+		indent := len(line) - len(detail)
+		for len(indents) > 0 && indents[len(indents)-1] >= indent {
+			indents, stack = indents[:len(indents)-1], stack[:len(stack)-1]
+		}
+		if reads := strings.Fields(detail); len(reads) > 1 && reads[1] == table && underCorrelated(stack) {
+			out = append(out, detail)
+		}
+		indents, stack = append(indents, indent), append(stack, detail)
+	}
+	return out
+}
+
+// underCorrelated is true when the nearest subquery among a step's parents
+// is a correlated one.
+func underCorrelated(parents []string) bool {
+	for _, p := range slices.Backward(parents) {
+		switch {
+		case strings.HasPrefix(p, "CORRELATED "):
+			return true
+		case strings.HasPrefix(p, "SCALAR SUBQUERY"), strings.HasPrefix(p, "LIST SUBQUERY"), strings.HasPrefix(p, "MATERIALIZE"):
+			return false
+		}
+	}
+	return false
+}
+
+// perRowReadsOf lists, over every statement seen, the plan steps that read
+// table inside a correlated subquery (perRowReads).
+func perRowReadsOf(t *testing.T, z *zoo, seen []readStatement, table string) []string {
+	t.Helper()
+	db := readPool(t, z)
+	var out []string
+	for _, st := range seen {
+		raw, args := rawStatement(t, st.sql, st.params)
+		out = append(out, perRowReads(queryPlan(t, db, raw, args), table)...)
+	}
+	return out
+}

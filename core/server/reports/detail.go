@@ -30,6 +30,10 @@ type windowFrame struct {
 	// by their SQL.
 	hoisted   []string
 	hoistedAs map[string]string
+	// checking is a frame that only compiles a cell to check it: its
+	// hoisted values have no select below, so a lookup is not hoisted into
+	// it (a running value is refused where it is checked).
+	checking bool
 }
 
 // hoist keeps a running value to compute in the select below and returns
@@ -165,11 +169,17 @@ func (rc *rowsCtx) window(op string, arg *Node, scale int, at string) (expr, err
 	return windowSQL(op, e, scale, rc.detail, at)
 }
 
-func (rc *rowsCtx) bind(v any) string                       { return rc.r.s.bind(v) }
-func (rc *rowsCtx) fiscalStart() string                     { return rc.bind(int64(rc.r.c.fiscal)) }
-func (rc *rowsCtx) filter() bool                            { return false }
-func (rc *rowsCtx) label(e expr) string                     { return rc.r.c.textOf(rc.r.s, e) }
-func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(rc, rc.r, n, at) }
+func (rc *rowsCtx) bind(v any) string   { return rc.r.s.bind(v) }
+func (rc *rowsCtx) fiscalStart() string { return rc.bind(int64(rc.r.c.fiscal)) }
+func (rc *rowsCtx) filter() bool        { return false }
+func (rc *rowsCtx) label(e expr) string { return rc.r.c.textOf(rc.r.s, e) }
+func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) {
+	e, err := lookupIn(rc, rc.r, n, at)
+	if err != nil {
+		return e, err
+	}
+	return rc.hoistLookup(e), nil
+}
 func (rc *rowsCtx) currencySQL(cur currency) string {
 	return currencyCode(rc, rc.r.c, cur, func(key string) string { return "w." + key })
 }
@@ -181,6 +191,32 @@ func (rc *rowsCtx) hoist(sql string) string {
 		return sql
 	}
 	return rc.detail.hoist("w", sql)
+}
+
+// hoistLookup computes a lookup on a detail row once per row, in the select
+// below the detail select: SQLite runs a correlated subquery again at each
+// place the row reads it, and a currency guard (R24) reads a lookup's value,
+// code and mixed check many times over. A lookup that holds a total or a
+// running value stays where it is.
+func (rc *rowsCtx) hoistLookup(e expr) expr {
+	if rc.detail == nil || rc.detail.checking || e.agg || e.win {
+		return e
+	}
+	if e.mixed != "" {
+		// A sum lookup's value holds its mixed check: it reads the hoisted
+		// one, hoisted before it.
+		mixed := rc.hoist(e.mixed)
+		e.sql = strings.ReplaceAll(e.sql, e.mixed, mixed)
+		e.mixed = mixed
+	}
+	if e.cur.sql != "" {
+		e.cur.sql = rc.hoist(e.cur.sql)
+	}
+	if e.shown != "" {
+		e.shown = rc.hoist(e.shown)
+	}
+	e.sql = rc.hoist(e.sql)
+	return e
 }
 
 // windowSQL is a running value or a percent over a frame. A running sum

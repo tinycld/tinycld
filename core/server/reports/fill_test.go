@@ -300,3 +300,16 @@ func TestFillIsRefusedWhereItCannotWork(t *testing.T) {
 		requireSpecError(t, Validate(app, spec), 400, c.at, c.want)
 	}
 }
+
+// Fill rows are the keyset less the base rows' keys, read once: no subquery
+// reads the base source again for each fill record.
+func TestFillReadsTheBaseRowsOnce(t *testing.T) {
+	z := newZoo(t)
+	withEmptyAnimals(t, z)
+	withPlainFeedingsRule(t, z)
+	seen := observeReads(t)
+	z.run(t, "ann", animalFill(`{"where":{"op":"eq","args":[{"path":[{"field":"active"}]},{"value":true}]}}`, ""), Options{}, nil)
+	if reads := perRowReadsOf(t, z, *seen, "zoo_feedings"); len(reads) != 0 {
+		t.Fatalf("a subquery reads the feedings for each fill record: %v", reads)
+	}
+}

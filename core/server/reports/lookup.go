@@ -141,8 +141,11 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		if err != nil {
 			return expr{}, err
 		}
+		// WHERE drops a NULL condition as it drops a false one, and a bare
+		// condition lets SQLite read each of its AND terms, so an index on
+		// the looked-up source can serve one (linkBound).
 		if !w.unset {
-			where = "COALESCE(" + w.sql + ", 0)"
+			where = "(" + w.sql + ")"
 		}
 		out.agg, out.win = out.agg || w.agg, out.win || w.win
 	}
@@ -327,6 +330,11 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	// A currency field is the looked-up row's own currency, read beside the
 	// amount; lookupIn picks the two from one row. The column names it for
 	// combining.
+	if l.inWhere && bound.endsAtLink {
+		if col := l.storedLinkCol(hops); col != "" {
+			e.link = storedLink{col: col, sql: e.sql}
+		}
+	}
 	switch cur, fixed := amountCurrencyOf(l.sc, hops, bound); {
 	case cur != "":
 		e.cur = currency{sql: cur, id: "row:" + cur, field: currencyField(bound)}
@@ -334,6 +342,38 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 		e.cur = currency{fixed: fixed}
 	}
 	return e, nil
+}
+
+// storedLinkCol is the stored relation column the last hop of a link path
+// follows, or "" where that column may hold NULL (a view's): a base
+// collection stores a blank relation as ”.
+func (l *lookupCtx) storedLinkCol(hops []hopPlan) string {
+	last := hops[len(hops)-1]
+	col, err := l.r.c.p.app.FindCachedCollectionByNameOrId(last.from.Collection)
+	if err != nil || col.IsView() {
+		return ""
+	}
+	return q(l.sc.join(hops[:len(hops)-1]), last.link.Field)
+}
+
+// linkBound is an extra condition for eq when one side is a link path in a
+// lookup's where: the stored relation column lies between the other side and
+// itself, which SQLite serves from an index on that column, so a lookup
+// correlated with the report's row searches the looked-up source instead of
+// scanning it for every row. The link path reads the linked row's id through
+// a join on that column, blank when the reader cannot see the row, so the
+// bound holds wherever the equality does: a value V gives the column V, and a
+// blank V gives every column (” up to any blob, which sorts after all text).
+// "" when neither side reads through a stored column.
+func linkBound(args []expr) string {
+	for i, a := range args[:2] {
+		if a.link.col == "" || a.link.sql != a.sql {
+			continue
+		}
+		v := args[1-i].sql
+		return fmt.Sprintf("%s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff')", a.link.col, v, a.link.col, v)
+	}
+	return ""
 }
 
 // outerPath reads a path on the report's row: what a path means in the

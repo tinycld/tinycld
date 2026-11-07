@@ -16,14 +16,15 @@ import (
 // base row (fill records). Their totals are those of no rows (a sum and a
 // count 0, a min blank): the level's aggregates over an empty select of w,
 // which returns one row, whatever an aggregate reads.
+//
+// The keys with no base row are the keyset's less w's, by EXCEPT (which
+// matches blank keys as equal), so w's rows are read once: a NOT EXISTS
+// over w per key would read the base source again for every key.
 func (lv *level) fillRows() string {
-	match := make([]string, len(lv.keys))
-	for i, k := range lv.keys {
-		match[i] = "w." + k + " IS kx." + k
-	}
+	keys := strings.Join(lv.keys, ", ")
 	empty := fmt.Sprintf("SELECT %s FROM w WHERE 0", strings.Join(append(slices.Clone(lv.aggs), "count(*) AS __n"), ", "))
-	return fmt.Sprintf("SELECT %s, e.* FROM %s kx CROSS JOIN (%s) e\nWHERE NOT EXISTS (SELECT 1 FROM w WHERE %s)",
-		strings.Join(prefixed("kx.", lv.keys), ", "), lv.c.fillSets[lv.n], empty, strings.Join(match, " AND "))
+	return fmt.Sprintf("SELECT %s, e.* FROM (SELECT %s FROM %s EXCEPT SELECT %s FROM w) kx CROSS JOIN (%s) e",
+		strings.Join(prefixed("kx.", lv.keys), ", "), keys, lv.c.fillSets[lv.n], keys, empty)
 }
 
 // parentKeys selects the parent rows of level n: the currencies for level 1

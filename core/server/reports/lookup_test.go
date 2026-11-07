@@ -678,3 +678,66 @@ func TestALookupOfALookupThatReadsTheRowKeepsEveryRow(t *testing.T) {
 	res := z.run(t, "ann", spec, Options{}, nil)
 	requireOrderedRows(t, spec, res, "nested", int64(0), int64(2), int64(1), int64(3), nil)
 }
+
+// A lookup whose where matches a link to the report's row bounds the stored
+// relation column too, so SQLite searches an index of it for each row
+// instead of reading the looked-up source whole.
+func TestALookupOnALinkSearchesAnIndexOfTheRelation(t *testing.T) {
+	z := newZoo(t)
+	withPlainFeedingsRule(t, z)
+	seen := observeReads(t)
+	res := z.run(t, "ann", `{"version":3,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
+		{"id":"fed","formula":{"op":"lookup","source":"zoo.feedings","pick":"count","value":{"path":[{"field":"id"}]},
+			"where":{"op":"eq","args":[{"path":[{"link":"animal"}]},{"outer":[{"field":"id"}]}]}}}],
+		"sort":[{"col":"name"}]}`, Options{}, nil)
+	requireRows(t, res, "fed", int64(1), int64(2), int64(2), nil)
+	reads := perRowReadsOf(t, z, *seen, "zoo_feedings")
+	if len(reads) == 0 {
+		t.Fatal("no subquery read the feedings for each row")
+	}
+	for _, step := range reads {
+		if !indexSearch.MatchString(step) {
+			t.Fatalf("the lookup reads the feedings by %q", step)
+		}
+	}
+}
+
+// A lookup on a detail row is computed once per row: a formula that reads a
+// sum lookup's value, its mixed check and its currency many times runs each
+// subquery once in the detail statement.
+func TestALookupOnADetailRowIsComputedOnce(t *testing.T) {
+	z := newZoo(t)
+	seen := observeReads(t)
+	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+		{"id":"usdFees","formula":{"op":"if","args":[{"value":true},{"op":"coalesce","args":[` + mixedFees + `,{"value":0}]},{"value":0}]}}],"sort":[{"col":"name"}]}`
+	requireMixedFeesBlank(t, z, "if", spec)
+	details := 0
+	for _, st := range *seen {
+		if strings.Contains(st.sql, "__level") {
+			continue
+		}
+		details++
+		if n := strings.Count(st.sql, "count(DISTINCT"); n != 1 {
+			t.Fatalf("the detail rows compute the mixed check %d times:\n%s", n, st.sql)
+		}
+	}
+	if details == 0 {
+		t.Fatal("no detail statement was read")
+	}
+}
+
+// withPlainFeedingsRule gives zoo_feedings a rule SQLite reads in place, and
+// an index on animal, so a query plan shows where the feedings are read: a
+// rule PocketBase compiles to a DISTINCT join is computed whole first, and
+// the plan reads that copy instead.
+func withPlainFeedingsRule(t *testing.T, z *zoo) {
+	t.Helper()
+	feedings, err := z.app.FindCollectionByNameOrId("zoo_feedings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	feedings.ListRule = rule(`@request.auth.id != ""`)
+	feedings.ViewRule = feedings.ListRule
+	feedings.AddIndex("idx_zoo_feedings_animal", false, "animal", "")
+	z.save(t, feedings)
+}

@@ -48,6 +48,16 @@ type expr struct {
 	// mixed is SQL that is true where a sum lookup in the value met amounts
 	// in two currencies (R3), "" when none can.
 	mixed string
+	// link is, in a lookup's where, the stored relation column a path that
+	// ends at a to-one link follows to read sql; eq bounds that column too.
+	link storedLink
+}
+
+// storedLink is the stored relation column (col) a link path reads its
+// value (sql) through; a copy of the expr whose sql changed no longer reads
+// through it.
+type storedLink struct {
+	col, sql string
 }
 
 // currency is where a money value's currency comes from: a currency key of w
@@ -754,11 +764,14 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if !comparable(args[0].typ, args[1].typ) {
 			return expr{}, invalid(at, fmt.Sprintf("%s compares values of one kind, not %s and %s", n.Op, args[0].typ, args[1].typ))
 		}
-		op := " IS "
 		if n.Op == "ne" {
-			op = " IS NOT "
+			return expr{sql: "(" + args[0].sql + " IS NOT " + args[1].sql + ")", typ: Bool}, nil
 		}
-		return expr{sql: "(" + args[0].sql + op + args[1].sql + ")", typ: Bool}, nil
+		sql := "(" + args[0].sql + " IS " + args[1].sql + ")"
+		if bound := linkBound(args); bound != "" {
+			sql = "(" + sql + " AND " + bound + ")"
+		}
+		return expr{sql: sql, typ: Bool}, nil
 	case "lt", "lte", "gt", "gte":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err
