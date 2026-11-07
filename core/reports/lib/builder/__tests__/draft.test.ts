@@ -1625,4 +1625,70 @@ describe('spec version 3 in the builder', () => {
         }
         expect(keptParams(byBound).map(p => p.id)).toEqual(['period'])
     })
+
+    // bind.go groupsAndPivot: an unbucketed group's column names the group, so its
+    // group and total rows show the group, never a formula.
+    it('flags a rollup on a column a group is grouped by with no bucket', () => {
+        const byMonth = { id: 'byMonth', col: 'day', bucket: 'month' as const }
+        const draft = draftFromSpec(
+            { ...V3, groups: [...(V3.groups ?? []), byMonth] },
+            META,
+            CATALOG
+        )
+        const sum: FormulaDraft = { kind: 'editable', node: { value: 1 } }
+        const rollupOn = (index: number) => ({
+            ...draft,
+            columns: draft.columns.map((c, i) => (i === index ? { ...c, rollup: sum } : c)),
+        })
+        expect(draftIssues(rollupOn(0), CATALOG)).toContainEqual({
+            path: ['columns', 0, 'rollup'],
+            message: 'A column a group is grouped by shows the group on its total rows',
+        })
+        expect(issuePaths(rollupOn(1))).not.toContain('columns.1.rollup')
+    })
+
+    // bind.go opening: a child row column has no cell on its level's opening row.
+    it('flags an opening cell on a child row column', () => {
+        const spec: ReportSpec = {
+            version: CURRENT_SPEC_VERSION,
+            source: TEAMS_KEY,
+            columns: [
+                { id: 'region', label: 'Region', path: [{ field: 'region' }] },
+                { id: 'name', label: 'Name', path: [{ field: 'name' }] },
+                {
+                    id: 'amount',
+                    label: 'Amount',
+                    path: [{ link: 'sales', mode: 'nest' }, { field: 'amount' }],
+                },
+            ],
+            groups: [
+                {
+                    id: 'byRegion',
+                    col: 'region',
+                    open: true,
+                    opening: { label: 'Before', cells: { name: { value: 'x' } } },
+                },
+            ],
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(issuePaths(draft)).not.toContain('groups.0.opening.cells.name')
+        const nested = {
+            ...draft,
+            groups: draft.groups.map(g => ({
+                ...g,
+                opening: setOpeningCell(openingDraft('Before'), 'amount', {
+                    kind: 'editable',
+                    node: { value: 0 },
+                }),
+            })),
+        }
+        expect(draftIssues(nested, CATALOG)).toContainEqual({
+            path: ['groups', 0, 'opening', 'cells', 'amount'],
+            message: 'A child row column has no opening cell',
+        })
+    })
 })
+
+function issuePaths(draft: BuilderDraft) {
+    return draftIssues(draft, CATALOG).map(i => i.path.join('.'))
+}

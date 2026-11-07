@@ -398,15 +398,20 @@ const ROLLUP_ROWS =
 const ROLLUP_NESTED = 'A child row column has no totals to replace'
 const ROLLUP_PIVOT = "A pivot's cell column is totalled by its pivot columns"
 const OPENING_PIVOT = 'This level never opens, so it has no opening row'
+const ROLLUP_GROUPED = 'A column a group is grouped by shows the group on its total rows'
 const OPENING_LABEL_COLUMN = "The opening row's label fills the first column"
+const OPENING_NESTED = 'A child row column has no opening cell'
 
-// bind.go columns: a rollup replaces a recomputed total of the report's own rows.
+// bind.go columns and groupsAndPivot: a rollup replaces a recomputed total of the
+// report's own rows, which an unbucketed group's column never has.
 function rollupIssues(draft: BuilderDraft): Issue[] {
+    const grouped = new Set(draft.groups.filter(g => g.bucket === '').map(g => g.col))
     return draft.columns.flatMap((column, i): Issue[] => {
         if (!column.rollup) return []
         const path = ['columns', i, 'rollup']
         if (column.total === 'rows') return [{ path, message: ROLLUP_ROWS }]
         if (nestDepth(column) > 0) return [{ path, message: ROLLUP_NESTED }]
+        if (grouped.has(column.id)) return [{ path, message: ROLLUP_GROUPED }]
         if (draft.pivot.on && draft.pivot.cell === column.id)
             return [{ path, message: ROLLUP_PIVOT }]
         return []
@@ -414,10 +419,10 @@ function rollupIssues(draft: BuilderDraft): Issue[] {
 }
 
 // bind.go groupsAndPivot: an opening row shows under a level that opens, in the
-// report's columns, with its label in the first.
+// report's own-row columns, with its label in the first.
 function openingIssues(draft: BuilderDraft): Issue[] {
     const first = draft.columns[0]?.id
-    const ids = new Set(draft.columns.map(column => column.id))
+    const byId = new Map(draft.columns.map(column => [column.id, column]))
     return draft.groups.flatMap((group, i): Issue[] => {
         if (!group.opening) return []
         const at = ['groups', i, 'opening']
@@ -425,8 +430,10 @@ function openingIssues(draft: BuilderDraft): Issue[] {
             return [{ path: at, message: OPENING_PIVOT }]
         return Object.keys(group.opening.cells).flatMap((col): Issue[] => {
             const path = [...at, 'cells', col]
+            const column = byId.get(col)
+            if (!column) return [{ path, message: `The report has no column "${col}"` }]
             if (col === first) return [{ path, message: OPENING_LABEL_COLUMN }]
-            if (!ids.has(col)) return [{ path, message: `The report has no column "${col}"` }]
+            if (nestDepth(column) > 0) return [{ path, message: OPENING_NESTED }]
             return []
         })
     })
