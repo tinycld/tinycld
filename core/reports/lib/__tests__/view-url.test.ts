@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_DISPLAY } from '../format'
 import type { ParamValue } from '../params'
 import type { ParamDef } from '../spec'
-import { parseViewOptions, reportLink, serializeViewOptions, type ViewOptions } from '../view-url'
+import {
+    decodeSort,
+    encodeSort,
+    parseViewOptions,
+    reportLink,
+    SORT_KEY,
+    serializeViewOptions,
+    type ViewOptions,
+} from '../view-url'
 
 const PERIOD: ParamDef = { id: 'period', type: 'dateRange', default: { preset: 'thisMonth' } }
 const KINDS: ParamDef = {
@@ -34,6 +42,7 @@ describe('the view URL', () => {
                 negativeRed: true,
                 hidden: ['cost', 'cost.p0'],
             },
+            sort: { col: 'cost', dir: 'desc' },
         }
         const search = serializeViewOptions(DEFS, options)
         expect(search).toMatchObject({
@@ -42,6 +51,7 @@ describe('the view URL', () => {
             negative: 'parens',
             red: '1',
             hide: 'cost,cost.p0',
+            s: 'cost:desc',
         })
         expect(parseViewOptions(DEFS, search)).toEqual(options)
     })
@@ -50,10 +60,11 @@ describe('the view URL', () => {
         const search = serializeViewOptions(DEFS, {
             params: { period: { kind: 'preset', preset: 'thisMonth' } },
             display: DEFAULT_DISPLAY,
+            sort: null,
         })
         expect(Object.values(search).every(value => value === undefined)).toBe(true)
         expect(Object.keys(search)).toEqual(
-            expect.arrayContaining(['p-period', 'p-kinds', 'div1000', 'hide'])
+            expect.arrayContaining(['p-period', 'p-kinds', 'div1000', 'hide', 's'])
         )
     })
 
@@ -65,9 +76,11 @@ describe('the view URL', () => {
             negative: 'sideways',
             div1000: 'yes',
             hide: 'cost,<script>',
+            s: 'cost:sideways',
         })
         expect(parsed.params).toEqual({})
         expect(parsed.display).toEqual({ ...DEFAULT_DISPLAY, hidden: ['cost'] })
+        expect(parsed.sort).toBeNull()
     })
 
     it('reads a preset by name and refuses a backwards range', () => {
@@ -93,6 +106,7 @@ describe('the view URL', () => {
             serializeViewOptions([BUDGET], {
                 params: { b: { kind: 'amount', cents: 1200, currency: '' } },
                 display: DEFAULT_DISPLAY,
+                sort: null,
             })['p-b']
         ).toBe('12.00')
         for (const bad of ['12 usd', '12.345 USD', 'USD', '1 2 USD', ''])
@@ -115,6 +129,7 @@ describe('the view URL', () => {
         const search = serializeViewOptions([TEAMS], {
             params: { teams: picked },
             display: DEFAULT_DISPLAY,
+            sort: null,
         })
         expect(search['p-teams']).toBe('["a1",{"group":"north"}]')
         expect(parseViewOptions([TEAMS], search).params.teams).toEqual(picked)
@@ -124,7 +139,56 @@ describe('the view URL', () => {
         const link = reportLink('https://acme.example', 'r1', DEFS, {
             params: { name: { kind: 'text', text: 'Acme' } },
             display: DEFAULT_DISPLAY,
+            sort: null,
         })
         expect(link).toBe('https://acme.example/a/reports/r1?p-name=Acme')
+    })
+
+    it('reads a sort as <column>:<asc|desc> and ignores any other shape', () => {
+        expect(SORT_KEY).toBe('s')
+        expect(parseViewOptions(DEFS, { s: 'amount:desc' }).sort).toEqual({
+            col: 'amount',
+            dir: 'desc',
+        })
+        expect(parseViewOptions(DEFS, { s: 'amount_q1.p0:asc' }).sort).toEqual({
+            col: 'amount_q1.p0',
+            dir: 'asc',
+        })
+        for (const bad of ['amount', 'amount:up', ':asc', 'amount:asc:desc', '<b>:asc', ''])
+            expect(decodeSort(bad)).toBeNull()
+        expect(decodeSort(undefined)).toBeNull()
+        expect(encodeSort({ col: 'amount', dir: 'asc' })).toBe('amount:asc')
+    })
+
+    it('writes the sort, and leaves it out with none', () => {
+        const sorted = serializeViewOptions(DEFS, {
+            params: {},
+            display: DEFAULT_DISPLAY,
+            sort: { col: 'amount', dir: 'desc' },
+        })
+        expect(sorted.s).toBe('amount:desc')
+        const plain = serializeViewOptions(DEFS, {
+            params: {},
+            display: DEFAULT_DISPLAY,
+            sort: null,
+        })
+        expect('s' in plain).toBe(true)
+        expect(plain.s).toBeUndefined()
+    })
+
+    it('keeps the sort in a copied link', () => {
+        const link = reportLink('https://acme.example', 'r1', DEFS, {
+            params: {},
+            display: DEFAULT_DISPLAY,
+            sort: { col: 'amount', dir: 'desc' },
+        })
+        expect(link).toBe('https://acme.example/a/reports/r1?s=amount%3Adesc')
+    })
+
+    it('reads All dates from the address', () => {
+        expect(parseViewOptions(DEFS, { 'p-period': 'allDates' }).params.period).toEqual({
+            kind: 'preset',
+            preset: 'allDates',
+        })
     })
 })

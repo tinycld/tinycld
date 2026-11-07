@@ -14,6 +14,7 @@ import {
     type ParamValues,
     periodWords,
     postedParams,
+    presetsFor,
     utf8Length,
     valueFromJson,
     valueToJson,
@@ -388,5 +389,40 @@ describe('empty state', () => {
             label: 'Show end of last fiscal year',
         })
         expect(emptyAction([NAME], {})).toBeNull()
+    })
+})
+
+describe('All dates', () => {
+    // R1: the server resolves All dates as a set range with no days.
+    const allDates = { id: 'period', type: 'dateRange' as const }
+
+    it('is the last range preset, and only a range offers it', () => {
+        const presets = presetsFor(PERIOD)
+        expect(presets[presets.length - 1]).toBe('allDates')
+        expect(presetsFor(AS_OF)).not.toContain('allDates')
+    })
+
+    it('names the period on the chip, in the header and when nothing matches', () => {
+        expect(chipText(PERIOD, { kind: 'preset', preset: 'allDates' }, allDates)).toBe(
+            'Period: All dates'
+        )
+        expect(periodWords(PERIOD, allDates)).toBe('All dates')
+        expect(emptyMessage(PERIOD, allDates)).toBe('No rows for all dates')
+    })
+
+    it('keeps an unset range without words', () => {
+        expect(periodWords(PERIOD, { ...allDates, unset: true })).toBeNull()
+        expect(emptyMessage(PERIOD, { ...allDates, unset: true })).toBe('No rows')
+    })
+
+    it('offers no narrower period when All dates has no rows', () => {
+        expect(emptyAction([PERIOD], { period: { kind: 'preset', preset: 'allDates' } })).toBeNull()
+    })
+
+    it('reads All dates as a default', () => {
+        expect(defaultValueOf({ ...PERIOD, default: { preset: 'allDates' } })).toEqual({
+            kind: 'preset',
+            preset: 'allDates',
+        })
     })
 })
