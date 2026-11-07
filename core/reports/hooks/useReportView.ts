@@ -32,7 +32,7 @@ import {
     toggleGroup,
     visibleRows,
 } from '../lib/rows'
-import type { RunBody } from '../lib/run-client'
+import { type RunBody, refusalSortProblem, type ViewSort } from '../lib/run-client'
 import {
     type BrokenMark,
     brokenProblems,
@@ -42,6 +42,7 @@ import {
 } from '../lib/spec'
 import type { Notice, ResolvedParam, ResultColumn, ResultRow, RunResult } from '../lib/types'
 import {
+    nextSort,
     parseViewOptions,
     reportLink,
     serializeViewOptions,
@@ -84,6 +85,11 @@ function viewState(input: {
     return run.result && hasRows(run.result.rows) ? 'ready' : 'empty'
 }
 
+// The reader's sort goes before the report's own (F8); the client sends one key.
+function sortOptions(sort: ViewSort | null): { sort?: ViewSort[] } {
+    return sort ? { sort: [sort] } : {}
+}
+
 function runBody(
     source: ViewSource | null,
     defs: readonly ParamDef[],
@@ -93,7 +99,11 @@ function runBody(
     if (!source) return null
     const common = {
         params: postedParams(defs, options.params),
-        options: { today: todayIso(), ...expansionOptions(expansion) },
+        options: {
+            today: todayIso(),
+            ...expansionOptions(expansion),
+            ...sortOptions(options.sort),
+        },
     }
     return source.kind === 'saved'
         ? { reportId: source.reportId, ...common }
@@ -295,6 +305,12 @@ export function useReportView(input: ReportViewInput) {
         onDisplayChange: (display: DisplayOptions) => write({ ...options, display }),
         // The reader's params stay for the run; only the number display goes back.
         onResetDisplay: () => write({ ...options, display: DEFAULT_DISPLAY }),
+        sort: options.sort,
+        // A new sort is a new rows key (rowsKeyOf), so the list starts at the top (F11).
+        onSortColumn: (col: string) => write({ ...options, sort: nextSort(options.sort, col) }),
+        onClearSort: () => write({ ...options, sort: null }),
+        // A run refused for the reader's sort offers Clear sort (R8).
+        sortProblem: refusalSortProblem(run.problems),
         onCopyLink,
     }
 }

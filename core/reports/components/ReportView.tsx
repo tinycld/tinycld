@@ -66,10 +66,18 @@ function editAction(model: ReportViewModel) {
     return { label: 'Edit report', testID: 'report-missing-edit', onPress: model.onEdit }
 }
 
+// R8: a run refused for the reader's sort (a copied link naming a column the
+// report no longer has) offers to clear it, which runs the report in its own
+// order; any other refusal offers the editor.
+function refusalAction(model: ReportViewModel) {
+    if (!model.sortProblem) return editAction(model)
+    return { label: 'Clear sort', testID: 'report-clear-sort', onPress: model.onClearSort }
+}
+
 export function ReportBody({ model }: { model: ReportViewModel }) {
     const { state } = model
     const retry = { label: 'Retry', testID: 'report-retry', onPress: model.run.retry }
-    const edit = editAction(model)
+    const fix = refusalAction(model)
     return (
         <>
             <LoadingBody isVisible={state === 'loading'} />
@@ -101,7 +109,7 @@ export function ReportBody({ model }: { model: ReportViewModel }) {
                 message="This report names something that no longer exists"
                 problems={model.problems}
                 note={model.missingNote}
-                action={edit}
+                action={fix}
             />
             <ProblemsBody
                 isVisible={state === 'invalid'}
@@ -109,7 +117,7 @@ export function ReportBody({ model }: { model: ReportViewModel }) {
                 message="This report cannot run"
                 problems={model.problems}
                 note={model.missingNote}
-                action={edit}
+                action={fix}
             />
             <EmptyBody
                 isVisible={state === 'empty'}
@@ -144,6 +152,8 @@ function TableBody({ model }: { model: ReportViewModel }) {
             onToggleGroup={model.onToggleGroup}
             onNearEnd={model.run.loadMore}
             isLoadingMore={model.run.isLoadingMore}
+            sort={model.sort}
+            onSortColumn={model.onSortColumn}
         />
     )
 }

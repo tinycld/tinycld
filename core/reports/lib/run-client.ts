@@ -176,3 +176,16 @@ export function forgetSavedRuns(queryClient: QueryClient, reportId: string) {
         predicate: query => isRunOf(query.queryKey, reportId),
     })
 }
+
+const SORT_OPTION_PATH = 'options.sort'
+
+/**
+ * Why the run refused the reader's sort (a column the report no longer has, R8):
+ * the message of the first problem under options.sort, else null.
+ */
+export function refusalSortProblem(problems: readonly Problem[]): string | null {
+    const problem = problems.find(
+        p => p.path === SORT_OPTION_PATH || p.path.startsWith(`${SORT_OPTION_PATH}.`)
+    )
+    return problem?.message ?? null
+}

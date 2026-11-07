@@ -192,3 +192,9 @@ export function reportLink(
     const text = query.toString()
     return `${origin}${appHref(`reports/${reportId}`)}${text ? `?${text}` : ''}`
 }
+
+/** The sort after a press on a column's heading: ascending, then descending, then the report's own order. */
+export function nextSort(current: ViewSort | null, col: string): ViewSort | null {
+    if (current?.col !== col) return { col, dir: 'asc' }
+    return current.dir === 'asc' ? { col, dir: 'desc' } : null
+}

@@ -8,6 +8,7 @@ import {
     PARAM_OPTIONS_PATH,
     RUN_QUERY_KEY,
     refusalOf,
+    refusalSortProblem,
     rowsKeyOf,
 } from '../run-client'
 import type { ReportSpec } from '../spec'
@@ -181,5 +182,40 @@ describe('rowsKeyOf', () => {
         expect(rowsKeyOf({ spec, params: {}, options: { ...options, sort: desc } })).toBe(
             `${draft}|sort:[{"col":"amount","dir":"desc"}]`
         )
+    })
+})
+
+describe('refusalSortProblem', () => {
+    // R8: a refusal of the reader's sort is offered "Clear sort".
+    it('is the message of the first problem under options.sort', () => {
+        expect(
+            refusalSortProblem([
+                { path: 'columns.0.id', code: 'invalid', message: 'not this one' },
+                {
+                    path: 'options.sort.0.col',
+                    code: 'unknown_column',
+                    message: 'the report has no column "nosuch"',
+                },
+            ])
+        ).toBe('the report has no column "nosuch"')
+        expect(
+            refusalSortProblem([
+                {
+                    path: 'options.sort',
+                    code: 'invalid',
+                    message: 'a pivot report has no opened rows to sort',
+                },
+            ])
+        ).toBe('a pivot report has no opened rows to sort')
+    })
+
+    it('is null for any other refusal', () => {
+        expect(refusalSortProblem([])).toBeNull()
+        expect(
+            refusalSortProblem([
+                { path: 'options.sorted', code: 'invalid', message: 'x' },
+                { path: 'source', code: 'unknown_source', message: 'y' },
+            ])
+        ).toBeNull()
     })
 })

@@ -34,7 +34,7 @@ const TEXT_ALIGN: Record<Justify, string> = {
     center: 'text-center',
     end: 'text-right tabular-nums',
 }
-const JUSTIFY_CONTENT = { start: 'flex-start', center: 'center', end: 'flex-end' } as const
+export const JUSTIFY_CONTENT = { start: 'flex-start', center: 'center', end: 'flex-end' } as const
 
 const CARET_SIZE = 14
 

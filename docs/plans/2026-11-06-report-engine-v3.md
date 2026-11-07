@@ -442,7 +442,7 @@ Generated from the task bodies, which are binding: where this outline and a body
 ### Task 13a — E2E first: the stub team balance report, the v3 e2e spec, and `reports-wrap.spec.ts` changed to F10
 - **F:** F1–F8, F10, F11 (e2e); F1/F2/F3/F5/F6 builder (e2e) · **Files:** `tests/scripts/reports-stub/server/register.go.txt`, `tests/e2e/reports-ledger-v3.spec.ts` (new), `tests/e2e/reports-wrap.spec.ts`.
 - **Tests first** (`test.describe('general-ledger: report engine v3', …)`): 'an open group starts with its opening row, runs a balance from it and ends with its rollup'; 'a grouped report scrolled past its first page keeps its running balance'; 'a heading sorts the rows inside their groups, and a copied link keeps it'; 'a link that sorts by a column the report lacks offers Clear sort'; 'All dates shows every sale, says so in the header, and opens at zero'; 'on a desktop too narrow for its narrowed line a report wraps to its tablet arrangement inside the table' (1024: pins Q2's 944 between 864 and 1008); 'on a phone an opening row is its label and then its figures, and a heading still sorts'; 'the builder counts a lookup on this row, shows a formula on group and total rows, and starts each group with a row'. In `reports-wrap.spec.ts`: `:385-433` replaced by 'on a desktop a table wider than its view narrows its text columns and never scrolls sideways'; `:504-546` gets a `cost` column so it still wraps at 390 (Q3).
-- **Red:** heading sort, phone sort: `report-sort-amount` not found (Task 15); Clear sort: `report-invalid` not found, the view does not send `s=` (Task 15); builder: `…-column-3-formula-0-1-part-outer` not found (Tasks 16, 16a, 18); wrap desktop: `outside` above 0, the `Sideways` scroller (Task 14). Green now, each with a mutation proof: opening row, paged balance, All dates, 1024, phone opening row part, phone blank slot.
+- **Red:** heading sort, phone sort: `report-sort-amount` not found (Task 15); Clear sort: `report-missing` not found, the view does not send `s=` (Task 15); builder: `…-column-3-formula-0-1-part-outer` not found (Tasks 16, 16a, 18); wrap desktop: `outside` above 0, the `Sideways` scroller (Task 14). Green now, each with a mutation proof: opening row, paged balance, All dates, 1024, phone opening row part, phone blank slot.
 - **Produces:** shipped report `salesstub.team_balance` "Stub team balance"; `openTeamBalance(page)`, `balanceOfOneTeam(page, prefix)`; the test ids Tasks 15, 16a and 18 must draw (`report-sort-<col>`, `report-clear-sort`, `<id>-outer`, `<id>-bound`, `<id>-pick-count`, `report-builder-column-N-rollup[-total|-custom|-formula]`, `report-builder-group-N-opening[-label|-cell-<col>-add|-cell-<col>-formula]`).
 
 ### Task 14 — F10/F5 view: the table without sideways scroll; the opening row
@@ -6197,6 +6197,8 @@ test.describe('general-ledger: report engine v3', () => {
         await expect(detailLabels(page)).toHaveText(['Ann', 'Bea', 'Cy', 'Dee'])
     })
 
+    // The run refuses a sort by an unknown column with 422 at options.sort.0.col,
+    // which the view draws as a report that names something missing.
     test('a link that sorts by a column the report lacks offers Clear sort', async ({
         page,
         browser,
@@ -6210,7 +6212,7 @@ test.describe('general-ledger: report engine v3', () => {
             await loginAsShippedOwner(q)
             // Opening a pasted link is a full load by nature.
             await q.goto(link.toString())
-            await expect(q.getByTestId('report-invalid')).toContainText('nosuch')
+            await expect(q.getByTestId('report-missing')).toContainText('nosuch')
             await q.getByTestId('report-clear-sort').click()
             await expect.poll(() => sortParam(q)).toBeNull()
             await expect(detailLabels(q)).toHaveText(['Ann', 'Bea', 'Cy', 'Dee'])
@@ -6487,7 +6489,7 @@ Expected, with Tasks 1–13 done (a test with "PASS" gets its mutation proof in 
 | v3: opening row, balance, rollup | PASS | engine Tasks 5–6, client Task 10 (`opening` kind) | — (Step 5) |
 | v3: paged running balance | PASS | Task 8 pages, Task 12 `mergePages` | — (Step 5) |
 | v3: heading sort and copied link | FAIL | `report-sort-amount`: element not found (no heading control) | Task 15 |
-| v3: Clear sort | FAIL | `report-invalid` not found: the view does not send the URL's `s=` to the run, so nothing refuses it | Task 15 |
+| v3: Clear sort | FAIL | `report-missing` not found: the view does not send the URL's `s=` to the run, so nothing refuses it | Task 15 |
 | v3: All dates | PASS | Tasks 4 and 11 | — (Step 5) |
 | v3: 1024 tablet arrangement | PASS | Task 13 already wraps the 1008 line to the tablet arrangement, and a blocks layout has no sideways scroller | — (Step 5) |
 | v3: phone opening row and sort | FAIL | at `report-sort-amount` (no heading control); the opening-row part before it holds (Task 13's pruned `rowLayout`) | Task 15 |
@@ -6961,7 +6963,7 @@ Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_POR
 Expected: PASS, the whole file (the 1100 desktop test is now green).
 
 Run: the same with `tests/e2e/reports-ledger-v3.spec.ts`.
-Expected: the opening-row, paged, All dates and 1024 tests PASS; the heading-sort, Clear sort and phone tests still FAIL at `report-sort-amount` / `report-invalid` (Task 15); the builder test still FAILS at the This row's field part (Tasks 16–18). The 1024 test is the check of Q2's computed number: its measured line is at least 864 (the General Ledger's narrowed line fits) and under 1008 (the stub's does not). If it fails on the width, record the measured `line` in the task's report and stop: Q2's premise is wrong and the human must see the number before the build goes on.
+Expected: the opening-row, paged, All dates and 1024 tests PASS; the heading-sort, Clear sort and phone tests still FAIL at `report-sort-amount` / `report-missing` (Task 15); the builder test still FAILS at the This row's field part (Tasks 16–18). The 1024 test is the check of Q2's computed number: its measured line is at least 864 (the General Ledger's narrowed line fits) and under 1008 (the stub's does not). If it fails on the width, record the measured `line` in the task's report and stop: Q2's premise is wrong and the human must see the number before the build goes on.
 
 - [ ] **Step 7: Commit**
 
@@ -7353,7 +7355,7 @@ Expected: PASS.
 
 - [ ] **Step 8a: Run the e2e Task 13a wrote red for this task**
 
-The UI behaviour — the press cycle asc → desc → report order, `s=` in the URL and the copied link, `role="button"` with "Sort by Amount", no control on the running `balance` column, the list starting at the top, and Clear sort on a refused `s=nosuch:asc` — is pinned by Task 13a's `reports-ledger-v3.spec.ts`, at desktop and phone. Before this task its heading-sort and phone tests failed at `report-sort-amount` (element not found) and its Clear sort test at `report-invalid` (the URL's sort was not sent).
+The UI behaviour — the press cycle asc → desc → report order, `s=` in the URL and the copied link, `role="button"` with "Sort by Amount", no control on the running `balance` column, the list starting at the top, and Clear sort on a refused `s=nosuch:asc` — is pinned by Task 13a's `reports-ledger-v3.spec.ts`, at desktop and phone. Before this task its heading-sort and phone tests failed at `report-sort-amount` (element not found) and its Clear sort test at `report-missing` (the URL's sort was not sent; the run refuses an unknown sort column with 422 at `options.sort.0.col`, which the view draws as `report-missing`, with `report-clear-sort` inside it).
 
 Check the ports first (`lsof -iTCP -sTCP:LISTEN -nP | grep -E ':(7210|7211)'`). Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && E2E_PORT=7210 E2E_PORT_2=7211 PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test:e2e -- tests/e2e/reports-ledger-v3.spec.ts`
 Expected: every test PASSES except the builder test, which still fails at the This row's field part (Tasks 16–18). The 1024 test stays green with the sort icons in the headings.

@@ -5,6 +5,7 @@ import type { ParamDef } from '../spec'
 import {
     decodeSort,
     encodeSort,
+    nextSort,
     parseViewOptions,
     reportLink,
     SORT_KEY,
@@ -189,6 +190,28 @@ describe('the view URL', () => {
         expect(parseViewOptions(DEFS, { 'p-period': 'allDates' }).params.period).toEqual({
             kind: 'preset',
             preset: 'allDates',
+        })
+    })
+})
+
+describe('nextSort', () => {
+    // A heading press cycles ascending → descending → the report's own order.
+    it('cycles a column ascending, descending, then off', () => {
+        const asc = nextSort(null, 'amount')
+        expect(asc).toEqual({ col: 'amount', dir: 'asc' })
+        const desc = nextSort(asc, 'amount')
+        expect(desc).toEqual({ col: 'amount', dir: 'desc' })
+        expect(nextSort(desc, 'amount')).toBeNull()
+    })
+
+    it('starts another column ascending', () => {
+        expect(nextSort({ col: 'amount', dir: 'desc' }, 'customer')).toEqual({
+            col: 'customer',
+            dir: 'asc',
+        })
+        expect(nextSort({ col: 'amount', dir: 'asc' }, 'customer')).toEqual({
+            col: 'customer',
+            dir: 'asc',
         })
     })
 })
