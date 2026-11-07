@@ -149,6 +149,7 @@ function TableBody({ model }: { model: ReportViewModel }) {
             format={model.display}
             breakpoint={model.breakpoint}
             layouts={model.layouts}
+            rowLevels={model.rowLevels}
             onToggleGroup={model.onToggleGroup}
             onNearEnd={model.run.loadMore}
             isLoadingMore={model.run.isLoadingMore}

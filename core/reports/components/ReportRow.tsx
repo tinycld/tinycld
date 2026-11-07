@@ -7,7 +7,7 @@ import type { VisibleRow } from '../lib/rows'
 import { groupChain } from '../lib/sticky'
 import { type Block, type Justify, type LineLayout, rowLayout } from '../lib/table-lines'
 import type { ResultColumn, ResultRow, RowKind } from '../lib/types'
-import { columnAlign, INDENT, ROW_HEIGHT } from './report-table-layout'
+import { CARET_SIZE, columnAlign, INDENT, ROW_HEIGHT } from './report-table-layout'
 
 // The rule above a row; it is drawn on the row's container, so it runs across
 // the whole row, wrapped lines included.
@@ -35,8 +35,6 @@ const TEXT_ALIGN: Record<Justify, string> = {
     end: 'text-right tabular-nums',
 }
 export const JUSTIFY_CONTENT = { start: 'flex-start', center: 'center', end: 'flex-end' } as const
-
-const CARET_SIZE = 14
 
 /** A one-line amount's alignment: numbers right, anything else left. */
 export function amountJustify(column: ResultColumn, index: number): Justify {

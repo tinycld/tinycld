@@ -40,6 +40,7 @@ import {
     type ParamDef,
     type ReportSpec,
 } from '../lib/spec'
+import { type RowLevels, rowLevelsOf } from '../lib/table-lines'
 import type { Notice, ResolvedParam, ResultColumn, ResultRow, RunResult } from '../lib/types'
 import {
     decodeSort,
@@ -71,6 +72,12 @@ const NO_COLUMNS: ResultColumn[] = []
 const NO_NOTICES: Notice[] = []
 const NO_ROWS: ResultRow[] = []
 const NO_LAYOUTS: readonly DisplayLayout[] = []
+
+// How deep the shown spec's rows go; absent with no spec yet, and in a model a
+// caller builds by hand (a static reference), where the table reads a flat report.
+function rowLevelsPart(spec: ReportSpec | null | undefined): { rowLevels?: RowLevels } {
+    return spec ? { rowLevels: rowLevelsOf(spec) } : {}
+}
 
 function viewState(input: {
     source: ViewSource | null
@@ -142,8 +149,11 @@ export interface ReportViewInput {
     missingNote?: string | null
     onShare?(): void
     onSaveAs?(): void
-    /** The report's line layouts per width (E14): the saved spec's, or the draft's. */
-    layouts?: readonly DisplayLayout[]
+    /**
+     * The spec whose rows the view draws (the saved report's, or the draft): its line
+     * layouts per width (E14) and how deep its rows go.
+     */
+    spec?: ReportSpec | null
 }
 
 export function useReportView(input: ReportViewInput) {
@@ -291,7 +301,8 @@ export function useReportView(input: ReportViewInput) {
         isUpdatingInBuilder: isEditing && panel !== 'inline',
         breakpoint,
         panelSurface: panel,
-        layouts: input.layouts ?? NO_LAYOUTS,
+        layouts: input.spec?.display?.layouts ?? NO_LAYOUTS,
+        ...rowLevelsPart(input.spec),
         heading: headingOf(run.result, org?.name),
         optionsSource,
         postedParams: posted,

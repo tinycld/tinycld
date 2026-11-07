@@ -1,6 +1,8 @@
 import type { Breakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import {
     AMOUNT_WIDTH,
+    CARET_ROOM,
+    INDENT,
     LABEL_MIN_WIDTH,
     PHONE_AMOUNT_WIDTH,
     PHONE_LABEL_WIDTH,
@@ -8,7 +10,7 @@ import {
 } from '../components/report-table-layout'
 import { isRightAligned } from './format'
 import type { VisibleRow } from './rows'
-import type { DisplayCell, DisplayLayout, DisplayWidth } from './spec'
+import type { DisplayCell, DisplayLayout, DisplayWidth, SpecColumn } from './spec'
 import type { CellValue, FieldType, ResultColumn } from './types'
 
 // E14: a report row wraps onto more lines where its columns do not fit, after
@@ -307,21 +309,60 @@ export function isFigureColumn(column: ResultColumn): boolean {
     return FIGURE_TYPES.has(column.type)
 }
 
+/** How deep a report's rows go: its group levels and its levels of nested child rows. */
+export type RowLevels = { groups: number; nests: number }
+/** A report with no groups and no child rows. */
+export const FLAT_LEVELS: RowLevels = { groups: 0, nests: 0 }
+
+/**
+ * A report's row levels, from its spec: one per group level, and one per `nest`
+ * hop of its deepest column (the engine nests one chain of child rows). The spec,
+ * not the loaded rows, so the layout does not change as groups open or pages load.
+ */
+export function rowLevelsOf(
+    spec: {
+        groups?: readonly unknown[] | null
+        columns: readonly Pick<SpecColumn, 'path'>[]
+    } | null
+): RowLevels {
+    if (!spec) return FLAT_LEVELS
+    const nestsOf = (column: Pick<SpecColumn, 'path'>) =>
+        (column.path ?? []).filter(hop => hop.mode === 'nest').length
+    return {
+        groups: spec.groups?.length ?? 0,
+        nests: Math.max(0, ...spec.columns.map(nestsOf)),
+    }
+}
+
+/**
+ * The label column's floor on one line: TEXT_FLOOR for the text of its most
+ * indented label. A row is indented INDENT per depth (a group row at its level
+ * less one, a detail row at the group levels, a child row one more per level),
+ * and a group row's label also starts after its caret (ReportRow labelStyle).
+ */
+export function labelFloor({ groups, nests }: RowLevels): number {
+    const deepestDetail = (groups + nests) * INDENT
+    const deepestGroup = groups > 0 ? (groups - 1) * INDENT + CARET_ROOM : 0
+    return TEXT_FLOOR + Math.max(deepestDetail, deepestGroup)
+}
+
 /**
  * The widths of one line at this width (F10, R12), or null when it does not fit:
  * every column at its natural width; if that is too wide, the label narrows toward
- * TEXT_FLOOR, then the text columns are lowered to one cap (water-fill from the
- * widest), each to TEXT_FLOOR at the least. Figure columns keep their width.
+ * its floor (labelFloor), then the text columns are lowered to one cap (water-fill
+ * from the widest), each to TEXT_FLOOR at the least. Figure columns keep their width.
  */
 export function fitOneLine(
     columns: readonly ResultColumn[],
     width: number,
-    breakpoint: Breakpoint
+    breakpoint: Breakpoint,
+    levels: RowLevels = FLAT_LEVELS
 ): Record<string, number> | null {
     const [label, ...others] = columns
     if (!label) return {}
     const isPhone = breakpoint === 'mobile'
-    const labelMin = isPhone ? PHONE_LABEL_WIDTH : LABEL_MIN_WIDTH
+    const labelFloorWidth = labelFloor(levels)
+    const labelMin = Math.max(isPhone ? PHONE_LABEL_WIDTH : LABEL_MIN_WIDTH, labelFloorWidth)
     const cell = isPhone ? PHONE_AMOUNT_WIDTH : AMOUNT_WIDTH
     const figures = others.filter(isFigureColumn)
     const texts = others.filter(column => !isFigureColumn(column))
@@ -333,12 +374,12 @@ export function fitOneLine(
     }
     const natural = labelMin + figureWidth + texts.length * cell
     if (natural <= width) return lineAt(labelMin, cell)
-    const labelWidth = Math.max(TEXT_FLOOR, labelMin - (natural - width))
+    const labelWidth = Math.max(labelFloorWidth, labelMin - (natural - width))
     if (labelWidth + figureWidth + texts.length * cell <= width) return lineAt(labelWidth, cell)
     if (texts.length === 0) return null
-    const cap = Math.floor((width - TEXT_FLOOR - figureWidth) / texts.length)
+    const cap = Math.floor((width - labelFloorWidth - figureWidth) / texts.length)
     if (cap < TEXT_FLOOR) return null
-    return lineAt(TEXT_FLOOR, Math.min(cell, cap))
+    return lineAt(labelFloorWidth, Math.min(cell, cap))
 }
 
 // The authored widths tried when this width has none and its line does not fit,
@@ -360,11 +401,13 @@ export function tableLines(input: {
     width: number
     breakpoint: Breakpoint
     layouts: readonly DisplayLayout[]
+    /** How deep the report's rows go (rowLevelsOf); absent: a flat report. */
+    levels?: RowLevels
 }): LineLayout {
-    const { columns, width, breakpoint, layouts } = input
+    const { columns, width, breakpoint, layouts, levels } = input
     const own = layouts.find(l => l.width === breakpoint)
     if (own) return authoredLines(own, columns, width)
-    const widths = fitOneLine(columns, width, breakpoint)
+    const widths = fitOneLine(columns, width, breakpoint, levels)
     if (widths) return { kind: 'one-line', widths }
     const narrower = NARROWER[breakpoint]
         .map(w => layouts.find(l => l.width === w))

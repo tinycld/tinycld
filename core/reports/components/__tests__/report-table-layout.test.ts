@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fitOneLine, isFigureColumn } from '../../lib/table-lines'
+import { fitOneLine, isFigureColumn, rowLevelsOf } from '../../lib/table-lines'
 import type { ResultColumn } from '../../lib/types'
 import {
     AMOUNT_WIDTH,
@@ -107,6 +107,69 @@ describe('fitOneLine', () => {
         expect(fitOneLine(label, 100, 'desktop')).toEqual({ customer: 100 })
         expect(fitOneLine(label, 79, 'desktop')).toBeNull()
         expect(fitOneLine([], 10, 'desktop')).toEqual({})
+    })
+
+    // The label's floor is for its text: the deepest row's indent and a group
+    // row's caret come on top, so a grouped report's labels keep 8 characters.
+    it('raises the label floor by the indent of the deepest row of a grouped report', () => {
+        // Two group levels: a detail row is indented 2 × 16 = 32, a level-2 group
+        // row 16 + its caret 18 = 34; the floor is 80 + 34 = 114, and the narrowed
+        // line 114 + 5 × 80 + 3 × 128 = 898.
+        const grouped = { groups: 2, nests: 0 }
+        expect(fitOneLine(WIDE, 1200, 'desktop', grouped)).toEqual(wideWidths(176, 128, 128))
+        // 1100 − 114 − 3 × 128 = 602 for five text columns: 120 each.
+        expect(fitOneLine(WIDE, 1100, 'desktop', grouped)).toEqual(wideWidths(114, 120, 128))
+        expect(fitOneLine(WIDE, 898, 'desktop', grouped)).toEqual(wideWidths(114, 80, 128))
+        expect(fitOneLine(WIDE, 897, 'desktop', grouped)).toBeNull()
+    })
+
+    it('counts nested child rows in the deepest indent', () => {
+        // One group level and one level of child rows: a child row is indented
+        // 2 × 16 = 32, more than the group row's caret (18); the floor is 112.
+        const nested = { groups: 1, nests: 1 }
+        expect(fitOneLine(WIDE, 896, 'desktop', nested)).toEqual(wideWidths(112, 80, 128))
+        expect(fitOneLine(WIDE, 895, 'desktop', nested)).toBeNull()
+        expect(fitOneLine(WIDE, 865, 'desktop', { groups: 0, nests: 1 })).toBeNull()
+    })
+
+    it('wraps a grouped phone row whose label would get less than its floor', () => {
+        const columns: ResultColumn[] = [
+            { id: 'customer', label: 'Customer', type: 'text' },
+            { id: 'ref', label: 'Ref', type: 'text' },
+            { id: 'amount', label: 'Amount', type: 'money', currency: 'USD' },
+            { id: 'cost', label: 'Cost', type: 'money', currency: 'USD' },
+        ]
+        // One group level: the floor is 80 + 18 = 98, the narrowed line 98 + 80 +
+        // 2 × 108 = 394, over 390 (a flat report fits there, at 80).
+        expect(fitOneLine(columns, 390, 'mobile', { groups: 1, nests: 0 })).toBeNull()
+        expect(fitOneLine(columns, 394, 'mobile', { groups: 1, nests: 0 })).toEqual({
+            customer: 98,
+            ref: 80,
+            amount: 108,
+            cost: 108,
+        })
+    })
+})
+
+describe('rowLevelsOf', () => {
+    it('counts the group levels and the nested hops of the deepest column', () => {
+        expect(rowLevelsOf(null)).toEqual({ groups: 0, nests: 0 })
+        expect(
+            rowLevelsOf({
+                groups: [{ col: 'team' }, { col: 'customer' }],
+                columns: [
+                    { path: [{ field: 'team' }] },
+                    {
+                        path: [
+                            { link: 'lines', mode: 'nest' },
+                            { link: 'parts', mode: 'nest' },
+                            { field: 'name' },
+                        ],
+                    },
+                    { path: [{ link: 'lines', mode: 'nest' }, { field: 'qty' }] },
+                ],
+            })
+        ).toEqual({ groups: 2, nests: 2 })
     })
 })
 

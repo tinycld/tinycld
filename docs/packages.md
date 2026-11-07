@@ -1298,7 +1298,9 @@ away before the run ends.
   on a running value or percent, a child row column, an unknown column or a
   pivot report is refused under `options.sort`.
 - A grouped result pages (`page.next`); running values continue on the next
-  page. A client merges pages by row id and keeps only the last page's Total.
+  page. A client merges pages by row id and drops each earlier page's trailing
+  total and computed rows (a Total inside a page's slice, one per currency
+  block, stays).
 - A `lookup` with `pick: "sum"` over amounts in more than one currency gives no
   value and the notice `mixedCurrency` naming its columns.
 

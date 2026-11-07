@@ -702,6 +702,46 @@ describe('F10: one line that fits, then the narrower arrangements', () => {
         expect(auto).not.toEqual(TABLET_LINES)
     })
 
+    // The label floor is for the label's text, past the deepest row's indent: a
+    // grouped phone report that a flat one would narrow onto one line wraps, with
+    // its label across the first line.
+    it('wraps a grouped phone report with its label on a line of its own', () => {
+        const flat = tableLines({ columns: COLS, width: 390, breakpoint: 'mobile', layouts: [] })
+        expect(flat).toMatchObject({ kind: 'one-line', widths: { account: 80 } })
+        const grouped = tableLines({
+            columns: COLS,
+            width: 390,
+            breakpoint: 'mobile',
+            layouts: [],
+            levels: { groups: 1, nests: 0 },
+        })
+        expect(grouped).toEqual(
+            tableLines({ columns: COLS, width: 360, breakpoint: 'mobile', layouts: [] })
+        )
+        const cell = (col: string, justify: 'start' | 'end') => ({
+            block: { kind: 'cell', col, justify },
+            tracks: 1,
+        })
+        expect(grouped).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'stack',
+                parts: [
+                    { kind: 'cell', col: 'account', justify: 'start' },
+                    {
+                        kind: 'side',
+                        of: 3,
+                        parts: [
+                            cell('number', 'start'),
+                            cell('debit', 'end'),
+                            cell('credit', 'end'),
+                        ],
+                    },
+                ],
+            },
+        })
+    })
+
     it('wraps a tablet in the same order, never to a wider arrangement', () => {
         expect(lines(700, 'tablet', [DESKTOP_LAYOUT, MOBILE_LAYOUT])).toEqual(MOBILE_LINES)
         expect(lines(700, 'tablet', [DESKTOP_LAYOUT])).toEqual(lines(700, 'mobile'))

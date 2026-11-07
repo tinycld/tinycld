@@ -72,7 +72,7 @@ To sort, open **Group and sort**, select **Add sort**, and pick the field. To so
 
 ## Sort a report
 
-To sort the rows by a column while you read, select the column's heading. The first press sorts from low to high, the next press from high to low, and the third press puts the report's own order back. An arrow beside the heading shows the order. The rows sort inside their groups; the groups keep their order. A running value, such as a running balance, keeps the report's own order, so its figures do not change. A column that shows a running value or a percent has no sort control, and a pivot report has none. **Copy link** keeps the sort. If a link sorts by a column that the report no longer has, the report shows why and a **Clear sort** button; select it to show the report in its own order.
+To sort the rows by a column while you read, select the column's heading. The first press sorts from low to high, the next press from high to low, and the third press puts the report's own order back. An arrow beside the heading shows the order. The rows sort inside their groups; the groups keep their order. A running value, such as a running balance, keeps the report's own order, so its figures do not change. A column that shows a running value or a percent has no sort control, and neither does a column of child rows (**Show as child rows**). A pivot report has no sort control. **Copy link** keeps the sort. If a link sorts by a column that the report no longer has, the report shows why and a **Clear sort** button; select it to show the report in its own order.
 
 ## Look up a value
 
