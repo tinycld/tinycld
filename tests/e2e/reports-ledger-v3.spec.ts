@@ -39,9 +39,10 @@ const YEAR = new Date().getFullYear()
 const PHONE = { width: 390, height: 844 }
 const OPENING = 'Before the period'
 // Q2: a line at a 1024 window is 944 wide. The narrowed line that Q2 asks about
-// (80 + 5 × 80 + 3 × 128) fits in it; this report's does not (80 + 2 × 80 + 6 × 128).
-const Q2_NARROWED_LINE = 864
-const TEAM_BALANCE_NARROWED_LINE = 1008
+// (a one-level grouped label floor of 98, + 5 × 80 + 3 × 128) fits in it; this
+// report's does not (98 + 2 × 80 + 6 × 128).
+const Q2_NARROWED_LINE = 882
+const TEAM_BALANCE_NARROWED_LINE = 1026
 
 async function openTeamBalance(page: Page) {
     await openReportsHub(page)
@@ -296,7 +297,7 @@ test.describe('general-ledger: report engine v3', () => {
     })
 
     // Q2, recommended answer (narrow first, then wrap): at a 1024 window the line is
-    // 944 wide, so Q2's narrowed line (864) fits and this report's does
+    // 944 wide, so Q2's narrowed line (882) fits and this report's does
     // not. This report wraps to its tablet arrangement: eight headings (Team is left
     // out) on two lines, all inside the table, and nothing scrolls sideways.
     test('on a desktop too narrow for its narrowed line a report wraps to its tablet arrangement inside the table', async ({
