@@ -94,6 +94,12 @@ func (c *tableCtx) window(string, *Node, int, string) (expr, error) {
 func (c *tableCtx) exists(*Node, string) (expr, error) {
 	return expr{}, fmt.Errorf("no links in the table")
 }
+
+// outerPath: the table has no paths; inside a lookup an outer leaf reads
+// the table's row (tableLookupCtx).
+func (c *tableCtx) outerPath(_ Path, at string) (expr, error) {
+	return expr{}, invalid(at, "outer reads the report's row: use it inside a lookup")
+}
 func (c *tableCtx) filter() bool { return false }
 
 // label: the formula table reads no records.
@@ -208,6 +214,14 @@ func (l *tableLookupCtx) path(p Path, at string) (expr, error) {
 		return expr{}, invalid(at, "unknown lookup column "+p[0].Field)
 	}
 	return expr{sql: "l." + p[0].Field, typ: typ}, nil
+}
+
+// outerPath reads one field of the table's row.
+func (l *tableLookupCtx) outerPath(p Path, at string) (expr, error) {
+	if len(p) != 1 || p[0].Field == "" {
+		return expr{}, invalid(at, "an outer path is one field here")
+	}
+	return l.outer.col(p[0].Field, at)
 }
 func (l *tableLookupCtx) param(string, string) (expr, error) { return expr{}, fmt.Errorf("no params") }
 func (l *tableLookupCtx) aggregate(Aggregate, *Node, int, string) (expr, error) {

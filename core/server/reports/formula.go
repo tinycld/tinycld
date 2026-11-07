@@ -251,6 +251,9 @@ type fctx interface {
 	// record compiles a record leaf: path read from the linked record of
 	// the group named group.
 	record(group string, p Path, at string) (expr, error)
+	// outerPath compiles an outer leaf: a path on the report's row, read
+	// from inside a lookup.
+	outerPath(p Path, at string) (expr, error)
 	// bind adds a value to the statement's parameters and returns its
 	// placeholder.
 	bind(v any) string
@@ -324,6 +327,8 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 		e, err := c.col(n.Col, at)
 		e.col = n.Col
 		return e, err
+	case n.Outer != nil:
+		return c.outerPath(n.Outer, at)
 	case n.Path != nil:
 		return c.path(n.Path, at+".path")
 	case n.Param != "":
@@ -389,14 +394,14 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 }
 
 // errNodeKind refuses a node that is not exactly one kind of node.
-const errNodeKind = "a formula node is one of op, col, path, param, value, subtotal or record"
+const errNodeKind = "a formula node is one of op, col, path, outer, param, value, subtotal or record"
 
 func nodeKinds(n *Node) int {
 	kinds := 0
 	// A record leaf's path is part of it. (A lookup, whose value is a
 	// formula, is compiled before nodes are counted.)
 	path := n.Path != nil && n.Record == ""
-	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Param != "", n.Value != nil, n.Subtotal != "", n.Record != ""} {
+	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Outer != nil, n.Param != "", n.Value != nil, n.Subtotal != "", n.Record != ""} {
 		if set {
 			kinds++
 		}
@@ -1141,6 +1146,10 @@ func (ctxBase) exists(n *Node, at string) (expr, error) {
 
 func (ctxBase) lookup(_ *Node, at string) (expr, error) {
 	return expr{}, invalid(at, "a lookup is read in a column, the filter, a group, a sort or a label")
+}
+
+func (ctxBase) outerPath(_ Path, at string) (expr, error) {
+	return expr{}, invalid(at, "outer reads the report's row: use it inside a lookup")
 }
 
 func (ctxBase) record(_ string, _ Path, at string) (expr, error) {

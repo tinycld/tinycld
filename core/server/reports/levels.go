@@ -957,6 +957,9 @@ func (lv *level) lookupReadsRowValue(n *Node, inAggregate bool, seen map[string]
 			return false
 		case n.Col != "" || n.Record != "":
 			return lv.readsRowValue(n, inAggregate, seen)
+		case n.Outer != nil:
+			// The report's row: blank on a level's rows, as a path is.
+			return !inAggregate
 		case n.Path != nil:
 			return false
 		}

@@ -105,7 +105,7 @@ func (b *binder) lookups(p *plan) {
 // A column it reads may be a total (one value per row of its level) or a
 // running value, which the outer select computes first (windowHoister).
 func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
-	if n.Col != "" || n.Path != nil || n.Param != "" || n.Subtotal != "" || n.Record != "" {
+	if n.Col != "" || n.Path != nil || n.Outer != nil || n.Param != "" || n.Subtotal != "" || n.Record != "" {
 		return expr{}, invalid(at, errNodeKind)
 	}
 	if len(n.Args) > 0 || n.Link != nil || n.Scale != nil {
@@ -129,6 +129,10 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 	v, err := compileFormula(&lookupCtx{outer: outer, r: r, sc: sc, src: src}, valueNode, at+".value")
 	if err != nil {
 		return expr{}, err
+	}
+	v.sql = ownRows(sc, v.sql)
+	if v.cur.sql != "" {
+		v.cur.sql = ownRows(sc, v.cur.sql)
 	}
 	out := expr{typ: v.typ, target: v.target, cur: v.cur, agg: v.agg, win: v.win, options: v.options}
 	where := "1"
@@ -165,6 +169,14 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		out.shown = pickedShown(n, v, from, where)
 	}
 	return out, nil
+}
+
+// ownRows ties a lookup's value to the rows of its source. SQLite counts an
+// aggregate whose argument reads no column of its own query (a value that is
+// a lookup reading only the report's row) as an aggregate of the query
+// around it, which folds the report into one row.
+func ownRows(sc *scope, sql string) string {
+	return fmt.Sprintf("(CASE WHEN %s.id IS NOT NULL THEN %s END)", sc.alias, sql)
 }
 
 // summedLookup adds the value over the matching rows, blank when none match.
@@ -322,6 +334,49 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 		e.cur = currency{fixed: fixed}
 	}
 	return e, nil
+}
+
+// outerPath reads a path on the report's row: what a path means in the
+// context the outermost lookup sits in (a detail row's value, a joined row
+// in the filter, blank on a group, subtotal or total row). It is bound on
+// the report's source, to one row (R4).
+func (l *lookupCtx) outerPath(p Path, at string) (expr, error) {
+	base := l.r.c.p.base
+	if outerToMany(base, p) {
+		return expr{}, invalid(at+".outer", "outer reads one value of the report's row: a to-many link is not one")
+	}
+	if _, err := bindValuePath(l.r.c.p.app, base, p, at+".outer", pathValue); err != nil {
+		return expr{}, err
+	}
+	var row fctx = l
+	for {
+		inner, ok := row.(*lookupCtx)
+		if !ok {
+			break
+		}
+		row = inner.outer
+	}
+	return row.path(p, at+".outer")
+}
+
+// outerToMany is true when an outer path follows a to-many link from the
+// report's source. A link it cannot follow is left to bindValuePath.
+func outerToMany(base *Source, p Path) bool {
+	src := base
+	for _, h := range p {
+		if h.Link == "" || src == nil {
+			continue
+		}
+		l := src.link(h.Link)
+		if l == nil {
+			return false
+		}
+		if l.Cardinality != ToOne {
+			return true
+		}
+		src = lookupRegistered(l.Target)
+	}
+	return false
 }
 
 func (l *lookupCtx) aggregate(op Aggregate, _ *Node, _ int, at string) (expr, error) {

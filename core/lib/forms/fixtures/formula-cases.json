@@ -723,6 +723,23 @@
             "expect": 0
         },
         {
+            "name": "outer reads the report row inside a lookup",
+            "types": { "c": "text" },
+            "values": { "c": "a" },
+            "lookupTypes": { "code": "text", "rate": "number" },
+            "lookupRows": [{ "code": "a", "rate": 3 }, { "code": "b", "rate": 9 }],
+            "formula": {
+                "op": "lookup",
+                "source": "table",
+                "where": {
+                    "op": "eq",
+                    "args": [{ "path": [{ "field": "code" }] }, { "outer": [{ "field": "c" }] }]
+                },
+                "value": { "path": [{ "field": "rate" }] }
+            },
+            "expect": 3
+        },
+        {
             "name": "a record field reads the group's record",
             "types": {},
             "values": {},

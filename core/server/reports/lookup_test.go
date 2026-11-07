@@ -573,3 +573,108 @@ func TestPickSumNeedsANumberOrAnAmount(t *testing.T) {
 		t.Fatalf("a count of names: %v", err)
 	}
 }
+
+// feedingsWithOuter reads the report's row from inside lookups: earlier
+// counts ann's feedings fed before the row's (f1 01-05, f3 01-20, f2 02-10,
+// f4 03-03), other is the other feeding of the row's animal, site the name of
+// the row's animal's site, and nested counts the earlier feedings inside a
+// lookup of another source.
+const feedingsWithOuter = `{"version":3,"source":"zoo.feedings","columns":[
+	{"id":"note","path":[{"field":"note"}]},
+	{"id":"earlier","formula":{"op":"lookup","source":"zoo.feedings","pick":"count",
+		"where":{"op":"lt","args":[{"path":[{"field":"fed"}]},{"outer":[{"field":"fed"}]}]},
+		"value":{"path":[{"field":"id"}]}}},
+	{"id":"other","formula":{"op":"lookup","source":"zoo.feedings",
+		"where":{"op":"and","args":[
+			{"op":"eq","args":[{"path":[{"link":"animal"}]},{"outer":[{"link":"animal"}]}]},
+			{"op":"ne","args":[{"path":[{"field":"note"}]},{"outer":[{"field":"note"}]}]}]},
+		"value":{"path":[{"field":"note"}]}}},
+	{"id":"site","formula":{"op":"lookup","source":"zoo.sites",
+		"where":{"op":"eq","args":[{"path":[{"field":"id"}]},{"outer":[{"link":"animal"},{"link":"site"}]}]},
+		"value":{"path":[{"field":"name"}]}}},
+	{"id":"nested","formula":{"op":"lookup","source":"zoo.sites",
+		"where":{"op":"eq","args":[{"path":[{"field":"region"}]},{"value":"north"}]},
+		"value":{"op":"lookup","source":"zoo.feedings","pick":"count",
+			"where":{"op":"lt","args":[{"path":[{"field":"fed"}]},{"outer":[{"field":"fed"}]}]},
+			"value":{"path":[{"field":"id"}]}}}}],
+	"sort":[{"col":"note"}]}`
+
+// Each detail row looks up its own answer; the total row has no one row,
+// so a lookup that reads it is blank there.
+func TestAnOuterLeafCorrelatesALookupToItsRow(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", feedingsWithOuter, Options{}, nil)
+	requireOrderedRows(t, feedingsWithOuter, res, "note", "f1", "f2", "f3", "f4", nil)
+	requireOrderedRows(t, feedingsWithOuter, res, "earlier", int64(0), int64(2), int64(1), int64(3), nil)
+	requireOrderedRows(t, feedingsWithOuter, res, "other", "f2", "f1", "f4", "f3", nil)
+	requireOrderedRows(t, feedingsWithOuter, res, "site", "North", "North", "South", "South", nil)
+}
+
+// An outer leaf in a lookup inside a lookup reads the report's row, not the
+// rows of the lookup around it (zoo.sites has no fed field).
+func TestAnOuterLeafInANestedLookupReadsTheReportRow(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", feedingsWithOuter, Options{}, nil)
+	requireOrderedRows(t, feedingsWithOuter, res, "nested", int64(0), int64(2), int64(1), int64(3), nil)
+}
+
+func TestAnOuterLeafIsBlankOnGroupRows(t *testing.T) {
+	z := newZoo(t)
+	const spec = `{"version":3,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"earlier","formula":{"op":"lookup","source":"zoo.feedings","pick":"count",
+			"where":{"op":"lt","args":[{"path":[{"field":"fed"}]},{"outer":[{"field":"fed"}]}]},
+			"value":{"path":[{"field":"id"}]}}}],
+		"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
+	requireRows(t, res, "kind", "group", "detail", "detail", "group", "detail", "detail", "total")
+	requireOrderedRows(t, spec, res, "earlier", nil, int64(0), int64(2), nil, int64(1), int64(3), nil)
+}
+
+func TestAnOuterLeafIsRefusedOutsideALookup(t *testing.T) {
+	app := withZooRegistry(t)
+	outer := `{"outer":[{"field":"note"}]}`
+	grouped := func(part string) string {
+		return `{"version":3,"source":"zoo.feedings","columns":[{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]}],` + part + `}`
+	}
+	cases := map[string]struct{ spec, at string }{
+		"a column":      {`{"version":3,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"x","formula":` + outer + `}]}`, "columns.1.formula"},
+		"the filter":    {grouped(`"filter":{"op":"eq","args":[` + outer + `,{"value":"f1"}]}`), "filter.args.0"},
+		"a having":      {grouped(`"groups":[{"id":"g","col":"animal","having":{"op":"eq","args":[` + outer + `,{"value":"f1"}]}}]`), "groups.0.having.args.0"},
+		"a group label": {grouped(`"groups":[{"id":"g","col":"animal","label":` + outer + `}]`), "groups.0.label"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := Validate(app, loadSpec(t, c.spec))
+			requireSpecError(t, err, 400, c.at, "outer reads the report's row: use it inside a lookup")
+		})
+	}
+}
+
+// A feeding's animal has many feedings: the row has no one value there.
+func TestAnOuterLeafIsRefusedOnAToManyPath(t *testing.T) {
+	app := withZooRegistry(t)
+	err := Validate(app, loadSpec(t, `{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals",
+		"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"outer":[{"link":"animal"},{"link":"feedings"},{"field":"note"}]}]},
+		"value":{"path":[{"field":"weight"}]}}}]}`))
+	requireSpecError(t, err, 400, "columns.0.formula.where.args.1.outer", "outer reads one value of the report's row: a to-many link is not one")
+}
+
+// A lookup whose value is a lookup that reads only the report's row (here
+// through a column) keeps every detail row: SQLite would otherwise run the
+// outer lookup's aggregate over the report's rows.
+func TestALookupOfALookupThatReadsTheRowKeepsEveryRow(t *testing.T) {
+	z := newZoo(t)
+	const spec = `{"version":3,"source":"zoo.feedings","columns":[
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"fed","path":[{"field":"fed"}]},
+		{"id":"nested","formula":{"op":"lookup","source":"zoo.sites",
+			"where":{"op":"eq","args":[{"path":[{"field":"region"}]},{"value":"north"}]},
+			"value":{"op":"lookup","source":"zoo.feedings","pick":"count",
+				"where":{"op":"lt","args":[{"path":[{"field":"fed"}]},{"col":"fed"}]},
+				"value":{"path":[{"field":"id"}]}}}}],
+		"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireOrderedRows(t, spec, res, "nested", int64(0), int64(2), int64(1), int64(3), nil)
+}

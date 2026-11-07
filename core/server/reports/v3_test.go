@@ -165,6 +165,12 @@ func requireV3Refusal(t *testing.T, app core.App, c v3Refusal) {
 func TestV3PartsAreValidated(t *testing.T) {
 	app := withZooRegistry(t)
 	cases := map[string]v3Refusal{
+		// F2: the outer leaf.
+		"an outer leaf with a value": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"outer":[{"field":"note"}],"value":1}}]}`,
+			400, "columns.0.formula", "one of op, col, path, outer"},
+		"an outer field the report's source does not have": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup",
+			"source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"outer":[{"field":"nope"}]}]},
+			"value":{"path":[{"field":"weight"}]}}}]}`, 422, "columns.0.formula.where.args.1.outer.0.field", `has no field "nope"`},
 		// F9: every new part decodes strictly.
 		"an unknown key in an opening": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],
 			"groups":[{"id":"g","col":"a","opening":{"label":"x","lable":"y"}}]}`, 400, "spec", `unknown field "lable"`},
