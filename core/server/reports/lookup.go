@@ -105,7 +105,7 @@ func (b *binder) lookups(p *plan) {
 // A column it reads may be a total (one value per row of its level) or a
 // running value, which the outer select computes first (windowHoister).
 func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
-	if n.Col != "" || n.Path != nil || n.Outer != nil || n.Param != "" || n.Subtotal != "" || n.Record != "" {
+	if n.Col != "" || n.Path != nil || n.Outer != nil || n.Param != "" || n.Subtotal != "" || n.Record != "" || n.Bound != "" {
 		return expr{}, invalid(at, errNodeKind)
 	}
 	if len(n.Args) > 0 || n.Link != nil || n.Scale != nil {

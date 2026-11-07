@@ -38,7 +38,7 @@ var (
 	rangePresets = []string{
 		"today", "thisMonth", "thisMonthToDate", "thisQuarter", "thisQuarterToDate",
 		"thisFiscalYear", "thisFiscalYearToDate", "lastMonth", "lastQuarter",
-		"lastFiscalYear", "last12Months",
+		"lastFiscalYear", "last12Months", "allDates",
 	}
 	asOfPresets = []string{"today", "endOfLastMonth", "endOfLastQuarter", "endOfLastFiscalYear"}
 )
@@ -451,6 +451,9 @@ func rangeDays(preset string, pc periodContext) (string, string) {
 		return firstDay(q - 3), lastDay(q - 1)
 	case "lastFiscalYear":
 		return firstDay(fy - 12), lastDay(fy - 1)
+	case "allDates":
+		// A set range with no bounds (R1): every row, a row with no day too.
+		return "", ""
 	}
 	return firstDay(today - 12), lastDay(today - 1) // last12Months
 }
@@ -472,8 +475,11 @@ func asOfDay(preset string, pc periodContext) string {
 func paramExpr(c fctx, v paramValue) (expr, error) {
 	switch v.typ {
 	case ParamDateRange:
-		if v.unset {
+		switch {
+		case v.unset:
 			return expr{rng: true, lo: "NULL", hi: "NULL", unset: true}, nil
+		case v.from == "" && v.to == "":
+			return expr{rng: true, all: true, lo: "NULL", hi: "NULL"}, nil
 		}
 		return expr{rng: true, lo: c.bind(v.from), hi: c.bind(v.to)}, nil
 	case ParamChoice:
@@ -500,4 +506,22 @@ func paramExpr(c fctx, v paramValue) (expr, error) {
 		return expr{sql: "NULL", typ: typ, unset: true}, nil
 	}
 	return expr{sql: c.bind(v.value), typ: typ}, nil
+}
+
+// rangeBound is a date range param's first (from) or last (to) day as a
+// Date (F3). A range with no bounds (unset, All dates) has no such day: the
+// value is blank, never an unset condition, so a comparison with it matches
+// no row (R2).
+func rangeBound(e expr, bound, at string) (expr, error) {
+	if bound != "from" && bound != "to" {
+		return expr{}, invalid(at, "bound is from or to")
+	}
+	if !e.rng {
+		return expr{}, invalid(at, "bound reads a date range's start or end")
+	}
+	day := e.lo
+	if bound == "to" {
+		day = e.hi
+	}
+	return expr{sql: day, typ: Date}, nil
 }

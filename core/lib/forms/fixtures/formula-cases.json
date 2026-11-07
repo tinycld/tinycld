@@ -740,6 +740,18 @@
             "expect": 3
         },
         {
+            "name": "param bound from reads the range's start",
+            "types": { "a": "date" },
+            "values": { "a": "2026-01-31" },
+            "paramDefs": [{ "id": "period", "type": "dateRange" }],
+            "paramValues": { "period": { "from": "2026-02-01", "to": "2026-02-28" } },
+            "formula": {
+                "op": "lt",
+                "args": [{ "col": "a" }, { "param": "period", "bound": "from" }]
+            },
+            "expect": true
+        },
+        {
             "name": "a record field reads the group's record",
             "types": {},
             "values": {},

@@ -31,12 +31,16 @@ type formulaCase struct {
 	RecordTypes map[string]FieldType `json:"recordTypes"`
 	Record      map[string]any       `json:"record"`
 	FiscalStart int                  `json:"fiscalStart"`
-	Formula     *Node                `json:"formula"`
-	Forms       any                  `json:"forms"`
-	FormsSkip   string               `json:"formsSkip"`
-	FormsNote   string               `json:"formsNote"`
-	Expect      any                  `json:"expect"`
-	Error       string               `json:"error"`
+	// ParamDefs and ParamValues are the params a case's formula reads, as a
+	// spec declares them and a run posts them.
+	ParamDefs   []ParamDef                 `json:"paramDefs"`
+	ParamValues map[string]json.RawMessage `json:"paramValues"`
+	Formula     *Node                      `json:"formula"`
+	Forms       any                        `json:"forms"`
+	FormsSkip   string                     `json:"formsSkip"`
+	FormsNote   string                     `json:"formsNote"`
+	Expect      any                        `json:"expect"`
+	Error       string                     `json:"error"`
 }
 
 func loadFormulaCases(t *testing.T) []formulaCase {
@@ -69,6 +73,8 @@ type tableCtx struct {
 	// named record, which is the method.
 	recordTypes map[string]FieldType
 	recordRow   map[string]any
+	// paramValues are the case's params as a run resolves them.
+	paramValues map[string]paramValue
 }
 
 func (c *tableCtx) col(id, at string) (expr, error) {
@@ -82,8 +88,12 @@ func (c *tableCtx) col(id, at string) (expr, error) {
 func (c *tableCtx) path(Path, string) (expr, error) {
 	return expr{}, fmt.Errorf("no paths in the table")
 }
-func (c *tableCtx) param(string, string) (expr, error) {
-	return expr{}, fmt.Errorf("no params in the table")
+func (c *tableCtx) param(id, at string) (expr, error) {
+	v, ok := c.paramValues[id]
+	if !ok {
+		return expr{}, invalid(at, "unknown param "+id)
+	}
+	return paramExpr(c, v)
 }
 func (c *tableCtx) subtotal(string, string) (expr, error) {
 	return expr{}, fmt.Errorf("no subtotals in the table")
@@ -223,7 +233,7 @@ func (l *tableLookupCtx) outerPath(p Path, at string) (expr, error) {
 	}
 	return l.outer.col(p[0].Field, at)
 }
-func (l *tableLookupCtx) param(string, string) (expr, error) { return expr{}, fmt.Errorf("no params") }
+func (l *tableLookupCtx) param(id, at string) (expr, error) { return l.outer.param(id, at) }
 func (l *tableLookupCtx) aggregate(Aggregate, *Node, int, string) (expr, error) {
 	return expr{}, fmt.Errorf("no totals in a lookup")
 }
@@ -253,10 +263,15 @@ func jsonValue(v any) any {
 
 func runFormulaCase(t *testing.T, app core.App, c formulaCase) (any, error) {
 	t.Helper()
+	values, perr := resolveParams(c.ParamDefs, c.ParamValues, anyDay)
+	if perr != nil {
+		t.Fatalf("params: %v", perr)
+	}
 	ctx := &tableCtx{
 		types: c.Types, params: dbx.Params{}, fiscal: c.FiscalStart,
 		lookupTypes: c.LookupTypes, lookupRows: c.LookupRows,
 		recordTypes: c.RecordTypes, recordRow: c.Record,
+		paramValues: values,
 	}
 	e, err := compileFormula(ctx, c.Formula, "formula")
 	if err != nil {

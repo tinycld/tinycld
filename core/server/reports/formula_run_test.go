@@ -170,13 +170,24 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 				columns = append(columns, fmt.Sprintf(`{"id":%q,"path":[{"field":%q}]}`, name, name))
 			}
 			columns = append(columns, `{"id":"zz_out","formula":`+string(node)+`}`)
-			raw := fmt.Sprintf(`{"version":1,"source":%q,"columns":[%s]}`, source, strings.Join(columns, ","))
+			params, given := "", map[string]string{}
+			if c.ParamDefs != nil {
+				defs, err := json.Marshal(c.ParamDefs)
+				if err != nil {
+					t.Fatal(err)
+				}
+				params = `"params":` + string(defs) + `,`
+			}
+			for id, v := range c.ParamValues {
+				given[id] = string(v)
+			}
+			raw := fmt.Sprintf(`{"version":1,%s"source":%q,"columns":[%s]}`, params, source, strings.Join(columns, ","))
 
 			if c.RecordTypes != nil {
 				recordRuns++
 				columns = append(columns, `{"id":"zz_rec","path":[{"link":"rec"}]}`)
-				raw = fmt.Sprintf(`{"version":2,"source":%q,"columns":[%s],"groups":[{"id":"g","col":"zz_rec"}]}`, source, strings.Join(columns, ","))
-				res := z.run(t, "ann", raw, Options{Expand: [][]any{{"row0"}}}, nil)
+				raw = fmt.Sprintf(`{"version":2,%s"source":%q,"columns":[%s],"groups":[{"id":"g","col":"zz_rec"}]}`, params, source, strings.Join(columns, ","))
+				res := z.run(t, "ann", raw, Options{Expand: [][]any{{"row0"}}}, given)
 				requireRows(t, res, "kind", "group", "detail", "total")
 				for _, row := range res.Rows[:2] {
 					if got := row.Cells["zz_out"]; !sameCell(got, c.Expect) {
@@ -187,7 +198,7 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 			}
 			if c.Values != nil && c.Error == "" {
 				detailRuns++
-				res := z.run(t, "ann", raw, Options{}, nil)
+				res := z.run(t, "ann", raw, Options{}, given)
 				requireRows(t, res, "kind", "detail", "total")
 				if got := res.Rows[0].Cells["zz_out"]; !sameCell(got, c.Expect) {
 					t.Fatalf("detail row: got %#v, want %v", got, c.Expect)
@@ -203,7 +214,7 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 				t.Fatalf("a case with an aggregate reads a column outside it; the total row cannot show it")
 			}
 			totalRuns++
-			res, err := z.try(t, "ann", raw, Options{}, nil)
+			res, err := z.try(t, "ann", raw, Options{}, given)
 			if c.Error != "" {
 				if !errors.Is(err, ErrAmountTooLarge) || !strings.Contains(c.Error, "integer overflow") {
 					t.Fatalf("err = %v, want the table's %q", err, c.Error)
@@ -224,7 +235,7 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 	}
 	// Keep in step with the table: the cases with one row, and the cases
 	// that total rows.
-	if detailRuns != 64 || totalRuns != 12 || recordRuns != 2 {
+	if detailRuns != 65 || totalRuns != 12 || recordRuns != 2 {
 		t.Fatalf("ran %d detail rows, %d totals and %d records", detailRuns, totalRuns, recordRuns)
 	}
 }

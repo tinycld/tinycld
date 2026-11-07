@@ -18,6 +18,9 @@ type expr struct {
 	// lo and hi hold a dateRange param's bounds; sql is empty for it.
 	rng    bool
 	lo, hi string
+	// all is a date range with no bounds (All dates): between it holds for
+	// every row.
+	all bool
 	// list is a list of values for in: sql is "(?, ?, …)".
 	list bool
 	// unset is a param with no value: in a filter, a condition on it
@@ -317,6 +320,9 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	if n.Source != "" || n.Pick != "" {
 		return expr{}, invalid(at, "only lookup takes a source and a pick")
 	}
+	if n.Bound != "" && n.Param == "" {
+		return expr{}, invalid(at, "bound goes with a param")
+	}
 	if kinds := nodeKinds(n); kinds != 1 {
 		return expr{}, invalid(at, errNodeKind)
 	}
@@ -332,7 +338,11 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	case n.Path != nil:
 		return c.path(n.Path, at+".path")
 	case n.Param != "":
-		return c.param(n.Param, at)
+		e, err := c.param(n.Param, at)
+		if err != nil || n.Bound == "" {
+			return e, err
+		}
+		return rangeBound(e, n.Bound, at)
 	case n.Subtotal != "":
 		return c.subtotal(n.Subtotal, at)
 	case n.Value != nil:
@@ -984,6 +994,10 @@ func between(args []expr, at string) (expr, error) {
 		x := args[0]
 		if !isDateLike(x.typ) {
 			return expr{}, invalid(at+".args.0", "a date range holds dates")
+		}
+		if args[1].all {
+			// All dates: every row, a row with no day too (R1).
+			return expr{sql: "1", typ: Bool}, nil
 		}
 		day := "substr(" + x.sql + ", 1, 10)"
 		return expr{sql: "(" + day + " >= " + args[1].lo + " AND " + day + " <= " + args[1].hi + ")", typ: Bool}, nil
