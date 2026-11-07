@@ -304,6 +304,14 @@ func (b *binder) columns(p *plan) {
 		} else if c.Formula != nil && c.Aggregate != "" {
 			b.scaleOf(cp, c.Aggregate)
 		}
+		if c.Rollup != nil {
+			switch {
+			case c.Total == TotalRows:
+				b.bad(at+".rollup", `a rollup replaces the column's totals: it does not go with total "rows"`)
+			case cp.nest > 0:
+				b.bad(at+".rollup", "a child row column has no totals to replace")
+			}
+		}
 	}
 }
 
@@ -782,6 +790,9 @@ func (b *binder) groupsAndPivot(p *plan) {
 	pp.cell = b.column(p, pv.Cell, "pivot.cell")
 	if pp.cell != nil && (pp.cell.col.Aggregate == "" || pp.cell.tm >= 0) {
 		b.bad("pivot.cell", "the pivot cell is a column with an aggregate, not a total across a to-many link")
+	}
+	if pp.cell != nil && pp.cell.col.Rollup != nil {
+		b.bad(pp.cell.at+".rollup", "a pivot's cell column is totalled by its pivot columns")
 	}
 	p.pivot = pp
 }

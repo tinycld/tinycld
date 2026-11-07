@@ -243,7 +243,7 @@ func (lv *level) sortKey(s sortPlan) (expr, bool, error) {
 }
 
 func (lv *level) sortValue(cp *colPlan, at string) (expr, bool, error) {
-	if cp.path != nil && cp.col.Aggregate == "" && cp.col.Total != TotalRows && lv.groupKey(cp) == "" {
+	if cp.path != nil && cp.col.Aggregate == "" && cp.col.Rollup == nil && cp.col.Total != TotalRows && lv.groupKey(cp) == "" {
 		return expr{}, false, nil
 	}
 	e, err := lv.cell(cp)
@@ -636,10 +636,58 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	if cp == nil {
 		return expr{}, unknownColumn(at, id)
 	}
+	if cp.col.Rollup != nil {
+		return lc.rollup(cp)
+	}
 	if cp.col.Total == TotalRows {
 		return lc.rowsTotal(cp)
 	}
 	return lc.recompute(cp, at)
+}
+
+// rollup is a column's cell on this level from its rollup formula (F6, R6),
+// in place of its total. A rollup that reads a value the level's rows have
+// none of (a record of a group the row is not inside, a bare path) is blank
+// as a whole, as a column's formula is.
+func (lc *levelCtx) rollup(cp *colPlan) (expr, error) {
+	lv := lc.lv
+	at := cp.at + ".rollup"
+	done, err := enter(lc.visiting, cp.col.ID, at)
+	if err != nil {
+		return expr{}, err
+	}
+	defer done()
+	e, err := compileFormula(&levelCtx{lv: lv, visiting: lc.visiting}, cp.col.Rollup, at)
+	if err != nil {
+		return expr{}, err
+	}
+	if err := lv.checkInColumn(cp, e, at, "a rollup"); err != nil {
+		return expr{}, err
+	}
+	if lv.readsRowValue(cp.col.Rollup, false, map[string]bool{}) {
+		e.sql, e.mixed = "NULL", ""
+	}
+	return e, nil
+}
+
+// checkInColumn refuses a level formula drawn in a column's cell (a rollup,
+// an opening cell; what names it) whose value the column cannot show: its
+// type is the column's detail type (a blank value fits any), and an amount
+// is in the column's currency.
+func (lv *level) checkInColumn(cp *colPlan, e expr, at, what string) error {
+	d, err := (&rowsCtx{r: lv.r, visiting: map[string]bool{}, detail: &windowFrame{}}).col(cp.col.ID, cp.at)
+	if err != nil {
+		return err
+	}
+	if e.typ != "" && d.typ != "" && e.typ != d.typ {
+		return invalid(at, fmt.Sprintf("%s shows in its column: it must be %s", what, d.typ))
+	}
+	if e.typ == Money {
+		if _, err := combined([]expr{d, e}, at); err != nil {
+			return invalid(at, what+"'s amount is in another currency than its column's")
+		}
+	}
+	return nil
 }
 
 // rowsTotal is a "rows" column's cell on this level (E2, R8). Above the
@@ -914,6 +962,12 @@ func (lv *level) readsRowValue(n *Node, inAggregate bool, seen map[string]bool) 
 	}
 	if n.Col != "" && !inAggregate && !seen[n.Col] {
 		cp := lv.c.p.byID[n.Col]
+		// A column with a rollup shows the rollup on the level's rows.
+		if cp != nil && cp.col.Rollup != nil {
+			seen[n.Col] = true
+			defer delete(seen, n.Col)
+			return lv.readsRowValue(cp.col.Rollup, false, seen)
+		}
 		// A "rows" column adds the rows under each group, so it has a value
 		// on every level.
 		if cp == nil || cp.col.Aggregate != "" || cp.col.Total == TotalRows || lv.groupKey(cp) != "" {
