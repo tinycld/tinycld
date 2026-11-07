@@ -324,6 +324,20 @@ func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) {
 	return e, nil
 }
 
+// probeWhere takes a lookup's where on a detail row, which the detail
+// select probes on each row it shows, or on a row of w inside a total,
+// which the group statement probes over w. One compiled only to check a
+// column is never run.
+func (rc *rowsCtx) probeWhere(at, sql string) bool {
+	switch {
+	case rc.detail == nil:
+		rc.r.c.probe(at, "SELECT 1 FROM w WHERE "+sql)
+	case !rc.detail.checking && !slices.Contains(rc.r.c.detailWheres, condProbe{at: at, sql: sql}):
+		rc.r.c.detailWheres = append(rc.r.c.detailWheres, condProbe{at: at, sql: sql})
+	}
+	return true
+}
+
 func (rc *rowsCtx) currencySQL(cur currency) string {
 	return currencyCode(rc, rc.r.c, cur, func(key string) string {
 		rc.reads.value()
@@ -355,39 +369,40 @@ func (rc *rowsCtx) hoistLookup(e expr, reads *rowReads) (_ expr, hoisted bool) {
 	if rc.detail == nil || rc.detail.checking || e.agg || e.win {
 		return e, false
 	}
-	if keys := reads.groupKeys(); len(keys) > 0 {
-		// The value keeps its mixed check inline: a keyed layer reads no
-		// value hoisted beside it.
-		parts := []*string{&e.sql, &e.mixed, &e.cur.sql, &e.shown}
-		var sqls []string
-		for _, p := range parts {
-			if *p != "" {
-				sqls = append(sqls, *p)
-			}
+	return hoistedLookup(rc.detail, "w", reads.groupKeys(), e), true
+}
+
+// hoistedLookup computes a lookup's parts in one layer of frame (once per
+// distinct value of keys, when there are keys) and reads them under alias.
+// A value with a mixed check is hoisted as its two parts, the value before
+// the check and the check, and the blank is built from the two above the
+// layer, so each is computed once.
+func hoistedLookup(frame *windowFrame, alias string, keys []string, e expr) expr {
+	if e.mixed != "" && e.unguarded == "" {
+		log.Warn("a lookup with a mixed check has no unguarded value; its check is computed twice")
+	}
+	value := e.sql
+	if e.unguarded != "" {
+		value = e.unguarded
+	}
+	parts := []*string{&value, &e.mixed, &e.cur.sql, &e.shown}
+	var sqls []string
+	for _, p := range parts {
+		if *p != "" {
+			sqls = append(sqls, *p)
 		}
-		refs := rc.detail.hoistLayer("w", keys, sqls...)
-		for _, p := range parts {
-			if *p != "" {
-				*p, refs = refs[0], refs[1:]
-			}
+	}
+	refs := frame.hoistLayer(alias, keys, sqls...)
+	for _, p := range parts {
+		if *p != "" {
+			*p, refs = refs[0], refs[1:]
 		}
-		return e, true
 	}
-	if e.mixed != "" {
-		// A sum lookup's value holds its mixed check: it reads the hoisted
-		// one, hoisted before it.
-		mixed := rc.hoist(e.mixed)
-		e.sql = strings.ReplaceAll(e.sql, e.mixed, mixed)
-		e.mixed = mixed
+	if e.unguarded == "" {
+		e.sql = value
+		return e
 	}
-	if e.cur.sql != "" {
-		e.cur.sql = rc.hoist(e.cur.sql)
-	}
-	if e.shown != "" {
-		e.shown = rc.hoist(e.shown)
-	}
-	e.sql = rc.hoist(e.sql)
-	return e, true
+	return e.guarded(e.mixed, value)
 }
 
 // windowSQL is a running value or a percent over a frame. A running sum

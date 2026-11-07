@@ -67,6 +67,34 @@ func TestAV2SpecLoadsSilentlyAsVersion3(t *testing.T) {
 	}
 }
 
+// A version 1 spec takes both identity steps (1→2, 2→3): it loads as
+// version 3, the run says nothing about an upgrade, and a save stores
+// version 3.
+func TestAV1SpecLoadsSilentlyAsVersion3(t *testing.T) {
+	z := newZoo(t)
+	raw := `{"version":1,"source":"zoo.feedings","columns":[{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],"groups":[{"id":"g","col":"animal","open":true}]}`
+	spec, info, err := Load([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Version != 3 || info.UpgradedFrom != 0 {
+		t.Fatalf("version %d, upgradedFrom %d", spec.Version, info.UpgradedFrom)
+	}
+	res := z.run(t, "ann", raw, Options{}, nil)
+	if len(res.Notices) != 0 {
+		t.Fatalf("notices = %+v", res.Notices)
+	}
+	_, stored, err := loadStored([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(stored, &doc); err != nil || doc["version"] != float64(3) {
+		t.Fatalf("stored = %s", stored)
+	}
+}
+
 func TestAVersion4SpecIsRefused(t *testing.T) {
 	_, _, err := Load([]byte(`{"version":4,"source":"zoo.feedings","columns":[]}`))
 	requireSpecError(t, err, 400, "version", "version 4 is newer than this server reads (3)")

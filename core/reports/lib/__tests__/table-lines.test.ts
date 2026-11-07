@@ -4,10 +4,12 @@ import table from '../fixtures/display-cells.json'
 import { type DisplayCell, type DisplayLayout, displayCellSchema } from '../spec'
 import {
     fitOneLine,
+    labelFloor,
     PINWHEEL_MESSAGE,
     PIVOT_NOTICE,
     placeCells,
     rowLayout,
+    rowLevelsOf,
     startingLayout,
     tableLines,
 } from '../table-lines'
@@ -807,5 +809,43 @@ describe('figure-only rows in a wrapped layout', () => {
         expect(rowLayout(item('detail', { balance: 1200 }), layout, 'customer')).toBe(layout)
         const full = { status: 'open', ref: 'A1', team: 't1', amount: 1, cost: 2, balance: 3 }
         expect(rowLayout(item('total', full), layout, 'customer')).toBe(layout)
+    })
+})
+
+// F10 over a pivot: the last group level holds the pivot's cells, so its groups
+// never open. They draw no caret and no row comes under them, so the label floor
+// is the deepest label that the report can really draw.
+describe('the label floor of a pivot report', () => {
+    const PIVOT = { path: [{ field: 'month' }], cell: 'amount' }
+    const columns = [{ path: [{ field: 'team' }] }]
+
+    it('marks a spec with a pivot', () => {
+        expect(rowLevelsOf({ groups: [{}], columns, pivot: PIVOT })).toEqual({
+            groups: 1,
+            nests: 0,
+            pivot: true,
+        })
+        expect(rowLevelsOf({ groups: [{}], columns })).toEqual({ groups: 1, nests: 0 })
+    })
+
+    it('counts the pivot level without a caret and with nothing under it', () => {
+        // One level: the pivot's rows sit at the left edge, like a flat report.
+        expect(labelFloor({ groups: 1, nests: 0, pivot: true })).toBe(80)
+        expect(labelFloor({ groups: 1, nests: 0 })).toBe(98)
+        // Two levels: the outer group's caret (18) passes the pivot rows' indent (16).
+        expect(labelFloor({ groups: 2, nests: 0, pivot: true })).toBe(98)
+        expect(labelFloor({ groups: 2, nests: 0 })).toBe(114)
+        expect(labelFloor({ groups: 3, nests: 0, pivot: true })).toBe(114)
+        expect(labelFloor({ groups: 0, nests: 0 })).toBe(80)
+    })
+
+    it('fits a one-level pivot on a phone line where a grouped report wraps', () => {
+        const at = (levels: { groups: number; nests: number; pivot?: boolean }) =>
+            tableLines({ columns: COLS, width: 390, breakpoint: 'mobile', layouts: [], levels })
+        expect(at({ groups: 1, nests: 0, pivot: true })).toMatchObject({
+            kind: 'one-line',
+            widths: { account: 80 },
+        })
+        expect(at({ groups: 1, nests: 0 })).toMatchObject({ kind: 'blocks' })
     })
 })

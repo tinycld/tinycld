@@ -152,15 +152,25 @@ func (rn *runner) markMixedLookups() {
 				}
 			}
 			n.Conditions = conds
-			n.Message = strings.Join(append([]string{n.Message}, words...), " ")
+			n.Message, n.Parts = noticeText(append([]string{n.Message}, words...))
 			return
 		}
 	}
-	message := words
+	sentences := words
 	if len(cols) > 0 {
-		message = append([]string{"A looked-up total mixes currencies, so it shows no value."}, words...)
+		sentences = append([]string{"A looked-up total mixes currencies, so it shows no value."}, words...)
 	}
-	rn.notice(Notice{Code: "mixedCurrency", Message: strings.Join(message, " "), Columns: cols, Conditions: conds})
+	message, parts := noticeText(sentences)
+	rn.notice(Notice{Code: "mixedCurrency", Message: message, Parts: parts, Columns: cols, Conditions: conds})
+}
+
+// noticeText is a notice's message made of sentences, and its parts: the
+// sentences when there is more than one (Notice.Parts).
+func noticeText(sentences []string) (string, []string) {
+	if len(sentences) < 2 {
+		return strings.Join(sentences, " "), nil
+	}
+	return strings.Join(sentences, " "), sentences
 }
 
 // conditionSentence tells, for a notice, what a condition or sort key (by
@@ -176,7 +186,47 @@ func (c *compiler) conditionSentence(at string) string {
 		}
 		return subject + " reads a looked-up total that mixes currencies, so it sorts as blank there."
 	}
+	if owner := c.lookupWhereOwner(at); owner != "" {
+		return "The where of a lookup in " + owner + " reads a looked-up total that mixes currencies, so that total counts as unknown there."
+	}
 	return c.conditionWords(at) + " reads a looked-up total that mixes currencies, so that total counts as unknown there."
+}
+
+// lookupWhereOwner names the part of the spec a lookup's where (by its spec
+// path, which ends in .where) is in, "" for any other path.
+func (c *compiler) lookupWhereOwner(at string) string {
+	parts := strings.Split(at, ".")
+	if len(parts) < 2 || parts[len(parts)-1] != "where" {
+		return ""
+	}
+	i := -1
+	if n, err := strconv.Atoi(parts[1]); err == nil {
+		i = n
+	}
+	switch {
+	case parts[0] == "filter":
+		return "the filter"
+	case parts[0] == "detail":
+		return "the detail label"
+	case parts[0] == "columns" && i >= 0 && i < len(c.p.spec.Columns):
+		if cp := c.p.byID[c.p.spec.Columns[i].ID]; cp != nil {
+			return fmt.Sprintf("the %q column", columnName(cp))
+		}
+	case parts[0] == "sort" && i >= 0:
+		return fmt.Sprintf("sort key %d", i+1)
+	case parts[0] == "layout" && i >= 0 && i < len(c.p.spec.Layout):
+		return fmt.Sprintf("the computed row %q", c.p.spec.Layout[i].Row)
+	case parts[0] == "groups" && i >= 0 && i < len(c.p.groups) && len(parts) > 2:
+		// groups.<i>.fill.where is the fill's own where (conditionWords).
+		if parts[2] == "fill" && len(parts) == 4 {
+			return ""
+		}
+		whats := map[string]string{"having": "the having", "label": "the label", "fill": "the fill", "opening": "the opening row"}
+		if what, ok := whats[parts[2]]; ok {
+			return fmt.Sprintf("%s of the %q group", what, columnName(c.p.groups[i].col))
+		}
+	}
+	return ""
 }
 
 func columnName(cp *colPlan) string {
@@ -300,11 +350,11 @@ func (rn *runner) push(row Row, raw map[string]any) {
 	rn.res.Rows = append(rn.res.Rows, row)
 	var cols []string
 	for idx, cp := range rn.c.p.cols {
-		helpers := mixedHelpers(idx)
+		helper := fmt.Sprintf("vmx%d", idx)
 		if row.Kind == KindOpening {
-			helpers = []string{fmt.Sprintf("opmx%d", idx)}
+			helper = fmt.Sprintf("opmx%d", idx)
 		}
-		if slices.ContainsFunc(helpers, func(name string) bool { return raw[name] != nil }) {
+		if raw[helper] != nil {
 			cols = append(cols, cp.col.ID)
 		}
 	}
@@ -552,8 +602,12 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 		// A currency the value carries (a record's or a looked-up row's own)
 		// is its row's; else the column's currency key holds it. A column with
 		// a fixed currency that some row carries its own on names a currency
-		// cell, so every other row shows the fixed code there.
-		rn.currencyCell(out, cp, row, row[fmt.Sprintf("vcur%d", idx)])
+		// cell, so every other row shows the fixed code there. A cell that is
+		// not an amount on this row (a count) or is blank for currencies
+		// (vmx<idx>) names none.
+		if rn.typeOf(cp, grouped) == Money && row[fmt.Sprintf("vmx%d", idx)] == nil {
+			rn.currencyCell(out, cp, row, row[fmt.Sprintf("vcur%d", idx)])
+		}
 		rn.labelCell(out, cp, row)
 	}
 	if pv := rn.c.p.pivot; pv != nil {
@@ -583,8 +637,9 @@ func (rn *runner) currencyCell(out map[string]any, cp *colPlan, row map[string]a
 
 // openingCells are an opening row's cells: each column its level's opening
 // names, from the group row's op<idx>, typed as the column's detail cells,
-// with a money cell's currency as a group row's (currencyCell). A column it
-// names no cell for has none, so it is blank.
+// with a money cell's currency as a group row's (currencyCell), none on a
+// cell blank for currencies (opmx<idx>). A column it names no cell for has
+// none, so it is blank.
 func (rn *runner) openingCells(row map[string]any, opening *Opening) map[string]any {
 	out := map[string]any{}
 	for idx, cp := range rn.c.p.cols {
@@ -592,7 +647,9 @@ func (rn *runner) openingCells(row map[string]any, opening *Opening) map[string]
 			continue
 		}
 		out[cp.col.ID] = rn.cellValue(cp, row[fmt.Sprintf("op%d", idx)], false)
-		rn.currencyCell(out, cp, row, row[fmt.Sprintf("opcur%d", idx)])
+		if row[fmt.Sprintf("opmx%d", idx)] == nil {
+			rn.currencyCell(out, cp, row, row[fmt.Sprintf("opcur%d", idx)])
+		}
 	}
 	return out
 }

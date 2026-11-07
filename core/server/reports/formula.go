@@ -48,6 +48,9 @@ type expr struct {
 	// mixed is SQL that is true where a sum lookup in the value met amounts
 	// in two currencies (R3), "" when none can.
 	mixed string
+	// unguarded is a lookup's value before its mixed check (expr.guarded):
+	// sql is blank where mixed holds, else unguarded. "" for any other value.
+	unguarded string
 	// condMixed is, on a condition, SQL that is true where a sum lookup the
 	// condition reads met amounts in two currencies: the condition is
 	// unknown there rather than blank, and the run names it in its
@@ -59,10 +62,11 @@ type expr struct {
 }
 
 // storedLink is the stored relation column (col) a link path reads its
-// value (sql) through; a copy of the expr whose sql changed no longer reads
-// through it.
+// value (sql) through, in the lookup scope sc; a copy of the expr whose sql
+// changed no longer reads through it.
 type storedLink struct {
 	col, sql string
+	sc       *scope
 }
 
 // currency is where a money value's currency comes from: a currency key of w
@@ -825,11 +829,10 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if n.Op == "ne" {
 			return expr{sql: "(" + args[0].sql + " IS NOT " + args[1].sql + ")", typ: Bool}, nil
 		}
-		sql := "(" + args[0].sql + " IS " + args[1].sql + ")"
-		if bound := linkBound(args); bound != "" {
-			sql = "(" + sql + " AND " + bound + ")"
+		if sql := linkedEq(n, args); sql != "" {
+			return expr{sql: sql, typ: Bool}, nil
 		}
-		return expr{sql: sql, typ: Bool}, nil
+		return expr{sql: "(" + args[0].sql + " IS " + args[1].sql + ")", typ: Bool}, nil
 	case "lt", "lte", "gt", "gte":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err

@@ -108,6 +108,88 @@ function detailLabels(page: Page) {
     return page.getByTestId('report-table').locator('[data-testid^="report-row-d:"]')
 }
 
+/**
+ * Signs in, seeds two teams of six sales each (team A first) and opens the report
+ * on them alone, in pages of 5 detail rows, so 12 sales page across team A's end.
+ * Then scrolls until team B's Total row is drawn: every page is merged then.
+ */
+async function pagedTeams(page: Page, prefix: string) {
+    await loginAsShippedOwner(page)
+    const stem = uniqueName(prefix)
+    const teams = [`${stem} A`, `${stem} B`]
+    await openReportStub(page)
+    for (const [i, team] of teams.entries()) {
+        await addTeam(page, team)
+        await addSales(page, {
+            team,
+            customerPrefix: `${stem}${'AB'[i]}`,
+            count: 6,
+            firstDay: `${YEAR}-02-01`,
+            firstAmount: 100 * (i + 1),
+            cost: 0,
+            quantity: 1,
+        })
+    }
+    const cursors: string[] = []
+    await page.route('**/api/reports/run', async route => {
+        const body = route.request().postDataJSON()
+        if (body.options?.cursor) cursors.push(body.options.cursor)
+        // The client's usual page size (RUN_PAGE_SIZE, 200) becomes 5. A fold run
+        // asks for max(200, the detail rows in view), which is 200 here, so it also
+        // gets pages of 5 and joins them until it holds the rows that were in view.
+        const limit = body.options?.limit === 200 ? 5 : body.options?.limit
+        await route.continue({
+            postData: JSON.stringify({ ...body, options: { ...body.options, limit } }),
+        })
+    })
+    // Tall enough that the list draws every row of both teams at once, so one
+    // snapshot holds the whole merged list (the list draws only rows near the view).
+    await page.setViewportSize({ width: 1280, height: 1600 })
+    await openTeamBalance(page)
+    // The first run has no Teams filter, so it shows these sales too: no row
+    // tells the two runs apart. The new run's params change the list's key, so
+    // the list mounts again; once the first run's scroller has left the page,
+    // every row on it is the new run's.
+    await expect(detailLabels(page).first()).toBeVisible()
+    const firstRunScroller = await listScroller(detailLabels(page).first())
+    await showTeams(page, stem, teams)
+    await expect.poll(() => firstRunScroller.evaluate(el => el.isConnected)).toBe(false)
+    const firstSale = rowOf(page, `${stem}A 00`)
+    await expect(firstSale).toBeVisible()
+    const scroller = await listScroller(firstSale)
+    await expect
+        .poll(async () => {
+            await scroller.evaluate(el => {
+                el.scrollTop = el.scrollHeight
+            })
+            return rowOf(page, `Total ${teams[1]}`).count()
+        })
+        .toBe(1)
+    return { stem, teams, cursors }
+}
+
+/**
+ * Records, at every change of the page from now on, each of these row ids that is
+ * missing from the list, so a list that drops rows and loads them again is caught,
+ * not only its end state. Read the record with recordedDrops.
+ */
+function recordDrops(page: Page, ids: readonly string[]) {
+    return page.evaluate(watched => {
+        const w = window as unknown as { __foldDrops: string[] }
+        w.__foldDrops = []
+        const has = (id: string) =>
+            document.querySelector(`[data-testid="report-row-${CSS.escape(id)}"]`) !== null
+        new MutationObserver(() => {
+            for (const id of watched) {
+                if (!has(id) && !w.__foldDrops.includes(id)) w.__foldDrops.push(id)
+            }
+        }).observe(document.body, { childList: true, subtree: true })
+    }, ids)
+}
+
+const recordedDrops = (page: Page) =>
+    page.evaluate(() => (window as unknown as { __foldDrops: string[] }).__foldDrops)
+
 const sortParam = (page: Page) => new URL(page.url()).searchParams.get('s')
 
 async function pickIn(page: Page, trigger: string, key: string) {
@@ -144,56 +226,7 @@ test.describe('general-ledger: report engine v3', () => {
     test('a grouped report scrolled past its first page keeps its running balance', async ({
         page,
     }) => {
-        await loginAsShippedOwner(page)
-        const stem = uniqueName('BalPage')
-        const teams = [`${stem} A`, `${stem} B`]
-        await openReportStub(page)
-        for (const [i, team] of teams.entries()) {
-            await addTeam(page, team)
-            await addSales(page, {
-                team,
-                customerPrefix: `${stem}${'AB'[i]}`,
-                count: 6,
-                firstDay: `${YEAR}-02-01`,
-                firstAmount: 100 * (i + 1),
-                cost: 0,
-                quantity: 1,
-            })
-        }
-        // Pages of 5 detail rows: 12 sales page across the first team's end.
-        const cursors: string[] = []
-        await page.route('**/api/reports/run', async route => {
-            const body = route.request().postDataJSON()
-            if (body.options?.cursor) cursors.push(body.options.cursor)
-            await route.continue({
-                postData: JSON.stringify({ ...body, options: { ...body.options, limit: 5 } }),
-            })
-        })
-        // Tall enough that the list draws every row of both teams at once, so one
-        // snapshot holds the whole merged list (the list draws only rows near the view).
-        await page.setViewportSize({ width: 1280, height: 1600 })
-        await openTeamBalance(page)
-        // The first run has no Teams filter, so it shows these sales too: no row
-        // tells the two runs apart. The new run's params change the list's key, so
-        // the list mounts again; once the first run's scroller has left the page,
-        // every row on it is the new run's.
-        await expect(detailLabels(page).first()).toBeVisible()
-        const firstRunScroller = await listScroller(detailLabels(page).first())
-        await showTeams(page, stem, teams)
-        await expect.poll(() => firstRunScroller.evaluate(el => el.isConnected)).toBe(false)
-        const firstSale = rowOf(page, `${stem}A 00`)
-        await expect(firstSale).toBeVisible()
-        const scroller = await listScroller(firstSale)
-        const lastSection = `Total ${teams[1]}`
-        // Scroll until the last team's Total row is drawn: every page is merged then.
-        await expect
-            .poll(async () => {
-                await scroller.evaluate(el => {
-                    el.scrollTop = el.scrollHeight
-                })
-                return rowOf(page, lastSection).count()
-            })
-            .toBe(1)
+        const { stem, cursors } = await pagedTeams(page, 'BalPage')
         expect(cursors.length).toBeGreaterThan(0)
         // Each team's sixth sale: the running sum of six amounts, whichever page it is on.
         await expect(await cellOf(page, 'balance', `${stem}A 05`)).toHaveText('6.15')
@@ -213,6 +246,73 @@ test.describe('general-ledger: report engine v3', () => {
         expect(occurrences(ids, 'total')).toBe(1)
         // A report over amounts with a currency keys its Total by currency (total:["USD"]).
         expect(ids[ids.length - 1]).toMatch(/^total/)
+    })
+
+    // F11: a fold keeps the reader's place. Folding a section that came on a later
+    // page must not drop the list back to the first page: the folded section's row
+    // stays in view, and the rows above it stay in the list, at every moment from the
+    // press to the folded run (a list that drops rows and loads them again is caught
+    // by the recorder, not only by the end state).
+    test('folding a section that came on a later page keeps the reader at that section', async ({
+        page,
+    }) => {
+        const { stem, teams } = await pagedTeams(page, 'BalFold')
+        const ids = await rowIds(page)
+        const groupB = ids.filter(id => id.startsWith('g:'))[1] ?? ''
+        const teamARows = ids.slice(0, ids.indexOf(groupB)).filter(id => id.startsWith('d:'))
+        expect(teamARows).toHaveLength(6)
+        const groupRow = page.getByTestId(`report-row-${groupB}`)
+        await expect(groupRow).toHaveText(new RegExp(teams[1]))
+        await expect(groupRow).toHaveAttribute('aria-expanded', 'true')
+
+        // Record, at every change of the page, whether team B's group row or any of
+        // team A's rows is missing from the list.
+        await recordDrops(page, [groupB, ...teamARows])
+        await groupRow.click()
+
+        // The folded run has landed once team B's rows are gone under its folded row.
+        await expect(groupRow).toHaveAttribute('aria-expanded', 'false')
+        await expect(rowOf(page, `${stem}B 00`)).toHaveCount(0)
+        await expect(groupRow).toBeInViewport()
+        const after = await rowIds(page)
+        expect(after).toEqual(expect.arrayContaining([...teamARows, groupB]))
+        expect(
+            await recordedDrops(page),
+            'rows the list dropped between the fold and its run'
+        ).toEqual([])
+    })
+
+    // F11: Expand all keeps the reader's place too. With every group closed the list
+    // holds no detail rows, so the reader's place is a group row. Expand all must
+    // not drop the list back to its first page (team A's first 5 rows), which does
+    // not reach team B's group row: that row stays in the list and in view at every
+    // moment from the press to the opened run.
+    test('Expand all from closed groups keeps the reader at the group in view', async ({
+        page,
+    }) => {
+        const { stem, teams } = await pagedTeams(page, 'BalExpand')
+        await pressToolbar(page, 'report-fold-all', 'Collapse all')
+        await expect(page.getByTestId('report-fold-all')).toHaveText('Expand all')
+        await expect(rowOf(page, `${stem}A 00`)).toHaveCount(0)
+        const groupB = (await rowIds(page)).filter(id => id.startsWith('g:'))[1] ?? ''
+        const groupRow = page.getByTestId(`report-row-${groupB}`)
+        await expect(groupRow).toHaveText(new RegExp(teams[1]))
+        await expect(groupRow).toHaveAttribute('aria-expanded', 'false')
+        await groupRow.scrollIntoViewIfNeeded()
+        await expect(groupRow).toBeInViewport()
+
+        await recordDrops(page, [groupB])
+        await pressToolbar(page, 'report-fold-all', 'Expand all')
+
+        // The opened run has landed once team A's first sale is drawn under its group.
+        await expect(page.getByTestId('report-fold-all')).toHaveText('Collapse all')
+        await expect(rowOf(page, `${stem}A 00`)).toBeVisible()
+        await expect(groupRow).toHaveAttribute('aria-expanded', 'true')
+        await expect(groupRow).toBeInViewport()
+        expect(
+            await recordedDrops(page),
+            'rows the list dropped between Expand all and its run'
+        ).toEqual([])
     })
 
     test('a heading sorts the rows inside their groups, and a copied link keeps it', async ({
@@ -353,16 +453,18 @@ test.describe('general-ledger: report engine v3', () => {
         for (const col of ['team', 'day', 'status', 'amount', 'cost', 'quantity', 'sameDay']) {
             await expect(page.getByTestId(`report-cell-${col}-${id}`)).toHaveCount(0)
         }
-        const gap = async () => {
-            const label = await opening.boundingBox()
-            const figures = await balance.boundingBox()
-            return label && figures ? figures.y - (label.y + label.height) : null
-        }
-        await expect.poll(gap).toBeGreaterThanOrEqual(-1)
-        expect(await gap()).toBeLessThanOrEqual(8)
+        // One snapshot holds both bounds of the gap and the page's width, so a
+        // re-layout between two reads cannot pass one bound and miss the other.
         await expect
-            .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
-            .toBeLessThanOrEqual(PHONE.width)
+            .poll(async () => {
+                const label = await opening.boundingBox()
+                const figures = await balance.boundingBox()
+                const width = await page.evaluate(() => document.documentElement.scrollWidth)
+                if (!label || !figures) return null
+                const gap = figures.y - (label.y + label.height)
+                return { gapFits: gap >= -1 && gap <= 8, fitsPhone: width <= PHONE.width }
+            })
+            .toEqual({ gapFits: true, fitsPhone: true })
 
         await page.getByTestId('report-sort-amount').click()
         await expect.poll(() => sortParam(page)).toBe('amount:asc')

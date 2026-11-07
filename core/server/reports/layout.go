@@ -59,7 +59,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 			lc.items[item.Section] = item
 			continue
 		}
-		lc.used = nil
+		lc.used, lc.wheres = nil, nil
 		// A formula that reads an earlier row is compiled with that row
 		// inside it, so its size grows with every reference, and it is
 		// compiled once for every cell.
@@ -98,7 +98,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		}
 		var pivotMixed []string
 		for j := range pivot {
-			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1
+			lc.cell, lc.typ, lc.column, lc.idx, lc.pivotIdx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1, j
 			e, err := lc.row(item, at+".formula")
 			if err != nil {
 				return nil, nil, err
@@ -122,7 +122,11 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		if len(lc.used) > maxJoinedChunks {
 			return nil, nil, invalid(at, "a computed row reads too many sections")
 		}
-		legs = append(legs, unionLeg{cells: cells, from: cur + lc.joins()})
+		from := cur + lc.joins()
+		for _, w := range lc.wheres {
+			c.probe(w.at, "SELECT 1 FROM "+from+" WHERE "+w.sql)
+		}
+		legs = append(legs, unionLeg{cells: cells, from: from})
 		lc.items[item.Row] = item
 	}
 	return lc.chunkCTEs(), legs, nil
@@ -164,9 +168,11 @@ type layoutCtx struct {
 	// money rules apply to a computed row.
 	typ FieldType
 	// col is that column (the pivot's cell column for a pivot cell), and idx
-	// its index, -1 for a pivot cell.
-	column *colPlan
-	idx    int
+	// its index, -1 for a pivot cell; pivotIdx is a pivot cell's index j
+	// (its cell pv<j>).
+	column   *colPlan
+	idx      int
+	pivotIdx int
 	// The sections a computed row reads are grouped in chunks, one CTE each
 	// (see chunkCTEs), so a SELECT stays under SQLite's column limit. chunkOf
 	// and keys are by section id; used lists the chunks the computed row
@@ -177,6 +183,16 @@ type layoutCtx struct {
 	used      []int
 	perChunk  int
 	cellNames []string
+	// wheres are the lookups' wheres the computed row being compiled reads
+	// that may be unknown (probeWhere), probed over its select's rows.
+	wheres []condProbe
+}
+
+// probeWhere takes a lookup's where on the computed row being compiled,
+// probed once the sections its select joins are known (layoutLegs).
+func (lc *layoutCtx) probeWhere(at, sql string) bool {
+	lc.wheres = append(lc.wheres, condProbe{at: at, sql: sql})
+	return true
 }
 
 // sectionSlot is where a section's cells are read: its chunk's CTE, and n,
@@ -282,7 +298,7 @@ func (lc *layoutCtx) mixedHelper() string {
 		if !lc.c.pivotMixed {
 			return ""
 		}
-		return "pvm" + strings.TrimPrefix(lc.cell, "pv")
+		return fmt.Sprintf("pvm%d", lc.pivotIdx)
 	}
 	if !lc.c.sectionMixed[lc.column.col.ID] {
 		return ""

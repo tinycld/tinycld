@@ -119,7 +119,7 @@ func checkGroupLabel(of *OptionsFrom, at string) *SpecError {
 		return invalid(at, "a group pick's text needs optionsFrom.group")
 	case !strings.Contains(of.GroupLabel, GroupLabelToken):
 		return invalid(at, "a group pick's text names the group with "+GroupLabelToken)
-	case len(of.GroupLabel) > maxLabel:
+	case characters(of.GroupLabel) > maxLabel:
 		return invalid(at, fmt.Sprintf("a group pick's text has at most %d characters", maxLabel))
 	}
 	return nil

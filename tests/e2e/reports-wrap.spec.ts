@@ -153,21 +153,28 @@ test.describe('report rows per width', () => {
             await seed(p, 24)
             await wideReport(p, uniqueName('Wrap'), true)
             await p.setViewportSize({ width: 390, height: 844 })
+            // Every layout read in one snapshot: the wrap, the alignment under the
+            // headings and the page's width settle together.
             await expect
                 .poll(async () => {
                     const b = await boxes(p, 'Wrapco 00')
-                    return b.label && b.amount
-                        ? b.amount.y >= b.label.y + b.label.height - 1
-                        : false
+                    const width = await p.evaluate(() => document.documentElement.scrollWidth)
+                    if (!b.label || !b.amount || !b.cost) return null
+                    return {
+                        wrapped: b.amount.y >= b.label.y + b.label.height - 1,
+                        amountUnderHeading: Math.abs((b.headAmount?.x ?? 0) - b.amount.x) <= 1,
+                        costUnderHeading: Math.abs((b.headCost?.x ?? 0) - b.cost.x) <= 1,
+                        headingsWrapped: (b.headAmount?.y ?? 0) > (b.headLabel?.y ?? 0),
+                        fitsPhone: width <= 390,
+                    }
                 })
-                .toBe(true)
-            const b = await boxes(p, 'Wrapco 00')
-            expect(Math.abs((b.headAmount?.x ?? 0) - (b.amount?.x ?? -9))).toBeLessThanOrEqual(1)
-            expect(Math.abs((b.headCost?.x ?? 0) - (b.cost?.x ?? -9))).toBeLessThanOrEqual(1)
-            expect((b.headAmount?.y ?? 0) > (b.headLabel?.y ?? 0)).toBe(true)
-            expect(
-                await p.evaluate(() => document.documentElement.scrollWidth)
-            ).toBeLessThanOrEqual(390)
+                .toEqual({
+                    wrapped: true,
+                    amountUnderHeading: true,
+                    costUnderHeading: true,
+                    headingsWrapped: true,
+                    fitsPhone: true,
+                })
 
             // Scroll the open group's rows: its own row goes up under the heading row,
             // and its stuck copy stays just under the heading row.
@@ -455,19 +462,22 @@ test.describe('report rows per width', () => {
                         lines: tops.size,
                     }
                 })
-            await expect.poll(async () => (await headings()).outside).toBe(0)
-            expect(await headings()).toMatchObject({ count: 9, lines: 1 })
-            // Nothing moves sideways.
+            await expect.poll(headings).toEqual({ count: 9, outside: 0, lines: 1 })
+            // Nothing moves sideways: the amount heading's place and every scrollLeft,
+            // read together in one poll after the wheel. The place before the wheel is
+            // read once the headings have settled (the poll above).
             const x = async (testId: string) => (await p.getByTestId(testId).boundingBox())?.x ?? 0
             const before = await x('report-heading-amount')
             await table.hover()
             await p.mouse.wheel(300, 0)
-            expect(
-                await table.evaluate(element =>
-                    [element, ...element.querySelectorAll('*')].every(el => el.scrollLeft === 0)
-                )
-            ).toBe(true)
-            expect(Math.abs((await x('report-heading-amount')) - before)).toBeLessThanOrEqual(1)
+            await expect
+                .poll(async () => ({
+                    scrolledSideways: await table.evaluate(element =>
+                        [element, ...element.querySelectorAll('*')].some(el => el.scrollLeft !== 0)
+                    ),
+                    headingMoved: Math.abs((await x('report-heading-amount')) - before) > 1,
+                }))
+                .toEqual({ scrolledSideways: false, headingMoved: false })
             // The label is cut short with "…"; the amount keeps its width.
             const text = label.getByText('Wrapco 00', { exact: true })
             expect(await text.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)

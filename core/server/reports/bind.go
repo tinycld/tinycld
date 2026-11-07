@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/core"
@@ -25,6 +26,10 @@ const (
 )
 
 var buckets = []string{"day", "month", "quarter", "year", "fiscalYear"}
+
+// characters counts text as a reader does, one per character (code point),
+// not per byte, as the client's spec schema counts it (lib/spec.ts).
+func characters(s string) int { return utf8.RuneCountInString(s) }
 
 // plan is a spec bound to the registry: every path resolved to its links
 // and field, every column reference to its column.
@@ -288,7 +293,7 @@ func (b *binder) columns(p *plan) {
 		default:
 			p.byID[c.ID] = cp
 		}
-		if len(c.Label) > maxLabel || len(c.Format) > maxFormat {
+		if characters(c.Label) > maxLabel || characters(c.Format) > maxFormat {
 			b.bad(at, fmt.Sprintf("a label has at most %d characters and a format %d", maxLabel, maxFormat))
 		}
 		if c.Total != "" && c.Total != TotalRecompute && c.Total != TotalRows {
@@ -734,6 +739,7 @@ func (b *binder) groupsAndPivot(p *plan) {
 		b.bad("groups", fmt.Sprintf("a report has at most %d group levels", maxGroups))
 	}
 	seen := map[string]bool{}
+	groupedRollup := map[*colPlan]bool{}
 	for i := range spec.Groups {
 		g := &spec.Groups[i]
 		at := fmt.Sprintf("groups.%d", i)
@@ -756,7 +762,9 @@ func (b *binder) groupsAndPivot(p *plan) {
 				b.bad(at+".bucket", "only a date column has a bucket")
 			}
 		}
-		if g.Bucket == "" && cp.col.Rollup != nil {
+		// One refusal per column, however many levels group by it.
+		if g.Bucket == "" && cp.col.Rollup != nil && !groupedRollup[cp] {
+			groupedRollup[cp] = true
 			b.bad(cp.at+".rollup", "a column a group is grouped by cannot have a rollup")
 		}
 		p.groups = append(p.groups, &groupPlan{group: g, col: cp, at: at})
@@ -813,7 +821,7 @@ func (b *binder) groupsAndPivot(p *plan) {
 // label fills, and not in a child row column. A cell's type and currency are
 // checked where it compiles, on its level (level.openingCells).
 func (b *binder) opening(p *plan, op *Opening, at string) {
-	if n := len(op.Label); n < 1 || n > maxLabel {
+	if n := characters(op.Label); n < 1 || n > maxLabel {
 		b.bad(at+".label", fmt.Sprintf("an opening row has a label of 1 to %d characters", maxLabel))
 	}
 	for _, id := range op.cellIDs() {
@@ -876,7 +884,7 @@ func (b *binder) layout(p *plan) {
 			b.bad(at, "a section has a title and the key of a first-level group")
 		case !isSection && (item.Formula == nil || item.Key != nil || item.Title != ""):
 			b.bad(at, "a computed row has a label and a formula")
-		case len(item.Title) > maxLabel || len(item.Label) > maxLabel:
+		case characters(item.Title) > maxLabel || characters(item.Label) > maxLabel:
 			b.bad(at, fmt.Sprintf("a title or label has at most %d characters", maxLabel))
 		}
 		if isSection && item.Key != nil {

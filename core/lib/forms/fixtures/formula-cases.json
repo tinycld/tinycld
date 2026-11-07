@@ -752,6 +752,60 @@
             "expect": true
         },
         {
+            "name": "param bound to reads the range's end",
+            "types": { "a": "date" },
+            "values": { "a": "2026-03-01" },
+            "paramDefs": [{ "id": "period", "type": "dateRange" }],
+            "paramValues": { "period": { "from": "2026-02-01", "to": "2026-02-28" } },
+            "formula": {
+                "op": "gt",
+                "args": [{ "col": "a" }, { "param": "period", "bound": "to" }]
+            },
+            "expect": true
+        },
+        {
+            "name": "param bound to is the range's last day",
+            "types": {},
+            "values": {},
+            "paramDefs": [{ "id": "period", "type": "dateRange" }],
+            "paramValues": { "period": { "from": "2026-02-01", "to": "2026-02-28" } },
+            "formula": { "param": "period", "bound": "to" },
+            "formsSkip": "the forms engine has no params",
+            "expect": "2026-02-28"
+        },
+        {
+            "name": "param bound of an unset range has no value",
+            "types": {},
+            "values": {},
+            "paramDefs": [{ "id": "period", "type": "dateRange" }],
+            "paramValues": { "period": null },
+            "formula": { "param": "period", "bound": "from" },
+            "formsSkip": "the forms engine has no params",
+            "expect": null
+        },
+        {
+            "name": "param bound of All dates has no value",
+            "types": {},
+            "values": {},
+            "paramDefs": [{ "id": "period", "type": "dateRange" }],
+            "paramValues": { "period": { "preset": "allDates" } },
+            "formula": { "param": "period", "bound": "to" },
+            "formsSkip": "the forms engine has no params",
+            "expect": null
+        },
+        {
+            "name": "a comparison with an open range's bound has no value",
+            "types": { "a": "date" },
+            "values": { "a": "2026-01-31" },
+            "paramDefs": [{ "id": "period", "type": "dateRange" }],
+            "paramValues": { "period": null },
+            "formula": {
+                "op": "lt",
+                "args": [{ "col": "a" }, { "param": "period", "bound": "from" }]
+            },
+            "expect": null
+        },
+        {
             "name": "a record field reads the group's record",
             "types": {},
             "values": {},

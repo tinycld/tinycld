@@ -309,8 +309,12 @@ export function isFigureColumn(column: ResultColumn): boolean {
     return FIGURE_TYPES.has(column.type)
 }
 
-/** How deep a report's rows go: its group levels and its levels of nested child rows. */
-export type RowLevels = { groups: number; nests: number }
+/**
+ * How deep a report's rows go: its group levels and its levels of nested child
+ * rows. `pivot`: the last group level holds the pivot's cells, so its groups never
+ * open (assemble.go canOpen) and no row comes under them.
+ */
+export type RowLevels = { groups: number; nests: number; pivot?: boolean }
 /** A report with no groups and no child rows. */
 export const FLAT_LEVELS: RowLevels = { groups: 0, nests: 0 }
 
@@ -323,27 +327,42 @@ export function rowLevelsOf(
     spec: {
         groups?: readonly unknown[] | null
         columns: readonly Pick<SpecColumn, 'path'>[]
+        pivot?: unknown
     } | null
 ): RowLevels {
     if (!spec) return FLAT_LEVELS
     const nestsOf = (column: Pick<SpecColumn, 'path'>) =>
         (column.path ?? []).filter(hop => hop.mode === 'nest').length
-    return {
+    const levels = {
         groups: spec.groups?.length ?? 0,
         nests: Math.max(0, ...spec.columns.map(nestsOf)),
     }
+    return spec.pivot ? { ...levels, pivot: true } : levels
+}
+
+// The left edge of a group row's label at a level (1 is the outermost): INDENT per
+// level above it, then its caret when the group can open (ReportRow labelStyle).
+const groupLabelStart = (level: number, canOpen: boolean) =>
+    (level - 1) * INDENT + (canOpen ? CARET_ROOM : 0)
+
+// The deepest label's left edge. A detail row sits at the group levels, a child
+// row one more per level. In a pivot report the last level's groups never open:
+// they draw no caret and hold no detail or child row.
+function deepestLabelStart({ groups, nests, pivot }: RowLevels): number {
+    if (groups === 0) return nests * INDENT
+    if (pivot) {
+        const pivotRows = groupLabelStart(groups, false)
+        return groups > 1 ? Math.max(pivotRows, groupLabelStart(groups - 1, true)) : pivotRows
+    }
+    return Math.max((groups + nests) * INDENT, groupLabelStart(groups, true))
 }
 
 /**
  * The label column's floor on one line: TEXT_FLOOR for the text of its most
- * indented label. A row is indented INDENT per depth (a group row at its level
- * less one, a detail row at the group levels, a child row one more per level),
- * and a group row's label also starts after its caret (ReportRow labelStyle).
+ * indented label (deepestLabelStart).
  */
-export function labelFloor({ groups, nests }: RowLevels): number {
-    const deepestDetail = (groups + nests) * INDENT
-    const deepestGroup = groups > 0 ? (groups - 1) * INDENT + CARET_ROOM : 0
-    return TEXT_FLOOR + Math.max(deepestDetail, deepestGroup)
+export function labelFloor(levels: RowLevels): number {
+    return TEXT_FLOOR + deepestLabelStart(levels)
 }
 
 /**

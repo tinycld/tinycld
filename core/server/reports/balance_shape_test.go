@@ -661,21 +661,26 @@ func perRowSteps(plan []string, tables ...string) []planStep {
 	return out
 }
 
-// perGroup is true when the step runs inside a named table SQLite computes
-// once for the statement other than the report's rows (w, or ws, the rows
-// of the shown groups): a group-level CTE (a<L>, s<L>, f<L>) or the table
-// of a value computed once per group key (wg<n>). A correlated subquery
-// there runs once per group, not once per detail row. An unnamed one
-// (subquery-<n>) may be a select of the detail rows, so it is not.
+// perGroup is true when the step runs inside a table SQLite computes once
+// for the statement that the engine names as one row per group: a
+// group-level CTE (a<L>, g<L>, g<L>_<i>, rs<L>, rt<L>, s<L>, f<L>) or the
+// table of a value computed once per group key (wg<n>). A correlated
+// subquery there runs once per group, not once per detail row. Any other
+// table (w, ws, a rule CTE, an unnamed subquery-<n>) may hold the detail
+// rows, so it is not.
 func (s planStep) perGroup() bool {
 	for _, p := range s.parents {
 		name, ok := strings.CutPrefix(p, "MATERIALIZE ")
-		if ok && name != "w" && name != "ws" && !strings.HasPrefix(name, "(") {
+		if ok && perGroupTable.MatchString(name) {
 			return true
 		}
 	}
 	return false
 }
+
+// perGroupTable is the name of a table the engine computes one row per
+// group in.
+var perGroupTable = regexp.MustCompile(`^(?:a\d+|g\d+(?:_\d+)?|rs\d+|rt\d+|s\d+|f\d+|wg\d+)$`)
 
 // underCorrelated is true when the nearest subquery among a step's parents
 // is a correlated one.

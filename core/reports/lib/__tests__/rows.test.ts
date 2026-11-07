@@ -64,6 +64,41 @@ describe('visibleRows', () => {
         expect(shown[4].isToggle).toBe(false)
     })
 
+    // A paged run: page 1 holds an open group and its first details; its subtotal
+    // row comes on page 2. The spec says the level has subtotals, so the group row
+    // shows no figures on page 1 either, and nothing changes when page 2 lands.
+    it('blanks an open group of a level with subtotals before its subtotal page arrives', () => {
+        const spec = { groups: [{ subtotals: true }] }
+        const pageOne = [group('g:a', ['a'], { expanded: true }), detail('d:1', 'g:a')]
+        expect(visibleRows(pageOne, spec)[0].cells).toEqual({})
+        const merged = [...pageOne, subtotal('s:a', 'g:a'), total]
+        expect(visibleRows(merged, spec)[0].cells).toEqual({})
+        // Without the spec, page 1 alone cannot know the subtotal comes.
+        expect(visibleRows(pageOne)[0].cells).toEqual({ cost: 100 })
+    })
+
+    it('keeps the figures of a group that no subtotal row ends', () => {
+        const closed = group('g:a', ['a'])
+        const open = group('g:b', ['b'], { expanded: true })
+        // A closed group of a level with subtotals, and an open one of a level without.
+        expect(visibleRows([closed], { groups: [{ subtotals: true }] })[0].cells).toEqual({
+            cost: 100,
+        })
+        expect(visibleRows([open], { groups: [{}] })[0].cells).toEqual({ cost: 100 })
+        // An inner level without subtotals under an outer level with them.
+        const inner = group('g:b|x', ['b', 'x'], { expanded: true })
+        const spec = { groups: [{ subtotals: true }, {}] }
+        expect(visibleRows([open, inner], spec).map(r => r.cells)).toEqual([{}, { cost: 100 }])
+    })
+
+    it('blanks a layout section and a closed group of a subtotalled level in a layout report', () => {
+        const spec = { groups: [{}, { subtotals: true }], layout: [{ section: 'Income' }] }
+        const section = group('g:income', ['income'])
+        const inner = group('g:income|x', ['income', 'x'])
+        const shown = visibleRows([section, inner], spec)
+        expect(shown.map(r => r.cells)).toEqual([{}, {}])
+    })
+
     it('does not offer a toggle on a group that cannot open', () => {
         const shown = visibleRows([group('g:a', ['a'], { canExpand: false })])
         expect(shown[0].isToggle).toBe(false)
@@ -258,23 +293,24 @@ describe('mergePages', () => {
         ])
     })
 
-    it('joins the columns, conditions and distinct whole messages one code names on each page', () => {
-        // Each name holds ". ", so a message cut into sentences would lose
-        // part of the second one.
-        const having = (team: string) =>
-            `The having of the "No. ${team}" group reads a looked-up total that mixes currencies, so that total counts as unknown there.`
-        const blank = 'A looked-up total mixes currencies, so it shows no value.'
-        const first: Notice = {
-            code: 'mixedCurrency',
-            message: having('1'),
-            conditions: ['groups.0.having'],
-        }
-        const second: Notice = {
-            code: 'mixedCurrency',
-            message: `${blank} ${having('2')}`,
+    // Each name holds ". ", so a message cut into sentences at ". " would lose
+    // part of a sentence: only the server's parts are sentences.
+    const having = (team: string) =>
+        `The having of the "No. ${team}" group reads a looked-up total that mixes currencies, so that total counts as unknown there.`
+    const blank = 'A looked-up total mixes currencies, so it shows no value.'
+    const mixed = (parts: string[], more: Partial<Notice> = {}): Notice => ({
+        code: 'mixedCurrency',
+        message: parts.join(' '),
+        ...(parts.length > 1 ? { parts } : {}),
+        ...more,
+    })
+
+    it('joins the columns, conditions and distinct sentences one code names on each page', () => {
+        const first = mixed([having('1')], { conditions: ['groups.0.having'] })
+        const second = mixed([blank, having('2')], {
             columns: ['balance'],
             conditions: ['groups.1.having'],
-        }
+        })
         const third: Notice = { ...second, columns: ['opening', 'balance'] }
         const cap = { code: 'rowCap', message: 'The report shows its first 5000 rows.' }
         const merged = mergePages([
@@ -283,13 +319,31 @@ describe('mergePages', () => {
             page(['d:3'], 3, [third]),
         ])
         expect(merged.notices).toEqual([
-            {
-                code: 'mixedCurrency',
-                message: `${having('1')} ${blank} ${having('2')}`,
+            mixed([having('1'), blank, having('2')], {
                 columns: ['balance', 'opening'],
                 conditions: ['groups.0.having', 'groups.1.having'],
-            },
+            }),
             cap,
+        ])
+    })
+
+    it('shows a sentence two pages’ messages share once', () => {
+        // Each page names the blank column and a having of its own: the blank
+        // sentence is in both messages, which differ as a whole.
+        const first = mixed([blank, having('1')], {
+            columns: ['balance'],
+            conditions: ['groups.0.having'],
+        })
+        const second = mixed([blank, having('2')], {
+            columns: ['balance'],
+            conditions: ['groups.1.having'],
+        })
+        const merged = mergePages([page(['d:1'], 1, [first]), page(['d:2'], 2, [second])])
+        expect(merged.notices).toEqual([
+            mixed([blank, having('1'), having('2')], {
+                columns: ['balance'],
+                conditions: ['groups.0.having', 'groups.1.having'],
+            }),
         ])
     })
 

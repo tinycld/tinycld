@@ -145,7 +145,8 @@ export interface ReportViewInput {
     onSaveAs?(): void
     /**
      * The spec whose rows the view draws (the saved report's, or the draft): its line
-     * layouts per width (E14) and how deep its rows go.
+     * layouts per width (E14), how deep its rows go, and which group rows end in a
+     * subtotal row.
      */
     spec?: ReportSpec | null
 }
@@ -250,8 +251,10 @@ export function useReportView(input: ReportViewInput) {
     useFocusEffect(useCallback(() => () => closeOnBlur(), []))
 
     // Kept while the run's rows and the open groups stay, so the table redraws
-    // its rows only when they change.
-    const shownRows = useMemo(() => visibleRows(rows), [rows])
+    // its rows only when they change. The spec says which group rows end in a
+    // subtotal row, also before a later page brings it.
+    const viewSpec = input.spec ?? null
+    const shownRows = useMemo(() => visibleRows(rows, viewSpec), [rows, viewSpec])
     const onToggleGroup = useCallback(
         (row: ResultRow) => setExpansion(reportKey, toggleGroup(expansion, row, rows)),
         [setExpansion, reportKey, expansion, rows]

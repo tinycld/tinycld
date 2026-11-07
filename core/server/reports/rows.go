@@ -84,9 +84,17 @@ type compiler struct {
 	// condProbes are the conditions of the statement being built that read a
 	// sum lookup which may meet two currencies (condProbe).
 	condProbes []condProbe
+	// probed holds each probe condProbes has (at and sql), so one is added
+	// once.
+	probed map[string]bool
 	// detailSortMixed are the spec sort keys of the detail select that read
-	// such a sum: sql names the select's column that is 1 where one did.
+	// such a sum, and the lookups' wheres on its rows that may (rowsCtx
+	// probeWhere): sql names the select's column that is 1 where one did.
 	detailSortMixed []condProbe
+	// detailWheres are the lookups' wheres the detail select being built
+	// probes on each of its rows (whereProber): sql is true on a row where
+	// one was unknown.
+	detailWheres []condProbe
 }
 
 // labelPlan is what a group's label compiled to. recordCurrency says an
@@ -177,6 +185,41 @@ type rowsCTE struct {
 	// filterMixed is the filter's condMixed: true on a row where a sum
 	// lookup the filter reads met two currencies.
 	filterMixed string
+	// wheres are the lookups' wheres compiled on the report's base rows (in
+	// w or in the filter) that may be unknown on one (whereProber); the
+	// group statement probes them (probeWheres).
+	wheres []rowWhere
+}
+
+// rowWhere is a lookup's where to probe over the report's base rows: sql is
+// true on a row where it was unknown. inFilter is a lookup in the filter,
+// probed over the rows the filter decides on; any other, over the rows it
+// keeps.
+type rowWhere struct {
+	at, sql  string
+	inFilter bool
+}
+
+// probeWheres adds the probes of the lookups' wheres on the base rows.
+func (r *rowsCTE) probeWheres() {
+	for _, w := range r.wheres {
+		cond := w.sql
+		if !w.inFilter && r.filter != "" {
+			cond = "(" + r.filter + ") AND " + cond
+		}
+		r.c.probe(w.at, "SELECT 1 "+r.root.render()+"\nWHERE "+cond)
+	}
+}
+
+// probeWhere takes a lookup's where on the report's base row; a joined
+// row's (a fill's target, an exists' link) is not one, and its lookup is
+// left to show no value there.
+func (j *joinCtx) probeWhere(at, sql string) bool {
+	if j.sc != j.r.root {
+		return false
+	}
+	j.r.wheres = append(j.r.wheres, rowWhere{at: at, sql: sql, inFilter: j.isFilter})
+	return true
 }
 
 func (c *compiler) rows(s *stmt) (*rowsCTE, error) {

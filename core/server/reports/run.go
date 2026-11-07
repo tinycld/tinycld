@@ -160,8 +160,13 @@ type Row struct {
 }
 
 type Notice struct {
-	Code    string   `json:"code"`
-	Message string   `json:"message"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Parts are the sentences of a message that has more than one, in its
+	// order (one per blank column, condition or sort key it names), so the
+	// pages of a run that share a sentence show it once; nil for a message
+	// of one sentence.
+	Parts   []string `json:"parts,omitempty"`
 	Columns []string `json:"columns,omitempty"`
 	// Conditions names, by spec path, each condition (the filter, a having,
 	// a fill's where) that read a looked-up total which mixes currencies.
@@ -484,23 +489,74 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 	}
 	// A statement without its computed rows is wrong, not just short: the
 	// statement limits the level rows and adds the computed rows after.
-	c.condProbes = nil
+	c.condProbes, c.probed = nil, nil
+	if r.filterMixed != "" {
+		c.probe("filter", "SELECT 1 "+r.root.render()+"\nWHERE "+r.filterMixed)
+	}
+	r.probeWheres()
 	ctes, body, err := c.groupStatement(s, r, rn.expand, pivot, int64(runLimits.rowCap+1))
 	if err != nil {
 		return nil, err
-	}
-	if r.filterMixed != "" {
-		c.probe("filter", "SELECT 1 "+r.root.render()+"\nWHERE "+r.filterMixed)
 	}
 	ctes = append([]string{r.render()}, ctes...)
 	rows, err := rn.query(s, ctes, body)
 	if err != nil {
 		return nil, err
 	}
-	if err := rn.probeConditions(s, ctes, c.condProbes); err != nil {
+	if err := rn.readProbes(s, ctes, rows, c.condProbes); err != nil {
 		return nil, err
 	}
 	return rn.capLevelRows(rows), nil
+}
+
+// probesCTE is the CTE that computes, once, whether each condition probe
+// of the group statement found a row (__probe<i>, condProbe); every leg of
+// the statement reads it, so the probes cost no statement of their own.
+const probesCTE = "__probes"
+
+// probeCTE is the probes' CTE, "" with no probe.
+func (c *compiler) probeCTE() string {
+	if len(c.condProbes) == 0 {
+		return ""
+	}
+	cols := make([]string, len(c.condProbes))
+	for i, p := range c.condProbes {
+		cols[i] = fmt.Sprintf("EXISTS (%s) AS __probe%d", p.sql, i)
+	}
+	return fmt.Sprintf("%s AS MATERIALIZED (SELECT %s)", probesCTE, strings.Join(cols, ", "))
+}
+
+// probeCells are the cells a leg of the group statement reads the probes'
+// results into, one per probe.
+func (c *compiler) probeCells() []string {
+	out := make([]string, len(c.condProbes))
+	for i := range c.condProbes {
+		out[i] = fmt.Sprintf("(SELECT __probe%d FROM %s) AS __probe%d", i, probesCTE, i)
+	}
+	return out
+}
+
+// readProbes names the conditions whose probe found a row, read from the
+// group statement's first row, and takes the probe cells off every row. A
+// statement that returned no row carries no result, so its probes run in a
+// statement of their own.
+func (rn *runner) readProbes(s *stmt, ctes []string, rows []map[string]any, probes []condProbe) error {
+	if len(probes) == 0 {
+		return nil
+	}
+	if len(rows) == 0 {
+		return rn.probeConditions(s, ctes, probes)
+	}
+	for i, p := range probes {
+		name := fmt.Sprintf("__probe%d", i)
+		if toInt(rows[0][name]) != 0 && !slices.Contains(rn.mixedConditions, p.at) {
+			rn.mixedConditions = append(rn.mixedConditions, p.at)
+		}
+		for _, row := range rows {
+			delete(row, name)
+		}
+	}
+	return nil
 }
 
 // condProbe is a condition that reads a sum lookup which may meet two
@@ -512,8 +568,17 @@ type condProbe struct {
 }
 
 // probe adds a condition's probe; one that decides on the rows of several
-// levels (a sort key) is probed over each.
+// levels (a sort key) is probed over each. A probe added again (a lookup's
+// where compiled once for each cell of a computed row) is probed once.
 func (c *compiler) probe(at, sql string) {
+	key := at + "\n" + sql
+	if c.probed[key] {
+		return
+	}
+	if c.probed == nil {
+		c.probed = map[string]bool{}
+	}
+	c.probed[key] = true
 	i := slices.IndexFunc(c.condProbes, func(p condProbe) bool { return p.at == at })
 	if i < 0 {
 		c.condProbes = append(c.condProbes, condProbe{at: at, sql: sql})
@@ -645,7 +710,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		labels := make([]string, 0, len(c.p.cols))
 		carried := make([]string, 0, len(c.p.cols))
 		for idx, cp := range c.p.cols {
-			e, err := lv.cell(cp)
+			e, err := lv.cell(cp, lv.frame)
 			if err != nil {
 				return nil, "", err
 			}
@@ -718,11 +783,19 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		ctes = append(ctes, l.lv.render(withoutCells(l.cells, unread), l.own, l.totals)...)
 	}
 	ctes = append(ctes, layoutCTEs...)
+	// The conditions that may read a mixed sum are probed in this statement
+	// (readProbes), over the CTEs it computes anyway.
+	probes := c.probeCells()
+	if cte := c.probeCTE(); cte != "" {
+		ctes = append(ctes, cte)
+	}
 	// The limit applies to the level rows only: computed rows sort last, so a
 	// limit on the whole statement would drop them first.
-	body := []string{fmt.Sprintf("SELECT * FROM (%s\nORDER BY __level, __ord LIMIT %s)", strings.Join(legs, "\nUNION ALL\n"), limitSQL(limit))}
+	first := strings.Join(append([]string{"*"}, probes...), ", ")
+	body := []string{fmt.Sprintf("SELECT %s FROM (%s\nORDER BY __level, __ord LIMIT %s)", first, strings.Join(legs, "\nUNION ALL\n"), limitSQL(limit))}
 	for _, leg := range computed {
-		body = append(body, "SELECT "+strings.Join(withoutCells(leg.cells, unread), ", ")+" FROM "+leg.from)
+		cells := append(withoutCells(leg.cells, unread), probes...)
+		body = append(body, "SELECT "+strings.Join(cells, ", ")+" FROM "+leg.from)
 	}
 	return ctes, strings.Join(body, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
 }
@@ -1024,6 +1097,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	}
 	visiting := map[string]bool{}
 	labels := newLabelRefs(c, r.s, frame, "w")
+	c.detailWheres = nil
 	var order []sortKey
 	sel := []string{"w.__id AS __id"}
 	for _, k := range append(keys, prefixed("w.", c.currencies)...) {
@@ -1066,7 +1140,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		inFrame("("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
 		// A spec key over a sum that met two currencies sorts as blank there;
 		// a viewer key sorts by a column, whose blank cell is named already.
-		if m := orSQL(e.mixed, e.condMixed); spec && m != "" {
+		if m := e.blankFor(); spec && m != "" {
 			mx := fmt.Sprintf("__smx%d", len(c.detailSortMixed))
 			sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", m, mx))
 			c.detailSortMixed = append(c.detailSortMixed, condProbe{at: s.at, sql: mx})
@@ -1129,6 +1203,13 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	if len(c.p.nest) > 0 {
 		sel = append(sel, r.nestParent()+" AS __n0")
 	}
+	// A lookup's where unknown on a row is probed over the rows the pages
+	// show, as a sort key over a mixed sum is.
+	for i, w := range c.detailWheres {
+		mx := fmt.Sprintf("__wmx%d", i)
+		sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", w.sql, mx))
+		c.detailSortMixed = append(c.detailSortMixed, condProbe{at: w.at, sql: mx})
+	}
 	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"), order, nil
 }
 
@@ -1171,10 +1252,6 @@ func mixedCell(e expr, idx int) string {
 }
 
 func noMixedCell(idx int) string { return fmt.Sprintf("NULL AS vmx%d", idx) }
-
-// mixedHelpers are the helper cells whose 1 marks column idx as one whose
-// looked-up total met two currencies.
-func mixedHelpers(idx int) []string { return []string{fmt.Sprintf("vmx%d", idx)} }
 
 // sortKey is one ORDER BY column of the detail select: s<i> for a sort
 // column, then __id, which is unique and never NULL.

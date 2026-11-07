@@ -235,7 +235,7 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 	}
 	// Keep in step with the table: the cases with one row, and the cases
 	// that total rows.
-	if detailRuns != 65 || totalRuns != 12 || recordRuns != 2 {
+	if detailRuns != 70 || totalRuns != 12 || recordRuns != 2 {
 		t.Fatalf("ran %d detail rows, %d totals and %d records", detailRuns, totalRuns, recordRuns)
 	}
 }

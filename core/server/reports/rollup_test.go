@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -109,6 +110,21 @@ func TestARollupIsRefusedOnAColumnAGroupGroupsBy(t *testing.T) {
 		{"id":"weight","path":[{"field":"grams"}],"rollup":{"op":"sum","args":[{"path":[{"field":"grams"}]}]}}],
 		"groups":[{"id":"g","col":"weight"}]}`))
 	requireSpecError(t, err, 400, "columns.2.rollup", "a column a group is grouped by cannot have a rollup")
+}
+
+// Two group levels that group by one rollup column give one refusal, at the
+// column, and no other problem.
+func TestTwoGroupsByOneRollupColumnAreRefusedOnce(t *testing.T) {
+	app := withZooRegistry(t)
+	err := Validate(app, loadSpec(t, `{"version":3,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"weight","path":[{"field":"grams"}],"rollup":{"op":"sum","args":[{"path":[{"field":"grams"}]}]}}],
+		"groups":[{"id":"g","col":"weight"},{"id":"h","col":"weight"}]}`))
+	requireSpecError(t, err, 400, "columns.1.rollup", "a column a group is grouped by cannot have a rollup")
+	var se *SpecError
+	if errors.As(err, &se); len(se.Problems) != 1 {
+		t.Fatalf("problems = %v, want the one rollup refusal", se.Problems)
+	}
 }
 
 // A rollup shows in its column's cells: it has the column's type, and an

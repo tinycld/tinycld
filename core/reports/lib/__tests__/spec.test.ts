@@ -408,6 +408,18 @@ describe('spec version 3', () => {
         expect(parseSpec(opening('x'.repeat(200)))).not.toBeNull()
     })
 
+    it('counts an opening label in characters, as the engine does, not in UTF-16 units', () => {
+        const opening = (label: string) => ({
+            ...FEEDINGS,
+            version: 3,
+            groups: [{ id: 'g', col: 'species', opening: { label } }],
+        })
+        // A CJK Extension B character is one character and two UTF-16 units.
+        const cjk = (n: number) => '𠀋'.repeat(n)
+        expect(parseSpec(opening(cjk(200)))).not.toBeNull()
+        expect(parseSpec(opening(cjk(201)))).toBeNull()
+    })
+
     it('refuses an outer leaf that is not a path of hops, and an opening part it does not know', () => {
         const outer = (value: unknown) => ({
             ...FEEDINGS,

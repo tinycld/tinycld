@@ -1288,6 +1288,12 @@ away before the run ends.
   and `or` leave that condition out. A `not`, or an `exists` whose `where` is
   only such conditions, also matches every row. A parameter with a default
   takes the default when nothing is posted.
+- Each entry of `params` is a parameter as the run resolved it. A date range
+  gives its days in `from` and `to`, an unset one `unset: true`. A range on
+  the `allDates` preset is set but has no bounds, so its entry has no
+  `unset`, no `from` and no `to` (`{ "id": "period", "type": "dateRange" }`):
+  read that shape as "All dates". A `between` on it matches every row, a row
+  with no day too, and a `bound` of it has no value.
 - A row's `kind` is `detail`, `group`, `opening`, `subtotal`, `computed` or
   `total`. An `opening` row (id `opening:<group key JSON>`) is the first row
   under an opened group whose level has `opening`; it carries only the cells
@@ -1302,7 +1308,13 @@ away before the run ends.
   total and computed rows (a Total inside a page's slice, one per currency
   block, stays).
 - A `lookup` with `pick: "sum"` over amounts in more than one currency gives no
-  value and the notice `mixedCurrency` naming its columns.
+  value and the notice `mixedCurrency` naming its columns (and, in
+  `conditions`, each condition or sort key that read such a sum, by its spec
+  path; a lookup's own `where` that read one is named by its path, for
+  example `columns.2.formula.where`). A cell with no value for that reason
+  names no currency. A notice of more than one
+  sentence gives each sentence in `parts`; a client that joins the notices of
+  several pages joins their parts, so a sentence two pages share shows once.
 
 **Spec version 2.** Version 2 added these fields. A version 2 spec sent to an
 older server is refused by its version.

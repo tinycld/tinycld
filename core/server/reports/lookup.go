@@ -135,7 +135,7 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		v.cur.sql = ownRows(sc, v.cur.sql)
 	}
 	out := expr{typ: v.typ, target: v.target, cur: v.cur, agg: v.agg, win: v.win, options: v.options}
-	where := "1"
+	where, unknown := "1", ""
 	if n.Where != nil {
 		w, err := compileWhere(&lookupCtx{outer: outer, r: r, sc: sc, src: src, inWhere: true}, n.Where, at)
 		if err != nil {
@@ -143,16 +143,73 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		}
 		// WHERE drops a NULL condition as it drops a false one, and a bare
 		// condition lets SQLite read each of its AND terms, so an index on
-		// the looked-up source can serve one (linkBound).
+		// the looked-up source can serve one (linkedEq).
 		if !w.unset {
 			where = "(" + w.sql + ")"
 		}
 		out.agg, out.win = out.agg || w.agg, out.win || w.win
+		if w.condMixed != "" {
+			unknown = whereUnknown(outer, sc, w, at+".where")
+		}
 	}
+	e, err := pickedLookup(outer, r, n, v, sc, where, out, at)
+	if err != nil || unknown == "" || n.Pick == "count" {
+		return e, err
+	}
+	// The context cannot name the where (whereProber): the lookup has no
+	// value where its where was unknown, as a sum that met two currencies
+	// has none, and the notice names its column or condition. A count is
+	// never blank for currencies; it counts the rows the where held for.
+	if e.unguarded == "" {
+		return e.guarded(unknown, e.sql), nil
+	}
+	return e.guarded(orSQL(e.mixed, unknown), e.unguarded), nil
+}
+
+// whereProber is a context that probes, over the rows it compiles for,
+// whether a lookup's where was unknown on one of them (a condition in it
+// read a sum lookup that met two currencies), so the run's mixedCurrency
+// notice names that where among its conditions. probeWhere reports false
+// where it cannot probe the rows.
+type whereProber interface {
+	probeWhere(at, sql string) bool
+}
+
+// whereUnknown hands a lookup's where whose condition may read a sum lookup
+// that met two currencies to the context the lookup is compiled for (the
+// report's row a lookup inside a lookup reads is the outer one's). unknown
+// is SQL true on a report row where the where was unknown on a looked-up
+// row, rather than false, unless another term decided it; it returns that
+// SQL when the context cannot probe it, "" when it took it.
+func whereUnknown(outer fctx, sc *scope, w expr, at string) string {
+	unknown := fmt.Sprintf("EXISTS (SELECT 1\n%s\nWHERE %s AND (%s) IS NULL)", sc.render(), w.condMixed, w.sql)
+	row := outer
+	for {
+		inner, ok := row.(*lookupCtx)
+		if !ok {
+			break
+		}
+		row = inner.outer
+	}
+	if p, ok := row.(whereProber); ok && p.probeWhere(at, unknown) {
+		return ""
+	}
+	return unknown
+}
+
+// pickedLookup is the lookup's value by its pick over the matching rows.
+func pickedLookup(outer fctx, r *rowsCTE, n *Node, v expr, sc *scope, where string, out expr, at string) (expr, error) {
 	switch n.Pick {
 	case "count":
-		// count skips a blank value; with no match it is 0.
-		return expr{sql: fmt.Sprintf("(SELECT count(%s)\n%s\nWHERE %s)", v.sql, sc.render(), where), typ: Number, agg: out.agg, win: out.win}, nil
+		// count skips a blank value; with no match it is 0. A value blank
+		// because a sum lookup in it met two currencies has a value, only not
+		// one to show, so it is counted (countedArg); the count names no
+		// currency.
+		counted := v.sql
+		if v.mixed != "" {
+			counted = fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE %s END)", v.mixed, v.sql)
+		}
+		return expr{sql: fmt.Sprintf("(SELECT count(%s)\n%s\nWHERE %s)", counted, sc.render(), where), typ: Number, agg: out.agg, win: out.win}, nil
 	case "sum":
 		if v.typ != Number && v.typ != Money {
 			return expr{}, invalid(at+".value", "pick sum adds numbers or amounts")
@@ -167,11 +224,34 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		pick = "max"
 	}
 	from := sc.render()
-	out.sql = fmt.Sprintf("(SELECT %s(%s)\n%s\nWHERE %s)", pick, v.sql, from, where)
+	value := fmt.Sprintf("(SELECT %s(%s)\n%s\nWHERE %s)", pick, v.sql, from, where)
 	if v.shown != "" {
 		out.shown = pickedShown(n, v, from, where)
 	}
-	return out, nil
+	return out.guarded(innerMixed(v, from, where), value), nil
+}
+
+// innerMixed is SQL that is true where a matching row's value is blank
+// because a sum lookup inside it met two currencies, "" when none can: the
+// lookup over those values has no value there either (R3), since the blank
+// one would be left out of it without a word.
+func innerMixed(v expr, from, where string) string {
+	if v.mixed == "" {
+		return ""
+	}
+	return fmt.Sprintf("EXISTS (SELECT 1\n%s\nWHERE %s AND %s)", from, where, v.mixed)
+}
+
+// guarded is e with value as its value: blank where mixed holds, when it
+// can. unguarded keeps value, so a hoist computes the value and its mixed
+// check once each and builds the blank from the two (rowsCtx.hoistLookup).
+func (e expr) guarded(mixed, value string) expr {
+	e.mixed, e.unguarded, e.sql = mixed, "", value
+	if mixed != "" {
+		e.unguarded = value
+		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", mixed, value)
+	}
+	return e
 }
 
 // ownRows ties a lookup's value to the rows of its source. SQLite counts an
@@ -190,13 +270,16 @@ func ownRows(sc *scope, sql string) string {
 func summedLookup(outer fctx, r *rowsCTE, n *Node, v expr, sc *scope, where string, out expr) expr {
 	from := sc.render()
 	out.target, out.options, out.shown = nil, nil, ""
+	sum := fmt.Sprintf("(SELECT sum(%s)\n%s\nWHERE %s)", v.sql, from, where)
+	// A matching value that is itself a sum over two currencies is blank, so
+	// it adds nothing below; the sum over it has no value either (R3).
+	inner := innerMixed(v, from, where)
 	if v.typ != Money || v.cur.sql == "" {
-		out.sql = fmt.Sprintf("(SELECT sum(%s)\n%s\nWHERE %s)", v.sql, from, where)
-		return out
+		return out.guarded(inner, sum)
 	}
 	matched := where + " AND " + v.sql + " IS NOT NULL"
-	out.mixed = fmt.Sprintf("((SELECT count(DISTINCT %s)\n%s\nWHERE %s) > 1)", v.cur.sql, from, matched)
-	out.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE (SELECT sum(%s)\n%s\nWHERE %s) END)", out.mixed, v.sql, from, where)
+	mixed := orSQL(fmt.Sprintf("((SELECT count(DISTINCT %s)\n%s\nWHERE %s) > 1)", v.cur.sql, from, matched), inner)
+	out = out.guarded(mixed, sum)
 	id := lookupCurrencyID(n)
 	out.cur = currency{sql: fmt.Sprintf("(SELECT min(%s)\n%s\nWHERE %s)", v.cur.sql, from, matched), id: id, field: v.cur.field}
 	if ck, ok := r.c.valueCur[id]; ok && !inLevel(outer) {
@@ -235,7 +318,7 @@ func pickedAmount(outer fctx, r *rowsCTE, n *Node, v expr, sc *scope, where stri
 		return fmt.Sprintf("(SELECT %s\n%s\nWHERE %s AND %s IS NOT NULL\nORDER BY %s %s, %s LIMIT 1)", col, from, where, v.sql, v.sql, dir, v.cur.sql)
 	}
 	id := lookupCurrencyID(n)
-	out.sql = pickOne(v.sql)
+	out = out.guarded(innerMixed(v, from, where), pickOne(v.sql))
 	out.cur = currency{sql: pickOne(v.cur.sql), id: id, field: v.cur.field}
 	if ck, ok := r.c.valueCur[id]; ok && !inLevel(outer) {
 		out.cur = currency{key: ck, id: id, field: v.cur.field}
@@ -332,7 +415,7 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	// combining.
 	if l.inWhere && bound.endsAtLink {
 		if col := l.storedLinkCol(hops); col != "" {
-			e.link = storedLink{col: col, sql: e.sql}
+			e.link = storedLink{col: col, sql: e.sql, sc: l.sc}
 		}
 	}
 	switch cur, fixed := amountCurrencyOf(l.sc, hops, bound); {
@@ -365,24 +448,55 @@ func (l *lookupCtx) storedLinkCol(hops []hopPlan) string {
 	return q(l.sc.alias, hops[0].link.Field)
 }
 
-// linkBound is an extra condition for eq when one side is a link path in a
-// lookup's where: the stored relation column lies between the other side and
-// itself, which SQLite serves from an index on that column, so a lookup
+// When one side of eq is a link path in a lookup's where, eq adds a bound:
+// the stored relation column lies between the other side and itself, which SQLite serves from an index on that column, so a lookup
 // correlated with the report's row searches the looked-up source instead of
 // scanning it for every row. The link path reads the linked row's id through
 // a join on that column, blank when the reader cannot see the row, so the
 // bound holds wherever the equality does: a value V gives the column V, and a
 // blank V gives every column (” up to any blob, which sorts after all text).
-// "" when neither side reads through a stored column.
-func linkBound(args []expr) string {
+//
+// linkedEq is eq with that bound, "" when neither side reads through a
+// stored column. The other side's value V is read three times; where V
+// reads nothing of the looked-up row, it is computed once per report row in
+// a one-row table of the lookup's scope (oneValue), and the three read it
+// there. A V that reads the looked-up row is one of its fields (a path) or
+// a condition on it, which a table in the same FROM cannot read.
+func linkedEq(n *Node, args []expr) string {
 	for i, a := range args[:2] {
 		if a.link.col == "" || a.link.sql != a.sql {
 			continue
 		}
 		v := args[1-i].sql
-		return fmt.Sprintf("%s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff')", a.link.col, v, a.link.col, v)
+		if !readsLookedUpRow(n.Args[1-i]) {
+			v = a.link.sc.oneValue(v)
+		}
+		return fmt.Sprintf("(%s IS %s AND %s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff'))", a.sql, v, a.link.col, v, a.link.col, v)
 	}
 	return ""
+}
+
+// oneValue computes sql once for each row the scope's query is run for, in
+// a one-row table joined to the scope, and returns the reference to it. One
+// row never changes the scope's rows. SQLite runs the table as a co-routine
+// first, so an index on the scope's table still serves a bound on it.
+func (sc *scope) oneValue(sql string) string {
+	alias := sc.s.alias("lb")
+	sc.sql = append(sc.sql, fmt.Sprintf("JOIN (SELECT %s AS v) %s", sql, alias))
+	return alias + ".v"
+}
+
+// readsLookedUpRow is true when a node in a lookup's where reads the
+// looked-up row: a path, or an exists over a link of it. A lookup inside it
+// reads its own source, and every other leaf the report's row.
+func readsLookedUpRow(n *Node) bool {
+	switch {
+	case n == nil, n.Op == "lookup":
+		return false
+	case n.Path != nil, n.Link != nil, n.Op == "exists", n.Op == "notExists":
+		return true
+	}
+	return slices.ContainsFunc(n.Args, readsLookedUpRow)
 }
 
 // outerPath reads a path on the report's row: what a path means in the

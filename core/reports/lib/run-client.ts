@@ -2,6 +2,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { isRecord } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { ClientResponseError } from 'pocketbase'
+import { mergePages } from './rows'
 import type { ReportSpec } from './spec'
 import type { CatalogSource, ParamOptionsPage, Problem, RunResult } from './types'
 
@@ -40,8 +41,8 @@ export type RunRefusal =
 
 export type RunOutcome = { kind: 'ok'; result: RunResult } | RunRefusal
 
-/** One page of a run, tagged with the rows key of the body that asked for it. */
-export type RunPage = RunOutcome & { rowsKey: string }
+/** One page of a run, tagged with the rows key and fold key of the body that asked for it. */
+export type RunPage = RunOutcome & { rowsKey: string; foldKey: string }
 
 // What decides a run's rows, apart from its params (the server resolves those and
 // returns them on the result): the saved report, or the draft spec without its
@@ -55,6 +56,24 @@ export function rowsKeyOf(body: RunBody): string {
     if ('reportId' in body) return `report:${body.reportId}${sort}`
     const { display: _display, ...rowsSpec } = body.spec
     return `spec:${JSON.stringify(rowsSpec)}${sort}`
+}
+
+// Two bodies with the same fold key ask for the same run but for which groups it
+// opens (and which page): a fold keeps the reader's place (F11).
+export function foldKeyOf(body: RunBody): string {
+    const {
+        expand: _expand,
+        expandAll: _expandAll,
+        cursor: _cursor,
+        limit: _limit,
+        ...options
+    } = body.options
+    return JSON.stringify({ ...body, options })
+}
+
+/** How many detail rows a run's result holds: what a page's limit counts. */
+export function detailRowCount(result: RunResult): number {
+    return result.rows.filter(row => row.kind === 'detail').length
 }
 
 export function problemsOf(data: unknown): Problem[] {
@@ -110,6 +129,57 @@ export async function runReport(body: RunBody, signal?: AbortSignal): Promise<Ru
         if (refusal) return refusal
         throw error
     }
+}
+
+/** The detail rows a run page asks for. */
+export const RUN_PAGE_SIZE = 200
+// The server holds a page at 1,000 detail rows (run.go runLimits.maxPage).
+const RUN_MAX_PAGE = 1000
+
+export function withPage(body: RunBody, cursor: string, limit = RUN_PAGE_SIZE): RunBody {
+    return {
+        ...body,
+        options: { ...body.options, limit, cursor: cursor || undefined },
+    }
+}
+
+/** The id of the last group row in these results, in document order. */
+export function lastGroupRowOf(results: readonly RunResult[]): string | undefined {
+    for (let p = results.length - 1; p >= 0; p--) {
+        const rows = results[p].rows
+        for (let r = rows.length - 1; r >= 0; r--) {
+            if (rows[r].kind === 'group') return rows[r].id
+        }
+    }
+    return undefined
+}
+
+/**
+ * A run's first page, holding at least `target` detail rows and the row `untilRow`
+ * when the run has them: the server's pages are fetched in turn and joined into one
+ * (mergePages), and the next page follows from the last one's cursor. A target of 0
+ * with no row is one page.
+ */
+export async function runFirstPage(
+    body: RunBody,
+    target: number,
+    signal?: AbortSignal,
+    untilRow?: string
+): Promise<RunOutcome> {
+    const results: RunResult[] = []
+    let cursor = ''
+    let loaded = 0
+    let holdsRow = !untilRow
+    do {
+        const limit = Math.min(RUN_MAX_PAGE, Math.max(RUN_PAGE_SIZE, target - loaded))
+        const outcome = await runReport(withPage(body, cursor, limit), signal)
+        if (outcome.kind !== 'ok') return outcome
+        results.push(outcome.result)
+        loaded += detailRowCount(outcome.result)
+        holdsRow ||= outcome.result.rows.some(row => row.id === untilRow)
+        cursor = outcome.result.page?.next ?? ''
+    } while (cursor && (loaded < target || !holdsRow))
+    return { kind: 'ok', result: mergePages(results) }
 }
 
 /**

@@ -107,6 +107,94 @@ func TestRegressionGuardAGroupItsHavingHidesHasNoOpeningRow(t *testing.T) {
 	requireRows(t, res, "label", "Leo", "Before the period", "Leo", "Total Leo", "Total")
 }
 
+// sectionsWithOpening is a layout report whose sections (the species groups)
+// each open onto an opening row whose grams cell is the section's own total
+// of grams, read on the group's level.
+const sectionsWithOpening = `{"version":3,"source":"zoo.feedings","columns":[
+	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+	{"id":"note","path":[{"field":"note"}]},
+	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
+	{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
+	"groups":[{"id":"g","col":"species","opening":{"label":"Start","cells":{"grams":{"op":"sum","args":[{"path":[{"field":"grams"}]}]}}}}],
+	"sort":[{"col":"note"}],
+	"layout":[
+		{"section":"cats","title":"Lions","key":"lion"},
+		{"section":"stripes","title":"Zebras","key":"zebra"},
+		{"section":"apes","title":"Monkeys","key":"monkey"},
+		{"row":"gap","label":"Lions less zebras","formula":{"op":"sub","args":[{"subtotal":"cats"},{"subtotal":"stripes"}]}}]}`
+
+// An open layout section starts with its opening row, the empty Monkeys
+// section too; a closed section has none, and a computed row never has one.
+func TestAnOpeningRowIsFirstUnderEachOpenLayoutSection(t *testing.T) {
+	z := newZoo(t)
+	closed := z.run(t, "ann", sectionsWithOpening, Options{}, nil)
+	requireRows(t, closed, "kind", "group", "subtotal", "group", "subtotal", "group", "subtotal", "computed")
+	open := z.run(t, "ann", sectionsWithOpening, Options{ExpandAll: true}, nil)
+	requireRows(t, open, "kind",
+		"group", "opening", "detail", "detail", "subtotal",
+		"group", "opening", "detail", "detail", "subtotal",
+		"group", "opening", "subtotal",
+		"computed")
+	requireRows(t, open, "label",
+		"Lions", "Start", "lion", "lion", "Total Lions",
+		"Zebras", "Start", "zebra", "zebra", "Total Zebras",
+		"Monkeys", "Start", "Total Monkeys",
+		"Lions less zebras")
+	requireOrderedRows(t, sectionsWithOpening, open, "grams",
+		int64(1300), int64(1300), int64(500), int64(800), int64(1300),
+		int64(400), int64(400), int64(300), int64(100), int64(400),
+		nil, nil, nil,
+		int64(900))
+	for _, i := range []int{1, 6, 11} {
+		section, opening := open.Rows[i-1], open.Rows[i]
+		if want := "opening:" + keyString(section.GroupKey); opening.ID != want || opening.Depth != 1 || opening.Section != section.ID {
+			t.Fatalf("opening row %d = %+v, want id %s under %s", i, opening, want, section.ID)
+		}
+		if _, ok := opening.Cells["cost"]; ok {
+			t.Fatalf("cost has an opening cell: %#v", opening.Cells)
+		}
+	}
+}
+
+// An opening on the inner level (animals inside species) puts an opening row
+// first under each open animal group, at depth 2, reading that animal's
+// record; the outer species groups have none.
+func TestAnOpeningRowOnAnInnerLevelIsFirstUnderEachOpenInnerGroup(t *testing.T) {
+	z := newZoo(t)
+	spec := `{"version":3,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
+		"columns":[
+			{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+			{"id":"animal","path":[{"link":"animal"}]},
+			{"id":"note","path":[{"field":"note"}]},
+			{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
+		"filter":{"op":"between","args":[{"path":[{"field":"due"}]},{"param":"period"}]},
+		"groups":[{"id":"s","col":"species","open":true},
+			{"id":"g","col":"animal","open":true,"subtotals":true,"opening":{"label":"Before the period","cells":{"grams":` + beforePeriod + `}}}],
+		"sort":[{"col":"note"}]}`
+	res := z.run(t, "ann", spec, Options{}, fromFebruary)
+	requireRows(t, res, "kind",
+		"group", "group", "opening", "detail", "subtotal",
+		"group", "group", "opening", "detail", "subtotal",
+		"total")
+	requireRows(t, res, "label",
+		"lion", "Leo", "Before the period", "lion", "Total Leo",
+		"zebra", "Zed", "Before the period", "zebra", "Total Zed",
+		"Total")
+	// Leo: f1 (500) is before the period, f2 (800) in it; Zed: f3 (300), f4 (100).
+	requireOrderedRows(t, spec, res, "grams",
+		int64(800), int64(800), int64(500), int64(800), int64(800),
+		int64(100), int64(100), int64(300), int64(100), int64(100),
+		int64(900))
+	for _, i := range []int{2, 7} {
+		group, opening := res.Rows[i-1], res.Rows[i]
+		want := "opening:" + keyString(group.GroupKey)
+		if group.Depth != 1 || opening.ID != want || opening.Depth != 2 || opening.Section != group.ID ||
+			keyString(opening.GroupKey) != keyString(group.GroupKey) {
+			t.Fatalf("opening row %d = %+v, want id %s at depth 2 under %+v", i, opening, want, group)
+		}
+	}
+}
+
 // An opening cell reads the group's record, a lookup and a param; a column the
 // opening names no cell for is blank.
 func TestOpeningCellsReadARecordALookupAndAParam(t *testing.T) {

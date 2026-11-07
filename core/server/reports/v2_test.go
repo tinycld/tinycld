@@ -284,6 +284,22 @@ func TestALookupValueWithoutAnAliasIsKept(t *testing.T) {
 	}
 }
 
+// A version 2 lookup whose value holds no aliased key keeps its value through
+// the 2→3 upgrade: the upgrade re-encodes the document, so the raw text is
+// compacted, but the value decodes to the one posted.
+func TestAV2LookupValueWithoutAnAliasIsKeptThroughTheUpgrade(t *testing.T) {
+	withZooRegistry(t)
+	const value = `{ "path" : [{"field":"name"}] }`
+	raw := `{"version":2,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.animals","value":` + value + `}}]}`
+	spec, info, _ := mustLoad(t, raw)
+	if spec.Version != 3 || info.UpgradedFrom != 0 || len(info.Aliased) != 0 {
+		t.Fatalf("version %d, info %+v", spec.Version, info)
+	}
+	if got := spec.Columns[0].Formula.Value; !reflect.DeepEqual(jsonDoc(t, got), jsonDoc(t, []byte(value))) {
+		t.Fatalf("value = %s, want %s", got, value)
+	}
+}
+
 // A group over a formula column whose link was renamed still finds the
 // records it links to, so its fill where resolves on them.
 func TestAFillWhereResolvesBehindARenamedLink(t *testing.T) {

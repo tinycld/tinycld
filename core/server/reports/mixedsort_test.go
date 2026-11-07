@@ -98,3 +98,27 @@ func TestAConditionSortKeyOverAMixedSumLookupIsNamed(t *testing.T) {
 		t.Fatalf("message = %q", n.Message)
 	}
 }
+
+// A condition as a sort key that an `or` term decides wherever the mixed sum
+// leaves it unknown has a value on every row, so it sorts by that value and
+// names nothing: on detail rows and on group rows.
+func TestAConditionSortKeyThatATrueTermDecidesIsNotNamed(t *testing.T) {
+	z := newZoo(t)
+	withEuroFeeding(t, z)
+	decided := func(costs string) string {
+		return `{"op":"or","args":[{"op":"gt","args":[` + costs + `,{"value":0}]},{"value":true}]}`
+	}
+	detail := `{"version":3,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+		"sort":[{"col":"note"},{"formula":` + decided(allCosts) + `}]}`
+	if res := z.run(t, "ann", detail, Options{}, nil); len(res.Notices) != 0 {
+		t.Fatalf("detail sort: notices = %+v", res.Notices)
+	}
+	group := `{"version":3,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"animal"}],
+		"sort":[{"formula":` + decided(leoCosts) + `}]}`
+	if res := z.run(t, "ann", group, Options{}, nil); len(res.Notices) != 0 {
+		t.Fatalf("group sort: notices = %+v", res.Notices)
+	}
+}
