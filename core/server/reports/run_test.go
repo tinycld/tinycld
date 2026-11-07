@@ -123,9 +123,9 @@ func TestRunDescribesItsColumns(t *testing.T) {
 		"sort":[{"col":"name"}]}`
 	res := z.run(t, "ann", spec, Options{}, nil)
 	want := []ResultColumn{
-		{ID: "name", Label: "Name", Type: Text, TotalType: Number, Aggregate: Count, Format: "plain"},
-		{ID: "region", Label: "Where", Type: Select, Options: []Option{{Value: "north", Label: "North"}, {Value: "south", Label: "South"}}},
-		{ID: "price", Label: "Price", Type: Money, Aggregate: Sum, Currency: "USD"},
+		{ID: "name", Label: "Name", Type: Text, TotalType: Number, Aggregate: Count, Format: "plain", Sortable: true},
+		{ID: "region", Label: "Where", Type: Select, Options: []Option{{Value: "north", Label: "North"}, {Value: "south", Label: "South"}}, Sortable: true},
+		{ID: "price", Label: "Price", Type: Money, Aggregate: Sum, Currency: "USD", Sortable: true},
 	}
 	if !reflect.DeepEqual(res.Columns, want) {
 		t.Fatalf("columns = %+v", res.Columns)
@@ -306,10 +306,10 @@ func TestColumnTypesDoNotDependOnWhetherRowsLoaded(t *testing.T) {
 		t.Fatalf("columns differ:\n%+v\n%+v", collapsed.Columns, open.Columns)
 	}
 	want := []ResultColumn{
-		{ID: "species", Label: "Species", Type: Text, TotalType: Number, Aggregate: Count},
-		{ID: "cost", Label: "Cost", Type: Money, CurrencyCell: "cost@currency", Aggregate: Sum},
+		{ID: "species", Label: "Species", Type: Text, TotalType: Number, Aggregate: Count, Sortable: true},
+		{ID: "cost", Label: "Cost", Type: Money, CurrencyCell: "cost@currency", Aggregate: Sum, Sortable: true},
 		{ID: "share", Label: "share", Type: Percent},
-		{ID: "notes", Label: "notes", Type: Text, TotalType: Number, Aggregate: Count},
+		{ID: "notes", Label: "notes", Type: Text, TotalType: Number, Aggregate: Count, Sortable: true},
 	}
 	if !reflect.DeepEqual(collapsed.Columns, want) {
 		t.Fatalf("columns = %+v", collapsed.Columns)

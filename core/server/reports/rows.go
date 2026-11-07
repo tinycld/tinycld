@@ -65,6 +65,12 @@ type compiler struct {
 	// detailLabel is what the report's detail label compiled to (the detail
 	// select's __label); nil when the first column labels detail rows.
 	detailLabel *labelPlan
+	// viewSort are the run's viewer sort keys (options.sort), which order
+	// detail rows before the spec's keys and never the window order.
+	viewSort []sortPlan
+	// sortable holds the columns a viewer may sort by, as detailSelect
+	// compiled them.
+	sortable map[string]bool
 	// labelTypes holds the type of the record label of each column whose
 	// values point at a record (vl<idx>, the cell <id>@label).
 	labelTypes map[string]FieldType

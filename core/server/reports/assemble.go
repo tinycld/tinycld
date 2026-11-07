@@ -40,6 +40,7 @@ func (rn *runner) columns() []ResultColumn {
 				rc.LabelCurrencyCell = cp.col.ID + "@labelCurrency"
 			}
 		}
+		rc.Sortable = c.p.pivot == nil && c.sortable[cp.col.ID]
 		rn.currencyOfColumn(cp, &rc)
 		out = append(out, rc)
 	}

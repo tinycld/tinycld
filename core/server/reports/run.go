@@ -99,6 +99,11 @@ type ResultColumn struct {
 	LabelCell         string    `json:"labelCell,omitempty"`
 	LabelType         FieldType `json:"labelType,omitempty"`
 	LabelCurrencyCell string    `json:"labelCurrencyCell,omitempty"`
+	// Sortable says a run accepts the column as a viewer sort key
+	// (options.sort): not a running value or a percent, not a child row
+	// column, not in a pivot report; the first column by its detail label
+	// when the report has one.
+	Sortable bool `json:"sortable,omitempty"`
 }
 
 // PivotColumn marks a pivot cell column: the cell column it splits, and
@@ -218,6 +223,9 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 		return nil, err
 	}
 	p, params := c.p, c.params
+	if c.viewSort, err = viewSortPlans(c, req.Options.Sort); err != nil {
+		return nil, err
+	}
 	expand, err := parseExpansion(req.Options)
 	if err != nil {
 		return nil, err
@@ -481,6 +489,46 @@ func (rn *runner) capLevelRows(rows []map[string]any) []map[string]any {
 
 func notASortKey(at string) error {
 	return invalid(at, "a running value or a percent is not a sort key")
+}
+
+// viewSortPlans checks a run's viewer sort (options.sort) and plans its keys.
+// It is a run input, not a spec part: a link outlives the report's columns,
+// so each key is checked against the report as it is now (R7). A key on the
+// first column of a report with a detail label sorts by that label. A running
+// value is refused where it compiles (detailSortValue).
+func viewSortPlans(c *compiler, keys []ViewSort) ([]sortPlan, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	if len(keys) > maxSort {
+		return nil, invalid("options.sort", fmt.Sprintf("a run sorts by at most %d columns", maxSort))
+	}
+	if c.p.pivot != nil {
+		return nil, invalid("options.sort", "a pivot report has no opened rows to sort")
+	}
+	seen := map[string]bool{}
+	out := make([]sortPlan, 0, len(keys))
+	for i, k := range keys {
+		at := fmt.Sprintf("options.sort.%d", i)
+		cp := c.p.byID[k.Col]
+		switch {
+		case cp == nil:
+			return nil, unknownColumn(at+".col", k.Col)
+		case seen[k.Col]:
+			return nil, invalid(at+".col", "a column sorts once")
+		case k.Dir != "" && k.Dir != "asc" && k.Dir != "desc":
+			return nil, invalid(at+".dir", "dir is asc or desc")
+		case cp.nest > 0:
+			return nil, invalid(at+".col", "a child row column is not a sort key")
+		}
+		seen[k.Col] = true
+		s := sortPlan{col: cp, at: at + ".col", desc: k.Dir == "desc"}
+		if d := c.p.spec.Detail; cp == c.p.cols[0] && d != nil && d.Label != nil {
+			s = sortPlan{formula: d.Label, at: at + ".col", desc: s.desc}
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // groupStatement is the UNION ALL of every level's rows (the children of
@@ -799,12 +847,22 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	for _, k := range append(keys, prefixed("w.", c.currencies)...) {
 		sel = append(sel, k+" AS "+strings.TrimPrefix(k, "w."))
 	}
-	for i, s := range c.p.sort {
+	// addKey selects one sort key's values as name and orders by them. A spec
+	// key also orders the window frame; a viewer key does not, so running
+	// values keep the report's order (R7), and its cursor column is view:<col>.
+	addKey := func(s sortPlan, name string, spec bool) error {
 		e, col, err := detailSortValue(&rowsCtx{r: r, visiting: visiting, detail: frame}, s)
 		if err != nil {
-			return "", nil, err
+			return err
 		}
-		name := fmt.Sprintf("s%d", i)
+		inFrame := func(parts ...string) {
+			if spec {
+				frame.order = append(frame.order, parts...)
+			}
+		}
+		if !spec {
+			col = "view:" + col
+		}
 		// A record sorts by its label's typed value, then by its id so equal
 		// labels keep one order. A label key holds a value of the label
 		// field's type or a no-name record's text, so its cursor value may be
@@ -813,21 +871,32 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			key := labelOrder(r.s, ref.value)
 			sel = append(sel, key+" AS "+name)
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@label"})
-			frame.order = append(frame.order, "("+key+" IS NULL)", key+dirOf(s.desc))
+			inFrame("("+key+" IS NULL)", key+dirOf(s.desc))
 			name = name + "_id"
 		} else if key, ok := shownOrder(r.s.bind, e); ok {
 			sel = append(sel, key+" AS "+name)
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@shown", typ: Text})
-			frame.order = append(frame.order, "("+key+" IS NULL)", key+dirOf(s.desc))
+			inFrame("("+key+" IS NULL)", key+dirOf(s.desc))
 			name = name + "_value"
 		}
 		sel = append(sel, e.sql+" AS "+name)
 		order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: e.typ})
-		frame.order = append(frame.order, "("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
+		inFrame("("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
+		return nil
+	}
+	for i, s := range c.viewSort {
+		if err := addKey(s, fmt.Sprintf("vs%d", i), false); err != nil {
+			return "", nil, err
+		}
+	}
+	for i, s := range c.p.sort {
+		if err := addKey(s, fmt.Sprintf("s%d", i), true); err != nil {
+			return "", nil, err
+		}
 	}
 	frame.order = append(frame.order, "w.__id")
 	order = append(order, sortKey{name: "__id"})
-	c.detailTypes, c.formulaOptions = map[string]FieldType{}, map[string][]Option{}
+	c.detailTypes, c.formulaOptions, c.sortable = map[string]FieldType{}, map[string][]Option{}, map[string]bool{}
 	for idx, cp := range c.p.cols {
 		if cp.nest > 0 {
 			// A child row column's label is read with its child rows.
@@ -851,6 +920,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(r.s, cp, e, idx), mixedCell(e, idx))
 		sel = append(sel, ref.cells(idx)...)
 		c.detailTypes[cp.col.ID] = e.typ
+		c.sortable[cp.col.ID] = !e.win
 		if cp.path == nil {
 			// A formula's amount has the currency of the amounts it reads.
 			c.currencyOf[cp.col.ID] = e.cur
@@ -863,6 +933,12 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			return "", nil, err
 		}
 		sel = append(sel, ref.value+" AS __label", ref.currency+" AS __labelcur")
+		// The first column sorts by the label: sortable when the label is.
+		le, err := compileFormula(&rowsCtx{r: r, visiting: visiting, detail: frame}, d.Label, "detail.label")
+		if err != nil {
+			return "", nil, err
+		}
+		c.sortable[c.p.cols[0].col.ID] = !le.win
 	}
 	if len(c.p.nest) > 0 {
 		sel = append(sel, r.nestParent()+" AS __n0")
