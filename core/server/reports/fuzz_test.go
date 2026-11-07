@@ -201,6 +201,8 @@ func FuzzRuleParity(f *testing.F) {
 		}
 		z.lookupParity(t, mux, user)
 		z.fillParity(t, mux, user)
+		z.sumLookupParity(t, mux, user)
+		z.pagedGroupParity(t, rng, user, pagedShapes[seed%uint64(len(pagedShapes))], 1+rng.IntN(5))
 	})
 }
 
@@ -259,4 +261,118 @@ func keys(m map[string]any) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// listItems reads every field of a collection's rows through the list API
+// as user.
+func (z *zoo) listItems(t *testing.T, mux http.Handler, collection, user string) []map[string]any {
+	t.Helper()
+	q := url.Values{"perPage": {"500"}, "skipTotal": {"1"}}
+	req := httptest.NewRequest(http.MethodGet, "/api/collections/"+collection+"/records?"+q.Encode(), nil)
+	req.Header.Set("Authorization", z.token(t, user))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list %s as %s: %d %s", collection, user, rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body.Items
+}
+
+// sumLookupParity: per feeding, a sum lookup of the grams of its animal's
+// feedings, and a count of them, equal the sum and the count over the
+// feedings the list API lists for the reader.
+func (z *zoo) sumLookupParity(t *testing.T, mux http.Handler, user string) {
+	t.Helper()
+	const sameAnimal = `{"op":"eq","args":[{"path":[{"link":"animal"}]},{"outer":[{"link":"animal"}]}]}`
+	res := z.run(t, user, `{"version":3,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"total","formula":{"op":"lookup","source":"zoo.feedings","where":`+sameAnimal+`,"value":{"path":[{"field":"grams"}]},"pick":"sum"}},
+		{"id":"n","formula":{"op":"lookup","source":"zoo.feedings","where":`+sameAnimal+`,"value":{"path":[{"field":"id"}]},"pick":"count"}}]}`,
+		Options{Limit: 1000}, nil)
+	sums, counts := map[string]int64{}, map[string]int64{}
+	for _, item := range z.listItems(t, mux, "zoo_feedings", user) {
+		animal, _ := item["animal"].(string)
+		grams, _ := item["grams"].(float64)
+		sums[animal] += int64(grams)
+		counts[animal]++
+	}
+	for _, row := range res.Rows {
+		if row.Kind != KindDetail {
+			continue
+		}
+		animal, _ := row.Cells["animal"].(string)
+		if !reflect.DeepEqual(row.Cells["total"], sums[animal]) || !reflect.DeepEqual(row.Cells["n"], counts[animal]) {
+			t.Fatalf("%s: animal %s: sum %v count %v, list API %d and %d", user, animal, row.Cells["total"], row.Cells["n"], sums[animal], counts[animal])
+		}
+	}
+}
+
+// pagedAnimals groups feedings by animal (under their species when levels is
+// 2), each open animal group starting with the sum of its animal's grams;
+// running restarts in each group.
+func pagedAnimals(levels int) string {
+	species, bySpecies := "", ""
+	if levels == 2 {
+		species = `{"id":"species","path":[{"link":"animal"},{"field":"species"}]},`
+		bySpecies = `{"id":"s","col":"species","open":true,"subtotals":true},`
+	}
+	return `{"version":3,"source":"zoo.feedings","columns":[` + species + `
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
+		{"id":"running","formula":{"op":"runningSum","args":[{"col":"grams"}]}}],
+		"groups":[` + bySpecies + `{"id":"g","col":"animal","open":true,"subtotals":true,"opening":{"label":"All feedings","cells":{"grams":
+			{"op":"lookup","source":"zoo.feedings","where":{"op":"eq","args":[{"path":[{"link":"animal"}]},{"record":"g","path":[{"field":"id"}]}]},
+			"value":{"path":[{"field":"grams"}]},"pick":"sum"}}}}],
+		"sort":[{"col":"note"}]}`
+}
+
+// pagedShape is one grouped report the paging parity runs: its group levels
+// and its expansion state. "open" sends none (the open levels expand), "all"
+// expands every group, "none" shuts every group, and "some" expands a random
+// half of the groups, so seams fall next to shut groups.
+type pagedShape struct {
+	levels int
+	expand string
+}
+
+// pagedShapes are taken in turn by seed, so the 40 seeds run each one five
+// times: with two levels a seam falls between the levels.
+var pagedShapes = []pagedShape{
+	{1, "open"}, {1, "all"}, {1, "none"}, {1, "some"},
+	{2, "open"}, {2, "all"}, {2, "none"}, {2, "some"},
+}
+
+// pagedGroupParity: the pages of a grouped report, joined as the client joins
+// them (mergedRows: an earlier page's trailing totals dropped, no row on two
+// pages), are exactly the one-page run.
+func (z *zoo) pagedGroupParity(t *testing.T, rng *rand.Rand, user string, shape pagedShape, limit int) {
+	t.Helper()
+	raw := pagedAnimals(shape.levels)
+	var opts Options
+	switch shape.expand {
+	case "all":
+		opts.ExpandAll = true
+	case "none":
+		opts.Expand = [][]any{}
+	case "some":
+		opts.Expand = [][]any{}
+		for _, row := range z.run(t, user, raw, Options{ExpandAll: true, Limit: 1000}, nil).Rows {
+			if row.Kind == KindGroup && rng.IntN(2) == 0 {
+				opts.Expand = append(opts.Expand, row.GroupKey)
+			}
+		}
+	}
+	opts.Limit = 1000
+	whole := z.run(t, user, raw, opts, nil)
+	opts.Limit = limit
+	if merged := mergedRows(t, groupedPages(t, z, user, raw, opts)); !reflect.DeepEqual(merged, whole.Rows) {
+		t.Fatalf("%s, %+v, limit %d: pages\n%v\nwhole\n%v", user, shape, limit, merged, whole.Rows)
+	}
 }

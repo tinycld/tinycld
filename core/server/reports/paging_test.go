@@ -185,12 +185,12 @@ func withF7(t *testing.T, z *zoo) {
 	z.feeding(t, "f7", z.recs["leo"], 100, "2026-01-07", 10)
 }
 
-// groupedPages walks every page of raw as ann with opts.
-func groupedPages(t *testing.T, z *zoo, raw string, opts Options) []*Result {
+// groupedPages walks every page of raw as user with opts.
+func groupedPages(t *testing.T, z *zoo, user, raw string, opts Options) []*Result {
 	t.Helper()
 	var pages []*Result
-	for range 100 {
-		res := z.run(t, "ann", raw, opts, nil)
+	for range 1000 {
+		res := z.run(t, user, raw, opts, nil)
 		pages = append(pages, res)
 		if res.Page == nil || res.Page.Next == "" {
 			return pages
@@ -229,7 +229,7 @@ func mergedRows(t *testing.T, pages []*Result) []Row {
 func TestAGroupedReportPagesAcrossAGroupBoundary(t *testing.T) {
 	z := newZoo(t)
 	withF7(t, z)
-	pages := groupedPages(t, z, pagedBySpecies, Options{Limit: 2})
+	pages := groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: 2})
 	if len(pages) != 3 {
 		t.Fatalf("%d pages", len(pages))
 	}
@@ -258,7 +258,7 @@ func TestAGroupedReportPagesAcrossAGroupBoundary(t *testing.T) {
 func TestARunningSumContinuesOnPageTwo(t *testing.T) {
 	z := newZoo(t)
 	withF7(t, z)
-	pages := groupedPages(t, z, pagedBySpecies, Options{Limit: 2})
+	pages := groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: 2})
 	requireDetails(t, pages[0], "running", int64(1000), int64(3500))
 	if first := pages[1].Rows[0]; first.Cells["note"] != "f7" || first.Cells["running"] != int64(3600) {
 		t.Fatalf("page 2 starts with %+v", first)
@@ -271,7 +271,7 @@ func TestAGroupedPageSeamRepeatsNoRow(t *testing.T) {
 	z := newZoo(t)
 	withF7(t, z)
 	whole := z.run(t, "ann", pagedBySpecies, Options{Limit: 1000}, nil)
-	if got := mergedRows(t, groupedPages(t, z, pagedBySpecies, Options{Limit: 1})); !reflect.DeepEqual(got, whole.Rows) {
+	if got := mergedRows(t, groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: 1})); !reflect.DeepEqual(got, whole.Rows) {
 		t.Fatalf("pages = %v\nwhole = %v", got, whole.Rows)
 	}
 	first := z.run(t, "ann", pagedBySpecies, Options{Limit: 2}, nil)
@@ -279,7 +279,7 @@ func TestAGroupedPageSeamRepeatsNoRow(t *testing.T) {
 		t.Fatal("a grouped run gave no page")
 	}
 	z.feeding(t, "f8", z.recs["zed"], 50, "2026-03-20", 5)
-	rest := groupedPages(t, z, pagedBySpecies, Options{Limit: 2, Cursor: first.Page.Next})
+	rest := groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: 2, Cursor: first.Page.Next})
 	merged := mergedRows(t, append([]*Result{first}, rest...))
 	requireRows(t, &Result{Rows: merged}, "note", nil, nil, "f1", "f2", "f7", nil, nil, nil, "f3", "f4", "f8", nil, nil)
 }
@@ -293,7 +293,7 @@ func TestAGroupedPageKeepsEachCurrencyTotalInItsPlace(t *testing.T) {
 	whole := z.run(t, "ann", feedingsBySpecies, Options{ExpandAll: true, Limit: 1000}, nil)
 	requireRows(t, whole, "kind", "group", "detail", "subtotal", "total", "group", "detail", "detail", "subtotal", "group", "detail", "detail", "subtotal", "total")
 	requireRows(t, whole, "note", nil, "f7", nil, nil, nil, "f1", "f2", nil, nil, "f3", "f4", nil, nil)
-	pages := groupedPages(t, z, feedingsBySpecies, Options{ExpandAll: true, Limit: 2})
+	pages := groupedPages(t, z, "ann", feedingsBySpecies, Options{ExpandAll: true, Limit: 2})
 	if len(pages) != 3 {
 		t.Fatalf("%d pages", len(pages))
 	}
@@ -322,7 +322,7 @@ func bulkFeedings(t *testing.T, z *zoo, n int) {
 func TestASixThousandRowGroupedReportPagesToItsEnd(t *testing.T) {
 	z := newZoo(t)
 	bulkFeedings(t, z, 6000)
-	pages := groupedPages(t, z, feedingsBySpecies, Options{ExpandAll: true, Limit: 1000})
+	pages := groupedPages(t, z, "ann", feedingsBySpecies, Options{ExpandAll: true, Limit: 1000})
 	details, lionTotals := 0, 0
 	for i, p := range pages {
 		if len(p.Notices) != 0 {
