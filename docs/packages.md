@@ -1302,10 +1302,8 @@ away before the run ends.
 - A `lookup` with `pick: "sum"` over amounts in more than one currency gives no
   value and the notice `mixedCurrency` naming its columns.
 
-**Spec version 2.** Version 2 added these fields; a version 2 spec loads
-unchanged as version 3. Every new field is optional, and a stored version 1
-spec loads unchanged (the upgrade step changes nothing). A version 2 spec sent
-to an older server is refused by its version.
+**Spec version 2.** Version 2 added these fields. A version 2 spec sent to an
+older server is refused by its version.
 
 | Field | What it does |
 |---|---|

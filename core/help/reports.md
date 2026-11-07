@@ -92,7 +92,7 @@ Some columns only name the group, for example an account's number on each line o
 
 ## Opening rows
 
-To start each group with a row of its own, open **Group and sort**, find the level, and turn on **Start each group with a row**. Enter a **Row label**, for example "Beginning balance". For each column after the first, select **Add a value** and build a formula from totals, group fields, lookups and asked values, or leave it at **No value**. Child row columns have no value on this row. The row shows first under each group that you open. It also shows under a group that has no rows of its own, if the level shows every record with **Show every …, even with no rows**. A closed group and a group that **Show only groups where…** hides have no opening row. The last group level of a pivot report cannot have an opening row.
+To start each group with a row of its own, open **Group and sort**, find the level, and turn on **Start each group with a row**. Enter a **Row label**, for example "Beginning balance". For each column after the first, select **Add a value** and build a formula from totals, group fields, lookups and asked values, or leave it with no value. Child row columns have no value on this row. The row shows first under each group that you open. It also shows under a group that has no rows of its own, if the level shows every record with **Show every …, even with no rows**. A closed group and a group that **Show only groups where…** hides have no opening row. The last group level of a pivot report cannot have an opening row.
 
 ## Filters that list records
 
