@@ -413,6 +413,48 @@ func TestABalanceShapedReportShowsQuietActiveGroupsOnAll(t *testing.T) {
 	}
 }
 
+// A reader the joined grant rule refuses sees no ledger line: bob's grant
+// row reads can_read false, and cara has no grant row. With the accounts
+// listed to every signed-in reader, each account still shows on All, but with
+// no line and a 0.00 beginning balance: no opening sums a line he may not
+// see (ann's Bank opens at 20.00 from last year's hidden line).
+func TestABalanceShapedReportShowsNoLedgerLineToAReaderWithoutAGrant(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	z.user(t, "cara")
+	params := map[string]string{"period": glJuly, "rows": `"all"`}
+	run := func(user string) ([]string, map[string][]glLine) {
+		t.Helper()
+		return balanceGroups(z.run(t, user, balanceSpec(), Options{Today: "2026-07-15"}, params))
+	}
+	for _, user := range []string{"bob", "cara"} {
+		if order, rows := run(user); len(order) != 0 || len(rows) != 0 {
+			t.Fatalf("%s sees accounts %v and rows %v under the grant rule", user, order, rows)
+		}
+	}
+
+	accounts, err := z.app.FindCollectionByNameOrId("zoo_ledger_accounts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedIn := rule(`@request.auth.id != ""`)
+	accounts.ListRule, accounts.ViewRule = signedIn, signedIn
+	z.save(t, accounts)
+	if _, rows := run("ann"); !reflect.DeepEqual(rows["1100 Bank"], []glLine{glOpeningRow(2000), glSubtotalRow("1100 Bank", 2000)}) {
+		t.Fatalf("ann's Bank rows = %#v, want a 20.00 opening", rows["1100 Bank"])
+	}
+	want := []string{"1000 Cash", "1100 Bank", "1200 Petty cash", "2000 Loan", "3900 Retained earnings", "4000 Sales", "5000 Rent"}
+	for _, user := range []string{"bob", "cara"} {
+		order, rows := run(user)
+		if !reflect.DeepEqual(order, want) {
+			t.Fatalf("%s sees accounts %v\nwant %v", user, order, want)
+		}
+		for _, account := range order {
+			requireGroupRows(t, rows, account, glOpeningRow(0), glSubtotalRow(account, 0))
+		}
+	}
+}
+
 // An open account cut at a page seam goes on on the next page: its running
 // balance carries over the seam, no row is repeated or lost, and the pages
 // merged as the client merges them equal the one-page run, filled accounts

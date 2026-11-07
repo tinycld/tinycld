@@ -2,7 +2,6 @@ package reports
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 )
@@ -18,6 +17,58 @@ type rowsCtx struct {
 	// nil inside an aggregate.
 	detail   *windowFrame
 	visiting map[string]bool
+	// reads records what the lookup being compiled reads of the row; nil
+	// outside a lookup.
+	reads *rowReads
+}
+
+// rowReads is what a lookup on a detail row reads of the report's row,
+// recorded by the row's leaves while the lookup compiles: the group key
+// columns its group records read, and whether it reads any other value of
+// the row (a column, a path, a currency key, a running value). Each leaf of
+// rowsCtx that reads the row records its read, so the facts do not depend on
+// how the SQL names the row.
+type rowReads struct {
+	keys  []string
+	other bool
+}
+
+func (r *rowReads) key(k string) {
+	if r != nil && !slices.Contains(r.keys, k) {
+		r.keys = append(r.keys, k)
+	}
+}
+
+func (r *rowReads) value() {
+	if r != nil {
+		r.other = true
+	}
+}
+
+// add records an inner lookup's reads in the lookup around it.
+func (r *rowReads) add(inner *rowReads) {
+	if r == nil {
+		return
+	}
+	for _, k := range inner.keys {
+		r.key(k)
+	}
+	if inner.other {
+		r.value()
+	}
+}
+
+// groupKeys is the group key columns read, sorted, when those are all the
+// lookup reads of the row; nil when it reads another value of the row, or
+// none (a lookup that reads nothing of the row is computed once per
+// statement as it is).
+func (r *rowReads) groupKeys() []string {
+	if r.other || len(r.keys) == 0 {
+		return nil
+	}
+	keys := slices.Clone(r.keys)
+	slices.Sort(keys)
+	return keys
 }
 
 // windowFrame is where a running value or a percent reads its rows: the
@@ -124,6 +175,7 @@ func (rc *rowsCtx) col(id, at string) (expr, error) {
 		if cp.tm >= 0 && rc.inAggregate {
 			return expr{}, invalid(at, fmt.Sprintf("a total of %q, itself a total across a to-many link, would double-count: use the column's own aggregate", id))
 		}
+		rc.reads.value()
 		return rc.r.colValue(cp), nil
 	}
 	done, err := enter(rc.visiting, id, at)
@@ -139,6 +191,7 @@ func (rc *rowsCtx) path(p Path, at string) (expr, error) {
 	if err != nil {
 		return expr{}, err
 	}
+	rc.reads.value()
 	return withCurrency(pathExpr(rc.r.hidden(bound), bound), rc.r.pathCurrency(bound)), nil
 }
 
@@ -157,7 +210,9 @@ func (rc *rowsCtx) record(group string, p Path, at string) (expr, error) {
 		return expr{}, err
 	}
 	e := recordExpr(bound)
-	key := fmt.Sprintf("w.k%d", gi)
+	k := fmt.Sprintf("k%d", gi)
+	rc.reads.key(k)
+	key := "w." + k
 	e.sql = recordSQL(rc.r.s, target, bound, key)
 	id := recordCurrencyID(group, p)
 	if ck, ok := c.valueCur[id]; ok {
@@ -181,6 +236,8 @@ func (rc *rowsCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (exp
 	if rc.inAggregate {
 		return expr{}, invalid(at, "a total inside a total")
 	}
+	// The argument compiles in a context of its own, which records nothing.
+	rc.reads.value()
 	e, err := rc.aggregateArg(rc.r, rc.visiting, op, arg, scale, at)
 	if err != nil {
 		return expr{}, err
@@ -207,6 +264,7 @@ func (rc *rowsCtx) window(op string, arg *Node, scale int, at string) (expr, err
 	if rc.detail == nil {
 		return expr{}, invalid(at, op+" cannot be inside a total")
 	}
+	rc.reads.value()
 	e, err := compileFormula(rc, arg, at+".args.0")
 	if err != nil {
 		return expr{}, err
@@ -218,20 +276,38 @@ func (rc *rowsCtx) bind(v any) string   { return rc.r.s.bind(v) }
 func (rc *rowsCtx) fiscalStart() string { return rc.bind(int64(rc.r.c.fiscal)) }
 func (rc *rowsCtx) filter() bool        { return false }
 func (rc *rowsCtx) label(e expr) string { return rc.r.c.textOf(rc.r.s, e) }
+
+// lookup compiles a lookup on the row, recording what it reads of the row
+// (hoistLookup reads that). A lookup inside it, through a column's formula,
+// adds its reads to this one's; one hoisted is a value of the row.
 func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) {
+	around := rc.reads
+	reads := &rowReads{}
+	rc.reads = reads
 	e, err := lookupIn(rc, rc.r, n, at)
+	rc.reads = around
 	if err != nil {
 		return e, err
 	}
-	return rc.hoistLookup(e), nil
+	around.add(reads)
+	e, hoisted := rc.hoistLookup(e, reads)
+	if hoisted {
+		around.value()
+	}
+	return e, nil
 }
+
 func (rc *rowsCtx) currencySQL(cur currency) string {
-	return currencyCode(rc, rc.r.c, cur, func(key string) string { return "w." + key })
+	return currencyCode(rc, rc.r.c, cur, func(key string) string {
+		rc.reads.value()
+		return "w." + key
+	})
 }
 
 // hoist computes a running value a lookup reads below the detail select.
 // Only a detail row has one (inside a total a running value is refused).
 func (rc *rowsCtx) hoist(sql string) string {
+	rc.reads.value()
 	if rc.detail == nil {
 		return sql
 	}
@@ -246,12 +322,13 @@ func (rc *rowsCtx) hoist(sql string) string {
 //
 // A lookup that reads of the row only its group keys (a group record, with
 // params and constants) has one value for every row of a group: it is
-// computed once per group key instead (rowKeysRead).
-func (rc *rowsCtx) hoistLookup(e expr) expr {
+// computed once per group key instead (rowReads.groupKeys). hoisted is true
+// when the lookup now reads a value hoisted below.
+func (rc *rowsCtx) hoistLookup(e expr, reads *rowReads) (_ expr, hoisted bool) {
 	if rc.detail == nil || rc.detail.checking || e.agg || e.win {
-		return e
+		return e, false
 	}
-	if keys := rowKeysRead(e); len(keys) > 0 {
+	if keys := reads.groupKeys(); len(keys) > 0 {
 		// The value keeps its mixed check inline: a keyed layer reads no
 		// value hoisted beside it.
 		parts := []*string{&e.sql, &e.mixed, &e.cur.sql, &e.shown}
@@ -267,7 +344,7 @@ func (rc *rowsCtx) hoistLookup(e expr) expr {
 				*p, refs = refs[0], refs[1:]
 			}
 		}
-		return e
+		return e, true
 	}
 	if e.mixed != "" {
 		// A sum lookup's value holds its mixed check: it reads the hoisted
@@ -283,34 +360,7 @@ func (rc *rowsCtx) hoistLookup(e expr) expr {
 		e.shown = rc.hoist(e.shown)
 	}
 	e.sql = rc.hoist(e.sql)
-	return e
-}
-
-// rowRef is a lookup's read of the report's row: every value of a base row
-// reads it as w.<column>.
-var rowRef = regexp.MustCompile(`\bw\.(\w+)`)
-
-// groupKeyCol is a group key column of w (k<group index>).
-var groupKeyCol = regexp.MustCompile(`^k\d+$`)
-
-// rowKeysRead is the group key columns a lookup reads of the report's row,
-// sorted, when those are all it reads of it; nil when it reads another
-// value of the row, or none (a lookup that reads nothing of the row is
-// computed once per statement as it is).
-func rowKeysRead(e expr) []string {
-	var keys []string
-	for _, sql := range []string{e.sql, e.mixed, e.cur.sql, e.shown} {
-		for _, m := range rowRef.FindAllStringSubmatch(sql, -1) {
-			if !groupKeyCol.MatchString(m[1]) {
-				return nil
-			}
-			if !slices.Contains(keys, m[1]) {
-				keys = append(keys, m[1])
-			}
-		}
-	}
-	slices.Sort(keys)
-	return keys
+	return e, true
 }
 
 // windowSQL is a running value or a percent over a frame. A running sum
