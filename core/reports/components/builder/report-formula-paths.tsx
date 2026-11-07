@@ -163,6 +163,25 @@ export function PathLeaf({ ctx, root, path, expr, set, id, where }: ReportLeafPr
     )
 }
 
+/** A field of the report's row, read inside a lookup (lookup.go lookupCtx.outerPath): to-one paths only. */
+export function OuterLeaf({ ctx, root, path, expr, set, id }: ReportLeafProps) {
+    if (partOf(expr) !== 'outer') return null
+    const here = contextAt(ctx, root, path)
+    if (!here.rowSource) return null
+    const info = describePath(here.catalog, here.rowSource, expr.outer ?? [])
+    const label = info ? `This row's ${pathLabel(info)}` : "Choose this row's field"
+    return (
+        <ColumnPicker
+            catalog={here.catalog}
+            baseKey={here.rowSource}
+            onPick={next => set({ outer: next })}
+            label={label}
+            testID={`${id}-outer`}
+            toOneOnly
+        />
+    )
+}
+
 interface RecordFieldProps {
     isVisible: boolean
     catalog: Catalog

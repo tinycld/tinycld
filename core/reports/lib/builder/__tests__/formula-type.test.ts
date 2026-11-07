@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formulaType, typesOf } from '../formula-type'
+import { formulaType, lookupPicks, typesOf } from '../formula-type'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
 import { CTX, LARGER, LOOKUP, WITH_PERIOD } from './formula-fixture'
 
@@ -85,5 +85,27 @@ describe('formulaType of the v3 parts', () => {
         }
         expect(formulaType(day, types)).toBe('date')
         expect(typesOf(CTX).rowSource).toBe(SALES_KEY)
+    })
+
+    it('types a bound from its param, as a param is typed', () => {
+        expect(formulaType({ param: 'period', bound: 'to' }, types)).toBe('date')
+        expect(formulaType({ param: 'gone', bound: 'from' }, types)).toBe('')
+        expect(formulaType({ param: 'statuses', bound: 'from' }, types)).toBe('text')
+    })
+
+    // lookup.go lookupIn: pick sum adds numbers or amounts, and refuses any other value.
+    it('offers Add up only on a lookup whose value is a number or an amount', () => {
+        const lookupOf = (field: string) => ({
+            op: 'lookup',
+            source: SALES_KEY,
+            value: { path: [{ field }] },
+            pick: 'min' as const,
+        })
+        const picksOf = (node: typeof LOOKUP) => lookupPicks(node, types).map(p => p.value)
+        expect(picksOf(lookupOf('amount'))).toEqual(['min', 'max', 'sum', 'count'])
+        expect(picksOf(lookupOf('quantity'))).toEqual(['min', 'max', 'sum', 'count'])
+        expect(picksOf(lookupOf('customer'))).toEqual(['min', 'max', 'count'])
+        expect(picksOf(lookupOf('day'))).toEqual(['min', 'max', 'count'])
+        expect(picksOf(LOOKUP)).toEqual(['min', 'max', 'count'])
     })
 })

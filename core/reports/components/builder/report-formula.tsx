@@ -38,15 +38,18 @@ import {
     withPart,
 } from '../../lib/builder/formula-ops'
 import {
+    boundChoices,
     isReportPart,
+    LOOKUP_PICKS,
     partOf,
     REPORT_TREE,
     type ReportFormulaContext,
     SCALED_PARTS,
 } from '../../lib/builder/formula-parts'
+import { lookupPicks, typesOf } from '../../lib/builder/formula-type'
 import { type SpecNode, specNodeSchema } from '../../lib/spec'
 import { FixedFormula, NEW_FORMULA } from './parts'
-import { PathLeaf, RecordLeaf, type ReportLeafProps } from './report-formula-paths'
+import { OuterLeaf, PathLeaf, RecordLeaf, type ReportLeafProps } from './report-formula-paths'
 
 // The report builder's formula parts (OQ2): the operator set the FormulaEditor
 // draws for a column, a layout computed row, a group level or a row label, with
@@ -208,6 +211,30 @@ function ParamLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
     )
 }
 
+// The first or last day of a date range param (params.go paramExpr bound).
+function BoundLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
+    if (partOf(expr) !== 'bound') return null
+    const here = contextAt(ctx, root, path)
+    const choices = boundChoices(here.params)
+    const isCurrent = (c: (typeof choices)[number]) =>
+        c.param === expr.param && c.bound === expr.bound
+    const items: PickItem[] = choices.map(c => ({
+        id: `${c.param}-${c.bound}`,
+        label: c.label,
+        isSelected: isCurrent(c),
+        onSelect: () => set({ param: c.param, bound: c.bound }),
+    }))
+    const shown = choices.find(isCurrent)?.label ?? `${expr.param} (missing)`
+    return (
+        <PickMenu
+            label={shown}
+            purpose={`Range start or end${where}`}
+            items={items}
+            testID={`${id}-bound`}
+        />
+    )
+}
+
 function WholeCents({ isVisible, testID }: { isVisible: boolean; testID: string }) {
     if (!isVisible) return null
     return (
@@ -249,7 +276,7 @@ function PlacesLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
     )
 }
 
-function LookupLeaf({ ctx, expr, set, id, where }: LeafProps) {
+function LookupLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
     if (partOf(expr) !== 'lookup') return null
     const pick = expr.pick ?? 'min'
     const sources: PickItem[] = [...ctx.catalog.values()].map(s => {
@@ -265,14 +292,15 @@ function LookupLeaf({ ctx, expr, set, id, where }: LeafProps) {
             },
         }
     })
-    const picks: PickItem[] = (['min', 'max'] as const).map(p => ({
-        id: p,
-        label: p === 'min' ? 'Smallest' : 'Largest',
-        isSelected: pick === p,
-        onSelect: () => set({ ...expr, pick: p }),
+    const offered = lookupPicks(expr, typesOf(contextAt(ctx, root, path)))
+    const picks: PickItem[] = offered.map(p => ({
+        id: p.value,
+        label: p.label,
+        isSelected: pick === p.value,
+        onSelect: () => set({ ...expr, pick: p.value }),
     }))
     const sourceLabel = ctx.catalog.get(expr.source ?? '')?.label ?? `${expr.source} (missing)`
-    const pickLabel = pick === 'min' ? 'Smallest' : 'Largest'
+    const pickLabel = LOOKUP_PICKS.find(p => p.value === pick)?.label ?? pick
     return (
         <>
             <PickMenu
@@ -376,8 +404,10 @@ function ReportFormulaLeaf(props: LeafProps) {
             <YesNoLeaf {...props} />
             <ValueLeaf {...props} />
             <PathLeaf {...props} />
+            <OuterLeaf {...props} />
             <RecordLeaf {...props} />
             <ParamLeaf {...props} />
+            <BoundLeaf {...props} />
             <PlacesLeaf {...props} />
             <LookupLeaf {...props} />
             <ExistsLeaf {...props} />
