@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -218,7 +219,7 @@ func TestALookupIsRefusedWhereItCannotBeRead(t *testing.T) {
 		"a total inside": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"op":"sum","args":[{"path":[{"field":"weight"}]}]}}}]}`,
 			"columns.0.formula.value", "one value per matching row"},
 		"a bad pick": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"id"}]},"pick":"avg"}}]}`,
-			"columns.0.formula.pick", "min or max"},
+			"columns.0.formula.pick", "min, max, sum or count"},
 		"a source on another op": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"add","source":"zoo.animals","args":[{"value":1},{"value":2}]}}]}`,
 			"columns.0.formula", "only lookup takes a source"},
 		"a leaf key too": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","col":"x","value":{"path":[{"field":"id"}]}}}]}`,
@@ -256,5 +257,121 @@ func TestALookupThatReadsAColumnTwiceCountsItTwice(t *testing.T) {
 	requireSpecError(t, err, 400, "columns.8", "with the formula columns it reads")
 	if _, ok := err.(*SpecError).Problems["columns.7"]; ok {
 		t.Fatalf("c7 (763 nodes) was refused: %v", err)
+	}
+}
+
+// sitesWithSums sums animals per site (a number), the fees of every animal
+// but lions (an amount whose currency each row carries), and every price
+// (an amount in the source's fixed currency).
+const sitesWithSums = `{"version":3,"source":"zoo.sites","columns":[
+	{"id":"name","path":[{"field":"name"}]},
+	{"id":"site","path":[{"field":"id"}]},
+	{"id":"weight","formula":{"op":"lookup","source":"zoo.animals","pick":"sum",
+		"where":{"op":"eq","args":[{"path":[{"link":"site"}]},{"col":"site"}]},
+		"value":{"path":[{"field":"weight"}]}}},
+	{"id":"usdFees","formula":{"op":"lookup","source":"zoo.animals","pick":"sum",
+		"where":{"op":"ne","args":[{"path":[{"field":"species"}]},{"value":"lion"}]},
+		"value":{"path":[{"field":"fee"}]}}},
+	{"id":"prices","formula":{"op":"lookup","source":"zoo.animals","pick":"sum","value":{"path":[{"field":"price"}]}}}],
+	"sort":[{"col":"name"}]}`
+
+// ann may list leo (north, 700 EUR), zed (south, 300 USD) and kit (no site,
+// 50 USD); mo (north) is hidden from her.
+func TestASumLookupAddsTheMatchingRows(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", sitesWithSums, Options{}, nil)
+	requireOrderedRows(t, sitesWithSums, res, "label", "North", "South", "Total")
+	// Correlated: each site adds its own animals; the total has no site.
+	requireOrderedRows(t, sitesWithSums, res, "weight", int64(190), int64(300), nil)
+	// One currency among the matched rows: the sum keeps it.
+	requireRows(t, res, "usdFees", int64(350), int64(350), int64(350))
+	requireRows(t, res, "usdFees@currency", "USD", "USD", "USD")
+	requireRows(t, res, "prices", int64(625000), int64(625000), int64(625000))
+	for _, c := range res.Columns {
+		if c.ID == "prices" && (c.Type != Money || c.Currency != "USD") {
+			t.Fatalf("prices column = %+v", c)
+		}
+		if c.ID == "weight" && c.Type != Number {
+			t.Fatalf("weight column = %+v", c)
+		}
+	}
+	if len(res.Notices) != 0 {
+		t.Fatalf("notices = %+v", res.Notices)
+	}
+}
+
+// bob's animals but lions are zed (300 USD) and mo (20 GBP): their fees
+// cannot be added, so the cell is blank and a notice names the column. When
+// the totals' notice is due too, the two are one notice.
+func TestASumLookupOverTwoCurrenciesHasNoValueAndANotice(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "bob", sitesWithSums, Options{}, nil)
+	requireRows(t, res, "usdFees", nil, nil, nil)
+	want := []Notice{{Code: "mixedCurrency", Message: "A looked-up total mixes currencies, so it shows no value.", Columns: []string{"usdFees"}}}
+	if !reflect.DeepEqual(res.Notices, want) {
+		t.Fatalf("notices = %+v", res.Notices)
+	}
+
+	const animals = `{"version":3,"source":"zoo.animals","columns":[
+		{"id":"name","path":[{"field":"name"}]},
+		{"id":"fee","path":[{"field":"fee"}],"aggregate":"sum"},
+		{"id":"allFees","formula":{"op":"lookup","source":"zoo.animals","pick":"sum","value":{"path":[{"field":"fee"}]}}}],
+		"sort":[{"col":"name"}]}`
+	res = z.run(t, "ann", animals, Options{}, nil)
+	for i, v := range rowsOf(res, "allFees") {
+		if v != nil {
+			t.Fatalf("row %d allFees = %#v, want blank", i, v)
+		}
+	}
+	want = []Notice{{Code: "mixedCurrency", Message: "Amounts in different currencies are totalled apart, one row per currency.", Columns: []string{"fee", "allFees"}}}
+	if !reflect.DeepEqual(res.Notices, want) {
+		t.Fatalf("notices = %+v", res.Notices)
+	}
+}
+
+func TestAnEmptyMatchIsBlankForSumAndZeroForCount(t *testing.T) {
+	z := newZoo(t)
+	nobody := `"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Nobody"}]},"value":{"path":[{"field":"weight"}]}`
+	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+		{"id":"sum","formula":{"op":"lookup","source":"zoo.animals","pick":"sum",` + nobody + `}},
+		{"id":"count","formula":{"op":"lookup","source":"zoo.animals","pick":"count",` + nobody + `}}],
+		"sort":[{"col":"name"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireRows(t, res, "sum", nil, nil, nil)
+	requireRows(t, res, "count", int64(0), int64(0), int64(0))
+}
+
+// count counts the matching rows whose value is not blank: kit has no birth
+// day, so ann's animals with one are leo and zed.
+func TestACountLookupCountsRowsWithAValue(t *testing.T) {
+	z := newZoo(t)
+	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+		{"id":"site","path":[{"field":"id"}]},
+		{"id":"born","formula":{"op":"lookup","source":"zoo.animals","pick":"count","value":{"path":[{"field":"born"}]}}},
+		{"id":"here","formula":{"op":"lookup","source":"zoo.animals","pick":"count",
+			"where":{"op":"eq","args":[{"path":[{"link":"site"}]},{"col":"site"}]},"value":{"path":[{"field":"name"}]}}}],
+		"sort":[{"col":"name"}]}`
+	res := z.run(t, "ann", spec, Options{}, nil)
+	requireRows(t, res, "born", int64(2), int64(2), int64(2))
+	requireOrderedRows(t, spec, res, "here", int64(1), int64(1), nil)
+	for _, c := range res.Columns {
+		if (c.ID == "born" || c.ID == "here") && c.Type != Number {
+			t.Fatalf("%s column = %+v", c.ID, c)
+		}
+	}
+}
+
+func TestPickSumNeedsANumberOrAnAmount(t *testing.T) {
+	app := withZooRegistry(t)
+	lookup := func(pick, field string) string {
+		return `{"version":3,"source":"zoo.sites","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals",
+			"pick":"` + pick + `","value":{"path":[{"field":"` + field + `"}]}}}]}`
+	}
+	for _, field := range []string{"name", "born", "active"} {
+		err := Validate(app, loadSpec(t, lookup("sum", field)))
+		requireSpecError(t, err, 400, "columns.0.formula.value", "pick sum adds numbers or amounts")
+	}
+	if err := Validate(app, loadSpec(t, lookup("count", "name"))); err != nil {
+		t.Fatalf("a count of names: %v", err)
 	}
 }

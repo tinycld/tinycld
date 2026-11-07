@@ -42,6 +42,9 @@ type expr struct {
 	shown string
 	// text is a text literal's value.
 	text *string
+	// mixed is SQL that is true where a sum lookup in the value met amounts
+	// in two currencies (R3), "" when none can.
+	mixed string
 }
 
 // currency is where a money value's currency comes from: a currency key of w
@@ -310,6 +313,7 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	for _, a := range args {
 		e.agg = e.agg || a.agg
 		e.win = e.win || a.win
+		e.mixed = orSQL(e.mixed, a.mixed)
 	}
 	return e, nil
 }
@@ -415,6 +419,17 @@ func isDateLike(t FieldType) bool {
 // num coalesces an arithmetic operand: a blank counts as zero, as in the
 // forms engine.
 func num(e expr) string { return "COALESCE(" + e.sql + ", 0)" }
+
+// orSQL joins two conditions with OR; an empty one is no condition.
+func orSQL(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return "(" + a + " OR " + b + ")"
+}
 
 // unsetCondition is a filter condition on an unset param: it matches every
 // row, and an and, or or not over it leaves it out.

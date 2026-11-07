@@ -755,7 +755,7 @@ func (lc *levelCtx) recompute(cp *colPlan, at string) (expr, error) {
 		// A formula that reads a row's value has none for a group of rows;
 		// computing it from blanks would show a wrong figure (0).
 		if lv.readsRowValue(cp.col.Formula, false, map[string]bool{}) {
-			e.sql = "NULL"
+			e.sql, e.mixed = "NULL", ""
 		}
 		return e, nil
 	}

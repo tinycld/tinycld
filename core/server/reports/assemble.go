@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -115,6 +116,37 @@ func (rn *runner) markCurrencies(groupRows []map[string]any) {
 	if len(cols) > 0 {
 		rn.notice(Notice{Code: "mixedCurrency", Message: "Amounts in different currencies are totalled apart, one row per currency.", Columns: cols})
 	}
+}
+
+// markMixedLookups names in a notice every column a row of which shows no
+// value because a sum lookup met amounts in two currencies (R3). With the
+// totals' notice due too, the two are one notice: its message, both columns.
+func (rn *runner) markMixedLookups(rowSets ...[]map[string]any) {
+	marked := func(name string) bool {
+		return slices.ContainsFunc(rowSets, func(rows []map[string]any) bool {
+			return slices.ContainsFunc(rows, func(row map[string]any) bool { return row[name] != nil })
+		})
+	}
+	var cols []string
+	for idx, cp := range rn.c.p.cols {
+		if slices.ContainsFunc(mixedHelpers(idx), marked) {
+			cols = append(cols, cp.col.ID)
+		}
+	}
+	if len(cols) == 0 {
+		return
+	}
+	for i := range rn.res.Notices {
+		if n := &rn.res.Notices[i]; n.Code == "mixedCurrency" {
+			for _, id := range cols {
+				if !slices.Contains(n.Columns, id) {
+					n.Columns = append(n.Columns, id)
+				}
+			}
+			return
+		}
+	}
+	rn.notice(Notice{Code: "mixedCurrency", Message: "A looked-up total mixes currencies, so it shows no value.", Columns: cols})
 }
 
 func toInt(v any) int64 {

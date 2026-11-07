@@ -172,6 +172,11 @@ func TestV3PartsAreValidated(t *testing.T) {
 			"rollup":{"op":"sum","sql":"x"}}]}`, 400, "spec", `unknown field "sql"`},
 		"a bound that is not text": {`{"version":3,"source":"zoo.feedings","params":[{"id":"p","type":"dateRange"}],
 			"columns":[{"id":"x","formula":{"param":"p","bound":1}}]}`, 400, "spec", "cannot unmarshal"},
+		// F1: sum and count lookups.
+		"a pick that is not min, max, sum or count": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup",
+			"source":"zoo.animals","value":{"path":[{"field":"weight"}]},"pick":"avg"}}]}`, 400, "columns.0.formula.pick", "pick is min, max, sum or count"},
+		"a sum of days": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup",
+			"source":"zoo.animals","value":{"path":[{"field":"born"}]},"pick":"sum"}}]}`, 400, "columns.0.formula.value", "pick sum adds numbers or amounts"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) { requireV3Refusal(t, app, c) })

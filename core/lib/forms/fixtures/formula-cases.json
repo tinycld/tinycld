@@ -643,6 +643,86 @@
             "expect": 5
         },
         {
+            "name": "lookup pick sum adds the matching values",
+            "types": { "c": "text" },
+            "values": { "c": "a" },
+            "lookupTypes": { "code": "text", "rate": "number" },
+            "lookupRows": [
+                { "code": "a", "rate": 3 },
+                { "code": "a", "rate": 1 },
+                { "code": "b", "rate": 9 }
+            ],
+            "formula": {
+                "op": "lookup",
+                "source": "table",
+                "where": {
+                    "op": "eq",
+                    "args": [{ "path": [{ "field": "code" }] }, { "col": "c" }]
+                },
+                "value": { "path": [{ "field": "rate" }] },
+                "pick": "sum"
+            },
+            "expect": 4
+        },
+        {
+            "name": "lookup pick count counts them",
+            "types": { "c": "text" },
+            "values": { "c": "a" },
+            "lookupTypes": { "code": "text", "rate": "number" },
+            "lookupRows": [
+                { "code": "a", "rate": 3 },
+                { "code": "a", "rate": 1 },
+                { "code": "b", "rate": 9 }
+            ],
+            "formula": {
+                "op": "lookup",
+                "source": "table",
+                "where": {
+                    "op": "eq",
+                    "args": [{ "path": [{ "field": "code" }] }, { "col": "c" }]
+                },
+                "value": { "path": [{ "field": "rate" }] },
+                "pick": "count"
+            },
+            "expect": 2
+        },
+        {
+            "name": "lookup pick sum with no match is empty",
+            "types": { "c": "text" },
+            "values": { "c": "z" },
+            "lookupTypes": { "code": "text", "rate": "number" },
+            "lookupRows": [{ "code": "a", "rate": 3 }],
+            "formula": {
+                "op": "lookup",
+                "source": "table",
+                "where": {
+                    "op": "eq",
+                    "args": [{ "path": [{ "field": "code" }] }, { "col": "c" }]
+                },
+                "value": { "path": [{ "field": "rate" }] },
+                "pick": "sum"
+            },
+            "expect": null
+        },
+        {
+            "name": "lookup pick count with no match is zero",
+            "types": { "c": "text" },
+            "values": { "c": "z" },
+            "lookupTypes": { "code": "text", "rate": "number" },
+            "lookupRows": [{ "code": "a", "rate": 3 }],
+            "formula": {
+                "op": "lookup",
+                "source": "table",
+                "where": {
+                    "op": "eq",
+                    "args": [{ "path": [{ "field": "code" }] }, { "col": "c" }]
+                },
+                "value": { "path": [{ "field": "rate" }] },
+                "pick": "count"
+            },
+            "expect": 0
+        },
+        {
             "name": "a record field reads the group's record",
             "types": {},
             "values": {},

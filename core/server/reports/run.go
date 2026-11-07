@@ -342,6 +342,7 @@ func (rn *runner) run() error {
 	}
 	rn.res.Columns = rn.columns()
 	rn.markCurrencies(groupRows)
+	rn.markMixedLookups(groupRows, details)
 	rn.assemble(groupRows, details, nested)
 	// A source's Go hooks read collections no statement reads, so their
 	// topics are added by name.
@@ -514,7 +515,7 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 			cells = append(cells, fmt.Sprintf("%s AS v%d", cellSQL(e), idx))
 			ref, _ := c.columnLabel(lv.labels, cp, e)
 			labels = append(labels, ref.cells(idx)...)
-			carried = append(carried, c.carriedCell(s, cp, e, idx))
+			carried = append(carried, c.carriedCell(s, cp, e, idx), mixedCell(e, idx))
 			c.levelTypes[cp.col.ID] = e.typ
 			if n == 1 {
 				c.sectionCur[cp.col.ID] = e.cur
@@ -591,8 +592,9 @@ type unionLeg struct {
 }
 
 // helperCell matches a row's record label (vl<idx>), its label's currency
-// (vc<idx>) and a value's carried currency (vcur<idx>).
-var helperCell = regexp.MustCompile(`^(?:vl|vc|vcur)\d+$`)
+// (vc<idx>), a value's carried currency (vcur<idx>) and a looked-up total's
+// mixed check (vmx<idx>).
+var helperCell = regexp.MustCompile(`^(?:vl|vc|vcur|vmx)\d+$`)
 
 // unreadHelpers are the helper cells that are NULL in every leg of a union:
 // no row has a label or a carried currency there, and assembly reads a missing
@@ -824,7 +826,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			if err := c.checkLabelField(cp, cp.path.target); err != nil {
 				return "", nil, err
 			}
-			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx), noCarriedCell(idx))
+			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx), noCarriedCell(idx), noMixedCell(idx))
 			sel = append(sel, labelRef{}.cells(idx)...)
 			c.detailTypes[cp.col.ID] = cp.path.field.Type
 			continue
@@ -838,7 +840,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			return "", nil, err
 		}
 		ref, _ := c.columnLabel(labels, cp, e)
-		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(r.s, cp, e, idx))
+		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(r.s, cp, e, idx), mixedCell(e, idx))
 		sel = append(sel, ref.cells(idx)...)
 		c.detailTypes[cp.col.ID] = e.typ
 		if cp.path == nil {
@@ -877,6 +879,21 @@ func (c *compiler) carriedCell(s *stmt, cp *colPlan, e expr, idx int) string {
 }
 
 func noCarriedCell(idx int) string { return fmt.Sprintf("NULL AS vcur%d", idx) }
+
+// mixedCell is a column cell's helper vmx<idx>: 1 on a row where a sum
+// lookup the cell reads met amounts in two currencies, NULL elsewhere.
+func mixedCell(e expr, idx int) string {
+	if e.mixed == "" {
+		return noMixedCell(idx)
+	}
+	return fmt.Sprintf("(CASE WHEN %s THEN 1 END) AS vmx%d", e.mixed, idx)
+}
+
+func noMixedCell(idx int) string { return fmt.Sprintf("NULL AS vmx%d", idx) }
+
+// mixedHelpers are the helper cells whose 1 marks column idx as one whose
+// looked-up total met two currencies.
+func mixedHelpers(idx int) []string { return []string{fmt.Sprintf("vmx%d", idx)} }
 
 // sortKey is one ORDER BY column of the detail select: s<i> for a sort
 // column, then __id, which is unique and never NULL.

@@ -2,6 +2,7 @@ package reports
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -159,11 +160,13 @@ func (c *tableCtx) lookup(n *Node, at string) (expr, error) {
 		}
 		where = "COALESCE(" + w.sql + ", 0)"
 	}
-	pick := "min"
-	if n.Pick == "max" {
-		pick = "max"
+	// pick names the SQL aggregate (min, max, sum, count); a count is a
+	// number whatever it counts.
+	pick, typ := cmp.Or(n.Pick, "min"), v.typ
+	if pick == "count" {
+		typ = Number
 	}
-	return expr{sql: fmt.Sprintf("(SELECT %s(%s) FROM (%s) l WHERE %s)", pick, v.sql, c.lookupTable(), where), typ: v.typ}, nil
+	return expr{sql: fmt.Sprintf("(SELECT %s(%s) FROM (%s) l WHERE %s)", pick, v.sql, c.lookupTable(), where), typ: typ}, nil
 }
 
 func (c *tableCtx) lookupTable() string {

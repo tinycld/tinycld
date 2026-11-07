@@ -75,7 +75,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		for idx, cp := range c.p.cols {
 			if !isNumeric(c.levelTypes[cp.col.ID]) || c.levelTypes[cp.col.ID] == Bool {
 				cells = append(cells, fmt.Sprintf("NULL AS v%d", idx))
-				carried = append(carried, noCarriedCell(idx))
+				carried = append(carried, noCarriedCell(idx), noMixedCell(idx))
 				continue
 			}
 			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("v%d", idx), c.levelTypes[cp.col.ID], cp, idx
@@ -84,7 +84,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 				return nil, nil, err
 			}
 			cells = append(cells, e.sql+" AS "+lc.cell)
-			carried = append(carried, lc.carriedCell(cp, e, idx))
+			carried = append(carried, lc.carriedCell(cp, e, idx), mixedCell(e, idx))
 		}
 		for j := range pivot {
 			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1

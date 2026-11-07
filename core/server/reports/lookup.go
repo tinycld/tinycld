@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 )
 
 // lookupValue decodes a lookup's value: a formula node over the looked-up
@@ -20,6 +21,10 @@ func lookupValue(n *Node, at string) (*Node, error) {
 	}
 	return &v, nil
 }
+
+// lookupPicks are a lookup's picks: the smallest or largest matching value,
+// their sum, or the number of matching rows with a value.
+var lookupPicks = []string{"min", "max", "sum", "count"}
 
 // decodedLookup is a lookup's value as plan.lookupOf decoded it, or why it
 // could not be.
@@ -91,7 +96,8 @@ func (b *binder) lookups(p *plan) {
 
 // lookupIn compiles a lookup in a context whose rows CTE is r: the smallest
 // (pick min, the default) or largest value of the node's value over the rows
-// of its source that match its where, NULL when none match. Every row of the
+// of its source that match its where, their sum (NULL when none match) or the
+// number of them with a value (0 when none match). Every row of the
 // source is read through its rule CTE, so the reader's list rule applies.
 // Inside, a path reads the looked-up source; a column, a group record or a
 // param reads the report's row through outer, which makes the subquery
@@ -105,8 +111,8 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 	if len(n.Args) > 0 || n.Link != nil || n.Scale != nil {
 		return expr{}, invalid(at, "lookup takes a source, a where, a value and a pick")
 	}
-	if n.Pick != "" && n.Pick != "min" && n.Pick != "max" {
-		return expr{}, invalid(at+".pick", "pick is min or max")
+	if n.Pick != "" && !slices.Contains(lookupPicks, n.Pick) {
+		return expr{}, invalid(at+".pick", "pick is min, max, sum or count")
 	}
 	if n.Source == "" {
 		return expr{}, invalid(at+".source", "a lookup names its source")
@@ -136,6 +142,16 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		}
 		out.agg, out.win = out.agg || w.agg, out.win || w.win
 	}
+	switch n.Pick {
+	case "count":
+		// count skips a blank value; with no match it is 0.
+		return expr{sql: fmt.Sprintf("(SELECT count(%s)\n%s\nWHERE %s)", v.sql, sc.render(), where), typ: Number, agg: out.agg, win: out.win}, nil
+	case "sum":
+		if v.typ != Number && v.typ != Money {
+			return expr{}, invalid(at+".value", "pick sum adds numbers or amounts")
+		}
+		return summedLookup(outer, r, n, v, sc, where, out), nil
+	}
 	if v.typ == Money && v.cur.sql != "" {
 		return pickedAmount(outer, r, n, v, sc, where, out), nil
 	}
@@ -149,6 +165,29 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		out.shown = pickedShown(n, v, from, where)
 	}
 	return out, nil
+}
+
+// summedLookup adds the value over the matching rows, blank when none match.
+// An amount whose currency each row carries is added only in one currency:
+// where the matching rows hold two, the sum is blank and mixed says so (R3).
+// Its currency is the rows' one currency, read beside it; on a base row
+// inside a total, the key valueCurrencies gave the lookup, as pickedAmount's.
+func summedLookup(outer fctx, r *rowsCTE, n *Node, v expr, sc *scope, where string, out expr) expr {
+	from := sc.render()
+	out.target, out.options, out.shown = nil, nil, ""
+	if v.typ != Money || v.cur.sql == "" {
+		out.sql = fmt.Sprintf("(SELECT sum(%s)\n%s\nWHERE %s)", v.sql, from, where)
+		return out
+	}
+	matched := where + " AND " + v.sql + " IS NOT NULL"
+	out.mixed = fmt.Sprintf("((SELECT count(DISTINCT %s)\n%s\nWHERE %s) > 1)", v.cur.sql, from, matched)
+	out.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE (SELECT sum(%s)\n%s\nWHERE %s) END)", out.mixed, v.sql, from, where)
+	id := lookupCurrencyID(n)
+	out.cur = currency{sql: fmt.Sprintf("(SELECT min(%s)\n%s\nWHERE %s)", v.cur.sql, from, matched), id: id}
+	if ck, ok := r.c.valueCur[id]; ok && !inLevel(outer) {
+		out.cur = currency{key: ck, id: id}
+	}
+	return out
 }
 
 // pickedShown is the shown form of a looked-up value that mixes a select's
