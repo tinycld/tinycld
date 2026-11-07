@@ -1,7 +1,7 @@
 ---
 title: Reports
 summary: Make a report from your data, run it, share it, and publish it to everyone
-tags: [reports, report builder, share report, publish, filter, group, pivot, formula, totals, groups, lookup, formulas, phone]
+tags: [reports, report builder, share report, publish, filter, group, pivot, formula, totals, groups, lookup, formulas, phone, sort, opening row, all dates]
 order: 40
 ---
 
@@ -56,6 +56,8 @@ If none is true, the lowest group level adds the values of its rows.
 
 For example, a Debit column shows an account's balance when the balance is above zero. Each account row shows its own balance. The Total adds the account rows.
 
+To show something other than the total on group and total rows, open the column in **Columns** and set **On group and total rows show** to **A formula** (the default is **The column's total**). Build the formula from totals, group fields, lookups and asked values. Opened rows still show the column's own value. This choice does not show while **Total** is **Add the rows shown**. A column that a group level groups by cannot have this formula, unless the level groups its dates by a period such as a month. A formula that reads a group field has no value on the Total row, because the Total row is not inside a group.
+
 ## Hide groups
 
 To show only some groups, open **Group and sort**, find the level, and add a condition under **Show only groups where…**. A condition can test a total of a field, a column, or a field of the group's record. Turn on **Ask when the report runs** to let the reader set the value from a chip.
@@ -68,15 +70,29 @@ To group by a linked record (for example each team of a sale), add the link as a
 
 To sort, open **Group and sort**, select **Add sort**, and pick the field. To sort groups by a field of their record, pick it by name (for example **Team › Name**). To sort by anything else, pick **Formula…**. A sort formula that reads a row's fields sorts the detail rows only. Group levels skip it.
 
+## Sort a report
+
+To sort the rows by a column while you read, select the column's heading. The first press sorts from low to high, the next press from high to low, and the third press puts the report's own order back. An arrow beside the heading shows the order. The rows sort inside their groups; the groups keep their order. A running value, such as a running balance, keeps the report's own order, so its figures do not change. A column that shows a running value or a percent has no sort control, and a pivot report has none. **Copy link** keeps the sort. If a link sorts by a column that the report no longer has, the report shows why and a **Clear sort** button; select it to show the report in its own order.
+
 ## Look up a value
 
-To read one value from another kind of record, add a formula column and pick **Look up**. Choose the **Source**, a condition under **Where**, and the **Value**. The report reads only records you may see. When several records match, **Which match** picks one: **Smallest** or **Largest**.
+To read a value from another kind of record, add a formula column and pick **Look up**. Choose the **Source**, a condition under **Where**, and the **Value**. The report reads only records you may see. Under **Which match**, choose what the lookup gives:
+
+- **Smallest** or **Largest**: one value of the records that match.
+- **Add up**: the sum of the values of all records that match. With no match, the cell is empty. If the records that match have amounts in two currencies, the cell is empty and the report shows a note.
+- **Count**: the number of records that match and have a value. With no match, it is 0.
+
+Inside **Where** or **Value**, pick **This row's field** to compare with a field of the report's own row. For example, "Day = This row's Day" finds the records of the same day as each row. On group and total rows, **This row's field** has no value.
 
 ## Opened rows
 
 When you open a group, its rows are labelled by the first column. To label them another way, turn on **Label opened rows with a formula** in **Columns**. The formula's label takes the first column's place, so opened rows do not show that column's value. A pivot report has no opened rows, so it does not show this choice.
 
 Some columns only name the group, for example an account's number on each line of the account. To show such a column only for the group, set **On opened rows** to **Leave blank** for that column in **Columns**. The value then shows on the group row, or on the group's subtotal row when the group is open and has subtotals. The opened rows show an empty cell, also on a phone. This choice shows only when the report has a group level and is not a pivot report. It does not show for the column that labels the opened rows. It also does not show for the first column of child rows (**Show as child rows**), because that column labels the child rows. Use it for a column that reads a field of the group's record (a **Group field** formula). A plain field that is not the group's field has no value on the group row, so a blank column of that kind shows nothing.
+
+## Opening rows
+
+To start each group with a row of its own, open **Group and sort**, find the level, and turn on **Start each group with a row**. Enter a **Row label**, for example "Beginning balance". For each column after the first, select **Add a value** and build a formula from totals, group fields, lookups and asked values, or leave it at **No value**. Child row columns have no value on this row. The row shows first under each group that you open. It also shows under a group that has no rows of its own, if the level shows every record with **Show every …, even with no rows**. A closed group and a group that **Show only groups where…** hides have no opening row. The last group level of a pivot report cannot have an opening row.
 
 ## Filters that list records
 
@@ -98,17 +114,20 @@ While a report runs again, "Updating…" shows in the header. On phones and tabl
 
 ## Formulas
 
-A formula is built from parts you pick from menus: **Number**, **Text**, **Column**, **Field**, **Group field** and **Asked value**; **Add**, **Subtract**, **Multiply**, **Divide** and **Round**; totals such as **Sum of** and running values such as **Running sum**; comparisons, **All of**, **Any of**, **Not** and **Is empty**; **If** and **First match**; text and date parts; and **Look up**.
+A formula is built from parts you pick from menus: **Number**, **Text**, **Column**, **Field**, **This row's field** (inside a lookup), **Group field** and **Asked value**; **Range start or end** (the first or last day of a period you ask for, such as "Period start"); **Add**, **Subtract**, **Multiply**, **Divide** and **Round**; totals such as **Sum of** and running values such as **Running sum**; comparisons, **All of**, **Any of**, **Not** and **Is empty**; **If** and **First match**; text and date parts; and **Look up**. When the period is **All dates**, "Period start" and "Period end" have no value, so a comparison with them matches no record.
 
-## Narrow screens
+## When columns do not fit
 
-On a phone or tablet, a row too wide for the screen wraps: the label on the first line and the figures below it, each under its heading. To choose where each column goes, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. The heading row and the open group rows stay at the top while you scroll.
+A report never scrolls sideways. When its columns do not fit on one line, the text columns get narrower first: the first column, then the other text columns. Long text ends in "…". Numbers, amounts, percents, dates and yes/no values keep their width. When the columns still do not fit, each row wraps: the label on the first line and the figures below it, each under its heading.
+
+To choose where each column goes at a width, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. An arrangement always applies at its own width. A width with no arrangement uses the next narrower one when the columns do not fit. The heading row and the open group rows stay at the top while you scroll. A long report loads more rows as you scroll, also when it has groups.
 
 ## Run a report
 
 - The chips above the report set its period and filters; **Add filter** adds a chip
-  for a filter you can set while you read. A link copied with
-  **Copy link** opens the report with the same choices.
+  for a filter you can set while you read. In the period chip, **All dates** shows
+  every row, also a row with no date. A link copied with **Copy link** opens the
+  report with the same choices.
 - **Customize** changes how numbers look (thousands, cents, negatives) and which
   columns show. It never changes the figures.
 - Select a group row to open or close it. **Expand all** opens every group; when any

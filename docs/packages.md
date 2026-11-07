@@ -1241,11 +1241,13 @@ away before the run ends.
 - A to-many link counts once. A formula reads a to-many path only through
   `exists` or an aggregate column, and `with` does not apply to an `exists`
   link.
-- A page cursor is tied to the report's sort keys and value types. A cursor
-  from a report that sorts differently, or sent to a grouped report, is
-  refused. Only a detail report has pages: `options.limit` does not apply
-  to a grouped report. A detail page holds 200 rows by default, and at most
-  1,000.
+- A page cursor is tied to the report's sort keys, its viewer sort
+  (`options.sort`), its group levels and the value types. A cursor from a
+  report that sorts or groups differently is refused. A detail or grouped
+  report pages: a page holds 200 detail rows by default, and at most 1,000
+  (`options.limit`). A grouped page also holds the group, opening and subtotal
+  rows between its detail rows; every page ends with the Total. The group
+  rows themselves are read whole, at most 5,000.
 - A formula holds at most 32 levels and 1,000 nodes. Each formula column it
   reads counts in full, as the compiler copies it in. The filter has the same
   limit.
@@ -1286,11 +1288,24 @@ away before the run ends.
   and `or` leave that condition out. A `not`, or an `exists` whose `where` is
   only such conditions, also matches every row. A parameter with a default
   takes the default when nothing is posted.
+- A row's `kind` is `detail`, `group`, `opening`, `subtotal`, `computed` or
+  `total`. An `opening` row (id `opening:<group key JSON>`) is the first row
+  under an opened group whose level has `opening`; it carries only the cells
+  its `cells` name, and its `section` is the group row.
+- `options.sort` (`[{ col, dir }]`, at most 10) orders detail rows inside their
+  groups before the spec's own sort keys; group order and running values keep
+  the spec's order. A `ResultColumn` with `sortable: true` accepts it. A sort
+  on a running value or percent, a child row column, an unknown column or a
+  pivot report is refused under `options.sort`.
+- A grouped result pages (`page.next`); running values continue on the next
+  page. A client merges pages by row id and keeps only the last page's Total.
+- A `lookup` with `pick: "sum"` over amounts in more than one currency gives no
+  value and the notice `mixedCurrency` naming its columns.
 
-**Spec version 2.** `reports.CurrentVersion` is 2. Every new field is
-optional, and a stored version 1 spec loads unchanged (the upgrade step
-changes nothing). A version 2 spec sent to an older server is refused by its
-version.
+**Spec version 2.** Version 2 added these fields; a version 2 spec loads
+unchanged as version 3. Every new field is optional, and a stored version 1
+spec loads unchanged (the upgrade step changes nothing). A version 2 spec sent
+to an older server is refused by its version.
 
 | Field | What it does |
 |---|---|
@@ -1305,9 +1320,23 @@ version.
 | `detail.label` | A formula that labels each detail row. Default: the first column. |
 | `params[].optionsFrom` | `{ source, value, label, group?, groupOrder?, groupLabel?, where? }`: a choice param reads its options from a source, under the reader's rules. `groupOrder` (with `group`) orders the groups: `{ "by": "label" }` (default) by the group's label, a number by its value; `{ "by": "declared" }` in the order the group's select field declares its options (refused unless `group` ends at a select field; a stored value no option names comes after the named ones, by label); `{ "by": "path", "path": [...] }` by the smallest value of `path` (a to-one path on the options source, bound as `group` is; it reads the field's stored value, so a select orders by its stored value, not its label or declared place; a blank text is no value) over each group's options, with groups that have no value after the others. Ties and every order end by label; the blank group is always first. The options come group by group in that order, then by label, and a page's `next` carries the group, so each page only appends. `groupLabel` (with `group`) is the text of a whole-group pick, with `{group}` where the group's label goes (`"All {group} accounts"`); absent: `All {group}`. |
 | formula leaf `{ record, path }` | Reads a field of a record group's record. |
-| operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: one value (`min` by default, or `max`) from the rows of another source that the reader may see. |
+| operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: from the rows of another source that the reader may see, one value (`min` by default, or `max`), their sum (`sum`: numbers or amounts; no match is empty), or the count of rows with a value (`count`: no match is 0). |
 | `pivot.labelField` | The field of a link's record that a pivot over that link names its columns by. |
 | `display.layouts[]` | `{ width, tracks, cells: [{ col, line, start?, span?, lines?, justify? }] }`: where each column goes on a narrow screen. |
+
+**Spec version 3.** `reports.CurrentVersion` is 3. Every new field is
+optional, and a stored version 1 or 2 spec loads unchanged with no upgrade
+notice (the step from 2 to 3 changes nothing). A version 3 spec sent to an
+older server is refused by its version.
+
+| Field | What it does |
+|---|---|
+| formula leaf `{ outer: [path] }` | Inside a lookup's `where` or `value`: the report row's value of a to-one path of the base source (a nested lookup still reads the report's row). Blank on group, subtotal and total rows. Refused outside a lookup and on a to-many path. |
+| formula leaf `{ param, bound: "from" \| "to" }` | The first or last day of a date range param, as a `Date`. Blank (not unset) on an unset range or on All dates, so a comparison with it matches no row. |
+| range preset `allDates` | A date range with no bounds: `between` on it matches every row, a row with a blank day included. The resolved param has no `from` or `to`. |
+| `groups[].opening` | `{ label, cells? }`: the opening row of each opened group of the level. Each cell is a formula on the level (totals, records of this and outer groups, lookups, params) whose type and currency are its column's; not on the first column; not on a pivot's last level. A level with `opening` lets a group with no base rows open (a fill group included). |
+| `columns[].rollup` | A formula shown on group, subtotal and total rows (and layout sections) in place of the column's total; detail rows keep the column's value. Blank where it reads a value the row does not have (a group's record on the Total). Refused with `total: "rows"`, on a child row column, on a pivot's cell column and on a column a group level groups by with no `bucket`. |
+| run `options.sort` | See "What a report returns". |
 
 A param of type `amount` holds cents and a currency. A multiple choice param
 may hold a whole group as `{"group": "<value>"}`; the server expands it under
