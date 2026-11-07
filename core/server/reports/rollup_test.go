@@ -99,6 +99,18 @@ func TestARollupIsRefusedOnAChildRowOrPivotCellColumn(t *testing.T) {
 	requireSpecError(t, err, 400, "columns.1.rollup", "a pivot's cell column is totalled by its pivot columns")
 }
 
+// A group row shows its key in the column the group groups by, so a rollup
+// there would replace the key.
+func TestARollupIsRefusedOnAColumnAGroupGroupsBy(t *testing.T) {
+	app := withZooRegistry(t)
+	err := Validate(app, loadSpec(t, `{"version":3,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
+		{"id":"weight","path":[{"field":"grams"}],"rollup":{"op":"sum","args":[{"path":[{"field":"grams"}]}]}}],
+		"groups":[{"id":"g","col":"weight"}]}`))
+	requireSpecError(t, err, 400, "columns.2.rollup", "a column a group is grouped by cannot have a rollup")
+}
+
 // A rollup shows in its column's cells: it has the column's type, and an
 // amount is in the column's currency (prices are in the animals' fixed
 // currency, costs in each feeding's own).

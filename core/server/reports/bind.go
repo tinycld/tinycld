@@ -756,6 +756,9 @@ func (b *binder) groupsAndPivot(p *plan) {
 				b.bad(at+".bucket", "only a date column has a bucket")
 			}
 		}
+		if g.Bucket == "" && cp.col.Rollup != nil {
+			b.bad(cp.at+".rollup", "a column a group is grouped by cannot have a rollup")
+		}
 		p.groups = append(p.groups, &groupPlan{group: g, col: cp, at: at})
 	}
 	pv := spec.Pivot
