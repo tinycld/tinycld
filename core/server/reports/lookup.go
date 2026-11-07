@@ -63,6 +63,7 @@ func (b *binder) lookups(p *plan) {
 	}
 	for i, c := range p.spec.Columns {
 		walk(c.Formula, fmt.Sprintf("columns.%d.formula", i))
+		walk(c.Rollup, fmt.Sprintf("columns.%d.rollup", i))
 	}
 	walk(p.spec.Filter, "filter")
 	for i, g := range p.spec.Groups {
@@ -71,6 +72,11 @@ func (b *binder) lookups(p *plan) {
 			walk(g.Fill.Where, fmt.Sprintf("groups.%d.fill.where", i))
 		}
 		walk(g.Having, fmt.Sprintf("groups.%d.having", i))
+		if g.Opening != nil {
+			for _, id := range g.Opening.cellIDs() {
+				walk(g.Opening.Cells[id], fmt.Sprintf("groups.%d.opening.cells.%s", i, id))
+			}
+		}
 	}
 	for i, s := range p.spec.Sort {
 		walk(s.Formula, fmt.Sprintf("sort.%d.formula", i))

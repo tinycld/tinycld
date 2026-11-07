@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -14,7 +16,7 @@ import (
 
 // CurrentVersion is the spec version this engine writes. Load upgrades an
 // older spec one version at a time with upgradeSteps.
-const CurrentVersion = 2
+const CurrentVersion = 3
 
 // upgradeSteps[v] turns a version v document into version v+1. upgrade sets
 // the version, not each step. Add a step whenever the spec format changes,
@@ -24,8 +26,13 @@ const CurrentVersion = 2
 // and open, formula sort keys, the detail label, options from a source, the
 // record and lookup formulas, display layouts), so a version 1 document is
 // already a valid version 2 document.
+//
+// 2 → 3 adds only optional parts too (sum and count lookups, outer leaves,
+// date range bounds, the All dates preset, opening rows, rollups), so a
+// version 2 document is already a valid version 3 document.
 var upgradeSteps = map[int]upgradeStep{
 	1: func(map[string]any) error { return nil },
+	2: func(map[string]any) error { return nil },
 }
 
 type upgradeStep func(doc map[string]any) error
@@ -114,6 +121,10 @@ type Column struct {
 	// column that names the open group (a value read from the group's record)
 	// shows on the group row only. Empty: the column shows on detail rows.
 	Detail string `json:"detail,omitempty"`
+	// Rollup is the column's cell on group, subtotal and total rows in place
+	// of its total: a formula on the row's level. Detail rows keep Path or
+	// Formula.
+	Rollup *Node `json:"rollup,omitempty"`
 }
 
 // DetailBlank is the one Column.Detail value.
@@ -144,10 +155,15 @@ type Node struct {
 	Link   Path   `json:"link,omitempty"`
 	Where  *Node  `json:"where,omitempty"`
 	// Source and Pick belong to lookup: the source it reads, and "min" (the
-	// default) or "max" of the matching rows' value. A lookup's Value is a
-	// formula node over that source, not a literal.
+	// default), "max", "sum" or "count" of the matching rows' value. A
+	// lookup's Value is a formula node over that source, not a literal.
 	Source string `json:"source,omitempty"`
 	Pick   string `json:"pick,omitempty"`
+	// Outer is a path on the report's row, read from inside a lookup: the
+	// row the outermost lookup sits on. It correlates the lookup.
+	Outer Path `json:"outer,omitempty"`
+	// Bound reads a date range param's first ("from") or last ("to") day.
+	Bound string `json:"bound,omitempty"`
 }
 
 // SortKey sorts by a column or by a formula ("asc" by default). On a group
@@ -177,7 +193,21 @@ type Group struct {
 	// Having is a condition on the group's level; a group that fails it is
 	// hidden with every row under it.
 	Having *Node `json:"having,omitempty"`
+	// Opening is a row shown first under each open group of this level.
+	Opening *Opening `json:"opening,omitempty"`
 }
+
+// Opening is a group level's opening row: its label, and the cells it shows
+// by column id, each a formula on the group's level. A column it does not
+// name is blank on the row.
+type Opening struct {
+	Label string           `json:"label"`
+	Cells map[string]*Node `json:"cells,omitempty"`
+}
+
+// cellIDs are the opening's cell column ids in order, so every walk over its
+// cells reports problems in one order.
+func (o *Opening) cellIDs() []string { return slices.Sorted(maps.Keys(o.Cells)) }
 
 // Fill is a record group's "show every record": the target's records that
 // match Where (all it may list when Where is nil) and have no base rows, under

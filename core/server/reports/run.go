@@ -27,6 +27,9 @@ type Options struct {
 	// report without groups.
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
+	// Sort orders the detail rows before the report's own sort keys: the
+	// viewer's heading sort.
+	Sort []ViewSort `json:"sort,omitempty"`
 	// Today is the reader's day (YYYY-MM-DD) for period presets; the
 	// default is today in UTC.
 	Today string `json:"today,omitempty"`
@@ -34,6 +37,13 @@ type Options struct {
 	// columns). The server does not read them: formatting stays in the
 	// client.
 	Display json.RawMessage `json:"display,omitempty"`
+}
+
+// ViewSort is one key of a run's viewer sort: a column, and "asc" (the
+// default) or "desc".
+type ViewSort struct {
+	Col string `json:"col"`
+	Dir string `json:"dir,omitempty"`
 }
 
 // Request is one run: a loaded spec, the reader, and the run's inputs.
@@ -108,6 +118,7 @@ type PivotColumn struct {
 const (
 	KindDetail   = "detail"
 	KindGroup    = "group"
+	KindOpening  = "opening"
 	KindSubtotal = "subtotal"
 	KindComputed = "computed"
 	KindTotal    = "total"

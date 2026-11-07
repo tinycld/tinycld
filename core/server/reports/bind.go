@@ -407,6 +407,9 @@ func (b *binder) formulaSizes(p *plan) {
 		if cp.col.Formula != nil {
 			check(cp.at, p.columnSize(cp, memo, map[string]bool{}))
 		}
+		if r := cp.col.Rollup; r != nil {
+			check(cp.at+".rollup", p.nodeSize(r, memo, map[string]bool{}, true))
+		}
 	}
 	if f := p.spec.Filter; f != nil {
 		check("filter", p.nodeSize(f, memo, map[string]bool{}, true))
@@ -420,6 +423,13 @@ func (b *binder) formulaSizes(p *plan) {
 		}
 		if h := p.spec.Groups[i].Having; h != nil {
 			check(fmt.Sprintf("groups.%d.having", i), p.nodeSize(h, memo, map[string]bool{}, true))
+		}
+		if o := p.spec.Groups[i].Opening; o != nil {
+			for _, id := range o.cellIDs() {
+				if n := o.Cells[id]; n != nil {
+					check(fmt.Sprintf("groups.%d.opening.cells.%s", i, id), p.nodeSize(n, memo, map[string]bool{}, true))
+				}
+			}
 		}
 	}
 	for i, s := range p.spec.Sort {

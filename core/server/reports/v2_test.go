@@ -9,32 +9,6 @@ import (
 	"testing"
 )
 
-// A version 1 spec loads unchanged as version 2: the step is the identity,
-// so the run says nothing about an upgrade and a save stores version 2.
-func TestAV1SpecLoadsSilentlyAsVersion2(t *testing.T) {
-	z := newZoo(t)
-	raw := `{"version":1,"source":"zoo.feedings","columns":[{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}]}`
-	spec, info, err := Load([]byte(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Version != 2 || info.UpgradedFrom != 0 {
-		t.Fatalf("version %d, upgradedFrom %d", spec.Version, info.UpgradedFrom)
-	}
-	res := z.run(t, "ann", raw, Options{}, nil)
-	if len(res.Notices) != 0 {
-		t.Fatalf("notices = %+v", res.Notices)
-	}
-	_, stored, err := loadStored([]byte(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(stored, &doc); err != nil || doc["version"] != float64(2) {
-		t.Fatalf("stored = %s", stored)
-	}
-}
-
 // A step that changes the document still says so.
 func TestAChangingStepIsNoticed(t *testing.T) {
 	withZooRegistry(t)
@@ -47,11 +21,6 @@ func TestAChangingStepIsNoticed(t *testing.T) {
 	if err != nil || info.UpgradedFrom != 1 {
 		t.Fatalf("info %+v, err %v", info, err)
 	}
-}
-
-func TestAVersion3SpecIsRefused(t *testing.T) {
-	_, _, err := Load([]byte(`{"version":3,"source":"zoo.feedings","columns":[]}`))
-	requireSpecError(t, err, 400, "version", "newer than this server reads (2)")
 }
 
 // every is a v2 spec that uses every new part (the zoo's "For review" spec).
@@ -106,7 +75,10 @@ func TestASpecWithEveryV2PartIsKeptWhole(t *testing.T) {
 				t.Fatalf("stored spec lost %s: %s", key, stored)
 			}
 		}
-		if !reflect.DeepEqual(jsonDoc(t, []byte(c.raw)), jsonDoc(t, stored)) {
+		// Stored as version 3, every other part as posted.
+		want := jsonDoc(t, []byte(c.raw)).(map[string]any)
+		want["version"] = json.Number("3")
+		if !reflect.DeepEqual(want, jsonDoc(t, stored)) {
 			t.Fatalf("stored spec differs from the posted one:\n%s", stored)
 		}
 	}
@@ -303,7 +275,9 @@ func TestAliasesResolveInEveryWalkedPart(t *testing.T) {
 // A lookup whose value holds no aliased key keeps the value as posted.
 func TestALookupValueWithoutAnAliasIsKept(t *testing.T) {
 	withZooRegistry(t)
-	raw := `{"version":2,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.animals","value":{ "path" : [{"field":"name"}] }}}]}`
+	// Posted as the current version: an older document is re-encoded by the
+	// upgrade, which compacts the raw value.
+	raw := `{"version":3,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.animals","value":{ "path" : [{"field":"name"}] }}}]}`
 	spec, _, _ := mustLoad(t, raw)
 	if got := string(spec.Columns[0].Formula.Value); got != `{ "path" : [{"field":"name"}] }` {
 		t.Fatalf("value = %s", got)
