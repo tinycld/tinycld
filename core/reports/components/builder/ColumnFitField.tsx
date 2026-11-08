@@ -3,6 +3,7 @@ import { X } from 'lucide-react-native'
 import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { type ColumnDraft, columnWithFit } from '../../lib/builder/draft'
+import { defaultFlexGrow } from '../../lib/column-measure'
 import type { ColumnFit } from '../../lib/spec'
 import { FieldError, IconButton } from './parts'
 
@@ -24,7 +25,7 @@ const LONG_TEXT: { id: string; label: string; lines?: number }[] = [
     { id: '2', label: 'Wrap to 2 lines', lines: 2 },
     { id: '3', label: 'Wrap to 3 lines', lines: 3 },
 ]
-// "Normal" is a text column's default; a figure's default is "None".
+// "Normal" is the default of text and the label column; other figures default to "None".
 const EXTRA_ROOM = [
     { id: '0', label: 'None', grow: 0 },
     { id: '1', label: 'Normal', grow: 1 },
@@ -43,8 +44,8 @@ function useColumnFit(
     const setFit = (next: ColumnFit) =>
         builder.setColumns(columns.map((c, i) => (i === index ? columnWithFit(c, next) : c)))
     const lines = fit.whiteSpace === 'normal' ? (fit.lineClamp ?? 2) : undefined
-    // The measure's default share (column-measure.ts): text 1, a figure 0.
-    const defaultGrow = isFigure ? 0 : 1
+    // The label column is the spec's first column (fit.go fitRefusals).
+    const defaultGrow = defaultFlexGrow({ isLabel: index === 0, isFigure })
     const grow = fit.flexGrow ?? defaultGrow
     const narrowest: PickItem[] = NARROWEST.map(item => ({
         id: item.id,

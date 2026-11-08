@@ -128,7 +128,7 @@ To change how a column fits, open the column in **Columns**:
 
 - **Narrowest** is the least width a text column gets before the report wraps its rows: **Automatic** (about eight letters), **Whole value** (never cut), or a number of letters.
 - **Long text** keeps the text on **One line, ends in …**, or wraps it to 2 or 3 lines.
-- **Extra room** is the column's share of the spare room on one line: **None**, **Normal**, **Double** or **Triple**.
+- **Extra room** is the column's share of the spare room on one line: **None**, **Normal**, **Double** or **Triple**. Text and the first column start at **Normal**; other numbers, amounts, percents, dates and yes/no values start at **None**. In a pivot, the setting applies to every column the pivot makes from that column.
 
 Numbers, amounts, percents, dates and yes/no values show **Never cut**: you can change only their extra room.
 

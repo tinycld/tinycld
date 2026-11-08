@@ -319,6 +319,20 @@ const wholeMeasure = (c: Content, fit: ColumnFit | undefined, grow: number): Col
 const NO_FITS: Readonly<Record<string, ColumnFit>> = {}
 
 /**
+ * A column's share of spare room when its fit sets no flexGrow (design §3.1): the
+ * label column and text take 1, other figures 0. The builder reads it too, so its
+ * picker shows the share the measure gives.
+ */
+export function defaultFlexGrow({ isLabel, isFigure }: { isLabel: boolean; isFigure: boolean }) {
+    return isLabel || !isFigure ? 1 : 0
+}
+
+// A pivot's cell columns (`amount_q1`) take the fit of their spec column
+// (`amount`): display.columns is keyed by spec column.
+const fitOf = (fits: Readonly<Record<string, ColumnFit>>, column: ResultColumn) =>
+    fits[column.pivot?.cell ?? column.id]
+
+/**
  * What the run's measure depends on (D1): the run (design, params, sort), the
  * number format, the shown columns and the row levels. A later page, a fold and a
  * live re-run keep the key, so the columns never move under the reader.
@@ -361,14 +375,15 @@ export function measureColumns(input: {
             minContent: labels.longestWord,
             pad: chrome,
         }
-        const fit = fits[label.id]
-        measures[label.id] = isWhole ? wholeMeasure(content, fit, 1) : fitted(content, fit, 1)
+        const fit = fitOf(fits, label)
+        const grow = defaultFlexGrow({ isLabel: true, isFigure: isWhole })
+        measures[label.id] = isWhole ? wholeMeasure(content, fit, grow) : fitted(content, fit, grow)
     }
     for (const column of others) {
         const heading = headingWidths(column, format)
         const cells = widestCell(column, rows, format)
         const natural = Math.max(heading.natural, cells.widest)
-        const fit = fits[column.id]
+        const fit = fitOf(fits, column)
         if (isFigureColumn(column)) {
             const whole = {
                 natural,
@@ -377,7 +392,11 @@ export function measureColumns(input: {
                 minContent: 0,
                 pad: 0,
             }
-            measures[column.id] = wholeMeasure(whole, fit, 0)
+            measures[column.id] = wholeMeasure(
+                whole,
+                fit,
+                defaultFlexGrow({ isLabel: false, isFigure: true })
+            )
             continue
         }
         const content: Content = {
@@ -387,7 +406,11 @@ export function measureColumns(input: {
             minContent: cells.longestWord,
             pad: CELL_PADDING,
         }
-        measures[column.id] = fitted(content, fit, 1)
+        measures[column.id] = fitted(
+            content,
+            fit,
+            defaultFlexGrow({ isLabel: false, isFigure: false })
+        )
     }
     return measures
 }

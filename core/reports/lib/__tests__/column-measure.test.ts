@@ -5,6 +5,7 @@ import {
     CH_WIDTH,
     cellTextStyle,
     deepestLabelStart,
+    defaultFlexGrow,
     isFigureType,
     labelChrome,
     labelNeed,
@@ -317,6 +318,42 @@ describe('column fit in the measure', () => {
         expect(m.amount?.min).toBe(labelNeed(row, DEFAULT_DISPLAY))
         expect(isFigureType('money')).toBe(true)
         expect(isFigureType('text')).toBe(false)
+    })
+
+    it('gives the label column and text a default share of 1, other figures 0', () => {
+        expect(defaultFlexGrow({ isLabel: true, isFigure: true })).toBe(1)
+        expect(defaultFlexGrow({ isLabel: true, isFigure: false })).toBe(1)
+        expect(defaultFlexGrow({ isLabel: false, isFigure: false })).toBe(1)
+        expect(defaultFlexGrow({ isLabel: false, isFigure: true })).toBe(0)
+        const columns: ResultColumn[] = [
+            { id: 'amount', label: 'Amt', type: 'money', currency: 'USD' },
+            { id: 'debit', label: 'Debit', type: 'money', currency: 'USD' },
+        ]
+        const row = item('detail', '$12.00', { debit: 1200 })
+        const m = measureColumns({ columns, rows: [row], format: DEFAULT_DISPLAY, levels: FLAT })
+        expect(m.amount?.grow).toBe(defaultFlexGrow({ isLabel: true, isFigure: true }))
+        expect(m.debit?.grow).toBe(defaultFlexGrow({ isLabel: false, isFigure: true }))
+    })
+
+    it('reads a pivot cell column’s fit from its spec column', () => {
+        const columns: ResultColumn[] = [
+            { id: 'account', label: 'Account', type: 'text' },
+            { id: 'note_q1', label: 'Q1', type: 'text', pivot: { cell: 'note', key: 'q1' } },
+            {
+                id: 'amount_q1',
+                label: 'Q1',
+                type: 'money',
+                currency: 'USD',
+                pivot: { cell: 'amount', key: 'q1' },
+            },
+        ]
+        const row = item('detail', 'Rent', { note_q1: 'Paid late', amount_q1: 1200 })
+        const run = (fits?: Record<string, ColumnFit>) =>
+            measureColumns({ columns, rows: [row], format: DEFAULT_DISPLAY, levels: FLAT, fits })
+        const m = run({ amount: { flexGrow: 3 }, note: { minWidth: '40ch' } })
+        expect(m.amount_q1?.grow).toBe(3)
+        expect(m.note_q1?.min).toBe(ch(40))
+        expect(run({ amount_q1: { flexGrow: 3 } }).amount_q1?.grow).toBe(0)
     })
 })
 

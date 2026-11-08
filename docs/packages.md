@@ -1365,7 +1365,10 @@ label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` o
 | `display.columns.<col>.whiteSpace` | `nowrap` (default: one line, ends in "…") or `normal` (the text wraps). |
 | `display.columns.<col>.lineClamp` | 1 to 4, with `whiteSpace: "normal"`: the most lines the text wraps to (default 2). |
 | `display.columns.<col>.textOverflow` | `ellipsis` only. |
-| `display.columns.<col>.flexGrow` | 0 to 10: the column's share of spare room on one line (default 1 for text, 0 for figures). |
+| `display.columns.<col>.flexGrow` | 0 to 10: the column's share of spare room on one line (default 1 for text and the label column, 0 for other figures). |
+
+`<col>` is a spec column id. A pivot's cell columns (one per pivot value) all take
+the fit of their spec column.
 
 A param of type `amount` holds cents and a currency. A multiple choice param
 may hold a whole group as `{"group": "<value>"}`; the server expands it under

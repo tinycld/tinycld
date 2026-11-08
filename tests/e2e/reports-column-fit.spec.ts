@@ -44,6 +44,14 @@ test.describe('report column fit', () => {
             // An amount is never cut: it offers only Extra room.
             await expect(p.getByTestId('report-builder-column-1-fit-never-cut')).toBeVisible()
             await expect(p.getByTestId('report-builder-column-1-fit-min')).toHaveCount(0)
+            await expect(p.getByTestId('report-builder-column-1-fit-grow')).toContainText('None')
+            // As the label column the amount takes a share of 1 (Normal), and None can be set.
+            await p.getByTestId('report-builder-column-1-up').click()
+            await expect(p.getByTestId('report-builder-column-0-fit-grow')).toContainText('Normal')
+            await chooseOption(p, 'report-builder-column-0-fit-grow', '0')
+            await expect(p.getByTestId('report-builder-column-0-fit-grow')).toContainText('None')
+            await chooseOption(p, 'report-builder-column-0-fit-grow', '1')
+            await p.getByTestId('report-builder-column-0-down').click()
             await chooseOption(p, 'report-builder-column-0-fit-min', '12')
             await expect(p.getByTestId('report-builder-column-0-fit-min')).toContainText(
                 '12 letters'
