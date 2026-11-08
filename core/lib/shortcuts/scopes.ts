@@ -135,11 +135,10 @@ export function useScopeOwner(): ScopeOwner | null {
  * from stack membership (focus) exists to prevent.
  */
 export function useShortcutScope(scope: Scope): ScopeOwner {
-    // The id is assigned ONCE, on mount, and kept for this instance's whole
-    // life. It is read through an accessor rather than returned as a value
-    // because the assignment happens in an effect: during the render that sets
-    // this up there is no id yet, and handing the register effect a null in that
-    // same commit is indistinguishable from "this instance owns nothing".
+    // The id is assigned ONCE and kept for this instance's whole life. It is
+    // read through an accessor rather than returned as a value because no id
+    // exists during the render that sets this up; it is assigned on the first
+    // READ or on mount, whichever comes first.
     //
     // `useState` (not `useRef`) for the box so its identity is created once and
     // the accessor closes over something stable — the register hooks list the
@@ -148,7 +147,14 @@ export function useShortcutScope(scope: Scope): ScopeOwner {
     const [owner] = useState<{ id: number | null; read: ScopeOwner }>(() => {
         const box: { id: number | null; read: ScopeOwner } = {
             id: null,
-            read: () => box.id,
+            // Assigned on first READ as well as on mount: a descendant that
+            // registers through ScopeProvider runs its effect BEFORE this
+            // component's own (React runs child effects first), and would
+            // otherwise stamp its shortcut null, which never matches.
+            read: () => {
+                if (box.id === null) box.id = nextId++
+                return box.id
+            },
         }
         return box
     })
@@ -163,7 +169,7 @@ export function useShortcutScope(scope: Scope): ScopeOwner {
     // still tracks focus, so a blurred screen holds no entry and cannot be on
     // top; its shortcuts keep their id and simply stop matching.
     useEffect(() => {
-        owner.id = nextId++
+        owner.read()
         return () => {
             if (owner.id !== null) popScope(owner.id)
             owner.id = null
@@ -172,7 +178,7 @@ export function useShortcutScope(scope: Scope): ScopeOwner {
 
     useFocusEffect(
         useCallback(() => {
-            const id = owner.id
+            const id = owner.read()
             if (id === null) return
             stack.push({ id, scope })
             return () => popScope(id)

@@ -1,5 +1,11 @@
 import { expect, type Page, test } from '@playwright/test'
-import { appShell, clearSession, createInvitedUser, type InvitedUser } from './helpers'
+import {
+    appShell,
+    clearSession,
+    createInvitedUser,
+    type InvitedUser,
+    openAccountSecurity,
+} from './helpers'
 import { totpCode } from './totp-helpers'
 
 // Two-step verification, passkeys and app passwords, driven through the UI.
@@ -20,14 +26,6 @@ test.describe('security: two-step verification', () => {
     test.afterEach(async () => {
         await closeInvitee()
     })
-
-    async function openSecurity(page: Page) {
-        await page.getByLabel('User menu').click()
-        await page.getByRole('menu').getByText('Settings', { exact: true }).click()
-        const accountGroup = page.getByText('Account', { exact: true }).locator('..')
-        await accountGroup.getByText('Security', { exact: true }).click()
-        await page.getByTestId('totp-section').waitFor({ state: 'visible' })
-    }
 
     // Signing out is clearing this browser's session; the next load shows the
     // sign-in overlay. Returns once the password step is submitted.
@@ -56,7 +54,7 @@ test.describe('security: two-step verification', () => {
     }
 
     test('turns on an authenticator app, then signs in with a code and a recovery code', async () => {
-        await openSecurity(inviteePage)
+        await openAccountSecurity(inviteePage)
         const { secret, codes } = await enrollAuthenticator(inviteePage)
 
         // The password alone now stops at the code step.
@@ -83,7 +81,7 @@ test.describe('security: two-step verification', () => {
     })
 
     test('creates, shows once and revokes an app password', async () => {
-        await openSecurity(inviteePage)
+        await openAccountSecurity(inviteePage)
         await inviteePage.getByTestId('app-password-create').click()
         await inviteePage.getByPlaceholder('Thunderbird on my laptop').fill('Thunderbird')
         await inviteePage.getByText('Create', { exact: true }).click()
@@ -116,7 +114,7 @@ test.describe('security: two-step verification', () => {
             },
         })
 
-        await openSecurity(inviteePage)
+        await openAccountSecurity(inviteePage)
         await inviteePage.getByTestId('passkey-add').click()
         await expect(inviteePage.getByTestId('passkey-row')).toHaveCount(1)
 
