@@ -449,18 +449,19 @@ test.describe('scroll position on web', () => {
             // checks that it rendered nothing (below), so a geometry that closes that
             // window fails the test.
             await p.setViewportSize({ width: 390, height: 800 })
-            // The rows are drawn wrapped (by other code) before the list is used.
+            // The rows are drawn wrapped (by other code) before the list is used. The
+            // last column (booked) cannot share line 1 when one line does not fit.
             const start = rowOf(p, dayOf(10))
             const startId = ((await start.getAttribute('data-testid')) ?? '').replace(
                 'report-row-',
                 ''
             )
-            const startAmount = p.getByTestId(`report-cell-amount-${startId}`)
+            const startBooked = p.getByTestId(`report-cell-booked-${startId}`)
             await expect
                 .poll(async () => {
                     const label = await start.boundingBox()
-                    const amount = await startAmount.boundingBox()
-                    return label && amount ? amount.y >= label.y + label.height - 1 : false
+                    const booked = await startBooked.boundingBox()
+                    return label && booked ? booked.y >= label.y + label.height - 1 : false
                 })
                 .toBe(true)
             // Start so that the wheel steps take the next row exactly 2 px past the list

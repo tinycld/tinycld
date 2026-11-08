@@ -603,14 +603,15 @@ test.describe('where a report run starts', () => {
         try {
             await seedAskedAmount(p)
             await p.setViewportSize({ width: 390, height: 844 })
-            // The rows wrap on a phone: the amount sits under the label.
+            // The rows wrap on a phone: the last column (quantity) cannot share line 1
+            // when one line does not fit, so it sits under the label.
             const first = rowOf(p, topName(0))
             const id = ((await first.getAttribute('data-testid')) ?? '').replace('report-row-', '')
-            const amount = p.getByTestId(`report-cell-amount-${id}`)
+            const quantity = p.getByTestId(`report-cell-quantity-${id}`)
             await expect
                 .poll(async () => {
                     const label = await first.boundingBox()
-                    const cell = await amount.boundingBox()
+                    const cell = await quantity.boundingBox()
                     return label && cell ? cell.y >= label.y + label.height - 1 : false
                 })
                 .toBe(true)
