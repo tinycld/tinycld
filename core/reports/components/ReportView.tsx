@@ -83,7 +83,8 @@ interface BodyProps {
     top?: ReactNode
 }
 
-export function ReportBody({ model, table, top }: BodyProps) {
+// The body of every state but the table's: each shows only in its own state.
+function StateBodies({ model }: { model: ReportViewModel }) {
     const { state } = model
     const retry = { label: 'Retry', testID: 'report-retry', onPress: model.run.retry }
     const fix = refusalAction(model)
@@ -134,13 +135,27 @@ export function ReportBody({ model, table, top }: BodyProps) {
                 action={model.emptyAction}
                 onAction={model.onEmptyAction}
             />
-            <TableBody model={model} table={table} top={top} />
         </>
     )
 }
 
-function TableBody({ model, table, top }: BodyProps) {
-    if (model.state !== 'ready') return null
+export function ReportBody({ model, table, top }: BodyProps) {
+    const states = <StateBodies model={model} />
+    // D9 with F11: on a phone the list holds the top area in every state, so the
+    // states are drawn inside it, under the top area; elsewhere they stand alone.
+    const fixedStates = top === undefined ? states : null
+    return (
+        <>
+            {fixedStates}
+            <TableBody model={model} table={table} top={top} states={states} />
+        </>
+    )
+}
+
+function TableBody({ model, table, top, states }: BodyProps & { states: ReactNode }) {
+    const isReady = model.state === 'ready'
+    if (!isReady && top === undefined) return null
+    const body = isReady ? undefined : states
     const runKey = shownRunKey(model)
     return (
         <ReportTable
@@ -158,6 +173,7 @@ function TableBody({ model, table, top }: BodyProps) {
             onSortColumn={model.onSortColumn}
             onTopRowIndex={model.run.onTopRowIndex}
             top={top}
+            body={body}
         />
     )
 }
@@ -216,9 +232,11 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
             isCompact={isCompact}
         />
     )
-    // D9: on a phone, with rows to scroll, the top area scrolls away with them; in
-    // any other state, or on a wider screen, it stays above the body.
-    const isTopInList = isCompact && model.isBodyShown && model.state === 'ready'
+    // D9: on a phone the top area is the list's header and scrolls away with the rows.
+    // It stays there in every run state (the list then shows the state under it), so
+    // a run that lands with no rows or fails does not mount it again and the focus
+    // stays on the control that started it. On a wider screen it stays above the body.
+    const isTopInList = isCompact && model.isBodyShown
     const fixedTop = isTopInList ? null : top
     const listTop = isTopInList ? top : undefined
     return (

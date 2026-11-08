@@ -372,6 +372,107 @@ test.describe('report rows per width', () => {
         }
     })
 
+    // D9 with F11, in every state a run can land in: the phone's top area stays the same
+    // elements whether the new run has rows, has none or fails, so the focus stays on
+    // the chip that started it. Each run is held until the chip's picker has closed and
+    // given the focus back, so the run lands while the chip has it.
+    test('on a phone the chip keeps the focus when its run has no rows or fails', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptstate')
+        try {
+            await seed(p, 24)
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await p.getByTestId('report-builder-section-filter').click()
+            await p.getByTestId('report-builder-filter-add-condition').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-amount')
+                .click()
+            await chooseOption(p, 'report-builder-filter-0-op', 'gte')
+            await p.getByTestId('report-builder-filter-0-ask').click()
+            await saveNewReport(p, uniqueName('States'))
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect(p.getByTestId('report-table')).toHaveCSS('opacity', '1')
+            await expect(rowOf(p, 'Wrapco 00')).toBeVisible()
+
+            const focusedTestId = () =>
+                p.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? null)
+            const keepChip = () =>
+                p.evaluate(() => {
+                    const chip = document.querySelector('[data-testid="report-param-amount"]')
+                    ;(window as Window & { keptChip?: Element | null }).keptChip = chip
+                })
+            const isSameChip = () =>
+                p.evaluate(() => {
+                    const kept = (window as Window & { keptChip?: Element | null }).keptChip
+                    const now = document.querySelector('[data-testid="report-param-amount"]')
+                    return kept?.isConnected === true && kept === now
+                })
+            const fillAmount = async (amount: string) => {
+                const picker = p.getByTestId('report-filter-picker')
+                await picker.getByTestId('report-filter-value').fill(amount)
+                await picker.getByTestId('report-filter-apply').click()
+                await expect(picker).toBeHidden()
+            }
+            // Sets the chip's value with the keyboard, holds the run it starts until the
+            // focus is back on the chip, then lets the run land as itself or as a failure.
+            const runFromChip = async (amount: string, answer?: 'fail') => {
+                let release = () => {}
+                const held = new Promise<void>(resolve => {
+                    release = resolve
+                })
+                await p.route('**/api/reports/run', async route => {
+                    await held
+                    if (answer !== 'fail') return route.continue()
+                    return route.fulfill({
+                        status: 404,
+                        contentType: 'application/json',
+                        body: JSON.stringify({ status: 404, message: 'Not found.', data: {} }),
+                    })
+                })
+                const chip = p.getByTestId('report-param-amount')
+                await chip.focus()
+                await p.keyboard.press('Enter')
+                await fillAmount(amount)
+                await expect.poll(focusedTestId).toBe('report-param-amount')
+                await keepChip()
+                release()
+                await p.unrouteAll({ behavior: 'wait' })
+            }
+
+            // The asked amount gets its chip once it has a value; every sale is 10.00 or more.
+            await p.getByTestId('report-add-filter').click()
+            await p.getByTestId('report-add-filter-amount').click()
+            await fillAmount('10')
+            await expect(p.getByTestId('report-param-amount')).toBeVisible()
+            await expect(rowOf(p, 'Wrapco 00')).toBeVisible()
+
+            // Rows → no rows: no sale is 999.00 or more.
+            await runFromChip('999')
+            await expect(p.getByTestId('report-empty')).toBeVisible()
+            expect(await isSameChip()).toBe(true)
+            await expect.poll(focusedTestId).toBe('report-param-amount')
+
+            // No rows → rows again.
+            await runFromChip('10.20')
+            await expect(rowOf(p, 'Wrapco 20')).toBeVisible()
+            await expect(rowOf(p, 'Wrapco 19')).toHaveCount(0)
+            expect(await isSameChip()).toBe(true)
+            await expect.poll(focusedTestId).toBe('report-param-amount')
+
+            // Rows → a failed run.
+            await runFromChip('10.10', 'fail')
+            await expect(p.getByTestId('report-error')).toBeVisible()
+            expect(await isSameChip()).toBe(true)
+            await expect.poll(focusedTestId).toBe('report-param-amount')
+        } finally {
+            await close()
+        }
+    })
+
     test('on a desktop a row stays one line and the heading row stays at the top', async ({
         page,
     }) => {

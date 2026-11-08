@@ -453,36 +453,64 @@ function FixedHeadingList(props: TableListProps) {
     )
 }
 
+interface FloatingHeadingProps extends HeadingRowProps {
+    isVisible: boolean
+    style: ReturnType<typeof useScrollAwayTop>['headingStyle']
+    onLayout: ReturnType<typeof useScrollAwayTop>['onHeadingLayout']
+}
+
+// Wrapped headings take no presses (D10), so a drag that starts on them passes
+// to the list. One-line headings keep their sort presses.
+function FloatingHeading({ isVisible, style, onLayout, ...row }: FloatingHeadingProps) {
+    if (!isVisible) return null
+    const touches = row.layout.kind === 'blocks' ? 'none' : 'box-none'
+    return (
+        <Animated.View style={style} onLayout={onLayout} pointerEvents={touches}>
+            <HeadingRow {...row} />
+        </Animated.View>
+    )
+}
+
+// With no heading row over the list, no slot is kept for it after the top area.
+const NO_HEADING_STICKY = { useNativeDriver: false as const, offset: 0 }
+
 // D9: the phone's list. The top area is the list's header and scrolls with the rows;
 // the heading row floats over the list (useScrollAwayTop). It comes first in the tree,
 // so its sort buttons come before the rows in the reading order. The header element
 // is new on each render (the top area shows the model's current state), but its
-// type and place stay, so the top area stays mounted across runs.
-function ScrollAwayList(props: TableListProps & { top: ReactNode }) {
-    const { columns, layout, format, sorting, onRowWidth, top } = props
+// type and place stay, so the top area stays mounted across runs. A run with no
+// rows, or one that fails or loads, keeps this same list: its state (`body`) is
+// drawn under the top area, with no rows, heading row or end row, so the top area
+// and the focus in it stay whatever state the run lands in.
+function ScrollAwayList(props: TableListProps & { top: ReactNode; body: ReactNode }) {
+    const { columns, layout, format, sorting, onRowWidth, top, body } = props
     const listProps = useTableListProps(props)
     const away = useScrollAwayTop()
+    const isTableShown = body === undefined
     const header = (
         <>
             <View onLayout={away.onTopLayout}>{top}</View>
             <RowWidthProbe onWidth={onRowWidth} />
+            {body}
         </>
     )
-    // Wrapped headings take no presses (D10), so a drag that starts on them passes
-    // to the list. One-line headings keep their sort presses.
-    const headingTouches = layout.kind === 'blocks' ? 'none' : 'box-none'
+    const sticky = isTableShown ? away.stickyConfig : NO_HEADING_STICKY
+    const footer = isTableShown ? listProps.ListFooterComponent : null
     return (
         <View className="min-h-0 flex-1">
-            <Animated.View
+            <FloatingHeading
+                isVisible={isTableShown}
                 style={away.headingStyle}
                 onLayout={away.onHeadingLayout}
-                pointerEvents={headingTouches}
-            >
-                <HeadingRow columns={columns} layout={layout} format={format} sorting={sorting} />
-            </Animated.View>
+                columns={columns}
+                layout={layout}
+                format={format}
+                sorting={sorting}
+            />
             <FlashList
                 {...listProps}
-                stickyHeaderConfig={away.stickyConfig}
+                ListFooterComponent={footer}
+                stickyHeaderConfig={sticky}
                 onScroll={away.onScroll}
                 ListHeaderComponent={header}
             />
@@ -490,9 +518,13 @@ function ScrollAwayList(props: TableListProps & { top: ReactNode }) {
     )
 }
 
-function TableList({ top, ...props }: TableListProps & { top?: ReactNode }) {
+function TableList({
+    top,
+    body,
+    ...props
+}: TableListProps & { top?: ReactNode; body?: ReactNode }) {
     if (top === undefined) return <FixedHeadingList {...props} />
-    return <ScrollAwayList {...props} top={top} />
+    return <ScrollAwayList {...props} top={top} body={body} />
 }
 
 export interface ReportTableProps {
@@ -521,7 +553,15 @@ export interface ReportTableProps {
      * list's header and the heading row stays at the top; not given, both stay put.
      */
     top?: ReactNode
+    /**
+     * D9 with F11: on a phone (`top` given), the run's state when it has no rows to
+     * show (loading, empty, failed, refused). Given, the list shows it under the top
+     * area in place of the rows, so the top area stays mounted whatever the run gives.
+     */
+    body?: ReactNode
 }
+
+const NO_ROWS: VisibleRow[] = []
 
 // FlashList measures every row (wrapped rows have the heights their content
 // gives them); onEndReached asks for the next page, through useReportRun's
@@ -531,17 +571,24 @@ export interface ReportTableProps {
 // fitted to its width, narrowed, or wrapped (tableLines). The list ends in TableEnd:
 // more rows on their way, or the end of the report.
 export function ReportTable(props: ReportTableProps) {
-    const { rows, runKey, layout, onToggleGroup, onNearEnd } = props
+    const { runKey, layout, onToggleGroup, onNearEnd, body } = props
     const columns = useStable(props.columns)
     const format = useStable(props.format)
     const sorting = useHeadingSort(props.sort, props.onSortColumn)
-    if (columns.length === 0) return null
-    const visibility = props.isMeasured ? '' : 'opacity-0'
+    const isStateShown = body !== undefined && props.top !== undefined
+    if (columns.length === 0 && !isStateShown) return null
+    const rows = isStateShown ? NO_ROWS : props.rows
+    const stateBody = isStateShown ? body : undefined
+    // A state has no rows to measure: it shows at once.
+    const visibility = props.isMeasured || isStateShown ? '' : 'opacity-0'
+    // The table's test id is on the rows only; a state keeps its own.
+    const testID = isStateShown ? 'report-state-list' : 'report-table'
     return (
-        <View testID="report-table" className={`min-h-0 flex-1 ${visibility}`}>
+        <View testID={testID} className={`min-h-0 flex-1 ${visibility}`}>
             <TableList
                 runKey={runKey}
                 top={props.top}
+                body={stateBody}
                 rows={rows}
                 columns={columns}
                 layout={layout}
