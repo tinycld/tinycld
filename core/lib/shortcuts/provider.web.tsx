@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useRef } from 'react'
 import { tinykeys } from 'tinykeys'
 import { handleKey, type KeyFacts } from './dispatch'
 import { atomsForShortcuts, createMatcher } from './matcher'
+import { watchModifierHeld } from './modifier-held'
 import { useShortcutRegistry } from './registry'
 
 export interface ShortcutsProviderProps {
@@ -64,6 +65,8 @@ function factsOf(event: KeyboardEvent): KeyFacts {
 
 export function ShortcutsProvider({ children }: ShortcutsProviderProps) {
     const matcherRef = useRef(createMatcher())
+
+    useEffect(() => watchModifierHeld(window, document), [])
 
     // Rebind tinykeys whenever the set of unique single atoms changes. We
     // diff by the sorted atom list so adding or removing a shortcut that
