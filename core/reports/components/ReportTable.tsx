@@ -21,6 +21,7 @@ import {
     TableRow,
     type TableRowProps,
 } from './ReportRow'
+import { HEADING_LINE_HEIGHT, ROW_HEIGHT } from './report-table-layout'
 
 const TEXT_ALIGN: Record<Justify, string> = {
     start: 'text-left',
@@ -68,7 +69,7 @@ function SortIcon({ kind, isVisible }: { kind: SortIconKind; isVisible: boolean 
 function HeadingText({ text, justify }: { text: string; justify: Justify }) {
     return (
         <Text
-            numberOfLines={1}
+            numberOfLines={2}
             className={`shrink text-xs font-semibold uppercase text-muted-foreground ${TEXT_ALIGN[justify]}`}
         >
             {text}
@@ -94,15 +95,20 @@ function HeadingContent({ column, text, justify, sorting, isPressable }: Heading
     if (!column.sortable) return <HeadingText text={text} justify={justify} />
     const kind = sortIconOf(sorting.sort, column.id)
     const iconFirst = justify === 'end'
+    // A plain heading shows only an arrow that says the column is sorted.
+    const isShown = isPressable || kind !== 'none'
+    const row = (
+        <>
+            <SortIcon kind={kind} isVisible={iconFirst && isShown} />
+            <HeadingText text={text} justify={justify} />
+            <SortIcon kind={kind} isVisible={!iconFirst && isShown} />
+        </>
+    )
+    const style = { justifyContent: JUSTIFY_CONTENT[justify] }
     if (!isPressable) {
         return (
-            <View
-                className="flex-1 flex-row items-center gap-1"
-                style={{ justifyContent: JUSTIFY_CONTENT[justify] }}
-            >
-                <SortIcon kind={kind} isVisible={iconFirst && kind !== 'none'} />
-                <HeadingText text={text} justify={justify} />
-                <SortIcon kind={kind} isVisible={!iconFirst && kind !== 'none'} />
+            <View className="flex-1 flex-row items-center gap-1" style={style}>
+                {row}
             </View>
         )
     }
@@ -113,11 +119,9 @@ function HeadingContent({ column, text, justify, sorting, isPressable }: Heading
             accessibilityLabel={sortLabel(text, kind)}
             onPress={() => sorting.onSortColumn(column.id)}
             className="min-h-11 flex-1 flex-row items-center gap-1"
-            style={{ justifyContent: JUSTIFY_CONTENT[justify] }}
+            style={style}
         >
-            <SortIcon kind={kind} isVisible={iconFirst} />
-            <HeadingText text={text} justify={justify} />
-            <SortIcon kind={kind} isVisible={!iconFirst} />
+            {row}
         </Pressable>
     )
 }
@@ -129,6 +133,7 @@ function HeadingCell({
     format,
     sorting,
     isPressable,
+    minHeight,
 }: {
     column: ResultColumn
     justify: Justify
@@ -136,13 +141,14 @@ function HeadingCell({
     format: NumberFormat
     sorting: HeadingSort
     isPressable: boolean
+    minHeight: number
 }) {
     const text = headingText(column, format)
     return (
         <View
             testID={`report-heading-${column.id}`}
             className="justify-center px-3"
-            style={cellBoxStyle(width)}
+            style={cellBoxStyle(width, minHeight)}
         >
             <HeadingContent
                 column={column}
@@ -161,20 +167,23 @@ function LabelHeading({
     format,
     sorting,
     isPressable,
+    minHeight,
 }: {
     column: ResultColumn
     format: NumberFormat
     sorting: HeadingSort
     isPressable: boolean
+    minHeight: number
 }) {
     return (
-        <View className="grow pl-1">
+        <View className="grow">
             <HeadingCell
                 column={column}
                 justify="start"
                 format={format}
                 sorting={sorting}
                 isPressable={isPressable}
+                minHeight={minHeight}
             />
         </View>
     )
@@ -200,12 +209,19 @@ function OneLineHeading({ columns, layout, format, sorting }: HeadingRowProps) {
             format={format}
             sorting={sorting}
             isPressable
+            minHeight={ROW_HEIGHT}
         />
     ))
     return (
         <>
             <View style={oneLineLabelStyle(layout, label.id)}>
-                <LabelHeading column={label} format={format} sorting={sorting} isPressable />
+                <LabelHeading
+                    column={label}
+                    format={format}
+                    sorting={sorting}
+                    isPressable
+                    minHeight={ROW_HEIGHT}
+                />
             </View>
             {cells}
         </>
@@ -218,7 +234,7 @@ function BlocksHeading({ columns, layout, format, sorting }: HeadingRowProps) {
     if (layout.kind !== 'blocks') return null
     const byId = new Map(columns.map(column => [column.id, column]))
     const labelId = columns[0]?.id
-    const renderCell: RenderCell = (col, justify) => {
+    const renderCell: RenderCell = (col, justify, minHeight) => {
         const column = byId.get(col)
         if (!column) return null
         if (col === labelId)
@@ -228,6 +244,7 @@ function BlocksHeading({ columns, layout, format, sorting }: HeadingRowProps) {
                     format={format}
                     sorting={sorting}
                     isPressable={false}
+                    minHeight={minHeight}
                 />
             )
         return (
@@ -237,12 +254,19 @@ function BlocksHeading({ columns, layout, format, sorting }: HeadingRowProps) {
                 format={format}
                 sorting={sorting}
                 isPressable={false}
+                minHeight={minHeight}
             />
         )
     }
     return (
         <View className="flex-1">
-            <RootBlockView root={layout.root} indent={layout.indent} renderCell={renderCell} />
+            <RootBlockView
+                root={layout.root}
+                indent={layout.indent}
+                renderCell={renderCell}
+                firstHeight={HEADING_LINE_HEIGHT}
+                restHeight={HEADING_LINE_HEIGHT}
+            />
         </View>
     )
 }

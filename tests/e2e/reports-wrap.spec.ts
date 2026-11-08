@@ -186,11 +186,38 @@ test.describe('report rows per width', () => {
                     fitsPhone: true,
                 })
 
+            // D6: the wrapped line is shorter than the first (not a press target), and it
+            // starts under the label's text (review §7.1-6).
+            const id =
+                (await rowOf(p, 'Wrapco 00').getAttribute('data-testid'))?.replace(
+                    'report-row-',
+                    ''
+                ) ?? ''
+            // The first cell of the wrapped line: quantity, which shares line 2 with status.
+            const first = p.getByTestId(`report-cell-quantity-${id}`)
+            const labelText = rowOf(p, 'Wrapco 00').getByText('Wrapco 00', { exact: true })
+            await expect
+                .poll(async () => {
+                    const box = await first.boundingBox()
+                    const text = await first.locator('div[dir="auto"]').boundingBox()
+                    const label = await labelText.boundingBox()
+                    if (!box || !text || !label) return null
+                    return {
+                        compact: box.height <= 30,
+                        underLabel: Math.abs(text.x - label.x) <= 1,
+                    }
+                })
+                .toEqual({ compact: true, underLabel: true })
+            const headingRow = await p.getByTestId('report-heading-row').boundingBox()
+            expect(headingRow?.height ?? 0).toBeLessThan(2 * 44)
+
             // Scroll the open group's rows: its own row goes up under the heading row,
             // and its stuck copy stays just under the heading row.
             const headingBottom = await bottomOf(p.getByTestId('report-heading-row'))
             await p.getByTestId('report-table').hover()
-            await p.mouse.wheel(0, 900)
+            // Far enough to scroll the group's own row away, not so far that the next
+            // group (the compact lines make the Open group shorter) pushes the copy up.
+            await p.mouse.wheel(0, 400)
             const sticky = p.getByTestId('report-sticky-group')
             await expect(sticky).toContainText('Open')
             await expect.poll(() => isScrolledAway(rowOf(p, 'Open'), headingBottom)).toBe(true)
