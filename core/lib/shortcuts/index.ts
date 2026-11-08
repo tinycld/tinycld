@@ -1,4 +1,5 @@
 export { ShortcutHelp, useShortcutHelp, useShortcutHelpStore } from './help'
+export { ariaKeyShortcuts, formatHint, type ShortcutHint } from './hint'
 export { formatKeys, isApplePlatform } from './keys'
 export { ShortcutsProvider } from './provider'
 export { useShortcutRegistry } from './registry'
