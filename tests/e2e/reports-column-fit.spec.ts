@@ -133,7 +133,7 @@ test.describe('report column fit', () => {
             await addTeam(p, team)
             await addSales(p, {
                 team,
-                customerPrefix: 'Fitco Supercalifragilisticexpialidocious Wholesale',
+                customerPrefix: 'Fitco Antidisestablishmentarianism Wholesale',
                 count: 1,
                 firstDay: '2026-01-05',
                 firstAmount: 12345,
@@ -144,7 +144,9 @@ test.describe('report column fit', () => {
             await startReport(p, SALES_SOURCE)
             // Three figures are never cut and fill most of a phone's line, so the label
             // gets little more than its least width: six letters, much less than
-            // "Supercalifragilisticexpialidocious".
+            // "Antidisestablishmentarianism". The word is short enough that the label
+            // still shares its line with the amount when a scrollbar gutter takes
+            // 15 px of the 390 (375 px rows on Linux).
             await addColumn(p, ['amount'])
             await addColumn(p, ['cost'])
             await addColumn(p, ['quantity'])
@@ -157,8 +159,20 @@ test.describe('report column fit', () => {
                 .locator('div[dir="auto"]')
 
             await p.setViewportSize({ width: 390, height: 844 })
-            await waitForTableFit(p)
+            expect(await waitForTableFit(p)).toBe('auto')
             await expect(label).toContainText('Wholesale')
+            // The label shares line 1 with the amount, so it must wrap to fit.
+            const amount = p
+                .locator('[data-testid^="report-cell-amount-d:"]')
+                .first()
+                .locator('div[dir="auto"]')
+            // On a shared line the amount sits beside the label (centred on it); on its
+            // own line it starts below the label's bottom.
+            const labelBox = await label.boundingBox()
+            const amountBox = await amount.boundingBox()
+            expect(amountBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(
+                (labelBox?.y ?? 0) + (labelBox?.height ?? 0)
+            )
             // Each word is one DOM range: a word split across lines has two client rects.
             const words = () =>
                 label.evaluate(element => {
@@ -182,11 +196,7 @@ test.describe('report column fit', () => {
             const overflowWrap = (element: Element) => getComputedStyle(element).overflowWrap
             expect(await label.evaluate(overflowWrap)).toBe('normal')
             // A cell's text (RowCell) takes the same style as the label's.
-            const cell = p
-                .locator('[data-testid^="report-cell-amount-d:"]')
-                .first()
-                .locator('div[dir="auto"]')
-            expect(await cell.evaluate(overflowWrap)).toBe('normal')
+            expect(await amount.evaluate(overflowWrap)).toBe('normal')
             const widest = Math.max(...found.map(w => w.width))
             expect(box).toBeGreaterThanOrEqual(widest)
             // The label wraps: it is narrower than its whole text.
