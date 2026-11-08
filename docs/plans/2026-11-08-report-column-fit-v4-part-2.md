@@ -1075,7 +1075,7 @@ Expected: no errors. (`useTableLayout` still calls `tableLines` with the old inp
 - Modify: `core/reports/lib/spec.ts` (add `displayFitOf`), test in `core/reports/lib/__tests__/spec.test.ts`
 - Modify: `core/reports/hooks/useReportView.ts:301` area (return `fit`), `:346-348` (`ReportViewModel`)
 - Modify: `core/reports/hooks/useTableLayout.ts` (whole file, 87 lines)
-- Modify: `core/reports/components/ReportTable.tsx:366-368` (probe `testID`), `:530-562` (`ReportTableProps.fit`), `:573-605` (`dataSet`)
+- Modify: `core/reports/components/ReportTable.tsx` `:530-562` (`ReportTableProps.fit`), `:573-605` (`dataSet`)
 - Modify: `core/reports/components/ReportView.tsx:159-176` (`TableBody` passes `fit`)
 - Create: `core/types/react-native-dataset.d.ts`; Modify: `core/package.json:48` (export), `core/tsconfig.package-base.json` (`types`)
 - Modify: `tests/e2e/helpers.ts` (`waitForTableFit`), `tests/e2e/reports-fit.spec.ts:125-140`
@@ -1084,7 +1084,7 @@ Eleven files, each a few lines; the `.d.ts`, the export and the `types` entry ar
 
 **Interfaces:**
 - Consumes: Task 8 `DisplayFit`, `ReportSpec['display']`; Task 9 `measureColumns({ fits })`, `measureKey({ fits })`; Task 10 `fitTable`, `LayoutSource`.
-- Produces: `displayFitOf(spec: Pick<ReportSpec, 'display'> | null | undefined): DisplayFit`; `ReportViewModel.fit?: DisplayFit`; `TableLayoutModel` picks `'fit'`; `TableLayout.fit: { width: number; source: LayoutSource }`; `ReportTableProps.fit?: { width: number; source: LayoutSource }`; DOM `data-fit-width` / `data-layout` on `[data-testid="report-table"]` once measured; `[data-testid="report-row-width-probe"]`; `waitForTableFit(page: Page): Promise<string>` (`tests/e2e/helpers.ts`).
+- Produces: `displayFitOf(spec: Pick<ReportSpec, 'display'> | null | undefined): DisplayFit`; `ReportViewModel.fit?: DisplayFit`; `TableLayoutModel` picks `'fit'`; `TableLayout.fit: { width: number; source: LayoutSource }`; `ReportTableProps.fit?: { width: number; source: LayoutSource }`; DOM `data-fit-width` / `data-layout` on `[data-testid="report-table"]` once measured; `[data-testid="report-width-probe"]` (the row probe's existing test id, kept); `waitForTableFit(page: Page): Promise<string>` (`tests/e2e/helpers.ts`).
 
 react-native-web 0.21 writes a `dataSet` prop as `data-*` attributes, hyphenating the keys (`createDOMProps` → `hyphenateString`): `fitWidth` → `data-fit-width`. React Native's `ViewProps` has no `dataSet`; the module augmentation below adds it (checked with tsc: `<View dataSet={{ a: '1' }} />` fails without it and passes with it). Native ignores the prop.
 
@@ -1219,7 +1219,7 @@ declare module 'react-native' {
 In `core/package.json`, after `"./types/editor-webview": "./types/editor-webview.d.ts",` add `"./types/react-native-dataset": "./types/react-native-dataset.d.ts",`. In `core/tsconfig.package-base.json` `types`, after `"@tinycld/core/types/editor-webview"` add `"@tinycld/core/types/react-native-dataset"`.
 
 In `core/reports/components/ReportTable.tsx`:
-- `RowWidthProbe`: `<View testID="report-row-width-probe" onLayout={e => onWidth(e.nativeEvent.layout.width)} />`.
+- `RowWidthProbe` (unchanged): `<View testID="report-width-probe" onLayout={e => onWidth(e.nativeEvent.layout.width)} />`.
 - `ReportTableProps`, after `onRowWidth`:
   ```ts
       /** The width the layout was fitted to and the rule that laid it out (useTableLayout). */
@@ -1258,7 +1258,7 @@ export async function waitForTableFit(page: Page): Promise<string> {
                 layout = await page.evaluate(() => {
                     const table = document.querySelector<HTMLElement>('[data-testid="report-table"]')
                     const probe = table?.querySelector<HTMLElement>(
-                        '[data-testid="report-row-width-probe"]'
+                        '[data-testid="report-width-probe"]'
                     )
                     if (!table || !probe || table.dataset.fitWidth === undefined) return ''
                     const drawn = probe.getBoundingClientRect().width
@@ -1897,7 +1897,7 @@ Expected: no errors.
 
 Part 1's section stands (GL and TB `Display` settings, the Books Go tests the version change breaks, the GL and TB e2e changes). Part 2 adds or confirms:
 
-- `waitForTableFit(page)` is exported by core `tests/e2e/helpers.ts` (Task 11). Books e2e imports it the way it imports the other core helpers; it returns `'one-line' | 'desktop' | 'tablet' | 'mobile' | 'auto'`.
+- `waitForTableFit(page)` is exported by core `tests/e2e/helpers.ts` (Task 11). Books e2e imports it the way it imports the other core helpers; it returns `'one-line' | 'desktop' | 'tablet' | 'mobile' | 'auto'`. It reads the row probe `[data-testid="report-width-probe"]`; a Books spec that reads the probe itself uses that id.
 - GL (`general-ledger.spec.ts:921-966`): with `OneLine.MinWidth: "1040px"` and the tablet layout's `MinWidth: "600px"`, expect `'tablet'` at 900 and 1024 (rows 836 and 960) and `'one-line'` at 1280 (1216). GL phone (`:861-919`): expect `'mobile'` (390 has no gate on the mobile layout).
 - TB (`trial-balance.spec.ts:553-613`): `account` with `WhiteSpace: "normal", LineClamp: 2` wraps through Task 13 (`numberOfLines` from `layout.lines`); the label checks read `label.top`/`label.bottom`, which hold for a two-line label.
 - `books/tinycld/books/screens/helix-mockup.tsx` builds a `ReportViewModel` with no `fit`; Task 11 makes `fit` optional, so it compiles and draws with the default fit. No change needed.

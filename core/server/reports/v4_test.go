@@ -3,6 +3,7 @@ package reports
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -116,6 +117,10 @@ func TestAFigureIsNeverCut(t *testing.T) {
 		"money with an ellipsis":     {spec(animal, `{"cost":{"textOverflow":"ellipsis"}}`), "display.columns.cost.textOverflow"},
 		"a formula giving money":     {spec(animal, `{"double":{"minWidth":"min-content"}}`), "display.columns.double.minWidth"},
 		"a label typed as a date":    {spec(`{"id":"animal","path":[{"link":"animal"}],"labelField":"born"}`, `{"animal":{"width":"20ch"}}`), "display.columns.animal.width"},
+		// Text in its detail rows, a number (a count) in its group rows (TotalType).
+		"a count of text that wraps": {spec(animal+`,{"id":"notes","path":[{"field":"note"}],"aggregate":"count"}`, `{"notes":{"whiteSpace":"normal"}}`), "display.columns.notes.whiteSpace"},
+		// The first column labels the detail rows with a date formula.
+		"a detail label typed as a date": {strings.TrimSuffix(spec(animal, `{"animal":{"width":"20ch"}}`), "}") + `,"detail":{"label":{"path":[{"field":"fed"}]}}}`, "display.columns.animal.width"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			requireSpecError(t, Validate(app, loadSpec(t, c.raw)), 400, c.at, neverCutMessage)

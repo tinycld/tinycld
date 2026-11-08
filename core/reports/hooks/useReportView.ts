@@ -345,7 +345,7 @@ export function useReportView(input: ReportViewInput) {
     }
 }
 
-// onSetSort and fit are optional: a hand-built model (Books' mockup) has neither;
+// onSetSort and fit are optional: a hand-built model has neither;
 // then the Sort chip is not shown and the table takes the default fit.
 export type ReportViewModel = Omit<ReturnType<typeof useReportView>, 'onSetSort' | 'fit'> & {
     onSetSort?(sort: ViewSort | null): void

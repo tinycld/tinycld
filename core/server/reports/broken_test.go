@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -85,6 +86,19 @@ func TestCheckSavedMarksBrokenReports(t *testing.T) {
 }
 
 // An app without core's report migration has no saved reports to check.
+// A fault that is not the spec's (the database, the engine) is filed as an
+// engine fault with the run's 500, never as a problem of the spec's version.
+func TestAnEngineFaultIsNotTheSpecs(t *testing.T) {
+	b := brokenFor(fmt.Errorf("reports: read a source: %w", sql.ErrConnDone))
+	want := Broken{Status: 500, Problems: map[string]Problem{"engine": {
+		Code:    "engine_fault",
+		Message: "reports: read a source: sql: connection is already closed",
+	}}}
+	if b == nil || !reflect.DeepEqual(*b, want) {
+		t.Fatalf("got %+v, want %+v", b, want)
+	}
+}
+
 func TestCheckSavedWithoutTheCollection(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {
