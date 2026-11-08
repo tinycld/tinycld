@@ -10,13 +10,13 @@ import (
 // Groups sort by a formula over the group record; details by a row formula.
 func TestSortByAFormula(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],
 		"sort":[{"formula":{"record":"g","path":[{"field":"weight"}]},"dir":"desc"}]}`, Options{}, nil)
 	requireRows(t, res, "label", "Zed", "Leo", "Total")
 
-	byGrams := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+	byGrams := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"sort":[{"formula":{"op":"sub","args":[{"value":0},{"path":[{"field":"grams"}]}]}}]}`
 	res = z.run(t, "ann", byGrams, Options{}, nil)
 	requireOrderedRows(t, byGrams, res, "note", "f2", "f1", "f3", "f4", nil)
@@ -29,11 +29,11 @@ func TestSortByAFormula(t *testing.T) {
 func TestASortKeyIsAColumnOrAFormula(t *testing.T) {
 	app := withZooRegistry(t)
 	for _, c := range []struct{ spec, at, want string }{
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"sort":[{"col":"n","formula":{"value":1}}]}`,
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"sort":[{"col":"n","formula":{"value":1}}]}`,
 			"sort.0", "a column or a formula"},
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"sort":[{}]}`,
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"sort":[{}]}`,
 			"sort.0", "a column or a formula"},
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"c","path":[{"field":"cost"}]}],"sort":[{"formula":{"op":"runningSum","args":[{"col":"c"}]}}]}`,
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"c","path":[{"field":"cost"}]}],"sort":[{"formula":{"op":"runningSum","args":[{"col":"c"}]}}]}`,
 			"sort.0.formula", "not a sort key"},
 	} {
 		spec, _, err := Load([]byte(c.spec))
@@ -50,7 +50,7 @@ func TestAFormulaSortKeyPagesWithBlanksLast(t *testing.T) {
 	z := newZoo(t)
 	// grams above 400, else blank: f1 500, f2 800, f3 and f4 blank.
 	spec := func(dir string) string {
-		return `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+		return `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"sort":[{"formula":{"op":"if","args":[{"op":"gt","args":[{"path":[{"field":"grams"}]},{"value":400}]},
 			{"path":[{"field":"grams"}]},{"value":null}]},"dir":"` + dir + `"},{"col":"note"}]}`
 	}
@@ -72,13 +72,13 @@ func TestAFormulaSortKeyPagesWithBlanksLast(t *testing.T) {
 // Prices order Zed (120,000) before Leo (500,000), the reverse of their names.
 func TestAFormulaReadingALinkSortsByTheRecordsLabel(t *testing.T) {
 	z := newZoo(t)
-	const byPrice = `{"version":2,"source":"zoo.feedings","columns":[
+	const byPrice = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},{"id":"animal","path":[{"link":"animal"}],"labelField":"price"}],
 		"sort":[{"formula":{"col":"animal"}},{"col":"note"}]}`
 	res := z.run(t, "ann", byPrice, Options{}, nil)
 	requireOrderedRows(t, byPrice, res, "note", "f3", "f4", "f1", "f2", nil)
 
-	res = z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res = z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}],"labelField":"price"},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],"sort":[{"formula":{"col":"animal"},"dir":"desc"}]}`, Options{}, nil)
 	requireRows(t, res, "cost", int64(3500), int64(1000), int64(4500))
@@ -88,7 +88,7 @@ func TestAFormulaReadingALinkSortsByTheRecordsLabel(t *testing.T) {
 // their label order and the formula sorts the detail rows inside them.
 func TestAFormulaReadingARowValueSortsOnlyDetailRows(t *testing.T) {
 	z := newZoo(t)
-	const byGrams = `{"version":2,"source":"zoo.feedings","columns":[
+	const byGrams = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],
@@ -97,7 +97,7 @@ func TestAFormulaReadingARowValueSortsOnlyDetailRows(t *testing.T) {
 	requireOrderedRows(t, byGrams, res, "cost", int64(3500), int64(2500), int64(1000), int64(1000), int64(700), int64(300), int64(4500))
 	// Leo's costs total 3,500 and Zed's 1,000, but the key also reads grams,
 	// so a group row has none and the groups stay in label order.
-	res = z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res = z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],
 		"sort":[{"formula":{"op":"add","args":[{"op":"coalesce","args":[{"path":[{"field":"grams"}]},{"value":0}]},
@@ -108,7 +108,7 @@ func TestAFormulaReadingARowValueSortsOnlyDetailRows(t *testing.T) {
 // A lookup in a sort formula is decoded and compiled like one in a column.
 func TestASortFormulaMayLookUp(t *testing.T) {
 	z := newZoo(t)
-	const byWeight = `{"version":2,"source":"zoo.feedings","columns":[
+	const byWeight = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},{"id":"animal","path":[{"link":"animal"}]}],
 		"sort":[{"formula":{"op":"lookup","source":"zoo.animals",
 			"where":{"op":"eq","args":[{"path":[{"field":"id"}]},{"col":"animal"}]},
@@ -119,7 +119,7 @@ func TestASortFormulaMayLookUp(t *testing.T) {
 	// bind refuses a lookup value that does not decode where it is, with the
 	// spec's other problems, before anything compiles.
 	app := withZooRegistry(t)
-	err := Validate(app, loadSpec(t, `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"sort":[{"formula":{"op":"lookup","source":"zoo.animals","value":{"nope":1}}},{"col":"note","dir":"sideways"}]}`))
 	requireSpecError(t, err, 400, "sort.0.formula.value", "a lookup's value is a formula")
 	requireSpecError(t, err, 400, "sort.1.dir", "asc or desc")
@@ -128,7 +128,7 @@ func TestASortFormulaMayLookUp(t *testing.T) {
 // A sort formula is held to the formula limits with the columns it reads.
 func TestValidateRefusesASortFormulaTooLargeWithTheColumnsItReads(t *testing.T) {
 	app := withZooRegistry(t)
-	raw := strings.Replace(strings.TrimSuffix(chainSpec(8, doubling), "}"), `"version":1`, `"version":2`, 1) +
+	raw := strings.TrimSuffix(chainSpec(8, doubling), "}") +
 		`,"sort":[{"formula":{"op":"add","args":[{"col":"c8"},{"col":"c8"}]}}]}`
 	requireSpecError(t, Validate(app, loadSpec(t, raw)), 400, "sort.0.formula", "with the formula columns it reads")
 }
@@ -141,7 +141,7 @@ func TestASortFormulasAmountsTotalPerCurrency(t *testing.T) {
 	z.rec(t, "f7", "zoo_feedings", map[string]any{
 		"animal": z.id("zed"), "cost": 400, "currency": "EUR", "fed": "2026-03-10 00:00:00.000Z", "grams": 10, "note": "f7",
 	})
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],
 		"sort":[{"formula":{"op":"sum","args":[{"path":[{"field":"cost"}]}]},"dir":"desc"}]}`, Options{}, nil)
@@ -163,7 +163,7 @@ func TestASortByASelectReadsItsOptionLabels(t *testing.T) {
 		{"id":"byFormula","formula":{"op":"coalesce","args":[{"path":[{"field":"kind"}]}]}},
 		{"id":"mixed","formula":{"op":"if","args":[{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"m3"}]},{"value":"Other"},{"path":[{"field":"kind"}]}]}}`
 	detail := func(sort string) string {
-		return `{"version":2,"source":"zoo.meals",` + columns + `],"sort":[` + sort + `,{"col":"note"}]}`
+		return `{"version":4,"source":"zoo.meals",` + columns + `],"sort":[` + sort + `,{"col":"note"}]}`
 	}
 	for name, c := range map[string]struct {
 		sort string
@@ -185,7 +185,7 @@ func TestASortByASelectReadsItsOptionLabels(t *testing.T) {
 	}
 
 	grouped := func(col, sort string) string {
-		return `{"version":2,"source":"zoo.meals",` + columns + `,{"id":"n","path":[{"field":"note"}],"aggregate":"count"}],` +
+		return `{"version":4,"source":"zoo.meals",` + columns + `,{"id":"n","path":[{"field":"note"}],"aggregate":"count"}],` +
 			`"groups":[{"id":"g","col":"` + col + `"}],"sort":[` + sort + `]}`
 	}
 	for name, c := range map[string]struct {

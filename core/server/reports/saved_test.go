@@ -57,15 +57,15 @@ func TestASpecIsCheckedAndSavedLoaded(t *testing.T) {
 	s := newSavedZoo(t)
 	ann := s.id("ann")
 	s.expect(t, "ann", http.MethodPost, reportsURL,
-		fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":1,"source":"zoo.feedings","columns":[{"id":"1x","path":[{"field":"cost"}]}]}}`, ann),
+		fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":4,"source":"zoo.feedings","columns":[{"id":"1x","path":[{"field":"cost"}]}]}}`, ann),
 		http.StatusBadRequest, `"message":"The report is not valid."`, `"columns.0.id":{"code":"invalid"`)
 	s.expect(t, "ann", http.MethodPost, reportsURL,
-		fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":1,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}}`, ann),
+		fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":4,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}}`, ann),
 		http.StatusUnprocessableEntity, `"source":{"code":"unknown_source"`)
 	s.expect(t, "ann", http.MethodPost, reportsURL, fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":5}}`, ann),
 		http.StatusBadRequest, `"version":{"code":"invalid"`)
 	body := s.expect(t, "ann", http.MethodPost, reportsURL,
-		fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":1,"source":"zoo.animals","columns":[{"id":"m","path":[{"field":"mass"}],"aggregate":"sum"}]}}`, ann),
+		fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":4,"source":"zoo.animals","columns":[{"id":"m","path":[{"field":"mass"}],"aggregate":"sum"}]}}`, ann),
 		http.StatusOK, `"source":"zoo.animals"`)
 	if !strings.Contains(body, `"field":"weight"`) || strings.Contains(body, `"mass"`) {
 		t.Fatalf("the alias was not saved resolved: %s", body)
@@ -76,14 +76,14 @@ func TestASpecIsCheckedAndSavedLoaded(t *testing.T) {
 // renamed; a changed spec must be valid, and clears the mark.
 func TestABrokenReportCanBeRenamedNotSavedBroken(t *testing.T) {
 	s := newSavedZoo(t)
-	gone := `{"version":1,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}`
+	gone := `{"version":4,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}`
 	b := s.saved(t, "B", "ann", "B", gone, false)
 	b.Set("broken", `{"status":422}`)
 	if err := s.app.Save(b); err != nil {
 		t.Fatal(err)
 	}
 	s.expect(t, "ann", http.MethodPatch, reportURL(b.Id), `{"title":"B renamed"}`, http.StatusOK, `"title":"B renamed"`, `"broken":{"status":422}`)
-	s.expect(t, "ann", http.MethodPatch, reportURL(b.Id), `{"spec":{"version":1,"source":"zoo.gone","columns":[{"id":"b","path":[{"field":"cost"}]}]}}`,
+	s.expect(t, "ann", http.MethodPatch, reportURL(b.Id), `{"spec":{"version":4,"source":"zoo.gone","columns":[{"id":"b","path":[{"field":"cost"}]}]}}`,
 		http.StatusUnprocessableEntity, `"source":{"code":"unknown_source"`)
 	s.expect(t, "ann", http.MethodPatch, reportURL(b.Id), `{"spec":`+savedSpec+`}`, http.StatusOK, `"broken":null`, `"source":"zoo.feedings"`)
 }
@@ -94,7 +94,7 @@ func TestAnUnloadableStoredSpecCanBeRenamed(t *testing.T) {
 	s := newSavedZoo(t)
 	b := s.saved(t, "V", "ann", "V", `{"version":99}`, false)
 	body := s.expect(t, "ann", http.MethodPatch, reportURL(b.Id), `{"title":"V renamed"}`, http.StatusOK, `"title":"V renamed"`, `"spec":{"version":99}`)
-	if strings.Contains(body, `"version":1`) {
+	if strings.Contains(body, `"version":4`) {
 		t.Fatalf("the spec changed: %s", body)
 	}
 	s.expect(t, "ann", http.MethodPatch, reportURL(b.Id), `{"spec":{"version":99,"x":1}}`, http.StatusBadRequest)
@@ -125,7 +125,7 @@ func TestAnUnloadableStoredSpecCanBeRenamedWithItsSpec(t *testing.T) {
 func TestSavedReportCaps(t *testing.T) {
 	s := newSavedZoo(t)
 	ann := s.id("ann")
-	big := fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":1,"x":"%s"}}`, ann, strings.Repeat("x", maxSpecBytes))
+	big := fmt.Sprintf(`{"owner":%q,"title":"x","spec":{"version":4,"x":"%s"}}`, ann, strings.Repeat("x", maxSpecBytes))
 	s.expect(t, "ann", http.MethodPost, reportsURL, big, http.StatusBadRequest, `"spec":{"code":"too_large"`)
 	s.expect(t, "ann", http.MethodPost, reportsURL, fmt.Sprintf(`{"owner":%q,"title":%q,"spec":%s}`, ann, strings.Repeat("t", 201), savedSpec),
 		http.StatusBadRequest, `"title":{"code":"validation_max_text_constraint"`)

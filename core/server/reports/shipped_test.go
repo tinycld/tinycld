@@ -111,7 +111,7 @@ func TestANewerRevisionReplacesTheShippedSpec(t *testing.T) {
 		t.Fatal("the same revision rewrote the report")
 	}
 	RegisterShipped(Shipped{Key: "zoo.feed_costs", Title: "Feeding costs", Spec: json.RawMessage(
-		`{"version":1,"source":"zoo.feedings","columns":[{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}]}`), Revision: 2})
+		`{"version":4,"source":"zoo.feedings","columns":[{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}]}`), Revision: 2})
 	if err := ReconcileShipped(s.app); err != nil {
 		t.Fatal(err)
 	}

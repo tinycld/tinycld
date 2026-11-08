@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const threeParams = `{"version":1,"source":"zoo.feedings",
+const threeParams = `{"version":4,"source":"zoo.feedings",
 	"params":[
 		{"id":"period","type":"dateRange","default":{"preset":"thisMonth"}},
 		{"id":"t","type":"text"},
@@ -72,7 +72,7 @@ func TestAGroupRowSaysWhetherItCanOpen(t *testing.T) {
 	if r := pivot.Rows[0]; r.Kind != KindGroup || r.CanExpand {
 		t.Fatalf("a pivot's innermost group = %+v, want a group that cannot open", r)
 	}
-	grouped := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	grouped := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species","subtotals":true}]}`, Options{}, nil)

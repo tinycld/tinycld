@@ -91,7 +91,7 @@ func requireOrderedRows(t testing.TB, spec string, res *Result, what string, wan
 	}
 }
 
-const feedingsByDay = `{"version":1,"source":"zoo.feedings","columns":[
+const feedingsByDay = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"fed","path":[{"field":"fed"}]},
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
@@ -118,7 +118,7 @@ func TestRunDetailRowsAndTheTotal(t *testing.T) {
 
 func TestRunDescribesItsColumns(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":1,"source":"zoo.animals","columns":[
+	const spec = `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}],"aggregate":"count","format":"plain"},
 		{"id":"region","label":"Where","path":[{"link":"site"},{"field":"region"}]},
 		{"id":"price","path":[{"field":"price"}],"aggregate":"sum"}],
@@ -177,7 +177,7 @@ func TestRunListsTheTopicsOfEveryCollectionItReads(t *testing.T) {
 	if !reflect.DeepEqual(res.Topics, want) {
 		t.Fatalf("topics = %v", res.Topics)
 	}
-	sites := z.run(t, "ann", `{"version":1,"source":"zoo.sites","columns":[{"id":"n","path":[{"field":"name"}]}]}`, Options{}, nil)
+	sites := z.run(t, "ann", `{"version":4,"source":"zoo.sites","columns":[{"id":"n","path":[{"field":"name"}]}]}`, Options{}, nil)
 	// The sites rule reads the signed-in user's role.
 	if !reflect.DeepEqual(sites.Topics, []string{"collection/users", "collection/zoo_sites"}) {
 		t.Fatalf("topics = %v", sites.Topics)
@@ -201,7 +201,7 @@ func TestRunNeedsAReader(t *testing.T) {
 
 func TestRunReturnsSpecErrors(t *testing.T) {
 	z := newZoo(t)
-	_, err := z.try(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"sort":[{"col":"x"}]}`, Options{}, nil)
+	_, err := z.try(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"sort":[{"col":"x"}]}`, Options{}, nil)
 	requireSpecError(t, err, 422, "sort.0.col", "no column")
 	_, err = z.try(t, "ann", feedingsByDay, Options{Today: "2026-13-01"}, nil)
 	requireSpecError(t, err, 400, "options.today", "YYYY-MM-DD")
@@ -209,7 +209,7 @@ func TestRunReturnsSpecErrors(t *testing.T) {
 
 func TestRunNoticesRenamedFieldsAndAnUpgrade(t *testing.T) {
 	z := newZoo(t)
-	const raw = `{"version":1,"source":"zoo.animals","columns":[{"id":"w","path":[{"field":"mass"}],"aggregate":"sum"}],"sort":[{"col":"w"}]}`
+	const raw = `{"version":4,"source":"zoo.animals","columns":[{"id":"w","path":[{"field":"mass"}],"aggregate":"sum"}],"sort":[{"col":"w"}]}`
 	spec, info, err := Load([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +234,7 @@ func TestRunNoticesRenamedFieldsAndAnUpgrade(t *testing.T) {
 
 func TestRunResolvesPresetsWithTheReadersDay(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.feedings",
+	spec := `{"version":4,"source":"zoo.feedings",
 		"params":[{"id":"period","type":"dateRange","default":{"preset":"thisMonth"}}],
 		"columns":[{"id":"note","path":[{"field":"note"}]}],
 		"filter":{"op":"between","args":[{"path":[{"field":"fed"}]},{"param":"period"}]},
@@ -246,7 +246,7 @@ func TestRunResolvesPresetsWithTheReadersDay(t *testing.T) {
 
 func TestRunFormulasOnDetailRowsAndTotals(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":1,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
@@ -275,7 +275,7 @@ func TestACountOfABoolIsANumberOnEveryTotalRow(t *testing.T) {
 			{Key: "active", Label: "Active", Type: Bool, Aggregates: CountOnly},
 		},
 	})
-	spec := `{"version":1,"source":"zoo.flags","columns":[
+	spec := `{"version":4,"source":"zoo.flags","columns":[
 		{"id":"species","path":[{"field":"species"}]},
 		{"id":"active","path":[{"field":"active"}],"aggregate":"count"}],
 		"groups":[{"id":"g","col":"species","subtotals":true}],"sort":[{"col":"species"}]}`
@@ -296,7 +296,7 @@ func TestACountOfABoolIsANumberOnEveryTotalRow(t *testing.T) {
 // statement) describes them as an expanded run does.
 func TestColumnTypesDoNotDependOnWhetherRowsLoaded(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}],"aggregate":"count"},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"share","formula":{"op":"percentOfTotal","args":[{"col":"cost"}],"scale":1}},
@@ -329,31 +329,31 @@ func TestValidateCompilesTheSpec(t *testing.T) {
 	}
 	const col = `{"id":"n","path":[{"field":"note"}]}`
 	// An unknown field or link inside a filter or a formula names it (422).
-	err := validate(`{"version":1,"source":"zoo.feedings","columns":[` + col + `],
+	err := validate(`{"version":4,"source":"zoo.feedings","columns":[` + col + `],
 		"filter":{"op":"gt","args":[{"path":[{"field":"nope"}]},{"value":1}]}}`)
 	requireSpecError(t, err, 422, "filter.args.0.path.0.field", "nope")
-	err = validate(`{"version":1,"source":"zoo.feedings","columns":[` + col + `],
+	err = validate(`{"version":4,"source":"zoo.feedings","columns":[` + col + `],
 		"filter":{"op":"gt","args":[{"path":[{"link":"nope"},{"field":"x"}]},{"value":1}]}}`)
 	requireSpecError(t, err, 422, "filter.args.0.path.0.link", "nope")
-	err = validate(`{"version":1,"source":"zoo.feedings","columns":[` + col + `,
+	err = validate(`{"version":4,"source":"zoo.feedings","columns":[` + col + `,
 		{"id":"f","formula":{"op":"add","args":[{"path":[{"field":"nope"}]},{"value":1}]}}]}`)
 	requireSpecError(t, err, 422, "columns.1.formula.args.0.path.0.field", "nope")
-	err = validate(`{"version":1,"source":"zoo.feedings","columns":[` + col + `,
+	err = validate(`{"version":4,"source":"zoo.feedings","columns":[` + col + `,
 		{"id":"f","formula":{"op":"add","args":[{"path":[{"link":"animal"},{"link":"nope"},{"field":"x"}]},{"value":1}]}}]}`)
 	requireSpecError(t, err, 422, "columns.1.formula.args.0.path.1.link", "nope")
 	// A formula leaf across a to-many link would repeat the row.
-	err = validate(`{"version":1,"source":"zoo.animals","columns":[{"id":"n","path":[{"field":"name"}]},
+	err = validate(`{"version":4,"source":"zoo.animals","columns":[{"id":"n","path":[{"field":"name"}]},
 		{"id":"f","formula":{"op":"add","args":[{"path":[{"link":"feedings"},{"field":"grams"}]},{"value":1}]}}]}`)
 	requireSpecError(t, err, 400, "columns.1.formula.args.0.path.0", "to-many")
 	// A formula that cannot compile fails here, not at a run.
-	err = validate(`{"version":1,"source":"zoo.feedings","columns":[` + col + `,
+	err = validate(`{"version":4,"source":"zoo.feedings","columns":[` + col + `,
 		{"id":"f","formula":{"op":"runningSum","args":[{"col":"f"}]}}]}`)
 	if err == nil || !strings.Contains(err.Error(), "reads itself") {
 		t.Fatalf("a formula reading itself: %v", err)
 	}
 	// A path in a formula with no aggregate is blank on total rows, not an
 	// error.
-	err = validate(`{"version":1,"source":"zoo.feedings","columns":[` + col + `,
+	err = validate(`{"version":4,"source":"zoo.feedings","columns":[` + col + `,
 		{"id":"f","formula":{"op":"mul","args":[{"path":[{"field":"cost"}]},{"value":2}]}}]}`)
 	if err != nil {
 		t.Fatalf("a path in a formula: %v", err)
@@ -370,7 +370,7 @@ func TestAFormulaPathIsBlankOnGroupAndTotalRows(t *testing.T) {
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
 		{"id":"perGram","formula":{"op":"div","args":[{"col":"cost"},{"col":"grams"}],"scale":0}}]`
-	const bySpecies = `{"version":1,"source":"zoo.feedings",` + columns + `,
+	const bySpecies = `{"version":4,"source":"zoo.feedings",` + columns + `,
 		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`
 	grouped := z.run(t, "ann", bySpecies, Options{ExpandAll: true}, nil)
 	requireRows(t, grouped, "kind", "group", "detail", "detail", "group", "detail", "detail", "total")
@@ -380,11 +380,11 @@ func TestAFormulaPathIsBlankOnGroupAndTotalRows(t *testing.T) {
 	requireOrderedRows(t, bySpecies, grouped, "double", nil, int64(2000), int64(5000), nil, int64(1400), int64(600), nil)
 	// A formula over totals is still computed for each group.
 	requireOrderedRows(t, bySpecies, grouped, "perGram", int64(3), int64(2), int64(3), int64(3), int64(2), int64(3), int64(3))
-	const plain = `{"version":1,"source":"zoo.feedings",` + columns + `,"sort":[{"col":"note"}]}`
+	const plain = `{"version":4,"source":"zoo.feedings",` + columns + `,"sort":[{"col":"note"}]}`
 	flat := z.run(t, "ann", plain, Options{}, nil)
 	requireOrderedRows(t, plain, flat, "same", int64(1000), int64(2500), int64(700), int64(300), nil)
 
-	_, err := z.try(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	_, err := z.try(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"bad","formula":{"op":"mul","args":[{"path":[{"field":"nope"}]},{"value":2}]}}]}`, Options{}, nil)
 	requireSpecError(t, err, 422, "columns.0.formula.args.0.path.0.field", "nope")
 }
@@ -422,7 +422,7 @@ func TestGroupKeysCompareByType(t *testing.T) {
 	if _, err := z.app.DB().NewQuery("UPDATE zoo_animals SET species = '1' WHERE name = 'Zed'").Execute(); err != nil {
 		t.Fatal(err)
 	}
-	spec := `{"version":1,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]}],
 		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"note"}]}`

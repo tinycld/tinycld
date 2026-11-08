@@ -9,7 +9,7 @@ import (
 // and grouped by its day.
 func TestATextDayReadsLikeADate(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"due","path":[{"field":"due"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"filter":{"op":"lte","args":[{"path":[{"field":"due"}]},{"value":"2026-02-10"}]},
