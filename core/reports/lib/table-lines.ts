@@ -1,17 +1,18 @@
 import type { Breakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import {
     AMOUNT_WIDTH,
-    CARET_ROOM,
-    INDENT,
     LABEL_MIN_WIDTH,
     PHONE_AMOUNT_WIDTH,
     PHONE_LABEL_WIDTH,
     TEXT_FLOOR,
 } from '../components/report-table-layout'
+import { deepestLabelStart, FLAT_LEVELS, isFigureColumn, type RowLevels } from './column-measure'
 import { isRightAligned } from './format'
 import type { VisibleRow } from './rows'
-import type { DisplayCell, DisplayLayout, DisplayWidth, SpecColumn } from './spec'
-import type { CellValue, FieldType, ResultColumn } from './types'
+import type { DisplayCell, DisplayLayout, DisplayWidth } from './spec'
+import type { CellValue, ResultColumn } from './types'
+
+export { FLAT_LEVELS, isFigureColumn, type RowLevels, rowLevelsOf } from './column-measure'
 
 // E14: a report row wraps onto more lines where its columns do not fit, after
 // Gridley: one cell renderer per column, and per width a layout that puts each
@@ -293,68 +294,6 @@ function authoredLines(
         return { kind: 'blocks', root: stackOf([label, tree]) }
     }
     return { kind: 'blocks', root: tree }
-}
-
-// Aligned or fixed-length values an ellipsis would ruin: they keep their width (R12).
-const FIGURE_TYPES: ReadonlySet<FieldType> = new Set([
-    'number',
-    'money',
-    'percent',
-    'date',
-    'datetime',
-    'bool',
-])
-
-export function isFigureColumn(column: ResultColumn): boolean {
-    return FIGURE_TYPES.has(column.type)
-}
-
-/**
- * How deep a report's rows go: its group levels and its levels of nested child
- * rows. `pivot`: the last group level holds the pivot's cells, so its groups never
- * open (assemble.go canOpen) and no row comes under them.
- */
-export type RowLevels = { groups: number; nests: number; pivot?: boolean }
-/** A report with no groups and no child rows. */
-export const FLAT_LEVELS: RowLevels = { groups: 0, nests: 0 }
-
-/**
- * A report's row levels, from its spec: one per group level, and one per `nest`
- * hop of its deepest column (the engine nests one chain of child rows). The spec,
- * not the loaded rows, so the layout does not change as groups open or pages load.
- */
-export function rowLevelsOf(
-    spec: {
-        groups?: readonly unknown[] | null
-        columns: readonly Pick<SpecColumn, 'path'>[]
-        pivot?: unknown
-    } | null
-): RowLevels {
-    if (!spec) return FLAT_LEVELS
-    const nestsOf = (column: Pick<SpecColumn, 'path'>) =>
-        (column.path ?? []).filter(hop => hop.mode === 'nest').length
-    const levels = {
-        groups: spec.groups?.length ?? 0,
-        nests: Math.max(0, ...spec.columns.map(nestsOf)),
-    }
-    return spec.pivot ? { ...levels, pivot: true } : levels
-}
-
-// The left edge of a group row's label at a level (1 is the outermost): INDENT per
-// level above it, then its caret when the group can open (ReportRow labelStyle).
-const groupLabelStart = (level: number, canOpen: boolean) =>
-    (level - 1) * INDENT + (canOpen ? CARET_ROOM : 0)
-
-// The deepest label's left edge. A detail row sits at the group levels, a child
-// row one more per level. In a pivot report the last level's groups never open:
-// they draw no caret and hold no detail or child row.
-function deepestLabelStart({ groups, nests, pivot }: RowLevels): number {
-    if (groups === 0) return nests * INDENT
-    if (pivot) {
-        const pivotRows = groupLabelStart(groups, false)
-        return groups > 1 ? Math.max(pivotRows, groupLabelStart(groups - 1, true)) : pivotRows
-    }
-    return Math.max((groups + nests) * INDENT, groupLabelStart(groups, true))
 }
 
 /**
