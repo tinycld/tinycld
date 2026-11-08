@@ -128,3 +128,23 @@ func TestAFigureIsNeverCut(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Where cells land is the client's (core/reports/lib/table-lines.ts
+// placeCells): the engine checks each cell's numbers only, so a full line, an
+// overlap and a pinwheel save.
+func TestTheEngineLeavesPlacementToTheClient(t *testing.T) {
+	app := withZooRegistry(t)
+	base := `{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"field":"note"}]},{"id":"b","path":[{"field":"cost"}]},
+		{"id":"c","path":[{"field":"grams"}]},{"id":"d","path":[{"field":"fed"}]},{"id":"e","path":[{"field":"currency"}]}],"display":{"layouts":[%s]}}`
+	for name, layout := range map[string]string{
+		"no room":  `{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"span":2},{"col":"b","line":1}]}`,
+		"overlap":  `{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"lines":2},{"col":"b","line":2,"start":1}]}`,
+		"pinwheel": `{"width":"mobile","tracks":3,"cells":[{"col":"a","line":1,"start":1,"span":2},{"col":"b","line":1,"start":3,"lines":2},{"col":"c","line":3,"start":2,"span":2},{"col":"d","line":2,"start":1,"lines":2},{"col":"e","line":2,"start":2}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := Validate(app, loadSpec(t, fmt.Sprintf(base, layout))); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

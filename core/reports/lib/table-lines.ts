@@ -29,6 +29,8 @@ export const PINWHEEL_MESSAGE =
     "These cells overlap in a way that can't be laid out; move one cell."
 export const PIVOT_NOTICE =
     "The pivot columns do not fit this width's arrangement, so the rows are laid out automatically here."
+export const ARRANGEMENT_NOTICE =
+    "This width's arrangement cannot be laid out, so the rows are laid out automatically here."
 
 export type Justify = 'start' | 'center' | 'end'
 export type SidePart = { block: Block; tracks: number; width?: number }
@@ -84,7 +86,7 @@ export function extent(c: Pick<DisplayCell, 'span' | 'lines'>) {
 /**
  * The index of the first cell of a part no straight cut can split, or -1 when
  * the pieces cut down to one each. Lines first, then tracks, the first cut
- * found, as the engine's cutDown (core/server/reports/display.go).
+ * found. The client alone places cells; the engine checks each cell's numbers only.
  */
 function cutDown(pieces: readonly Piece[], box: Box): number {
     if (pieces.length <= 1) return -1
@@ -103,7 +105,7 @@ function cutDown(pieces: readonly Piece[], box: Box): number {
     return Math.min(...pieces.map(p => p.index))
 }
 
-// A cell's first refusal before placement, as the engine's checks in order.
+// A cell's first refusal before placement (the engine checks the same numbers).
 function cellProblem(c: DisplayCell, tracks: number): string | null {
     const { span, lines } = extent(c)
     const start = c.start ?? 0
@@ -117,9 +119,9 @@ function cellProblem(c: DisplayCell, tracks: number): string | null {
 }
 
 /**
- * The engine's placement rules (core/server/reports/display.go placeCells): a
- * cell with a start sits there; one without takes the first tracks of its line
- * free on every line it spans; then the cells must cut down by straight lines.
+ * The placement rules: a cell with a start sits there; one without takes the
+ * first tracks of its line free on every line it spans; then the cells must cut
+ * down by straight lines. The one copy: the engine leaves placement to the client.
  */
 export function placeCells(tracks: number, cells: readonly DisplayCell[]): Placement {
     const taken = new Set<string>()
@@ -283,7 +285,9 @@ type Authored = { kind: 'tree'; root: Block } | { kind: 'refused'; notice?: stri
 // An arrangement's tree, without widths; or its refusal, so the choice moves on.
 function authoredLines(layout: DisplayLayout, columns: readonly ResultColumn[]): Authored {
     const arranged = placeCells(layout.tracks, layout.cells)
-    if ('problem' in arranged) return { kind: 'refused' }
+    // A spec from the CLI or the API may hold an arrangement the builder would
+    // refuse; the engine does not place cells, so the view says why it skips it.
+    if ('problem' in arranged) return { kind: 'refused', notice: ARRANGEMENT_NOTICE }
     const cells = expandPivots(layout, arranged.placed, columns)
     // The engine checks the entries as written; a run's pivot columns may still
     // run into another cell or past the last line. The arrangement is then

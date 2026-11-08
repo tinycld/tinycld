@@ -513,11 +513,12 @@ function groupOrderIssues(params: readonly ParamDef[], catalog: Catalog): Issue[
     })
 }
 
-// What the engine refuses in each display layout, in its order
-// (core/server/reports/display.go display): a second layout for a width; bad
-// tracks, no cells or more cells than a report has columns stop the layout's
-// checks; then each cell whose column the report lacks or another cell placed;
-// then the first cell placeCells refuses.
+// What the builder refuses in each display layout: the engine's checks in its
+// order (core/server/reports/display.go display: a second layout for a width;
+// bad tracks, no cells or more cells than a report has columns stop the
+// layout's checks; each cell whose column the report lacks or another cell
+// placed), then the first cell placeCells refuses (the client alone places
+// cells).
 function layoutIssues(
     layout: DisplayLayout,
     at: (string | number)[],

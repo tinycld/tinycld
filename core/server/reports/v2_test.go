@@ -144,8 +144,6 @@ func TestDisplayLayoutsAreChecked(t *testing.T) {
 		{`{"width":"mobile","tracks":13,"cells":[]}`, "display.layouts.0.tracks", "1 to 12", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"zz","line":1}]}`, "display.layouts.0.cells.0.col", "has no column", 422},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":9}]}`, "display.layouts.0.cells.0", "line is 1 to 8", 400},
-		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"span":2},{"col":"b","line":1}]}`, "display.layouts.0.cells.1", "no room on line 1", 400},
-		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"lines":2},{"col":"b","line":2,"start":1}]}`, "display.layouts.0.cells.1", "overlaps", 400},
 		{`{"width":"mobile","tracks":2,"cells":[{"col":"a","line":1,"justify":"left"}]}`, "display.layouts.0.cells.0.justify", "start, center or end", 400},
 		{`{"width":"mobile","tracks":2,"cells":[]},{"width":"mobile","tracks":1,"cells":[]}`, "display.layouts.1.width", "one layout per width", 400},
 		{`{"width":"mobile","tracks":1,"cells":[]},{"width":"tablet","tracks":1,"cells":[]},{"width":"desktop","tracks":1,"cells":[]},{"width":"mobile","tracks":1,"cells":[]}`, "display.layouts", "at most 3 display layouts", 400},
@@ -180,49 +178,6 @@ func TestDisplayLayoutsAreChecked(t *testing.T) {
 			t.Fatalf("%s: %v", raw, err)
 		}
 	}
-}
-
-// A pinwheel over five real columns is a 400 (not an unknown column).
-func TestDisplayRefusesAPinwheel(t *testing.T) {
-	app := withZooRegistry(t)
-	spec, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[
-		{"id":"a","path":[{"field":"note"}]},{"id":"b","path":[{"field":"cost"}]},{"id":"c","path":[{"field":"grams"}]},
-		{"id":"d","path":[{"field":"fed"}]},{"id":"e","path":[{"field":"currency"}]}],
-		"display":{"layouts":[{"width":"mobile","tracks":3,"cells":[{"col":"a","line":1,"start":1,"span":2},{"col":"b","line":1,"start":3,"lines":2},
-			{"col":"c","line":3,"start":2,"span":2},{"col":"d","line":2,"start":1,"lines":2},{"col":"e","line":2,"start":2}]}]}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireSpecError(t, Validate(app, spec), 400, "display.layouts.0.cells.0", "can't be laid out")
-}
-
-func TestPlaceCellsFlowsIntoFreeTracks(t *testing.T) {
-	got, err := placeCells(3, []DisplayCell{{Col: "a", Line: 1, Span: 3}, {Col: "b", Line: 2}, {Col: "c", Line: 2}, {Col: "d", Line: 3}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []placed{{1, 3, 1, 1}, {1, 1, 2, 1}, {2, 1, 2, 1}, {1, 1, 3, 1}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("placed = %+v", got)
-	}
-}
-
-// A cell may span lines anywhere a straight cut frees it, mid-row included;
-// only a pinwheel is refused (R28).
-func TestPlaceCellsCutsAnyLayoutButAPinwheel(t *testing.T) {
-	mid := []DisplayCell{{Col: "a", Line: 1}, {Col: "m", Line: 1, Start: 2, Lines: 2}, {Col: "b", Line: 1, Start: 3}, {Col: "c", Line: 2, Start: 1}, {Col: "d", Line: 2, Start: 3}}
-	if _, err := placeCells(3, mid); err != nil {
-		t.Fatal(err)
-	}
-	pinwheel := []DisplayCell{
-		{Col: "a", Line: 1, Start: 1, Span: 2},
-		{Col: "b", Line: 1, Start: 3, Lines: 2},
-		{Col: "c", Line: 3, Start: 2, Span: 2},
-		{Col: "d", Line: 2, Start: 1, Lines: 2},
-		{Col: "e", Line: 2, Start: 2},
-	}
-	_, err := placeCells(3, pinwheel)
-	requireSpecError(t, err, 400, "cells.0", "These cells overlap in a way that can't be laid out; move one cell.")
 }
 
 // Every part that reads a field reads its current key: group labels, having,

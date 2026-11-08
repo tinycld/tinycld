@@ -14,6 +14,7 @@ import { DEFAULT_DISPLAY } from '../format'
 import type { VisibleRow } from '../rows'
 import { type DisplayCell, type DisplayLayout, displayCellSchema } from '../spec'
 import {
+    ARRANGEMENT_NOTICE,
     type Block,
     continuationIndent,
     fitOneLine,
@@ -204,7 +205,7 @@ const caseSchema = z.object({
 const SHARED = z.array(caseSchema).parse(table.cases)
 
 describe('the shared display cell table', () => {
-    // Keep equal to the count in the Go test.
+    // The client alone places cells (the engine checks each cell's numbers only).
     it('holds every case', () => {
         expect(SHARED.length).toBe(21)
     })
@@ -402,7 +403,7 @@ describe('the table layout per width', () => {
         // …and with nothing after it, to the automatic lines.
         const auto = lines(360, [])
         expect(auto.kind).toBe('blocks')
-        expect(lines(360, [refused])).toEqual(auto)
+        expect(lines(360, [refused])).toStrictEqual({ ...auto, notice: ARRANGEMENT_NOTICE })
     })
     it('places a pivot cell column as all its pivot columns, one per track from its position', () => {
         const columns: ResultColumn[] = [
@@ -658,6 +659,29 @@ describe('the table layout per width', () => {
                 2
             )
         ).toEqual({ ...auto, notice: PIVOT_NOTICE })
+    })
+    it('lays out automatically, and says so, when an arrangement cannot be placed', () => {
+        // Σmin 404 > 300: one line does not fit.
+        const auto = tableLines({ columns: COLS, width: 300, layouts: [], measures: COLS_MEASURES })
+        const overlap: DisplayLayout = {
+            width: 'mobile',
+            tracks: 2,
+            cells: [
+                { col: 'account', line: 1, span: 2 },
+                { col: 'number', line: 1 },
+            ],
+        }
+        const result = tableLines({
+            columns: COLS,
+            width: 300,
+            layouts: [overlap],
+            measures: COLS_MEASURES,
+        })
+        // The literal: a missing export reads as undefined and would pass a toEqual.
+        expect(result).toMatchObject({
+            notice: "This width's arrangement cannot be laid out, so the rows are laid out automatically here.",
+        })
+        expect(result).toStrictEqual({ ...auto, notice: ARRANGEMENT_NOTICE })
     })
     it('a row with no figures draws only its label', () => {
         const layout = tableLines({
