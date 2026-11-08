@@ -10,6 +10,7 @@ import {
     wasConsumedByLayerDismissal,
 } from '@tinycld/core/ui/overlay'
 import { Sheet } from '@tinycld/core/ui/sheet'
+import { type ButtonShortcut, ShortcutButton } from '@tinycld/core/ui/shortcut-button'
 import { X } from 'lucide-react-native'
 import { createContext, type ReactNode, type RefObject, useContext, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View, type ViewInstance } from 'react-native'
@@ -333,6 +334,17 @@ function DialogCancelButton({
     )
 }
 
+/**
+ * ⌘/Ctrl+Enter for a dialog's primary action, typed in its fields too. Opt-in
+ * per dialog (ConfirmDialog, PromptDialog): a dialog whose body holds an
+ * editor may already bind ⌘↵ there.
+ */
+export const DIALOG_SUBMIT_SHORTCUT: ButtonShortcut = {
+    keys: '$mod+Enter',
+    scope: 'modal',
+    allowInInputs: true,
+}
+
 interface DialogActionButtonProps {
     label: string
     onPress: () => void
@@ -345,35 +357,59 @@ interface DialogActionButtonProps {
      * false for an action that stays on the device (Done, Print, Open).
      */
     requiresServer?: boolean
+    /** A keyboard shortcut for the action; the button then shows it (see ShortcutButton). */
+    shortcut?: ButtonShortcut
     testID?: string
 }
 
-function DialogActionButton({
-    label,
-    onPress,
-    isDisabled = false,
-    isDestructive = false,
-    requiresServer = true,
-    testID,
-}: DialogActionButtonProps) {
+function DialogActionButton({ requiresServer = true, ...props }: DialogActionButtonProps) {
     const writes = useWritesAvailable()
-    const ActionButton = requiresServer ? ServerActionButton : Button
     return (
         <>
             <WritesUnavailableHint
                 isVisible={requiresServer && !writes.available}
                 reason={writes.reason}
             />
-            <ActionButton
+            <ActionButtonControl requiresServer={requiresServer} {...props} />
+        </>
+    )
+}
+
+function ActionButtonControl({
+    label,
+    onPress,
+    isDisabled = false,
+    isDestructive = false,
+    requiresServer,
+    shortcut,
+    testID,
+}: DialogActionButtonProps & { requiresServer: boolean }) {
+    const variant = isDestructive ? 'destructive' : 'default'
+    if (shortcut) {
+        return (
+            <ShortcutButton
+                label={label}
+                shortcut={shortcut}
                 onPress={onPress}
                 isDisabled={isDisabled}
+                serverAction={requiresServer}
                 size="sm"
-                variant={isDestructive ? 'destructive' : 'default'}
+                variant={variant}
                 testID={testID}
-            >
-                <ButtonText>{label}</ButtonText>
-            </ActionButton>
-        </>
+            />
+        )
+    }
+    const ActionButton = requiresServer ? ServerActionButton : Button
+    return (
+        <ActionButton
+            onPress={onPress}
+            isDisabled={isDisabled}
+            size="sm"
+            variant={variant}
+            testID={testID}
+        >
+            <ButtonText>{label}</ButtonText>
+        </ActionButton>
     )
 }
 

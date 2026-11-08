@@ -1,4 +1,4 @@
-import { Dialog } from '@tinycld/core/ui/dialog'
+import { DIALOG_SUBMIT_SHORTCUT, Dialog } from '@tinycld/core/ui/dialog'
 import type { ReactNode } from 'react'
 import { Text } from 'react-native'
 
@@ -55,6 +55,7 @@ export function ConfirmDialog({
                     isDisabled={isSubmitting}
                     isDestructive={isDestructive}
                     requiresServer={requiresServer}
+                    shortcut={DIALOG_SUBMIT_SHORTCUT}
                     testID={confirmTestID}
                 />
             </Dialog.Footer>

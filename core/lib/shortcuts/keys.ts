@@ -1,11 +1,15 @@
 import { Platform } from 'react-native'
 
+// On web, read `navigator.platform` — the field tinykeys resolves `$mod`
+// from — so the key a hint names is the key that fires. The user agent can
+// disagree with it (a spoofed or "request desktop site" agent), and then
+// the app showed Ctrl for a shortcut that answered ⌘.
 const IS_APPLE =
     Platform.OS === 'ios' ||
     Platform.OS === 'macos' ||
     (Platform.OS === 'web' &&
         typeof navigator !== 'undefined' &&
-        /Mac|iPhone|iPad|iPod/.test(navigator.userAgent))
+        /Mac|iPhone|iPad|iPod/.test(navigator.platform))
 
 // Characters that are produced by Shift on a standard US layout. When a
 // binding uses the Shift modifier purely to produce one of these characters

@@ -7,7 +7,7 @@ describe('formatKeys', () => {
     })
 
     it('joins combo parts into one atom', () => {
-        expect(formatKeys('Shift+F')).toEqual([['Shift', 'F']])
+        expect(formatKeys('Shift+F', false)).toEqual([['Shift', 'F']])
     })
 
     it('collapses Shift+<glyph> into just the glyph', () => {
@@ -18,7 +18,7 @@ describe('formatKeys', () => {
     })
 
     it('keeps Shift when the key is a letter', () => {
-        expect(formatKeys('Shift+C')).toEqual([['Shift', 'C']])
+        expect(formatKeys('Shift+C', false)).toEqual([['Shift', 'C']])
     })
 
     it('renders Enter as ↵', () => {
