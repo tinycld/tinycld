@@ -36,7 +36,9 @@ import { type RunBody, refusalSortProblem, type ViewSort } from '../lib/run-clie
 import {
     type BrokenMark,
     brokenProblems,
+    type DisplayFit,
     type DisplayLayout,
+    displayFitOf,
     type ParamDef,
     type ReportSpec,
 } from '../lib/spec'
@@ -299,6 +301,7 @@ export function useReportView(input: ReportViewInput) {
         breakpoint,
         panelSurface: panel,
         layouts: input.spec?.display?.layouts ?? NO_LAYOUTS,
+        fit: displayFitOf(input.spec),
         // Required in the model, so a model built by hand states its levels too
         // (none would draw the label at a flat report's floor). No spec yet: flat.
         rowLevels: rowLevelsOf(input.spec ?? null),
@@ -342,7 +345,9 @@ export function useReportView(input: ReportViewInput) {
     }
 }
 
-// onSetSort is optional: a hand-built model (Books' mockup) has none, and then the Sort chip is not shown.
-export type ReportViewModel = Omit<ReturnType<typeof useReportView>, 'onSetSort'> & {
+// onSetSort and fit are optional: a hand-built model (Books' mockup) has neither;
+// then the Sort chip is not shown and the table takes the default fit.
+export type ReportViewModel = Omit<ReturnType<typeof useReportView>, 'onSetSort' | 'fit'> & {
     onSetSort?(sort: ViewSort | null): void
+    fit?: DisplayFit
 }

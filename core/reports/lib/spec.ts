@@ -277,6 +277,15 @@ export function parseSpec(value: unknown): ReportSpec | null {
     return parsed.success ? parsed.data : null
 }
 
+/** The fit settings of a spec's display that the table reads besides its arrangements. */
+export function displayFitOf(spec: Pick<ReportSpec, 'display'> | null | undefined): DisplayFit {
+    const display = spec?.display
+    return {
+        ...(display?.oneLine ? { oneLine: display.oneLine } : {}),
+        ...(display?.columns ? { columns: display.columns } : {}),
+    }
+}
+
 // reports.broken: why a saved report cannot run (core/server/reports/broken.go).
 export const brokenSchema = z.object({
     status: z.number(),

@@ -14,7 +14,7 @@ import { headingText, type NumberFormat } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import type { ViewSort } from '../lib/run-client'
 import { stickyIndices } from '../lib/sticky'
-import type { Justify, LineLayout } from '../lib/table-lines'
+import type { Justify, LayoutSource, LineLayout } from '../lib/table-lines'
 import type { ResultColumn, ResultRow } from '../lib/types'
 import {
     amountJustify,
@@ -364,7 +364,8 @@ function useTopRowReport(onTopRowIndex: ((index: number) => void) | undefined) {
 // bar's gutter (scrollbar-gutter: stable, any bar width, none for overlay bars),
 // and on native the whole list. The heading row keeps the same gutter.
 function RowWidthProbe({ onWidth }: { onWidth(width: number): void }) {
-    return <View onLayout={e => onWidth(e.nativeEvent.layout.width)} />
+    // Not "report-row-…": the specs select rows by that prefix.
+    return <View testID="report-width-probe" onLayout={e => onWidth(e.nativeEvent.layout.width)} />
 }
 
 interface TableListProps extends Omit<TableRowProps, 'item'> {
@@ -539,6 +540,8 @@ export interface ReportTableProps {
     isMeasured: boolean
     /** Told the width the rows really get (the list's content width). */
     onRowWidth(width: number): void
+    /** The width the layout was fitted to and the rule that laid it out (useTableLayout). */
+    fit?: { width: number; source: LayoutSource }
     onToggleGroup(row: ResultRow): void
     onNearEnd(): void
     /** A later page is left: the list ends in "Loading more rows…", else in "End of report". */
@@ -583,8 +586,14 @@ export function ReportTable(props: ReportTableProps) {
     const visibility = props.isMeasured || isStateShown ? '' : 'opacity-0'
     // The table's test id is on the rows only; a state keeps its own.
     const testID = isStateShown ? 'report-state-list' : 'report-table'
+    // The e2e marker (tests/e2e/helpers.ts waitForTableFit): set once the rows'
+    // width is measured, so a test reads the layout of the width the rows have.
+    const dataSet =
+        props.isMeasured && !isStateShown && props.fit
+            ? { fitWidth: String(props.fit.width), layout: props.fit.source }
+            : undefined
     return (
-        <View testID={testID} className={`min-h-0 flex-1 ${visibility}`}>
+        <View testID={testID} dataSet={dataSet} className={`min-h-0 flex-1 ${visibility}`}>
             <TableList
                 runKey={runKey}
                 top={props.top}

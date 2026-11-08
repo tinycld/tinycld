@@ -3,6 +3,7 @@ import {
     brokenProblems,
     CURRENT_SPEC_VERSION,
     canCopyReport,
+    displayFitOf,
     parseBroken,
     parseFitLength,
     parseSpec,
@@ -28,6 +29,22 @@ const FEEDINGS = {
     sort: [{ col: 'note', dir: 'desc' }],
     groups: [{ id: 'g', col: 'species', subtotals: true }],
 }
+
+describe('displayFitOf', () => {
+    it('gives the one-line width and the column fits, and nothing else', () => {
+        const display = {
+            oneLine: { minWidth: '1040px' },
+            columns: { note: { minWidth: '12ch' } },
+            layouts: [{ width: 'mobile' as const, tracks: 1, cells: [{ col: 'note', line: 1 }] }],
+        }
+        expect(displayFitOf({ display })).toEqual({
+            oneLine: { minWidth: '1040px' },
+            columns: { note: { minWidth: '12ch' } },
+        })
+        expect(displayFitOf({ display: { layouts: display.layouts } })).toEqual({})
+        expect(displayFitOf(null)).toEqual({})
+    })
+})
 
 describe('parseSpec', () => {
     it('reads a stored spec as it is', () => {
