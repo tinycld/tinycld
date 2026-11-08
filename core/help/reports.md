@@ -122,7 +122,17 @@ A report never scrolls sideways. Each column gets the room its heading and its v
 
 Group, opening, subtotal and total rows show their whole label: it runs across the empty cells after it. When the rows wrap, a total's label moves onto the line of its figures if there is room.
 
-When the columns do not fit on one line, the report uses the first arrangement that fits the screen, widest first: **Desktop**, then **Tablet**, then **Phone**. With no arrangement that fits, each row wraps by itself: as many columns as fit go on each line, the label first, and the next lines start under the row's label. A column heading that is too long for its column uses two lines. When the rows wrap, the lines after a row's first line are shorter, so more rows fit on the screen. Notes about the report, such as a pivot that cannot follow an arrangement, show in one band above the report. On a phone the band shows two lines; select **Show all** to read every note.
+When the columns do not fit on one line (or the rows are narrower than **One line from**), the report uses the first arrangement that fits the screen and that the rows reach (its **Use from**), widest first: **Desktop**, then **Tablet**, then **Phone**. With no arrangement that fits, each row wraps by itself: as many columns as fit go on each line, the label first, and the next lines start under the row's label. A column heading that is too long for its column uses two lines. When the rows wrap, the lines after a row's first line are shorter, so more rows fit on the screen. Notes about the report, such as a pivot that cannot follow an arrangement, show in one band above the report. On a phone the band shows two lines; select **Show all** to read every note.
+
+To change how a column fits, open the column in **Columns**:
+
+- **Narrowest** is the least width a text column gets before the report wraps its rows: **Automatic** (about eight letters), **Whole value** (never cut), or a number of letters.
+- **Long text** keeps the text on **One line, ends in …**, or wraps it to 2 or 3 lines.
+- **Extra room** is the column's share of the spare room on one line: **None**, **Normal**, **Double** or **Triple**.
+
+Numbers, amounts, percents, dates and yes/no values show **Never cut**: you can change only their extra room.
+
+In **Arrange**, **One line from** is the least row width at which the report uses one line; below it, the report uses an arrangement or wraps its rows. **Use from** on an arrangement is the least row width at which it is used. On a computer the rows are the window's width less the side rail.
 
 To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. On a phone, the title, the chips and the notes scroll away with the rows, so the rows get the screen; scroll back to the top to change a chip. A long report loads more rows as you scroll, also when it has groups. Until its last rows have loaded, the list ends with **Loading more rows…**; the Total shows with the last rows, and **End of report** marks the end.
 

@@ -205,10 +205,10 @@ function labelTone(kind: RowKind): string {
     return kind === 'opening' ? 'text-muted-foreground' : 'text-foreground'
 }
 
-function LabelText({ row, text }: { row: ResultRow; text: string }) {
+function LabelText({ row, text, lines = 1 }: { row: ResultRow; text: string; lines?: number }) {
     return (
         <Text
-            numberOfLines={1}
+            numberOfLines={lines}
             className={`min-w-0 flex-1 text-sm ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`}
         >
             {text}
@@ -224,6 +224,8 @@ interface RowLabelProps {
     minHeight?: number
     /** Part of the stuck copy: its own test ids, and no tab stop (the row in the list has them). */
     isCopy?: boolean
+    /** The lines its text may wrap to (the layout's lines); absent: one. */
+    lines?: number
 }
 
 // Child rows indent the label only, so the figures stay aligned. It grows to fill
@@ -249,6 +251,7 @@ function GroupToggleLabel({
     justify = 'start',
     minHeight = ROW_HEIGHT,
     isCopy = false,
+    lines,
 }: RowLabelProps) {
     const { row } = item
     const text = rowLabelText(row, format)
@@ -266,7 +269,7 @@ function GroupToggleLabel({
             style={labelStyle(row, justify, minHeight)}
         >
             <GroupCaret isOpen={item.isOpen} />
-            <LabelText row={row} text={text} />
+            <LabelText row={row} text={text} lines={lines} />
         </Pressable>
     )
 }
@@ -274,7 +277,7 @@ function GroupToggleLabel({
 /** A row's label: a group's is its fold toggle. */
 export function RowLabel(props: RowLabelProps) {
     if (props.item.isToggle) return <GroupToggleLabel {...props} />
-    const { item, format, justify = 'start', minHeight = ROW_HEIGHT, isCopy = false } = props
+    const { item, format, justify = 'start', minHeight = ROW_HEIGHT, isCopy = false, lines } = props
     const text = rowLabelText(item.row, format)
     return (
         <View
@@ -282,7 +285,7 @@ export function RowLabel(props: RowLabelProps) {
             className="flex-row items-center pr-3"
             style={labelStyle(item.row, justify, minHeight)}
         >
-            <LabelText row={item.row} text={text} />
+            <LabelText row={item.row} text={text} lines={lines} />
         </View>
     )
 }
@@ -316,6 +319,8 @@ interface RowCellProps {
     width?: number
     minHeight?: number
     isCopy?: boolean
+    /** The lines its text may wrap to (the layout's lines); absent: one. */
+    lines?: number
 }
 
 // A group row's label is its one accessible toggle. Its figures take the same
@@ -330,12 +335,13 @@ export function RowCell({
     width,
     minHeight = ROW_HEIGHT,
     isCopy = false,
+    lines = 1,
 }: RowCellProps) {
     const { row } = item
     const display = cellDisplay(column, row, item.cells[column.id], format)
     const text = (
         <Text
-            numberOfLines={1}
+            numberOfLines={lines}
             className={cellTextClass(display, justify, row.kind, isFigureColumn(column))}
         >
             {display.text}
@@ -387,7 +393,8 @@ export interface TableRowProps {
 }
 
 // Each column at the width the line gave it; a cell too narrow for its text ends
-// in "…" (numberOfLines 1), so nothing runs past the table's edge. A group row's
+// in "…" (numberOfLines), or wraps to the lines its fit allows, so nothing runs
+// past the table's edge. A group row's
 // label also takes the empty cells before its first value (oneLineLabelSpan).
 function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: TableRowProps) {
     if (layout.kind !== 'one-line') return null
@@ -411,6 +418,7 @@ function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: Ta
                 width={layout.widths[column.id]}
                 minHeight={ROW_HEIGHT}
                 isCopy={isCopy}
+                lines={layout.lines?.[column.id]}
             />
         ))
     return (
@@ -421,6 +429,7 @@ function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: Ta
                     format={format}
                     onToggleGroup={onToggleGroup}
                     isCopy={isCopy}
+                    lines={label ? layout.lines?.[label.id] : undefined}
                 />
             </View>
             {cells}
@@ -430,8 +439,8 @@ function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: Ta
 
 function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: TableRowProps) {
     const [label] = columns
-    const lines = rowLayout(item, layout, label?.id ?? '', labelNeed(item, format))
-    if (lines.kind !== 'blocks') return null
+    const rowLines = rowLayout(item, layout, label?.id ?? '', labelNeed(item, format))
+    if (rowLines.kind !== 'blocks') return null
     const byId = new Map(columns.map(column => [column.id, column]))
     const restHeight = item.isToggle ? ROW_HEIGHT : CONTINUATION_LINE_HEIGHT
     const renderCell: RenderCell = (col, justify, minHeight) => {
@@ -444,6 +453,7 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: Tab
                     justify={justify}
                     minHeight={minHeight}
                     isCopy={isCopy}
+                    lines={rowLines.lines?.[col]}
                 />
             )
         }
@@ -458,14 +468,15 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: Tab
                 onToggleGroup={onToggleGroup}
                 minHeight={minHeight}
                 isCopy={isCopy}
+                lines={rowLines.lines?.[col]}
             />
         )
     }
     return (
         <View className={`bg-background ${ROW_RULE[item.row.kind]}`}>
             <RootBlockView
-                root={lines.root}
-                indent={lines.indent}
+                root={rowLines.root}
+                indent={rowLines.indent}
                 renderCell={renderCell}
                 firstHeight={ROW_HEIGHT}
                 restHeight={restHeight}
