@@ -128,8 +128,10 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
 
 ## Run a report
 
-- The chips above the report set its period and filters; **Add filter** adds a chip
-  for a filter you can set while you read. In the period chip, **All dates** shows
+- The chips above the report set its period and filters; the period chip names the
+  period, such as **This month**, and the dates show under the chips. **Add filter**
+  adds a chip for a filter you can set while you read. On a narrow screen, swipe the
+  chips sideways to see the rest; the right edge fades while there are more. In the period chip, **All dates** shows
   every row, also a row with no date. A link copied with **Copy link** opens the
   report with the same choices.
 - To sort, press a column heading: each press sorts up, then down, then back to the

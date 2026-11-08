@@ -288,13 +288,6 @@ export function controlItems(defs: readonly ParamDef[], values: ParamValues): Co
     return items
 }
 
-function resolvedDates(resolved: ResolvedParam | undefined): string | null {
-    if (resolved?.from && resolved.to) return rangeChipText(resolved.from, resolved.to)
-    if (typeof resolved?.value === 'string' && isIsoDay(resolved.value))
-        return shortDay(resolved.value)
-    return null
-}
-
 /**
  * The shown labels of a choice from a source, which the picker reads from the server:
  * by value, and a whole group's under `group:<group value>`.
@@ -345,18 +338,11 @@ function choiceLabels(
     return all.join(', ')
 }
 
-export function valueText(
-    def: ParamDef,
-    value: ParamValue | null,
-    resolved: ResolvedParam | undefined,
-    labels?: ChoiceLabels
-): string {
+export function valueText(def: ParamDef, value: ParamValue | null, labels?: ChoiceLabels): string {
     if (!value) return 'Any'
     switch (value.kind) {
-        case 'preset': {
-            const dates = resolvedDates(resolved)
-            return dates ? `${PRESET_LABELS[value.preset]} · ${dates}` : PRESET_LABELS[value.preset]
-        }
+        case 'preset':
+            return PRESET_LABELS[value.preset]
         case 'day':
             return shortDay(value.day)
         case 'range':
@@ -378,13 +364,10 @@ function amountText(cents: number, currency: string): string {
     return currency === '' ? amount : `${currency} ${amount}`
 }
 
-export function chipText(
-    def: ParamDef,
-    value: ParamValue | null,
-    resolved: ResolvedParam | undefined,
-    labels?: ChoiceLabels
-): string {
-    const text = valueText(def, value, resolved, labels)
+// D11: a preset is named alone on its chip ("Day: This fiscal year"); the document
+// header under the chips carries the days, so the chip stays short on a phone.
+export function chipText(def: ParamDef, value: ParamValue | null, labels?: ChoiceLabels): string {
+    const text = valueText(def, value, labels)
     return def.label ? `${def.label}: ${text}` : text
 }
 

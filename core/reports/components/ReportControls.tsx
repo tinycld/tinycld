@@ -1,8 +1,16 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ArrowUpDown, Plus } from 'lucide-react-native'
-import type { ReactElement } from 'react'
-import { Pressable, ScrollView, Text } from 'react-native'
+import { type ReactElement, useRef, useState } from 'react'
+import {
+    type LayoutChangeEvent,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
+    Pressable,
+    ScrollView,
+    Text,
+    View,
+} from 'react-native'
 import type { ReportViewModel } from '../hooks/useReportView'
 import { type ControlItem, chipText, isDateParam, type ParamValue } from '../lib/params'
 import type { ParamDef } from '../lib/spec'
@@ -73,12 +81,7 @@ function ParamControl({ model, def, value, isRemovable }: ParamControlProps) {
     const chip = (
         <ParamChip
             paramId={def.id}
-            text={chipText(
-                def,
-                value,
-                model.resolved[def.id],
-                model.optionLabels.get(def.id) ?? undefined
-            )}
+            text={chipText(def, value, model.optionLabels.get(def.id) ?? undefined)}
             label={def.label ?? def.id}
             isDate={isDateParam(def)}
             isRemovable={isRemovable}
@@ -201,8 +204,52 @@ function SortControl({ model, isVisible }: { model: ReportViewModel; isVisible: 
     )
 }
 
+// Opacities of the strips that fade the chip row's right edge, left to right.
+const FADE_STEPS = [0.25, 0.5, 0.75, 0.95] as const
+const FADE_STRIP = { width: 6 }
+const FADE_STYLE = {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    pointerEvents: 'none',
+} as const
+
+// D11: the chips keep their side scroll; while chips lie past the right edge, the
+// edge fades so the reader sees there is more. Sizes are kept in a ref and only the
+// answer is state, so a scroll redraws the row only when the fade comes or goes.
+function useEdgeFade() {
+    const sizes = useRef({ view: 0, content: 0, x: 0 })
+    const [isShown, setIsShown] = useState(false)
+    const update = (next: Partial<typeof sizes.current>) => {
+        Object.assign(sizes.current, next)
+        const { view, content, x } = sizes.current
+        setIsShown(content - view - x > 1)
+    }
+    return {
+        isShown,
+        onLayout: (e: LayoutChangeEvent) => update({ view: e.nativeEvent.layout.width }),
+        onContentSizeChange: (width: number) => update({ content: width }),
+        onScroll: (e: NativeSyntheticEvent<NativeScrollEvent>) =>
+            update({ x: e.nativeEvent.contentOffset.x }),
+    }
+}
+
+const FADE_STRIPS = FADE_STEPS.map(opacity => (
+    <View key={opacity} className="bg-background" style={[FADE_STRIP, { opacity }]} />
+))
+
+function EdgeFade({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return (
+        <View testID="report-controls-fade" className="flex-row" style={FADE_STYLE}>
+            {FADE_STRIPS}
+        </View>
+    )
+}
+
 // One line of chips under the header: it scrolls sideways on a narrow screen and
-// never wraps.
+// never wraps; a fade marks its right edge while more chips lie past it (D11).
 export function ReportControls({
     model,
     isSortMenuShown,
@@ -210,6 +257,7 @@ export function ReportControls({
     model: ReportViewModel
     isSortMenuShown: boolean
 }) {
+    const fade = useEdgeFade()
     if (model.controls.length === 0 && !isSortMenuShown) return null
     const controls = model.controls.map(item => (
         <Control
@@ -219,15 +267,21 @@ export function ReportControls({
         />
     ))
     return (
-        <ScrollView
-            horizontal
-            testID="report-controls"
-            showsHorizontalScrollIndicator={false}
-            style={ROW_STYLE}
-            contentContainerClassName="flex-row items-center gap-2 px-4 py-2"
-        >
-            {controls}
-            <SortControl model={model} isVisible={isSortMenuShown} />
-        </ScrollView>
+        <View style={ROW_STYLE}>
+            <ScrollView
+                horizontal
+                testID="report-controls"
+                showsHorizontalScrollIndicator={false}
+                scrollEventThrottle={16}
+                onLayout={fade.onLayout}
+                onContentSizeChange={fade.onContentSizeChange}
+                onScroll={fade.onScroll}
+                contentContainerClassName="flex-row items-center gap-2 px-4 py-2"
+            >
+                {controls}
+                <SortControl model={model} isVisible={isSortMenuShown} />
+            </ScrollView>
+            <EdgeFade isVisible={fade.isShown} />
+        </View>
     )
 }

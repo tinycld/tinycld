@@ -117,27 +117,16 @@ describe('controlItems', () => {
 })
 
 describe('chip text', () => {
-    it('shows a preset with the days the server resolved', () => {
-        const resolved = {
-            id: 'period',
-            type: 'dateRange' as const,
-            from: '2026-10-01',
-            to: '2026-10-31',
-        }
-        expect(chipText(PERIOD, { kind: 'preset', preset: 'thisMonth' }, resolved)).toBe(
-            'Period: This month · Oct 1 – Oct 31, 2026'
-        )
-        expect(chipText(PERIOD, { kind: 'preset', preset: 'thisMonth' }, undefined)).toBe(
-            'Period: This month'
-        )
+    it('names a preset alone; the document header carries its days', () => {
+        expect(chipText(PERIOD, { kind: 'preset', preset: 'thisMonth' })).toBe('Period: This month')
     })
 
     it('names choices, text and numbers', () => {
-        expect(chipText(KINDS, { kind: 'choice', values: ['open', 'paid'] }, undefined)).toBe(
+        expect(chipText(KINDS, { kind: 'choice', values: ['open', 'paid'] })).toBe(
             'Kinds: Open, Paid'
         )
-        expect(chipText(NAME, { kind: 'text', text: 'Acme' }, undefined)).toBe('Name: “Acme”')
-        expect(chipText(AS_OF, { kind: 'day', day: '2026-06-30' }, undefined)).toBe('Jun 30, 2026')
+        expect(chipText(NAME, { kind: 'text', text: 'Acme' })).toBe('Name: “Acme”')
+        expect(chipText(AS_OF, { kind: 'day', day: '2026-06-30' })).toBe('Jun 30, 2026')
     })
 })
 
@@ -177,18 +166,16 @@ describe('a choice whose options come from a source', () => {
             ['a1', 'Cash'],
             ['b2', 'Bank'],
         ])
-        expect(chipText(def, { kind: 'choice', values: ['a1'] }, undefined, labels)).toBe(
-            'Accounts: Cash'
+        expect(chipText(def, { kind: 'choice', values: ['a1'] }, labels)).toBe('Accounts: Cash')
+        expect(chipText(def, { kind: 'choice', values: ['a1', 'b2', 'c3'] }, labels)).toBe(
+            'Accounts: 3 selected'
         )
-        expect(
-            chipText(def, { kind: 'choice', values: ['a1', 'b2', 'c3'] }, undefined, labels)
-        ).toBe('Accounts: 3 selected')
         // A record whose label is not read yet (or that the reader can no longer
         // list) is counted, never shown by its id.
-        expect(chipText(def, { kind: 'choice', values: ['c3'] }, undefined, labels)).toBe(
+        expect(chipText(def, { kind: 'choice', values: ['c3'] }, labels)).toBe(
             'Accounts: 1 selected'
         )
-        expect(chipText(def, { kind: 'choice', values: ['a1', 'c3'] }, undefined, labels)).toBe(
+        expect(chipText(def, { kind: 'choice', values: ['a1', 'c3'] }, labels)).toBe(
             'Accounts: 2 selected'
         )
     })
@@ -239,10 +226,8 @@ describe('a whole group of options from a source', () => {
             ['a1', 'N1'],
             ['group:north', 'North'],
         ])
-        expect(chipText({ ...def, label: 'Teams' }, picked, undefined, labels)).toBe(
-            'Teams: N1, All North'
-        )
-        expect(chipText({ ...def, label: 'Teams' }, picked, undefined)).toBe('Teams: 2 selected')
+        expect(chipText({ ...def, label: 'Teams' }, picked, labels)).toBe('Teams: N1, All North')
+        expect(chipText({ ...def, label: 'Teams' }, picked)).toBe('Teams: 2 selected')
     })
 
     // D1: a report names its group pick ("All Expense accounts").
@@ -274,7 +259,7 @@ describe('a whole group of options from a source', () => {
             ['a1', 'N1'],
             ['group:north', 'North'],
         ])
-        expect(chipText(named('All {group} teams'), picked, undefined, labels)).toBe(
+        expect(chipText(named('All {group} teams'), picked, labels)).toBe(
             'Teams: N1, All North teams'
         )
     })
@@ -350,8 +335,8 @@ describe('amount params', () => {
     })
 
     it('shows the currency and the amount on the chip', () => {
-        expect(chipText(BUDGET, budget, undefined)).toBe('Budget: USD 1,500.00')
-        expect(chipText(BUDGET, { kind: 'amount', cents: -1200, currency: '' }, undefined)).toBe(
+        expect(chipText(BUDGET, budget)).toBe('Budget: USD 1,500.00')
+        expect(chipText(BUDGET, { kind: 'amount', cents: -1200, currency: '' })).toBe(
             'Budget: -12.00'
         )
     })
@@ -403,9 +388,7 @@ describe('All dates', () => {
     })
 
     it('names the period on the chip, in the header and when nothing matches', () => {
-        expect(chipText(PERIOD, { kind: 'preset', preset: 'allDates' }, allDates)).toBe(
-            'Period: All dates'
-        )
+        expect(chipText(PERIOD, { kind: 'preset', preset: 'allDates' })).toBe('Period: All dates')
         expect(periodWords(PERIOD, allDates)).toBe('All dates')
         expect(emptyMessage(PERIOD, allDates)).toBe('No rows for all dates')
     })
