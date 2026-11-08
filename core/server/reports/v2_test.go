@@ -77,7 +77,7 @@ func TestASpecWithEveryV2PartIsKeptWhole(t *testing.T) {
 		}
 		// Stored as version 3, every other part as posted.
 		want := jsonDoc(t, []byte(c.raw)).(map[string]any)
-		want["version"] = json.Number("3")
+		want["version"] = json.Number("4")
 		if !reflect.DeepEqual(want, jsonDoc(t, stored)) {
 			t.Fatalf("stored spec differs from the posted one:\n%s", stored)
 		}
@@ -277,7 +277,7 @@ func TestALookupValueWithoutAnAliasIsKept(t *testing.T) {
 	withZooRegistry(t)
 	// Posted as the current version: an older document is re-encoded by the
 	// upgrade, which compacts the raw value.
-	raw := `{"version":3,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.animals","value":{ "path" : [{"field":"name"}] }}}]}`
+	raw := `{"version":4,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.animals","value":{ "path" : [{"field":"name"}] }}}]}`
 	spec, _, _ := mustLoad(t, raw)
 	if got := string(spec.Columns[0].Formula.Value); got != `{ "path" : [{"field":"name"}] }` {
 		t.Fatalf("value = %s", got)
@@ -292,7 +292,7 @@ func TestAV2LookupValueWithoutAnAliasIsKeptThroughTheUpgrade(t *testing.T) {
 	const value = `{ "path" : [{"field":"name"}] }`
 	raw := `{"version":2,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.animals","value":` + value + `}}]}`
 	spec, info, _ := mustLoad(t, raw)
-	if spec.Version != 3 || info.UpgradedFrom != 0 || len(info.Aliased) != 0 {
+	if spec.Version != CurrentVersion || info.UpgradedFrom != 0 || len(info.Aliased) != 0 {
 		t.Fatalf("version %d, info %+v", spec.Version, info)
 	}
 	if got := spec.Columns[0].Formula.Value; !reflect.DeepEqual(jsonDoc(t, got), jsonDoc(t, []byte(value))) {

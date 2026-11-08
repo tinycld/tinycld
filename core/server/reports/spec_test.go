@@ -104,7 +104,7 @@ func TestLoadRefusesWhatIsNotASpec(t *testing.T) {
 		"no version":      {`{"source":"zoo.feedings","columns":[]}`, "version", "whole number"},
 		"version zero":    {`{"version":0,"columns":[]}`, "version", "whole number"},
 		"version 1.5":     {`{"version":1.5,"columns":[]}`, "version", "whole number"},
-		"newer version":   {`{"version":4,"columns":[]}`, "version", "newer than this server reads (3)"},
+		"newer version":   {`{"version":5,"columns":[]}`, "version", "newer than this server reads (4)"},
 		"wrong leaf type": {`{"version":1,"source":"zoo.feedings","columns":[{"id":"a","path":"cost"}]}`, "spec", "cannot unmarshal"},
 	}
 	for name, c := range cases {

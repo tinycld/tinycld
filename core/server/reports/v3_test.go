@@ -50,7 +50,7 @@ func TestAV2SpecLoadsSilentlyAsVersion3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Version != 3 || info.UpgradedFrom != 0 {
+	if spec.Version != CurrentVersion || info.UpgradedFrom != 0 {
 		t.Fatalf("version %d, upgradedFrom %d", spec.Version, info.UpgradedFrom)
 	}
 	res := z.run(t, "ann", raw, Options{}, nil)
@@ -62,7 +62,7 @@ func TestAV2SpecLoadsSilentlyAsVersion3(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc map[string]any
-	if err := json.Unmarshal(stored, &doc); err != nil || doc["version"] != float64(3) {
+	if err := json.Unmarshal(stored, &doc); err != nil || doc["version"] != float64(CurrentVersion) {
 		t.Fatalf("stored = %s", stored)
 	}
 }
@@ -78,7 +78,7 @@ func TestAV1SpecLoadsSilentlyAsVersion3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Version != 3 || info.UpgradedFrom != 0 {
+	if spec.Version != CurrentVersion || info.UpgradedFrom != 0 {
 		t.Fatalf("version %d, upgradedFrom %d", spec.Version, info.UpgradedFrom)
 	}
 	res := z.run(t, "ann", raw, Options{}, nil)
@@ -90,14 +90,14 @@ func TestAV1SpecLoadsSilentlyAsVersion3(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc map[string]any
-	if err := json.Unmarshal(stored, &doc); err != nil || doc["version"] != float64(3) {
+	if err := json.Unmarshal(stored, &doc); err != nil || doc["version"] != float64(CurrentVersion) {
 		t.Fatalf("stored = %s", stored)
 	}
 }
 
-func TestAVersion4SpecIsRefused(t *testing.T) {
-	_, _, err := Load([]byte(`{"version":4,"source":"zoo.feedings","columns":[]}`))
-	requireSpecError(t, err, 400, "version", "version 4 is newer than this server reads (3)")
+func TestAVersion5SpecIsRefused(t *testing.T) {
+	_, _, err := Load([]byte(`{"version":5,"source":"zoo.feedings","columns":[]}`))
+	requireSpecError(t, err, 400, "version", "version 5 is newer than this server reads (4)")
 }
 
 // Every v3 field decodes strictly and is stored as posted; a run's options
@@ -108,7 +108,9 @@ func TestASpecWithEveryV3FieldLoadsAndIsStoredUnchanged(t *testing.T) {
 	if info.UpgradedFrom != 0 || len(info.Aliased) != 0 {
 		t.Fatalf("info = %+v", info)
 	}
-	if !reflect.DeepEqual(jsonDoc(t, []byte(everyV3)), jsonDoc(t, stored)) {
+	want := jsonDoc(t, []byte(everyV3)).(map[string]any)
+	want["version"] = json.Number("4")
+	if !reflect.DeepEqual(want, jsonDoc(t, stored)) {
 		t.Fatalf("stored spec differs from the posted one:\n%s", stored)
 	}
 	for _, key := range []string{`"outer":[`, `"bound":"from"`, `"pick":"sum"`, `"pick":"count"`, `"opening":{`, `"rollup":{`, `"preset":"allDates"`} {

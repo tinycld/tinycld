@@ -14,25 +14,16 @@ import (
 	validation "github.com/pocketbase/ozzo-validation/v4"
 )
 
-// CurrentVersion is the spec version this engine writes. Load upgrades an
-// older spec one version at a time with upgradeSteps.
-const CurrentVersion = 3
+// CurrentVersion is the spec version this engine reads and writes.
+const CurrentVersion = 4
 
-// upgradeSteps[v] turns a version v document into version v+1. upgrade sets
-// the version, not each step. Add a step whenever the spec format changes,
-// and raise CurrentVersion with it.
-//
-// 1 → 2 adds only optional parts (column totals, group having, labels, fill
-// and open, formula sort keys, the detail label, options from a source, the
-// record and lookup formulas, display layouts), so a version 1 document is
-// already a valid version 2 document.
-//
-// 2 → 3 adds only optional parts too (sum and count lookups, outer leaves,
-// date range bounds, the All dates preset, opening rows, rollups), so a
-// version 2 document is already a valid version 3 document.
+// upgradeSteps[v] turns a version v document into version v+1. The steps
+// are identities and go with the one-version change (column fit plan,
+// Task 7).
 var upgradeSteps = map[int]upgradeStep{
 	1: func(map[string]any) error { return nil },
 	2: func(map[string]any) error { return nil },
+	3: func(map[string]any) error { return nil },
 }
 
 type upgradeStep func(doc map[string]any) error
@@ -52,18 +43,43 @@ type Spec struct {
 	Display *Display     `json:"display,omitempty"`
 }
 
-// Display is how the report table lays its columns out per width (E14).
-// The engine checks it and otherwise leaves it to the client.
+// Display is how the report table lays its columns out (E14): the width from
+// which one line is tried, each column's fit, and the arrangements per width.
+// The engine checks it and otherwise leaves it to the client
+// (core/reports/lib/column-measure.ts, table-lines.ts).
 type Display struct {
-	Layouts []DisplayLayout `json:"layouts,omitempty"`
+	OneLine *DisplayOneLine      `json:"oneLine,omitempty"`
+	Columns map[string]ColumnFit `json:"columns,omitempty"`
+	Layouts []DisplayLayout      `json:"layouts,omitempty"`
+}
+
+// DisplayOneLine gates the one-line layout: it is tried only where the rows
+// are at least MinWidth (px) wide. The columns must still fit.
+type DisplayOneLine struct {
+	MinWidth string `json:"minWidth"`
+}
+
+// ColumnFit is a column's CSS-like fit (column-fit-design.md §3.1). Lengths
+// are the text room: the client adds the cell's padding.
+type ColumnFit struct {
+	Width        string `json:"width,omitempty"`
+	MinWidth     string `json:"minWidth,omitempty"`
+	MaxWidth     string `json:"maxWidth,omitempty"`
+	WhiteSpace   string `json:"whiteSpace,omitempty"`
+	LineClamp    int    `json:"lineClamp,omitempty"`
+	TextOverflow string `json:"textOverflow,omitempty"`
+	// FlexGrow is a pointer: 0 (no share of the spare room) is a setting.
+	FlexGrow *int `json:"flexGrow,omitempty"`
 }
 
 // DisplayLayout places columns on lines of Tracks equal tracks at one width
-// (mobile, tablet or desktop). A column it does not list is not shown there.
+// (mobile, tablet or desktop), tried only where the rows are at least
+// MinWidth (px) wide. A column it does not list is not shown there.
 type DisplayLayout struct {
-	Width  string        `json:"width"`
-	Tracks int           `json:"tracks"`
-	Cells  []DisplayCell `json:"cells"`
+	Width    string        `json:"width"`
+	MinWidth string        `json:"minWidth,omitempty"`
+	Tracks   int           `json:"tracks"`
+	Cells    []DisplayCell `json:"cells"`
 }
 
 // DisplayCell puts a column on Line (from 1), at Start (0 places it in the

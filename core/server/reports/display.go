@@ -20,6 +20,7 @@ func (b *binder) display(p *plan) {
 	if d == nil {
 		return
 	}
+	b.columnFits(p)
 	if len(d.Layouts) > len(displayWidths) {
 		b.bad("display.layouts", fmt.Sprintf("a report has at most %d display layouts, one per width", len(displayWidths)))
 		return
@@ -34,6 +35,11 @@ func (b *binder) display(p *plan) {
 			b.bad(at+".width", "one layout per width")
 		}
 		seen[l.Width] = true
+		if l.MinWidth != "" {
+			if msg := fitLengthProblem(l.MinWidth, pxRule); msg != "" {
+				b.bad(at+".minWidth", msg)
+			}
+		}
 		if l.Tracks < 1 || l.Tracks > maxDisplayTracks {
 			b.bad(at+".tracks", fmt.Sprintf("tracks is 1 to %d", maxDisplayTracks))
 			continue

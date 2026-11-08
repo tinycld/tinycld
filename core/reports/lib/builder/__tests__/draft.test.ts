@@ -1497,7 +1497,7 @@ describe('spec version 3 in the builder', () => {
             cells: { balance: { kind: 'editable', node: OPEN_BALANCE } },
         })
         const saved = specFromDraft(draft, CATALOG)
-        expect(saved.version).toBe(3)
+        expect(saved.version).toBe(CURRENT_SPEC_VERSION)
         expect(saved).toEqual(V3)
         expect(JSON.stringify(saved)).toBe(JSON.stringify(V3))
     })

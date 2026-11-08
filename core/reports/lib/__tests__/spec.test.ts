@@ -67,12 +67,11 @@ describe('parseSpec', () => {
         ).toBeNull()
     })
 
-    it('reads a version 1, 2 and 3 spec and refuses version 4', () => {
+    it('reads a version 1 to 4 spec and refuses version 5', () => {
         expect(parseSpec({ ...FEEDINGS, version: 1 })).not.toBeNull()
-        expect(parseSpec({ ...FEEDINGS, version: 2 })).not.toBeNull()
-        expect(parseSpec({ ...FEEDINGS, version: 3 })).not.toBeNull()
-        expect(parseSpec({ ...FEEDINGS, version: 4 })).toBeNull()
-        expect(CURRENT_SPEC_VERSION).toBe(3)
+        expect(parseSpec({ ...FEEDINGS, version: 4 })).not.toBeNull()
+        expect(parseSpec({ ...FEEDINGS, version: 5 })).toBeNull()
+        expect(CURRENT_SPEC_VERSION).toBe(4)
     })
 
     // E1: optionsFrom.groupOrder (spec.go GroupOrder) is by label, declared, or a path.
