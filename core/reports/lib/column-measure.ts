@@ -2,17 +2,30 @@ import { CARET_ROOM, INDENT } from '../components/report-table-layout'
 import { shortDay } from './dates'
 import { cellDisplay, headingText, type NumberFormat, rowLabelText } from './format'
 import type { VisibleRow } from './rows'
-import type { SpecColumn } from './spec'
+import { type ColumnFit, type FitLength, parseFitLength, type SpecColumn } from './spec'
 import { longestWordWidth, type TextStyle, textWidth } from './text-width'
 import type { FieldType, ResultColumn, RowKind } from './types'
 
 // Review §7.1-1: every column's width comes from its content — its heading, the
 // rows of the run as it first lands (group, subtotal and Total rows included) and
-// fixed worst cases — never from the screen. Pure, so web, native and an export at
-// a page width size columns the same way. The measure is kept for the run (D1).
+// fixed worst cases — and its fit settings (display.columns), never from the
+// screen. Pure, so web, native and an export at a page width size columns the same
+// way. The measure is kept for the run (D1).
 
-/** A column's widths: what its content needs, the least it may get, and its share of spare room. */
-export type ColumnMeasure = { natural: number; min: number; grow: number }
+/**
+ * A column's widths: what its content needs, the least it may get, its share of
+ * spare room; and from its fit (display.columns) the most it may get, the lines its
+ * text may wrap to, and the parts of the line width a % setting asks for (0–1),
+ * which the fit resolves at each line's width (table-lines.ts atWidth).
+ */
+export type ColumnMeasure = {
+    natural: number
+    min: number
+    grow: number
+    max?: number
+    lines?: number
+    pct?: { width?: number; min?: number; max?: number }
+}
 export type ColumnMeasures = Record<string, ColumnMeasure>
 
 /** A cell's px-3 on both sides. */
@@ -29,6 +42,10 @@ const HEADING: TextStyle = { size: 'xs', weight: 'semibold', uppercase: true }
 
 /** The least a text column is held to: eight average letters. */
 export const TEXT_MIN_WIDTH = textWidth('n'.repeat(TEXT_MIN_CHARS), CELL)
+/** The width of "0" in a cell: a ch. */
+export const CH_WIDTH = textWidth('0', CELL)
+/** The lines a wrapping column's text may take when its fit gives no lineClamp. */
+export const DEFAULT_LINE_CLAMP = 2
 
 const BOLD_KINDS: ReadonlySet<RowKind> = new Set(['group', 'subtotal', 'computed', 'total'])
 
@@ -47,10 +64,12 @@ const FIGURE_TYPES: ReadonlySet<FieldType> = new Set([
     'bool',
 ])
 
+export function isFigureType(type: FieldType | undefined): boolean {
+    return type !== undefined && FIGURE_TYPES.has(type)
+}
+
 export function isFigureColumn(column: ResultColumn): boolean {
-    return (
-        FIGURE_TYPES.has(column.type) || (!!column.totalType && FIGURE_TYPES.has(column.totalType))
-    )
+    return isFigureType(column.type) || isFigureType(column.totalType)
 }
 
 // The widest value a column of this type may show on a later page, so a column
@@ -154,16 +173,22 @@ const hasValue = (value: unknown) => value !== undefined && value !== null
 // value; 0 when every cell is blank (D3: it is then as wide as its heading).
 function widestCell(column: ResultColumn, rows: readonly VisibleRow[], format: NumberFormat) {
     let widest = 0
+    let longestWord = 0
     let valued: VisibleRow | undefined
     for (const item of rows) {
         const text = cellDisplay(column, item.row, item.cells[column.id], format).text
         if (!text) continue
         valued = valued ?? item
-        widest = Math.max(widest, textWidth(text, cellTextStyle(item.row.kind)))
+        const style = cellTextStyle(item.row.kind)
+        widest = Math.max(widest, textWidth(text, style))
+        longestWord = Math.max(longestWord, longestWordWidth(text, style))
     }
     const worst = valued ? worstText(column, valued, format) : undefined
     if (worst) widest = Math.max(widest, textWidth(worst, CELL))
-    return widest === 0 ? 0 : widest + CELL_PADDING
+    return {
+        widest: widest === 0 ? 0 : widest + CELL_PADDING,
+        longestWord: longestWord === 0 ? 0 : longestWord + CELL_PADDING,
+    }
 }
 
 // A non-detail row spans the empty cells after its label (Task 6), so its label
@@ -175,17 +200,27 @@ function spansNothing(item: VisibleRow, others: readonly ResultColumn[]) {
 
 const TYPED_LABELS: ReadonlySet<FieldType> = new Set(['date', 'datetime', 'number', 'money'])
 
+// The width a row's label needs for its longest word, as labelNeed for the whole label.
+function labelWordNeed(item: VisibleRow, format: NumberFormat): number {
+    const { row } = item
+    const start = INDENT + row.depth * INDENT + (item.isToggle ? CARET_ROOM : 0)
+    const word = longestWordWidth(rowLabelText(row, format), cellTextStyle(row.kind))
+    return start + word + CELL_PADDING / 2
+}
+
 function labelWidths(
     others: readonly ResultColumn[],
     rows: readonly VisibleRow[],
     format: NumberFormat
-): { widest: number; isTyped: boolean } {
+): { widest: number; longestWord: number; isTyped: boolean } {
     let widest = 0
+    let longestWord = 0
     let isTyped = false
     for (const item of rows) {
         const { row } = item
         if (row.kind !== 'detail' && !spansNothing(item, others)) continue
         widest = Math.max(widest, labelNeed(item, format))
+        longestWord = Math.max(longestWord, labelWordNeed(item, format))
         if (row.kind !== 'detail' || !row.labelType || !TYPED_LABELS.has(row.labelType)) continue
         isTyped = true
         if (row.labelType === 'date' || row.labelType === 'datetime') {
@@ -193,8 +228,95 @@ function labelWidths(
             widest = Math.max(widest, start + textWidth(WORST_DAY, CELL) + CELL_PADDING / 2)
         }
     }
-    return { widest, isTyped }
+    return { widest, longestWord, isTyped }
 }
+
+// What a column's content asks for before its fit. Widths include the padding
+// (`pad`: a cell's px-3 on both sides, or the label's chrome); `floor` is the
+// automatic least width (eight letters, or the whole value of a typed label).
+type Content = {
+    natural: number
+    headingMin: number
+    floor: number
+    minContent: number
+    pad: number
+}
+
+type Pct = NonNullable<ColumnMeasure['pct']>
+
+const autoMin = (c: Content) => Math.max(c.headingMin, Math.min(c.natural, c.floor))
+const pctOf = (length: FitLength) => length.value / 100
+
+// A ch or px length is the text's width, so the padding is added; % is resolved later.
+function lengthPx(length: FitLength, pad: number): number {
+    const text = length.unit === 'ch' ? length.value * CH_WIDTH : length.value
+    return Math.ceil(text) + pad
+}
+
+function applyWidth(out: ColumnMeasure, c: Content, value: string | undefined, pct: Pct) {
+    const length = value ? parseFitLength(value) : null
+    if (!length) return
+    if (length.unit === '%') {
+        pct.width = pctOf(length)
+        return
+    }
+    const px = Math.max(c.headingMin, lengthPx(length, c.pad))
+    out.natural = px
+    out.min = px
+    out.max = px
+}
+
+function applyMin(out: ColumnMeasure, c: Content, value: string | undefined, pct: Pct) {
+    if (value === 'min-content') out.min = Math.max(c.headingMin, c.minContent)
+    else if (value === 'max-content') out.min = c.natural
+    else if (value && value !== 'auto') {
+        const length = parseFitLength(value)
+        if (length?.unit === '%') pct.min = pctOf(length)
+        else if (length) out.min = Math.max(c.headingMin, lengthPx(length, c.pad))
+    }
+    out.natural = Math.max(out.natural, out.min)
+    if (out.max !== undefined) out.max = Math.max(out.max, out.min)
+}
+
+function applyMax(out: ColumnMeasure, c: Content, value: string | undefined, pct: Pct) {
+    const length = value && value !== 'none' ? parseFitLength(value) : null
+    if (!length) return
+    if (length.unit === '%') {
+        pct.max = pctOf(length)
+        return
+    }
+    const cap = Math.max(out.min, lengthPx(length, c.pad))
+    out.max = out.max === undefined ? cap : Math.min(out.max, cap)
+    out.natural = Math.min(out.natural, out.max)
+}
+
+// A text column's measure under its fit, read as CSS (design §3.2): `width` sets
+// it, `minWidth` raises its least width (never under the heading's longest word),
+// `maxWidth` caps it but never under its least. A wrap may narrow it to its
+// longest word (or eight letters), never cutting a word.
+function fitted(c: Content, fit: ColumnFit | undefined, grow: number): ColumnMeasure {
+    const out: ColumnMeasure = { natural: c.natural, min: autoMin(c), grow: fit?.flexGrow ?? grow }
+    if (!fit) return out
+    const pct: Pct = {}
+    if (fit.whiteSpace === 'normal') {
+        out.lines = fit.lineClamp ?? DEFAULT_LINE_CLAMP
+        out.min = Math.max(c.headingMin, Math.min(c.natural, Math.max(c.minContent, c.floor)))
+    }
+    applyWidth(out, c, fit.width, pct)
+    applyMin(out, c, fit.minWidth, pct)
+    applyMax(out, c, fit.maxWidth, pct)
+    if (Object.keys(pct).length > 0) out.pct = pct
+    return out
+}
+
+// A figure is never cut (decision 2): its fit gives only its share of spare room.
+const wholeMeasure = (c: Content, fit: ColumnFit | undefined, grow: number): ColumnMeasure => ({
+    natural: c.natural,
+    min: autoMin(c),
+    grow: fit?.flexGrow ?? grow,
+})
+
+const NO_FITS: Readonly<Record<string, ColumnFit>> = {}
 
 /**
  * What the run's measure depends on (D1): the run (design, params, sort), the
@@ -206,10 +328,11 @@ export function measureKey(input: {
     format: NumberFormat
     columns: readonly ResultColumn[]
     levels: RowLevels
+    fits?: Readonly<Record<string, ColumnFit>>
 }): string {
     const { runKey, format, columns, levels } = input
     const shape = columns.map(column => [column.id, column.label, column.sortable === true])
-    return JSON.stringify([runKey, format, shape, levels])
+    return JSON.stringify([runKey, format, shape, levels, input.fits ?? NO_FITS])
 }
 
 export function measureColumns(input: {
@@ -217,28 +340,54 @@ export function measureColumns(input: {
     rows: readonly VisibleRow[]
     format: NumberFormat
     levels: RowLevels
+    /** The report's column fit settings (display.columns); absent: the defaults. */
+    fits?: Readonly<Record<string, ColumnFit>>
 }): ColumnMeasures {
     const { columns, format, levels } = input
     const rows = input.rows.slice(0, MEASURE_ROW_LIMIT)
     const [label, ...others] = columns
+    const fits = input.fits ?? NO_FITS
     const measures: ColumnMeasures = {}
     if (label) {
         const heading = headingWidths(label, format)
-        const { widest, isTyped } = labelWidths(others, rows, format)
-        const natural = Math.max(heading.natural, widest)
-        const floor = isTyped ? widest : Math.min(natural, labelChrome(levels) + TEXT_MIN_WIDTH)
-        measures[label.id] = { natural, min: Math.max(heading.min, floor), grow: 1 }
+        const labels = labelWidths(others, rows, format)
+        // A label of figures (a typed label, or a figure column first) is never cut.
+        const isWhole = labels.isTyped || isFigureColumn(label)
+        const chrome = labelChrome(levels)
+        const content: Content = {
+            natural: Math.max(heading.natural, labels.widest),
+            headingMin: heading.min,
+            floor: isWhole ? labels.widest : chrome + TEXT_MIN_WIDTH,
+            minContent: labels.longestWord,
+            pad: chrome,
+        }
+        const fit = fits[label.id]
+        measures[label.id] = isWhole ? wholeMeasure(content, fit, 1) : fitted(content, fit, 1)
     }
     for (const column of others) {
         const heading = headingWidths(column, format)
-        const widest = widestCell(column, rows, format)
-        const natural = Math.max(heading.natural, widest)
+        const cells = widestCell(column, rows, format)
+        const natural = Math.max(heading.natural, cells.widest)
+        const fit = fits[column.id]
         if (isFigureColumn(column)) {
-            measures[column.id] = { natural, min: Math.max(heading.min, widest), grow: 0 }
+            const whole = {
+                natural,
+                headingMin: heading.min,
+                floor: cells.widest,
+                minContent: 0,
+                pad: 0,
+            }
+            measures[column.id] = wholeMeasure(whole, fit, 0)
             continue
         }
-        const floor = Math.min(natural, TEXT_MIN_WIDTH + CELL_PADDING)
-        measures[column.id] = { natural, min: Math.max(heading.min, floor), grow: 1 }
+        const content: Content = {
+            natural,
+            headingMin: heading.min,
+            floor: TEXT_MIN_WIDTH + CELL_PADDING,
+            minContent: cells.longestWord,
+            pad: CELL_PADDING,
+        }
+        measures[column.id] = fitted(content, fit, 1)
     }
     return measures
 }
