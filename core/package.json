@@ -70,7 +70,7 @@
         "@jridgewell/trace-mapping": "^0.3.31",
         "@react-native-async-storage/async-storage": "2.2.0",
         "@react-native-community/netinfo": "12.0.1",
-        "@sentry/react-native": "~8.28.0",
+        "@sentry/react-native": "~8.34.0",
         "@shopify/flash-list": "github:nathanstitt/flash-list#265c951ddb7781b29345902b8a20d048a769b682",
         "@simplewebauthn/browser": "^14.0.0",
         "@tanstack/db": "^0.12.1",
