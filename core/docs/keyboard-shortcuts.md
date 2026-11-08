@@ -17,6 +17,14 @@ TinyCld has a sequence-aware keyboard shortcut system that works on both web and
 
 Sequences like `t m` are two presses in quick succession (up to 1 second between keys).
 
+### Dialogs
+
+| Keys | Action |
+|---|---|
+| `⌘/Ctrl + Enter` | Confirm a confirm dialog, or submit a dialog that asks for a name |
+
+Hold `⌘` (Ctrl on Windows and Linux) to see the shortcut of each button that has one. Point at a button to see its shortcut in a tooltip.
+
 ### Mail list
 
 | Keys | Action |
@@ -109,6 +117,7 @@ Shortcuts live under `lib/shortcuts/`. The system is intentionally small and avo
   - **while a menu, popover or search palette is open** (any non-modal layer on top) — every key goes to bubble. A menu pushes no shortcut scope, so the screen's keys stay active under it; the bubble path lets the menu's search field and its focused trigger keep their keys, as before.
   - **`global` shortcuts and a key typed in a text field** — capture feeds such a key only to scoped shortcuts; `global` ones get it in bubble, as before. A global shortcut stays registered by a screen the user has left (`freezeOnBlur`), so reading it first would let that screen take keys from every field in the app.
   - **Escape while a layer is open** — neither. The layer stack (`ui/overlay/layer-stack.ts`) closes the top menu, dialog or sheet from its own capture listener on `document`, which runs after the window capture listener; the provider yields Escape to it so a screen's Escape never fires on the same press.
+- `lib/shortcuts/modifier-held.ts` — web only: `useModifierHeld()` is true after ⌘ (Ctrl off Apple) is held alone for 400 ms. Any other key, the keyup, a window blur or a hidden page clears it.
 - `lib/shortcuts/dispatch.ts` — the pure phase decision (`keyPhase`, `handleKey`), unit-tested.
 - `lib/shortcuts/provider.native.tsx` — wraps the app in `KeyboardExtendedView` from [`react-native-external-keyboard`](https://github.com/dorian-marchal/react-native-external-keyboard) and translates native `KeyPress` events to the same atom format.
 - `lib/shortcuts/help.tsx` + `lib/shortcuts/help-list.ts` + `ui/Kbd.tsx` — the `?` overlay, its store and list, and the key badge component. The overlay lists only shortcuts whose scope is active (`isScopeActive`), not everything registered: a screen shadowed by an inner scope, or one left mounted by `freezeOnBlur`, still has its shortcuts in the registry but none of them can fire. Activity is judged against the stack below the overlay's own `modal` entry: opening the overlay records `nextScopeId()` as `scopeFloor`, and `helpGroups` reads `topScopeEntry(scopeFloor)`, so the list shows the keys of the screen (or dialog) it was opened over. It also leaves out a `global` shortcut when an active scoped one binds the same keys, because the matcher fires the scoped one (`pickFiring` in `matcher.ts` holds that rule for both).
@@ -119,7 +128,7 @@ The matcher dispatches a shortcut only when:
 2. `allowInInputs` is true, **or** focus is not currently in a text input / contenteditable / ProseMirror surface, and
 3. Its optional `when()` guard (if any) returns true.
 
-Opening a dialog, a sheet or a search palette pushes the `modal` scope (its `LayerEscape`), which silences list/thread/compose shortcuts until it closes. A menu or popover pushes no scope. `Escape` is registered in the `modal` scope with `allowInInputs: true` for the help list; on web the layer stack closes the layer, even from a focused input.
+Opening a dialog, a sheet or a search palette pushes the `modal` scope (its `LayerScope`; the palettes use `LayerEscape`, which is a `LayerScope` with no content), which silences list/thread/compose shortcuts until it closes. `LayerScope` also wraps the layer's content in a `ScopeProvider`, so a shortcut registered inside the layer (a `ShortcutButton` in the footer) is stamped with that layer's id. A menu or popover pushes no scope. `Escape` is registered in the `modal` scope with `allowInInputs: true` for the help list; on web the layer stack closes the layer, even from a focused input.
 
 ## Registering shortcuts
 
@@ -159,6 +168,28 @@ Fields:
 - **`description`** / **`group`** — displayed in the `?` help overlay, which renders one row per shortcut sorted by description. Two shortcuts that do the same thing under different keys therefore need distinct wording, or they read as the action listed twice; suffix the alias `(alt)` (`'Open card'` / `'Open card (alt)'`).
 - **`allowInInputs`** — defaults to `false`. Set `true` for shortcuts that should fire while an input is focused (`⌘+Enter` to send, `Escape` to close).
 - **`when`** — optional guard, e.g. `when: () => !selection.isEmpty`.
+
+### Shortcut buttons
+
+An action button that has a shortcut is a `ShortcutButton` (`@tinycld/core/ui/shortcut-button`). Do not register the button's shortcut separately.
+
+```tsx
+import { ShortcutButton } from '@tinycld/core/ui/shortcut-button'
+
+<ShortcutButton
+    label="Send"
+    shortcut={{ keys: '$mod+Enter', scope: 'compose', allowInInputs: true }}
+    onPress={send}
+    serverAction
+/>
+```
+
+- Pressing the keys presses the button. It does nothing while the button is disabled (or, with `serverAction`, while writes cannot reach the server). The key then falls through to the focused element.
+- The label is the shortcut's description in the `?` overlay.
+- `scope` is required. A `global` shortcut on a screen that `freezeOnBlur` has hidden still fires.
+- Web only: holding ⌘/Ctrl swaps the label for the keys, with no change in size. A plain key (no ⌘/Ctrl/Alt) shows as `then c`, so the user releases ⌘ first. The tooltip shows `<label> <keys>`, and the button has `aria-keyshortcuts`.
+- Native: the shortcut fires where the native provider feeds keys (iOS with a hardware keyboard; Android feeds none). There is no hint or tooltip, because React Native cannot detect a modifier held alone. The `accessibilityHint` names the shortcut.
+- In a dialog, pass the shortcut to `Dialog.ActionButton` (`shortcut={DIALOG_SUBMIT_SHORTCUT}` from `@tinycld/core/ui/dialog`). `ConfirmDialog` and `PromptDialog` do this already.
 
 ### Package-wide jump shortcut
 

@@ -19,6 +19,8 @@ This app is built from a small **core** plus a set of optional **feature package
 
 Press `t` followed by a single letter to jump between packages (the letter is shown in each package's docs). Press ⇧? to see the keyboard shortcuts of the screen you are on (not while the cursor is in a text box).
 
+Many buttons have a keyboard shortcut. In a web browser, to see the shortcut of one button, point at it. To see the shortcuts of all the buttons on the screen, hold ⌘. In a dialog that asks you to confirm, or to type a name, press ⌘↵ to do the action.
+
 ## Where to go next
 
 - [Organizations](help://core:organizations) — your workspace and member roles
