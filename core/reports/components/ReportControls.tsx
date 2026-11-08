@@ -1,11 +1,12 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
-import { Plus } from 'lucide-react-native'
+import { ArrowUpDown, Plus } from 'lucide-react-native'
 import type { ReactElement } from 'react'
 import { Pressable, ScrollView, Text } from 'react-native'
 import type { ReportViewModel } from '../hooks/useReportView'
 import { type ControlItem, chipText, isDateParam, type ParamValue } from '../lib/params'
 import type { ParamDef } from '../lib/spec'
+import { sortChipText, sortChoices } from '../lib/view-url'
 import { ParamChip } from './ParamChip'
 import { ParamPeriodControl } from './ParamPeriodControl'
 import { ParamPicker } from './ParamPickers'
@@ -150,10 +151,66 @@ function Control({ item, model }: { item: ControlItem; model: ReportViewModel })
     )
 }
 
+// An element, not a component: the Menu clones its trigger.
+function sortChip(text: string, iconColor: string) {
+    return (
+        <Pressable
+            testID="report-sort-menu"
+            accessibilityRole="button"
+            accessibilityLabel={text}
+            className="flex-row items-center gap-1.5 rounded-full border border-border bg-secondary px-3"
+            style={CHIP_STYLE}
+        >
+            <ArrowUpDown size={14} color={iconColor} />
+            <Text numberOfLines={1} className="text-sm text-secondary-foreground">
+                {text}
+            </Text>
+        </Pressable>
+    )
+}
+
+// D10: when the rows wrap, the headings are not buttons; the reader sorts here.
+function SortControl({ model, isVisible }: { model: ReportViewModel; isVisible: boolean }) {
+    const muted = useThemeColor('muted-foreground')
+    const onSetSort = model.onSetSort
+    if (!isVisible || !onSetSort) return null
+    const trigger = sortChip(sortChipText(model.columns, model.display, model.sort), muted)
+    const onOpenChange = (open: boolean) => {
+        if (open) model.onOpenSurface({ kind: 'sort' })
+        else model.onCloseSurfaceOf('sort')
+    }
+    const items = sortChoices(model.columns, model.display).map(choice => (
+        <Menu.Item
+            key={choice.key}
+            label={choice.label}
+            testID={`report-sort-choice-${choice.key}`}
+            onSelect={() => onSetSort(choice.sort)}
+        />
+    ))
+    return (
+        <Menu
+            trigger={trigger}
+            isOpen={model.surface?.kind === 'sort'}
+            onOpenChange={onOpenChange}
+            title="Sort"
+            sheetSide="bottom"
+            testID="report-sort-menu-list"
+        >
+            {items}
+        </Menu>
+    )
+}
+
 // One line of chips under the header: it scrolls sideways on a narrow screen and
 // never wraps.
-export function ReportControls({ model }: { model: ReportViewModel }) {
-    if (model.controls.length === 0) return null
+export function ReportControls({
+    model,
+    isSortMenuShown,
+}: {
+    model: ReportViewModel
+    isSortMenuShown: boolean
+}) {
+    if (model.controls.length === 0 && !isSortMenuShown) return null
     const controls = model.controls.map(item => (
         <Control
             key={item.kind === 'param' ? item.def.id : 'add-filter'}
@@ -170,6 +227,7 @@ export function ReportControls({ model }: { model: ReportViewModel }) {
             contentContainerClassName="flex-row items-center gap-2 px-4 py-2"
         >
             {controls}
+            <SortControl model={model} isVisible={isSortMenuShown} />
         </ScrollView>
     )
 }

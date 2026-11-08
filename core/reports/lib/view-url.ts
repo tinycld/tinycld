@@ -1,6 +1,6 @@
 import { appHref } from '@tinycld/core/lib/org-routes'
 import { isIsoDay } from './dates'
-import { DEFAULT_DISPLAY, type DisplayOptions } from './format'
+import { DEFAULT_DISPLAY, type DisplayOptions, headingText, type NumberFormat } from './format'
 import { centsFromText, textFromCents } from './money'
 import {
     amountValue,
@@ -14,6 +14,7 @@ import {
 } from './params'
 import type { ViewSort } from './run-client'
 import type { ParamDef } from './spec'
+import type { ResultColumn } from './types'
 
 // A run's params and Customize options live in the route's search params, so a
 // copied link reopens the report as the reader left it. Each value is checked on
@@ -197,4 +198,36 @@ export function reportLink(
 export function nextSort(current: ViewSort | null, col: string): ViewSort | null {
     if (current?.col !== col) return { col, dir: 'asc' }
     return current.dir === 'asc' ? { col, dir: 'desc' } : null
+}
+
+export type SortChoice = { key: string; label: string; sort: ViewSort | null }
+
+/** The Sort menu's choices (D10): the report's own order, then each sortable column both ways. */
+export function sortChoices(columns: readonly ResultColumn[], format: NumberFormat): SortChoice[] {
+    const choices: SortChoice[] = [{ key: 'none', label: 'Report order', sort: null }]
+    for (const column of columns) {
+        if (!column.sortable) continue
+        const text = headingText(column, format)
+        for (const dir of ['asc', 'desc'] as const) {
+            const words = dir === 'asc' ? 'ascending' : 'descending'
+            choices.push({
+                key: `${column.id}-${dir}`,
+                label: `${text}, ${words}`,
+                sort: { col: column.id, dir },
+            })
+        }
+    }
+    return choices
+}
+
+const SORT_ARROW = { asc: '↑', desc: '↓' } as const
+
+export function sortChipText(
+    columns: readonly ResultColumn[],
+    format: NumberFormat,
+    sort: ViewSort | null
+): string {
+    const column = sort ? columns.find(c => c.id === sort.col) : undefined
+    if (!sort || !column) return 'Sort'
+    return `Sort: ${headingText(column, format)} ${SORT_ARROW[sort.dir]}`
 }

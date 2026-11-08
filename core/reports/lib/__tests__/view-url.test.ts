@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_DISPLAY } from '../format'
 import type { ParamValue } from '../params'
 import type { ParamDef } from '../spec'
+import type { ResultColumn } from '../types'
 import {
     decodeSort,
     encodeSort,
@@ -10,6 +11,8 @@ import {
     reportLink,
     SORT_KEY,
     serializeViewOptions,
+    sortChipText,
+    sortChoices,
     type ViewOptions,
 } from '../view-url'
 
@@ -213,5 +216,43 @@ describe('nextSort', () => {
             col: 'customer',
             dir: 'asc',
         })
+    })
+})
+
+describe('sort choices', () => {
+    const columns: ResultColumn[] = [
+        { id: 'customer', label: 'Customer', type: 'text', sortable: true },
+        { id: 'balance', label: 'Balance', type: 'money', currency: 'USD' },
+        { id: 'amount', label: 'Amount', type: 'money', currency: 'USD', sortable: true },
+    ]
+
+    it('offers the report order, then each sortable column both ways', () => {
+        expect(sortChoices(columns, DEFAULT_DISPLAY)).toEqual([
+            { key: 'none', label: 'Report order', sort: null },
+            {
+                key: 'customer-asc',
+                label: 'Customer, ascending',
+                sort: { col: 'customer', dir: 'asc' },
+            },
+            {
+                key: 'customer-desc',
+                label: 'Customer, descending',
+                sort: { col: 'customer', dir: 'desc' },
+            },
+            { key: 'amount-asc', label: 'Amount, ascending', sort: { col: 'amount', dir: 'asc' } },
+            {
+                key: 'amount-desc',
+                label: 'Amount, descending',
+                sort: { col: 'amount', dir: 'desc' },
+            },
+        ])
+    })
+
+    it('names the sort in the chip', () => {
+        expect(sortChipText(columns, DEFAULT_DISPLAY, null)).toBe('Sort')
+        expect(sortChipText(columns, DEFAULT_DISPLAY, { col: 'amount', dir: 'desc' })).toBe(
+            'Sort: Amount ↓'
+        )
+        expect(sortChipText(columns, DEFAULT_DISPLAY, { col: 'gone', dir: 'asc' })).toBe('Sort')
     })
 })

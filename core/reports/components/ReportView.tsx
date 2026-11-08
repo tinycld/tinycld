@@ -160,6 +160,7 @@ function ViewBody({ model, table }: { model: ReportViewModel; table: TableLayout
 
 export function ReportView({ model, side }: { model: ReportViewModel; side?: ReactNode }) {
     const table = useTableLayout(model)
+    const isSortMenuShown = table.layout.kind === 'blocks'
     return (
         <View testID="report-screen" className="flex-1 flex-row bg-background">
             <View className="min-w-0 flex-1">
@@ -170,7 +171,7 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
                     isUpdating={model.isUpdating}
                     isUpdatingLive={!model.isUpdatingInBuilder}
                 />
-                <ReportControls model={model} />
+                <ReportControls model={model} isSortMenuShown={isSortMenuShown} />
                 <ReportNotices notices={model.notices} isLive={model.isBodyShown} />
                 <ReportDocumentHeader
                     heading={model.heading}

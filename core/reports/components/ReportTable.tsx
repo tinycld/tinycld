@@ -81,17 +81,31 @@ interface HeadingContentProps {
     text: string
     justify: Justify
     sorting: HeadingSort
+    isPressable: boolean
 }
 
 // R15: a column the run can sort by (ResultColumn.sortable) has a heading that is a
-// button; each press cycles ascending → descending → the report's order. The icon
-// sits outside the text, so the ellipsis never hides it; in a right-aligned column
-// it comes first, so the text's right edge stays in line with the values. A
-// running value's heading is plain text.
-function HeadingContent({ column, text, justify, sorting }: HeadingContentProps) {
+// button on a one-line layout; each press cycles ascending → descending → the
+// report's order. The icon sits outside the text, so the ellipsis never hides it; in
+// a right-aligned column it comes first, so the text's right edge stays in line with
+// the values. A running value's heading is plain text, and so is every heading when
+// the rows wrap (D10): the Sort chip sorts then, and a sorted column keeps its arrow.
+function HeadingContent({ column, text, justify, sorting, isPressable }: HeadingContentProps) {
     if (!column.sortable) return <HeadingText text={text} justify={justify} />
     const kind = sortIconOf(sorting.sort, column.id)
     const iconFirst = justify === 'end'
+    if (!isPressable) {
+        return (
+            <View
+                className="flex-1 flex-row items-center gap-1"
+                style={{ justifyContent: JUSTIFY_CONTENT[justify] }}
+            >
+                <SortIcon kind={kind} isVisible={iconFirst && kind !== 'none'} />
+                <HeadingText text={text} justify={justify} />
+                <SortIcon kind={kind} isVisible={!iconFirst && kind !== 'none'} />
+            </View>
+        )
+    }
     return (
         <Pressable
             testID={`report-sort-${column.id}`}
@@ -114,12 +128,14 @@ function HeadingCell({
     width,
     format,
     sorting,
+    isPressable,
 }: {
     column: ResultColumn
     justify: Justify
     width?: number
     format: NumberFormat
     sorting: HeadingSort
+    isPressable: boolean
 }) {
     const text = headingText(column, format)
     return (
@@ -128,7 +144,13 @@ function HeadingCell({
             className="justify-center px-3"
             style={cellBoxStyle(width)}
         >
-            <HeadingContent column={column} text={text} justify={justify} sorting={sorting} />
+            <HeadingContent
+                column={column}
+                text={text}
+                justify={justify}
+                sorting={sorting}
+                isPressable={isPressable}
+            />
         </View>
     )
 }
@@ -138,14 +160,22 @@ function LabelHeading({
     column,
     format,
     sorting,
+    isPressable,
 }: {
     column: ResultColumn
     format: NumberFormat
     sorting: HeadingSort
+    isPressable: boolean
 }) {
     return (
         <View className="grow pl-1">
-            <HeadingCell column={column} justify="start" format={format} sorting={sorting} />
+            <HeadingCell
+                column={column}
+                justify="start"
+                format={format}
+                sorting={sorting}
+                isPressable={isPressable}
+            />
         </View>
     )
 }
@@ -169,12 +199,13 @@ function OneLineHeading({ columns, layout, format, sorting }: HeadingRowProps) {
             width={layout.widths[column.id]}
             format={format}
             sorting={sorting}
+            isPressable
         />
     ))
     return (
         <>
             <View style={oneLineLabelStyle(layout, label.id)}>
-                <LabelHeading column={label} format={format} sorting={sorting} />
+                <LabelHeading column={label} format={format} sorting={sorting} isPressable />
             </View>
             {cells}
         </>
@@ -191,8 +222,23 @@ function BlocksHeading({ columns, layout, format, sorting }: HeadingRowProps) {
         const column = byId.get(col)
         if (!column) return null
         if (col === labelId)
-            return <LabelHeading column={column} format={format} sorting={sorting} />
-        return <HeadingCell column={column} justify={justify} format={format} sorting={sorting} />
+            return (
+                <LabelHeading
+                    column={column}
+                    format={format}
+                    sorting={sorting}
+                    isPressable={false}
+                />
+            )
+        return (
+            <HeadingCell
+                column={column}
+                justify={justify}
+                format={format}
+                sorting={sorting}
+                isPressable={false}
+            />
+        )
     }
     return (
         <View className="flex-1">

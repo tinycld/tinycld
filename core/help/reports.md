@@ -132,6 +132,9 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
   for a filter you can set while you read. In the period chip, **All dates** shows
   every row, also a row with no date. A link copied with **Copy link** opens the
   report with the same choices.
+- To sort, press a column heading: each press sorts up, then down, then back to the
+  report's order. When the rows wrap (on a phone), use the **Sort** chip above the
+  report instead.
 - **Customize** changes how numbers look (thousands, cents, negatives) and which
   columns show. It never changes the figures.
 - Select a group row to open or close it. **Expand all** opens every group; when any

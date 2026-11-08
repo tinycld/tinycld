@@ -374,6 +374,8 @@ test.describe('general-ledger: report engine v3', () => {
         await sort.click()
         await expect.poll(() => sortParam(page)).toBe('amount:asc')
         await expect(detailLabels(page)).toHaveText(['Dee', 'Ann', 'Bea', 'Cy'])
+        // One line keeps tap-to-sort and shows no Sort chip.
+        await expect(page.getByTestId('report-sort-menu')).toHaveCount(0)
         await sort.click()
         await expect.poll(() => sortParam(page)).toBe('amount:desc')
         await expect(detailLabels(page)).toHaveText(['Cy', 'Bea', 'Ann', 'Dee'])
@@ -472,7 +474,7 @@ test.describe('general-ledger: report engine v3', () => {
         )
     })
 
-    test('on a phone an opening row shows its whole label with its figures right after it, and a heading still sorts', async ({
+    test('on a phone an opening row shows its whole label with its figures right after it, and the Sort chip sorts', async ({
         page,
     }) => {
         await balanceOfOneTeam(page, 'BalPhone')
@@ -506,9 +508,12 @@ test.describe('general-ledger: report engine v3', () => {
             })
             .toEqual({ figuresFollow: true, labelWhole: true, fitsPhone: true })
 
-        await page.getByTestId('report-sort-amount').click()
+        await page.getByTestId('report-sort-menu').click()
+        await page.getByTestId('report-sort-choice-amount-asc').click()
         await expect.poll(() => sortParam(page)).toBe('amount:asc')
         await expect(detailLabels(page)).toHaveText(['Dee', 'Ann', 'Bea', 'Cy'])
+        await expect(page.getByTestId('report-sort-amount')).toHaveCount(0)
+        await expect(page.getByTestId('report-sort-menu')).toContainText('Sort: Amount ↑')
     })
 
     // The builder's v3 controls, in the order the tasks add them: This row's field,
