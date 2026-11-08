@@ -14,23 +14,23 @@ import (
 // target for (or none); each must compile.
 var targetCases = []string{
 	// A path that ends at a link, at id, or at a field; a bucketed date.
-	`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},{"id":"i","path":[{"link":"animal"},{"field":"id"}]},
+	`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},{"id":"i","path":[{"link":"animal"},{"field":"id"}]},
 		{"id":"n","path":[{"field":"note"}]},{"id":"d","path":[{"field":"fed"}]}],
 		"groups":[{"id":"ga","col":"a"},{"id":"gi","col":"i"},{"id":"gn","col":"n"},{"id":"gd","col":"d","bucket":"month"}]}`,
 	// A column it names; if, case and coalesce results.
-	`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
+	`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
 		{"id":"c","formula":{"col":"a"}},
 		{"id":"f","formula":{"op":"if","args":[{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"x"}]},{"col":"a"},{"col":"a"}]}},
 		{"id":"k","formula":{"op":"case","args":[{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"x"}]},{"path":[{"link":"animal"},{"link":"site"}]},{"path":[{"link":"animal"},{"link":"site"}]}]}},
 		{"id":"o","formula":{"op":"coalesce","args":[{"path":[{"link":"animal"},{"link":"owner"}]}]}}],
 		"groups":[{"id":"gc","col":"c"},{"id":"gf","col":"f"},{"id":"gk","col":"k"},{"id":"go","col":"o"}]}`,
 	// A lookup's value: a link of the looked-up source, or the report's column.
-	`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
+	`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
 		{"id":"s","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Leo"}]},"value":{"path":[{"link":"site"}]}}},
 		{"id":"b","formula":{"op":"lookup","source":"zoo.sites","value":{"col":"a"}}}],
 		"groups":[{"id":"gs","col":"s"},{"id":"gb","col":"b"}]}`,
 	// A to-many total links nowhere.
-	`{"version":2,"source":"zoo.animals","columns":[{"id":"n","path":[{"link":"feedings","mode":"aggregate"},{"field":"grams"}],"aggregate":"sum"},{"id":"a","path":[{"field":"name"}]}],
+	`{"version":4,"source":"zoo.animals","columns":[{"id":"n","path":[{"link":"feedings","mode":"aggregate"},{"field":"grams"}],"aggregate":"sum"},{"id":"a","path":[{"field":"name"}]}],
 		"groups":[{"id":"ga","col":"a"}]}`,
 }
 
@@ -125,7 +125,7 @@ func testSpecLiterals(t *testing.T) []string {
 // as args are: a lookup in it names its own source.
 func TestAnExistsWhereIsWalkedUnderAnUnknownSource(t *testing.T) {
 	withZooRegistry(t)
-	spec, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.nowhere",
+	spec, _, err := Load([]byte(`{"version":4,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.nowhere",
 		"where":{"op":"exists","link":[{"link":"gone"}],"where":{"op":"gt","args":[
 			{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"mass"}]}},{"value":1}]}},
 		"value":{"value":1}}}]}`))

@@ -74,9 +74,9 @@ func TestASavedRunBody(t *testing.T) {
 // naming the missing part. One stored with an old field key runs, and says so.
 func TestASavedReportNamesWhatIsMissing(t *testing.T) {
 	s := newSavedZoo(t)
-	gone := s.saved(t, "gone", "ann", "gone", `{"version":1,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}`, false)
+	gone := s.saved(t, "gone", "ann", "gone", `{"version":4,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}`, false)
 	s.expect(t, "ann", http.MethodPost, runURL, savedRun(gone.Id), http.StatusUnprocessableEntity, `"source":{"code":"unknown_source"`)
-	old := s.saved(t, "old", "ann", "old", `{"version":1,"source":"zoo.animals","columns":[{"id":"m","path":[{"field":"mass"}],"aggregate":"sum"}]}`, false)
+	old := s.saved(t, "old", "ann", "old", `{"version":4,"source":"zoo.animals","columns":[{"id":"m","path":[{"field":"mass"}],"aggregate":"sum"}]}`, false)
 	s.expect(t, "ann", http.MethodPost, runURL, savedRun(old.Id), http.StatusOK, `"code":"aliased"`, `"from":"mass"`)
 }
 

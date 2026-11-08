@@ -22,7 +22,7 @@ var twoLookedUpCosts = `{"op":"add","args":[` + orZero(lookedUpCost("f1")) + `,`
 // feedingsWithLookedUpCost adds looked-up costs to the row's own cost, to its
 // running sum, and to each other. Every one reads zoo.feedings.cost, whose
 // currency is the row's own currency field.
-var feedingsWithLookedUpCost = `{"version":3,"source":"zoo.feedings","columns":[
+var feedingsWithLookedUpCost = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"plus","formula":{"op":"add","args":[` + lookedUpCost("f1") + `,{"path":[{"field":"cost"}]}]}},
 	{"id":"balance","formula":{"op":"add","args":[` + orZero(lookedUpCost("f1")) + `,{"op":"runningSum","args":[{"path":[{"field":"cost"}]}]}]}},
@@ -58,7 +58,7 @@ func TestALookedUpAmountCombinesWithAmountsOfItsField(t *testing.T) {
 // On a group row a looked-up amount adds to the group's total of its field.
 func TestALookedUpAmountCombinesWithATotalOfItsField(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -83,7 +83,7 @@ func TestALookedUpAmountOnAGroupOrTotalInAnotherCurrencyIsBlank(t *testing.T) {
 	if err := z.app.Save(f3); err != nil {
 		t.Fatal(err)
 	}
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -124,7 +124,7 @@ func TestALookedUpAmountOnAGroupOrTotalInAnotherCurrencyIsBlank(t *testing.T) {
 // whose value is itself a sum lookup: the costs of the report row's animal.
 // The inner value is money whose currency each feeding carries, so the outer
 // sum reads the inner one's currency beside it.
-const nestedSum = `{"version":3,"source":"zoo.feedings","columns":[
+const nestedSum = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"nested","formula":{"op":"lookup","source":"zoo.animals","pick":"sum",
 		"value":{"op":"lookup","source":"zoo.feedings","pick":"sum",
@@ -176,7 +176,7 @@ func TestALookedUpAmountInAnotherCurrencyThanItsRowIsBlank(t *testing.T) {
 	if err := z.app.Save(f3); err != nil {
 		t.Fatal(err)
 	}
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"plus","formula":{"op":"add","args":[` + lookedUpCost("f1") + `,{"path":[{"field":"cost"}]}]}}],
 		"sort":[{"col":"note"}]}`
@@ -195,7 +195,7 @@ func TestALookedUpAmountInAnotherCurrencyThanItsRowIsBlank(t *testing.T) {
 // stays one field wide.
 func TestAmountsOfTwoCurrencyFieldsStillDoNotCombine(t *testing.T) {
 	app := withZooRegistry(t)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"add","args":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"add","args":[
 		` + lookedUpCost("f1") + `,{"path":[{"link":"animal"},{"field":"fee"}]}]}}]}`
 	requireSpecError(t, Validate(app, loadSpec(t, spec)), 400, "columns.0.formula", "amounts in different currencies cannot be combined")
 }

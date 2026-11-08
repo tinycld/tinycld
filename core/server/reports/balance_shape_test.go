@@ -190,7 +190,7 @@ const (
 			"value":{"path":[{"link":"account"},{"field":"full_name"}]},"pick":"min"},
 		{"op":"gt","args":[COUNT,{"value":2}]},{"value":"-Split-"},
 		{"value":null}]}`
-	glSpec = `{"version":3,"source":"zoo.ledger_lines",
+	glSpec = `{"version":4,"source":"zoo.ledger_lines",
 		"params":[
 			{"id":"period","type":"dateRange","label":"Period","default":{"preset":"thisMonthToDate"}},
 			{"id":"rows","type":"choice","label":"Rows","default":"active","options":[{"value":"active","label":"With activity"},{"value":"all","label":"All"}]},

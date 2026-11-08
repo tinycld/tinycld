@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const feedingsBySpecies = `{"version":1,"source":"zoo.feedings","columns":[
+const feedingsBySpecies = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -46,7 +46,7 @@ func TestExpandTakesAtMostTheRowCapOfKeys(t *testing.T) {
 
 // sixLevels groups feedings six deep; a key of its last level holds six
 // group values and the cost's currency.
-const sixLevels = `{"version":1,"source":"zoo.feedings","columns":[
+const sixLevels = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
 	{"id":"note","path":[{"field":"note"}]},
@@ -78,7 +78,7 @@ func TestExpandTakesTheRowCapOfTheDeepestKeys(t *testing.T) {
 // An expanded key matches by IS, so a blank group key opens too.
 func TestExpandOpensABlankGroup(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.animals","columns":[
+	spec := `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"region","path":[{"link":"site"},{"field":"region"}]},
 		{"id":"name","path":[{"field":"name"}]}],
 		"groups":[{"id":"g","col":"region"}],"sort":[{"col":"name"}]}`
@@ -89,7 +89,7 @@ func TestExpandOpensABlankGroup(t *testing.T) {
 
 func TestTwoGroupLevels(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"site","path":[{"link":"animal"},{"link":"site"},{"field":"name"}]},
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
@@ -124,7 +124,7 @@ func TestAToManyTotalCountsEachParentOnce(t *testing.T) {
 	z := newZoo(t)
 	// Each feeding row carries its animal's keeper count. Leo has two
 	// feedings: adding the per-row counts would count leo's keeper twice.
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"site","path":[{"link":"animal"},{"link":"site"},{"field":"name"}]},
 		{"id":"keepers","path":[{"link":"animal"},{"link":"keepers","mode":"aggregate"},{"field":"id"}],"aggregate":"count"},
 		{"id":"grams","path":[{"link":"animal"},{"link":"feedings","mode":"aggregate"},{"field":"grams"}],"aggregate":"avg","scale":0}],
@@ -137,7 +137,7 @@ func TestAToManyTotalCountsEachParentOnce(t *testing.T) {
 
 func TestGroupsSortByTheirTotals(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"cost","dir":"%s"}]}`
@@ -147,7 +147,7 @@ func TestGroupsSortByTheirTotals(t *testing.T) {
 
 func TestGroupByAMonthBucket(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"fed","path":[{"field":"fed"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"fed","bucket":"month"}]}`, Options{}, nil)
@@ -161,13 +161,13 @@ func TestGroupByAMonthBucket(t *testing.T) {
 // blank where it is not (the total row), never computed from a blank.
 func TestAFormulaOverAGroupColumnIsBlankWhereThereIsNoKey(t *testing.T) {
 	z := newZoo(t)
-	byGrams := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	byGrams := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"grams","path":[{"field":"grams"}]},
 		{"id":"g2","formula":{"op":"mul","args":[{"col":"grams"},{"value":2}]}}],
 		"groups":[{"id":"g","col":"grams"}]}`, Options{}, nil)
 	requireRows(t, byGrams, "g2", int64(200), int64(600), int64(1000), int64(1600), nil)
 
-	byBand := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	byBand := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"band","formula":{"op":"div","args":[{"path":[{"field":"grams"}]},{"value":400}],"scale":0}},
 		{"id":"band2","formula":{"op":"mul","args":[{"col":"band"},{"value":2}]}}],
 		"groups":[{"id":"g","col":"band"}]}`, Options{}, nil)
@@ -178,7 +178,7 @@ func TestAFormulaOverAGroupColumnIsBlankWhereThereIsNoKey(t *testing.T) {
 // its group row shows the key.
 func TestGroupByAFormulaColumn(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"bucket","formula":{"op":"div","args":[{"path":[{"field":"grams"}]},{"value":400}],"scale":0}},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -197,7 +197,7 @@ func TestGroupByAFormulaColumn(t *testing.T) {
 
 func TestGroupLabelsUseSelectLabelsAndNone(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.animals","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"region","path":[{"link":"site"},{"field":"region"}]},
 		{"id":"weight","path":[{"field":"weight"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"region"}]}`, Options{}, nil)
@@ -229,7 +229,7 @@ func TestAFormulaOverAmountsTotalsEachCurrencyApart(t *testing.T) {
 	z.rec(t, "f7", "zoo_feedings", map[string]any{
 		"animal": z.id("zed"), "cost": 400, "currency": "EUR", "fed": "2026-03-10 00:00:00.000Z", "grams": 10, "note": "f7",
 	})
-	const spec = `{"version":1,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"t","formula":{"op":"sum","args":[{"op":"add","args":[{"path":[{"field":"cost"}]},{"value":0}]}]}}],
 		"sort":[{"col":"note"}]}`
@@ -246,7 +246,7 @@ func TestAFormulaOverAmountsTotalsEachCurrencyApart(t *testing.T) {
 // fixed currency combines with itself and names its code.
 func TestAFormulaRefusesToCombineCurrencies(t *testing.T) {
 	z := newZoo(t)
-	mixed := `{"version":1,"source":"zoo.feedings","columns":[
+	mixed := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"cost","path":[{"field":"cost"}]},
 		{"id":"x","formula":{"op":"add","args":[{"col":"cost"},{"path":[{"link":"animal"},{"field":"price"}]}]}}]}`
 	_, err := z.try(t, "ann", mixed, Options{}, nil)
@@ -259,11 +259,11 @@ func TestAFormulaRefusesToCombineCurrencies(t *testing.T) {
 		"case":     `{"op":"case","args":[{"value":true},{"col":"cost"},{"path":[{"link":"animal"},{"field":"price"}]}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			raw := `{"version":1,"source":"zoo.feedings","columns":[{"id":"cost","path":[{"field":"cost"}]},{"id":"x","formula":` + op + `}]}`
+			raw := `{"version":4,"source":"zoo.feedings","columns":[{"id":"cost","path":[{"field":"cost"}]},{"id":"x","formula":` + op + `}]}`
 			requireSpecError(t, Validate(z.app, loadSpec(t, raw)), 400, "columns.1.formula", "amounts in different currencies")
 		})
 	}
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"same","formula":{"op":"sub","args":[{"path":[{"field":"cost"}]},{"path":[{"field":"cost"}]}]}},
 		{"id":"price","formula":{"op":"add","args":[{"path":[{"link":"animal"},{"field":"price"}]},{"path":[{"link":"animal"},{"field":"price"}]}]}}]}`, Options{}, nil)
 	if c := res.Columns[0]; c.CurrencyCell != "same@currency" {
@@ -278,7 +278,7 @@ func TestAFormulaRefusesToCombineCurrencies(t *testing.T) {
 // child row holds it.
 func TestANestedAmountCarriesItsCurrency(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":1,"source":"zoo.animals","columns":[
+	const spec = `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"cost","path":[{"link":"feedings","mode":"nest"},{"field":"cost"}]}],
 		"sort":[{"col":"name"}]}`
@@ -301,7 +301,7 @@ func TestGroupRowsStopAtTheRowCap(t *testing.T) {
 
 func TestRunningValuesAndPercents(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":1,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -319,7 +319,7 @@ func TestRunningValuesAndPercents(t *testing.T) {
 
 func TestARunningValueIsNotASortKey(t *testing.T) {
 	z := newZoo(t)
-	_, err := z.try(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	_, err := z.try(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"running","formula":{"op":"runningSum","args":[{"col":"cost"}]}}],
 		"sort":[{"col":"running"}]}`, Options{}, nil)
@@ -341,7 +341,7 @@ func TestABucketLabelFormulaSpellsTheBucketsKey(t *testing.T) {
 		"fiscalYear": `{"op":"concat","args":[` + part("fiscalYear") + `]}`,
 	}
 	spec := func(bucket, label string) string {
-		return `{"version":2,"source":"zoo.feedings","columns":[{"id":"fed","path":[{"field":"fed"}]},
+		return `{"version":4,"source":"zoo.feedings","columns":[{"id":"fed","path":[{"field":"fed"}]},
 			{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 			"groups":[{"id":"g","col":"fed","bucket":"` + bucket + `"` + label + `}]}`
 	}

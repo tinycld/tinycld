@@ -18,7 +18,7 @@ import (
 	"tinycld.org/core/offboard"
 )
 
-const goneSpec = `{"version":1,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}`
+const goneSpec = `{"version":4,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}`
 
 func brokenOf(t *testing.T, s *savedZoo, key string) *Broken {
 	t.Helper()
@@ -127,7 +127,7 @@ func TestABrokenMarkIsBounded(t *testing.T) {
 		cols = append(cols, fmt.Sprintf(`{"id":"c%d","path":[{"field":"nope%d"}]}`, i, i))
 	}
 	z := newZoo(t)
-	b := checkSpec(z.app, []byte(`{"version":1,"source":"zoo.feedings","columns":[`+strings.Join(cols, ",")+`]}`))
+	b := checkSpec(z.app, []byte(`{"version":4,"source":"zoo.feedings","columns":[`+strings.Join(cols, ",")+`]}`))
 	if b == nil {
 		t.Fatal("a spec with 60 bad columns has no mark")
 	}
@@ -157,7 +157,7 @@ func storedBroken(t *testing.T, s *savedZoo, key string) string {
 // offboard move.
 func TestAMarkFitsTheColumnWhateverTheSpecQuotes(t *testing.T) {
 	s := newSavedZoo(t)
-	s.saved(t, "huge", "ann", "Huge", `{"version":1,"source":"zoo.feedings","`+strings.Repeat("k", 100*1024)+`":1}`, false)
+	s.saved(t, "huge", "ann", "Huge", `{"version":4,"source":"zoo.feedings","`+strings.Repeat("k", 100*1024)+`":1}`, false)
 	if _, err := CheckSaved(s.app); err != nil {
 		t.Fatal(err)
 	}

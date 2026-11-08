@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const speciesHaving = `{"version":2,"source":"zoo.feedings","params":[{"id":"min","type":"number"}],"columns":[
+const speciesHaving = `{"version":4,"source":"zoo.feedings","params":[{"id":"min","type":"number"}],"columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -25,7 +25,7 @@ func TestHavingHidesGroupsAndAnUnsetParamHidesNone(t *testing.T) {
 	requireOrderedRows(t, speciesHaving, some, "cost", int64(3500), int64(1000), int64(2500), int64(4500))
 }
 
-const hiddenParent = `{"version":2,"source":"zoo.feedings","columns":[
+const hiddenParent = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -48,7 +48,7 @@ func TestAHiddenGroupHidesItsChildrenWhenExpandedByKey(t *testing.T) {
 	requireRows(t, res, "label", "lion", "f1", "f2", "Total")
 }
 
-const lionHidden = `{"version":2,"source":"zoo.feedings","columns":[
+const lionHidden = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -90,7 +90,7 @@ func TestRunningValuesReadTheShownRowsOnly(t *testing.T) {
 // whose note groups are all hidden, stays closed and shows its own figures.
 func TestADeeperHavingLeavesTheParentSubtotal(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -106,7 +106,7 @@ func TestADeeperHavingLeavesTheParentSubtotal(t *testing.T) {
 
 func TestHavingReadsARecordField(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal","having":{"op":"gt","args":[{"record":"g","path":[{"field":"weight"}]},{"value":200}]}}]}`, Options{}, nil)
 	requireRows(t, res, "label", "Zed", "Total")
@@ -118,7 +118,7 @@ func TestHavingOnAnAmountNoColumnShows(t *testing.T) {
 	z := newZoo(t)
 	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 100, "currency": "EUR",
 		"fed": "2026-01-07 00:00:00.000Z", "grams": 10, "note": "f7", "due": "2026-01-07"})
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
 		"groups":[{"id":"g","col":"species","having":{"op":"gt","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":150}]}}],
@@ -132,7 +132,7 @@ func TestHavingOnAnAmountNoColumnShows(t *testing.T) {
 // fees are 2 × 700 EUR, zed's 2 × 300 USD.
 func TestHavingOnACarriedAmountGroupsByItsCurrency(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
 		"groups":[{"id":"g","col":"animal","having":{"op":"gt","args":[
@@ -146,7 +146,7 @@ func TestHavingOnACarriedAmountGroupsByItsCurrency(t *testing.T) {
 func TestHavingOnFillRows(t *testing.T) {
 	z := newZoo(t)
 	withEmptyAnimals(t, z)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal",
@@ -162,7 +162,7 @@ func TestHavingOnFillRows(t *testing.T) {
 // a filter reads a column), so no group passes.
 func TestHavingReadsAColumnAsItsCellShowsIt(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","params":[{"id":"min","type":"number"}],"columns":[
+	spec := `{"version":4,"source":"zoo.feedings","params":[{"id":"min","type":"number"}],"columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"big","formula":{"op":"gte","args":[{"col":"cost"},{"param":"min"}]}}],
@@ -177,15 +177,15 @@ func TestHavingReadsAColumnAsItsCellShowsIt(t *testing.T) {
 func TestHavingIsRefusedWhereItCannotWork(t *testing.T) {
 	app := withZooRegistry(t)
 	for _, c := range []struct{ spec, at, want string }{
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"groups":[{"id":"g","col":"n","having":{"value":3}}]}`,
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"groups":[{"id":"g","col":"n","having":{"value":3}}]}`,
 			"groups.0.having", "having is a condition"},
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
 			"groups":[{"id":"g","col":"n","having":{"op":"gt","args":[{"op":"percentOfTotal","scale":2,"args":[{"col":"c"}]},{"value":10}]}}]}`,
 			"groups.0.having", "not a condition"},
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
 			"groups":[{"id":"g","col":"n","having":{"op":"gt","args":[{"col":"c"},{"value":0}]}}],"layout":[{"section":"s","title":"S","key":"f1"}]}`,
 			"groups.0.having", "a layout's sections are fixed rows"},
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
 			"groups":[{"id":"g","col":"n","having":{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"f1"}]}}]}`,
 			"groups.0.having", "not a value of one row"},
 	} {
@@ -204,7 +204,7 @@ func TestValidateChecksAHaving(t *testing.T) {
 	big := strings.TrimSuffix(chainSpec(8, doubling), "}") + `,"groups":[{"id":"g","col":"c0","having":
 		{"op":"eq","args":[{"op":"concat","args":[{"col":"c8"},{"col":"c8"}]},{"value":"x"}]}}]}`
 	requireSpecError(t, Validate(app, loadSpec(t, big)), 400, "groups.0.having", "with the formula columns it reads")
-	bad := `{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],
+	bad := `{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],
 		"groups":[{"id":"g","col":"a","having":{"op":"lookup","source":"zoo.sites","value":{"nope":1}}}]}`
 	requireSpecError(t, Validate(app, loadSpec(t, bad)), 400, "groups.0.having.value", "a lookup's value is a formula")
 }
@@ -214,7 +214,7 @@ func TestValidateChecksAHaving(t *testing.T) {
 // 1000 and 2500, zebra's 500 each: only lion keeps a note group over 2000.
 func TestAGroupWhoseChildrenAreAllHiddenDoesNotExpand(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],

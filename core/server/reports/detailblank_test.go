@@ -64,7 +64,7 @@ func registerLinesSource() {
 // by the account; No. is the account's number, read from the group's record;
 // opened lines are labelled by their memo. NO is the No. column's detail
 // member ("" for none).
-const ledgerByAccount = `{"version":2,"source":"zoo.lines",
+const ledgerByAccount = `{"version":4,"source":"zoo.lines",
 	"columns":[
 		{"id":"name","path":[{"link":"account"}]},
 		{"id":"no","label":"No.","formula":{"record":"byAccount","path":[{"field":"number"}]}NO},
@@ -139,7 +139,7 @@ func TestABlankColumnLeavesEveryOtherCell(t *testing.T) {
 
 // feedingsCostBlank is feedings grouped by animal, the cost (in its row's
 // currency) blank on detail rows.
-const feedingsCostBlank = `{"version":2,"source":"zoo.feedings","columns":[
+const feedingsCostBlank = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"animal","path":[{"link":"animal"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum","detail":"blank"},
 	{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
@@ -180,12 +180,12 @@ func TestValidateAcceptsABlankColumn(t *testing.T) {
 	for name, spec := range map[string]string{
 		"the No. column": ledger(blankOnDetail),
 		"the amount":     feedingsCostBlank,
-		"the first column, labelled by memo": `{"version":2,"source":"zoo.lines",
+		"the first column, labelled by memo": `{"version":4,"source":"zoo.lines",
 			"columns":[{"id":"no","path":[{"link":"account"},{"field":"number"}],"detail":"blank"},
 				{"id":"name","path":[{"link":"account"}]}],
 			"groups":[{"id":"byAccount","col":"name"}],
 			"detail":{"label":{"path":[{"field":"memo"}]}}}`,
-		"a formula over the first column labels the rows": `{"version":2,"source":"zoo.lines",
+		"a formula over the first column labels the rows": `{"version":4,"source":"zoo.lines",
 			"columns":[{"id":"memo","path":[{"field":"memo"}],"detail":"blank"},
 				{"id":"name","path":[{"link":"account"}]}],
 			"groups":[{"id":"byAccount","col":"name"}],
@@ -207,11 +207,11 @@ func TestValidateRefusesABlankColumn(t *testing.T) {
 		// Only "blank" is a detail member.
 		{"another value", ledger(`,"detail":"hide"`), "columns.1.detail"},
 		// A report with no groups has no group row to show the value on.
-		{"no groups", `{"version":2,"source":"zoo.lines","columns":[
+		{"no groups", `{"version":4,"source":"zoo.lines","columns":[
 			{"id":"memo","path":[{"field":"memo"}]},
 			{"id":"no","path":[{"link":"account"},{"field":"number"}],"detail":"blank"}]}`, "columns.1.detail"},
 		// The first column labels detail rows when no detail label is set.
-		{"the first column with no detail label", `{"version":2,"source":"zoo.lines","columns":[
+		{"the first column with no detail label", `{"version":4,"source":"zoo.lines","columns":[
 			{"id":"name","path":[{"link":"account"}],"detail":"blank"},
 			{"id":"debit","path":[{"field":"amount"}],"aggregate":"sum"}],
 			"groups":[{"id":"byAccount","col":"name"}]}`, "columns.0.detail"},
@@ -231,7 +231,7 @@ func TestValidateRefusesABlankColumn(t *testing.T) {
 
 // pivotGramsBlank is feedings grouped by species, cost pivoted by month, and
 // grams blank on detail rows, which a pivot report never has.
-const pivotGramsBlank = `{"version":2,"source":"zoo.feedings","columns":[
+const pivotGramsBlank = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 	{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum","detail":"blank"}],
@@ -246,7 +246,7 @@ var feedingsFedBlank = strings.Replace(strings.Replace(animalsWithFeedings, "COS
 // twoNestLevels nests each feeding's animal's feedings under the feeding: a
 // second nest level, labelled by its own first column (again). AGAIN and
 // AGAINCOST are the detail members of the second level's two columns.
-const twoNestLevels = `{"version":2,"source":"zoo.animals","columns":[
+const twoNestLevels = `{"version":4,"source":"zoo.animals","columns":[
 	{"id":"name","path":[{"field":"name"}]},
 	{"id":"site","path":[{"link":"site"}]},
 	{"id":"fed","path":[{"link":"feedings","mode":"nest"},{"field":"fed"}]},
@@ -286,7 +286,7 @@ func TestValidateAcceptsThePivotAndNestShapesWithNoBlank(t *testing.T) {
 func TestRunRefusesABlankLabelColumn(t *testing.T) {
 	z := newZoo(t)
 	withLines(t, z)
-	spec := `{"version":2,"source":"zoo.lines","columns":[
+	spec := `{"version":4,"source":"zoo.lines","columns":[
 		{"id":"name","path":[{"link":"account"}],"detail":"blank"},
 		{"id":"debit","path":[{"field":"amount"}],"aggregate":"sum"}],
 		"groups":[{"id":"byAccount","col":"name"}]}`
@@ -297,7 +297,7 @@ func TestRunRefusesABlankLabelColumn(t *testing.T) {
 // animalsWithFeedings is animals grouped by site, each animal's feedings
 // nested under it as child rows (fed labels them); the feeding's cost, in its
 // row's currency, is a child row column. COST is its detail member.
-const animalsWithFeedings = `{"version":2,"source":"zoo.animals","columns":[
+const animalsWithFeedings = `{"version":4,"source":"zoo.animals","columns":[
 	{"id":"name","path":[{"field":"name"}]},
 	{"id":"site","path":[{"link":"site"}]},
 	{"id":"fed","path":[{"link":"feedings","mode":"nest"},{"field":"fed"}]},

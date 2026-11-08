@@ -87,7 +87,7 @@ func registerAccountsSource() {
 // accountsParam is an accounts report whose Accounts filter lists the
 // accounts grouped by type. GROUP is the group path and ORDER the
 // optionsFrom's groupOrder member (empty for none).
-const accountsParam = `{"version":2,"source":"zoo.accounts",
+const accountsParam = `{"version":4,"source":"zoo.accounts",
 	"params":[{"id":"accounts","type":"choice","label":"Accounts","multiple":true,
 		"optionsFrom":{"source":"zoo.accounts","value":[{"field":"id"}],"label":[{"field":"name"}]GROUPORDER}}],
 	"columns":[{"id":"name","path":[{"field":"name"}]}],
@@ -332,7 +332,7 @@ func TestGroupOrderDeclaredPagesOverALongOptionList(t *testing.T) {
 		z.rec(t, b.key, "zoo_bins", map[string]any{"name": strings.ToUpper(b.key), "kind": b.kind})
 	}
 	want := []string{"Z1", "Z2", "M1", "M2", "A1", "A2"}
-	spec := `{"version":2,"source":"zoo.bins",
+	spec := `{"version":4,"source":"zoo.bins",
 		"params":[{"id":"bins","type":"choice","multiple":true,
 			"optionsFrom":{"source":"zoo.bins","value":[{"field":"id"}],"label":[{"field":"name"}],"group":[{"field":"kind"}],"groupOrder":{"by":"declared"}}}],
 		"columns":[{"id":"name","path":[{"field":"name"}]}],
