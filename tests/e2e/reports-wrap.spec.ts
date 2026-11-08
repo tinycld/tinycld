@@ -351,7 +351,8 @@ test.describe('report rows per width', () => {
             await chip.evaluate(element => {
                 ;(window as Window & { keptChip?: Element }).keptChip = element
             })
-            await chip.click()
+            await chip.focus()
+            await p.keyboard.press('Enter')
             await p.getByTestId('report-sort-choice-customer-desc').click()
             // Sorted by customer ascending before, Wrapco 23 was the last row.
             await expect(rowOf(p, 'Wrapco 23')).toBeInViewport()
@@ -362,6 +363,8 @@ test.describe('report rows per width', () => {
                 return kept?.isConnected === true && kept === now
             })
             expect(isSameChip).toBe(true)
+            // The chip's sheet gives the focus back to the chip when it closes.
+            await expect.poll(focusedTestId).toBe('report-sort-menu')
         } finally {
             await close()
         }
@@ -1077,5 +1080,36 @@ test.describe('report rows on a touch phone', () => {
             })
             .toBeGreaterThan(0)
         await expect.poll(() => isScrolledAway(first, headingBottom)).toBe(true)
+    })
+
+    // D9: on a phone the title is part of the list's header, so a finger drag that
+    // starts on it scrolls the rows, as one on a row does.
+    test('a swipe that starts on the title scrolls the rows', async ({ page }) => {
+        await login(page)
+        await seed(page, 16)
+        await wideReport(page, uniqueName('TitleSwipe'), false)
+        await page.setViewportSize({ width: 390, height: 844 })
+        const table = page.getByTestId('report-table')
+        const title = page.getByTestId('report-title')
+        await expect(table).toHaveCSS('opacity', '1')
+        await expect
+            .poll(
+                async () =>
+                    ((await title.boundingBox())?.y ?? 0) >= ((await table.boundingBox())?.y ?? 0)
+            )
+            .toBe(true)
+        const firstRow = table.locator('[data-testid^="report-row-"]').first()
+        const scroller = await listScroller(firstRow)
+        expect(await scroller.evaluate(list => list.scrollTop)).toBe(0)
+        const titleBox = await title.boundingBox()
+        const titleY = titleBox?.y ?? 0
+
+        await swipeUp(page, (titleBox?.x ?? 0) + 20, titleY + (titleBox?.height ?? 0) / 2, 300)
+        await expect
+            .poll(() => scroller.evaluate(list => list.scrollTop), {
+                message: 'the swipe on the title scrolls the list',
+            })
+            .toBeGreaterThan(0)
+        await expect.poll(async () => (await title.boundingBox())?.y ?? titleY).toBeLessThan(titleY)
     })
 })

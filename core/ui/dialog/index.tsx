@@ -98,6 +98,7 @@ function DialogRoot({
                     onClose={onClose}
                     title={header ? undefined : title}
                     description={description}
+                    initialFocusRef={initialFocusRef}
                     testID={testID}
                 >
                     {header}
