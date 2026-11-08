@@ -77,15 +77,21 @@ function matches(shortcut: Shortcut, ctx: MatcherContext): boolean {
 
 /**
  * Find a registered shortcut that exactly matches the given keys string.
- * Returns the first match in iteration order.
+ * A match of the active scope wins over a `global` one: core registers its
+ * globals (`/` search) at app start, before any screen mounts, so registry
+ * order alone would let them shadow a screen's own key. Only the top scope
+ * entry is active (`isScopeActive`), so at most one scope's shortcuts can
+ * match; among those, and among globals, the first in registry order wins.
  */
 function findExactMatch(keys: string, ctx: MatcherContext): Shortcut | null {
+    let globalMatch: Shortcut | null = null
     for (const shortcut of getShortcuts().values()) {
         if (shortcut.keys !== keys) continue
         if (!matches(shortcut, ctx)) continue
-        return shortcut
+        if (shortcut.scope !== 'global') return shortcut
+        globalMatch ??= shortcut
     }
-    return null
+    return globalMatch
 }
 
 /**
