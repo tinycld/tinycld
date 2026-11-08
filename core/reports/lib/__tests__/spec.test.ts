@@ -4,6 +4,7 @@ import {
     CURRENT_SPEC_VERSION,
     canCopyReport,
     parseBroken,
+    parseFitLength,
     parseSpec,
 } from '../spec'
 
@@ -428,5 +429,57 @@ describe('the parts of version 3', () => {
         expect(parseSpec(outer('fed'))).toBeNull()
         const groups = [{ id: 'g', col: 'species', opening: { label: 'Before', rows: 2 } }]
         expect(parseSpec({ ...FEEDINGS, version: 4, groups })).toBeNull()
+    })
+})
+
+describe('column fit (spec version 4)', () => {
+    const FIT = {
+        ...FEEDINGS,
+        display: {
+            oneLine: { minWidth: '1040px' },
+            columns: {
+                cost: { flexGrow: 0 },
+                note: {
+                    minWidth: '7.5ch',
+                    maxWidth: '40%',
+                    whiteSpace: 'normal',
+                    lineClamp: 2,
+                    textOverflow: 'ellipsis',
+                },
+            },
+            layouts: [
+                {
+                    width: 'tablet',
+                    minWidth: '600px',
+                    tracks: 2,
+                    cells: [{ col: 'note', line: 1 }],
+                },
+            ],
+        },
+    }
+
+    it('reads every fit setting as it is', () => {
+        expect(parseSpec(FIT)).toEqual(FIT)
+    })
+
+    it('refuses a length with no unit, a width gate not in px, and a value Go never stores', () => {
+        const withDisplay = (display: unknown) => parseSpec({ ...FEEDINGS, display })
+        expect(withDisplay({ columns: { note: { minWidth: '12' } } })).toBeNull()
+        expect(withDisplay({ oneLine: { minWidth: '60ch' } })).toBeNull()
+        expect(withDisplay({ oneLine: {} })).toBeNull()
+        expect(
+            withDisplay({ layouts: [{ width: 'tablet', minWidth: '50%', tracks: 1, cells: [] }] })
+        ).toBeNull()
+        expect(withDisplay({ columns: { note: { textOverflow: 'clip' } } })).toBeNull()
+        expect(withDisplay({ columns: { note: { lineClamp: 5 } } })).toBeNull()
+        expect(withDisplay({ columns: { note: { colour: 'red' } } })).toBeNull()
+    })
+
+    it('parses a length into its number and unit', () => {
+        expect(parseFitLength('7.5ch')).toEqual({ value: 7.5, unit: 'ch' })
+        expect(parseFitLength('600px')).toEqual({ value: 600, unit: 'px' })
+        expect(parseFitLength('40%')).toEqual({ value: 40, unit: '%' })
+        expect(parseFitLength('max-content')).toBeNull()
+        expect(parseFitLength('12')).toBeNull()
     })
 })

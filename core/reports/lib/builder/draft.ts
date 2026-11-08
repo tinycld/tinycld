@@ -2,10 +2,13 @@ import { z } from '@tinycld/core/ui/form'
 import { utf8Length } from '../params'
 import {
     BUCKETS,
+    type ColumnFit,
     CURRENT_SPEC_VERSION,
+    columnFitSchema,
     DISPLAY_WIDTHS,
     type DisplayLayout,
     displayLayoutSchema,
+    displayOneLineSchema,
     GROUP_LABEL_TOKEN,
     type ParamDef,
     paramDefSchema,
@@ -153,6 +156,8 @@ const columnFields = {
     detail: z.enum(['show', 'blank']).optional(),
     /** On group, subtotal and total rows: a formula instead of the column's total (F6). */
     rollup: formulaDraftSchema.nullable().optional(),
+    /** The column's fit (display.columns), kept as the spec says it; a save tidies it (tidyFit). */
+    fit: columnFitSchema.optional(),
 }
 export const columnDraftSchema = z.union([
     z.object({
@@ -236,8 +241,11 @@ const draftShape = z.object({
     layout: z.array(layoutItemSchema).max(MAX_LAYOUT_ITEMS),
     /** A formula that labels each opened (detail) row; null: the first column's value (E7). */
     detailLabel: formulaDraftSchema.nullable(),
-    /** The line layouts per width (E14), kept as the spec says them. */
-    display: z.object({ layouts: z.array(displayLayoutSchema).max(DISPLAY_WIDTHS.length) }),
+    /** The one-line width gate and the line layouts per width (E14), kept as the spec says them. */
+    display: z.object({
+        oneLine: displayOneLineSchema.optional(),
+        layouts: z.array(displayLayoutSchema).max(DISPLAY_WIDTHS.length),
+    }),
     /** Empty parts the read spec spelled out (`detail: {}`, `display: {}`), kept by a save. */
     explicit: z.object({ detail: z.boolean(), display: z.boolean() }),
 })
@@ -623,7 +631,8 @@ function columnDraft(
     column: SpecColumn,
     catalog: Catalog,
     baseKey: string,
-    params: readonly ParamDef[]
+    params: readonly ParamDef[],
+    fit: ColumnFit | undefined
 ): ColumnDraft {
     const common = {
         id: column.id,
@@ -635,6 +644,7 @@ function columnDraft(
         labelField: column.labelField ?? '',
         detail: column.detail ?? 'show',
         ...(column.rollup ? { rollup: formulaDraft(column.rollup, params) } : {}),
+        ...(fit ? { fit } : {}),
     } as const
     if (column.formula) {
         return {
@@ -690,7 +700,9 @@ export function draftFromSpec(
           }
         : NO_PIVOT
     const params = spec.params ?? []
-    const columns = spec.columns.map(column => columnDraft(column, catalog, spec.source, params))
+    const columns = spec.columns.map(column =>
+        columnDraft(column, catalog, spec.source, params, spec.display?.columns?.[column.id])
+    )
     const specGroups = spec.groups ?? []
     const base = { source: spec.source, columns, groups: specGroups, params }
     return {
@@ -714,7 +726,10 @@ export function draftFromSpec(
         pivot,
         layout: (spec.layout ?? []).map(item => layoutItemDraft(item, params)),
         detailLabel: spec.detail?.label ? formulaDraft(spec.detail.label, params) : null,
-        display: { layouts: spec.display?.layouts ?? [] },
+        display: {
+            ...(spec.display?.oneLine ? { oneLine: spec.display.oneLine } : {}),
+            layouts: spec.display?.layouts ?? [],
+        },
         explicit: { detail: Boolean(spec.detail), display: Boolean(spec.display) },
     }
 }
@@ -1003,6 +1018,46 @@ function specPivot(pivot: BuilderDraft['pivot']): NonNullable<ReportSpec['pivot'
     }
 }
 
+/** A column's fit in the engine's field order with no unset setting; undefined when nothing is set. */
+export function tidyFit(fit: ColumnFit | undefined): ColumnFit | undefined {
+    if (!fit) return undefined
+    const tidy: ColumnFit = {
+        ...(fit.width !== undefined ? { width: fit.width } : {}),
+        ...(fit.minWidth !== undefined ? { minWidth: fit.minWidth } : {}),
+        ...(fit.maxWidth !== undefined ? { maxWidth: fit.maxWidth } : {}),
+        ...(fit.whiteSpace !== undefined ? { whiteSpace: fit.whiteSpace } : {}),
+        ...(fit.lineClamp !== undefined ? { lineClamp: fit.lineClamp } : {}),
+        ...(fit.textOverflow !== undefined ? { textOverflow: fit.textOverflow } : {}),
+        ...(fit.flexGrow !== undefined ? { flexGrow: fit.flexGrow } : {}),
+    }
+    return Object.keys(tidy).length > 0 ? tidy : undefined
+}
+
+// Go writes a map's keys in byte order (not locale order).
+function byteOrder(a: string, b: string): number {
+    if (a < b) return -1
+    return a > b ? 1 : 0
+}
+
+// The display in the engine's field order (oneLine, columns, layouts); an empty
+// display the read spec spelled out is kept, any other empty one is left out.
+function specDisplay(draft: BuilderDraft): ReportSpec['display'] {
+    const fits = draft.columns
+        .flatMap(column => {
+            const fit = tidyFit(column.fit)
+            return fit ? [[column.id, fit] as const] : []
+        })
+        .sort(([a], [b]) => byteOrder(a, b))
+    const { oneLine, layouts } = draft.display
+    const display = {
+        ...(oneLine ? { oneLine } : {}),
+        ...(fits.length > 0 ? { columns: Object.fromEntries(fits) } : {}),
+        ...(layouts.length > 0 ? { layouts } : {}),
+    }
+    if (Object.keys(display).length > 0) return display
+    return draft.explicit.display ? {} : undefined
+}
+
 // Parts are written in the spec's own order, so a save that changes nothing writes
 // the spec it read.
 export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec {
@@ -1024,7 +1079,7 @@ export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec
         const ctx = formulaContext(draft, catalog, { kind: 'detail' })
         spec.detail = { label: specFormula(draft.detailLabel, ctx) }
     } else if (draft.explicit.detail) spec.detail = {}
-    if (draft.display.layouts.length > 0) spec.display = { layouts: draft.display.layouts }
-    else if (draft.explicit.display) spec.display = {}
+    const display = specDisplay(draft)
+    if (display) spec.display = display
     return spec
 }

@@ -68,6 +68,7 @@ function useArrange(builder: ReportBuilder, resultColumns: readonly ResultColumn
     ).filter(issue => issue.path[2] === index)
     const setLayout = (next: DisplayLayout) =>
         builder.setDisplay({
+            ...display,
             layouts:
                 index < 0
                     ? [...display.layouts, next]
@@ -90,7 +91,10 @@ function useArrange(builder: ReportBuilder, resultColumns: readonly ResultColumn
                 setLayout(startingLayout(width, columns))
                 return
             }
-            builder.setDisplay({ layouts: display.layouts.filter((_, i) => i !== index) })
+            builder.setDisplay({
+                ...display,
+                layouts: display.layouts.filter((_, i) => i !== index),
+            })
         },
         setTracks: (tracks: number) => {
             if (layout)
