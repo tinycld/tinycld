@@ -311,15 +311,6 @@ function TableEnd({ hasMore }: { hasMore: boolean }) {
     )
 }
 
-function LayoutNotice({ text }: { text: string | undefined }) {
-    if (!text) return null
-    return (
-        <Text testID="report-layout-notice" className="px-3 py-2 text-xs text-muted-foreground">
-            {text}
-        </Text>
-    )
-}
-
 // Everything a row draws from: FlashList's extraData, the one signal that redraws
 // the rows, so renderItem itself never changes.
 interface TableData extends Omit<TableRowProps, 'item'> {
@@ -459,14 +450,12 @@ export function ReportTable(props: ReportTableProps) {
     const format = useStable(props.format)
     const sorting = useHeadingSort(props.sort, props.onSortColumn)
     if (columns.length === 0) return null
-    const notice = layout.kind === 'blocks' ? layout.notice : undefined
     const visibility = props.isMeasured ? '' : 'opacity-0'
     // FlashList keeps the row in view anchored when the rows change, which a live
     // re-run of the same design and params needs; a run with a new design, new
     // params or a new sort is another list, so it starts at the top.
     return (
         <View testID="report-table" className={`min-h-0 flex-1 ${visibility}`}>
-            <LayoutNotice text={notice} />
             <TableList
                 key={runKey}
                 rows={rows}

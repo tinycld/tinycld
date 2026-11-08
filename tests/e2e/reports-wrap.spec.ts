@@ -717,7 +717,29 @@ test.describe('report rows per width', () => {
             await expect(p.getByTestId('report-builder-arrange-cost-problem')).toHaveCount(0)
             await saveNewReport(p, uniqueName('Pivot arrange'))
             await p.setViewportSize({ width: 390, height: 844 })
-            await expect(p.getByTestId('report-layout-notice')).toBeVisible()
+            // H5: the layout notice is in the one notice band, not in the table; on a
+            // phone the band is cut at two lines until the reader selects Show all.
+            const band = p.getByTestId('report-notices-region')
+            await expect(band.getByTestId('report-notice-layout')).toContainText(
+                'The pivot columns do not fit'
+            )
+            await expect(
+                p.getByTestId('report-table').getByTestId('report-notice-layout')
+            ).toHaveCount(0)
+            const toggle = band.getByTestId('report-notices-toggle')
+            await expect(toggle).toHaveText('Show all')
+            const capped = (await band.getByTestId('report-notices').boundingBox())?.height ?? 0
+            await toggle.click()
+            await expect(toggle).toHaveText('Show less')
+            await expect
+                .poll(
+                    async () =>
+                        (await band.getByTestId('report-notices').boundingBox())?.height ?? 0
+                )
+                .toBeGreaterThan(capped)
+            // A desktop never cuts the band.
+            await p.setViewportSize({ width: 1280, height: 800 })
+            await expect(band.getByTestId('report-notices-toggle')).toHaveCount(0)
         } finally {
             await close()
         }

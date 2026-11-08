@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { View } from 'react-native'
 import type { ReportViewModel } from '../hooks/useReportView'
 import { shownRunKey, type TableLayout, useTableLayout } from '../hooks/useTableLayout'
+import { layoutNoticeOf } from '../lib/notices'
 import { ReportControls } from './ReportControls'
 import { ReportCustomizePanel } from './ReportCustomizePanel'
 import { ReportDocumentHeader } from './ReportDocumentHeader'
@@ -161,6 +162,9 @@ function ViewBody({ model, table }: { model: ReportViewModel; table: TableLayout
 export function ReportView({ model, side }: { model: ReportViewModel; side?: ReactNode }) {
     const table = useTableLayout(model)
     const isSortMenuShown = table.layout.kind === 'blocks'
+    // The table's layout notice joins the run's in the band, once the table is drawn.
+    const layoutNotice = model.state === 'ready' ? layoutNoticeOf(table.layout) : undefined
+    const isCompact = model.breakpoint === 'mobile'
     return (
         <View testID="report-screen" className="flex-1 flex-row bg-background">
             <View className="min-w-0 flex-1">
@@ -172,7 +176,12 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
                     isUpdatingLive={!model.isUpdatingInBuilder}
                 />
                 <ReportControls model={model} isSortMenuShown={isSortMenuShown} />
-                <ReportNotices notices={model.notices} isLive={model.isBodyShown} />
+                <ReportNotices
+                    notices={model.notices}
+                    layoutNotice={layoutNotice}
+                    isLive={model.isBodyShown}
+                    isCompact={isCompact}
+                />
                 <ReportDocumentHeader
                     heading={model.heading}
                     title={model.title}
