@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import {
-    LayerEscape,
+    LayerScope,
     OverlayPortal,
     useHasSheetHost,
     useLayerFocus,
@@ -210,72 +210,75 @@ function SheetRoot({
 
     return (
         <OverlayPortal host="sheet">
-            {isOpen ? <LayerEscape onEscape={close} /> : null}
-            <View style={StyleSheet.absoluteFill} pointerEvents={isOpen ? 'auto' : 'none'}>
-                <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
-                    <Pressable
-                        style={[StyleSheet.absoluteFill, { backgroundColor: overlayBg }]}
-                        // Both guards, exactly as Dialog's backdrop — on the
-                        // mobile breakpoint a Dialog IS a Sheet, so the
-                        // rules-builder case lives here too. `isTopLayer` for a
-                        // press while a menu is still open, and
-                        // `wasConsumedByLayerDismissal` for the click that
-                        // follows the press which closed it.
-                        onPress={event => {
-                            if (!isTopLayer()) return
-                            const native = event?.nativeEvent as { pointerId?: number } | undefined
-                            if (wasConsumedByLayerDismissal(native)) return
-                            close()
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel="Close"
-                    />
-                </Animated.View>
-
-                <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                    pointerEvents="box-none"
-                    style={StyleSheet.absoluteFill}
-                >
-                    <GestureDetector gesture={panGesture}>
-                        <Animated.View
-                            ref={setSurfaceNode}
-                            testID={testID}
-                            accessibilityViewIsModal
-                            tabIndex={-1}
-                            onLayout={e => {
-                                sheetHeight.value = e.nativeEvent.layout.height
+            <LayerScope onEscape={close} isEscapeActive={isOpen}>
+                <View style={StyleSheet.absoluteFill} pointerEvents={isOpen ? 'auto' : 'none'}>
+                    <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
+                        <Pressable
+                            style={[StyleSheet.absoluteFill, { backgroundColor: overlayBg }]}
+                            // Both guards, exactly as Dialog's backdrop — on the
+                            // mobile breakpoint a Dialog IS a Sheet, so the
+                            // rules-builder case lives here too. `isTopLayer` for a
+                            // press while a menu is still open, and
+                            // `wasConsumedByLayerDismissal` for the click that
+                            // follows the press which closed it.
+                            onPress={event => {
+                                if (!isTopLayer()) return
+                                const native = event?.nativeEvent as
+                                    | { pointerId?: number }
+                                    | undefined
+                                if (wasConsumedByLayerDismissal(native)) return
+                                close()
                             }}
-                            className={SIDE_CLASS[side]}
-                            style={[
-                                {
-                                    maxHeight: `${maxHeightPercent * 100}%`,
-                                    backgroundColor: surfaceBg,
-                                    paddingTop,
-                                },
-                                sheetStyle,
-                            ]}
-                        >
-                            <SheetSideContext.Provider value={side}>
-                                <Handle
-                                    isVisible={!hideHandle && side === 'bottom'}
-                                    color={handleColor}
-                                />
-                                <SheetHeader
-                                    title={title}
-                                    description={description}
-                                    onClose={close}
-                                />
-                                {children}
-                                <Handle
-                                    isVisible={!hideHandle && side === 'top'}
-                                    color={handleColor}
-                                />
-                            </SheetSideContext.Provider>
-                        </Animated.View>
-                    </GestureDetector>
-                </KeyboardAvoidingView>
-            </View>
+                            accessibilityRole="button"
+                            accessibilityLabel="Close"
+                        />
+                    </Animated.View>
+
+                    <KeyboardAvoidingView
+                        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                        pointerEvents="box-none"
+                        style={StyleSheet.absoluteFill}
+                    >
+                        <GestureDetector gesture={panGesture}>
+                            <Animated.View
+                                ref={setSurfaceNode}
+                                testID={testID}
+                                accessibilityViewIsModal
+                                tabIndex={-1}
+                                onLayout={e => {
+                                    sheetHeight.value = e.nativeEvent.layout.height
+                                }}
+                                className={SIDE_CLASS[side]}
+                                style={[
+                                    {
+                                        maxHeight: `${maxHeightPercent * 100}%`,
+                                        backgroundColor: surfaceBg,
+                                        paddingTop,
+                                    },
+                                    sheetStyle,
+                                ]}
+                            >
+                                <SheetSideContext.Provider value={side}>
+                                    <Handle
+                                        isVisible={!hideHandle && side === 'bottom'}
+                                        color={handleColor}
+                                    />
+                                    <SheetHeader
+                                        title={title}
+                                        description={description}
+                                        onClose={close}
+                                    />
+                                    {children}
+                                    <Handle
+                                        isVisible={!hideHandle && side === 'top'}
+                                        color={handleColor}
+                                    />
+                                </SheetSideContext.Provider>
+                            </Animated.View>
+                        </GestureDetector>
+                    </KeyboardAvoidingView>
+                </View>
+            </LayerScope>
         </OverlayPortal>
     )
 }

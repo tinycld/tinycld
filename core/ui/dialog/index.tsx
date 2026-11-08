@@ -3,7 +3,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useWritesAvailable } from '@tinycld/core/lib/use-writes-available'
 import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import {
-    LayerEscape,
+    LayerScope,
     OverlayPortal,
     useLayerFocus,
     useOverlayLayer,
@@ -169,58 +169,61 @@ function DialogLayer({
 
     return (
         <OverlayPortal>
-            <LayerEscape onEscape={onClose} />
-            <View style={StyleSheet.absoluteFill} className="items-center justify-center">
-                <Animated.View
-                    entering={FadeIn.duration(150)}
-                    exiting={FadeOut.duration(150)}
-                    style={StyleSheet.absoluteFill}
-                >
-                    {/* Not in the accessibility tree: the header's Close button is the
-                        one "Close" a reader (or a test) should find.
+            <LayerScope onEscape={onClose}>
+                <View style={StyleSheet.absoluteFill} className="items-center justify-center">
+                    <Animated.View
+                        entering={FadeIn.duration(150)}
+                        exiting={FadeOut.duration(150)}
+                        style={StyleSheet.absoluteFill}
+                    >
+                        {/* Not in the accessibility tree: the header's Close button is the
+                            one "Close" a reader (or a test) should find.
 
-                        The backdrop closes the dialog only for a press that is
-                        really aimed at it. A menu or popover opened from inside the
-                        dialog draws over this same backdrop, so one press outside
-                        the menu produces both a pointerdown that dismisses the menu
-                        and then a click here, by which time the dialog is back on
-                        top. Acting on that click would dismiss two layers with one
-                        press and throw away everything the user had entered. Both
-                        guards are needed: `isTopLayer` for a press while the menu is
-                        still open, and `wasConsumedByLayerDismissal` for the click
-                        that follows the press which closed it. A genuine second
-                        press still closes the dialog. */}
-                    <Pressable
-                        style={[StyleSheet.absoluteFill, { backgroundColor: backdropColor }]}
-                        onPress={event => {
-                            if (!isTopLayer()) return
-                            const native = event?.nativeEvent as { pointerId?: number } | undefined
-                            if (wasConsumedByLayerDismissal(native)) return
-                            onClose()
-                        }}
-                        accessible={false}
-                        importantForAccessibility="no"
-                    />
-                </Animated.View>
-                {/* A PREDEFINED entering animation, on purpose: a custom keyframe
-                    (`ZoomIn.withInitialValues`) makes Reanimated pin the box's
-                    width and height on web once it has run, after which the
-                    dialog can never grow with its content. */}
-                <Animated.View
-                    ref={setSurfaceNode}
-                    entering={FadeIn.duration(150)}
-                    testID={testID}
-                    role="dialog"
-                    aria-modal
-                    accessibilityViewIsModal
-                    tabIndex={-1}
-                    pointerEvents="auto"
-                    className={`bg-background rounded-md overflow-hidden border border-border/80 shadow-hard-2 ${sizeClass}`}
-                >
-                    {header}
-                    {children}
-                </Animated.View>
-            </View>
+                            The backdrop closes the dialog only for a press that is
+                            really aimed at it. A menu or popover opened from inside the
+                            dialog draws over this same backdrop, so one press outside
+                            the menu produces both a pointerdown that dismisses the menu
+                            and then a click here, by which time the dialog is back on
+                            top. Acting on that click would dismiss two layers with one
+                            press and throw away everything the user had entered. Both
+                            guards are needed: `isTopLayer` for a press while the menu is
+                            still open, and `wasConsumedByLayerDismissal` for the click
+                            that follows the press which closed it. A genuine second
+                            press still closes the dialog. */}
+                        <Pressable
+                            style={[StyleSheet.absoluteFill, { backgroundColor: backdropColor }]}
+                            onPress={event => {
+                                if (!isTopLayer()) return
+                                const native = event?.nativeEvent as
+                                    | { pointerId?: number }
+                                    | undefined
+                                if (wasConsumedByLayerDismissal(native)) return
+                                onClose()
+                            }}
+                            accessible={false}
+                            importantForAccessibility="no"
+                        />
+                    </Animated.View>
+                    {/* A PREDEFINED entering animation, on purpose: a custom keyframe
+                        (`ZoomIn.withInitialValues`) makes Reanimated pin the box's
+                        width and height on web once it has run, after which the
+                        dialog can never grow with its content. */}
+                    <Animated.View
+                        ref={setSurfaceNode}
+                        entering={FadeIn.duration(150)}
+                        testID={testID}
+                        role="dialog"
+                        aria-modal
+                        accessibilityViewIsModal
+                        tabIndex={-1}
+                        pointerEvents="auto"
+                        className={`bg-background rounded-md overflow-hidden border border-border/80 shadow-hard-2 ${sizeClass}`}
+                    >
+                        {header}
+                        {children}
+                    </Animated.View>
+                </View>
+            </LayerScope>
         </OverlayPortal>
     )
 }
