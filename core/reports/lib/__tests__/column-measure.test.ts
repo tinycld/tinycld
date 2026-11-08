@@ -13,6 +13,7 @@ import {
     measureKey,
     SORT_ICON_ROOM,
     TEXT_MIN_WIDTH,
+    WORD_MARGIN,
 } from '../column-measure'
 import { cellDisplay, DEFAULT_DISPLAY } from '../format'
 import type { VisibleRow } from '../rows'
@@ -288,9 +289,9 @@ describe('column fit in the measure', () => {
                 memo: { ...wrap, minWidth: '5ch' },
                 name: { ...wrap, width: '5ch' },
             })
-            expect(m.account?.min).toBeGreaterThan(labelWord)
-            expect(m.memo?.min).toBeGreaterThan(cellWord)
-            expect(m.name?.min).toBeGreaterThan(cellWord)
+            expect(m.account?.min).toBe(labelWord + WORD_MARGIN)
+            expect(m.memo?.min).toBe(cellWord + WORD_MARGIN)
+            expect(m.name?.min).toBe(cellWord + WORD_MARGIN)
             for (const col of [m.account, m.memo, m.name]) {
                 expect(col?.natural).toBeGreaterThanOrEqual(col?.min ?? 0)
                 expect(col?.max ?? Infinity).toBeGreaterThanOrEqual(col?.min ?? 0)
@@ -304,7 +305,7 @@ describe('column fit in the measure', () => {
             })
             for (const col of [m.memo, m.name]) {
                 const at = atWidth(col ?? { natural: 0, min: 0, grow: 0 }, 390)
-                expect(at.min).toBeGreaterThan(cellWord)
+                expect(at.min).toBe(cellWord + WORD_MARGIN)
                 expect(at.max ?? Infinity).toBeGreaterThanOrEqual(at.min)
             }
         })

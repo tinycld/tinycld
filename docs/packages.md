@@ -1362,7 +1362,7 @@ label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` o
 | `display.columns.<col>.width` | A length (`12ch`, `120px`, `25%`): the column is exactly this wide. `ch` and `px` are the text's width (the cell's padding is added); `%` is the cell's whole width as a part of the line. |
 | `display.columns.<col>.minWidth` | `auto` (default: eight letters for text, the whole value for a figure), `min-content` (the longest word), `max-content` (the whole value), or a length. |
 | `display.columns.<col>.maxWidth` | `none` (default) or a length; never under `minWidth`. |
-| `display.columns.<col>.whiteSpace` | `nowrap` (default: one line, ends in "…") or `normal` (the text wraps at spaces). A wrapping column is never narrower than its longest word (plus 2 px for the width estimate): a smaller `width` or `minWidth`, or a `%` that gives less, is raised to it, and a word is never split across lines. A `minWidth` wider than the content is kept. |
+| `display.columns.<col>.whiteSpace` | `nowrap` (default: one line, ends in "…") or `normal` (the text wraps at spaces). A wrapping column is never narrower than its longest measured word (plus 2 px for the width estimate; the measure reads the first 500 rows): a smaller `width` or `minWidth`, or a `%` that gives less, is raised to it. A `minWidth` wider than the content is kept. On web a word wider than its line is clipped, not split. |
 | `display.columns.<col>.lineClamp` | 1 to 4, with `whiteSpace: "normal"`: the most lines the text wraps to (default 2). |
 | `display.columns.<col>.textOverflow` | `ellipsis` only. |
 | `display.columns.<col>.flexGrow` | 0 to 10: the column's share of spare room on one line (default 1 for text and the label column, 0 for other figures). |

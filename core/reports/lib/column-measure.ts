@@ -299,6 +299,7 @@ export const WORD_MARGIN = 2
 // A wrapping column never goes under its longest word, whatever its width or
 // minWidth: native text splits a word wider than its line. Its natural and max
 // follow, so a % setting (resolved from `min` in table-lines atWidth) keeps it too.
+// A one-word value's natural width grows by WORD_MARGIN with it: that is intended.
 function holdLongestWord(out: ColumnMeasure, c: Content) {
     if (c.minContent === 0) return
     out.min = Math.max(out.min, Math.min(c.natural, c.minContent) + WORD_MARGIN)
@@ -309,7 +310,8 @@ function holdLongestWord(out: ColumnMeasure, c: Content) {
 // A text column's measure under its fit, read as CSS (design §3.2): `width` sets
 // it, `minWidth` raises its least width (never under the heading's longest word),
 // `maxWidth` caps it but never under its least. A wrap may narrow it to its
-// longest word (or eight letters), never cutting a word.
+// longest word (or eight letters), never cutting a word: after width, minWidth and
+// maxWidth, a wrap is raised to its longest word (holdLongestWord).
 function fitted(c: Content, fit: ColumnFit | undefined, grow: number): ColumnMeasure {
     const out: ColumnMeasure = { natural: c.natural, min: autoMin(c), grow: fit?.flexGrow ?? grow }
     if (!fit) return out

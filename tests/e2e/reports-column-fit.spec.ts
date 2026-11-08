@@ -179,9 +179,14 @@ test.describe('report column fit', () => {
                 .toEqual([])
             const { box, found } = await words()
             // A word a few px wider than its line is clipped, as CSS does, never split.
-            expect(await label.evaluate(element => getComputedStyle(element).overflowWrap)).toBe(
-                'normal'
-            )
+            const overflowWrap = (element: Element) => getComputedStyle(element).overflowWrap
+            expect(await label.evaluate(overflowWrap)).toBe('normal')
+            // A cell's text (RowCell) takes the same style as the label's.
+            const cell = p
+                .locator('[data-testid^="report-cell-amount-d:"]')
+                .first()
+                .locator('div[dir="auto"]')
+            expect(await cell.evaluate(overflowWrap)).toBe('normal')
             const widest = Math.max(...found.map(w => w.width))
             expect(box).toBeGreaterThanOrEqual(widest)
             // The label wraps: it is narrower than its whole text.
