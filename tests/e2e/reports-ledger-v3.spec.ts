@@ -298,7 +298,10 @@ test.describe('general-ledger: report engine v3', () => {
         await expect(loading).toContainText('Loading more rows…')
         expect(occurrences(await rowIds(page), 'total')).toBe(0)
         await expect(page.getByTestId('report-end')).toHaveCount(0)
-        const amountWidth = (await page.getByTestId('report-heading-amount').boundingBox())?.width
+        const heading = page.getByTestId('report-heading-amount')
+        const widthOf = async () => (await heading.boundingBox())?.width
+        await expect.poll(widthOf).toBeGreaterThan(0)
+        const amountWidth = await widthOf()
 
         release()
         const scroller = await listScroller(firstSale)
@@ -315,9 +318,10 @@ test.describe('general-ledger: report engine v3', () => {
         await expect(loading).toHaveCount(0)
         const ids = await rowIds(page)
         expect(ids[ids.length - 1]).toMatch(/^total/)
-        expect((await page.getByTestId('report-heading-amount').boundingBox())?.width).toBe(
-            amountWidth
-        )
+        // The Total (18.30) and the team rollups (12.15) are wider than any detail
+        // amount (at most 2.05), so the column would widen if the measure ignored the
+        // held rows.
+        await expect.poll(widthOf).toBe(amountWidth)
     })
 
     // F11: a fold keeps the reader's place. Folding a section that came on a later
