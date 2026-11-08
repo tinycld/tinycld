@@ -747,6 +747,69 @@ test.describe('report rows per width', () => {
             await close()
         }
     })
+
+    // Review §7.1-2 and H7: a subtotal row's label spans its empty cells on one line,
+    // and on a phone it moves beside its figure when the empty tracks hold it.
+    test('a subtotal row shows its whole label on a desktop line and beside its figure on a phone', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptsubspan')
+        try {
+            const team = uniqueName('Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            await addSale(p, {
+                team,
+                customer: 'Ada',
+                amount: 1000,
+                cost: 400,
+                quantity: 3,
+                day: '2026-01-05',
+            })
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['quantity'])
+            await addColumn(p, ['cost'])
+            await addColumn(p, ['amount'])
+            await chooseOption(p, 'report-builder-column-3-aggregate', 'sum')
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'customer')
+            await p.getByTestId('report-builder-group-0-open').click()
+            // Phone: the label across line 1, then quantity · cost · amount.
+            await p.getByTestId('report-builder-section-arrange').click()
+            await p.getByTestId('report-builder-arrange-width-mobile').click()
+            await p.getByTestId('report-builder-arrange-on').click()
+            await chooseOption(p, 'report-builder-arrange-tracks', '3')
+            await chooseOption(p, 'report-builder-arrange-customer-span', '3')
+            await chooseOption(p, 'report-builder-arrange-quantity-line', '2')
+            await chooseOption(p, 'report-builder-arrange-cost-line', '2')
+            await chooseOption(p, 'report-builder-arrange-amount-line', '2')
+            await saveNewReport(p, uniqueName('Subtotal span'))
+
+            const subtotal = rowOf(p, 'Total Ada')
+            const amount = await cellOf(p, 'amount', 'Total Ada')
+            const isCut = () =>
+                subtotal
+                    .getByText('Total Ada', { exact: true })
+                    .evaluate(el => el.scrollWidth > el.clientWidth)
+            await p.setViewportSize({ width: 1280, height: 800 })
+            await expect(p.getByTestId('report-table')).toHaveCSS('opacity', '1')
+            await expect.poll(isCut).toBe(false)
+
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect
+                .poll(async () => {
+                    const label = await subtotal.boundingBox()
+                    const figure = await amount.boundingBox()
+                    return label && figure ? Math.abs(label.y - figure.y) <= 1 : false
+                })
+                .toBe(true)
+            await expect.poll(isCut).toBe(false)
+        } finally {
+            await close()
+        }
+    })
 })
 
 test.describe('report rows on a touch phone', () => {

@@ -2,6 +2,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import type { ReactNode } from 'react'
 import { Pressable, Text, View } from 'react-native'
+import { labelNeed } from '../lib/column-measure'
 import { type CellDisplay, cellDisplay, type NumberFormat, rowLabelText } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import { groupChain } from '../lib/sticky'
@@ -365,7 +366,7 @@ function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: Ta
 
 function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: TableRowProps) {
     const [label] = columns
-    const lines = rowLayout(item, layout, label?.id ?? '')
+    const lines = rowLayout(item, layout, label?.id ?? '', labelNeed(item, format))
     if (lines.kind !== 'blocks') return null
     const byId = new Map(columns.map(column => [column.id, column]))
     const renderCell: RenderCell = (col, justify) => {

@@ -472,7 +472,7 @@ test.describe('general-ledger: report engine v3', () => {
         )
     })
 
-    test('on a phone an opening row is its label and then its figures, and a heading still sorts', async ({
+    test('on a phone an opening row shows its whole label with its figures right after it, and a heading still sorts', async ({
         page,
     }) => {
         await balanceOfOneTeam(page, 'BalPhone')
@@ -494,10 +494,17 @@ test.describe('general-ledger: report engine v3', () => {
                 const figures = await balance.boundingBox()
                 const width = await page.evaluate(() => document.documentElement.scrollWidth)
                 if (!label || !figures) return null
-                const gap = figures.y - (label.y + label.height)
-                return { gapFits: gap >= -1 && gap <= 8, fitsPhone: width <= PHONE.width }
+                const labelWhole = await opening
+                    .getByText(OPENING, { exact: true })
+                    .evaluate(el => el.scrollWidth <= el.clientWidth)
+                return {
+                    figuresFollow:
+                        figures.y >= label.y - 1 && figures.y <= label.y + label.height + 8,
+                    labelWhole,
+                    fitsPhone: width <= PHONE.width,
+                }
             })
-            .toEqual({ gapFits: true, fitsPhone: true })
+            .toEqual({ figuresFollow: true, labelWhole: true, fitsPhone: true })
 
         await page.getByTestId('report-sort-amount').click()
         await expect.poll(() => sortParam(page)).toBe('amount:asc')

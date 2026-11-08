@@ -120,6 +120,8 @@ A formula is built from parts you pick from menus: **Number**, **Text**, **Colum
 
 A report never scrolls sideways. Each column gets the room its heading and its values need. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". Spare room goes to the columns whose text is cut, then to the text columns. A column with no value is as wide as its heading.
 
+Group, opening, subtotal and total rows show their whole label: it runs across the empty cells after it. When the rows wrap, a total's label moves onto the line of its figures if there is room.
+
 When the columns do not fit on one line, the report uses the first arrangement that fits the screen, widest first: **Desktop**, then **Tablet**, then **Phone**. With no arrangement that fits, each row wraps by itself: as many columns as fit go on each line, the label first, and the next lines start under the row's label.
 
 To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. A long report loads more rows as you scroll, also when it has groups.

@@ -668,7 +668,7 @@ describe('the table layout per width', () => {
         if (layout.kind !== 'blocks') throw new Error('expected lines')
         const row = { id: 'g', kind: 'group' as const, depth: 0, label: 'Assets', cells: {} }
         expect(
-            rowLayout({ row, cells: {}, isToggle: true, isOpen: false }, layout, 'account')
+            rowLayout({ row, cells: {}, isToggle: true, isOpen: false }, layout, 'account', 0)
         ).toEqual({
             kind: 'blocks',
             root: { kind: 'cell', col: 'account', justify: 'start' },
@@ -676,7 +676,7 @@ describe('the table layout per width', () => {
         })
         const full = { number: 'A1', debit: 5, credit: 0 }
         expect(
-            rowLayout({ row, cells: full, isToggle: false, isOpen: false }, layout, 'account')
+            rowLayout({ row, cells: full, isToggle: false, isOpen: false }, layout, 'account', 0)
         ).toBe(layout)
     })
     // E2: an opened row with no No. cell (blank on detail rows) keeps the phone lines,
@@ -691,9 +691,9 @@ describe('the table layout per width', () => {
         expect(layout.kind).toBe('blocks')
         const row = { id: 'd:1', kind: 'detail' as const, depth: 1, label: 'Sale', cells: {} }
         const cells = { debit: 250, credit: null }
-        expect(rowLayout({ row, cells, isToggle: false, isOpen: false }, layout, 'account')).toBe(
-            layout
-        )
+        expect(
+            rowLayout({ row, cells, isToggle: false, isOpen: false }, layout, 'account', 0)
+        ).toBe(layout)
     })
     it('starts an arrangement from the columns', () => {
         expect(startingLayout('mobile', [{ id: 'a' }, { id: 'b' }, { id: 'c' }])).toEqual({
@@ -799,6 +799,27 @@ describe('the layout chosen by fit', () => {
         expect(shapeOf(at(900, [DESKTOP_LAYOUT, TABLET_LAYOUT]))).toEqual(DESKTOP_LINES)
         expect(shapeOf(at(900, [MOBILE_LAYOUT, TABLET_LAYOUT]))).toEqual(TABLET_LINES)
         expect(shapeOf(at(400, [MOBILE_LAYOUT]))).toEqual(MOBILE_LINES)
+        // At 300 the tablet's second line needs 330 (3 × 110) and 296 is left under
+        // the indent, so it falls through to the mobile lines, which fit.
+        expect(shapeOf(at(300, [TABLET_LAYOUT, MOBILE_LAYOUT]))).toEqual(MOBILE_LINES)
+    })
+
+    it('never gives a part a negative width at a width below the indent', () => {
+        const layout = tableLines({
+            columns: COLS,
+            width: 40,
+            layouts: [],
+            levels: { groups: 3, nests: 0 },
+            measures: uniform(COLS, 110),
+        })
+        if (layout.kind !== 'blocks') throw new Error('expected lines')
+        expect(layout.indent).toBeGreaterThan(40)
+        const widths = (block: Block): number[] => {
+            if (block.kind === 'stack') return block.parts.flatMap(widths)
+            if (block.kind !== 'side') return []
+            return block.parts.flatMap(part => [part.width ?? 0, ...widths(part.block)])
+        }
+        expect(Math.min(...widths(layout.root))).toBeGreaterThanOrEqual(0)
     })
 
     it('falls to the automatic lines when no arrangement fits', () => {
@@ -942,36 +963,48 @@ describe('figure-only rows in a wrapped layout', () => {
         isToggle: false,
         isOpen: false,
     })
-    const gap = { block: { kind: 'gap', lines: 1 } as const, tracks: 1 }
 
-    it('draws an opening row as its label line, then its figures line', () => {
-        expect(shapeOf(rowLayout(item('opening', { balance: 1200 }), layout, 'customer'))).toEqual({
-            kind: 'blocks',
+    it('lets the label take the empty tracks of its line', () => {
+        const cells = { amount: 900, cost: 300, balance: null }
+        const row = rowLayout(item('subtotal', cells), layout, 'customer', 999)
+        if (row.kind !== 'blocks' || row.root.kind !== 'stack') throw new Error('expected lines')
+        // Line 1 is the label alone, across the row; the blank balance keeps its track.
+        expect(row.root.parts[0]).toEqual(label)
+        expect(shapeOf({ ...row, root: row.root.parts[1] as Block })).toMatchObject({
             root: {
-                kind: 'stack',
-                parts: [label, { kind: 'side', of: 3, parts: [gap, gap, money('balance')] }],
+                kind: 'side',
+                of: 3,
+                parts: [{ tracks: 1 }, { tracks: 1 }, { block: { kind: 'gap' } }],
             },
         })
     })
 
-    it('draws a subtotal without its blank text lines, and keeps a blank figure’s track', () => {
-        const cells = { amount: 900, cost: 300, balance: null }
-        expect(shapeOf(rowLayout(item('subtotal', cells), layout, 'customer'))).toEqual({
-            kind: 'blocks',
-            root: {
-                kind: 'stack',
-                parts: [
-                    label,
-                    { kind: 'side', of: 3, parts: [money('amount'), money('cost'), gap] },
-                ],
-            },
-        })
+    it('puts an opening row’s label beside its figure when the empty tracks hold it (H7)', () => {
+        const row = rowLayout(item('opening', { balance: 1200 }), layout, 'customer', 150)
+        if (row.kind !== 'blocks' || row.root.kind !== 'side') throw new Error('expected one line')
+        const [labelPart, figure] = row.root.parts
+        expect(labelPart?.block).toEqual(label)
+        expect(labelPart?.tracks).toBe(2)
+        expect(figure?.block).toEqual(money('balance').block)
+        // The two empty tracks and the indent: the line keeps the row's width.
+        if (layout.kind !== 'blocks' || layout.root.kind !== 'stack')
+            throw new Error('expected lines')
+        const line = layout.root.parts.at(-1) as Extract<Block, { kind: 'side' }>
+        expect(labelPart?.width).toBe(
+            (line.parts[0]?.width ?? 0) + (line.parts[1]?.width ?? 0) + layout.indent
+        )
+    })
+
+    it('keeps the label on its own line when the empty tracks are too narrow', () => {
+        const row = rowLayout(item('opening', { balance: 1200 }), layout, 'customer', 10_000)
+        if (row.kind !== 'blocks') throw new Error('expected blocks')
+        expect(row.root.kind).toBe('stack')
     })
 
     it('keeps every line of a detail row, and of any row with a value in every column', () => {
-        expect(rowLayout(item('detail', { balance: 1200 }), layout, 'customer')).toBe(layout)
+        expect(rowLayout(item('detail', { balance: 1200 }), layout, 'customer', 0)).toBe(layout)
         const full = { status: 'open', ref: 'A1', team: 't1', amount: 1, cost: 2, balance: 3 }
-        expect(rowLayout(item('total', full), layout, 'customer')).toBe(layout)
+        expect(rowLayout(item('total', full), layout, 'customer', 0)).toBe(layout)
     })
 })
 
@@ -1048,10 +1081,12 @@ describe('the label span of a one-line row', () => {
         expect(oneLineLabelSpan(item('group', { number: 'A', debit: 12 }), others)).toBe(0)
     })
 
-    it('spans no column of a detail row, or of any other row kind', () => {
+    it('spans every non-detail row up to its first value, and no detail row', () => {
         expect(oneLineLabelSpan(item('detail', {}), others)).toBe(0)
-        expect(oneLineLabelSpan(item('subtotal', { credit: 1 }), others)).toBe(0)
-        expect(oneLineLabelSpan(item('opening', { credit: 1 }), others)).toBe(0)
+        expect(oneLineLabelSpan(item('subtotal', { credit: 1 }), others)).toBe(2)
+        expect(oneLineLabelSpan(item('opening', { credit: 1 }), others)).toBe(2)
+        expect(oneLineLabelSpan(item('total', { debit: 5, credit: 1 }), others)).toBe(1)
+        expect(oneLineLabelSpan(item('computed', {}), others)).toBe(3)
     })
 
     it('widens the label box by the columns it spans, so later cells keep their place', () => {

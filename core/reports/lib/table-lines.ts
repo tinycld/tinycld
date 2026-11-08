@@ -226,7 +226,7 @@ function autoLines(
     for (const column of columns) {
         const min = measureOf(measures, column.id).min
         const line = lines[lines.length - 1]
-        const room = lines.length === 1 ? width : width - indent
+        const room = lines.length === 1 ? width : Math.max(0, width - indent)
         if (line && used + min <= room) {
             line.push(column)
             used += min
@@ -450,7 +450,12 @@ function fitRoot(
     if (root.kind !== 'stack') return fitBlock(root, width, measures, clamp)
     const parts: Block[] = []
     for (const [i, part] of root.parts.entries()) {
-        const fitted = fitBlock(part, i === 0 ? width : width - indent, measures, clamp)
+        const fitted = fitBlock(
+            part,
+            i === 0 ? width : Math.max(0, width - indent),
+            measures,
+            clamp
+        )
         if (!fitted) return null
         parts.push(fitted)
     }
@@ -519,21 +524,71 @@ function blockColumns(block: Block): string[] {
 // The block without the cells `keeps` refuses: in a side block a refused cell
 // leaves a gap, so the others keep their tracks; a stack line, or a side block,
 // left with no cell goes (R14). Null when nothing is left.
-function pruned(block: Block, keeps: (col: string) => boolean): Block | null {
+function pruned(block: Block, keeps: (col: string) => boolean, labelId: string): Block | null {
     if (block.kind === 'gap') return block
     if (block.kind === 'cell') return keeps(block.col) ? block : null
     if (block.kind === 'stack') {
         const parts = block.parts.flatMap(part => {
-            const kept = pruned(part, keeps)
+            const kept = pruned(part, keeps, labelId)
             return kept && hasCell(kept) ? [kept] : []
         })
         return parts.length > 0 ? stackOf(parts) : null
     }
     const parts = block.parts.map(part => ({
         ...part,
-        block: pruned(part.block, keeps) ?? LINE_GAP,
+        block: pruned(part.block, keeps, labelId) ?? LINE_GAP,
     }))
-    return parts.some(part => hasCell(part.block)) ? { ...block, parts } : null
+    return parts.some(part => hasCell(part.block)) ? labelSpans({ ...block, parts }, labelId) : null
+}
+
+const isLabelCell = (block: Block, labelId: string) =>
+    block.kind === 'cell' && block.col === labelId
+
+// The label takes the empty parts right of it on its line: their tracks and widths
+// become its own (review §7.1-2). A side block left with one part is that block.
+function labelSpans(block: Extract<Block, { kind: 'side' }>, labelId: string): Block {
+    const parts: SidePart[] = []
+    for (const part of block.parts) {
+        const last = parts[parts.length - 1]
+        if (last && isLabelCell(last.block, labelId) && part.block.kind === 'gap') {
+            parts[parts.length - 1] = {
+                ...last,
+                tracks: last.tracks + part.tracks,
+                width:
+                    last.width === undefined || part.width === undefined
+                        ? undefined
+                        : last.width + part.width,
+            }
+            continue
+        }
+        parts.push(part)
+    }
+    const [only] = parts
+    return parts.length === 1 && only ? only.block : { ...block, parts }
+}
+
+// H7: a row whose first line is its label alone moves the label into the empty
+// parts that start its next line, when they hold the whole label. That line becomes
+// the row's first, drawn without the indent, so the label part also takes the indent.
+function labelOntoFigures(root: Block, labelId: string, need: number, indent: number): Block {
+    if (root.kind !== 'stack') return root
+    const [first, next, ...rest] = root.parts
+    if (!first || !isLabelCell(first, labelId) || next?.kind !== 'side') return root
+    let room = indent
+    let tracks = 0
+    let count = 0
+    for (const part of next.parts) {
+        if (part.block.kind !== 'gap' || part.width === undefined) break
+        room += part.width
+        tracks += part.tracks
+        count++
+    }
+    if (count === 0 || room < need) return root
+    const line: Block = {
+        ...next,
+        parts: [{ block: first, tracks, width: room }, ...next.parts.slice(count)],
+    }
+    return rest.length === 0 ? line : stackOf([line, ...rest])
 }
 
 /**
@@ -543,7 +598,12 @@ function pruned(block: Block, keeps: (col: string) => boolean): Block | null {
  * opening row is its label line, then its figures line (R14); a detail row keeps
  * every line, so a field sits at the same place in each row.
  */
-export function rowLayout(item: VisibleRow, layout: LineLayout, labelId: string): LineLayout {
+export function rowLayout(
+    item: VisibleRow,
+    layout: LineLayout,
+    labelId: string,
+    need: number
+): LineLayout {
     if (layout.kind === 'one-line') return layout
     const labelOnly: Block = { kind: 'cell', col: labelId, justify: 'start' }
     if (Object.keys(item.cells).length === 0)
@@ -551,17 +611,18 @@ export function rowLayout(item: VisibleRow, layout: LineLayout, labelId: string)
     if (item.row.kind === 'detail') return layout
     const keeps = (col: string) => col === labelId || hasValue(item.cells[col])
     if (blockColumns(layout.root).every(keeps)) return layout
-    return { ...layout, root: pruned(layout.root, keeps) ?? labelOnly }
+    const root = pruned(layout.root, keeps, labelId) ?? labelOnly
+    return { ...layout, root: labelOntoFigures(root, labelId, need, layout.indent) }
 }
 
 /**
- * How many columns after the label a row's label spans on one line (F10): a group
- * row spans its empty cells up to its first value (every column when it has none),
- * as its blocks lines draw only its label; any other row spans none, so a detail
- * label ends in "…" at the label column's width and every cell keeps its column.
+ * How many columns after the label a row's label spans on one line: a non-detail
+ * row (group, opening, subtotal, computed, total) spans its empty cells up to its
+ * first value, every column when it has none; a detail row spans none, so its label
+ * ends in "…" at the label column's width and every cell keeps its column.
  */
 export function oneLineLabelSpan(item: VisibleRow, columnIds: readonly string[]): number {
-    if (item.row.kind !== 'group') return 0
+    if (item.row.kind === 'detail') return 0
     const first = columnIds.findIndex(id => hasValue(item.cells[id]))
     return first === -1 ? columnIds.length : first
 }
