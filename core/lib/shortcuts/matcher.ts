@@ -76,16 +76,31 @@ function matches(shortcut: Shortcut, ctx: MatcherContext): boolean {
 }
 
 /**
- * Find a registered shortcut that exactly matches the given keys string.
- * Returns the first match in iteration order.
+ * Of shortcuts with the same keys that can all fire, the one that does. A
+ * shortcut of the active scope wins over a `global` one: core registers its
+ * globals (`/` search) at app start, before any screen mounts, so registry
+ * order alone would let them shadow a screen's own key. Only the top scope
+ * entry is active (`isScopeActive`), so at most one scope's shortcuts are
+ * candidates; among those, and among globals, the first in order wins.
+ * Exported so the help overlay lists the same winner the matcher fires.
  */
-function findExactMatch(keys: string, ctx: MatcherContext): Shortcut | null {
-    for (const shortcut of getShortcuts().values()) {
-        if (shortcut.keys !== keys) continue
-        if (!matches(shortcut, ctx)) continue
-        return shortcut
+export function pickFiring(candidates: Iterable<Shortcut>): Shortcut | null {
+    let globalMatch: Shortcut | null = null
+    for (const shortcut of candidates) {
+        if (shortcut.scope !== 'global') return shortcut
+        globalMatch ??= shortcut
     }
-    return null
+    return globalMatch
+}
+
+function* exactCandidates(keys: string, ctx: MatcherContext): Generator<Shortcut> {
+    for (const shortcut of getShortcuts().values()) {
+        if (shortcut.keys === keys && matches(shortcut, ctx)) yield shortcut
+    }
+}
+
+function findExactMatch(keys: string, ctx: MatcherContext): Shortcut | null {
+    return pickFiring(exactCandidates(keys, ctx))
 }
 
 /**

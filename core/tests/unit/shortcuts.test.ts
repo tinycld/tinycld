@@ -246,6 +246,40 @@ describe('matcher', () => {
 
         expect(m.feedAtom('a', { inInput: false })).toBe(false)
     })
+
+    // Core's global `/` (search) is registered at app start, before any package
+    // screen mounts, so it is first in the registry. A package's scoped `/`
+    // must still win while its scope holds the keyboard.
+    it('a scoped shortcut beats a global one with the same keys while its scope is active', () => {
+        const runGlobal = vi.fn()
+        const runScoped = vi.fn()
+        register({
+            id: 't.search',
+            keys: '/',
+            scope: 'global',
+            description: 'search',
+            run: runGlobal,
+        })
+        const listId = pushScope('list')
+        register({
+            id: 't.filter',
+            keys: '/',
+            scope: 'list',
+            scopeId: listId,
+            description: 'filter',
+            run: runScoped,
+        })
+        const m = createMatcher()
+
+        expect(m.feedAtom('/', { inInput: false })).toBe(true)
+        expect(runScoped).toHaveBeenCalledTimes(1)
+        expect(runGlobal).not.toHaveBeenCalled()
+
+        popScope(listId)
+        expect(m.feedAtom('/', { inInput: false })).toBe(true)
+        expect(runGlobal).toHaveBeenCalledTimes(1)
+        expect(runScoped).toHaveBeenCalledTimes(1)
+    })
 })
 
 // Regression: a blurred-but-mounted screen must keep stamping its OWN scope id.
@@ -1011,6 +1045,37 @@ describe('help list', () => {
         expect(isScopeActive(post, topScopeEntry(floor))).toBe(true)
         expect(isScopeActive(close)).toBe(true)
         expect(isScopeActive(close, topScopeEntry(floor))).toBe(false)
+    })
+
+    it('leaves out a global shortcut that an active scoped one with the same keys shadows', () => {
+        register({
+            id: 't.search',
+            keys: '/',
+            scope: 'global',
+            description: 'Search',
+            group: 'Navigation',
+            run: () => {},
+        })
+        const listId = pushScope('list')
+        register({
+            id: 't.find',
+            keys: '/',
+            scope: 'list',
+            scopeId: listId,
+            description: 'Find in list',
+            group: 'List',
+            run: () => {},
+        })
+        const shortcuts = useShortcutRegistry.getState().shortcuts
+
+        const shadowed = helpGroups(shortcuts, null)
+        expect(Object.keys(shadowed)).toEqual(['List'])
+        expect(shadowed.List.map(s => s.id)).toEqual(['t.find'])
+
+        popScope(listId)
+        const unshadowed = helpGroups(shortcuts, null)
+        expect(Object.keys(unshadowed)).toEqual(['Navigation'])
+        expect(unshadowed.Navigation.map(s => s.id)).toEqual(['t.search'])
     })
 
     it('lists the shortcuts of the screen under the ⇧? overlay', () => {

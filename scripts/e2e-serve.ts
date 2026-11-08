@@ -42,6 +42,7 @@ import { type ChildProcess, type StdioOptions, spawn, spawnSync } from 'node:chi
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
+import { stopChildOnFailure } from './e2e-child'
 import { openE2eOutput, printLogTail } from './e2e-output'
 import { exportWeb } from './export-web'
 import { promoteRelease } from './promote-release'
@@ -328,7 +329,18 @@ async function main() {
     })
 
     // Readiness log (Playwright's own /api/health gate is the real signal).
-    await waitForUpstream(port, 'pb', 60_000)
+    // A failed gate stops PB, which would otherwise hold the port for the next
+    // run; `shuttingDown` is set before that stop so the exit handler above
+    // does not exit with PB's code before the error reaches the catch below.
+    const waitForPb = async () => {
+        try {
+            await waitForUpstream(port, 'pb', 60_000)
+        } catch (err) {
+            shuttingDown = true
+            throw err
+        }
+    }
+    await stopChildOnFailure(pb, waitForPb)
     say(`ready on http://localhost:${port}`)
 }
 
