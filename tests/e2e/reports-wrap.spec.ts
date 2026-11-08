@@ -390,7 +390,7 @@ test.describe('report rows per width', () => {
         }
     })
 
-    test('on a desktop a table wider than its view narrows its text columns and never scrolls sideways', async ({
+    test('on a desktop a wide table fits its columns to their content and never scrolls sideways', async ({
         page,
     }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptside')
@@ -478,25 +478,27 @@ test.describe('report rows per width', () => {
                     headingMoved: Math.abs((await x('report-heading-amount')) - before) > 1,
                 }))
                 .toEqual({ scrolledSideways: false, headingMoved: false })
-            // The label is cut short with "…"; the amount keeps its width.
+            // Every figure keeps its whole value and heading (R12); the short label is whole.
+            const isCut = (testId: string) =>
+                p.getByTestId(testId).evaluate(el => {
+                    const text = el.querySelector('div[dir="auto"]') ?? el
+                    return text.scrollWidth > text.clientWidth
+                })
+            const id = (await label.getAttribute('data-testid'))?.replace('report-row-', '') ?? ''
+            for (const col of ['amount', 'cost', 'quantity', 'day', 'booked']) {
+                await expect.poll(() => isCut(`report-cell-${col}-${id}`)).toBe(false)
+                await expect.poll(() => isCut(`report-heading-${col}`)).toBe(false)
+            }
             const text = label.getByText('Wrapco 00', { exact: true })
-            expect(await text.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
-            await expect
-                .poll(async () =>
-                    Math.round(
-                        (await p.getByTestId('report-heading-amount').boundingBox())?.width ?? 0
-                    )
-                )
-                .toBe(128)
+            expect(await text.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(false)
         } finally {
             await close()
         }
     })
 
-    // F10: on one narrowed line the label column is at its floor, but an open group
-    // row has no other cell on its line, so its label spans the row, as it does in
-    // the phone's blocks; a detail label is still cut short with "…".
-    test('on a narrowed desktop line an open group row shows its whole label while detail labels end in "…"', async ({
+    // F10: an open group row has no other cell on its line, so its label spans the
+    // row, as it does in the phone's blocks; a detail label gets its text's width.
+    test('on a desktop line an open group row shows its whole label across the row', async ({
         page,
     }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptspan')
@@ -532,10 +534,10 @@ test.describe('report rows per width', () => {
             const detail = rowOf(p, 'Wrapco Longname 00')
             await expect(detail).toBeVisible()
             const isCut = (text: Locator) => text.evaluate(el => el.scrollWidth > el.clientWidth)
-            // The detail label is held to the narrowed label column.
+            // The detail label gets the room its text needs.
             await expect
                 .poll(() => isCut(detail.getByText('Wrapco Longname 00', { exact: true })))
-                .toBe(true)
+                .toBe(false)
             const detailWidth = (await detail.boundingBox())?.width ?? 0
             // The group label is whole, in a box wider than the label column.
             await expect.poll(() => isCut(groupRow.getByText(team, { exact: true }))).toBe(false)
@@ -675,10 +677,10 @@ test.describe('report rows per width', () => {
             await openReportsHub(p)
             await startTeamSales(p)
             await groupWithTeamRegion(p)
-            // A fifth column: with four, R21 fits the row on one narrowed line at 390
-            // (98 + 108 + 2 × 84 = 374; the label's floor is 80 plus its group row's
-            // caret, 18), and this test is about the wrapped rows.
+            // Two more columns: the row must not fit one line at 390, and this test is
+            // about the wrapped rows.
             await addColumn(p, ['cost'])
+            await addColumn(p, ['quantity'])
             await expect(p.getByTestId('report-builder-column-3-detail')).toBeVisible()
             await chooseOption(p, 'report-builder-column-3-detail', 'blank')
             await saveNewReport(p, uniqueName('Blank phone'))

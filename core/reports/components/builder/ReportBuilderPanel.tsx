@@ -20,6 +20,7 @@ import { type ReactNode, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { copyTitle, type ReportBuilder } from '../../hooks/useReportBuilder'
 import type { ReportViewModel } from '../../hooks/useReportView'
+import { useTableLayout } from '../../hooks/useTableLayout'
 import type { Problem } from '../../lib/types'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
 import { ReportNotices } from '../ReportNotices'
@@ -235,6 +236,7 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
     const [mode, setMode] = useState<Mode>('design')
     const insets = useDeviceInsets()
     const height = useWindowHeight() - insets.top
+    const table = useTableLayout(preview)
     return (
         <Sheet
             isOpen
@@ -259,7 +261,7 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
                 </ModeBody>
                 <ModeBody isVisible={mode === 'preview'}>
                     <ReportNotices notices={preview.notices} />
-                    <ReportBody model={preview} />
+                    <ReportBody model={preview} table={table} />
                 </ModeBody>
                 <Footer builder={builder} onSaveAs={onSaveAs} />
             </View>

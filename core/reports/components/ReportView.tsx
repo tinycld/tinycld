@@ -3,6 +3,7 @@ import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
 import type { ReportViewModel } from '../hooks/useReportView'
+import { shownRunKey, type TableLayout, useTableLayout } from '../hooks/useTableLayout'
 import { ReportControls } from './ReportControls'
 import { ReportCustomizePanel } from './ReportCustomizePanel'
 import { ReportDocumentHeader } from './ReportDocumentHeader'
@@ -74,7 +75,7 @@ function refusalAction(model: ReportViewModel) {
     return { label: 'Clear sort', testID: 'report-clear-sort', onPress: model.onClearSort }
 }
 
-export function ReportBody({ model }: { model: ReportViewModel }) {
+export function ReportBody({ model, table }: { model: ReportViewModel; table: TableLayout }) {
     const { state } = model
     const retry = { label: 'Retry', testID: 'report-retry', onPress: model.run.retry }
     const fix = refusalAction(model)
@@ -125,20 +126,12 @@ export function ReportBody({ model }: { model: ReportViewModel }) {
                 action={model.emptyAction}
                 onAction={model.onEmptyAction}
             />
-            <TableBody model={model} />
+            <TableBody model={model} table={table} />
         </>
     )
 }
 
-// Which run's rows are shown: its design and its resolved params. It changes when
-// a run of a new design or new params lands; not while that run loads behind the
-// earlier rows, not when a live re-run of the same design and params answers, and
-// not on a group fold, a page load or a display-only change.
-function shownRunKey(model: ReportViewModel): string {
-    return JSON.stringify([model.run.shownRowsKey ?? '', model.run.result?.params ?? []])
-}
-
-function TableBody({ model }: { model: ReportViewModel }) {
+function TableBody({ model, table }: { model: ReportViewModel; table: TableLayout }) {
     if (model.state !== 'ready') return null
     const runKey = shownRunKey(model)
     return (
@@ -147,9 +140,9 @@ function TableBody({ model }: { model: ReportViewModel }) {
             rows={model.rows}
             runKey={runKey}
             format={model.display}
-            breakpoint={model.breakpoint}
-            layouts={model.layouts}
-            rowLevels={model.rowLevels}
+            layout={table.layout}
+            isMeasured={table.isMeasured}
+            onRowWidth={table.onRowWidth}
             onToggleGroup={model.onToggleGroup}
             onNearEnd={model.run.loadMore}
             isLoadingMore={model.run.isLoadingMore}
@@ -160,12 +153,13 @@ function TableBody({ model }: { model: ReportViewModel }) {
     )
 }
 
-function ViewBody({ model }: { model: ReportViewModel }) {
+function ViewBody({ model, table }: { model: ReportViewModel; table: TableLayout }) {
     if (!model.isBodyShown) return null
-    return <ReportBody model={model} />
+    return <ReportBody model={model} table={table} />
 }
 
 export function ReportView({ model, side }: { model: ReportViewModel; side?: ReactNode }) {
+    const table = useTableLayout(model)
     return (
         <View testID="report-screen" className="flex-1 flex-row bg-background">
             <View className="min-w-0 flex-1">
@@ -184,7 +178,7 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
                     periodWords={model.periodWords}
                     isThousands={model.display.divideBy1000}
                 />
-                <ViewBody model={model} />
+                <ViewBody model={model} table={table} />
             </View>
             <ReportCustomizePanel model={model} />
             {side}

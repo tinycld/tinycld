@@ -39,11 +39,6 @@ const TEAM_BALANCE_TITLE = 'Stub team balance'
 const YEAR = new Date().getFullYear()
 const PHONE = { width: 390, height: 844 }
 const OPENING = 'Before the period'
-// Q2: a line at a 1024 window is 944 wide. The narrowed line that Q2 asks about
-// (a one-level grouped label floor of 98, + 5 × 80 + 3 × 128) fits in it; this
-// report's does not (98 + 2 × 80 + 6 × 128).
-const Q2_NARROWED_LINE = 882
-const TEAM_BALANCE_NARROWED_LINE = 1026
 
 async function openTeamBalance(page: Page) {
     await openReportsHub(page)
@@ -444,46 +439,36 @@ test.describe('general-ledger: report engine v3', () => {
         await expect(await cellOf(page, 'balance', 'Dee')).toHaveText('20.00')
     })
 
-    // Q2, recommended answer (narrow first, then wrap): at a 1024 window the line is
-    // 944 wide, so Q2's narrowed line (882) fits and this report's does
-    // not. This report wraps to its tablet arrangement: eight headings (Team is left
-    // out) on two lines, all inside the table, and nothing scrolls sideways.
-    test('on a desktop too narrow for its narrowed line a report wraps to its tablet arrangement inside the table', async ({
+    // A report too wide for one line at 820 wraps (by an arrangement or by itself);
+    // every heading stays inside the table and nothing scrolls sideways.
+    test('on a view too narrow for one line a report wraps inside the table and never scrolls sideways', async ({
         page,
     }) => {
         await balanceOfOneTeam(page, 'BalFit')
-        await page.setViewportSize({ width: 1024, height: 720 })
+        await page.setViewportSize({ width: 820, height: 720 })
         const measure = () =>
             page.getByTestId('report-table').evaluate(table => {
                 const right = table.getBoundingClientRect().right
-                const heading = table.querySelector('[data-testid="report-heading-row"]')
                 const cells = [
                     ...table.querySelectorAll('[data-testid^="report-heading-"]'),
                 ].filter(el => el.getAttribute('data-testid') !== 'report-heading-row')
                 const tops = new Set(cells.map(el => Math.round(el.getBoundingClientRect().top)))
                 return {
-                    // The heading row keeps the list's scroll bar gutter, so its client
-                    // width is the width a line's tracks get.
-                    line: heading?.clientWidth ?? 0,
-                    headings: cells.length,
                     lines: tops.size,
                     outside: cells.filter(el => el.getBoundingClientRect().right > right + 1)
                         .length,
                 }
             })
-        // At the first window (1280) the line is 1200; wait for the 1024 one.
-        await expect
-            .poll(async () => (await measure()).line)
-            .toBeLessThan(TEAM_BALANCE_NARROWED_LINE)
-        await expect.poll(async () => (await measure()).headings).toBe(8)
+        await expect(page.getByTestId('report-table')).toHaveCSS('opacity', '1')
+        // Polled: the lines are read once the 820 window's re-layout has landed.
+        await expect.poll(async () => (await measure()).lines).toBeGreaterThanOrEqual(2)
         const fit = await measure()
-        expect(fit.line).toBeGreaterThanOrEqual(Q2_NARROWED_LINE)
-        expect(fit).toMatchObject({ lines: 2, outside: 0 })
-        await expect(page.getByTestId('report-heading-team')).toHaveCount(0)
+        expect(fit.lines).toBeGreaterThanOrEqual(2)
+        expect(fit.outside).toBe(0)
         const scroller = await listScroller(rowOf(page, 'Dee'))
         expect(await scroller.evaluate(el => el.scrollWidth === el.clientWidth)).toBe(true)
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
-            1024
+            820
         )
     })
 

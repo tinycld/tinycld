@@ -1,15 +1,14 @@
 import { FlashList, type ListRenderItemInfo, type ViewToken } from '@shopify/flash-list'
-import { type Breakpoint, useWindowWidth } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react-native'
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native'
+import { useStable } from '../hooks/useStable'
 import { headingText, type NumberFormat } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import type { ViewSort } from '../lib/run-client'
-import type { DisplayLayout } from '../lib/spec'
 import { stickyIndices } from '../lib/sticky'
-import { type Justify, type LineLayout, type RowLevels, tableLines } from '../lib/table-lines'
+import type { Justify, LineLayout } from '../lib/table-lines'
 import type { ResultColumn, ResultRow } from '../lib/types'
 import {
     amountJustify,
@@ -27,15 +26,6 @@ const TEXT_ALIGN: Record<Justify, string> = {
     start: 'text-left',
     center: 'text-center',
     end: 'text-right',
-}
-
-// The value kept from an earlier render while it is equal in content, so a new
-// array or object with the same content does not redraw every row.
-function useStable<T>(value: T): T {
-    const [kept, setKept] = useState(value)
-    if (kept === value || JSON.stringify(kept) === JSON.stringify(value)) return kept
-    setKept(value)
-    return value
 }
 
 /** The reader's sort the heading shows, and the press that changes it. */
@@ -355,10 +345,12 @@ export interface ReportTableProps {
     /** The design and params of the run whose rows are shown; a new value starts the list at the top. */
     runKey: string
     format: NumberFormat
-    breakpoint: Breakpoint
-    layouts: readonly DisplayLayout[]
-    /** How deep the report's rows go (rowLevelsOf): the label's floor on a narrowed line. */
-    rowLevels: RowLevels
+    /** The lines of every row and the heading (useTableLayout). */
+    layout: LineLayout
+    /** False until the rows' width is measured: the table is drawn hidden until then. */
+    isMeasured: boolean
+    /** Told the width the rows really get (the list's content width). */
+    onRowWidth(width: number): void
     onToggleGroup(row: ResultRow): void
     onNearEnd(): void
     isLoadingMore: boolean
@@ -376,32 +368,13 @@ export interface ReportTableProps {
 // asks for the next one too. The table never scrolls sideways (F10): its line is
 // fitted to its width, narrowed, or wrapped (tableLines).
 export function ReportTable(props: ReportTableProps) {
-    const { rows, runKey, breakpoint, layouts, onToggleGroup, onNearEnd, isLoadingMore } = props
+    const { rows, runKey, layout, onToggleGroup, onNearEnd, isLoadingMore } = props
     const columns = useStable(props.columns)
     const format = useStable(props.format)
     const sorting = useHeadingSort(props.sort, props.onSortColumn)
-    const windowWidth = useWindowWidth()
-    // The width the rows really get (a builder drawer narrows it), measured: local
-    // layout state from onLayout. It is kept here, not in the list, so a new run's
-    // list starts at the known width. Until the first measure the table is drawn
-    // hidden at the window's width, so a wrong first width is never seen.
-    const [rowWidth, setRowWidth] = useState<number>()
-    const lineWidth = rowWidth ?? windowWidth
-    const { groups, nests } = props.rowLevels
-    const layout = useMemo(
-        () =>
-            tableLines({
-                columns,
-                width: lineWidth,
-                breakpoint,
-                layouts,
-                levels: { groups, nests },
-            }),
-        [columns, lineWidth, breakpoint, layouts, groups, nests]
-    )
     if (columns.length === 0) return null
     const notice = layout.kind === 'blocks' ? layout.notice : undefined
-    const visibility = rowWidth === undefined ? 'opacity-0' : ''
+    const visibility = props.isMeasured ? '' : 'opacity-0'
     // FlashList keeps the row in view anchored when the rows change, which a live
     // re-run of the same design and params needs; a run with a new design, new
     // params or a new sort is another list, so it starts at the top.
@@ -417,7 +390,7 @@ export function ReportTable(props: ReportTableProps) {
                 onToggleGroup={onToggleGroup}
                 onNearEnd={onNearEnd}
                 isLoadingMore={isLoadingMore}
-                onRowWidth={setRowWidth}
+                onRowWidth={props.onRowWidth}
                 sorting={sorting}
                 onTopRowIndex={props.onTopRowIndex}
             />

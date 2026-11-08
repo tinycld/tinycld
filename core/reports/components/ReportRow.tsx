@@ -269,15 +269,15 @@ export function RowCell({
 }
 
 /**
- * The label column's box on one line (F10): it takes the width the other columns
- * leave, and never less than the width the line gave it and the columns it spans.
+ * The label column's box on one line: the width the line gave it and the widths of
+ * the columns it spans.
  */
 export function oneLineLabelStyle(
     layout: LineLayout,
     labelId: string | undefined,
     spanned: readonly string[] = []
 ) {
-    return { flex: 1, minWidth: oneLineLabelWidth(layout, labelId, spanned) }
+    return { width: oneLineLabelWidth(layout, labelId, spanned) }
 }
 
 export interface TableRowProps {
@@ -383,6 +383,9 @@ function OwnRow({ item, ...props }: Omit<TableRowProps, 'item'> & { item: Visibl
     return <TableRow {...props} item={item} />
 }
 
+// A stuck label line runs across the row.
+const STICKY_LABEL_BOX = { flex: 1 } as const
+
 // The stuck copy of a section boundary (FlashList's StickyHeader target): the
 // open groups the rows below it are inside, outermost first, as label lines; an
 // open group's own row is drawn whole, figures included, as the list draws it.
@@ -397,10 +400,9 @@ export function StickyGroup({ rows, index, ...props }: StickyGroupProps) {
     if (chain.length === 0) return null
     const stuck = rows[index]
     const own = chain[chain.length - 1] === stuck ? (stuck ?? null) : null
-    const labelBox = oneLineLabelStyle(props.layout, props.columns[0]?.id)
     const labels = (own ? chain.slice(0, -1) : chain).map(item => (
         <View key={item.row.id} className="flex-row bg-background">
-            <View style={labelBox}>
+            <View style={STICKY_LABEL_BOX}>
                 <RowLabel
                     item={item}
                     format={props.format}
