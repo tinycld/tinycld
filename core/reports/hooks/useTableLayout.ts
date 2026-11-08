@@ -7,7 +7,7 @@ import { useStable } from './useStable'
 
 export type TableLayoutModel = Pick<
     ReportViewModel,
-    'columns' | 'rows' | 'display' | 'breakpoint' | 'layouts' | 'rowLevels' | 'run'
+    'columns' | 'rows' | 'display' | 'layouts' | 'rowLevels' | 'run'
 >
 
 export interface TableLayout {
@@ -67,11 +67,11 @@ export function useTableLayout(model: TableLayoutModel): TableLayout {
     const measures = useRunMeasures(model)
     const columns = useStable(model.columns)
     const levels = useStable(model.rowLevels)
-    const { breakpoint, layouts } = model
+    const { layouts } = model
     const width = rowWidth ?? windowWidth
     const layout = useMemo(
-        () => tableLines({ columns, width, breakpoint, layouts, levels, measures }),
-        [columns, width, breakpoint, layouts, levels, measures]
+        () => tableLines({ columns, width, layouts, levels, measures }),
+        [columns, width, layouts, levels, measures]
     )
     return { layout, isMeasured: rowWidth !== undefined, onRowWidth: setRowWidth }
 }

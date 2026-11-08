@@ -1,4 +1,3 @@
-import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { useWatch } from '@tinycld/core/ui/form'
 import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
@@ -30,11 +29,6 @@ const WIDTHS: { value: DisplayWidth; label: string }[] = [
     { value: 'tablet', label: 'Tablet' },
     { value: 'desktop', label: 'Desktop' },
 ]
-const WIDTH_NAMES: Record<DisplayWidth, string> = {
-    mobile: 'Phone',
-    tablet: 'Tablet',
-    desktop: 'Desktop',
-}
 const JUSTIFY_NAMES = { start: 'Start', center: 'Center', end: 'End' } as const
 
 const counting = (from: number, to: number) =>
@@ -66,7 +60,6 @@ function useArrange(builder: ReportBuilder, resultColumns: readonly ResultColumn
     const columns = useWatch({ control, name: 'columns' })
     const width = useReportUIStore(s => s.arrangeWidth)
     const setWidth = useReportUIStore(s => s.setArrangeWidth)
-    const breakpoint = useBreakpoint()
     const index = display.layouts.findIndex(l => l.width === width)
     const layout = display.layouts[index]
     const issues = displayIssues(
@@ -90,11 +83,8 @@ function useArrange(builder: ReportBuilder, resultColumns: readonly ResultColumn
         columns,
         issues,
         defaultJustify: (col: string) => defaultJustify(resultColumns, col),
-        // The preview draws the arrangement of the width it is drawn at.
-        hint:
-            width === breakpoint
-                ? null
-                : `The preview is drawn at ${WIDTH_NAMES[breakpoint]} width; this arrangement shows at ${WIDTH_NAMES[width]} width.`,
+        // The preview uses an arrangement only where one line does not fit its width.
+        hint: 'Used when the columns do not fit on one line and this arrangement fits the screen. Each line gives its columns the room their content needs.',
         onSwitch: (isOn: boolean) => {
             if (isOn) {
                 setLayout(startingLayout(width, columns))
@@ -137,8 +127,7 @@ function WidthTab({ item, arrange }: { item: (typeof WIDTHS)[number]; arrange: A
     )
 }
 
-function Hint({ text }: { text: string | null }) {
-    if (!text) return null
+function Hint({ text }: { text: string }) {
     return (
         <Text testID="report-builder-arrange-hint" className="text-xs text-muted-foreground">
             {text}
@@ -352,15 +341,14 @@ function ArrangeFields({ arrange }: { arrange: Arrange }) {
     )
 }
 
-// F10: with no arrangement, a width fits its columns on one line, cutting long
-// text short; when they still do not fit, a narrower width's arrangement takes
-// over (tableLines NARROWER), and only without one do the rows wrap by themselves.
+// With no arrangement that fits, the rows wrap by themselves: as many columns as
+// fit on each line.
 function AutoCaption({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
     return (
         <Text testID="report-builder-arrange-auto" className="text-xs text-muted-foreground">
-            Off: the columns fit on one line, with long text cut short. When they do not fit, the
-            next narrower width's arrangement is used, or the rows wrap if there is none.
+            Off: the columns fit on one line when they can. When they do not, the rows wrap by
+            themselves, or use an arrangement of another width that fits.
         </Text>
     )
 }

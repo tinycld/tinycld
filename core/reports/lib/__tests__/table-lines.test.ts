@@ -14,7 +14,11 @@ import { DEFAULT_DISPLAY } from '../format'
 import type { VisibleRow } from '../rows'
 import { type DisplayCell, type DisplayLayout, displayCellSchema } from '../spec'
 import {
+    type Block,
+    continuationIndent,
     fitOneLine,
+    isFigureColumn,
+    type LineLayout,
     measureOf,
     oneLineLabelSpan,
     oneLineLabelWidth,
@@ -37,6 +41,24 @@ const COLS: ResultColumn[] = [
 ]
 
 const m = (min: number, natural: number, grow: number) => ({ min, natural, grow })
+
+// The tree of a layout without its px widths and indent.
+function shapeOf(layout: LineLayout): unknown {
+    const strip = (block: Block): Block => {
+        if (block.kind === 'stack') return { ...block, parts: block.parts.map(strip) }
+        if (block.kind !== 'side') return block
+        return {
+            ...block,
+            parts: block.parts.map(({ block: b, tracks }) => ({ block: strip(b), tracks })),
+        }
+    }
+    if (layout.kind === 'one-line') return layout
+    const { indent: _indent, ...rest } = layout
+    return { ...rest, root: strip(layout.root) }
+}
+
+const uniform = (columns: readonly ResultColumn[], min: number): ColumnMeasures =>
+    Object.fromEntries(columns.map(c => [c.id, m(min, min, isFigureColumn(c) ? 0 : 1)]))
 
 describe('shareWidth', () => {
     const parts = [m(100, 200, 1), m(50, 50, 0), m(80, 120, 1)]
@@ -204,28 +226,41 @@ const WIDE_LABEL_MEASURES: ColumnMeasures = {
 describe('the table layout per width', () => {
     it('draws one line with its natural widths wherever the columns fit', () => {
         const measures = COLS_MEASURES
-        expect(
-            tableLines({ columns: COLS, width: 1280, breakpoint: 'desktop', layouts: [], measures })
-        ).toEqual({ kind: 'one-line', widths: fitOneLine(COLS, 1280, measures) })
-        expect(
-            tableLines({ columns: COLS, width: 900, breakpoint: 'tablet', layouts: [], measures })
-        ).toEqual({ kind: 'one-line', widths: fitOneLine(COLS, 900, measures) })
+        expect(tableLines({ columns: COLS, width: 1280, layouts: [], measures })).toEqual({
+            kind: 'one-line',
+            widths: fitOneLine(COLS, 1280, measures),
+        })
+        expect(tableLines({ columns: COLS, width: 900, layouts: [], measures })).toEqual({
+            kind: 'one-line',
+            widths: fitOneLine(COLS, 900, measures),
+        })
     })
-    it('wraps a phone row: the label across line 1, the amounts in aligned tracks below', () => {
+    it('wraps a phone row: the label on line 1, as many columns as fit on each line below', () => {
+        // The label's min (300) leaves no room beside it; the rest fit 360 − 4.
         expect(
-            tableLines({
-                columns: COLS,
-                width: 360,
-                breakpoint: 'mobile',
-                layouts: [],
-                measures: WIDE_LABEL_MEASURES,
-            })
+            shapeOf(
+                tableLines({
+                    columns: COLS,
+                    width: 360,
+                    layouts: [],
+                    measures: WIDE_LABEL_MEASURES,
+                })
+            )
         ).toEqual({
             kind: 'blocks',
             root: {
                 kind: 'stack',
                 parts: [
-                    { kind: 'cell', col: 'account', justify: 'start' },
+                    {
+                        kind: 'side',
+                        of: 1,
+                        parts: [
+                            {
+                                block: { kind: 'cell', col: 'account', justify: 'start' },
+                                tracks: 1,
+                            },
+                        ],
+                    },
                     {
                         kind: 'side',
                         of: 3,
@@ -239,46 +274,47 @@ describe('the table layout per width', () => {
             },
         })
     })
-    it('wraps the amounts onto more lines when the tracks run out, a short last line keeping its tracks', () => {
+    it('packs the columns onto lines by content, a column that does not fit starting the next line', () => {
+        // 110 each at 300: account and number on line 1 (220), debit and credit below.
         expect(
-            tableLines({
-                columns: COLS,
-                width: 300,
-                breakpoint: 'tablet',
-                layouts: [],
-                measures: WIDE_LABEL_MEASURES,
-            })
+            shapeOf(
+                tableLines({ columns: COLS, width: 300, layouts: [], measures: uniform(COLS, 110) })
+            )
         ).toEqual({
             kind: 'blocks',
             root: {
                 kind: 'stack',
                 parts: [
-                    { kind: 'cell', col: 'account', justify: 'start' },
                     {
                         kind: 'side',
                         of: 2,
                         parts: [
+                            {
+                                block: { kind: 'cell', col: 'account', justify: 'start' },
+                                tracks: 1,
+                            },
                             { block: { kind: 'cell', col: 'number', justify: 'start' }, tracks: 1 },
-                            { block: { kind: 'cell', col: 'debit', justify: 'end' }, tracks: 1 },
                         ],
                     },
                     {
                         kind: 'side',
                         of: 2,
                         parts: [
+                            { block: { kind: 'cell', col: 'debit', justify: 'end' }, tracks: 1 },
                             { block: { kind: 'cell', col: 'credit', justify: 'end' }, tracks: 1 },
-                            { block: { kind: 'gap', lines: 1 }, tracks: 1 },
                         ],
                     },
                 ],
             },
         })
     })
+    // COLS at 110 each: one line needs 440, so an arrangement is tried below that.
+    const COLS_110 = uniform(COLS, 110)
     it('cuts an arrangement with a mid-row cell spanning two lines into side blocks', () => {
         const layout = tableLines({
             columns: COLS,
             width: 400,
-            breakpoint: 'mobile',
+            measures: COLS_110,
             layouts: [
                 {
                     width: 'mobile',
@@ -292,7 +328,7 @@ describe('the table layout per width', () => {
                 },
             ],
         })
-        expect(layout).toEqual({
+        expect(shapeOf(layout)).toEqual({
             kind: 'blocks',
             root: {
                 kind: 'side',
@@ -327,10 +363,10 @@ describe('the table layout per width', () => {
         const layout = tableLines({
             columns: COLS,
             width: 400,
-            breakpoint: 'mobile',
+            measures: COLS_110,
             layouts: [{ width: 'mobile', tracks: 2, cells: [{ col: 'debit', line: 1, span: 2 }] }],
         })
-        expect(layout).toEqual({
+        expect(shapeOf(layout)).toEqual({
             kind: 'blocks',
             root: {
                 kind: 'stack',
@@ -341,37 +377,31 @@ describe('the table layout per width', () => {
             },
         })
     })
-    it('uses the arrangement for its own width only, and lays out a refused one automatically', () => {
+    it('uses the first arrangement that fits, whatever the screen, and skips a refused one', () => {
         const mobile = {
             width: 'mobile' as const,
             tracks: 2,
             cells: [{ col: 'debit', line: 1, span: 2 }],
         }
-        expect(
-            tableLines({
-                columns: COLS,
-                width: 1280,
-                breakpoint: 'desktop',
-                layouts: [mobile],
-            })
-        ).toMatchObject({ kind: 'one-line' })
-        const auto = tableLines({
-            columns: COLS,
-            width: 360,
-            breakpoint: 'mobile',
-            layouts: [],
-            measures: WIDE_LABEL_MEASURES,
+        const lines = (width: number, layouts: DisplayLayout[]) =>
+            tableLines({ columns: COLS, width, layouts, measures: COLS_110 })
+        expect(lines(1280, [mobile])).toMatchObject({ kind: 'one-line' })
+        const refused = { width: 'desktop' as const, tracks: 2, cells: [{ col: 'debit', line: 9 }] }
+        // The refused desktop arrangement falls through to the phone one…
+        expect(shapeOf(lines(360, [refused, mobile]))).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'stack',
+                parts: [
+                    { kind: 'cell', col: 'account', justify: 'start' },
+                    { kind: 'cell', col: 'debit', justify: 'end' },
+                ],
+            },
         })
+        // …and with nothing after it, to the automatic lines.
+        const auto = lines(360, [])
         expect(auto.kind).toBe('blocks')
-        const refused = { ...mobile, cells: [{ col: 'debit', line: 9 }] }
-        expect(
-            tableLines({
-                columns: COLS,
-                width: 360,
-                breakpoint: 'mobile',
-                layouts: [refused],
-            })
-        ).toEqual(auto)
+        expect(lines(360, [refused])).toEqual(auto)
     })
     it('places a pivot cell column as all its pivot columns, one per track from its position', () => {
         const columns: ResultColumn[] = [
@@ -383,7 +413,7 @@ describe('the table layout per width', () => {
         const layout = tableLines({
             columns,
             width: 390,
-            breakpoint: 'mobile',
+            measures: uniform(columns, 110),
             layouts: [
                 {
                     width: 'mobile',
@@ -396,7 +426,7 @@ describe('the table layout per width', () => {
             ],
         })
         const cell = (col: string) => ({ kind: 'cell', col, justify: 'end' })
-        expect(layout).toEqual({
+        expect(shapeOf(layout)).toEqual({
             kind: 'blocks',
             root: {
                 kind: 'stack',
@@ -428,7 +458,7 @@ describe('the table layout per width', () => {
         const layout = tableLines({
             columns: COLS,
             width: 390,
-            breakpoint: 'mobile',
+            measures: COLS_110,
             layouts: [
                 {
                     width: 'mobile',
@@ -440,7 +470,7 @@ describe('the table layout per width', () => {
                 },
             ],
         })
-        expect(layout).toEqual({
+        expect(shapeOf(layout)).toEqual({
             kind: 'blocks',
             root: {
                 kind: 'side',
@@ -463,10 +493,11 @@ describe('the table layout per width', () => {
     })
     it('keeps the place and the lines of a placed column the run does not show', () => {
         const shown = COLS.filter(c => c.id !== 'number')
+        // Three columns at 110 need 330 on one line.
         const layout = tableLines({
             columns: shown,
-            width: 390,
-            breakpoint: 'mobile',
+            width: 300,
+            measures: uniform(shown, 110),
             layouts: [
                 {
                     width: 'mobile',
@@ -480,7 +511,7 @@ describe('the table layout per width', () => {
                 },
             ],
         })
-        expect(layout).toEqual({
+        expect(shapeOf(layout)).toEqual({
             kind: 'blocks',
             root: {
                 kind: 'stack',
@@ -512,29 +543,29 @@ describe('the table layout per width', () => {
             { id: 'number', label: 'No.', type: 'number' },
             { id: 'debit', label: 'Debit', type: 'money', currency: 'USD' },
         ]
+        // One line needs 220, so the two-line arrangement is used at 200.
         const layout = tableLines({
             columns,
-            width: 390,
-            breakpoint: 'mobile',
+            width: 200,
+            measures: uniform(columns, 110),
             layouts: [
                 {
                     width: 'mobile',
-                    tracks: 2,
+                    tracks: 1,
                     cells: [
                         { col: 'number', line: 1 },
-                        { col: 'debit', line: 1 },
+                        { col: 'debit', line: 2 },
                     ],
                 },
             ],
         })
-        expect(layout).toEqual({
+        expect(shapeOf(layout)).toEqual({
             kind: 'blocks',
             root: {
-                kind: 'side',
-                of: 2,
+                kind: 'stack',
                 parts: [
-                    { block: { kind: 'cell', col: 'number', justify: 'start' }, tracks: 1 },
-                    { block: { kind: 'cell', col: 'debit', justify: 'end' }, tracks: 1 },
+                    { kind: 'cell', col: 'number', justify: 'start' },
+                    { kind: 'cell', col: 'debit', justify: 'end' },
                 ],
             },
         })
@@ -546,17 +577,20 @@ describe('the table layout per width', () => {
         { id: 'amount_q2', label: 'Q2', type: 'money', pivot: { cell: 'amount', key: 2 } },
         { id: 'amount_q3', label: 'Q3', type: 'money', pivot: { cell: 'amount', key: 3 } },
     ]
+    // Five columns at 110 need 550 on one line; four side by side fit 500.
+    const PIVOTS_110 = uniform(PIVOTS, 110)
     const pivotLines = (cells: DisplayCell[], tracks: number) =>
         tableLines({
             columns: PIVOTS,
-            width: 390,
-            breakpoint: 'mobile',
+            width: 500,
+            measures: PIVOTS_110,
             layouts: [{ width: 'mobile', tracks, cells }],
         })
+    const pivotShape = (cells: DisplayCell[], tracks: number) => shapeOf(pivotLines(cells, tracks))
     const pivotCell = (col: string) => ({ kind: 'cell', col, justify: 'end' })
     it('gives each pivot column the span and lines of its entry', () => {
         expect(
-            pivotLines(
+            pivotShape(
                 [
                     { col: 'account', line: 1, lines: 2 },
                     { col: 'amount', line: 1, lines: 2 },
@@ -577,7 +611,7 @@ describe('the table layout per width', () => {
             },
         })
         expect(
-            pivotLines(
+            pivotShape(
                 [
                     { col: 'account', line: 1, span: 4 },
                     { col: 'amount', line: 2, span: 2 },
@@ -611,13 +645,7 @@ describe('the table layout per width', () => {
         })
     })
     it('lays out automatically, and says so, when the pivot columns collide with a cell', () => {
-        const auto = tableLines({
-            columns: PIVOTS,
-            width: 390,
-            breakpoint: 'mobile',
-            layouts: [],
-            measures: { account: m(400, 400, 1) },
-        })
+        const auto = tableLines({ columns: PIVOTS, width: 500, layouts: [], measures: PIVOTS_110 })
         expect(auto.kind).toBe('blocks')
         expect(
             pivotLines(
@@ -634,16 +662,17 @@ describe('the table layout per width', () => {
         const layout = tableLines({
             columns: COLS,
             width: 360,
-            breakpoint: 'mobile',
             layouts: [],
             measures: WIDE_LABEL_MEASURES,
         })
+        if (layout.kind !== 'blocks') throw new Error('expected lines')
         const row = { id: 'g', kind: 'group' as const, depth: 0, label: 'Assets', cells: {} }
         expect(
             rowLayout({ row, cells: {}, isToggle: true, isOpen: false }, layout, 'account')
         ).toEqual({
             kind: 'blocks',
             root: { kind: 'cell', col: 'account', justify: 'start' },
+            indent: layout.indent,
         })
         const full = { number: 'A1', debit: 5, credit: 0 }
         expect(
@@ -656,7 +685,6 @@ describe('the table layout per width', () => {
         const layout = tableLines({
             columns: COLS,
             width: 360,
-            breakpoint: 'mobile',
             layouts: [],
             measures: WIDE_LABEL_MEASURES,
         })
@@ -680,8 +708,7 @@ describe('the table layout per width', () => {
     })
 })
 
-// F10: one line when it fits (narrowed if need be), else the nearest narrower
-// arrangement, else the automatic lines (R13). WIDE narrows to 864 at best.
+// Nine columns: at 110 each, one line needs 990.
 const WIDE: ResultColumn[] = [
     { id: 'customer', label: 'Customer', type: 'text' },
     { id: 'status', label: 'Status', type: 'select' },
@@ -757,91 +784,133 @@ const MOBILE_LINES = {
     },
 }
 
-// Σmin 915; Σnatural 220 + 5 × 128 + 3 × 110 = 1190.
-const WIDE_MEASURES: ColumnMeasures = {
-    customer: m(120, 220, 1),
-    ...Object.fromEntries(
-        ['status', 'ref', 'team', 'note', 'other'].map(id => [id, m(93, 128, 1)] as const)
-    ),
-    ...Object.fromEntries(['amount', 'cost', 'balance'].map(id => [id, m(110, 110, 0)] as const)),
-}
+describe('the layout chosen by fit', () => {
+    // WIDE at min 110 each: one line needs 990.
+    const measures = uniform(WIDE, 110)
+    const at = (width: number, layouts: DisplayLayout[] = []) =>
+        tableLines({ columns: WIDE, width, layouts, measures })
 
-describe('F10: one line that fits, then the narrower arrangements', () => {
-    const lines = (
-        width: number,
-        breakpoint: 'desktop' | 'tablet' | 'mobile',
-        layouts = [] as DisplayLayout[]
-    ) => tableLines({ columns: WIDE, width, breakpoint, layouts, measures: WIDE_MEASURES })
+    it('draws one line wherever it fits, an arrangement or not', () => {
+        expect(at(1000, [DESKTOP_LAYOUT, TABLET_LAYOUT, MOBILE_LAYOUT]).kind).toBe('one-line')
+    })
 
-    it('draws a desktop line that fits with its natural widths', () => {
-        expect(lines(1190, 'desktop')).toEqual({
-            kind: 'one-line',
-            widths: {
-                customer: 220,
-                status: 128,
-                ref: 128,
-                team: 128,
-                note: 128,
-                other: 128,
-                amount: 110,
-                cost: 110,
-                balance: 110,
+    it('uses the widest arrangement whose lines fit, then the narrower ones', () => {
+        // The fixtures carry no widths and no indent, so they compare with the shape.
+        expect(shapeOf(at(900, [DESKTOP_LAYOUT, TABLET_LAYOUT]))).toEqual(DESKTOP_LINES)
+        expect(shapeOf(at(900, [MOBILE_LAYOUT, TABLET_LAYOUT]))).toEqual(TABLET_LINES)
+        expect(shapeOf(at(400, [MOBILE_LAYOUT]))).toEqual(MOBILE_LINES)
+    })
+
+    it('falls to the automatic lines when no arrangement fits', () => {
+        // The label's min (110) is wider than the view: no arrangement fits.
+        const auto = at(100, [MOBILE_LAYOUT])
+        expect(auto.kind).toBe('blocks')
+        expect(shapeOf(auto)).not.toEqual(MOBILE_LINES)
+    })
+
+    it('gives a side block its width by content, a span its share of the spare room', () => {
+        const layout = tableLines({
+            columns: COLS,
+            width: 360,
+            layouts: [
+                {
+                    width: 'mobile',
+                    tracks: 3,
+                    cells: [
+                        { col: 'account', line: 1, span: 2 },
+                        { col: 'number', line: 1 },
+                        { col: 'debit', line: 2 },
+                        { col: 'credit', line: 2, start: 3 },
+                    ],
+                },
+            ],
+            measures: {
+                account: m(100, 100, 1),
+                number: m(60, 60, 1),
+                debit: m(110, 110, 0),
+                credit: m(110, 110, 0),
             },
         })
-        // The label and the text columns share the 110 spare by grow.
-        expect(lines(1300, 'desktop')).toEqual({
-            kind: 'one-line',
-            widths: fitOneLine(WIDE, 1300, WIDE_MEASURES),
+        if (layout.kind !== 'blocks' || layout.root.kind !== 'stack')
+            throw new Error('expected lines')
+        const [first, second] = layout.root.parts
+        if (first?.kind !== 'side' || second?.kind !== 'side')
+            throw new Error('expected side lines')
+        // One line needs 380, so the arrangement is used. Line 1: 200 spare by
+        // tracks 2 : 1 → 133 and 66, the remainder 1 to the first part.
+        expect(first.parts.map(p => p.width)).toEqual([234, 126])
+        // The second line is fitted under the indent (a flat report: 16 − 12 = 4):
+        // 356 − 220 = 136 spare by tracks 1 : 1 : 1, the empty track included.
+        expect(layout.indent).toBe(4)
+        expect(second.parts.map(p => p.width)).toEqual([156, 45, 155])
+    })
+
+    it('packs the automatic lines by content, the label sharing line 1', () => {
+        const layout = tableLines({
+            columns: COLS,
+            width: 300,
+            layouts: [],
+            measures: {
+                account: m(120, 120, 1),
+                number: m(60, 60, 1),
+                debit: m(110, 110, 0),
+                credit: m(110, 110, 0),
+            },
+        })
+        expect(shapeOf(layout)).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'stack',
+                parts: [
+                    {
+                        kind: 'side',
+                        of: 3,
+                        parts: [
+                            {
+                                block: { kind: 'cell', col: 'account', justify: 'start' },
+                                tracks: 1,
+                            },
+                            { block: { kind: 'cell', col: 'number', justify: 'start' }, tracks: 1 },
+                            { block: { kind: 'cell', col: 'debit', justify: 'end' }, tracks: 1 },
+                        ],
+                    },
+                    {
+                        kind: 'side',
+                        of: 1,
+                        parts: [
+                            { block: { kind: 'cell', col: 'credit', justify: 'end' }, tracks: 1 },
+                        ],
+                    },
+                ],
+            },
         })
     })
 
-    it('narrows the label and the text columns toward their mins before it wraps', () => {
-        expect(lines(1100, 'desktop')).toEqual({
-            kind: 'one-line',
-            widths: fitOneLine(WIDE, 1100, WIDE_MEASURES),
+    it('clamps a column wider than its line, and never draws past the width', () => {
+        const layout = tableLines({
+            columns: COLS,
+            width: 100,
+            layouts: [],
+            measures: {
+                account: m(150, 150, 1),
+                number: m(60, 60, 1),
+                debit: m(110, 110, 0),
+                credit: m(110, 110, 0),
+            },
         })
-        expect(lines(915, 'desktop')).toMatchObject({
-            kind: 'one-line',
-            widths: { customer: 120, note: 93, amount: 110 },
-        })
-        expect(fitOneLine(WIDE, 914, WIDE_MEASURES)).toBeNull()
-        expect(lines(914, 'desktop').kind).toBe('blocks')
+        if (layout.kind !== 'blocks' || layout.root.kind !== 'stack')
+            throw new Error('expected lines')
+        for (const [i, line] of layout.root.parts.entries()) {
+            if (line.kind !== 'side') throw new Error('expected side lines')
+            const room = i === 0 ? 100 : 100 - layout.indent
+            expect(line.parts.reduce((s, p) => s + (p.width ?? 0), 0)).toBe(room)
+        }
     })
 
-    // Q1 (recommended): an author's arrangement for this width replaces the line.
-    it('uses the authored desktop arrangement where there is one, even when the line fits', () => {
-        expect(lines(1300, 'desktop', [DESKTOP_LAYOUT, TABLET_LAYOUT])).toEqual(DESKTOP_LINES)
-    })
-
-    // The brief's "desktop that wraps to an authored desktop layout": at 800 the
-    // narrowed line (864) does not fit, and the desktop arrangement wins over the
-    // tablet one. This holds under either answer to Q1.
-    it('wraps a desktop too narrow for the line to its own authored arrangement', () => {
-        expect(lines(800, 'desktop', [DESKTOP_LAYOUT, TABLET_LAYOUT])).toEqual(DESKTOP_LINES)
-    })
-
-    it('wraps a desktop too narrow for the narrowed line to the tablet arrangement, then the phone one, then automatically', () => {
-        expect(lines(800, 'desktop', [MOBILE_LAYOUT, TABLET_LAYOUT])).toEqual(TABLET_LINES)
-        expect(lines(800, 'desktop', [MOBILE_LAYOUT])).toEqual(MOBILE_LINES)
-        const auto = lines(800, 'desktop')
-        expect(auto.kind).toBe('blocks')
-        expect(auto).toEqual(lines(800, 'tablet'))
-        expect(auto).not.toEqual(TABLET_LINES)
-    })
-
-    // The label's min is for its text, past the deepest row's indent.
-    it('the label min grows with the deepest label start', () => {
-        const flatLevels = { groups: 0, nests: 0 }
-        const groupedLevels = { groups: 1, nests: 0 }
-        expect(labelMinOf(flatLevels)).toBe(labelChrome(flatLevels) + TEXT_MIN_WIDTH)
-        expect(labelMinOf(groupedLevels)).toBe(labelChrome(groupedLevels) + TEXT_MIN_WIDTH)
-        expect(labelMinOf(groupedLevels) - labelMinOf(flatLevels)).toBe(CARET_ROOM)
-    })
-
-    it('wraps a tablet in the same order, never to a wider arrangement', () => {
-        expect(lines(700, 'tablet', [DESKTOP_LAYOUT, MOBILE_LAYOUT])).toEqual(MOBILE_LINES)
-        expect(lines(700, 'tablet', [DESKTOP_LAYOUT])).toEqual(lines(700, 'mobile'))
-        expect(lines(1000, 'tablet', [DESKTOP_LAYOUT])).toMatchObject({ kind: 'one-line' })
+    it('starts the continuation lines under a detail row’s label text', () => {
+        expect(continuationIndent({ groups: 0, nests: 0 })).toBe(4)
+        expect(continuationIndent({ groups: 1, nests: 0 })).toBe(20)
+        expect(continuationIndent({ groups: 1, nests: 1 })).toBe(36)
     })
 })
 
@@ -864,8 +933,8 @@ describe('figure-only rows in a wrapped layout', () => {
     const layout = tableLines({
         columns: COLUMNS,
         width: 390,
-        breakpoint: 'mobile',
         layouts: [PHONE],
+        measures: uniform(COLUMNS, 110),
     })
     const item = (kind: ResultRow['kind'], cells: Record<string, CellValue>) => ({
         row: { id: `${kind}:1`, kind, depth: 1, label: 'Before the period', cells },
@@ -876,7 +945,7 @@ describe('figure-only rows in a wrapped layout', () => {
     const gap = { block: { kind: 'gap', lines: 1 } as const, tracks: 1 }
 
     it('draws an opening row as its label line, then its figures line', () => {
-        expect(rowLayout(item('opening', { balance: 1200 }), layout, 'customer')).toEqual({
+        expect(shapeOf(rowLayout(item('opening', { balance: 1200 }), layout, 'customer'))).toEqual({
             kind: 'blocks',
             root: {
                 kind: 'stack',
@@ -887,7 +956,7 @@ describe('figure-only rows in a wrapped layout', () => {
 
     it('draws a subtotal without its blank text lines, and keeps a blank figure’s track', () => {
         const cells = { amount: 900, cost: 300, balance: null }
-        expect(rowLayout(item('subtotal', cells), layout, 'customer')).toEqual({
+        expect(shapeOf(rowLayout(item('subtotal', cells), layout, 'customer'))).toEqual({
             kind: 'blocks',
             root: {
                 kind: 'stack',
@@ -907,9 +976,18 @@ describe('figure-only rows in a wrapped layout', () => {
 })
 
 // F10 over a pivot: the last group level holds the pivot's cells, so its groups
-// never open. They draw no caret and no row comes under them, so the label floor
-// is the deepest label that the report can really draw.
-describe('the label floor of a pivot report', () => {
+// never open. They draw no caret and no row comes under them, so the label min
+// is set by the deepest label start that the report can really draw.
+describe('the label min and the deepest label start', () => {
+    // The label's min is for its text, past the deepest row's indent.
+    it('the label min grows with the deepest label start', () => {
+        const flatLevels = { groups: 0, nests: 0 }
+        const groupedLevels = { groups: 1, nests: 0 }
+        expect(labelMinOf(flatLevels)).toBe(labelChrome(flatLevels) + TEXT_MIN_WIDTH)
+        expect(labelMinOf(groupedLevels)).toBe(labelChrome(groupedLevels) + TEXT_MIN_WIDTH)
+        expect(labelMinOf(groupedLevels) - labelMinOf(flatLevels)).toBe(CARET_ROOM)
+    })
+
     const PIVOT = { path: [{ field: 'month' }], cell: 'amount' }
     const columns = [{ path: [{ field: 'team' }] }]
 
@@ -947,7 +1025,6 @@ describe('the label span of a one-line row', () => {
     const layout = tableLines({
         columns: COLS,
         width: 1280,
-        breakpoint: 'desktop',
         layouts: [],
         levels: { groups: 1, nests: 0 },
     })
@@ -988,6 +1065,8 @@ describe('the label span of a one-line row', () => {
             widths.account + widths.number + widths.debit + widths.credit
         )
         expect(oneLineLabelWidth(layout, undefined, others)).toBeUndefined()
-        expect(oneLineLabelWidth({ kind: 'blocks', root: label }, 'account', [])).toBeUndefined()
+        expect(
+            oneLineLabelWidth({ kind: 'blocks', root: label, indent: 0 }, 'account', [])
+        ).toBeUndefined()
     })
 })

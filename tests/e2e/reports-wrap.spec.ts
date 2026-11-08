@@ -20,8 +20,8 @@ import {
 } from './reports-helpers'
 
 /**
- * E14: on a phone a row too wide for one line wraps (the label on line 1, the
- * figures aligned on line 2 under headings that wrap the same way) and nothing
+ * E14: on a phone a row too wide for one line wraps: as many columns as fit on
+ * each line, each under its heading (the headings wrap the same way), and nothing
  * scrolls sideways; an open group's row sticks while its rows scroll under it.
  * Desktop keeps one line per row, narrowing text columns before it wraps, never
  * scrolls sideways, and the heading row stays at the top. An author arrangement
@@ -67,11 +67,18 @@ async function wideReport(p: Page, title: string, grouped: boolean) {
 async function boxes(p: Page, row: string) {
     const label = rowOf(p, row)
     const id = (await label.getAttribute('data-testid'))?.replace('report-row-', '') ?? ''
-    const box = async (testId: string) => p.getByTestId(testId).boundingBox()
+    // A column the report does not have (status, when not grouped) has no box;
+    // boundingBox would wait for it, and stall the poll that reads these.
+    const box = async (testId: string) => {
+        const locator = p.getByTestId(testId)
+        return (await locator.count()) > 0 ? locator.boundingBox() : null
+    }
     return {
         label: await label.boundingBox(),
         amount: await box(`report-cell-amount-${id}`),
         cost: await box(`report-cell-cost-${id}`),
+        status: await box(`report-cell-status-${id}`),
+        headStatus: await box('report-heading-status'),
         headLabel: await box('report-heading-customer'),
         headAmount: await box('report-heading-amount'),
         headCost: await box('report-heading-cost'),
@@ -159,12 +166,14 @@ test.describe('report rows per width', () => {
                 .poll(async () => {
                     const b = await boxes(p, 'Wrapco 00')
                     const width = await p.evaluate(() => document.documentElement.scrollWidth)
-                    if (!b.label || !b.amount || !b.cost) return null
+                    if (!b.label || !b.amount || !b.cost || !b.status) return null
                     return {
-                        wrapped: b.amount.y >= b.label.y + b.label.height - 1,
+                        // The last column cannot share line 1 when one line does not fit.
+                        wrapped: b.status.y >= b.label.y + b.label.height - 1,
                         amountUnderHeading: Math.abs((b.headAmount?.x ?? 0) - b.amount.x) <= 1,
                         costUnderHeading: Math.abs((b.headCost?.x ?? 0) - b.cost.x) <= 1,
-                        headingsWrapped: (b.headAmount?.y ?? 0) > (b.headLabel?.y ?? 0),
+                        statusUnderHeading: Math.abs((b.headStatus?.x ?? 0) - b.status.x) <= 1,
+                        headingsWrapped: (b.headStatus?.y ?? 0) > (b.headLabel?.y ?? 0),
                         fitsPhone: width <= 390,
                     }
                 })
@@ -172,6 +181,7 @@ test.describe('report rows per width', () => {
                     wrapped: true,
                     amountUnderHeading: true,
                     costUnderHeading: true,
+                    statusUnderHeading: true,
                     headingsWrapped: true,
                     fitsPhone: true,
                 })
@@ -374,14 +384,18 @@ test.describe('report rows per width', () => {
 
             await expectWholeStackPushed(p, stackIds)
 
-            // On a phone the rows wrap, so the stack is drawn by other code.
+            // On a phone the rows wrap, so the stack is drawn by other code. The last
+            // column (booked) cannot share line 1 when one line does not fit.
             await p.setViewportSize({ width: 390, height: 844 })
+            const pushRow = rowOf(p, 'Push 09')
             await expect
                 .poll(async () => {
-                    const b = await boxes(p, 'Push 09')
-                    return b.label && b.amount
-                        ? b.amount.y >= b.label.y + b.label.height - 1
-                        : false
+                    const id =
+                        (await pushRow.getAttribute('data-testid'))?.replace('report-row-', '') ??
+                        ''
+                    const label = await pushRow.boundingBox()
+                    const booked = await p.getByTestId(`report-cell-booked-${id}`).boundingBox()
+                    return label && booked ? booked.y >= label.y + label.height - 1 : false
                 })
                 .toBe(true)
             await expectWholeStackPushed(p, stackIds)
@@ -707,24 +721,25 @@ test.describe('report rows per width', () => {
             await expect(rowOf(p, team)).toHaveAttribute('aria-expanded', 'true')
 
             const amount = await cellOf(p, 'amount', 'Ada')
+            const cost = await cellOf(p, 'cost', 'Ada')
             const region = await cellOf(p, 'formula', 'Ada')
-            // Wrapped: the opened row's figures are on a line below its label.
+            // The blank slot sits under its heading, on a line with a figure of its row.
             await expect
                 .poll(async () => {
-                    const label = await rowOf(p, 'Ada').boundingBox()
-                    const figure = await amount.boundingBox()
-                    return label && figure ? figure.y >= label.y + label.height - 1 : false
+                    const heading = await p.getByTestId('report-heading-formula').boundingBox()
+                    const slot = await region.boundingBox()
+                    const figures = [await amount.boundingBox(), await cost.boundingBox()]
+                    if (!heading || !slot) return null
+                    return {
+                        underHeading: Math.abs(heading.x - slot.x) <= 1,
+                        besideFigure: figures.some(f => f && Math.abs(f.y - slot.y) <= 1),
+                    }
                 })
-                .toBe(true)
+                .toEqual({ underHeading: true, besideFigure: true })
             await expect(amount).toHaveText('10.00')
             await expect(await cellOf(p, 'formula', team)).toHaveText('South')
             await expect(region).toBeVisible()
             await expect(region).toHaveText('')
-            const heading = await p.getByTestId('report-heading-formula').boundingBox()
-            const slot = await region.boundingBox()
-            const figure = await amount.boundingBox()
-            expect(Math.abs((heading?.x ?? 0) - (slot?.x ?? -9))).toBeLessThanOrEqual(1)
-            expect(Math.abs((figure?.y ?? 0) - (slot?.y ?? -9))).toBeLessThanOrEqual(1)
             expect(
                 await p.evaluate(() => document.documentElement.scrollWidth)
             ).toBeLessThanOrEqual(390)
@@ -746,7 +761,8 @@ test.describe('report rows on a touch phone', () => {
         await wideReport(page, uniqueName('Touch'), false)
         await page.setViewportSize({ width: 390, height: 844 })
         // The swipe goes to the phone layout only: the table is the phone's width and
-        // its headings have wrapped, the figures on the line under the label.
+        // its headings have wrapped, the last column (quantity) on a line under the
+        // label's, as it cannot share line 1 when one line does not fit.
         const table = page.getByTestId('report-table')
         await expect
             .poll(async () => Math.abs(((await table.boundingBox())?.width ?? 0) - 390))
@@ -754,8 +770,8 @@ test.describe('report rows on a touch phone', () => {
         await expect
             .poll(async () => {
                 const label = await page.getByTestId('report-heading-customer').boundingBox()
-                const amount = await page.getByTestId('report-heading-amount').boundingBox()
-                return label && amount ? amount.y >= label.y + label.height - 1 : false
+                const last = await page.getByTestId('report-heading-quantity').boundingBox()
+                return label && last ? last.y >= label.y + label.height - 1 : false
             })
             .toBe(true)
         const headingBottom = await bottomOf(page.getByTestId('report-heading-row'))

@@ -1,5 +1,6 @@
-import type { Breakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
+import { INDENT } from '../components/report-table-layout'
 import {
+    CELL_PADDING,
     type ColumnMeasure,
     type ColumnMeasures,
     FLAT_LEVELS,
@@ -19,10 +20,9 @@ export { FLAT_LEVELS, isFigureColumn, type RowLevels, rowLevelsOf } from './colu
 // alignment. React Native has no CSS grid on native, so a layout is cut into a
 // tree of blocks (guillotine cuts between lines or between tracks) that flex
 // draws: a stack of blocks top to bottom, or blocks side by side whose widths
-// are their shares of the tracks. Row content is flex lines; FlashList
-// positions rows (R28).
+// the fit gives by content. Row content is flex lines; FlashList positions
+// rows (R28).
 
-export const AUTO_TRACK_MIN = 104
 export const MAX_TRACKS = 12
 export const MAX_LINES = 8
 export const PINWHEEL_MESSAGE =
@@ -31,15 +31,16 @@ export const PIVOT_NOTICE =
     "The pivot columns do not fit this width's arrangement, so the rows are laid out automatically here."
 
 export type Justify = 'start' | 'center' | 'end'
+export type SidePart = { block: Block; tracks: number; width?: number }
 export type Block =
     | { kind: 'cell'; col: string; justify: Justify }
     | { kind: 'gap'; lines: number }
     | { kind: 'stack'; parts: Block[] }
-    | { kind: 'side'; of: number; parts: { block: Block; tracks: number }[] }
-/** One line, each column at its width (the label's is its minimum: it takes what is left). */
+    | { kind: 'side'; of: number; parts: SidePart[] }
+/** One line, each column at its width; or blocks whose side parts carry px widths. */
 export type LineLayout =
     | { kind: 'one-line'; widths: Record<string, number> }
-    | { kind: 'blocks'; root: Block; notice?: string }
+    | { kind: 'blocks'; root: Block; indent: number; notice?: string }
 export type Placed = { start: number; span: number; line: number; lines: number }
 export type Placement = { placed: Placed[] } | { problem: { index: number; message: string } }
 
@@ -159,7 +160,7 @@ function stackOf(parts: Block[]): Block {
 }
 
 /** A part of a side block; a nested side block's parts fold into it (track counts are absolute). */
-function sideParts(block: Block, tracks: number): { block: Block; tracks: number }[] {
+function sideParts(block: Block, tracks: number): SidePart[] {
     return block.kind === 'side' ? block.parts : [{ block, tracks }]
 }
 
@@ -210,27 +211,45 @@ export function defaultJustify(columns: readonly ResultColumn[], col: string): J
     return column ? justifyOf(column) : 'start'
 }
 
-// No arrangement for this width: the label across line 1, the other columns
-// in order on the lines below, one per track of at least AUTO_TRACK_MIN.
+// No arrangement fits: the columns in order on lines, first fit at their mins, the
+// label first on line 1 (review §7.1-5). Line 1 has the whole width; the later
+// lines start at the indent. A column too wide for a line alone gets that line
+// and is cut (fitRoot with clamp).
 function autoLines(
     columns: readonly ResultColumn[],
-    width: number
+    width: number,
+    measures: ColumnMeasures,
+    indent: number
 ): Extract<LineLayout, { kind: 'blocks' }> {
-    const [label, ...amounts] = columns
-    const tracks = Math.max(1, Math.floor(width / AUTO_TRACK_MIN))
-    const lines: Block[] = label ? [{ kind: 'cell', col: label.id, justify: 'start' }] : []
-    for (let i = 0; i < amounts.length; i += tracks) {
-        const line = amounts.slice(i, i + tracks)
-        const parts: { block: Block; tracks: number }[] = line.map(column => ({
-            block: { kind: 'cell', col: column.id, justify: justifyOf(column) },
-            tracks: 1,
-        }))
-        // A short last line keeps each amount on its own track.
-        if (line.length < tracks)
-            parts.push({ block: { kind: 'gap', lines: 1 }, tracks: tracks - line.length })
-        lines.push({ kind: 'side', of: tracks, parts })
+    const lines: ResultColumn[][] = []
+    let used = 0
+    for (const column of columns) {
+        const min = measureOf(measures, column.id).min
+        const line = lines[lines.length - 1]
+        const room = lines.length === 1 ? width : width - indent
+        if (line && used + min <= room) {
+            line.push(column)
+            used += min
+            continue
+        }
+        lines.push([column])
+        used = min
     }
-    return { kind: 'blocks', root: stackOf(lines) }
+    const labelId = columns[0]?.id
+    const sideOf = (line: ResultColumn[]): Block => ({
+        kind: 'side',
+        of: line.length,
+        parts: line.map(column => ({
+            block: {
+                kind: 'cell',
+                col: column.id,
+                justify: column.id === labelId ? 'start' : justifyOf(column),
+            },
+            tracks: 1,
+        })),
+    })
+    const root = stackOf(lines.map(sideOf))
+    return { kind: 'blocks', root: fitRoot(root, width, measures, indent, true) ?? root, indent }
 }
 
 // A pivot cell column's entry stands for all its pivot columns, each as wide
@@ -259,19 +278,18 @@ function expandPivots(
     })
 }
 
-function authoredLines(
-    layout: DisplayLayout,
-    columns: readonly ResultColumn[],
-    width: number
-): LineLayout {
+type Authored = { kind: 'tree'; root: Block } | { kind: 'refused'; notice?: string }
+
+// An arrangement's tree, without widths; or its refusal, so the choice moves on.
+function authoredLines(layout: DisplayLayout, columns: readonly ResultColumn[]): Authored {
     const arranged = placeCells(layout.tracks, layout.cells)
-    if ('problem' in arranged) return autoLines(columns, width)
+    if ('problem' in arranged) return { kind: 'refused' }
     const cells = expandPivots(layout, arranged.placed, columns)
     // The engine checks the entries as written; a run's pivot columns may still
-    // run into another cell or past the last line. The rows are then laid out
-    // automatically, and the table says why.
+    // run into another cell or past the last line. The arrangement is then
+    // skipped, and when the rows end in automatic lines the table says why.
     const result = placeCells(layout.tracks, cells)
-    if ('problem' in result) return { ...autoLines(columns, width), notice: PIVOT_NOTICE }
+    if ('problem' in result) return { kind: 'refused', notice: PIVOT_NOTICE }
     const pieces = result.placed.map(pieceOf)
     const lines = Math.max(1, ...pieces.map(p => p.y1))
     const labelId = columns[0]?.id
@@ -290,9 +308,9 @@ function authoredLines(
     // its own above it: a row is never without its label.
     if (labelId && !cells.some(c => c.col === labelId)) {
         const label: Block = { kind: 'cell', col: labelId, justify: 'start' }
-        return { kind: 'blocks', root: stackOf([label, tree]) }
+        return { kind: 'tree', root: stackOf([label, tree]) }
     }
-    return { kind: 'blocks', root: tree }
+    return { kind: 'tree', root: tree }
 }
 
 const NO_MEASURE: ColumnMeasure = { natural: 0, min: 0, grow: 0 }
@@ -348,48 +366,137 @@ export function fitOneLine(
     return Object.fromEntries(columns.map((column, i) => [column.id, widths[i] ?? 0]))
 }
 
-// The authored widths tried when this width has none and its line does not fit,
-// nearest first (R13).
-const NARROWER: Record<Breakpoint, readonly DisplayWidth[]> = {
-    desktop: ['tablet', 'mobile'],
-    tablet: ['mobile'],
-    mobile: [],
+type Extent = { min: number; natural: number }
+
+// What a block needs: a cell its column's measure, a gap nothing, a stack its
+// widest part, a side block its parts side by side.
+function extentOf(block: Block, measures: ColumnMeasures): Extent {
+    if (block.kind === 'cell') return measureOf(measures, block.col)
+    if (block.kind === 'gap') return { min: 0, natural: 0 }
+    const extents =
+        block.kind === 'stack'
+            ? block.parts.map(part => extentOf(part, measures))
+            : block.parts.map(part => extentOf(part.block, measures))
+    const pick = block.kind === 'stack' ? Math.max : (...n: number[]) => sum(n)
+    return {
+        min: pick(0, ...extents.map(e => e.min)),
+        natural: pick(0, ...extents.map(e => e.natural)),
+    }
+}
+
+// Widths when the mins do not fit (one automatic line of a single column wider than
+// the view): in proportion to the mins, so they still add up to the width.
+function clampedWidths(parts: readonly Extent[], width: number): number[] {
+    const total = sum(parts.map(part => part.min)) || 1
+    const widths = parts.map(part => Math.floor((part.min / total) * width))
+    widths[0] = (widths[0] ?? 0) + width - sum(widths)
+    return widths
 }
 
 /**
- * The lines of every row (and the heading) at this width (F10): the author's
- * arrangement for this width (Q1); else one line, narrowed if it must be; else the
- * nearest narrower arrangement; else the automatic lines. Never wider than `width`,
- * so the table never scrolls sideways.
+ * The block at this width with px widths on every side part (D5): each side block
+ * shares its width by content, a part's tracks being its share of the spare room.
+ * Null when a part's min does not fit. `clamp` gives a lone cell wider than its
+ * width the width it has (automatic lines), so it is cut rather than refused.
+ */
+function fitBlock(
+    block: Block,
+    width: number,
+    measures: ColumnMeasures,
+    clamp = false
+): Block | null {
+    if (block.kind === 'cell')
+        return clamp || measureOf(measures, block.col).min <= width ? block : null
+    if (block.kind === 'gap') return block
+    if (block.kind === 'stack') {
+        const parts: Block[] = []
+        for (const part of block.parts) {
+            const fitted = fitBlock(part, width, measures, clamp)
+            if (!fitted) return null
+            parts.push(fitted)
+        }
+        return { ...block, parts }
+    }
+    const shares = block.parts.map(part => ({
+        ...extentOf(part.block, measures),
+        grow: part.tracks,
+    }))
+    const widths = shareWidth(shares, width) ?? (clamp ? clampedWidths(shares, width) : null)
+    if (!widths) return null
+    const parts: SidePart[] = []
+    for (const [i, part] of block.parts.entries()) {
+        const partWidth = widths[i] ?? 0
+        const fitted = fitBlock(part.block, partWidth, measures, clamp)
+        if (!fitted) return null
+        parts.push({ ...part, block: fitted, width: partWidth })
+    }
+    return { ...block, parts }
+}
+
+/** Where the lines after a row's first start: under a detail row's label text. */
+export function continuationIndent(levels: RowLevels): number {
+    return Math.max(0, INDENT + (levels.groups + levels.nests) * INDENT - CELL_PADDING / 2)
+}
+
+// A stack root's first line has the whole width; the lines after it start at the
+// indent, so they are fitted to what is left.
+function fitRoot(
+    root: Block,
+    width: number,
+    measures: ColumnMeasures,
+    indent: number,
+    clamp = false
+): Block | null {
+    if (root.kind !== 'stack') return fitBlock(root, width, measures, clamp)
+    const parts: Block[] = []
+    for (const [i, part] of root.parts.entries()) {
+        const fitted = fitBlock(part, i === 0 ? width : width - indent, measures, clamp)
+        if (!fitted) return null
+        parts.push(fitted)
+    }
+    return { ...root, parts }
+}
+
+// Arrangements are tried widest first, whatever the screen: the screen's width
+// class only names the builder's tabs.
+const WIDTH_ORDER: readonly DisplayWidth[] = ['desktop', 'tablet', 'mobile']
+
+/**
+ * The lines of every row (and the heading) at this width, by a fit test on the
+ * measured width (review §7.1-4): one line when its columns' mins fit; else the
+ * first author arrangement, widest first, whose lines fit, each line shared by
+ * content; else the automatic lines. Never wider than `width`.
  */
 export function tableLines(input: {
     columns: readonly ResultColumn[]
     width: number
-    breakpoint: Breakpoint
     layouts: readonly DisplayLayout[]
     /** How deep the report's rows go (rowLevelsOf); absent: a flat report. */
     levels?: RowLevels
-    /** What each column's content needs (measureColumns); absent: the headings and worst cases alone. */
+    /** The run's measure (measureColumns); absent: the headings and worst cases alone. */
     measures?: ColumnMeasures
 }): LineLayout {
-    const { columns, width, breakpoint, layouts, levels } = input
-    const own = layouts.find(l => l.width === breakpoint)
-    if (own) return authoredLines(own, columns, width)
-    const measured =
-        input.measures ??
-        measureColumns({
-            columns,
-            rows: [],
-            format: DEFAULT_DISPLAY,
-            levels: levels ?? FLAT_LEVELS,
-        })
-    const widths = fitOneLine(columns, width, measured)
+    const { columns, width, layouts } = input
+    const levels = input.levels ?? FLAT_LEVELS
+    const measures =
+        input.measures ?? measureColumns({ columns, rows: [], format: DEFAULT_DISPLAY, levels })
+    const widths = fitOneLine(columns, width, measures)
     if (widths) return { kind: 'one-line', widths }
-    const narrower = NARROWER[breakpoint]
-        .map(w => layouts.find(l => l.width === w))
-        .find(layout => layout !== undefined)
-    if (narrower) return authoredLines(narrower, columns, width)
-    return autoLines(columns, width)
+    const indent = continuationIndent(levels)
+    let notice: string | undefined
+    for (const name of WIDTH_ORDER) {
+        const layout = layouts.find(l => l.width === name)
+        if (!layout) continue
+        const authored = authoredLines(layout, columns)
+        if (authored.kind === 'refused') {
+            notice = notice ?? authored.notice
+            continue
+        }
+        const root = fitRoot(authored.root, width, measures, indent)
+        if (root) return { kind: 'blocks', root, indent }
+    }
+    const auto = autoLines(columns, width, measures, indent)
+    return notice ? { ...auto, notice } : auto
 }
 
 const hasValue = (value: CellValue | undefined) => value !== undefined && value !== null
@@ -423,8 +530,8 @@ function pruned(block: Block, keeps: (col: string) => boolean): Block | null {
         return parts.length > 0 ? stackOf(parts) : null
     }
     const parts = block.parts.map(part => ({
+        ...part,
         block: pruned(part.block, keeps) ?? LINE_GAP,
-        tracks: part.tracks,
     }))
     return parts.some(part => hasCell(part.block)) ? { ...block, parts } : null
 }
@@ -439,7 +546,8 @@ function pruned(block: Block, keeps: (col: string) => boolean): Block | null {
 export function rowLayout(item: VisibleRow, layout: LineLayout, labelId: string): LineLayout {
     if (layout.kind === 'one-line') return layout
     const labelOnly: Block = { kind: 'cell', col: labelId, justify: 'start' }
-    if (Object.keys(item.cells).length === 0) return { kind: 'blocks', root: labelOnly }
+    if (Object.keys(item.cells).length === 0)
+        return { kind: 'blocks', root: labelOnly, indent: layout.indent }
     if (item.row.kind === 'detail') return layout
     const keeps = (col: string) => col === labelId || hasValue(item.cells[col])
     if (blockColumns(layout.root).every(keeps)) return layout

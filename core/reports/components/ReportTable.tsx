@@ -12,11 +12,11 @@ import type { Justify, LineLayout } from '../lib/table-lines'
 import type { ResultColumn, ResultRow } from '../lib/types'
 import {
     amountJustify,
-    BlockView,
     cellBoxStyle,
     JUSTIFY_CONTENT,
     oneLineLabelStyle,
     type RenderCell,
+    RootBlockView,
     StickyGroup,
     TableRow,
     type TableRowProps,
@@ -196,7 +196,7 @@ function BlocksHeading({ columns, layout, format, sorting }: HeadingRowProps) {
     }
     return (
         <View className="flex-1">
-            <BlockView block={layout.root} renderCell={renderCell} />
+            <RootBlockView root={layout.root} indent={layout.indent} renderCell={renderCell} />
         </View>
     )
 }

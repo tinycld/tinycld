@@ -12,6 +12,7 @@ import {
     oneLineLabelSpan,
     oneLineLabelWidth,
     rowLayout,
+    type SidePart,
 } from '../lib/table-lines'
 import type { ResultColumn, ResultRow, RowKind } from '../lib/types'
 import { CARET_SIZE, columnAlign, INDENT, ROW_HEIGHT } from './report-table-layout'
@@ -53,13 +54,13 @@ export type RenderCell = (col: string, justify: Justify) => ReactNode
 
 /**
  * A row (or the heading) as its block tree (lib/table-lines.ts), drawn with flex:
- * a stack is a column of blocks, a side block a row of blocks as wide as their
- * share of the tracks. A side row stretches its blocks to one height, so a cell
- * that spans lines is as tall as the lines beside it; justify aligns each cell,
- * and an empty part keeps the height of the lines it stands for. Heights come
- * from the content: FlashList measures the row.
+ * a stack is a column of blocks, a side block a row of blocks at the px widths the
+ * fit gave them. A side row stretches its blocks to one height, so a cell that
+ * spans lines is as tall as the lines beside it; justify aligns each cell, and an
+ * empty part keeps the height of the lines it stands for. Heights come from the
+ * content: FlashList measures the row.
  */
-export function BlockView({ block, renderCell }: { block: Block; renderCell: RenderCell }) {
+function BlockView({ block, renderCell }: { block: Block; renderCell: RenderCell }) {
     if (block.kind === 'gap') return <View style={{ minHeight: block.lines * ROW_HEIGHT }} />
     if (block.kind === 'cell') return <CellSlot block={block} renderCell={renderCell} />
     if (block.kind === 'stack') return <StackBlock parts={block.parts} renderCell={renderCell} />
@@ -83,21 +84,53 @@ function StackBlock({ parts, renderCell }: { parts: Block[]; renderCell: RenderC
     return <View className="grow">{items}</View>
 }
 
+// A part's px width from the fit; a hand-built tree with none takes its share of the tracks.
+function partStyle(part: SidePart, of: number) {
+    return part.width === undefined
+        ? { width: `${(part.tracks / of) * 100}%` }
+        : { width: part.width }
+}
+
 function SideBlock({
     of,
     parts,
     renderCell,
 }: {
     of: number
-    parts: { block: Block; tracks: number }[]
+    parts: SidePart[]
     renderCell: RenderCell
 }) {
     const items = parts.map((part, i) => (
-        <View key={blockKey(part.block, i)} style={{ width: `${(part.tracks / of) * 100}%` }}>
+        <View key={blockKey(part.block, i)} style={partStyle(part, of)}>
             <BlockView block={part.block} renderCell={renderCell} />
         </View>
     ))
     return <View className="flex-row">{items}</View>
+}
+
+const lineStyle = (index: number, indent: number) =>
+    index === 0 ? undefined : { paddingLeft: indent }
+
+/**
+ * A row's (or the heading's) whole tree: the lines after the first of a stack root
+ * start at the indent, under a detail row's label text, as the fit sized them.
+ */
+export function RootBlockView({
+    root,
+    indent,
+    renderCell,
+}: {
+    root: Block
+    indent: number
+    renderCell: RenderCell
+}) {
+    if (root.kind !== 'stack') return <BlockView block={root} renderCell={renderCell} />
+    const lines = root.parts.map((part, i) => (
+        <View key={blockKey(part, i)} style={lineStyle(i, indent)}>
+            <BlockView block={part} renderCell={renderCell} />
+        </View>
+    ))
+    return <View className="grow">{lines}</View>
 }
 
 /** A block's key: its first cell's column, or its place. */
@@ -362,7 +395,7 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: Tab
     }
     return (
         <View className={`bg-background ${ROW_RULE[item.row.kind]}`}>
-            <BlockView block={lines.root} renderCell={renderCell} />
+            <RootBlockView root={lines.root} indent={lines.indent} renderCell={renderCell} />
         </View>
     )
 }

@@ -118,9 +118,11 @@ A formula is built from parts you pick from menus: **Number**, **Text**, **Colum
 
 ## When columns do not fit
 
-A report never scrolls sideways. When its columns do not fit on one line, the text columns get narrower first: the first column, then the other text columns. Long text ends in "…". Numbers, amounts, percents, dates and yes/no values keep their width. When the columns still do not fit, each row wraps: the label on the first line and the figures below it, each under its heading.
+A report never scrolls sideways. Each column gets the room its heading and its values need. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". Spare room goes to the columns whose text is cut, then to the text columns. A column with no value is as wide as its heading.
 
-To choose where each column goes at a width, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. An arrangement always applies at its own width. A width with no arrangement uses the next narrower one when the columns do not fit. The heading row and the open group rows stay at the top while you scroll. A long report loads more rows as you scroll, also when it has groups.
+When the columns do not fit on one line, the report uses the first arrangement that fits the screen, widest first: **Desktop**, then **Tablet**, then **Phone**. With no arrangement that fits, each row wraps by itself: as many columns as fit go on each line, the label first, and the next lines start under the row's label.
+
+To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. A long report loads more rows as you scroll, also when it has groups.
 
 ## Run a report
 

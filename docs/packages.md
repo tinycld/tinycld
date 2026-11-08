@@ -1334,7 +1334,7 @@ older server is refused by its version.
 | formula leaf `{ record, path }` | Reads a field of a record group's record. |
 | operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: from the rows of another source that the reader may see, one value (`min` by default, or `max`), their sum (`sum`: numbers or amounts; no match is empty), or the count of rows with a value (`count`: no match is 0). |
 | `pivot.labelField` | The field of a link's record that a pivot over that link names its columns by. |
-| `display.layouts[]` | `{ width, tracks, cells: [{ col, line, start?, span?, lines?, justify? }] }`: where each column goes on a narrow screen. |
+| `display.layouts[]` | `{ width, tracks, cells: [{ col, line, start?, span?, lines?, justify? }] }`: an arrangement of the columns on lines. The view uses one line when its columns fit (each column sized by its heading and values), else the first arrangement whose lines fit, widest `width` first, else automatic lines. Inside a line each column gets its content's width; `span` is its share of the spare room. |
 
 **Spec version 3.** `reports.CurrentVersion` is 3. Every new field is
 optional, and a stored version 1 or 2 spec loads unchanged with no upgrade
