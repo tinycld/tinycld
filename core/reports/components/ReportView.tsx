@@ -145,7 +145,7 @@ function TableBody({ model, table }: { model: ReportViewModel; table: TableLayou
             onRowWidth={table.onRowWidth}
             onToggleGroup={model.onToggleGroup}
             onNearEnd={model.run.loadMore}
-            isLoadingMore={model.run.isLoadingMore}
+            hasMore={model.run.hasMore}
             sort={model.sort}
             onSortColumn={model.onSortColumn}
             onTopRowIndex={model.run.onTopRowIndex}

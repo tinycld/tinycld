@@ -6,6 +6,7 @@ import {
     foldAllLabel,
     foldAllTarget,
     hasRows,
+    holdWholeReportRows,
     mergePages,
     NO_EXPANSION,
     toggleGroup,
@@ -521,5 +522,52 @@ describe('mergePages', () => {
             'total:GBP',
         ])
         expect(merged.rows[merged.rows.length - 1]?.cells.cost).toBe(80)
+    })
+})
+
+describe('holdWholeReportRows', () => {
+    const pageOf = (next: string, rows: ResultRow[]): RunResult => ({
+        columns: [{ id: 'cost', label: 'Cost', type: 'money' }],
+        rows,
+        notices: [],
+        topics: [],
+        page: { size: rows.length, next },
+        params: [],
+    })
+    const net: ResultRow = {
+        id: 'c:net',
+        kind: 'computed',
+        depth: 0,
+        label: 'Net',
+        cells: { cost: 5 },
+    }
+
+    it('holds the trailing Total and computed rows back while a later page is left', () => {
+        const shown = holdWholeReportRows(pageOf('next', [detail('d:1'), net, total]))
+        expect(shown.result.rows.map(r => r.id)).toEqual(['d:1'])
+        expect(shown.held.map(r => r.id)).toEqual(['c:net', 'total'])
+    })
+
+    it('shows them with the last page, and leaves an unpaged result as it is', () => {
+        const last = pageOf('', [detail('d:1'), total])
+        expect(holdWholeReportRows(last)).toEqual({ result: last, held: [] })
+        const unpaged: RunResult = { ...last, page: null }
+        expect(holdWholeReportRows(unpaged).result).toBe(unpaged)
+    })
+
+    it('keeps a Total inside the page’s slice in its place', () => {
+        const block: ResultRow = { ...total, id: 'total:EUR' }
+        const shown = holdWholeReportRows(
+            pageOf('next', [detail('d:1'), block, detail('d:2'), total])
+        )
+        expect(shown.result.rows.map(r => r.id)).toEqual(['d:1', 'total:EUR', 'd:2'])
+        expect(shown.held.map(r => r.id)).toEqual(['total'])
+    })
+
+    it('shows a last page of whole-report rows alone', () => {
+        const merged = mergePages([pageOf('next', [detail('d:1'), total]), pageOf('', [total])])
+        const shown = holdWholeReportRows(merged)
+        expect(shown.result.rows.map(r => r.id)).toEqual(['d:1', 'total'])
+        expect(shown.held).toEqual([])
     })
 })

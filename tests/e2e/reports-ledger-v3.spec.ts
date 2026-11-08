@@ -115,10 +115,15 @@ const MAX_PAGE = 1000
 /**
  * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
  * teams of one sale each after them, and opens the report on them alone, in pages
- * of 5 detail rows, so 12 sales page across team A's end. Then scrolls until the
- * last team's Total row is drawn: every page is merged then.
+ * of 5 detail rows, so 12 sales page across team A's end. A next page (a request
+ * with a cursor) waits for `nextPages` when it is given.
  */
-async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
+async function openPagedTeams(
+    page: Page,
+    prefix: string,
+    smallTeams = 0,
+    nextPages?: Promise<void>
+) {
     await loginAsShippedOwner(page)
     const stem = uniqueName(prefix)
     const letters = 'ABCDEFGH'.slice(0, 2 + smallTeams)
@@ -140,6 +145,7 @@ async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
     const sent: SentRun[] = []
     await page.route('**/api/reports/run', async route => {
         const body = route.request().postDataJSON()
+        if (body.options?.cursor && nextPages) await nextPages
         if (body.options?.cursor) cursors.push(body.options.cursor)
         sent.push({ cursor: body.options?.cursor, limit: body.options?.limit })
         // The client's page sizes become 5. A fold run asks for max(200, the detail
@@ -166,16 +172,27 @@ async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
     await expect.poll(() => firstRunScroller.evaluate(el => el.isConnected)).toBe(false)
     const firstSale = rowOf(page, `${stem}A 00`)
     await expect(firstSale).toBeVisible()
+    return { stem, teams, cursors, sent, firstSale }
+}
+
+/**
+ * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
+ * teams of one sale each after them, and opens the report on them alone, in pages
+ * of 5 detail rows, so 12 sales page across team A's end. Then scrolls until the
+ * last team's Total row is drawn: every page is merged then.
+ */
+async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
+    const { firstSale, ...paged } = await openPagedTeams(page, prefix, smallTeams)
     const scroller = await listScroller(firstSale)
     await expect
         .poll(async () => {
             await scroller.evaluate(el => {
                 el.scrollTop = el.scrollHeight
             })
-            return rowOf(page, `Total ${teams[teams.length - 1]}`).count()
+            return rowOf(page, `Total ${paged.teams[paged.teams.length - 1]}`).count()
         })
         .toBe(1)
-    return { stem, teams, cursors, sent }
+    return paged
 }
 
 /**
@@ -264,6 +281,43 @@ test.describe('general-ledger: report engine v3', () => {
         expect(occurrences(ids, 'total')).toBe(1)
         // A report over amounts with a currency keys its Total by currency (total:["USD"]).
         expect(ids[ids.length - 1]).toMatch(/^total/)
+    })
+
+    // D8, D12: while a later page is left, the list ends in "Loading more rows…", never
+    // in the Total; the Total comes with the last page, and "End of report" ends the list.
+    // The amount column keeps its width when the Total lands (the measure held it).
+    test('the Total waits for the last page, a loading row stands in its place, and an end row follows it', async ({
+        page,
+    }) => {
+        let release = () => {}
+        const nextPages = new Promise<void>(resolve => {
+            release = resolve
+        })
+        const { teams, firstSale } = await openPagedTeams(page, 'BalEnd', 0, nextPages)
+        const loading = page.getByTestId('report-loading-more')
+        await expect(loading).toContainText('Loading more rows…')
+        expect(occurrences(await rowIds(page), 'total')).toBe(0)
+        await expect(page.getByTestId('report-end')).toHaveCount(0)
+        const amountWidth = (await page.getByTestId('report-heading-amount').boundingBox())?.width
+
+        release()
+        const scroller = await listScroller(firstSale)
+        await expect
+            .poll(async () => {
+                await scroller.evaluate(el => {
+                    el.scrollTop = el.scrollHeight
+                })
+                return occurrences(await rowIds(page), 'total')
+            })
+            .toBe(1)
+        await expect(rowOf(page, `Total ${teams[teams.length - 1]}`)).toHaveCount(1)
+        await expect(page.getByTestId('report-end')).toHaveText('End of report')
+        await expect(loading).toHaveCount(0)
+        const ids = await rowIds(page)
+        expect(ids[ids.length - 1]).toMatch(/^total/)
+        expect((await page.getByTestId('report-heading-amount').boundingBox())?.width).toBe(
+            amountWidth
+        )
     })
 
     // F11: a fold keeps the reader's place. Folding a section that came on a later

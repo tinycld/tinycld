@@ -289,11 +289,24 @@ function HeadingRow(props: HeadingRowProps) {
     )
 }
 
-function LoadingMore({ isVisible }: { isVisible: boolean }) {
-    if (!isVisible) return null
+// D8, D12: the list ends in what comes next. While a later page is left the Total
+// is held back, and this row stands in its place; after the last page, a short
+// end row (a page footer is for exports only).
+function TableEnd({ hasMore }: { hasMore: boolean }) {
+    if (hasMore) {
+        return (
+            <View
+                testID="report-loading-more"
+                className="flex-row items-center justify-center gap-2 py-3"
+            >
+                <ActivityIndicator />
+                <Text className="text-sm text-muted-foreground">Loading more rows…</Text>
+            </View>
+        )
+    }
     return (
-        <View testID="report-loading-more" className="items-center py-3">
-            <ActivityIndicator />
+        <View testID="report-end" className="items-center py-3">
+            <Text className="text-sm text-muted-foreground">End of report</Text>
         </View>
     )
 }
@@ -361,7 +374,8 @@ function RowWidthProbe({ onWidth }: { onWidth(width: number): void }) {
 interface TableListProps extends Omit<TableRowProps, 'item'> {
     rows: VisibleRow[]
     onNearEnd(): void
-    isLoadingMore: boolean
+    /** A later page is left: the list ends in "Loading more rows…", else in "End of report". */
+    hasMore: boolean
     onRowWidth(width: number): void
     sorting: HeadingSort
     onTopRowIndex?(index: number): void
@@ -370,7 +384,7 @@ interface TableListProps extends Omit<TableRowProps, 'item'> {
 function TableList({
     rows,
     onNearEnd,
-    isLoadingMore,
+    hasMore,
     onRowWidth,
     sorting,
     onTopRowIndex,
@@ -403,7 +417,7 @@ function TableList({
                 viewabilityConfig={VIEWABILITY_CONFIG}
                 className="web:[scrollbar-gutter:stable]"
                 ListHeaderComponent={header}
-                ListFooterComponent={<LoadingMore isVisible={isLoadingMore} />}
+                ListFooterComponent={<TableEnd hasMore={hasMore} />}
             />
         </>
     )
@@ -423,7 +437,8 @@ export interface ReportTableProps {
     onRowWidth(width: number): void
     onToggleGroup(row: ResultRow): void
     onNearEnd(): void
-    isLoadingMore: boolean
+    /** A later page is left: the list ends in "Loading more rows…", else in "End of report". */
+    hasMore: boolean
     /** The reader's sort (the view URL's `s=`); null: the report's own order. */
     sort: ViewSort | null
     onSortColumn(col: string): void
@@ -436,9 +451,10 @@ export interface ReportTableProps {
 // guard (hasNextPage and not already fetching). FlashList checks it after each
 // commit and again when the rows change, so a first page shorter than the view
 // asks for the next one too. The table never scrolls sideways (F10): its line is
-// fitted to its width, narrowed, or wrapped (tableLines).
+// fitted to its width, narrowed, or wrapped (tableLines). The list ends in TableEnd:
+// more rows on their way, or the end of the report.
 export function ReportTable(props: ReportTableProps) {
-    const { rows, runKey, layout, onToggleGroup, onNearEnd, isLoadingMore } = props
+    const { rows, runKey, layout, onToggleGroup, onNearEnd } = props
     const columns = useStable(props.columns)
     const format = useStable(props.format)
     const sorting = useHeadingSort(props.sort, props.onSortColumn)
@@ -459,7 +475,7 @@ export function ReportTable(props: ReportTableProps) {
                 format={format}
                 onToggleGroup={onToggleGroup}
                 onNearEnd={onNearEnd}
-                isLoadingMore={isLoadingMore}
+                hasMore={props.hasMore}
                 onRowWidth={props.onRowWidth}
                 sorting={sorting}
                 onTopRowIndex={props.onTopRowIndex}

@@ -219,3 +219,21 @@ export function mergePages(pages: readonly RunResult[]): RunResult {
         notices: uniqueNotices(pages.flatMap(page => page.notices)),
     }
 }
+
+/** The merged run as the list shows it, and the whole-report rows it holds back. */
+export type ShownResult = { result: RunResult; held: readonly ResultRow[] }
+
+const NO_HELD: readonly ResultRow[] = []
+
+// D8 (H1): every page ends with the whole-report rows (the Total, a layout's
+// computed rows). While a later page is left, the list must not end in them, or
+// the reader sees an end that is not the end; they are held back until the last
+// page lands. The column measure still reads them (useTableLayout), so the Total's
+// width is known from the first page. Not done in mergePages: runFirstPage joins
+// several server pages into one first page with it, and must keep the Total.
+export function holdWholeReportRows(result: RunResult): ShownResult {
+    if (!result.page?.next) return { result, held: NO_HELD }
+    const rows = withoutAppendedTotals(result.rows)
+    if (rows.length === result.rows.length) return { result, held: NO_HELD }
+    return { result: { ...result, rows: [...rows] }, held: result.rows.slice(rows.length) }
+}

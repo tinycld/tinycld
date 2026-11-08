@@ -1,6 +1,7 @@
 import { useWindowWidth } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useMemo, useRef, useState } from 'react'
 import { type ColumnMeasures, measureColumns, measureKey } from '../lib/column-measure'
+import { type VisibleRow, visibleRows } from '../lib/rows'
 import { type LineLayout, tableLines } from '../lib/table-lines'
 import type { ReportViewModel } from './useReportView'
 import { useStable } from './useStable'
@@ -25,6 +26,15 @@ export function shownRunKey(model: Pick<ReportViewModel, 'run'>): string {
     return JSON.stringify([model.run.shownRowsKey ?? '', model.run.result?.params ?? []])
 }
 
+// D1 measures the first rows, the whole-report rows included. While a later page
+// is left those rows are held back from the list (D8), so the measure reads them here.
+// They go first: measureColumns reads only its first MEASURE_ROW_LIMIT rows, and a
+// fold's first page can be longer than that.
+function measuredRows(model: TableLayoutModel): readonly VisibleRow[] {
+    const held = model.run.heldRows ?? []
+    return held.length === 0 ? model.rows : [...visibleRows(held), ...model.rows]
+}
+
 // The measure taken from the rows shown when the key first appears, kept while the
 // key stays (D1): a later page, a fold or a live re-run never moves a column. It is
 // computed in render and kept in a ref by its key, with no state and no effect: the
@@ -47,7 +57,7 @@ function useRunMeasures(model: TableLayoutModel): ColumnMeasures {
     if (kept.current === null || isNewKey || isFirstDetail) {
         const measures = measureColumns({
             columns: model.columns,
-            rows: model.rows,
+            rows: measuredRows(model),
             format: model.display,
             levels,
         })

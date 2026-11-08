@@ -124,7 +124,7 @@ Group, opening, subtotal and total rows show their whole label: it runs across t
 
 When the columns do not fit on one line, the report uses the first arrangement that fits the screen, widest first: **Desktop**, then **Tablet**, then **Phone**. With no arrangement that fits, each row wraps by itself: as many columns as fit go on each line, the label first, and the next lines start under the row's label. A column heading that is too long for its column uses two lines. When the rows wrap, the lines after a row's first line are shorter, so more rows fit on the screen.
 
-To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. A long report loads more rows as you scroll, also when it has groups.
+To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. A long report loads more rows as you scroll, also when it has groups. Until its last rows have loaded, the list ends with **Loading more rows…**; the Total shows with the last rows, and **End of report** marks the end.
 
 ## Run a report
 

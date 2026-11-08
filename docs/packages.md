@@ -1306,7 +1306,9 @@ away before the run ends.
 - A grouped result pages (`page.next`); running values continue on the next
   page. A client merges pages by row id and drops each earlier page's trailing
   total and computed rows (a Total inside a page's slice, one per currency
-  block, stays).
+  block, stays). Core's view also holds the newest page's trailing total and
+  computed rows back while it has `page.next` (`holdWholeReportRows`), so the
+  Total shows only with the last page; its column measure still reads them.
 - A `lookup` with `pick: "sum"` over amounts in more than one currency gives no
   value and the notice `mixedCurrency` naming its columns (and, in
   `conditions`, each condition or sort key that read such a sum, by its spec
