@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { CARET_ROOM, INDENT } from '../../components/report-table-layout'
 import {
     CELL_PADDING,
+    CH_WIDTH,
     cellTextStyle,
     deepestLabelStart,
+    defaultFlexGrow,
+    isFigureType,
     labelChrome,
     labelNeed,
     measureColumns,
@@ -13,6 +16,7 @@ import {
 } from '../column-measure'
 import { cellDisplay, DEFAULT_DISPLAY } from '../format'
 import type { VisibleRow } from '../rows'
+import type { ColumnFit } from '../spec'
 import { longestWordWidth, textWidth } from '../text-width'
 import type { CellValue, ResultColumn, ResultRow } from '../types'
 
@@ -188,5 +192,177 @@ describe('measureKey', () => {
             measureKey({ ...base, format: { ...DEFAULT_DISPLAY, divideBy1000: true } })
         ).not.toBe(measureKey(base))
         expect(measureKey({ ...base, levels: FLAT })).not.toBe(measureKey(base))
+    })
+})
+
+describe('column fit in the measure', () => {
+    // An untyped label, so the label column is text and takes settings.
+    const NOTE = item('detail', 'Office supplies for the front desk', {
+        number: 'JE-7',
+        memo: 'Reversal of JE-12 for October rent',
+        debit: 1200,
+    })
+    const rows = [GROUP, NOTE, TOTAL]
+    const plain = measureColumns({
+        columns: COLUMNS,
+        rows,
+        format: DEFAULT_DISPLAY,
+        levels: GROUPED,
+    })
+    const withFits = (fits: Record<string, ColumnFit>) =>
+        measureColumns({ columns: COLUMNS, rows, format: DEFAULT_DISPLAY, levels: GROUPED, fits })
+    const ch = (n: number) => Math.ceil(n * CH_WIDTH) + CELL_PADDING
+    const memo = plain.memo ?? { natural: 0, min: 0, grow: 0 }
+
+    it('changes nothing without settings', () => {
+        expect(withFits({})).toEqual(plain)
+    })
+
+    it('raises a text column to its minWidth, and its natural width with it', () => {
+        const wide = withFits({ memo: { minWidth: '60ch' } }).memo
+        expect(wide).toEqual({ natural: Math.max(memo.natural, ch(60)), min: ch(60), grow: 1 })
+    })
+
+    it('keeps the whole value with max-content and the longest word with min-content', () => {
+        const m = withFits({
+            memo: { minWidth: 'max-content' },
+            number: { minWidth: 'min-content' },
+        })
+        expect(m.memo?.min).toBe(memo.natural)
+        expect(m.number?.min).toBe(
+            Math.max(
+                longestWordWidth('No.', HEADING) + CELL_PADDING,
+                longestWordWidth('JE-7', CELL) + CELL_PADDING
+            )
+        )
+    })
+
+    it('caps a column at maxWidth, never under its min', () => {
+        const m = withFits({ memo: { maxWidth: '10ch' } }).memo
+        expect(m?.max).toBe(Math.max(memo.min, ch(10)))
+        expect(m?.natural).toBe(m?.max)
+    })
+
+    it('fixes a column at width', () => {
+        expect(withFits({ memo: { width: '100px' } }).memo).toEqual({
+            natural: 100 + CELL_PADDING,
+            min: 100 + CELL_PADDING,
+            max: 100 + CELL_PADDING,
+            grow: 1,
+        })
+    })
+
+    it('lets a wrapping column narrow to its longest word or eight letters, on two lines', () => {
+        const m = withFits({ memo: { whiteSpace: 'normal' } }).memo
+        const word = longestWordWidth('Reversal of JE-12 for October rent', CELL) + CELL_PADDING
+        expect(m?.lines).toBe(2)
+        expect(m?.min).toBe(
+            Math.max(
+                memo.min,
+                Math.min(memo.natural, Math.max(word, TEXT_MIN_WIDTH + CELL_PADDING))
+            )
+        )
+        expect(withFits({ memo: { whiteSpace: 'normal', lineClamp: 3 } }).memo?.lines).toBe(3)
+    })
+
+    it('keeps a % for the fit to resolve at the line width', () => {
+        expect(withFits({ memo: { width: '25%' } }).memo).toEqual({ ...memo, pct: { width: 0.25 } })
+        expect(withFits({ memo: { minWidth: '10%', maxWidth: '40%' } }).memo?.pct).toEqual({
+            min: 0.1,
+            max: 0.4,
+        })
+    })
+
+    it('takes flexGrow on a text column and on a figure', () => {
+        expect(withFits({ memo: { flexGrow: 3 } }).memo).toEqual({ ...memo, grow: 3 })
+        expect(withFits({ debit: { flexGrow: 2 } }).debit).toEqual({ ...plain.debit, grow: 2 })
+    })
+
+    it('ignores a setting that would cut a figure (the engine refuses it)', () => {
+        expect(withFits({ debit: { width: '2ch', whiteSpace: 'normal' } }).debit).toEqual(
+            plain.debit
+        )
+    })
+
+    it('pads a label length with the label chrome', () => {
+        expect(withFits({ account: { width: '20ch' } }).account?.min).toBe(
+            Math.ceil(20 * CH_WIDTH) + labelChrome(GROUPED)
+        )
+    })
+
+    it('never cuts a typed label, whatever its setting', () => {
+        const typed = [GROUP, DETAIL, TOTAL]
+        const base = measureColumns({
+            columns: COLUMNS,
+            rows: typed,
+            format: DEFAULT_DISPLAY,
+            levels: GROUPED,
+        })
+        const set = measureColumns({
+            columns: COLUMNS,
+            rows: typed,
+            format: DEFAULT_DISPLAY,
+            levels: GROUPED,
+            fits: { account: { width: '2ch' } },
+        })
+        expect(set.account).toEqual(base.account)
+    })
+
+    it('never cuts a label column of figures, even when its rows carry no label type', () => {
+        const columns: ResultColumn[] = [
+            { id: 'amount', label: 'Amt', type: 'money', currency: 'USD' },
+            { id: 'memo', label: 'Memo', type: 'text' },
+        ]
+        const row = item('detail', '$12,345.67 paid in full on account', { memo: 'x' })
+        const m = measureColumns({ columns, rows: [row], format: DEFAULT_DISPLAY, levels: FLAT })
+        expect(m.amount?.min).toBe(labelNeed(row, DEFAULT_DISPLAY))
+        expect(isFigureType('money')).toBe(true)
+        expect(isFigureType('text')).toBe(false)
+    })
+
+    it('gives the label column and text a default share of 1, other figures 0', () => {
+        expect(defaultFlexGrow({ isLabel: true, isFigure: true })).toBe(1)
+        expect(defaultFlexGrow({ isLabel: true, isFigure: false })).toBe(1)
+        expect(defaultFlexGrow({ isLabel: false, isFigure: false })).toBe(1)
+        expect(defaultFlexGrow({ isLabel: false, isFigure: true })).toBe(0)
+        const columns: ResultColumn[] = [
+            { id: 'amount', label: 'Amt', type: 'money', currency: 'USD' },
+            { id: 'debit', label: 'Debit', type: 'money', currency: 'USD' },
+        ]
+        const row = item('detail', '$12.00', { debit: 1200 })
+        const m = measureColumns({ columns, rows: [row], format: DEFAULT_DISPLAY, levels: FLAT })
+        expect(m.amount?.grow).toBe(defaultFlexGrow({ isLabel: true, isFigure: true }))
+        expect(m.debit?.grow).toBe(defaultFlexGrow({ isLabel: false, isFigure: true }))
+    })
+
+    it('reads a pivot cell column’s fit from its spec column', () => {
+        const columns: ResultColumn[] = [
+            { id: 'account', label: 'Account', type: 'text' },
+            { id: 'note_q1', label: 'Q1', type: 'text', pivot: { cell: 'note', key: 'q1' } },
+            {
+                id: 'amount_q1',
+                label: 'Q1',
+                type: 'money',
+                currency: 'USD',
+                pivot: { cell: 'amount', key: 'q1' },
+            },
+        ]
+        const row = item('detail', 'Rent', { note_q1: 'Paid late', amount_q1: 1200 })
+        const run = (fits?: Record<string, ColumnFit>) =>
+            measureColumns({ columns, rows: [row], format: DEFAULT_DISPLAY, levels: FLAT, fits })
+        const m = run({ amount: { flexGrow: 3 }, note: { minWidth: '40ch' } })
+        expect(m.amount_q1?.grow).toBe(3)
+        expect(m.note_q1?.min).toBe(ch(40))
+        expect(run({ amount_q1: { flexGrow: 3 } }).amount_q1?.grow).toBe(0)
+    })
+})
+
+describe('measureKey with fits', () => {
+    it('changes with a column fit', () => {
+        const base = { runKey: 'r1', format: DEFAULT_DISPLAY, columns: COLUMNS, levels: GROUPED }
+        expect(measureKey({ ...base, fits: { memo: { minWidth: '12ch' } } })).not.toBe(
+            measureKey(base)
+        )
+        expect(measureKey({ ...base, fits: {} })).toBe(measureKey(base))
     })
 })

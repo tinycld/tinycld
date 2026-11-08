@@ -130,7 +130,7 @@ describe('forgetSavedRuns', () => {
 })
 
 describe('rowsKeyOf', () => {
-    const spec: ReportSpec = { version: 1, source: 'a.b', columns: [] }
+    const spec: ReportSpec = { version: 4, source: 'a.b', columns: [] }
     const options = { today: '2026-11-06' }
 
     it('keys a saved report on its id, whatever its params or options', () => {

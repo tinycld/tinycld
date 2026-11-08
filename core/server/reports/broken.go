@@ -173,11 +173,16 @@ func checkSpec(app core.App, raw []byte) *Broken {
 	if err == nil {
 		return nil
 	}
+	return brokenFor(err)
+}
+
+// brokenFor is the mark for err, a fault of Load or Validate.
+func brokenFor(err error) *Broken {
 	var specErr *SpecError
 	if !errors.As(err, &specErr) {
-		// An engine fault (a missing upgrade step), not the spec's: the run
+		// A fault of the database or the engine, not the spec's: the run
 		// would answer 500 as well.
-		return &Broken{Status: 500, Problems: map[string]Problem{"version": {Code: "no_upgrade", Message: err.Error()}}}
+		return &Broken{Status: 500, Problems: map[string]Problem{"engine": {Code: "engine_fault", Message: cutMessage(err.Error())}}}
 	}
 	keys := slices.Sorted(maps.Keys(specErr.Problems))
 	status, _ := specStatus(specErr)

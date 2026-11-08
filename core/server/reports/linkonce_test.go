@@ -16,7 +16,7 @@ func TestALinkLookupComputesTheValueItMatchesOnce(t *testing.T) {
 	seen := observeReads(t)
 	ownID := `{"op":"lookup","source":"zoo.animals","pick":"max","value":{"path":[{"field":"id"}]},
 		"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"outer":[{"field":"name"}]}]}}`
-	res := z.run(t, "ann", `{"version":3,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"fed","formula":{"op":"lookup","source":"zoo.feedings","pick":"count","value":{"path":[{"field":"id"}]},
 			"where":{"op":"eq","args":[{"path":[{"link":"animal"}]},`+ownID+`]}}}],
 		"sort":[{"col":"name"}]}`, Options{}, nil)

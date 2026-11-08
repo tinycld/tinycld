@@ -29,7 +29,7 @@ func TestARunPrintsItsSourcesHeadingAndWatchesWhatItReads(t *testing.T) {
 	if !slices.Contains(res.Topics, "collection/zoo_sites") {
 		t.Fatalf("topics = %v", res.Topics)
 	}
-	other := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[{"id":"n","path":[{"field":"name"}]}]}`, Options{}, nil)
+	other := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[{"id":"n","path":[{"field":"name"}]}]}`, Options{}, nil)
 	if other.Heading != "" || slices.Contains(other.Topics, "collection/zoo_sites") {
 		t.Fatalf("animals: heading %q, topics %v", other.Heading, other.Topics)
 	}
@@ -166,7 +166,7 @@ func TestAHeadingShowsOnlyWhatTheReaderMayView(t *testing.T) {
 
 // A feedings report on this fiscal year with each feeding's fiscal year. f9
 // (zed, 2026-08-20) is a feeding both ann and bob may list.
-const fiscalFeedings = `{"version":2,"source":"zoo.feedings",
+const fiscalFeedings = `{"version":4,"source":"zoo.feedings",
 	"params":[{"id":"period","type":"dateRange","default":{"preset":"thisFiscalYear"}}],
 	"columns":[{"id":"note","path":[{"field":"note"}]},
 		{"id":"fed","path":[{"field":"fed"}]},

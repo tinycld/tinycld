@@ -14,16 +14,16 @@ func cjk(n int) string { return strings.Repeat("帳", n) }
 func TestALabelLimitCountsCharactersNotBytes(t *testing.T) {
 	app := withZooRegistry(t)
 	column := func(label string) string {
-		return `{"version":3,"source":"zoo.feedings","columns":[{"id":"note","label":"` + label + `","path":[{"field":"note"}]}]}`
+		return `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","label":"` + label + `","path":[{"field":"note"}]}]}`
 	}
 	opening := func(label string) string {
-		return `{"version":3,"source":"zoo.feedings","columns":[
+		return `{"version":4,"source":"zoo.feedings","columns":[
 			{"id":"animal","path":[{"link":"animal"}]},
 			{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 			"groups":[{"id":"g","col":"animal","opening":{"label":"` + label + `"}}]}`
 	}
 	layout := func(title string) string {
-		return `{"version":3,"source":"zoo.feedings","columns":[
+		return `{"version":4,"source":"zoo.feedings","columns":[
 			{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 			{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 			"groups":[{"id":"g","col":"species"}],

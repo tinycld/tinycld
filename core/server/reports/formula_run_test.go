@@ -181,12 +181,12 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 			for id, v := range c.ParamValues {
 				given[id] = string(v)
 			}
-			raw := fmt.Sprintf(`{"version":1,%s"source":%q,"columns":[%s]}`, params, source, strings.Join(columns, ","))
+			raw := fmt.Sprintf(`{"version":4,%s"source":%q,"columns":[%s]}`, params, source, strings.Join(columns, ","))
 
 			if c.RecordTypes != nil {
 				recordRuns++
 				columns = append(columns, `{"id":"zz_rec","path":[{"link":"rec"}]}`)
-				raw = fmt.Sprintf(`{"version":2,%s"source":%q,"columns":[%s],"groups":[{"id":"g","col":"zz_rec"}]}`, params, source, strings.Join(columns, ","))
+				raw = fmt.Sprintf(`{"version":4,%s"source":%q,"columns":[%s],"groups":[{"id":"g","col":"zz_rec"}]}`, params, source, strings.Join(columns, ","))
 				res := z.run(t, "ann", raw, Options{Expand: [][]any{{"row0"}}}, given)
 				requireRows(t, res, "kind", "group", "detail", "total")
 				for _, row := range res.Rows[:2] {

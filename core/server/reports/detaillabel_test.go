@@ -7,7 +7,7 @@ import (
 
 func TestADetailLabelIsAFormula(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"sort":[{"col":"note"}]`
 	plain := z.run(t, "ann", spec+`}`, Options{}, nil)
 	requireOrderedRows(t, spec+`}`, plain, "label", "f1", "f2", "f3", "f4", "Total")
@@ -42,7 +42,7 @@ func TestADetailLabelThatIsAColumnNamesIt(t *testing.T) {
 
 func TestADetailNeedsItsLabel(t *testing.T) {
 	app := withZooRegistry(t)
-	spec, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"detail":{}}`))
+	spec, _, err := Load([]byte(`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"detail":{}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func toText(v any) string {
 	return labelText(v)
 }
 
-const feedingsByNote = `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},
+const feedingsByNote = `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},
 	{"id":"animal","path":[{"link":"animal"}]}],"sort":[{"col":"note"}],"detail":{"label":LABEL}}`
 
 func withDetailLabel(label string) string { return strings.Replace(feedingsByNote, "LABEL", label, 1) }

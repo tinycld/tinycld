@@ -190,7 +190,7 @@ const (
 			"value":{"path":[{"link":"account"},{"field":"full_name"}]},"pick":"min"},
 		{"op":"gt","args":[COUNT,{"value":2}]},{"value":"-Split-"},
 		{"value":null}]}`
-	glSpec = `{"version":3,"source":"zoo.ledger_lines",
+	glSpec = `{"version":4,"source":"zoo.ledger_lines",
 		"params":[
 			{"id":"period","type":"dateRange","label":"Period","default":{"preset":"thisMonthToDate"}},
 			{"id":"rows","type":"choice","label":"Rows","default":"active","options":[{"value":"active","label":"With activity"},{"value":"all","label":"All"}]},
@@ -305,12 +305,12 @@ const glJuly = `{"from":"2026-07-01","to":"2026-07-31"}`
 func TestABalanceShapedSpecLoadsAndValidates(t *testing.T) {
 	z := newZoo(t)
 	withBalanceZoo(t, z)
-	spec, info, err := Load([]byte(balanceSpec()))
+	spec, _, err := Load([]byte(balanceSpec()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Version != CurrentVersion || info.UpgradedFrom != 0 {
-		t.Fatalf("version %d, upgraded from %d", spec.Version, info.UpgradedFrom)
+	if spec.Version != CurrentVersion {
+		t.Fatalf("version %d", spec.Version)
 	}
 	if err := Validate(z.app, spec); err != nil {
 		t.Fatalf("Validate: %v", err)

@@ -12,7 +12,7 @@ import (
 // (it reads a bare path).
 func TestARollupShowsOnGroupSubtotalAndTotalRows(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":3,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -32,7 +32,7 @@ func TestARollupShowsOnGroupSubtotalAndTotalRows(t *testing.T) {
 // so it is blank there as a whole (R6).
 func TestARollupThatReadsARecordIsBlankOnTheTotal(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":3,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum",
@@ -46,7 +46,7 @@ func TestARollupThatReadsARecordIsBlankOnTheTotal(t *testing.T) {
 
 func TestARollupReadsLookupsAndParams(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":3,"source":"zoo.feedings","params":[{"id":"extra","type":"number"}],"columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","params":[{"id":"extra","type":"number"}],"columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum",
@@ -65,7 +65,7 @@ func TestARollupReadsLookupsAndParams(t *testing.T) {
 // total 3500, Zed's 1000, all 4500.
 func TestARollupAddsALookedUpAmountOfItsColumnsField(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":3,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum",
@@ -83,18 +83,18 @@ func TestARollupAddsALookedUpAmountOfItsColumnsField(t *testing.T) {
 
 func TestARollupIsRefusedWithRowsTotals(t *testing.T) {
 	app := withZooRegistry(t)
-	err := Validate(app, loadSpec(t, `{"version":3,"source":"zoo.feedings","columns":[{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum",
+	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum",
 		"total":"rows","rollup":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}}]}`))
 	requireSpecError(t, err, 400, "columns.0.rollup", `a rollup replaces the column's totals: it does not go with total "rows"`)
 }
 
 func TestARollupIsRefusedOnAChildRowOrPivotCellColumn(t *testing.T) {
 	app := withZooRegistry(t)
-	err := Validate(app, loadSpec(t, `{"version":3,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
+	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"notes","path":[{"link":"feedings","mode":"nest"},{"field":"note"}],"rollup":{"value":null}}]}`))
 	requireSpecError(t, err, 400, "columns.1.rollup", "a child row column has no totals to replace")
 
-	err = Validate(app, loadSpec(t, `{"version":3,"source":"zoo.feedings","columns":[{"id":"month","path":[{"field":"fed"}]},
+	err = Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"month","path":[{"field":"fed"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum","rollup":{"op":"sum","args":[{"path":[{"field":"grams"}]}]}}],
 		"groups":[{"id":"m","col":"month","bucket":"month"}],"pivot":{"path":[{"link":"animal"}],"cell":"grams"}}`))
 	requireSpecError(t, err, 400, "columns.1.rollup", "a pivot's cell column is totalled by its pivot columns")
@@ -104,7 +104,7 @@ func TestARollupIsRefusedOnAChildRowOrPivotCellColumn(t *testing.T) {
 // there would replace the key.
 func TestARollupIsRefusedOnAColumnAGroupGroupsBy(t *testing.T) {
 	app := withZooRegistry(t)
-	err := Validate(app, loadSpec(t, `{"version":3,"source":"zoo.feedings","columns":[
+	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
 		{"id":"weight","path":[{"field":"grams"}],"rollup":{"op":"sum","args":[{"path":[{"field":"grams"}]}]}}],
@@ -116,7 +116,7 @@ func TestARollupIsRefusedOnAColumnAGroupGroupsBy(t *testing.T) {
 // column, and no other problem.
 func TestTwoGroupsByOneRollupColumnAreRefusedOnce(t *testing.T) {
 	app := withZooRegistry(t)
-	err := Validate(app, loadSpec(t, `{"version":3,"source":"zoo.feedings","columns":[
+	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"weight","path":[{"field":"grams"}],"rollup":{"op":"sum","args":[{"path":[{"field":"grams"}]}]}}],
 		"groups":[{"id":"g","col":"weight"},{"id":"h","col":"weight"}]}`))
@@ -133,7 +133,7 @@ func TestTwoGroupsByOneRollupColumnAreRefusedOnce(t *testing.T) {
 func TestARollupMustHaveItsColumnsTypeAndCurrency(t *testing.T) {
 	app := withZooRegistry(t)
 	cost := func(rollup string) string {
-		return `{"version":3,"source":"zoo.feedings","columns":[{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum","rollup":` + rollup + `}]}`
+		return `{"version":4,"source":"zoo.feedings","columns":[{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum","rollup":` + rollup + `}]}`
 	}
 	err := Validate(app, loadSpec(t, cost(`{"value":"x"}`)))
 	requireSpecError(t, err, 400, "columns.0.rollup", "a rollup shows in its column: it must be money")
@@ -155,7 +155,7 @@ func TestARollupOverAMixedSumIsBlankWithANotice(t *testing.T) {
 	if err := z.app.Save(f3); err != nil {
 		t.Fatal(err)
 	}
-	const spec = `{"version":3,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum",
@@ -182,7 +182,7 @@ func TestARollupOverAMixedSumIsBlankWithANotice(t *testing.T) {
 // order (Leo, Zed). Leo's rollup is 1300, Zed's 400.
 func TestASortOnARollupOrdersTheGroups(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":3,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"grams","path":[{"field":"grams"}],
 			"rollup":{"op":"sum","args":[{"path":[{"field":"grams"}]}]}}],

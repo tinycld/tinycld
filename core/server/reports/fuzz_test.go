@@ -163,7 +163,7 @@ func (z *zoo) engineExpanded(t *testing.T, src fuzzSource, user, filter string) 
 	for i, l := range src.links {
 		cols += fmt.Sprintf(`,{"id":"linked%d","path":[{"link":%q},{"field":%q}]}`, i, l.link, l.field)
 	}
-	spec := fmt.Sprintf(`{"version":1,"source":%q,"columns":[%s]`, src.key, cols)
+	spec := fmt.Sprintf(`{"version":4,"source":%q,"columns":[%s]`, src.key, cols)
 	if filter != "" {
 		spec += `,"filter":` + filter
 	}
@@ -209,7 +209,7 @@ func FuzzRuleParity(f *testing.F) {
 // lookupParity: a lookup reads exactly what the list API lists for the reader.
 func (z *zoo) lookupParity(t *testing.T, mux http.Handler, user string) {
 	t.Helper()
-	res := z.run(t, user, `{"version":2,"source":"zoo.feedings","columns":[{"id":"id","path":[{"field":"id"}]},
+	res := z.run(t, user, `{"version":4,"source":"zoo.feedings","columns":[{"id":"id","path":[{"field":"id"}]},
 		{"id":"lk","formula":{"op":"lookup","source":"zoo.sites","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"North"}]},"value":{"path":[{"field":"id"}]}}}]}`,
 		Options{Limit: 1000}, nil)
 	// pick defaults to min: the smallest id among the sites the reader lists.
@@ -235,7 +235,7 @@ func (z *zoo) lookupParity(t *testing.T, mux http.Handler, user string) {
 // fillParity: a fill adds exactly the animals the list API lists for the reader.
 func (z *zoo) fillParity(t *testing.T, mux http.Handler, user string) {
 	t.Helper()
-	res := z.run(t, user, `{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
+	res := z.run(t, user, `{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],"groups":[{"id":"g","col":"a","fill":{}}]}`, Options{}, nil)
 	got := map[string]bool{}
 	for _, row := range res.Rows {
@@ -290,7 +290,7 @@ func (z *zoo) listItems(t *testing.T, mux http.Handler, collection, user string)
 func (z *zoo) sumLookupParity(t *testing.T, mux http.Handler, user string) {
 	t.Helper()
 	const sameAnimal = `{"op":"eq","args":[{"path":[{"link":"animal"}]},{"outer":[{"link":"animal"}]}]}`
-	res := z.run(t, user, `{"version":3,"source":"zoo.feedings","columns":[
+	res := z.run(t, user, `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"total","formula":{"op":"lookup","source":"zoo.feedings","where":`+sameAnimal+`,"value":{"path":[{"field":"grams"}]},"pick":"sum"}},
 		{"id":"n","formula":{"op":"lookup","source":"zoo.feedings","where":`+sameAnimal+`,"value":{"path":[{"field":"id"}]},"pick":"count"}}]}`,
@@ -322,7 +322,7 @@ func pagedAnimals(levels int) string {
 		species = `{"id":"species","path":[{"link":"animal"},{"field":"species"}]},`
 		bySpecies = `{"id":"s","col":"species","open":true,"subtotals":true},`
 	}
-	return `{"version":3,"source":"zoo.feedings","columns":[` + species + `
+	return `{"version":4,"source":"zoo.feedings","columns":[` + species + `
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},

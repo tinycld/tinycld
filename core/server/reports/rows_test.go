@@ -79,7 +79,7 @@ func (z *zoo) mustW(t *testing.T, user, raw string, params map[string]string) []
 
 func TestWHoldsOnlyRowsTheReaderMayList(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}]}`
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}]}`
 	if got := column(z.mustW(t, "ann", spec, nil), "note"); !reflect.DeepEqual(got, []any{"f1", "f2", "f3", "f4"}) {
 		t.Fatalf("ann's feedings = %v", got)
 	}
@@ -92,7 +92,7 @@ func TestAHiddenLinkedRowLeavesEmptyCellsAndKeepsTheRow(t *testing.T) {
 	z := newZoo(t)
 	// Bob keeps zed, owned by... bob; zed's site is south. The vault is
 	// superuser-only, so its link is always hidden.
-	rows := z.mustW(t, "ann", `{"version":1,"source":"zoo.animals","columns":[
+	rows := z.mustW(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"owner","path":[{"link":"owner"},{"field":"name"}]},
 		{"id":"site","path":[{"link":"site"},{"field":"name"}]}]}`, nil)
@@ -114,7 +114,7 @@ func TestAHiddenLinkedRowLeavesEmptyCellsAndKeepsTheRow(t *testing.T) {
 // show "Gold".
 func TestAToOneLinkToASuperuserOnlyCollectionGivesEmptyCellsAndKeepsTheParent(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.animals","columns":[
+	spec := `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"gold","path":[{"link":"vault"},{"field":"name"}]}]}`
 	rows := z.mustW(t, "ann", spec, nil)
@@ -132,7 +132,7 @@ func TestAToOneLinkToASuperuserOnlyCollectionGivesEmptyCellsAndKeepsTheParent(t 
 
 func TestRequiredLinkDropsRowsWithoutIt(t *testing.T) {
 	z := newZoo(t)
-	rows := z.mustW(t, "ann", `{"version":1,"source":"zoo.animals","columns":[
+	rows := z.mustW(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"site","path":[{"link":"site","with":"required"},{"field":"name"}]}]}`, nil)
 	if got := column(rows, "name"); !reflect.DeepEqual(got, []any{"Leo", "Zed"}) {
@@ -142,7 +142,7 @@ func TestRequiredLinkDropsRowsWithoutIt(t *testing.T) {
 
 func TestAToManyTotalCountsOnlyVisibleLinkedRows(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.animals","columns":[
+	spec := `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"fed","path":[{"link":"feedings","mode":"aggregate"},{"field":"id"}],"aggregate":"count"},
 		{"id":"cost","path":[{"link":"feedings","mode":"aggregate"},{"field":"grams"}],"aggregate":"sum"},
@@ -164,7 +164,7 @@ func TestAToManyTotalCountsOnlyVisibleLinkedRows(t *testing.T) {
 
 func TestFilterExistsAndNotExists(t *testing.T) {
 	z := newZoo(t)
-	base := `{"version":1,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]}],"filter":%s}`
+	base := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]}],"filter":%s}`
 	cases := map[string]struct {
 		filter string
 		want   []any
@@ -193,7 +193,7 @@ func TestFilterExistsAndNotExists(t *testing.T) {
 func TestExistsLinkRowsTheReaderCannotSeeDoNotMatch(t *testing.T) {
 	z := newZoo(t)
 	// Mo lives in the north, but ann cannot list mo.
-	rows := z.mustW(t, "ann", `{"version":1,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]}],
+	rows := z.mustW(t, "ann", `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]}],
 		"filter":{"op":"exists","link":[{"link":"animals"}],"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Mo"}]}}}`, nil)
 	if len(rows) != 0 {
 		t.Fatalf("rows = %v", rows)
@@ -202,7 +202,7 @@ func TestExistsLinkRowsTheReaderCannotSeeDoNotMatch(t *testing.T) {
 
 func TestAFilterOnAnUnsetParamMatchesEveryRow(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.feedings",
+	spec := `{"version":4,"source":"zoo.feedings",
 		"params":[{"id":"species","type":"text"},{"id":"period","type":"dateRange"}],
 		"columns":[{"id":"note","path":[{"field":"note"}]}],
 		"filter":{"op":"and","args":[
@@ -222,7 +222,7 @@ func TestAFilterOnAnUnsetParamMatchesEveryRow(t *testing.T) {
 // cleared chip filters nothing, however the filter wraps it.
 func TestAnUnsetParamUnderNotOrNotExistsMatchesEveryRow(t *testing.T) {
 	z := newZoo(t)
-	feedings := `{"version":1,"source":"zoo.feedings","params":[{"id":"t","type":"text"}],
+	feedings := `{"version":4,"source":"zoo.feedings","params":[{"id":"t","type":"text"}],
 		"columns":[{"id":"note","path":[{"field":"note"}]}],"filter":%s}`
 	every := []any{"f1", "f2", "f3", "f4"}
 	cases := map[string]struct {
@@ -255,7 +255,7 @@ func TestAnUnsetParamUnderNotOrNotExistsMatchesEveryRow(t *testing.T) {
 	}
 	// Kit has no feeding ann may see: with the param set, only kit has no
 	// such feeding; unset, the where filters nothing and every animal stays.
-	animals := `{"version":1,"source":"zoo.animals","params":[{"id":"t","type":"text"}],
+	animals := `{"version":4,"source":"zoo.animals","params":[{"id":"t","type":"text"}],
 		"columns":[{"id":"name","path":[{"field":"name"}]}],
 		"filter":{"op":"notExists","link":[{"link":"feedings"}],"where":{"op":"eq","args":[{"path":[{"field":"note"}]},{"param":"t"}]}}}`
 	if got := column(z.mustW(t, "ann", animals, nil), "name"); !reflect.DeepEqual(got, []any{"Kit", "Leo", "Zed"}) {
@@ -271,7 +271,7 @@ func TestAnUnsetParamUnderNotOrNotExistsMatchesEveryRow(t *testing.T) {
 func TestValidateChecksAConditionOnAnUnsetParam(t *testing.T) {
 	app := withZooRegistry(t)
 	spec := func(filter string) string {
-		return `{"version":1,"source":"zoo.feedings","params":[{"id":"n","type":"number"}],
+		return `{"version":4,"source":"zoo.feedings","params":[{"id":"n","type":"number"}],
 			"columns":[{"id":"note","path":[{"field":"note"}]}],"filter":` + filter + `}`
 	}
 	err := Validate(app, loadSpec(t, spec(`{"op":"gt","args":[{"path":[{"field":"note"}]},{"param":"n"}]}`)))
@@ -287,7 +287,7 @@ func TestValidateChecksAConditionOnAnUnsetParam(t *testing.T) {
 func TestValidateRefusesADateRangeOutsideItsBetweenSlot(t *testing.T) {
 	app := withZooRegistry(t)
 	spec := func(filter string) string {
-		return `{"version":1,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
+		return `{"version":4,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
 			"columns":[{"id":"note","path":[{"field":"note"}]}],"filter":` + filter + `}`
 	}
 	fed := `{"path":[{"field":"fed"}]}`
@@ -304,7 +304,7 @@ func TestValidateRefusesADateRangeOutsideItsBetweenSlot(t *testing.T) {
 // no posted value compiles.
 func TestValidateCompilesAParamWithItsDefault(t *testing.T) {
 	app := withZooRegistry(t)
-	p, err := bind(app, loadSpec(t, `{"version":1,"source":"zoo.feedings",
+	p, err := bind(app, loadSpec(t, `{"version":4,"source":"zoo.feedings",
 		"params":[{"id":"n","type":"number","default":5},{"id":"t","type":"text"}],
 		"columns":[{"id":"note","path":[{"field":"note"}]}]}`))
 	if err != nil {
@@ -321,7 +321,7 @@ func TestValidateCompilesAParamWithItsDefault(t *testing.T) {
 
 func TestAFilterReadsAFormulaColumnAndAToManyTotal(t *testing.T) {
 	z := newZoo(t)
-	rows := z.mustW(t, "ann", `{"version":1,"source":"zoo.animals","columns":[
+	rows := z.mustW(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"fed","path":[{"link":"feedings","mode":"aggregate"},{"field":"id"}],"aggregate":"count"},
 		{"id":"heavy","formula":{"op":"gt","args":[{"path":[{"field":"weight"}]},{"value":100}]}}],
@@ -337,23 +337,23 @@ func TestRowCompileErrors(t *testing.T) {
 		spec, at, want string
 		status         int
 	}{
-		"to-many value in a filter": {`{"version":1,"source":"zoo.animals","columns":[{"id":"n","path":[{"field":"name"}]}],
+		"to-many value in a filter": {`{"version":4,"source":"zoo.animals","columns":[{"id":"n","path":[{"field":"name"}]}],
 			"filter":{"op":"gt","args":[{"path":[{"link":"feedings"},{"field":"grams"}]},{"value":1}]}}`,
 			"filter.args.0.path.0", "reads a to-many link only through exists", 400},
-		"total in a filter": {`{"version":1,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
+		"total in a filter": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
 			"filter":{"op":"gt","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":1}]}}`,
 			"filter.args.0", "use it in a column, not in a filter", 400},
-		"filter not a condition": {`{"version":1,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
+		"filter not a condition": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
 			"filter":{"path":[{"field":"cost"}]}}`, "filter", "the filter is a condition", 400},
-		"unknown param": {`{"version":1,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
+		"unknown param": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
 			"filter":{"op":"eq","args":[{"path":[{"field":"note"}]},{"param":"who"}]}}`, "filter.args.1", "no param", 422},
-		"formula reads itself": {`{"version":1,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},
+		"formula reads itself": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},
 			{"id":"a","formula":{"op":"add","args":[{"col":"b"},{"value":1}]}},{"id":"b","formula":{"op":"add","args":[{"col":"a"},{"value":1}]}}],
 			"filter":{"op":"gt","args":[{"col":"a"},{"value":1}]}}`, "columns.2.formula.args.0", "reads itself", 400},
-		"where reads a column": {`{"version":1,"source":"zoo.sites","columns":[{"id":"n","path":[{"field":"name"}]}],
+		"where reads a column": {`{"version":4,"source":"zoo.sites","columns":[{"id":"n","path":[{"field":"name"}]}],
 			"filter":{"op":"exists","link":[{"link":"animals"}],"where":{"op":"eq","args":[{"col":"n"},{"value":"x"}]}}}`,
 			"filter.where.args.0", "not report columns", 400},
-		"unknown exists link": {`{"version":1,"source":"zoo.sites","columns":[{"id":"n","path":[{"field":"name"}]}],
+		"unknown exists link": {`{"version":4,"source":"zoo.sites","columns":[{"id":"n","path":[{"field":"name"}]}],
 			"filter":{"op":"exists","link":[{"link":"pens"}]}}`, "filter.link.0.link", "no link", 422},
 	}
 	for name, c := range cases {
@@ -366,7 +366,7 @@ func TestRowCompileErrors(t *testing.T) {
 
 func TestAMultipleChoiceParamInAFilter(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.feedings",
+	spec := `{"version":4,"source":"zoo.feedings",
 		"params":[{"id":"species","type":"choice","multiple":true,"options":[{"value":"lion","label":"Lion"},{"value":"zebra","label":"Zebra"}]}],
 		"columns":[{"id":"note","path":[{"field":"note"}]}],
 		"filter":{"op":"in","args":[{"path":[{"link":"animal"},{"field":"species"}]},{"param":"species"}]}}`
@@ -393,7 +393,7 @@ func TestAMultipleChoiceParamInAFilter(t *testing.T) {
 // A formula column is a group column: its key is computed in w.
 func TestAFormulaColumnIsAGroupKey(t *testing.T) {
 	z := newZoo(t)
-	spec, _, err := Load([]byte(`{"version":1,"source":"zoo.animals","columns":[
+	spec, _, err := Load([]byte(`{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"heavy","formula":{"op":"gt","args":[{"path":[{"field":"weight"}]},{"value":100}]}}],
 		"groups":[{"id":"g","col":"heavy"}]}`))
@@ -429,7 +429,7 @@ func TestAFormulaColumnIsAGroupKey(t *testing.T) {
 
 func TestAFormulaOperandAcrossAToManyLinkIsRefused(t *testing.T) {
 	z := newZoo(t)
-	_, err := z.wRows(t, "ann", `{"version":1,"source":"zoo.animals","columns":[
+	_, err := z.wRows(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"n","path":[{"field":"name"}]},
 		{"id":"x","formula":{"op":"gt","args":[{"path":[{"link":"feedings"},{"field":"grams"}]},{"value":1}]}}],
 		"filter":{"col":"x"}}`, nil)
@@ -438,7 +438,7 @@ func TestAFormulaOperandAcrossAToManyLinkIsRefused(t *testing.T) {
 
 func TestAnUnknownReferenceInAFilterIsRefused(t *testing.T) {
 	z := newZoo(t)
-	base := `{"version":1,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
+	base := `{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
 		"filter":{"op":"eq","args":[{"path":%s},{"value":"x"}]}}`
 	cases := map[string]struct{ path, at, want string }{
 		"field": {`[{"field":"nope"}]`, "filter.args.0.path.0.field", "no field"},
@@ -454,7 +454,7 @@ func TestAnUnknownReferenceInAFilterIsRefused(t *testing.T) {
 
 func TestAFilterPathFollowsFourLinksAndNotFive(t *testing.T) {
 	z := newZoo(t)
-	base := `{"version":1,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
+	base := `{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],
 		"filter":{"op":"isEmpty","args":[{"path":[%s]}]}}`
 	four := `{"link":"animal"},{"link":"vault"},{"link":"animal"},{"link":"owner"},{"field":"name"}`
 	// The vault is hidden from ann, so the end of the chain is empty on every row.
@@ -488,7 +488,7 @@ func TestExistsWithABlankWhereFieldIsFalseNotNull(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			rows := z.mustW(t, "ann", `{"version":1,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]}],"filter":`+c.filter+`}`, nil)
+			rows := z.mustW(t, "ann", `{"version":4,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]}],"filter":`+c.filter+`}`, nil)
 			if got := column(rows, "name"); !reflect.DeepEqual(got, c.want) {
 				t.Fatalf("animals = %v, want %v", got, c.want)
 			}
@@ -498,7 +498,7 @@ func TestExistsWithABlankWhereFieldIsFalseNotNull(t *testing.T) {
 
 func TestWithDoesNotApplyToAnExistsLink(t *testing.T) {
 	z := newZoo(t)
-	base := `{"version":1,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]}],"filter":%s}`
+	base := `{"version":4,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]}],"filter":%s}`
 	cases := map[string]string{
 		"notExists": `{"op":"notExists","link":[{"link":"site","with":"required"}]}`,
 		"or":        `{"op":"or","args":[{"op":"exists","link":[{"link":"site","with":"required"}]},{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Kit"}]}]}`,

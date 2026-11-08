@@ -112,8 +112,6 @@ export interface Notice {
     conditions?: string[]
     count?: number
     leftOut?: number
-    /** The spec version an `upgraded` notice came from. */
-    fromVersion?: number
     aliases?: { source: string; from: string; to: string }[]
 }
 

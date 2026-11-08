@@ -3,12 +3,14 @@ import {
     brokenProblems,
     CURRENT_SPEC_VERSION,
     canCopyReport,
+    displayFitOf,
     parseBroken,
+    parseFitLength,
     parseSpec,
 } from '../spec'
 
 const FEEDINGS = {
-    version: 1,
+    version: 4,
     source: 'zoo.feedings',
     params: [{ id: 'period', type: 'dateRange', default: { preset: 'thisMonth' } }],
     columns: [
@@ -27,6 +29,22 @@ const FEEDINGS = {
     sort: [{ col: 'note', dir: 'desc' }],
     groups: [{ id: 'g', col: 'species', subtotals: true }],
 }
+
+describe('displayFitOf', () => {
+    it('gives the one-line width and the column fits, and nothing else', () => {
+        const display = {
+            oneLine: { minWidth: '1040px' },
+            columns: { note: { minWidth: '12ch' } },
+            layouts: [{ width: 'mobile' as const, tracks: 1, cells: [{ col: 'note', line: 1 }] }],
+        }
+        expect(displayFitOf({ display })).toEqual({
+            oneLine: { minWidth: '1040px' },
+            columns: { note: { minWidth: '12ch' } },
+        })
+        expect(displayFitOf({ display: { layouts: display.layouts } })).toEqual({})
+        expect(displayFitOf(null)).toEqual({})
+    })
+})
 
 describe('parseSpec', () => {
     it('reads a stored spec as it is', () => {
@@ -57,7 +75,7 @@ describe('parseSpec', () => {
     it('refuses what is not a spec', () => {
         expect(parseSpec(null)).toBeNull()
         expect(parseSpec('a spec')).toBeNull()
-        expect(parseSpec({ version: 1, source: 'zoo.feedings' })).toBeNull()
+        expect(parseSpec({ version: 4, source: 'zoo.feedings' })).toBeNull()
         expect(parseSpec({ ...FEEDINGS, sql: 'DELETE FROM zoo_feedings' })).toBeNull()
         expect(
             parseSpec({
@@ -67,19 +85,17 @@ describe('parseSpec', () => {
         ).toBeNull()
     })
 
-    it('reads a version 1, 2 and 3 spec and refuses version 4', () => {
-        expect(parseSpec({ ...FEEDINGS, version: 1 })).not.toBeNull()
-        expect(parseSpec({ ...FEEDINGS, version: 2 })).not.toBeNull()
-        expect(parseSpec({ ...FEEDINGS, version: 3 })).not.toBeNull()
-        expect(parseSpec({ ...FEEDINGS, version: 4 })).toBeNull()
-        expect(CURRENT_SPEC_VERSION).toBe(3)
+    it('reads version 4 only', () => {
+        expect(parseSpec({ ...FEEDINGS, version: 4 })).not.toBeNull()
+        for (const version of [1, 2, 3, 5]) expect(parseSpec({ ...FEEDINGS, version })).toBeNull()
+        expect(CURRENT_SPEC_VERSION).toBe(4)
     })
 
     // E1: optionsFrom.groupOrder (spec.go GroupOrder) is by label, declared, or a path.
     it('reads a group order of each kind and refuses any other', () => {
         const withOrder = (groupOrder: unknown) => ({
             ...FEEDINGS,
-            version: 2,
+            version: 4,
             params: [
                 {
                     id: 'animals',
@@ -111,7 +127,7 @@ describe('parseSpec', () => {
     it('reads a column blank on detail rows and refuses any other detail', () => {
         const withDetail = (detail: unknown) => ({
             ...FEEDINGS,
-            version: 2,
+            version: 4,
             columns: [
                 { id: 'note', path: [{ field: 'note' }] },
                 { id: 'species', path: [{ link: 'animal' }, { field: 'species' }], detail },
@@ -134,7 +150,7 @@ describe('parseSpec', () => {
 
     it('reads every v2 part', () => {
         const spec = {
-            version: 2,
+            version: 4,
             source: 'zoo.feedings',
             params: [
                 {
@@ -295,7 +311,7 @@ const BEFORE_PERIOD = {
 
 // The head's v3 example: every new part once.
 const V3 = {
-    version: 3,
+    version: 4,
     source: 'zoo.feedings',
     params: [{ id: 'period', type: 'dateRange', label: 'Period', default: { preset: 'allDates' } }],
     columns: [
@@ -351,18 +367,18 @@ const V3 = {
     sort: [{ col: 'fed' }],
 }
 
-describe('spec version 3', () => {
+describe('the parts of version 3', () => {
     it('reads every v3 part as it is', () => {
         expect(parseSpec(V3)).toEqual(V3)
     })
 
     it('reads a v3 spec with none of the new parts', () => {
-        expect(parseSpec({ ...FEEDINGS, version: 3 })).toEqual({ ...FEEDINGS, version: 3 })
+        expect(parseSpec({ ...FEEDINGS, version: 4 })).toEqual({ ...FEEDINGS, version: 4 })
     })
 
     it('reads an opening row with no cells', () => {
         const groups = [{ id: 'g', col: 'species', opening: { label: 'Before' } }]
-        expect(parseSpec({ ...FEEDINGS, version: 3, groups })?.groups?.[0]?.opening).toEqual({
+        expect(parseSpec({ ...FEEDINGS, version: 4, groups })?.groups?.[0]?.opening).toEqual({
             label: 'Before',
         })
     })
@@ -370,7 +386,7 @@ describe('spec version 3', () => {
     it('refuses a pick, a bound or an opening label the engine refuses', () => {
         const lookup = (pick: string) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             columns: [
                 {
                     id: 'x',
@@ -389,7 +405,7 @@ describe('spec version 3', () => {
 
         const bound = (b: string) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             filter: {
                 op: 'lt',
                 args: [{ path: [{ field: 'fed' }] }, { param: 'period', bound: b }],
@@ -400,7 +416,7 @@ describe('spec version 3', () => {
 
         const opening = (label: string) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             groups: [{ id: 'g', col: 'species', opening: { label } }],
         })
         expect(parseSpec(opening(''))).toBeNull()
@@ -411,7 +427,7 @@ describe('spec version 3', () => {
     it('counts an opening label in characters, as the engine does, not in UTF-16 units', () => {
         const opening = (label: string) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             groups: [{ id: 'g', col: 'species', opening: { label } }],
         })
         // A CJK Extension B character is one character and two UTF-16 units.
@@ -423,12 +439,64 @@ describe('spec version 3', () => {
     it('refuses an outer leaf that is not a path of hops, and an opening part it does not know', () => {
         const outer = (value: unknown) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             columns: [{ id: 'x', formula: { outer: value } }],
         })
         expect(parseSpec(outer([{ field: 'fed' }]))).not.toBeNull()
         expect(parseSpec(outer('fed'))).toBeNull()
         const groups = [{ id: 'g', col: 'species', opening: { label: 'Before', rows: 2 } }]
-        expect(parseSpec({ ...FEEDINGS, version: 3, groups })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, version: 4, groups })).toBeNull()
+    })
+})
+
+describe('column fit (spec version 4)', () => {
+    const FIT = {
+        ...FEEDINGS,
+        display: {
+            oneLine: { minWidth: '1040px' },
+            columns: {
+                cost: { flexGrow: 0 },
+                note: {
+                    minWidth: '7.5ch',
+                    maxWidth: '40%',
+                    whiteSpace: 'normal',
+                    lineClamp: 2,
+                    textOverflow: 'ellipsis',
+                },
+            },
+            layouts: [
+                {
+                    width: 'tablet',
+                    minWidth: '600px',
+                    tracks: 2,
+                    cells: [{ col: 'note', line: 1 }],
+                },
+            ],
+        },
+    }
+
+    it('reads every fit setting as it is', () => {
+        expect(parseSpec(FIT)).toEqual(FIT)
+    })
+
+    it('refuses a length with no unit, a width gate not in px, and a value Go never stores', () => {
+        const withDisplay = (display: unknown) => parseSpec({ ...FEEDINGS, display })
+        expect(withDisplay({ columns: { note: { minWidth: '12' } } })).toBeNull()
+        expect(withDisplay({ oneLine: { minWidth: '60ch' } })).toBeNull()
+        expect(withDisplay({ oneLine: {} })).toBeNull()
+        expect(
+            withDisplay({ layouts: [{ width: 'tablet', minWidth: '50%', tracks: 1, cells: [] }] })
+        ).toBeNull()
+        expect(withDisplay({ columns: { note: { textOverflow: 'clip' } } })).toBeNull()
+        expect(withDisplay({ columns: { note: { lineClamp: 5 } } })).toBeNull()
+        expect(withDisplay({ columns: { note: { colour: 'red' } } })).toBeNull()
+    })
+
+    it('parses a length into its number and unit', () => {
+        expect(parseFitLength('7.5ch')).toEqual({ value: 7.5, unit: 'ch' })
+        expect(parseFitLength('600px')).toEqual({ value: 600, unit: 'px' })
+        expect(parseFitLength('40%')).toEqual({ value: 40, unit: '%' })
+        expect(parseFitLength('max-content')).toBeNull()
+        expect(parseFitLength('12')).toBeNull()
     })
 })

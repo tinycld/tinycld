@@ -86,9 +86,7 @@ func onReportUpdate(e *core.RecordRequestEvent) error {
 }
 
 // prepareSpec reads the posted spec as a run reads it and stores it as Load
-// returns it: upgraded to the current version, aliases resolved. That is how
-// a spec is "saved upgraded on its next save". source becomes the spec's
-// base source. A new spec, or a changed one, must pass Validate, and then
+// returns it: aliases resolved. source becomes the spec's base source. A new spec, or a changed one, must pass Validate, and then
 // the report is no longer broken. An update that leaves the spec as it was
 // (the same JSON value, sent or not) is not checked, valid or not, so a
 // broken report can still be renamed.
@@ -118,7 +116,7 @@ func prepareSpec(e *core.RecordRequestEvent, original *core.Record) error {
 }
 
 // loadStored reads a spec as a run reads it and returns it with the bytes
-// that are stored for it: upgraded, aliases resolved. A client save and a
+// that are stored for it, as Load returns it: aliases resolved. A client save and a
 // shipped report both store this form.
 func loadStored(raw []byte) (*Spec, []byte, error) {
 	spec, _, err := Load(raw)

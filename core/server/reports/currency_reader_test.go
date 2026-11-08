@@ -57,7 +57,7 @@ func withOfficeCurrency(t *testing.T, z *zoo) *[]*core.RequestInfo {
 // animalsWorth groups the animals by species, each group labelled by its
 // total price, with two amounts in the fixed currency (price and fee) and an
 // optional amount floor on the price.
-const animalsWorth = `{"version":2,"source":"zoo.animals",
+const animalsWorth = `{"version":4,"source":"zoo.animals",
 	"params":[{"id":"over","type":"amount","label":"Over"}],
 	"columns":[{"id":"species","path":[{"field":"species"}]},
 		{"id":"name","path":[{"field":"name"}]},
@@ -69,7 +69,7 @@ const animalsWorth = `{"version":2,"source":"zoo.animals",
 
 // animalsByPrice pivots the animals' fees over their prices: one column per
 // price, labelled by the price and its currency.
-const animalsByPrice = `{"version":2,"source":"zoo.animals","columns":[
+const animalsByPrice = `{"version":4,"source":"zoo.animals","columns":[
 	{"id":"active","path":[{"field":"active"}]},
 	{"id":"fee","path":[{"field":"fee"}],"aggregate":"sum"}],
 	"groups":[{"id":"g","col":"active"}],
@@ -77,7 +77,7 @@ const animalsByPrice = `{"version":2,"source":"zoo.animals","columns":[
 
 // feedingsByAnimalPrice labels each feeding's animal by its price: a label
 // read from the animals' source, in its fixed currency.
-const feedingsByAnimalPrice = `{"version":2,"source":"zoo.feedings","columns":[
+const feedingsByAnimalPrice = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"animal","path":[{"link":"animal"}],"labelField":"price"},
 	{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`
 
@@ -295,7 +295,7 @@ func TestValidateNeverReadsAFixedCurrency(t *testing.T) {
 // computed row's currency cell carries the fixed code (layout carriedCell).
 // With no sort, detail rows read in record id order, which is random, so the
 // spec sorts the feedings by cost (f3 700, then f4 300).
-const zebrasWithZedsPrice = `{"version":2,"source":"zoo.feedings","columns":[
+const zebrasWithZedsPrice = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 	"groups":[{"id":"g","col":"species"}],
@@ -308,7 +308,7 @@ const zebrasWithZedsPrice = `{"version":2,"source":"zoo.feedings","columns":[
 // then a computed row with feeding f3's cost (700 USD), which carries its own
 // currency: the price column names a currency cell, and every row that
 // carries none shows the fixed code there.
-const zebraPricesWithF3sCost = `{"version":2,"source":"zoo.animals","columns":[
+const zebraPricesWithF3sCost = `{"version":4,"source":"zoo.animals","columns":[
 	{"id":"species","path":[{"field":"species"}]},
 	{"id":"price","path":[{"field":"price"}],"aggregate":"sum"}],
 	"groups":[{"id":"g","col":"species"}],
@@ -319,7 +319,7 @@ const zebraPricesWithF3sCost = `{"version":2,"source":"zoo.animals","columns":[
 // sitesByFedAnimalPrice nests each site's animals and their feedings, each
 // feeding labelled by its animal's price: a child row's amount label in the
 // animals' fixed currency.
-const sitesByFedAnimalPrice = `{"version":2,"source":"zoo.sites","columns":[
+const sitesByFedAnimalPrice = `{"version":4,"source":"zoo.sites","columns":[
 	{"id":"site","path":[{"field":"name"}]},
 	{"id":"name","path":[{"link":"animals","mode":"nest"},{"field":"name"}]},
 	{"id":"fed","path":[{"link":"animals","mode":"nest"},{"link":"feedings","mode":"nest"},{"link":"animal"}],"labelField":"price"}],

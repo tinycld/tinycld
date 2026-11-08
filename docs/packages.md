@@ -1318,8 +1318,7 @@ away before the run ends.
   sentence gives each sentence in `parts`; a client that joins the notices of
   several pages joins their parts, so a sentence two pages share shows once.
 
-**Spec version 2.** Version 2 added these fields. A version 2 spec sent to an
-older server is refused by its version.
+**Fields added in version 2.**
 
 | Field | What it does |
 |---|---|
@@ -1336,12 +1335,9 @@ older server is refused by its version.
 | formula leaf `{ record, path }` | Reads a field of a record group's record. |
 | operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: from the rows of another source that the reader may see, one value (`min` by default, or `max`), their sum (`sum`: numbers or amounts; no match is empty), or the count of rows with a value (`count`: no match is 0). |
 | `pivot.labelField` | The field of a link's record that a pivot over that link names its columns by. |
-| `display.layouts[]` | `{ width, tracks, cells: [{ col, line, start?, span?, lines?, justify? }] }`: an arrangement of the columns on lines. The view uses one line when its columns fit (each column sized by its heading and values), else the first arrangement whose lines fit, widest `width` first, else automatic lines. Inside a line each column gets its content's width; `span` is its share of the spare room. |
+| `display.layouts[]` | `{ width, minWidth?, tracks, cells: [{ col, line, start?, span?, lines?, justify? }] }`: an arrangement of the columns on lines. The view uses one line when the rows are at least `display.oneLine.minWidth` wide and its columns fit (each column sized by its heading and values), else the first arrangement the rows reach (its `minWidth`) whose lines fit, widest `width` first, else automatic lines. Inside a line each column gets its content's width; `span` is its share of the spare room. `minWidth` (px, for example `"600px"`): the arrangement is used only where the rows are at least that wide. |
 
-**Spec version 3.** `reports.CurrentVersion` is 3. Every new field is
-optional, and a stored version 1 or 2 spec loads unchanged with no upgrade
-notice (the step from 2 to 3 changes nothing). A version 3 spec sent to an
-older server is refused by its version.
+**Fields added in version 3.**
 
 | Field | What it does |
 |---|---|
@@ -1351,6 +1347,28 @@ older server is refused by its version.
 | `groups[].opening` | `{ label, cells? }`: the opening row of each opened group of the level. Each cell is a formula on the level (totals, records of this and outer groups, lookups, params) whose type and currency are its column's; not on the first column; not on a pivot's last level. A level with `opening` lets a group with no base rows open (a fill group included). |
 | `columns[].rollup` | A formula shown on group, subtotal and total rows (and layout sections) in place of the column's total; detail rows keep the column's value. Blank where it reads a value the row does not have (a group's record on the Total). Refused with `total: "rows"`, on a child row column, on a pivot's cell column and on a column a group level groups by with no `bucket`. |
 | run `options.sort` | See "What a report returns". |
+
+**Spec version 4.** `reports.CurrentVersion` is 4, and it is the only version a
+server reads: a spec of any other version is refused (`version must be 4`), and a
+saved report of another version opens Broken. Version 4 adds the column fit, read
+as the CSS properties of the same names. A setting that could cut a figure (a
+number, amount, percent, date, datetime or yes/no column, or a first column whose
+label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` or
+`max-content`.
+
+| Field | What it does |
+|---|---|
+| `display.oneLine.minWidth` | px. The rows are drawn on one line only where they are at least this wide (and the columns fit); below it the arrangements and automatic lines are used. |
+| `display.columns.<col>.width` | A length (`12ch`, `120px`, `25%`): the column is exactly this wide. `ch` and `px` are the text's width (the cell's padding is added); `%` is the cell's whole width as a part of the line. |
+| `display.columns.<col>.minWidth` | `auto` (default: eight letters for text, the whole value for a figure), `min-content` (the longest word), `max-content` (the whole value), or a length. |
+| `display.columns.<col>.maxWidth` | `none` (default) or a length; never under `minWidth`. |
+| `display.columns.<col>.whiteSpace` | `nowrap` (default: one line, ends in "…") or `normal` (the text wraps). |
+| `display.columns.<col>.lineClamp` | 1 to 4, with `whiteSpace: "normal"`: the most lines the text wraps to (default 2). |
+| `display.columns.<col>.textOverflow` | `ellipsis` only. |
+| `display.columns.<col>.flexGrow` | 0 to 10: the column's share of spare room on one line (default 1 for text and the label column, 0 for other figures). |
+
+`<col>` is a spec column id. A pivot's cell columns (one per pivot value) all take
+the fit of their spec column.
 
 A param of type `amount` holds cents and a currency. A multiple choice param
 may hold a whole group as `{"group": "<value>"}`; the server expands it under
@@ -1386,7 +1404,7 @@ which the memo labels:
 
 ```json
 {
-  "version": 2,
+  "version": 4,
   "source": "zoo.lines",
   "columns": [
     { "id": "name", "path": [{ "link": "account" }] },

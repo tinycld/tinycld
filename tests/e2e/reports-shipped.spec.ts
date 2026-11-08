@@ -48,12 +48,9 @@ test.describe('a shipped report', () => {
         await saveAs.press('Enter')
         await expect(page.getByTestId('report-title')).toHaveText(title)
 
-        // A version 1 shipped report runs with no "upgraded" notice (R1, F25): once the
-        // run has drawn its table or its empty state, no notice says so.
         await expect(
             page.getByTestId('report-table').or(page.getByTestId('report-empty'))
         ).toBeVisible()
-        await expect(page.getByTestId('report-notice-upgraded')).toHaveCount(0)
         // The copy's builder edits the if formula (OQ2): its parts are menus.
         await pressToolbar(page, 'report-edit-open', 'Edit report')
         await expect(page.getByTestId('report-builder')).toBeVisible()

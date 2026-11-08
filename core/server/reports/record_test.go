@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-const byAnimal = `{"version":2,"source":"zoo.feedings","columns":[
+const byAnimal = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"animal","path":[{"link":"animal"}]},
 	{"id":"species","formula":{"record":"g","path":[{"field":"species"}]}},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -29,7 +29,7 @@ func TestARecordGroupLabelsItsRowsAndReadsTheRecord(t *testing.T) {
 
 func TestAGroupLabelIsAFormula(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal","label":{"op":"concat","args":[
 			{"record":"g","path":[{"field":"name"}]},{"value":" at "},{"record":"g","path":[{"link":"site"},{"field":"name"}]}]}}],
@@ -40,7 +40,7 @@ func TestAGroupLabelIsAFormula(t *testing.T) {
 // A record the reader cannot see is a blank key and a blank label.
 func TestARecordTheReaderCannotSeeIsBlank(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"vault","path":[{"link":"vault"}]},
 		{"id":"vname","formula":{"record":"g","path":[{"field":"name"}]}},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
@@ -49,7 +49,7 @@ func TestARecordTheReaderCannotSeeIsBlank(t *testing.T) {
 	requireRows(t, res, "vname", nil, nil)
 	// Opened, with its subtotal: every row under the hidden record reads it
 	// blank too.
-	sub := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	sub := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"vault","path":[{"link":"vault"}]},
 		{"id":"vname","formula":{"record":"g","path":[{"field":"name"}]}},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
@@ -63,7 +63,7 @@ func TestARecordTheReaderCannotSeeIsBlank(t *testing.T) {
 // blank: leo's vault is hidden, zed has none.
 func TestARecordFieldPastAHiddenLinkIsBlank(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"vault","formula":{"record":"g","path":[{"link":"vault"},{"field":"name"}]}},
 		{"id":"site","formula":{"record":"g","path":[{"link":"site"},{"field":"name"}]}},
@@ -81,7 +81,7 @@ func TestRecordGroupsReadInLabelOrder(t *testing.T) {
 	twin := z.rec(t, "leo2", "zoo_animals", map[string]any{"name": "Leo", "species": "lion", "owner": z.id("ann"), "weight": 150})
 	z.rec(t, "k5", "zoo_keepers", map[string]any{"user": z.id("ann"), "animal": twin.Id})
 	z.feeding(t, "f7", twin, 50, "2026-04-01", 10)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}]}`, Options{}, nil)
 	requireRows(t, res, "label", "Leo", "Leo", "Zed", "Total")
@@ -108,12 +108,12 @@ func TestAnOuterLabelCannotReadAnInnerRecord(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			raw := `{"version":2,"source":"zoo.feedings",` + cols + `,"groups":[{"id":"s","col":"site","label":` + c.label + `},{"id":"a","col":"animal"}]}`
+			raw := `{"version":4,"source":"zoo.feedings",` + cols + `,"groups":[{"id":"s","col":"site","label":` + c.label + `},{"id":"a","col":"animal"}]}`
 			requireSpecError(t, Validate(app, loadSpec(t, raw)), 400, c.at, "which is grouped inside it")
 		})
 	}
 	// Inside a total, each base row has its record: the label may total them.
-	total := `{"version":2,"source":"zoo.feedings",` + cols + `,"groups":[{"id":"s","col":"site","label":
+	total := `{"version":4,"source":"zoo.feedings",` + cols + `,"groups":[{"id":"s","col":"site","label":
 		{"op":"countDistinct","args":[{"record":"a","path":[{"field":"species"}]}]}},{"id":"a","col":"animal"}]}`
 	if err := Validate(app, loadSpec(t, total)); err != nil {
 		t.Fatalf("a total of inner records: %v", err)
@@ -126,14 +126,14 @@ func TestARecordLeafIsRefusedWhereItCannotBeRead(t *testing.T) {
 		spec, at, want string
 		status         int
 	}{
-		"unknown group": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"record":"nope","path":[{"field":"name"}]}}]}`,
+		"unknown group": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"record":"nope","path":[{"field":"name"}]}}]}`,
 			"columns.0.formula", "has no group", 422},
-		"not a record group": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"x","formula":{"record":"g","path":[{"field":"name"}]}}],"groups":[{"id":"g","col":"n"}]}`,
+		"not a record group": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"x","formula":{"record":"g","path":[{"field":"name"}]}}],"groups":[{"id":"g","col":"n"}]}`,
 			"columns.1.formula", "is not grouped by a link", 400},
-		"in the filter": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],"groups":[{"id":"g","col":"a"}],
+		"in the filter": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],"groups":[{"id":"g","col":"a"}],
 			"filter":{"op":"eq","args":[{"record":"g","path":[{"field":"name"}]},{"value":"Leo"}]}}`,
 			"filter.args.0", "before they are grouped", 400},
-		"no path": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},{"id":"x","formula":{"record":"g"}}],"groups":[{"id":"g","col":"a"}]}`,
+		"no path": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},{"id":"x","formula":{"record":"g"}}],"groups":[{"id":"g","col":"a"}]}`,
 			"columns.1.formula", "names a field of the record", 400},
 	}
 	for name, c := range cases {
@@ -151,7 +151,7 @@ func TestARecordLeafIsRefusedWhereItCannotBeRead(t *testing.T) {
 // (F5), though no column reads the amount.
 func TestALabelThatTotalsAnAmountGroupsByItsCurrency(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal","label":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}}],
 		"sort":[{"col":"grams"}]}`, Options{}, nil)
@@ -175,7 +175,7 @@ func TestValidateChecksAGroupLabel(t *testing.T) {
 	big := strings.TrimSuffix(chainSpec(8, doubling), "}") + `,"groups":[{"id":"g","col":"c0","label":
 		{"op":"concat","args":[{"col":"c8"},{"col":"c8"}]}}]}`
 	requireSpecError(t, Validate(app, loadSpec(t, big)), 400, "groups.0.label", "with the formula columns it reads")
-	bad := `{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],
+	bad := `{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],
 		"groups":[{"id":"g","col":"a","label":{"op":"lookup","source":"zoo.sites","value":{"nope":1}}}]}`
 	requireSpecError(t, Validate(app, loadSpec(t, bad)), 400, "groups.0.label.value", "a lookup's value is a formula")
 }
@@ -185,7 +185,7 @@ func TestValidateChecksAGroupLabel(t *testing.T) {
 // only.
 func TestNestedRecordGroupsReadTheirOwnRecords(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"sname","formula":{"record":"s","path":[{"field":"name"}]}},
@@ -206,7 +206,7 @@ func TestNestedRecordGroupsReadTheirOwnRecords(t *testing.T) {
 // column: on the group rows and the rows below them.
 func TestALookupReadsTheGroupRecord(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"kg","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"weight"}]},
 			"where":{"op":"eq","args":[{"path":[{"field":"species"}]},{"record":"g","path":[{"field":"species"}]}]}}},
@@ -225,7 +225,7 @@ func TestARelationGroupLabelShowsItsRecordsLabel(t *testing.T) {
 	z := newZoo(t)
 	run := func(animal, label string) *Result {
 		t.Helper()
-		return z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		return z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 			`+animal+`,{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 			"groups":[{"id":"g","col":"animal","label":`+label+`}],"sort":[{"col":"cost"}]}`, Options{}, nil)
 	}
@@ -265,14 +265,14 @@ func TestARelationGroupLabelShowsItsRecordsLabel(t *testing.T) {
 // source's name.
 func TestARecordGroupIsLabelledByItsColumnsLabelField(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}],"labelField":"species"},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"cost"}]}`, Options{}, nil)
 	requireRows(t, res, "label", "zebra", "lion", "Total")
 	// The group rows' link cells carry the same label; the total has none.
 	requireRows(t, res, "animal@label", "zebra", "lion", nil)
-	keepers := z.run(t, "ann", `{"version":2,"source":"zoo.keepers","columns":[
+	keepers := z.run(t, "ann", `{"version":4,"source":"zoo.keepers","columns":[
 		{"id":"k","path":[{"field":"id"}]},{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
 		"groups":[{"id":"g","col":"k"}]}`, Options{}, nil)
 	requireRows(t, keepers, "label", "Keepers", "Keepers", "Total")
@@ -281,7 +281,7 @@ func TestARecordGroupIsLabelledByItsColumnsLabelField(t *testing.T) {
 // Computed rows carry no label beside a link column.
 func TestALayoutReportWithALinkColumnLabelsItsSections(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],
 		"layout":[{"section":"l","title":"Leo","key":"`+z.id("leo")+`"},{"row":"r","label":"Twice","formula":{"op":"mul","args":[{"subtotal":"l"},{"value":2}]}}]}`, Options{}, nil)

@@ -24,7 +24,7 @@ func TestARefusalBelongsToTheAppThatWasChecked(t *testing.T) {
 		t.Fatal("CheckSources on the app without the zoo refused nothing")
 	}
 
-	const sites = `{"version":1,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]}]}`
+	const sites = `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]}]}`
 	if _, err := withZoo.try(t, "ann", sites, Options{}, nil); err != nil {
 		t.Fatalf("the app with the zoo lost zoo.sites after another app was checked: %v", err)
 	}

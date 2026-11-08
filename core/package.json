@@ -46,6 +46,7 @@
         "./tsconfig.package-base.json": "./tsconfig.package-base.json",
         "./uniwind-types": "./uniwind-types.d.ts",
         "./types/editor-webview": "./types/editor-webview.d.ts",
+        "./types/react-native-dataset": "./types/react-native-dataset.d.ts",
         "./lucide-icons": "./lucide-icons.d.ts",
         "./vitest-config": "./vitest-config.ts",
         "./playwright-config": "./playwright-config.ts",

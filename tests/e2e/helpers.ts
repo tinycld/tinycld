@@ -520,6 +520,37 @@ export async function openSettingsItem(page: Page, label: string) {
     await index.getByText(label, { exact: true }).click()
 }
 
+/**
+ * Waits until the report table's layout is fitted to the width its rows have now
+ * (the table's data-fit-width equals the row probe's width), and returns the rule
+ * that laid it out: 'one-line', 'desktop', 'tablet', 'mobile' or 'auto'. Call it
+ * after each setViewportSize before reading the table's geometry.
+ */
+export async function waitForTableFit(page: Page): Promise<string> {
+    let layout = ''
+    await expect
+        .poll(
+            async () => {
+                layout = await page.evaluate(() => {
+                    const table = document.querySelector<HTMLElement>(
+                        '[data-testid="report-table"]'
+                    )
+                    const probe = table?.querySelector<HTMLElement>(
+                        '[data-testid="report-width-probe"]'
+                    )
+                    if (!table || !probe || table.dataset.fitWidth === undefined) return ''
+                    const drawn = probe.getBoundingClientRect().width
+                    const isSettled = Math.abs(drawn - Number(table.dataset.fitWidth)) < 1
+                    return isSettled ? (table.dataset.layout ?? '') : ''
+                })
+                return layout
+            },
+            { message: 'the report table fits its layout to the width its rows have' }
+        )
+        .not.toBe('')
+    return layout
+}
+
 /** Open Settings → Account → Security from the user menu. */
 export async function openAccountSecurity(page: Page) {
     await page.getByLabel('User menu').click()

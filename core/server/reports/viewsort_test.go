@@ -50,7 +50,7 @@ func TestRunningValuesKeepTheSpecsOrderUnderAViewerSort(t *testing.T) {
 // record label (Zed, then Leo), the report's order after it.
 func TestAViewerSortOnTheFirstColumnSortsByTheDetailLabel(t *testing.T) {
 	z := newZoo(t)
-	const base = `{"version":2,"source":"zoo.feedings","columns":[
+	const base = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"fed","path":[{"field":"fed"}]}],"sort":[{"col":"fed"}]`
@@ -84,7 +84,7 @@ func TestAViewerSortIsCheckedAtRunTime(t *testing.T) {
 	for i := range eleven {
 		eleven[i] = ViewSort{Col: "note", Dir: "asc"}
 	}
-	const pivot = `{"version":2,"source":"zoo.feedings","columns":[
+	const pivot = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],"pivot":{"path":[{"field":"fed"}],"bucket":"month","cell":"cost"}}`
@@ -138,11 +138,11 @@ func sortableOf(res *Result) map[string]bool {
 // including a child row first column that a detail label stands in for.
 func TestAColumnIsSortableExactlyWhenTheRunAcceptsItsSort(t *testing.T) {
 	z := newZoo(t)
-	const nestedFirstLabelled = `{"version":2,"source":"zoo.sites","columns":[
+	const nestedFirstLabelled = `{"version":4,"source":"zoo.sites","columns":[
 		{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"name"}]},
 		{"id":"site","path":[{"field":"name"}]}],
 		"sort":[{"col":"site"}],"detail":{"label":{"path":[{"field":"name"}]}}}`
-	const firstLabelled = `{"version":2,"source":"zoo.feedings","columns":[
+	const firstLabelled = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"fed","path":[{"field":"fed"}]}],"sort":[{"col":"fed"}],
@@ -176,7 +176,7 @@ func TestResultColumnsSayWhichSort(t *testing.T) {
 	if got, want := sortableOf(nested), map[string]bool{"site": true, "animal": false, "owner": false, "fed": false}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("nested sortable = %v, want %v", got, want)
 	}
-	pivot := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	pivot := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],"pivot":{"path":[{"field":"fed"}],"bucket":"month","cell":"cost"}}`, Options{}, nil)

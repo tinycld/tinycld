@@ -166,6 +166,7 @@ function TableBody({ model, table, top, states }: BodyProps & { states: ReactNod
             layout={table.layout}
             isMeasured={table.isMeasured}
             onRowWidth={table.onRowWidth}
+            fit={table.fit}
             onToggleGroup={model.onToggleGroup}
             onNearEnd={model.run.loadMore}
             hasMore={model.run.hasMore}

@@ -232,7 +232,7 @@ func groupedTeams(label string, group Path) ParamDef {
 
 // boundSpec reads the period's first and last day, compares each feeding's
 // day with the first, and sums ann's grams fed before it.
-const boundSpec = `{"version":3,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],"columns":[
+const boundSpec = `{"version":4,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],"columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"from","formula":{"param":"period","bound":"from"}},
 	{"id":"to","formula":{"param":"period","bound":"to"}},
@@ -279,7 +279,7 @@ func TestAllDatesMatchesEveryRowAndResolvesWithNoBounds(t *testing.T) {
 	z := newZoo(t)
 	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 5, "currency": "USD", "grams": 1, "note": "f7"})
 	inPeriod := `{"op":"between","args":[{"path":[{"field":"fed"}]},{"param":"period"}]}`
-	spec := `{"version":3,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange","default":{"preset":"allDates"}}],
+	spec := `{"version":4,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange","default":{"preset":"allDates"}}],
 		"columns":[{"id":"note","path":[{"field":"note"}]},
 		{"id":"inPeriod","formula":` + inPeriod + `},
 		{"id":"counted","formula":{"op":"lookup","source":"zoo.feedings","pick":"count","where":` + inPeriod + `,"value":{"path":[{"field":"id"}]}}}],
@@ -300,7 +300,7 @@ func TestAllDatesMatchesEveryRowAndResolvesWithNoBounds(t *testing.T) {
 func TestABoundIsRefusedOffADateRange(t *testing.T) {
 	app := withZooRegistry(t)
 	spec := func(formula string) string {
-		return `{"version":3,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"},{"id":"day","type":"date"}],
+		return `{"version":4,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"},{"id":"day","type":"date"}],
 			"columns":[{"id":"x","formula":` + formula + `}]}`
 	}
 	cases := map[string]struct{ formula, want string }{

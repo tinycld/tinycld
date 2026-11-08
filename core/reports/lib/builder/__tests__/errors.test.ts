@@ -58,4 +58,23 @@ describe('builder errors', () => {
             { path: 'title', code: '', message: 'Cannot be blank.' },
         ])
     })
+
+    it('shows a column fit problem under Columns, naming the column', () => {
+        expect(sectionOf('display.columns.amount.minWidth')).toBe('columns')
+        expect(sectionOf('display.oneLine.minWidth')).toBe('arrange')
+        expect(
+            describeProblem({
+                path: 'display.columns.amount.minWidth',
+                code: 'invalid',
+                message: 'a figure is never cut',
+            })
+        ).toBe('Column amount: a figure is never cut')
+        expect(
+            describeProblem({
+                path: 'display.oneLine.minWidth',
+                code: 'invalid',
+                message: 'px only',
+            })
+        ).toBe('One line: px only')
+    })
 })

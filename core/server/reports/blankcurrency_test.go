@@ -45,7 +45,7 @@ func TestABlankMismatchedCellCarriesNoCurrency(t *testing.T) {
 	if err := z.app.Save(f3); err != nil {
 		t.Fatal(err)
 	}
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"rolled","formula":{"op":"add","args":[` + orZero(lookedUpCost("f1")) + `,{"op":"sum","args":[{"path":[{"field":"cost"}]}]}]}}],
@@ -68,7 +68,7 @@ func TestABlankMismatchedCellCarriesNoCurrency(t *testing.T) {
 // and counts the rows whose sum met two currencies.
 func TestACountOverAMixedSumLookupCarriesNoCurrency(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[
+	spec := `{"version":4,"source":"zoo.sites","columns":[
 		{"id":"region","path":[{"field":"region"}]},
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"n","aggregate":"count","formula":` + mixedFees + `}],

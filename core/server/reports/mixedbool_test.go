@@ -55,7 +55,7 @@ func rowKinds(res *Result) string {
 func TestABoolDetailCellOverAMixedSumIsNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"pos","formula":{"op":"gt","args":[{"path":[{"field":"grams"}]},` + allCosts + `]}}],
 		"sort":[{"col":"note"}]}`
@@ -68,7 +68,7 @@ func TestABoolDetailCellOverAMixedSumIsNamed(t *testing.T) {
 func TestABoolGroupCellOverAMixedSumIsNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
 		{"id":"pos","formula":` + positive(leoCosts) + `}],
@@ -97,7 +97,7 @@ func TestABoolGroupCellOverAMixedSumIsNamed(t *testing.T) {
 func TestABoolTotalCellOverAMixedSumIsNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
 		{"id":"pos","formula":` + positive(allCosts) + `}],
@@ -113,7 +113,7 @@ func TestABoolTotalCellOverAMixedSumIsNamed(t *testing.T) {
 func TestABoolOpeningCellOverAMixedSumIsNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"pos","formula":{"op":"gt","args":[{"path":[{"field":"grams"}]},{"value":0}]}}],
@@ -139,7 +139,7 @@ func TestABoolOpeningCellOverAMixedSumIsNamed(t *testing.T) {
 func TestABoolLayoutSectionCellOverAMixedSumIsNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
 		{"id":"pos","formula":` + positive(allCosts) + `}],
@@ -155,7 +155,7 @@ func TestABoolLayoutSectionCellOverAMixedSumIsNamed(t *testing.T) {
 func TestABoolCellAnotherTermDecidesIsNotNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"any","formula":{"op":"or","args":[` + positive(allCosts) + `,{"op":"gt","args":[{"path":[{"field":"grams"}]},{"value":0}]}]}}],
 		"sort":[{"col":"note"}]}`

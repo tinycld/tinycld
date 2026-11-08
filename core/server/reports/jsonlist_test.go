@@ -17,7 +17,7 @@ func manyReads(n int) string {
 	for i := range n {
 		cols = append(cols, fmt.Sprintf(`{"id":"in%d","formula":{"op":"in","args":[{"path":[{"link":"animal"}]},{"param":"animals"}]}}`, i))
 	}
-	return `{"version":2,"source":"zoo.feedings",
+	return `{"version":4,"source":"zoo.feedings",
 	"params":[{"id":"animals","type":"choice","label":"Animals","multiple":true,
 		"optionsFrom":{"source":"zoo.animals","value":[{"field":"id"}],"label":[{"field":"name"}],"group":[{"field":"species"}]}}],
 	"columns":[` + strings.Join(cols, ",") + `],"sort":[{"col":"note"}]}`
@@ -56,7 +56,7 @@ func TestALongGroupReferenceListReadManyTimesRuns(t *testing.T) {
 // fourLevels groups feedings four deep; the last level is a link that fills
 // in every animal the reader may list, so a run reads the expanded keys of
 // level 3 twice: for the level's rows and for its fill's parents.
-const fourLevels = `{"version":1,"source":"zoo.feedings","columns":[
+const fourLevels = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
 	{"id":"note","path":[{"field":"note"}]},
@@ -89,13 +89,13 @@ func TestThousandsOfExpandedKeysRun(t *testing.T) {
 // group, level by level.
 func TestExpandedKeysOfMixedTypes(t *testing.T) {
 	z := newZoo(t)
-	byGrams := `{"version":1,"source":"zoo.feedings","columns":[
+	byGrams := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"grams","path":[{"field":"grams"}]},{"id":"note","path":[{"field":"note"}]}],
 		"groups":[{"id":"g","col":"grams"}],"sort":[{"col":"note"}]}`
 	res := z.run(t, "ann", byGrams, Options{Expand: [][]any{{float64(500)}, {"800"}, {300.5}, {true}}}, nil)
 	requireRows(t, res, "note", nil, nil, nil, "f1", nil, nil)
 
-	byRegion := `{"version":1,"source":"zoo.animals","columns":[
+	byRegion := `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"region","path":[{"link":"site"},{"field":"region"}]},
 		{"id":"species","path":[{"field":"species"}]},
 		{"id":"name","path":[{"field":"name"}]}],
@@ -176,10 +176,10 @@ func TestASelectWithManyOptionsShowsItsLabels(t *testing.T) {
 			{Key: "kind", Label: "Kind", Type: Select, Options: options},
 		},
 	})
-	grouped := z.run(t, "ann", `{"version":2,"source":"zoo.menu","columns":[{"id":"kind","path":[{"field":"kind"}]},
+	grouped := z.run(t, "ann", `{"version":4,"source":"zoo.menu","columns":[{"id":"kind","path":[{"field":"kind"}]},
 		{"id":"n","path":[{"field":"note"}],"aggregate":"count"}],"groups":[{"id":"g","col":"kind"}]}`, Options{}, nil)
 	requireRows(t, grouped, "label", "Apricot", "Odd", "Zest", "Total")
-	const lowSpec = `{"version":2,"source":"zoo.menu","columns":[{"id":"note","path":[{"field":"note"}]},
+	const lowSpec = `{"version":4,"source":"zoo.menu","columns":[{"id":"note","path":[{"field":"note"}]},
 		{"id":"low","formula":{"op":"lower","args":[{"path":[{"field":"kind"}]}]}}],"sort":[{"col":"note"}]}`
 	shown := z.run(t, "ann", lowSpec, Options{}, nil)
 	requireOrderedRows(t, lowSpec, shown, "low", "zest", "apricot", "odd", nil)
@@ -191,7 +191,7 @@ func TestASelectWithManyOptionsShowsItsLabels(t *testing.T) {
 func TestAListComparesAsBoundValues(t *testing.T) {
 	z := newZoo(t)
 	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 5, "currency": "USD", "grams": 7, "note": "500"})
-	spec := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},
 		{"id":"byNote","formula":{"op":"in","args":[{"path":[{"field":"note"}]},{"value":[500,"f1"]}]}},
 		{"id":"byGrams","formula":{"op":"in","args":[{"path":[{"field":"grams"}]},{"value":["800","7.0",1e400]}]}}],
 		"sort":[{"col":"note"}]}`

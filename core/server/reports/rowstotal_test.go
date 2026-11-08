@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const speciesRows = `{"version":2,"source":"zoo.feedings","params":[{"id":"min","type":"number"}],"columns":[
+const speciesRows = `{"version":4,"source":"zoo.feedings","params":[{"id":"min","type":"number"}],"columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"shown","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"},
 	{"id":"all","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -38,7 +38,7 @@ func TestRowsTotalsAddOnlyShownRowsPerCurrency(t *testing.T) {
 // A level above the innermost adds its shown child groups.
 func TestRowsTotalsAddShownChildGroups(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
 		{"id":"shown","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"},
@@ -53,7 +53,7 @@ func TestRowsTotalsAddShownChildGroups(t *testing.T) {
 // With no groups the total adds the detail cells.
 func TestRowsTotalWithoutGroupsAddsTheDetailCells(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"big","formula":{"op":"if","args":[{"op":"gt","args":[{"path":[{"field":"cost"}]},{"value":1000}]},{"path":[{"field":"cost"}]},{"value":0}]},"total":"rows"}],
 		"sort":[{"col":"note"}]}`
@@ -72,7 +72,7 @@ func TestRowsTotalsOnPivotCells(t *testing.T) {
 
 func TestALayoutSectionAddsItsShownRows(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
 		{"id":"shown","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"}],
@@ -92,7 +92,7 @@ func TestALayoutSectionAddsItsShownRows(t *testing.T) {
 // rows.
 func TestRowsTotalOnANumberWithoutAnAggregate(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"grams","path":[{"field":"grams"}],"total":"rows"},
 		{"id":"most","path":[{"field":"grams"}],"aggregate":"max","total":"rows"}],
@@ -100,7 +100,7 @@ func TestRowsTotalOnANumberWithoutAnAggregate(t *testing.T) {
 	requireRows(t, res, "grams", int64(1300), int64(400), int64(1700))
 	requireRows(t, res, "most", int64(800), int64(300), int64(1100))
 
-	res = z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res = z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
 		{"id":"grams","path":[{"field":"grams"}],"total":"rows"}],
@@ -113,7 +113,7 @@ func TestRowsTotalOnANumberWithoutAnAggregate(t *testing.T) {
 // A number with no aggregate that adds its rows is a sort key on groups too.
 func TestGroupsSortByANumberThatAddsItsRows(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"grams","path":[{"field":"grams"}],"total":"rows"}],
 		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"grams"}]}`, Options{}, nil)
@@ -129,7 +129,7 @@ func TestGroupsSortByANumberThatAddsItsRows(t *testing.T) {
 func TestAFillRowAddsItsBlankOrZeroCells(t *testing.T) {
 	z := newZoo(t)
 	withEmptyAnimals(t, z)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"grams","path":[{"field":"grams"}],"total":"rows"},
 		{"id":"shown","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"},
@@ -147,7 +147,7 @@ func TestAFillRowAddsItsBlankOrZeroCells(t *testing.T) {
 // and hides too; no row under it reaches the result.
 func TestAHavingReadsARowsColumn(t *testing.T) {
 	z := newZoo(t)
-	const both = `{"version":2,"source":"zoo.feedings","columns":[
+	const both = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
 		{"id":"note","path":[{"field":"note"}]},
@@ -161,7 +161,7 @@ func TestAHavingReadsARowsColumn(t *testing.T) {
 	requireOrderedRows(t, both, res, "shown", int64(3500), int64(3500), int64(1000), int64(2500), int64(3500))
 	// The having is on the outer group only; its sum still adds the level
 	// below, also in the statement of the detail rows.
-	const outer = `{"version":2,"source":"zoo.feedings","columns":[
+	const outer = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
 		{"id":"note","path":[{"field":"note"}]},
@@ -177,7 +177,7 @@ func TestAHavingReadsARowsColumn(t *testing.T) {
 // shown) before lion (its one animal, 3500, hidden).
 func TestARowsColumnSortsGroupsByWhatTheyShow(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
 		{"id":"shown","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"}],
@@ -191,7 +191,7 @@ func TestARowsColumnSortsGroupsByWhatTheyShow(t *testing.T) {
 // group; a column that reads a "rows" column reads its sum on every level.
 func TestARowsFormulaAddsItsDetailCellsUnderGroups(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"big","formula":{"op":"if","args":[{"op":"gt","args":[{"path":[{"field":"cost"}]},{"value":1000}]},{"path":[{"field":"cost"}]},{"value":0}]},"total":"rows"},
 		{"id":"twice","formula":{"op":"mul","args":[{"col":"big"},{"value":2}]}}],
@@ -205,7 +205,7 @@ func TestARowsFormulaAddsItsDetailCellsUnderGroups(t *testing.T) {
 // each of which shows the animal's fee.
 func TestARowsTotalOfACarriedAmountAddsEachCurrency(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"fee","formula":{"record":"g","path":[{"field":"fee"}]},"total":"rows"}],
 		"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"fee"}]}`, Options{}, nil)
@@ -227,11 +227,11 @@ func TestRowsTotalsOfEveryColumnKind(t *testing.T) {
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"avg","path":[{"field":"grams"}],"aggregate":"avg","scale":0,"total":"rows"},
 		{"id":"one","formula":{"value":1},"total":"rows"}]`
-	const flat = `{"version":2,"source":"zoo.feedings",` + cols + `,"sort":[{"col":"note"}]}`
+	const flat = `{"version":4,"source":"zoo.feedings",` + cols + `,"sort":[{"col":"note"}]}`
 	res := z.run(t, "ann", flat, Options{}, nil)
 	requireOrderedRows(t, flat, res, "avg", int64(500), int64(800), int64(300), int64(100), int64(1700))
 	requireRows(t, res, "one", int64(1), int64(1), int64(1), int64(1), int64(4))
-	res = z.run(t, "ann", `{"version":2,"source":"zoo.feedings",`+cols+`,"groups":[{"id":"g","col":"species"}],"sort":[{"col":"species"}]}`, Options{}, nil)
+	res = z.run(t, "ann", `{"version":4,"source":"zoo.feedings",`+cols+`,"groups":[{"id":"g","col":"species"}],"sort":[{"col":"species"}]}`, Options{}, nil)
 	requireRows(t, res, "label", "lion", "zebra", "Total")
 	requireRows(t, res, "avg", int64(650), int64(200), int64(850))
 	requireRows(t, res, "one", int64(2), int64(2), int64(4))
@@ -241,7 +241,7 @@ func TestRowsTotalsOfEveryColumnKind(t *testing.T) {
 // having reads that sum and hides it in turn (South, its zebra 1000).
 func TestARowsTotalAddsThroughThreeLevels(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"site","path":[{"link":"animal"},{"link":"site"},{"field":"name"}]},
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
@@ -264,7 +264,7 @@ func TestRowsTotalsOnMorePivotCellsThanAJoinHolds(t *testing.T) {
 	for i := range 70 {
 		z.feeding(t, fmt.Sprintf("p%02d", i), z.recs["leo"], 1, "2026-04-01", 1)
 	}
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"name","path":[{"link":"animal"},{"field":"name"}]},
 		{"id":"shown","path":[{"field":"cost"}],"aggregate":"sum","total":"rows"}],
@@ -283,7 +283,7 @@ func TestManyRowsColumnsOverOneParentAddTheirRows(t *testing.T) {
 	for i := range 70 {
 		cols = append(cols, fmt.Sprintf(`{"id":"w%d","path":[{"link":"animals","mode":"aggregate"},{"field":"weight"}],"aggregate":"sum","total":"rows"}`, i))
 	}
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[`+strings.Join(cols, ",")+`],
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.sites","columns":[`+strings.Join(cols, ",")+`],
 		"groups":[{"id":"g","col":"region"},{"id":"h","col":"name"}],"sort":[{"col":"region"}]}`, Options{}, nil)
 	requireRows(t, res, "label", "North", "South", "Total")
 	requireRows(t, res, "w0", int64(190), int64(300), int64(490))
@@ -303,7 +303,7 @@ func TestManyRecomputeTotalsOverOneParentUnderAHaving(t *testing.T) {
 	for i := range 65 {
 		cols = append(cols, fmt.Sprintf(`{"id":"w%d","path":[{"link":"animals","mode":"aggregate"},{"field":"weight"}],"aggregate":"sum"}`, i))
 	}
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[`+strings.Join(cols, ",")+`],
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.sites","columns":[`+strings.Join(cols, ",")+`],
 		"groups":[{"id":"g","col":"region"},{"id":"h","col":"name","having":{"op":"gt","args":[{"col":"w0"},{"value":200}]}}],
 		"sort":[{"col":"region"}]}`, Options{ExpandAll: true}, nil)
 	requireRows(t, res, "kind", "group", "group", "group", "detail", "total")
@@ -343,7 +343,7 @@ func withLedger(t *testing.T, z *zoo) {
 	z.feeding(t, "c4", z.recs["lia"], -500, "2026-02-12", 10)
 }
 
-const ledgerByAnimal = `{"version":2,"source":"zoo.feedings","columns":[
+const ledgerByAnimal = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"animal","path":[{"link":"animal"}]},
 	{"id":"note","path":[{"field":"note"}]},` + ledgerSides + `],
 	"groups":[{"id":"g","col":"animal"%s}],
@@ -389,7 +389,7 @@ func TestARowsTotalFillRowIsBlankOnBothSides(t *testing.T) {
 func TestARowsTotalAddsNothingForAGroupItsHavingHides(t *testing.T) {
 	z := newZoo(t)
 	withLedger(t, z)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"net","path":[{"field":"cost"}],"aggregate":"sum"},`+ledgerSides+`],
 		"groups":[{"id":"g","col":"animal","having":{"op":"lt","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":0}]}}],
@@ -429,7 +429,7 @@ func TestARowsTotalComputesEachCurrencyApart(t *testing.T) {
 func TestARowsTotalOuterLevelAddsItsChildGroups(t *testing.T) {
 	z := newZoo(t)
 	withLedger(t, z)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"animal","path":[{"link":"animal"}]},`+ledgerSides+`],
 		"groups":[{"id":"s","col":"species"},{"id":"a","col":"animal"}],
@@ -448,7 +448,7 @@ func TestARowsTotalOuterLevelAddsItsChildGroups(t *testing.T) {
 func TestARowsPivotCellComputesTheInnermostGroupFromItsBaseRows(t *testing.T) {
 	z := newZoo(t)
 	z.feeding(t, "p1", z.recs["leo"], 100, "2026-01-25", 200)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"most","path":[{"field":"grams"}],"aggregate":"max","total":"rows"}],
 		"groups":[{"id":"g","col":"species"}],"sort":[{"col":"species"}],
@@ -468,14 +468,14 @@ func TestALayoutSectionOfARowsColumnUnderTheRule(t *testing.T) {
 	withLedger(t, z)
 	const layout = `"layout":[{"section":"l","title":"Lions","key":"lion"},{"section":"z","title":"Zebras","key":"zebra"},
 		{"row":"b","label":"Both","formula":{"op":"add","args":[{"subtotal":"l"},{"subtotal":"z"}]}}]}`
-	one := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	one := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},`+ledgerSides+`],
 		"groups":[{"id":"g","col":"species"}],`+layout, Options{}, nil)
 	requireRows(t, one, "label", "Lions", "Total Lions", "Zebras", "Total Zebras", "Both")
 	requireRows(t, one, "debit", int64(2700), int64(2700), nil, nil, int64(2700))
 	requireRows(t, one, "credit", nil, nil, int64(2700), int64(2700), int64(2700))
 
-	two := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	two := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"animal","path":[{"link":"animal"}]},`+ledgerSides+`],
 		"groups":[{"id":"g","col":"species"},{"id":"a","col":"animal"}],`+layout, Options{}, nil)
@@ -499,7 +499,7 @@ func TestARowsTotalOverAnAggregatedColumnComputesFromBaseRows(t *testing.T) {
 	z := newZoo(t)
 	withLedger(t, z)
 	for _, total := range []string{"", `,"total":"rows"`} {
-		res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+		res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 			{"id":"animal","path":[{"link":"animal"}]},
 			{"id":"net","path":[{"field":"cost"}],"aggregate":"sum"`+total+`},`+ledgerSidesOfNet+`],
 			"groups":[{"id":"g","col":"animal"}],
@@ -517,7 +517,7 @@ func TestARowsTotalOverAnAggregatedColumnComputesFromBaseRows(t *testing.T) {
 func TestARowsColumnReadingARowsColumnShowsItsCells(t *testing.T) {
 	z := newZoo(t)
 	withLedger(t, z)
-	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},` + ledgerSides + `,
@@ -552,7 +552,7 @@ func TestARowsTotalWithFillAndHavingOnOneLevel(t *testing.T) {
 // detail row is its cost plus its grams.
 func TestARowsTotalOfAnAggregateBesideARowValue(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"mix","formula":{"op":"add","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"path":[{"field":"grams"}]}]},"total":"rows"}],
@@ -571,7 +571,7 @@ func TestARowsTotalOfAnAggregateBesideARowValue(t *testing.T) {
 // Total adds the shown group cells (1000).
 func TestARowsTotalOverACappedRowsColumn(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"grams","path":[{"field":"grams"}],"total":"rows"},
@@ -586,14 +586,14 @@ func TestARowsTotalOverACappedRowsColumn(t *testing.T) {
 func TestRowsTotalIsRefusedWhereItMeansNothing(t *testing.T) {
 	app := withZooRegistry(t)
 	for _, c := range []struct{ spec, at, want string }{
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"c","path":[{"field":"cost"}],"aggregate":"sum","total":"some"}]}`,
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"c","path":[{"field":"cost"}],"aggregate":"sum","total":"some"}]}`,
 			"columns.0.total", "total is recompute or rows"},
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}],"total":"rows"}]}`,
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}],"total":"rows"}]}`,
 			"columns.0.total", "only a number or an amount column adds the rows shown"},
-		{`{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"},
+		{`{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"},
 			{"id":"p","formula":{"op":"percentOfTotal","scale":2,"args":[{"col":"c"}]},"total":"rows"}],"groups":[{"id":"g","col":"n"}]}`,
 			"columns.2.total", "is not added up"},
-		{`{"version":2,"source":"zoo.sites","columns":[{"id":"n","path":[{"field":"name"}]},
+		{`{"version":4,"source":"zoo.sites","columns":[{"id":"n","path":[{"field":"name"}]},
 			{"id":"w","path":[{"link":"animals","mode":"nest"},{"field":"weight"}],"total":"rows"}]}`,
 			"columns.1.total", "child rows are not totalled"},
 	} {
@@ -628,7 +628,7 @@ func TestToManyTotalsOfOneParentRowShareOneCTE(t *testing.T) {
 	total := func(id, aggregate, field string) string {
 		return fmt.Sprintf(`{"id":%q,"path":[{"link":"animals","mode":"aggregate"},{"field":%q}],"aggregate":%q}`, id, field, aggregate)
 	}
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[{"id":"region","path":[{"field":"region"}]},`+
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.sites","columns":[{"id":"region","path":[{"field":"region"}]},`+
 		strings.Join([]string{total("sum", "sum", "weight"), total("min", "min", "weight"), total("max", "max", "weight"),
 			strings.Replace(total("avg", "avg", "weight"), `"avg"}`, `"avg","scale":0}`, 1), total("price", "sum", "price")}, ",")+`],
 		"groups":[{"id":"g","col":"region"}],"sort":[{"col":"region"}]}`, Options{}, nil)
@@ -646,7 +646,7 @@ func TestToManyTotalsOfOneParentRowShareOneCTE(t *testing.T) {
 	}
 
 	// Ann keeps Leo and Zed, so she reads only their feedings.
-	filled := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[{"id":"site","path":[{"link":"site"}]},
+	filled := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[{"id":"site","path":[{"link":"site"}]},
 		{"id":"grams","path":[{"link":"feedings","mode":"aggregate"},{"field":"grams"}],"aggregate":"sum"},
 		{"id":"most","path":[{"link":"feedings","mode":"aggregate"},{"field":"grams"}],"aggregate":"max"}],
 		"groups":[{"id":"g","col":"site","fill":{}}],"sort":[{"col":"site"}]}`, Options{}, nil)

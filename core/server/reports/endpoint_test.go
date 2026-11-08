@@ -45,18 +45,18 @@ func TestRunEndpoint(t *testing.T) {
 	z.post(t, "a member runs a draft", ann, `{"spec":`+feedingsByDay+`,"params":{},"options":{"limit":10,"display":{"negative":"parens"}}}`,
 		http.StatusOK, `"kind":"total"`, `"cost":4500`, `"topics":["collection/zoo_animals","collection/zoo_feedings","collection/zoo_keepers"]`)
 	z.post(t, "signed out", "", runBodyOf(feedingsByDay), http.StatusUnauthorized, `"status":401`)
-	z.post(t, "an invalid spec", ann, runBodyOf(`{"version":1,"source":"zoo.feedings","columns":[{"id":"1x","path":[{"field":"cost"}]}]}`),
+	z.post(t, "an invalid spec", ann, runBodyOf(`{"version":4,"source":"zoo.feedings","columns":[{"id":"1x","path":[{"field":"cost"}]}]}`),
 		http.StatusBadRequest, `"message":"The report is not valid."`, `"columns.0.id":{"code":"invalid"`)
-	z.post(t, "an unknown column", ann, runBodyOf(`{"version":1,"source":"zoo.feedings","columns":[{"id":"a","path":[{"field":"cost"}]}],"sort":[{"col":"b"}]}`),
+	z.post(t, "an unknown column", ann, runBodyOf(`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"field":"cost"}]}],"sort":[{"col":"b"}]}`),
 		http.StatusUnprocessableEntity, `"sort.0.col":{"code":"unknown_column"`)
-	z.post(t, "an unknown source", ann, runBodyOf(`{"version":1,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}`),
+	z.post(t, "an unknown source", ann, runBodyOf(`{"version":4,"source":"zoo.gone","columns":[{"id":"a","path":[{"field":"cost"}]}]}`),
 		http.StatusUnprocessableEntity, `"source":{"code":"unknown_source"`)
 	z.post(t, "SQL is not a field", ann, `{"spec":`+feedingsByDay+`,"sql":"DELETE FROM zoo_feedings"}`,
 		http.StatusBadRequest, `unknown field`)
 	z.post(t, "a second object", ann, `{"spec":`+feedingsByDay+`}{"sql":"x"}`, http.StatusBadRequest, `after the first object`)
 	z.post(t, "trailing text", ann, `{"spec":`+feedingsByDay+`} trailing`, http.StatusBadRequest, `after the first object`)
 	z.post(t, "no spec", ann, `{"params":{}}`, http.StatusBadRequest, `no spec`)
-	z.post(t, "a body too large", ann, `{"spec":{"version":1,"columns":[],"x":"`+strings.Repeat("x", maxRunBody)+`"}}`,
+	z.post(t, "a body too large", ann, `{"spec":{"version":4,"columns":[],"x":"`+strings.Repeat("x", maxRunBody)+`"}}`,
 		http.StatusRequestEntityTooLarge, `"status":413`)
 	if n, _ := z.app.CountRecords("zoo_feedings"); n != 6 {
 		t.Fatalf("the endpoint wrote: %d feedings", n)
@@ -149,7 +149,7 @@ func TestServeRefusesABrokenSourceBeforeAnyRun(t *testing.T) {
 	z := newZoo(t)
 	RegisterSource(Source{Key: "zoo.ghosts", Collection: "zoo_ghosts", Label: "Ghosts", Fields: []Field{{Key: "name", Label: "Name", Type: Text}}})
 	Register(z.app)
-	z.post(t, "a refused source", z.token(t, "ann"), runBodyOf(`{"version":1,"source":"zoo.ghosts","columns":[{"id":"a","path":[{"field":"name"}]}]}`),
+	z.post(t, "a refused source", z.token(t, "ann"), runBodyOf(`{"version":4,"source":"zoo.ghosts","columns":[{"id":"a","path":[{"field":"name"}]}]}`),
 		http.StatusUnprocessableEntity, `"source":{"code":"unknown_source"`)
 	if _, bad := Refused(z.app)["zoo.ghosts"]; !bad {
 		t.Fatal("serve did not refuse zoo.ghosts")

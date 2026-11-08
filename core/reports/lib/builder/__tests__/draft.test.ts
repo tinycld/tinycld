@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { CURRENT_SPEC_VERSION, type ParamDef, type ReportSpec, type SpecNode } from '../../spec'
+import {
+    type ColumnFit,
+    CURRENT_SPEC_VERSION,
+    type ParamDef,
+    type ReportSpec,
+    type SpecNode,
+} from '../../spec'
 import { placeCells, startingLayout } from '../../table-lines'
 import { MAX_COLUMNS } from '../columns'
 import {
     type BuilderDraft,
     builderSchema,
     type ColumnDraft,
+    columnWithFit,
     displayIssues,
     draftFromSpec,
     draftIssues,
@@ -14,7 +21,9 @@ import {
     groupTarget,
     keptParams,
     labelStart,
+    layoutWithMinWidth,
     levelScope,
+    NEVER_CUT,
     offersDetailBlank,
     offersHaving,
     openingCellRows,
@@ -23,6 +32,7 @@ import {
     showsDetailLabel,
     showsHaving,
     specFromDraft,
+    tidyFit,
 } from '../draft'
 import { emptyCondition, emptyGroup } from '../filter'
 import { formulaContext } from '../formula-context'
@@ -295,7 +305,7 @@ describe('the scale of a division and an average', () => {
 
     it('divides an amount formula by a number in whole cents', () => {
         const draft = draftFromSpec(
-            { version: 1, source: SALES_KEY, columns: amountCols },
+            { version: 4, source: SALES_KEY, columns: amountCols },
             META,
             CATALOG
         )
@@ -324,7 +334,7 @@ describe('the scale of a division and an average', () => {
 
     it('averages an amount formula in whole cents', () => {
         const draft = draftFromSpec(
-            { version: 1, source: SALES_KEY, columns: amountCols },
+            { version: 4, source: SALES_KEY, columns: amountCols },
             META,
             CATALOG
         )
@@ -1484,7 +1494,7 @@ const V3: ReportSpec = {
 const BALANCE = 4
 
 describe('spec version 3 in the builder', () => {
-    it('keeps every v3 part through the draft and writes version 3', () => {
+    it('keeps every v3 part through the draft and writes the current version', () => {
         const draft = draftFromSpec(V3, META, CATALOG)
         expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
         expect(draft.columns[3]).toMatchObject({ kind: 'formula', formula: { kind: 'editable' } })
@@ -1497,7 +1507,7 @@ describe('spec version 3 in the builder', () => {
             cells: { balance: { kind: 'editable', node: OPEN_BALANCE } },
         })
         const saved = specFromDraft(draft, CATALOG)
-        expect(saved.version).toBe(3)
+        expect(saved.version).toBe(CURRENT_SPEC_VERSION)
         expect(saved).toEqual(V3)
         expect(JSON.stringify(saved)).toBe(JSON.stringify(V3))
     })
@@ -1765,6 +1775,135 @@ describe('the desktop arrangement in the builder', () => {
     })
 })
 
+describe('column fit in the builder', () => {
+    const FIT_SPEC: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        columns: [
+            { id: 'customer', label: 'Customer', path: [{ field: 'customer' }] },
+            { id: 'amount', label: 'Amount', path: [{ field: 'amount' }] },
+        ],
+        display: {
+            oneLine: { minWidth: '1040px' },
+            columns: {
+                amount: { flexGrow: 0 },
+                customer: { minWidth: '7.5ch', whiteSpace: 'normal', lineClamp: 2 },
+            },
+            layouts: [
+                {
+                    width: 'tablet',
+                    minWidth: '600px',
+                    tracks: 2,
+                    cells: [
+                        { col: 'customer', line: 1, span: 2 },
+                        { col: 'amount', line: 2 },
+                    ],
+                },
+            ],
+        },
+    }
+
+    it('keeps the one-line width, every column fit and a layout gate through the draft', () => {
+        const draft = draftFromSpec(FIT_SPEC, META, CATALOG)
+        expect(draft.columns[0]?.fit).toEqual({
+            minWidth: '7.5ch',
+            whiteSpace: 'normal',
+            lineClamp: 2,
+        })
+        expect(draft.display.oneLine).toEqual({ minWidth: '1040px' })
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        // A save that changes nothing writes the same bytes.
+        expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(FIT_SPEC))
+    })
+
+    it('writes each fit in the engine order, the columns in byte order, and no empty fit', () => {
+        const draft = draftFromSpec(FIT_SPEC, META, CATALOG)
+        const shuffled: ColumnFit = { lineClamp: 2, whiteSpace: 'normal', minWidth: '7.5ch' }
+        const columns = draft.columns.map(column =>
+            column.id === 'customer' ? { ...column, fit: shuffled } : { ...column, fit: {} }
+        )
+        const saved = specFromDraft({ ...draft, columns }, CATALOG)
+        expect(JSON.stringify(saved.display?.columns)).toBe(
+            JSON.stringify({ customer: { minWidth: '7.5ch', whiteSpace: 'normal', lineClamp: 2 } })
+        )
+    })
+
+    it('writes no display when nothing is set, and keeps an empty one the spec spelled out', () => {
+        const plain = { ...FIT_SPEC, display: undefined }
+        expect(specFromDraft(draftFromSpec(plain, META, CATALOG), CATALOG).display).toBeUndefined()
+        const spelled = { ...FIT_SPEC, display: {} }
+        expect(specFromDraft(draftFromSpec(spelled, META, CATALOG), CATALOG).display).toEqual({})
+    })
+
+    it('tidies a fit: engine order, no unset setting, undefined when empty', () => {
+        expect(tidyFit({ flexGrow: 2, width: '10ch', minWidth: undefined })).toEqual({
+            width: '10ch',
+            flexGrow: 2,
+        })
+        expect(JSON.stringify(tidyFit({ flexGrow: 2, width: '10ch' }))).toBe(
+            '{"width":"10ch","flexGrow":2}'
+        )
+        expect(tidyFit({})).toBeUndefined()
+        expect(tidyFit(undefined)).toBeUndefined()
+    })
+})
+
 function issuePaths(draft: BuilderDraft) {
     return draftIssues(draft, CATALOG).map(i => i.path.join('.'))
 }
+
+describe('column fit choices', () => {
+    const META = { title: 'Sales', description: '' }
+    const spec: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        columns: [
+            { id: 'customer', label: 'Customer', path: [{ field: 'customer' }] },
+            { id: 'amount', label: 'Amount', path: [{ field: 'amount' }] },
+        ],
+    }
+    const draft = draftFromSpec(spec, META, CATALOG)
+    const withFits = (customer: ColumnFit | undefined, amount: ColumnFit | undefined) => ({
+        ...draft,
+        columns: draft.columns.map(column =>
+            columnWithFit(column, column.id === 'customer' ? customer : amount)
+        ),
+    })
+
+    it('lets text narrow and wrap, and a figure take only extra room or its whole value', () => {
+        const ok = withFits(
+            { minWidth: '12ch', whiteSpace: 'normal', lineClamp: 2 },
+            { minWidth: 'max-content', flexGrow: 2 }
+        )
+        expect(draftIssues(ok, CATALOG)).toEqual([])
+        expect(builderSchema(CATALOG).safeParse(ok).success).toBe(true)
+    })
+
+    it('refuses a setting that would cut a figure, on the column', () => {
+        const cut = withFits(undefined, { minWidth: '6ch' })
+        expect(draftIssues(cut, CATALOG)).toEqual([
+            { path: ['columns', 1, 'fit'], message: NEVER_CUT },
+        ])
+    })
+
+    it('clears an empty fit', () => {
+        const [customer] = draft.columns
+        if (!customer) throw new Error('no column')
+        expect(columnWithFit(customer, { flexGrow: undefined }).fit).toBeUndefined()
+        expect(columnWithFit(customer, { flexGrow: 0, minWidth: '8ch' }).fit).toEqual({
+            minWidth: '8ch',
+            flexGrow: 0,
+        })
+    })
+
+    it('puts a layout minWidth where the engine writes it', () => {
+        const layout = startingLayout('tablet', [{ id: 'customer' }, { id: 'amount' }], 2)
+        expect(Object.keys(layoutWithMinWidth(layout, '600px'))).toEqual([
+            'width',
+            'minWidth',
+            'tracks',
+            'cells',
+        ])
+        expect(layoutWithMinWidth({ ...layout, minWidth: '600px' }, undefined)).toEqual(layout)
+    })
+})

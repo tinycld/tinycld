@@ -12,7 +12,7 @@ import (
 // everyV3 uses every part version 3 adds (the plan's "For review" spec): a
 // count lookup with outer leaves, a sum lookup with a range bound, the All
 // dates preset, an opening row and a rollup.
-const everyV3 = `{"version":3,"source":"zoo.feedings",
+const everyV3 = `{"version":4,"source":"zoo.feedings",
 	"params":[{"id":"period","type":"dateRange","label":"Period","default":{"preset":"allDates"}}],
 	"columns":[
 		{"id":"animal","label":"Animal","path":[{"link":"animal"}]},
@@ -40,72 +40,12 @@ const everyV3 = `{"version":3,"source":"zoo.feedings",
 			"value":{"path":[{"field":"cost"}]},"pick":"sum"},{"value":0}]}}}}],
 	"sort":[{"col":"fed"}]}`
 
-// A version 2 spec loads unchanged as version 3: the step is the identity,
-// so the run says nothing about an upgrade and a save stores version 3.
-func TestAV2SpecLoadsSilentlyAsVersion3(t *testing.T) {
-	z := newZoo(t)
-	raw := `{"version":2,"source":"zoo.feedings","columns":[{"id":"animal","path":[{"link":"animal"}]},
-		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],"groups":[{"id":"g","col":"animal","open":true}]}`
-	spec, info, err := Load([]byte(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Version != 3 || info.UpgradedFrom != 0 {
-		t.Fatalf("version %d, upgradedFrom %d", spec.Version, info.UpgradedFrom)
-	}
-	res := z.run(t, "ann", raw, Options{}, nil)
-	if len(res.Notices) != 0 {
-		t.Fatalf("notices = %+v", res.Notices)
-	}
-	_, stored, err := loadStored([]byte(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(stored, &doc); err != nil || doc["version"] != float64(3) {
-		t.Fatalf("stored = %s", stored)
-	}
-}
-
-// A version 1 spec takes both identity steps (1→2, 2→3): it loads as
-// version 3, the run says nothing about an upgrade, and a save stores
-// version 3.
-func TestAV1SpecLoadsSilentlyAsVersion3(t *testing.T) {
-	z := newZoo(t)
-	raw := `{"version":1,"source":"zoo.feedings","columns":[{"id":"animal","path":[{"link":"animal"}]},
-		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],"groups":[{"id":"g","col":"animal","open":true}]}`
-	spec, info, err := Load([]byte(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Version != 3 || info.UpgradedFrom != 0 {
-		t.Fatalf("version %d, upgradedFrom %d", spec.Version, info.UpgradedFrom)
-	}
-	res := z.run(t, "ann", raw, Options{}, nil)
-	if len(res.Notices) != 0 {
-		t.Fatalf("notices = %+v", res.Notices)
-	}
-	_, stored, err := loadStored([]byte(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(stored, &doc); err != nil || doc["version"] != float64(3) {
-		t.Fatalf("stored = %s", stored)
-	}
-}
-
-func TestAVersion4SpecIsRefused(t *testing.T) {
-	_, _, err := Load([]byte(`{"version":4,"source":"zoo.feedings","columns":[]}`))
-	requireSpecError(t, err, 400, "version", "version 4 is newer than this server reads (3)")
-}
-
 // Every v3 field decodes strictly and is stored as posted; a run's options
 // carry the viewer sort.
 func TestASpecWithEveryV3FieldLoadsAndIsStoredUnchanged(t *testing.T) {
 	withZooRegistry(t)
 	spec, info, stored := mustLoad(t, everyV3)
-	if info.UpgradedFrom != 0 || len(info.Aliased) != 0 {
+	if len(info.Aliased) != 0 {
 		t.Fatalf("info = %+v", info)
 	}
 	if !reflect.DeepEqual(jsonDoc(t, []byte(everyV3)), jsonDoc(t, stored)) {
@@ -138,7 +78,7 @@ func TestASpecWithEveryV3FieldLoadsAndIsStoredUnchanged(t *testing.T) {
 // with its current key, and the formula-size guard counts the new slots.
 func TestV3SlotsResolveAliasesAndCountSize(t *testing.T) {
 	app := withZooRegistry(t)
-	spec, info, _ := mustLoad(t, `{"version":3,"source":"zoo.feedings","columns":[
+	spec, info, _ := mustLoad(t, `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"heavier","formula":{"op":"lookup","source":"zoo.animals","pick":"count",
 			"where":{"op":"gt","args":[{"path":[{"field":"mass"}]},{"outer":[{"link":"animal"},{"field":"mass"}]}]},
@@ -161,7 +101,7 @@ func TestV3SlotsResolveAliasesAndCountSize(t *testing.T) {
 	}
 
 	big := `{"op":"add","args":[` + strings.TrimSuffix(strings.Repeat(`{"value":1},`, 1000), ",") + `]}`
-	err := Validate(app, loadSpec(t, `{"version":3,"source":"zoo.feedings","columns":[
+	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum","rollup":`+big+`}],
 		"groups":[{"id":"g","col":"animal","opening":{"label":"Before","cells":{"cost":`+big+`}}}]}`))
@@ -194,22 +134,22 @@ func TestV3PartsAreValidated(t *testing.T) {
 	app := withZooRegistry(t)
 	cases := map[string]v3Refusal{
 		// F2: the outer leaf.
-		"an outer leaf with a value": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"outer":[{"field":"note"}],"value":1}}]}`,
+		"an outer leaf with a value": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"outer":[{"field":"note"}],"value":1}}]}`,
 			400, "columns.0.formula", "one of op, col, path, outer"},
-		"an outer field the report's source does not have": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup",
+		"an outer field the report's source does not have": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup",
 			"source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"outer":[{"field":"nope"}]}]},
 			"value":{"path":[{"field":"weight"}]}}}]}`, 422, "columns.0.formula.where.args.1.outer.0.field", `has no field "nope"`},
 		// F9: every new part decodes strictly.
-		"an unknown key in an opening": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],
+		"an unknown key in an opening": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]}],
 			"groups":[{"id":"g","col":"a","opening":{"label":"x","lable":"y"}}]}`, 400, "spec", `unknown field "lable"`},
-		"an unknown key in a rollup": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"c","path":[{"field":"cost"}],"aggregate":"sum",
+		"an unknown key in a rollup": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"c","path":[{"field":"cost"}],"aggregate":"sum",
 			"rollup":{"op":"sum","sql":"x"}}]}`, 400, "spec", `unknown field "sql"`},
-		"a bound that is not text": {`{"version":3,"source":"zoo.feedings","params":[{"id":"p","type":"dateRange"}],
+		"a bound that is not text": {`{"version":4,"source":"zoo.feedings","params":[{"id":"p","type":"dateRange"}],
 			"columns":[{"id":"x","formula":{"param":"p","bound":1}}]}`, 400, "spec", "cannot unmarshal"},
 		// F1: sum and count lookups.
-		"a pick that is not min, max, sum or count": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup",
+		"a pick that is not min, max, sum or count": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup",
 			"source":"zoo.animals","value":{"path":[{"field":"weight"}]},"pick":"avg"}}]}`, 400, "columns.0.formula.pick", "pick is min, max, sum or count"},
-		"a sum of days": {`{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup",
+		"a sum of days": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup",
 			"source":"zoo.animals","value":{"path":[{"field":"born"}]},"pick":"sum"}}]}`, 400, "columns.0.formula.value", "pick sum adds numbers or amounts"},
 	}
 	for name, c := range cases {

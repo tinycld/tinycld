@@ -9,7 +9,7 @@ import (
 
 func TestOpenGroupsOpenWhenTheRunHasNoExpansion(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -27,7 +27,7 @@ func TestOpenGroupsOpenWhenTheRunHasNoExpansion(t *testing.T) {
 
 func TestOpenFirstLevelLeavesTheSecondClosed(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -47,7 +47,7 @@ func TestOpenFirstLevelLeavesTheSecondClosed(t *testing.T) {
 	}
 }
 
-const openTwoLevels = `{"version":2,"source":"zoo.feedings","columns":[
+const openTwoLevels = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -65,7 +65,7 @@ func TestOpenUnderAClosedAncestorFetchesNothing(t *testing.T) {
 
 func TestOpenStopsAtTheFirstClosedLevel(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"fed","path":[{"field":"fed"}]},
 		{"id":"note","path":[{"field":"note"}]},

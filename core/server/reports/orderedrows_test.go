@@ -26,7 +26,7 @@ func TestRequireOrderedRowsNeedsASort(t *testing.T) {
 		{Kind: KindDetail, Cells: map[string]any{"note": "f1"}},
 		{Kind: KindDetail, Cells: map[string]any{"note": "f2"}},
 	}}
-	const cols = `"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}]`
+	const cols = `"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}]`
 	for _, c := range []struct {
 		name, spec string
 		want       []any

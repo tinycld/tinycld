@@ -219,7 +219,7 @@ test.describe('sharing reports', () => {
             owner: owner.id,
             title,
             spec: {
-                version: 1,
+                version: 4,
                 source: 'salesstub.gone',
                 columns: [{ id: 'name', path: [{ field: 'name' }] }],
             },

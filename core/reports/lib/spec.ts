@@ -6,7 +6,7 @@ import { AGGREGATES, PARAM_TYPES, type Problem } from './types'
 // too. Null parts read as absent: a hand-written or shipped spec may say
 // "layout": null.
 
-export const CURRENT_SPEC_VERSION = 3
+export const CURRENT_SPEC_VERSION = 4
 export const BUCKETS = ['day', 'month', 'quarter', 'year', 'fiscalYear'] as const
 export type Bucket = (typeof BUCKETS)[number]
 
@@ -184,14 +184,53 @@ export const displayCellSchema = z.strictObject({
 })
 export type DisplayCell = z.infer<typeof displayCellSchema>
 
+// A column fit length (core/server/reports/fit.go fitLength): a number of 1 to 4
+// digits, with decimals, in ch (the width of "0"), px or % (of the line).
+export const FIT_LENGTH = /^(\d{1,4}(?:\.\d+)?)(ch|px|%)$/
+const PX_LENGTH = /^\d{1,4}(?:\.\d+)?px$/
+export type FitLength = { value: number; unit: 'ch' | 'px' | '%' }
+
+const isFitUnit = (unit: string | undefined): unit is FitLength['unit'] =>
+    unit === 'ch' || unit === 'px' || unit === '%'
+
+export function parseFitLength(s: string): FitLength | null {
+    const [, digits, unit] = FIT_LENGTH.exec(s) ?? []
+    if (!digits || !isFitUnit(unit)) return null
+    return { value: Number(digits), unit }
+}
+
+const fitLength = z.string().regex(FIT_LENGTH)
+const pxLength = z.string().regex(PX_LENGTH)
+
+// One column's fit, after CSS (design §3.2). The engine refuses each setting that
+// could cut a figure; flexGrow is free on every column.
+export const columnFitSchema = z.strictObject({
+    width: fitLength.optional(),
+    minWidth: z.union([z.enum(['auto', 'min-content', 'max-content']), fitLength]).optional(),
+    maxWidth: z.union([z.literal('none'), fitLength]).optional(),
+    whiteSpace: z.enum(['nowrap', 'normal']).optional(),
+    lineClamp: z.number().int().min(1).max(4).optional(),
+    textOverflow: z.literal('ellipsis').optional(),
+    flexGrow: z.number().int().min(0).max(10).optional(),
+})
+export type ColumnFit = z.infer<typeof columnFitSchema>
+
+// The least row width at which the report is drawn on one line.
+export const displayOneLineSchema = z.strictObject({ minWidth: pxLength })
+export type DisplayOneLine = z.infer<typeof displayOneLineSchema>
+
 // The columns placed on lines of `tracks` equal tracks at one width; a column it
-// does not list is not shown there.
+// does not list is not shown there. `minWidth`: the least row width it is used at.
 export const displayLayoutSchema = z.strictObject({
     width: z.enum(DISPLAY_WIDTHS),
+    minWidth: pxLength.optional(),
     tracks: z.number().int(),
     cells: z.array(displayCellSchema),
 })
 export type DisplayLayout = z.infer<typeof displayLayoutSchema>
+
+/** The fit settings the table reads besides the arrangements. */
+export type DisplayFit = { oneLine?: DisplayOneLine; columns?: Record<string, ColumnFit> }
 
 const layoutItemSchema = z.strictObject({
     section: z.string().optional(),
@@ -203,8 +242,8 @@ const layoutItemSchema = z.strictObject({
 })
 
 export const reportSpecSchema = z.strictObject({
-    // A newer app's spec may mean something this app would read wrongly: unreadable.
-    version: z.number().int().min(1).max(CURRENT_SPEC_VERSION),
+    // One spec version: a spec of another version is unreadable here.
+    version: z.literal(CURRENT_SPEC_VERSION),
     source: z.string().min(1),
     params: z.array(paramDefSchema).nullish(),
     columns: z.array(specColumnSchema),
@@ -223,13 +262,28 @@ export const reportSpecSchema = z.strictObject({
     layout: z.array(layoutItemSchema).nullish(),
     // A formula on each detail row that labels it (the first column's value without it).
     detail: z.strictObject({ label: specNodeSchema.optional() }).nullish(),
-    display: z.strictObject({ layouts: z.array(displayLayoutSchema).optional() }).nullish(),
+    display: z
+        .strictObject({
+            oneLine: displayOneLineSchema.optional(),
+            columns: z.record(z.string(), columnFitSchema).optional(),
+            layouts: z.array(displayLayoutSchema).optional(),
+        })
+        .nullish(),
 })
 export type ReportSpec = z.infer<typeof reportSpecSchema>
 
 export function parseSpec(value: unknown): ReportSpec | null {
     const parsed = reportSpecSchema.safeParse(value)
     return parsed.success ? parsed.data : null
+}
+
+/** The fit settings of a spec's display that the table reads besides its arrangements. */
+export function displayFitOf(spec: Pick<ReportSpec, 'display'> | null | undefined): DisplayFit {
+    const display = spec?.display
+    return {
+        ...(display?.oneLine ? { oneLine: display.oneLine } : {}),
+        ...(display?.columns ? { columns: display.columns } : {}),
+    }
 }
 
 // reports.broken: why a saved report cannot run (core/server/reports/broken.go).

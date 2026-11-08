@@ -2,13 +2,14 @@ import { useWindowWidth } from '@tinycld/core/components/workspace/useBreakpoint
 import { useMemo, useRef, useState } from 'react'
 import { type ColumnMeasures, measureColumns, measureKey } from '../lib/column-measure'
 import { type VisibleRow, visibleRows } from '../lib/rows'
-import { type LineLayout, tableLines } from '../lib/table-lines'
+import type { ColumnFit, DisplayFit } from '../lib/spec'
+import { fitTable, type LayoutSource, type LineLayout } from '../lib/table-lines'
 import type { ReportViewModel } from './useReportView'
 import { useStable } from './useStable'
 
 export type TableLayoutModel = Pick<
     ReportViewModel,
-    'columns' | 'rows' | 'display' | 'layouts' | 'rowLevels' | 'run'
+    'columns' | 'rows' | 'display' | 'layouts' | 'rowLevels' | 'run' | 'fit'
 >
 
 export interface TableLayout {
@@ -16,7 +17,11 @@ export interface TableLayout {
     /** False until the rows' width is measured: the table is drawn hidden until then. */
     isMeasured: boolean
     onRowWidth(width: number): void
+    /** The width the layout was fitted to and the rule that laid it out (the table's e2e marker). */
+    fit: { width: number; source: LayoutSource }
 }
+
+const NO_FIT: DisplayFit = {}
 
 // Which run's rows are shown: its design and its resolved params. It changes when
 // a run of a new design or new params lands; not while that run loads behind the
@@ -42,13 +47,17 @@ function measuredRows(model: TableLayoutModel): readonly VisibleRow[] {
 // start closed is measured once more when its first detail rows are shown, so the
 // text columns get their content's width then, not their heading's. That happens
 // once per key: folding every group again hides the details but never measures.
-function useRunMeasures(model: TableLayoutModel): ColumnMeasures {
+function useRunMeasures(
+    model: TableLayoutModel,
+    fits: Readonly<Record<string, ColumnFit>> | undefined
+): ColumnMeasures {
     const levels = model.rowLevels
     const key = measureKey({
         runKey: shownRunKey(model),
         format: model.display,
         columns: model.columns,
         levels,
+        fits,
     })
     const hasDetail = model.rows.some(item => item.row.kind === 'detail')
     const kept = useRef<{ key: string; hasDetail: boolean; measures: ColumnMeasures } | null>(null)
@@ -60,6 +69,7 @@ function useRunMeasures(model: TableLayoutModel): ColumnMeasures {
             rows: measuredRows(model),
             format: model.display,
             levels,
+            fits,
         })
         kept.current = { key, hasDetail, measures }
     }
@@ -74,14 +84,20 @@ function useRunMeasures(model: TableLayoutModel): ColumnMeasures {
 export function useTableLayout(model: TableLayoutModel): TableLayout {
     const windowWidth = useWindowWidth()
     const [rowWidth, setRowWidth] = useState<number>()
-    const measures = useRunMeasures(model)
+    const fit = useStable(model.fit ?? NO_FIT)
+    const measures = useRunMeasures(model, fit.columns)
     const columns = useStable(model.columns)
     const levels = useStable(model.rowLevels)
     const { layouts } = model
     const width = rowWidth ?? windowWidth
-    const layout = useMemo(
-        () => tableLines({ columns, width, layouts, levels, measures }),
-        [columns, width, layouts, levels, measures]
+    const fitted = useMemo(
+        () => fitTable({ columns, width, layouts, levels, measures, oneLine: fit.oneLine }),
+        [columns, width, layouts, levels, measures, fit.oneLine]
     )
-    return { layout, isMeasured: rowWidth !== undefined, onRowWidth: setRowWidth }
+    return {
+        layout: fitted.layout,
+        isMeasured: rowWidth !== undefined,
+        onRowWidth: setRowWidth,
+        fit: { width, source: fitted.source },
+    }
 }

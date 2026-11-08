@@ -23,7 +23,7 @@ func withEuroFeeding(t *testing.T, z *zoo) {
 
 // gramsByAnimalHaving groups the feedings by animal under a having.
 func gramsByAnimalHaving(having string) string {
-	return `{"version":3,"source":"zoo.feedings","columns":[
+	return `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
@@ -88,7 +88,7 @@ func TestAHavingOverAMixedSumLookupHidesNoGroupItsOtherTermsShow(t *testing.T) {
 func TestAFilterOverAMixedSumLookupDropsNoRowItsOtherTermsKeep(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"filter":{"op":"or","args":[
 			{"op":"eq","args":[{"value":1},{"value":1}]},
 			{"op":"gt","args":[` + allCosts + `,{"value":0}]}]},
@@ -107,7 +107,7 @@ func TestAFilterOverAMixedSumLookupDropsNoRowItsOtherTermsKeep(t *testing.T) {
 // A filter whose sum lookup is in one currency names nothing.
 func TestAFilterOverASumLookupInOneCurrencyHasNoNotice(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"filter":{"op":"gt","args":[` + allCosts + `,{"value":0}]},
 		"sort":[{"col":"note"}]}`
 	res := z.run(t, "ann", spec, Options{}, nil)
@@ -122,7 +122,7 @@ func TestAFilterOverASumLookupInOneCurrencyHasNoNotice(t *testing.T) {
 func TestAFillWhereOverAMixedSumLookupIsNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal","fill":{"where":{"op":"or","args":[

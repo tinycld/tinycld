@@ -25,14 +25,14 @@ func TestADetailLabelThatReadsASelectShowsItsOptionLabel(t *testing.T) {
 
 func TestAGroupLabelThatReadsASelectShowsItsOptionLabel(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal","label":{"record":"g","path":[{"link":"site"},{"field":"region"}]}}]}`, Options{}, nil)
 	requireRows(t, res, "label", "North", "South", "Total")
 }
 
 func TestTextOperatorsReadASelectsOptionLabel(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},
 		{"id":"where","formula":{"op":"concat","args":[` + regionPath + `,{"value":" / "},{"col":"note"}]}},
 		{"id":"loud","formula":{"op":"upper","args":[` + regionPath + `]}},
 		{"id":"north","formula":{"op":"startsWith","args":[` + regionPath + `,{"value":"Nor"}]}}],"sort":[{"col":"note"}]}`
@@ -51,7 +51,7 @@ func TestIfAndCoalesceOverASelectShowItsOptionLabels(t *testing.T) {
 	res := z.run(t, "ann", spec, Options{}, nil)
 	requireOrderedRows(t, spec, res, "label", "North", "North", "cheap", "cheap", "Total")
 
-	grouped := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	grouped := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"region","formula":{"op":"coalesce","args":[`+regionPath+`]}},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"region"}]}`, Options{}, nil)
 	requireRows(t, grouped, "label", "North", "South", "Total")
@@ -77,7 +77,7 @@ func TestACaseOverASelectShowsItsOptionLabels(t *testing.T) {
 // conditions compare its stored values: a filter on it matches what is stored.
 func TestAConditionComparesAMixsStoredValues(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}],
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}],
 		"params":[{"id":"p","type":"choice","options":[{"value":"north","label":"North"},{"value":"south","label":"South"}]}],"filter":FILTER}`
 	blankOr := `{"op":"eq","args":[{"op":"coalesce","args":[` + regionPath + `,{"value":""}]},{"value":"north"}]}`
 	blankSpec := strings.Replace(spec, "FILTER", blankOr, 1)
@@ -91,7 +91,7 @@ func TestAConditionComparesAMixsStoredValues(t *testing.T) {
 // Kit, with no site, reads "north", shown as North like Leo's.
 func TestACoalesceWithAStoredValueShowsItConsistently(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
+	const spec = `{"version":4,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"region","formula":{"op":"coalesce","args":[{"path":[{"link":"site"},{"field":"region"}]},{"value":"north"}]}}],
 		"sort":[{"col":"name"}],"detail":{"label":{"col":"region"}}}`
 	res := z.run(t, "ann", spec, Options{}, nil)
@@ -128,7 +128,7 @@ func withMeals(t *testing.T, z *zoo) {
 func TestSelectGroupsReadInOptionLabelOrder(t *testing.T) {
 	z := newZoo(t)
 	withMeals(t, z)
-	spec := `{"version":2,"source":"zoo.meals","columns":[{"id":"kind","path":[{"field":"kind"}]},
+	spec := `{"version":4,"source":"zoo.meals","columns":[{"id":"kind","path":[{"field":"kind"}]},
 		{"id":"byFormula","formula":{"op":"coalesce","args":[{"path":[{"field":"kind"}]}]}},
 		{"id":"mixed","formula":{"op":"if","args":[{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"m3"}]},{"value":"Other"},{"path":[{"field":"kind"}]}]}},
 		{"id":"n","path":[{"field":"note"}],"aggregate":"count"}],"groups":[GROUP]}`
@@ -150,7 +150,7 @@ func TestSelectGroupsReadInOptionLabelOrder(t *testing.T) {
 	}
 	// A mixed column's cells show it as text, and a filter on it compares
 	// stored values.
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.meals","columns":[{"id":"note","path":[{"field":"note"}]},
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.meals","columns":[{"id":"note","path":[{"field":"note"}]},
 		{"id":"mixed","formula":{"op":"if","args":[{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"m3"}]},{"value":"Other"},{"path":[{"field":"kind"}]}]}}],
 		"sort":[{"col":"note"}],"filter":{"op":"eq","args":[{"col":"mixed"},{"value":"apple"}]}}`, Options{}, nil)
 	requireRows(t, res, "mixed", "Zest", nil)
@@ -165,7 +165,7 @@ func TestALookedUpMixShowsItsOptionLabels(t *testing.T) {
 	z := newZoo(t)
 	region := `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"id"}]},{"col":"animal"}]},
 		"value":{"op":"coalesce","args":[{"path":[{"link":"site"},{"field":"region"}]},{"value":""}]}}`
-	spec := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"animal","path":[{"link":"animal"}]},
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"region","formula":` + region + `}],"sort":[{"col":"note"}],"detail":{"label":` + region + `}`
 	res := z.run(t, "ann", spec+`}`, Options{}, nil)
 	requireOrderedRows(t, spec+`}`, res, "region", "North", "North", "South", "South", nil)
@@ -180,7 +180,7 @@ func TestALookedUpMixShowsItsOptionLabels(t *testing.T) {
 
 func TestADetailLabelIsRefusedOnAPivot(t *testing.T) {
 	app := withZooRegistry(t)
-	spec := loadSpec(t, `{"version":2,"source":"zoo.feedings","columns":[{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+	spec := loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],"pivot":{"path":[{"field":"fed"}],"bucket":"month","cell":"cost"},"detail":{"label":{"col":"species"}}}`)
 	requireSpecError(t, Validate(app, spec), 400, "detail.label", "a pivot report has no detail rows")

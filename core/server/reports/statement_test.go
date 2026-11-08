@@ -231,7 +231,7 @@ func wideSpec() string {
 	for i := range 65 {
 		cols = append(cols, fmt.Sprintf(`{"id":"w%d","path":[{"link":"animals","mode":"aggregate"},{"field":"weight"}],"aggregate":"sum"}`, i))
 	}
-	return `{"version":2,"source":"zoo.sites","columns":[` + strings.Join(cols, ",") + `],
+	return `{"version":4,"source":"zoo.sites","columns":[` + strings.Join(cols, ",") + `],
 		"groups":[{"id":"g","col":"region"},{"id":"h","col":"name","having":{"op":"gt","args":[{"col":"w0"},{"value":200}]}}],
 		"sort":[{"col":"region"}]}`
 }
@@ -294,7 +294,7 @@ func TestHelperColumnsOnlyForColumnsThatHaveThem(t *testing.T) {
 	if m := regexp.MustCompile(` AS (vl|vc|vcur)\d+\b`).FindString(stmt); m != "" {
 		t.Fatalf("the wide report's statement selects %q", m)
 	}
-	linked, _ := z.groupStatementOf(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	linked, _ := z.groupStatementOf(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"site","path":[{"link":"site"}]},{"id":"w","path":[{"field":"weight"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"site"}]}`, Options{ExpandAll: true})
 	if !strings.Contains(linked, " AS vl0") || strings.Contains(linked, " AS vl1") {
@@ -327,11 +327,11 @@ func TestEveryReportStatementIsPreparedOnce(t *testing.T) {
 	z := newZoo(t)
 	db := readPool(t, z)
 	seen := observeReads(t)
-	z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"w","path":[{"field":"weight"}],"aggregate":"sum"}],
+	z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"w","path":[{"field":"weight"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"name"}],"sort":[{"col":"name"}]}`, Options{ExpandAll: true}, nil)
 	z.run(t, "ann", wideSpec(), Options{ExpandAll: true}, nil)
 	z.run(t, "ann", sitesWithAnimals, Options{}, nil)
-	z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[{"id":"name","path":[{"link":"animal"},{"field":"name"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
+	z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[{"id":"name","path":[{"link":"animal"},{"field":"name"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"name"}],"pivot":{"path":[{"field":"note"}],"cell":"c"}}`, Options{}, nil)
 	z.options(t, "ann", animalsParam, OptionsRequest{Param: "animals"})
 	kinds := map[string]bool{}

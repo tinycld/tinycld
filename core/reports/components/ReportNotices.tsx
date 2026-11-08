@@ -98,8 +98,8 @@ function NoticeBand({ notices, isCompact }: { notices: Notice[]; isCompact: bool
     )
 }
 
-// What the run says about itself (caps that applied, mixed currencies, an upgraded
-// spec, renamed fields; spec "Errors"), and, last, the table's own layout notice
+// What the run says about itself (caps that applied, mixed currencies,
+// renamed fields; spec "Errors"), and, last, the table's own layout notice
 // (H5): one band above the table. "Updating…" is not one of them: it has its own
 // slot in the header (ReportUpdating). The live region is always mounted, empty and
 // without height when there are no notices, so a screen reader announces notices

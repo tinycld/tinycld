@@ -15,7 +15,7 @@ func withEmptyAnimals(t *testing.T, z *zoo) {
 }
 
 func animalFill(fill, filter string) string {
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
@@ -68,7 +68,7 @@ func TestFillWhereReadsLinksThroughTheRules(t *testing.T) {
 func TestFillWithAPivot(t *testing.T) {
 	z := newZoo(t)
 	withEmptyAnimals(t, z)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal","fill":{"where":{"op":"eq","args":[{"path":[{"field":"active"}]},{"value":true}]}}}],
@@ -141,7 +141,7 @@ func TestFillComputesOnlyUnderExpandedParents(t *testing.T) {
 func TestFillRowOpensOnlyOntoTheNextLevelsFill(t *testing.T) {
 	z := newZoo(t)
 	withEmptyAnimals(t, z)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"animal","path":[{"link":"animal"}]},
@@ -169,7 +169,7 @@ func TestFillUnderFillParents(t *testing.T) {
 	cy := z.user(t, "cy")
 	cub := z.rec(t, "cub", "zoo_animals", map[string]any{"name": "Cub", "species": "bear", "site": z.id("east"), "owner": cy.Id, "active": true})
 	z.rec(t, "k5", "zoo_keepers", map[string]any{"user": z.id("ann"), "animal": cub.Id})
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"owner","path":[{"link":"animal"},{"link":"owner"}]},
 		{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
 		{"id":"animal","path":[{"link":"animal"}]},
@@ -190,7 +190,7 @@ func TestFillUnderFillParents(t *testing.T) {
 	}
 }
 
-const sitesThenAnimals = `{"version":2,"source":"zoo.feedings","columns":[
+const sitesThenAnimals = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
 	{"id":"animal","path":[{"link":"animal"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -233,7 +233,7 @@ func TestFillSitsUnderEveryCurrency(t *testing.T) {
 func TestFillRowsTotalNoRows(t *testing.T) {
 	z := newZoo(t)
 	withEmptyAnimals(t, z)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"keepers","path":[{"link":"animal"},{"link":"keepers","mode":"aggregate"},{"field":"id"}],"aggregate":"count"},
 		{"id":"ones","formula":{"value":1},"aggregate":"count"},
@@ -251,7 +251,7 @@ func TestFillRowsTotalNoRows(t *testing.T) {
 func TestFillWhereReadsTheParentRecordAndParams(t *testing.T) {
 	z := newZoo(t)
 	withEmptyAnimals(t, z)
-	spec := `{"version":2,"source":"zoo.feedings","params":[{"id":"sp","type":"text"}],"columns":[
+	spec := `{"version":4,"source":"zoo.feedings","params":[{"id":"sp","type":"text"}],"columns":[
 		{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -272,7 +272,7 @@ func TestFillWhereReadsTheParentRecordAndParams(t *testing.T) {
 func TestFillWhereReadsABucketKey(t *testing.T) {
 	z := newZoo(t)
 	withEmptyAnimals(t, z)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"fed","path":[{"field":"fed"}]},
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -286,8 +286,8 @@ func TestFillWhereReadsABucketKey(t *testing.T) {
 
 func TestFillIsRefusedWhereItCannotWork(t *testing.T) {
 	app := withZooRegistry(t)
-	notRecord := `{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"groups":[{"id":"g","col":"n","fill":{}}]}`
-	ownColumn := `{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
+	notRecord := `{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"groups":[{"id":"g","col":"n","fill":{}}]}`
+	ownColumn := `{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},{"id":"c","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"a","fill":{"where":{"op":"gt","args":[{"col":"c"},{"value":0}]}}}]}`
 	for _, c := range []struct{ spec, at, want string }{
 		{notRecord, "groups.0.fill", "only a group by a link"},

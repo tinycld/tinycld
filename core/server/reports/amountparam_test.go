@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const budgetHaving = `{"version":2,"source":"zoo.feedings","params":[{"id":"budget","type":"amount","label":"Budget"}],"columns":[
+const budgetHaving = `{"version":4,"source":"zoo.feedings","params":[{"id":"budget","type":"amount","label":"Budget"}],"columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 	{"id":"left","formula":{"op":"sub","args":[{"param":"budget"},{"op":"sum","args":[{"path":[{"field":"cost"}]}]}]}}],
@@ -50,7 +50,7 @@ func TestAnAmountParamValueIsChecked(t *testing.T) {
 
 // A filter compares an amount param with each row's amount in the row's own
 // currency: a USD floor never keeps a EUR row because its cents are larger.
-const costFloor = `{"version":2,"source":"zoo.feedings","params":[{"id":"floor","type":"amount","label":"Floor"}],"columns":[
+const costFloor = `{"version":4,"source":"zoo.feedings","params":[{"id":"floor","type":"amount","label":"Floor"}],"columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"cost","path":[{"field":"cost"}]}],
 	"filter":{"op":"gte","args":[{"path":[{"field":"cost"}]},{"param":"floor"}]},
@@ -72,7 +72,7 @@ func TestAFilterKeepsAnAmountParamToTheRowsCurrency(t *testing.T) {
 
 // A column that shows an amount param shows it in the param's currency, and
 // the resolved params echo the amount and its currency.
-const budgetColumn = `{"version":2,"source":"zoo.feedings","params":[{"id":"budget","type":"amount","label":"Budget"}],"columns":[
+const budgetColumn = `{"version":4,"source":"zoo.feedings","params":[{"id":"budget","type":"amount","label":"Budget"}],"columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"budget","formula":{"param":"budget"}}],
 	"filter":{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"f1"}]}}`
@@ -93,7 +93,7 @@ func TestAnAmountParamShowsItsCurrency(t *testing.T) {
 
 // An amount a filter reads with no column of it carries its currency field
 // read beside it; a source's fixed currency is that source's code.
-const animalsOver = `{"version":2,"source":"zoo.animals","params":[{"id":"over","type":"amount","label":"Over"}],"columns":[
+const animalsOver = `{"version":4,"source":"zoo.animals","params":[{"id":"over","type":"amount","label":"Over"}],"columns":[
 	{"id":"name","path":[{"field":"name"}]}],
 	"filter":{"op":"or","args":[
 		{"op":"gte","args":[{"path":[{"field":"fee"}]},{"param":"over"}]},
@@ -121,7 +121,7 @@ func withEuroLeo(t *testing.T, z *zoo, cost int) {
 
 // A comparison compares the amount and the currency: across currencies ne is
 // true and every other comparison false, never blank.
-const costCompared = `{"version":2,"source":"zoo.feedings","params":[{"id":"floor","type":"amount","label":"Floor"}],"columns":[
+const costCompared = `{"version":4,"source":"zoo.feedings","params":[{"id":"floor","type":"amount","label":"Floor"}],"columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"over","formula":{"op":"gte","args":[{"path":[{"field":"cost"}]},{"param":"floor"}]}},
 	{"id":"same","formula":{"op":"eq","args":[{"path":[{"field":"cost"}]},{"param":"floor"}]}}],
@@ -143,7 +143,7 @@ func TestAComparisonAcrossCurrenciesIsDefinite(t *testing.T) {
 
 // Two amounts in different currencies compare as unequal, whatever their
 // cents: Leo's fee is 700 EUR, his price 500000 USD.
-const feeAgainstPrice = `{"version":2,"source":"zoo.animals","params":[{"id":"x","type":"amount"}],"columns":[
+const feeAgainstPrice = `{"version":4,"source":"zoo.animals","params":[{"id":"x","type":"amount"}],"columns":[
 	{"id":"name","path":[{"field":"name"}]}],
 	"filter":%s,"sort":[{"col":"name"}]}`
 
@@ -164,7 +164,7 @@ func TestAmountsInTwoCurrenciesCompareAsUnequal(t *testing.T) {
 // A missing amount is not one in another currency: with no animal, its fee
 // and price compare as two blanks in one currency do, never as unequal
 // currencies.
-const keepersCompared = `{"version":2,"source":"zoo.keepers","columns":[
+const keepersCompared = `{"version":4,"source":"zoo.keepers","columns":[
 	{"id":"name","path":[{"link":"animal"},{"field":"name"}]}],
 	"filter":%s,"sort":[{"col":"name"}]}`
 
@@ -190,7 +190,7 @@ func TestAMissingCurrencyIsNotAnotherCurrency(t *testing.T) {
 // his price in USD.
 func TestARatioOfAmountsKeepsToOneCurrency(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.animals","columns":[
+	const spec = `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"share","formula":{"op":"div","scale":4,"args":[{"path":[{"field":"fee"}]},{"path":[{"field":"price"}]}]}}],
 		"sort":[{"col":"name"}]}`
@@ -203,7 +203,7 @@ func TestARatioOfAmountsKeepsToOneCurrency(t *testing.T) {
 
 // Two amount params in different currencies hold against nothing; in one,
 // they combine.
-const twoParams = `{"version":2,"source":"zoo.feedings","params":[{"id":"a","type":"amount"},{"id":"b","type":"amount"}],"columns":[
+const twoParams = `{"version":4,"source":"zoo.feedings","params":[{"id":"a","type":"amount"},{"id":"b","type":"amount"}],"columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"diff","formula":{"op":"sub","args":[{"param":"a"},{"param":"b"}]}},
 	{"id":"same","formula":{"op":"eq","args":[{"param":"a"},{"param":"b"}]}}],
@@ -222,7 +222,7 @@ func TestTwoAmountParamsInTwoCurrencies(t *testing.T) {
 
 // A ratio of an amount to an amount param, and a param inside a total, hold
 // only in the param's currency.
-const budgetShares = `{"version":2,"source":"zoo.feedings","params":[{"id":"budget","type":"amount"}],"columns":[
+const budgetShares = `{"version":4,"source":"zoo.feedings","params":[{"id":"budget","type":"amount"}],"columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"share","formula":{"op":"div","scale":2,"args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"param":"budget"}]}},
 	{"id":"left","formula":{"op":"sum","args":[{"op":"sub","args":[{"param":"budget"},{"path":[{"field":"cost"}]}]}]}}],
@@ -241,7 +241,7 @@ func TestARatioAndATotalKeepToTheParamsCurrency(t *testing.T) {
 
 // An amount param in an exists' where holds against the linked rows'
 // currency: Leo's only feeding over 3000 is in EUR.
-const animalsFedOver = `{"version":2,"source":"zoo.animals","params":[{"id":"over","type":"amount"}],"columns":[
+const animalsFedOver = `{"version":4,"source":"zoo.animals","params":[{"id":"over","type":"amount"}],"columns":[
 	{"id":"name","path":[{"field":"name"}]}],
 	"filter":{"op":"exists","link":[{"link":"feedings"}],"where":{"op":"gte","args":[{"path":[{"field":"cost"}]},{"param":"over"}]}},
 	"sort":[{"col":"name"}]}`
@@ -270,7 +270,7 @@ func TestAFillWhereComparesAmountsInTheirCurrencies(t *testing.T) {
 
 	// Under each cost, the animals whose fee is at least that cost, in its
 	// currency: Leo's 700 EUR fee is not at least 300 USD.
-	byCost := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	byCost := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"cost","path":[{"field":"cost"}]},
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
@@ -281,7 +281,7 @@ func TestAFillWhereComparesAmountsInTheirCurrencies(t *testing.T) {
 }
 
 // A lookup's where compares the looked-up rows' amounts in their currency.
-const cheapestOver = `{"version":2,"source":"zoo.feedings","params":[{"id":"over","type":"amount"}],"columns":[
+const cheapestOver = `{"version":4,"source":"zoo.feedings","params":[{"id":"over","type":"amount"}],"columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"cheapest","formula":{"op":"lookup","source":"zoo.feedings","where":{"op":"gte","args":[{"path":[{"field":"cost"}]},{"param":"over"}]},"value":{"path":[{"field":"cost"}]}}}],
 	"filter":{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"f1"}]}}`
@@ -300,7 +300,7 @@ func TestALookupKeepsAnAmountParamToTheLookedUpRowsCurrency(t *testing.T) {
 // (read by a lookup) only in the param's currency.
 func TestALayoutRowKeepsAnAmountParamToTheRowsCurrency(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","params":[{"id":"budget","type":"amount"}],"columns":[
+	spec := `{"version":4,"source":"zoo.feedings","params":[{"id":"budget","type":"amount"}],"columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],
@@ -319,12 +319,12 @@ func TestALayoutRowKeepsAnAmountParamToTheRowsCurrency(t *testing.T) {
 func TestAGroupKeyKeepsAmountsToTheirCurrency(t *testing.T) {
 	z := newZoo(t)
 	withEuroLeo(t, z, 1000)
-	byAmount := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	byAmount := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"amount","formula":{"path":[{"field":"cost"}]}},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
 		"groups":[{"id":"g","col":"amount"}],"sort":[{"col":"amount"}]}`, Options{}, nil)
 	requireRows(t, byAmount, "n", int64(1), int64(1), int64(1), int64(1), int64(1), int64(1), int64(4))
-	big := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","params":[{"id":"over","type":"amount"}],"columns":[
+	big := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","params":[{"id":"over","type":"amount"}],"columns":[
 		{"id":"big","formula":{"op":"gte","args":[{"path":[{"field":"cost"}]},{"param":"over"}]}},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
 		"groups":[{"id":"g","col":"big"}],"sort":[{"col":"big"}]}`, Options{}, map[string]string{"over": `{"amount":1000,"currency":"USD"}`})

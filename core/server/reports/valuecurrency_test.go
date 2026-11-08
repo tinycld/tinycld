@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const feeByAnimal = `{"version":2,"source":"zoo.feedings","columns":[
+const feeByAnimal = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"animal","path":[{"link":"animal"}]},
 	{"id":"fee","formula":{"record":"g","path":[{"field":"fee"}]}},
 	{"id":"fees","formula":{"record":"g","path":[{"field":"fee"}]},"aggregate":"sum"}],
@@ -47,7 +47,7 @@ func TestARecordAmountCarriesItsCurrency(t *testing.T) {
 // A looked-up amount carries the currency of the row it picked.
 func TestALookedUpAmountCarriesThePickedRowsCurrency(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"top","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"fee"}]},"pick":"max"}},
 		{"id":"low","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"fee"}]}}}],"sort":[{"col":"name"}]}`, Options{}, nil)
 	// ann may list leo (700 EUR), zed (300 USD), kit (50 USD).
@@ -59,7 +59,7 @@ func TestALookedUpAmountCarriesThePickedRowsCurrency(t *testing.T) {
 
 func TestCarriedCurrenciesCombineOnlyWithTheirOwn(t *testing.T) {
 	app := withZooRegistry(t)
-	twice, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
+	twice, _, err := Load([]byte(`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
 		{"id":"x","formula":{"op":"add","args":[{"record":"g","path":[{"field":"fee"}]},{"record":"g","path":[{"field":"fee"}]}]}}],"groups":[{"id":"g","col":"a"}]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestCarriedCurrenciesCombineOnlyWithTheirOwn(t *testing.T) {
 	if err := Validate(app, twice); err != nil {
 		t.Fatalf("one record field twice combines: %v", err)
 	}
-	mixed, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
+	mixed, _, err := Load([]byte(`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
 		{"id":"x","formula":{"op":"add","args":[{"record":"g","path":[{"field":"fee"}]},{"op":"sum","args":[{"path":[{"field":"cost"}]}]}]}}],"groups":[{"id":"g","col":"a"}]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestCarriedCurrenciesCombineOnlyWithTheirOwn(t *testing.T) {
 	requireSpecError(t, Validate(app, mixed), 400, "columns.1.formula", "different currencies")
 	// A record amount read on a group row and the total of the same amount
 	// read per base row come from one place.
-	withTotal, _, err := Load([]byte(`{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
+	withTotal, _, err := Load([]byte(`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"link":"animal"}]},
 		{"id":"x","formula":{"op":"add","args":[{"record":"g","path":[{"field":"fee"}]},{"op":"sum","args":[{"record":"g","path":[{"field":"fee"}]}]}]}}],"groups":[{"id":"g","col":"a"}]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func totalsByCurrency(res *Result, col string) map[any]any {
 // total by their own currency.
 func TestCarriedAmountsInsideATotalGroupByTheirCurrency(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"fee","formula":{"record":"g","path":[{"field":"fee"}]}},
 		{"id":"viaCol","formula":{"op":"sum","args":[{"col":"fee"}]}},
@@ -127,7 +127,7 @@ func TestCarriedAmountsInsideATotalGroupByTheirCurrency(t *testing.T) {
 // USD total.
 func TestAPercentOfCarriedAmountsSumsEachCurrencyApart(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"share","formula":{"op":"percentOfTotal","args":[{"record":"g","path":[{"field":"fee"}]}],"scale":0}}],
 		"groups":[{"id":"g","col":"animal"}]}`, Options{ExpandAll: true}, nil)
@@ -141,7 +141,7 @@ func TestAPercentOfCarriedAmountsSumsEachCurrencyApart(t *testing.T) {
 // A group labelled by a record amount shows the record's own currency.
 func TestARecordAmountLabelCarriesItsCurrency(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal","label":{"record":"g","path":[{"field":"fee"}]}}]}`, Options{}, nil)
@@ -159,7 +159,7 @@ func TestARecordAmountLabelCarriesItsCurrency(t *testing.T) {
 // lionsLayout is ann's feedings by species with a Lions section (leo's two
 // feedings, 3500 USD) and the computed rows rows.
 func lionsLayout(rows string) string {
-	return `{"version":2,"source":"zoo.feedings","columns":[
+	return `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],
@@ -196,7 +196,7 @@ func TestAComputedRowKeepsALookedUpAmountsCurrency(t *testing.T) {
 // subtotal show the fixed code there, the computed row its own.
 func TestAFixedCurrencyColumnKeepsItsCodeBesideACarriedRow(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"species","path":[{"field":"species"}]},
 		{"id":"price","path":[{"field":"price"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],
@@ -209,7 +209,7 @@ func TestAFixedCurrencyColumnKeepsItsCodeBesideACarriedRow(t *testing.T) {
 		t.Fatalf("price column = %+v", c)
 	}
 	// Expanded, the section's detail rows read the fixed code too.
-	open := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	open := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"species","path":[{"field":"species"}]},
 		{"id":"price","path":[{"field":"price"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],
@@ -231,7 +231,7 @@ func addIvy(t *testing.T, z *zoo) {
 func TestAGroupByALookedUpAmountGroupsByItsCurrency(t *testing.T) {
 	z := newZoo(t)
 	addIvy(t, z)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"aid","path":[{"field":"id"}]},
 		{"id":"fe","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"id"}]},{"col":"aid"}]},"value":{"path":[{"field":"fee"}]}}},
 		{"id":"n","path":[{"field":"id"}],"aggregate":"count"}],
@@ -254,7 +254,7 @@ func TestALookupTieIsBrokenByCurrencyCode(t *testing.T) {
 	z := newZoo(t)
 	addIvy(t, z)
 	tied := `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"fee"}]},{"value":300}]},"value":{"path":[{"field":"fee"}]},"pick":"PICK"}`
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"lo","formula":`+strings.Replace(tied, "PICK", "min", 1)+`},
 		{"id":"hi","formula":`+strings.Replace(tied, "PICK", "max", 1)+`}],"sort":[{"col":"name"}]}`, Options{}, nil)
 	c := res.Rows[0].Cells
@@ -267,13 +267,13 @@ func TestALookupTieIsBrokenByCurrencyCode(t *testing.T) {
 // currency.
 func TestAHiddenRowCarriesNoCurrency(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"mo","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Mo"}]},"value":{"path":[{"field":"fee"}]}}}],"sort":[{"col":"name"}]}`, Options{}, nil)
 	if c := res.Rows[0].Cells; c["mo"] != nil || c["mo@currency"] != nil {
 		t.Fatalf("Mo's fee = %+v", c)
 	}
 	// leo's vault is hidden, so the animal read past it is too; zed has none.
-	rec := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	rec := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"fee","formula":{"record":"g","path":[{"field":"fee"}]}},
 		{"id":"vfee","formula":{"record":"g","path":[{"link":"vault"},{"link":"animal"},{"field":"fee"}]}}],
@@ -302,7 +302,7 @@ func pivotLabels(res *Result) []string {
 func TestAPivotOverAnAmountSplitsItsCurrencies(t *testing.T) {
 	z := newZoo(t)
 	z.rec(t, "f7", "zoo_feedings", map[string]any{"animal": z.id("leo"), "cost": 300, "currency": "EUR", "fed": "2026-04-01 00:00:00.000Z", "grams": 10, "note": "f7"})
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],
@@ -321,7 +321,7 @@ func TestAPivotOverAnAmountSplitsItsCurrencies(t *testing.T) {
 // amount, each labelled by its typed amount and that currency.
 func TestAPivotOverAFixedCurrencyAmountKeepsOneColumnPerAmount(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.animals","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"active","path":[{"field":"active"}]},
 		{"id":"weight","path":[{"field":"weight"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"active"}],

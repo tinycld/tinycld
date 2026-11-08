@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import { createInvitedUser, skipWithoutReportsStub, waitForTableFit } from './helpers'
 import {
     addColumn,
     addSale,
@@ -125,6 +125,9 @@ test.describe('report fit at four widths', () => {
             for (const size of WIDTHS) {
                 await p.setViewportSize(size)
                 await expect(p.getByTestId('report-table')).toHaveCSS('opacity', '1')
+                const layout = await waitForTableFit(p)
+                // Eight columns never fit one line on a phone, and there is no arrangement.
+                if (size.width === 390) expect(layout).toBe('auto')
                 // The checks below read the drawn cells: there must be some.
                 // The Total's id carries its currency (total:["USD"]).
                 await expect(p.locator('[data-testid^="report-row-total"]').first()).toBeVisible()
