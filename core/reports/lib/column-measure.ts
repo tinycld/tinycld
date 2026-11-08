@@ -196,6 +196,24 @@ function labelWidths(
     return { widest, isTyped }
 }
 
+/**
+ * What the run's measure depends on (D1): the run (design, params, sort), the
+ * number format, the shown columns and the row levels. A later page, a fold and a
+ * live re-run keep the key, so the columns never move under the reader.
+ */
+export function measureKey(input: {
+    runKey: string
+    format: NumberFormat
+    columns: readonly ResultColumn[]
+    levels: RowLevels
+    /** Whether any detail row is shown: a report whose groups start closed measures again when one opens. */
+    hasDetail: boolean
+}): string {
+    const { runKey, format, columns, levels, hasDetail } = input
+    const shape = columns.map(column => [column.id, column.label, column.sortable === true])
+    return JSON.stringify([runKey, format, shape, levels, hasDetail])
+}
+
 export function measureColumns(input: {
     columns: readonly ResultColumn[]
     rows: readonly VisibleRow[]

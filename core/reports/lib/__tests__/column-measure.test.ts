@@ -7,6 +7,7 @@ import {
     labelChrome,
     labelNeed,
     measureColumns,
+    measureKey,
     SORT_ICON_ROOM,
     TEXT_MIN_WIDTH,
 } from '../column-measure'
@@ -165,5 +166,30 @@ describe('the label chrome', () => {
         )
         expect(cellTextStyle('detail')).toEqual(CELL)
         expect(cellTextStyle('subtotal')).toEqual(BOLD)
+    })
+})
+
+describe('measureKey', () => {
+    const base = {
+        runKey: 'r1',
+        format: DEFAULT_DISPLAY,
+        columns: COLUMNS,
+        levels: GROUPED,
+        hasDetail: true,
+    }
+
+    it('stays for the same run, columns and format', () => {
+        expect(measureKey(base)).toBe(measureKey({ ...base, columns: [...COLUMNS] }))
+    })
+
+    it('changes with the run, a hidden column, the number format and the levels', () => {
+        expect(measureKey({ ...base, runKey: 'r2' })).not.toBe(measureKey(base))
+        expect(measureKey({ ...base, columns: COLUMNS.slice(0, 4) })).not.toBe(measureKey(base))
+        expect(
+            measureKey({ ...base, format: { ...DEFAULT_DISPLAY, divideBy1000: true } })
+        ).not.toBe(measureKey(base))
+        expect(measureKey({ ...base, levels: FLAT })).not.toBe(measureKey(base))
+        // Groups that start closed: measured again when the first detail rows show.
+        expect(measureKey({ ...base, hasDetail: false })).not.toBe(measureKey(base))
     })
 })

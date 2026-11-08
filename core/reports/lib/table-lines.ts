@@ -1,13 +1,12 @@
 import type { Breakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import {
-    AMOUNT_WIDTH,
-    LABEL_MIN_WIDTH,
-    PHONE_AMOUNT_WIDTH,
-    PHONE_LABEL_WIDTH,
-    TEXT_FLOOR,
-} from '../components/report-table-layout'
-import { deepestLabelStart, FLAT_LEVELS, isFigureColumn, type RowLevels } from './column-measure'
-import { isRightAligned } from './format'
+    type ColumnMeasure,
+    type ColumnMeasures,
+    FLAT_LEVELS,
+    measureColumns,
+    type RowLevels,
+} from './column-measure'
+import { DEFAULT_DISPLAY, isRightAligned } from './format'
 import type { VisibleRow } from './rows'
 import type { DisplayCell, DisplayLayout, DisplayWidth } from './spec'
 import type { CellValue, ResultColumn } from './types'
@@ -296,48 +295,57 @@ function authoredLines(
     return { kind: 'blocks', root: tree }
 }
 
+const NO_MEASURE: ColumnMeasure = { natural: 0, min: 0, grow: 0 }
+
+export function measureOf(measures: ColumnMeasures, id: string): ColumnMeasure {
+    return measures[id] ?? NO_MEASURE
+}
+
+const sum = (values: readonly number[]) => values.reduce((total, n) => total + n, 0)
+
 /**
- * The label column's floor on one line: TEXT_FLOOR for the text of its most
- * indented label (deepestLabelStart).
+ * Widths that share `width` by content, as CSS table-layout:auto does: each part at
+ * its min; the spare room first in proportion to what each part lacks of its
+ * natural width, then by grow. The parts add up to `width` exactly: the rounding
+ * remainder goes to the first part (the label). Null when the mins do not fit.
  */
-export function labelFloor(levels: RowLevels): number {
-    return TEXT_FLOOR + deepestLabelStart(levels)
+export function shareWidth(parts: readonly ColumnMeasure[], width: number): number[] | null {
+    if (parts.length === 0) return []
+    const widths = parts.map(part => part.min)
+    if (sum(widths) > width) return null
+    const lack = parts.map(part => Math.max(0, part.natural - part.min))
+    const totalLack = sum(lack)
+    if (totalLack > 0) {
+        const share = Math.min(1, (width - sum(widths)) / totalLack)
+        for (const [i, need] of lack.entries())
+            widths[i] = (widths[i] ?? 0) + Math.floor(need * share)
+    }
+    const spare = width - sum(widths)
+    const totalGrow = sum(parts.map(part => part.grow))
+    if (spare > 0 && totalGrow > 0) {
+        for (const [i, part] of parts.entries())
+            widths[i] = (widths[i] ?? 0) + Math.floor((spare * part.grow) / totalGrow)
+    }
+    widths[0] = (widths[0] ?? 0) + width - sum(widths)
+    return widths
 }
 
 /**
- * The widths of one line at this width (F10, R12), or null when it does not fit:
- * every column at its natural width; if that is too wide, the label narrows toward
- * its floor (labelFloor), then the text columns are lowered to one cap (water-fill
- * from the widest), each to TEXT_FLOOR at the least. Figure columns keep their width.
+ * The widths of one line at this width (review §7.1-3), or null when the columns'
+ * mins do not fit: figures, dates and short text are never cut (their min is their
+ * natural width); long text narrows to its min, in proportion to what it lacks.
  */
 export function fitOneLine(
     columns: readonly ResultColumn[],
     width: number,
-    breakpoint: Breakpoint,
-    levels: RowLevels = FLAT_LEVELS
+    measures: ColumnMeasures
 ): Record<string, number> | null {
-    const [label, ...others] = columns
-    if (!label) return {}
-    const isPhone = breakpoint === 'mobile'
-    const labelFloorWidth = labelFloor(levels)
-    const labelMin = Math.max(isPhone ? PHONE_LABEL_WIDTH : LABEL_MIN_WIDTH, labelFloorWidth)
-    const cell = isPhone ? PHONE_AMOUNT_WIDTH : AMOUNT_WIDTH
-    const figures = others.filter(isFigureColumn)
-    const texts = others.filter(column => !isFigureColumn(column))
-    const figureWidth = figures.length * cell
-    const lineAt = (labelWidth: number, textWidth: number) => {
-        const widths: Record<string, number> = { [label.id]: labelWidth }
-        for (const column of others) widths[column.id] = isFigureColumn(column) ? cell : textWidth
-        return widths
-    }
-    const natural = labelMin + figureWidth + texts.length * cell
-    if (natural <= width) return lineAt(labelMin, cell)
-    const labelWidth = Math.max(labelFloorWidth, labelMin - (natural - width))
-    if (labelWidth + figureWidth + texts.length * cell <= width) return lineAt(labelWidth, cell)
-    if (texts.length === 0) return null
-    const cap = Math.floor((width - labelFloorWidth - figureWidth) / texts.length)
-    if (cap < TEXT_FLOOR) return null
-    return lineAt(labelFloorWidth, Math.min(cell, cap))
+    const widths = shareWidth(
+        columns.map(column => measureOf(measures, column.id)),
+        width
+    )
+    if (!widths) return null
+    return Object.fromEntries(columns.map((column, i) => [column.id, widths[i] ?? 0]))
 }
 
 // The authored widths tried when this width has none and its line does not fit,
@@ -361,11 +369,21 @@ export function tableLines(input: {
     layouts: readonly DisplayLayout[]
     /** How deep the report's rows go (rowLevelsOf); absent: a flat report. */
     levels?: RowLevels
+    /** What each column's content needs (measureColumns); absent: the headings and worst cases alone. */
+    measures?: ColumnMeasures
 }): LineLayout {
     const { columns, width, breakpoint, layouts, levels } = input
     const own = layouts.find(l => l.width === breakpoint)
     if (own) return authoredLines(own, columns, width)
-    const widths = fitOneLine(columns, width, breakpoint, levels)
+    const measured =
+        input.measures ??
+        measureColumns({
+            columns,
+            rows: [],
+            format: DEFAULT_DISPLAY,
+            levels: levels ?? FLAT_LEVELS,
+        })
+    const widths = fitOneLine(columns, width, measured)
     if (widths) return { kind: 'one-line', widths }
     const narrower = NARROWER[breakpoint]
         .map(w => layouts.find(l => l.width === w))
