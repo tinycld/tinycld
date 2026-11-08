@@ -22,7 +22,8 @@ export function sectionOf(specPath: string): BuilderSection {
     if (head === 'groups' || head === 'sort') return 'group'
     if (head === 'pivot') return 'pivot'
     if (head === 'layout') return 'layout'
-    if (head === 'display') return 'arrange'
+    // A column's fit is set on the column; the one-line width and layouts under Arrange.
+    if (head === 'display') return specPath.startsWith('display.columns.') ? 'columns' : 'arrange'
     return 'details'
 }
 
@@ -36,8 +37,12 @@ const PART_NAMES: Record<string, string> = {
 }
 
 export function describeProblem(problem: Problem): string {
-    // A display problem is about one of its layouts: display.layouts.<n>.
     const parts = problem.path.split('.')
+    // display.columns.<col>.<setting> names its column by id; display.oneLine is the one-line width.
+    if (parts[0] === 'display' && parts[1] === 'columns' && parts[2])
+        return `Column ${parts[2]}: ${problem.message}`
+    if (parts[0] === 'display' && parts[1] === 'oneLine') return `One line: ${problem.message}`
+    // A display problem is about one of its layouts: display.layouts.<n>.
     const [head, index] = parts[0] === 'display' ? [parts[0], parts[2]] : parts
     const name = head ? PART_NAMES[head] : undefined
     if (name && index !== undefined && /^\d+$/.test(index))

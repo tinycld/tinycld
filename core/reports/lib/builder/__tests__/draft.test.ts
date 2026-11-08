@@ -12,6 +12,7 @@ import {
     type BuilderDraft,
     builderSchema,
     type ColumnDraft,
+    columnWithFit,
     displayIssues,
     draftFromSpec,
     draftIssues,
@@ -20,7 +21,9 @@ import {
     groupTarget,
     keptParams,
     labelStart,
+    layoutWithMinWidth,
     levelScope,
+    NEVER_CUT,
     offersDetailBlank,
     offersHaving,
     openingCellRows,
@@ -1848,3 +1851,59 @@ describe('column fit in the builder', () => {
 function issuePaths(draft: BuilderDraft) {
     return draftIssues(draft, CATALOG).map(i => i.path.join('.'))
 }
+
+describe('column fit choices', () => {
+    const META = { title: 'Sales', description: '' }
+    const spec: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        columns: [
+            { id: 'customer', label: 'Customer', path: [{ field: 'customer' }] },
+            { id: 'amount', label: 'Amount', path: [{ field: 'amount' }] },
+        ],
+    }
+    const draft = draftFromSpec(spec, META, CATALOG)
+    const withFits = (customer: ColumnFit | undefined, amount: ColumnFit | undefined) => ({
+        ...draft,
+        columns: draft.columns.map(column =>
+            columnWithFit(column, column.id === 'customer' ? customer : amount)
+        ),
+    })
+
+    it('lets text narrow and wrap, and a figure take only extra room or its whole value', () => {
+        const ok = withFits(
+            { minWidth: '12ch', whiteSpace: 'normal', lineClamp: 2 },
+            { minWidth: 'max-content', flexGrow: 2 }
+        )
+        expect(draftIssues(ok, CATALOG)).toEqual([])
+        expect(builderSchema(CATALOG).safeParse(ok).success).toBe(true)
+    })
+
+    it('refuses a setting that would cut a figure, on the column', () => {
+        const cut = withFits(undefined, { minWidth: '6ch' })
+        expect(draftIssues(cut, CATALOG)).toEqual([
+            { path: ['columns', 1, 'fit'], message: NEVER_CUT },
+        ])
+    })
+
+    it('clears an empty fit', () => {
+        const [customer] = draft.columns
+        if (!customer) throw new Error('no column')
+        expect(columnWithFit(customer, { flexGrow: undefined }).fit).toBeUndefined()
+        expect(columnWithFit(customer, { flexGrow: 0, minWidth: '8ch' }).fit).toEqual({
+            minWidth: '8ch',
+            flexGrow: 0,
+        })
+    })
+
+    it('puts a layout minWidth where the engine writes it', () => {
+        const layout = startingLayout('tablet', [{ id: 'customer' }, { id: 'amount' }], 2)
+        expect(Object.keys(layoutWithMinWidth(layout, '600px'))).toEqual([
+            'width',
+            'minWidth',
+            'tracks',
+            'cells',
+        ])
+        expect(layoutWithMinWidth({ ...layout, minWidth: '600px' }, undefined)).toEqual(layout)
+    })
+})

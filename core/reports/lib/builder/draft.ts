@@ -1,4 +1,5 @@
 import { z } from '@tinycld/core/ui/form'
+import { isFigureType } from '../column-measure'
 import { utf8Length } from '../params'
 import {
     BUCKETS,
@@ -253,6 +254,39 @@ export type BuilderDraft = z.infer<typeof draftShape>
 
 type Issue = { path: (string | number)[]; message: string }
 
+export const NEVER_CUT =
+    'Numbers, amounts, percents, dates and yes/no values are never cut: only Extra room can change'
+
+// What a figure may take (core/server/reports/fit.go fitRefusals): flexGrow, and a
+// minWidth that keeps the whole value.
+const isWholeMin = (minWidth: string | undefined) =>
+    minWidth === undefined || minWidth === 'auto' || minWidth === 'max-content'
+
+function fitIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
+    const types = columnTypes(draft, catalog)
+    return draft.columns.flatMap((column, i): Issue[] => {
+        const fit = tidyFit(column.fit)
+        if (!fit || !isFigureType(types.get(column.id))) return []
+        const { flexGrow: _flexGrow, minWidth, ...cutting } = fit
+        if (isWholeMin(minWidth) && Object.keys(cutting).length === 0) return []
+        return [{ path: ['columns', i, 'fit'], message: NEVER_CUT }]
+    })
+}
+
+/** The column with this fit, tidied; an empty fit is removed. */
+export function columnWithFit(column: ColumnDraft, fit: ColumnFit | undefined): ColumnDraft {
+    return { ...column, fit: tidyFit(fit) }
+}
+
+/** The layout with this minWidth, its fields in the engine's order (width, minWidth, tracks, cells). */
+export function layoutWithMinWidth(
+    layout: DisplayLayout,
+    minWidth: string | undefined
+): DisplayLayout {
+    const { width, tracks, cells } = layout
+    return minWidth ? { width, minWidth, tracks, cells } : { width, tracks, cells }
+}
+
 function columnIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues: Issue[] = []
     const ids = draft.columns.map(column => column.id)
@@ -474,6 +508,7 @@ export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         ...paramIssues(draft.params),
         ...groupOrderIssues(draft.params, catalog),
         ...columnIssues(draft, catalog),
+        ...fitIssues(draft, catalog),
         ...detailBlankIssues(draft),
         ...rollupIssues(draft),
         ...openingIssues(draft),

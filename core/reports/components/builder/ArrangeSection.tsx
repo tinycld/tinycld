@@ -5,7 +5,7 @@ import { Switch } from '@tinycld/core/ui/switch'
 import { Trash2 } from 'lucide-react-native'
 import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
-import { type ColumnDraft, displayIssues } from '../../lib/builder/draft'
+import { type ColumnDraft, displayIssues, layoutWithMinWidth } from '../../lib/builder/draft'
 import type { DisplayCell, DisplayLayout, DisplayWidth } from '../../lib/spec'
 import {
     defaultJustify,
@@ -30,6 +30,30 @@ const WIDTHS: { value: DisplayWidth; label: string }[] = [
     { value: 'desktop', label: 'Desktop' },
 ]
 const JUSTIFY_NAMES = { start: 'Start', center: 'Center', end: 'End' } as const
+
+// The least row width for one line (display.oneLine), and for an arrangement
+// (layouts[].minWidth): below it the report uses another layout.
+const GATES: { id: string; label: string; minWidth?: string }[] = [
+    { id: 'any', label: 'Any width' },
+    { id: '600', label: '600 px', minWidth: '600px' },
+    { id: '800', label: '800 px', minWidth: '800px' },
+    { id: '1040', label: '1040 px', minWidth: '1040px' },
+    { id: '1280', label: '1280 px', minWidth: '1280px' },
+]
+
+const gateItems = (
+    current: string | undefined,
+    onSelect: (minWidth?: string) => void
+): PickItem[] =>
+    GATES.map(gate => ({
+        id: gate.id,
+        label: gate.label,
+        isSelected: gate.minWidth === current,
+        onSelect: () => onSelect(gate.minWidth),
+    }))
+
+const gateLabel = (current: string | undefined) =>
+    GATES.find(gate => gate.minWidth === current)?.label ?? current ?? 'Any width'
 
 const counting = (from: number, to: number) =>
     Array.from({ length: to - from + 1 }, (_, i) => from + i)
@@ -85,7 +109,17 @@ function useArrange(builder: ReportBuilder, resultColumns: readonly ResultColumn
         issues,
         defaultJustify: (col: string) => defaultJustify(resultColumns, col),
         // The preview uses an arrangement only where one line does not fit its width.
-        hint: 'Used when the columns do not fit on one line and this arrangement fits the screen. Each line gives its columns the room their content needs.',
+        hint: 'Used where the rows are at least the Use from width, the columns do not fit on one line, and this arrangement fits. Each line gives its columns the room their content needs.',
+        oneLineItems: gateItems(display.oneLine?.minWidth, minWidth =>
+            builder.setDisplay(
+                minWidth ? { ...display, oneLine: { minWidth } } : { layouts: display.layouts }
+            )
+        ),
+        oneLineLabel: gateLabel(display.oneLine?.minWidth),
+        useFromItems: gateItems(layout?.minWidth, minWidth => {
+            if (layout) setLayout(layoutWithMinWidth(layout, minWidth))
+        }),
+        useFromLabel: gateLabel(layout?.minWidth),
         onSwitch: (isOn: boolean) => {
             if (isOn) {
                 setLayout(startingLayout(width, columns))
@@ -128,6 +162,20 @@ function WidthTab({ item, arrange }: { item: (typeof WIDTHS)[number]; arrange: A
         >
             <ButtonText>{item.label}</ButtonText>
         </Button>
+    )
+}
+
+function OneLineFrom({ arrange }: { arrange: Arrange }) {
+    return (
+        <View className="flex-row items-center gap-2">
+            <Text className="flex-1 text-sm text-foreground">One line from</Text>
+            <PickMenu
+                label={arrange.oneLineLabel}
+                purpose="Least row width for one line"
+                items={arrange.oneLineItems}
+                testID="report-builder-arrange-one-line"
+            />
+        </View>
     )
 }
 
@@ -338,6 +386,15 @@ function ArrangeFields({ arrange }: { arrange: Arrange }) {
                     testID="report-builder-arrange-tracks"
                 />
             </View>
+            <View className="flex-row items-center gap-2">
+                <Text className="flex-1 text-sm text-foreground">Use from</Text>
+                <PickMenu
+                    label={arrange.useFromLabel}
+                    purpose="Least row width for this arrangement"
+                    items={arrange.useFromItems}
+                    testID="report-builder-arrange-use-from"
+                />
+            </View>
             <IssueLines issues={general} testID="report-builder-arrange-problems" />
             {rows}
             {strays}
@@ -351,8 +408,9 @@ function AutoCaption({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
     return (
         <Text testID="report-builder-arrange-auto" className="text-xs text-muted-foreground">
-            Off: the columns fit on one line when they can. When they do not, the rows wrap by
-            themselves, or use an arrangement of another width that fits.
+            Off: the columns fit on one line when the rows are wide enough and the columns fit. When
+            they do not, the rows wrap by themselves, or use an arrangement of another width that
+            fits.
         </Text>
     )
 }
@@ -371,6 +429,7 @@ export function ArrangeSection({
     const tabs = WIDTHS.map(item => <WidthTab key={item.value} item={item} arrange={arrange} />)
     return (
         <BuilderSection title="Arrange" section="arrange" problems={problems}>
+            <OneLineFrom arrange={arrange} />
             <View accessibilityRole="tablist" className="flex-row gap-2">
                 {tabs}
             </View>

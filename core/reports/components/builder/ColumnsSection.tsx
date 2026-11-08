@@ -21,9 +21,11 @@ import {
     showsDetailLabel,
 } from '../../lib/builder/draft'
 import { linkTarget, rowsTotalColumns } from '../../lib/builder/formula-context'
+import { isFigureType } from '../../lib/column-measure'
 import type { SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
+import { ColumnFitField } from './ColumnFitField'
 import { ColumnPicker } from './ColumnPicker'
 import { LevelFormula } from './GroupLevelParts'
 import { FieldError, IconButton, NEW_FORMULA, RecordLabelField } from './parts'
@@ -84,9 +86,18 @@ interface ColumnRowProps {
     numericIds: ReadonlySet<string>
     /** The columns whose total may add the rows shown (levels.go detailCell). */
     rowsTotalIds: ReadonlySet<string>
+    /** The columns that are never cut (numbers, amounts, percents, dates, yes/no). */
+    figureIds: ReadonlySet<string>
 }
 
-function ColumnRow({ builder, columns, index, numericIds, rowsTotalIds }: ColumnRowProps) {
+function ColumnRow({
+    builder,
+    columns,
+    index,
+    numericIds,
+    rowsTotalIds,
+    figureIds,
+}: ColumnRowProps) {
     const source = useWatch({ control: builder.form.control, name: 'source' })
     const column = columns[index]
     if (!column) return null
@@ -138,6 +149,12 @@ function ColumnRow({ builder, columns, index, numericIds, rowsTotalIds }: Column
                 onValueChange={builder.validateLists}
             />
             <FormatField builder={builder} column={column} index={index} numericIds={numericIds} />
+            <ColumnFitField
+                builder={builder}
+                columns={columns}
+                index={index}
+                isFigure={figureIds.has(column.id)}
+            />
             <TotalField
                 isVisible={rowsTotalIds.has(column.id) || column.total === 'rows'}
                 builder={builder}
@@ -460,6 +477,9 @@ export function ColumnsSection({
     const columns = useWatch({ control: builder.form.control, name: 'columns' })
     const choices = useColumnChoices(builder)
     const numericIds = new Set(choices.filter(choice => choice.isNumeric).map(choice => choice.key))
+    const figureIds = new Set(
+        choices.filter(choice => isFigureType(choice.type)).map(choice => choice.key)
+    )
     const rowsTotalIds = rowsTotalColumns(choices, columns)
     const onPick = (path: SpecHop[]) => {
         const info = describePath(builder.catalog, builder.base.key, path)
@@ -510,6 +530,7 @@ export function ColumnsSection({
             index={index}
             numericIds={numericIds}
             rowsTotalIds={rowsTotalIds}
+            figureIds={figureIds}
         />
     ))
     return (
