@@ -5,7 +5,14 @@ import { Pressable, Text, View } from 'react-native'
 import { type CellDisplay, cellDisplay, type NumberFormat, rowLabelText } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import { groupChain } from '../lib/sticky'
-import { type Block, type Justify, type LineLayout, rowLayout } from '../lib/table-lines'
+import {
+    type Block,
+    type Justify,
+    type LineLayout,
+    oneLineLabelSpan,
+    oneLineLabelWidth,
+    rowLayout,
+} from '../lib/table-lines'
 import type { ResultColumn, ResultRow, RowKind } from '../lib/types'
 import { CARET_SIZE, columnAlign, INDENT, ROW_HEIGHT } from './report-table-layout'
 
@@ -263,11 +270,14 @@ export function RowCell({
 
 /**
  * The label column's box on one line (F10): it takes the width the other columns
- * leave, and never less than the width the line gave it.
+ * leave, and never less than the width the line gave it and the columns it spans.
  */
-export function oneLineLabelStyle(layout: LineLayout, labelId: string | undefined) {
-    const minWidth = layout.kind === 'one-line' && labelId ? layout.widths[labelId] : undefined
-    return { flex: 1, minWidth }
+export function oneLineLabelStyle(
+    layout: LineLayout,
+    labelId: string | undefined,
+    spanned: readonly string[] = []
+) {
+    return { flex: 1, minWidth: oneLineLabelWidth(layout, labelId, spanned) }
 }
 
 export interface TableRowProps {
@@ -280,25 +290,34 @@ export interface TableRowProps {
 }
 
 // Each column at the width the line gave it; a cell too narrow for its text ends
-// in "…" (numberOfLines 1), so nothing runs past the table's edge.
+// in "…" (numberOfLines 1), so nothing runs past the table's edge. A group row's
+// label also takes the empty cells before its first value (oneLineLabelSpan).
 function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: TableRowProps) {
     if (layout.kind !== 'one-line') return null
     const [label, ...amounts] = columns
-    const cells = amounts.map((column, i) => (
-        <RowCell
-            key={column.id}
-            item={item}
-            column={column}
-            format={format}
-            justify={amountJustify(column, i + 1)}
-            onToggleGroup={onToggleGroup}
-            width={layout.widths[column.id]}
-            isCopy={isCopy}
-        />
-    ))
+    const span = oneLineLabelSpan(
+        item,
+        amounts.map(column => column.id)
+    )
+    const spanned = amounts.slice(0, span).map(column => column.id)
+    const labelBox = oneLineLabelStyle(layout, label?.id, spanned)
+    const cells = amounts
+        .slice(span)
+        .map((column, i) => (
+            <RowCell
+                key={column.id}
+                item={item}
+                column={column}
+                format={format}
+                justify={amountJustify(column, span + i + 1)}
+                onToggleGroup={onToggleGroup}
+                width={layout.widths[column.id]}
+                isCopy={isCopy}
+            />
+        ))
     return (
         <View className={`flex-row bg-background ${ROW_RULE[item.row.kind]}`}>
-            <View style={oneLineLabelStyle(layout, label?.id)}>
+            <View style={labelBox}>
                 <RowLabel
                     item={item}
                     format={format}

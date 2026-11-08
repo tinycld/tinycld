@@ -493,6 +493,109 @@ test.describe('report rows per width', () => {
         }
     })
 
+    // F10: on one narrowed line the label column is at its floor, but an open group
+    // row has no other cell on its line, so its label spans the row, as it does in
+    // the phone's blocks; a detail label is still cut short with "…".
+    test('on a narrowed desktop line an open group row shows its whole label while detail labels end in "…"', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptspan')
+        try {
+            const team = uniqueName('Northwest Regional Wholesale Accounts Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            await addSale(p, {
+                team,
+                customer: 'Wrapco Longname 00',
+                amount: 1000,
+                cost: 400,
+                quantity: 3,
+                day: '2026-01-05',
+            })
+            await openReportsHub(p)
+            await startTeamSales(p)
+            for (const keys of [['cost'], ['quantity'], ['currency'], ['day'], ['booked']]) {
+                await addColumn(p, keys)
+            }
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'team')
+            // Subtotals stay on, so the open group's figures are on its subtotal row
+            // and its own row has no cell after the label.
+            await p.getByTestId('report-builder-group-0-open').click()
+            await saveNewReport(p, uniqueName('Spanned'))
+            await p.setViewportSize({ width: 1100, height: 720 })
+            const table = p.getByTestId('report-table')
+            await expect(table).toHaveCSS('opacity', '1')
+            const groupRow = rowOf(p, team)
+            await expect(groupRow).toHaveAttribute('aria-expanded', 'true')
+            const detail = rowOf(p, 'Wrapco Longname 00')
+            await expect(detail).toBeVisible()
+            const isCut = (text: Locator) => text.evaluate(el => el.scrollWidth > el.clientWidth)
+            // The detail label is held to the narrowed label column.
+            await expect
+                .poll(() => isCut(detail.getByText('Wrapco Longname 00', { exact: true })))
+                .toBe(true)
+            const detailWidth = (await detail.boundingBox())?.width ?? 0
+            // The group label is whole, in a box wider than the label column.
+            await expect.poll(() => isCut(groupRow.getByText(team, { exact: true }))).toBe(false)
+            expect((await groupRow.boundingBox())?.width ?? 0).toBeGreaterThan(detailWidth + 200)
+            // The detail row's cells keep their columns.
+            const amount = await cellOf(p, 'amount', 'Wrapco Longname 00')
+            const headAmount = await p.getByTestId('report-heading-amount').boundingBox()
+            expect(
+                Math.abs(((await amount.boundingBox())?.x ?? 0) - (headAmount?.x ?? 0))
+            ).toBeLessThanOrEqual(1)
+        } finally {
+            await close()
+        }
+    })
+
+    // F10: a closed group row keeps its figures. Its label spans only the empty
+    // cells before its first figure, and each figure stays under its heading.
+    test('on a desktop line a closed group row spans its label up to its first figure, and its figures keep their columns', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptspanc')
+        try {
+            await seed(p, 2)
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['day'])
+            await addColumn(p, ['amount'])
+            await chooseOption(p, 'report-builder-column-2-aggregate', 'sum')
+            await addColumn(p, ['cost'])
+            await chooseOption(p, 'report-builder-column-3-aggregate', 'sum')
+            // A group level picks one of the report's columns.
+            await addColumn(p, ['status'])
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'status')
+            await saveNewReport(p, uniqueName('Closed span'))
+            const table = p.getByTestId('report-table')
+            await expect(table).toHaveCSS('opacity', '1')
+            const group = rowOf(p, 'Open')
+            await expect(group).toHaveAttribute('aria-expanded', 'false')
+            const amount = await cellOf(p, 'amount', 'Open')
+            await expect(amount).toHaveText('10.00')
+            // The day cell, empty on a group row, is not drawn: the label takes its place.
+            await expect(await cellOf(p, 'day', 'Open')).toHaveCount(0)
+            const box = async (locator: Locator) =>
+                (await locator.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 }
+            const label = await box(group)
+            const headDay = await box(p.getByTestId('report-heading-day'))
+            const headAmount = await box(p.getByTestId('report-heading-amount'))
+            const headCost = await box(p.getByTestId('report-heading-cost'))
+            // The label box ends where the first figure starts, past the day column.
+            expect(label.x + label.width).toBeGreaterThanOrEqual(headDay.x + headDay.width - 1)
+            expect(Math.abs((await box(amount)).x - headAmount.x)).toBeLessThanOrEqual(1)
+            const cost = await cellOf(p, 'cost', 'Open')
+            expect(Math.abs((await box(cost)).x - headCost.x)).toBeLessThanOrEqual(1)
+        } finally {
+            await close()
+        }
+    })
+
     test('an arrangement names its problems in the builder, and a pivot that cannot follow it says so', async ({
         page,
     }) => {
