@@ -728,15 +728,30 @@ test.describe('report rows per width', () => {
             ).toHaveCount(0)
             const toggle = band.getByTestId('report-notices-toggle')
             await expect(toggle).toHaveText('Show all')
-            const capped = (await band.getByTestId('report-notices').boundingBox())?.height ?? 0
+            // The line clamp over the layout notice, up to the band. The check holds
+            // whether the text really wraps to two lines or three (the toggle uses an
+            // upper estimate).
+            const layoutNotice = band.getByTestId('report-notice-layout')
+            const clampOf = () =>
+                layoutNotice.evaluate(el => {
+                    for (let n: Element | null = el; n; n = n.parentElement) {
+                        if (n.getAttribute('data-testid') === 'report-notices') break
+                        const clamp = getComputedStyle(n).getPropertyValue('-webkit-line-clamp')
+                        if (clamp && clamp !== 'none') return clamp
+                    }
+                    return 'none'
+                })
+            await expect.poll(clampOf).toBe('2')
             await toggle.click()
             await expect(toggle).toHaveText('Show less')
-            await expect
-                .poll(
-                    async () =>
-                        (await band.getByTestId('report-notices').boundingBox())?.height ?? 0
-                )
-                .toBeGreaterThan(capped)
+            // Show all: the notice is its own line of the band, whole.
+            await expect.poll(clampOf).toBe('none')
+            expect(
+                await layoutNotice.evaluate(el => el.parentElement?.getAttribute('data-testid'))
+            ).toBe('report-notices')
+            expect(await layoutNotice.evaluate(el => el.scrollHeight <= el.clientHeight + 1)).toBe(
+                true
+            )
             // A desktop never cuts the band.
             await p.setViewportSize({ width: 1280, height: 800 })
             await expect(band.getByTestId('report-notices-toggle')).toHaveCount(0)
