@@ -5,6 +5,8 @@ import { type DisplayCell, type DisplayLayout, displayCellSchema } from '../spec
 import {
     fitOneLine,
     labelFloor,
+    oneLineLabelSpan,
+    oneLineLabelWidth,
     PINWHEEL_MESSAGE,
     PIVOT_NOTICE,
     placeCells,
@@ -847,5 +849,56 @@ describe('the label floor of a pivot report', () => {
             widths: { account: 80 },
         })
         expect(at({ groups: 1, nests: 0 })).toMatchObject({ kind: 'blocks' })
+    })
+})
+
+// F10: a group row's label is not held to the label column's width when the
+// cells after it are empty, as its blocks lines draw only its label.
+describe('the label span of a one-line row', () => {
+    const layout = tableLines({
+        columns: COLS,
+        width: 1280,
+        breakpoint: 'desktop',
+        layouts: [],
+        levels: { groups: 1, nests: 0 },
+    })
+    const others = ['number', 'debit', 'credit']
+    const item = (kind: ResultRow['kind'], cells: Record<string, CellValue>) => ({
+        row: { id: `${kind}:1`, kind, depth: 0, label: '1000 Cash and cash equivalents', cells },
+        cells,
+        isToggle: kind === 'group',
+        isOpen: kind === 'group',
+    })
+
+    it('spans an open group row (no cells) across every column', () => {
+        expect(oneLineLabelSpan(item('group', {}), others)).toBe(3)
+    })
+
+    it('spans a closed group row up to its first value, and blank cells count as empty', () => {
+        expect(
+            oneLineLabelSpan(item('group', { number: null, debit: 12, credit: 3 }), others)
+        ).toBe(1)
+        expect(oneLineLabelSpan(item('group', { debit: 12 }), others)).toBe(1)
+        expect(oneLineLabelSpan(item('group', { number: 'A', debit: 12 }), others)).toBe(0)
+    })
+
+    it('spans no column of a detail row, or of any other row kind', () => {
+        expect(oneLineLabelSpan(item('detail', {}), others)).toBe(0)
+        expect(oneLineLabelSpan(item('subtotal', { credit: 1 }), others)).toBe(0)
+        expect(oneLineLabelSpan(item('opening', { credit: 1 }), others)).toBe(0)
+    })
+
+    it('widens the label box by the columns it spans, so later cells keep their place', () => {
+        if (layout.kind !== 'one-line') throw new Error('expected one line')
+        const { widths } = layout
+        expect(oneLineLabelWidth(layout, 'account', [])).toBe(widths.account)
+        expect(oneLineLabelWidth(layout, 'account', ['number'])).toBe(
+            widths.account + widths.number
+        )
+        expect(oneLineLabelWidth(layout, 'account', others)).toBe(
+            widths.account + widths.number + widths.debit + widths.credit
+        )
+        expect(oneLineLabelWidth(layout, undefined, others)).toBeUndefined()
+        expect(oneLineLabelWidth({ kind: 'blocks', root: label }, 'account', [])).toBeUndefined()
     })
 })

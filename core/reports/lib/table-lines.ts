@@ -489,6 +489,34 @@ export function rowLayout(item: VisibleRow, layout: LineLayout, labelId: string)
     return { ...layout, root: pruned(layout.root, keeps) ?? labelOnly }
 }
 
+/**
+ * How many columns after the label a row's label spans on one line (F10): a group
+ * row spans its empty cells up to its first value (every column when it has none),
+ * as its blocks lines draw only its label; any other row spans none, so a detail
+ * label ends in "…" at the label column's width and every cell keeps its column.
+ */
+export function oneLineLabelSpan(item: VisibleRow, columnIds: readonly string[]): number {
+    if (item.row.kind !== 'group') return 0
+    const first = columnIds.findIndex(id => hasValue(item.cells[id]))
+    return first === -1 ? columnIds.length : first
+}
+
+/**
+ * The least width of a one-line row's label box: the label column's width and the
+ * widths of the columns it spans (oneLineLabelSpan), so the cells after it keep
+ * their places. Undefined where rows are not one line.
+ */
+export function oneLineLabelWidth(
+    layout: LineLayout,
+    labelId: string | undefined,
+    spanned: readonly string[]
+): number | undefined {
+    if (layout.kind !== 'one-line' || !labelId) return undefined
+    const own = layout.widths[labelId]
+    if (own === undefined) return undefined
+    return spanned.reduce((sum, id) => sum + (layout.widths[id] ?? 0), own)
+}
+
 /** A first arrangement: the first column across line 1, the others in order on the lines below. */
 export function startingLayout(
     width: DisplayWidth,

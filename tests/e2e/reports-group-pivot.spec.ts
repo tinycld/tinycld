@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
 import { createInvitedUser, skipWithoutReportsStub } from './helpers'
 import {
     addColumn,
@@ -87,8 +87,16 @@ test.describe('grouping and pivoting a report', () => {
             await rowOf(p, 'Open').click()
             await expect(table.getByText('Alpha', { exact: true })).toBeVisible()
             await expect(await cellOf(p, 'amount', 'Total Open')).toHaveText('$30.00')
-            // An open group with a subtotal row shows no figures of its own.
-            await expect(await cellOf(p, 'amount', 'Open')).toHaveText('')
+            // An open group with a subtotal row shows no figures of its own: it draws
+            // no cells, and its label spans the row (F10).
+            await expect(await cellOf(p, 'amount', 'Open')).toHaveCount(0)
+            await expect(await cellOf(p, 'status', 'Open')).toHaveCount(0)
+            const width = async (locator: Locator) => (await locator.boundingBox())?.width ?? 0
+            const headings = ['customer', 'status', 'amount'].map(id =>
+                width(p.getByTestId(`report-heading-${id}`))
+            )
+            const rowWidth = (await Promise.all(headings)).reduce((sum, w) => sum + w, 0)
+            expect(await width(rowOf(p, 'Open'))).toBeGreaterThanOrEqual(rowWidth - 2)
             await expect(p.getByTestId('report-fold-all')).toHaveText('Collapse all')
 
             await p.getByTestId('report-fold-all').click()
