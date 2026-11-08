@@ -163,13 +163,17 @@ async function openPagedTeams(
     await page.setViewportSize({ width: 1280, height: 1600 })
     await openTeamBalance(page)
     // The first run has no Teams filter, so it shows these sales too: no row
-    // tells the two runs apart. The new run's params change the list's key, so
-    // the list mounts again; once the first run's scroller has left the page,
-    // every row on it is the new run's.
+    // tells the two runs apart. Once the run with the Teams filter has answered
+    // and the view no longer says "Updating…", every row is the new run's.
     await expect(detailLabels(page).first()).toBeVisible()
-    const firstRunScroller = await listScroller(detailLabels(page).first())
+    const teamsRun = page.waitForResponse(
+        response =>
+            response.url().includes('/api/reports/run') &&
+            response.request().postDataJSON()?.params?.teams !== undefined
+    )
     await showTeams(page, stem, teams)
-    await expect.poll(() => firstRunScroller.evaluate(el => el.isConnected)).toBe(false)
+    await teamsRun
+    await expect(page.getByTestId('report-updating')).toHaveCount(0)
     const firstSale = rowOf(page, `${stem}A 00`)
     await expect(firstSale).toBeVisible()
     return { stem, teams, cursors, sent, firstSale }

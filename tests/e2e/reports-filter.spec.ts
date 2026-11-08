@@ -481,14 +481,19 @@ async function setMinAmount(p: Page, amount: string) {
     await expect(picker).toBeHidden()
 }
 
-// The list is at its top and the report's first row is the first row in view.
+// The list is at its top and the report's first row is the first row in view, right
+// under the heading row. On a desktop the heading row sits above the list; on a
+// phone the top area is the list's header, with the heading row under it (D9).
 async function expectAtTop(p: Page, first: number) {
     await expect.poll(() => scrollOffset(p), 'the list scroll offset').toBeLessThanOrEqual(1)
     const row = rowOf(p, topName(first))
     await expect(row).toBeInViewport()
+    const heading = await p.getByTestId('report-heading-row').boundingBox()
+    const rowBox = await row.boundingBox()
+    const headingBottom = (heading?.y ?? 0) + (heading?.height ?? 0)
     expect(
-        Math.abs(await gapToListTop(row)),
-        'the first row is at the list top'
+        Math.abs((rowBox?.y ?? Number.POSITIVE_INFINITY) - headingBottom),
+        'the first row is right under the heading row'
     ).toBeLessThanOrEqual(1)
 }
 

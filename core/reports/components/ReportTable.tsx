@@ -1,8 +1,14 @@
-import { FlashList, type ListRenderItemInfo, type ViewToken } from '@shopify/flash-list'
+import {
+    FlashList,
+    type FlashListRef,
+    type ListRenderItemInfo,
+    type ViewToken,
+} from '@shopify/flash-list'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react-native'
-import { useMemo } from 'react'
-import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native'
+import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
+import { ActivityIndicator, Animated, Platform, Pressable, Text, View } from 'react-native'
+import { useScrollAwayTop } from '../hooks/useScrollAwayTop'
 import { useStable } from '../hooks/useStable'
 import { headingText, type NumberFormat } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
@@ -323,7 +329,6 @@ function renderTableItem({ item, index, target, extraData }: ListRenderItemInfo<
     return <StickyGroup {...row} rows={rows} index={index} />
 }
 
-const rowKey = (item: VisibleRow) => item.row.id
 const rowType = (item: VisibleRow) => item.row.kind
 const STICKY_CONFIG = { useNativeDriver: Platform.OS !== 'web' }
 // A row counts as in view from its first pixel, at once: a fold pressed just after a
@@ -364,6 +369,7 @@ function RowWidthProbe({ onWidth }: { onWidth(width: number): void }) {
 
 interface TableListProps extends Omit<TableRowProps, 'item'> {
     rows: VisibleRow[]
+    runKey: string
     onNearEnd(): void
     /** A later page is left: the list ends in "Loading more rows…", else in "End of report". */
     hasMore: boolean
@@ -372,22 +378,50 @@ interface TableListProps extends Omit<TableRowProps, 'item'> {
     onTopRowIndex?(index: number): void
 }
 
-function TableList({
+// A run with a new design, new params or a new sort is another list, so it starts at
+// the top (F11). The list stays mounted (a remount would mount the phone's top area
+// in its header again and take the focus off the chip that started the run), so the
+// scroll goes back to the top instead. Row keys carry the run: FlashList keeps the
+// row in view anchored when the rows change, which a live re-run of the same run
+// needs, but a row of the earlier run (the same row in a new sort) must not pull
+// the new run's scroll back down to it.
+function useNewRunAtTop(runKey: string) {
+    const listRef = useRef<FlashListRef<VisibleRow>>(null)
+    const shownKey = useRef(runKey)
+    useLayoutEffect(() => {
+        if (shownKey.current === runKey) return
+        shownKey.current = runKey
+        listRef.current?.scrollToOffset({ offset: 0, animated: false })
+    }, [runKey])
+    const keyExtractor = useCallback((item: VisibleRow) => `${runKey}:${item.row.id}`, [runKey])
+    return { listRef, keyExtractor }
+}
+
+// What both list variants give FlashList: the sticky rows, the rows' redraw signal,
+// the top-row report, the list's ref and its row keys.
+function useTableListData({
     rows,
-    onNearEnd,
-    hasMore,
-    onRowWidth,
-    sorting,
+    runKey,
+    columns,
+    layout,
+    format,
+    onToggleGroup,
     onTopRowIndex,
-    ...row
 }: TableListProps) {
-    const { columns, layout, format, onToggleGroup } = row
     const sticky = useMemo(() => stickyIndices(rows), [rows])
     const onViewableItemsChanged = useTopRowReport(onTopRowIndex)
     const extraData = useMemo<TableData>(
         () => ({ columns, layout, format, onToggleGroup, rows }),
         [columns, layout, format, onToggleGroup, rows]
     )
+    const { listRef, keyExtractor } = useNewRunAtTop(runKey)
+    return { sticky, extraData, onViewableItemsChanged, listRef, keyExtractor }
+}
+
+function FixedHeadingList(props: TableListProps) {
+    const { rows, columns, layout, format, sorting, onRowWidth, onNearEnd, hasMore } = props
+    const { sticky, extraData, onViewableItemsChanged, listRef, keyExtractor } =
+        useTableListData(props)
     // One element while the width setter stays, so FlashList keeps its header
     // rather than rebuilding it on every render.
     const header = useMemo(() => <RowWidthProbe onWidth={onRowWidth} />, [onRowWidth])
@@ -395,9 +429,10 @@ function TableList({
         <>
             <HeadingRow columns={columns} layout={layout} format={format} sorting={sorting} />
             <FlashList
+                ref={listRef}
                 data={rows}
                 renderItem={renderTableItem}
-                keyExtractor={rowKey}
+                keyExtractor={keyExtractor}
                 getItemType={rowType}
                 extraData={extraData}
                 stickyHeaderIndices={sticky}
@@ -412,6 +447,62 @@ function TableList({
             />
         </>
     )
+}
+
+// D9: the phone's list. The top area is the list's header and scrolls with the rows;
+// the heading row floats over the list (useScrollAwayTop). It comes first in the tree,
+// so its sort buttons come before the rows in the reading order.
+function ScrollAwayList(props: TableListProps & { top: ReactNode }) {
+    const { rows, columns, layout, format, sorting, onRowWidth, onNearEnd, hasMore, top } = props
+    const { sticky, extraData, onViewableItemsChanged, listRef, keyExtractor } =
+        useTableListData(props)
+    const away = useScrollAwayTop()
+    const header = useMemo(
+        () => (
+            <>
+                <View onLayout={away.onTopLayout}>{top}</View>
+                <RowWidthProbe onWidth={onRowWidth} />
+            </>
+        ),
+        [top, away.onTopLayout, onRowWidth]
+    )
+    // Wrapped headings take no presses (D10), so a drag that starts on them passes
+    // to the list. One-line headings keep their sort presses.
+    const headingTouches = layout.kind === 'blocks' ? 'none' : 'box-none'
+    return (
+        <View className="min-h-0 flex-1">
+            <Animated.View
+                style={away.headingStyle}
+                onLayout={away.onHeadingLayout}
+                pointerEvents={headingTouches}
+            >
+                <HeadingRow columns={columns} layout={layout} format={format} sorting={sorting} />
+            </Animated.View>
+            <FlashList
+                ref={listRef}
+                data={rows}
+                renderItem={renderTableItem}
+                keyExtractor={keyExtractor}
+                getItemType={rowType}
+                extraData={extraData}
+                stickyHeaderIndices={sticky}
+                stickyHeaderConfig={away.stickyConfig}
+                onScroll={away.onScroll}
+                onEndReached={onNearEnd}
+                onEndReachedThreshold={0.5}
+                onViewableItemsChanged={onViewableItemsChanged}
+                viewabilityConfig={VIEWABILITY_CONFIG}
+                className="web:[scrollbar-gutter:stable]"
+                ListHeaderComponent={header}
+                ListFooterComponent={<TableEnd hasMore={hasMore} />}
+            />
+        </View>
+    )
+}
+
+function TableList({ top, ...props }: TableListProps & { top?: ReactNode }) {
+    if (top === undefined) return <FixedHeadingList {...props} />
+    return <ScrollAwayList {...props} top={top} />
 }
 
 export interface ReportTableProps {
@@ -435,6 +526,11 @@ export interface ReportTableProps {
     onSortColumn(col: string): void
     /** Told the index (in `rows`) of the row at the top of the view whenever the indices in view change. */
     onTopRowIndex?(index: number): void
+    /**
+     * D9: the view's top area on a phone. Given, it scrolls away with the rows as the
+     * list's header and the heading row stays at the top; not given, both stay put.
+     */
+    top?: ReactNode
 }
 
 // FlashList measures every row (wrapped rows have the heights their content
@@ -451,13 +547,11 @@ export function ReportTable(props: ReportTableProps) {
     const sorting = useHeadingSort(props.sort, props.onSortColumn)
     if (columns.length === 0) return null
     const visibility = props.isMeasured ? '' : 'opacity-0'
-    // FlashList keeps the row in view anchored when the rows change, which a live
-    // re-run of the same design and params needs; a run with a new design, new
-    // params or a new sort is another list, so it starts at the top.
     return (
         <View testID="report-table" className={`min-h-0 flex-1 ${visibility}`}>
             <TableList
-                key={runKey}
+                runKey={runKey}
+                top={props.top}
                 rows={rows}
                 columns={columns}
                 layout={layout}

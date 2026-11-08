@@ -412,6 +412,12 @@ test.describe('the report view', () => {
             // The same on a phone, where the header row is narrow.
             await p.setViewportSize({ width: 390, height: 844 })
             await expect(rowOf(p, 'Open')).toHaveAttribute('aria-expanded', 'true')
+            // D9: once the phone layout is drawn, the title is in the table's box.
+            await expect
+                .poll(
+                    async () => (await topOf(p.getByTestId('report-title'))) >= (await topOf(table))
+                )
+                .toBe(true)
             tableTop = await topOf(table)
             release = await holdRuns(p)
             // The open group's stuck copy lies over its row at the top, so fold from

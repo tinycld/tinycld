@@ -76,7 +76,14 @@ function refusalAction(model: ReportViewModel) {
     return { label: 'Clear sort', testID: 'report-clear-sort', onPress: model.onClearSort }
 }
 
-export function ReportBody({ model, table }: { model: ReportViewModel; table: TableLayout }) {
+interface BodyProps {
+    model: ReportViewModel
+    table: TableLayout
+    /** D9: the top area that scrolls away with the rows (a phone); not given, it stays above. */
+    top?: ReactNode
+}
+
+export function ReportBody({ model, table, top }: BodyProps) {
     const { state } = model
     const retry = { label: 'Retry', testID: 'report-retry', onPress: model.run.retry }
     const fix = refusalAction(model)
@@ -127,12 +134,12 @@ export function ReportBody({ model, table }: { model: ReportViewModel; table: Ta
                 action={model.emptyAction}
                 onAction={model.onEmptyAction}
             />
-            <TableBody model={model} table={table} />
+            <TableBody model={model} table={table} top={top} />
         </>
     )
 }
 
-function TableBody({ model, table }: { model: ReportViewModel; table: TableLayout }) {
+function TableBody({ model, table, top }: BodyProps) {
     if (model.state !== 'ready') return null
     const runKey = shownRunKey(model)
     return (
@@ -150,13 +157,49 @@ function TableBody({ model, table }: { model: ReportViewModel; table: TableLayou
             sort={model.sort}
             onSortColumn={model.onSortColumn}
             onTopRowIndex={model.run.onTopRowIndex}
+            top={top}
         />
     )
 }
 
-function ViewBody({ model, table }: { model: ReportViewModel; table: TableLayout }) {
+function ViewBody({ model, table, top }: BodyProps) {
     if (!model.isBodyShown) return null
-    return <ReportBody model={model} table={table} />
+    return <ReportBody model={model} table={table} top={top} />
+}
+
+interface ReportTopProps {
+    model: ReportViewModel
+    isSortMenuShown: boolean
+    layoutNotice: string | undefined
+    isCompact: boolean
+}
+
+// Everything above the rows: the header, the chips, the notices and the document header.
+function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTopProps) {
+    return (
+        <>
+            <ReportHeader
+                title={model.title}
+                onBack={model.onBack}
+                actions={toolbarItems(model)}
+                isUpdating={model.isUpdating}
+                isUpdatingLive={!model.isUpdatingInBuilder}
+            />
+            <ReportControls model={model} isSortMenuShown={isSortMenuShown} />
+            <ReportNotices
+                notices={model.notices}
+                layoutNotice={layoutNotice}
+                isLive={model.isBodyShown}
+                isCompact={isCompact}
+            />
+            <ReportDocumentHeader
+                heading={model.heading}
+                title={model.title}
+                periodWords={model.periodWords}
+                isThousands={model.display.divideBy1000}
+            />
+        </>
+    )
 }
 
 export function ReportView({ model, side }: { model: ReportViewModel; side?: ReactNode }) {
@@ -165,30 +208,24 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
     // The table's layout notice joins the run's in the band, once the table is drawn.
     const layoutNotice = model.state === 'ready' ? layoutNoticeOf(table.layout) : undefined
     const isCompact = model.breakpoint === 'mobile'
+    const top = (
+        <ReportTop
+            model={model}
+            isSortMenuShown={isSortMenuShown}
+            layoutNotice={layoutNotice}
+            isCompact={isCompact}
+        />
+    )
+    // D9: on a phone, with rows to scroll, the top area scrolls away with them; in
+    // any other state, or on a wider screen, it stays above the body.
+    const isTopInList = isCompact && model.isBodyShown && model.state === 'ready'
+    const fixedTop = isTopInList ? null : top
+    const listTop = isTopInList ? top : undefined
     return (
         <View testID="report-screen" className="flex-1 flex-row bg-background">
             <View className="min-w-0 flex-1">
-                <ReportHeader
-                    title={model.title}
-                    onBack={model.onBack}
-                    actions={toolbarItems(model)}
-                    isUpdating={model.isUpdating}
-                    isUpdatingLive={!model.isUpdatingInBuilder}
-                />
-                <ReportControls model={model} isSortMenuShown={isSortMenuShown} />
-                <ReportNotices
-                    notices={model.notices}
-                    layoutNotice={layoutNotice}
-                    isLive={model.isBodyShown}
-                    isCompact={isCompact}
-                />
-                <ReportDocumentHeader
-                    heading={model.heading}
-                    title={model.title}
-                    periodWords={model.periodWords}
-                    isThousands={model.display.divideBy1000}
-                />
-                <ViewBody model={model} table={table} />
+                {fixedTop}
+                <ViewBody model={model} table={table} top={listTop} />
             </View>
             <ReportCustomizePanel model={model} />
             {side}
