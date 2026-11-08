@@ -122,4 +122,72 @@ test.describe('report column fit', () => {
             await close()
         }
     })
+
+    test('a wrapping column with a narrow least width never splits a word on a phone', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptword')
+        try {
+            const team = uniqueName('Word Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            await addSales(p, {
+                team,
+                customerPrefix: 'Fitco Supercalifragilisticexpialidocious Wholesale',
+                count: 1,
+                firstDay: '2026-01-05',
+                firstAmount: 12345,
+                cost: 100,
+                quantity: 1,
+            })
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            // Three figures are never cut and fill most of a phone's line, so the label
+            // gets little more than its least width: six letters, much less than
+            // "Supercalifragilisticexpialidocious".
+            await addColumn(p, ['amount'])
+            await addColumn(p, ['cost'])
+            await addColumn(p, ['quantity'])
+            await chooseOption(p, 'report-builder-column-0-fit-wrap', '2')
+            await chooseOption(p, 'report-builder-column-0-fit-min', '6')
+            await saveNewReport(p, uniqueName('Word'))
+            const label = p
+                .locator('[data-testid^="report-row-d:"]')
+                .first()
+                .locator('div[dir="auto"]')
+
+            await p.setViewportSize({ width: 390, height: 844 })
+            await waitForTableFit(p)
+            await expect(label).toContainText('Wholesale')
+            // Each word is one DOM range: a word split across lines has two client rects.
+            const words = () =>
+                label.evaluate(element => {
+                    const node = element.firstChild
+                    const text = node?.textContent ?? ''
+                    const box = element.getBoundingClientRect().width
+                    const found = [...text.matchAll(/\S+/g)].map(match => {
+                        const range = document.createRange()
+                        range.setStart(node as Node, match.index)
+                        range.setEnd(node as Node, match.index + match[0].length)
+                        const rects = range.getClientRects()
+                        return { word: match[0], rects: rects.length, width: rects[0]?.width ?? 0 }
+                    })
+                    return { box, found }
+                })
+            await expect
+                .poll(async () => (await words()).found.filter(w => w.rects !== 1).map(w => w.word))
+                .toEqual([])
+            const { box, found } = await words()
+            // A word a few px wider than its line is clipped, as CSS does, never split.
+            expect(await label.evaluate(element => getComputedStyle(element).overflowWrap)).toBe(
+                'normal'
+            )
+            const widest = Math.max(...found.map(w => w.width))
+            expect(box).toBeGreaterThanOrEqual(widest)
+            // The label wraps: it is narrower than its whole text.
+            expect(box).toBeLessThan(found.reduce((sum, w) => sum + w.width, 0))
+        } finally {
+            await close()
+        }
+    })
 })

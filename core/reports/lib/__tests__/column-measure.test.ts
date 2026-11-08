@@ -17,6 +17,7 @@ import {
 import { cellDisplay, DEFAULT_DISPLAY } from '../format'
 import type { VisibleRow } from '../rows'
 import type { ColumnFit } from '../spec'
+import { atWidth } from '../table-lines'
 import { longestWordWidth, textWidth } from '../text-width'
 import type { CellValue, ResultColumn, ResultRow } from '../types'
 
@@ -263,6 +264,58 @@ describe('column fit in the measure', () => {
             )
         )
         expect(withFits({ memo: { whiteSpace: 'normal', lineClamp: 3 } }).memo?.lines).toBe(3)
+    })
+
+    describe('a wrapping column is never narrower than its longest word', () => {
+        // "Incomprehensibilities" is wider than 5 letters and than the eight-letter floor.
+        const LONG = 'Incomprehensibilities Wholesale'
+        const LABEL_ROW = item('detail', LONG, { memo: LONG, name: LONG, debit: 1200 })
+        const run = (fits: Record<string, ColumnFit>) =>
+            measureColumns({
+                columns: COLUMNS,
+                rows: [LABEL_ROW],
+                format: DEFAULT_DISPLAY,
+                levels: GROUPED,
+                fits,
+            })
+        const cellWord = longestWordWidth(LONG, CELL) + CELL_PADDING
+        const labelWord = INDENT + INDENT + longestWordWidth(LONG, CELL) + CELL_PADDING / 2
+
+        it('raises a narrow minWidth or width to the longest word, with a margin', () => {
+            const wrap = { whiteSpace: 'normal' } as const
+            const m = run({
+                account: { ...wrap, minWidth: '5ch' },
+                memo: { ...wrap, minWidth: '5ch' },
+                name: { ...wrap, width: '5ch' },
+            })
+            expect(m.account?.min).toBeGreaterThan(labelWord)
+            expect(m.memo?.min).toBeGreaterThan(cellWord)
+            expect(m.name?.min).toBeGreaterThan(cellWord)
+            for (const col of [m.account, m.memo, m.name]) {
+                expect(col?.natural).toBeGreaterThanOrEqual(col?.min ?? 0)
+                expect(col?.max ?? Infinity).toBeGreaterThanOrEqual(col?.min ?? 0)
+            }
+        })
+
+        it('holds a % width, minWidth or maxWidth at the longest word', () => {
+            const m = run({
+                memo: { whiteSpace: 'normal', width: '1%' },
+                name: { whiteSpace: 'normal', minWidth: '1%', maxWidth: '2%' },
+            })
+            for (const col of [m.memo, m.name]) {
+                const at = atWidth(col ?? { natural: 0, min: 0, grow: 0 }, 390)
+                expect(at.min).toBeGreaterThan(cellWord)
+                expect(at.max ?? Infinity).toBeGreaterThanOrEqual(at.min)
+            }
+        })
+
+        it('keeps a minWidth wider than the word as set', () => {
+            expect(run({ memo: { whiteSpace: 'normal', minWidth: '60ch' } }).memo?.min).toBe(ch(60))
+        })
+
+        it('does not raise a one-line column: it ends in …', () => {
+            expect(run({ memo: { minWidth: '5ch' } }).memo?.min).toBeLessThan(cellWord)
+        })
     })
 
     it('keeps a % for the fit to resolve at the line width', () => {
