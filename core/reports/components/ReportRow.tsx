@@ -205,11 +205,16 @@ function labelTone(kind: RowKind): string {
     return kind === 'opening' ? 'text-muted-foreground' : 'text-foreground'
 }
 
+// react-native-web gives a Text of more lines `overflow-wrap: break-word`, which
+// splits a word wider than its line. The measure gives a wrapping column its
+// longest word; if the estimate is short, the word is clipped, as CSS does.
+const WHOLE_WORDS = 'web:break-normal'
+
 function LabelText({ row, text, lines = 1 }: { row: ResultRow; text: string; lines?: number }) {
     return (
         <Text
             numberOfLines={lines}
-            className={`min-w-0 flex-1 text-sm ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`}
+            className={`min-w-0 flex-1 text-sm ${WHOLE_WORDS} ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`}
         >
             {text}
         </Text>
@@ -306,7 +311,7 @@ function cellTextClass(
 ): string {
     const tone = display.isRed || display.isError ? 'text-danger' : 'text-foreground'
     const digits = isFigure ? 'tabular-nums' : ''
-    return `text-sm ${TEXT_ALIGN[justify]} ${digits} ${tone} ${ROW_WEIGHT[kind]}`
+    return `text-sm ${WHOLE_WORDS} ${TEXT_ALIGN[justify]} ${digits} ${tone} ${ROW_WEIGHT[kind]}`
 }
 
 interface RowCellProps {
