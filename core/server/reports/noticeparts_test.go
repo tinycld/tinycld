@@ -11,7 +11,7 @@ import (
 // mergePages): here a blank column's sentence, then a sort key's.
 func TestANoticeOfSeveralSentencesGivesThemAsParts(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[
+	spec := `{"version":4,"source":"zoo.sites","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"usdFees","formula":` + mixedFees + `}],
 		"sort":[{"formula":` + mixedFees + `},{"col":"name"}]}`

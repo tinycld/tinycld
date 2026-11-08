@@ -14,7 +14,7 @@ const sortsAsBlank = "reads a looked-up total that mixes currencies, so it sorts
 func TestADetailSortOverAMixedSumLookupIsNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"sort":[{"formula":` + allCosts + `},{"col":"note"}]}`
 	res := z.run(t, "ann", spec, Options{}, nil)
 	requireRows(t, res, "label", "f1", "f2", "f3", "f4", "f7", "Total")
@@ -32,7 +32,7 @@ func TestADetailSortOverAMixedSumLookupIsNamed(t *testing.T) {
 func TestAGroupSortOverAMixedSumLookupIsNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],
@@ -57,7 +57,7 @@ func TestAGroupSortOverAMixedSumLookupIsNamed(t *testing.T) {
 func TestASortByAMixedColumnNamesTheColumn(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"all","label":"All costs","formula":` + allCosts + `}],
 		"sort":[{"col":"all"},{"col":"note"}]}`
@@ -74,7 +74,7 @@ func TestASortByAMixedColumnNamesTheColumn(t *testing.T) {
 // A sort key whose sum lookup is in one currency names nothing.
 func TestASortOverASumLookupInOneCurrencyHasNoNotice(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"sort":[{"formula":` + allCosts + `},{"col":"note"}]}`
 	res := z.run(t, "ann", spec, Options{}, nil)
 	if len(res.Notices) != 0 {
@@ -87,7 +87,7 @@ func TestASortOverASumLookupInOneCurrencyHasNoNotice(t *testing.T) {
 func TestAConditionSortKeyOverAMixedSumLookupIsNamed(t *testing.T) {
 	z := newZoo(t)
 	withEuroFeeding(t, z)
-	spec := `{"version":3,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+	spec := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"sort":[{"col":"note"},{"formula":{"op":"gt","args":[` + allCosts + `,{"value":0}]}}]}`
 	res := z.run(t, "ann", spec, Options{}, nil)
 	n := conditionNotice(res, "sort.1.formula")
@@ -108,12 +108,12 @@ func TestAConditionSortKeyThatATrueTermDecidesIsNotNamed(t *testing.T) {
 	decided := func(costs string) string {
 		return `{"op":"or","args":[{"op":"gt","args":[` + costs + `,{"value":0}]},{"value":true}]}`
 	}
-	detail := `{"version":3,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+	detail := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"sort":[{"col":"note"},{"formula":` + decided(allCosts) + `}]}`
 	if res := z.run(t, "ann", detail, Options{}, nil); len(res.Notices) != 0 {
 		t.Fatalf("detail sort: notices = %+v", res.Notices)
 	}
-	group := `{"version":3,"source":"zoo.feedings","columns":[
+	group := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"animal"}],

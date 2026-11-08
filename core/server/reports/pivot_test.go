@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const costBySpeciesAndMonth = `{"version":1,"source":"zoo.feedings","columns":[
+const costBySpeciesAndMonth = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 	"groups":[{"id":"g","col":"species"}],
@@ -64,7 +64,7 @@ func TestTheRowCapNeverCutsPivotColumns(t *testing.T) {
 
 func TestPivotCellOfAnAverageAndAYearBucket(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "bob", `{"version":1,"source":"zoo.feedings","columns":[
+	res := z.run(t, "bob", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"avg","scale":1}],
 		"groups":[{"id":"g","col":"species"}],
@@ -96,7 +96,7 @@ func TestPivotFoldsABlankAndAMissingTextKeyIntoOneColumn(t *testing.T) {
 	z := newZoo(t)
 	blank := z.rec(t, "blank", "zoo_sites", map[string]any{"name": ""})
 	z.rec(t, "pip", "zoo_animals", map[string]any{"name": "Pip", "species": "owl", "site": blank.Id, "owner": z.id("ann"), "weight": 7})
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.animals","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"species","path":[{"field":"species"}]},
 		{"id":"weight","path":[{"field":"weight"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],
@@ -132,7 +132,7 @@ func TestPivotKeyWithQuotesIsOnlyData(t *testing.T) {
 	z.rec(t, "f7", "zoo_feedings", map[string]any{
 		"animal": z.id("zed"), "cost": 400, "currency": "USD", "fed": "2026-03-10 00:00:00.000Z", "grams": 10, "note": evil,
 	})
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],
@@ -149,7 +149,7 @@ func TestPivotCapNoticeCountsEveryLeftOutValue(t *testing.T) {
 	for i, day := range []string{"04", "05", "06"} {
 		z.feeding(t, fmt.Sprintf("x%d", i), z.recs["leo"], 10, "2026-04-"+day, 1)
 	}
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],

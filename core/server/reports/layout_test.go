@@ -14,7 +14,7 @@ import (
 
 // A statement in the zoo: sections pick first-level groups by key, computed
 // rows read the sections' subtotals by name.
-const zooStatement = `{"version":1,"source":"zoo.feedings","columns":[
+const zooStatement = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
 	{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
@@ -56,7 +56,7 @@ func TestLayoutComputedRowsSplitThePivot(t *testing.T) {
 
 func TestLayoutErrors(t *testing.T) {
 	z := newZoo(t)
-	base := `{"version":1,"source":"zoo.feedings","columns":[
+	base := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],"layout":[{"section":"cats","title":"Lions","key":"lion"},%s]}`
@@ -81,7 +81,7 @@ func TestLayoutErrors(t *testing.T) {
 
 // layoutOf is a one-group statement over cost with the given layout items.
 func layoutOf(items string) string {
-	return `{"version":1,"source":"zoo.feedings","columns":[
+	return `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],"layout":[` + items + `]}`
@@ -125,7 +125,7 @@ func TestLayoutRefusesAHugeExpansion(t *testing.T) {
 
 func TestLayoutBoolSectionKey(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":1,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"active","path":[{"link":"animal"},{"field":"active"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"active"}],"layout":[

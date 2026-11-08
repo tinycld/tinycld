@@ -10,7 +10,7 @@ import (
 	"github.com/pocketbase/dbx"
 )
 
-const feedingsPaged = `{"version":1,"source":"zoo.feedings","columns":[
+const feedingsPaged = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"fed","path":[{"field":"fed"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -94,7 +94,7 @@ func fullNotes(t *testing.T, z *zoo, raw string) []any {
 }
 
 func feedingsSortedBy(sort string) string {
-	return `{"version":1,"source":"zoo.feedings","columns":[
+	return `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"fed","path":[{"field":"fed"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -171,7 +171,7 @@ func TestAMalformedCursorOfTheRightShapeIsRefused(t *testing.T) {
 
 // pagedBySpecies groups ann's feedings by species, each open group starting with
 // an opening row and ending in its subtotal; running restarts in each group.
-const pagedBySpecies = `{"version":3,"source":"zoo.feedings","columns":[
+const pagedBySpecies = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -386,7 +386,7 @@ func TestAGroupedCursorIsRefusedAfterASpecChangeOrASortChange(t *testing.T) {
 func TestGroupRowsStillStopAtTheGroupCap(t *testing.T) {
 	z := newZoo(t)
 	withLimits(t, func(l *limits) { l.rowCap = 3 })
-	const byNote = `{"version":2,"source":"zoo.feedings","columns":[
+	const byNote = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"note"}],"sort":[{"col":"note"}]}`

@@ -18,7 +18,7 @@ const beforePeriod = `{"op":"coalesce","args":[{"op":"lookup","source":"zoo.feed
 // group opening onto the grams fed before the period. group adds group parts
 // (fill, having) after the opening.
 func gramsByAnimal(cells, group string) string {
-	return `{"version":3,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
+	return `{"version":4,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
 		"columns":[
 			{"id":"animal","path":[{"link":"animal"}]},
 			{"id":"note","path":[{"field":"note"}]},
@@ -110,7 +110,7 @@ func TestRegressionGuardAGroupItsHavingHidesHasNoOpeningRow(t *testing.T) {
 // sectionsWithOpening is a layout report whose sections (the species groups)
 // each open onto an opening row whose grams cell is the section's own total
 // of grams, read on the group's level.
-const sectionsWithOpening = `{"version":3,"source":"zoo.feedings","columns":[
+const sectionsWithOpening = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -161,7 +161,7 @@ func TestAnOpeningRowIsFirstUnderEachOpenLayoutSection(t *testing.T) {
 // record; the outer species groups have none.
 func TestAnOpeningRowOnAnInnerLevelIsFirstUnderEachOpenInnerGroup(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
+	spec := `{"version":4,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
 		"columns":[
 			{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 			{"id":"animal","path":[{"link":"animal"}]},
@@ -231,7 +231,7 @@ func openingOverTwoCurrencies(t *testing.T, cell string) *Result {
 	z.rec(t, "f7", "zoo_feedings", map[string]any{
 		"animal": z.id("leo"), "cost": 400, "currency": "EUR", "fed": "2026-03-10 00:00:00.000Z", "grams": 10, "note": "f7",
 	})
-	spec := `{"version":3,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"bal","path":[{"field":"cost"}]}],
@@ -293,7 +293,7 @@ func TestAnOpeningCellAddsUpItsColumnsAmounts(t *testing.T) {
 func TestOpeningIsRefusedWhereItCannotShow(t *testing.T) {
 	app := withZooRegistry(t)
 	withOpening := func(opening string) string {
-		return `{"version":3,"source":"zoo.feedings","columns":[
+		return `{"version":4,"source":"zoo.feedings","columns":[
 			{"id":"animal","path":[{"link":"animal"}]},
 			{"id":"note","path":[{"field":"note"}]},
 			{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
@@ -317,12 +317,12 @@ func TestOpeningIsRefusedWhereItCannotShow(t *testing.T) {
 			"groups.0.opening.label", "an opening row has a label of 1 to 200 characters"},
 		"a long label": {withOpening(`{"label":"` + strings.Repeat("x", 201) + `"}`), 400,
 			"groups.0.opening.label", "an opening row has a label of 1 to 200 characters"},
-		"a child row column": {`{"version":3,"source":"zoo.animals","columns":[
+		"a child row column": {`{"version":4,"source":"zoo.animals","columns":[
 			{"id":"name","path":[{"field":"name"}]},
 			{"id":"notes","path":[{"link":"feedings","mode":"nest"},{"field":"note"}]}],
 			"groups":[{"id":"g","col":"name","opening":{"label":"Start","cells":{"notes":{"value":null}}}}]}`, 400,
 			"groups.0.opening.cells.notes", "a child row column has no opening cell"},
-		"a pivot's last level": {`{"version":3,"source":"zoo.feedings","columns":[
+		"a pivot's last level": {`{"version":4,"source":"zoo.feedings","columns":[
 			{"id":"animal","path":[{"link":"animal"}]},
 			{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
 			"groups":[{"id":"g","col":"animal","opening":{"label":"Start"}}],

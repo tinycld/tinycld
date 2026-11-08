@@ -34,7 +34,7 @@ func requireWhereNamed(t *testing.T, z *zoo, spec string, want ...string) {
 
 func TestALookupWhereOverAMixedSumIsNamedOnDetailAndTotalRows(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"fed","formula":` + unknownWhere + `}],"sort":[{"col":"name"}]}`
 	requireWhereNamed(t, z, spec, "columns.1.formula.where")
 	res := z.run(t, "bob", spec, Options{}, nil)
@@ -51,28 +51,28 @@ func TestALookupWhereOverAMixedSumIsNamedOnDetailAndTotalRows(t *testing.T) {
 
 func TestALookupWhereOverAMixedSumIsNamedOnGroupRows(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},
 		{"id":"fed","formula":` + unknownWhere + `}],"groups":[{"id":"r","col":"region"}],"sort":[{"col":"name"}]}`
 	requireWhereNamed(t, z, spec, "columns.2.formula.where")
 }
 
 func TestALookupWhereOverAMixedSumIsNamedInTheFilter(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]}],
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]}],
 		"filter":{"op":"gte","args":[` + unknownWhere + `,{"value":0}]},"sort":[{"col":"name"}]}`
 	requireWhereNamed(t, z, spec, "filter.args.0.where")
 }
 
 func TestALookupWhereOverAMixedSumIsNamedInAHaving(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]}],
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]}],
 		"groups":[{"id":"r","col":"region","having":{"op":"gte","args":[` + unknownWhere + `,{"value":0}]}}],"sort":[{"col":"name"}]}`
 	requireWhereNamed(t, z, spec, "groups.0.having.args.0.where")
 }
 
 func TestALookupWhereOverAMixedSumIsNamedOnAComputedRow(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},
 		{"id":"n","formula":{"value":1},"total":"rows"}],"groups":[{"id":"r","col":"region"}],
 		"layout":[{"section":"north","title":"North","key":"north"},{"row":"fed","label":"Fed","formula":` + unknownWhere + `}],"sort":[{"col":"name"}]}`
 	requireWhereNamed(t, z, spec, "layout.1.formula.where")
@@ -84,7 +84,7 @@ func TestALookupWhereOverAMixedSumIsNamedOnAComputedRow(t *testing.T) {
 func TestALookupWhereThatReadsTheRowIsNamedOnDetailRowsOnly(t *testing.T) {
 	z := newZoo(t)
 	where := `{"op":"and","args":[{"op":"gt","args":[` + mixedFees + `,{"value":0}]},{"op":"ne","args":[{"path":[{"link":"site"}]},{"outer":[{"field":"id"}]}]}]}`
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},
 		{"id":"fed","formula":{"op":"lookup","source":"zoo.animals","pick":"count","value":{"path":[{"field":"id"}]},"where":` + where + `}}],
 		"groups":[{"id":"r","col":"region"}],"sort":[{"col":"name"}]}`
 	if res := z.run(t, "bob", spec, Options{}, nil); len(res.Notices) != 0 {

@@ -16,7 +16,7 @@ import (
 
 // animalsParam is a feedings report whose Animals filter lists the animals
 // the reader may see, grouped by species.
-const animalsParam = `{"version":2,"source":"zoo.feedings",
+const animalsParam = `{"version":4,"source":"zoo.feedings",
 	"params":[{"id":"animals","type":"choice","label":"Animals","multiple":true,
 		"optionsFrom":{"source":"zoo.animals","value":[{"field":"id"}],"label":[{"field":"name"}],"group":[{"field":"species"}]}}],
 	"columns":[{"id":"note","path":[{"field":"note"}]}],
@@ -42,7 +42,7 @@ func TestARunTakesAnyIDForAnOptionsFromSourceParam(t *testing.T) {
 
 func TestOptionsFromIsChecked(t *testing.T) {
 	app := withZooRegistry(t)
-	base := `{"version":2,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"params":[%s]}`
+	base := `{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"params":[%s]}`
 	for _, c := range []struct {
 		param, at, want string
 		status          int
@@ -559,7 +559,7 @@ func TestAGroupReferenceReadsUnderTheReadersRules(t *testing.T) {
 	z := newZoo(t)
 	// Every member lists every site; the options are the sites of the animals
 	// the reader may list, grouped by species.
-	sitesOfAnimals := `{"version":2,"source":"zoo.sites",
+	sitesOfAnimals := `{"version":4,"source":"zoo.sites",
 		"params":[{"id":"sites","type":"choice","multiple":true,
 			"optionsFrom":{"source":"zoo.animals","value":[{"link":"site"}],"label":[{"link":"site"}],"group":[{"field":"species"}]}}],
 		"columns":[{"id":"name","path":[{"field":"name"}]}],

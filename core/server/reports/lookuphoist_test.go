@@ -8,7 +8,7 @@ import (
 
 // A detail-row lookup over zoo.feedings, grouped by animal. WHERE is the
 // lookup's where; the other columns are what it may read of the row.
-const hoistSpec = `{"version":2,"source":"zoo.feedings",
+const hoistSpec = `{"version":4,"source":"zoo.feedings",
 	"params":[{"id":"min","type":"number","label":"Min"}],
 	"columns":[
 		{"id":"animal","path":[{"link":"animal"}]},

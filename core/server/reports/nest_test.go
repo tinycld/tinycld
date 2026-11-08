@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const sitesWithAnimals = `{"version":1,"source":"zoo.sites","columns":[
+const sitesWithAnimals = `{"version":4,"source":"zoo.sites","columns":[
 	{"id":"site","path":[{"field":"name"}]},
 	{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"name"}]},
 	{"id":"owner","path":[{"link":"animals","mode":"nest"},{"link":"owner"},{"field":"name"}]},
@@ -104,7 +104,7 @@ func TestNestedRowsOfAPagedReportBelongToTheirOwnPage(t *testing.T) {
 
 func TestNestedRowsOfAGroupedReportSitUnderTheirDetailRow(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":1,"source":"zoo.sites","columns":[
+	spec := `{"version":4,"source":"zoo.sites","columns":[
 		{"id":"region","path":[{"field":"region"}]},
 		{"id":"site","path":[{"field":"name"}]},
 		{"id":"animal","path":[{"link":"animals","mode":"nest"},{"field":"name"}]}],

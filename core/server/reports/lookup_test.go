@@ -14,7 +14,7 @@ const siteNorth = `{"op":"lookup","source":"zoo.sites",
 // A lookup reads one value from another source's rows the reader may list.
 func TestALookupReadsAnotherSourceUnderTheReadersRules(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.feedings","columns":[
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"site","formula":` + siteNorth + `}],"sort":[{"col":"note"}]}`
 	res := z.run(t, "ann", spec, Options{}, nil)
@@ -34,7 +34,7 @@ func TestALookupReadsAnotherSourceUnderTheReadersRules(t *testing.T) {
 // A lookup that reads a report column is correlated: each row looks up its own.
 func TestALookupMayReadTheRowsColumns(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"weight","formula":{"op":"lookup","source":"zoo.animals",
@@ -47,14 +47,14 @@ func TestALookupMayReadTheRowsColumns(t *testing.T) {
 func TestALookupInTheFilterPicksMinOrMaxAndIsBlankWithNoMatch(t *testing.T) {
 	z := newZoo(t)
 	zedID := `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Zed"}]},"value":{"path":[{"field":"id"}]}}`
-	zeds := `{"version":2,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
+	zeds := `{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]}],
 		"filter":{"op":"eq","args":[{"path":[{"link":"animal"}]},` + zedID + `]},"sort":[{"col":"note"}]}`
 	res := z.run(t, "ann", zeds, Options{}, nil)
 	requireOrderedRows(t, zeds, res, "note", "f3", "f4", nil)
 
 	heaviest := `{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"weight"}]},"pick":"max"}`
 	none := `{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Nobody"}]},"value":{"path":[{"field":"weight"}]}}`
-	res = z.run(t, "ann", `{"version":2,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	res = z.run(t, "ann", `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"heaviest","formula":`+heaviest+`},{"id":"none","formula":`+none+`}],"sort":[{"col":"name"}]}`, Options{}, nil)
 	requireRows(t, res, "heaviest", int64(300), int64(300), int64(300))
 	requireRows(t, res, "none", nil, nil, nil)
@@ -65,7 +65,7 @@ func TestALookupInTheFilterPicksMinOrMaxAndIsBlankWithNoMatch(t *testing.T) {
 // never reaches her pick.
 func TestALookupNeverReadsARowTheReaderCannotList(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":2,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"mo","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Mo"}]},"value":{"path":[{"field":"weight"}]}}},
 		{"id":"lightest","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"ne","args":[{"path":[{"field":"name"}]},{"value":"Kit"}]},"value":{"path":[{"field":"weight"}]}}}],
 		"sort":[{"col":"name"}]}`
@@ -84,7 +84,7 @@ func TestALookupNeverReadsARowTheReaderCannotList(t *testing.T) {
 // lighter than Leo but hidden from her, so Leo's group reads Kit's 4).
 func TestACorrelatedLookupOnAGroupRowReadsTheGroupsKey(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"weight","formula":{"op":"lookup","source":"zoo.animals",
 			"where":{"op":"eq","args":[{"path":[{"field":"id"}]},{"col":"animal"}]},
@@ -109,7 +109,7 @@ func TestACorrelatedLookupOnAGroupRowReadsTheGroupsKey(t *testing.T) {
 // fit 300, 700 and 1000 but she cannot list Mo).
 func TestALookupReadsATotalColumnOnEveryRow(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"spent","formula":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}},
@@ -131,7 +131,7 @@ func TestALookupReadsATotalColumnOnEveryRow(t *testing.T) {
 // is the heaviest one lighter than fits.
 func TestALookupReadsARunningValue(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":2,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
@@ -155,7 +155,7 @@ func TestALookupReadsARunningValue(t *testing.T) {
 // plus the weight of Leo.
 func TestALayoutRowLooksAValueUp(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],
@@ -174,7 +174,7 @@ func TestALayoutRowLooksAValueUp(t *testing.T) {
 func TestALayoutLookupReadsParamsButNoColumn(t *testing.T) {
 	z := newZoo(t)
 	layout := func(where string) string {
-		return `{"version":2,"source":"zoo.feedings","params":[{"id":"who","type":"text"}],"columns":[
+		return `{"version":4,"source":"zoo.feedings","params":[{"id":"who","type":"text"}],"columns":[
 			{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 			{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 			"groups":[{"id":"g","col":"species"}],
@@ -196,7 +196,7 @@ func TestALayoutLookupReadsParamsButNoColumn(t *testing.T) {
 // would be the answer to both, but ann cannot list him.
 func TestALayoutLookupReadsSectionsAndEarlierRows(t *testing.T) {
 	z := newZoo(t)
-	res := z.run(t, "ann", `{"version":2,"source":"zoo.feedings","columns":[
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"species"}],
@@ -214,19 +214,19 @@ func TestALayoutLookupReadsSectionsAndEarlierRows(t *testing.T) {
 func TestALookupIsRefusedWhereItCannotBeRead(t *testing.T) {
 	app := withZooRegistry(t)
 	cases := map[string]struct{ spec, at, want string }{
-		"unknown source": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.gone","value":{"path":[{"field":"id"}]}}}]}`,
+		"unknown source": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.gone","value":{"path":[{"field":"id"}]}}}]}`,
 			"columns.0.formula.source", "does not exist"},
-		"a total inside": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"op":"sum","args":[{"path":[{"field":"weight"}]}]}}}]}`,
+		"a total inside": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"op":"sum","args":[{"path":[{"field":"weight"}]}]}}}]}`,
 			"columns.0.formula.value", "one value per matching row"},
-		"a bad pick": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"id"}]},"pick":"avg"}}]}`,
+		"a bad pick": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"path":[{"field":"id"}]},"pick":"avg"}}]}`,
 			"columns.0.formula.pick", "min, max, sum or count"},
-		"a source on another op": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"add","source":"zoo.animals","args":[{"value":1},{"value":2}]}}]}`,
+		"a source on another op": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"add","source":"zoo.animals","args":[{"value":1},{"value":2}]}}]}`,
 			"columns.0.formula", "only lookup takes a source"},
-		"a leaf key too": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","col":"x","value":{"path":[{"field":"id"}]}}}]}`,
+		"a leaf key too": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","col":"x","value":{"path":[{"field":"id"}]}}}]}`,
 			"columns.0.formula", "one of op, col, path"},
-		"no source": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","value":{"path":[{"field":"id"}]}}}]}`,
+		"no source": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","value":{"path":[{"field":"id"}]}}}]}`,
 			"columns.0.formula.source", "a lookup names its source"},
-		"a value that is not a formula": {`{"version":2,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"field":"id"}}}]}`,
+		"a value that is not a formula": {`{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals","value":{"field":"id"}}}]}`,
 			"columns.0.formula.value", "a lookup's value is a formula"},
 	}
 	for name, c := range cases {
@@ -253,7 +253,7 @@ func TestALookupThatReadsAColumnTwiceCountsItTwice(t *testing.T) {
 	step := `{"op":"lookup","source":"zoo.animals",
 		"where":{"op":"eq","args":[{"path":[{"field":"weight"}]},{"op":"add","args":[{"col":"PREV"},{"col":"PREV"}]}]},
 		"value":{"path":[{"field":"weight"}]}}`
-	err := Validate(app, loadSpec(t, strings.Replace(chainSpec(20, step), `"version":1`, `"version":2`, 1)))
+	err := Validate(app, loadSpec(t, chainSpec(20, step)))
 	requireSpecError(t, err, 400, "columns.8", "with the formula columns it reads")
 	if _, ok := err.(*SpecError).Problems["columns.7"]; ok {
 		t.Fatalf("c7 (763 nodes) was refused: %v", err)
@@ -263,7 +263,7 @@ func TestALookupThatReadsAColumnTwiceCountsItTwice(t *testing.T) {
 // sitesWithSums sums animals per site (a number), the fees of every animal
 // but lions (an amount whose currency each row carries), and every price
 // (an amount in the source's fixed currency).
-const sitesWithSums = `{"version":3,"source":"zoo.sites","columns":[
+const sitesWithSums = `{"version":4,"source":"zoo.sites","columns":[
 	{"id":"name","path":[{"field":"name"}]},
 	{"id":"site","path":[{"field":"id"}]},
 	{"id":"weight","formula":{"op":"lookup","source":"zoo.animals","pick":"sum",
@@ -312,7 +312,7 @@ func TestASumLookupOverTwoCurrenciesHasNoValueAndANotice(t *testing.T) {
 		t.Fatalf("notices = %+v", res.Notices)
 	}
 
-	const animals = `{"version":3,"source":"zoo.animals","columns":[
+	const animals = `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"name","path":[{"field":"name"}]},
 		{"id":"fee","path":[{"field":"fee"}],"aggregate":"sum"},
 		{"id":"allFees","formula":{"op":"lookup","source":"zoo.animals","pick":"sum","value":{"path":[{"field":"fee"}]}}}],
@@ -347,7 +347,7 @@ func TestAnAggregateOverAMixedSumLookupHasNoValueAndANotice(t *testing.T) {
 	}
 	want := []Notice{{Code: "mixedCurrency", Message: "A looked-up total mixes currencies, so it shows no value.", Columns: []string{"usdFees"}}}
 	for name, cols := range specs {
-		spec := `{"version":3,"source":"zoo.sites","columns":[
+		spec := `{"version":4,"source":"zoo.sites","columns":[
 			{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},` + cols + `,
 			"sort":[{"col":"name"}]}`
 		for _, opts := range []Options{{}, {ExpandAll: true}} {
@@ -421,7 +421,7 @@ func TestAPivotCellOverAMixedSumLookupHasNoValue(t *testing.T) {
 			"groups":[{"id":"r","col":"region"},{"id":"g","col":"name"}]`,
 	}
 	for name, cols := range specs {
-		spec := `{"version":3,"source":"zoo.sites","columns":[
+		spec := `{"version":4,"source":"zoo.sites","columns":[
 			{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},` + cols + `,
 			"pivot":{"path":[{"field":"region"}],"cell":"usdFees"},"sort":[{"col":"name"}]}`
 		requireMixedFeesBlank(t, z, name, spec)
@@ -436,8 +436,8 @@ func TestALayoutRowOverAMixedSectionHasNoValue(t *testing.T) {
 		{"row":"p","label":"North plus one","formula":{"op":"add","args":[{"subtotal":"n"},{"value":1}]}}]`
 	cols := `{"id":"region","path":[{"field":"region"}]},{"id":"usdFees","aggregate":"sum","formula":` + mixedFees + `}],
 		"groups":[{"id":"r","col":"region"}],`
-	requireMixedFeesBlank(t, z, "layout", `{"version":3,"source":"zoo.sites","columns":[`+cols+layout+`}`)
-	requireMixedFeesBlank(t, z, "layout with a pivot", `{"version":3,"source":"zoo.sites","columns":[`+cols+
+	requireMixedFeesBlank(t, z, "layout", `{"version":4,"source":"zoo.sites","columns":[`+cols+layout+`}`)
+	requireMixedFeesBlank(t, z, "layout with a pivot", `{"version":4,"source":"zoo.sites","columns":[`+cols+
 		`"pivot":{"path":[{"field":"name"}],"cell":"usdFees"},`+layout+`}`)
 }
 
@@ -452,7 +452,7 @@ func TestAFormulaOverAMixedSumLookupHasNoValue(t *testing.T) {
 	for name, f := range formulas {
 		for _, groups := range []string{``, `,"groups":[{"id":"g","col":"name"}]`} {
 			for _, agg := range []string{``, `"aggregate":"sum",`} {
-				spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+				spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 					{"id":"usdFees",` + agg + `"formula":` + f + `}]` + groups + `,"sort":[{"col":"name"}]}`
 				requireMixedFeesBlank(t, z, name+groups+agg, spec)
 			}
@@ -468,7 +468,7 @@ func TestACountIsNeverBlankForCurrencies(t *testing.T) {
 	const fees = `{"op":"lookup","source":"zoo.animals","pick":"count",
 		"where":{"op":"ne","args":[{"path":[{"field":"species"}]},{"value":"lion"}]},
 		"value":{"path":[{"field":"fee"}]}}`
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"n","formula":` + fees + `}],"sort":[{"col":"name"}]}`
 	res := z.run(t, "bob", spec, Options{}, nil)
 	requireRows(t, res, "n", int64(2), int64(2), int64(2))
@@ -483,7 +483,7 @@ func TestACountIsNeverBlankForCurrencies(t *testing.T) {
 		"pivot":     `{"id":"n","aggregate":"count","formula":` + mixedFees + `}],` + byName + `,"pivot":{"path":[{"field":"region"}],"cell":"n"}`,
 	}
 	for name, cols := range specs {
-		spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},` + cols + `,"sort":[{"col":"name"}]}`
+		spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},` + cols + `,"sort":[{"col":"name"}]}`
 		for _, opts := range []Options{{}, {ExpandAll: true}} {
 			res := z.run(t, "bob", spec, opts, nil)
 			// A detail row of an aggregate column shows the looked-up amount
@@ -530,7 +530,7 @@ func TestACountIsNeverBlankForCurrencies(t *testing.T) {
 func TestAnEmptyMatchIsBlankForSumAndZeroForCount(t *testing.T) {
 	z := newZoo(t)
 	nobody := `"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Nobody"}]},"value":{"path":[{"field":"weight"}]}`
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"sum","formula":{"op":"lookup","source":"zoo.animals","pick":"sum",` + nobody + `}},
 		{"id":"count","formula":{"op":"lookup","source":"zoo.animals","pick":"count",` + nobody + `}}],
 		"sort":[{"col":"name"}]}`
@@ -543,7 +543,7 @@ func TestAnEmptyMatchIsBlankForSumAndZeroForCount(t *testing.T) {
 // day, so ann's animals with one are leo and zed.
 func TestACountLookupCountsRowsWithAValue(t *testing.T) {
 	z := newZoo(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"site","path":[{"field":"id"}]},
 		{"id":"born","formula":{"op":"lookup","source":"zoo.animals","pick":"count","value":{"path":[{"field":"born"}]}}},
 		{"id":"here","formula":{"op":"lookup","source":"zoo.animals","pick":"count",
@@ -562,7 +562,7 @@ func TestACountLookupCountsRowsWithAValue(t *testing.T) {
 func TestPickSumNeedsANumberOrAnAmount(t *testing.T) {
 	app := withZooRegistry(t)
 	lookup := func(pick, field string) string {
-		return `{"version":3,"source":"zoo.sites","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals",
+		return `{"version":4,"source":"zoo.sites","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals",
 			"pick":"` + pick + `","value":{"path":[{"field":"` + field + `"}]}}}]}`
 	}
 	for _, field := range []string{"name", "born", "active"} {
@@ -579,7 +579,7 @@ func TestPickSumNeedsANumberOrAnAmount(t *testing.T) {
 // f4 03-03), other is the other feeding of the row's animal, site the name of
 // the row's animal's site, and nested counts the earlier feedings inside a
 // lookup of another source.
-const feedingsWithOuter = `{"version":3,"source":"zoo.feedings","columns":[
+const feedingsWithOuter = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"note","path":[{"field":"note"}]},
 	{"id":"earlier","formula":{"op":"lookup","source":"zoo.feedings","pick":"count",
 		"where":{"op":"lt","args":[{"path":[{"field":"fed"}]},{"outer":[{"field":"fed"}]}]},
@@ -620,7 +620,7 @@ func TestAnOuterLeafInANestedLookupReadsTheReportRow(t *testing.T) {
 
 func TestAnOuterLeafIsBlankOnGroupRows(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":3,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"animal","path":[{"link":"animal"}]},
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"earlier","formula":{"op":"lookup","source":"zoo.feedings","pick":"count",
@@ -636,10 +636,10 @@ func TestAnOuterLeafIsRefusedOutsideALookup(t *testing.T) {
 	app := withZooRegistry(t)
 	outer := `{"outer":[{"field":"note"}]}`
 	grouped := func(part string) string {
-		return `{"version":3,"source":"zoo.feedings","columns":[{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]}],` + part + `}`
+		return `{"version":4,"source":"zoo.feedings","columns":[{"id":"animal","path":[{"link":"animal"}]},{"id":"note","path":[{"field":"note"}]}],` + part + `}`
 	}
 	cases := map[string]struct{ spec, at string }{
-		"a column":      {`{"version":3,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"x","formula":` + outer + `}]}`, "columns.1.formula"},
+		"a column":      {`{"version":4,"source":"zoo.feedings","columns":[{"id":"note","path":[{"field":"note"}]},{"id":"x","formula":` + outer + `}]}`, "columns.1.formula"},
 		"the filter":    {grouped(`"filter":{"op":"eq","args":[` + outer + `,{"value":"f1"}]}`), "filter.args.0"},
 		"a having":      {grouped(`"groups":[{"id":"g","col":"animal","having":{"op":"eq","args":[` + outer + `,{"value":"f1"}]}}]`), "groups.0.having.args.0"},
 		"a group label": {grouped(`"groups":[{"id":"g","col":"animal","label":` + outer + `}]`), "groups.0.label"},
@@ -655,7 +655,7 @@ func TestAnOuterLeafIsRefusedOutsideALookup(t *testing.T) {
 // A feeding's animal has many feedings: the row has no one value there.
 func TestAnOuterLeafIsRefusedOnAToManyPath(t *testing.T) {
 	app := withZooRegistry(t)
-	err := Validate(app, loadSpec(t, `{"version":3,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals",
+	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"x","formula":{"op":"lookup","source":"zoo.animals",
 		"where":{"op":"eq","args":[{"path":[{"field":"name"}]},{"outer":[{"link":"animal"},{"link":"feedings"},{"field":"note"}]}]},
 		"value":{"path":[{"field":"weight"}]}}}]}`))
 	requireSpecError(t, err, 400, "columns.0.formula.where.args.1.outer", "outer reads one value of the report's row: a to-many link is not one")
@@ -666,7 +666,7 @@ func TestAnOuterLeafIsRefusedOnAToManyPath(t *testing.T) {
 // outer lookup's aggregate over the report's rows.
 func TestALookupOfALookupThatReadsTheRowKeepsEveryRow(t *testing.T) {
 	z := newZoo(t)
-	const spec = `{"version":3,"source":"zoo.feedings","columns":[
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
 		{"id":"note","path":[{"field":"note"}]},
 		{"id":"fed","path":[{"field":"fed"}]},
 		{"id":"nested","formula":{"op":"lookup","source":"zoo.sites",
@@ -686,7 +686,7 @@ func TestALookupOnALinkSearchesAnIndexOfTheRelation(t *testing.T) {
 	z := newZoo(t)
 	withPlainFeedingsRule(t, z)
 	seen := observeReads(t)
-	res := z.run(t, "ann", `{"version":3,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"fed","formula":{"op":"lookup","source":"zoo.feedings","pick":"count","value":{"path":[{"field":"id"}]},
 			"where":{"op":"eq","args":[{"path":[{"link":"animal"}]},{"outer":[{"field":"id"}]}]}}}],
 		"sort":[{"col":"name"}]}`, Options{}, nil)
@@ -713,7 +713,7 @@ func TestALookupOnATwoHopLinkMatchesABlankMiddleRow(t *testing.T) {
 	count := func(where string) string {
 		return `{"op":"lookup","source":"zoo.animals","pick":"count","value":{"path":[{"field":"id"}]},"where":` + where + `}`
 	}
-	spec := `{"version":3,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
+	spec := `{"version":4,"source":"zoo.animals","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"top","formula":` + count(match) + `},
 		{"id":"underOr","formula":` + count(`{"op":"or","args":[`+match+`,{"op":"eq","args":[{"path":[{"field":"name"}]},{"value":"Nobody"}]}]}`) + `}],
 		"sort":[{"col":"name"}]}`
@@ -729,7 +729,7 @@ func TestALookupOnATwoHopLinkMatchesABlankMiddleRow(t *testing.T) {
 func TestALookupOnADetailRowIsComputedOnce(t *testing.T) {
 	z := newZoo(t)
 	seen := observeReads(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"usdFees","formula":{"op":"if","args":[{"value":true},{"op":"coalesce","args":[` + mixedFees + `,{"value":0}]},{"value":0}]}}],"sort":[{"col":"name"}]}`
 	requireMixedFeesBlank(t, z, "if", spec)
 	details := 0

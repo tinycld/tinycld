@@ -12,7 +12,7 @@ import (
 func TestALookupOnAGroupRowIsComputedOnce(t *testing.T) {
 	z := newZoo(t)
 	seen := observeReads(t)
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},
 		{"id":"usdFees","formula":` + mixedFees + `}],"groups":[{"id":"g","col":"name"}],"sort":[{"col":"name"}]}`
 	requireMixedFeesBlank(t, z, "group", spec)
 	groups := 0
@@ -39,7 +39,7 @@ func TestALookupThatAHavingAddsUpIsComputedOncePerRow(t *testing.T) {
 	z := newZoo(t)
 	seen := observeReads(t)
 	formula := `{"op":"if","args":[{"op":"gt","args":[{"op":"count","args":[{"path":[{"field":"name"}]}]},{"value":0}]},` + mixedFees + `,` + mixedFees + `]}`
-	spec := `{"version":3,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},
+	spec := `{"version":4,"source":"zoo.sites","columns":[{"id":"name","path":[{"field":"name"}]},{"id":"region","path":[{"field":"region"}]},
 		{"id":"usdFees","total":"rows","formula":` + formula + `}],
 		"groups":[{"id":"r","col":"region","having":{"op":"isEmpty","args":[{"col":"usdFees"}]}},{"id":"g","col":"name"}],"sort":[{"col":"name"}]}`
 	z.run(t, "bob", spec, Options{ExpandAll: true}, nil)
