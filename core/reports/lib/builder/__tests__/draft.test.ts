@@ -295,7 +295,7 @@ describe('the scale of a division and an average', () => {
 
     it('divides an amount formula by a number in whole cents', () => {
         const draft = draftFromSpec(
-            { version: 1, source: SALES_KEY, columns: amountCols },
+            { version: 4, source: SALES_KEY, columns: amountCols },
             META,
             CATALOG
         )
@@ -324,7 +324,7 @@ describe('the scale of a division and an average', () => {
 
     it('averages an amount formula in whole cents', () => {
         const draft = draftFromSpec(
-            { version: 1, source: SALES_KEY, columns: amountCols },
+            { version: 4, source: SALES_KEY, columns: amountCols },
             META,
             CATALOG
         )
@@ -1484,7 +1484,7 @@ const V3: ReportSpec = {
 const BALANCE = 4
 
 describe('spec version 3 in the builder', () => {
-    it('keeps every v3 part through the draft and writes version 3', () => {
+    it('keeps every v3 part through the draft and writes the current version', () => {
         const draft = draftFromSpec(V3, META, CATALOG)
         expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
         expect(draft.columns[3]).toMatchObject({ kind: 'formula', formula: { kind: 'editable' } })

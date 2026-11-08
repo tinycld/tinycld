@@ -203,8 +203,8 @@ const layoutItemSchema = z.strictObject({
 })
 
 export const reportSpecSchema = z.strictObject({
-    // A newer app's spec may mean something this app would read wrongly: unreadable.
-    version: z.number().int().min(1).max(CURRENT_SPEC_VERSION),
+    // One spec version: a spec of another version is unreadable here.
+    version: z.literal(CURRENT_SPEC_VERSION),
     source: z.string().min(1),
     params: z.array(paramDefSchema).nullish(),
     columns: z.array(specColumnSchema),

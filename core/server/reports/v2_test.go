@@ -9,22 +9,8 @@ import (
 	"testing"
 )
 
-// A step that changes the document still says so.
-func TestAChangingStepIsNoticed(t *testing.T) {
-	withZooRegistry(t)
-	steps := map[int]upgradeStep{1: func(doc map[string]any) error {
-		doc["columns"] = doc["cols"]
-		delete(doc, "cols")
-		return nil
-	}}
-	_, info, err := loadWith([]byte(`{"version":1,"source":"zoo.feedings","cols":[]}`), steps, 2)
-	if err != nil || info.UpgradedFrom != 1 {
-		t.Fatalf("info %+v, err %v", info, err)
-	}
-}
-
-// every is a v2 spec that uses every new part (the zoo's "For review" spec).
-const every = `{"version":2,"source":"zoo.feedings",
+// every is a spec that uses every v2 part (the zoo's "For review" spec).
+const every = `{"version":4,"source":"zoo.feedings",
 	"params":[{"id":"asOf","type":"asOf","label":"As of","default":{"preset":"endOfLastMonth"}},
 		{"id":"rows","type":"choice","label":"Rows","default":"nonzero","options":[{"value":"nonzero","label":"Non-zero"},{"value":"all","label":"All"}]},
 		{"id":"animals","type":"choice","label":"Animals","multiple":true,"optionsFrom":{"source":"zoo.animals","value":[{"field":"id"}],"label":[{"field":"name"}],"group":[{"field":"species"}],
@@ -44,7 +30,7 @@ const every = `{"version":2,"source":"zoo.feedings",
 
 // pivoted is a pivot over a link named by a label field, with a display
 // layout that places the pivot's cell column.
-const pivoted = `{"version":2,"source":"zoo.feedings",
+const pivoted = `{"version":4,"source":"zoo.feedings",
 	"columns":[{"id":"month","path":[{"field":"fed"}]},{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
 	"groups":[{"id":"m","col":"month","bucket":"month"}],
 	"pivot":{"path":[{"link":"animal"}],"cell":"grams","labelField":"name"},
@@ -75,10 +61,7 @@ func TestASpecWithEveryV2PartIsKeptWhole(t *testing.T) {
 				t.Fatalf("stored spec lost %s: %s", key, stored)
 			}
 		}
-		// Stored as version 3, every other part as posted.
-		want := jsonDoc(t, []byte(c.raw)).(map[string]any)
-		want["version"] = json.Number("4")
-		if !reflect.DeepEqual(want, jsonDoc(t, stored)) {
+		if !reflect.DeepEqual(jsonDoc(t, []byte(c.raw)), jsonDoc(t, stored)) {
 			t.Fatalf("stored spec differs from the posted one:\n%s", stored)
 		}
 	}
@@ -135,7 +118,7 @@ func TestAliasesResolveInEveryV2Part(t *testing.T) {
 
 func TestDisplayLayoutsAreChecked(t *testing.T) {
 	app := withZooRegistry(t)
-	base := `{"version":2,"source":"zoo.feedings","columns":[{"id":"a","path":[{"field":"note"}]},{"id":"b","path":[{"field":"cost"}]}],"display":{"layouts":[%s]}}`
+	base := `{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"field":"note"}]},{"id":"b","path":[{"field":"cost"}]}],"display":{"layouts":[%s]}}`
 	for _, c := range []struct {
 		layout, at, want string
 		status           int
@@ -187,7 +170,7 @@ func TestAliasesResolveInEveryWalkedPart(t *testing.T) {
 	withZooRegistry(t)
 	mass := `{"path":[{"link":"animal"},{"field":"mass"}]}`
 	own := `{"path":[{"field":"mass"}]}`
-	raw := `{"version":2,"source":"zoo.feedings",
+	raw := `{"version":4,"source":"zoo.feedings",
 		"columns":[{"id":"animal","path":[{"link":"animal"}]},
 			{"id":"again","formula":{"op":"if","args":[{"value":true},{"col":"animal"},{"col":"animal"}]}},
 			{"id":"heavy","formula":{"op":"lookup","source":"zoo.animals","where":{"op":"gt","args":[` + own + `,{"value":100}]},"value":` + own + `}}],
@@ -230,28 +213,10 @@ func TestAliasesResolveInEveryWalkedPart(t *testing.T) {
 // A lookup whose value holds no aliased key keeps the value as posted.
 func TestALookupValueWithoutAnAliasIsKept(t *testing.T) {
 	withZooRegistry(t)
-	// Posted as the current version: an older document is re-encoded by the
-	// upgrade, which compacts the raw value.
 	raw := `{"version":4,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.animals","value":{ "path" : [{"field":"name"}] }}}]}`
 	spec, _, _ := mustLoad(t, raw)
 	if got := string(spec.Columns[0].Formula.Value); got != `{ "path" : [{"field":"name"}] }` {
 		t.Fatalf("value = %s", got)
-	}
-}
-
-// A version 2 lookup whose value holds no aliased key keeps its value through
-// the 2→3 upgrade: the upgrade re-encodes the document, so the raw text is
-// compacted, but the value decodes to the one posted.
-func TestAV2LookupValueWithoutAnAliasIsKeptThroughTheUpgrade(t *testing.T) {
-	withZooRegistry(t)
-	const value = `{ "path" : [{"field":"name"}] }`
-	raw := `{"version":2,"source":"zoo.feedings","columns":[{"id":"l","formula":{"op":"lookup","source":"zoo.animals","value":` + value + `}}]}`
-	spec, info, _ := mustLoad(t, raw)
-	if spec.Version != CurrentVersion || info.UpgradedFrom != 0 || len(info.Aliased) != 0 {
-		t.Fatalf("version %d, info %+v", spec.Version, info)
-	}
-	if got := spec.Columns[0].Formula.Value; !reflect.DeepEqual(jsonDoc(t, got), jsonDoc(t, []byte(value))) {
-		t.Fatalf("value = %s, want %s", got, value)
 	}
 }
 
@@ -264,7 +229,7 @@ func TestAFillWhereResolvesBehindARenamedLink(t *testing.T) {
 		Links:   []Link{{Key: "beast", Label: "Beast", Target: "zoo.animals", Cardinality: ToOne, Field: "beast"}},
 		Aliases: map[string]string{"pet": "beast"},
 	})
-	spec, info, _ := mustLoad(t, `{"version":2,"source":"zoo.tours",
+	spec, info, _ := mustLoad(t, `{"version":4,"source":"zoo.tours",
 		"columns":[{"id":"b","formula":{"op":"coalesce","args":[{"path":[{"link":"pet"}]}]}}],
 		"groups":[{"id":"g","col":"b","fill":{"where":{"op":"gt","args":[{"path":[{"field":"mass"}]},{"value":1}]}}}]}`)
 	if got := spec.Groups[0].Fill.Where.Args[0].Path[0].Field; got != "weight" {

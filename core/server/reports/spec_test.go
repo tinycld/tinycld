@@ -1,9 +1,7 @@
 package reports
 
 import (
-	"encoding/json"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -55,7 +53,7 @@ func requireSpecError(t *testing.T, err error, status int, at, contains string) 
 }
 
 const designExample = `{
-  "version": 1,
+  "version": 4,
   "source": "zoo.feedings",
   "params": [ { "id": "period", "type": "dateRange", "default": { "preset": "thisFiscalYear" } } ],
   "columns": [
@@ -88,7 +86,7 @@ func TestLoadReadsTheDesignExample(t *testing.T) {
 	if string(spec.Filter.Args[1].Where.Args[1].Value) != `"ann"` {
 		t.Fatalf("value = %s", spec.Filter.Args[1].Where.Args[1].Value)
 	}
-	if info.UpgradedFrom != 0 || len(info.Aliased) != 0 {
+	if len(info.Aliased) != 0 {
 		t.Fatalf("info = %+v", info)
 	}
 }
@@ -98,14 +96,15 @@ func TestLoadRefusesWhatIsNotASpec(t *testing.T) {
 	cases := map[string]struct {
 		raw, at, want string
 	}{
-		"not json":        {`[1]`, "spec", "not a single JSON object"},
-		"unknown key":     {`{"version":1,"source":"zoo.feedings","columns":[],"sql":"DROP"}`, "spec", "unknown field"},
-		"trailing data":   {`{"version":1,"source":"zoo.feedings","columns":[]} {}`, "spec", "not a single JSON object"},
-		"no version":      {`{"source":"zoo.feedings","columns":[]}`, "version", "whole number"},
-		"version zero":    {`{"version":0,"columns":[]}`, "version", "whole number"},
-		"version 1.5":     {`{"version":1.5,"columns":[]}`, "version", "whole number"},
-		"newer version":   {`{"version":5,"columns":[]}`, "version", "newer than this server reads (4)"},
-		"wrong leaf type": {`{"version":1,"source":"zoo.feedings","columns":[{"id":"a","path":"cost"}]}`, "spec", "cannot unmarshal"},
+		"not json":         {`[1]`, "spec", "not a single JSON object"},
+		"unknown key":      {`{"version":4,"source":"zoo.feedings","columns":[],"sql":"DROP"}`, "spec", "unknown field"},
+		"trailing data":    {`{"version":4,"source":"zoo.feedings","columns":[]} {}`, "spec", "not a single JSON object"},
+		"no version":       {`{"source":"zoo.feedings","columns":[]}`, "version", "version must be 4"},
+		"version zero":     {`{"version":0,"columns":[]}`, "version", "version must be 4"},
+		"version 1.5":      {`{"version":1.5,"columns":[]}`, "version", "version must be 4"},
+		"an older version": {`{"version":3,"source":"zoo.feedings","columns":[]}`, "version", "version must be 4"},
+		"newer version":    {`{"version":5,"columns":[]}`, "version", "version must be 4"},
+		"wrong leaf type":  {`{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":"cost"}]}`, "spec", "cannot unmarshal"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -115,38 +114,9 @@ func TestLoadRefusesWhatIsNotASpec(t *testing.T) {
 	}
 }
 
-func TestUpgradeRunsEveryStepInOrder(t *testing.T) {
-	steps := map[int]upgradeStep{
-		1: func(doc map[string]any) error {
-			doc["columns"] = doc["cols"]
-			delete(doc, "cols")
-			return nil
-		},
-		2: func(doc map[string]any) error {
-			doc["source"] = "zoo." + doc["source"].(string)
-			return nil
-		},
-	}
-	out, from, err := upgrade([]byte(`{"version":1,"source":"feedings","cols":[]}`), steps, 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(out, &doc); err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]any{"version": float64(3), "source": "zoo.feedings", "columns": []any{}}
-	if from != 1 || !reflect.DeepEqual(doc, want) {
-		t.Fatalf("from %d, doc %v", from, doc)
-	}
-	if _, _, err := upgrade([]byte(`{"version":1}`), map[int]upgradeStep{}, 2); err == nil {
-		t.Fatal("a missing step must fail")
-	}
-}
-
 func TestLoadResolvesAliasesOnEveryPath(t *testing.T) {
 	withZooRegistry(t)
-	raw := `{"version":1,"source":"zoo.feedings",
+	raw := `{"version":4,"source":"zoo.feedings",
 		"columns":[{"id":"w","path":[{"link":"animal"},{"field":"mass"}],"aggregate":"sum"},
 		           {"id":"f","formula":{"op":"mul","args":[{"path":[{"link":"animal"},{"field":"mass"}]},{"value":2}]}}],
 		"filter":{"op":"exists","link":[{"link":"animal"},{"link":"site"},{"link":"animals"}],
@@ -167,19 +137,16 @@ func TestLoadResolvesAliasesOnEveryPath(t *testing.T) {
 	}
 }
 
-func TestLoadKeepsLargeIntegersAcrossAnUpgrade(t *testing.T) {
+func TestLoadKeepsLargeIntegers(t *testing.T) {
 	withZooRegistry(t)
-	raw := `{"version":1,"source":"zoo.feedings","columns":[],
-		"filter":{"op":"eq","args":[{"path":[{"field":"id"}]},{"value":9007199254740993}]}}`
-	spec, info, err := Load([]byte(raw))
+	raw := `{"version":4,"source":"zoo.feedings","columns":[],
+	"filter":{"op":"eq","args":[{"path":[{"field":"id"}]},{"value":9007199254740993}]}}`
+	spec, _, err := Load([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := string(spec.Filter.Args[1].Value); got != "9007199254740993" {
 		t.Fatalf("value = %s, want 9007199254740993", got)
-	}
-	if info.UpgradedFrom != 0 {
-		t.Fatalf("UpgradedFrom = %d, want 0", info.UpgradedFrom)
 	}
 }
 

@@ -129,6 +129,18 @@ func TestAFigureIsNeverCut(t *testing.T) {
 	}
 }
 
+// One spec version: an older or newer one is refused, never upgraded.
+func TestLoadReadsOnlyVersion4(t *testing.T) {
+	for _, v := range []int{1, 2, 3, 5} {
+		_, _, err := Load([]byte(fmt.Sprintf(`{"version":%d,"source":"zoo.feedings","columns":[]}`, v)))
+		requireSpecError(t, err, 400, "version", "version must be 4")
+	}
+	spec, info, err := Load([]byte(`{"version":4,"source":"zoo.feedings","columns":[]}`))
+	if err != nil || spec.Version != 4 || len(info.Aliased) != 0 {
+		t.Fatalf("spec %+v, info %+v, err %v", spec, info, err)
+	}
+}
+
 // Where cells land is the client's (core/reports/lib/table-lines.ts
 // placeCells): the engine checks each cell's numbers only, so a full line, an
 // overlap and a pinwheel save.

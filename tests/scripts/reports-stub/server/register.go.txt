@@ -58,7 +58,7 @@ func Register(_ core.App) error {
 		Key: "salesstub.larger_side", Title: "Stub larger side", Revision: 1,
 		Description: "Each sale's amount or cost, whichever is larger.",
 		Spec: json.RawMessage(`{
-			"version": 1,
+			"version": 4,
 			"source": "salesstub.sales",
 			"columns": [
 				{"id": "customer", "path": [{"field": "customer"}]},
@@ -81,7 +81,7 @@ func Register(_ core.App) error {
 		Key: "salesstub.team_totals", Title: "Stub team totals", Revision: 2, Unpublished: true,
 		Description: "Each team's sales booked on or before a day.",
 		Spec: json.RawMessage(`{
-			"version": 2,
+			"version": 4,
 			"source": "salesstub.sales",
 			"params": [
 				{"id": "asOf", "type": "asOf", "label": "As of", "default": {"preset": "today"}},
@@ -112,7 +112,7 @@ func Register(_ core.App) error {
 		Key: "salesstub.team_balance", Title: "Stub team balance", Revision: 1, Unpublished: true,
 		Description: "Each team's sales with a running balance from before the period.",
 		Spec: json.RawMessage(strings.ReplaceAll(`{
-			"version": 3,
+			"version": 4,
 			"source": "salesstub.sales",
 			"params": [
 				{"id": "period", "type": "dateRange", "label": "Period", "default": {"preset": "thisFiscalYear"}},

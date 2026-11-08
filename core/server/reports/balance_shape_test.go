@@ -305,12 +305,12 @@ const glJuly = `{"from":"2026-07-01","to":"2026-07-31"}`
 func TestABalanceShapedSpecLoadsAndValidates(t *testing.T) {
 	z := newZoo(t)
 	withBalanceZoo(t, z)
-	spec, info, err := Load([]byte(balanceSpec()))
+	spec, _, err := Load([]byte(balanceSpec()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Version != CurrentVersion || info.UpgradedFrom != 0 {
-		t.Fatalf("version %d, upgraded from %d", spec.Version, info.UpgradedFrom)
+	if spec.Version != CurrentVersion {
+		t.Fatalf("version %d", spec.Version)
 	}
 	if err := Validate(z.app, spec); err != nil {
 		t.Fatalf("Validate: %v", err)

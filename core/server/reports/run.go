@@ -174,10 +174,8 @@ type Notice struct {
 	// Count is the number of rows a rowCap or nestCap notice kept.
 	Count int `json:"count,omitempty"`
 	// LeftOut is the number of pivot values a pivotCap notice left out.
-	LeftOut int `json:"leftOut,omitempty"`
-	// FromVersion is the spec version an upgraded notice came from.
-	FromVersion int     `json:"fromVersion,omitempty"`
-	Aliases     []Alias `json:"aliases,omitempty"`
+	LeftOut int     `json:"leftOut,omitempty"`
+	Aliases []Alias `json:"aliases,omitempty"`
 }
 
 type Page struct {
@@ -325,9 +323,6 @@ func todayOf(s, at string) (time.Time, error) {
 }
 
 func (rn *runner) loadNotices(info *LoadInfo) {
-	if info.UpgradedFrom != 0 {
-		rn.notice(Notice{Code: "upgraded", Message: fmt.Sprintf("The report was made with spec version %d and upgraded.", info.UpgradedFrom), FromVersion: info.UpgradedFrom})
-	}
 	if len(info.Aliased) > 0 {
 		rn.notice(Notice{Code: "aliased", Message: "Some fields of the report were renamed; it uses their new names.", Aliases: info.Aliased})
 	}

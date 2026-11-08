@@ -207,14 +207,13 @@ func TestRunReturnsSpecErrors(t *testing.T) {
 	requireSpecError(t, err, 400, "options.today", "YYYY-MM-DD")
 }
 
-func TestRunNoticesRenamedFieldsAndAnUpgrade(t *testing.T) {
+func TestRunNoticesRenamedFields(t *testing.T) {
 	z := newZoo(t)
 	const raw = `{"version":4,"source":"zoo.animals","columns":[{"id":"w","path":[{"field":"mass"}],"aggregate":"sum"}],"sort":[{"col":"w"}]}`
 	spec, info, err := Load([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	info.UpgradedFrom = 1
 	res, err := Run(context.Background(), z.app, Request{Spec: spec, Loaded: info, Auth: z.recs["ann"]})
 	if err != nil {
 		t.Fatal(err)
@@ -223,11 +222,8 @@ func TestRunNoticesRenamedFieldsAndAnUpgrade(t *testing.T) {
 	for _, n := range res.Notices {
 		codes = append(codes, n.Code)
 	}
-	if !reflect.DeepEqual(codes, []string{"upgraded", "aliased"}) || res.Notices[1].Aliases[0].From != "mass" {
+	if !reflect.DeepEqual(codes, []string{"aliased"}) || res.Notices[0].Aliases[0].From != "mass" {
 		t.Fatalf("notices = %+v", res.Notices)
-	}
-	if res.Notices[0].FromVersion != 1 || res.Notices[0].Count != 0 {
-		t.Fatalf("upgrade notice = %+v", res.Notices[0])
 	}
 	requireOrderedRows(t, raw, res, "w", int64(4), int64(190), int64(300), int64(494))
 }

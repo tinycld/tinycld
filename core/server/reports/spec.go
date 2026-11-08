@@ -6,27 +6,16 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
 )
 
-// CurrentVersion is the spec version this engine reads and writes.
+// CurrentVersion is the one spec version this engine reads and writes.
 const CurrentVersion = 4
-
-// upgradeSteps[v] turns a version v document into version v+1. The steps
-// are identities and go with the one-version change (column fit plan,
-// Task 7).
-var upgradeSteps = map[int]upgradeStep{
-	1: func(map[string]any) error { return nil },
-	2: func(map[string]any) error { return nil },
-	3: func(map[string]any) error { return nil },
-}
-
-type upgradeStep func(doc map[string]any) error
 
 // Spec is a report: versioned JSON, never SQL.
 type Spec struct {
@@ -305,11 +294,9 @@ const (
 	GroupOrderPath     = "path"
 )
 
-// LoadInfo says what Load changed: the version it upgraded from (0 when it
-// did not upgrade) and every alias it resolved.
+// LoadInfo says what Load changed: every alias it resolved.
 type LoadInfo struct {
-	UpgradedFrom int
-	Aliased      []Alias
+	Aliased []Alias
 }
 
 // Alias is one old key Load replaced with its new key.
@@ -350,89 +337,28 @@ func unknownRef(at, code, message string) *SpecError {
 	return &SpecError{Status: 422, Problems: map[string]validation.Error{at: validation.NewError(code, message)}}
 }
 
-// Load reads a stored or posted spec: it upgrades an older version to
-// CurrentVersion, decodes it strictly (an unknown key is an error), and
-// replaces every aliased key with its current key. A later bind step checks
-// the result. A spec saved again is saved as Load returns it.
+// Load reads a stored or posted spec: one JSON object of version
+// CurrentVersion, decoded strictly (an unknown key is an error), with every
+// aliased key replaced by its current key. A later bind step checks the
+// result. A spec saved again is saved as Load returns it.
 func Load(raw []byte) (*Spec, *LoadInfo, error) {
-	return loadWith(raw, upgradeSteps, CurrentVersion)
-}
-
-func loadWith(raw []byte, steps map[int]upgradeStep, target int) (*Spec, *LoadInfo, error) {
-	upgraded, from, err := upgrade(raw, steps, target)
-	if err != nil {
-		return nil, nil, err
-	}
-	var spec Spec
-	dec := json.NewDecoder(bytes.NewReader(upgraded))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&spec); err != nil {
-		return nil, nil, invalid("spec", "the spec is not valid: "+err.Error())
-	}
-	info := &LoadInfo{Aliased: resolveAliases(&spec)}
-	// The notice says the report changed; a step that changed nothing (1 → 2)
-	// gives none.
-	if from != target && !sameExceptVersion(raw, upgraded) {
-		info.UpgradedFrom = from
-	}
-	return &spec, info, nil
-}
-
-// upgrade runs steps from the document's version up to target. Numbers stay
-// json.Number so an integer above 2^53 survives the re-encode unchanged.
-func upgrade(raw []byte, steps map[int]upgradeStep, target int) ([]byte, int, error) {
 	var doc map[string]any
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&doc); err != nil {
-		return nil, 0, invalid("spec", "the spec is not a single JSON object")
+		return nil, nil, invalid("spec", "the spec is not a single JSON object")
 	}
 	if _, err := dec.Token(); err != io.EOF {
-		return nil, 0, invalid("spec", "the spec is not a single JSON object")
+		return nil, nil, invalid("spec", "the spec is not a single JSON object")
 	}
-	n, ok := doc["version"].(json.Number)
-	if !ok {
-		return nil, 0, invalid("version", "version must be a whole number from 1")
+	if n, ok := doc["version"].(json.Number); !ok || n.String() != strconv.Itoa(CurrentVersion) {
+		return nil, nil, invalid("version", fmt.Sprintf("version must be %d", CurrentVersion))
 	}
-	v, err := n.Int64()
-	if err != nil || v < 1 {
-		return nil, 0, invalid("version", "version must be a whole number from 1")
+	var spec Spec
+	strict := json.NewDecoder(bytes.NewReader(raw))
+	strict.DisallowUnknownFields()
+	if err := strict.Decode(&spec); err != nil {
+		return nil, nil, invalid("spec", "the spec is not valid: "+err.Error())
 	}
-	from := int(v)
-	if from > target {
-		return nil, 0, invalid("version", fmt.Sprintf("version %d is newer than this server reads (%d)", from, target))
-	}
-	if from == target {
-		return raw, from, nil
-	}
-	for at := from; at < target; at++ {
-		step := steps[at]
-		if step == nil {
-			return nil, 0, fmt.Errorf("reports: no upgrade from spec version %d", at)
-		}
-		if err := step(doc); err != nil {
-			return nil, 0, invalid("version", fmt.Sprintf("version %d cannot be upgraded: %v", at, err))
-		}
-		doc["version"] = at + 1
-	}
-	out, err := json.Marshal(doc)
-	return out, from, err
-}
-
-// sameExceptVersion reports whether two spec documents differ only in their
-// version. Numbers stay json.Number, so a large integer compares exactly.
-func sameExceptVersion(a, b []byte) bool {
-	read := func(raw []byte) (map[string]any, bool) {
-		var doc map[string]any
-		dec := json.NewDecoder(bytes.NewReader(raw))
-		dec.UseNumber()
-		if dec.Decode(&doc) != nil {
-			return nil, false
-		}
-		delete(doc, "version")
-		return doc, true
-	}
-	da, okA := read(a)
-	db, okB := read(b)
-	return okA && okB && reflect.DeepEqual(da, db)
+	return &spec, &LoadInfo{Aliased: resolveAliases(&spec)}, nil
 }

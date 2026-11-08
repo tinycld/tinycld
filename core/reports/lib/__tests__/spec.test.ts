@@ -8,7 +8,7 @@ import {
 } from '../spec'
 
 const FEEDINGS = {
-    version: 1,
+    version: 4,
     source: 'zoo.feedings',
     params: [{ id: 'period', type: 'dateRange', default: { preset: 'thisMonth' } }],
     columns: [
@@ -57,7 +57,7 @@ describe('parseSpec', () => {
     it('refuses what is not a spec', () => {
         expect(parseSpec(null)).toBeNull()
         expect(parseSpec('a spec')).toBeNull()
-        expect(parseSpec({ version: 1, source: 'zoo.feedings' })).toBeNull()
+        expect(parseSpec({ version: 4, source: 'zoo.feedings' })).toBeNull()
         expect(parseSpec({ ...FEEDINGS, sql: 'DELETE FROM zoo_feedings' })).toBeNull()
         expect(
             parseSpec({
@@ -67,10 +67,9 @@ describe('parseSpec', () => {
         ).toBeNull()
     })
 
-    it('reads a version 1 to 4 spec and refuses version 5', () => {
-        expect(parseSpec({ ...FEEDINGS, version: 1 })).not.toBeNull()
+    it('reads version 4 only', () => {
         expect(parseSpec({ ...FEEDINGS, version: 4 })).not.toBeNull()
-        expect(parseSpec({ ...FEEDINGS, version: 5 })).toBeNull()
+        for (const version of [1, 2, 3, 5]) expect(parseSpec({ ...FEEDINGS, version })).toBeNull()
         expect(CURRENT_SPEC_VERSION).toBe(4)
     })
 
@@ -78,7 +77,7 @@ describe('parseSpec', () => {
     it('reads a group order of each kind and refuses any other', () => {
         const withOrder = (groupOrder: unknown) => ({
             ...FEEDINGS,
-            version: 2,
+            version: 4,
             params: [
                 {
                     id: 'animals',
@@ -110,7 +109,7 @@ describe('parseSpec', () => {
     it('reads a column blank on detail rows and refuses any other detail', () => {
         const withDetail = (detail: unknown) => ({
             ...FEEDINGS,
-            version: 2,
+            version: 4,
             columns: [
                 { id: 'note', path: [{ field: 'note' }] },
                 { id: 'species', path: [{ link: 'animal' }, { field: 'species' }], detail },
@@ -133,7 +132,7 @@ describe('parseSpec', () => {
 
     it('reads every v2 part', () => {
         const spec = {
-            version: 2,
+            version: 4,
             source: 'zoo.feedings',
             params: [
                 {
@@ -294,7 +293,7 @@ const BEFORE_PERIOD = {
 
 // The head's v3 example: every new part once.
 const V3 = {
-    version: 3,
+    version: 4,
     source: 'zoo.feedings',
     params: [{ id: 'period', type: 'dateRange', label: 'Period', default: { preset: 'allDates' } }],
     columns: [
@@ -350,18 +349,18 @@ const V3 = {
     sort: [{ col: 'fed' }],
 }
 
-describe('spec version 3', () => {
+describe('the parts of version 3', () => {
     it('reads every v3 part as it is', () => {
         expect(parseSpec(V3)).toEqual(V3)
     })
 
     it('reads a v3 spec with none of the new parts', () => {
-        expect(parseSpec({ ...FEEDINGS, version: 3 })).toEqual({ ...FEEDINGS, version: 3 })
+        expect(parseSpec({ ...FEEDINGS, version: 4 })).toEqual({ ...FEEDINGS, version: 4 })
     })
 
     it('reads an opening row with no cells', () => {
         const groups = [{ id: 'g', col: 'species', opening: { label: 'Before' } }]
-        expect(parseSpec({ ...FEEDINGS, version: 3, groups })?.groups?.[0]?.opening).toEqual({
+        expect(parseSpec({ ...FEEDINGS, version: 4, groups })?.groups?.[0]?.opening).toEqual({
             label: 'Before',
         })
     })
@@ -369,7 +368,7 @@ describe('spec version 3', () => {
     it('refuses a pick, a bound or an opening label the engine refuses', () => {
         const lookup = (pick: string) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             columns: [
                 {
                     id: 'x',
@@ -388,7 +387,7 @@ describe('spec version 3', () => {
 
         const bound = (b: string) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             filter: {
                 op: 'lt',
                 args: [{ path: [{ field: 'fed' }] }, { param: 'period', bound: b }],
@@ -399,7 +398,7 @@ describe('spec version 3', () => {
 
         const opening = (label: string) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             groups: [{ id: 'g', col: 'species', opening: { label } }],
         })
         expect(parseSpec(opening(''))).toBeNull()
@@ -410,7 +409,7 @@ describe('spec version 3', () => {
     it('counts an opening label in characters, as the engine does, not in UTF-16 units', () => {
         const opening = (label: string) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             groups: [{ id: 'g', col: 'species', opening: { label } }],
         })
         // A CJK Extension B character is one character and two UTF-16 units.
@@ -422,12 +421,12 @@ describe('spec version 3', () => {
     it('refuses an outer leaf that is not a path of hops, and an opening part it does not know', () => {
         const outer = (value: unknown) => ({
             ...FEEDINGS,
-            version: 3,
+            version: 4,
             columns: [{ id: 'x', formula: { outer: value } }],
         })
         expect(parseSpec(outer([{ field: 'fed' }]))).not.toBeNull()
         expect(parseSpec(outer('fed'))).toBeNull()
         const groups = [{ id: 'g', col: 'species', opening: { label: 'Before', rows: 2 } }]
-        expect(parseSpec({ ...FEEDINGS, version: 3, groups })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, version: 4, groups })).toBeNull()
     })
 })
