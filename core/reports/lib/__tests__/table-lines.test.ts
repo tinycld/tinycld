@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { CARET_ROOM } from '../../components/report-table-layout'
 import {
+    type ColumnMeasure,
     type ColumnMeasures,
     deepestLabelStart,
     labelChrome,
@@ -15,9 +16,11 @@ import type { VisibleRow } from '../rows'
 import { type DisplayCell, type DisplayLayout, displayCellSchema } from '../spec'
 import {
     ARRANGEMENT_NOTICE,
+    atWidth,
     type Block,
     continuationIndent,
     fitOneLine,
+    fitTable,
     isFigureColumn,
     type LineLayout,
     labelSpans,
@@ -1200,5 +1203,110 @@ describe('the label span of a side block', () => {
             ],
         }
         expect(labelSpans(side, 'account')).toEqual(side)
+    })
+})
+
+describe('column fit in the fit', () => {
+    const FIT_MEASURES: ColumnMeasures = {
+        account: m(120, 180, 1),
+        number: m(64, 64, 1),
+        debit: m(110, 110, 0),
+        credit: m(110, 110, 0),
+    }
+    // Mins: 120 + 64 + 110 + 110 = 404.
+    const fitAt = (width: number, extra: Partial<Parameters<typeof fitTable>[0]> = {}) =>
+        fitTable({ columns: COLS, width, layouts: [], measures: FIT_MEASURES, ...extra })
+    const TABLET: DisplayLayout = {
+        width: 'tablet',
+        tracks: 2,
+        cells: [
+            { col: 'account', line: 1, span: 2 },
+            { col: 'number', line: 2 },
+            { col: 'debit', line: 2 },
+            { col: 'credit', line: 3 },
+        ],
+    }
+
+    it('stops a grower at its max and shares the rest among the others', () => {
+        const capped: ColumnMeasure = { min: 80, natural: 120, grow: 1, max: 150 }
+        expect(shareWidth([m(100, 100, 1), capped], 600)).toEqual([450, 150])
+        expect(
+            shareWidth(
+                [m(100, 100, 1), { min: 100, natural: 100, grow: 1, max: 120 }, m(100, 100, 1)],
+                600
+            )
+        ).toEqual([240, 120, 240])
+    })
+
+    it('resolves a % at the line width', () => {
+        expect(atWidth({ natural: 100, min: 50, grow: 1, pct: { width: 0.25 } }, 800)).toEqual({
+            natural: 200,
+            min: 200,
+            max: 200,
+            grow: 1,
+        })
+        expect(
+            atWidth({ natural: 300, min: 50, grow: 1, pct: { min: 0.1, max: 0.2 } }, 1000)
+        ).toEqual({
+            natural: 200,
+            min: 100,
+            max: 200,
+            grow: 1,
+        })
+        const plain = m(50, 100, 1)
+        expect(atWidth(plain, 1000)).toBe(plain)
+    })
+
+    it('a % width is a part of the line', () => {
+        const measures = { ...FIT_MEASURES, number: { ...m(64, 64, 1), pct: { width: 0.25 } } }
+        expect(fitAt(800, { measures }).layout).toEqual({
+            kind: 'one-line',
+            widths: { account: 380, number: 200, debit: 110, credit: 110 },
+        })
+    })
+
+    it('draws one line only from the one-line width', () => {
+        expect(fitAt(500, { oneLine: { minWidth: '600px' } }).source).toBe('auto')
+        expect(fitAt(600, { oneLine: { minWidth: '600px' } }).source).toBe('one-line')
+        expect(fitAt(500).source).toBe('one-line')
+    })
+
+    it('never one line under the gate, however wide the columns fit', () => {
+        const wide = fitAt(1280, { oneLine: { minWidth: '4000px' } })
+        expect(wide.source).toBe('auto')
+        expect(wide.layout.kind).toBe('blocks')
+    })
+
+    it('uses an arrangement only from its minWidth, and says nothing when it skips it', () => {
+        expect(fitAt(380, { layouts: [{ ...TABLET, minWidth: '350px' }] }).source).toBe('tablet')
+        const skipped = fitAt(380, { layouts: [{ ...TABLET, minWidth: '390px' }] })
+        expect(skipped.source).toBe('auto')
+        expect(skipped.layout.kind === 'blocks' && skipped.layout.notice).toBeFalsy()
+    })
+
+    it('carries the lines a wrapping column may take, on every row', () => {
+        const measures = { ...FIT_MEASURES, account: { ...m(120, 180, 1), lines: 2 } }
+        expect(fitAt(1280, { measures }).layout).toMatchObject({
+            kind: 'one-line',
+            lines: { account: 2 },
+        })
+        const auto = fitAt(300, { measures }).layout
+        expect(auto).toMatchObject({ kind: 'blocks', lines: { account: 2 } })
+        const group: VisibleRow = {
+            row: { id: 'group:A', kind: 'group', depth: 0, label: 'A', cells: {} },
+            cells: {},
+            isToggle: true,
+            isOpen: false,
+        }
+        expect(rowLayout(group, auto, 'account', 0)).toMatchObject({ lines: { account: 2 } })
+        expect('lines' in fitAt(1280).layout).toBe(false)
+    })
+
+    it('says which rule laid the rows out', () => {
+        expect(fitAt(1280).source).toBe('one-line')
+        expect(fitAt(300).source).toBe('auto')
+        expect(
+            tableLines({ columns: COLS, width: 1280, layouts: [], measures: FIT_MEASURES })
+        ).toEqual(fitAt(1280).layout)
     })
 })
