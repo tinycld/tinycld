@@ -116,13 +116,15 @@ const MAX_PAGE = 1000
  * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
  * teams of one sale each after them, and opens the report on them alone, in pages
  * of 5 detail rows, so 12 sales page across team A's end. A next page (a request
- * with a cursor) waits for `nextPages` when it is given.
+ * with a cursor) waits for `nextPages` when it is given. Team n's sales start at
+ * `baseAmount` × n cents and go up a cent each.
  */
 async function openPagedTeams(
     page: Page,
     prefix: string,
     smallTeams = 0,
-    nextPages?: Promise<void>
+    nextPages?: Promise<void>,
+    baseAmount = 100
 ) {
     await loginAsShippedOwner(page)
     const stem = uniqueName(prefix)
@@ -136,7 +138,7 @@ async function openPagedTeams(
             customerPrefix: `${stem}${letters[i]}`,
             count: i < 2 ? 6 : 1,
             firstDay: `${YEAR}-02-01`,
-            firstAmount: 100 * (i + 1),
+            firstAmount: baseAmount * (i + 1),
             cost: 0,
             quantity: 1,
         })
@@ -297,7 +299,10 @@ test.describe('general-ledger: report engine v3', () => {
         const nextPages = new Promise<void>(resolve => {
             release = resolve
         })
-        const { teams, firstSale } = await openPagedTeams(page, 'BalEnd', 0, nextPages)
+        // Sales of 6,000.00 (team A) and 12,000.00 (team B) a cent up each: the team
+        // rollups (36,000.15 and 72,000.15) stay inside the measure's worst amount
+        // (−99,999.99), and only the Total (108,000.30) is wider.
+        const { teams, firstSale } = await openPagedTeams(page, 'BalEnd', 0, nextPages, 600_000)
         const loading = page.getByTestId('report-loading-more')
         await expect(loading).toContainText('Loading more rows…')
         expect(occurrences(await rowIds(page), 'total')).toBe(0)
@@ -322,10 +327,22 @@ test.describe('general-ledger: report engine v3', () => {
         await expect(loading).toHaveCount(0)
         const ids = await rowIds(page)
         expect(ids[ids.length - 1]).toMatch(/^total/)
-        // The Total (18.30) and the team rollups (12.15) are wider than any detail
-        // amount (at most 2.05), so the column would widen if the measure ignored the
-        // held rows.
         await expect.poll(widthOf).toBe(amountWidth)
+        // The Total is wider than every detail amount and the worst amount, so only a
+        // measure that read the held Total gives the column room for it.
+        const total = page.getByTestId(`report-cell-amount-${ids[ids.length - 1]}`)
+        await expect(total).toHaveText(/^\$?108,000\.30$/)
+        const fit = await total.evaluate(cell => {
+            const text = cell.querySelector('div[dir="auto"]')
+            const head = document.querySelector('[data-testid="report-heading-amount"]')
+            if (!(text instanceof HTMLElement) || !head) return 'not drawn'
+            if (text.scrollWidth > text.clientWidth) return 'cut'
+            const box = text.getBoundingClientRect()
+            const headBox = head.getBoundingClientRect()
+            const isInside = box.left >= headBox.left - 1 && box.right <= headBox.right + 1
+            return isInside ? 'fits' : 'outside its heading'
+        })
+        expect(fit).toBe('fits')
     })
 
     // F11: a fold keeps the reader's place. Folding a section that came on a later

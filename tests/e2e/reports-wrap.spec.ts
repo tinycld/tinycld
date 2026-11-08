@@ -357,6 +357,8 @@ test.describe('report rows per width', () => {
             // Sorted by customer ascending before, Wrapco 23 was the last row.
             await expect(rowOf(p, 'Wrapco 23')).toBeInViewport()
             await expect(chip).toContainText('Sort: Customer ↓')
+            // A screen reader hears the sort in words, not the arrow.
+            await expect(chip).toHaveAccessibleName('Sort: Customer, descending')
             const isSameChip = await p.evaluate(() => {
                 const kept = (window as Window & { keptChip?: Element }).keptChip
                 const now = document.querySelector('[data-testid="report-sort-menu"]')
@@ -893,8 +895,12 @@ test.describe('report rows per width', () => {
             expect(await layoutNotice.evaluate(el => el.scrollHeight <= el.clientHeight + 1)).toBe(
                 true
             )
-            // A desktop never cuts the band.
+            // At 1280 the row fits one line, so no arrangement is tried: the layout
+            // notice leaves the band, and with it the band's toggle. (The one-line
+            // fit comes before any arrangement, table-lines.ts tableLines.)
             await p.setViewportSize({ width: 1280, height: 800 })
+            await expect(p.getByTestId('report-table')).toBeVisible()
+            await expect(band.getByTestId('report-notice-layout')).toHaveCount(0)
             await expect(band.getByTestId('report-notices-toggle')).toHaveCount(0)
         } finally {
             await close()
@@ -1092,19 +1098,23 @@ test.describe('report rows on a touch phone', () => {
         const table = page.getByTestId('report-table')
         const title = page.getByTestId('report-title')
         await expect(table).toHaveCSS('opacity', '1')
+        // The title is in the table's box (the list's header); both must be drawn.
         await expect
-            .poll(
-                async () =>
-                    ((await title.boundingBox())?.y ?? 0) >= ((await table.boundingBox())?.y ?? 0)
-            )
-            .toBe(true)
+            .poll(async () => {
+                const titleBox = await title.boundingBox()
+                const tableBox = await table.boundingBox()
+                if (!titleBox || !tableBox) return 'not drawn'
+                return titleBox.y >= tableBox.y ? 'inside' : 'above'
+            })
+            .toBe('inside')
         const firstRow = table.locator('[data-testid^="report-row-"]').first()
         const scroller = await listScroller(firstRow)
         expect(await scroller.evaluate(list => list.scrollTop)).toBe(0)
         const titleBox = await title.boundingBox()
-        const titleY = titleBox?.y ?? 0
+        if (!titleBox) throw new Error('the title is not drawn')
+        const titleY = titleBox.y
 
-        await swipeUp(page, (titleBox?.x ?? 0) + 20, titleY + (titleBox?.height ?? 0) / 2, 300)
+        await swipeUp(page, titleBox.x + 20, titleY + titleBox.height / 2, 300)
         await expect
             .poll(() => scroller.evaluate(list => list.scrollTop), {
                 message: 'the swipe on the title scrolls the list',

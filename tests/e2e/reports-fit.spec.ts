@@ -45,21 +45,26 @@ async function fitProblems(p: Page) {
             }
             if (cut(textOf(heading))) problems.push(`heading ${col} cut`)
             const head = heading.getBoundingClientRect()
+            let drawn = 0
             for (const cell of table.querySelectorAll(`[data-testid^="report-cell-${col}-"]`)) {
+                // A group row leaves the cells of columns it does not sum blank.
                 const text = textOf(cell)
                 if (!text?.textContent) continue
+                drawn++
                 const id = cell.getAttribute('data-testid')
                 if (cut(text)) problems.push(`${id} cut`)
                 const box = text.getBoundingClientRect()
                 if (box.left < head.left - 1 || box.right > head.right + 1)
                     problems.push(`${id} outside its heading`)
             }
+            if (drawn === 0) problems.push(`no ${col} figure drawn`)
         }
         for (const row of table.querySelectorAll('[data-testid^="report-row-"]')) {
             const id = row.getAttribute('data-testid') ?? ''
             if (id.startsWith('report-row-d:')) continue
             const text = textOf(row)
-            if (text && cut(text)) problems.push(`${id} label cut`)
+            if (!text?.textContent) problems.push(`${id} label missing`)
+            else if (cut(text)) problems.push(`${id} label cut`)
         }
         return problems
     }, FIGURES)
@@ -120,6 +125,12 @@ test.describe('report fit at four widths', () => {
             for (const size of WIDTHS) {
                 await p.setViewportSize(size)
                 await expect(p.getByTestId('report-table')).toHaveCSS('opacity', '1')
+                // The checks below read the drawn cells: there must be some.
+                // The Total's id carries its currency (total:["USD"]).
+                await expect(p.locator('[data-testid^="report-row-total"]').first()).toBeVisible()
+                await expect(
+                    p.locator('[data-testid^="report-cell-amount-"]').first()
+                ).toBeVisible()
                 await expect
                     .poll(() => fitProblems(p), { message: `fit at ${size.width}` })
                     .toEqual([])

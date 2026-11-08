@@ -14,17 +14,27 @@ describe('textWidth', () => {
         expect(FONT_PX).toEqual({ sm: 14, xs: 12 })
         // 0.62 em × 14 = 8.68
         expect(textWidth('0', CELL)).toBe(9)
-        // 6 digits × 0.62 + 2 narrow × 0.34 = 4.40 em × 14 = 61.6
-        expect(textWidth('1,234.56', CELL)).toBe(62)
+        // 6 digits × 0.62 + 2 narrow × 0.36 = 4.44 em × 14 = 62.16
+        expect(textWidth('1,234.56', CELL)).toBe(63)
         // 6 × 0.65 + 2 × 0.40 = 4.70 em × 14 = 65.8
         expect(textWidth('1,234.56', BOLD)).toBe(66)
     })
 
     it('tells narrow, wide, upper and lower letters apart', () => {
-        // M wide 0.95 + i narrow 0.34 = 1.29 em × 14 = 18.06
+        // M wide 0.95 + i narrow 0.36 = 1.31 em × 14 = 18.34
         expect(textWidth('Mi', CELL)).toBe(19)
         // A upper 0.78 + b lower 0.61 = 1.39 em × 14 = 19.46
         expect(textWidth('Ab', CELL)).toBe(20)
+    })
+
+    it('holds a narrow letter to the widest drawn (Roboto Medium r, 0.351 em)', () => {
+        // 10 × 0.36 = 3.6 em × 14 = 50.4; 10 × 0.351 × 14 = 49.14
+        expect(textWidth('rrrrrrrrrr', CELL)).toBe(51)
+    })
+
+    it('does not count a backtick as narrow (SF draws it at 0.5 em)', () => {
+        // other 0.62 em × 14 = 8.68
+        expect(textWidth('`', CELL)).toBe(9)
     })
 
     it('draws a heading in capitals at the small size', () => {
@@ -42,8 +52,8 @@ describe('textWidth', () => {
 
 describe('longestWordWidth', () => {
     it('is the width of the widest word', () => {
-        // "reversal": 3 narrow × 0.34 + 5 lower × 0.61 = 4.07 em × 14 = 56.98
-        expect(longestWordWidth('Void reversal', CELL)).toBe(57)
+        // "reversal": 3 narrow × 0.36 + 5 lower × 0.61 = 4.13 em × 14 = 57.82
+        expect(longestWordWidth('Void reversal', CELL)).toBe(58)
         expect(longestWordWidth('', CELL)).toBe(0)
     })
 })

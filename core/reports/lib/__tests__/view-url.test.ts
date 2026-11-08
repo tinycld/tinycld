@@ -11,6 +11,7 @@ import {
     reportLink,
     SORT_KEY,
     serializeViewOptions,
+    sortChipLabel,
     sortChipText,
     sortChoices,
     type ViewOptions,
@@ -254,5 +255,16 @@ describe('sort choices', () => {
             'Sort: Amount ↓'
         )
         expect(sortChipText(columns, DEFAULT_DISPLAY, { col: 'gone', dir: 'asc' })).toBe('Sort')
+    })
+
+    it('names the sort in words for a screen reader, not by its arrow', () => {
+        expect(sortChipLabel(columns, DEFAULT_DISPLAY, null)).toBe('Sort')
+        expect(sortChipLabel(columns, DEFAULT_DISPLAY, { col: 'amount', dir: 'desc' })).toBe(
+            'Sort: Amount, descending'
+        )
+        expect(sortChipLabel(columns, DEFAULT_DISPLAY, { col: 'amount', dir: 'asc' })).toBe(
+            'Sort: Amount, ascending'
+        )
+        expect(sortChipLabel(columns, DEFAULT_DISPLAY, { col: 'gone', dir: 'asc' })).toBe('Sort')
     })
 })

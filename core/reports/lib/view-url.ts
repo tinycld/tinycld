@@ -202,6 +202,8 @@ export function nextSort(current: ViewSort | null, col: string): ViewSort | null
 
 export type SortChoice = { key: string; label: string; sort: ViewSort | null }
 
+const SORT_WORDS = { asc: 'ascending', desc: 'descending' } as const
+
 /** The Sort menu's choices (D10): the report's own order, then each sortable column both ways. */
 export function sortChoices(columns: readonly ResultColumn[], format: NumberFormat): SortChoice[] {
     const choices: SortChoice[] = [{ key: 'none', label: 'Report order', sort: null }]
@@ -209,10 +211,9 @@ export function sortChoices(columns: readonly ResultColumn[], format: NumberForm
         if (!column.sortable) continue
         const text = headingText(column, format)
         for (const dir of ['asc', 'desc'] as const) {
-            const words = dir === 'asc' ? 'ascending' : 'descending'
             choices.push({
                 key: `${column.id}-${dir}`,
-                label: `${text}, ${words}`,
+                label: `${text}, ${SORT_WORDS[dir]}`,
                 sort: { col: column.id, dir },
             })
         }
@@ -230,4 +231,15 @@ export function sortChipText(
     const column = sort ? columns.find(c => c.id === sort.col) : undefined
     if (!sort || !column) return 'Sort'
     return `Sort: ${headingText(column, format)} ${SORT_ARROW[sort.dir]}`
+}
+
+/** The chip's name for a screen reader: the sort in words, not the arrow glyph. */
+export function sortChipLabel(
+    columns: readonly ResultColumn[],
+    format: NumberFormat,
+    sort: ViewSort | null
+): string {
+    const column = sort ? columns.find(c => c.id === sort.col) : undefined
+    if (!sort || !column) return 'Sort'
+    return `Sort: ${headingText(column, format)}, ${SORT_WORDS[sort.dir]}`
 }

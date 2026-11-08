@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Animated, type LayoutChangeEvent } from 'react-native'
 
 /**
@@ -47,14 +47,7 @@ export function useScrollAwayTop() {
         () => ({ useNativeDriver: false as const, offset: headingHeight }),
         [headingHeight]
     )
-    // Stable, so the list header built from them is not new on each render.
-    const onTopLayout = useCallback(
-        (e: LayoutChangeEvent) => setTopHeight(e.nativeEvent.layout.height),
-        []
-    )
-    const onHeadingLayout = useCallback(
-        (e: LayoutChangeEvent) => setHeadingHeight(e.nativeEvent.layout.height),
-        []
-    )
+    const onTopLayout = (e: LayoutChangeEvent) => setTopHeight(e.nativeEvent.layout.height)
+    const onHeadingLayout = (e: LayoutChangeEvent) => setHeadingHeight(e.nativeEvent.layout.height)
     return { onScroll, headingStyle, stickyConfig, onTopLayout, onHeadingLayout }
 }

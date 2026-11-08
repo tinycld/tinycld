@@ -397,9 +397,10 @@ function useNewRunAtTop(runKey: string) {
     return { listRef, keyExtractor }
 }
 
-// What both list variants give FlashList: the sticky rows, the rows' redraw signal,
-// the top-row report, the list's ref and its row keys.
-function useTableListData({
+// What both list variants give FlashList: the rows, the sticky rows, the rows'
+// redraw signal, the top-row report, the list's ref and row keys, the next-page
+// signal and the end row. Each variant adds its header and sticky config.
+function useTableListProps({
     rows,
     runKey,
     columns,
@@ -407,6 +408,8 @@ function useTableListData({
     format,
     onToggleGroup,
     onTopRowIndex,
+    onNearEnd,
+    hasMore,
 }: TableListProps) {
     const sticky = useMemo(() => stickyIndices(rows), [rows])
     const onViewableItemsChanged = useTopRowReport(onTopRowIndex)
@@ -415,13 +418,26 @@ function useTableListData({
         [columns, layout, format, onToggleGroup, rows]
     )
     const { listRef, keyExtractor } = useNewRunAtTop(runKey)
-    return { sticky, extraData, onViewableItemsChanged, listRef, keyExtractor }
+    return {
+        ref: listRef,
+        data: rows,
+        renderItem: renderTableItem,
+        keyExtractor,
+        getItemType: rowType,
+        extraData,
+        stickyHeaderIndices: sticky,
+        onEndReached: onNearEnd,
+        onEndReachedThreshold: 0.5,
+        onViewableItemsChanged,
+        viewabilityConfig: VIEWABILITY_CONFIG,
+        className: 'web:[scrollbar-gutter:stable]',
+        ListFooterComponent: <TableEnd hasMore={hasMore} />,
+    }
 }
 
 function FixedHeadingList(props: TableListProps) {
-    const { rows, columns, layout, format, sorting, onRowWidth, onNearEnd, hasMore } = props
-    const { sticky, extraData, onViewableItemsChanged, listRef, keyExtractor } =
-        useTableListData(props)
+    const { columns, layout, format, sorting, onRowWidth } = props
+    const listProps = useTableListProps(props)
     // One element while the width setter stays, so FlashList keeps its header
     // rather than rebuilding it on every render.
     const header = useMemo(() => <RowWidthProbe onWidth={onRowWidth} />, [onRowWidth])
@@ -429,21 +445,9 @@ function FixedHeadingList(props: TableListProps) {
         <>
             <HeadingRow columns={columns} layout={layout} format={format} sorting={sorting} />
             <FlashList
-                ref={listRef}
-                data={rows}
-                renderItem={renderTableItem}
-                keyExtractor={keyExtractor}
-                getItemType={rowType}
-                extraData={extraData}
-                stickyHeaderIndices={sticky}
+                {...listProps}
                 stickyHeaderConfig={STICKY_CONFIG}
-                onEndReached={onNearEnd}
-                onEndReachedThreshold={0.5}
-                onViewableItemsChanged={onViewableItemsChanged}
-                viewabilityConfig={VIEWABILITY_CONFIG}
-                className="web:[scrollbar-gutter:stable]"
                 ListHeaderComponent={header}
-                ListFooterComponent={<TableEnd hasMore={hasMore} />}
             />
         </>
     )
@@ -451,20 +455,18 @@ function FixedHeadingList(props: TableListProps) {
 
 // D9: the phone's list. The top area is the list's header and scrolls with the rows;
 // the heading row floats over the list (useScrollAwayTop). It comes first in the tree,
-// so its sort buttons come before the rows in the reading order.
+// so its sort buttons come before the rows in the reading order. The header element
+// is new on each render (the top area shows the model's current state), but its
+// type and place stay, so the top area stays mounted across runs.
 function ScrollAwayList(props: TableListProps & { top: ReactNode }) {
-    const { rows, columns, layout, format, sorting, onRowWidth, onNearEnd, hasMore, top } = props
-    const { sticky, extraData, onViewableItemsChanged, listRef, keyExtractor } =
-        useTableListData(props)
+    const { columns, layout, format, sorting, onRowWidth, top } = props
+    const listProps = useTableListProps(props)
     const away = useScrollAwayTop()
-    const header = useMemo(
-        () => (
-            <>
-                <View onLayout={away.onTopLayout}>{top}</View>
-                <RowWidthProbe onWidth={onRowWidth} />
-            </>
-        ),
-        [top, away.onTopLayout, onRowWidth]
+    const header = (
+        <>
+            <View onLayout={away.onTopLayout}>{top}</View>
+            <RowWidthProbe onWidth={onRowWidth} />
+        </>
     )
     // Wrapped headings take no presses (D10), so a drag that starts on them passes
     // to the list. One-line headings keep their sort presses.
@@ -479,22 +481,10 @@ function ScrollAwayList(props: TableListProps & { top: ReactNode }) {
                 <HeadingRow columns={columns} layout={layout} format={format} sorting={sorting} />
             </Animated.View>
             <FlashList
-                ref={listRef}
-                data={rows}
-                renderItem={renderTableItem}
-                keyExtractor={keyExtractor}
-                getItemType={rowType}
-                extraData={extraData}
-                stickyHeaderIndices={sticky}
+                {...listProps}
                 stickyHeaderConfig={away.stickyConfig}
                 onScroll={away.onScroll}
-                onEndReached={onNearEnd}
-                onEndReachedThreshold={0.5}
-                onViewableItemsChanged={onViewableItemsChanged}
-                viewabilityConfig={VIEWABILITY_CONFIG}
-                className="web:[scrollbar-gutter:stable]"
                 ListHeaderComponent={header}
-                ListFooterComponent={<TableEnd hasMore={hasMore} />}
             />
         </View>
     )

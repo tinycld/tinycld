@@ -14,7 +14,7 @@ import {
 import type { ReportViewModel } from '../hooks/useReportView'
 import { type ControlItem, chipText, isDateParam, type ParamValue } from '../lib/params'
 import type { ParamDef } from '../lib/spec'
-import { sortChipText, sortChoices } from '../lib/view-url'
+import { sortChipLabel, sortChipText, sortChoices } from '../lib/view-url'
 import { ParamChip } from './ParamChip'
 import { ParamPeriodControl } from './ParamPeriodControl'
 import { ParamPicker } from './ParamPickers'
@@ -155,12 +155,12 @@ function Control({ item, model }: { item: ControlItem; model: ReportViewModel })
 }
 
 // An element, not a component: the Menu clones its trigger.
-function sortChip(text: string, iconColor: string) {
+function sortChip(text: string, label: string, iconColor: string) {
     return (
         <Pressable
             testID="report-sort-menu"
             accessibilityRole="button"
-            accessibilityLabel={text}
+            accessibilityLabel={label}
             className="flex-row items-center gap-1.5 rounded-full border border-border bg-secondary px-3"
             style={CHIP_STYLE}
         >
@@ -177,7 +177,12 @@ function SortControl({ model, isVisible }: { model: ReportViewModel; isVisible: 
     const muted = useThemeColor('muted-foreground')
     const onSetSort = model.onSetSort
     if (!isVisible || !onSetSort) return null
-    const trigger = sortChip(sortChipText(model.columns, model.display, model.sort), muted)
+    const { columns, display, sort } = model
+    const trigger = sortChip(
+        sortChipText(columns, display, sort),
+        sortChipLabel(columns, display, sort),
+        muted
+    )
     const onOpenChange = (open: boolean) => {
         if (open) model.onOpenSurface({ kind: 'sort' })
         else model.onCloseSurfaceOf('sort')

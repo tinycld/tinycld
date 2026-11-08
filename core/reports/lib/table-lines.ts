@@ -546,7 +546,7 @@ const isLabelCell = (block: Block, labelId: string) =>
 
 // The label takes the empty parts right of it on its line: their tracks and widths
 // become its own (review §7.1-2). A side block left with one part is that block.
-function labelSpans(block: Extract<Block, { kind: 'side' }>, labelId: string): Block {
+export function labelSpans(block: Extract<Block, { kind: 'side' }>, labelId: string): Block {
     const parts: SidePart[] = []
     for (const part of block.parts) {
         const last = parts[parts.length - 1]

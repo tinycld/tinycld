@@ -19,6 +19,7 @@ import {
     fitOneLine,
     isFigureColumn,
     type LineLayout,
+    labelSpans,
     measureOf,
     oneLineLabelSpan,
     oneLineLabelWidth,
@@ -1103,5 +1104,77 @@ describe('the label span of a one-line row', () => {
         expect(
             oneLineLabelWidth({ kind: 'blocks', root: label, indent: 0 }, 'account', [])
         ).toBeUndefined()
+    })
+})
+
+describe('the label span of a side block', () => {
+    const labelCell: Block = { kind: 'cell', col: 'account', justify: 'start' }
+    const debitCell: Block = { kind: 'cell', col: 'debit', justify: 'end' }
+    const gap: Block = { kind: 'gap', lines: 1 }
+
+    it('gives the label the empty parts right of it: their tracks and widths add up', () => {
+        const side: Block = {
+            kind: 'side',
+            of: 6,
+            parts: [
+                { block: labelCell, tracks: 2, width: 100 },
+                { block: gap, tracks: 1, width: 40 },
+                { block: gap, tracks: 1, width: 30 },
+                { block: debitCell, tracks: 2, width: 80 },
+            ],
+        }
+        if (side.kind !== 'side') throw new Error('expected a side block')
+        expect(labelSpans(side, 'account')).toEqual({
+            kind: 'side',
+            of: 6,
+            parts: [
+                { block: labelCell, tracks: 4, width: 170 },
+                { block: debitCell, tracks: 2, width: 80 },
+            ],
+        })
+    })
+
+    it('keeps a gap left of the label, and a part with no width leaves the sum unknown', () => {
+        const side = {
+            kind: 'side' as const,
+            of: 4,
+            parts: [
+                { block: gap, tracks: 1, width: 20 },
+                { block: labelCell, tracks: 1, width: 60 },
+                { block: gap, tracks: 2 },
+            ],
+        }
+        expect(labelSpans(side, 'account')).toEqual({
+            kind: 'side',
+            of: 4,
+            parts: [
+                { block: gap, tracks: 1, width: 20 },
+                { block: labelCell, tracks: 3, width: undefined },
+            ],
+        })
+    })
+
+    it('is the label block when the label takes every part', () => {
+        const side = {
+            kind: 'side' as const,
+            of: 3,
+            parts: [
+                { block: labelCell, tracks: 1, width: 60 },
+                { block: gap, tracks: 2, width: 90 },
+            ],
+        }
+        expect(labelSpans(side, 'account')).toEqual(labelCell)
+    })
+
+    it('leaves a gap after another cell', () => {
+        const side = {
+            kind: 'side' as const,
+            of: 3,
+            parts: [
+                { block: debitCell, tracks: 1, width: 60 },
+                { block: gap, tracks: 2, width: 90 },
+            ],
+        }
+        expect(labelSpans(side, 'account')).toEqual(side)
     })
 })

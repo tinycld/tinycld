@@ -49,6 +49,9 @@ test.describe('report text width estimate', () => {
                 },
                 { texts, font, family }
             )
+            // No canvas context draws nothing, and every check below would pass.
+            expect(drawn).toHaveLength(SAMPLES.length)
+            expect(drawn.every(width => width > 0)).toBe(true)
             const estimates = SAMPLES.map(text => textWidth(text, style))
             const under = SAMPLES.filter((_, i) => (estimates[i] ?? 0) < (drawn[i] ?? 0))
             expect(under, `estimated narrower than drawn at ${font}`).toEqual([])

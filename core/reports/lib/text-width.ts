@@ -16,7 +16,8 @@ type CharClass = 'digit' | 'narrow' | 'wide' | 'upper' | 'lower' | 'other' | 'fa
 const EM: Record<TextStyle['weight'], Record<CharClass, number>> = {
     normal: {
         digit: 0.62,
-        narrow: 0.34,
+        // Roboto Medium's r (0.351 em) bounds Android's regular r; SF and Arial are narrower.
+        narrow: 0.36,
         wide: 0.95,
         upper: 0.78,
         lower: 0.61,
@@ -34,7 +35,8 @@ const EM: Record<TextStyle['weight'], Record<CharClass, number>> = {
     },
 }
 
-const NARROW = new Set([..."iljfrtI.,:;'!|` "])
+// No backtick: SF draws it at half an em.
+const NARROW = new Set([..."iljfrtI.,:;'!| "])
 const WIDE = new Set([...'mwMW%&'])
 const FAR = new Set(['@'])
 // Past Latin Extended-B: other scripts, CJK, emoji and wide symbols (—, …).
