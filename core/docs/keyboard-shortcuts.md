@@ -176,17 +176,25 @@ An action button that has a shortcut is a `ShortcutButton` (`@tinycld/core/ui/sh
 ```tsx
 import { ShortcutButton } from '@tinycld/core/ui/shortcut-button'
 
-<ShortcutButton
-    label="Send"
-    shortcut={{ keys: '$mod+Enter', scope: 'compose', allowInInputs: true }}
-    onPress={send}
-    serverAction
-/>
+function ComposeFooter({ send }: { send: () => void }) {
+    const scopeOwner = useShortcutScope('compose')
+    return (
+        <ShortcutButton
+            label="Send"
+            shortcut={{ keys: '$mod+Enter', scope: 'compose', allowInInputs: true }}
+            scopeOwner={scopeOwner}
+            onPress={send}
+            serverAction
+        />
+    )
+}
 ```
 
 - Pressing the keys presses the button. It does nothing while the button is disabled (or, with `serverAction`, while writes cannot reach the server). The key then falls through to the focused element.
 - The label is the shortcut's description in the `?` overlay.
 - `scope` is required. A `global` shortcut on a screen that `freezeOnBlur` has hidden still fires.
+- Outside a dialog, a non-`global` button needs `scopeOwner`: the value the screen's `useShortcutScope` returned (or a `ScopeProvider` with it above the button). The button registers before the screen's scope effect runs, so without the owner it is stamped `null` and never fires. Inside a `Dialog` or `Sheet`, the layer gives its content the owner.
+- While a layer closes (a Sheet keeps its content mounted through its exit animation and holds the `modal` scope until it unmounts), its buttons do not act on their keys (`useLayerActive`).
 - Web only: holding ⌘/Ctrl swaps the label for the keys, with no change in size. A plain key (no ⌘/Ctrl/Alt) shows as `then c`, so the user releases ⌘ first. The tooltip shows `<label> <keys>`, and the button has `aria-keyshortcuts`.
 - Native: the shortcut fires where the native provider feeds keys (iOS with a hardware keyboard; Android feeds none). There is no hint or tooltip, because React Native cannot detect a modifier held alone. The `accessibilityHint` names the shortcut.
 - In a dialog, pass the shortcut to `Dialog.ActionButton` (`shortcut={DIALOG_SUBMIT_SHORTCUT}` from `@tinycld/core/ui/dialog`). `ConfirmDialog` and `PromptDialog` do this already.

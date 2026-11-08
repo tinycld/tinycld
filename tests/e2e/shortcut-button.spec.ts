@@ -8,7 +8,9 @@ import { createInvitedUser, openAccountSecurity } from './helpers'
 //
 // The "⌘C does not show the hint" rule is in the unit test
 // (core/tests/unit/modifier-held.test.ts): proving a hint does NOT appear in
-// e2e would need a fixed sleep.
+// e2e would need a fixed sleep. A disabled button leaving the key alone is in
+// core/tests/unit/button-shortcut.test.tsx: here the prompt's own submit guard
+// and its field's submit-on-Enter would hide a broken shortcut guard.
 const IS_MAC = process.platform === 'darwin'
 const MODIFIER = IS_MAC ? 'Meta' : 'Control'
 const HINT = IS_MAC ? '⌘↵' : 'Ctrl+↵'
@@ -50,22 +52,6 @@ test.describe('shortcut buttons', () => {
         await expect(page.getByText('Revoke app password?')).toBeVisible()
         await page.keyboard.press('ControlOrMeta+Enter')
         await expect(row).toHaveCount(0)
-    })
-
-    test('a disabled action button ignores its shortcut', async () => {
-        await openNamePrompt()
-        const submit = page.getByTestId('app-password-name-submit')
-        await expect(submit).toHaveAttribute('aria-disabled', 'true')
-        await page.keyboard.press('ControlOrMeta+Enter')
-        await expect(page.getByPlaceholder(NAME_PLACEHOLDER)).toBeVisible()
-
-        await page.getByPlaceholder(NAME_PLACEHOLDER).fill('Laptop')
-        await expect(submit).not.toHaveAttribute('aria-disabled', 'true')
-        await page.keyboard.press('ControlOrMeta+Enter')
-        await expect(page.getByTestId('app-password-value')).toBeVisible()
-        await page.getByTestId('app-password-done').click()
-        // One row: the press on the disabled button created nothing.
-        await expect(page.getByTestId('app-password-row')).toHaveCount(1)
     })
 
     test('holding the modifier shows the shortcut without resizing the button', async () => {

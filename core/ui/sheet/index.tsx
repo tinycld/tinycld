@@ -210,7 +210,7 @@ function SheetRoot({
 
     return (
         <OverlayPortal host="sheet">
-            <LayerScope onEscape={close} isEscapeActive={isOpen}>
+            <LayerScope onEscape={close} isActive={isOpen}>
                 <View style={StyleSheet.absoluteFill} pointerEvents={isOpen ? 'auto' : 'none'}>
                     <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
                         <Pressable

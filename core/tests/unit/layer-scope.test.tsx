@@ -87,13 +87,13 @@ describe('LayerScope', () => {
         expect(lower).not.toHaveBeenCalled()
     })
 
-    it('runs Escape only while isEscapeActive', () => {
+    it('runs Escape only while isActive', () => {
         const onEscape = vi.fn()
-        const { rerender } = render(<LayerScope onEscape={onEscape} isEscapeActive={false} />)
+        const { rerender } = render(<LayerScope onEscape={onEscape} isActive={false} />)
         createMatcher().feedAtom('Escape', { inInput: false })
         expect(onEscape).not.toHaveBeenCalled()
 
-        rerender(<LayerScope onEscape={onEscape} isEscapeActive />)
+        rerender(<LayerScope onEscape={onEscape} isActive />)
         createMatcher().feedAtom('Escape', { inInput: false })
         expect(onEscape).toHaveBeenCalledTimes(1)
     })

@@ -1,5 +1,6 @@
 import { Tooltip } from '@tinycld/core/components/Tooltip'
 import { ariaKeyShortcuts, formatHint, type ShortcutHint } from '@tinycld/core/lib/shortcuts/hint'
+import type { ScopeOwner } from '@tinycld/core/lib/shortcuts/scopes'
 import { useWritesAvailable } from '@tinycld/core/lib/use-writes-available'
 import { Button, ButtonIcon, ServerActionButton } from '@tinycld/core/ui/button'
 import type { ComponentProps } from 'react'
@@ -28,6 +29,8 @@ export interface ShortcutButtonProps {
     className?: string
     testID?: string
     accessibilityHint?: string
+    /** Required for a non-global shortcut outside a dialog: the screen's `useShortcutScope()`. */
+    scopeOwner?: ScopeOwner
 }
 
 /**
@@ -48,6 +51,7 @@ export function ShortcutButton({
     variant,
     size,
     className,
+    scopeOwner,
 }: ShortcutButtonProps) {
     const writes = useWritesAvailable()
     const flash = usePressFlash()
@@ -59,6 +63,7 @@ export function ShortcutButton({
             flash.flash()
             onPress()
         },
+        scopeOwner,
     })
     const hint = formatHint(shortcut.keys)
     const a11y = shortcutA11yProps(shortcut.keys, hint, accessibilityHint)
