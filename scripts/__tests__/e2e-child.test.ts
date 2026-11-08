@@ -13,6 +13,14 @@ process.stdout.write(String(g.pid) + '\\n')
 setInterval(() => {}, 1000)
 `
 
+// A child that ignores SIGTERM, as a hung process may; it prints a line once
+// the handler is in place.
+const IGNORES_SIGTERM = `
+process.on('SIGTERM', () => {})
+process.stdout.write('ready\\n')
+setInterval(() => {}, 1000)
+`
+
 const pids: number[] = []
 
 function isAlive(pid: number): boolean {
@@ -62,6 +70,22 @@ describe('stopChildOnFailure', () => {
         expect(hasExited(child)).toBe(true)
         expect(isAlive(child.pid as number)).toBe(false)
     })
+
+    it('kills a child that ignores SIGTERM after the grace time, and rethrows its error', async () => {
+        const child = spawn(process.execPath, ['-e', IGNORES_SIGTERM], {
+            stdio: ['ignore', 'pipe', 'ignore'],
+        })
+        if (child.pid) pids.push(child.pid)
+        await readFirstLine(child)
+        const failure = new Error('start failed')
+
+        await expect(
+            stopChildOnFailure(child, () => Promise.reject(failure), { killAfterMs: 200 })
+        ).rejects.toBe(failure)
+
+        expect(child.signalCode).toBe('SIGKILL')
+        expect(isAlive(child.pid as number)).toBe(false)
+    }, 3000)
 
     it('leaves the child running when the wait succeeds', async () => {
         const child = spawnIdle()

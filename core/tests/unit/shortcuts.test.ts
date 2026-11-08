@@ -1047,6 +1047,37 @@ describe('help list', () => {
         expect(isScopeActive(close, topScopeEntry(floor))).toBe(false)
     })
 
+    it('leaves out a global shortcut that an active scoped one with the same keys shadows', () => {
+        register({
+            id: 't.search',
+            keys: '/',
+            scope: 'global',
+            description: 'Search',
+            group: 'Navigation',
+            run: () => {},
+        })
+        const listId = pushScope('list')
+        register({
+            id: 't.find',
+            keys: '/',
+            scope: 'list',
+            scopeId: listId,
+            description: 'Find in list',
+            group: 'List',
+            run: () => {},
+        })
+        const shortcuts = useShortcutRegistry.getState().shortcuts
+
+        const shadowed = helpGroups(shortcuts, null)
+        expect(Object.keys(shadowed)).toEqual(['List'])
+        expect(shadowed.List.map(s => s.id)).toEqual(['t.find'])
+
+        popScope(listId)
+        const unshadowed = helpGroups(shortcuts, null)
+        expect(Object.keys(unshadowed)).toEqual(['Navigation'])
+        expect(unshadowed.Navigation.map(s => s.id)).toEqual(['t.search'])
+    })
+
     it('lists the shortcuts of the screen under the ⇧? overlay', () => {
         const listId = pushScope('list')
         register({

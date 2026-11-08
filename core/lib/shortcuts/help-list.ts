@@ -1,5 +1,5 @@
 import { create } from '@tinycld/core/lib/store'
-import { isScopeActive } from './matcher'
+import { isScopeActive, pickFiring } from './matcher'
 import { nextScopeId, topScopeEntry } from './scopes'
 import type { Shortcut } from './types'
 
@@ -45,7 +45,7 @@ export function helpGroups(
     floor: number | null
 ): Record<string, Shortcut[]> {
     const top = topScopeEntry(floor ?? undefined)
-    const groups: Record<string, Shortcut[]> = {}
+    const byKeys = new Map<string, Shortcut[]>()
     for (const s of shortcuts.values()) {
         // The "Help" group documents how to open/close this very overlay, so
         // showing it inside the overlay is redundant.
@@ -58,12 +58,28 @@ export function helpGroups(
         // Listing those advertises keys that do nothing, and duplicates every
         // entry the two screens have in common.
         if (!isScopeActive(s, top)) continue
-        const key = s.group ?? 'General'
-        if (!groups[key]) groups[key] = []
-        groups[key].push(s)
+        const sameKeys = byKeys.get(s.keys)
+        if (sameKeys) sameKeys.push(s)
+        else byKeys.set(s.keys, [s])
+    }
+    const groups: Record<string, Shortcut[]> = {}
+    for (const sameKeys of byKeys.values()) {
+        // A global whose keys an active scoped shortcut also binds never fires
+        // (the matcher's rule, `pickFiring`), so it is left out too.
+        const scopedWins = pickFiring(sameKeys)?.scope !== 'global'
+        for (const s of sameKeys) {
+            if (scopedWins && s.scope === 'global') continue
+            addToGroup(groups, s)
+        }
     }
     for (const key of Object.keys(groups)) {
         groups[key].sort((a, b) => a.description.localeCompare(b.description))
     }
     return groups
+}
+
+function addToGroup(groups: Record<string, Shortcut[]>, s: Shortcut) {
+    const key = s.group ?? 'General'
+    if (!groups[key]) groups[key] = []
+    groups[key].push(s)
 }
