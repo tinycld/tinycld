@@ -593,6 +593,24 @@ test.describe('report rows per width', () => {
             expect(Math.abs((await box(amount)).x - headAmount.x)).toBeLessThanOrEqual(1)
             const cost = await cellOf(p, 'cost', 'Open')
             expect(Math.abs((await box(cost)).x - headCost.x)).toBeLessThanOrEqual(1)
+            // D1: a fold never re-measures. Once the groups are open the measure holds
+            // the details' widths; folding them all hides every detail row, and the
+            // columns stay where they were.
+            const fold = p.getByTestId('report-fold-all')
+            await expect(fold).toHaveText('Expand all')
+            await fold.click()
+            await expect(fold).toHaveText('Collapse all')
+            await expect(group).toHaveAttribute('aria-expanded', 'true')
+            await expect(table).toHaveCSS('opacity', '1')
+            const opened = await box(p.getByTestId('report-heading-amount'))
+            await fold.click()
+            await expect(fold).toHaveText('Expand all')
+            await expect(group).toHaveAttribute('aria-expanded', 'false')
+            await expect
+                .poll(async () =>
+                    Math.abs((await box(p.getByTestId('report-heading-amount'))).x - opened.x)
+                )
+                .toBeLessThanOrEqual(1)
         } finally {
             await close()
         }

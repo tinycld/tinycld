@@ -175,7 +175,6 @@ describe('measureKey', () => {
         format: DEFAULT_DISPLAY,
         columns: COLUMNS,
         levels: GROUPED,
-        hasDetail: true,
     }
 
     it('stays for the same run, columns and format', () => {
@@ -189,7 +188,5 @@ describe('measureKey', () => {
             measureKey({ ...base, format: { ...DEFAULT_DISPLAY, divideBy1000: true } })
         ).not.toBe(measureKey(base))
         expect(measureKey({ ...base, levels: FLAT })).not.toBe(measureKey(base))
-        // Groups that start closed: measured again when the first detail rows show.
-        expect(measureKey({ ...base, hasDetail: false })).not.toBe(measureKey(base))
     })
 })

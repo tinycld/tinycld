@@ -28,9 +28,10 @@ export function shownRunKey(model: Pick<ReportViewModel, 'run'>): string {
 // The measure taken from the rows shown when the key first appears, kept while the
 // key stays (D1): a later page, a fold or a live re-run never moves a column. It is
 // computed in render and kept in a ref by its key, with no state and no effect: the
-// measure is derived from the rows, only its moment is kept. `hasDetail` makes a
-// report whose groups start closed measure once more when its first detail rows are
-// shown, so the text columns get their content's width then, not their heading's.
+// measure is derived from the rows, only its moment is kept. A report whose groups
+// start closed is measured once more when its first detail rows are shown, so the
+// text columns get their content's width then, not their heading's. That happens
+// once per key: folding every group again hides the details but never measures.
 function useRunMeasures(model: TableLayoutModel): ColumnMeasures {
     const levels = model.rowLevels
     const key = measureKey({
@@ -38,17 +39,19 @@ function useRunMeasures(model: TableLayoutModel): ColumnMeasures {
         format: model.display,
         columns: model.columns,
         levels,
-        hasDetail: model.rows.some(item => item.row.kind === 'detail'),
     })
-    const kept = useRef<{ key: string; measures: ColumnMeasures } | null>(null)
-    if (kept.current?.key !== key) {
+    const hasDetail = model.rows.some(item => item.row.kind === 'detail')
+    const kept = useRef<{ key: string; hasDetail: boolean; measures: ColumnMeasures } | null>(null)
+    const isNewKey = kept.current?.key !== key
+    const isFirstDetail = hasDetail && kept.current?.hasDetail === false
+    if (kept.current === null || isNewKey || isFirstDetail) {
         const measures = measureColumns({
             columns: model.columns,
             rows: model.rows,
             format: model.display,
             levels,
         })
-        kept.current = { key, measures }
+        kept.current = { key, hasDetail, measures }
     }
     return kept.current.measures
 }

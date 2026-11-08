@@ -206,12 +206,10 @@ export function measureKey(input: {
     format: NumberFormat
     columns: readonly ResultColumn[]
     levels: RowLevels
-    /** Whether any detail row is shown: a report whose groups start closed measures again when one opens. */
-    hasDetail: boolean
 }): string {
-    const { runKey, format, columns, levels, hasDetail } = input
+    const { runKey, format, columns, levels } = input
     const shape = columns.map(column => [column.id, column.label, column.sortable === true])
-    return JSON.stringify([runKey, format, shape, levels, hasDetail])
+    return JSON.stringify([runKey, format, shape, levels])
 }
 
 export function measureColumns(input: {
