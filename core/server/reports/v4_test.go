@@ -97,3 +97,34 @@ func TestColumnFitIsChecked(t *testing.T) {
 	_, _, err := Load([]byte(fmt.Sprintf(base, note(`{"min":"8ch"}`))))
 	requireSpecError(t, err, 400, "spec", "unknown field")
 }
+
+func TestAFigureIsNeverCut(t *testing.T) {
+	app := withZooRegistry(t)
+	spec := func(first, fits string) string {
+		return `{"version":4,"source":"zoo.feedings","columns":[` + first + `,
+			{"id":"note","path":[{"field":"note"}]},{"id":"cost","path":[{"field":"cost"}]},
+			{"id":"fed","path":[{"field":"fed"}]},{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
+			{"id":"double","formula":{"op":"mul","args":[{"col":"cost"},{"value":2}]}}],
+			"groups":[{"id":"g","col":"animal"}],"display":{"columns":` + fits + `}}`
+	}
+	const animal = `{"id":"animal","path":[{"link":"animal"}]}`
+	for name, c := range map[string]struct{ raw, at string }{
+		"money with a min":           {spec(animal, `{"cost":{"minWidth":"8ch"}}`), "display.columns.cost.minWidth"},
+		"money with a width":         {spec(animal, `{"cost":{"width":"100px"}}`), "display.columns.cost.width"},
+		"a date that wraps":          {spec(animal, `{"fed":{"whiteSpace":"normal"}}`), "display.columns.fed.whiteSpace"},
+		"a summed number with a max": {spec(animal, `{"grams":{"maxWidth":"10ch"}}`), "display.columns.grams.maxWidth"},
+		"money with an ellipsis":     {spec(animal, `{"cost":{"textOverflow":"ellipsis"}}`), "display.columns.cost.textOverflow"},
+		"a formula giving money":     {spec(animal, `{"double":{"minWidth":"min-content"}}`), "display.columns.double.minWidth"},
+		"a label typed as a date":    {spec(`{"id":"animal","path":[{"link":"animal"}],"labelField":"born"}`, `{"animal":{"width":"20ch"}}`), "display.columns.animal.width"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireSpecError(t, Validate(app, loadSpec(t, c.raw)), 400, c.at, neverCutMessage)
+		})
+	}
+	// flexGrow and a whole-value min are free on a figure; text may narrow and wrap.
+	ok := spec(animal, `{"cost":{"minWidth":"max-content","flexGrow":2},"fed":{"minWidth":"auto"},
+		"note":{"minWidth":"5ch","whiteSpace":"normal","lineClamp":2},"animal":{"minWidth":"5ch","whiteSpace":"normal","lineClamp":2}}`)
+	if err := Validate(app, loadSpec(t, ok)); err != nil {
+		t.Fatal(err)
+	}
+}

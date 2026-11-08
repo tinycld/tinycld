@@ -1450,6 +1450,9 @@ func compileDry(p *plan) error {
 	if _, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1); err != nil {
 		return err
 	}
+	if err := fitRefusals(c); err != nil {
+		return err
+	}
 	for _, d := range p.spec.Params {
 		if op := p.options[d.ID]; op != nil {
 			// As the picker reads them: with the group order.

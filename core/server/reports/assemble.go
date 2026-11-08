@@ -16,23 +16,11 @@ func (rn *runner) columns() []ResultColumn {
 	out := make([]ResultColumn, 0, len(c.p.cols))
 	for _, cp := range c.p.cols {
 		rc := ResultColumn{ID: cp.col.ID, Label: labelOf(cp), Aggregate: cp.col.Aggregate, Format: cp.col.Format}
-		rc.Type = c.detailTypes[cp.col.ID]
-		if rc.Type == "" {
-			rc.Type = c.levelTypes[cp.col.ID]
-		}
-		if cp.path != nil {
-			rc.Type = cp.path.field.Type
-			if cp.tm >= 0 {
-				rc.Type = aggregateType(cp.col.Aggregate, cp.path.field.Type, cp.scale)
-			}
-			if cp.path.field.Type == Select {
-				rc.Options = cp.path.field.Options
-			}
-		} else if rc.Type == Select {
+		rc.Type, rc.TotalType = c.resultType(cp)
+		if cp.path != nil && cp.path.field.Type == Select {
+			rc.Options = cp.path.field.Options
+		} else if cp.path == nil && rc.Type == Select {
 			rc.Options = c.formulaOptions[cp.col.ID]
-		}
-		if t := c.levelTypes[cp.col.ID]; t != "" && t != rc.Type && cp.col.Aggregate != "" {
-			rc.TotalType = t
 		}
 		if typ, ok := c.labelTypes[cp.col.ID]; ok {
 			rc.LabelCell, rc.LabelType = cp.col.ID+"@label", typ

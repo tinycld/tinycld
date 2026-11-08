@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	validation "github.com/pocketbase/ozzo-validation/v4"
 )
 
 // Column fit (spec v4, column-fit-design.md §3): the engine checks the
@@ -16,6 +18,8 @@ const (
 	maxLineClamp = 4
 	maxFlexGrow  = 10
 )
+
+const neverCutMessage = "a figure is never cut: it takes only flexGrow and minWidth auto or max-content"
 
 var fitLengthPattern = regexp.MustCompile(`^(\d{1,4}(?:\.\d+)?)(ch|px|%)$`)
 
@@ -87,6 +91,87 @@ func (b *binder) columnFits(p *plan) {
 			b.columnFit(d.Columns[id], at)
 		}
 	}
+}
+
+// figureTypes are the cells shown whole (column-measure.ts FIGURE_TYPES), and
+// typedLabelTypes the labels shown whole (column-measure.ts TYPED_LABELS).
+var (
+	figureTypes     = []FieldType{Number, Money, Percent, Date, DateTime, Bool}
+	typedLabelTypes = []FieldType{Date, DateTime, Number, Money}
+)
+
+// resultType is a column's type and, when its group cells differ, their type:
+// what ResultColumn.Type and TotalType say.
+func (c *compiler) resultType(cp *colPlan) (typ, total FieldType) {
+	typ = c.detailTypes[cp.col.ID]
+	if typ == "" {
+		typ = c.levelTypes[cp.col.ID]
+	}
+	if cp.path != nil {
+		typ = cp.path.field.Type
+		if cp.tm >= 0 {
+			typ = aggregateType(cp.col.Aggregate, cp.path.field.Type, cp.scale)
+		}
+	}
+	if t := c.levelTypes[cp.col.ID]; t != "" && t != typ && cp.col.Aggregate != "" {
+		total = t
+	}
+	return typ, total
+}
+
+// neverCut is true for a column whose cells the client shows whole: a figure,
+// or (first, the label column) a label typed as a date or an amount.
+func (c *compiler) neverCut(cp *colPlan, first bool) bool {
+	typ, total := c.resultType(cp)
+	if slices.Contains(figureTypes, typ) || slices.Contains(figureTypes, total) {
+		return true
+	}
+	if !first {
+		return false
+	}
+	if t, ok := c.labelTypes[cp.col.ID]; ok && slices.Contains(typedLabelTypes, t) {
+		return true
+	}
+	return c.detailLabel != nil && slices.Contains(typedLabelTypes, c.detailLabel.typ)
+}
+
+// fitRefusals refuses a fit that could cut a figure (decision 2): on such a
+// column only flexGrow and a whole-value minWidth are taken.
+func fitRefusals(c *compiler) error {
+	d := c.p.spec.Display
+	if d == nil || len(d.Columns) == 0 {
+		return nil
+	}
+	problems := map[string]validation.Error{}
+	// The label column is the spec's first column; c.p.cols moves a pivot's
+	// cell column to the end, so its order is not the spec's.
+	label := c.p.spec.Columns[0].ID
+	for _, cp := range c.p.cols {
+		f, ok := d.Columns[cp.col.ID]
+		if !ok || !c.neverCut(cp, cp.col.ID == label) {
+			continue
+		}
+		at := "display.columns." + cp.col.ID + "."
+		for _, s := range []struct {
+			name  string
+			isSet bool
+		}{
+			{"width", f.Width != ""},
+			{"minWidth", f.MinWidth != "" && f.MinWidth != "auto" && f.MinWidth != "max-content"},
+			{"maxWidth", f.MaxWidth != ""},
+			{"whiteSpace", f.WhiteSpace != ""},
+			{"lineClamp", f.LineClamp != 0},
+			{"textOverflow", f.TextOverflow != ""},
+		} {
+			if s.isSet {
+				problems[at+s.name] = validation.NewError("invalid", neverCutMessage)
+			}
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return &SpecError{Status: 400, Problems: problems}
 }
 
 func (b *binder) columnFit(f ColumnFit, at string) {
