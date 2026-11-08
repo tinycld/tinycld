@@ -6,7 +6,10 @@ import type { DisplayWidth } from '../lib/spec'
 // time; open groups last for the session per report (not persisted, not in the
 // URL); the share dialog can be opened from the hub and from a report.
 
-export type ReportSurface = { kind: 'param'; paramId: string } | { kind: 'add-filter' }
+export type ReportSurface =
+    | { kind: 'param'; paramId: string }
+    | { kind: 'add-filter' }
+    | { kind: 'sort' }
 
 /** The expansion key of the builder's draft before it is saved. */
 export const NEW_REPORT_KEY = 'new'

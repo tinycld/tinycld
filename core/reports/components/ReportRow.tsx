@@ -2,6 +2,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import type { ReactNode } from 'react'
 import { Pressable, Text, View } from 'react-native'
+import { isFigureColumn, labelNeed } from '../lib/column-measure'
 import { type CellDisplay, cellDisplay, type NumberFormat, rowLabelText } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import { groupChain } from '../lib/sticky'
@@ -12,9 +13,16 @@ import {
     oneLineLabelSpan,
     oneLineLabelWidth,
     rowLayout,
+    type SidePart,
 } from '../lib/table-lines'
 import type { ResultColumn, ResultRow, RowKind } from '../lib/types'
-import { CARET_SIZE, columnAlign, INDENT, ROW_HEIGHT } from './report-table-layout'
+import {
+    CARET_SIZE,
+    CONTINUATION_LINE_HEIGHT,
+    columnAlign,
+    INDENT,
+    ROW_HEIGHT,
+} from './report-table-layout'
 
 // The rule above a row; it is drawn on the row's container, so it runs across
 // the whole row, wrapped lines included.
@@ -39,7 +47,7 @@ const ROW_WEIGHT: Record<RowKind, string> = {
 const TEXT_ALIGN: Record<Justify, string> = {
     start: 'text-left',
     center: 'text-center',
-    end: 'text-right tabular-nums',
+    end: 'text-right',
 }
 export const JUSTIFY_CONTENT = { start: 'flex-start', center: 'center', end: 'flex-end' } as const
 
@@ -49,55 +57,131 @@ export function amountJustify(column: ResultColumn, index: number): Justify {
 }
 
 /** Draws a column's cell, aligned as its block says. */
-export type RenderCell = (col: string, justify: Justify) => ReactNode
+export type RenderCell = (col: string, justify: Justify, minHeight: number) => ReactNode
 
 /**
  * A row (or the heading) as its block tree (lib/table-lines.ts), drawn with flex:
- * a stack is a column of blocks, a side block a row of blocks as wide as their
- * share of the tracks. A side row stretches its blocks to one height, so a cell
- * that spans lines is as tall as the lines beside it; justify aligns each cell,
- * and an empty part keeps the height of the lines it stands for. Heights come
- * from the content: FlashList measures the row.
+ * a stack is a column of blocks, a side block a row of blocks at the px widths the
+ * fit gave them. A side row stretches its blocks to one height, so a cell that
+ * spans lines is as tall as the lines beside it; justify aligns each cell, and an
+ * empty part keeps the height of the lines it stands for. Heights come from the
+ * content: FlashList measures the row.
  */
-export function BlockView({ block, renderCell }: { block: Block; renderCell: RenderCell }) {
-    if (block.kind === 'gap') return <View style={{ minHeight: block.lines * ROW_HEIGHT }} />
-    if (block.kind === 'cell') return <CellSlot block={block} renderCell={renderCell} />
-    if (block.kind === 'stack') return <StackBlock parts={block.parts} renderCell={renderCell} />
-    return <SideBlock of={block.of} parts={block.parts} renderCell={renderCell} />
+function BlockView({
+    block,
+    renderCell,
+    lineHeight,
+}: {
+    block: Block
+    renderCell: RenderCell
+    lineHeight: number
+}) {
+    if (block.kind === 'gap') return <View style={{ minHeight: block.lines * lineHeight }} />
+    if (block.kind === 'cell')
+        return <CellSlot block={block} renderCell={renderCell} lineHeight={lineHeight} />
+    if (block.kind === 'stack')
+        return <StackBlock parts={block.parts} renderCell={renderCell} lineHeight={lineHeight} />
+    return (
+        <SideBlock
+            of={block.of}
+            parts={block.parts}
+            renderCell={renderCell}
+            lineHeight={lineHeight}
+        />
+    )
 }
 
 function CellSlot({
     block,
     renderCell,
+    lineHeight,
 }: {
     block: Extract<Block, { kind: 'cell' }>
     renderCell: RenderCell
+    lineHeight: number
 }) {
-    return <View className="min-w-0 grow">{renderCell(block.col, block.justify)}</View>
+    return <View className="min-w-0 grow">{renderCell(block.col, block.justify, lineHeight)}</View>
 }
 
-function StackBlock({ parts, renderCell }: { parts: Block[]; renderCell: RenderCell }) {
+function StackBlock({
+    parts,
+    renderCell,
+    lineHeight,
+}: {
+    parts: Block[]
+    renderCell: RenderCell
+    lineHeight: number
+}) {
     const items = parts.map((part, i) => (
-        <BlockView key={blockKey(part, i)} block={part} renderCell={renderCell} />
+        <BlockView
+            key={blockKey(part, i)}
+            block={part}
+            renderCell={renderCell}
+            lineHeight={lineHeight}
+        />
     ))
     return <View className="grow">{items}</View>
+}
+
+// A part's px width from the fit; a hand-built tree with none takes its share of the tracks.
+function partStyle(part: SidePart, of: number) {
+    return part.width === undefined
+        ? { width: `${(part.tracks / of) * 100}%` }
+        : { width: part.width }
 }
 
 function SideBlock({
     of,
     parts,
     renderCell,
+    lineHeight,
 }: {
     of: number
-    parts: { block: Block; tracks: number }[]
+    parts: SidePart[]
     renderCell: RenderCell
+    lineHeight: number
 }) {
     const items = parts.map((part, i) => (
-        <View key={blockKey(part.block, i)} style={{ width: `${(part.tracks / of) * 100}%` }}>
-            <BlockView block={part.block} renderCell={renderCell} />
+        <View key={blockKey(part.block, i)} style={partStyle(part, of)}>
+            <BlockView block={part.block} renderCell={renderCell} lineHeight={lineHeight} />
         </View>
     ))
     return <View className="flex-row">{items}</View>
+}
+
+const lineStyle = (index: number, indent: number) =>
+    index === 0 ? undefined : { paddingLeft: indent }
+
+/**
+ * A row's (or the heading's) whole tree: the lines after the first of a stack root
+ * start at the indent, under a detail row's label text, as the fit sized them. The
+ * first line is firstHeight tall, the lines after it restHeight.
+ */
+export function RootBlockView({
+    root,
+    indent,
+    renderCell,
+    firstHeight,
+    restHeight,
+}: {
+    root: Block
+    indent: number
+    renderCell: RenderCell
+    firstHeight: number
+    restHeight: number
+}) {
+    if (root.kind !== 'stack')
+        return <BlockView block={root} renderCell={renderCell} lineHeight={firstHeight} />
+    const lines = root.parts.map((part, i) => (
+        <View key={blockKey(part, i)} style={lineStyle(i, indent)}>
+            <BlockView
+                block={part}
+                renderCell={renderCell}
+                lineHeight={i === 0 ? firstHeight : restHeight}
+            />
+        </View>
+    ))
+    return <View className="grow">{lines}</View>
 }
 
 /** A block's key: its first cell's column, or its place. */
@@ -137,16 +221,17 @@ interface RowLabelProps {
     format: NumberFormat
     onToggleGroup(row: ResultRow): void
     justify?: Justify
+    minHeight?: number
     /** Part of the stuck copy: its own test ids, and no tab stop (the row in the list has them). */
     isCopy?: boolean
 }
 
 // Child rows indent the label only, so the figures stay aligned. It grows to fill
 // its slot, as a block cell does.
-function labelStyle(row: ResultRow, justify: Justify) {
+function labelStyle(row: ResultRow, justify: Justify, minHeight: number) {
     return {
         flexGrow: 1,
-        minHeight: ROW_HEIGHT,
+        minHeight,
         paddingLeft: INDENT + row.depth * INDENT,
         justifyContent: JUSTIFY_CONTENT[justify],
     }
@@ -162,6 +247,7 @@ function GroupToggleLabel({
     format,
     onToggleGroup,
     justify = 'start',
+    minHeight = ROW_HEIGHT,
     isCopy = false,
 }: RowLabelProps) {
     const { row } = item
@@ -177,7 +263,7 @@ function GroupToggleLabel({
             aria-expanded={item.isOpen}
             onPress={() => onToggleGroup(row)}
             className="flex-row items-center gap-1 pr-3"
-            style={labelStyle(row, justify)}
+            style={labelStyle(row, justify, minHeight)}
         >
             <GroupCaret isOpen={item.isOpen} />
             <LabelText row={row} text={text} />
@@ -188,13 +274,13 @@ function GroupToggleLabel({
 /** A row's label: a group's is its fold toggle. */
 export function RowLabel(props: RowLabelProps) {
     if (props.item.isToggle) return <GroupToggleLabel {...props} />
-    const { item, format, justify = 'start', isCopy = false } = props
+    const { item, format, justify = 'start', minHeight = ROW_HEIGHT, isCopy = false } = props
     const text = rowLabelText(item.row, format)
     return (
         <View
             testID={labelId(item.row, isCopy)}
             className="flex-row items-center pr-3"
-            style={labelStyle(item.row, justify)}
+            style={labelStyle(item.row, justify, minHeight)}
         >
             <LabelText row={item.row} text={text} />
         </View>
@@ -205,13 +291,19 @@ export function RowLabel(props: RowLabelProps) {
  * A cell's box. A one-line amount keeps its width; a block cell has none and
  * grows to fill its slot, so a cell spanning lines is as tall as they are.
  */
-export function cellBoxStyle(width?: number) {
-    return { width, minHeight: ROW_HEIGHT, flexGrow: width === undefined ? 1 : 0 }
+export function cellBoxStyle(width: number | undefined, minHeight: number) {
+    return { width, minHeight, flexGrow: width === undefined ? 1 : 0 }
 }
 
-function cellTextClass(display: CellDisplay, justify: Justify, kind: RowKind): string {
+function cellTextClass(
+    display: CellDisplay,
+    justify: Justify,
+    kind: RowKind,
+    isFigure: boolean
+): string {
     const tone = display.isRed || display.isError ? 'text-danger' : 'text-foreground'
-    return `text-sm ${TEXT_ALIGN[justify]} ${tone} ${ROW_WEIGHT[kind]}`
+    const digits = isFigure ? 'tabular-nums' : ''
+    return `text-sm ${TEXT_ALIGN[justify]} ${digits} ${tone} ${ROW_WEIGHT[kind]}`
 }
 
 interface RowCellProps {
@@ -222,6 +314,7 @@ interface RowCellProps {
     onToggleGroup(row: ResultRow): void
     /** A one-line amount's fixed width; a block cell fills its slot. */
     width?: number
+    minHeight?: number
     isCopy?: boolean
 }
 
@@ -235,17 +328,21 @@ export function RowCell({
     justify,
     onToggleGroup,
     width,
+    minHeight = ROW_HEIGHT,
     isCopy = false,
 }: RowCellProps) {
     const { row } = item
     const display = cellDisplay(column, row, item.cells[column.id], format)
     const text = (
-        <Text numberOfLines={1} className={cellTextClass(display, justify, row.kind)}>
+        <Text
+            numberOfLines={1}
+            className={cellTextClass(display, justify, row.kind, isFigureColumn(column))}
+        >
             {display.text}
         </Text>
     )
     const testID = `${isCopy ? 'report-sticky-cell' : 'report-cell'}-${column.id}-${row.id}`
-    const style = cellBoxStyle(width)
+    const style = cellBoxStyle(width, minHeight)
     if (!item.isToggle) {
         return (
             <View testID={testID} className="justify-center px-3" style={style}>
@@ -269,15 +366,15 @@ export function RowCell({
 }
 
 /**
- * The label column's box on one line (F10): it takes the width the other columns
- * leave, and never less than the width the line gave it and the columns it spans.
+ * The label column's box on one line: the width the line gave it and the widths of
+ * the columns it spans.
  */
 export function oneLineLabelStyle(
     layout: LineLayout,
     labelId: string | undefined,
     spanned: readonly string[] = []
 ) {
-    return { flex: 1, minWidth: oneLineLabelWidth(layout, labelId, spanned) }
+    return { width: oneLineLabelWidth(layout, labelId, spanned) }
 }
 
 export interface TableRowProps {
@@ -312,6 +409,7 @@ function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: Ta
                 justify={amountJustify(column, span + i + 1)}
                 onToggleGroup={onToggleGroup}
                 width={layout.widths[column.id]}
+                minHeight={ROW_HEIGHT}
                 isCopy={isCopy}
             />
         ))
@@ -332,10 +430,11 @@ function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: Ta
 
 function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: TableRowProps) {
     const [label] = columns
-    const lines = rowLayout(item, layout, label?.id ?? '')
+    const lines = rowLayout(item, layout, label?.id ?? '', labelNeed(item, format))
     if (lines.kind !== 'blocks') return null
     const byId = new Map(columns.map(column => [column.id, column]))
-    const renderCell: RenderCell = (col, justify) => {
+    const restHeight = item.isToggle ? ROW_HEIGHT : CONTINUATION_LINE_HEIGHT
+    const renderCell: RenderCell = (col, justify, minHeight) => {
         if (col === label?.id) {
             return (
                 <RowLabel
@@ -343,6 +442,7 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: Tab
                     format={format}
                     onToggleGroup={onToggleGroup}
                     justify={justify}
+                    minHeight={minHeight}
                     isCopy={isCopy}
                 />
             )
@@ -356,13 +456,20 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: Tab
                 format={format}
                 justify={justify}
                 onToggleGroup={onToggleGroup}
+                minHeight={minHeight}
                 isCopy={isCopy}
             />
         )
     }
     return (
         <View className={`bg-background ${ROW_RULE[item.row.kind]}`}>
-            <BlockView block={lines.root} renderCell={renderCell} />
+            <RootBlockView
+                root={lines.root}
+                indent={lines.indent}
+                renderCell={renderCell}
+                firstHeight={ROW_HEIGHT}
+                restHeight={restHeight}
+            />
         </View>
     )
 }
@@ -383,6 +490,9 @@ function OwnRow({ item, ...props }: Omit<TableRowProps, 'item'> & { item: Visibl
     return <TableRow {...props} item={item} />
 }
 
+// A stuck label line runs across the row.
+const STICKY_LABEL_BOX = { flex: 1 } as const
+
 // The stuck copy of a section boundary (FlashList's StickyHeader target): the
 // open groups the rows below it are inside, outermost first, as label lines; an
 // open group's own row is drawn whole, figures included, as the list draws it.
@@ -397,10 +507,9 @@ export function StickyGroup({ rows, index, ...props }: StickyGroupProps) {
     if (chain.length === 0) return null
     const stuck = rows[index]
     const own = chain[chain.length - 1] === stuck ? (stuck ?? null) : null
-    const labelBox = oneLineLabelStyle(props.layout, props.columns[0]?.id)
     const labels = (own ? chain.slice(0, -1) : chain).map(item => (
         <View key={item.row.id} className="flex-row bg-background">
-            <View style={labelBox}>
+            <View style={STICKY_LABEL_BOX}>
                 <RowLabel
                     item={item}
                     format={props.format}

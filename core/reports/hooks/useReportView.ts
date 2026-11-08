@@ -332,10 +332,17 @@ export function useReportView(input: ReportViewInput) {
         // A new sort is a new rows key (rowsKeyOf), so the list starts at the top (F11).
         onSortColumn,
         onClearSort: () => write({ ...options, sort: null }),
+        onSetSort: (sort: ViewSort | null) => {
+            write({ ...options, sort })
+            closeSurface()
+        },
         // A run refused for the reader's sort offers Clear sort (R8).
         sortProblem: refusalSortProblem(run.problems),
         onCopyLink,
     }
 }
 
-export type ReportViewModel = ReturnType<typeof useReportView>
+// onSetSort is optional: a hand-built model (Books' mockup) has none, and then the Sort chip is not shown.
+export type ReportViewModel = Omit<ReturnType<typeof useReportView>, 'onSetSort'> & {
+    onSetSort?(sort: ViewSort | null): void
+}

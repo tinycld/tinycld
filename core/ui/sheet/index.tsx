@@ -4,11 +4,12 @@ import {
     LayerEscape,
     OverlayPortal,
     useHasSheetHost,
+    useLayerFocus,
     useOverlayLayer,
     wasConsumedByLayerDismissal,
 } from '@tinycld/core/ui/overlay'
 import { X } from 'lucide-react-native'
-import type { ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { createContext, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react'
 import {
     KeyboardAvoidingView,
@@ -83,6 +84,8 @@ interface SheetProps {
     surface?: Parameters<typeof useThemeColor>[0]
     /** Hide the drag-handle pill (shown by default). */
     hideHandle?: boolean
+    /** Focused on open (web) instead of the sheet's first focusable. */
+    initialFocusRef?: RefObject<{ focus: () => void } | null>
     testID?: string
 }
 
@@ -96,6 +99,7 @@ function SheetRoot({
     maxHeightPercent = 0.85,
     surface = 'background',
     hideHandle = false,
+    initialFocusRef,
     testID,
 }: SheetProps) {
     const overlayBg = useThemeColor('overlay-backdrop')
@@ -116,7 +120,9 @@ function SheetRoot({
     const backdropOpacity = useSharedValue(0)
     const [mounted, setMounted] = useState(false)
     const seededDir = useRef(dir)
-    const surfaceRef = useRef<ViewInstance | null>(null)
+    // State from a callback ref, as Dialog's: the surface mounts inside the
+    // host a commit after this component does, and the focus effect must run then.
+    const [surfaceNode, setSurfaceNode] = useState<ViewInstance | null>(null)
 
     const close = useCallback(() => onClose(), [onClose])
 
@@ -152,12 +158,19 @@ function SheetRoot({
     // the layer joins the stack for Escape and the Android back button only.
     const { isTopLayer } = useOverlayLayer({
         isOpen,
-        nodes: () => [surfaceRef.current as unknown as Node | null],
+        nodes: () => [surfaceNode as unknown as Node | null],
         onDismiss: close,
         dismissOnOutside: false,
         // Same rule as Dialog: a sheet owns the screen, so the app behind it
         // goes inert. See AppContent in ui/overlay/host.tsx.
         isModal: true,
+    })
+    // Same focus as Dialog: the app behind is inert, so without this focus
+    // falls to the body on open and stays there after close.
+    useLayerFocus({
+        isActive: isOpen,
+        container: surfaceNode as unknown as HTMLElement | null,
+        initialFocusRef,
     })
 
     const panGesture = Gesture.Pan()
@@ -226,9 +239,10 @@ function SheetRoot({
                 >
                     <GestureDetector gesture={panGesture}>
                         <Animated.View
-                            ref={surfaceRef}
+                            ref={setSurfaceNode}
                             testID={testID}
                             accessibilityViewIsModal
+                            tabIndex={-1}
                             onLayout={e => {
                                 sheetHeight.value = e.nativeEvent.layout.height
                             }}

@@ -3,6 +3,8 @@ import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
 import type { ReportViewModel } from '../hooks/useReportView'
+import { shownRunKey, type TableLayout, useTableLayout } from '../hooks/useTableLayout'
+import { layoutNoticeOf } from '../lib/notices'
 import { ReportControls } from './ReportControls'
 import { ReportCustomizePanel } from './ReportCustomizePanel'
 import { ReportDocumentHeader } from './ReportDocumentHeader'
@@ -74,7 +76,15 @@ function refusalAction(model: ReportViewModel) {
     return { label: 'Clear sort', testID: 'report-clear-sort', onPress: model.onClearSort }
 }
 
-export function ReportBody({ model }: { model: ReportViewModel }) {
+interface BodyProps {
+    model: ReportViewModel
+    table: TableLayout
+    /** D9: the top area that scrolls away with the rows (a phone); not given, it stays above. */
+    top?: ReactNode
+}
+
+// The body of every state but the table's: each shows only in its own state.
+function StateBodies({ model }: { model: ReportViewModel }) {
     const { state } = model
     const retry = { label: 'Retry', testID: 'report-retry', onPress: model.run.retry }
     const fix = refusalAction(model)
@@ -125,21 +135,27 @@ export function ReportBody({ model }: { model: ReportViewModel }) {
                 action={model.emptyAction}
                 onAction={model.onEmptyAction}
             />
-            <TableBody model={model} />
         </>
     )
 }
 
-// Which run's rows are shown: its design and its resolved params. It changes when
-// a run of a new design or new params lands; not while that run loads behind the
-// earlier rows, not when a live re-run of the same design and params answers, and
-// not on a group fold, a page load or a display-only change.
-function shownRunKey(model: ReportViewModel): string {
-    return JSON.stringify([model.run.shownRowsKey ?? '', model.run.result?.params ?? []])
+export function ReportBody({ model, table, top }: BodyProps) {
+    const states = <StateBodies model={model} />
+    // D9 with F11: on a phone the list holds the top area in every state, so the
+    // states are drawn inside it, under the top area; elsewhere they stand alone.
+    const fixedStates = top === undefined ? states : null
+    return (
+        <>
+            {fixedStates}
+            <TableBody model={model} table={table} top={top} states={states} />
+        </>
+    )
 }
 
-function TableBody({ model }: { model: ReportViewModel }) {
-    if (model.state !== 'ready') return null
+function TableBody({ model, table, top, states }: BodyProps & { states: ReactNode }) {
+    const isReady = model.state === 'ready'
+    if (!isReady && top === undefined) return null
+    const body = isReady ? undefined : states
     const runKey = shownRunKey(model)
     return (
         <ReportTable
@@ -147,44 +163,87 @@ function TableBody({ model }: { model: ReportViewModel }) {
             rows={model.rows}
             runKey={runKey}
             format={model.display}
-            breakpoint={model.breakpoint}
-            layouts={model.layouts}
-            rowLevels={model.rowLevels}
+            layout={table.layout}
+            isMeasured={table.isMeasured}
+            onRowWidth={table.onRowWidth}
             onToggleGroup={model.onToggleGroup}
             onNearEnd={model.run.loadMore}
-            isLoadingMore={model.run.isLoadingMore}
+            hasMore={model.run.hasMore}
             sort={model.sort}
             onSortColumn={model.onSortColumn}
             onTopRowIndex={model.run.onTopRowIndex}
+            top={top}
+            body={body}
         />
     )
 }
 
-function ViewBody({ model }: { model: ReportViewModel }) {
+function ViewBody({ model, table, top }: BodyProps) {
     if (!model.isBodyShown) return null
-    return <ReportBody model={model} />
+    return <ReportBody model={model} table={table} top={top} />
+}
+
+interface ReportTopProps {
+    model: ReportViewModel
+    isSortMenuShown: boolean
+    layoutNotice: string | undefined
+    isCompact: boolean
+}
+
+// Everything above the rows: the header, the chips, the notices and the document header.
+function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTopProps) {
+    return (
+        <>
+            <ReportHeader
+                title={model.title}
+                onBack={model.onBack}
+                actions={toolbarItems(model)}
+                isUpdating={model.isUpdating}
+                isUpdatingLive={!model.isUpdatingInBuilder}
+            />
+            <ReportControls model={model} isSortMenuShown={isSortMenuShown} />
+            <ReportNotices
+                notices={model.notices}
+                layoutNotice={layoutNotice}
+                isLive={model.isBodyShown}
+                isCompact={isCompact}
+            />
+            <ReportDocumentHeader
+                heading={model.heading}
+                title={model.title}
+                periodWords={model.periodWords}
+                isThousands={model.display.divideBy1000}
+            />
+        </>
+    )
 }
 
 export function ReportView({ model, side }: { model: ReportViewModel; side?: ReactNode }) {
+    const table = useTableLayout(model)
+    const isSortMenuShown = table.layout.kind === 'blocks'
+    // The table's layout notice joins the run's in the band, once the table is drawn.
+    const layoutNotice = model.state === 'ready' ? layoutNoticeOf(table.layout) : undefined
+    const isCompact = model.breakpoint === 'mobile'
+    const top = (
+        <ReportTop
+            model={model}
+            isSortMenuShown={isSortMenuShown}
+            layoutNotice={layoutNotice}
+            isCompact={isCompact}
+        />
+    )
+    // D9: on a phone the top area is the list's header and scrolls away with the rows.
+    // It stays there in every run state (the list then shows the state under it), so
+    // a run that lands with no rows or fails does not mount it again and the focus
+    // stays on the control that started it. On a wider screen it stays above the body.
+    const isTopInList = isCompact && model.isBodyShown
+    const fixedTop = isTopInList ? null : top
+    const listTop = isTopInList ? top : undefined
     return (
         <View testID="report-screen" className="flex-1 flex-row bg-background">
             <View className="min-w-0 flex-1">
-                <ReportHeader
-                    title={model.title}
-                    onBack={model.onBack}
-                    actions={toolbarItems(model)}
-                    isUpdating={model.isUpdating}
-                    isUpdatingLive={!model.isUpdatingInBuilder}
-                />
-                <ReportControls model={model} />
-                <ReportNotices notices={model.notices} isLive={model.isBodyShown} />
-                <ReportDocumentHeader
-                    heading={model.heading}
-                    title={model.title}
-                    periodWords={model.periodWords}
-                    isThousands={model.display.divideBy1000}
-                />
-                <ViewBody model={model} />
+                {fixedTop}
+                <ViewBody model={model} table={table} top={listTop} />
             </View>
             <ReportCustomizePanel model={model} />
             {side}

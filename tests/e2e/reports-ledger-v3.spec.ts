@@ -39,11 +39,6 @@ const TEAM_BALANCE_TITLE = 'Stub team balance'
 const YEAR = new Date().getFullYear()
 const PHONE = { width: 390, height: 844 }
 const OPENING = 'Before the period'
-// Q2: a line at a 1024 window is 944 wide. The narrowed line that Q2 asks about
-// (a one-level grouped label floor of 98, + 5 × 80 + 3 × 128) fits in it; this
-// report's does not (98 + 2 × 80 + 6 × 128).
-const Q2_NARROWED_LINE = 882
-const TEAM_BALANCE_NARROWED_LINE = 1026
 
 async function openTeamBalance(page: Page) {
     await openReportsHub(page)
@@ -120,10 +115,17 @@ const MAX_PAGE = 1000
 /**
  * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
  * teams of one sale each after them, and opens the report on them alone, in pages
- * of 5 detail rows, so 12 sales page across team A's end. Then scrolls until the
- * last team's Total row is drawn: every page is merged then.
+ * of 5 detail rows, so 12 sales page across team A's end. A next page (a request
+ * with a cursor) waits for `nextPages` when it is given. Team n's sales start at
+ * `baseAmount` × n cents and go up a cent each.
  */
-async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
+async function openPagedTeams(
+    page: Page,
+    prefix: string,
+    smallTeams = 0,
+    nextPages?: Promise<void>,
+    baseAmount = 100
+) {
     await loginAsShippedOwner(page)
     const stem = uniqueName(prefix)
     const letters = 'ABCDEFGH'.slice(0, 2 + smallTeams)
@@ -136,7 +138,7 @@ async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
             customerPrefix: `${stem}${letters[i]}`,
             count: i < 2 ? 6 : 1,
             firstDay: `${YEAR}-02-01`,
-            firstAmount: 100 * (i + 1),
+            firstAmount: baseAmount * (i + 1),
             cost: 0,
             quantity: 1,
         })
@@ -145,6 +147,7 @@ async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
     const sent: SentRun[] = []
     await page.route('**/api/reports/run', async route => {
         const body = route.request().postDataJSON()
+        if (body.options?.cursor && nextPages) await nextPages
         if (body.options?.cursor) cursors.push(body.options.cursor)
         sent.push({ cursor: body.options?.cursor, limit: body.options?.limit })
         // The client's page sizes become 5. A fold run asks for max(200, the detail
@@ -162,25 +165,40 @@ async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
     await page.setViewportSize({ width: 1280, height: 1600 })
     await openTeamBalance(page)
     // The first run has no Teams filter, so it shows these sales too: no row
-    // tells the two runs apart. The new run's params change the list's key, so
-    // the list mounts again; once the first run's scroller has left the page,
-    // every row on it is the new run's.
+    // tells the two runs apart. Once the run with the Teams filter has answered
+    // and the view no longer says "Updating…", every row is the new run's.
     await expect(detailLabels(page).first()).toBeVisible()
-    const firstRunScroller = await listScroller(detailLabels(page).first())
+    const teamsRun = page.waitForResponse(
+        response =>
+            response.url().includes('/api/reports/run') &&
+            response.request().postDataJSON()?.params?.teams !== undefined
+    )
     await showTeams(page, stem, teams)
-    await expect.poll(() => firstRunScroller.evaluate(el => el.isConnected)).toBe(false)
+    await teamsRun
+    await expect(page.getByTestId('report-updating')).toHaveCount(0)
     const firstSale = rowOf(page, `${stem}A 00`)
     await expect(firstSale).toBeVisible()
+    return { stem, teams, cursors, sent, firstSale }
+}
+
+/**
+ * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
+ * teams of one sale each after them, and opens the report on them alone, in pages
+ * of 5 detail rows, so 12 sales page across team A's end. Then scrolls until the
+ * last team's Total row is drawn: every page is merged then.
+ */
+async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
+    const { firstSale, ...paged } = await openPagedTeams(page, prefix, smallTeams)
     const scroller = await listScroller(firstSale)
     await expect
         .poll(async () => {
             await scroller.evaluate(el => {
                 el.scrollTop = el.scrollHeight
             })
-            return rowOf(page, `Total ${teams[teams.length - 1]}`).count()
+            return rowOf(page, `Total ${paged.teams[paged.teams.length - 1]}`).count()
         })
         .toBe(1)
-    return { stem, teams, cursors, sent }
+    return paged
 }
 
 /**
@@ -269,6 +287,62 @@ test.describe('general-ledger: report engine v3', () => {
         expect(occurrences(ids, 'total')).toBe(1)
         // A report over amounts with a currency keys its Total by currency (total:["USD"]).
         expect(ids[ids.length - 1]).toMatch(/^total/)
+    })
+
+    // D8, D12: while a later page is left, the list ends in "Loading more rows…", never
+    // in the Total; the Total comes with the last page, and "End of report" ends the list.
+    // The amount column keeps its width when the Total lands (the measure held it).
+    test('the Total waits for the last page, a loading row stands in its place, and an end row follows it', async ({
+        page,
+    }) => {
+        let release = () => {}
+        const nextPages = new Promise<void>(resolve => {
+            release = resolve
+        })
+        // Sales of 6,000.00 (team A) and 12,000.00 (team B) a cent up each: the team
+        // rollups (36,000.15 and 72,000.15) stay inside the measure's worst amount
+        // (−99,999.99), and only the Total (108,000.30) is wider.
+        const { teams, firstSale } = await openPagedTeams(page, 'BalEnd', 0, nextPages, 600_000)
+        const loading = page.getByTestId('report-loading-more')
+        await expect(loading).toContainText('Loading more rows…')
+        expect(occurrences(await rowIds(page), 'total')).toBe(0)
+        await expect(page.getByTestId('report-end')).toHaveCount(0)
+        const heading = page.getByTestId('report-heading-amount')
+        const widthOf = async () => (await heading.boundingBox())?.width
+        await expect.poll(widthOf).toBeGreaterThan(0)
+        const amountWidth = await widthOf()
+
+        release()
+        const scroller = await listScroller(firstSale)
+        await expect
+            .poll(async () => {
+                await scroller.evaluate(el => {
+                    el.scrollTop = el.scrollHeight
+                })
+                return occurrences(await rowIds(page), 'total')
+            })
+            .toBe(1)
+        await expect(rowOf(page, `Total ${teams[teams.length - 1]}`)).toHaveCount(1)
+        await expect(page.getByTestId('report-end')).toHaveText('End of report')
+        await expect(loading).toHaveCount(0)
+        const ids = await rowIds(page)
+        expect(ids[ids.length - 1]).toMatch(/^total/)
+        await expect.poll(widthOf).toBe(amountWidth)
+        // The Total is wider than every detail amount and the worst amount, so only a
+        // measure that read the held Total gives the column room for it.
+        const total = page.getByTestId(`report-cell-amount-${ids[ids.length - 1]}`)
+        await expect(total).toHaveText(/^\$?108,000\.30$/)
+        const fit = await total.evaluate(cell => {
+            const text = cell.querySelector('div[dir="auto"]')
+            const head = document.querySelector('[data-testid="report-heading-amount"]')
+            if (!(text instanceof HTMLElement) || !head) return 'not drawn'
+            if (text.scrollWidth > text.clientWidth) return 'cut'
+            const box = text.getBoundingClientRect()
+            const headBox = head.getBoundingClientRect()
+            const isInside = box.left >= headBox.left - 1 && box.right <= headBox.right + 1
+            return isInside ? 'fits' : 'outside its heading'
+        })
+        expect(fit).toBe('fits')
     })
 
     // F11: a fold keeps the reader's place. Folding a section that came on a later
@@ -379,6 +453,8 @@ test.describe('general-ledger: report engine v3', () => {
         await sort.click()
         await expect.poll(() => sortParam(page)).toBe('amount:asc')
         await expect(detailLabels(page)).toHaveText(['Dee', 'Ann', 'Bea', 'Cy'])
+        // One line keeps tap-to-sort and shows no Sort chip.
+        await expect(page.getByTestId('report-sort-menu')).toHaveCount(0)
         await sort.click()
         await expect.poll(() => sortParam(page)).toBe('amount:desc')
         await expect(detailLabels(page)).toHaveText(['Cy', 'Bea', 'Ann', 'Dee'])
@@ -444,50 +520,40 @@ test.describe('general-ledger: report engine v3', () => {
         await expect(await cellOf(page, 'balance', 'Dee')).toHaveText('20.00')
     })
 
-    // Q2, recommended answer (narrow first, then wrap): at a 1024 window the line is
-    // 944 wide, so Q2's narrowed line (882) fits and this report's does
-    // not. This report wraps to its tablet arrangement: eight headings (Team is left
-    // out) on two lines, all inside the table, and nothing scrolls sideways.
-    test('on a desktop too narrow for its narrowed line a report wraps to its tablet arrangement inside the table', async ({
+    // A report too wide for one line at 820 wraps (by an arrangement or by itself);
+    // every heading stays inside the table and nothing scrolls sideways.
+    test('on a view too narrow for one line a report wraps inside the table and never scrolls sideways', async ({
         page,
     }) => {
         await balanceOfOneTeam(page, 'BalFit')
-        await page.setViewportSize({ width: 1024, height: 720 })
+        await page.setViewportSize({ width: 820, height: 720 })
         const measure = () =>
             page.getByTestId('report-table').evaluate(table => {
                 const right = table.getBoundingClientRect().right
-                const heading = table.querySelector('[data-testid="report-heading-row"]')
                 const cells = [
                     ...table.querySelectorAll('[data-testid^="report-heading-"]'),
                 ].filter(el => el.getAttribute('data-testid') !== 'report-heading-row')
                 const tops = new Set(cells.map(el => Math.round(el.getBoundingClientRect().top)))
                 return {
-                    // The heading row keeps the list's scroll bar gutter, so its client
-                    // width is the width a line's tracks get.
-                    line: heading?.clientWidth ?? 0,
-                    headings: cells.length,
                     lines: tops.size,
                     outside: cells.filter(el => el.getBoundingClientRect().right > right + 1)
                         .length,
                 }
             })
-        // At the first window (1280) the line is 1200; wait for the 1024 one.
-        await expect
-            .poll(async () => (await measure()).line)
-            .toBeLessThan(TEAM_BALANCE_NARROWED_LINE)
-        await expect.poll(async () => (await measure()).headings).toBe(8)
+        await expect(page.getByTestId('report-table')).toHaveCSS('opacity', '1')
+        // Polled: the lines are read once the 820 window's re-layout has landed.
+        await expect.poll(async () => (await measure()).lines).toBeGreaterThanOrEqual(2)
         const fit = await measure()
-        expect(fit.line).toBeGreaterThanOrEqual(Q2_NARROWED_LINE)
-        expect(fit).toMatchObject({ lines: 2, outside: 0 })
-        await expect(page.getByTestId('report-heading-team')).toHaveCount(0)
+        expect(fit.lines).toBeGreaterThanOrEqual(2)
+        expect(fit.outside).toBe(0)
         const scroller = await listScroller(rowOf(page, 'Dee'))
         expect(await scroller.evaluate(el => el.scrollWidth === el.clientWidth)).toBe(true)
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
-            1024
+            820
         )
     })
 
-    test('on a phone an opening row is its label and then its figures, and a heading still sorts', async ({
+    test('on a phone an opening row shows its whole label with its figures right after it, and the Sort chip sorts', async ({
         page,
     }) => {
         await balanceOfOneTeam(page, 'BalPhone')
@@ -509,14 +575,24 @@ test.describe('general-ledger: report engine v3', () => {
                 const figures = await balance.boundingBox()
                 const width = await page.evaluate(() => document.documentElement.scrollWidth)
                 if (!label || !figures) return null
-                const gap = figures.y - (label.y + label.height)
-                return { gapFits: gap >= -1 && gap <= 8, fitsPhone: width <= PHONE.width }
+                const labelWhole = await opening
+                    .getByText(OPENING, { exact: true })
+                    .evaluate(el => el.scrollWidth <= el.clientWidth)
+                return {
+                    figuresFollow:
+                        figures.y >= label.y - 1 && figures.y <= label.y + label.height + 8,
+                    labelWhole,
+                    fitsPhone: width <= PHONE.width,
+                }
             })
-            .toEqual({ gapFits: true, fitsPhone: true })
+            .toEqual({ figuresFollow: true, labelWhole: true, fitsPhone: true })
 
-        await page.getByTestId('report-sort-amount').click()
+        await page.getByTestId('report-sort-menu').click()
+        await page.getByTestId('report-sort-choice-amount-asc').click()
         await expect.poll(() => sortParam(page)).toBe('amount:asc')
         await expect(detailLabels(page)).toHaveText(['Dee', 'Ann', 'Bea', 'Cy'])
+        await expect(page.getByTestId('report-sort-amount')).toHaveCount(0)
+        await expect(page.getByTestId('report-sort-menu')).toContainText('Sort: Amount ↑')
     })
 
     // The builder's v3 controls, in the order the tasks add them: This row's field,

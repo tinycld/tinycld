@@ -31,6 +31,7 @@ describe('runView', () => {
             result: undefined,
             problems: [],
             isUpdating: false,
+            heldRows: [],
             topics: [],
         })
     })
@@ -86,5 +87,40 @@ describe('runView', () => {
         const kept = runView(query({ isError: true, pages: [ok()] }))
         expect(kept.state).toBe('error')
         expect(kept.result?.rows).toHaveLength(1)
+    })
+
+    const withTotal = (next: string): RunOutcome => {
+        const base = result(['collection/sales'])
+        return {
+            kind: 'ok',
+            result: {
+                ...base,
+                rows: [
+                    ...base.rows,
+                    { id: 'total', kind: 'total', depth: 0, label: 'Total', cells: {} },
+                ],
+                page: { size: 1, next },
+            },
+        }
+    }
+
+    it('holds the Total back while a later page is left, and shows it with the last page', () => {
+        const first = runView(query({ pages: [withTotal('c1')] }))
+        expect(first.result?.rows.map(row => row.id)).toEqual(['d:1'])
+        expect(first.heldRows.map(row => row.id)).toEqual(['total'])
+        const all = runView(query({ pages: [withTotal('c1'), withTotal('')] }))
+        expect(all.result?.rows.map(row => row.id)).toEqual(['d:1', 'total'])
+        expect(all.heldRows).toEqual([])
+    })
+
+    it('holds the Total back again when a re-run’s first page has a later page', () => {
+        const pages = [withTotal('c1')]
+        const shown = runView(query({ pages }))
+        const updating = runView(query({ pages, isPlaceholderData: true }))
+        expect(updating.result).toBe(shown.result)
+        expect(updating.heldRows).toBe(shown.heldRows)
+        expect(runView(query({ pages: [withTotal('c2')] })).heldRows.map(row => row.id)).toEqual([
+            'total',
+        ])
     })
 })

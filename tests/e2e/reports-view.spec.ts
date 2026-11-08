@@ -135,9 +135,8 @@ test.describe('the report view', () => {
         const { inviteePage: p, user, close } = await makeReport(page, 'rptchips', true)
         try {
             const table = p.getByTestId('report-table')
-            await expect(p.getByTestId('report-param-day')).toHaveText(
-                new RegExp(`^Day: This fiscal year · Jan 1 – Dec 31, ${YEAR}$`)
-            )
+            await expect(p.getByTestId('report-param-day')).toHaveText('Day: This fiscal year')
+            await expect(p.getByTestId('report-document-period')).toContainText(String(YEAR))
             await expect(table.getByText('Gamma', { exact: true })).toBeVisible()
 
             await p.getByTestId('report-param-day').click()
@@ -413,6 +412,12 @@ test.describe('the report view', () => {
             // The same on a phone, where the header row is narrow.
             await p.setViewportSize({ width: 390, height: 844 })
             await expect(rowOf(p, 'Open')).toHaveAttribute('aria-expanded', 'true')
+            // D9: once the phone layout is drawn, the title is in the table's box.
+            await expect
+                .poll(
+                    async () => (await topOf(p.getByTestId('report-title'))) >= (await topOf(table))
+                )
+                .toBe(true)
             tableTop = await topOf(table)
             release = await holdRuns(p)
             // The open group's stuck copy lies over its row at the top, so fold from
@@ -518,9 +523,8 @@ test.describe('the report view', () => {
             await p.getByTestId('report-param-day').click()
             await expect(p.getByText('Day', { exact: true }).last()).toBeVisible()
             await p.getByTestId('report-period-preset-lastFiscalYear').click()
-            await expect(p.getByTestId('report-param-day')).toHaveText(
-                new RegExp(`^Day: Last fiscal year · Jan 1 – Dec 31, ${YEAR - 1}$`)
-            )
+            await expect(p.getByTestId('report-param-day')).toHaveText('Day: Last fiscal year')
+            await expect(p.getByTestId('report-document-period')).toContainText(String(YEAR - 1))
             await expect(p.getByTestId('report-empty')).toBeVisible()
             await pressToolbar(p, 'report-customize-open', 'Customize')
             await expect(p.getByTestId('report-customize')).toBeVisible()
@@ -528,6 +532,28 @@ test.describe('the report view', () => {
             await p.getByTestId('report-customize-close').click()
             await expect(p.getByTestId('report-customize')).toBeHidden()
             await expect.poll(() => p.url()).toContain('nocents=1')
+        } finally {
+            await close()
+        }
+    })
+
+    // D11: a long chip row scrolls sideways under a fade at its right edge; the fade
+    // goes once the row is scrolled to its end, and a desktop whose chips fit has none.
+    test('on a phone the chips scroll sideways under a fade, and the period chip names its preset only', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await makeReport(page, 'rptchipfade', true, 'Sales')
+        try {
+            await expect(p.getByTestId('report-param-day')).toHaveText('Day: This fiscal year')
+            await expect(p.getByTestId('report-controls-fade')).toHaveCount(0)
+            await p.setViewportSize({ width: 390, height: 844 })
+            await addCustomerFilter(p, 'Gamma and every other customer of the year')
+            const fade = p.getByTestId('report-controls-fade')
+            await expect(fade).toBeVisible()
+            await p.getByTestId('report-controls').evaluate(el => {
+                el.scrollLeft = el.scrollWidth
+            })
+            await expect(fade).toHaveCount(0)
         } finally {
             await close()
         }

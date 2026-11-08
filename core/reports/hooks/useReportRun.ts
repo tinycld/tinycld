@@ -22,11 +22,13 @@ import {
     withPage,
 } from '../lib/run-client'
 import { type RunView, runView } from '../lib/run-state'
-import type { RunResult } from '../lib/types'
+import type { ResultRow, RunResult } from '../lib/types'
 import { useReportRecentStore } from '../stores/report-recent-store'
 import { useLiveTopics } from './useLiveTopics'
 
-export interface ReportRun extends Omit<RunView, 'topics'> {
+export interface ReportRun extends Omit<RunView, 'topics' | 'heldRows'> {
+    /** Optional, because a hand-built ReportRun (a mockup) holds nothing back. */
+    heldRows?: readonly ResultRow[]
     /**
      * The rows key of the body whose pages are shown. While a changed run loads, the
      * previous body's pages stay in view, so this changes when the new run lands.

@@ -118,16 +118,25 @@ A formula is built from parts you pick from menus: **Number**, **Text**, **Colum
 
 ## When columns do not fit
 
-A report never scrolls sideways. When its columns do not fit on one line, the text columns get narrower first: the first column, then the other text columns. Long text ends in "…". Numbers, amounts, percents, dates and yes/no values keep their width. When the columns still do not fit, each row wraps: the label on the first line and the figures below it, each under its heading.
+A report never scrolls sideways. Each column gets the room its heading and its values need. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". Spare room goes to the columns whose text is cut, then to the text columns. A column with no value is as wide as its heading.
 
-To choose where each column goes at a width, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. An arrangement always applies at its own width. A width with no arrangement uses the next narrower one when the columns do not fit. The heading row and the open group rows stay at the top while you scroll. A long report loads more rows as you scroll, also when it has groups.
+Group, opening, subtotal and total rows show their whole label: it runs across the empty cells after it. When the rows wrap, a total's label moves onto the line of its figures if there is room.
+
+When the columns do not fit on one line, the report uses the first arrangement that fits the screen, widest first: **Desktop**, then **Tablet**, then **Phone**. With no arrangement that fits, each row wraps by itself: as many columns as fit go on each line, the label first, and the next lines start under the row's label. A column heading that is too long for its column uses two lines. When the rows wrap, the lines after a row's first line are shorter, so more rows fit on the screen. Notes about the report, such as a pivot that cannot follow an arrangement, show in one band above the report. On a phone the band shows two lines; select **Show all** to read every note.
+
+To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. On a phone, the title, the chips and the notes scroll away with the rows, so the rows get the screen; scroll back to the top to change a chip. A long report loads more rows as you scroll, also when it has groups. Until its last rows have loaded, the list ends with **Loading more rows…**; the Total shows with the last rows, and **End of report** marks the end.
 
 ## Run a report
 
-- The chips above the report set its period and filters; **Add filter** adds a chip
-  for a filter you can set while you read. In the period chip, **All dates** shows
+- The chips above the report set its period and filters; the period chip names the
+  period, such as **This month**, and the dates show under the chips. **Add filter**
+  adds a chip for a filter you can set while you read. On a narrow screen, swipe the
+  chips sideways to see the rest; the right edge fades while there are more. In the period chip, **All dates** shows
   every row, also a row with no date. A link copied with **Copy link** opens the
   report with the same choices.
+- To sort, press a column heading: each press sorts up, then down, then back to the
+  report's order. When the rows wrap (on a phone), use the **Sort** chip above the
+  report instead (on a phone, scroll back to the top to reach it).
 - **Customize** changes how numbers look (thousands, cents, negatives) and which
   columns show. It never changes the figures.
 - Select a group row to open or close it. **Expand all** opens every group; when any

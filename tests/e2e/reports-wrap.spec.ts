@@ -20,8 +20,8 @@ import {
 } from './reports-helpers'
 
 /**
- * E14: on a phone a row too wide for one line wraps (the label on line 1, the
- * figures aligned on line 2 under headings that wrap the same way) and nothing
+ * E14: on a phone a row too wide for one line wraps: as many columns as fit on
+ * each line, each under its heading (the headings wrap the same way), and nothing
  * scrolls sideways; an open group's row sticks while its rows scroll under it.
  * Desktop keeps one line per row, narrowing text columns before it wraps, never
  * scrolls sideways, and the heading row stays at the top. An author arrangement
@@ -67,11 +67,18 @@ async function wideReport(p: Page, title: string, grouped: boolean) {
 async function boxes(p: Page, row: string) {
     const label = rowOf(p, row)
     const id = (await label.getAttribute('data-testid'))?.replace('report-row-', '') ?? ''
-    const box = async (testId: string) => p.getByTestId(testId).boundingBox()
+    // A column the report does not have (status, when not grouped) has no box;
+    // boundingBox would wait for it, and stall the poll that reads these.
+    const box = async (testId: string) => {
+        const locator = p.getByTestId(testId)
+        return (await locator.count()) > 0 ? locator.boundingBox() : null
+    }
     return {
         label: await label.boundingBox(),
         amount: await box(`report-cell-amount-${id}`),
         cost: await box(`report-cell-cost-${id}`),
+        status: await box(`report-cell-status-${id}`),
+        headStatus: await box('report-heading-status'),
         headLabel: await box('report-heading-customer'),
         headAmount: await box('report-heading-amount'),
         headCost: await box('report-heading-cost'),
@@ -103,7 +110,10 @@ async function expectWholeStackPushed(p: Page, stackIds: string[]) {
     const dayRow = (await rowOf(p, '2026-01-05').boundingBox())?.height ?? 0
     expect(height).toBeGreaterThan(dayRow + 10)
 
-    await scrollRowTo(next, height / 2)
+    const scroller = await listScroller(next)
+    const scrollerTop = (await scroller.boundingBox())?.y ?? 0
+    // D9: on a phone the heading row floats over the list's top.
+    await scrollRowTo(next, headingBottom - scrollerTop + height / 2)
     await expect
         .poll(async () => {
             const stack = await sticky.boundingBox()
@@ -159,12 +169,14 @@ test.describe('report rows per width', () => {
                 .poll(async () => {
                     const b = await boxes(p, 'Wrapco 00')
                     const width = await p.evaluate(() => document.documentElement.scrollWidth)
-                    if (!b.label || !b.amount || !b.cost) return null
+                    if (!b.label || !b.amount || !b.cost || !b.status) return null
                     return {
-                        wrapped: b.amount.y >= b.label.y + b.label.height - 1,
+                        // The last column cannot share line 1 when one line does not fit.
+                        wrapped: b.status.y >= b.label.y + b.label.height - 1,
                         amountUnderHeading: Math.abs((b.headAmount?.x ?? 0) - b.amount.x) <= 1,
                         costUnderHeading: Math.abs((b.headCost?.x ?? 0) - b.cost.x) <= 1,
-                        headingsWrapped: (b.headAmount?.y ?? 0) > (b.headLabel?.y ?? 0),
+                        statusUnderHeading: Math.abs((b.headStatus?.x ?? 0) - b.status.x) <= 1,
+                        headingsWrapped: (b.headStatus?.y ?? 0) > (b.headLabel?.y ?? 0),
                         fitsPhone: width <= 390,
                     }
                 })
@@ -172,21 +184,290 @@ test.describe('report rows per width', () => {
                     wrapped: true,
                     amountUnderHeading: true,
                     costUnderHeading: true,
+                    statusUnderHeading: true,
                     headingsWrapped: true,
                     fitsPhone: true,
                 })
 
-            // Scroll the open group's rows: its own row goes up under the heading row,
-            // and its stuck copy stays just under the heading row.
-            const headingBottom = await bottomOf(p.getByTestId('report-heading-row'))
+            // D6: the wrapped line is shorter than the first (not a press target), and it
+            // starts under the label's text (review §7.1-6).
+            const id =
+                (await rowOf(p, 'Wrapco 00').getAttribute('data-testid'))?.replace(
+                    'report-row-',
+                    ''
+                ) ?? ''
+            // The first cell of the wrapped line: quantity, which shares line 2 with status.
+            const first = p.getByTestId(`report-cell-quantity-${id}`)
+            const labelText = rowOf(p, 'Wrapco 00').getByText('Wrapco 00', { exact: true })
+            await expect
+                .poll(async () => {
+                    const box = await first.boundingBox()
+                    const text = await first.locator('div[dir="auto"]').boundingBox()
+                    const label = await labelText.boundingBox()
+                    if (!box || !text || !label) return null
+                    return {
+                        compact: box.height <= 30,
+                        underLabel: Math.abs(text.x - label.x) <= 1,
+                    }
+                })
+                .toEqual({ compact: true, underLabel: true })
+            const headingRow = await p.getByTestId('report-heading-row').boundingBox()
+            expect(headingRow?.height ?? 0).toBeLessThan(2 * 44)
+
+            // Scroll the open group's rows: the top area scrolls away, the heading row
+            // stays at the top of the table, the group's own row goes up under it, and
+            // its stuck copy stays just under it (D9).
+            const heading = p.getByTestId('report-heading-row')
             await p.getByTestId('report-table').hover()
             await p.mouse.wheel(0, 900)
             const sticky = p.getByTestId('report-sticky-group')
             await expect(sticky).toContainText('Open')
-            await expect.poll(() => isScrolledAway(rowOf(p, 'Open'), headingBottom)).toBe(true)
             await expect
-                .poll(async () => Math.abs(((await sticky.boundingBox())?.y ?? 0) - headingBottom))
+                .poll(async () => isScrolledAway(rowOf(p, 'Open'), await bottomOf(heading)))
+                .toBe(true)
+            await expect
+                .poll(async () =>
+                    Math.abs(((await sticky.boundingBox())?.y ?? 0) - (await bottomOf(heading)))
+                )
                 .toBeLessThanOrEqual(2)
+        } finally {
+            await close()
+        }
+    })
+
+    // D9: on a phone the title, chips and notes scroll away with the rows and the
+    // column headings stay at the top of the table, the open group's copy right under
+    // them; back at the top, the headings sit under the document header again. A
+    // desktop keeps its top area in place.
+    test('on a phone the title and chips scroll away with the rows while the headings stay', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptaway')
+        try {
+            await seed(p, 24)
+            await wideReport(p, uniqueName('Away'), true)
+            const title = p.getByTestId('report-title')
+            const table = p.getByTestId('report-table')
+            const heading = p.getByTestId('report-heading-row')
+            const yOf = async (locator: Locator) => (await locator.boundingBox())?.y ?? 0
+
+            const titleY = await yOf(title)
+            await table.hover()
+            await p.mouse.wheel(0, 400)
+            await expect.poll(() => yOf(title)).toBe(titleY)
+
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect(table).toHaveCSS('opacity', '1')
+            await table.hover()
+            await p.mouse.wheel(0, -5000)
+            const documentHeader = p.getByTestId('report-document-header')
+            await expect
+                .poll(async () => Math.abs((await yOf(heading)) - (await bottomOf(documentHeader))))
+                .toBeLessThanOrEqual(2)
+
+            // At the top the title is inside the table's box, above its headings.
+            await expect.poll(() => yOf(title)).toBeGreaterThanOrEqual(await yOf(table))
+            await p.mouse.wheel(0, 900)
+            await expect
+                .poll(async () => (await bottomOf(title)) <= (await yOf(table)) + 1)
+                .toBe(true)
+            await expect
+                .poll(async () => Math.abs((await yOf(heading)) - (await yOf(table))))
+                .toBeLessThanOrEqual(2)
+            const sticky = p.getByTestId('report-sticky-group')
+            await expect(sticky).toContainText('Open')
+            await expect
+                .poll(async () => Math.abs((await yOf(sticky)) - (await bottomOf(heading))))
+                .toBeLessThanOrEqual(2)
+
+            await p.mouse.wheel(0, -5000)
+            await expect
+                .poll(async () => Math.abs((await yOf(heading)) - (await bottomOf(documentHeader))))
+                .toBeLessThanOrEqual(2)
+            await expect.poll(() => yOf(title)).toBeGreaterThanOrEqual(await yOf(table))
+        } finally {
+            await close()
+        }
+    })
+
+    // D9 with F11: the phone's top area lives in the list, and the list stays mounted
+    // across runs. A new run (here a new sort) keeps the keyboard focus on the control
+    // that started it and keeps the chip it changed (the same element, not a new
+    // one); a run that lands while the reader is scrolled down starts the list at its
+    // top again, title and chips in view.
+    test('on a phone a new run keeps the focus and the chips, and starts the list at the top', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptrun')
+        try {
+            await seed(p, 24)
+            const title = p.getByTestId('report-title')
+            const table = p.getByTestId('report-table')
+            const heading = p.getByTestId('report-heading-row')
+            const yOf = async (locator: Locator) => (await locator.boundingBox())?.y ?? 0
+            const focusedTestId = () =>
+                p.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? null)
+            const isAtTop = async () => {
+                const list = await listScroller(rowOf(p, 'Wrapco 23'))
+                return (await list.evaluate(element => element.scrollTop)) === 0
+            }
+
+            // Two columns fit one line on a phone, so its headings sort on a press,
+            // and the floating heading row is in reach while the rows are scrolled.
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await saveNewReport(p, uniqueName('Run'))
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect(table).toHaveCSS('opacity', '1')
+            const sortAmount = p.getByTestId('report-sort-amount')
+            await sortAmount.click()
+            await expect(sortAmount).toHaveAccessibleName(/ascending/)
+            await expect(rowOf(p, 'Wrapco 00')).toBeInViewport()
+            await table.hover()
+            await p.mouse.wheel(0, 900)
+            await expect
+                .poll(async () => (await bottomOf(title)) <= (await yOf(table)) + 1)
+                .toBe(true)
+            await sortAmount.focus()
+            await p.keyboard.press('Enter')
+            // Only the new run (largest amount first) shows Wrapco 23 at the top.
+            await expect
+                .poll(async () =>
+                    Math.abs((await yOf(rowOf(p, 'Wrapco 23'))) - (await bottomOf(heading)))
+                )
+                .toBeLessThanOrEqual(2)
+            await expect.poll(isAtTop).toBe(true)
+            await expect.poll(() => yOf(title)).toBeGreaterThanOrEqual(await yOf(table))
+            await expect.poll(focusedTestId).toBe('report-sort-amount')
+
+            // A wide report wraps on a phone, so the Sort chip sorts it. The chip that
+            // started the run is still the same element when the run lands.
+            await p.setViewportSize({ width: 1280, height: 800 })
+            await wideReport(p, uniqueName('Focus'), false)
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect(table).toHaveCSS('opacity', '1')
+            const chip = p.getByTestId('report-sort-menu')
+            await chip.evaluate(element => {
+                ;(window as Window & { keptChip?: Element }).keptChip = element
+            })
+            await chip.focus()
+            await p.keyboard.press('Enter')
+            await p.getByTestId('report-sort-choice-customer-desc').click()
+            // Sorted by customer ascending before, Wrapco 23 was the last row.
+            await expect(rowOf(p, 'Wrapco 23')).toBeInViewport()
+            await expect(chip).toContainText('Sort: Customer ↓')
+            // A screen reader hears the sort in words, not the arrow.
+            await expect(chip).toHaveAccessibleName('Sort: Customer, descending')
+            const isSameChip = await p.evaluate(() => {
+                const kept = (window as Window & { keptChip?: Element }).keptChip
+                const now = document.querySelector('[data-testid="report-sort-menu"]')
+                return kept?.isConnected === true && kept === now
+            })
+            expect(isSameChip).toBe(true)
+            // The chip's sheet gives the focus back to the chip when it closes.
+            await expect.poll(focusedTestId).toBe('report-sort-menu')
+        } finally {
+            await close()
+        }
+    })
+
+    // D9 with F11, in every state a run can land in: the phone's top area stays the same
+    // elements whether the new run has rows, has none or fails, so the focus stays on
+    // the chip that started it. Each run is held until the chip's picker has closed and
+    // given the focus back, so the run lands while the chip has it.
+    test('on a phone the chip keeps the focus when its run has no rows or fails', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptstate')
+        try {
+            await seed(p, 24)
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await p.getByTestId('report-builder-section-filter').click()
+            await p.getByTestId('report-builder-filter-add-condition').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-amount')
+                .click()
+            await chooseOption(p, 'report-builder-filter-0-op', 'gte')
+            await p.getByTestId('report-builder-filter-0-ask').click()
+            await saveNewReport(p, uniqueName('States'))
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect(p.getByTestId('report-table')).toHaveCSS('opacity', '1')
+            await expect(rowOf(p, 'Wrapco 00')).toBeVisible()
+
+            const focusedTestId = () =>
+                p.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? null)
+            const keepChip = () =>
+                p.evaluate(() => {
+                    const chip = document.querySelector('[data-testid="report-param-amount"]')
+                    ;(window as Window & { keptChip?: Element | null }).keptChip = chip
+                })
+            const isSameChip = () =>
+                p.evaluate(() => {
+                    const kept = (window as Window & { keptChip?: Element | null }).keptChip
+                    const now = document.querySelector('[data-testid="report-param-amount"]')
+                    return kept?.isConnected === true && kept === now
+                })
+            const fillAmount = async (amount: string) => {
+                const picker = p.getByTestId('report-filter-picker')
+                await picker.getByTestId('report-filter-value').fill(amount)
+                await picker.getByTestId('report-filter-apply').click()
+                await expect(picker).toBeHidden()
+            }
+            // Sets the chip's value with the keyboard, holds the run it starts until the
+            // focus is back on the chip, then lets the run land as itself or as a failure.
+            const runFromChip = async (amount: string, answer?: 'fail') => {
+                let release = () => {}
+                const held = new Promise<void>(resolve => {
+                    release = resolve
+                })
+                await p.route('**/api/reports/run', async route => {
+                    await held
+                    if (answer !== 'fail') return route.continue()
+                    return route.fulfill({
+                        status: 404,
+                        contentType: 'application/json',
+                        body: JSON.stringify({ status: 404, message: 'Not found.', data: {} }),
+                    })
+                })
+                const chip = p.getByTestId('report-param-amount')
+                await chip.focus()
+                await p.keyboard.press('Enter')
+                await fillAmount(amount)
+                await expect.poll(focusedTestId).toBe('report-param-amount')
+                await keepChip()
+                release()
+                await p.unrouteAll({ behavior: 'wait' })
+            }
+
+            // The asked amount gets its chip once it has a value; every sale is 10.00 or more.
+            await p.getByTestId('report-add-filter').click()
+            await p.getByTestId('report-add-filter-amount').click()
+            await fillAmount('10')
+            await expect(p.getByTestId('report-param-amount')).toBeVisible()
+            await expect(rowOf(p, 'Wrapco 00')).toBeVisible()
+
+            // Rows → no rows: no sale is 999.00 or more.
+            await runFromChip('999')
+            await expect(p.getByTestId('report-empty')).toBeVisible()
+            expect(await isSameChip()).toBe(true)
+            await expect.poll(focusedTestId).toBe('report-param-amount')
+
+            // No rows → rows again.
+            await runFromChip('10.20')
+            await expect(rowOf(p, 'Wrapco 20')).toBeVisible()
+            await expect(rowOf(p, 'Wrapco 19')).toHaveCount(0)
+            expect(await isSameChip()).toBe(true)
+            await expect.poll(focusedTestId).toBe('report-param-amount')
+
+            // Rows → a failed run.
+            await runFromChip('10.10', 'fail')
+            await expect(p.getByTestId('report-error')).toBeVisible()
+            expect(await isSameChip()).toBe(true)
+            await expect.poll(focusedTestId).toBe('report-param-amount')
         } finally {
             await close()
         }
@@ -374,14 +655,18 @@ test.describe('report rows per width', () => {
 
             await expectWholeStackPushed(p, stackIds)
 
-            // On a phone the rows wrap, so the stack is drawn by other code.
+            // On a phone the rows wrap, so the stack is drawn by other code. The last
+            // column (booked) cannot share line 1 when one line does not fit.
             await p.setViewportSize({ width: 390, height: 844 })
+            const pushRow = rowOf(p, 'Push 09')
             await expect
                 .poll(async () => {
-                    const b = await boxes(p, 'Push 09')
-                    return b.label && b.amount
-                        ? b.amount.y >= b.label.y + b.label.height - 1
-                        : false
+                    const id =
+                        (await pushRow.getAttribute('data-testid'))?.replace('report-row-', '') ??
+                        ''
+                    const label = await pushRow.boundingBox()
+                    const booked = await p.getByTestId(`report-cell-booked-${id}`).boundingBox()
+                    return label && booked ? booked.y >= label.y + label.height - 1 : false
                 })
                 .toBe(true)
             await expectWholeStackPushed(p, stackIds)
@@ -390,7 +675,7 @@ test.describe('report rows per width', () => {
         }
     })
 
-    test('on a desktop a table wider than its view narrows its text columns and never scrolls sideways', async ({
+    test('on a desktop a wide table fits its columns to their content and never scrolls sideways', async ({
         page,
     }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptside')
@@ -478,25 +763,27 @@ test.describe('report rows per width', () => {
                     headingMoved: Math.abs((await x('report-heading-amount')) - before) > 1,
                 }))
                 .toEqual({ scrolledSideways: false, headingMoved: false })
-            // The label is cut short with "…"; the amount keeps its width.
+            // Every figure keeps its whole value and heading (R12); the short label is whole.
+            const isCut = (testId: string) =>
+                p.getByTestId(testId).evaluate(el => {
+                    const text = el.querySelector('div[dir="auto"]') ?? el
+                    return text.scrollWidth > text.clientWidth
+                })
+            const id = (await label.getAttribute('data-testid'))?.replace('report-row-', '') ?? ''
+            for (const col of ['amount', 'cost', 'quantity', 'day', 'booked']) {
+                await expect.poll(() => isCut(`report-cell-${col}-${id}`)).toBe(false)
+                await expect.poll(() => isCut(`report-heading-${col}`)).toBe(false)
+            }
             const text = label.getByText('Wrapco 00', { exact: true })
-            expect(await text.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
-            await expect
-                .poll(async () =>
-                    Math.round(
-                        (await p.getByTestId('report-heading-amount').boundingBox())?.width ?? 0
-                    )
-                )
-                .toBe(128)
+            expect(await text.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(false)
         } finally {
             await close()
         }
     })
 
-    // F10: on one narrowed line the label column is at its floor, but an open group
-    // row has no other cell on its line, so its label spans the row, as it does in
-    // the phone's blocks; a detail label is still cut short with "…".
-    test('on a narrowed desktop line an open group row shows its whole label while detail labels end in "…"', async ({
+    // F10: an open group row has no other cell on its line, so its label spans the
+    // row, as it does in the phone's blocks; a detail label gets its text's width.
+    test('on a desktop line an open group row shows its whole label across the row', async ({
         page,
     }) => {
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptspan')
@@ -532,10 +819,10 @@ test.describe('report rows per width', () => {
             const detail = rowOf(p, 'Wrapco Longname 00')
             await expect(detail).toBeVisible()
             const isCut = (text: Locator) => text.evaluate(el => el.scrollWidth > el.clientWidth)
-            // The detail label is held to the narrowed label column.
+            // The detail label gets the room its text needs.
             await expect
                 .poll(() => isCut(detail.getByText('Wrapco Longname 00', { exact: true })))
-                .toBe(true)
+                .toBe(false)
             const detailWidth = (await detail.boundingBox())?.width ?? 0
             // The group label is whole, in a box wider than the label column.
             await expect.poll(() => isCut(groupRow.getByText(team, { exact: true }))).toBe(false)
@@ -591,6 +878,24 @@ test.describe('report rows per width', () => {
             expect(Math.abs((await box(amount)).x - headAmount.x)).toBeLessThanOrEqual(1)
             const cost = await cellOf(p, 'cost', 'Open')
             expect(Math.abs((await box(cost)).x - headCost.x)).toBeLessThanOrEqual(1)
+            // D1: a fold never re-measures. Once the groups are open the measure holds
+            // the details' widths; folding them all hides every detail row, and the
+            // columns stay where they were.
+            const fold = p.getByTestId('report-fold-all')
+            await expect(fold).toHaveText('Expand all')
+            await fold.click()
+            await expect(fold).toHaveText('Collapse all')
+            await expect(group).toHaveAttribute('aria-expanded', 'true')
+            await expect(table).toHaveCSS('opacity', '1')
+            const opened = await box(p.getByTestId('report-heading-amount'))
+            await fold.click()
+            await expect(fold).toHaveText('Expand all')
+            await expect(group).toHaveAttribute('aria-expanded', 'false')
+            await expect
+                .poll(async () =>
+                    Math.abs((await box(p.getByTestId('report-heading-amount'))).x - opened.x)
+                )
+                .toBeLessThanOrEqual(1)
         } finally {
             await close()
         }
@@ -656,7 +961,48 @@ test.describe('report rows per width', () => {
             await expect(p.getByTestId('report-builder-arrange-cost-problem')).toHaveCount(0)
             await saveNewReport(p, uniqueName('Pivot arrange'))
             await p.setViewportSize({ width: 390, height: 844 })
-            await expect(p.getByTestId('report-layout-notice')).toBeVisible()
+            // H5: the layout notice is in the one notice band, not in the table; on a
+            // phone the band is cut at two lines until the reader selects Show all.
+            const band = p.getByTestId('report-notices-region')
+            await expect(band.getByTestId('report-notice-layout')).toContainText(
+                'The pivot columns do not fit'
+            )
+            // The band is the only place it shows (on a phone the band itself scrolls
+            // inside the table's box with the rows, D9).
+            await expect(p.getByTestId('report-notice-layout')).toHaveCount(1)
+            const toggle = band.getByTestId('report-notices-toggle')
+            await expect(toggle).toHaveText('Show all')
+            // The line clamp over the layout notice, up to the band. The check holds
+            // whether the text really wraps to two lines or three (the toggle uses an
+            // upper estimate).
+            const layoutNotice = band.getByTestId('report-notice-layout')
+            const clampOf = () =>
+                layoutNotice.evaluate(el => {
+                    for (let n: Element | null = el; n; n = n.parentElement) {
+                        if (n.getAttribute('data-testid') === 'report-notices') break
+                        const clamp = getComputedStyle(n).getPropertyValue('-webkit-line-clamp')
+                        if (clamp && clamp !== 'none') return clamp
+                    }
+                    return 'none'
+                })
+            await expect.poll(clampOf).toBe('2')
+            await toggle.click()
+            await expect(toggle).toHaveText('Show less')
+            // Show all: the notice is its own line of the band, whole.
+            await expect.poll(clampOf).toBe('none')
+            expect(
+                await layoutNotice.evaluate(el => el.parentElement?.getAttribute('data-testid'))
+            ).toBe('report-notices')
+            expect(await layoutNotice.evaluate(el => el.scrollHeight <= el.clientHeight + 1)).toBe(
+                true
+            )
+            // At 1280 the row fits one line, so no arrangement is tried: the layout
+            // notice leaves the band, and with it the band's toggle. (The one-line
+            // fit comes before any arrangement, table-lines.ts tableLines.)
+            await p.setViewportSize({ width: 1280, height: 800 })
+            await expect(p.getByTestId('report-table')).toBeVisible()
+            await expect(band.getByTestId('report-notice-layout')).toHaveCount(0)
+            await expect(band.getByTestId('report-notices-toggle')).toHaveCount(0)
         } finally {
             await close()
         }
@@ -675,10 +1021,10 @@ test.describe('report rows per width', () => {
             await openReportsHub(p)
             await startTeamSales(p)
             await groupWithTeamRegion(p)
-            // A fifth column: with four, R21 fits the row on one narrowed line at 390
-            // (98 + 108 + 2 × 84 = 374; the label's floor is 80 plus its group row's
-            // caret, 18), and this test is about the wrapped rows.
+            // Two more columns: the row must not fit one line at 390, and this test is
+            // about the wrapped rows.
             await addColumn(p, ['cost'])
+            await addColumn(p, ['quantity'])
             await expect(p.getByTestId('report-builder-column-3-detail')).toBeVisible()
             await chooseOption(p, 'report-builder-column-3-detail', 'blank')
             await saveNewReport(p, uniqueName('Blank phone'))
@@ -687,27 +1033,91 @@ test.describe('report rows per width', () => {
             await expect(rowOf(p, team)).toHaveAttribute('aria-expanded', 'true')
 
             const amount = await cellOf(p, 'amount', 'Ada')
+            const cost = await cellOf(p, 'cost', 'Ada')
             const region = await cellOf(p, 'formula', 'Ada')
-            // Wrapped: the opened row's figures are on a line below its label.
+            // The blank slot sits under its heading, on a line with a figure of its row.
             await expect
                 .poll(async () => {
-                    const label = await rowOf(p, 'Ada').boundingBox()
-                    const figure = await amount.boundingBox()
-                    return label && figure ? figure.y >= label.y + label.height - 1 : false
+                    const heading = await p.getByTestId('report-heading-formula').boundingBox()
+                    const slot = await region.boundingBox()
+                    const figures = [await amount.boundingBox(), await cost.boundingBox()]
+                    if (!heading || !slot) return null
+                    return {
+                        underHeading: Math.abs(heading.x - slot.x) <= 1,
+                        besideFigure: figures.some(f => f && Math.abs(f.y - slot.y) <= 1),
+                    }
                 })
-                .toBe(true)
+                .toEqual({ underHeading: true, besideFigure: true })
             await expect(amount).toHaveText('10.00')
             await expect(await cellOf(p, 'formula', team)).toHaveText('South')
             await expect(region).toBeVisible()
             await expect(region).toHaveText('')
-            const heading = await p.getByTestId('report-heading-formula').boundingBox()
-            const slot = await region.boundingBox()
-            const figure = await amount.boundingBox()
-            expect(Math.abs((heading?.x ?? 0) - (slot?.x ?? -9))).toBeLessThanOrEqual(1)
-            expect(Math.abs((figure?.y ?? 0) - (slot?.y ?? -9))).toBeLessThanOrEqual(1)
             expect(
                 await p.evaluate(() => document.documentElement.scrollWidth)
             ).toBeLessThanOrEqual(390)
+        } finally {
+            await close()
+        }
+    })
+
+    // Review §7.1-2 and H7: a subtotal row's label spans its empty cells on one line,
+    // and on a phone it moves beside its figure when the empty tracks hold it.
+    test('a subtotal row shows its whole label on a desktop line and beside its figure on a phone', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptsubspan')
+        try {
+            const team = uniqueName('Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            await addSale(p, {
+                team,
+                customer: 'Ada',
+                amount: 1000,
+                cost: 400,
+                quantity: 3,
+                day: '2026-01-05',
+            })
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['quantity'])
+            await addColumn(p, ['cost'])
+            await addColumn(p, ['amount'])
+            await chooseOption(p, 'report-builder-column-3-aggregate', 'sum')
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'customer')
+            await p.getByTestId('report-builder-group-0-open').click()
+            // Phone: the label across line 1, then quantity · cost · amount.
+            await p.getByTestId('report-builder-section-arrange').click()
+            await p.getByTestId('report-builder-arrange-width-mobile').click()
+            await p.getByTestId('report-builder-arrange-on').click()
+            await chooseOption(p, 'report-builder-arrange-tracks', '3')
+            await chooseOption(p, 'report-builder-arrange-customer-span', '3')
+            await chooseOption(p, 'report-builder-arrange-quantity-line', '2')
+            await chooseOption(p, 'report-builder-arrange-cost-line', '2')
+            await chooseOption(p, 'report-builder-arrange-amount-line', '2')
+            await saveNewReport(p, uniqueName('Subtotal span'))
+
+            const subtotal = rowOf(p, 'Total Ada')
+            const amount = await cellOf(p, 'amount', 'Total Ada')
+            const isCut = () =>
+                subtotal
+                    .getByText('Total Ada', { exact: true })
+                    .evaluate(el => el.scrollWidth > el.clientWidth)
+            await p.setViewportSize({ width: 1280, height: 800 })
+            await expect(p.getByTestId('report-table')).toHaveCSS('opacity', '1')
+            await expect.poll(isCut).toBe(false)
+
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect
+                .poll(async () => {
+                    const label = await subtotal.boundingBox()
+                    const figure = await amount.boundingBox()
+                    return label && figure ? Math.abs(label.y - figure.y) <= 1 : false
+                })
+                .toBe(true)
+            await expect.poll(isCut).toBe(false)
         } finally {
             await close()
         }
@@ -726,7 +1136,8 @@ test.describe('report rows on a touch phone', () => {
         await wideReport(page, uniqueName('Touch'), false)
         await page.setViewportSize({ width: 390, height: 844 })
         // The swipe goes to the phone layout only: the table is the phone's width and
-        // its headings have wrapped, the figures on the line under the label.
+        // its headings have wrapped, the last column (quantity) on a line under the
+        // label's, as it cannot share line 1 when one line does not fit.
         const table = page.getByTestId('report-table')
         await expect
             .poll(async () => Math.abs(((await table.boundingBox())?.width ?? 0) - 390))
@@ -734,8 +1145,8 @@ test.describe('report rows on a touch phone', () => {
         await expect
             .poll(async () => {
                 const label = await page.getByTestId('report-heading-customer').boundingBox()
-                const amount = await page.getByTestId('report-heading-amount').boundingBox()
-                return label && amount ? amount.y >= label.y + label.height - 1 : false
+                const last = await page.getByTestId('report-heading-quantity').boundingBox()
+                return label && last ? last.y >= label.y + label.height - 1 : false
             })
             .toBe(true)
         const headingBottom = await bottomOf(page.getByTestId('report-heading-row'))
@@ -776,5 +1187,40 @@ test.describe('report rows on a touch phone', () => {
             })
             .toBeGreaterThan(0)
         await expect.poll(() => isScrolledAway(first, headingBottom)).toBe(true)
+    })
+
+    // D9: on a phone the title is part of the list's header, so a finger drag that
+    // starts on it scrolls the rows, as one on a row does.
+    test('a swipe that starts on the title scrolls the rows', async ({ page }) => {
+        await login(page)
+        await seed(page, 16)
+        await wideReport(page, uniqueName('TitleSwipe'), false)
+        await page.setViewportSize({ width: 390, height: 844 })
+        const table = page.getByTestId('report-table')
+        const title = page.getByTestId('report-title')
+        await expect(table).toHaveCSS('opacity', '1')
+        // The title is in the table's box (the list's header); both must be drawn.
+        await expect
+            .poll(async () => {
+                const titleBox = await title.boundingBox()
+                const tableBox = await table.boundingBox()
+                if (!titleBox || !tableBox) return 'not drawn'
+                return titleBox.y >= tableBox.y ? 'inside' : 'above'
+            })
+            .toBe('inside')
+        const firstRow = table.locator('[data-testid^="report-row-"]').first()
+        const scroller = await listScroller(firstRow)
+        expect(await scroller.evaluate(list => list.scrollTop)).toBe(0)
+        const titleBox = await title.boundingBox()
+        if (!titleBox) throw new Error('the title is not drawn')
+        const titleY = titleBox.y
+
+        await swipeUp(page, titleBox.x + 20, titleY + titleBox.height / 2, 300)
+        await expect
+            .poll(() => scroller.evaluate(list => list.scrollTop), {
+                message: 'the swipe on the title scrolls the list',
+            })
+            .toBeGreaterThan(0)
+        await expect.poll(async () => (await title.boundingBox())?.y ?? titleY).toBeLessThan(titleY)
     })
 })
