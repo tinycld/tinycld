@@ -520,6 +520,15 @@ export async function openSettingsItem(page: Page, label: string) {
     await index.getByText(label, { exact: true }).click()
 }
 
+/** Open Settings → Account → Security from the user menu. */
+export async function openAccountSecurity(page: Page) {
+    await page.getByLabel('User menu').click()
+    await page.getByRole('menu').getByText('Settings', { exact: true }).click()
+    const accountGroup = page.getByText('Account', { exact: true }).locator('..')
+    await accountGroup.getByText('Security', { exact: true }).click()
+    await page.getByTestId('totp-section').waitFor({ state: 'visible' })
+}
+
 export async function clickSidebarItem(page: Page, label: string) {
     await page.getByText(label, { exact: true }).click()
 }

@@ -8,7 +8,7 @@
 // every module that only wants to stay interactive, which is how a plain leaf
 // dependency turns into an import cycle the bundler resolves differently from
 // the test runner.
-export { LayerEscape } from './escape'
+export { LayerEscape, LayerScope } from './escape'
 export { useLayerFocus } from './focus'
 export {
     OverlayHost,

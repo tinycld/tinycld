@@ -1,5 +1,5 @@
 import { useWritesAvailable } from '@tinycld/core/lib/use-writes-available'
-import { Dialog } from '@tinycld/core/ui/dialog'
+import { DIALOG_SUBMIT_SHORTCUT, Dialog } from '@tinycld/core/ui/dialog'
 import { Controller, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { useEffect, useRef } from 'react'
@@ -27,6 +27,8 @@ export type PromptDialogProps = {
      * typed into an editor.
      */
     requiresServer?: boolean
+    /** The submit button's test id. */
+    confirmTestID?: string
 }
 
 function promptSchema(required: boolean, maxLength: number | undefined) {
@@ -71,6 +73,7 @@ function PromptFormFields({
     isSubmitting = false,
     errorMessage,
     requiresServer = true,
+    confirmTestID,
 }: Omit<PromptFormProps, 'isVisible'>) {
     const inputRef = useRef<TextInputInstance>(null)
     const {
@@ -142,6 +145,8 @@ function PromptFormFields({
                     onPress={submit}
                     isDisabled={!canSubmit}
                     requiresServer={requiresServer}
+                    shortcut={DIALOG_SUBMIT_SHORTCUT}
+                    testID={confirmTestID}
                 />
             </Dialog.Footer>
         </>

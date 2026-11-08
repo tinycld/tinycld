@@ -121,6 +121,7 @@ export function AppPasswordsSection() {
                 description="Name it after the app or device that will use it."
                 placeholder="Thunderbird on my laptop"
                 confirmLabel="Create"
+                confirmTestID="app-password-name-submit"
                 maxLength={100}
                 required
                 isSubmitting={ap.isCreating}
