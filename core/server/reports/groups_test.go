@@ -3,6 +3,7 @@ package reports
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -291,12 +292,18 @@ func TestANestedAmountCarriesItsCurrency(t *testing.T) {
 	requireOrderedRows(t, spec, res, "cost@currency", nil, nil, "USD", "USD", nil, "USD", "USD", nil)
 }
 
-func TestGroupRowsStopAtTheRowCap(t *testing.T) {
+// A grouped report pages its group rows, so the cap does not apply to it; a
+// pivot still stops at the cap.
+func TestAGroupedReportHasNoRowCap(t *testing.T) {
 	z := newZoo(t)
 	withLimits(t, func(l *limits) { l.rowCap = 2 })
 	res := z.run(t, "ann", feedingsBySpecies, Options{}, nil)
-	if len(res.Notices) != 1 || res.Notices[0].Code != "rowCap" || res.Notices[0].Count != 2 {
-		t.Fatalf("notices = %+v", res.Notices)
+	if len(res.Notices) != 0 || !slices.Equal(groupRowLabels(res), []string{"lion", "zebra"}) {
+		t.Fatalf("groups %v, notices = %+v", groupRowLabels(res), res.Notices)
+	}
+	pivot := z.run(t, "ann", fmt.Sprintf(costBySpeciesAndMonth, ""), Options{}, nil)
+	if len(pivot.Notices) != 1 || pivot.Notices[0].Code != "rowCap" || pivot.Notices[0].Count != 2 {
+		t.Fatalf("pivot notices = %+v", pivot.Notices)
 	}
 }
 

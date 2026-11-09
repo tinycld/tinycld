@@ -240,6 +240,21 @@ type runner struct {
 	// mixedConditions are the conditions that read such a sum on some row
 	// (probeConditions).
 	mixedConditions []string
+	// A run that pages its group rows (pagedNow) reads its cursor into
+	// groupCur, with each level's order terms (groupShape), the detail sort
+	// keys (groupKeys) and the fingerprint its cursors carry (groupFP).
+	// rawGroups and rawDetails hold the statement rows the page's group and
+	// detail rows came from, by row id, so the next cursor reads their order
+	// values.
+	groupCur   *groupCursor
+	groupShape [][]orderTerm
+	groupKeys  []sortKey
+	groupFP    string
+	rawGroups  map[string]map[string]any
+	rawDetails map[string]map[string]any
+	// readDetails is set when the detail pass ran: such a run always had a
+	// page, even one that fits.
+	readDetails bool
 }
 
 // groupedPage is a grouped run's page: after is the open group the previous
@@ -349,12 +364,25 @@ func (rn *runner) run() error {
 	if rn.c.p.pivot != nil && rn.opts.Cursor != "" {
 		return badCursor()
 	}
-	groupRows, err := rn.groupPass()
+	// pagedNow knows an innermost group's key by its currency keys, which
+	// compiling w finds. Nothing is sent to the database.
+	if rn.pagedGroups() {
+		if _, err := rn.c.rows(newStmt(rn.app, rn.c.info)); err != nil {
+			return err
+		}
+	}
+	paged := rn.pagedNow()
+	groupPass := rn.groupPass
+	if paged {
+		groupPass = rn.pagedGroupPass
+	}
+	groupRows, err := groupPass()
 	if err != nil {
 		return err
 	}
 	var details []map[string]any
-	if rn.c.p.pivot == nil {
+	// A paged run opens no innermost group, so it reads no detail row.
+	if rn.c.p.pivot == nil && !paged {
 		var leaves [][]any
 		grouped := len(rn.c.p.groups) > 0
 		if grouped {
@@ -381,7 +409,11 @@ func (rn *runner) run() error {
 	rn.res.Columns = rn.columns()
 	rn.markCurrencies(groupRows)
 	rn.assemble(groupRows, details, nested)
-	rn.pageWindow()
+	if paged {
+		rn.cutPage(rn.pageLimit())
+	} else {
+		rn.pageWindow()
+	}
 	rn.markMixedLookups()
 	// A source's Go hooks read collections no statement reads, so their
 	// topics are added by name.
@@ -534,6 +566,260 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 func (rn *runner) pagedGroups() bool {
 	p := rn.c.p
 	return len(p.groups) > 0 && p.pivot == nil && len(p.layout) == 0 && len(p.nest) == 0
+}
+
+// pagedNow is true while this run pages its group rows. For now only a run
+// that shows no detail row (no innermost group opens) pages them; a run that
+// opens one keeps one group statement and pages its detail rows.
+func (rn *runner) pagedNow() bool {
+	if !rn.pagedGroups() {
+		return false
+	}
+	e, depth := rn.expand, len(rn.c.p.groups)
+	if e.all || e.open[depth] {
+		return false
+	}
+	return !slices.ContainsFunc(e.keys, func(k []any) bool { return len(k) == depth+len(rn.c.currencies) })
+}
+
+// pageLimit is the most rows a page holds: options.limit up to maxPage, else
+// pageSize.
+func (rn *runner) pageLimit() int {
+	if rn.opts.Limit > 0 {
+		return min(rn.opts.Limit, runLimits.maxPage)
+	}
+	return runLimits.pageSize
+}
+
+// pagedGroupPass reads one page of a grouped run's level rows (J1a), then
+// the Total in a statement of its own. The levels compile once; the cursor
+// is read from their order terms before the page statement is written, as
+// its keyset compares their values.
+func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
+	c := rn.c
+	s := newStmt(rn.app, c.info)
+	r, err := c.rows(s)
+	if err != nil {
+		return nil, err
+	}
+	c.condProbes, c.probed = nil, nil
+	if r.filterMixed != "" {
+		c.probe("filter", "SELECT 1 "+r.root.render()+"\nWHERE "+r.filterMixed)
+	}
+	r.probeWheres()
+	levels, err := c.compileLevels(s, r, rn.expand, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	rn.groupShape = make([][]orderTerm, 0, len(levels)-1)
+	for _, l := range levels[1:] {
+		rn.groupShape = append(rn.groupShape, l.lv.terms)
+	}
+	// The detail sort keys are in the cursor's fingerprint: a cursor from
+	// another sort is refused even on a page with no detail row. This compile
+	// also gives the columns their detail types (detailTypes).
+	if _, rn.groupKeys, err = c.detailSelect(r, "w"); err != nil {
+		return nil, err
+	}
+	rn.groupFP = groupFingerprint(c.groupLevels(), levelShape(rn.groupShape), foldPrint(rn.expand), rn.groupKeys)
+	if rn.opts.Cursor != "" {
+		cur, err := readGroupCursor(rn.groupFP, rn.groupShape, rn.groupKeys, len(c.p.groups), len(c.currencies), rn.opts.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		rn.groupCur = &cur
+	}
+	levelCTEs, pageCTEs, body, err := c.pagedGroupStatement(s, levels, rn.expand, rn.groupCur, int64(rn.pageLimit()))
+	if err != nil {
+		return nil, err
+	}
+	levelCTEs = append([]string{r.render()}, levelCTEs...)
+	rows, err := rn.query(s, slices.Concat(levelCTEs, pageCTEs), body)
+	if err != nil {
+		return nil, err
+	}
+	// totalPass adds the probes' CTE to the list it gets: its own copy.
+	totals, err := rn.totalPass(s, slices.Clone(levelCTEs))
+	if err != nil {
+		return nil, err
+	}
+	rn.rawGroups = map[string]map[string]any{}
+	return append(rows, totals...), nil
+}
+
+// pagedGroupStatement selects one page of level rows (J1a) in document order:
+// the currency blocks in Total order (R7), then each level's sibling ordinal
+// down the path (a parent before its children). Its rows are the cursor's
+// anchors (the enclosing groups the page starts inside, for their subtotals)
+// and the rows after the cursor, at most limit+1 of them past the anchors,
+// so the cut (cutPage) knows whether more follow. Every o<L> keeps its
+// lookup layers and record joins (#452); the keyset and limit go on the outer
+// select. having and fill already shaped o<L>, so they apply before the
+// keyset. The levels are compiled (compileLevels) and the cursor read
+// before this is called: the cursor's shape is the levels' order terms.
+func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *expansion, cur *groupCursor, limit int64) (levelCTEs, pageCTEs []string, body string, err error) {
+	groups := len(c.p.groups)
+	unread := c.unreadCells(levels, nil)
+	for _, l := range levels[1:] {
+		l.lv.paged = true
+	}
+	for _, l := range levels {
+		levelCTEs = append(levelCTEs, l.lv.render(withoutCells(l.cells, unread), l.own, l.totals)...)
+	}
+	// The union names its columns, so each leg's own order values line up
+	// with the other legs' NULLs.
+	base := []string{"__level", "__row"}
+	for i := range groups {
+		base = append(base, fmt.Sprintf("k%d", i))
+	}
+	base = append(base, c.currencies...)
+	for _, cell := range withoutCells(levels[1].cells, unread) {
+		_, name := splitCell(cell)
+		base = append(base, name)
+	}
+	base = append(base, "__ord", "__own", "__label", "__labelcur", "__n", "__kids")
+	legs := make([]string, 0, groups)
+	for n := 1; n <= groups; n++ {
+		cols := prefixed("o.", base)
+		for i := 1; i <= groups; i++ {
+			if i <= n {
+				cols = append(cols, fmt.Sprintf("pp.__p%d", i))
+			} else {
+				cols = append(cols, fmt.Sprintf("NULL AS __p%d", i))
+			}
+		}
+		for m := 1; m <= groups; m++ {
+			for j := range levels[m].lv.terms {
+				if m == n {
+					cols = append(cols, "o."+orderValue(m, j))
+				} else {
+					cols = append(cols, "NULL AS "+orderValue(m, j))
+				}
+			}
+		}
+		legs = append(legs, fmt.Sprintf("SELECT %s FROM o%d o JOIN pp%d pp ON %s WHERE %s",
+			strings.Join(cols, ", "), n, n, strings.Join(c.sameGroup("o", "pp", n), " AND "), expand.shownUnder(c, s, n-1, "o.")))
+	}
+	keyset, pc, anchors := c.groupKeyset(s, levels, cur)
+	pageCTEs = c.pathCTEs()
+	if pc != "" {
+		pageCTEs = append(pageCTEs, pc)
+	}
+	var order []string
+	for _, ck := range c.currencies {
+		order = append(order, "("+ck+" IS NULL)", ck)
+	}
+	for i := 1; i <= groups; i++ {
+		order = append(order, fmt.Sprintf("__p%d", i))
+	}
+	body = fmt.Sprintf("SELECT * FROM (%s)\nWHERE %s\nORDER BY %s LIMIT %s",
+		strings.Join(legs, "\nUNION ALL\n"), keyset, strings.Join(order, ", "), limitSQL(limit+1+int64(anchors)))
+	return levelCTEs, pageCTEs, body, nil
+}
+
+// sameGroup matches a's row to b's by the first n group keys and the
+// currency keys, with IS, so a blank key matches a blank one.
+func (c *compiler) sameGroup(a, b string, n int) []string {
+	out := make([]string, 0, n+len(c.currencies))
+	for i := range n {
+		out = append(out, fmt.Sprintf("%s.k%d IS %s.k%d", a, i, b, i))
+	}
+	for _, ck := range c.currencies {
+		out = append(out, a+"."+ck+" IS "+b+"."+ck)
+	}
+	return out
+}
+
+// pathCTEs give each level row its path: pp<L> holds a level-L row's keys and
+// the sibling ordinals (__ord) of it and each enclosing group, __p1 to __p<L>,
+// which order the page's rows in document order.
+func (c *compiler) pathCTEs() []string {
+	groups := len(c.p.groups)
+	ctes := make([]string, 0, groups)
+	ctes = append(ctes, fmt.Sprintf("pp1 AS (SELECT %s FROM o1)", strings.Join(append(append([]string{"k0"}, c.currencies...), "__ord AS __p1"), ", ")))
+	for n := 2; n <= groups; n++ {
+		var cols []string
+		for i := range n {
+			cols = append(cols, fmt.Sprintf("o.k%d", i))
+		}
+		cols = append(cols, prefixed("o.", c.currencies)...)
+		for i := 1; i < n; i++ {
+			cols = append(cols, fmt.Sprintf("pp.__p%d", i))
+		}
+		cols = append(cols, fmt.Sprintf("o.__ord AS __p%d", n))
+		ctes = append(ctes, fmt.Sprintf("pp%d AS (SELECT %s FROM o%d o JOIN pp%d pp ON %s)",
+			n, strings.Join(cols, ", "), n, n-1, strings.Join(c.sameGroup("o", "pp", n-1), " AND ")))
+	}
+	return ctes
+}
+
+// groupKeyset selects the page's rows after a group cursor ("1" without
+// one), the CTE pc it reads ("" without one), and the number of anchors: the
+// enclosing groups of where the page starts, which the page reads again so
+// their open rows' subtotals follow their children (the path group too when
+// the page starts inside it). With d the cursor's depth, a row is kept when it
+// is an anchor, inside the path group (mode in), in a later currency block,
+// or under the path's level-(i-1) group and after its level-i group, i = 1..d.
+// "After" compares sibling ordinals with the count of siblings at or before
+// the cursor's order values (Ruling R1), so a group added or removed between
+// pages shifts no other.
+func (c *compiler) groupKeyset(s *stmt, levels []compiledLevel, cur *groupCursor) (string, string, int) {
+	if cur == nil {
+		return "1", "", 0
+	}
+	d := len(cur.Path)
+	curs := cur.Group[d:]
+	anchors := d
+	if cur.Mode == cursorAfter {
+		anchors = d - 1
+	}
+	// under is the first n of the cursor's group keys and its currency keys,
+	// on the columns of table (bare for "").
+	under := func(table string, n int) []string {
+		prefix := ""
+		if table != "" {
+			prefix = table + "."
+		}
+		out := make([]string, 0, n+len(curs))
+		for i := range n {
+			out = append(out, fmt.Sprintf("%sk%d IS %s", prefix, i, s.bind(cur.Group[i])))
+		}
+		for j, ck := range c.currencies {
+			out = append(out, prefix+ck+" IS "+s.bind(curs[j]))
+		}
+		return out
+	}
+	var terms []string
+	for n := 1; n <= anchors; n++ {
+		terms = append(terms, "("+strings.Join(append([]string{fmt.Sprintf("__level = %d", n)}, under("", n)...), " AND ")+")")
+	}
+	if cur.Mode == cursorIn {
+		terms = append(terms, "("+strings.Join(append([]string{fmt.Sprintf("__level > %d", d)}, under("", d)...), " AND ")+")")
+	}
+	if len(c.currencies) > 0 {
+		var cols []orderTerm
+		var values []any
+		for j, ck := range c.currencies {
+			blank := int64(0)
+			if curs[j] == nil {
+				blank = 1
+			}
+			cols = append(cols, orderTerm{sql: "(" + ck + " IS NULL)"}, orderTerm{sql: ck})
+			values = append(values, blank, curs[j])
+		}
+		terms = append(terms, afterSQL(s, cols, values))
+	}
+	counts := make([]string, 0, d)
+	for i := 1; i <= d; i++ {
+		xTerms := make([]orderTerm, len(levels[i].lv.terms))
+		for j, t := range levels[i].lv.terms {
+			xTerms[j] = orderTerm{sql: "x." + orderValue(i, j), desc: t.desc}
+		}
+		conds := append(under("x", i-1), "NOT "+afterSQL(s, xTerms, cur.Path[i-1]))
+		counts = append(counts, fmt.Sprintf("(SELECT count(*) FROM o%d x WHERE %s) AS c%d", i, strings.Join(conds, " AND "), i))
+		terms = append(terms, "("+strings.Join(append(under("", i-1), fmt.Sprintf("__p%d > (SELECT c%d FROM pc)", i, i)), " AND ")+")")
+	}
+	return anyOf(terms), "pc AS (SELECT " + strings.Join(counts, ", ") + ")", anchors
 }
 
 // totalPass reads the Total rows (o0, one per currency) over the group
@@ -739,100 +1025,24 @@ func viewSortPlans(c *compiler, keys []ViewSort) ([]sortPlan, error) {
 // frame and SQLite never computes a CTE nothing reads.
 func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64, withTotal bool) ([]string, string, error) {
 	var ctes, legs []string
-	c.levelTypes, c.sectionCur, c.fillSets = map[string]FieldType{}, map[string]currency{}, map[int]string{}
-	c.sectionMixed = map[string]bool{}
-	// readsSums is true when the level above adds this level's "rows" cells
-	// (childSum), which rt<L> then holds.
-	readsSums := false
-	// Each level's o<L> renders once every leg's cells are known: a helper
-	// column no leg has a value for is left out of all of them.
-	type levelRows struct {
-		lv            *level
-		cells, totals []string
-		own           string
-	}
-	var levels []levelRows
-	for n := 0; n <= len(c.p.groups); n++ {
-		lv, err := c.level(r, n, expand)
-		if err != nil {
-			return nil, "", err
-		}
-		cells := make([]string, 0, len(c.p.cols))
-		labels := make([]string, 0, len(c.p.cols))
-		carried := make([]string, 0, len(c.p.cols))
-		for idx, cp := range c.p.cols {
-			e, err := lv.cell(cp, lv.frame)
-			if err != nil {
-				return nil, "", err
-			}
-			cells = append(cells, fmt.Sprintf("%s AS v%d", cellSQL(e), idx))
-			ref, _ := c.columnLabel(lv.labels, cp, e)
-			labels = append(labels, ref.cells(idx)...)
-			carried = append(carried, c.carriedCell(s, cp, e, idx), mixedCell(e, idx))
-			c.levelTypes[cp.col.ID] = e.typ
-			if n == 1 {
-				c.sectionCur[cp.col.ID] = e.cur
-				c.sectionMixed[cp.col.ID] = e.blankFor() != ""
-			}
-		}
-		pivotCells, pivotMixed, err := c.pivotCells(lv, pivot)
-		if err != nil {
-			return nil, "", err
-		}
-		opening, err := lv.openingCells()
-		if err != nil {
-			return nil, "", err
-		}
-		// The labels, the carried currencies, the pivot cells' mixed helpers,
-		// then the opening cells follow the pivot cells, as in every leg of the
-		// union.
-		cells = append(append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...), opening...)
-		// The having's aggregates join a<L>, so it compiles before render.
-		own, err := lv.own()
-		if err != nil {
-			return nil, "", err
-		}
-		lv.countShownKids()
-		var totals []string
-		if readsSums {
-			if totals, err = lv.rowsCells(); err != nil {
-				return nil, "", err
-			}
-			if pv := c.p.pivot; pv != nil && pv.cell.col.Total == TotalRows {
-				totals = append(append(totals, pivotCells...), pivotMixed...)
-			}
-		}
-		levels = append(levels, levelRows{lv: lv, cells: cells, totals: totals, own: own})
-		readsSums = len(lv.childCells) > 0
+	levels, err := c.compileLevels(s, r, expand, pivot, func(n int) {
 		if n == 0 && !withTotal {
-			continue
+			return
 		}
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
 			leg += " WHERE " + expand.where(c, s, n-1, "")
 		}
 		legs = append(legs, leg)
+	})
+	if err != nil {
+		return nil, "", err
 	}
 	layoutCTEs, computed, err := c.layoutLegs(s, pivot)
 	if err != nil {
 		return nil, "", err
 	}
-	all := make([][]string, 0, len(levels)+len(computed))
-	for _, l := range levels {
-		all = append(all, l.cells)
-	}
-	for _, leg := range computed {
-		all = append(all, leg.cells)
-	}
-	unread := unreadHelpers(all)
-	// A layout's section chunks read o1.vcur<idx> by name for every column
-	// whose first-level currency has SQL (layoutLegs, lc.cellNames), so that
-	// cell stays even when its SQL is the text NULL.
-	for idx, cp := range c.p.cols {
-		if c.sectionCur[cp.col.ID].sql != "" {
-			delete(unread, fmt.Sprintf("vcur%d", idx))
-		}
-	}
+	unread := c.unreadCells(levels, computed)
 	for _, l := range levels {
 		ctes = append(ctes, l.lv.render(withoutCells(l.cells, unread), l.own, l.totals)...)
 	}
@@ -855,6 +1065,110 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		body = append(body, "SELECT "+strings.Join(cells, ", ")+" FROM "+leg.from)
 	}
 	return ctes, strings.Join(body, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
+}
+
+// compiledLevel is one level of a group statement, compiled and not yet
+// rendered: each level's o<L> renders once every leg's cells are known, as a
+// helper column no leg has a value for is left out of all of them.
+type compiledLevel struct {
+	lv            *level
+	cells, totals []string
+	own           string
+}
+
+// compileLevels compiles levels 0 (the Total) to the innermost group. A
+// level binds its parameters on s and the levels share compiler state (the
+// level types, the section currencies, the fill keysets), so a statement
+// compiles its levels once, in this order. compiled, when given, runs after
+// each level compiles: what it binds keeps its place among the levels'
+// parameters, so the statement's text does not move.
+func (c *compiler) compileLevels(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, compiled func(n int)) ([]compiledLevel, error) {
+	c.levelTypes, c.sectionCur, c.fillSets = map[string]FieldType{}, map[string]currency{}, map[int]string{}
+	c.sectionMixed = map[string]bool{}
+	// readsSums is true when the level above adds this level's "rows" cells
+	// (childSum), which rt<L> then holds.
+	readsSums := false
+	var levels []compiledLevel
+	for n := 0; n <= len(c.p.groups); n++ {
+		lv, err := c.level(r, n, expand)
+		if err != nil {
+			return nil, err
+		}
+		cells := make([]string, 0, len(c.p.cols))
+		labels := make([]string, 0, len(c.p.cols))
+		carried := make([]string, 0, len(c.p.cols))
+		for idx, cp := range c.p.cols {
+			e, err := lv.cell(cp, lv.frame)
+			if err != nil {
+				return nil, err
+			}
+			cells = append(cells, fmt.Sprintf("%s AS v%d", cellSQL(e), idx))
+			ref, _ := c.columnLabel(lv.labels, cp, e)
+			labels = append(labels, ref.cells(idx)...)
+			carried = append(carried, c.carriedCell(s, cp, e, idx), mixedCell(e, idx))
+			c.levelTypes[cp.col.ID] = e.typ
+			if n == 1 {
+				c.sectionCur[cp.col.ID] = e.cur
+				c.sectionMixed[cp.col.ID] = e.blankFor() != ""
+			}
+		}
+		pivotCells, pivotMixed, err := c.pivotCells(lv, pivot)
+		if err != nil {
+			return nil, err
+		}
+		opening, err := lv.openingCells()
+		if err != nil {
+			return nil, err
+		}
+		// The labels, the carried currencies, the pivot cells' mixed helpers,
+		// then the opening cells follow the pivot cells, as in every leg of the
+		// union.
+		cells = append(append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...), opening...)
+		// The having's aggregates join a<L>, so it compiles before render.
+		own, err := lv.own()
+		if err != nil {
+			return nil, err
+		}
+		lv.countShownKids()
+		var totals []string
+		if readsSums {
+			if totals, err = lv.rowsCells(); err != nil {
+				return nil, err
+			}
+			if pv := c.p.pivot; pv != nil && pv.cell.col.Total == TotalRows {
+				totals = append(append(totals, pivotCells...), pivotMixed...)
+			}
+		}
+		levels = append(levels, compiledLevel{lv: lv, cells: cells, totals: totals, own: own})
+		readsSums = len(lv.childCells) > 0
+		if compiled != nil {
+			compiled(n)
+		}
+	}
+	return levels, nil
+}
+
+// unreadCells are the helper cells no leg of a statement over levels and the
+// layout's computed legs has a value for (unreadHelpers), but those a
+// layout's section chunks read by name.
+func (c *compiler) unreadCells(levels []compiledLevel, computed []unionLeg) map[string]bool {
+	all := make([][]string, 0, len(levels)+len(computed))
+	for _, l := range levels {
+		all = append(all, l.cells)
+	}
+	for _, leg := range computed {
+		all = append(all, leg.cells)
+	}
+	unread := unreadHelpers(all)
+	// A layout's section chunks read o1.vcur<idx> by name for every column
+	// whose first-level currency has SQL (layoutLegs, lc.cellNames), so that
+	// cell stays even when its SQL is the text NULL.
+	for idx, cp := range c.p.cols {
+		if c.sectionCur[cp.col.ID].sql != "" {
+			delete(unread, fmt.Sprintf("vcur%d", idx))
+		}
+	}
+	return unread
 }
 
 // unionLeg is one select of the group statement's UNION ALL: its cells
@@ -977,10 +1291,8 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	limit := runLimits.pageSize
-	if rn.opts.Limit > 0 {
-		limit = min(rn.opts.Limit, runLimits.maxPage)
-	}
+	limit := rn.pageLimit()
+	rn.readDetails = true
 	ctes := append([]string{r.render()}, shown...)
 	grouped := len(c.p.groups) > 0
 	from, by, levels := "("+sel+") d", orderBy(order), ""

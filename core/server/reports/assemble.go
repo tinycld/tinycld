@@ -405,6 +405,151 @@ func (rn *runner) pageWindow() {
 	rn.res.Rows = out
 }
 
+// cutPage keeps a paged grouped run's page (J1a, R3): the rows from where the
+// cursor left off, up to limit counted rows (group, opening, detail and
+// subtotal; a Total or computed row is not counted), then the Totals after
+// the slice, as every page ends in them. A group row and its opening row
+// stay on one page. The last counted row gives page.next when a counted row
+// follows it.
+func (rn *runner) cutPage(limit int) {
+	rows := rn.res.Rows
+	start := rn.pageStart(rows)
+	end, counted := start, 0
+	for end < len(rows) {
+		r := rows[end]
+		if isEnd(r) {
+			end++
+			continue
+		}
+		take := 1
+		if r.Kind == KindGroup && end+1 < len(rows) && rows[end+1].Kind == KindOpening && rows[end+1].Section == r.ID {
+			take = 2
+		}
+		if counted+take > limit && counted > 0 {
+			break
+		}
+		counted += take
+		end += take
+		if counted >= limit {
+			break
+		}
+	}
+	more := slices.ContainsFunc(rows[end:], func(r Row) bool { return !isEnd(r) })
+	out := slices.Clone(rows[start:end])
+	for _, r := range rows[end:] {
+		if isEnd(r) {
+			out = append(out, r)
+		}
+	}
+	rn.res.Rows = out
+	details := 0
+	for _, r := range out {
+		if r.Kind == KindDetail {
+			details++
+		}
+	}
+	// A run that is one page and read no detail rows keeps a nil page, as it
+	// had before J1, so a run that fits one page is byte-identical (R4, the
+	// ledger golden: its "collapsed" runs fit one page).
+	if !more && rn.opts.Cursor == "" && !rn.readDetails {
+		return
+	}
+	rn.res.Page = &Page{Size: details}
+	if more {
+		rn.res.Page.Next = rn.cursorAt(lastCounted(rows[start:end]))
+	}
+}
+
+// pageStart is where a paged run's page starts among its rows: after the
+// Totals of the currency blocks before the cursor's (they were on an earlier
+// page; its own block's Total may be next), then after the deepest anchor's
+// group row and its opening row, which the page read again only for their
+// subtotals.
+func (rn *runner) pageStart(rows []Row) int {
+	cur := rn.groupCur
+	if cur == nil {
+		return 0
+	}
+	d := len(cur.Path)
+	own := "total"
+	if len(rn.c.currencies) > 0 {
+		own += ":" + keyString(cur.Group[d:])
+	}
+	start := 0
+	for start < len(rows) && rows[start].Kind == KindTotal && rows[start].ID != own {
+		start++
+	}
+	anchors := d
+	if cur.Mode == cursorAfter {
+		anchors = d - 1
+	}
+	if anchors == 0 {
+		return start
+	}
+	// A group removed between pages is not among the rows: the page starts
+	// after the deepest anchor that still is.
+	for n := anchors; n >= 1; n-- {
+		id := "g:" + keyString(append(slices.Clone(cur.Group[:n]), cur.Group[d:]...))
+		i := slices.IndexFunc(rows[start:], func(r Row) bool { return r.ID == id })
+		if i < 0 {
+			log.WarnContext(rn.ctx, "page start group not among the rows", "group", id)
+			continue
+		}
+		at := start + i + 1
+		if at < len(rows) && rows[at].Kind == KindOpening && rows[at].Section == id {
+			at++
+		}
+		return at
+	}
+	return start
+}
+
+// lastCounted is the last row a page counts (not a Total or computed row);
+// a page that has a next one holds at least one.
+func lastCounted(rows []Row) Row {
+	for i := len(rows) - 1; i > 0; i-- {
+		if !isEnd(rows[i]) {
+			return rows[i]
+		}
+	}
+	return rows[0]
+}
+
+// cursorAt is the cursor after row, the last row a page counts (R6): inside
+// the group for a detail row, an expanded group row or an opening row; after
+// the group's whole subtree for a closed group row or a subtotal. Its path
+// holds the order values of the group and of each enclosing group, read from
+// their statement rows.
+func (rn *runner) cursorAt(row Row) string {
+	key, mode := row.GroupKey, cursorAfter
+	var detail map[string]any
+	switch {
+	case row.Kind == KindDetail:
+		detail = rn.rawDetails[row.ID]
+		key, mode = rn.rowKey(rn.rawGroups[row.Section], len(rn.c.p.groups)), cursorIn
+	case row.Kind == KindOpening, row.Kind == KindGroup && row.Expanded:
+		mode = cursorIn
+	}
+	depth := len(key) - len(rn.c.currencies)
+	path := make([][]any, depth)
+	for i := 1; i <= depth; i++ {
+		id := "g:" + keyString(append(slices.Clone(key[:i]), key[depth:]...))
+		raw, ok := rn.rawGroups[id]
+		if !ok {
+			// Every enclosing group's row is an anchor or was read: a missing
+			// one is an engine fault, and an empty next ends the list early.
+			log.ErrorContext(rn.ctx, "page end group path not among the rows", "group", id)
+			return ""
+		}
+		values := make([]any, len(rn.groupShape[i-1]))
+		for j := range values {
+			values[j] = raw[orderValue(i, j)]
+		}
+		path[i-1] = values
+	}
+	return groupCursorOf(rn.groupFP, rn.groupKeys, groupPos{key: key, path: path, mode: mode}, detail)
+}
+
 // group emits a level-n group row, its children when expanded, and its
 // subtotal.
 func (rn *runner) group(t *tree, row map[string]any, n int, section string) {
@@ -507,6 +652,9 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 		}
 	}
 	expanded := canOpen && rn.expand.has(key, n)
+	if rn.rawGroups != nil {
+		rn.rawGroups[id] = row
+	}
 	rn.push(Row{
 		ID: id, Kind: KindGroup, Depth: n - 1, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,

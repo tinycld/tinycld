@@ -77,6 +77,13 @@ type level struct {
 	lookups    *windowFrame
 	lookupMemo map[string]levelLookup
 	pre        map[string]bool
+	// terms are what the level's sibling rows order by (frame.order writes
+	// them); a paged run's cursor holds a group's values of them.
+	terms []orderTerm
+	// paged is set for a level of a page statement: o<L> then also selects its
+	// rows' order values (__s<L>_<j>) and is materialized, as the path CTE of
+	// the level reads it a second time.
+	paged bool
 }
 
 // levelLookup is a lookup compiled on a level's rows, and the wheres it
@@ -115,11 +122,12 @@ func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
 	if err := lv.labelSQL(); err != nil {
 		return nil, err
 	}
-	order, err := lv.order()
+	terms, err := lv.order()
 	if err != nil {
 		return nil, err
 	}
-	lv.frame.order = order
+	lv.terms = terms
+	lv.frame.order = orderSQL(terms)
 	return lv, nil
 }
 
@@ -224,8 +232,12 @@ func (lv *level) cell(cp *colPlan, rows *windowFrame) (expr, error) {
 // a record group, by its label, then by the level's key (the record's id), so
 // records with no sort key read in label order and the same label keeps one
 // order.
-func (lv *level) order() ([]string, error) {
-	var out []string
+func (lv *level) order() ([]orderTerm, error) {
+	var out []orderTerm
+	// key sorts by x: its blanks last, then x in the key's direction.
+	key := func(x string, desc bool) {
+		out = append(out, orderTerm{sql: "(" + x + " IS NULL)"}, orderTerm{sql: x, desc: desc})
+	}
 	for _, s := range lv.c.p.sort {
 		e, ok, err := lv.sortKey(s)
 		if err != nil {
@@ -242,28 +254,35 @@ func (lv *level) order() ([]string, error) {
 		// A record sorts by its label's typed value, then by its id; a select
 		// by its shown label, then by its stored value.
 		if ref, ok := lv.c.sortLabel(lv.labels, s, e); ok {
-			key := labelOrder(lv.r.s, ref.value)
-			out = append(out, "("+key+" IS NULL)", key+dirOf(s.desc))
-		} else if key, ok := shownOrder(lv.r.s.bind, e); ok {
-			out = append(out, "("+key+" IS NULL)", key+dirOf(s.desc))
+			key(labelOrder(lv.r.s, ref.value), s.desc)
+		} else if shown, ok := shownOrder(lv.r.s.bind, e); ok {
+			key(shown, s.desc)
 		}
-		out = append(out, "("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
+		key(e.sql, s.desc)
 	}
 	if lv.n > 0 {
 		if lv.c.groupTargets[lv.n-1] != nil && lv.labelKey != "" {
-			out = append(out, "("+lv.labelKey+" IS NULL)", lv.labelKey)
+			key(lv.labelKey, false)
 		}
 		// A select's groups read in the order of their option labels.
 		if shown := lv.shownKey(lv.n - 1); shown != "" {
-			out = append(out, "("+shown+" IS NULL)", shown)
+			key(shown, false)
 		}
-		key := fmt.Sprintf("a.k%d", lv.n-1)
-		out = append(out, "("+key+" IS NULL)", key)
+		key(fmt.Sprintf("a.k%d", lv.n-1), false)
 	}
 	if len(out) == 0 {
-		out = []string{"1"}
+		out = []orderTerm{{sql: "1"}}
 	}
 	return out, nil
+}
+
+// orderSQL writes order terms as ORDER BY items.
+func orderSQL(terms []orderTerm) []string {
+	out := make([]string, len(terms))
+	for i, t := range terms {
+		out[i] = t.sql + dirOf(t.desc)
+	}
+	return out
 }
 
 // sortKey is a sort key's value on this level, or ok false where it means
@@ -366,9 +385,21 @@ func (lv *level) render(cells []string, own string, totals []string) []string {
 		kids = lv.kids
 	}
 	out = append(out, "1 AS __own", lv.label.value+" AS __label", lv.label.currency+" AS __labelcur", "a.__n AS __n", kids+" AS __kids")
+	materialized := ""
+	if lv.paged {
+		for j, t := range lv.terms {
+			out = append(out, fmt.Sprintf("%s AS %s", t.sql, orderValue(lv.n, j)))
+		}
+		materialized = "MATERIALIZED "
+	}
 	body := strings.Join(out, ", ")
-	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, body, lv.rowsFrom(g, lv.frame, body)))
+	ctes = append(ctes, fmt.Sprintf("o%d AS %s(SELECT %s FROM %s)", lv.n, materialized, body, lv.rowsFrom(g, lv.frame, body)))
 	return ctes
+}
+
+// orderValue names a paged level row's value of its order term j.
+func orderValue(n, j int) string {
+	return fmt.Sprintf("__s%d_%d", n, j)
 }
 
 // base returns the CTEs of the level's rows before its cells, and the one that
