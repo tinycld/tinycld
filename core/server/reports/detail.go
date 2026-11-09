@@ -89,6 +89,27 @@ type windowFrame struct {
 	checking bool
 	// compiled holds the formulas compiled on the frame's rows (formula).
 	compiled map[*Node]expr
+	// recs joins the group records the frame's rows read under its layers;
+	// nil for a frame that reads them by subquery.
+	recs *recordJoins
+	// name prefixes the hoisted values' names (wh when "").
+	name string
+	// lookups holds each lookup compiled on the frame's rows by its node, so
+	// the copies of one lookup in a formula (an if that reads it in both
+	// branches) are computed once (rowsCtx.lookup).
+	lookups map[string]detailLookup
+}
+
+// detailLookup is a lookup compiled on a frame's detail rows: its value as
+// the frame computes it, what it reads of the row and whether it was hoisted
+// (both recorded again in the lookup around a copy), and the wheres it handed
+// the detail select to probe (at relative to the lookup's at).
+type detailLookup struct {
+	e       expr
+	reads   *rowReads
+	hoisted bool
+	at      string
+	wheres  []condProbe
 }
 
 // hoistLayer is one select below the frame's own: values ("<sql> AS
@@ -118,7 +139,11 @@ func (f *windowFrame) hoistLayer(alias string, keys []string, sqls ...string) []
 	for i, sql := range sqls {
 		name, ok := f.hoistedAs[sql]
 		if !ok {
-			name = fmt.Sprintf("wh%d", len(f.hoistedAs))
+			prefix := f.name
+			if prefix == "" {
+				prefix = "wh"
+			}
+			name = fmt.Sprintf("%s%d", prefix, len(f.hoistedAs))
 			f.hoistedAs[sql] = name
 			layer.cols = append(layer.cols, sql+" AS "+name)
 			layer.names = append(layer.names, name)
@@ -141,8 +166,12 @@ func (f *windowFrame) hoistLayer(alias string, keys []string, sqls ...string) []
 func (f *windowFrame) from(table, alias string) string {
 	base := table + " " + alias
 	from := base
-	if len(f.hoisted) == 0 && table == alias {
+	if len(f.hoisted) == 0 && table == alias && !f.recs.any() {
 		from = table
+	}
+	// The records first: a hoisted value may read one.
+	if f.recs.any() {
+		from = f.recs.from(from)
 	}
 	for i, h := range f.hoisted {
 		if len(h.keys) == 0 {
@@ -239,12 +268,20 @@ func (rc *rowsCtx) record(group string, p Path, at string) (expr, error) {
 	k := fmt.Sprintf("k%d", gi)
 	rc.reads.key(k)
 	key := "w." + k
-	e.sql = recordSQL(rc.r.s, target, bound, key)
 	id := recordCurrencyID(group, p)
+	read := func(p *pathPlan) string { return recordSQL(rc.r.s, target, p, key) }
+	// On a detail row the record is joined under the frame once, however many
+	// cells, sort keys and window orders read it. Inside a lookup it stays a
+	// subquery on the group key, which lets the lookup be computed once per
+	// group key (rowReads.groupKeys).
+	if f := rc.detail; f != nil && f.recs != nil && !f.checking && rc.reads == nil {
+		read = f.recs.reader(gi, target)
+	}
+	e.sql = read(bound)
 	if ck, ok := c.valueCur[id]; ok {
 		e.cur = currency{key: ck, id: id}
 	} else {
-		e.cur = recordCurrency(rc.r.s, target, bound, key, id)
+		e.cur = recordCurrencyBy(bound, key, id, read)
 	}
 	return e, nil
 }
@@ -308,9 +345,23 @@ func (rc *rowsCtx) label(e expr) string { return rc.r.c.textOf(rc.r.s, e) }
 // (hoistLookup reads that). A lookup inside it, through a column's formula,
 // adds its reads to this one's; one hoisted is a value of the row.
 func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) {
+	f := rc.detail
+	memo := f != nil && !f.checking
+	key := lookupCurrencyID(n)
+	if m, ok := f.lookupOf(key); memo && ok {
+		rc.reads.add(m.reads)
+		if m.hoisted {
+			rc.reads.value()
+		}
+		for _, w := range m.wheres {
+			rc.probeWhere(at+strings.TrimPrefix(w.at, m.at), w.sql)
+		}
+		return m.e, nil
+	}
 	around := rc.reads
 	reads := &rowReads{}
 	rc.reads = reads
+	wheres := len(rc.r.c.detailWheres)
 	e, err := lookupIn(rc, rc.r, n, at)
 	rc.reads = around
 	if err != nil {
@@ -321,7 +372,22 @@ func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) {
 	if hoisted {
 		around.value()
 	}
+	if memo {
+		if f.lookups == nil {
+			f.lookups = map[string]detailLookup{}
+		}
+		f.lookups[key] = detailLookup{e: e, reads: reads, hoisted: hoisted, at: at, wheres: slices.Clone(rc.r.c.detailWheres[wheres:])}
+	}
 	return e, nil
+}
+
+// lookupOf is the lookup compiled on the frame's rows under key, if any.
+func (f *windowFrame) lookupOf(key string) (detailLookup, bool) {
+	if f == nil {
+		return detailLookup{}, false
+	}
+	m, ok := f.lookups[key]
+	return m, ok
 }
 
 // probeWhere takes a lookup's where on a detail row, which the detail

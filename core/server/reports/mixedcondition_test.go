@@ -232,8 +232,8 @@ func TestAMixedCellNoticeNamesOnlyColumnsBlankOnThisPage(t *testing.T) {
 var keyedLayer = regexp.MustCompile(`\) wg\d+ ON `)
 
 // The General Ledger's opening lookup is computed once per group in the
-// detail select, however many times the run compiles the column that reads
-// it: a viewer sort on the balance and the detail label compile it again.
+// detail select, however many places read it: the balance column, the detail
+// label and a viewer sort on the label.
 func TestABalanceShapedReportHoistsItsOpeningLookupOnce(t *testing.T) {
 	z := newZoo(t)
 	withBalanceZoo(t, z)
@@ -257,12 +257,12 @@ func TestABalanceShapedReportHoistsItsOpeningLookupOnce(t *testing.T) {
 		return 0
 	}
 	plain := hoisted(balanceSpec(), Options{Today: "2026-07-15"})
-	// The label reads the opening the balance column reads; a viewer sort on
-	// the first column sorts by the label.
+	// The label reads the opening the balance column reads, so it adds no
+	// layer; a viewer sort on the first column sorts by the label.
 	labelled := hoisted(openingLabel, Options{Today: "2026-07-15"})
 	sorted := hoisted(openingLabel, Options{Today: "2026-07-15", Sort: []ViewSort{{Col: "account"}}})
-	if labelled != plain+1 || sorted != labelled {
-		t.Fatalf("keyed layers: %d plain, %d with the opening as the label, %d sorted by it; want the label's one more, the sort's none",
+	if labelled != plain || sorted != labelled {
+		t.Fatalf("keyed layers: %d plain, %d with the opening as the label, %d sorted by it; want the same number",
 			plain, labelled, sorted)
 	}
 }

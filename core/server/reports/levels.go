@@ -2,6 +2,7 @@ package reports
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -64,12 +65,34 @@ type level struct {
 	// sortMixed are the sort keys (sql: where the key met a mixed sum) that
 	// order the level's rows; render probes them over the rows it shows.
 	sortMixed []condProbe
+	// recs joins the group records the level's formulas read onto its rows
+	// (gr<L>), once per level.
+	recs *recordJoins
+	// lookups computes each lookup the level's formulas read once per row
+	// (kh<n>), wherever it is read: in a cell, the rollup, the opening, the
+	// having, a sort key or the label. lookupMemo holds each lookup's compile
+	// by its node, so the copies of one lookup in those places compile to one
+	// column. pre names the ones the having reads, which lk<L> computes
+	// before it (rowsFrom adds the others under the select that reads them).
+	lookups    *windowFrame
+	lookupMemo map[string]levelLookup
+	pre        map[string]bool
+}
+
+// levelLookup is a lookup compiled on a level's rows, and the wheres it
+// handed the level to probe (at relative to the lookup's at), so another
+// place that reads it probes them there too.
+type levelLookup struct {
+	e      expr
+	at     string
+	wheres []levelWhere
 }
 
 // level prepares level n: its keys, its parent partition, and the order of
 // its sibling rows, which running values read.
 func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
-	lv := &level{c: c, r: r, n: n, aggNames: map[string]bool{}, visiting: map[string]bool{}, reads: map[string]bool{}}
+	lv := &level{c: c, r: r, n: n, aggNames: map[string]bool{}, visiting: map[string]bool{}, reads: map[string]bool{}, recs: newRecordJoins(r.s, "a"),
+		lookups: &windowFrame{name: "kh"}, lookupMemo: map[string]levelLookup{}}
 	for i := range n {
 		lv.keys = append(lv.keys, fmt.Sprintf("k%d", i))
 	}
@@ -320,7 +343,7 @@ func (lv *level) isGroupColumn(cp *colPlan) bool {
 func (lv *level) render(cells []string, own string, totals []string) []string {
 	ctes, g := lv.base(own, totals)
 	for _, m := range lv.sortMixed {
-		lv.c.probe(m.at, fmt.Sprintf("SELECT 1 FROM %s WHERE %s", lv.frame.from(g, "a"), m.sql))
+		lv.c.probe(m.at, fmt.Sprintf("SELECT 1 FROM %s WHERE %s", lv.rowsFrom(g, lv.frame, m.sql), m.sql))
 	}
 	for _, w := range lv.wheres {
 		lv.c.probe(w.at, fmt.Sprintf("SELECT 1 FROM %s WHERE %s", w.from(lv, g), w.sql))
@@ -343,7 +366,8 @@ func (lv *level) render(cells []string, own string, totals []string) []string {
 		kids = lv.kids
 	}
 	out = append(out, "1 AS __own", lv.label.value+" AS __label", lv.label.currency+" AS __labelcur", "a.__n AS __n", kids+" AS __kids")
-	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, strings.Join(out, ", "), lv.frame.from(g, "a")))
+	body := strings.Join(out, ", ")
+	ctes = append(ctes, fmt.Sprintf("o%d AS (SELECT %s FROM %s)", lv.n, body, lv.rowsFrom(g, lv.frame, body)))
 	return ctes
 }
 
@@ -383,13 +407,33 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	}
 	joined, g := lv.joinSides(a, sides)
 	ctes = append(ctes, joined...)
+	// Every select of the level reads its rows from here on, so the records
+	// its formulas read are joined once, under all of them.
+	if lv.recs.any() {
+		gr := fmt.Sprintf("gr%d", lv.n)
+		ctes = append(ctes, fmt.Sprintf("%s AS (SELECT * FROM %s)", gr, lv.recs.from(g+" a")))
+		g = gr
+	}
+	// The lookups the having reads are computed once per row, before it: the
+	// having, rt<L> and the probes read them, and s<L> carries them to o<L>.
+	// They are computed on every row of the level, also one under a hidden
+	// parent or one where an if would not reach them: the values are the same,
+	// only a lookup that raises an error (a sum past SQLite's integer range)
+	// could now raise it on such a row.
+	lv.pre = lv.lookupsIn(own, nil)
+	if len(lv.pre) > 0 {
+		lk := fmt.Sprintf("lk%d", lv.n)
+		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (SELECT * FROM %s)", lk, lv.lookupLayers(g, lv.pre)))
+		g = lk
+	}
 	if len(totals) > 0 {
 		sel := make([]string, 0, len(lv.keys)+len(totals))
 		for _, k := range lv.keys {
 			sel = append(sel, "a."+k+" AS "+k)
 		}
 		sel = append(sel, totals...)
-		ctes = append(ctes, fmt.Sprintf("rt%d AS (SELECT %s FROM %s WHERE %s)", lv.n, strings.Join(sel, ", "), lv.sumsFrame.from(g, "a"), own))
+		body := strings.Join(sel, ", ")
+		ctes = append(ctes, fmt.Sprintf("rt%d AS (SELECT %s FROM %s WHERE %s)", lv.n, body, lv.rowsFrom(g, lv.sumsFrame, body, own), own))
 	}
 	conds := []string{}
 	if m := lv.c.havingAbove(lv.n); m > 0 {
@@ -398,7 +442,8 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	lv.allRows = g
 	if lv.havingMixed != "" {
 		// The level's rows under shown groups, before its having hides any.
-		probe := fmt.Sprintf("SELECT 1 FROM %s a WHERE %s", g, strings.Join(append(slices.Clone(conds), lv.havingMixed), " AND "))
+		where := strings.Join(append(slices.Clone(conds), lv.havingMixed), " AND ")
+		probe := fmt.Sprintf("SELECT 1 FROM %s WHERE %s", lv.rowsFrom(g, nil, where), where)
 		lv.c.probe(lv.c.p.groups[lv.n-1].at+".having", probe)
 	}
 	if own != "1" {
@@ -409,7 +454,8 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 		// Materialized: inShown reads it once for every row below the
 		// level, and SQLite would otherwise total the level's rows and run
 		// its having again for each of them.
-		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (SELECT a.* FROM %s a WHERE %s)", s, g, strings.Join(conds, " AND ")))
+		where := strings.Join(conds, " AND ")
+		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (SELECT a.* FROM %s WHERE %s)", s, lv.rowsFrom(g, nil, where), where))
 		g = s
 	}
 	return ctes, g
@@ -1143,13 +1189,15 @@ func (lc *levelCtx) record(group string, p Path, at string) (expr, error) {
 	e := recordExpr(bound)
 	// Outside the group (a level above it, the total) there is no one record,
 	// and so no amount and no currency.
-	key := "NULL"
-	e.sql = "NULL"
-	if lc.lv.n >= gi+1 {
-		key = fmt.Sprintf("a.k%d", gi)
-		e.sql = recordSQL(lc.lv.r.s, target, bound, key)
+	if lc.lv.n < gi+1 {
+		e.sql = "NULL"
+		e.cur = recordCurrency(lc.lv.r.s, target, bound, "NULL", recordCurrencyID(group, p))
+		return e, nil
 	}
-	e.cur = recordCurrency(lc.lv.r.s, target, bound, key, recordCurrencyID(group, p))
+	// The record is joined onto the level's rows once (gr<L>), however many
+	// places read it.
+	e.sql = lc.lv.recs.column(gi, target, bound)
+	e.cur = recordCurrencyBy(bound, fmt.Sprintf("a.k%d", gi), recordCurrencyID(group, p), lc.lv.recs.reader(gi, target))
 	return e, nil
 }
 
@@ -1221,11 +1269,11 @@ type levelWhere struct {
 func (w levelWhere) from(lv *level, g string) string {
 	switch {
 	case w.cond:
-		return lv.allRows + " a"
+		return lv.rowsFrom(lv.allRows, nil, w.sql)
 	case w.rows != nil:
-		return w.rows.from(g, "a")
+		return lv.rowsFrom(g, w.rows, w.sql)
 	}
-	return lv.frame.from(g, "a")
+	return lv.rowsFrom(g, lv.frame, w.sql)
 }
 
 // unread is e with no value, for a formula that reads a value of one row,
@@ -1250,9 +1298,92 @@ func (lc *levelCtx) probeWhere(at, sql string) bool {
 // again at each place the row reads it. A lookup that holds a total or a
 // running value stays where it is.
 func (lc *levelCtx) lookup(n *Node, at string) (expr, error) {
-	e, err := lookupIn(lc, lc.lv.r, n, at)
-	if err != nil || lc.rows == nil || e.agg || e.win {
-		return e, err
+	lv := lc.lv
+	key := lookupCurrencyID(n)
+	m, ok := lv.lookupMemo[key]
+	if ok {
+		// The wheres the lookup's where may leave unknown are probed over the
+		// rows this place decides on, under this place's spec path.
+		for _, w := range m.wheres {
+			lc.probeWhere(at+strings.TrimPrefix(w.at, m.at), w.sql)
+		}
+	} else {
+		before := len(lv.wheres)
+		e, err := lookupIn(lc, lv.r, n, at)
+		if err != nil {
+			return e, err
+		}
+		m = levelLookup{e: e, at: at, wheres: slices.Clone(lv.wheres[before:])}
+		lv.lookupMemo[key] = m
 	}
-	return hoistedLookup(lc.rows, "a", nil, e), nil
+	if m.e.agg || m.e.win {
+		return m.e, nil
+	}
+	return hoistedLookup(lv.lookups, "a", nil, m.e), nil
+}
+
+// lookupRef is a reference to one of the level's lookups (kh<n>). Placement
+// finds the lookups a select reads by this name in its SQL, so every select
+// over the level's rows reads them through rowsFrom; one that does not fails
+// with "no such column", never with a wrong value.
+var lookupRef = regexp.MustCompile(`\ba\.(kh\d+)\b`)
+
+// lookupsIn names the level's lookups sql reads, with the ones those read,
+// leaving out those in skip.
+func (lv *level) lookupsIn(sql string, skip map[string]bool) map[string]bool {
+	sqlOf := make(map[string]string, len(lv.lookups.hoistedAs))
+	for text, name := range lv.lookups.hoistedAs {
+		sqlOf[name] = text
+	}
+	out := map[string]bool{}
+	var walk func(string)
+	walk = func(text string) {
+		for _, m := range lookupRef.FindAllStringSubmatch(text, -1) {
+			name := m[1]
+			if out[name] || skip[name] {
+				continue
+			}
+			out[name] = true
+			walk(sqlOf[name])
+		}
+	}
+	walk(sql)
+	return out
+}
+
+// lookupLayers is table (as a) with the named lookups added, layer by layer
+// in the order they were hoisted, so one may read one hoisted before it.
+func (lv *level) lookupLayers(table string, names map[string]bool) string {
+	from := table + " a"
+	for _, h := range lv.lookups.hoisted {
+		var cols []string
+		for i, name := range h.names {
+			if names[name] {
+				cols = append(cols, h.cols[i])
+			}
+		}
+		if len(cols) > 0 {
+			from = fmt.Sprintf("(SELECT a.*, %s FROM %s) a", strings.Join(cols, ", "), from)
+		}
+	}
+	return from
+}
+
+// rowsPlaceholder stands for the level's rows while rowsFrom finds the
+// lookups a select reads.
+const rowsPlaceholder = "\x00rows\x00"
+
+// rowsFrom is what a select over the level's rows (table, as a) reads through
+// frame (nil: none): the lookups the select reads (in sqls or in frame's
+// layers) that table does not already hold, computed under frame's layers.
+func (lv *level) rowsFrom(table string, frame *windowFrame, sqls ...string) string {
+	inner := rowsPlaceholder + " a"
+	if frame != nil {
+		inner = frame.from(rowsPlaceholder, "a")
+	}
+	src := table
+	if need := lv.lookupsIn(inner+"\n"+strings.Join(sqls, "\n"), lv.pre); len(need) > 0 {
+		src = "(SELECT * FROM " + lv.lookupLayers(table, need) + ")"
+	}
+	return strings.Replace(inner, rowsPlaceholder, src, 1)
 }

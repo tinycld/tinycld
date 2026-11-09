@@ -54,8 +54,14 @@ func (c *compiler) parentKeys(s *stmt, n int, expand *expansion) string {
 // fillKeys selects level n's keys: those of its base rows, and each parent row
 // joined with the target's records that match the fill's where. The target's
 // records are read through its rule CTE, so a record the reader cannot list
-// never fills in. The join is a plain one, so SQLite picks its order and may
-// index the side it probes.
+// never fills in.
+//
+// The join is a CROSS JOIN, so p is always the outer loop. p is the
+// currencies, or the expanded rows of the level above, and the target's
+// records are a table SQLite can search by the fill's where, or index for it.
+// With a plain join SQLite may put the records outer (it reads them in id
+// order for the UNION) and run p, a read of w or of the keyset above, again
+// for each record: records times base rows.
 func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (string, error) {
 	target := c.groupTargets[n-1]
 	if target == nil {
@@ -92,9 +98,9 @@ func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (st
 	from := strings.TrimPrefix(sc.render(), "FROM ")
 	parents := c.parentKeys(r.s, n, expand)
 	if mixed != "" {
-		c.probe(c.p.groups[n-1].at+".fill.where", fmt.Sprintf("SELECT 1 FROM (%s) p\nJOIN %s\nWHERE %s", parents, from, mixed))
+		c.probe(c.p.groups[n-1].at+".fill.where", fmt.Sprintf("SELECT 1 FROM (%s) p\nCROSS JOIN %s\nWHERE %s", parents, from, mixed))
 	}
-	return fmt.Sprintf("SELECT %s FROM w UNION SELECT %s\nFROM (%s) p\nJOIN %s%s",
+	return fmt.Sprintf("SELECT %s FROM w UNION SELECT %s\nFROM (%s) p\nCROSS JOIN %s%s",
 		strings.Join(keys, ", "), strings.Join(picked, ", "), parents, from, where), nil
 }
 
