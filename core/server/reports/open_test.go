@@ -85,6 +85,14 @@ func TestOpenIsIgnoredWhenTheRunSendsKeys(t *testing.T) {
 	requireRows(t, res, "kind", "group", "group", "total")
 }
 
+// Ruling R2: collapse (even empty) keeps the open levels; expand without
+// collapse still replaces them (TestOpenIsIgnoredWhenTheRunSendsKeys).
+func TestOpenLevelsStayOpenWhenTheRunSendsCollapse(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", pagedBySpecies, Options{Expand: [][]any{}, Collapse: [][]any{}}, nil)
+	requireRows(t, res, "kind", "group", "opening", "detail", "detail", "subtotal", "group", "opening", "detail", "detail", "subtotal", "total")
+}
+
 func TestOpenWithHavingFillAndLayout(t *testing.T) {
 	z := newZoo(t)
 	having := strings.Replace(speciesHaving, `"groups":[{"id":"g","col":"species",`, `"groups":[{"id":"g","col":"species","open":true,`, 1)

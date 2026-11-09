@@ -2,6 +2,8 @@ package reports
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -226,23 +228,27 @@ func mergedRows(t *testing.T, pages []*Result) []Row {
 	return out
 }
 
-func TestAGroupedReportPagesAcrossAGroupBoundary(t *testing.T) {
+// Since J1a a page counts group, opening, detail and subtotal rows (R3), not
+// only detail rows, so a page of 2 ends earlier than it did; a group row and
+// its opening stay on one page, and Page.Size still counts the details (R4).
+func TestAGroupedReportCountsEveryRowKindOnItsPages(t *testing.T) {
 	z := newZoo(t)
 	withF7(t, z)
 	pages := groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: 2})
-	if len(pages) != 3 {
+	if len(pages) != 6 {
 		t.Fatalf("%d pages", len(pages))
 	}
-	requireRows(t, pages[0], "kind", "group", "opening", "detail", "detail", "total")
-	requireOrderedRows(t, pagedBySpecies, pages[0], "note", nil, nil, "f1", "f2", nil)
-	requireRows(t, pages[1], "kind", "detail", "subtotal", "group", "opening", "detail", "total")
-	requireOrderedRows(t, pagedBySpecies, pages[1], "note", "f7", nil, nil, nil, "f3", nil)
-	if ids := []string{pages[1].Rows[1].ID, pages[1].Rows[2].ID, pages[1].Rows[3].ID}; !slices.Equal(ids, []string{`s:["lion","USD"]`, `g:["zebra","USD"]`, `opening:["zebra","USD"]`}) {
-		t.Fatalf("page 2 ids = %v", ids)
-	}
+	requireRows(t, pages[0], "kind", "group", "opening", "total")
+	requireRows(t, pages[0], "id", `g:["lion","USD"]`, `opening:["lion","USD"]`, `total:["USD"]`)
+	requireRows(t, pages[1], "kind", "detail", "detail", "total")
+	requireOrderedRows(t, pagedBySpecies, pages[1], "note", "f1", "f2", nil)
 	requireRows(t, pages[2], "kind", "detail", "subtotal", "total")
-	requireOrderedRows(t, pagedBySpecies, pages[2], "note", "f4", nil, nil)
-	for i, want := range []int{2, 2, 1} {
+	requireRows(t, pages[2], "id", "d:"+z.id("f7"), `s:["lion","USD"]`, `total:["USD"]`)
+	requireRows(t, pages[3], "id", `g:["zebra","USD"]`, `opening:["zebra","USD"]`, `total:["USD"]`)
+	requireRows(t, pages[4], "kind", "detail", "detail", "total")
+	requireOrderedRows(t, pagedBySpecies, pages[4], "note", "f3", "f4", nil)
+	requireRows(t, pages[5], "id", `s:["zebra","USD"]`, `total:["USD"]`)
+	for i, want := range []int{0, 2, 1, 0, 2, 0} {
 		if pages[i].Page.Size != want {
 			t.Fatalf("page %d size = %d", i+1, pages[i].Page.Size)
 		}
@@ -254,11 +260,12 @@ func TestAGroupedReportPagesAcrossAGroupBoundary(t *testing.T) {
 }
 
 // Window values are computed before the page is cut: lion's running sum goes
-// on from page 1's 3500 (f1 1000, f2 2500) to 3600 at f7.
+// on from page 1's 3500 (f1 1000, f2 2500) to 3600 at f7. A page of 4 holds
+// lion's group row, its opening, f1 and f2 (J1a: every row kind counts).
 func TestARunningSumContinuesOnPageTwo(t *testing.T) {
 	z := newZoo(t)
 	withF7(t, z)
-	pages := groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: 2})
+	pages := groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: 4})
 	requireDetails(t, pages[0], "running", int64(1000), int64(3500))
 	if first := pages[1].Rows[0]; first.Cells["note"] != "f7" || first.Cells["running"] != int64(3600) {
 		t.Fatalf("page 2 starts with %+v", first)
@@ -282,27 +289,6 @@ func TestAGroupedPageSeamRepeatsNoRow(t *testing.T) {
 	rest := groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: 2, Cursor: first.Page.Next})
 	merged := mergedRows(t, append([]*Result{first}, rest...))
 	requireRows(t, &Result{Rows: merged}, "note", nil, nil, "f1", "f2", "f7", nil, nil, nil, "f3", "f4", "f8", nil, nil)
-}
-
-// An expanded report in two currencies keeps each currency's Total after its
-// own block: a page holds a total inside its slice in its place, and ends in
-// the totals after its slice.
-func TestAGroupedPageKeepsEachCurrencyTotalInItsPlace(t *testing.T) {
-	z := newZoo(t)
-	withEuroLeo(t, z, 100)
-	whole := z.run(t, "ann", feedingsBySpecies, Options{ExpandAll: true, Limit: 1000}, nil)
-	requireRows(t, whole, "kind", "group", "detail", "subtotal", "total", "group", "detail", "detail", "subtotal", "group", "detail", "detail", "subtotal", "total")
-	requireRows(t, whole, "note", nil, "f7", nil, nil, nil, "f1", "f2", nil, nil, "f3", "f4", nil, nil)
-	pages := groupedPages(t, z, "ann", feedingsBySpecies, Options{ExpandAll: true, Limit: 2})
-	if len(pages) != 3 {
-		t.Fatalf("%d pages", len(pages))
-	}
-	requireRows(t, pages[0], "id", `g:["lion","EUR"]`, "d:"+z.id("f7"), `s:["lion","EUR"]`, `total:["EUR"]`, `g:["lion","USD"]`, "d:"+z.id("f1"), `total:["USD"]`)
-	requireRows(t, pages[1], "id", "d:"+z.id("f2"), `s:["lion","USD"]`, `g:["zebra","USD"]`, "d:"+z.id("f3"), `total:["USD"]`)
-	requireRows(t, pages[2], "id", "d:"+z.id("f4"), `s:["zebra","USD"]`, `total:["USD"]`)
-	if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
-		t.Fatalf("pages = %v\nwhole = %v", got, whole.Rows)
-	}
 }
 
 // bulkFeedings adds n feedings of leo (cost 1, grams 1, notes n00001…) in one
@@ -340,17 +326,34 @@ func TestASixThousandRowGroupedReportPagesToItsEnd(t *testing.T) {
 			}
 		}
 	}
-	if len(pages) != 7 || details != 6004 || lionTotals != 1 {
-		t.Fatalf("pages = %d, details = %d, lion subtotals = %d", len(pages), details, lionTotals)
+	// Since J1a a page counts lion's and zebra's group and subtotal rows too
+	// (R3), so the 6,004 details and those 4 rows fill the pages.
+	if want := (6004 + 4 + 999) / 1000; len(pages) != want || details != 6004 || lionTotals != 1 {
+		t.Fatalf("pages = %d (want %d), details = %d, lion subtotals = %d", len(pages), want, details, lionTotals)
+	}
+	// The page count alone matches a details-only count too: page 1's group
+	// row is one of its 1,000 counted rows.
+	if n := countedRows(pages[0].Rows); n != 1000 {
+		t.Fatalf("page 1 holds %d counted rows, want 1000", n)
 	}
 }
 
+// A page holds at most 1,000 counted rows (group, opening, detail and
+// subtotal, J1a); Page.Size is the details among them (R4).
 func TestAGroupedPageHoldsAtMostAThousandRows(t *testing.T) {
 	z := newZoo(t)
 	bulkFeedings(t, z, 1200)
 	res := z.run(t, "ann", feedingsBySpecies, Options{ExpandAll: true, Limit: 5000}, nil)
-	if res.Page == nil || res.Page.Size != 1000 || res.Page.Next == "" {
-		t.Fatalf("page = %+v", res.Page)
+	details := 0
+	for _, r := range res.Rows {
+		if r.Kind == KindDetail {
+			details++
+		}
+	}
+	// Page 1 is lion's group row and 999 of lion's 1,202 details: 1,000
+	// counted rows, 999 of them details.
+	if n := countedRows(res.Rows); n != 1000 || details != 999 || res.Page == nil || res.Page.Size != 999 || res.Page.Next == "" {
+		t.Fatalf("%d counted rows, %d details, page = %+v", n, details, res.Page)
 	}
 }
 
@@ -366,9 +369,10 @@ func TestAGroupedCursorIsRefusedAfterASpecChangeOrASortChange(t *testing.T) {
 		spec string
 		opts Options
 	}{
-		"another sort":      {strings.Replace(pagedBySpecies, `"sort":[{"col":"note"}]`, `"sort":[{"col":"note","dir":"desc"}]`, 1), Options{}},
-		"another grouping":  {byNote, Options{}},
-		"a viewer sort":     {pagedBySpecies, Options{Sort: []ViewSort{{Col: "cost", Dir: "desc"}}}},
+		"another sort":     {strings.Replace(pagedBySpecies, `"sort":[{"col":"note"}]`, `"sort":[{"col":"note","dir":"desc"}]`, 1), Options{}},
+		"another grouping": {byNote, Options{}},
+		"a viewer sort":    {pagedBySpecies, Options{Sort: []ViewSort{{Col: "cost", Dir: "desc"}}}},
+		// Since J1a the fold print in the cursor's fingerprint refuses it.
 		"its group is shut": {pagedBySpecies, Options{Expand: [][]any{{"zebra", "USD"}}}},
 	}
 	for name, c := range cases {
@@ -381,9 +385,9 @@ func TestAGroupedCursorIsRefusedAfterASpecChangeOrASortChange(t *testing.T) {
 	}
 }
 
-// Group rows keep their cap: with rowCap 3 the group statement keeps the
-// total and the first two groups, says so, and pages only their details.
-func TestGroupRowsStillStopAtTheGroupCap(t *testing.T) {
+// Since J1a an open grouped report pages its group rows, so the group cap is
+// gone: with rowCap 3 every group and its detail still shows, with no notice.
+func TestAnOpenGroupedReportHasNoGroupCap(t *testing.T) {
 	z := newZoo(t)
 	withLimits(t, func(l *limits) { l.rowCap = 3 })
 	const byNote = `{"version":4,"source":"zoo.feedings","columns":[
@@ -391,12 +395,140 @@ func TestGroupRowsStillStopAtTheGroupCap(t *testing.T) {
 		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"note"}],"sort":[{"col":"note"}]}`
 	res := z.run(t, "ann", byNote, Options{ExpandAll: true}, nil)
-	requireRows(t, res, "kind", "group", "detail", "group", "detail", "total")
-	requireRows(t, res, "label", "f1", "f1", "f2", "f2", "Total")
-	if len(res.Notices) != 1 || res.Notices[0].Code != "rowCap" || res.Notices[0].Count != 3 {
+	requireRows(t, res, "kind", "group", "detail", "group", "detail", "group", "detail", "group", "detail", "total")
+	requireRows(t, res, "label", "f1", "f1", "f2", "f2", "f3", "f3", "f4", "f4", "Total")
+	if len(res.Notices) != 0 {
 		t.Fatalf("notices = %+v", res.Notices)
 	}
 	if res.Page == nil || res.Page.Next != "" {
 		t.Fatalf("page = %+v", res.Page)
+	}
+}
+
+func testShape() [][]orderTerm {
+	return [][]orderTerm{{{sql: "(a.k0 IS NULL)"}, {sql: "a.k0"}}, {{sql: "(x IS NULL)"}, {sql: "x", desc: true}, {sql: "(a.k1 IS NULL)"}, {sql: "a.k1"}}}
+}
+
+func TestAGroupCursorReadsBackWhatItWrote(t *testing.T) {
+	keys := []sortKey{{name: "s0", col: "note", typ: Text}, {name: "__id"}}
+	fp := groupFingerprint("species/;note/", levelShape(testShape()), foldPrint(&expansion{open: map[int]bool{1: true}}), keys)
+	at := groupPos{key: []any{"lion", "f1", "USD"}, path: [][]any{{int64(0), "lion"}, {int64(0), int64(12), int64(0), "f1"}}, mode: cursorIn}
+	text := groupCursorOf(fp, keys, at, map[string]any{"s0": "f2", "__id": "abc"})
+	cur, err := readGroupCursor(fp, testShape(), keys, 2, 1, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cur.Group, at.key) || !reflect.DeepEqual(cur.Path, at.path) || cur.Mode != cursorIn || !reflect.DeepEqual(cur.Values, []any{"f2", "abc"}) {
+		t.Fatalf("cursor = %+v", cur)
+	}
+	after := groupCursorOf(fp, keys, groupPos{key: []any{"lion", "USD"}, path: at.path[:1], mode: cursorAfter}, nil)
+	if cur, err := readGroupCursor(fp, testShape(), keys, 2, 1, after); err != nil || cur.Values != nil || cur.Mode != cursorAfter {
+		t.Fatalf("after cursor = %+v, %v", cur, err)
+	}
+}
+
+// The fingerprint ties a group cursor to the fold state (J1b): a fold, an
+// unfold, Expand all or Collapse all is a new run from page 1.
+func TestAGroupFingerprintChangesWithTheFoldState(t *testing.T) {
+	keys := []sortKey{{name: "__id"}}
+	shape := levelShape(testShape())
+	base := &expansion{open: map[int]bool{1: true}, set: map[string]bool{}, closed: map[string]bool{}}
+	folded := &expansion{open: map[int]bool{1: true}, set: map[string]bool{}, closed: map[string]bool{`["lion","USD"]`: true}}
+	all := &expansion{all: true, open: map[int]bool{}, set: map[string]bool{}, closed: map[string]bool{}}
+	prints := map[string]bool{}
+	for _, e := range []*expansion{base, folded, all} {
+		prints[groupFingerprint("species/", shape, foldPrint(e), keys)] = true
+	}
+	if len(prints) != 3 {
+		t.Fatalf("fingerprints = %v, want three", prints)
+	}
+	// The same folds listed in another order are the same state.
+	a := &expansion{open: map[int]bool{}, set: map[string]bool{`["a"]`: true, `["b"]`: true}, closed: map[string]bool{}}
+	b := &expansion{open: map[int]bool{}, set: map[string]bool{`["b"]`: true, `["a"]`: true}, closed: map[string]bool{}}
+	if foldPrint(a) != foldPrint(b) {
+		t.Fatal("the fold print depends on the keys' order")
+	}
+}
+
+func TestAMalformedGroupCursorIsRefused(t *testing.T) {
+	keys := []sortKey{{name: "__id"}}
+	fp := groupFingerprint("species/;note/", levelShape(testShape()), "", keys)
+	good := func(c map[string]any) string {
+		raw, _ := json.Marshal(c)
+		return encodeCursor(string(raw))
+	}
+	cases := map[string]map[string]any{
+		"another fingerprint":    {"k": "000000000000", "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}}, "m": "after"},
+		"no mode":                {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}}},
+		"a mode it never writes": {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}}, "m": "before"},
+		"path longer than group": {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}, []any{0, 1, 0, "f1"}}, "m": "after"},
+		"a level of wrong width": {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0}}, "m": "after"},
+		"values outside a leaf":  {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}}, "m": "in", "v": []any{"x"}},
+		"values with mode after": {"k": fp, "g": []any{"lion", "f1", "USD"}, "p": []any{[]any{0, "lion"}, []any{0, 1, 0, "f1"}}, "m": "after", "v": []any{"x"}},
+		"an object in the group": {"k": fp, "g": []any{map[string]any{}, "USD"}, "p": []any{[]any{0, "lion"}}, "m": "after"},
+		"an object in the path":  {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, map[string]any{}}}, "m": "after"},
+		"values of wrong length": inLeaf(fp, []any{"x", "y"}),
+		"a number for __id":      inLeaf(fp, []any{5}),
+		// An "(x IS NULL)" term's value is a number (0 or 1), never text or
+		// blank: such a cursor would compare its level's rows by a wrong kind
+		// and read a wrong page (review B, deferral 1).
+		"a string at an IS NULL term":       {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{"0", "lion"}}, "m": "after"},
+		"a blank at an IS NULL term":        {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{nil, "lion"}}, "m": "after"},
+		"a string at an inner IS NULL term": {"k": fp, "g": []any{"lion", "f1", "USD"}, "p": []any{[]any{0, "lion"}, []any{0, 1, "0", "f1"}}, "m": "in", "v": []any{"x"}},
+	}
+	// The cases differ from a cursor the reader takes in one thing only.
+	if _, err := readGroupCursor(fp, testShape(), keys, 2, 1, good(inLeaf(fp, []any{"x"}))); err != nil {
+		t.Fatalf("a well-formed cursor in a leaf: %v", err)
+	}
+	for name, c := range cases {
+		if _, err := readGroupCursor(fp, testShape(), keys, 2, 1, good(c)); err == nil {
+			t.Errorf("%s: taken", name)
+		}
+	}
+	raw, _ := json.Marshal(inLeaf(fp, []any{"x"}))
+	if _, err := readGroupCursor(fp, testShape(), keys, 2, 1, encodeCursor(string(raw)+"{}")); err == nil {
+		t.Error("trailing data after the cursor: taken")
+	}
+}
+
+// inLeaf is a group cursor inside the leaf group lion/f1 with values v.
+func inLeaf(fp string, v []any) map[string]any {
+	return map[string]any{"k": fp, "g": []any{"lion", "f1", "USD"}, "p": []any{[]any{0, "lion"}, []any{0, 1, 0, "f1"}}, "m": "in", "v": v}
+}
+
+func TestAfterSQLIsTrueOnlyForARowAfterTheValues(t *testing.T) {
+	z := newZoo(t)
+	s := newStmt(z.app, nil)
+	cols := []orderTerm{{sql: "(x IS NULL)"}, {sql: "x", desc: true}, {sql: "y"}}
+	type row struct {
+		x    any
+		y    string
+		want bool
+	}
+	cases := []struct {
+		values []any
+		rows   []row
+	}{
+		{[]any{int64(0), int64(5), "m"}, []row{{int64(6), "a", false}, {int64(5), "a", false}, {int64(5), "m", false}, {int64(5), "z", true}, {int64(4), "a", true}, {nil, "a", true}}},
+		// A blank cursor value: only a blank row ties on it; a set row sorts before.
+		{[]any{int64(1), nil, "m"}, []row{{int64(3), "z", false}, {nil, "a", false}, {nil, "m", false}, {nil, "z", true}}},
+	}
+	for _, c := range cases {
+		cond := afterSQL(s, cols, c.values)
+		for _, r := range c.rows {
+			// No coalesce: NOT afterSQL must count a row, so the term is never NULL.
+			var after, notAfter any
+			q := fmt.Sprintf("SELECT (%s), NOT (%s) FROM (SELECT {:x} AS x, {:y} AS y)", cond, cond)
+			params := dbx.Params{"x": r.x, "y": r.y}
+			for k, v := range s.params {
+				params[k] = v
+			}
+			if err := z.app.DB().NewQuery(q).Bind(params).Row(&after, &notAfter); err != nil {
+				t.Fatal(err)
+			}
+			if after == nil || notAfter == nil || (after == int64(1)) != r.want {
+				t.Errorf("values %v, x=%v y=%v: after = %v, not after = %v, want %v", c.values, r.x, r.y, after, notAfter, r.want)
+			}
+		}
 	}
 }

@@ -108,7 +108,7 @@ Records with no group always show first. In each group, the records show by name
 
 ## Fold groups
 
-To open a group level when the report opens, turn on **Open when the report opens** for that level. **Collapse all** closes the groups until you open them again.
+To open a group level when the report opens, turn on **Open when the report opens** for that level. To close or open one group, select its row. The other groups stay as they are, also the groups that load when you scroll further. **Collapse all** closes the groups until you open them again.
 
 While a report runs again, "Updating…" shows in the header. On phones and tablets it shows beside **Close** in the builder. The table does not move.
 
@@ -118,7 +118,7 @@ A formula is built from parts you pick from menus: **Number**, **Text**, **Colum
 
 ## When columns do not fit
 
-A report never scrolls sideways. Each column gets the room its heading and its values need. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". Spare room goes to the columns whose text is cut, then to the text columns. A column with no value is as wide as its heading.
+A report never scrolls sideways. Each column gets at least its least width. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". On one line, the rest of the room goes to the columns by their **Extra room**: while two columns both need more room for their text, a column with **Double** gets twice the room of a column with **Normal**, also when its text is shorter. A column stops at the width its values need while another column's text is still cut, and its share goes to the others; when every column shows its whole text, the room left goes by **Extra room** again. A column with **None** gets the room that its values need, and no more. A column with no value is as wide as its heading.
 
 Group, opening, subtotal and total rows show their whole label: it runs across the empty cells after it. When the rows wrap, a total's label moves onto the line of its figures if there is room.
 
@@ -128,13 +128,13 @@ To change how a column fits, open the column in **Columns**:
 
 - **Narrowest** is the least width a text column gets before the report wraps its rows: **Automatic** (about eight letters), **Whole value** (never cut), or a number of letters.
 - **Long text** keeps the text on **One line, ends in …**, or wraps it to 2 or 3 lines. A column that wraps is never narrower than its longest word, whatever its **Narrowest** setting, so its words stay whole.
-- **Extra room** is the column's share of the spare room on one line: **None**, **Normal**, **Double** or **Triple**. Text and the first column start at **Normal**; other numbers, amounts, percents, dates and yes/no values start at **None**. In a pivot, the setting applies to every column the pivot makes from that column.
+- **Extra room** is the column's share of the spare room on one line: **None**, **Normal**, **Double** or **Triple**. A column with **Double** gets twice the spare room of a column with **Normal**, whichever column has the longer text, but no column takes room past its values' width while another column's text is still cut. Text and the first column start at **Normal**; other numbers, amounts, percents, dates and yes/no values start at **None**. In a pivot, the setting applies to every column the pivot makes from that column.
 
 Numbers, amounts, percents, dates and yes/no values show **Never cut**: you can change only their extra room.
 
 In **Arrange**, **One line from** is the least row width at which the report uses one line; below it, the report uses an arrangement or wraps its rows. **Use from** on an arrangement is the least row width at which it is used. On a computer the rows are the window's width less the side rail.
 
-To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. On a phone, the title, the chips and the notes scroll away with the rows, so the rows get the screen; scroll back to the top to change a chip. A long report loads more rows as you scroll, also when it has groups. Until its last rows have loaded, the list ends with **Loading more rows…**; the Total shows with the last rows, and **End of report** marks the end.
+To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. On a phone, the title, the chips and the notes scroll away with the rows, so the rows get the screen; scroll back to the top to change a chip. A long report loads more rows as you scroll, however many groups it has. Until its last rows have loaded, the list ends with **Loading more rows…**; the Total shows with the last rows, and **End of report** marks the end. If more rows cannot load, the list ends with **Could not load more rows**. Select **Retry** to try again. The rows that show stay.
 
 ## Run a report
 

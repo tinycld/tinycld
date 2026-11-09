@@ -2,8 +2,10 @@ package reports
 
 import (
 	"context"
+	"database/sql"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -30,13 +32,15 @@ func TestABalanceShapedReportComputesItsBeginningBalanceOncePerStatement(t *test
 	if _, err := runLedger(z, map[string]string{"period": ledgerPeriod}, Options{Today: "2025-07-15"}); err != nil {
 		t.Fatal(err)
 	}
-	kinds := 0
+	var kinds []string
 	for _, st := range *seen {
 		kind := "detail"
-		if strings.Contains(st.sql, "__level") {
+		if isTotalStatement(st.sql) {
+			kind = "total"
+		} else if strings.Contains(st.sql, "__level") {
 			kind = "group"
 		}
-		kinds++
+		kinds = append(kinds, kind)
 		// Two lookups, on two levels (the total and the accounts) or in two
 		// selects (the shown accounts and the lines).
 		if n := strings.Count(st.sql, "(SELECT sum("); n > 4 {
@@ -60,8 +64,118 @@ func TestABalanceShapedReportComputesItsBeginningBalanceOncePerStatement(t *test
 			t.Errorf("the %s statement reads a group record by %d subqueries on a line, want at most 9", kind, byLine)
 		}
 	}
-	if kinds != 2 {
-		t.Fatalf("%d statements, want the group and the detail statement", kinds)
+	got := append([]string(nil), kinds...)
+	sort.Strings(got)
+	if !slices.Equal(got, []string{"detail", "group", "total"}) {
+		t.Fatalf("statements %v, want the group, the Total and the detail statement", got)
+	}
+}
+
+// J1a: a cursor page's level statement keeps the #452 shape (each lookup
+// once per group row, the group record joined once per level), and so does
+// the Total statement of its own.
+func TestACursorPageComputesItsBeginningBalanceOncePerStatement(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	withLedgerScale(t, z, 20)
+	first, err := runLedger(z, map[string]string{"period": ledgerPeriod}, Options{Today: "2025-07-15", Limit: 7})
+	if err != nil || first.Page == nil || first.Page.Next == "" {
+		t.Fatalf("first page: %+v, %v", first.Page, err)
+	}
+	seen := observeReads(t)
+	if _, err := runLedger(z, map[string]string{"period": ledgerPeriod}, Options{Today: "2025-07-15", Limit: 7, Cursor: first.Page.Next}); err != nil {
+		t.Fatal(err)
+	}
+	db := readPool(t, z)
+	kinds := map[string]int{}
+	for _, st := range *seen {
+		kind := "detail"
+		switch {
+		case isTotalStatement(st.sql):
+			kind = "total"
+		case strings.Contains(st.sql, "__p1"):
+			kind = "page"
+		}
+		kinds[kind]++
+		switch kind {
+		case "page":
+			requireLevelRowsOnce(t, db, st)
+		case "total":
+			requireTotalLevelRowsOnce(t, db, st)
+		}
+		if n := strings.Count(st.sql, "(SELECT sum("); n > 4 {
+			t.Errorf("the %s statement holds %d sum lookups, want at most 4", kind, n)
+		}
+		for _, m := range recordSubquery.FindAllStringSubmatch(st.sql, -1) {
+			if m[1] == "a" {
+				t.Errorf("the %s statement reads a group record by a subquery on a level row", kind)
+			}
+		}
+	}
+	if kinds["page"] != 1 || kinds["total"] != 1 {
+		t.Fatalf("statements %v, want one page and one Total statement", kinds)
+	}
+}
+
+// levelRowsStep is a level's rows o<L> computed in a query plan.
+var levelRowsStep = regexp.MustCompile(`^\s*(MATERIALIZE|CO-ROUTINE) (o\d+)$`)
+
+// requireLevelRowsOnce fails unless the plan of a page statement computes
+// each o<L> once, materialized: its leg and the cursor's sibling counts both
+// read it, and SQLite computes an inlined o<L> again for each reader, its
+// lookups with it. The SQL text is the same either way, so this reads the
+// plan.
+func requireLevelRowsOnce(t *testing.T, db *sql.DB, st readStatement) {
+	t.Helper()
+	raw, args := rawStatement(t, st.sql, st.params)
+	plan := queryPlan(t, db, raw, args)
+	computed := map[string][]string{}
+	for _, step := range plan {
+		if m := levelRowsStep.FindStringSubmatch(step); m != nil {
+			computed[m[2]] = append(computed[m[2]], m[1])
+		}
+	}
+	if len(computed) == 0 {
+		t.Fatalf("the page statement's plan computes no o<L>:\n%s", strings.Join(plan, "\n"))
+	}
+	for name, how := range computed {
+		if !slices.Equal(how, []string{"MATERIALIZE"}) {
+			t.Errorf("the page statement's plan computes %s as %v, want MATERIALIZE once", name, how)
+		}
+	}
+}
+
+// pathCTEName is a CTE only a page statement needs: a level's paths (pp<L>)
+// or the cursor's sibling counts (pc).
+var pathCTEName = regexp.MustCompile(`^(pp\d+|pc)$`)
+
+// requireTotalLevelRowsOnce is requireLevelRowsOnce for the Total statement
+// (review B, deferral 3): its plan computes each o<L> it reads exactly once,
+// and with it each lookup of that level. It checks first that the statement
+// holds no path CTE, the one thing that reads an o<L> a second time; so an
+// o<L> computed once may be a co-routine here, and a Total statement that
+// gained a path CTE fails here rather than passing on a plan that happens to
+// materialize.
+func requireTotalLevelRowsOnce(t *testing.T, db *sql.DB, st readStatement) {
+	t.Helper()
+	if names := ctesOf(st.sql); slices.ContainsFunc(names, pathCTEName.MatchString) {
+		t.Fatalf("the Total statement holds a path CTE: %v", names)
+	}
+	raw, args := rawStatement(t, st.sql, st.params)
+	plan := queryPlan(t, db, raw, args)
+	computed := map[string][]string{}
+	for _, step := range plan {
+		if m := levelRowsStep.FindStringSubmatch(step); m != nil {
+			computed[m[2]] = append(computed[m[2]], m[1])
+		}
+	}
+	if len(computed) == 0 {
+		t.Fatalf("the Total statement's plan computes no o<L>:\n%s", strings.Join(plan, "\n"))
+	}
+	for name, how := range computed {
+		if len(how) != 1 {
+			t.Errorf("the Total statement's plan computes %s as %v, want once", name, how)
+		}
 	}
 }
 

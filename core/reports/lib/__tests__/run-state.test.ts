@@ -20,6 +20,7 @@ const query = (extra: Partial<RunQueryState>): RunQueryState => ({
     pages: [],
     isPending: false,
     isError: false,
+    isLoadMoreError: false,
     isPlaceholderData: false,
     ...extra,
 })
@@ -34,6 +35,14 @@ describe('runView', () => {
             heldRows: [],
             topics: [],
         })
+    })
+
+    // R8: a failed next page keeps the pages already shown and the run ready; the
+    // list ends in a row with Retry (useReportRun's loadMoreFailed).
+    it('stays ready with its rows when only the next page failed', () => {
+        const view = runView(query({ isError: true, isLoadMoreError: true, pages: [ok()] }))
+        expect(view.state).toBe('ready')
+        expect(view.result?.rows).toHaveLength(1)
     })
 
     it('is loading while the first run is pending', () => {

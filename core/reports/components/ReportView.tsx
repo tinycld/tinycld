@@ -170,6 +170,8 @@ function TableBody({ model, table, top, states }: BodyProps & { states: ReactNod
             onToggleGroup={model.onToggleGroup}
             onNearEnd={model.run.loadMore}
             hasMore={model.run.hasMore}
+            loadMoreFailed={model.run.loadMoreFailed}
+            onRetryMore={model.run.retryLoadMore}
             sort={model.sort}
             onSortColumn={model.onSortColumn}
             onTopRowIndex={model.run.onTopRowIndex}

@@ -168,25 +168,83 @@ describe('visibleRows', () => {
 })
 
 describe('expansion state', () => {
+    const a = group('g:a', ['a'], { expanded: true })
+    const b = group('g:b', ['b'], { expanded: true })
+    const rows = [a, b]
+
     it('sends no expand on the first run, so groups marked open open', () => {
         expect(expansionOptions(DEFAULT_EXPANSION)).toEqual({})
     })
 
     it('collapse sends an empty expand, so groups marked open stay closed', () => {
-        expect(foldAllTarget([group('g:a', ['a'], { expanded: true })])).toEqual(NO_EXPANSION)
+        expect(foldAllTarget([a])).toEqual(NO_EXPANSION)
         expect(expansionOptions(NO_EXPANSION)).toEqual({ expand: [] })
     })
 
-    it('a press under the default state keeps the groups the result shows open', () => {
-        const rows = [group('g:a', ['a'], { expanded: true }), group('g:b', ['b'])]
-        expect(toggleGroup(DEFAULT_EXPANSION, rows[1] as ResultRow, rows)).toEqual({
-            all: false,
-            keys: [['a'], ['b']],
-        })
-        expect(toggleGroup(DEFAULT_EXPANSION, rows[0] as ResultRow, rows)).toEqual({
-            all: false,
-            keys: [],
-        })
+    // J1b: the server gets the fold, not the list of every other open group, so a
+    // fold works in a report with more open groups than expand may list (5,000).
+    it('folding a group under an open level adds its key to collapsed and sends only the fold', () => {
+        const folded = toggleGroup(DEFAULT_EXPANSION, a, rows)
+        expect(folded).toEqual({ all: false, keys: [], collapsed: [['a']], isDefault: true })
+        expect(expansionOptions(folded)).toEqual({ collapse: [['a']] })
+    })
+
+    it('folding a group under Expand all keeps Expand all and sends the fold', () => {
+        const folded = toggleGroup(EXPAND_ALL, a, rows)
+        expect(folded).toEqual({ all: true, keys: [], collapsed: [['a']] })
+        expect(expansionOptions(folded)).toEqual({ expandAll: true, collapse: [['a']] })
+    })
+
+    // Back to the first run's body, so the cached first run serves it.
+    it('unfolding a folded group under an open level removes its key and sends no expand for it', () => {
+        const folded = toggleGroup(DEFAULT_EXPANSION, a, rows)
+        const closedA = { ...a, expanded: false }
+        const unfolded = toggleGroup(folded, closedA, [closedA, b])
+        expect(unfolded).toEqual(DEFAULT_EXPANSION)
+        expect(expansionOptions(unfolded)).toEqual({})
+        const underAll = toggleGroup(toggleGroup(EXPAND_ALL, a, rows), closedA, [closedA, b])
+        expect(expansionOptions(underAll)).toEqual({ expandAll: true })
+    })
+
+    // R2: with collapse sent, the open levels stay open and expand only adds groups
+    // of closed levels.
+    it('opening a group of a closed level under the open levels sends it in expand, beside the folds', () => {
+        const folded = toggleGroup(DEFAULT_EXPANSION, a, rows)
+        const closedLevel = group('g:a.x', ['a', 'x'], { section: 'g:a' })
+        const opened = toggleGroup(folded, closedLevel, [a, closedLevel, b])
+        expect(expansionOptions(opened)).toEqual({ expand: [['a', 'x']], collapse: [['a']] })
+        // Nothing folded: collapse is still sent (empty), or expand alone would open
+        // only its own groups.
+        const openedOnly = toggleGroup(DEFAULT_EXPANSION, closedLevel, [a, closedLevel, b])
+        expect(expansionOptions(openedOnly)).toEqual({ expand: [['a', 'x']], collapse: [] })
+    })
+
+    it('closing a group drops the folds and opened groups under it', () => {
+        const opened = group('g:a.x', ['a', 'x'], { section: 'g:a', expanded: true })
+        const folded = group('g:a.y', ['a', 'y'], { section: 'g:a' })
+        const start = { ...DEFAULT_EXPANSION, keys: [['a', 'x']], collapsed: [['a', 'y']] }
+        const closed = toggleGroup(start, a, [a, opened, folded, b])
+        expect(closed).toEqual({ all: false, keys: [], collapsed: [['a']], isDefault: true })
+    })
+
+    // Review B, deferral 2: under Expand all a closed group that is not a fold is
+    // one the server did not open. Toggling it must not hold a key the run body
+    // never sends: what the state holds is what the server gets.
+    it('under Expand all, toggling a closed group that is not a fold holds no key it does not send', () => {
+        const closed = group('g:c', ['c'])
+        for (const start of [EXPAND_ALL, toggleGroup(EXPAND_ALL, a, rows)]) {
+            const next = toggleGroup(start, closed, [...rows, closed])
+            const sent = expansionOptions(next)
+            const sentKeys = [...(sent.expand ?? []), ...(sent.collapse ?? [])]
+            expect(sent.expandAll).toBe(true)
+            expect(sentKeys).toEqual(expect.arrayContaining([...next.keys, ...next.collapsed]))
+        }
+    })
+
+    it('Expand all and Collapse all clear collapsed', () => {
+        expect(foldAllTarget([group('g:a', ['a'])]).collapsed).toEqual([])
+        expect(foldAllTarget([a]).collapsed).toEqual([])
+        expect(expansionOptions(EXPAND_ALL)).toEqual({ expandAll: true })
     })
 })
 
@@ -215,24 +273,37 @@ describe('toggleGroup', () => {
 
     it('opens a closed group by adding its key', () => {
         const closed = group('g:c', ['c'])
-        expect(toggleGroup(NO_EXPANSION, closed, [closed])).toEqual({ all: false, keys: [['c']] })
+        expect(toggleGroup(NO_EXPANSION, closed, [closed])).toEqual({
+            all: false,
+            keys: [['c']],
+            collapsed: [],
+        })
     })
 
     it('closes a group and every group under it', () => {
-        const next = toggleGroup({ all: false, keys: [['a'], ['a', 'x'], ['b']] }, outer, rows)
-        expect(next).toEqual({ all: false, keys: [['b']] })
+        const next = toggleGroup(
+            { all: false, keys: [['a'], ['a', 'x'], ['b']], collapsed: [] },
+            outer,
+            rows
+        )
+        expect(next).toEqual({ all: false, keys: [['b']], collapsed: [] })
     })
 
-    it('keeps every other open group when closing one under Expand all', () => {
-        expect(toggleGroup(EXPAND_ALL, inner, rows)).toEqual({ all: false, keys: [['a'], ['b']] })
+    // J1b changed this case: under Expand all a fold is sent as collapse, and Expand
+    // all stays, so the groups of later pages open too (was: the open keys in view).
+    it('keeps Expand all when closing one group under it', () => {
+        expect(toggleGroup(EXPAND_ALL, inner, rows)).toEqual({
+            all: true,
+            keys: [],
+            collapsed: [['a', 'x']],
+        })
     })
 
     it('adds a key once', () => {
         const closed = group('g:c', ['c'])
-        expect(toggleGroup({ all: false, keys: [['c']] }, closed, [closed])).toEqual({
-            all: false,
-            keys: [['c']],
-        })
+        expect(toggleGroup({ all: false, keys: [['c']], collapsed: [] }, closed, [closed])).toEqual(
+            { all: false, keys: [['c']], collapsed: [] }
+        )
     })
 })
 
@@ -254,7 +325,9 @@ describe('fold all', () => {
     it('turns an expansion into run options', () => {
         expect(expansionOptions(NO_EXPANSION)).toEqual({ expand: [] })
         expect(expansionOptions(EXPAND_ALL)).toEqual({ expandAll: true })
-        expect(expansionOptions({ all: false, keys: [['a']] })).toEqual({ expand: [['a']] })
+        expect(expansionOptions({ all: false, keys: [['a']], collapsed: [] })).toEqual({
+            expand: [['a']],
+        })
     })
 })
 
