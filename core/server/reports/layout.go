@@ -125,6 +125,24 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		}
 		legs = append(legs, leg)
 	}
+	// A section with no rows has no group row of its own: assemble draws it
+	// from this leg, every number cell 0 and each derived cell computed from
+	// those 0 cells, as a computed row reads an empty section. Its size is
+	// fixed by the columns, not by anything the layout says, so it is counted
+	// but never refused: a refusal could point at nothing the author wrote.
+	if len(sectionAt) > 0 {
+		item := &LayoutItem{Row: emptySectionID, Formula: &Node{Subtotal: emptySectionID}}
+		cells := c.cellSizes(item, sizes)
+		compiled += len(pivot) * cells[""]
+		for _, cp := range c.p.cols {
+			compiled += cells[cp.col.ID]
+		}
+		leg, err := lc.computedLeg(item, len(c.p.layout)+len(legs), "layout", cur)
+		if err != nil {
+			return nil, nil, err
+		}
+		legs = append(legs, leg)
+	}
 	c.layoutCounted += compiled
 	return lc.chunkCTEs(), legs, nil
 }
@@ -135,6 +153,10 @@ func (lc *layoutCtx) compiled(*Node) { lc.c.layoutNodes++ }
 // sectionTotalID names the leg that holds a section's total with its within
 // rows; "~" is never in a layout id (idRe), so it cannot clash with a row.
 func sectionTotalID(section string) string { return "~" + section }
+
+// emptySectionID names the leg of an empty section's cells and its {subtotal}
+// leaf, which is 0. A section id is never empty, so no section total is "~".
+const emptySectionID = "~"
 
 // computedLeg is the union leg of one computed row (or a section total): its
 // formula compiled for every cell column, ordered by ord.
@@ -484,6 +506,9 @@ func (lc *layoutCtx) inline(item *LayoutItem, at string) (expr, error) {
 const bareSection = "\x00bare"
 
 func (lc *layoutCtx) subtotal(id, at string) (expr, error) {
+	if id == emptySectionID {
+		return lc.emptySection(), nil
+	}
 	bare := strings.HasSuffix(id, bareSection)
 	id = strings.TrimSuffix(id, bareSection)
 	item, ok := lc.items[id]
@@ -532,6 +557,24 @@ func (lc *layoutCtx) subtotal(id, at string) (expr, error) {
 		e.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", e.mixed, e.sql)
 	}
 	return withCurrency(e, lc.sectionCurrency(id, slot)), nil
+}
+
+// emptySection is an empty section's cell in the column being compiled: 0,
+// in the computed row's currency. A currency the section's cells carry (a
+// record's) comes from a row, and an empty section has none.
+func (lc *layoutCtx) emptySection() expr {
+	if lc.cell == "" {
+		return expr{sql: "0", typ: Number}
+	}
+	// A column that totals no rows is blank on every section, so on this one too.
+	if lc.idx >= 0 && !lc.c.p.totalsRows(lc.column) {
+		return expr{sql: "NULL", typ: lc.typ}
+	}
+	cur := lc.c.sectionCur[lc.column.col.ID]
+	if cur.sql != "" && lc.idx >= 0 {
+		cur = currency{}
+	}
+	return withCurrency(expr{sql: "0", typ: lc.typ}, cur)
 }
 
 // mixedHelper is the helper cell beside the cell being compiled that marks
@@ -706,6 +749,10 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 			row = map[string]any{"k0": key, "__level": int64(1)}
 			for _, name := range rn.c.currencies {
 				row[name] = total[name]
+			}
+			// A section the row cap cut stays blank: it may hold rows.
+			if zero := t.computed[emptySectionID+"|"+ck]; zero != nil && !rn.sectionsCapped {
+				row = rn.withinTotal(row, zero)
 			}
 		}
 		groupKey := rn.rowKey(row, 1)

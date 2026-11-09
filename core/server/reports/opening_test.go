@@ -143,7 +143,7 @@ func TestAnOpeningRowIsFirstUnderEachOpenLayoutSection(t *testing.T) {
 	requireOrderedRows(t, sectionsWithOpening, open, "grams",
 		int64(1300), int64(1300), int64(500), int64(800), int64(1300),
 		int64(400), int64(400), int64(300), int64(100), int64(400),
-		nil, nil, nil,
+		int64(0), nil, int64(0),
 		int64(900))
 	for _, i := range []int{1, 6, 11} {
 		section, opening := open.Rows[i-1], open.Rows[i]
