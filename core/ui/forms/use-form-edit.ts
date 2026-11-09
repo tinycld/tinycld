@@ -21,6 +21,7 @@ import {
 } from '@tinycld/core/lib/forms/values'
 import type { FormHost } from '@tinycld/core/lib/packages/derive-form-hosts'
 import { useForm } from 'react-hook-form'
+import type { ZodTypeAny } from 'zod'
 import { EMPTY_DEFINITION, EMPTY_STATE } from './empty-schema'
 import { formErrorHandler } from './form-error-handler'
 import { useSchemaRefResolver } from './use-schema-ref-resolver'
@@ -97,7 +98,9 @@ export function useFormEdit(
      */
     tables: Record<string, TableRow[]> = {},
     /** The host UI's component schemas (`FormHostUi.schemas`), used by every validation here. */
-    schemas: HostSchemas = {}
+    schemas: HostSchemas = {},
+    /** The host UI's whole-record schema (`FormHostUi.recordSchema`), run after the field schemas. */
+    recordSchema?: ZodTypeAny
 ) {
     const { forms, defaultForm, isReady } = useFormsOfHost(host.key)
     const named = (record[host.formColumn] as string) || ''
@@ -109,7 +112,13 @@ export function useFormEdit(
     const fallback = named && isReady && !found ? named : undefined
     const values = definition ? mergeValues(host, definition, record, rows, tables) : {}
     const initialSchema = definition
-        ? buildSchema(definition, host, evaluate(definition, values, context), schemas)
+        ? buildSchema(
+              definition,
+              host,
+              evaluate(definition, values, context),
+              schemas,
+              recordSchema
+          )
         : buildSchema(EMPTY_DEFINITION, host, EMPTY_STATE, schemas)
     const { schemaRef, resolver } = useSchemaRefResolver(initialSchema)
     const form = useForm<FormValues>({
@@ -137,7 +146,8 @@ export function useFormEdit(
             definition,
             host,
             evaluate(definition, current, context),
-            schemas
+            schemas,
+            recordSchema
         )
         const dirtyKeys = definition.fields
             .map(f => f.key)

@@ -19,11 +19,14 @@ const SHIFT_PRODUCED = new Set('?!@#$%^&*()_+{}|:"<>~')
 
 /**
  * Format a key combo or sequence for display. Resolves $mod to ⌘ on Apple
- * platforms and Ctrl elsewhere, and splits sequences on whitespace.
+ * platforms and Ctrl elsewhere, draws named keys as glyphs (KEY_GLYPHS), and
+ * splits sequences on whitespace.
  *
- *   "$mod+Enter" → [["⌘", "Enter"]]
- *   "t i"        → [["t"], ["i"]]
- *   "Shift+?"    → [["?"]]   (Shift is implicit in the glyph)
+ *   "$mod+Enter"         → [["⌘", "↵"]]
+ *   "$mod+Alt+ArrowUp"   → [["⌘", "⌥", "↑"]]
+ *   "Alt+t"              → [["⌥", "T"]]   (a letter after a modifier is a capital)
+ *   "t i"                → [["t"], ["i"]]
+ *   "Shift+?"            → [["?"]]   (Shift is implicit in the glyph)
  *
  * `isApple` is a parameter so a test can format for both platforms.
  */
@@ -43,17 +46,35 @@ function formatCombo(combo: string, isApple: boolean): string[] {
     const isShiftGlyph =
         rawParts.length === 2 && rawParts[0] === 'Shift' && SHIFT_PRODUCED.has(last)
     const parts = isShiftGlyph ? [last] : rawParts
+    const hasModifier = parts.some(part => MODIFIERS.has(part))
+    const lastIndex = parts.length - 1
 
-    return parts.map(part => {
+    return parts.map((part, index) => {
         if (part === '$mod') return isApple ? '⌘' : 'Ctrl'
         if (part === 'Shift') return isApple ? '⇧' : 'Shift'
         if (part === 'Alt') return isApple ? '⌥' : 'Alt'
         if (part === 'Meta') return isApple ? '⌘' : 'Meta'
         if (part === 'Control') return isApple ? '⌃' : 'Ctrl'
-        if (part === 'Enter') return '↵'
-        if (part === 'Escape') return 'Esc'
+        const glyph = KEY_GLYPHS[part]
+        if (glyph) return glyph
+        // A modifier-plus-letter reads as a capital on every key cap and
+        // menu (⌘S, ⌥T). A plain letter keeps its case, because a capital
+        // alone would read as Shift + the letter.
+        if (hasModifier && index === lastIndex && /^[a-z]$/.test(part)) return part.toUpperCase()
         return part
     })
+}
+
+const MODIFIERS = new Set(['$mod', 'Meta', 'Control', 'Alt', 'Shift'])
+
+const KEY_GLYPHS: Record<string, string> = {
+    Enter: '↵',
+    Escape: 'Esc',
+    ArrowUp: '↑',
+    ArrowDown: '↓',
+    ArrowLeft: '←',
+    ArrowRight: '→',
+    Backspace: '⌫',
 }
 
 export const isApplePlatform = IS_APPLE

@@ -20,6 +20,7 @@ import {
 import type { FormHost } from '@tinycld/core/lib/packages/derive-form-hosts'
 import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
+import type { ZodTypeAny } from 'zod'
 import { EMPTY_DEFINITION, EMPTY_STATE } from './empty-schema'
 import { formErrorHandler } from './form-error-handler'
 import { useSchemaRefResolver } from './use-schema-ref-resolver'
@@ -41,7 +42,9 @@ export function useFormCreate(
     /** Values the caller already has (a title typed in a composer); they win over the defaults. */
     initialValues: FormValues = {},
     /** The host UI's component schemas (`FormHostUi.schemas`), used by every validation here. */
-    schemas: HostSchemas = {}
+    schemas: HostSchemas = {},
+    /** The host UI's whole-record schema (`FormHostUi.recordSchema`), run after the field schemas. */
+    recordSchema?: ZodTypeAny
 ) {
     const { forms, defaultForm, isReady } = useFormsOfHost(host.key)
     // Which type the dialog shows: local UI state until the record exists.
@@ -49,7 +52,7 @@ export function useFormCreate(
     const row = forms.find(f => f.id === (formId || defaultForm?.id))
     const definition: FormDefinition | undefined = row?.definition
     const initialSchema = definition
-        ? buildSchema(definition, host, evaluate(definition, {}, context), schemas)
+        ? buildSchema(definition, host, evaluate(definition, {}, context), schemas, recordSchema)
         : buildSchema(EMPTY_DEFINITION, host, EMPTY_STATE, schemas)
     const { schemaRef, resolver } = useSchemaRefResolver(initialSchema)
     // A ref, so an unstable object literal from the caller never re-seeds the form.
@@ -97,7 +100,8 @@ export function useFormCreate(
             definition,
             host,
             evaluate(definition, prepareValues(definition, host, form.getValues()), context),
-            schemas
+            schemas,
+            recordSchema
         )
         let out: SplitValues | null = null
         await form.handleSubmit(values => {

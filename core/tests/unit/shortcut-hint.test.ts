@@ -23,7 +23,15 @@ describe('formatHint', () => {
     })
 
     it('treats Alt as a modifier', () => {
-        expect(formatHint('Alt+s', false)).toEqual({ text: 'Alt+s', isPlain: false })
+        expect(formatHint('Alt+s', false)).toEqual({ text: 'Alt+S', isPlain: false })
+    })
+
+    it('draws a letter after modifiers as a capital on Apple', () => {
+        expect(formatHint('$mod+Alt+d', true).text).toBe('⌘⌥D')
+    })
+
+    it('draws Backspace as ⌫ elsewhere', () => {
+        expect(formatHint('$mod+Alt+Backspace', false).text).toBe('Ctrl+Alt+⌫')
     })
 })
 

@@ -331,6 +331,33 @@ describe('RulesTab keeps a rule the server would refuse from being authored', ()
         press('form-action-kind-0-0')
         expect(q(document.body, 'form-action-kind-0-0-hide')).toBeTruthy()
     })
+    it('offers no hide for a locked built-in or the page that holds it', () => {
+        const builtins = host.builtin
+        host.builtin = builtins.map(b => (b.key === 'due' ? { ...b, locked: true } : b))
+        try {
+            render(<Harness />)
+            // `due` alone on its own page, so only the lock can keep that page shown.
+            const onExtra = (d: DraftDefinition): DraftDefinition => ({
+                ...d,
+                pages: [...d.pages, { key: 'extra', title: 'Extra' }],
+                fields: d.fields.map(f => (f.key === 'due' ? { ...f, page: 'extra' } : f)),
+            })
+            act(() => editorRef?.apply(onExtra))
+            seed([{ ...emptyRule('r1'), actions: [{ action: 'show', field: 'due' }] }])
+            press('form-action-kind-0-0')
+            expect(q(document.body, 'form-action-kind-0-0-show')).toBeTruthy()
+            expect(q(document.body, 'form-action-kind-0-0-hide')).toBeNull()
+            seed([{ ...emptyRule('r1'), actions: [{ action: 'show', page: 'extra' }] }])
+            press('form-action-kind-0-0')
+            expect(q(document.body, 'form-action-kind-0-0-hide')).toBeNull()
+            // An optional built-in that is not locked can still be hidden.
+            seed([{ ...emptyRule('r1'), actions: [{ action: 'show', field: 'owner' }] }])
+            press('form-action-kind-0-0')
+            expect(q(document.body, 'form-action-kind-0-0-hide')).toBeTruthy()
+        } finally {
+            host.builtin = builtins
+        }
+    })
     it('drops hide to show when the target becomes a required built-in', () => {
         render(<Harness />)
         seed([{ ...emptyRule('r1'), actions: [{ action: 'hide', field: 'severity' }] }])

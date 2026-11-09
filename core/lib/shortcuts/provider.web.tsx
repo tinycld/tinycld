@@ -63,6 +63,52 @@ function factsOf(event: KeyboardEvent): KeyFacts {
     return facts
 }
 
+/**
+ * The tinykeys bindings for one atom. On a Mac, Option changes the character a
+ * key types (⌥M types µ) and the browser reports that character as
+ * `event.key`, so an `Alt` atom that ends in a letter or a digit also binds
+ * the physical key `event.code` names (`KeyM`, `Digit5`). Both are literal
+ * keys: tinykeys builds a regex key with the RegExp `v` flag, which Safari
+ * before 17 does not have, so a regex binding would throw on mount. A key that
+ * reports its plain letter matches both bindings; the provider runs the atom's
+ * handler once per event.
+ */
+export function tinykeysBindings(atom: string): string[] {
+    const parts = atom.split(/\b\+/)
+    const last = parts.pop() ?? ''
+    if (!parts.includes('Alt')) return [atom]
+    let code: string | null = null
+    if (/^[a-z]$/i.test(last)) code = `Key${last.toUpperCase()}`
+    else if (/^[0-9]$/.test(last)) code = `Digit${last}`
+    if (!code) return [atom]
+    return [atom, [...parts, code].join('+')]
+}
+
+type KeyHandler = (event: KeyboardEvent) => void
+
+/** Runs `handler` at most once per event, however many of its bindings match. */
+function oncePerEvent(handler: KeyHandler): KeyHandler {
+    const seen = new WeakSet<KeyboardEvent>()
+    return event => {
+        if (seen.has(event)) return
+        seen.add(event)
+        handler(event)
+    }
+}
+
+/** Adds `handler` under each binding; two atoms that share a binding both run. */
+function bindAll(into: Record<string, KeyHandler>, bindings: string[], handler: KeyHandler) {
+    for (const binding of bindings) {
+        const earlier = into[binding]
+        into[binding] = earlier
+            ? event => {
+                  earlier(event)
+                  handler(event)
+              }
+            : handler
+    }
+}
+
 export function ShortcutsProvider({ children }: ShortcutsProviderProps) {
     const matcherRef = useRef(createMatcher())
 
@@ -84,23 +130,26 @@ export function ShortcutsProvider({ children }: ShortcutsProviderProps) {
         // twice: capture for a key held with a modifier and for a scoped
         // shortcut's key typed in a text field (no menu open), bubble for the
         // rest.
-        const capture: Record<string, (event: KeyboardEvent) => void> = {}
-        const bubble: Record<string, (event: KeyboardEvent) => void> = {}
+        const capture: Record<string, KeyHandler> = {}
+        const bubble: Record<string, KeyHandler> = {}
         for (const atom of atoms) {
-            capture[atom] = event => {
+            const bindings = tinykeysBindings(atom)
+            const onCapture = oncePerEvent(event => {
                 const matcher = matcherRef.current
                 if (!handleKey({ matcher, atom, facts: factsOf(event), phase: 'capture' })) return
                 // The focused element must not see a key a shortcut took: a
                 // Pressable would press itself, a field would type it.
                 event.preventDefault()
                 event.stopPropagation()
-            }
-            bubble[atom] = event => {
+            })
+            const onBubble = oncePerEvent(event => {
                 const matcher = matcherRef.current
                 if (handleKey({ matcher, atom, facts: factsOf(event), phase: 'bubble' })) {
                     event.preventDefault()
                 }
-            }
+            })
+            bindAll(capture, bindings, onCapture)
+            bindAll(bubble, bindings, onBubble)
         }
 
         const unbindCapture = tinykeys(window, capture, { capture: true })

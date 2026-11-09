@@ -1,8 +1,15 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Minus, Plus } from 'lucide-react-native'
-import { useState } from 'react'
+import { type Ref, useState } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
-import { Pressable, TextInput as RNTextInput, Text, View, type ViewProps } from 'react-native'
+import {
+    Pressable,
+    TextInput as RNTextInput,
+    Text,
+    type TextInputInstance,
+    View,
+    type ViewProps,
+} from 'react-native'
 import { iosInputCenteringStyle } from './ios-input-style'
 
 export type NumberInputProps<T extends FieldValues = Record<string, unknown>> = {
@@ -26,6 +33,14 @@ export type NumberInputProps<T extends FieldValues = Record<string, unknown>> = 
     /** Names the input for assistive technology when no visible label is passed. */
     accessibilityLabel?: string
     wrapperProps?: ViewProps
+    /** Enter on web, the return key on native (a table adds a row on it). */
+    onSubmitEditing?: () => void
+    /** The input element, for a caller that moves focus to it (a table after a row action). */
+    inputRef?: Ref<TextInputInstance>
+    /** Called when the input takes focus (a table notes which row the keyboard is in). */
+    onFocus?: () => void
+    /** Called when the input loses focus (a table forgets the row the keyboard left). */
+    onBlur?: () => void
 }
 
 const DECIMAL_TEXT = /^-?\d*\.?\d*$/
@@ -55,6 +70,10 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
     testID,
     accessibilityLabel,
     wrapperProps = {},
+    onSubmitEditing,
+    inputRef,
+    onFocus,
+    onBlur,
 }: NumberInputProps<T>) {
     const placeholderColor = useThemeColor('field-placeholder')
     const iconColor = useThemeColor('foreground')
@@ -141,13 +160,17 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
                     <Minus size={16} color={iconColor} />
                 </Pressable>
                 <RNTextInput
+                    ref={inputRef}
                     value={displayValue}
                     onChangeText={handleTextChange}
+                    onFocus={onFocus}
                     onBlur={() => {
                         setTyped(null)
                         field.onBlur()
+                        onBlur?.()
                     }}
                     keyboardType="numeric"
+                    onSubmitEditing={onSubmitEditing}
                     editable={!disabled}
                     accessibilityLabel={accessibilityLabel ?? label}
                     testID={testID ?? name}

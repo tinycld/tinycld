@@ -4,7 +4,7 @@ import type { ReactElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { widgetHost } from '../../../lib/forms/__tests__/fixtures'
 import { addPage, newCustomField } from '../../../lib/forms/builder'
-import { defaultDefinitionFor } from '../../../lib/forms/host'
+import { defaultDefinitionFor, hostDefSchema } from '../../../lib/forms/host'
 import { OverlayProvider } from '../../../ui/overlay'
 import { FieldProperties } from '../FieldProperties'
 import { useEditorForm } from '../use-editor-form'
@@ -316,5 +316,72 @@ describe('FieldProperties number bounds', () => {
         expect(editorRef?.form.getValues('fields.8.min')).toBe(0.5)
         expect(editorRef?.form.getValues('fields.8.max')).toBe(9.75)
         expect(editorRef?.form.getValues('fields.8.step')).toBe(0.25)
+    })
+})
+
+/** `terms` is optional but locked; `lines` is a host table with row kinds. */
+const billHost = {
+    ...hostDefSchema.parse({
+        key: 'gizmos:bill',
+        label: 'Bill',
+        collection: 'gizmos_bills',
+        formColumn: 'form',
+        fieldsColumn: 'fields',
+        columns: ['name', 'terms', 'form', 'fields'],
+        builtin: [
+            { key: 'name', label: 'Name', kind: 'text', storage: 'column', required: true },
+            { key: 'terms', label: 'Terms', kind: 'text', storage: 'column', locked: true },
+            {
+                key: 'lines',
+                label: 'Lines',
+                kind: 'table',
+                storage: 'rows',
+                columns: [
+                    { key: 'product', label: 'Product', kind: 'text' },
+                    { key: 'text', label: 'Text', kind: 'text' },
+                ],
+                rowKinds: [
+                    { key: 'item', label: 'Item', addLabel: 'Add line', columns: ['product'] },
+                    {
+                        key: 'note',
+                        label: 'Note',
+                        addLabel: 'Note line',
+                        columns: ['text'],
+                        span: true,
+                    },
+                ],
+            },
+        ],
+    }),
+    pkgSlug: 'gizmos',
+    pkgName: 'Gizmos',
+    ui: async () => ({ components: {} }),
+}
+const billRow = {
+    ...plain,
+    id: 'f2',
+    host: 'gizmos:bill',
+    name: 'Bill',
+    slug: 'bill',
+    definition: defaultDefinitionFor(billHost),
+}
+
+function BillHarness({ fieldKey }: { fieldKey: string }) {
+    const editor = useEditorForm(billRow, billHost)
+    return <FieldProperties editor={editor} fieldKey={fieldKey} />
+}
+
+describe('FieldProperties for a locked built-in', () => {
+    it('locks hidden for a locked optional builtin', () => {
+        const { container, getByText } = render(<BillHarness fieldKey="terms" />)
+        expect(isDisabled(q(container, 'fields.1.hidden'))).toBe(true)
+        expect(getByText('Locked by the record')).toBeTruthy()
+        expect(q(container, 'fields.1.required')).not.toBeNull()
+        expect(isDisabled(q(container, 'fields.1.required'))).toBe(false)
+    })
+
+    it('lists the row kinds of a host table', () => {
+        const { container } = render(<BillHarness fieldKey="lines" />)
+        expect(q(container, 'form-prop-host-table')?.textContent).toContain('Item, Note')
     })
 })

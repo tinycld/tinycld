@@ -5,6 +5,7 @@ import { buildSchema, type HostSchemas } from '@tinycld/core/lib/forms/values'
 import type { FormHost } from '@tinycld/core/lib/packages/derive-form-hosts'
 import { useEffect, useMemo, useRef } from 'react'
 import { type Control, type UseFormSetValue, useWatch } from 'react-hook-form'
+import type { ZodTypeAny } from 'zod'
 
 /** A stable empty default, so the schema memo does not rebuild on every render. */
 const NO_SCHEMAS: HostSchemas = {}
@@ -25,15 +26,17 @@ export function useFormState(
     ctx: EvalContext,
     setValue?: UseFormSetValue<FormValues>,
     /** The host UI's component schemas (`FormHostUi.schemas`); keep it referentially stable. */
-    schemas: HostSchemas = NO_SCHEMAS
+    schemas: HostSchemas = NO_SCHEMAS,
+    /** The host UI's whole-record schema (`FormHostUi.recordSchema`); keep it referentially stable. */
+    recordSchema?: ZodTypeAny
 ) {
     const values = useWatch({ control }) as FormValues
     // Rules and the display read the computed values, so a rule on a total reacts as rows change.
     const computed = useMemo(() => applyComputed(def, host, values), [def, host, values])
     const state = useMemo(() => evaluate(def, computed, ctx), [def, computed, ctx])
     const schema = useMemo(
-        () => buildSchema(def, host, state, schemas),
-        [def, host, state, schemas]
+        () => buildSchema(def, host, state, schemas, recordSchema),
+        [def, host, state, schemas, recordSchema]
     )
     const previouslyActive = useRef<Set<string> | null>(null)
     if (previouslyActive.current === null) previouslyActive.current = new Set(state.activeRules)

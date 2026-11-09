@@ -28,4 +28,28 @@ describe('formatKeys', () => {
     it('renders Escape as Esc', () => {
         expect(formatKeys('Escape')).toEqual([['Esc']])
     })
+
+    it('draws the arrow keys as arrows', () => {
+        expect(formatKeys('$mod+Alt+ArrowUp', true)).toEqual([['⌘', '⌥', '↑']])
+        expect(formatKeys('$mod+Alt+ArrowDown', true)).toEqual([['⌘', '⌥', '↓']])
+        expect(formatKeys('ArrowLeft')).toEqual([['←']])
+        expect(formatKeys('ArrowRight')).toEqual([['→']])
+    })
+
+    it('draws Backspace as ⌫', () => {
+        expect(formatKeys('$mod+Backspace', true)).toEqual([['⌘', '⌫']])
+    })
+
+    it('draws a letter after a modifier as a capital', () => {
+        expect(formatKeys('$mod+s', true)).toEqual([['⌘', 'S']])
+        expect(formatKeys('Alt+t', true)).toEqual([['⌥', 'T']])
+    })
+
+    it('keeps a digit after a modifier', () => {
+        expect(formatKeys('Alt+5', true)).toEqual([['⌥', '5']])
+    })
+
+    it('keeps the case of a plain letter', () => {
+        expect(formatKeys('c')).toEqual([['c']])
+    })
 })

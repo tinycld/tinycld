@@ -15,10 +15,12 @@
                     "kind": "text",
                     "storage": "column",
                     "required": true,
+                    "locked": false,
                     "multiple": false,
                     "collaborative": false,
                     "chrome": "cell",
-                    "decimals": 0
+                    "decimals": 0,
+                    "rowShortcuts": false
                 },
                 {
                     "key": "first",
@@ -26,10 +28,12 @@
                     "kind": "text",
                     "storage": "column",
                     "required": false,
+                    "locked": false,
                     "multiple": false,
                     "collaborative": false,
                     "chrome": "cell",
-                    "decimals": 0
+                    "decimals": 0,
+                    "rowShortcuts": false
                 },
                 {
                     "key": "last",
@@ -37,10 +41,12 @@
                     "kind": "text",
                     "storage": "column",
                     "required": false,
+                    "locked": false,
                     "multiple": false,
                     "collaborative": false,
                     "chrome": "cell",
-                    "decimals": 0
+                    "decimals": 0,
+                    "rowShortcuts": false
                 },
                 {
                     "key": "due",
@@ -48,10 +54,12 @@
                     "kind": "date",
                     "storage": "column",
                     "required": false,
+                    "locked": false,
                     "multiple": false,
                     "collaborative": false,
                     "chrome": "cell",
-                    "decimals": 0
+                    "decimals": 0,
+                    "rowShortcuts": false
                 },
                 {
                     "key": "notes",
@@ -59,10 +67,12 @@
                     "kind": "textarea",
                     "storage": "column",
                     "required": false,
+                    "locked": false,
                     "multiple": false,
                     "collaborative": false,
                     "chrome": "cell",
-                    "decimals": 0
+                    "decimals": 0,
+                    "rowShortcuts": false
                 }
             ],
             "layout": {

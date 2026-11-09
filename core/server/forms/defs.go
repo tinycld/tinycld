@@ -18,6 +18,9 @@ type Builtin struct {
 	Multiple      bool   `json:"multiple"`
 	Collaborative bool   `json:"collaborative"`
 	Component     string `json:"component,omitempty"`
+	// Locked is an optional built-in the record depends on: a definition may
+	// move and relabel it, never hide it (ValidateDefinition refuses).
+	Locked bool `json:"locked"`
 	// Chrome is presentation only ("cell" or "bare"); the server decodes it
 	// so the host file round-trips, and never reads it.
 	Chrome string `json:"chrome,omitempty"`
@@ -30,6 +33,24 @@ type Builtin struct {
 	// refuses it on any other kind). validateHostRecord checks a changed value
 	// against it, so every writer gets the refusal the form shows.
 	MaxLength *int `json:"maxLength,omitempty"`
+	// RowKinds and RowShortcuts are a table built-in's line kinds and row
+	// keys. They are presentation only: ParseHosts checks that each kind
+	// names the table's own columns, and nothing else on the server reads them.
+	RowKinds     []RowKind `json:"rowKinds,omitempty"`
+	RowShortcuts bool      `json:"rowShortcuts,omitempty"`
+}
+
+// RowKind mirrors rowKindSchema in core/lib/forms/host.ts: a kind of line in a
+// table built-in, stored in the row's `kind` cell. Label, AddLabel, Span,
+// ColumnAt and Shortcut are presentation only.
+type RowKind struct {
+	Key      string            `json:"key"`
+	Label    string            `json:"label"`
+	AddLabel string            `json:"addLabel"`
+	Columns  []string          `json:"columns"`
+	Span     bool              `json:"span,omitempty"`
+	ColumnAt map[string]string `json:"columnAt,omitempty"`
+	Shortcut string            `json:"shortcut,omitempty"`
 }
 
 type Files struct {
@@ -110,6 +131,9 @@ func ParseHosts(raw []byte) (*Defs, error) {
 		return nil, fmt.Errorf("forms: parse hosts: %w", err)
 	}
 	for i := range defs.Hosts {
+		if err := rowKindsError(&defs.Hosts[i]); err != nil {
+			return nil, err
+		}
 		if f := defs.Hosts[i].Files; f != nil {
 			if f.NameColumn == "" {
 				f.NameColumn = "name"
@@ -120,6 +144,41 @@ func ParseHosts(raw []byte) (*Defs, error) {
 		}
 	}
 	return &defs, nil
+}
+
+// rowKindsError refuses row kinds the client schema (rowKindIssues in
+// core/lib/forms/host.ts) refuses: kinds on a built-in that is not a table, a
+// repeated kind key, a kind column the table lacks, and a span kind with other
+// than one column.
+func rowKindsError(h *Host) error {
+	for _, b := range h.Builtins {
+		if len(b.RowKinds) == 0 {
+			continue
+		}
+		if b.Kind != "table" {
+			return fmt.Errorf("forms: host %s: %s: only a table built-in has row kinds", h.Key, b.Key)
+		}
+		columns := map[string]bool{}
+		for _, c := range b.Columns {
+			columns[c.Key] = true
+		}
+		seen := map[string]bool{}
+		for _, k := range b.RowKinds {
+			if seen[k.Key] {
+				return fmt.Errorf("forms: host %s: %s: duplicate row kind key %s", h.Key, b.Key, k.Key)
+			}
+			seen[k.Key] = true
+			for _, c := range k.Columns {
+				if !columns[c] {
+					return fmt.Errorf("forms: host %s: %s: row kind %s: %s is not a column of this table", h.Key, b.Key, k.Key, c)
+				}
+			}
+			if k.Span && len(k.Columns) != 1 {
+				return fmt.Errorf("forms: host %s: %s: row kind %s: a span row kind has exactly one column", h.Key, b.Key, k.Key)
+			}
+		}
+	}
+	return nil
 }
 
 func (d *Defs) Host(key string) *Host {

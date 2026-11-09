@@ -1,12 +1,13 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react'
 import type { UseFormReturn } from 'react-hook-form'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { orderDefinition, orderFormHost } from '../../../lib/forms/__tests__/table-fixtures'
 import type { FormValues } from '../../../lib/forms/logic'
+import { OverlayProvider } from '../../overlay'
 import { FormRenderer } from '../FormRenderer'
 import { useFormEdit } from '../use-form-edit'
-import { byTestId, rowIdsOf } from './table-harness'
+import { pickRowAction, rowIdsOf } from './table-harness'
 
 afterEach(cleanup)
 
@@ -158,16 +159,18 @@ function EditHarness({ formRef }: { formRef: { current: UseFormReturn<FormValues
     formRef.current = edit.form
     if (!edit.definition) return null
     return (
-        <FormRenderer
-            host={orderFormHost}
-            ui={null}
-            definition={edit.definition}
-            layout="sections"
-            form={edit.form}
-            schemaRef={edit.schemaRef}
-            context={ctx}
-            recordId={record.id}
-        />
+        <OverlayProvider>
+            <FormRenderer
+                host={orderFormHost}
+                ui={null}
+                definition={edit.definition}
+                layout="sections"
+                form={edit.form}
+                schemaRef={edit.schemaRef}
+                context={ctx}
+                recordId={record.id}
+            />
+        </OverlayProvider>
     )
 }
 
@@ -175,7 +178,7 @@ describe('useFormEdit rows in the renderer', () => {
     it('a moved row that lacks a cell does not take its neighbour value', async () => {
         const formRef: { current: UseFormReturn<FormValues> | null } = { current: null }
         const { container } = render(<EditHarness formRef={formRef} />)
-        fireEvent.click(byTestId(container, 'form-table-lines-a-down'))
+        pickRowAction(container, 'lines', 'a', 'down')
         await waitFor(() => expect(rowIdsOf(container, 'lines')).toEqual(['b', 'a']))
         expect(formRef.current?.getValues('lines')).toEqual([
             { id: 'b', item: 'cog', qty: 5, rate: 1 },

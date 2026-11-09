@@ -680,6 +680,8 @@ function TableKind(props: KindProps) {
             containerWidth={props.containerWidth ?? 0}
             computedRows={props.computed?.[field.key]}
             isHostTable={resolved.builtin?.storage === 'rows'}
+            rowKinds={resolved.builtin?.rowKinds}
+            rowShortcuts={resolved.builtin?.rowShortcuts ?? false}
             testID={testID}
         />
     )

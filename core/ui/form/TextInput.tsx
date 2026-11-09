@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import type { ComponentType, ReactNode } from 'react'
+import type { ComponentType, ReactNode, Ref } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
-import type { TextInputProps as RNTextInputProps } from 'react-native'
+import type { TextInputProps as RNTextInputProps, TextInputInstance } from 'react-native'
 import { TextInput as RNTextInput, Text, View, type ViewProps } from 'react-native'
 import { iosInputCenteringStyle } from './ios-input-style'
 
@@ -50,6 +50,8 @@ export type TextInputProps<T extends FieldValues = Record<string, unknown>> = Om
     // addition to RHF's own field.onChange. Lets a form derive a sibling field
     // (e.g. slug from name) in the change event instead of a syncing useEffect.
     onValueChange?: (value: string) => void
+    /** The input element, for a caller that moves focus to it (a table after a row action). */
+    inputRef?: Ref<TextInputInstance>
 }
 
 export function TextInput<T extends FieldValues = Record<string, unknown>>(
@@ -68,6 +70,7 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
         onValueChange,
         testID,
         accessibilityLabel,
+        inputRef,
         ...inputProps
     } = props
     const {
@@ -89,6 +92,7 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
                     // after the spread because the form binding and the field's
                     // look belong to this component.
                     {...inputProps}
+                    ref={inputRef}
                     value={field.value || ''}
                     onChangeText={value => {
                         field.onChange(value)

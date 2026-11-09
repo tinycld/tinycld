@@ -44,18 +44,21 @@ test.describe('forms table', () => {
         await expect(page.getByTestId(`form-table-lines-${second}-amount`)).toHaveText('7.50')
         await expect(page.getByTestId('form-input-subtotal')).toHaveText('17.50')
 
-        await page.getByTestId(`form-table-lines-${second}-up`).focus()
+        // The row menu button is the row's one Tab stop: open it from the keyboard.
+        await page.getByTestId(`form-table-lines-menu-${second}`).focus()
         await page.keyboard.press('Enter')
+        await page.getByTestId('form-table-lines-menu-up').click()
         await expect.poll(() => rowIds(page)).toEqual([second, first])
-        // At the top Move up is disabled, so focus moves to the same row's Move down.
-        await expect(page.getByTestId(`form-table-lines-${second}-down`)).toBeFocused()
+        // Focus stays on the moved row's menu button, so a keyboard user can move it again.
+        await expect(page.getByTestId(`form-table-lines-menu-${second}`)).toBeFocused()
 
         await page.getByTestId('forms-stub-order-create').click()
         await openOrder(page, name)
         await expect.poll(() => rowIds(page)).toEqual([second, first])
         await expect(page.getByTestId('form-input-subtotal')).toHaveText('17.50')
 
-        await page.getByTestId(`form-table-lines-${first}-remove`).click()
+        await page.getByTestId(`form-table-lines-menu-${first}`).click()
+        await page.getByTestId('form-table-lines-menu-remove').click()
         await expect(page.getByTestId('form-input-subtotal')).toHaveText('7.50')
         await page.getByTestId('forms-stub-order-save').click()
         await expect(page.getByTestId('forms-stub-order-saved')).toBeVisible()

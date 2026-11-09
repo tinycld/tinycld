@@ -8,7 +8,7 @@ import {
     type HostTableColumn,
     type TableColumn,
 } from './definition'
-import { type FormHostBuiltin, type FormHostDef, findBuiltin } from './host'
+import { type FormHostBuiltin, type FormHostDef, findBuiltin, type HostRowKind } from './host'
 import type { FormState, FormValues } from './logic'
 import { completeTableRows } from './table-rows'
 
@@ -162,11 +162,34 @@ function columnSchemaFor(c: TableColumn): ZodTypeAny {
     }
 }
 
+/**
+ * A host table with row kinds checks each row against its own kind's columns
+ * only (a description line has no product). The `kind` cell picks the
+ * schema, so a row of a kind the table lacks is refused at `kind`.
+ */
+function kindRowSchema(columns: readonly TableColumn[], rowKinds: HostRowKind[]): ZodTypeAny {
+    const byKey = new Map(columns.map(c => [c.key, c]))
+    const [first, ...rest] = rowKinds.map(kind => {
+        const shape: Record<string, ZodTypeAny> = {
+            id: z.string().min(1),
+            kind: z.literal(kind.key),
+        }
+        for (const key of kind.columns) {
+            const column = byKey.get(key)
+            if (column) shape[key] = columnSchemaFor(column)
+        }
+        return z.object(shape).passthrough()
+    })
+    return z.discriminatedUnion('kind', [first, ...rest])
+}
+
 function tableSchema({ custom, builtin, required, missing }: KindSchemaInput): ZodTypeAny {
     const columns = custom?.kind === 'table' ? custom.columns : (builtin?.columns ?? [])
+    const rowKinds = builtin?.rowKinds
     const shape: Record<string, ZodTypeAny> = { id: z.string().min(1) }
     for (const c of columns) shape[c.key] = columnSchemaFor(c)
-    const rows = z.array(z.object(shape).passthrough(), absent(missing))
+    const row = rowKinds ? kindRowSchema(columns, rowKinds) : z.object(shape).passthrough()
+    const rows = z.array(row, absent(missing))
     return required ? rows.min(1, missing) : rows.nullable()
 }
 
@@ -227,12 +250,14 @@ function hostValueSchema(own: ZodTypeAny, required: boolean, missing: string): Z
 /**
  * The submit schema for the fields visible in this state. Rows, sections and collaborative
  * text are excluded. A custom built-in whose component is a key of `schemas` takes that schema.
+ * `recordSchema` is the host's whole-record check, run after the field schemas.
  */
 export function buildSchema(
     def: FormDefinition,
     host: FormHostDef,
     state: FormState,
-    schemas: HostSchemas = {}
+    schemas: HostSchemas = {},
+    recordSchema?: ZodTypeAny
 ) {
     const shape: Record<string, ZodTypeAny> = {}
     for (const f of def.fields) {
@@ -250,7 +275,18 @@ export function buildSchema(
     }
     // Passthrough keeps hidden, row and collaborative values in the output, so the resolver can
     // hand them to splitValues. Only the keys in `shape` are validated.
-    return z.object(shape).passthrough()
+    const fields = z.object(shape).passthrough()
+    if (!recordSchema) return fields
+    // A host's cross-field rules (a due date after a date, a document total) need the
+    // whole record, and the same resolver must report them as field errors. `when`
+    // runs the check even after a field failed, so every error shows at once.
+    return fields.superRefine(
+        (values, ctx) => {
+            const result = recordSchema.safeParse(values)
+            if (!result.success) for (const issue of result.error.issues) ctx.addIssue({ ...issue })
+        },
+        { when: () => true }
+    )
 }
 
 export interface SplitValues {
