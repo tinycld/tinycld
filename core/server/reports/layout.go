@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -24,7 +25,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		cur = "(SELECT DISTINCT " + strings.Join(c.currencies, ", ") + " FROM o1 UNION ALL SELECT " + nulls +
 			" WHERE NOT EXISTS (SELECT 1 FROM o1)) cur"
 	}
-	lc := &layoutCtx{c: c, s: s, items: map[string]*LayoutItem{}, chunkOf: map[string]sectionSlot{}, keys: map[string]string{}}
+	lc := &layoutCtx{c: c, s: s, items: map[string]*LayoutItem{}, within: map[string][]*LayoutItem{}, withinAt: map[string]map[string][]*LayoutItem{}, chunkOf: map[string]sectionSlot{}, keys: map[string]string{}, pivotCount: len(pivot)}
 	for idx, cp := range c.p.cols {
 		if t := c.levelTypes[cp.col.ID]; isNumeric(t) && t != Bool {
 			lc.cellNames = append(lc.cellNames, fmt.Sprintf("v%d", idx))
@@ -51,85 +52,163 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		}
 	}
 	lc.perChunk = max(1, chunkColumns/max(1, len(lc.cellNames)))
-	sizes := map[string]int{}
+	// sizes holds, by row and column id, the size of the row's cell in that
+	// column; the "" column is its formula's, the cell of every pivot column.
+	sizes := map[string]map[string]int{}
 	compiled := 0
+	// size counts an item's cells toward the layout's caps: a cell that reads
+	// an earlier row is compiled with that row's cell in the same column inside
+	// it, so its size grows with every reference.
+	size := func(item *LayoutItem, at string) error {
+		cells := c.cellSizes(item, sizes)
+		sizes[item.Row] = cells
+		largest := 0
+		for _, n := range cells {
+			largest = max(largest, n)
+		}
+		compiled += len(pivot) * cells[""]
+		for _, cp := range c.p.cols {
+			compiled += cells[cp.col.ID]
+		}
+		if largest > maxLayoutNodes || compiled > maxLayoutCompiled {
+			return invalid(at, "the layout's computed rows are too large; reference fewer earlier rows")
+		}
+		return nil
+	}
+	sectionAt := map[string]string{}
 	for i, item := range c.p.layout {
 		at := fmt.Sprintf("layout.%d", i)
 		if item.Section != "" {
 			lc.items[item.Section] = item
+			sectionAt[item.Section] = at
 			continue
 		}
-		lc.used, lc.wheres = nil, nil
-		// A formula that reads an earlier row is compiled with that row
-		// inside it, so its size grows with every reference, and it is
-		// compiled once for every cell.
-		sizes[item.Row] = c.p.expandedSize(item.Formula, sizes)
-		compiled += sizes[item.Row] * (len(c.p.cols) + len(pivot))
-		if sizes[item.Row] > maxLayoutNodes || compiled > maxLayoutCompiled {
-			return nil, nil, invalid(at, "the layout's computed rows are too large; reference fewer earlier rows")
-		}
-		cells := []string{fmt.Sprintf("%d AS __level", len(c.p.groups)+1), s.bind(item.Row) + " AS __row"}
-		for g := range c.p.groups {
-			cells = append(cells, fmt.Sprintf("NULL AS k%d", g))
-		}
-		for _, ck := range c.currencies {
-			cells = append(cells, "cur."+ck+" AS "+ck)
-		}
-		// Compiled once on no column, so a layout with no number columns
-		// is still checked.
-		lc.cell, lc.typ = "", Number
-		if _, err := lc.row(item, at+".formula"); err != nil {
+		if err := size(item, at); err != nil {
 			return nil, nil, err
 		}
-		carried := make([]string, 0, len(c.p.cols))
-		for idx, cp := range c.p.cols {
-			if !isNumeric(c.levelTypes[cp.col.ID]) || c.levelTypes[cp.col.ID] == Bool {
-				cells = append(cells, fmt.Sprintf("NULL AS v%d", idx))
-				carried = append(carried, noCarriedCell(idx), noMixedCell(idx))
-				continue
+		// A section read inlines the within rows it holds, so it counts them.
+		if item.Within != "" {
+			if sizes[item.Within] == nil {
+				sizes[item.Within] = map[string]int{}
 			}
-			lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("v%d", idx), c.levelTypes[cp.col.ID], cp, idx
-			e, err := lc.row(item, at+".formula")
-			if err != nil {
-				return nil, nil, err
-			}
-			cells = append(cells, e.sql+" AS "+lc.cell)
-			carried = append(carried, lc.carriedCell(cp, e, idx), mixedCell(e, idx))
-		}
-		var pivotMixed []string
-		for j := range pivot {
-			lc.cell, lc.typ, lc.column, lc.idx, lc.pivotIdx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1, j
-			e, err := lc.row(item, at+".formula")
-			if err != nil {
-				return nil, nil, err
-			}
-			cells = append(cells, e.sql+" AS "+lc.cell)
-			if c.pivotMixed {
-				pivotMixed = append(pivotMixed, pivotMixedCell(e, j))
+			for id, n := range sizes[item.Row] {
+				sizes[item.Within][id] += n
 			}
 		}
-		// A computed row points at no record: no column has a label.
-		for idx := range c.p.cols {
-			cells = append(cells, labelRef{}.cells(idx)...)
+		leg, err := lc.computedLeg(item, i, at, cur)
+		if err != nil {
+			return nil, nil, err
 		}
-		cells = append(append(cells, carried...), pivotMixed...)
-		// A computed row has no opening row: its opening cells are blank.
-		for idx := range c.p.cols {
-			cells = append(cells, blankOpeningCells(idx)...)
-		}
-		// The level rows' last columns, so every leg of the union has the same.
-		cells = append(cells, fmt.Sprintf("%d AS __ord", i), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n", "NULL AS __kids")
-		if len(lc.used) > maxJoinedChunks {
-			return nil, nil, invalid(at, "a computed row reads too many sections")
-		}
-		from := cur + lc.joins()
-		for _, w := range lc.wheres {
-			c.probe(w.at, "SELECT 1 FROM "+from+" WHERE "+w.sql)
-		}
-		legs = append(legs, unionLeg{cells: cells, from: from})
+		legs = append(legs, leg)
 		lc.items[item.Row] = item
+		// The lists only grow at their ends, so the clone keeps this row's view.
+		lc.withinAt[item.Row] = maps.Clone(lc.within)
+		if item.Within != "" {
+			lc.within[item.Within] = append(lc.within[item.Within], item)
+		}
 	}
+	// A section with within rows gets one more leg, its total: compiled after
+	// every item, so it adds all of the section's within rows. assemble draws
+	// the section's group row and subtotal from it.
+	for _, sec := range c.p.layout {
+		if sec.Section == "" || len(lc.within[sec.Section]) == 0 {
+			continue
+		}
+		item := &LayoutItem{Row: sectionTotalID(sec.Section), Formula: &Node{Subtotal: sec.Section}}
+		at := sectionAt[sec.Section]
+		if err := size(item, at); err != nil {
+			return nil, nil, err
+		}
+		leg, err := lc.computedLeg(item, len(c.p.layout)+len(legs), at, cur)
+		if err != nil {
+			return nil, nil, err
+		}
+		legs = append(legs, leg)
+	}
+	c.layoutCounted += compiled
 	return lc.chunkCTEs(), legs, nil
+}
+
+// compiled counts a formula node compiled for a computed row (leafTracker).
+func (lc *layoutCtx) compiled(*Node) { lc.c.layoutNodes++ }
+
+// sectionTotalID names the leg that holds a section's total with its within
+// rows; "~" is never in a layout id (idRe), so it cannot clash with a row.
+func sectionTotalID(section string) string { return "~" + section }
+
+// computedLeg is the union leg of one computed row (or a section total): its
+// formula compiled for every cell column, ordered by ord.
+func (lc *layoutCtx) computedLeg(item *LayoutItem, ord int, at, cur string) (unionLeg, error) {
+	c, s := lc.c, lc.s
+	// A computed row has a figure only in a number column, so cells naming
+	// any other is refused here, where the columns' types are known.
+	for _, id := range item.cellIDs() {
+		if t := c.levelTypes[id]; !isNumeric(t) || t == Bool {
+			return unionLeg{}, invalid(at+".cells."+id, "cells name number and amount columns")
+		}
+	}
+	lc.used, lc.wheres, lc.current = nil, nil, item
+	cells := []string{fmt.Sprintf("%d AS __level", len(c.p.groups)+1), s.bind(item.Row) + " AS __row"}
+	for g := range c.p.groups {
+		cells = append(cells, fmt.Sprintf("NULL AS k%d", g))
+	}
+	for _, ck := range c.currencies {
+		cells = append(cells, "cur."+ck+" AS "+ck)
+	}
+	// The formula is compiled once on no column, so a layout with no number
+	// columns still checks it. A cells formula is not: cells name only number
+	// columns (above), so the loop below compiles each one once, in its
+	// column, at layout.N.formula.cells.<id>, which is what cellSizes counts.
+	lc.cell, lc.typ = "", Number
+	if _, err := lc.cellOf(item, at+".formula"); err != nil {
+		return unionLeg{}, err
+	}
+	carried := make([]string, 0, len(c.p.cols))
+	for idx, cp := range c.p.cols {
+		if !isNumeric(c.levelTypes[cp.col.ID]) || c.levelTypes[cp.col.ID] == Bool {
+			cells = append(cells, fmt.Sprintf("NULL AS v%d", idx))
+			carried = append(carried, noCarriedCell(idx), noMixedCell(idx))
+			continue
+		}
+		lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("v%d", idx), c.levelTypes[cp.col.ID], cp, idx
+		e, err := lc.cellOf(item, at+".formula")
+		if err != nil {
+			return unionLeg{}, err
+		}
+		cells = append(cells, e.sql+" AS "+lc.cell)
+		carried = append(carried, lc.carriedCell(cp, e, idx), mixedCell(e, idx))
+	}
+	var pivotMixed []string
+	for j := range lc.pivotCount {
+		lc.cell, lc.typ, lc.column, lc.idx, lc.pivotIdx = fmt.Sprintf("pv%d", j), c.levelTypes[c.p.pivot.cell.col.ID], c.p.pivot.cell, -1, j
+		e, err := lc.cellOf(item, at+".formula")
+		if err != nil {
+			return unionLeg{}, err
+		}
+		cells = append(cells, e.sql+" AS "+lc.cell)
+		if c.pivotMixed {
+			pivotMixed = append(pivotMixed, pivotMixedCell(e, j))
+		}
+	}
+	// A computed row points at no record: no column has a label.
+	for idx := range c.p.cols {
+		cells = append(cells, labelRef{}.cells(idx)...)
+	}
+	cells = append(append(cells, carried...), pivotMixed...)
+	// A computed row has no opening row: its opening cells are blank.
+	for idx := range c.p.cols {
+		cells = append(cells, blankOpeningCells(idx)...)
+	}
+	// The level rows' last columns, so every leg of the union has the same.
+	cells = append(cells, fmt.Sprintf("%d AS __ord", ord), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n", "NULL AS __kids")
+	if len(lc.used) > maxJoinedChunks {
+		return unionLeg{}, invalid(at, "a computed row reads too many sections")
+	}
+	from := cur + lc.joins()
+	for _, w := range lc.wheres {
+		c.probe(w.at, "SELECT 1 FROM "+from+" WHERE "+w.sql)
+	}
+	return unionLeg{cells: cells, from: from}, nil
 }
 
 // maxJoinedChunks keeps a computed row's select under SQLite's limit of 64
@@ -162,6 +241,16 @@ type layoutCtx struct {
 	c     *compiler
 	s     *stmt
 	items map[string]*LayoutItem
+	// current is the item being compiled; within holds, by section id, the
+	// within rows compiled before it, in layout order, so a section read adds
+	// only the within rows above the reader.
+	current *LayoutItem
+	within  map[string][]*LayoutItem
+	// withinAt is, by computed row id, within as it was when that row was
+	// compiled, so the row inlined into a later reader has the value it shows.
+	withinAt map[string]map[string][]*LayoutItem
+	// pivotCount is the number of pivot cells (pv<j>) a leg compiles.
+	pivotCount int
 	// cell is the result column being compiled; empty for the check pass.
 	cell string
 	// typ is the type of that column's cells, which a subtotal keeps so the
@@ -243,7 +332,88 @@ func (p *plan) expandedSize(n *Node, rows map[string]int) int {
 	return size
 }
 
-func (lc *layoutCtx) row(item *LayoutItem, at string) (expr, error) {
+// cellSizes is a computed row's cell size in each column (as cellOf compiles
+// it), with the earlier rows it reads inlined at their size in that column;
+// the "" column is its formula's (pivot cells, and the check pass, which
+// compiles the formula only and inlines an earlier row by its formula). A
+// cells formula is compiled only in its own column. A derived
+// cell inlines the row's own cell for every {col} it reads, through the
+// derived columns it reads. A column with no figure is a NULL.
+func (c *compiler) cellSizes(item *LayoutItem, rows map[string]map[string]int) map[string]int {
+	in := func(id string) map[string]int {
+		col := make(map[string]int, len(rows))
+		for row, cells := range rows {
+			col[row] = cells[id]
+		}
+		return col
+	}
+	sizes := map[string]int{"": c.p.expandedSize(item.Formula, in(""))}
+	var cell func(id string) int
+	cell = func(id string) int {
+		if n, done := sizes[id]; done {
+			return n
+		}
+		n := 1
+		switch t := c.levelTypes[id]; {
+		case !isNumeric(t) || t == Bool:
+		case item.Cells[id] != nil:
+			n = c.p.expandedSize(item.Cells[id], in(id))
+		case c.p.derived[id]:
+			// Bind refuses a cycle of columns, so the reads end.
+			n = derivedSize(c.p.byID[id].col.Formula, cell)
+		case item.Formula != nil:
+			n = c.p.expandedSize(item.Formula, in(id))
+		}
+		sizes[id] = n
+		return n
+	}
+	for _, cp := range c.p.cols {
+		cell(cp.col.ID)
+	}
+	return sizes
+}
+
+// derivedSize counts a derived column's formula with each {col} it reads
+// replaced by the row's cell in that column; scalarOnly keeps it to args.
+func derivedSize(n *Node, cell func(id string) int) int {
+	if n == nil {
+		return 0
+	}
+	if n.Col != "" {
+		return cell(n.Col)
+	}
+	size := 1
+	for _, a := range n.Args {
+		size += derivedSize(a, cell)
+	}
+	return size
+}
+
+// cellOf is item's cell in the column being compiled (lc.cell): its cells
+// formula for that column, a derived column's formula over the row's own
+// cells, else its formula, else blank.
+func (lc *layoutCtx) cellOf(item *LayoutItem, at string) (expr, error) {
+	// The check pass (no column) compiles the formula only: a cells formula
+	// is compiled in its own column, so the caps count every compile of it.
+	if lc.cell == "" || lc.column == nil || lc.idx < 0 {
+		return lc.formulaCell(item, at)
+	}
+	id := lc.column.col.ID
+	switch {
+	case item.Cells[id] != nil:
+		return lc.numberCell(item.Cells[id], at+".cells."+id)
+	case lc.c.p.derived[id]:
+		return compileFormula(&derivedCtx{layoutCtx: lc, item: item, visiting: map[string]bool{}}, lc.column.col.Formula, at)
+	}
+	return lc.formulaCell(item, at)
+}
+
+// formulaCell is item's formula in the column being compiled, blank for a
+// row with cells and no formula.
+func (lc *layoutCtx) formulaCell(item *LayoutItem, at string) (expr, error) {
+	if item.Formula == nil {
+		return expr{sql: "NULL", typ: lc.typ}, nil
+	}
 	e, err := compileFormula(lc, item.Formula, at)
 	if err != nil {
 		return expr{}, err
@@ -254,13 +424,86 @@ func (lc *layoutCtx) row(item *LayoutItem, at string) (expr, error) {
 	return e, nil
 }
 
+// numberCell is one cells formula in the column being compiled.
+func (lc *layoutCtx) numberCell(n *Node, at string) (expr, error) {
+	e, err := compileFormula(lc, n, at)
+	if err != nil {
+		return expr{}, err
+	}
+	if !isNumeric(e.typ) || e.typ == Bool {
+		return expr{}, invalid(at, "cells name number and amount columns")
+	}
+	return e, nil
+}
+
+// derivedCtx compiles a derived column on a computed row: {col Y} is the
+// row's own cell in Y, compiled with lc's column state switched to Y.
+type derivedCtx struct {
+	*layoutCtx
+	item     *LayoutItem
+	visiting map[string]bool
+}
+
+func (d *derivedCtx) col(id, at string) (expr, error) {
+	cp := d.c.p.byID[id]
+	if cp == nil {
+		return expr{}, unknownColumn(at, id)
+	}
+	done, err := enter(d.visiting, id, at)
+	if err != nil {
+		return expr{}, err
+	}
+	defer done()
+	t := d.c.levelTypes[id]
+	if !isNumeric(t) || t == Bool {
+		return expr{sql: "NULL", typ: t}, nil
+	}
+	lc := d.layoutCtx
+	cell, typ, column, idx, pivotIdx := lc.cell, lc.typ, lc.column, lc.idx, lc.pivotIdx
+	// Only the column state is switched back: the sections and lookup wheres the
+	// read joins (used, wheres, chunks) belong to the row's select and stay.
+	defer func() { lc.cell, lc.typ, lc.column, lc.idx, lc.pivotIdx = cell, typ, column, idx, pivotIdx }()
+	i := d.c.p.index(cp)
+	lc.cell, lc.typ, lc.column, lc.idx = fmt.Sprintf("v%d", i), t, cp, i
+	return lc.cellOf(d.item, at)
+}
+
+// inline is an earlier row's cell compiled as it was for its own leg, from
+// its place in the layout: its section reads add only the within rows above
+// it, never those between it and the reader (ruling 9).
+func (lc *layoutCtx) inline(item *LayoutItem, at string) (expr, error) {
+	current, within := lc.current, lc.within
+	lc.current, lc.within = item, lc.withinAt[item.Row]
+	defer func() { lc.current, lc.within = current, within }()
+	return lc.cellOf(item, at)
+}
+
+// bareSection marks a {subtotal} leaf that reads a section's own rows only,
+// without its within rows: the add that subtotal builds reads it. idRe allows
+// letters, digits and _, so no layout id holds it.
+const bareSection = "\x00bare"
+
 func (lc *layoutCtx) subtotal(id, at string) (expr, error) {
+	bare := strings.HasSuffix(id, bareSection)
+	id = strings.TrimSuffix(id, bareSection)
 	item, ok := lc.items[id]
 	if !ok {
 		return expr{}, unknownRef(at, "unknown_subtotal", fmt.Sprintf("the layout has no section or earlier row %q", id))
 	}
 	if item.Row != "" {
-		return lc.row(item, at)
+		return lc.inline(item, at)
+	}
+	if lc.current != nil && lc.current.Within == id {
+		return expr{}, invalid(at, fmt.Sprintf("a row inside %q cannot read that section: it would read itself", id))
+	}
+	// A section read adds its earlier within rows through add, so add's
+	// money, currency and blank rules apply exactly as to any formula.
+	if rows := lc.within[id]; !bare && len(rows) > 0 {
+		args := []*Node{{Subtotal: id + bareSection}}
+		for _, w := range rows {
+			args = append(args, &Node{Subtotal: w.Row})
+		}
+		return compileFormula(lc, &Node{Op: "add", Args: args}, at)
 	}
 	if lc.cell == "" {
 		return expr{sql: "NULL", typ: Number}, nil
@@ -394,13 +637,19 @@ func layoutKey(raw json.RawMessage) (any, error) {
 // col is refused: a computed row's cell in a column is its own formula, so
 // a column read from it (even inside a lookup) would read itself.
 func (lc *layoutCtx) col(id, at string) (expr, error) {
-	return expr{}, invalid(at, fmt.Sprintf("a computed row reads sections' subtotals, earlier rows, values and lookups: its cell in %q is this formula, so reading the column would read itself", id))
+	return expr{}, invalid(at, fmt.Sprintf("a computed row reads sections' subtotals, earlier rows, params, values and lookups: its cell in %q is this formula, so reading the column would read itself", id))
 }
 func (lc *layoutCtx) path(_ Path, at string) (expr, error) { return expr{}, lc.only(at) }
 func (lc *layoutCtx) record(_ string, _ Path, at string) (expr, error) {
 	return expr{}, lc.only(at)
 }
-func (lc *layoutCtx) param(_, at string) (expr, error) { return expr{}, lc.only(at) }
+func (lc *layoutCtx) param(id, at string) (expr, error) {
+	v, err := paramOf(lc.c, id, at)
+	if err != nil {
+		return expr{}, err
+	}
+	return paramLeaf(lc.c, lc.s, lc, id, v)
+}
 func (lc *layoutCtx) aggregate(_ Aggregate, _ *Node, _ int, at string) (expr, error) {
 	return expr{}, lc.only(at)
 }
@@ -416,7 +665,7 @@ func (lc *layoutCtx) lookup(n *Node, at string) (expr, error) {
 	return lookupIn(lc, &rowsCTE{c: lc.c, s: lc.s}, n, at)
 }
 func (lc *layoutCtx) only(at string) error {
-	return invalid(at, "a computed row reads sections' subtotals, earlier rows, values and lookups")
+	return invalid(at, "a computed row reads sections' subtotals, earlier rows, params, values and lookups")
 }
 func (lc *layoutCtx) bind(v any) string   { return lc.s.bind(v) }
 func (lc *layoutCtx) fiscalStart() string { return lc.bind(int64(lc.c.fiscal)) }
@@ -438,6 +687,10 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 		byKey[keyString([]any{g["k0"]})] = g
 	}
 	for _, item := range rn.c.p.layout {
+		// A within row is emitted inside its section (groupWithLabel).
+		if item.Within != "" {
+			continue
+		}
 		if item.Row != "" {
 			row := t.computed[item.Row+"|"+ck]
 			if row == nil {
@@ -456,6 +709,37 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 			}
 		}
 		groupKey := rn.rowKey(row, 1)
-		rn.groupWithLabel(t, row, 1, "", "g:"+keyString(groupKey), rowLabel{text: item.Title}, groupKey, true)
+		if sum := t.computed[sectionTotalID(item.Section)+"|"+ck]; sum != nil {
+			row = rn.withinTotal(row, sum)
+		}
+		rn.groupWithLabel(t, row, 1, 0, "", "g:"+keyString(groupKey), rowLabel{text: item.Title}, groupKey, true, item)
 	}
+}
+
+// withinTotal is a section's row with its number cells (and their currency
+// and blank helpers) taken from the section-total leg, so the group row and
+// the subtotal add the section's within rows.
+func (rn *runner) withinTotal(row, total map[string]any) map[string]any {
+	out := maps.Clone(row)
+	for idx, cp := range rn.c.p.cols {
+		// A computed leg's text and yes/no cells are NULL; the section keeps its own.
+		if t := rn.c.levelTypes[cp.col.ID]; !isNumeric(t) || t == Bool {
+			continue
+		}
+		for _, name := range []string{"v%d", "vcur%d", "vmx%d"} {
+			key := fmt.Sprintf(name, idx)
+			if v, ok := total[key]; ok {
+				out[key] = v
+			}
+		}
+	}
+	for j := range rn.pivotValues {
+		for _, name := range []string{"pv%d", "pvm%d"} {
+			key := fmt.Sprintf(name, j)
+			if v, ok := total[key]; ok {
+				out[key] = v
+			}
+		}
+	}
+	return out
 }

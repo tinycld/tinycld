@@ -130,6 +130,16 @@ type Column struct {
 	// of its total: a formula on the row's level. Detail rows keep Path or
 	// Formula.
 	Rollup *Node `json:"rollup,omitempty"`
+	// Hidden computes the column (a group key, a sort key, a {col} read, a
+	// section key) but never shows it: the result leaves the column and its
+	// cells out, so it has no heading, cell, Customize entry, arrangement or
+	// export column.
+	Hidden bool `json:"hidden,omitempty"`
+	// Heading is a formula over params and values, computed once per run,
+	// that the column's heading shows in place of Label (a date in the
+	// reader's short day form). Label stays the column's name in Customize
+	// and the builder. A heading that is blank (an unset param) shows Label.
+	Heading *Node `json:"heading,omitempty"`
 }
 
 // DetailBlank is the one Column.Detail value.
@@ -200,7 +210,19 @@ type Group struct {
 	Having *Node `json:"having,omitempty"`
 	// Opening is a row shown first under each open group of this level.
 	Opening *Opening `json:"opening,omitempty"`
+	// Blank "skip": a row whose key at this level is blank skips the level:
+	// no group row, no subtotal; its rows sit directly under the parent group
+	// (one depth less per skipped level) and count in the parent's totals.
+	// Absent: a blank key forms a (none) group.
+	Blank string `json:"blank,omitempty"`
+	// HideEmpty hides a group whose child groups are all hidden and that has
+	// no shown row passed up from a skipped level below it, with its subtotal,
+	// as a having would hide it.
+	HideEmpty bool `json:"hideEmpty,omitempty"`
 }
+
+// GroupBlankSkip is the one Group.Blank value.
+const GroupBlankSkip = "skip"
 
 // Opening is a group level's opening row: its label, and the cells it shows
 // by column id, each a formula on the group's level. A column it does not
@@ -232,7 +254,8 @@ type Pivot struct {
 }
 
 // LayoutItem is a section (section, title, key: the first group's key it
-// shows) or a computed row (row, label, formula over {subtotal} leaves).
+// shows) or a computed row (row, label, formula over {subtotal} leaves, and
+// within: the section it sits inside, if any).
 type LayoutItem struct {
 	Section string          `json:"section,omitempty"`
 	Title   string          `json:"title,omitempty"`
@@ -240,7 +263,18 @@ type LayoutItem struct {
 	Row     string          `json:"row,omitempty"`
 	Label   string          `json:"label,omitempty"`
 	Formula *Node           `json:"formula,omitempty"`
+	// Within names a section earlier in the layout that this computed row
+	// sits inside: shown after the section's rows and before its total while
+	// the section is open, and added to the section's total.
+	Within string `json:"within,omitempty"`
+	// Cells is the computed row's cell per column id, each a formula like
+	// Formula; a number column it does not name takes Formula.
+	Cells map[string]*Node `json:"cells,omitempty"`
 }
+
+// cellIDs are the computed row's cell column ids in order, so every walk over
+// its cells reports problems in one order.
+func (l *LayoutItem) cellIDs() []string { return slices.Sorted(maps.Keys(l.Cells)) }
 
 type ParamDef struct {
 	ID      string          `json:"id"`

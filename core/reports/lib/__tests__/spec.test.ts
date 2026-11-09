@@ -500,3 +500,88 @@ describe('column fit (spec version 4)', () => {
         expect(parseFitLength('12')).toBeNull()
     })
 })
+
+describe('statement fields (G7)', () => {
+    const base = {
+        version: 4,
+        source: 'zoo.feedings',
+        columns: [
+            { id: 'animal', path: [{ link: 'animal' }] },
+            { id: 'sp', path: [{ link: 'animal' }, { field: 'species' }], hidden: true },
+        ],
+    }
+
+    it('parses a hidden column', () => {
+        expect(parseSpec(base)?.columns[1]?.hidden).toBe(true)
+    })
+
+    it('keeps a spec without hidden valid', () => {
+        const { hidden: _hidden, ...plain } = base.columns[1]
+        expect(parseSpec({ ...base, columns: [base.columns[0], plain] })).not.toBeNull()
+    })
+})
+
+describe('statement fields (G1)', () => {
+    it('parses blank: skip on a group and refuses any other value', () => {
+        const spec = {
+            version: 4,
+            source: 'zoo.feedings',
+            columns: [{ id: 'a', path: [{ field: 'name' }] }],
+            groups: [
+                { id: 's', col: 'a' },
+                { id: 'r', col: 'a', blank: 'skip' },
+                { id: 'x', col: 'a' },
+            ],
+        }
+        expect(parseSpec(spec)?.groups?.[1]?.blank).toBe('skip')
+        expect(parseSpec({ ...spec, groups: [{ id: 'r', col: 'a', blank: 'keep' }] })).toBeNull()
+    })
+})
+
+describe('statement fields (G5)', () => {
+    it('parses hideEmpty on a group', () => {
+        const spec = {
+            version: 4,
+            source: 'zoo.feedings',
+            columns: [{ id: 'a', path: [{ field: 'name' }] }],
+            groups: [
+                { id: 's', col: 'a', hideEmpty: true },
+                { id: 'x', col: 'a' },
+            ],
+        }
+        expect(parseSpec(spec)?.groups?.[0]?.hideEmpty).toBe(true)
+    })
+})
+
+describe('statement fields (G3)', () => {
+    it('parses a heading formula on a column', () => {
+        const spec = {
+            version: 4,
+            source: 'zoo.feedings',
+            params: [{ id: 'asOf', type: 'asOf' }],
+            columns: [
+                { id: 'a', path: [{ field: 'name' }] },
+                { id: 'c', path: [{ field: 'cost' }], heading: { param: 'asOf' } },
+            ],
+        }
+        expect(parseSpec(spec)?.columns[1]?.heading).toEqual({ param: 'asOf' })
+    })
+})
+
+describe('statement fields (G4, G8)', () => {
+    it('parses within and cells on a computed row', () => {
+        const spec = {
+            version: 4,
+            source: 'zoo.feedings',
+            columns: [{ id: 'a', path: [{ field: 'name' }] }],
+            groups: [{ id: 'g', col: 'a' }],
+            layout: [
+                { section: 'eq', title: 'Equity', key: 'equity' },
+                { row: 're', label: 'Retained', within: 'eq', cells: { cost: { value: 1 } } },
+            ],
+        }
+        const row = parseSpec(spec)?.layout?.[1]
+        expect(row?.within).toBe('eq')
+        expect(row?.cells).toEqual({ cost: { value: 1 } })
+    })
+})

@@ -12,6 +12,7 @@ import {
     type BuilderDraft,
     builderSchema,
     type ColumnDraft,
+    cellColumnIds,
     columnWithFit,
     displayIssues,
     draftFromSpec,
@@ -24,15 +25,23 @@ import {
     layoutWithMinWidth,
     levelScope,
     NEVER_CUT,
+    offersBlankSkip,
     offersDetailBlank,
     offersHaving,
+    offersHidden,
+    offersHideEmpty,
     openingCellRows,
     openingDraft,
     setOpeningCell,
+    showsBlankSkip,
     showsDetailLabel,
     showsHaving,
+    showsHeading,
+    showsHidden,
+    showsHideEmpty,
     specFromDraft,
     tidyFit,
+    withinChoices,
 } from '../draft'
 import { emptyCondition, emptyGroup } from '../filter'
 import { formulaContext } from '../formula-context'
@@ -1905,5 +1914,321 @@ describe('column fit choices', () => {
             'cells',
         ])
         expect(layoutWithMinWidth({ ...layout, minWidth: '600px' }, undefined)).toEqual(layout)
+    })
+})
+
+const STATEMENT: ReportSpec = {
+    version: 4,
+    source: SALES_KEY,
+    params: [{ id: 'asOf', type: 'asOf', label: 'As of' }],
+    columns: [
+        { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+        {
+            id: 'amount',
+            label: 'Current',
+            path: [{ field: 'amount' }],
+            aggregate: 'sum',
+            heading: { param: 'asOf' },
+        },
+        { id: 'status', label: 'Status', path: [{ field: 'status' }], hidden: true },
+    ],
+    groups: [
+        { id: 'side', col: 'status', subtotals: true, open: true },
+        { id: 'byTeam', col: 'team', blank: 'skip', hideEmpty: true },
+        { id: 'leaf', col: 'team' },
+    ],
+    layout: [
+        { section: 'open', title: 'Open', key: 'open' },
+        {
+            row: 'adj',
+            label: 'Adjustments',
+            within: 'open',
+            // A row inside a section cannot read it (layout.go subtotal).
+            cells: { amount: { value: 5 } },
+        },
+    ],
+}
+
+describe('statement fields in the builder', () => {
+    it('keeps blank, hideEmpty, heading, hidden, within and cells through a round trip', () => {
+        expect(specFromDraft(draftFromSpec(STATEMENT, META, CATALOG), CATALOG)).toEqual(STATEMENT)
+    })
+
+    it('reads each field into the draft', () => {
+        const draft = draftFromSpec(STATEMENT, META, CATALOG)
+        expect(draft.groups[1]).toMatchObject({ blank: 'skip', hideEmpty: true })
+        expect(draft.columns[1]?.heading).not.toBeNull()
+        expect(draft.columns[2]?.hidden).toBe(true)
+        const row = draft.layout[1]
+        expect(row?.kind === 'row' && row.within).toBe('open')
+        expect(row?.kind === 'row' && Object.keys(row.cells ?? {})).toEqual(['amount'])
+        const cleared = {
+            ...draft,
+            groups: draft.groups.map(g => ({ ...g, blank: 'group' as const, hideEmpty: false })),
+        }
+        const spec = specFromDraft(cleared, CATALOG)
+        expect(spec.groups?.[1]?.blank).toBeUndefined()
+        expect(spec.groups?.[1]?.hideEmpty).toBeUndefined()
+    })
+
+    it('shows the heading control past column 0, or on column 0 while it holds one', () => {
+        const draft = draftFromSpec(STATEMENT, META, CATALOG)
+        expect(showsHeading(draft, 0)).toBe(false)
+        expect(showsHeading(draft, 1)).toBe(true)
+        const first = {
+            ...draft,
+            columns: draft.columns.map((c, i) =>
+                i === 0 ? { ...c, heading: { ...NEW_ZERO } } : c
+            ),
+        }
+        expect(showsHeading(first, 0)).toBe(true)
+        expect(showsHeading(draft, 9)).toBe(false)
+    })
+
+    it('drops an empty within, so "After the sections" writes none', () => {
+        const draft = draftFromSpec(STATEMENT, META, CATALOG)
+        const cleared = {
+            ...draft,
+            layout: draft.layout.map(item =>
+                item.kind === 'row' ? { ...item, within: '' } : item
+            ),
+        }
+        const row = specFromDraft(cleared, CATALOG).layout?.[1]
+        expect(row).not.toHaveProperty('within')
+    })
+
+    it('keeps a cell formula it cannot edit read-only and unchanged', () => {
+        const fixed: ReportSpec = {
+            ...STATEMENT,
+            layout: [
+                STATEMENT.layout?.[0] ?? { section: 'open' },
+                {
+                    row: 'adj',
+                    label: 'Adjustments',
+                    within: 'open',
+                    // An operator the editor cannot write (as draft.test.ts:1516 uses).
+                    cells: { amount: { op: 'shout', args: [] } },
+                },
+            ],
+        }
+        const draft = draftFromSpec(fixed, META, CATALOG)
+        const row = draft.layout[1]
+        expect(row?.kind === 'row' && row.cells?.amount?.kind).toBe('fixed')
+        expect(specFromDraft(draft, CATALOG)).toEqual(fixed)
+    })
+
+    it('offers each control only where the engine accepts its field', () => {
+        const draft = draftFromSpec(STATEMENT, META, CATALOG)
+        // Rows with no <col>: not on the first or last level, not on a bucket.
+        expect([0, 1, 2].map(i => offersBlankSkip(draft, i))).toEqual([false, true, false])
+        const bucketed = {
+            ...draft,
+            groups: draft.groups.map((g, i) => (i === 1 ? { ...g, bucket: 'month' as const } : g)),
+        }
+        expect(offersBlankSkip(bucketed, 1)).toBe(false)
+        // Hide a group when every row in it is hidden: not on the last level, nor on
+        // a layout's sections, which always show.
+        expect([0, 1, 2].map(i => offersHideEmpty(draft, i))).toEqual([false, true, false])
+        const noLayout = { ...draft, layout: [] }
+        expect([0, 1, 2].map(i => offersHideEmpty(noLayout, i))).toEqual([true, true, false])
+        // Use only to group or sort: not the first column, not one display names.
+        expect([0, 1, 2].map(i => offersHidden(draft, i))).toEqual([false, true, true])
+        const placed = {
+            ...draft,
+            display: {
+                layouts: [
+                    { width: 'mobile' as const, tracks: 1, cells: [{ col: 'status', line: 1 }] },
+                ],
+            },
+        }
+        expect(offersHidden(placed, 2)).toBe(false)
+        // Add a row to this section: only sections earlier in the layout.
+        expect(withinChoices(draft, 1)).toEqual(['open'])
+        expect(withinChoices(draft, 0)).toEqual([])
+        // This column: … on number and amount columns after the first only.
+        const types = new Map([
+            ['team', 'relation' as const],
+            ['amount', 'money' as const],
+            ['status', 'select' as const],
+        ])
+        expect(cellColumnIds(draft, types)).toEqual(['amount'])
+        // The engine fills any number column, a percent one too (layout.go computedLeg).
+        expect(cellColumnIds(draft, new Map([...types, ['status', 'percent' as const]]))).toEqual([
+            'amount',
+            'status',
+        ])
+    })
+
+    it('does not offer hidden on a column an opening row fills', () => {
+        const draft = draftFromSpec(STATEMENT, META, CATALOG)
+        const opened = {
+            ...draft,
+            columns: draft.columns.map(c => (c.id === 'status' ? { ...c, hidden: false } : c)),
+            groups: draft.groups.map((g, i) =>
+                i === 0 ? { ...g, opening: { label: 'Before', cells: { status: NEW_ZERO } } } : g
+            ),
+        }
+        expect(offersHidden(opened, 2)).toBe(false)
+        expect(offersHidden(opened, 1)).toBe(true)
+    })
+
+    it("does not offer hidden on a nest level's first column, which labels its child rows", () => {
+        const draft = draftFromSpec(STATEMENT, META, CATALOG)
+        const nested = (id: string, field: string) => ({
+            ...draft.columns[0],
+            kind: 'path' as const,
+            id,
+            label: id,
+            path: [{ link: 'lines', mode: 'nest' as const }, { field }],
+            hidden: false,
+        })
+        const withChildRows = {
+            ...draft,
+            columns: [...draft.columns, nested('item', 'name'), nested('qty', 'qty')],
+        }
+        expect(offersHidden(withChildRows, 3)).toBe(false)
+        expect(offersHidden(withChildRows, 4)).toBe(true)
+    })
+})
+
+const NEW_ZERO: FormulaDraft = { kind: 'editable', node: { value: 0 } }
+
+// Like a having a layout no longer offers (LAYOUT_HAVING, showsHaving), a field set
+// where bind refuses it is a draft issue, and its control stays in view to clear it.
+describe('statement fields set where the engine refuses them', () => {
+    const base = () => draftFromSpec(STATEMENT, META, CATALOG)
+    const at = (draft: BuilderDraft, path: (string | number)[]) =>
+        draftIssues(draft, CATALOG).filter(issue => issue.path.join('.') === path.join('.'))
+
+    it('has no issue where each field is offered', () => {
+        expect(draftIssues(base(), CATALOG)).toEqual([])
+    })
+
+    it('flags a skip on a level that became the last, and keeps its control in view', () => {
+        const draft = base()
+        const short = { ...draft, groups: draft.groups.slice(0, 2) }
+        expect(offersBlankSkip(short, 1)).toBe(false)
+        expect(showsBlankSkip(short, 1)).toBe(true)
+        expect(at(short, ['groups', 1, 'blank'])).toEqual([
+            {
+                path: ['groups', 1, 'blank'],
+                message: 'The last level has no level below for its rows to pass to',
+            },
+        ])
+        const cleared = {
+            ...short,
+            groups: short.groups.map(g => ({ ...g, blank: 'group' as const })),
+        }
+        expect(at(cleared, ['groups', 1, 'blank'])).toEqual([])
+        expect(showsBlankSkip(cleared, 1)).toBe(false)
+    })
+
+    it('flags a skip on a bucketed level and on the first level', () => {
+        const draft = base()
+        const bucketed = {
+            ...draft,
+            groups: draft.groups.map((g, i) => (i === 1 ? { ...g, bucket: 'month' as const } : g)),
+        }
+        expect(at(bucketed, ['groups', 1, 'blank'])).toHaveLength(1)
+        const first = {
+            ...draft,
+            groups: draft.groups.map((g, i) => (i === 0 ? { ...g, blank: 'skip' as const } : g)),
+        }
+        expect(at(first, ['groups', 0, 'blank'])).toHaveLength(1)
+    })
+
+    it('flags hideEmpty on a level that became the last, and keeps its control in view', () => {
+        const draft = base()
+        const short = { ...draft, groups: draft.groups.slice(0, 2) }
+        expect(offersHideEmpty(short, 1)).toBe(false)
+        expect(showsHideEmpty(short, 1)).toBe(true)
+        expect(at(short, ['groups', 1, 'hideEmpty'])).toEqual([
+            {
+                path: ['groups', 1, 'hideEmpty'],
+                message: 'The last level has no child groups to be empty of',
+            },
+        ])
+    })
+
+    it("flags hideEmpty on a layout's sections, and keeps its control in view", () => {
+        const draft = base()
+        const sections = {
+            ...draft,
+            groups: draft.groups.map((g, i) => (i === 0 ? { ...g, hideEmpty: true } : g)),
+        }
+        expect(showsHideEmpty(sections, 0)).toBe(true)
+        expect(at(sections, ['groups', 0, 'hideEmpty'])).toEqual([
+            {
+                path: ['groups', 0, 'hideEmpty'],
+                message: "A layout's sections always show: hide empty groups on a deeper level",
+            },
+        ])
+    })
+
+    it('flags a row inside a section that reads that section', () => {
+        const draft = base()
+        const reads = { kind: 'editable' as const, node: { subtotal: 'open' } }
+        const readsOwn = {
+            ...draft,
+            layout: draft.layout.map(item =>
+                item.kind === 'row' ? { ...item, formula: reads, cells: { amount: reads } } : item
+            ),
+        }
+        const message = 'A row inside a section adds to it, so it cannot read that section'
+        expect(at(readsOwn, ['layout', 1, 'formula'])).toEqual([
+            { path: ['layout', 1, 'formula'], message },
+        ])
+        expect(at(readsOwn, ['layout', 1, 'cells', 'amount'])).toEqual([
+            { path: ['layout', 1, 'cells', 'amount'], message },
+        ])
+    })
+
+    it('flags hidden on a column shown after all, and keeps its control in view', () => {
+        const draft = base()
+        const placed = {
+            ...draft,
+            display: {
+                layouts: [
+                    { width: 'mobile' as const, tracks: 1, cells: [{ col: 'status', line: 1 }] },
+                ],
+            },
+        }
+        expect(showsHidden(placed, 2)).toBe(true)
+        expect(at(placed, ['columns', 2, 'hidden'])).toHaveLength(1)
+        const opened = {
+            ...draft,
+            groups: draft.groups.map((g, i) =>
+                i === 0 ? { ...g, opening: { label: 'Before', cells: { status: NEW_ZERO } } } : g
+            ),
+        }
+        expect(at(opened, ['columns', 2, 'hidden'])).toEqual([
+            {
+                path: ['columns', 2, 'hidden'],
+                message: 'A hidden column is never shown, so its opening cell would not show',
+            },
+        ])
+        const firstHidden = {
+            ...draft,
+            columns: draft.columns.map((c, i) => (i === 0 ? { ...c, hidden: true } : c)),
+        }
+        expect(at(firstHidden, ['columns', 0, 'hidden'])).toHaveLength(1)
+        const unhidden = {
+            ...placed,
+            columns: placed.columns.map(c => ({ ...c, hidden: false })),
+        }
+        expect(at(unhidden, ['columns', 2, 'hidden'])).toEqual([])
+        expect(showsHidden(unhidden, 2)).toBe(false)
+    })
+
+    it('flags a row cell in a column it cannot fill', () => {
+        const draft = base()
+        const withCells = (cells: Record<string, FormulaDraft>) => ({
+            ...draft,
+            layout: draft.layout.map(item => (item.kind === 'row' ? { ...item, cells } : item)),
+        })
+        for (const col of ['team', 'status', 'gone']) {
+            expect(at(withCells({ [col]: NEW_ZERO }), ['layout', 1, 'cells', col])).toHaveLength(1)
+        }
+        expect(at(withCells({ amount: NEW_ZERO }), ['layout', 1, 'cells', 'amount'])).toEqual([])
     })
 })

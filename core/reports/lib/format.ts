@@ -226,9 +226,24 @@ export function rowLabelText(row: ResultRow, format: NumberFormat): string {
     return row.kind === 'subtotal' ? `Total ${text}` : text
 }
 
-/** A column's heading: a pivot column over typed values by its typed label. */
+/**
+ * A column's heading: its run heading (a day in the short day form), a pivot column
+ * over typed values by its typed label, else its label.
+ */
 export function headingText(column: ResultColumn, format: NumberFormat): string {
-    const pivot = column.pivot
+    const { heading } = column
+    if (heading && heading.value !== null) {
+        return typedLabelText(heading.type, heading.value, '', format)
+    }
+    return columnName(column, format)
+}
+
+/**
+ * A column's name, as Customize lists it: a run heading changes with the params
+ * (a day), so the name stays the label; a pivot column is named by its typed label.
+ */
+export function columnName(column: ResultColumn, format: NumberFormat): string {
+    const { pivot } = column
     if (!pivot?.labelType || pivot.labelValue === undefined || pivot.labelValue === null) {
         return column.label
     }

@@ -71,12 +71,16 @@ export interface ResultColumn {
     labelCurrencyCell?: string
     /** The run accepts this column as a reader's sort key (options.sort). */
     sortable?: boolean
+    /** What the heading shows in place of `label` this run (a day, a text or a number). */
+    heading?: { value: CellValue; type: FieldType }
 }
 
 export interface ResultRow {
     id: string
     kind: RowKind
     depth: number
+    /** A group or subtotal row's group level (1 for the first); absent on other rows. */
+    level?: number
     label: string
     /** The column whose cell the label repeats (a child row leaves that cell out). */
     labelColumn?: string

@@ -352,11 +352,10 @@ describe('scales follow the operands', () => {
 })
 
 describe('what a part offers where it sits', () => {
-    it('offers no path, record, param or total in a layout row, but a lookup that reads params', () => {
+    it('offers no path, record or total in a layout row, but params and a lookup', () => {
         const parts = partsAt(LAYOUT, { value: 0 }, [])
-        for (const p of ['path', 'record', 'param', 'sum', 'runningSum'])
-            expect(parts).not.toContain(p)
-        expect(parts).toEqual(expect.arrayContaining(['field', 'lookup']))
+        for (const p of ['path', 'record', 'sum', 'runningSum']) expect(parts).not.toContain(p)
+        expect(parts).toEqual(expect.arrayContaining(['field', 'param', 'lookup']))
         const where = partsAt(LAYOUT, LOOKUP, [0, 1])
         expect(where).toEqual(expect.arrayContaining(['path', 'param', 'field']))
     })

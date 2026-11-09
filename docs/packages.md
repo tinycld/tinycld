@@ -1303,6 +1303,11 @@ away before the run ends.
   the spec's order. A `ResultColumn` with `sortable: true` accepts it. A sort
   on a running value or percent, a child row column, an unknown column or a
   pivot report is refused under `options.sort`.
+- A result column may carry `heading: { value, type }` (see `columns[].heading`
+  in "Fields added in version 4"); the view shows it in place of `label`. A group
+  or subtotal row carries `level`: the group level, 1 for the first. Other rows
+  have none. With a skipped level (`groups[].blank`), `depth + 1` is not the
+  level.
 - A grouped result pages (`page.next`); running values continue on the next
   page. A client merges pages by row id and drops each earlier page's trailing
   total and computed rows (a Total inside a page's slice, one per currency
@@ -1356,6 +1361,8 @@ number, amount, percent, date, datetime or yes/no column, or a first column whos
 label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` or
 `max-content`.
 
+**Fields added in version 4.**
+
 | Field | What it does |
 |---|---|
 | `display.oneLine.minWidth` | px. The rows are drawn on one line only where they are at least this wide (and the columns fit); below it the arrangements and automatic lines are used. |
@@ -1366,6 +1373,12 @@ label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` o
 | `display.columns.<col>.lineClamp` | 1 to 4, with `whiteSpace: "normal"`: the most lines the text wraps to (default 2). |
 | `display.columns.<col>.textOverflow` | `ellipsis` only. |
 | `display.columns.<col>.flexGrow` | 0 to 10: the column's share of spare room on one line (default 1 for text and the label column, 0 for other figures). |
+| `groups[].blank` | `"skip"`: a base row whose key at this level is blank skips the level: no group row and no subtotal for it; its rows sit directly under the parent group (or layout section), one depth less per skipped level, keep their full group key (with the blank), and count in the parent's totals. Absent: a blank key forms a `(none)` group. A fill below a skipped level fills under the parent the rows reach. Refused on the first and the last group level, on a bucketed level and for any other value. |
+| `groups[].hideEmpty` | `true`: a group whose child groups are all hidden, with no shown row passed up from a skipped level, is hidden with its subtotal, as a having would hide it (a `"rows"` total above it adds nothing it did not show; a `"recompute"` total counts every row the filter keeps, the rows of hidden groups included, as with any having). Allowed on a bucketed level. Refused on the last level, and on the first group of a layout report (its sections always show). |
+| `columns[].heading` | A formula over params and values, computed once per run; the result column carries `heading: { value, type }` (text, date, datetime or number), which the view shows in place of `label` (a day in the reader's short form). Absent when the heading is blank: an unset param, a null, or an empty or whitespace-only text. `label` stays the column's name, and Customize and the builder name the column by it. Refused when it reads anything but params and values (a path is refused), or is of another type: money, yes/no, a date range and a list are refused. |
+| `columns[].hidden` | `true`: the column is computed (a group, sort or section key, a `{col}` read) but the result leaves it and its cells out: no heading, no cell, no Customize entry, no arrangement, no export column, not a viewer sort key. Refused on the first column, on the first column of each nest level (it labels the child rows), on a column `display.columns` or `display.layouts` names, on a column a group's `opening` names, and on a pivot's cell column. |
+| `layout[].within` | On a computed row: the id of a section earlier in the layout. The row is emitted after that section's rows and before its subtotal, at depth 1, only while the section is open, with `section` naming the section's group row; it never opens. A section with a within row can always open, also when a deeper level's having hides every one of its own rows. The section's group row and subtotal add it, and a later row's `{ subtotal: <section> }` reads the total with it (and with every within row of that section before the reader). Its formulas read lookups, params, values, earlier computed rows and other sections; reading its own section is refused. |
+| `layout[].cells` | On a computed row: `{ <col id>: formula }`, the row's cell in that column (same leaves as `formula`). A number column it does not name takes `formula`; with no `formula` that cell is blank. A row with neither is refused, and so is a cell on the first column, a non-number column or a pivot's cell column. A **derived column** (a formula column with no aggregate or rollup that reads only `{col}`, `{param}`, values and scalar operators) is computed on every computed row, and on a section total that holds a within row, from that row's own cells. Any computed row, top-level or within, may read `{param}`. |
 
 `<col>` is a spec column id. A pivot's cell columns (one per pivot value) all take
 the fit of their spec column.

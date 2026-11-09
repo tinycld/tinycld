@@ -112,7 +112,7 @@ func TestExpandedKeysOfMixedTypes(t *testing.T) {
 func TestExpandedKeysWithManyPatternsOfBlanks(t *testing.T) {
 	z := newZoo(t)
 	cols := []string{"k0"}
-	c := &compiler{}
+	c := &compiler{p: &plan{}}
 	for i := range 10 {
 		c.currencies = append(c.currencies, fmt.Sprintf("ck%d", i))
 	}

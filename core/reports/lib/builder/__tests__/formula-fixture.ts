@@ -20,7 +20,7 @@ export const CTX: ReportFormulaContext = {
     windows: true,
     lookups: true,
 }
-// A computed row looks values up (F16); only its lookups read params. It has no
+// A computed row reads params (Ruling 7) and looks values up (F16). It has no
 // report row, so "This row's field" is not offered there.
 export const LAYOUT: ReportFormulaContext = {
     ...CTX,
@@ -28,8 +28,6 @@ export const LAYOUT: ReportFormulaContext = {
     source: null,
     rowSource: null,
     records: [],
-    params: [],
-    lookupParams: CTX.params,
     totals: false,
     windows: false,
     lookups: true,

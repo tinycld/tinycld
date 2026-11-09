@@ -20,13 +20,14 @@ import { type FormulaTypes, formulaType } from './formula-type'
  * row (`index` is its place in the layout), a group level's label (`index` is the
  * level: it reads only what the level's rows have), a sort formula (a level with no
  * index: a sort reads anything but a running value, and skips a level where it has
- * no value) or a detail row's label.
+ * no value), a detail row's label or a column's heading.
  */
 export type FormulaPlace =
     | { kind: 'column'; selfKey: string }
     | { kind: 'layout'; index: number }
     | { kind: 'level'; index?: number }
     | { kind: 'detail' }
+    | { kind: 'heading' }
 
 /**
  * What a column's type is read from: the columns, and the groups and params a
@@ -57,6 +58,12 @@ function childNodes(node: SpecNode): SpecNode[] {
 export function readsColumn(node: SpecNode | undefined, col: string): boolean {
     if (!node) return false
     return node.col === col || childNodes(node).some(n => readsColumn(n, col))
+}
+
+/** Whether a layout formula reads section or row `id` anywhere. */
+export function readsSubtotal(node: SpecNode | undefined, id: string): boolean {
+    if (!node) return false
+    return node.subtotal === id || childNodes(node).some(n => readsSubtotal(n, id))
 }
 
 /**
@@ -405,9 +412,8 @@ function formulaParams(draft: FormulaDraftParts): FormulaParam[] {
 
 // A computed row is worked out once for every column (layout.go), each section's
 // subtotal taking that column's type; one amount column makes its subtotals
-// amounts, so a division of one keeps whole cents. The row reads no param itself,
-// but a lookup inside it does (layout.go param, lookup.go lookupCtx.param), and it
-// may look values up (F16).
+// amounts, so a division of one keeps whole cents. The row and its cells read params
+// (Ruling 7, layout.go layoutCtx.param), and it may look values up (F16).
 function layoutContext(
     draft: FormulaDraftParts,
     catalog: Catalog,
@@ -415,11 +421,17 @@ function layoutContext(
 ): ReportFormulaContext {
     const hasAmounts = columnChoices(draft, catalog).some(choice => choice.type === 'money')
     const type: FieldType = hasAmounts ? 'money' : 'number'
-    const values = draft.layout.slice(0, index).map(item => ({
-        key: item.id,
-        label: item.kind === 'section' ? item.title : item.label,
-        type,
-    }))
+    // A row inside a section adds to it, so it cannot read it (layout.go subtotal).
+    const place = draft.layout[index]
+    const within = place?.kind === 'row' ? place.within : undefined
+    const values = draft.layout
+        .slice(0, index)
+        .filter(item => item.id !== within)
+        .map(item => ({
+            key: item.id,
+            label: item.kind === 'section' ? item.title : item.label,
+            type,
+        }))
     return {
         catalog,
         leaf: 'subtotal',
@@ -427,8 +439,7 @@ function layoutContext(
         source: null,
         rowSource: null,
         records: [],
-        params: [],
-        lookupParams: formulaParams(draft),
+        params: formulaParams(draft),
         totals: false,
         windows: false,
         lookups: true,
@@ -458,6 +469,22 @@ export function formulaContext(
     place: FormulaPlace
 ): ReportFormulaContext {
     if (place.kind === 'layout') return layoutContext(draft, catalog, place.index)
+    // A heading is one value per run: params and values only, no row to read a path,
+    // column or record of (bind refuses the rest).
+    if (place.kind === 'heading') {
+        return {
+            catalog,
+            leaf: 'col',
+            values: [],
+            source: null,
+            rowSource: null,
+            records: [],
+            params: formulaParams(draft),
+            totals: false,
+            windows: false,
+            lookups: false,
+        }
+    }
     const selfKey = place.kind === 'column' ? place.selfKey : ''
     const offered = levelOffer(draft, catalog, place)
     // Child rows have no single value on the row to read.

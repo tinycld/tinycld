@@ -1310,3 +1310,67 @@ describe('column fit in the fit', () => {
         ).toEqual(fitAt(1280).layout)
     })
 })
+
+describe('an authored layout gives up indent before it is given up (G9)', () => {
+    const columns: ResultColumn[] = [
+        { id: 'account', label: 'Account', type: 'text' },
+        { id: 'current', label: 'Current', type: 'money', currency: 'USD' },
+        { id: 'prior', label: 'Prior year', type: 'money', currency: 'USD' },
+        { id: 'change', label: 'Change', type: 'money', currency: 'USD' },
+        { id: 'pct', label: '% change', type: 'percent' },
+    ]
+    // The phone layout leaves % change out: the label, then three figures.
+    const mobile: DisplayLayout = {
+        width: 'mobile',
+        tracks: 3,
+        cells: [
+            { col: 'account', line: 1, span: 3 },
+            { col: 'current', line: 2 },
+            { col: 'prior', line: 2 },
+            { col: 'change', line: 2 },
+        ],
+    }
+    // Three figures of 105 need 315 on line 2.
+    const measures: ColumnMeasures = {
+        account: m(100, 100, 1),
+        current: m(105, 105, 0),
+        prior: m(105, 105, 0),
+        change: m(105, 105, 0),
+        pct: m(105, 105, 0),
+    }
+    const levels: RowLevels = { groups: 4, nests: 0 }
+    const fitAt = (width: number, layouts: DisplayLayout[] = [mobile]) =>
+        fitTable({ columns, width, layouts, levels, measures })
+
+    it('fits at the largest smaller indent when the full indent leaves too little room', () => {
+        // 378 − 68 (four levels) = 310 < 315; 378 − 52 (three levels) = 326.
+        const { layout, source } = fitAt(378)
+        expect(source).toBe('mobile')
+        if (layout.kind !== 'blocks') throw new Error('expected lines')
+        expect(layout.indent).toBe(continuationIndent({ groups: 3, nests: 0 }))
+        expect(layout.indent).toBe(52)
+    })
+
+    it('keeps the full indent where the lines fit at it', () => {
+        const { layout, source } = fitAt(400)
+        expect(source).toBe('mobile')
+        if (layout.kind !== 'blocks') throw new Error('expected lines')
+        expect(layout.indent).toBe(continuationIndent(levels))
+    })
+
+    it('tries indent 0 last', () => {
+        // 318 − 4 (no level) = 314 < 315; 318 − 0 = 318.
+        const { layout, source } = fitAt(318)
+        expect(source).toBe('mobile')
+        if (layout.kind !== 'blocks') throw new Error('expected lines')
+        expect(layout.indent).toBe(0)
+    })
+
+    it('falls to automatic lines when the layout does not fit even at indent 0', () => {
+        expect(fitAt(300).source).toBe('auto')
+    })
+
+    it('still does not try a layout below its minWidth', () => {
+        expect(fitAt(378, [{ ...mobile, minWidth: '400px' }]).source).toBe('auto')
+    })
+})

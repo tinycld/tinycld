@@ -37,7 +37,8 @@ export type SubtotalSpec = {
 // section (level 1). A paged run may send that subtotal row on a later page.
 function endsInSubtotal(row: ResultRow, spec: SubtotalSpec): boolean {
     const isLayout = (spec.layout?.length ?? 0) > 0
-    const level = row.depth + 1
+    // With a skipped level (groups[].blank) a row's depth no longer gives its level.
+    const level = row.level ?? row.depth + 1
     const hasSubtotals = (isLayout && level === 1) || spec.groups?.[level - 1]?.subtotals === true
     return hasSubtotals && (row.expanded === true || isLayout)
 }
@@ -61,7 +62,13 @@ export function visibleRows(
     const withSubtotal = new Set(
         rows.flatMap(row => (row.kind === 'subtotal' && row.section ? [row.section] : []))
     )
-    return rows.map(row => {
+    // The server never sends such a row under a folded section; this keeps a stale
+    // page (held or merged from before a fold) from showing one.
+    const folded = new Set(
+        rows.flatMap(row => (row.kind === 'group' && row.expanded !== true ? [row.id] : []))
+    )
+    const shown = rows.filter(row => !(isSectionRow(row) && row.section && folded.has(row.section)))
+    return shown.map(row => {
         const isGroup = row.kind === 'group'
         return {
             row,
@@ -182,7 +189,12 @@ const EMPTY_RESULT: RunResult = {
     params: [],
 }
 
-const isWholeReportRow = (row: ResultRow) => row.kind === 'total' || row.kind === 'computed'
+// A computed row inside a section (layout[].within) belongs to that section: it
+// is neither a whole-report row nor shown under a folded section.
+const isSectionRow = (row: ResultRow) => row.kind === 'computed' && row.section !== undefined
+
+const isWholeReportRow = (row: ResultRow) =>
+    row.kind === 'total' || (row.kind === 'computed' && !isSectionRow(row))
 
 // The rows of an earlier page without the whole-report rows the server appends
 // after the page's slice: those repeat on every page, and only the newest page's

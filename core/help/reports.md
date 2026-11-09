@@ -62,6 +62,28 @@ To show something other than the total on group and total rows, open the column 
 
 To show only some groups, open **Group and sort**, find the level, and add a condition under **Show only groups where…**. A condition can test a total of a field, a column, or a field of the group's record. Turn on **Ask when the report runs** to let the reader set the value from a chip.
 
+## Group by levels some rows do not have
+
+To show rows that have no value at a level directly under the group above, open the level in **Group and sort** and set **Rows with no <column>** to **Place them directly under the group above**. Those rows then have no group or total of their own at that level, and they count in the total of the group above. The first and the last level cannot do this. A level grouped by a date bucket cannot either.
+
+## Column headings that name a day
+
+To make a column's heading show a value from the report's parameters (for example the **As of** day), turn on **Heading: from a parameter** in **Columns** and choose the parameter. The heading can be text, a day, a date and time, or a number. A day shows in short form ("Nov 8, 2026"). Money, yes/no, a date range and a list cannot be a heading. **Customize** and the builder still list the column by its name. If the heading has no value, the heading shows the column's name. This is the case when the parameter is not set, is empty, or is text with only spaces.
+
+## Statements: sections and computed rows
+
+A statement shows fixed sections and rows computed from them. A computed row can read the report's parameters. To put a computed row inside a section, choose the section in **Add a row to this section**. The row shows after the section's rows and before its total, while the section is open. The section's total adds the row, and a row later in the layout that reads the section reads that total. A row inside a section cannot read its own section. A section with a row inside it can always open, also when every one of its own rows is hidden, so that its total is never more than the rows you can see.
+
+A computed row can have its own formula in a column: add it under **This column: …**. A number column the row names no formula for uses the row's formula. To use only the column formulas, press **Remove** beside the row's formula; those other columns are then blank. A column whose formula reads only other columns of the same row (a Change of "Current − Prior year", a percent change) is worked out from that row's own figures, on computed rows and on section totals too.
+
+## Hide groups with nothing to show
+
+To hide a group when every row in it is hidden (for example by **Show only groups where…**), turn on **Hide a group when every row in it is hidden** for its level. The group and its total do not show. A group that has a row placed directly under it from a level below stays. This chains upwards: a group whose child groups are all hidden is hidden too. This choice shows for a level grouped by a date bucket too. The last level cannot do this, and neither can the first level of a statement, because its sections always show. A total set to **Recompute from all rows** still counts the rows of the hidden groups, as it does for **Show only groups where…**. A total set to **Add the rows shown** does not.
+
+## Group by a formula
+
+To group or sort by a value you do not want to show, add the formula as a column and turn on **Use only to group or sort (do not show)**. The report still groups and sorts by it, but the column has no heading or cells, is not listed in **Customize**, and is not in an export. The first column cannot be hidden, and neither can the first column of child rows, because it names them. Neither can a column that a width layout places, a column that the opening row of a group level has a value for, or the cell column of a pivot.
+
 ## Group by a linked record
 
 To group by a linked record (for example each team of a sale), add the link as a column: in **Add column**, pick **Team (record)**. In **Group and sort**, select **Add group level** and set **Group by** to that column. The group row shows the record's name. To show another field, or a formula, change **Label**. On any level, turn on **Show every Team, even with no rows** to list records that have no rows, and add conditions to choose which. Under another group, a condition can be **Same as the Region above** (the name of the group level above), so each region lists only its own teams.
