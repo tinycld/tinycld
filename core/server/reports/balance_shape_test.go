@@ -26,7 +26,7 @@ import (
 // collection (zoo_ledger_access: user, can_read), the rule shape a package
 // that keeps its own members writes: PocketBase compiles it to a DISTINCT
 // join, so the plan check below covers a rule SQLite cannot read in place.
-func withBalanceZoo(t *testing.T, z *zoo) {
+func withBalanceZoo(t testing.TB, z *zoo) {
 	t.Helper()
 	access := core.NewBaseCollection("zoo_ledger_access")
 	access.Fields.Add(

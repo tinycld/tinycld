@@ -418,6 +418,10 @@ func (rn *runner) detailTypes() error {
 // Nothing else sets it.
 var observeRead func(sql string, params dbx.Params)
 
+// topicsRead finds the change-signal topics of a read; a test wraps it to see
+// what a run explains.
+var topicsRead = changesignal.TopicsRead
+
 // readRows runs one read statement with the rule CTEs and ctes under the run
 // time limit; with topics, it also returns the change-signal topics of every
 // collection the statement reads.
@@ -434,7 +438,7 @@ func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body st
 	defer cancel()
 	var read []string
 	if topics {
-		if read, err = changesignal.TopicsRead(ctx, app, sql, s.params); err != nil {
+		if read, err = topicsRead(ctx, app, sql, s.params); err != nil {
 			return nil, nil, mapRunError(err)
 		}
 	}
