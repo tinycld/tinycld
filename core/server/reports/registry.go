@@ -115,9 +115,15 @@ type Source struct {
 	// Aliases maps an old field or link key to its new key, so a saved
 	// report keeps working after a rename.
 	Aliases map[string]string
-	// Currency is the fixed currency of Money fields that name no Currency
-	// field, read for the reader (see Heading), at most once per source in one
-	// read of a report. nil means the currency is unknown to the engine.
+	// Currency is the source's currency, read for the reader (see Heading), at
+	// most once per source in one read of a report. It has two uses: it is the
+	// fixed currency of Money fields that name no Currency field, and, for a
+	// Money field that names one, the currency of the rows a report makes
+	// when it reads no rows at all (its total, its fill records, its computed
+	// rows and its empty layout sections), which no row gives a currency. A report that reads
+	// rows always takes their currencies, and a row whose currency field is
+	// blank stays without one. nil means the currency is unknown to the
+	// engine, and such rows have none.
 	Currency func(app core.App, reader *core.RequestInfo) string
 	// FiscalStartMonth (1-12) drives fiscalYear, fiscalPeriod and the fiscal
 	// period presets when this source is a report's base. nil means 1. It runs
