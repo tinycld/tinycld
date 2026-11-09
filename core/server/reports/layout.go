@@ -19,10 +19,10 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 	}
 	cur := "(SELECT 1) cur"
 	if len(c.currencies) > 0 {
-		// With no visible rows the computed rows still come, once, with no
-		// currency, as they do for a report without currencies.
-		nulls := strings.TrimSuffix(strings.Repeat("NULL, ", len(c.currencies)), ", ")
-		cur = "(SELECT DISTINCT " + strings.Join(c.currencies, ", ") + " FROM o1 UNION ALL SELECT " + nulls +
+		// With no visible rows the computed rows still come, once, as they do
+		// for a report without currencies, in each key's source currency
+		// (noRowCurrency) or none.
+		cur = "(SELECT DISTINCT " + strings.Join(c.currencies, ", ") + " FROM o1 UNION ALL SELECT " + c.noRowCurrencies(s) +
 			" WHERE NOT EXISTS (SELECT 1 FROM o1)) cur"
 	}
 	lc := &layoutCtx{c: c, s: s, items: map[string]*LayoutItem{}, within: map[string][]*LayoutItem{}, withinAt: map[string]map[string][]*LayoutItem{}, chunkOf: map[string]sectionSlot{}, keys: map[string]string{}, pivotCount: len(pivot)}

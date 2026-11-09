@@ -28,8 +28,9 @@ func (lv *level) fillRows() string {
 }
 
 // parentKeys selects the parent rows of level n: the currencies for level 1
-// (or one no-currency row when there are no rows); for a deeper level the
-// rows of level n-1 that show and are open, its fill rows included. A folded
+// (or one row in the sources' currencies, noRowCurrency, when there are no
+// rows); for a deeper level the rows of level n-1 that show and are open,
+// its fill rows included. A folded
 // or collapsed row, or one under a folded ancestor, shows no children, so its
 // fill records are never computed. At a skip level the blank key is open when
 // its parent is (expansion.where), so a fill below it fills under the parent
@@ -40,8 +41,7 @@ func (c *compiler) parentKeys(s *stmt, n int, expand *expansion) string {
 			return "SELECT 1 AS __one"
 		}
 		cks := strings.Join(c.currencies, ", ")
-		nulls := strings.TrimSuffix(strings.Repeat("NULL, ", len(c.currencies)), ", ")
-		return fmt.Sprintf("SELECT DISTINCT %s FROM w UNION ALL SELECT %s WHERE NOT EXISTS (SELECT 1 FROM w)", cks, nulls)
+		return fmt.Sprintf("SELECT DISTINCT %s FROM w UNION ALL SELECT %s WHERE NOT EXISTS (SELECT 1 FROM w)", cks, c.noRowCurrencies(s))
 	}
 	expanded := expand.shownUnder(c, s, n-1, "")
 	if set, ok := c.fillSets[n-1]; ok {

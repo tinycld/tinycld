@@ -20,6 +20,10 @@ type compiler struct {
 	// currencies names w's currency keys; every total groups by them, so
 	// amounts in different currencies are never added together.
 	currencies []string
+	// currencySource maps a currency key that reads a currency field to the
+	// field's source, whose Currency (if set) is the key's value on a row
+	// made over no rows (noRowCurrency).
+	currencySource map[string]*Source
 	// currencyOf maps a money column's id to its currency: a currency key
 	// of w, or a source's fixed currency.
 	currencyOf map[string]currency
@@ -173,6 +177,37 @@ func (c *compiler) fixedCurrency(src *Source) string {
 	return code
 }
 
+// noRowCurrency is currency key ck's value on a row made when the report
+// reads no rows (the total, the first-level parent, a computed row): the
+// Currency of the source whose currency field ck reads, nil when that source
+// has none or ck is a carried currency. No row gives such a row a currency,
+// so a money cell on it would otherwise have none. A row the report reads
+// never gets it: a row that names no currency keeps none.
+func (c *compiler) noRowCurrency(ck string) any {
+	src := c.currencySource[ck]
+	if src == nil {
+		return nil
+	}
+	if code := c.fixedCurrency(src); code != "" {
+		return code
+	}
+	return nil
+}
+
+// noRowCurrencies are the currency keys' values, as SQL, on the one row a
+// statement makes when it reads no rows (noRowCurrency).
+func (c *compiler) noRowCurrencies(s *stmt) string {
+	vals := make([]string, 0, len(c.currencies))
+	for _, ck := range c.currencies {
+		if code := c.noRowCurrency(ck); code != nil {
+			vals = append(vals, s.bind(code))
+		} else {
+			vals = append(vals, "NULL")
+		}
+	}
+	return strings.Join(vals, ", ")
+}
+
 // rowsCTE is the CTE `w`: one row per base row the reader may list that
 // passes the filter, with every value a later pass reads: group keys k<n>,
 // currency keys ck<n>, the pivot key pk, path columns c<idx>, hidden path
@@ -228,7 +263,7 @@ func (j *joinCtx) probeWhere(at, sql string) bool {
 
 func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	// Each statement builds its own w; the currency keys come out the same.
-	c.currencies, c.currencyOf, c.valueCur, c.valueCurErr = nil, map[string]currency{}, map[string]string{}, map[string]error{}
+	c.currencies, c.currencySource, c.currencyOf, c.valueCur, c.valueCurErr = nil, map[string]*Source{}, map[string]currency{}, map[string]string{}, map[string]error{}
 	r := &rowsCTE{c: c, s: s, root: newScope(s, c.p.base), raw: map[string]string{}, byExpr: map[string]string{}}
 	r.add("__id", q(r.root.alias, "id"))
 	// The currency keys of the amounts the report reads by path come first, so
@@ -421,7 +456,11 @@ func (r *rowsCTE) pathCurrency(p *pathPlan) currency {
 	sql, fixed := amountCurrencyOf(r.root, p.hops, p)
 	switch {
 	case sql != "":
-		return currency{key: r.currencyColumn(sql), field: currencyField(p)}
+		key := r.currencyColumn(sql)
+		if p.src.Currency != nil {
+			r.c.currencySource[key] = p.src
+		}
+		return currency{key: key, field: currencyField(p)}
 	case fixed != nil:
 		return currency{fixed: fixed}
 	}

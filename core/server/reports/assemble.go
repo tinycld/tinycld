@@ -307,8 +307,14 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 	})
 	if len(t.totals) == 0 {
 		// A total over no rows grouped by currency has no row; the report
-		// still ends in a total.
-		t.totals = []map[string]any{{"__level": int64(0)}}
+		// still ends in a total, in the currencies the fill and computed
+		// rows over no rows are in (noRowCurrency). The statement orders by
+		// __level, so the row cap never cuts a total: no total means no rows.
+		total := map[string]any{"__level": int64(0)}
+		for _, ck := range rn.c.currencies {
+			total[ck] = rn.c.noRowCurrency(ck)
+		}
+		t.totals = []map[string]any{total}
 	}
 	if groups == 0 {
 		for _, row := range details {

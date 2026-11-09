@@ -1141,6 +1141,12 @@ reports.RegisterSource(reports.Source{
   or the source sets `Source.Currency`, a function that gives one fixed
   currency for the reader (see below). A money field with neither panics
   in `RegisterSource`: the engine never adds amounts it cannot tell apart.
+  A source whose money fields name a `Currency` field can also set
+  `Source.Currency`. The engine then uses it only when the report reads no
+  rows at all: the total, the fill records, the computed rows and the empty
+  layout sections are in that currency (for example `$0.00`, not `0.00`). When the report
+  reads rows, each amount is in its row's currency, and a row with a blank
+  currency field has no currency.
   A field offers the aggregates in `Aggregates` (`SumAll`, `MinMax`,
   `CountOnly`); with none it can be counted. Every source also offers `id`.
 - To rename or remove a field or a link, keep the old key in `Aliases`
@@ -1156,8 +1162,9 @@ reports.RegisterSource(reports.Source{
   never a superuser. Each read of a report calls `Heading` and
   `FiscalStartMonth` one time. It calls `Currency` at most one time for each
   source, and only when the read shows or compares an amount in that
-  source's fixed currency. The read uses that one value everywhere. A
-  param's options do not call `Heading`. `Validate` calls none of the three.
+  source's fixed currency, or reads an amount of that source by its
+  currency field, so that a read that finds no rows still has a currency.
+  The read uses that one value everywhere. A param's options do not call `Heading`. `Validate` calls none of the three.
   The functions run with the app, not under the reader's rules. They must
   return only what that reader may see.
 - The reader is read-only. The run's list rules use the same request, so a
