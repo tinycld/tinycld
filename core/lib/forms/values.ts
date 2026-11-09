@@ -129,8 +129,16 @@ function anySchema({ required, missing }: KindSchemaInput): ZodTypeAny {
 /** The number input holds `''` while cleared: that is no value, not a wrong one. */
 const blankToNull = (value: unknown) => (value === '' ? null : value)
 
-function columnSchemaFor(c: TableColumn): ZodTypeAny {
-    const needed = c.required && !c.hidden
+/**
+ * A needed cell that is empty or only spaces is missing, as Go's `blankCell` reads it, so it
+ * gets `<Label> is required` before the select or date format check. The value is not trimmed.
+ */
+const filledCell = (missing: string) =>
+    z.string(absent(missing)).refine(s => s.trim() !== '', { message: missing, abort: true })
+
+/** `requiredHere`: the row's kind lists the column in its `required`. */
+function columnSchemaFor(c: TableColumn, requiredHere = false): ZodTypeAny {
+    const needed = (c.required || requiredHere) && !c.hidden
     const missing = `${c.label} is required`
     const optional = (s: ZodTypeAny) => s.nullable().optional()
     switch (c.kind) {
@@ -148,13 +156,11 @@ function columnSchemaFor(c: TableColumn): ZodTypeAny {
         case 'toggle':
             return optional(z.boolean())
         case 'date':
-            return needed
-                ? z.string(absent(missing)).min(1, missing).pipe(dateValueSchema)
-                : optional(dateValueSchema)
+            return needed ? filledCell(missing).pipe(dateValueSchema) : optional(dateValueSchema)
         case 'select': {
             const values = c.options.map(o => o.value) as [string, ...string[]]
             const one = z.enum(values, absent(missing))
-            return needed ? one : optional(one)
+            return needed ? filledCell(missing).pipe(one) : optional(one)
         }
         case 'computed':
             // The engine overwrites it; whatever the client held is not validated.
@@ -165,7 +171,9 @@ function columnSchemaFor(c: TableColumn): ZodTypeAny {
 /**
  * A host table with row kinds checks each row against its own kind's columns
  * only (a description line has no product). The `kind` cell picks the
- * schema, so a row of a kind the table lacks is refused at `kind`.
+ * schema, so a row of a kind the table lacks is refused at `kind`. A column
+ * is required on a row when it is table-wide `required` or in the kind's
+ * own `required` list.
  */
 function kindRowSchema(columns: readonly TableColumn[], rowKinds: HostRowKind[]): ZodTypeAny {
     const byKey = new Map(columns.map(c => [c.key, c]))
@@ -174,9 +182,10 @@ function kindRowSchema(columns: readonly TableColumn[], rowKinds: HostRowKind[])
             id: z.string().min(1),
             kind: z.literal(kind.key),
         }
+        const requiredHere = new Set(kind.required ?? [])
         for (const key of kind.columns) {
             const column = byKey.get(key)
-            if (column) shape[key] = columnSchemaFor(column)
+            if (column) shape[key] = columnSchemaFor(column, requiredHere.has(key))
         }
         return z.object(shape).passthrough()
     })

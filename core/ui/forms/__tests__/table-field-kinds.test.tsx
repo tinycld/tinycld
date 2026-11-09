@@ -14,7 +14,7 @@ import { pushScope, resetScopes, ScopeProvider } from '../../../lib/shortcuts/sc
 import { OverlayProvider } from '../../overlay'
 import { FieldInput } from '../FieldInput'
 import { tableKindKeyLabel } from '../fields/use-table-field'
-import { byTestId, pickRowAction, rowIdsOf } from './table-harness'
+import { byTestId, pickRowAction, rowIdsOf, TableHarness } from './table-harness'
 
 // The key glyphs are drawn for the platform the module sees at load: an Apple one here.
 vi.hoisted(() => {
@@ -645,5 +645,79 @@ describe('TableField host cells and kinds', () => {
             expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'r2', 'x1', 'x2', 'r4'])
         )
         expect(rowsNow()).toEqual([r1, r2, x1, x2, r4])
+    })
+})
+
+/** Item lines and Description lines; only a Description line must fill its description. */
+function describedHost() {
+    return asFormHost(
+        hostDefSchema.parse({
+            key: 'gizmos:quote',
+            label: 'Quote',
+            collection: 'gizmos_quotes',
+            formColumn: 'form',
+            fieldsColumn: 'fields',
+            columns: ['form', 'fields'],
+            builtin: [
+                {
+                    key: 'lines',
+                    label: 'Lines',
+                    kind: 'table',
+                    storage: 'rows',
+                    columns: [
+                        { key: 'product', label: 'Product', kind: 'text' },
+                        { key: 'description', label: 'Description', kind: 'text' },
+                    ],
+                    rowKinds: [
+                        {
+                            key: 'item',
+                            label: 'Item',
+                            addLabel: 'Add line',
+                            columns: ['product', 'description'],
+                        },
+                        {
+                            key: 'description',
+                            label: 'Description',
+                            addLabel: 'Description line',
+                            columns: ['description'],
+                            span: true,
+                            required: ['description'],
+                        },
+                    ],
+                },
+            ],
+        })
+    )
+}
+
+describe('TableField required columns per row kind', () => {
+    it('shows Description is required under a Description row only, after submit', async () => {
+        const host = describedHost()
+        const formRef: { current: UseFormReturn<FormValues> | null } = { current: null }
+        const onValid = vi.fn()
+        const lines = [
+            { id: 'i1', kind: 'item', product: 'Widget', description: '' },
+            { id: 'd1', kind: 'description', product: null, description: '' },
+        ]
+        const { container } = render(
+            <TableHarness
+                host={host}
+                definition={defaultDefinitionFor(host)}
+                initialValues={{ lines }}
+                formRef={formRef}
+            />
+        )
+        await act(async () => {
+            await formRef.current?.handleSubmit(onValid)()
+        })
+        await waitFor(() =>
+            expect(byTestId(container, 'form-table-lines-row-d1').textContent).toContain(
+                'Description is required'
+            )
+        )
+        expect(byTestId(container, 'form-table-lines-row-i1').textContent).not.toContain(
+            'Description is required'
+        )
+        expect(onValid).not.toHaveBeenCalled()
     })
 })

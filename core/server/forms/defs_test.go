@@ -3,6 +3,7 @@ package forms
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -151,5 +152,167 @@ func TestLoadHosts_DecodesLockedRowKindsAndAddOnSubmit(t *testing.T) {
 	}
 	if !lines.Columns[1].AddOnSubmit || lines.Columns[0].AddOnSubmit {
 		t.Fatalf("addOnSubmit is on qty only: %+v", lines.Columns)
+	}
+}
+
+// requiredLines is a `lines` table whose description kind must fill its description;
+// product is required on every kind (table-wide), note is hidden, taxable a toggle.
+const requiredLinesColumns = `"columns":[{"key":"product","kind":"text","label":"Product","required":true},` +
+	`{"key":"description","kind":"text","label":"Description"},` +
+	`{"key":"rate","kind":"number","label":"Rate"},` +
+	`{"key":"note","kind":"text","label":"Note","hidden":true},` +
+	`{"key":"taxable","kind":"toggle","label":"Tax"},` +
+	`{"key":"amount","kind":"computed","label":"Amount","expression":{"var":"rate"}}]`
+
+func requiredLinesHost(kinds string) string {
+	return linesHost(`{"key":"lines","label":"Lines","kind":"table","storage":"rows",` + requiredLinesColumns +
+		`,"rowKinds":[` + kinds + `]}`)
+}
+
+const (
+	itemKindJSON        = `{"key":"item","label":"Item","addLabel":"Add line","columns":["product","description","rate","taxable","amount"]}`
+	descriptionKindJSON = `{"key":"description","label":"Description","addLabel":"Description line","columns":["description"],"span":true,"required":["description"]}`
+	percentKindJSON     = `{"key":"percent","label":"Percent","addLabel":"Percent line","columns":["product","rate","note","taxable","amount"],"required":["rate","note","taxable","amount"]}`
+)
+
+func requiredLines(t *testing.T) *Builtin {
+	t.Helper()
+	defs, err := loadHostsJSON(t, requiredLinesHost(itemKindJSON+","+descriptionKindJSON+","+percentKindJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := defs.Host("gizmos:bill").Builtin("lines")
+	if lines == nil {
+		t.Fatal("no lines built-in")
+	}
+	return lines
+}
+
+func TestParseHosts_DecodesTheRequiredColumnsOfARowKind(t *testing.T) {
+	lines := requiredLines(t)
+	if got := lines.RowKinds[0].Required; len(got) != 0 {
+		t.Fatalf("item kind requires nothing of its own: %v", got)
+	}
+	if got := lines.RowKinds[1].Required; len(got) != 1 || got[0] != "description" {
+		t.Fatalf("description kind required = %v, want [description]", got)
+	}
+}
+
+func TestParseHosts_RefusesARequiredKeyThatIsNotAColumnOfTheKind(t *testing.T) {
+	for name, kind := range map[string]string{
+		"not a table column":    `{"key":"description","label":"Description","addLabel":"Description line","columns":["description"],"span":true,"required":["ghost"]}`,
+		"another kind's column": `{"key":"description","label":"Description","addLabel":"Description line","columns":["description"],"span":true,"required":["product"]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseHosts([]byte(requiredLinesHost(itemKindJSON + "," + kind)))
+			if err == nil {
+				t.Fatal("a required key that is not one of the kind's columns must be refused")
+			}
+			if !strings.Contains(err.Error(), "is not a column of this kind") {
+				t.Fatalf("error = %q, want it to contain %q", err, "is not a column of this kind")
+			}
+		})
+	}
+}
+
+func TestParseHosts_RefusesARequiredKeyNamedTwice(t *testing.T) {
+	kind := `{"key":"description","label":"Description","addLabel":"Description line","columns":["description"],"span":true,"required":["description","description"]}`
+	_, err := ParseHosts([]byte(requiredLinesHost(itemKindJSON + "," + kind)))
+	if err == nil {
+		t.Fatal("a required key named twice must be refused")
+	}
+	if !strings.Contains(err.Error(), "duplicate required column description") {
+		t.Fatalf("error = %q, want it to contain %q", err, "duplicate required column description")
+	}
+}
+
+func TestRowError_RequiresTheKindsOwnRequiredColumns(t *testing.T) {
+	lines := requiredLines(t)
+	for name, row := range map[string]map[string]any{
+		"empty":  {"id": "d1", "kind": "description", "description": ""},
+		"spaces": {"id": "d1", "kind": "description", "description": "   "},
+		"nil":    {"id": "d1", "kind": "description", "description": nil},
+		"absent": {"id": "d1", "kind": "description"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := lines.RowError(row); got != "Description is required" {
+				t.Fatalf("RowError = %q, want %q", got, "Description is required")
+			}
+		})
+	}
+	if got := lines.RowError(map[string]any{"id": "d1", "kind": "description", "description": "Labor"}); got != "" {
+		t.Fatalf("a filled description row: RowError = %q, want empty", got)
+	}
+}
+
+func TestRowError_LetsAnItemRowLeaveTheDescriptionBlank(t *testing.T) {
+	lines := requiredLines(t)
+	row := map[string]any{"id": "i1", "kind": "item", "product": "Widget", "description": "  ", "rate": 5.0, "taxable": false}
+	if got := lines.RowError(row); got != "" {
+		t.Fatalf("RowError = %q, want empty", got)
+	}
+}
+
+func TestRowError_StillRequiresATableWideRequiredColumn(t *testing.T) {
+	lines := requiredLines(t)
+	for name, row := range map[string]map[string]any{
+		"item":    {"id": "i1", "kind": "item", "product": "", "rate": 5.0},
+		"percent": {"id": "p1", "kind": "percent", "rate": 10.0, "taxable": true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := lines.RowError(row); got != "Product is required" {
+				t.Fatalf("RowError = %q, want %q", got, "Product is required")
+			}
+		})
+	}
+}
+
+func TestRowError_ReportsTheFirstMissingColumnInTheKindsOrder(t *testing.T) {
+	lines := requiredLines(t)
+	row := map[string]any{"id": "p1", "kind": "percent", "product": " ", "rate": nil}
+	if got := lines.RowError(row); got != "Product is required" {
+		t.Fatalf("RowError = %q, want %q", got, "Product is required")
+	}
+}
+
+func TestRowError_NeverRequiresAHiddenToggleOrComputedColumn(t *testing.T) {
+	lines := requiredLines(t)
+	// The percent kind lists note (hidden), taxable (toggle) and amount (computed) as required.
+	row := map[string]any{"id": "p1", "kind": "percent", "product": "Discount", "rate": 10.0, "note": "", "taxable": false}
+	if got := lines.RowError(row); got != "" {
+		t.Fatalf("RowError = %q, want empty", got)
+	}
+	row["rate"] = nil
+	if got := lines.RowError(row); got != "Rate is required" {
+		t.Fatalf("RowError = %q, want %q", got, "Rate is required")
+	}
+}
+
+func TestRowError_RefusesARowWithAMissingOrUnknownKind(t *testing.T) {
+	lines := requiredLines(t)
+	for name, row := range map[string]map[string]any{
+		"absent":  {"id": "r1", "product": "Widget", "description": "x"},
+		"blank":   {"id": "r1", "kind": "", "product": "Widget", "description": "x"},
+		"unknown": {"id": "r1", "kind": "other", "product": "Widget", "description": "x"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := lines.RowError(row); got == "" {
+				t.Fatal("a row whose kind is missing or unknown must be refused")
+			}
+		})
+	}
+}
+
+func TestRowError_ChecksEveryColumnOfATableWithoutKinds(t *testing.T) {
+	defs, err := loadHostsJSON(t, linesHost(`{"key":"lines","label":"Lines","kind":"table","storage":"rows",`+linesColumns+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := defs.Host("gizmos:bill").Builtin("lines")
+	if got := lines.RowError(map[string]any{"id": "r1", "product": " ", "qty": 1.0}); got != "Product is required" {
+		t.Fatalf("RowError = %q, want %q", got, "Product is required")
+	}
+	if got := lines.RowError(map[string]any{"id": "r1", "product": "Widget"}); got != "" {
+		t.Fatalf("RowError = %q, want empty", got)
 	}
 }
