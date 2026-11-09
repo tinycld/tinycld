@@ -2,6 +2,8 @@ package reports
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -398,5 +400,112 @@ func TestGroupRowsStillStopAtTheGroupCap(t *testing.T) {
 	}
 	if res.Page == nil || res.Page.Next != "" {
 		t.Fatalf("page = %+v", res.Page)
+	}
+}
+
+func testShape() [][]orderTerm {
+	return [][]orderTerm{{{sql: "(a.k0 IS NULL)"}, {sql: "a.k0"}}, {{sql: "(x IS NULL)"}, {sql: "x", desc: true}, {sql: "(a.k1 IS NULL)"}, {sql: "a.k1"}}}
+}
+
+func TestAGroupCursorReadsBackWhatItWrote(t *testing.T) {
+	keys := []sortKey{{name: "s0", col: "note", typ: Text}, {name: "__id"}}
+	fp := groupFingerprint("species/;note/", levelShape(testShape()), foldPrint(&expansion{open: map[int]bool{1: true}}), keys)
+	at := groupPos{key: []any{"lion", "f1", "USD"}, path: [][]any{{int64(0), "lion"}, {int64(0), int64(12), int64(0), "f1"}}, mode: cursorIn}
+	text := groupCursorOf(fp, keys, at, map[string]any{"s0": "f2", "__id": "abc"})
+	cur, err := readGroupCursor(fp, testShape(), keys, 2, 1, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cur.Group, at.key) || !reflect.DeepEqual(cur.Path, at.path) || cur.Mode != cursorIn || !reflect.DeepEqual(cur.Values, []any{"f2", "abc"}) {
+		t.Fatalf("cursor = %+v", cur)
+	}
+	after := groupCursorOf(fp, keys, groupPos{key: []any{"lion", "USD"}, path: at.path[:1], mode: cursorAfter}, nil)
+	if cur, err := readGroupCursor(fp, testShape(), keys, 2, 1, after); err != nil || cur.Values != nil || cur.Mode != cursorAfter {
+		t.Fatalf("after cursor = %+v, %v", cur, err)
+	}
+}
+
+// The fingerprint ties a group cursor to the fold state (J1b): a fold, an
+// unfold, Expand all or Collapse all is a new run from page 1.
+func TestAGroupFingerprintChangesWithTheFoldState(t *testing.T) {
+	keys := []sortKey{{name: "__id"}}
+	shape := levelShape(testShape())
+	base := &expansion{open: map[int]bool{1: true}, set: map[string]bool{}, closed: map[string]bool{}}
+	folded := &expansion{open: map[int]bool{1: true}, set: map[string]bool{}, closed: map[string]bool{`["lion","USD"]`: true}}
+	all := &expansion{all: true, open: map[int]bool{}, set: map[string]bool{}, closed: map[string]bool{}}
+	prints := map[string]bool{}
+	for _, e := range []*expansion{base, folded, all} {
+		prints[groupFingerprint("species/", shape, foldPrint(e), keys)] = true
+	}
+	if len(prints) != 3 {
+		t.Fatalf("fingerprints = %v, want three", prints)
+	}
+	// The same folds listed in another order are the same state.
+	a := &expansion{open: map[int]bool{}, set: map[string]bool{`["a"]`: true, `["b"]`: true}, closed: map[string]bool{}}
+	b := &expansion{open: map[int]bool{}, set: map[string]bool{`["b"]`: true, `["a"]`: true}, closed: map[string]bool{}}
+	if foldPrint(a) != foldPrint(b) {
+		t.Fatal("the fold print depends on the keys' order")
+	}
+}
+
+func TestAMalformedGroupCursorIsRefused(t *testing.T) {
+	keys := []sortKey{{name: "__id"}}
+	fp := groupFingerprint("species/;note/", levelShape(testShape()), "", keys)
+	good := func(c map[string]any) string {
+		raw, _ := json.Marshal(c)
+		return encodeCursor(string(raw))
+	}
+	cases := map[string]map[string]any{
+		"another fingerprint":    {"k": "000000000000", "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}}, "m": "after"},
+		"no mode":                {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}}},
+		"a mode it never writes": {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}}, "m": "before"},
+		"path longer than group": {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}, []any{0, 1, 0, "f1"}}, "m": "after"},
+		"a level of wrong width": {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0}}, "m": "after"},
+		"values outside a leaf":  {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, "lion"}}, "m": "in", "v": []any{"x"}},
+		"values with mode after": {"k": fp, "g": []any{"lion", "f1", "USD"}, "p": []any{[]any{0, "lion"}, []any{0, 1, 0, "f1"}}, "m": "after", "v": []any{"x"}},
+		"an object in the group": {"k": fp, "g": []any{map[string]any{}, "USD"}, "p": []any{[]any{0, "lion"}}, "m": "after"},
+		"an object in the path":  {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, map[string]any{}}}, "m": "after"},
+	}
+	for name, c := range cases {
+		if _, err := readGroupCursor(fp, testShape(), keys, 2, 1, good(c)); err == nil {
+			t.Errorf("%s: taken", name)
+		}
+	}
+}
+
+func TestAfterSQLIsTrueOnlyForARowAfterTheValues(t *testing.T) {
+	z := newZoo(t)
+	s := newStmt(z.app, nil)
+	cols := []orderTerm{{sql: "(x IS NULL)"}, {sql: "x", desc: true}, {sql: "y"}}
+	type row struct {
+		x    any
+		y    string
+		want bool
+	}
+	cases := []struct {
+		values []any
+		rows   []row
+	}{
+		{[]any{int64(0), int64(5), "m"}, []row{{int64(6), "a", false}, {int64(5), "a", false}, {int64(5), "m", false}, {int64(5), "z", true}, {int64(4), "a", true}, {nil, "a", true}}},
+		// A blank cursor value: only a blank row ties on it; a set row sorts before.
+		{[]any{int64(1), nil, "m"}, []row{{int64(3), "z", false}, {nil, "a", false}, {nil, "m", false}, {nil, "z", true}}},
+	}
+	for _, c := range cases {
+		cond := afterSQL(s, cols, c.values)
+		for _, r := range c.rows {
+			// No coalesce: NOT afterSQL must count a row, so the term is never NULL.
+			var after, notAfter any
+			q := fmt.Sprintf("SELECT (%s), NOT (%s) FROM (SELECT {:x} AS x, {:y} AS y)", cond, cond)
+			params := dbx.Params{"x": r.x, "y": r.y}
+			for k, v := range s.params {
+				params[k] = v
+			}
+			if err := z.app.DB().NewQuery(q).Bind(params).Row(&after, &notAfter); err != nil {
+				t.Fatal(err)
+			}
+			if after == nil || notAfter == nil || (after == int64(1)) != r.want {
+				t.Errorf("values %v, x=%v y=%v: after = %v, not after = %v, want %v", c.values, r.x, r.y, after, notAfter, r.want)
+			}
+		}
 	}
 }
