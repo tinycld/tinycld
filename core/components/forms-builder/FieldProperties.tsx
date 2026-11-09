@@ -9,7 +9,7 @@ import {
 } from '@tinycld/core/lib/forms/builder'
 import { WEB_FORM_HOST_KEY } from '@tinycld/core/lib/forms/core-hosts'
 import { FIELD_WIDTHS, type FieldWidth } from '@tinycld/core/lib/forms/definition'
-import { findBuiltin } from '@tinycld/core/lib/forms/host'
+import { type FormHostBuiltin, findBuiltin, type HostRowKind } from '@tinycld/core/lib/forms/host'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
 import { NumberInput, RadioInput, TextInput, Toggle, useWatch } from '@tinycld/core/ui/form'
@@ -232,13 +232,22 @@ function KindSection({ editor, index, fieldKey, kind, operands, isVisible }: Kin
     }
 }
 
-function HostTableNote({ isVisible }: { isVisible: boolean }) {
+function HostTableNote({ isVisible, rowKinds }: { isVisible: boolean; rowKinds?: HostRowKind[] }) {
     if (!isVisible) return null
+    const kinds = rowKinds?.map(k => k.label).join(', ')
+    const kindsText = kinds ? ` Line kinds: ${kinds}.` : ''
     return (
         <Text className="text-xs text-muted-foreground mb-3" testID="form-prop-host-table">
-            Columns for this table come from the app and cannot be changed here.
+            {`Columns for this table come from the app and cannot be changed here.${kindsText}`}
         </Text>
     )
+}
+
+/** Why Hidden is locked: the record requires the built-in, or locks it. */
+function hiddenLockHint(builtin: FormHostBuiltin | undefined): string | undefined {
+    if (builtin?.required) return 'Required by the record'
+    if (builtin?.locked) return 'Locked by the record'
+    return undefined
 }
 
 function collaborativeHint(isSupported: boolean) {
@@ -445,6 +454,9 @@ export function FieldProperties({ editor, fieldKey }: FieldPropertiesProps) {
     const i = p.index
     const isCustom = p.field.kind !== 'builtin'
     const isHostRequired = Boolean(p.builtin?.required)
+    // A locked built-in may be moved and relabeled, never hidden.
+    const isHostLocked = Boolean(p.builtin?.required || p.builtin?.locked)
+    const hiddenHint = hiddenLockHint(p.builtin)
     // A table's columns are what a person edits it for, so they come first.
     const isTable = p.kind === 'table'
     return (
@@ -466,7 +478,7 @@ export function FieldProperties({ editor, fieldKey }: FieldPropertiesProps) {
                 operands={p.operands}
                 isVisible={isCustom && isTable}
             />
-            <HostTableNote isVisible={!isCustom && isTable} />
+            <HostTableNote isVisible={!isCustom && isTable} rowKinds={p.builtin?.rowKinds} />
             <TextInput control={control} name={`fields.${i}.description`} label="Description" />
             <PlaceholderInput editor={editor} index={i} isVisible={!NO_PLACEHOLDER.has(p.kind)} />
             <PlacementSection editor={editor} fieldKey={fieldKey} />
@@ -487,8 +499,8 @@ export function FieldProperties({ editor, fieldKey }: FieldPropertiesProps) {
                 control={control}
                 name={`fields.${i}.hidden`}
                 label="Hidden"
-                disabled={isHostRequired}
-                hint={isHostRequired ? 'Required by the record' : undefined}
+                disabled={isHostLocked}
+                hint={hiddenHint}
             />
             <DefaultPicker editor={editor} fieldKey={fieldKey} kind={p.kind} />
             <KindSection

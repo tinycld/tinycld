@@ -73,11 +73,40 @@ export function planTableWrites(
     return plan
 }
 
-/** A blank row: null in every editable column. Computed cells are the engine's. */
-export function newTableRow(columns: readonly TableColumn[], id: string): TableRow {
+/**
+ * A blank row: null in every editable column. Computed cells are the engine's.
+ * A table with row kinds passes the row's `kind`, kept in its `kind` cell.
+ */
+export function newTableRow(columns: readonly TableColumn[], id: string, kind?: string): TableRow {
     const row: TableRow = { id }
+    if (kind !== undefined) row.kind = kind
     for (const c of columns) if (c.kind !== 'computed') row[c.key] = null
     return row
+}
+
+/** `rows` with `row` at `index` (0 first; `rows.length` appends). */
+export function insertRow(rows: readonly TableRow[], index: number, row: TableRow): TableRow[] {
+    const next = [...rows]
+    next.splice(Math.max(0, Math.min(index, rows.length)), 0, row)
+    return next
+}
+
+/** `rows` with a copy of the row `id` (same cells and kind, id `newId`) right below it. */
+export function duplicateRow(rows: readonly TableRow[], id: string, newId: string): TableRow[] {
+    const index = rows.findIndex(r => r.id === id)
+    if (index < 0) return [...rows]
+    return insertRow(rows, index + 1, { ...rows[index], id: newId })
+}
+
+/** `rows` with the row `id` replaced, at its place, by `replacement` (a bundle expanded into lines). */
+export function replaceRows(
+    rows: readonly TableRow[],
+    id: string,
+    replacement: readonly TableRow[]
+): TableRow[] {
+    const index = rows.findIndex(r => r.id === id)
+    if (index < 0) return [...rows]
+    return [...rows.slice(0, index), ...replacement, ...rows.slice(index + 1)]
 }
 
 /**

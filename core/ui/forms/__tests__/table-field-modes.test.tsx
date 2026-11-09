@@ -60,7 +60,8 @@ describe('TableField layouts and modes', () => {
         expect(has(container, 'form-table-parts-cards')).toBe(true)
         expect(has(container, 'form-table-parts-head-label')).toBe(false)
         expect(container.textContent).toContain('Label *')
-        expect(has(container, 'form-table-parts-a-up')).toBe(true)
+        expect(has(container, 'form-table-parts-menu-a')).toBe(true)
+        expect(has(container, 'form-table-parts-a-up')).toBe(false)
     })
 
     it('shows a grid on a wide form', () => {
@@ -88,8 +89,7 @@ describe('TableField layouts and modes', () => {
             />
         )
         expect(has(container, 'form-table-parts-row-a')).toBe(true)
-        expect(has(container, 'form-table-parts-a-up')).toBe(false)
-        expect(has(container, 'form-table-parts-a-remove')).toBe(false)
+        expect(has(container, 'form-table-parts-menu-a')).toBe(false)
         expect(has(container, 'form-table-parts-add')).toBe(false)
     })
 

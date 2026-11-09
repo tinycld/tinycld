@@ -13,7 +13,7 @@ import {
 } from '../../../lib/forms/__tests__/table-fixtures'
 import type { BuiltinFieldProps } from '../../../lib/forms/host-ui'
 import type { FormValues } from '../../../lib/forms/logic'
-import { byTestId, rowIdsOf, TableHarness } from './table-harness'
+import { byTestId, menuItem, pickRowAction, rowIdsOf, TableHarness } from './table-harness'
 
 afterEach(() => {
     cleanup()
@@ -79,43 +79,45 @@ describe('TableField', () => {
     it('keeps a cell edit when its row moves', async () => {
         const { container, rowsNow } = setUp()
         fireEvent.input(byTestId(container, 'form-table-parts-a-qty'), { target: { value: '5' } })
-        fireEvent.click(byTestId(container, 'form-table-parts-a-down'))
+        pickRowAction(container, 'parts', 'a', 'down')
         await waitFor(() => expect(rowIdsOf(container, 'parts')).toEqual(['b', 'a']))
         expect(rowsNow()).toEqual([rowB, { ...rowA, qty: 5 }])
     })
 
     it('disables Move up on the first row and Move down on the last', () => {
         const { container, rowsNow } = setUp()
-        fireEvent.click(byTestId(container, 'form-table-parts-a-up'))
-        fireEvent.click(byTestId(container, 'form-table-parts-b-down'))
-        expect(rowsNow()).toEqual([rowA, rowB])
         expect(
-            byTestId(container, 'form-table-parts-a-up').getAttribute('accessibilityLabel')
-        ).toBe('Move row 1 up')
+            byTestId(container, 'form-table-parts-menu-a').getAttribute('accessibilityLabel')
+        ).toBe('Line 1 actions')
+        pickRowAction(container, 'parts', 'a', 'up')
+        pickRowAction(container, 'parts', 'b', 'down')
+        expect(rowsNow()).toEqual([rowA, rowB])
+        fireEvent.click(byTestId(container, 'form-table-parts-menu-a'))
+        expect(menuItem('parts', 'up').getAttribute('aria-disabled')).toBe('true')
+        expect(menuItem('parts', 'down').getAttribute('aria-disabled')).not.toBe('true')
     })
 
-    it('keeps focus on the moved row so a keyboard user can press again', async () => {
+    it('keeps focus on the moved row menu button so a keyboard user can press again', async () => {
         const focus = vi.spyOn(HTMLElement.prototype, 'focus')
         const third = { ...rowB, id: 'c', label: 'C' }
         const { container } = setUp([rowA, rowB, third])
-        fireEvent.click(byTestId(container, 'form-table-parts-a-down'))
+        pickRowAction(container, 'parts', 'a', 'down')
         await waitFor(() => expect(rowIdsOf(container, 'parts')).toEqual(['b', 'a', 'c']))
         await waitFor(() =>
-            expect(focus.mock.contexts.at(-1)).toBe(byTestId(container, 'form-table-parts-a-down'))
+            expect(focus.mock.contexts.at(-1)).toBe(byTestId(container, 'form-table-parts-menu-a'))
         )
-        fireEvent.click(byTestId(container, 'form-table-parts-a-down'))
+        pickRowAction(container, 'parts', 'a', 'down')
         await waitFor(() => expect(rowIdsOf(container, 'parts')).toEqual(['b', 'c', 'a']))
-        // At the bottom Move down is disabled, so focus takes the row's Move up.
         await waitFor(() =>
-            expect(focus.mock.contexts.at(-1)).toBe(byTestId(container, 'form-table-parts-a-up'))
+            expect(focus.mock.contexts.at(-1)).toBe(byTestId(container, 'form-table-parts-menu-a'))
         )
     })
 
-    it('removes a row and puts focus on Add row', async () => {
+    it('removes the only row from its menu and puts focus on Add row', async () => {
         const focus = vi.spyOn(HTMLElement.prototype, 'focus')
-        const { container, rowsNow } = setUp()
-        fireEvent.click(byTestId(container, 'form-table-parts-a-remove'))
-        expect(rowsNow()).toEqual([rowB])
+        const { container, rowsNow } = setUp([rowA])
+        pickRowAction(container, 'parts', 'a', 'remove')
+        expect(rowsNow()).toEqual([])
         await waitFor(() =>
             expect(focus.mock.contexts.at(-1)).toBe(byTestId(container, 'form-table-parts-add'))
         )
@@ -160,7 +162,8 @@ describe('TableField writes', () => {
     it('keeps both moves when two presses land before a re-render', () => {
         const third = { ...rowB, id: 'c', label: 'C' }
         const { container, rowsNow } = setUp([rowA, rowB, third])
-        const down = byTestId(container, 'form-table-parts-a-down')
+        fireEvent.click(byTestId(container, 'form-table-parts-menu-a'))
+        const down = menuItem('parts', 'down')
         act(() => {
             down.click()
             down.click()
@@ -176,17 +179,6 @@ describe('TableField writes', () => {
             add.click()
         })
         expect(rowsNow()).toHaveLength(4)
-    })
-
-    it('removes both rows when two removes land before a re-render', () => {
-        const { container, rowsNow } = setUp()
-        const removeA = byTestId(container, 'form-table-parts-a-remove')
-        const removeB = byTestId(container, 'form-table-parts-b-remove')
-        act(() => {
-            removeA.click()
-            removeB.click()
-        })
-        expect(rowsNow()).toEqual([])
     })
 })
 
@@ -212,18 +204,31 @@ describe('TableField focus on native', () => {
         Object.assign(Platform, { OS: realOS })
     })
 
-    it('puts the screen reader on the moved row and on Add row after a remove', async () => {
-        Object.assign(Platform, { OS: 'ios' })
+    it('puts the screen reader on the moved row menu button after a menu move', async () => {
         const send = vi.spyOn(AccessibilityInfo, 'sendAccessibilityEvent')
         const { container } = setUp()
-        fireEvent.click(byTestId(container, 'form-table-parts-a-down'))
+        fireEvent.click(byTestId(container, 'form-table-parts-menu-a'))
+        const down = menuItem('parts', 'down')
+        // The menu drew as on web; the focus move after the press runs as on iOS.
+        Object.assign(Platform, { OS: 'ios' })
+        fireEvent.click(down)
+        await waitFor(() => expect(rowIdsOf(container, 'parts')).toEqual(['b', 'a']))
         await waitFor(() =>
             expect(send).toHaveBeenLastCalledWith(
-                byTestId(container, 'form-table-parts-a-up'),
+                byTestId(container, 'form-table-parts-menu-a'),
                 'focus'
             )
         )
-        fireEvent.click(byTestId(container, 'form-table-parts-b-remove'))
+    })
+
+    it('puts the screen reader on Add row after the last row is removed', async () => {
+        const send = vi.spyOn(AccessibilityInfo, 'sendAccessibilityEvent')
+        const { container } = setUp([rowA])
+        fireEvent.click(byTestId(container, 'form-table-parts-menu-a'))
+        const remove = menuItem('parts', 'remove')
+        // The menu drew as on web; the focus move after the press runs as on iOS.
+        Object.assign(Platform, { OS: 'ios' })
+        fireEvent.click(remove)
         await waitFor(() =>
             expect(send).toHaveBeenLastCalledWith(
                 byTestId(container, 'form-table-parts-add'),

@@ -127,3 +127,51 @@ func TestParseDefinition_FileLimits(t *testing.T) {
 		t.Fatalf("file limits not decoded: %+v", f)
 	}
 }
+
+// lockedHost has an optional built-in the record locks: it may move and be
+// relabeled, never be hidden.
+func lockedHost() *Host {
+	return &Host{Key: "gizmos:bill", Label: "Bill", Builtins: []Builtin{
+		{Key: "name", Label: "Name", Kind: "text", Storage: "column", Required: true},
+		{Key: "terms", Label: "Terms", Kind: "text", Storage: "column", Locked: true},
+	}}
+}
+
+func lockedDefinition(t *testing.T, termsField, rules string) *Definition {
+	t.Helper()
+	def, err := ParseDefinition([]byte(`{"version":1,` +
+		`"pages":[{"key":"main","title":"Main"},{"key":"more","title":"More"}],` +
+		`"fields":[{"key":"name","kind":"builtin","page":"main","label":"Name","width":"full","required":true,"hidden":false},` +
+		termsField + `],"rules":` + rules + `,"defaults":{},"submit":{"required":[]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return def
+}
+
+func TestValidateDefinition_LockedBuiltinCannotBeHidden(t *testing.T) {
+	const onMore = `{"key":"terms","kind":"builtin","page":"more","label":"Terms","width":"full","required":false,"hidden":false}`
+	const hiddenField = `{"key":"terms","kind":"builtin","page":"more","label":"Terms","width":"full","required":false,"hidden":true}`
+	rule := func(action string) string {
+		return `[{"key":"r","match":"all","when":[{"field":"name","op":"is_empty"}],"actions":[` + action + `]}]`
+	}
+	cases := map[string]*Definition{
+		"terms is locked by the record and cannot be hidden": lockedDefinition(t, hiddenField, `[]`),
+		"cannot hide locked field terms":                     lockedDefinition(t, onMore, rule(`{"action":"hide","field":"terms"}`)),
+		"page more holds locked field terms":                 lockedDefinition(t, onMore, rule(`{"action":"hide","page":"more"}`)),
+	}
+	for want, def := range cases {
+		errs := ValidateDefinition(def, lockedHost())
+		if errs == nil || !strings.Contains(errs.Error(), want) {
+			t.Errorf("want %q, got %v", want, errs)
+		}
+	}
+}
+
+func TestValidateDefinition_LockedBuiltinMovesAndRelabels(t *testing.T) {
+	moved := lockedDefinition(t,
+		`{"key":"terms","kind":"builtin","page":"more","label":"Payment terms","width":"half","required":false,"hidden":false}`, `[]`)
+	if errs := ValidateDefinition(moved, lockedHost()); errs != nil {
+		t.Fatalf("a locked built-in may move and be relabeled: %v", errs)
+	}
+}

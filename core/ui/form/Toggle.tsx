@@ -17,6 +17,10 @@ export type ToggleProps<T extends FieldValues = Record<string, unknown>> = {
     /** Defaults to `name`, as on the other form inputs. */
     testID?: string
     wrapperProps?: ViewProps
+    /** Called when the switch takes focus (a table notes which row the keyboard is in). */
+    onFocus?: () => void
+    /** Called when the switch loses focus (a table forgets the row the keyboard left). */
+    onBlur?: () => void
 }
 
 export function Toggle<T extends FieldValues = Record<string, unknown>>({
@@ -30,6 +34,8 @@ export function Toggle<T extends FieldValues = Record<string, unknown>>({
     onValueChange,
     testID,
     wrapperProps = {},
+    onFocus,
+    onBlur,
 }: ToggleProps<T>) {
     const {
         field,
@@ -51,6 +57,8 @@ export function Toggle<T extends FieldValues = Record<string, unknown>>({
                         onValueChange?.(next)
                     }}
                     disabled={disabled}
+                    onFocus={onFocus}
+                    onBlur={onBlur}
                     accessibilityLabel={label}
                     testID={testID ?? name}
                 />

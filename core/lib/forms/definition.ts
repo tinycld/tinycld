@@ -117,6 +117,11 @@ const columnBase = {
     label: z.string().trim().min(1).max(120),
     required: z.boolean().default(false),
     hidden: z.boolean().default(false),
+    /**
+     * Enter (or the native return key) in this cell of the table's last row
+     * adds a row. Set it on the last editable cell of a row.
+     */
+    addOnSubmit: z.boolean().optional(),
 }
 
 export const columnSchema = z.discriminatedUnion('kind', [
@@ -448,10 +453,10 @@ export function validateDefinitionForHost(
                     path: ['fields', i, 'key'],
                     message: `${f.key} is not a built-in field of ${host.label}`,
                 })
-            else if (b.required && f.hidden)
+            else if (f.hidden && hideLock(b))
                 issues.push({
                     path: ['fields', i, 'hidden'],
-                    message: `${f.key} is required by the record and cannot be hidden`,
+                    message: `${f.key} is ${hideLock(b)} by the record and cannot be hidden`,
                 })
             seen.add(f.key)
             return
@@ -517,26 +522,39 @@ function computeFieldOf(f: FormField, builtins: Map<string, FormHostBuiltin>): C
     return { key: f.key, kind: f.kind }
 }
 
-/** A rule may not hide a built-in the host requires, nor a page that holds one. Mirrored in Go (actionError). */
+/** Why a built-in may never be hidden: the record requires it, or it is locked. */
+function hideLock(b: FormHostBuiltin | undefined): 'required' | 'locked' | null {
+    if (b?.required) return 'required'
+    if (b?.locked) return 'locked'
+    return null
+}
+
+/**
+ * A rule may not hide a built-in the host requires or locks, nor a page that
+ * holds one. Mirrored in Go (actionError).
+ */
 function hiddenRequiredIssues(def: FormDefinition, host: FormHostDef): DefinitionIssue[] {
-    const required = new Set(host.builtin.filter(b => b.required).map(b => b.key))
-    const requiredOn = (page: string) =>
-        def.fields.find(f => f.kind === 'builtin' && f.page === page && required.has(f.key))
+    const builtins = new Map(host.builtin.map(b => [b.key, b]))
+    const heldOn = (page: string) =>
+        def.fields.find(
+            f => f.kind === 'builtin' && f.page === page && hideLock(builtins.get(f.key))
+        )
     const issues: DefinitionIssue[] = []
     def.rules.forEach((r, ri) => {
         r.actions.forEach((a, ai) => {
             if (a.action !== 'hide') return
             const path = ['rules', ri, 'actions', ai]
-            const held = a.page ? requiredOn(a.page) : undefined
+            const held = a.page ? heldOn(a.page) : undefined
             if (held)
                 issues.push({
                     path: [...path, 'page'],
-                    message: `page ${a.page} holds required field ${held.key}`,
+                    message: `page ${a.page} holds ${hideLock(builtins.get(held.key))} field ${held.key}`,
                 })
-            if (a.field && required.has(a.field))
+            const lock = a.field ? hideLock(builtins.get(a.field)) : null
+            if (lock)
                 issues.push({
                     path: [...path, 'field'],
-                    message: `cannot hide required field ${a.field}`,
+                    message: `cannot hide ${lock} field ${a.field}`,
                 })
         })
     })

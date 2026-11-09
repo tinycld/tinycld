@@ -104,6 +104,24 @@ Moving, archiving and adding need edit rights on the board; a viewer sees only t
 | `Enter` | Open focused event |
 | `Shift + C` | New event |
 
+### Table rows
+
+A table field in a form (an order's lines) has row keys when its host built-in sets `rowShortcuts: true`. They fire only while the table is editable and focus is in one of its cells, and they work from inside a text cell (`allowInInputs`). The `?` overlay lists them under **Lines**.
+
+| Keys | Action |
+|---|---|
+| `⌘ + ⌥ + ⌫` | Remove the line; focus goes to the same column of the next line, else the previous line, else the add button |
+| `⌘ + ⌥ + ↑` | Move the line up |
+| `⌘ + ⌥ + ↓` | Move the line down |
+| `⌘ + ⌥ + D` | Duplicate the line below it |
+| `⌥ + M` | Open the line's menu (insert above or below, move, duplicate, remove) |
+
+(`⌘` is Ctrl and `⌥` is Alt off Apple platforms.) On a Mac, Option changes the character a key types (⌥M types µ), so on web an `Alt` key that ends in a letter or a digit also matches the physical key (`event.code` `KeyM`, `Digit5`): the provider binds the key and the code as two literal tinykeys bindings (no regex binding, because tinykeys builds one with the RegExp `v` flag, which Safari before 17 lacks) and runs the shortcut once per key press. On native, a row action that ends on a text, number or date cell gives that input keyboard focus; on any other target it moves the screen reader's cursor. The row keys act only while a cell or a line's menu button holds focus: each cell input (and a host cell, through `noteFocus` / `noteBlur`) notes its own focus and blur. A table without `rowShortcuts` has the same actions in each line's menu, without the keys.
+
+A table with row kinds (`rowKinds`) adds a line of a kind from the add actions. The first kind's add button is a `ShortcutButton` with that kind's `shortcut`; every other kind's `shortcut` is registered by the table while it is editable, adds that kind's line after the focused line, and is listed by its `addLabel`. A column with `addOnSubmit: true` adds a line of the first kind when Enter is pressed in it on the last line.
+
+Every table action reads the rows current when it runs, so two keys pressed before a re-render both apply.
+
 ## How it works
 
 Shortcuts live under `lib/shortcuts/`. The system is intentionally small and avoids coupling to any UI framework beyond React.
@@ -197,6 +215,7 @@ function ComposeFooter({ send }: { send: () => void }) {
 - While a layer closes (a Sheet keeps its content mounted through its exit animation and holds the `modal` scope until it unmounts), its buttons do not act on their keys (`useLayerActive`).
 - Web only: holding ⌘/Ctrl swaps the label for the keys, with no change in size. A plain key (no ⌘/Ctrl/Alt) shows as `then c`, so the user releases ⌘ first. The tooltip shows `<label> <keys>`, and the button has `aria-keyshortcuts`.
 - Native: the shortcut fires where the native provider feeds keys (iOS with a hardware keyboard; Android feeds none). There is no hint or tooltip, because React Native cannot detect a modifier held alone. The `accessibilityHint` names the shortcut.
+- Key hints (`formatKeys` in `lib/shortcuts/keys.ts`) draw named keys as glyphs: Enter `↵`, Escape `Esc`, the arrows `↑ ↓ ← →`, Backspace `⌫`. A letter after a modifier is a capital (`Alt+t` shows `⌥T`); a plain letter keeps its case, because a capital alone reads as Shift plus the letter.
 - In a dialog, pass the shortcut to `Dialog.ActionButton` (`shortcut={DIALOG_SUBMIT_SHORTCUT}` from `@tinycld/core/ui/dialog`). `ConfirmDialog` and `PromptDialog` do this already.
 
 ### Package-wide jump shortcut

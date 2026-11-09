@@ -62,6 +62,9 @@ type Column struct {
 	Min        *float64 `json:"min,omitempty"`
 	Max        *float64 `json:"max,omitempty"`
 	MaxLength  *int     `json:"maxLength,omitempty"`
+	// AddOnSubmit is presentation only (Enter in the cell adds a row); the
+	// server decodes it so the host file round-trips, and never reads it.
+	AddOnSubmit bool `json:"addOnSubmit,omitempty"`
 }
 
 type Page struct {
@@ -288,7 +291,8 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 	// it is not a second problem, and a built-in in the list is not missing.
 	declared := map[string]bool{}
 	seenBuiltin := map[string]bool{}
-	// requiredOnPage lists, per page, the host-required built-ins placed on it.
+	// requiredOnPage lists, per page, the built-ins placed on it that the host
+	// requires or locks: none of them may be hidden.
 	requiredOnPage := map[string][]string{}
 	for i, f := range def.Fields {
 		at := func(leaf string) []any { return []any{"fields", i, leaf} }
@@ -318,11 +322,12 @@ func ValidateDefinition(def *Definition, host *Host) validation.Errors {
 				p.add(fmt.Sprintf("%q is not a built-in field of %s. Built-in fields: %s.", f.Key, host.Label, listOrNone(host.BuiltinKeys())), at("key")...)
 				continue
 			}
-			if b.Required && f.Hidden {
-				p.add(fmt.Sprintf("%s is required by the record and cannot be hidden. Set hidden to false.", f.Key), at("hidden")...)
+			lock := hideLock(b)
+			if lock != "" && f.Hidden {
+				p.add(fmt.Sprintf("%s is %s by the record and cannot be hidden. Set hidden to false.", f.Key, lock), at("hidden")...)
 				continue
 			}
-			if b.Required {
+			if lock != "" {
 				requiredOnPage[f.Page] = append(requiredOnPage[f.Page], f.Key)
 			}
 			kinds[f.Key] = b.Kind
@@ -508,6 +513,20 @@ func duplicateOptionError(options []Option, path ...any) validation.Errors {
 	return nil
 }
 
+// hideLock is why a built-in may never be hidden ("required" or "locked"), or
+// "" when it may; hideLock in core/lib/forms/definition.ts is its mirror.
+func hideLock(b *Builtin) string {
+	switch {
+	case b == nil:
+		return ""
+	case b.Required:
+		return "required"
+	case b.Locked:
+		return "locked"
+	}
+	return ""
+}
+
 func actionError(a Action, kinds map[string]string, pages map[string]bool, requiredOnPage map[string][]string, host *Host, path ...any) validation.Errors {
 	at := func(leaf string) []any { return append(append([]any{}, path...), leaf) }
 	switch a.Action {
@@ -517,15 +536,15 @@ func actionError(a Action, kinds map[string]string, pages map[string]bool, requi
 				return defErr("unknown page "+a.Page+". Pages: "+listOrNone(sortedBoolKeys(pages))+".", at("page")...)
 			}
 			if held := requiredOnPage[a.Page]; a.Action == "hide" && len(held) > 0 {
-				return defErr("page "+a.Page+" holds required field "+held[0]+", so it cannot be hidden. Hide its other fields one by one instead.", at("page")...)
+				return defErr("page "+a.Page+" holds "+hideLock(host.Builtin(held[0]))+" field "+held[0]+", so it cannot be hidden. Hide its other fields one by one instead.", at("page")...)
 			}
 			return nil
 		}
 		if _, ok := kinds[a.Field]; !ok {
 			return defErr("unknown field "+a.Field+". Fields: "+listOrNone(sortedKeys(kinds))+".", at("field")...)
 		}
-		if b := host.Builtin(a.Field); a.Action == "hide" && b != nil && b.Required {
-			return defErr("cannot hide required field "+a.Field+". The record needs it, so it must stay visible.", at("field")...)
+		if lock := hideLock(host.Builtin(a.Field)); a.Action == "hide" && lock != "" {
+			return defErr("cannot hide "+lock+" field "+a.Field+". The record needs it, so it must stay visible.", at("field")...)
 		}
 	case "require", "set_options", "set_value":
 		if _, ok := kinds[a.Field]; !ok {

@@ -16,6 +16,66 @@ import { computeExprSchema } from './expression'
 export const BUILTIN_KINDS = [...CUSTOM_KINDS, 'custom', 'section'] as const
 export type BuiltinKind = (typeof BUILTIN_KINDS)[number]
 
+/**
+ * One kind of row of a host table (an item line, a description line). A row
+ * stores its kind in its `kind` cell and draws only its kind's columns.
+ */
+const rowKindSchema = z.object({
+    key: keySchema,
+    label: z.string().min(1).max(60),
+    /** The add action's label ("Add line", "Description line"). */
+    addLabel: z.string().min(1).max(60),
+    /** The table columns a row of this kind draws, in order. */
+    columns: z.array(keySchema).min(1),
+    /** The kind's one cell spans the whole row (a description or subtotal line). */
+    span: z.boolean().default(false),
+    /**
+     * Column of this kind → the first kind's column whose header slot it is
+     * drawn in on the wide grid (a percent cell under Rate).
+     */
+    columnAt: z.record(keySchema, keySchema).optional(),
+    /** Key combo that adds a row of this kind after the focused row. */
+    shortcut: z.string().min(1).optional(),
+})
+export type HostRowKind = z.infer<typeof rowKindSchema>
+
+type BuiltinIssueSink = (path: (string | number)[], message: string) => void
+
+/** Row kinds belong to a table, name its columns, and place cells in the first kind's slots. */
+function rowKindIssues(
+    rowKinds: HostRowKind[],
+    columns: { key: string }[] | undefined,
+    report: BuiltinIssueSink
+) {
+    const columnKeys = new Set((columns ?? []).map(c => c.key))
+    const firstKind = new Set(rowKinds[0]?.columns ?? [])
+    const kindKeys = new Set<string>()
+    rowKinds.forEach((kind, k) => {
+        if (kindKeys.has(kind.key))
+            report(['rowKinds', k, 'key'], `duplicate row kind key ${kind.key}`)
+        kindKeys.add(kind.key)
+        kind.columns.forEach((column, c) => {
+            if (!columnKeys.has(column))
+                report(['rowKinds', k, 'columns', c], `${column} is not a column of this table`)
+        })
+        if (kind.span && kind.columns.length !== 1)
+            report(['rowKinds', k, 'columns'], 'a span row kind has exactly one column')
+        const own = new Set(kind.columns)
+        for (const [column, slot] of Object.entries(kind.columnAt ?? {})) {
+            if (!own.has(column))
+                report(
+                    ['rowKinds', k, 'columnAt', column],
+                    `${column} is not a column of this kind`
+                )
+            if (!firstKind.has(slot))
+                report(
+                    ['rowKinds', k, 'columnAt', column],
+                    `${slot} is not a column of the first row kind`
+                )
+        }
+    })
+}
+
 const builtinSchema = z
     .object({
         key: keySchema,
@@ -23,6 +83,11 @@ const builtinSchema = z
         kind: z.enum(BUILTIN_KINDS),
         storage: z.enum(['column', 'rows', 'none']),
         required: z.boolean().default(false),
+        /**
+         * An optional built-in the record depends on: an admin may move and
+         * relabel it, never hide it (field flag, rule, or hidden page).
+         */
+        locked: z.boolean().default(false),
         multiple: z.boolean().default(false),
         collaborative: z.boolean().default(false),
         /** Export name in the host's UI module `components` map. */
@@ -46,8 +111,24 @@ const builtinSchema = z
          * server gives every other writer the same refusal.
          */
         maxLength: z.number().int().positive().max(10000).optional(),
+        /** A table built-in's kinds of row; absent means one kind with every column. */
+        rowKinds: z.array(rowKindSchema).min(1).optional(),
+        /** The table registers core's row keys (remove, move, duplicate, open menu). */
+        rowShortcuts: z.boolean().default(false),
     })
     .superRefine((b, ctx) => {
+        if (b.rowKinds) {
+            if (b.kind !== 'table')
+                ctx.addIssue({
+                    code: 'custom',
+                    path: ['rowKinds'],
+                    message: 'only a table built-in has row kinds',
+                })
+            else
+                rowKindIssues(b.rowKinds, b.columns, (path, message) =>
+                    ctx.addIssue({ code: 'custom', path, message })
+                )
+        }
         if (b.maxLength !== undefined && b.kind !== 'text')
             ctx.addIssue({
                 code: 'custom',

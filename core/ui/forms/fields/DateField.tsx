@@ -3,8 +3,8 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { Popover } from '@tinycld/core/ui/popover'
 import { CalendarDays } from 'lucide-react-native'
-import { useState } from 'react'
-import { Pressable, View } from 'react-native'
+import { type Ref, useState } from 'react'
+import { Pressable, type TextInputInstance, View } from 'react-native'
 
 export interface DateFieldProps {
     /** YYYY-MM-DD, or YYYY-MM-DDTHH:mm when withTime. */
@@ -16,6 +16,12 @@ export interface DateFieldProps {
     accessibilityLabel?: string
     /** Focuses the text input when it mounts, so a data-entry form can start on it. */
     autoFocus?: boolean
+    /** Called when the text input or the calendar button takes focus (a table notes which row the keyboard is in). */
+    onFocus?: () => void
+    /** Called when the text input or the calendar button loses focus (a table forgets the row the keyboard left). */
+    onBlur?: () => void
+    /** The text input, for a caller that moves keyboard focus to it (a table after a row action). */
+    inputRef?: Ref<TextInputInstance>
 }
 
 // MiniCalendar's day columns are percentage widths, so it has no natural width
@@ -44,6 +50,9 @@ export function DateField({
     testID,
     accessibilityLabel = 'Date',
     autoFocus = false,
+    onFocus,
+    onBlur,
+    inputRef,
 }: DateFieldProps) {
     const [isOpen, setIsOpen] = useState(false)
     const fg = useThemeColor('foreground')
@@ -56,6 +65,7 @@ export function DateField({
     return (
         <View className="flex-row items-center border border-border rounded-md px-2">
             <PlainInput
+                ref={inputRef}
                 value={value ?? ''}
                 onChangeText={text => onChange(text === '' ? null : text)}
                 placeholder={withTime ? 'YYYY-MM-DDTHH:mm' : 'YYYY-MM-DD'}
@@ -63,6 +73,8 @@ export function DateField({
                 style={{ color: fg, flex: 1 }}
                 editable={!disabled}
                 autoFocus={autoFocus && !disabled}
+                onFocus={onFocus}
+                onBlur={onBlur}
                 accessibilityLabel={accessibilityLabel}
                 testID={testID}
             />
@@ -75,6 +87,8 @@ export function DateField({
                 trigger={
                     <Pressable
                         disabled={disabled}
+                        onFocus={onFocus}
+                        onBlur={onBlur}
                         accessibilityLabel="Open calendar"
                         testID={testID ? `${testID}-open` : undefined}
                     >

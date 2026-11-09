@@ -534,7 +534,8 @@ export function FormRenderer(props: FormRendererProps) {
         form.control,
         context,
         isEditable ? form.setValue : undefined,
-        props.ui?.schemas ?? NO_SCHEMAS
+        props.ui?.schemas ?? NO_SCHEMAS,
+        props.ui?.recordSchema
     )
     // The resolver reads this ref, so required-if rules validate against the live state.
     if (schemaRef) schemaRef.current = schema

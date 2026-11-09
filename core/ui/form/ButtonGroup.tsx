@@ -32,6 +32,10 @@ export type ButtonGroupProps<T extends FieldValues = Record<string, unknown>> = 
     /** Called after the form value changes to a different option, so a caller can clear dependent fields in the change event itself. */
     onValueChange?: (value: string) => void
     wrapperProps?: ViewProps
+    /** Called when an option takes focus (a table notes which row the keyboard is in). */
+    onFocus?: () => void
+    /** Called when an option loses focus (a table forgets the row the keyboard left). */
+    onBlur?: () => void
 }
 
 export function ButtonGroup<T extends FieldValues = Record<string, unknown>>({
@@ -46,6 +50,8 @@ export function ButtonGroup<T extends FieldValues = Record<string, unknown>>({
     disabled = false,
     onValueChange,
     wrapperProps = {},
+    onFocus,
+    onBlur,
 }: ButtonGroupProps<T>) {
     const {
         field,
@@ -77,6 +83,8 @@ export function ButtonGroup<T extends FieldValues = Record<string, unknown>>({
                             key={option.value}
                             accessibilityLabel={option.label}
                             onPress={() => choose(option.value)}
+                            onFocus={onFocus}
+                            onBlur={onBlur}
                             disabled={disabled}
                             accessibilityRole="radio"
                             // A radio's state is "checked"; ARIA ignores aria-selected

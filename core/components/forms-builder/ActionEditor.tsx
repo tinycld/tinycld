@@ -65,11 +65,11 @@ function allowedActions(draft: DraftDefinition, host: FormHostDef, target: Targe
 }
 
 /**
- * A built-in the record requires, or a page holding one: a rule may not hide
- * it (the server refuses), so the builder never offers to.
+ * A built-in the record requires or locks, or a page holding one: a rule may
+ * not hide it (the server refuses), so the builder never offers to.
  */
 export function holdsRequired(draft: DraftDefinition, host: FormHostDef, target: Target): boolean {
-    const required = new Set(host.builtin.filter(b => b.required).map(b => b.key))
+    const required = new Set(host.builtin.filter(b => b.required || b.locked).map(b => b.key))
     const isRequired = (f: DraftDefinition['fields'][number]) =>
         f.kind === 'builtin' && required.has(f.key)
     if ('page' in target) return draft.fields.some(f => f.page === target.page && isRequired(f))

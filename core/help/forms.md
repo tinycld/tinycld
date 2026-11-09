@@ -15,7 +15,10 @@ every member sees the same record types.
 
 A form has the record's **built-in fields** and any **custom fields** an
 admin adds. A built-in field can be renamed, moved, hidden or given a
-default, but not deleted. A custom field can be text, long text, a number, a
+default, but not deleted. A built-in field that the record requires, or that
+the record locks, cannot be hidden: its **Hidden** switch cannot be changed,
+and shows "Required by the record" or "Locked by the record". A rule cannot
+hide it either. A custom field can be text, long text, a number, a
 date, a toggle, a choice list, a person, a checklist, rich text, markdown, a
 file, a **table** or a **calculated value**. The feature that owns a record
 can also give it its own table or calculated value; you can move and rename
@@ -29,14 +32,42 @@ screen a quarter becomes a half, and halves and thirds become full width.
 Some records have a **table**, such as the lines of an order. Each row of a
 table has the same columns.
 
-- To add a row, select **Add row** below the table.
-- To remove a row, select the trash button at the end of the row. Its label
-  is "Remove row N", where N is the number of the row.
-- To move a row, select the up arrow button ("Move row N up") or the down
-  arrow button ("Move row N down") at the end of the row. The first row
-  cannot move up, and the last row cannot move down. With a keyboard, press
-  Tab to go to the button, then press Enter or Space. The focus stays on the
-  row, so you can press the key again to move the row more.
+- To add a row, select **Add row** below the table. Some tables have more
+  than one kind of row, such as an item line and a note line. Their first
+  kind has its own add button below the table, and **Add…** next to it
+  lists the other kinds.
+- In some tables, press Enter in the last row's cell of a column such as
+  Qty to add a row.
+- Each row has a menu button (⋮) at its end. Its label is "Line N actions",
+  where N is the number of the row. Select it to open the row's menu:
+  **Insert line above**, **Insert line below**, **Move up**, **Move down**,
+  **Duplicate** and **Remove**. The first row cannot move up, and the last
+  row cannot move down. With a keyboard, press Tab to go to the menu button,
+  then press Enter or Space.
+
+After a row action, the focus goes where you can continue:
+
+- After **Move up** or **Move down**, the focus stays on the moved row's
+  menu button, so you can open the menu again to move the row more.
+- After **Remove**, the focus goes to the next row, else the row above,
+  else the add button.
+- After **Duplicate** or an insert, the focus goes to the new row.
+
+Some tables also have row keys. They work while the focus is in a cell or on
+the menu button of a row, and act on that row:
+
+| Keys | Action |
+|---|---|
+| ⌘⌥↑ | Move the row up |
+| ⌘⌥↓ | Move the row down |
+| ⌘⌥D | Duplicate the row |
+| ⌘⌥⌫ | Remove the row |
+| ⌥M | Open the row's menu |
+
+A key moves or removes the row and keeps the focus in the same column. When
+a table has its own key for a kind of row, such as ⌥T for a note line, the
+**Add…** menu shows the key, and the key adds that kind of row below the row
+that has the focus, or at the end when the focus is not in the table. Press ⇧? to see the keys of the screen you are on.
 
 A star after a column name shows a required column. If a required cell is
 empty when you save, the form shows an error below that cell. On a phone,
@@ -105,7 +136,7 @@ The line below **Formula** shows the formula as text, for example "= Qty × Pric
 
 A field's key is set when it is created and never changes, so renaming a field keeps its stored values. Deleting a custom field keeps the stored values hidden and removes any rule, default or requirement that named it; the editor says what it removed.
 
-The **Rules** tab lists the form's rules. Each rule has conditions ("when all of" or "when any of") and actions. Pick a field, an operator and a value; then pick an action and its target. **Set options** is offered only for choice lists. **Hide** is not offered for a field the record always needs, nor for the page that holds one. Write a date as YYYY-MM-DD. A problem with a rule shows in that rule's card.
+The **Rules** tab lists the form's rules. Each rule has conditions ("when all of" or "when any of") and actions. Pick a field, an operator and a value; then pick an action and its target. **Set options** is offered only for choice lists. **Hide** is not offered for a field the record requires or locks, nor for the page that holds one. Write a date as YYYY-MM-DD. A problem with a rule shows in that rule's card.
 
 **Preview** opens the draft as a desktop sees it, with rules live; switch to Phone to see how its columns stack on a small screen. **Save** writes the form; the server checks it again and points at any field it refuses. The list above the form names each problem by its field or rule.
 
