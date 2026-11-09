@@ -395,22 +395,26 @@ function growInto(widths: number[], parts: readonly ColumnMeasure[], width: numb
     }
 }
 
-/**
- * Widths that share `width` by content, as CSS table-layout:auto does: each part at
- * its min; the spare room first in proportion to what each part lacks of its
- * natural width, then by grow, a part stopping at its max. The parts add up to `width` exactly: the rounding
- * remainder goes to the first part (the label). Null when the mins do not fit.
- */
-export function shareWidth(parts: readonly ColumnMeasure[], width: number): number[] | null {
+const lackOf = (part: ColumnMeasure) => Math.max(0, part.natural - part.min)
+
+// Shares `width` among the parts: each at its min; then what `lack` gives each part,
+// in proportion when the room is short; then the rest by grow, a part stopping at
+// its max. The parts add up to `width` exactly: the rounding remainder goes to the
+// first part (the label). Null when the mins do not fit.
+function share(
+    parts: readonly ColumnMeasure[],
+    width: number,
+    lack: (part: ColumnMeasure) => number
+): number[] | null {
     if (parts.length === 0) return []
     const widths = parts.map(part => part.min)
     if (sum(widths) > width) return null
-    const lack = parts.map(part => Math.max(0, part.natural - part.min))
-    const totalLack = sum(lack)
+    const lacks = parts.map(lack)
+    const totalLack = sum(lacks)
     if (totalLack > 0) {
-        const share = Math.min(1, (width - sum(widths)) / totalLack)
-        for (const [i, need] of lack.entries())
-            widths[i] = (widths[i] ?? 0) + Math.floor(need * share)
+        const fraction = Math.min(1, (width - sum(widths)) / totalLack)
+        for (const [i, need] of lacks.entries())
+            widths[i] = (widths[i] ?? 0) + Math.floor(need * fraction)
     }
     growInto(widths, parts, width)
     widths[0] = (widths[0] ?? 0) + width - sum(widths)
@@ -418,16 +422,38 @@ export function shareWidth(parts: readonly ColumnMeasure[], width: number): numb
 }
 
 /**
+ * Widths that share `width` by content, as CSS table-layout:auto does: the spare
+ * room first in proportion to what each part lacks of its natural width, then by
+ * grow. A side block's parts (arranged and automatic lines), whose grow is their
+ * tracks.
+ */
+export function shareWidth(parts: readonly ColumnMeasure[], width: number): number[] | null {
+    return share(parts, width, lackOf)
+}
+
+/**
+ * The widths of one line (J2, R10): each column at its min, then the spare room by
+ * grow (Extra room, `flexGrow`), so a column with twice the grow gets twice the
+ * room, whatever its content. A column with no grow gets only what it lacks of its
+ * natural width, and no more, so a figure's heading does not wrap when there is
+ * room.
+ */
+export function shareLineWidth(parts: readonly ColumnMeasure[], width: number): number[] | null {
+    return share(parts, width, part => (part.grow > 0 ? 0 : lackOf(part)))
+}
+
+/**
  * The widths of one line at this width (review §7.1-3), or null when the columns'
  * mins do not fit: figures, dates and short text are never cut (their min is their
- * natural width); long text narrows to its min, in proportion to what it lacks.
+ * natural width); long text narrows to its min. The spare room goes by Extra room
+ * (shareLineWidth).
  */
 export function fitOneLine(
     columns: readonly ResultColumn[],
     width: number,
     measures: ColumnMeasures
 ): Record<string, number> | null {
-    const widths = shareWidth(
+    const widths = shareLineWidth(
         columns.map(column => measureOf(measures, column.id)),
         width
     )

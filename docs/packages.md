@@ -1374,7 +1374,7 @@ label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` o
 | `display.columns.<col>.whiteSpace` | `nowrap` (default: one line, ends in "…") or `normal` (the text wraps at spaces). A wrapping column is never narrower than its longest measured word (plus 2 px for the width estimate; the measure reads the first 500 rows): a smaller `width` or `minWidth`, or a `%` that gives less, is raised to it. A `minWidth` wider than the content is kept. On web a word wider than its line is clipped, not split. |
 | `display.columns.<col>.lineClamp` | 1 to 4, with `whiteSpace: "normal"`: the most lines the text wraps to (default 2). |
 | `display.columns.<col>.textOverflow` | `ellipsis` only. |
-| `display.columns.<col>.flexGrow` | 0 to 10: the column's share of spare room on one line (default 1 for text and the label column, 0 for other figures). |
+| `display.columns.<col>.flexGrow` | 0 to 10: the column's share of the spare room on one line, the room past every column's least width. A column with 2 gets twice the room of a column with 1, whatever their content. A column with 0 gets at most its content's width (default 1 for text and the label column, 0 for other figures). |
 
 `<col>` is a spec column id. A pivot's cell columns (one per pivot value) all take
 the fit of their spec column.

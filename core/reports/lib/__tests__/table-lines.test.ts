@@ -32,6 +32,7 @@ import {
     placeCells,
     rowLayout,
     rowLevelsOf,
+    shareLineWidth,
     shareWidth,
     startingLayout,
     tableLines,
@@ -118,20 +119,24 @@ const labelMinOf = (levels: RowLevels) =>
 describe('fitOneLine by content', () => {
     const measures = COLS_MEASURES
 
-    it('gives each column its natural width and the spare room to the text', () => {
-        // 464 natural; 36 spare by grow over account and number.
+    // J2: the spare room goes by grow (account and number, 1 each), not first to
+    // account for what it lacks of its natural width (was 198 / 82 at 500 and
+    // 140 / 64 at 424).
+    it('gives each column its min and the spare room to the text by grow', () => {
+        // Mins 404; 96 spare: 48 each.
         expect(fitOneLine(COLS, 500, measures)).toEqual({
-            account: 198,
-            number: 82,
+            account: 168,
+            number: 112,
             debit: 110,
             credit: 110,
         })
     })
 
-    it('narrows the label toward its min before the line breaks', () => {
+    it('narrows the text toward its min before the line breaks', () => {
+        // 20 spare: 10 each.
         expect(fitOneLine(COLS, 424, measures)).toEqual({
-            account: 140,
-            number: 64,
+            account: 130,
+            number: 74,
             debit: 110,
             credit: 110,
         })
@@ -141,6 +146,42 @@ describe('fitOneLine by content', () => {
 
     it('reads an unknown column as needing nothing', () => {
         expect(measureOf(measures, 'nope')).toEqual({ natural: 0, min: 0, grow: 0 })
+    })
+})
+
+// J2 (human, 2026-11-08): one line shares its spare room by Extra room (flexGrow),
+// not by what each column lacks of its natural width.
+describe('one line shares its spare room by Extra room', () => {
+    const COLS_J2: ResultColumn[] = [
+        { id: 'name', label: 'Name', type: 'text' },
+        { id: 'description', label: 'Description', type: 'text' },
+        { id: 'amount', label: 'Amount', type: 'money', currency: 'USD' },
+    ]
+
+    it('gives a Description with flexGrow 2 more of the spare room than a Name with flexGrow 1, also when Name is wider', () => {
+        // Mins 80 + 80 + 100 = 260; 220 spare by grow: 73 and 146, the 1 left over
+        // to the first column.
+        const wideName = { name: m(80, 300, 1), description: m(80, 165, 2), amount: m(100, 100, 0) }
+        const narrowName = {
+            name: m(80, 120, 1),
+            description: m(80, 300, 2),
+            amount: m(100, 100, 0),
+        }
+        for (const measures of [wideName, narrowName]) {
+            const widths = fitOneLine(COLS_J2, 480, measures)
+            expect(widths).toEqual({ name: 154, description: 226, amount: 100 })
+            const spare = (id: 'name' | 'description') => (widths?.[id] ?? 0) - 80
+            expect(spare('description')).toBeGreaterThan(spare('name'))
+        }
+    })
+
+    it('gives a column with no Extra room its content width when there is room, and no more', () => {
+        const parts = [m(80, 300, 1), m(60, 140, 0), m(100, 100, 0)]
+        // Room for all: the None column takes its 80 of lack, the rest goes by grow.
+        expect(shareLineWidth(parts, 600)).toEqual([360, 140, 100])
+        // 40 spare: the None column's lack comes first (it gets no other room).
+        expect(shareLineWidth(parts, 280)).toEqual([80, 100, 100])
+        expect(shareLineWidth(parts, 239)).toBeNull()
     })
 })
 

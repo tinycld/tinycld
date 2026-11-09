@@ -118,7 +118,7 @@ A formula is built from parts you pick from menus: **Number**, **Text**, **Colum
 
 ## When columns do not fit
 
-A report never scrolls sideways. Each column gets the room its heading and its values need. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". Spare room goes to the columns whose text is cut, then to the text columns. A column with no value is as wide as its heading.
+A report never scrolls sideways. Each column gets at least its least width. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". On one line, the rest of the room goes to the columns by their **Extra room**: a column with **Double** gets twice the room of a column with **Normal**, also when its text is shorter. A column with **None** gets the room that its values need, and no more. A column with no value is as wide as its heading.
 
 Group, opening, subtotal and total rows show their whole label: it runs across the empty cells after it. When the rows wrap, a total's label moves onto the line of its figures if there is room.
 
@@ -128,7 +128,7 @@ To change how a column fits, open the column in **Columns**:
 
 - **Narrowest** is the least width a text column gets before the report wraps its rows: **Automatic** (about eight letters), **Whole value** (never cut), or a number of letters.
 - **Long text** keeps the text on **One line, ends in …**, or wraps it to 2 or 3 lines. A column that wraps is never narrower than its longest word, whatever its **Narrowest** setting, so its words stay whole.
-- **Extra room** is the column's share of the spare room on one line: **None**, **Normal**, **Double** or **Triple**. Text and the first column start at **Normal**; other numbers, amounts, percents, dates and yes/no values start at **None**. In a pivot, the setting applies to every column the pivot makes from that column.
+- **Extra room** is the column's share of the spare room on one line: **None**, **Normal**, **Double** or **Triple**. A column with **Double** gets twice the spare room of a column with **Normal**, whichever column has the longer text. Text and the first column start at **Normal**; other numbers, amounts, percents, dates and yes/no values start at **None**. In a pivot, the setting applies to every column the pivot makes from that column.
 
 Numbers, amounts, percents, dates and yes/no values show **Never cut**: you can change only their extra room.
 
