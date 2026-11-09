@@ -4,6 +4,7 @@ import {
     cellCurrency,
     cellDisplay,
     cellType,
+    columnName,
     DEFAULT_DISPLAY,
     formatReportAmount,
     formatReportPercent,
@@ -390,5 +391,36 @@ describe('mergeHidden', () => {
         ]
         expect(mergeHidden(['cost.p9', 'amount'], listed)).toEqual(['cost.p9', 'cost'])
         expect(mergeHidden([], listed)).toEqual(['cost'])
+    })
+})
+
+describe('headingText (G3)', () => {
+    const column: ResultColumn = { id: 'current', label: 'Current', type: 'money', currency: 'USD' }
+
+    it('shows a date heading in the short day form', () => {
+        const dated = { ...column, heading: { value: '2026-11-08', type: 'date' as const } }
+        expect(headingText(dated, DEFAULT_DISPLAY)).toBe('Nov 8, 2026')
+    })
+
+    it('shows a text heading as is', () => {
+        const named = { ...column, heading: { value: 'This year', type: 'text' as const } }
+        expect(headingText(named, DEFAULT_DISPLAY)).toBe('This year')
+    })
+
+    it('shows the label when there is no heading', () => {
+        expect(headingText(column, DEFAULT_DISPLAY)).toBe('Current')
+    })
+})
+
+describe('columnName (G3)', () => {
+    it('names a column with a run heading by its label', () => {
+        const column: ResultColumn = {
+            id: 'current',
+            label: 'Current',
+            type: 'money',
+            currency: 'USD',
+            heading: { value: '2026-11-08', type: 'date' },
+        }
+        expect(columnName(column, DEFAULT_DISPLAY)).toBe('Current')
     })
 })

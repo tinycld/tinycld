@@ -183,7 +183,7 @@ func (z *zoo) engineExpanded(t *testing.T, src fuzzSource, user, filter string) 
 }
 
 func FuzzRuleParity(f *testing.F) {
-	for seed := range uint64(40) {
+	for seed := range uint64(60) {
 		f.Add(seed)
 	}
 	// One grown zoo serves every seed this process runs; a seed only reads.
@@ -203,8 +203,35 @@ func FuzzRuleParity(f *testing.F) {
 		z.lookupParity(t, mux, user)
 		z.fillParity(t, mux, user)
 		z.sumLookupParity(t, mux, user)
+		z.cellsParity(t, mux, user)
 		z.pagedGroupParity(t, mux, rng, user, pagedShapes[seed%uint64(len(pagedShapes))], 1+rng.IntN(5))
 	})
+}
+
+// cellsParity: a computed row's cell from a sum lookup at the as-of day equals
+// the sum of the grams of the feedings the list API lists on or before it.
+func (z *zoo) cellsParity(t *testing.T, mux http.Handler, user string) {
+	t.Helper()
+	res := z.run(t, user, `{"version":4,"source":"zoo.feedings",
+		"params":[{"id":"asOf","type":"asOf"}],
+		"columns":[{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species"}],
+		"layout":[{"section":"cats","title":"Lions","key":"lion"},
+		{"row":"fed","label":"Fed","cells":{"grams":{"op":"coalesce","args":[{"op":"lookup","source":"zoo.feedings",
+			"where":{"op":"lte","args":[{"path":[{"field":"fed"}]},{"param":"asOf"}]},"value":{"path":[{"field":"grams"}]},"pick":"sum"},{"value":0}]}}}]}`,
+		Options{}, map[string]string{"asOf": `"2026-02-28"`})
+	want := 0.0
+	for _, item := range z.listItems(t, mux, "zoo_feedings", user) {
+		if fed, _ := item["fed"].(string); fed != "" && fed[:10] <= "2026-02-28" {
+			g, _ := item["grams"].(float64)
+			want += g
+		}
+	}
+	got := res.Rows[len(res.Rows)-1].Cells["grams"]
+	if fmt.Sprint(got) != fmt.Sprint(int64(want)) {
+		t.Fatalf("%s: fed grams = %v, list API = %v", user, got, want)
+	}
 }
 
 // lookupParity: a lookup reads exactly what the list API lists for the reader.
@@ -315,13 +342,19 @@ func (z *zoo) sumLookupParity(t *testing.T, mux http.Handler, user string) {
 }
 
 // pagedAnimals groups feedings by animal (under their species when levels is
-// 2), each open animal group starting with the sum of its animal's grams;
+// 2 or more, and their site's region, a skip level, between them when levels
+// is 3), each open animal group starting with the sum of its animal's grams;
 // running restarts in each group.
 func pagedAnimals(levels int) string {
 	species, bySpecies := "", ""
-	if levels == 2 {
+	if levels >= 2 {
 		species = `{"id":"species","path":[{"link":"animal"},{"field":"species"}]},`
 		bySpecies = `{"id":"s","col":"species","open":true,"subtotals":true},`
+	}
+	if levels == 3 {
+		// An animal with no site has a blank region and sits under its species.
+		species += `{"id":"region","path":[{"link":"animal"},{"link":"site"},{"field":"region"}]},`
+		bySpecies += `{"id":"r","col":"region","blank":"skip","open":true,"subtotals":true},`
 	}
 	return `{"version":4,"source":"zoo.feedings","columns":[` + species + `
 		{"id":"animal","path":[{"link":"animal"}]},
@@ -344,11 +377,13 @@ type pagedShape struct {
 	expand string
 }
 
-// pagedShapes are taken in turn by seed, so the 40 seeds run each one four
-// times: with two levels a seam falls between the levels.
+// pagedShapes are taken in turn by seed, so the 60 seeds run each one four
+// times: with two levels a seam falls between the levels, and with three a
+// seam falls beside rows that skip the blank middle level.
 var pagedShapes = []pagedShape{
 	{1, "open"}, {1, "all"}, {1, "none"}, {1, "some"}, {1, "fold"},
 	{2, "open"}, {2, "all"}, {2, "none"}, {2, "some"}, {2, "fold"},
+	{3, "open"}, {3, "all"}, {3, "none"}, {3, "some"}, {3, "fold"},
 }
 
 // pagedGroupParity: the pages of a grouped report, joined as the client joins
@@ -403,7 +438,9 @@ func (z *zoo) pagedGroupParity(t *testing.T, mux http.Handler, rng *rand.Rand, u
 		switch {
 		case row.Kind == KindDetail:
 			got = append(got, row.ID)
-		case row.Kind == KindGroup && row.Expanded && row.Depth == shape.levels-1:
+		// By level, not depth: an animal under a skipped region sits a depth
+		// higher than its level.
+		case row.Kind == KindGroup && row.Expanded && row.Level == shape.levels:
 			animal, _ := row.GroupKey[shape.levels-1].(string)
 			items := slices.Clone(byAnimal[animal])
 			slices.SortFunc(items, func(a, b map[string]any) int {

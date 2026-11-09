@@ -17,12 +17,15 @@ import {
 import {
     type ColumnDraft,
     type FormulaDraft,
+    formulaDraft,
     offersDetailBlank,
     showsDetailLabel,
+    showsHeading,
+    showsHidden,
 } from '../../lib/builder/draft'
 import { linkTarget, rowsTotalColumns } from '../../lib/builder/formula-context'
 import { isFigureType } from '../../lib/column-measure'
-import type { SpecHop } from '../../lib/spec'
+import type { ParamDef, SpecHop } from '../../lib/spec'
 import type { Aggregate, Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnFitField } from './ColumnFitField'
@@ -162,6 +165,8 @@ function ColumnRow({
             />
             <ColumnRollup builder={builder} columns={columns} index={index} />
             <DetailField builder={builder} columns={columns} index={index} />
+            <HeadingField builder={builder} columns={columns} index={index} />
+            <HiddenField builder={builder} columns={columns} index={index} />
             <LinkLabelField builder={builder} columns={columns} index={index} source={source} />
             <ColumnFormula builder={builder} columns={columns} index={index} />
         </View>
@@ -336,6 +341,103 @@ function DetailField({ builder, columns, index }: Omit<ColumnPartProps, 'source'
             testID={`report-builder-column-${index}-detail`}
             onValueChange={builder.validateLists}
         />
+    )
+}
+
+// A new heading starts on the report's first day param, the usual case (an as-of
+// day); a report with no such param starts on the editor's empty formula.
+function newHeading(params: readonly ParamDef[]): FormulaDraft {
+    const day = params.find(p => p.type === 'asOf' || p.type === 'date')
+    return day ? formulaDraft({ param: day.id }, params) : NEW_FORMULA
+}
+
+const HEADING_LABEL = 'Heading: from a parameter'
+
+function HeadingFormula({
+    isVisible,
+    builder,
+    heading,
+    onChange,
+    testID,
+}: {
+    isVisible: boolean
+    builder: ReportBuilder
+    heading: FormulaDraft | null
+    onChange: (next: FormulaDraft) => void
+    testID: string
+}) {
+    if (!isVisible || !heading) return null
+    return (
+        <ReportFormula
+            builder={builder}
+            place={{ kind: 'heading' }}
+            formula={heading}
+            onChange={onChange}
+            testID={testID}
+        />
+    )
+}
+
+/** "Heading: from a parameter" (G3): not offered on the first column, which labels the rows, unless it holds one. */
+function HeadingField({ builder, columns, index }: Omit<ColumnPartProps, 'source'>) {
+    const params = useWatch({ control: builder.form.control, name: 'params' })
+    const column = columns[index]
+    if (!column || !showsHeading({ columns }, index)) return null
+    const heading = column.heading ?? null
+    const testID = `report-builder-column-${index}-heading`
+    const setHeading = (next: FormulaDraft | null) =>
+        builder.setColumns(columns.map((c, i) => (i === index ? { ...c, heading: next } : c)))
+    return (
+        <View className="gap-1">
+            <View className="flex-row items-center gap-2">
+                <Switch
+                    value={heading !== null}
+                    onValueChange={on => setHeading(on ? newHeading(params) : null)}
+                    accessibilityLabel={HEADING_LABEL}
+                    testID={testID}
+                />
+                <Text className="flex-1 text-sm text-foreground">{HEADING_LABEL}</Text>
+            </View>
+            <HeadingFormula
+                isVisible={heading !== null}
+                builder={builder}
+                heading={heading}
+                onChange={setHeading}
+                testID={`${testID}-formula`}
+            />
+        </View>
+    )
+}
+
+const HIDDEN_LABEL = 'Use only to group or sort (do not show)'
+
+/**
+ * "Use only to group or sort (do not show)" (G7). Turned on where bind refuses it,
+ * it stays in view with its refusal, so it can be turned off.
+ */
+function HiddenField({ builder, columns, index }: Omit<ColumnPartProps, 'source'>) {
+    const control = builder.form.control
+    const display = useWatch({ control, name: 'display' })
+    const pivot = useWatch({ control, name: 'pivot' })
+    const groups = useWatch({ control, name: 'groups' })
+    if (!showsHidden({ columns, display, pivot, groups }, index)) return null
+    const testID = `report-builder-column-${index}-hidden`
+    const state = builder.form.getFieldState(`columns.${index}.hidden`, builder.form.formState)
+    const setHidden = (hidden: boolean) =>
+        builder.setColumns(columns.map((c, i) => (i === index ? { ...c, hidden } : c)))
+    return (
+        <View className="gap-1">
+            <View className="flex-row items-center gap-2">
+                <Switch
+                    value={columns[index]?.hidden === true}
+                    onValueChange={setHidden}
+                    accessibilityLabel={HIDDEN_LABEL}
+                    testID={testID}
+                />
+                <Text className="flex-1 text-sm text-foreground">{HIDDEN_LABEL}</Text>
+            </View>
+            <FieldError message={state.error?.message} testID={`${testID}-error`} />
+        </View>
     )
 }
 

@@ -142,8 +142,7 @@ function childContext(
     const part = partOf(node)
     if (part === 'lookup') {
         const source = node.source ?? here.source
-        const params = here.lookupParams ?? here.params
-        return { ...here, source, params, totals: false, windows: false, inLookup: true }
+        return { ...here, source, totals: false, windows: false, inLookup: true }
     }
     if (RELATED_SET.has(part) && index === 0) {
         const target = here.source

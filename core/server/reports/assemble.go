@@ -15,6 +15,9 @@ func (rn *runner) columns() []ResultColumn {
 	c := rn.c
 	out := make([]ResultColumn, 0, len(c.p.cols))
 	for _, cp := range c.p.cols {
+		if cp.col.Hidden {
+			continue
+		}
 		rc := ResultColumn{ID: cp.col.ID, Label: labelOf(cp), Aggregate: cp.col.Aggregate, Format: cp.col.Format}
 		rc.Type, rc.TotalType = c.resultType(cp)
 		if cp.path != nil && cp.path.field.Type == Select {
@@ -29,6 +32,7 @@ func (rn *runner) columns() []ResultColumn {
 			}
 		}
 		rc.Sortable = c.p.pivot == nil && c.sortable[cp.col.ID]
+		rc.Heading = rn.headings[cp.col.ID]
 		rn.currencyOfColumn(cp, &rc)
 		out = append(out, rc)
 	}
@@ -317,7 +321,7 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 			continue
 		}
 		for _, g := range t.children[rn.currencyKey(total)] {
-			rn.group(t, g, 1, "")
+			rn.group(t, g, 1, 0, "")
 		}
 		rn.push(Row{ID: "total" + rn.currencySuffix(total), Kind: KindTotal, Label: "Total", Cells: rn.cells(total)}, total)
 	}
@@ -355,7 +359,9 @@ func (rn *runner) push(row Row, raw map[string]any) {
 	rn.mixedRows[row.ID] = cols
 }
 
-func isEnd(r Row) bool { return r.Kind == KindTotal || r.Kind == KindComputed }
+// isEnd is a whole-report row; a computed row inside a section belongs to
+// its section.
+func isEnd(r Row) bool { return r.Kind == KindTotal || (r.Kind == KindComputed && r.Section == "") }
 
 // pageWindow keeps a grouped page's slice of the document (R9e): the rows
 // after the previous page's last detail row (after its group row and opening
@@ -515,6 +521,11 @@ func (rn *runner) pageStart(rows []Row) int {
 	// moved group read at its new place by the keyset is not one: starting
 	// after it would skip the rows before it.
 	for n := rn.anchored; n >= 1; n-- {
+		// A skip level's blank key draws no row: its children follow the
+		// anchor above it.
+		if rn.c.skips(n) && cur.Group[n-1] == nil {
+			continue
+		}
 		id := "g:" + keyString(append(slices.Clone(cur.Group[:n]), cur.Group[d:]...))
 		i := slices.IndexFunc(rows[start:], func(r Row) bool { return r.ID == id })
 		if i < 0 {
@@ -576,8 +587,8 @@ func (rn *runner) cursorAt(row Row, held []held) (string, error) {
 }
 
 // group emits a level-n group row, its children when expanded, and its
-// subtotal.
-func (rn *runner) group(t *tree, row map[string]any, n int, section string) {
+// subtotal, at depth.
+func (rn *runner) group(t *tree, row map[string]any, n, depth int, section string) {
 	key := rn.rowKey(row, n)
 	id := "g:" + keyString(key)
 	g := rn.c.p.groups[n-1]
@@ -592,7 +603,26 @@ func (rn *runner) group(t *tree, row map[string]any, n int, section string) {
 	if g.group.Label != nil || rn.c.groupTargets[n-1] != nil {
 		label = rn.groupLabel(row, rn.c.labels[n-1])
 	}
-	rn.groupWithLabel(t, row, n, section, id, label, key, g.group.Subtotals)
+	rn.groupWithLabel(t, row, n, depth, section, id, label, key, g.group.Subtotals, nil)
+}
+
+// children emits the level-n groups under a parent key. A blank key at a skip
+// level emits no row of its own: its children come in its place, at the same
+// depth, under the same section.
+func (rn *runner) children(t *tree, parent []any, n, depth int, section string) {
+	for _, child := range t.children[keyString(parent)] {
+		if rn.c.skips(n) && child[fmt.Sprintf("k%d", n-1)] == nil {
+			key := rn.rowKey(child, n)
+			// A paged run's cursor reads the order values of every enclosing
+			// group, this one too (cursorAt).
+			if rn.rawGroups != nil {
+				rn.rawGroups["g:"+keyString(key)] = child
+			}
+			rn.children(t, key, n+1, depth, section)
+			continue
+		}
+		rn.group(t, child, n, depth, section)
+	}
 }
 
 // rowLabel is a group row's label: its text and, for a label that is not
@@ -658,8 +688,10 @@ func (rn *runner) currencyOf(row map[string]any, cur currency) string {
 }
 
 // groupWithLabel emits a group row; subtotal says whether an expanded group
-// ends in a subtotal row (a layout section always does).
-func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id string, label rowLabel, key []any, subtotal bool) {
+// ends in a subtotal row (a layout section always does). layoutSection is the
+// layout section the row draws, nil for any other group: its within rows
+// come after its children, before its subtotal.
+func (rn *runner) groupWithLabel(t *tree, row map[string]any, n, depth int, section, id string, label rowLabel, key []any, subtotal bool, layoutSection *LayoutItem) {
 	p := rn.c.p
 	opening := p.groups[n-1].group.Opening
 	canOpen := n < len(p.groups) || p.pivot == nil
@@ -667,8 +699,10 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 	// opening row and the subtotal show (R5d). Without one: a fill record has
 	// no base rows and opens only onto the next level's fill records (a layout
 	// section with no rows has no __n and keeps this rule), and a group whose
-	// child groups the having hides, every one, opens onto nothing.
-	if opening == nil {
+	// child groups the having hides, every one, opens onto nothing. A layout
+	// section with within rows always opens onto them: they add to its total,
+	// so they show even when no row of its own does.
+	if opening == nil && !rn.hasWithin(layoutSection) {
 		if v, ok := row["__n"]; ok && v != nil && toInt(v) == 0 && !rn.c.nextFill(n) {
 			canOpen = false
 		}
@@ -676,34 +710,51 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 			canOpen = false
 		}
 	}
-	expanded := canOpen && rn.expand.has(key, n)
+	expanded := canOpen && rn.expand.has(rn.c, key, n)
 	if rn.rawGroups != nil {
 		rn.rawGroups[id] = row
 	}
 	rn.push(Row{
-		ID: id, Kind: KindGroup, Depth: n - 1, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),
+		ID: id, Kind: KindGroup, Depth: depth, Level: n, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
 	}, row)
 	if expanded && opening != nil {
-		rn.push(Row{ID: "opening:" + keyString(key), Kind: KindOpening, Depth: n, Label: opening.Label, Section: id, GroupKey: key, Cells: rn.openingCells(row, opening)}, row)
+		rn.push(Row{ID: "opening:" + keyString(key), Kind: KindOpening, Depth: depth + 1, Label: opening.Label, Section: id, GroupKey: key, Cells: rn.openingCells(row, opening)}, row)
 	}
 	if expanded {
 		if n < len(p.groups) {
-			for _, child := range t.children[keyString(key)] {
-				rn.group(t, child, n+1, id)
-			}
+			rn.children(t, key, n+1, depth+1, id)
 		} else {
 			for _, d := range t.details[keyString(key)] {
-				rn.detail(t, d, id, n)
+				rn.detail(t, d, id, depth+1)
 			}
+		}
+	}
+	if expanded && layoutSection != nil {
+		for _, w := range p.layout {
+			if w.Row == "" || w.Within != layoutSection.Section {
+				continue
+			}
+			raw := t.computed[w.Row+"|"+rn.currencyKey(row)]
+			if raw == nil {
+				raw = map[string]any{}
+			}
+			rn.push(Row{ID: "c:" + w.Row + rn.currencySuffix(row), Kind: KindComputed, Depth: depth + 1, Label: w.Label, Section: id, Cells: rn.cells(raw)}, raw)
 		}
 	}
 	if subtotal && (expanded || len(p.layout) > 0) {
 		rn.push(Row{
-			ID: "s:" + keyString(key), Kind: KindSubtotal, Depth: n - 1, Label: "Total " + label.text, Section: id, GroupKey: key, Cells: rn.cells(row),
+			ID: "s:" + keyString(key), Kind: KindSubtotal, Depth: depth, Level: n, Label: "Total " + label.text, Section: id, GroupKey: key, Cells: rn.cells(row),
 			LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
 		}, row)
 	}
+}
+
+// hasWithin is true when the layout has a computed row inside section s.
+func (rn *runner) hasWithin(s *LayoutItem) bool {
+	return s != nil && slices.ContainsFunc(rn.c.p.layout, func(w *LayoutItem) bool {
+		return w.Row != "" && w.Within == s.Section
+	})
 }
 
 // detail emits a detail row and the child rows nested under it.
@@ -758,6 +809,9 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 	_, grouped := row["__level"]
 	out := map[string]any{}
 	for idx, cp := range rn.c.p.cols {
+		if cp.col.Hidden {
+			continue
+		}
 		name := fmt.Sprintf("v%d", idx)
 		if _, ok := row[name]; !ok {
 			continue

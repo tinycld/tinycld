@@ -95,6 +95,10 @@ type compiler struct {
 	// probes on each of its rows (whereProber): sql is true on a row where
 	// one was unknown.
 	detailWheres []condProbe
+	// layoutNodes counts every formula node compiled for the layout's
+	// computed rows, and layoutCounted what the layout's caps counted
+	// (layoutLegs), so a test pins the compile work to the caps.
+	layoutNodes, layoutCounted int
 }
 
 // labelPlan is what a group's label compiled to. recordCurrency says an
@@ -284,6 +288,12 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 		// USD and 300 EUR are two groups.
 		if e.typ == Money && e.cur.sql != "" && e.cur.id != "" {
 			r.currencyKey(e.cur.id, e.cur.sql)
+		}
+		// A skip level's blank key is NULL: a text key of "" is blank as well
+		// (fieldSQL leaves a text field's "" as it is), so the tree, the
+		// level's own rule, the expansion and the cursor see one blank.
+		if g.group.Blank == GroupBlankSkip {
+			e.sql = "NULLIF(" + e.sql + ", '')"
 		}
 		r.add(fmt.Sprintf("k%d", i), e.sql)
 	}

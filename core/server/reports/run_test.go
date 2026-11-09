@@ -55,6 +55,12 @@ func rowsOf(res *Result, what string) []any {
 			out[i] = r.Kind
 		case "label":
 			out[i] = r.Label
+		case "depth":
+			out[i] = r.Depth
+		case "level":
+			out[i] = r.Level
+		case "section":
+			out[i] = r.Section
 		default:
 			out[i] = r.Cells[what]
 		}
@@ -430,7 +436,8 @@ func TestGroupKeysCompareByType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !text.has([]any{"1"}, 1) || text.has([]any{int64(1)}, 1) {
+	c := &compiler{p: &plan{}}
+	if !text.has(c, []any{"1"}, 1) || text.has(c, []any{int64(1)}, 1) {
 		t.Fatal("the text \"1\" and the number 1 are different group keys")
 	}
 }

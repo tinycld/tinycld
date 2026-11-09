@@ -175,6 +175,35 @@ test.describe('formulas, related rows and layouts', () => {
             await buildStatusLayout(p)
             await expectStatusLayout(p)
 
+            // A row with a column formula can drop its formula for the other columns;
+            // the column formula still fills its column.
+            const row = 'report-builder-layout-2'
+            await expect(p.getByTestId(`${row}-formula-remove`)).toHaveCount(0)
+            await p.getByTestId(`${row}-cell-amount-add`).click()
+            await chooseOption(p, `${row}-cell-amount-root-part`, 'field')
+            await chooseOption(p, `${row}-cell-amount-root-field`, 'section')
+            await expect(await cellOf(p, 'amount', 'Open less paid')).toHaveText('$30.00')
+            await p.getByTestId(`${row}-formula-remove`).click()
+            await expect(p.getByTestId(`${row}-formula-add`)).toBeVisible()
+            await expect(p.getByTestId(`${row}-formula-summary`)).toHaveCount(0)
+            await expect(await cellOf(p, 'amount', 'Open less paid')).toHaveText('$30.00')
+            await p.getByTestId(`${row}-cell-amount-remove`).click()
+            // With neither a formula nor a column formula, Save refuses and says why
+            // at the row, and the builder stays open.
+            await p.getByTestId('report-builder-title').fill(uniqueName('Layout'))
+            await p.getByTestId('report-builder-save').click()
+            await expect(p.getByTestId(`${row}-formula-error`)).toHaveText(
+                'A computed row needs a formula or a column formula'
+            )
+            await expect(p.getByTestId('report-builder')).toBeVisible()
+            await p.getByTestId(`${row}-formula-add`).click()
+            await chooseOption(p, `${row}-formula-root-part`, 'sub')
+            await chooseOption(p, `${row}-formula-0-part`, 'field')
+            await chooseOption(p, `${row}-formula-0-field`, 'section')
+            await chooseOption(p, `${row}-formula-1-part`, 'field')
+            await chooseOption(p, `${row}-formula-1-field`, 'section2')
+            await expectStatusLayout(p)
+
             // The layout's order is the report's order; a computed row can be removed.
             const rows = p.getByTestId('report-table').locator('[data-testid^="report-row-"]')
             await p.getByTestId('report-builder-layout-1-up').click()

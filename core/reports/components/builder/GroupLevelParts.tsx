@@ -1,5 +1,5 @@
 import { Button, ButtonText } from '@tinycld/core/ui/button'
-import { TextInput, useWatch } from '@tinycld/core/ui/form'
+import { SelectInput, TextInput, useWatch } from '@tinycld/core/ui/form'
 import { type PickItem, PickMenu } from '@tinycld/core/ui/pick-menu'
 import { Switch } from '@tinycld/core/ui/switch'
 import type { ReactNode } from 'react'
@@ -16,7 +16,9 @@ import {
     openingCellRows,
     openingDraft,
     setOpeningCell,
+    showsBlankSkip,
     showsHaving,
+    showsHideEmpty,
 } from '../../lib/builder/draft'
 import type { GroupDraft } from '../../lib/builder/filter'
 import type { FormulaPlace } from '../../lib/builder/formula-context'
@@ -250,6 +252,63 @@ export function GroupHaving({ builder, groups, index }: Omit<LevelPartProps, 'ta
                     setLevel(builder, groups, index, { having }, ...added)
                 }
             />
+        </View>
+    )
+}
+
+const BLANK_OPTIONS = [
+    { value: 'group', label: "Put them in a '(none)' group" },
+    { value: 'skip', label: 'Place them directly under the group above' },
+]
+
+/**
+ * "Rows with no <col>": a '(none)' group, or directly under the group above (G1).
+ * A skip read back where bind refuses it stays in view, with its refusal, so it can
+ * be set back.
+ */
+export function GroupBlank({ builder, groups, index }: Omit<LevelPartProps, 'target'>) {
+    const columns = useWatch({ control: builder.form.control, name: 'columns' })
+    const group = groups[index]
+    if (!group || !showsBlankSkip({ groups }, index)) return null
+    const columnLabel = columns.find(c => c.id === group.col)?.label ?? group.col
+    return (
+        <SelectInput
+            name={`groups.${index}.blank`}
+            control={builder.form.control}
+            label={`Rows with no ${columnLabel}`}
+            options={BLANK_OPTIONS}
+            // An absent blank is the engine's default, a '(none)' group.
+            placeholder={BLANK_OPTIONS[0]?.label}
+            testID={`report-builder-group-${index}-blank`}
+            onValueChange={builder.validateLists}
+        />
+    )
+}
+
+const HIDE_EMPTY_LABEL = 'Hide a group when every row in it is hidden'
+
+/**
+ * "Hide a group when every row in it is hidden" (G5). Turned on where bind refuses
+ * it, it stays in view with its refusal, so it can be turned off.
+ */
+export function GroupHideEmpty({ builder, groups, index }: Omit<LevelPartProps, 'target'>) {
+    const layout = useWatch({ control: builder.form.control, name: 'layout' })
+    const group = groups[index]
+    if (!group || !showsHideEmpty({ groups, layout }, index)) return null
+    const testID = `report-builder-group-${index}-hide-empty`
+    const state = builder.form.getFieldState(`groups.${index}.hideEmpty`, builder.form.formState)
+    return (
+        <View className="gap-1">
+            <View className="flex-row items-center gap-2">
+                <Switch
+                    value={group.hideEmpty === true}
+                    onValueChange={hideEmpty => setLevel(builder, groups, index, { hideEmpty })}
+                    accessibilityLabel={HIDE_EMPTY_LABEL}
+                    testID={testID}
+                />
+                <Text className="flex-1 text-sm text-foreground">{HIDE_EMPTY_LABEL}</Text>
+            </View>
+            <FieldError message={state.error?.message} testID={`${testID}-error`} />
         </View>
     )
 }

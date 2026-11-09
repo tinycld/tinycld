@@ -111,6 +111,15 @@ type ResultColumn struct {
 	// column, not in a pivot report; the first column by its detail label
 	// when the report has one.
 	Sortable bool `json:"sortable,omitempty"`
+	// Heading is the value the column's heading shows (Column.Heading), absent
+	// when the column has none or it is blank this run.
+	Heading *ColumnHeading `json:"heading,omitempty"`
+}
+
+// ColumnHeading is a column's heading this run: a text, a day or a number.
+type ColumnHeading struct {
+	Value any       `json:"value"`
+	Type  FieldType `json:"type"`
 }
 
 // PivotColumn marks a pivot cell column: the cell column it splits, and
@@ -140,6 +149,11 @@ type Row struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"`
 	Depth int    `json:"depth"`
+	// Level is a group or subtotal row's group level (1 for the first
+	// group). With a skipped level (Group.Blank) depth + 1 is no longer the
+	// level, and a client that reads a row's group from its depth would read
+	// the wrong one. 0 (absent) on every other row.
+	Level int    `json:"level,omitempty"`
 	Label string `json:"label"`
 	// LabelColumn names the column whose cell the label repeats, so the
 	// client can leave that cell out; "" when the label is no cell's value.
@@ -242,6 +256,8 @@ type runner struct {
 	// mixedConditions are the conditions that read such a sum on some row
 	// (probeConditions).
 	mixedConditions []string
+	// headings are the run's column headings by column id (readHeadings).
+	headings map[string]*ColumnHeading
 	// A run that pages its group rows (pagedGroups) reads its cursor into
 	// groupCur, with each level's order terms (groupShape), the detail sort
 	// keys (groupKeys) and the fingerprint its cursors carry (groupFP).
@@ -414,6 +430,9 @@ func (rn *runner) run() error {
 	}
 	nested, err := rn.nestPass(details)
 	if err != nil {
+		return err
+	}
+	if err := rn.readHeadings(); err != nil {
 		return err
 	}
 	rn.res.Columns = rn.columns()
@@ -678,9 +697,23 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 		base = append(base, name)
 	}
 	base = append(base, "__ord", "__own", "__label", "__labelcur", "__n", "__kids")
+	skipping := false
+	for n := 1; n <= groups; n++ {
+		skipping = skipping || c.skips(n)
+	}
 	legs := make([]string, 0, groups)
 	for n := 1; n <= groups; n++ {
 		cols := prefixed("o.", base)
+		// A skip level's blank key is read (its children's path, the cursor's
+		// order values) but draws no row (children), so the limit does not
+		// count it.
+		if skipping {
+			blank := "0"
+			if c.skips(n) {
+				blank = fmt.Sprintf("(o.k%d IS NULL)", n-1)
+			}
+			cols = append(cols, blank+" AS "+uncountedCell)
+		}
 		for i := 1; i <= groups; i++ {
 			if i <= n {
 				cols = append(cols, fmt.Sprintf("pp.__p%d", i))
@@ -716,10 +749,24 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 	for i := 1; i <= groups; i++ {
 		order = append(order, fmt.Sprintf("__p%d", i))
 	}
-	body = fmt.Sprintf("SELECT %s FROM (%s)\nWHERE %s\nORDER BY %s LIMIT %s",
-		selected, strings.Join(legs, "\nUNION ALL\n"), keyset, strings.Join(order, ", "), limitSQL(limit+1+int64(anchors)))
+	rows := limitSQL(limit + 1 + int64(anchors))
+	orderBy := strings.Join(order, ", ")
+	union := strings.Join(legs, "\nUNION ALL\n")
+	if !skipping {
+		body = fmt.Sprintf("SELECT %s FROM (%s)\nWHERE %s\nORDER BY %s LIMIT %s", selected, union, keyset, orderBy, rows)
+		return levelCTEs, pageCTEs, body, nil
+	}
+	// A LIMIT would count the blank keys of skip levels, which draw no row: a
+	// page of them would end early and look like the last one. The running
+	// count of the rows that draw takes its place.
+	body = fmt.Sprintf("SELECT * FROM (SELECT %s, SUM(1 - %s) OVER (ORDER BY %s ROWS UNBOUNDED PRECEDING) AS __counted FROM (%s)\nWHERE %s)\nWHERE __counted <= %s\nORDER BY %s",
+		selected, uncountedCell, orderBy, union, keyset, rows, orderBy)
 	return levelCTEs, pageCTEs, body, nil
 }
+
+// uncountedCell is 1 on a paged level row that draws no row of its own (a
+// skip level's blank key), which the page's limit does not count.
+const uncountedCell = "__uncounted"
 
 // sameGroup matches a's row to b's by the first n group keys and the
 // currency keys, with IS, so a blank key matches a blank one.
@@ -1022,7 +1069,7 @@ func viewSortPlans(c *compiler, keys []ViewSort) ([]sortPlan, error) {
 		// even when the column is a child row column (Sortable says the same).
 		byLabel := cp != nil && cp == c.p.cols[0] && d != nil && d.Label != nil
 		switch {
-		case cp == nil:
+		case cp == nil || cp.col.Hidden:
 			return nil, unknownColumn(at+".col", k.Col)
 		case seen[k.Col]:
 			return nil, invalid(at+".col", "a column sorts once")
@@ -1142,12 +1189,14 @@ func (c *compiler) compileLevels(s *stmt, r *rowsCTE, expand *expansion, pivot [
 		// then the opening cells follow the pivot cells, as in every leg of the
 		// union.
 		cells = append(append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...), opening...)
+		// A skip level's blank key passes on its shown children, so they are
+		// counted before its condition compiles.
+		lv.countShownKids()
 		// The having's aggregates join a<L>, so it compiles before render.
 		own, err := lv.own()
 		if err != nil {
 			return nil, err
 		}
-		lv.countShownKids()
 		var totals []string
 		if readsSums {
 			if totals, err = lv.rowsCells(); err != nil {
@@ -1469,10 +1518,9 @@ func (rn *runner) openGroups(groupRows []map[string]any) [][]any {
 	rows, notices := rn.res.Rows, rn.res.Notices
 	rn.res.Rows, rn.res.Notices = []Row{}, slices.Clone(notices)
 	rn.assemble(groupRows, nil, nil)
-	depth := len(rn.c.p.groups) - 1
 	var out [][]any
 	for _, r := range rn.res.Rows {
-		if r.Kind == KindGroup && r.Expanded && r.Depth == depth {
+		if r.Kind == KindGroup && r.Expanded && r.Level == len(rn.c.p.groups) {
 			out = append(out, r.GroupKey)
 		}
 	}
@@ -1480,12 +1528,18 @@ func (rn *runner) openGroups(groupRows []map[string]any) [][]any {
 	return out
 }
 
-// groupLevels names the report's group levels (column and bucket) for a
-// grouped cursor's fingerprint: a cursor from another grouping is refused.
+// skips is true when group level n (1 for the first) passes its blank keys up.
+func (c *compiler) skips(n int) bool {
+	return n >= 1 && n <= len(c.p.groups) && c.p.groups[n-1].group.Blank == GroupBlankSkip
+}
+
+// groupLevels names the report's group levels (column, bucket and blank) for
+// a grouped cursor's fingerprint: a cursor from another grouping is refused,
+// and a skip changes the row tree as much as a bucket does.
 func (c *compiler) groupLevels() string {
 	parts := make([]string, len(c.p.groups))
 	for i, g := range c.p.groups {
-		parts[i] = g.col.col.ID + "/" + g.group.Bucket
+		parts[i] = g.col.col.ID + "/" + g.group.Bucket + "/" + g.group.Blank
 	}
 	return strings.Join(parts, ";")
 }
@@ -1939,6 +1993,20 @@ func keysIn(s *stmt, cols []string, keys [][]any, encoded [][]string) string {
 // open group's: every group under expandAll or an open level, else an
 // expanded key; never a folded key.
 func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string {
+	own := e.whereOwn(c, s, depth, prefix)
+	if !c.skips(depth) {
+		return own
+	}
+	// A blank key at a skip level is never a row the reader opens or folds:
+	// it is open exactly when the group above it is, so its rows show under
+	// that group.
+	parent := e.where(c, s, depth-1, prefix)
+	return fmt.Sprintf("(%s OR (%sk%d IS NULL AND %s))", own, prefix, depth-1, parent)
+}
+
+// whereOwn is where without the skip levels: the keys the reader opened and
+// did not fold.
+func (e *expansion) whereOwn(c *compiler, s *stmt, depth int, prefix string) string {
 	cols := make([]string, 0, depth+len(c.currencies))
 	for i := range depth {
 		cols = append(cols, fmt.Sprintf("%sk%d", prefix, i))
@@ -1985,18 +2053,31 @@ func anyOf(conds []string) string {
 }
 
 // has is true when the level-n group with key opens.
-func (e *expansion) has(key []any, n int) bool {
+func (e *expansion) has(c *compiler, key []any, n int) bool {
 	if e.closed[keyString(key)] {
 		return false
 	}
-	return e.all || e.open[n] || e.set[keyString(key)]
+	if e.all || e.open[n] || e.set[keyString(key)] {
+		return true
+	}
+	// key is n group keys then the currency keys; parent drops key n-1.
+	if c.skips(n) && key[n-1] == nil {
+		parent := append(slices.Clone(key[:n-1]), key[n:]...)
+		return e.has(c, parent, n-1)
+	}
+	return false
 }
 
 // compileDry compiles every statement of a plan without a database, so a
 // formula, a filter or a layout that cannot compile fails Validate, not a
 // run. Params are unset and the pivot has one value.
 func compileDry(p *plan) error {
-	c := newCompiler(p, nil, nil, nil)
+	return newCompiler(p, nil, nil, nil).compileAll()
+}
+
+// compileAll compiles every statement of c's plan, as compileDry.
+func (c *compiler) compileAll() error {
+	p := c.p
 	s := newStmt(nil, nil)
 	r, err := c.rows(s)
 	if err != nil {
@@ -2015,6 +2096,9 @@ func compileDry(p *plan) error {
 		return err
 	}
 	if err := fitRefusals(c); err != nil {
+		return err
+	}
+	if _, err := c.headings(s); err != nil {
 		return err
 	}
 	for _, d := range p.spec.Params {

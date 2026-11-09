@@ -600,11 +600,24 @@ function linesOf(measures: ColumnMeasures): Record<string, number> | undefined {
     return wrapping.length > 0 ? Object.fromEntries(wrapping) : undefined
 }
 
+// The indents an authored arrangement is tried at: the full continuation indent,
+// then one group level fewer at a time down to none, then 0. A phone that cannot
+// give the figures line its full indent draws the author's lines a little less
+// indented rather than falling to automatic lines (which place every column).
+function indentsToTry(levels: RowLevels): number[] {
+    const fewer = Array.from({ length: levels.groups }, (_, i) =>
+        continuationIndent({ groups: levels.groups - 1 - i, nests: 0 })
+    )
+    return [...new Set([continuationIndent(levels), ...fewer, 0])]
+}
+
 /**
  * The lines of every row (and the heading) at this width, by a fit test on the
  * measured width (review §7.1-4): one line when the row is at least the one-line
  * width and its columns' mins fit; else the first author arrangement, widest
- * first, that the width reaches (its minWidth) and whose lines fit, each line
+ * first, that the width reaches (its minWidth) and whose lines fit, at the full
+ * continuation indent or, failing that, at a smaller one (one group level fewer
+ * at a time, then 0), each line
  * shared by content; else the automatic lines. Never wider than `width`. Also
  * says which rule it used (the table's e2e marker).
  */
@@ -630,8 +643,11 @@ export function fitTable(input: FitTableInput): { layout: LineLayout; source: La
             notice = notice ?? authored.notice
             continue
         }
-        const root = fitRoot(authored.root, width, measures, indent)
-        if (root) return { layout: withLines({ kind: 'blocks', root, indent }), source: name }
+        for (const at of indentsToTry(levels)) {
+            const root = fitRoot(authored.root, width, measures, at)
+            if (root)
+                return { layout: withLines({ kind: 'blocks', root, indent: at }), source: name }
+        }
     }
     const auto = autoLines(columns, width, measures, indent)
     return { layout: withLines(notice ? { ...auto, notice } : auto), source: 'auto' }

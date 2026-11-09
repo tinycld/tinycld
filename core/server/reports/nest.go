@@ -135,6 +135,9 @@ func (rn *runner) nestedRows(t *tree, level int, parentKey any, parentID, sectio
 		id := fmt.Sprintf("%s/%v", parentID, row["__id"])
 		cells := map[string]any{}
 		for _, cp := range cols {
+			if cp.col.Hidden {
+				continue
+			}
 			cells[cp.col.ID] = rn.cellValue(cp, row[fmt.Sprintf("v%d", rn.c.p.index(cp))], false)
 			if cur := rn.c.p.nestCurrency(cp); cur.key != "" {
 				cells[cp.col.ID+"@currency"] = row[cur.key]

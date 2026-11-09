@@ -18,7 +18,7 @@ import {
  * The report formula leaves that read the report's asked values and the scales
  * the engine fixes: an asked value in a column (typed like any other number, so it
  * is shown as a number and is a pivot cell), whole cents, yes or no, and a layout
- * computed row whose lookup reads an asked value the row itself cannot. A fresh
+ * computed row whose lookup reads an asked value. A fresh
  * invited member owns the sale; teams are shared, so names are unique.
  */
 
@@ -119,10 +119,10 @@ test.describe('report formula leaves', () => {
             await p.getByTestId('report-builder-layout-1-label').fill('Looked up')
             const f = 'report-builder-layout-1-formula'
 
-            // The row reads no asked value itself; a lookup inside it does.
+            // A computed row reads an asked value itself, and so does a lookup inside it.
             await p.getByTestId(`${f}-root-part`).click()
             await expect(p.getByTestId(`${f}-root-part-lookup`)).toBeVisible()
-            await expect(p.getByTestId(`${f}-root-part-param`)).toHaveCount(0)
+            await expect(p.getByTestId(`${f}-root-part-param`)).toBeVisible()
             await p.getByTestId(`${f}-root-part-lookup`).click()
             await chooseOption(p, `${f}-root-source`, SALES_SOURCE)
             await chooseOption(p, `${f}-0-part`, 'eq')

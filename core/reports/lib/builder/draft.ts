@@ -63,6 +63,7 @@ import {
     formulaContext,
     isNumericType,
     levelValueColumns,
+    readsSubtotal,
     recordGroups,
     type TargetDraft,
 } from './formula-context'
@@ -159,6 +160,10 @@ const columnFields = {
     rollup: formulaDraftSchema.nullable().optional(),
     /** The column's fit (display.columns), kept as the spec says it; a save tidies it (tidyFit). */
     fit: columnFitSchema.optional(),
+    /** The heading from a formula over params (a day); null or absent: the label. */
+    heading: formulaDraftSchema.nullable().optional(),
+    /** Computed to group or sort by, never shown (G7). */
+    hidden: z.boolean().optional(),
 }
 export const columnDraftSchema = z.union([
     z.object({
@@ -184,7 +189,12 @@ const layoutItemSchema = z.union([
         kind: z.literal('row'),
         id: idSchema,
         label: labelSchema,
-        formula: formulaDraftSchema,
+        /** null: only the columns `cells` names have a figure. */
+        formula: formulaDraftSchema.nullable(),
+        /** The earlier section the row sits inside; absent or '': after the sections. */
+        within: z.string().optional(),
+        /** The row's own formula in a column, by column id. */
+        cells: z.record(z.string(), formulaDraftSchema).optional(),
     }),
 ])
 export type LayoutItemDraft = z.infer<typeof layoutItemSchema>
@@ -216,6 +226,10 @@ export const groupLevelSchema = z.object({
     fill: z.object({ on: z.boolean(), where: filterGroupSchema }),
     /** The row that starts each opened group of this level (F5); none when null or absent. */
     opening: openingDraftSchema.nullable().optional(),
+    /** Rows with no key: a '(none)' group, or directly under the group above. */
+    blank: z.enum(['group', 'skip']).optional(),
+    /** Hide a group when every row in it is hidden (G5). */
+    hideEmpty: z.boolean().optional(),
 })
 export type GroupLevelDraft = z.infer<typeof groupLevelSchema>
 
@@ -350,6 +364,29 @@ function groupingIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         if (layoutIds.indexOf(item.id) !== i) {
             issues.push({ path: ['layout', i, 'id'], message: 'Two layout items have this id' })
         }
+        if (item.kind !== 'row') return
+        if (item.formula === null && Object.keys(item.cells ?? {}).length === 0) {
+            issues.push({
+                path: ['layout', i, 'formula'],
+                message: 'A computed row needs a formula or a column formula',
+            })
+        }
+        if (item.within && !withinChoices(draft, i).includes(item.within)) {
+            issues.push({
+                path: ['layout', i, 'within'],
+                message: 'Choose a section above this row',
+            })
+        }
+        const within = item.within
+        if (!within) return
+        if (readsSubtotal(item.formula?.node, within)) {
+            issues.push({ path: ['layout', i, 'formula'], message: READS_OWN_SECTION })
+        }
+        for (const [col, cell] of Object.entries(item.cells ?? {})) {
+            if (readsSubtotal(cell.node, within)) {
+                issues.push({ path: ['layout', i, 'cells', col], message: READS_OWN_SECTION })
+            }
+        }
     })
     return issues
 }
@@ -379,6 +416,11 @@ function levelIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
 
 const LAYOUT_HAVING = "A layout's sections are fixed rows: hide rows on a deeper group"
 const PIVOT_DETAIL = 'A pivot report has no opened rows to label: turn the row label off'
+const HIDE_EMPTY_LAST = 'The last level has no child groups to be empty of'
+const HIDE_EMPTY_SECTIONS = "A layout's sections always show: hide empty groups on a deeper level"
+const READS_OWN_SECTION = 'A row inside a section adds to it, so it cannot read that section'
+const CELL_COLUMN =
+    "A row's column formula fills a number, amount or percent column after the first, not the pivot's cell column"
 
 /**
  * A level's "Show only groups where…" is offered unless the level is a layout's first
@@ -386,6 +428,149 @@ const PIVOT_DETAIL = 'A pivot report has no opened rows to label: turn the row l
  */
 export function offersHaving(draft: Pick<BuilderDraft, 'layout'>, index: number): boolean {
     return index > 0 || draft.layout.length === 0
+}
+
+/** Why a level cannot skip rows with no key (bind.go groupsAndPivot), or undefined. */
+function blankSkipRefusal(draft: Pick<BuilderDraft, 'groups'>, index: number) {
+    if (index === draft.groups.length - 1)
+        return 'The last level has no level below for its rows to pass to'
+    if (index === 0) return 'The first level has no group above for its rows to sit under'
+    if (draft.groups[index]?.bucket !== '') return 'A bucketed level has no blank key to skip'
+    return undefined
+}
+
+/** "Rows with no <col>" (bind.go groupsAndPivot: not first, not last, not bucketed). */
+export function offersBlankSkip(draft: Pick<BuilderDraft, 'groups'>, index: number): boolean {
+    if (!draft.groups[index]) return false
+    return blankSkipRefusal(draft, index) === undefined
+}
+
+/** The blank control shows where it is offered, or where it holds a skip to remove. */
+export function showsBlankSkip(draft: Pick<BuilderDraft, 'groups'>, index: number): boolean {
+    return offersBlankSkip(draft, index) || draft.groups[index]?.blank === 'skip'
+}
+
+type HideEmptyDraft = Pick<BuilderDraft, 'groups' | 'layout'>
+
+/** Why a level cannot hide its empty groups (bind.go groupsAndPivot, layout), or undefined. */
+function hideEmptyRefusal(draft: HideEmptyDraft, index: number) {
+    if (index === draft.groups.length - 1) return HIDE_EMPTY_LAST
+    if (index === 0 && draft.layout.length > 0) return HIDE_EMPTY_SECTIONS
+    return undefined
+}
+
+/**
+ * "Hide a group when every row in it is hidden": not on the last level, which has no
+ * groups under it, nor on a layout's sections, which always show (bind.go). A
+ * bucketed level is offered it, as bind accepts it there.
+ */
+export function offersHideEmpty(draft: HideEmptyDraft, index: number): boolean {
+    return hideEmptyRefusal(draft, index) === undefined
+}
+
+/** The hide-empty control shows where it is offered, or where it is on to turn off. */
+export function showsHideEmpty(draft: HideEmptyDraft, index: number): boolean {
+    return offersHideEmpty(draft, index) || draft.groups[index]?.hideEmpty === true
+}
+
+type HiddenDraft = Pick<BuilderDraft, 'columns' | 'display' | 'pivot' | 'groups'>
+
+/** Why a column cannot be hidden (bind.go hiddenColumns, columns, opening), or undefined. */
+function hiddenRefusal(draft: HiddenDraft, index: number) {
+    const column = draft.columns[index]
+    if (!column) return undefined
+    if (index === 0) return 'The first column labels the rows, so it is shown'
+    if (labelsChildRows(draft.columns, index))
+        return 'The first column of child rows labels the child rows, so it is shown'
+    if (column.fit && Object.keys(column.fit).length > 0)
+        return 'A hidden column is never shown, so it has no fit'
+    if (draft.pivot.on && draft.pivot.cell === column.id)
+        return "A pivot's cell column shows as the pivot's columns, so it is not hidden"
+    if (draft.display.layouts.some(layout => layout.cells.some(cell => cell.col === column.id)))
+        return 'A hidden column is never shown, so no layout places it'
+    if (draft.groups.some(group => group.opening && column.id in group.opening.cells))
+        return 'A hidden column is never shown, so its opening cell would not show'
+    return undefined
+}
+
+/**
+ * "Use only to group or sort" (bind.go hiddenColumns): not the first column, which
+ * labels each row, nor one the display places or fits, nor the pivot's cell column,
+ * nor one an opening row fills.
+ */
+export function offersHidden(draft: HiddenDraft, index: number): boolean {
+    if (!draft.columns[index]) return false
+    return hiddenRefusal(draft, index) === undefined
+}
+
+/** The hidden control shows where it is offered, or where it is on to turn off. */
+export function showsHidden(draft: HiddenDraft, index: number): boolean {
+    return offersHidden(draft, index) || draft.columns[index]?.hidden === true
+}
+
+/** The heading control is offered past the first column (it labels the rows), and stays on a first column that holds one, so it can be turned off. */
+export function showsHeading(draft: Pick<BuilderDraft, 'columns'>, index: number): boolean {
+    const column = draft.columns[index]
+    if (!column) return false
+    return index > 0 || Boolean(column.heading)
+}
+
+/** "Add a row to this section": the sections before the row (bind.go layout within). */
+export function withinChoices(draft: Pick<BuilderDraft, 'layout'>, index: number): string[] {
+    return draft.layout.slice(0, index).flatMap(item => (item.kind === 'section' ? [item.id] : []))
+}
+
+/**
+ * "This column: …": number, amount and percent columns after the first (bind.go
+ * layoutCells, layout.go computedLeg); the pivot's cell column shows as the pivot's
+ * columns, which the row's formula fills.
+ */
+export function cellColumnIds(
+    draft: Pick<BuilderDraft, 'columns' | 'pivot'>,
+    types: ReadonlyMap<string, FieldType>
+): string[] {
+    return draft.columns.slice(1).flatMap(column => {
+        const type = types.get(column.id)
+        const isNumber = type !== undefined && isNumericType(type)
+        const isPivotCell = draft.pivot.on && draft.pivot.cell === column.id
+        return isNumber && !isPivotCell ? [column.id] : []
+    })
+}
+
+// bind.go groupsAndPivot: a level's blank and hideEmpty, where they are not offered.
+function levelFieldIssues(draft: BuilderDraft): Issue[] {
+    return draft.groups.flatMap((group, i): Issue[] => {
+        const issues: Issue[] = []
+        const blank = group.blank === 'skip' ? blankSkipRefusal(draft, i) : undefined
+        if (blank) issues.push({ path: ['groups', i, 'blank'], message: blank })
+        const hideEmpty = group.hideEmpty ? hideEmptyRefusal(draft, i) : undefined
+        if (hideEmpty) issues.push({ path: ['groups', i, 'hideEmpty'], message: hideEmpty })
+        return issues
+    })
+}
+
+function hiddenIssues(draft: BuilderDraft): Issue[] {
+    return draft.columns.flatMap((column, i): Issue[] => {
+        if (!column.hidden) return []
+        const message = hiddenRefusal(draft, i)
+        return message ? [{ path: ['columns', i, 'hidden'], message }] : []
+    })
+}
+
+// bind.go layoutCells and layout.go computedLeg: a row's cells only in the columns
+// "This column: …" offers.
+function cellIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
+    const offered = new Set(cellColumnIds(draft, columnTypes(draft, catalog)))
+    const ids = new Set(draft.columns.map(column => column.id))
+    return draft.layout.flatMap((item, i): Issue[] => {
+        if (item.kind !== 'row') return []
+        return Object.keys(item.cells ?? {}).flatMap((col): Issue[] => {
+            if (offered.has(col)) return []
+            const path = ['layout', i, 'cells', col]
+            if (!ids.has(col)) return [{ path, message: `The report has no column "${col}"` }]
+            return [{ path, message: CELL_COLUMN }]
+        })
+    })
 }
 
 const hasHaving = (draft: Pick<BuilderDraft, 'groups'>, index: number) =>
@@ -512,6 +697,9 @@ export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         ...detailBlankIssues(draft),
         ...rollupIssues(draft),
         ...openingIssues(draft),
+        ...hiddenIssues(draft),
+        ...levelFieldIssues(draft),
+        ...cellIssues(draft, catalog),
         ...groupingIssues(draft, catalog),
     ]
     const [firstProblem] = conditionProblems(draft.filter, catalog, draft.source)
@@ -680,6 +868,8 @@ function columnDraft(
         detail: column.detail ?? 'show',
         ...(column.rollup ? { rollup: formulaDraft(column.rollup, params) } : {}),
         ...(fit ? { fit } : {}),
+        ...(column.heading ? { heading: formulaDraft(column.heading, params) } : {}),
+        ...(column.hidden ? { hidden: true } : {}),
     } as const
     if (column.formula) {
         return {
@@ -703,11 +893,17 @@ type SpecLayoutItem = NonNullable<ReportSpec['layout']>[number]
 
 function layoutItemDraft(item: SpecLayoutItem, params: readonly ParamDef[]): LayoutItemDraft {
     if (item.row) {
+        // With `cells` a row may have no formula; a save must not invent one.
+        const cells = Object.entries(item.cells ?? {}).map(
+            ([col, node]) => [col, formulaDraft(node, params)] as const
+        )
         return {
             kind: 'row',
             id: item.row,
             label: item.label ?? item.row,
-            formula: formulaDraft(item.formula ?? { value: 0 }, params),
+            formula: item.formula ? formulaDraft(item.formula, params) : null,
+            ...(item.within ? { within: item.within } : {}),
+            ...(cells.length > 0 ? { cells: Object.fromEntries(cells) } : {}),
         }
     }
     return {
@@ -812,6 +1008,8 @@ function groupLevelDraft(g: SpecGroup, read: LevelRead): GroupLevelDraft {
             where: nodeToFilter(g.fill?.where, catalog, read.fillSource, undefined, read.above),
         },
         ...(g.opening ? { opening: openingFromSpec(g.opening, params) } : {}),
+        ...(g.blank ? { blank: g.blank } : {}),
+        ...(g.hideEmpty ? { hideEmpty: true } : {}),
     }
 }
 
@@ -839,6 +1037,7 @@ function specFormula(formula: FormulaDraft, ctx: ReportFormulaContext): SpecNode
 function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecColumn[] {
     const ctx = formulaContext(draft, catalog, { kind: 'column', selfKey: '' })
     const levelCtx = formulaContext(draft, catalog, { kind: 'level' })
+    const headingCtx = formulaContext(draft, catalog, { kind: 'heading' })
     return draft.columns.map(column => {
         const out: SpecColumn = { id: column.id, label: column.label }
         if (column.kind === 'path') out.path = column.path
@@ -853,6 +1052,8 @@ function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecC
         if (column.detail === 'blank') out.detail = 'blank'
         // A rollup is worked out on the level rows (levels.go levelCtx.col).
         if (column.rollup) out.rollup = specFormula(column.rollup, levelCtx)
+        if (column.heading) out.heading = specFormula(column.heading, headingCtx)
+        if (column.hidden) out.hidden = true
         return out
     })
 }
@@ -962,6 +1163,7 @@ export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[
     for (const column of draft.columns) {
         if (column.kind === 'formula') node(column.formula.node)
         node(column.rollup?.node)
+        node(column.heading?.node)
     }
     for (const group of draft.groups) {
         paramsInGroup(group.having, read)
@@ -970,7 +1172,11 @@ export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[
         for (const cell of Object.values(group.opening?.cells ?? {})) node(cell.node)
     }
     for (const key of draft.sort) if (key.kind === 'formula') node(key.formula.node)
-    for (const item of draft.layout) if (item.kind === 'row') node(item.formula.node)
+    for (const item of draft.layout) {
+        if (item.kind !== 'row') continue
+        node(item.formula?.node)
+        for (const cell of Object.values(item.cells ?? {})) node(cell.node)
+    }
     node(draft.detailLabel?.node)
     // A kept param's options can be filtered by another param, which then stays too,
     // and so on (params.go optionsFrom.where).
@@ -994,9 +1200,22 @@ function specLayout(
     const ctx = formulaContext(draft, catalog, { kind: 'layout', index: draft.layout.length })
     return draft.layout.map(item =>
         item.kind === 'row'
-            ? { row: item.id, label: item.label, formula: specFormula(item.formula, ctx) }
+            ? {
+                  row: item.id,
+                  label: item.label,
+                  ...(item.formula ? { formula: specFormula(item.formula, ctx) } : {}),
+                  ...(item.within ? { within: item.within } : {}),
+                  ...(item.cells && Object.keys(item.cells).length > 0
+                      ? { cells: specCells(item.cells, ctx) }
+                      : {}),
+              }
             : { section: item.id, title: item.title, key: sectionKey(item.key, keyType) }
     )
+}
+
+function specCells(cells: Record<string, FormulaDraft>, ctx: ReportFormulaContext) {
+    const written = Object.entries(cells).map(([col, f]) => [col, specFormula(f, ctx)] as const)
+    return Object.fromEntries(written)
 }
 
 function specSort(draft: BuilderDraft, catalog: Catalog): SpecSortKey[] {
@@ -1010,10 +1229,8 @@ function specSort(draft: BuilderDraft, catalog: Catalog): SpecSortKey[] {
 }
 
 function specOpening(opening: OpeningDraft, ctx: ReportFormulaContext) {
-    const cells = Object.entries(opening.cells)
-    if (cells.length === 0) return { label: opening.label }
-    const written = cells.map(([col, formula]) => [col, specFormula(formula, ctx)] as const)
-    return { label: opening.label, cells: Object.fromEntries(written) }
+    if (Object.keys(opening.cells).length === 0) return { label: opening.label }
+    return { label: opening.label, cells: specCells(opening.cells, ctx) }
 }
 
 function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
@@ -1036,6 +1253,8 @@ function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
             ...(g.fill.on ? { fill: where ? { where } : {} } : {}),
             ...(g.open ? { open: true } : {}),
             ...(g.opening ? { opening: specOpening(g.opening, ctx) } : {}),
+            ...(g.blank === 'skip' ? { blank: 'skip' as const } : {}),
+            ...(g.hideEmpty ? { hideEmpty: true } : {}),
         }
     })
 }

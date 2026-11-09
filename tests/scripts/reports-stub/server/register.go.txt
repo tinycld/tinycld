@@ -156,7 +156,85 @@ func Register(_ core.App) error {
 			]}]}
 		}`, "OPENING", teamOpening)),
 	})
+	// A published statement over the statement parts (G1, G3, G4, G5, G7, G8): sections
+	// by a hidden status column, a skipped region level and a skipped desk level,
+	// headings that name the as-of day and the same day a year earlier, a row inside
+	// the paid section with its own cell per column, derived Change and percent
+	// columns, and a phone layout that leaves the percent out
+	// (tests/e2e/reports-statements.spec.ts).
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.statement", Title: "Stub statement", Revision: 1,
+		Description: "Sales on a day beside the same day a year earlier, by status.",
+		Spec: json.RawMessage(strings.NewReplacer(
+			"PRIOR_DAY", priorDay,
+			"COST_TO_ASOF", costTo(`{"param": "asOf"}`),
+			"COST_TO_PRIOR", costTo(priorDay),
+		).Replace(`{
+			"version": 4,
+			"source": "salesstub.sales",
+			"params": [{"id": "asOf", "type": "asOf", "label": "As of", "default": {"preset": "today"}}],
+			"columns": [
+				{"id": "team", "label": "Team", "path": [{"link": "team"}]},
+				{"id": "current", "label": "Current", "heading": {"param": "asOf"},
+				 "formula": {"op": "coalesce", "args": [{"op": "sum", "args": [{"op": "if", "args": [
+					{"op": "lte", "args": [{"path": [{"field": "day"}]}, {"param": "asOf"}]}, {"path": [{"field": "amount"}]}, {"value": null}]}]}, {"value": 0}]}},
+				{"id": "prior", "label": "Prior year", "heading": PRIOR_DAY,
+				 "formula": {"op": "coalesce", "args": [{"op": "sum", "args": [{"op": "if", "args": [
+					{"op": "lte", "args": [{"path": [{"field": "day"}]}, PRIOR_DAY]}, {"path": [{"field": "amount"}]}, {"value": null}]}]}, {"value": 0}]}},
+				{"id": "change", "label": "Change", "formula": {"op": "sub", "args": [{"col": "current"}, {"col": "prior"}]}},
+				{"id": "pct", "label": "% change", "format": "percent", "formula": {"op": "if", "args": [
+					{"op": "eq", "args": [{"col": "prior"}, {"value": 0}]}, {"value": null},
+					{"op": "mul", "args": [{"op": "div", "scale": 4, "args": [{"col": "change"},
+						{"op": "max", "args": [{"col": "prior"}, {"op": "sub", "args": [{"value": 0}, {"col": "prior"}]}]}]}, {"value": 100}]}]}},
+				{"id": "side", "hidden": true, "path": [{"field": "status"}]},
+				{"id": "cls", "hidden": true, "formula": {"op": "case", "args": [
+					{"op": "eq", "args": [{"path": [{"link": "team"}, {"field": "region"}]}, {"value": "north"}]}, {"value": 1},
+					{"op": "eq", "args": [{"path": [{"link": "team"}, {"field": "region"}]}, {"value": "south"}]}, {"value": 2},
+					{"value": null}]}},
+				{"id": "knd", "hidden": true, "formula": {"op": "if", "args": [
+					{"op": "eq", "args": [{"path": [{"link": "team"}, {"field": "region"}]}, {"value": "south"}]}, {"value": 1}, {"value": null}]}}
+			],
+			"groups": [
+				{"id": "section", "col": "side", "open": true, "subtotals": true},
+				{"id": "region", "col": "cls", "blank": "skip", "hideEmpty": true, "open": true, "subtotals": true,
+				 "label": {"op": "case", "args": [{"op": "eq", "args": [{"col": "cls"}, {"value": 1}]}, {"value": "North"}, {"value": "South"}]}},
+				{"id": "desk", "col": "knd", "blank": "skip", "hideEmpty": true, "open": true, "subtotals": true,
+				 "label": {"value": "Southern desks"}},
+				{"id": "byTeam", "col": "team", "label": {"record": "byTeam", "path": [{"field": "name"}]},
+				 "having": {"op": "or", "args": [{"op": "ne", "args": [{"col": "current"}, {"value": 0}]}, {"op": "ne", "args": [{"col": "prior"}, {"value": 0}]}]}}
+			],
+			"layout": [
+				{"section": "open", "title": "Open sales", "key": "open"},
+				{"section": "paid", "title": "Paid sales", "key": "paid"},
+				{"row": "adjust", "label": "Adjustments", "within": "paid", "cells": {
+					"current": COST_TO_ASOF,
+					"prior": COST_TO_PRIOR}},
+				{"row": "all", "label": "All sales", "formula": {"op": "add", "args": [{"subtotal": "open"}, {"subtotal": "paid"}]}}
+			],
+			"sort": [{"col": "cls"}, {"col": "knd"}, {"formula": {"record": "byTeam", "path": [{"field": "name"}]}}],
+			"display": {
+				"columns": {"team": {"minWidth": "12ch"}, "current": {"minWidth": "max-content"}, "prior": {"minWidth": "max-content"},
+					"change": {"minWidth": "max-content"}, "pct": {"minWidth": "max-content"}},
+				"layouts": [
+					{"width": "mobile", "tracks": 3, "cells": [{"col": "team", "line": 1, "span": 3},
+						{"col": "current", "line": 2}, {"col": "prior", "line": 2}, {"col": "change", "line": 2}]},
+					{"width": "tablet", "minWidth": "600px", "tracks": 4, "cells": [{"col": "team", "line": 1, "span": 4},
+						{"col": "current", "line": 2}, {"col": "prior", "line": 2}, {"col": "change", "line": 2}, {"col": "pct", "line": 2}]}
+				]
+			}
+		}`)),
+	})
 	return nil
+}
+
+// priorDay is the same day a year before the as-of day.
+const priorDay = `{"op": "addMonths", "args": [{"param": "asOf"}, {"value": -12}]}`
+
+// costTo is the cost of the reader's sales on or before a day (a node).
+func costTo(day string) string {
+	return `{"op": "coalesce", "args": [{"op": "lookup", "source": "salesstub.sales",
+		"where": {"op": "lte", "args": [{"path": [{"field": "day"}]}, ` + day + `]},
+		"value": {"path": [{"field": "cost"}]}, "pick": "sum"}, {"value": 0}]}`
 }
 
 // stubHeading is the business name the stub's reports print above their title (E9).

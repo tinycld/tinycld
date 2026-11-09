@@ -278,7 +278,6 @@ describe('what a formula reads where it is edited', () => {
             leaf: 'subtotal',
             source: null,
             records: [],
-            params: [],
             totals: false,
             windows: false,
         })
@@ -291,8 +290,23 @@ describe('what a formula reads where it is edited', () => {
         expect(counted.values).toEqual([{ key: 'open', label: 'Open', type: 'number' }])
     })
 
+    // A row inside a section adds to it, so it cannot read it (layout.go subtotal).
+    it('a row inside a section is not offered that section', () => {
+        const inside = draft()
+        inside.layout = inside.layout.map(item =>
+            item.kind === 'row' ? { ...item, within: 'open' } : item
+        )
+        expect(formulaContext(inside, CATALOG, { kind: 'layout', index: 1 }).values).toEqual([])
+    })
+
+    // Ruling 7: a computed row's formula and its cells read params (layout.go param).
+    it('a layout row reads the params', () => {
+        const ctx = formulaContext(draft(), CATALOG, { kind: 'layout', index: 1 })
+        expect(ctx.params.map(p => p.id)).toEqual(['period'])
+    })
+
     // F16 / R21: a computed row may look a value up; the lookup reads params
-    // (lookup.go lookupCtx.param) though the row itself reads none (layout.go param).
+    // (lookup.go lookupCtx.param).
     it('a layout row looks values up, and its lookups read the params', () => {
         const ctx = formulaContext(draft(), CATALOG, { kind: 'layout', index: 1 })
         expect(ctx.lookups).toBe(true)

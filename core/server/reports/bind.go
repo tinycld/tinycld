@@ -53,6 +53,8 @@ type plan struct {
 	// options binds each choice param whose options come from a source, by
 	// param id.
 	options map[string]*optionsPlan
+	// derived marks the derived columns by id (derivedColumns).
+	derived map[string]bool
 }
 
 // optionsPlan is a choice param's options source bound to the registry: its
@@ -204,6 +206,7 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	b.merge(checkParamDefs(spec.Params))
 	b.optionSources(p)
 	b.columns(p)
+	b.derivedColumns(p)
 	b.lookups(p)
 	b.formulaSizes(p)
 	b.nestChain(p)
@@ -219,10 +222,45 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 		b.bad("detail.label", "a pivot report has no detail rows to label")
 	}
 	b.display(p)
+	b.hiddenColumns(p)
 	if err := b.err(); err != nil {
 		return nil, err
 	}
 	return p, nil
+}
+
+// hiddenColumns refuses a hidden column the display arranges or fits, and a
+// hidden pivot cell column: each would show a column the result leaves out.
+func (b *binder) hiddenColumns(p *plan) {
+	// As the first column labels the rows, each level's first column labels
+	// its child rows (nestedRows), so it is shown.
+	for _, lv := range p.nest {
+		if len(lv.cols) > 0 && lv.cols[0].col.Hidden {
+			b.bad(lv.cols[0].at+".hidden", "the first column of child rows labels the child rows, so it is shown")
+		}
+	}
+	for i, c := range p.spec.Columns {
+		if !c.Hidden {
+			continue
+		}
+		if pv := p.spec.Pivot; pv != nil && pv.Cell == c.ID {
+			b.bad(fmt.Sprintf("columns.%d.hidden", i), "a pivot's cell column shows as the pivot's columns, so it is not hidden")
+		}
+		d := p.spec.Display
+		if d == nil {
+			continue
+		}
+		if _, ok := d.Columns[c.ID]; ok {
+			b.bad("display.columns."+c.ID, "a hidden column is never shown, so it has no fit")
+		}
+		for li, l := range d.Layouts {
+			for ci, cell := range l.Cells {
+				if cell.Col == c.ID {
+					b.bad(fmt.Sprintf("display.layouts.%d.cells.%d.col", li, ci), "a hidden column is never shown, so no layout places it")
+				}
+			}
+		}
+	}
 }
 
 // optionSources binds each choice param's options source: its value, label,
@@ -300,6 +338,9 @@ func (b *binder) columns(p *plan) {
 			b.bad(at+".total", "total is recompute or rows")
 		}
 		b.detailBlank(p.spec, i)
+		if c.Hidden && i == 0 {
+			b.bad(at+".hidden", "the first column labels the rows, so it is shown")
+		}
 		if (c.Path == nil) == (c.Formula == nil) {
 			b.bad(at, "a column has a path or a formula")
 		}
@@ -762,6 +803,20 @@ func (b *binder) groupsAndPivot(p *plan) {
 				b.bad(at+".bucket", "only a date column has a bucket")
 			}
 		}
+		switch {
+		case g.Blank == "":
+		case g.Blank != GroupBlankSkip:
+			b.bad(at+".blank", `blank is "skip"`)
+		case i == len(spec.Groups)-1:
+			b.bad(at+".blank", "the last level has no level below for its rows to pass to")
+		case i == 0:
+			b.bad(at+".blank", "the first level has no group above for its rows to sit under")
+		case g.Bucket != "":
+			b.bad(at+".blank", "a bucketed level has no blank key to skip")
+		}
+		if g.HideEmpty && i == len(spec.Groups)-1 {
+			b.bad(at+".hideEmpty", "the last level has no child groups to be empty of")
+		}
 		// One refusal per column, however many levels group by it.
 		if g.Bucket == "" && cp.col.Rollup != nil && !groupedRollup[cp] {
 			groupedRollup[cp] = true
@@ -832,6 +887,8 @@ func (b *binder) opening(p *plan, op *Opening, at string) {
 			b.bad(cellAt, "the opening row's label fills the first column")
 		case cp.nest > 0:
 			b.bad(cellAt, "a child row column has no opening cell")
+		case cp.col.Hidden:
+			b.bad(cellAt, "a hidden column is never shown, so its opening cell would not show")
 		}
 	}
 }
@@ -851,6 +908,58 @@ func (b *binder) layoutSectionKey(at string, item *LayoutItem, seen map[string]b
 	seen[id] = true
 }
 
+// layoutCells refuses a computed row's cells on a column it cannot fill: an
+// unknown one, the first (the row's label is there) or a pivot's cell column
+// (it shows as the pivot's columns, which the row's formula fills).
+func (b *binder) layoutCells(p *plan, at string, item *LayoutItem) {
+	for _, id := range item.cellIDs() {
+		cellAt := at + ".cells." + id
+		cp := b.column(p, id, cellAt)
+		switch {
+		case cp == nil:
+		case len(p.cols) > 0 && cp == p.cols[0]:
+			b.bad(cellAt, "the row's label fills the first column")
+		case p.spec.Pivot != nil && p.spec.Pivot.Cell == id:
+			b.bad(cellAt, "a pivot's cell column is filled by the row's formula")
+		}
+	}
+}
+
+// derivedColumns marks each derived column: a formula column with no
+// aggregate and no rollup that reads only columns, params, values and scalar
+// operators. On a computed row its cell is its formula over the row's own
+// cells (G8).
+func (b *binder) derivedColumns(p *plan) {
+	p.derived = map[string]bool{}
+	for _, cp := range p.cols {
+		c := cp.col
+		if c.Formula != nil && c.Aggregate == "" && c.Rollup == nil && scalarOnly(c.Formula) {
+			p.derived[c.ID] = true
+		}
+	}
+}
+
+// scalarOnly is true for a formula of columns, params, values and scalar
+// operators.
+func scalarOnly(n *Node) bool {
+	if n == nil {
+		return true
+	}
+	if n.Path != nil || n.Record != "" || n.Subtotal != "" || n.Outer != nil || n.Link != nil || n.Where != nil || n.Source != "" {
+		return false
+	}
+	switch {
+	case n.Op == "lookup", n.Op == "exists", n.Op == "notExists", aggregateOp(n), windowOp(n):
+		return false
+	}
+	for _, a := range n.Args {
+		if !scalarOnly(a) {
+			return false
+		}
+	}
+	return true
+}
+
 func (b *binder) layout(p *plan) {
 	items := p.spec.Layout
 	if len(items) == 0 {
@@ -865,8 +974,13 @@ func (b *binder) layout(p *plan) {
 	if len(p.spec.Groups) > 0 && p.spec.Groups[0].Having != nil {
 		b.bad("groups.0.having", "a layout's sections are fixed rows: hide rows on a deeper group")
 	}
+	// The last-level refusal (groupsAndPivot) already names a one-level spec.
+	if len(p.spec.Groups) > 1 && p.spec.Groups[0].HideEmpty {
+		b.bad("groups.0.hideEmpty", "a layout's sections are fixed rows: hide empty groups on a deeper group")
+	}
 	seen := map[string]bool{}
 	keys := map[string]bool{}
+	sections := map[string]int{}
 	for i := range items {
 		item := &items[i]
 		at := fmt.Sprintf("layout.%d", i)
@@ -880,15 +994,33 @@ func (b *binder) layout(p *plan) {
 			continue
 		case !idRe.MatchString(id) || seen[id]:
 			b.bad(at, "a layout item needs a unique id of letters, digits and _")
-		case isSection && (item.Key == nil || item.Formula != nil || item.Label != ""):
+		case isSection && (item.Key == nil || item.Formula != nil || item.Label != "" || item.Within != "" || len(item.Cells) > 0):
 			b.bad(at, "a section has a title and the key of a first-level group")
-		case !isSection && (item.Formula == nil || item.Key != nil || item.Title != ""):
-			b.bad(at, "a computed row has a label and a formula")
+		case !isSection && ((item.Formula == nil && len(item.Cells) == 0) || item.Key != nil || item.Title != ""):
+			b.bad(at, "a computed row has a label and a formula or cells")
 		case characters(item.Title) > maxLabel || characters(item.Label) > maxLabel:
 			b.bad(at, fmt.Sprintf("a title or label has at most %d characters", maxLabel))
 		}
 		if isSection && item.Key != nil {
 			b.layoutSectionKey(at+".key", item, keys)
+		}
+		if !isSection {
+			b.layoutCells(p, at, item)
+		}
+		if !isSection && item.Within != "" {
+			at := at + ".within"
+			switch idx, ok := sections[item.Within]; {
+			case ok && idx < i:
+			case ok || seen[item.Within] || slices.ContainsFunc(items, func(o LayoutItem) bool { return o.Section == item.Within || o.Row == item.Within }):
+				b.bad(at, "within names a section earlier in the layout")
+			default:
+				b.missing(at, "unknown_section", fmt.Sprintf("the layout has no section %q", item.Within))
+			}
+		}
+		if isSection {
+			if _, ok := sections[id]; !ok {
+				sections[id] = i
+			}
 		}
 		seen[id] = true
 		p.layout = append(p.layout, item)

@@ -547,11 +547,20 @@ func (lv *level) joinSides(a string, sides []tmCol) ([]string, string) {
 const shownCell = "__shown"
 
 // countShownKids makes the level read how many of each row's child groups
-// pass their having, when the next level's group has one.
+// show, when the next level can hide some (hidesRows).
 func (lv *level) countShownKids() {
-	if lv.n >= 1 && lv.n < len(lv.c.p.groups) && lv.c.p.groups[lv.n].group.Having != nil {
+	if lv.n >= 1 && lv.n < len(lv.c.p.groups) && lv.c.hidesRows(lv.n+1) {
 		lv.kids = lv.childSum(shownCell)
 	}
+}
+
+// hidesRows is true when some rows of group level n can be missing from the
+// rows a run shows (a having, a skip level's blank key with nothing shown
+// under it, or an empty group of a hideEmpty level), so the level above counts
+// its shown children.
+func (c *compiler) hidesRows(n int) bool {
+	g := c.p.groups[n-1].group
+	return g.Having != nil || g.Blank == GroupBlankSkip || g.HideEmpty
 }
 
 // rowsCells are the level's cells of its "rows" columns, which rt<L> holds for
@@ -562,7 +571,7 @@ func (lv *level) rowsCells() ([]string, error) {
 		return nil, nil
 	}
 	var out []string
-	if lv.c.p.groups[lv.n-1].group.Having != nil {
+	if lv.c.hidesRows(lv.n) {
 		out = append(out, "1 AS "+shownCell)
 	}
 	for idx, cp := range lv.c.p.cols {
@@ -603,11 +612,44 @@ func (c *compiler) inShown(m int, alias string) string {
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM s%d p WHERE %s)", m, strings.Join(match, " AND "))
 }
 
-// own is 1 for a row of this level that passes its group's having.
+// own is 1 for a row of this level that shows: it passes its group's having,
+// or, for the blank key of a skip level, something under it shows.
 func (lv *level) own() (string, error) {
 	if lv.n == 0 {
 		return "1", nil
 	}
+	cond, err := lv.having()
+	if err != nil {
+		return "", err
+	}
+	g := lv.c.p.groups[lv.n-1]
+	// With no count of shown children the level below hides nothing, so every
+	// group has a shown child and none is empty.
+	if g.group.HideEmpty && lv.kids != "" {
+		cond = fmt.Sprintf("(%s AND %s > 0)", cond, lv.kids)
+	}
+	if g.group.Blank != GroupBlankSkip {
+		return cond, nil
+	}
+	// The blank key is no group: it passes when something under it shows,
+	// and the level's having (a rule for groups) does not apply to it.
+	// When the level below hides nothing, something under it always shows.
+	passes := "1"
+	if lv.kids != "" {
+		passes = lv.kids + " > 0"
+	}
+	if passes == "1" && cond == "1" {
+		return "1", nil
+	}
+	blank := fmt.Sprintf("a.k%d IS NULL", lv.n-1)
+	if lv.havingMixed != "" {
+		lv.havingMixed = fmt.Sprintf("(NOT %s AND %s)", blank, lv.havingMixed)
+	}
+	return fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", blank, passes, cond), nil
+}
+
+// having is 1 for a row of this level that passes its group's having.
+func (lv *level) having() (string, error) {
 	g := lv.c.p.groups[lv.n-1]
 	if g.group.Having == nil {
 		return "1", nil

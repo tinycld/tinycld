@@ -644,3 +644,92 @@ describe('holdWholeReportRows', () => {
         expect(shown.held).toEqual([])
     })
 })
+
+describe('rows at a skipped level (G1)', () => {
+    // A layout report: section › class (skipped for this row) › account. The account
+    // sits at depth 1 but is a level-3 group, whose level has no subtotals.
+    const spec = {
+        groups: [{ subtotals: true }, { subtotals: true }, { subtotals: false }],
+        layout: [{}],
+    }
+    const account: ResultRow = {
+        id: 'g:["equity",null,"acct"]',
+        kind: 'group',
+        depth: 1,
+        level: 3,
+        label: 'Owner capital',
+        canExpand: true,
+        expanded: false,
+        cells: { amount: 500 },
+    }
+
+    it('keeps the figures of a group at depth 1 whose level ends in no subtotal', () => {
+        expect(visibleRows([account], spec)[0]?.cells).toEqual({ amount: 500 })
+    })
+
+    it('reads depth + 1 when a row carries no level', () => {
+        const { level: _level, ...noLevel } = account
+        expect(visibleRows([noLevel], spec)[0]?.cells).toEqual({})
+    })
+})
+
+describe('a computed row inside a section (G4)', () => {
+    const spec = { groups: [{ subtotals: true }], layout: [{}] }
+    const section = (expanded: boolean): ResultRow => ({
+        id: 'g:["equity"]',
+        kind: 'group',
+        depth: 0,
+        level: 1,
+        label: 'Equity',
+        canExpand: true,
+        expanded,
+        cells: { amount: 900 },
+    })
+    const inside: ResultRow = {
+        id: 'c:netIncome',
+        kind: 'computed',
+        depth: 1,
+        label: 'Net income',
+        section: 'g:["equity"]',
+        cells: { amount: 400 },
+    }
+    const total: ResultRow = {
+        id: 's:["equity"]',
+        kind: 'subtotal',
+        depth: 0,
+        level: 1,
+        label: 'Total Equity',
+        section: 'g:["equity"]',
+        cells: { amount: 900 },
+    }
+
+    it('sits at depth 1 before the total of an open section and does not open', () => {
+        const shown = visibleRows([section(true), inside, total], spec)
+        expect(shown.map(r => r.row.id)).toEqual(['g:["equity"]', 'c:netIncome', 's:["equity"]'])
+        expect(shown[1]).toMatchObject({ isToggle: false, isOpen: false, cells: { amount: 400 } })
+        expect(shown[1]?.row.depth).toBe(1)
+    })
+
+    it('is hidden inside a folded section', () => {
+        const shown = visibleRows([section(false), inside, total], spec)
+        expect(shown.map(r => r.row.id)).toEqual(['g:["equity"]', 's:["equity"]'])
+    })
+
+    it('is not held back or dropped as a whole-report row at a page end', () => {
+        const page = (rows: ResultRow[], next?: string): RunResult => ({
+            columns: [],
+            rows,
+            notices: [],
+            topics: [],
+            page: next ? { next, size: 1 } : { size: 1 },
+            params: [],
+        })
+        const first = page([section(true), inside], 'p2')
+        expect(holdWholeReportRows(first).result.rows.map(r => r.id)).toEqual([
+            'g:["equity"]',
+            'c:netIncome',
+        ])
+        const merged = mergePages([first, page([total])])
+        expect(merged.rows.map(r => r.id)).toEqual(['g:["equity"]', 'c:netIncome', 's:["equity"]'])
+    })
+})

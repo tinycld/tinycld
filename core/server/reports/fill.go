@@ -31,7 +31,9 @@ func (lv *level) fillRows() string {
 // (or one no-currency row when there are no rows); for a deeper level the
 // rows of level n-1 that show and are open, its fill rows included. A folded
 // or collapsed row, or one under a folded ancestor, shows no children, so its
-// fill records are never computed.
+// fill records are never computed. At a skip level the blank key is open when
+// its parent is (expansion.where), so a fill below it fills under the parent
+// the rows reach.
 func (c *compiler) parentKeys(s *stmt, n int, expand *expansion) string {
 	if n == 1 {
 		if len(c.currencies) == 0 {

@@ -137,6 +137,11 @@ export const specColumnSchema = z.strictObject({
     // A formula shown on group, subtotal and total rows in place of the column's
     // totals; detail rows keep `path` or `formula`.
     rollup: specNodeSchema.optional(),
+    // Computed (a group, sort or section key, a {col} read) but never shown: the
+    // result leaves the column and its cells out.
+    hidden: z.boolean().optional(),
+    // A formula over params and values the heading shows in place of the label.
+    heading: specNodeSchema.optional(),
 })
 export type SpecColumn = z.infer<typeof specColumnSchema>
 
@@ -166,6 +171,11 @@ export const specGroupSchema = z.strictObject({
             cells: z.record(z.string(), specNodeSchema).optional(),
         })
         .optional(),
+    // 'skip': a row whose key at this level is blank skips the level and sits under
+    // the group above. Absent: a blank key forms a (none) group.
+    blank: z.literal('skip').optional(),
+    // Hides a group whose child groups are all hidden, with its subtotal.
+    hideEmpty: z.boolean().optional(),
 })
 export type SpecGroup = z.infer<typeof specGroupSchema>
 
@@ -239,6 +249,11 @@ const layoutItemSchema = z.strictObject({
     row: z.string().optional(),
     label: z.string().optional(),
     formula: specNodeSchema.optional(),
+    // A computed row inside an earlier section: shown before the section's total
+    // while it is open, and added to that total.
+    within: z.string().optional(),
+    // The row's cell per column id, each a formula like `formula`.
+    cells: z.record(z.string(), specNodeSchema).optional(),
 })
 
 export const reportSpecSchema = z.strictObject({

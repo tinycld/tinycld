@@ -15,7 +15,15 @@ import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { moved } from './ColumnsSection'
 import type { AboveChoice } from './ConditionTree'
-import { GroupFill, GroupHaving, GroupLabel, GroupOpening, setLevel } from './GroupLevelParts'
+import {
+    GroupBlank,
+    GroupFill,
+    GroupHaving,
+    GroupHideEmpty,
+    GroupLabel,
+    GroupOpening,
+    setLevel,
+} from './GroupLevelParts'
 import { BucketSelect, IconButton } from './parts'
 import { useColumnChoices } from './report-formula'
 import { SortRows } from './SortRows'
@@ -143,6 +151,8 @@ function GroupRow({ builder, groups, index, choices }: GroupRowProps) {
             <GroupLabel {...part} labelField={labelField} />
             <GroupFill {...part} above={above} />
             <GroupHaving builder={builder} groups={groups} index={index} />
+            <GroupBlank builder={builder} groups={groups} index={index} />
+            <GroupHideEmpty builder={builder} groups={groups} index={index} />
             <GroupOpening builder={builder} groups={groups} index={index} />
             <Toggle
                 name={`groups.${index}.open`}

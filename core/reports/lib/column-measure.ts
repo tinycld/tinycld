@@ -352,6 +352,10 @@ export function defaultFlexGrow({ isLabel, isFigure }: { isLabel: boolean; isFig
 const fitOf = (fits: Readonly<Record<string, ColumnFit>>, column: ResultColumn) =>
     fits[column.pivot?.cell ?? column.id]
 
+// The heading is part of the measure's key, so a heading that changes width
+// (another day) measures the column again.
+const headingKey = (column: ResultColumn) => (column.heading ? String(column.heading.value) : '')
+
 /**
  * What the run's measure depends on (D1): the run (design, params, sort), the
  * number format, the shown columns and the row levels. A later page, a fold and a
@@ -365,7 +369,12 @@ export function measureKey(input: {
     fits?: Readonly<Record<string, ColumnFit>>
 }): string {
     const { runKey, format, columns, levels } = input
-    const shape = columns.map(column => [column.id, column.label, column.sortable === true])
+    const shape = columns.map(column => [
+        column.id,
+        column.label,
+        headingKey(column),
+        column.sortable === true,
+    ])
     return JSON.stringify([runKey, format, shape, levels, input.fits ?? NO_FITS])
 }
 

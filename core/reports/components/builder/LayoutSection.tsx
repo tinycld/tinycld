@@ -4,11 +4,17 @@ import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react-native'
 import { Text, View } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import { MAX_LAYOUT_ITEMS, nextColumnId } from '../../lib/builder/columns'
-import type { FormulaDraft, LayoutItemDraft } from '../../lib/builder/draft'
+import {
+    cellColumnIds,
+    type FormulaDraft,
+    type LayoutItemDraft,
+    withinChoices,
+} from '../../lib/builder/draft'
+import { columnTypes } from '../../lib/builder/formula-context'
 import type { Problem } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { moved } from './ColumnsSection'
-import { IconButton, NEW_FORMULA } from './parts'
+import { FieldError, IconButton, NEW_FORMULA } from './parts'
 import { ReportFormula, useColumnChoices } from './report-formula'
 
 const KIND_LABELS = { section: 'Section', row: 'Computed row' } as const
@@ -55,26 +61,262 @@ function SectionKey({ builder, index, keyOptions }: ItemProps) {
     )
 }
 
+// A row with column formulas may drop its formula for the other columns; a row
+// with none keeps it, as it needs one or the other.
+function RemoveRowFormula({
+    isVisible,
+    onPress,
+    testID,
+}: {
+    isVisible: boolean
+    onPress: () => void
+    testID: string
+}) {
+    if (!isVisible) return null
+    return (
+        <View className="flex-row items-center gap-2">
+            <Text numberOfLines={1} className="min-w-0 flex-1 text-xs text-muted-foreground">
+                The other columns
+            </Text>
+            <Button
+                variant="outline"
+                size="sm"
+                onPress={onPress}
+                accessibilityLabel="Remove the formula for the other columns"
+                testID={testID}
+            >
+                <ButtonText>Remove</ButtonText>
+            </Button>
+        </View>
+    )
+}
+
 // A computed row reads the sections and computed rows above it, by id, and may
 // look values up (F16).
 function RowFormula({ builder, items, index }: ItemProps) {
     const item = items[index]
     if (item?.kind !== 'row') return null
-    const setFormula = (formula: FormulaDraft) =>
+    const setFormula = (formula: FormulaDraft | null) =>
         builder.setLayout(
             items.map((other, i) =>
                 i === index && other.kind === 'row' ? { ...other, formula } : other
             )
         )
+    const addFormula = () => setFormula(NEW_FORMULA)
+    const removeFormula = () => setFormula(null)
+    // Save's refusals of the row's formula (none and no column formula, or a
+    // read of its own section) are drawn here, in both forms of the row.
+    const state = builder.form.getFieldState(`layout.${index}.formula`, builder.form.formState)
+    const error = (
+        <FieldError
+            message={state.error?.message}
+            testID={`report-builder-layout-${index}-formula-error`}
+        />
+    )
+    // A row with column formulas may have none for the other columns.
+    if (item.formula === null) {
+        return (
+            <View className="gap-1">
+                {error}
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onPress={addFormula}
+                    testID={`report-builder-layout-${index}-formula-add`}
+                >
+                    <ButtonText>Add a formula for the other columns</ButtonText>
+                </Button>
+            </View>
+        )
+    }
+    const hasCells = Object.keys(item.cells ?? {}).length > 0
+    return (
+        <View className="gap-1">
+            <RemoveRowFormula
+                isVisible={hasCells}
+                onPress={removeFormula}
+                testID={`report-builder-layout-${index}-formula-remove`}
+            />
+            {error}
+            <ReportFormula
+                builder={builder}
+                place={{ kind: 'layout', index }}
+                formula={item.formula}
+                onChange={setFormula}
+                testID={`report-builder-layout-${index}-formula`}
+            />
+        </View>
+    )
+}
+
+const AFTER_SECTIONS = 'After the sections'
+
+/**
+ * "Add a row to this section": a section above the row, or after the sections (G4).
+ * A section read back that is no longer above the row stays in view, with its
+ * refusal, so it can be set back.
+ */
+function RowWithin({ builder, items, index }: ItemProps) {
+    const item = items[index]
+    if (item?.kind !== 'row') return null
+    const sections = withinChoices({ layout: items }, index)
+    const within = item.within ?? ''
+    if (sections.length === 0 && within === '') return null
+    const titleOf = (id: string) => {
+        const found = items.find(other => other.kind === 'section' && other.id === id)
+        return found?.kind === 'section' ? found.title : id
+    }
+    const options = [
+        { value: '', label: AFTER_SECTIONS },
+        ...sections.map(id => ({ value: id, label: titleOf(id) })),
+    ]
+    return (
+        <SelectInput
+            name={`layout.${index}.within`}
+            control={builder.form.control}
+            label="Add a row to this section"
+            options={options}
+            // An absent within places the row after the sections.
+            placeholder={AFTER_SECTIONS}
+            testID={`report-builder-layout-${index}-within`}
+            onValueChange={builder.validateLists}
+        />
+    )
+}
+
+interface CellRowData {
+    col: string
+    label: string
+    formula: FormulaDraft | null
+    /** A cell in a column "This column: …" no longer offers: Save refuses it. */
+    isStale: boolean
+}
+
+function CellFormula({
+    isVisible,
+    builder,
+    index,
+    formula,
+    onChange,
+    testID,
+}: {
+    isVisible: boolean
+    builder: ReportBuilder
+    index: number
+    formula: FormulaDraft | null
+    onChange: (formula: FormulaDraft) => void
+    testID: string
+}) {
+    if (!isVisible || !formula) return null
     return (
         <ReportFormula
             builder={builder}
             place={{ kind: 'layout', index }}
-            formula={item.formula}
-            onChange={setFormula}
-            testID={`report-builder-layout-${index}-formula`}
+            formula={formula}
+            onChange={onChange}
+            testID={testID}
         />
     )
+}
+
+// One column of a computed row: the row's formula, or its own formula for this
+// column. A stale cell shows its refusal and Remove only.
+function CellRow({
+    builder,
+    index,
+    row,
+    onChange,
+}: {
+    builder: ReportBuilder
+    index: number
+    row: CellRowData
+    onChange: (formula: FormulaDraft | null) => void
+}) {
+    const testID = `report-builder-layout-${index}-cell-${row.col}`
+    const caption = `This column: ${row.label}`
+    if (!row.formula) {
+        return (
+            <Button
+                variant="outline"
+                size="sm"
+                onPress={() => onChange(NEW_FORMULA)}
+                testID={`${testID}-add`}
+            >
+                <ButtonText>{caption}</ButtonText>
+            </Button>
+        )
+    }
+    const state = builder.form.getFieldState(
+        `layout.${index}.cells.${row.col}`,
+        builder.form.formState
+    )
+    return (
+        <View className="gap-1">
+            <View className="flex-row items-center gap-2">
+                <Text numberOfLines={1} className="min-w-0 flex-1 text-xs text-muted-foreground">
+                    {caption}
+                </Text>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onPress={() => onChange(null)}
+                    accessibilityLabel={`Remove the formula for ${row.label}`}
+                    testID={`${testID}-remove`}
+                >
+                    <ButtonText>Remove</ButtonText>
+                </Button>
+            </View>
+            <FieldError message={state.error?.message} testID={`${testID}-error`} />
+            <CellFormula
+                isVisible={!row.isStale}
+                builder={builder}
+                index={index}
+                formula={row.formula}
+                onChange={onChange}
+                testID={testID}
+            />
+        </View>
+    )
+}
+
+/** "This column: …": the row's own formula in a number, amount or percent column (G8). */
+function RowCells({ builder, items, index }: ItemProps) {
+    const control = builder.form.control
+    const source = useWatch({ control, name: 'source' })
+    const columns = useWatch({ control, name: 'columns' })
+    const params = useWatch({ control, name: 'params' })
+    const groups = useWatch({ control, name: 'groups' })
+    const pivot = useWatch({ control, name: 'pivot' })
+    const item = items[index]
+    if (item?.kind !== 'row') return null
+    const types = columnTypes({ source, columns, params, groups }, builder.catalog)
+    const offered = cellColumnIds({ columns, pivot }, types)
+    const cells = item.cells ?? {}
+    const stale = Object.keys(cells).filter(col => !offered.includes(col))
+    const setCell = (col: string, formula: FormulaDraft | null) => {
+        const kept = Object.entries(cells).filter(([key]) => key !== col)
+        const next = Object.fromEntries(formula ? [...kept, [col, formula] as const] : kept)
+        builder.setLayout(
+            items.map((other, i) =>
+                i === index && other.kind === 'row' ? { ...other, cells: next } : other
+            )
+        )
+    }
+    const rows = [...offered, ...stale].map(col => (
+        <CellRow
+            key={col}
+            builder={builder}
+            index={index}
+            row={{
+                col,
+                label: columns.find(c => c.id === col)?.label ?? col,
+                formula: cells[col] ?? null,
+                isStale: stale.includes(col),
+            }}
+            onChange={formula => setCell(col, formula)}
+        />
+    ))
+    return <View className="gap-1">{rows}</View>
 }
 
 function ItemFields(props: ItemProps) {
@@ -106,6 +348,8 @@ function ItemFields(props: ItemProps) {
                 maxLength={200}
             />
             <RowFormula {...props} />
+            <RowWithin {...props} />
+            <RowCells {...props} />
         </>
     )
 }
