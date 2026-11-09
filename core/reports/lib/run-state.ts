@@ -17,6 +17,8 @@ export interface RunQueryState {
     pages: readonly RunOutcome[]
     isPending: boolean
     isError: boolean
+    /** Only the next page failed; the pages already loaded stay (R8). */
+    isLoadMoreError: boolean
     /** The pages are the previous body's answer, shown while this body's run loads. */
     isPlaceholderData: boolean
 }
@@ -48,7 +50,7 @@ function firstRefusal(pages: readonly RunOutcome[]): RunRefusal | undefined {
 function baseState(query: RunQueryState, refusal: RunRefusal | undefined): RunState {
     if (!query.hasBody) return 'idle'
     if (refusal) return refusal.kind
-    if (query.isError) return 'error'
+    if (query.isError && !query.isLoadMoreError) return 'error'
     return query.isPending ? 'loading' : 'ready'
 }
 

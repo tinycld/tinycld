@@ -14,6 +14,17 @@ const json = (value: unknown, status = 200) =>
         headers: { 'content-type': 'application/json' },
     })
 
+/** A route's answer with an HTTP status other than 200, such as a refusal. */
+export class FakeAnswer {
+    readonly status: number
+    readonly body: unknown
+
+    constructor(status: number, body: unknown) {
+        this.status = status
+        this.body = body
+    }
+}
+
 const aborted = () => new DOMException('The operation was aborted.', 'AbortError')
 
 /** Rejects when `signal` aborts, as the browser's fetch does. */
@@ -53,7 +64,8 @@ export function fakePbServer(routes: Record<string, FakeRoute>) {
         }
         const route = routes[path]
         if (!route) return json({ message: `no route for ${path}` }, 404)
-        return json(await abortable(route(body, init?.signal ?? undefined), init?.signal))
+        const answer = await abortable(route(body, init?.signal ?? undefined), init?.signal)
+        return answer instanceof FakeAnswer ? json(answer.body, answer.status) : json(answer)
     }
     vi.stubGlobal('fetch', vi.fn(fetchStub))
     // The app resolves its server before `pb` sends anything; the test has none.

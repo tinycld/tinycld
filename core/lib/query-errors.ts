@@ -12,6 +12,13 @@ function couldNotReachServer(error: unknown): boolean {
     )
 }
 
+/**
+ * A read the server refused for a reason the person caused, which the screen shows
+ * as its own state. It is thrown, so the query keeps it as an error state, and it is
+ * logged, not reported: it is not a bug.
+ */
+export class QueryRefusal extends Error {}
+
 // reportQueryError is the global handler for a failed read: useQuery surfaces
 // errors as state rather than throwing, so without it a read failure is silent
 // (the component shows its own error UI, but nothing is logged). The queryKey
@@ -30,6 +37,10 @@ export function reportQueryError(
             queryKey,
         })
         onSessionEnded()
+        return
+    }
+    if (error instanceof QueryRefusal) {
+        log.info('query.refused', error.message, { queryKey })
         return
     }
     if (couldNotReachServer(error)) {

@@ -11,6 +11,7 @@ import {
     foldKeyOf,
     groupRowAt,
     isTransientRunError,
+    LoadMoreRefused,
     lastGroupRowOf,
     pageRowCount,
     RUN_QUERY_KEY,
@@ -46,6 +47,13 @@ export interface ReportRun extends Omit<RunView, 'topics' | 'heldRows'> {
     hasMore: boolean
     isLoadingMore: boolean
     loadMore(): void
+    /**
+     * The next page failed (R8): the rows shown stay, and the list ends in a row with
+     * Retry. Optional, because a hand-built ReportRun (a mockup) loads no pages.
+     */
+    loadMoreFailed?: boolean
+    /** Asks again for the next page that failed. Optional, as `loadMoreFailed`. */
+    retryLoadMore?(): void
     retry(): void
 }
 
@@ -133,6 +141,9 @@ export function useReportRun({
                 pageParam === ''
                     ? await runFirstPage(body, place.rows, signal, place.groupRow)
                     : await runReport(withPage(body, pageParam), signal)
+            // A later page's refusal is thrown, so the query keeps the pages shown and
+            // marks only the next page failed (R8).
+            if (outcome.kind !== 'ok' && pageParam !== '') throw new LoadMoreRefused(outcome)
             if (outcome.kind === 'ok' && pageParam === '' && 'reportId' in body) {
                 useReportRecentStore
                     .getState()
@@ -148,13 +159,6 @@ export function useReportRun({
     })
     const pages = query.data?.pages ?? []
     shown.current = pages[0] ? { foldKey: pages[0].foldKey, results: resultsOf(pages) } : null
-    const { topics, ...view } = runView({
-        hasBody: body !== null,
-        pages,
-        isPending: query.isPending,
-        isError: query.isError,
-        isPlaceholderData: query.isPlaceholderData,
-    })
     // A refetch and a next page cancel each other's fetch in flight. A live rerun
     // that cancelled a next page would leave the list a page short for good: the list
     // asks for more only when its rows change, and the rerun's rows are the same. A
@@ -166,6 +170,20 @@ export function useReportRun({
     // waits again. The query client is read, not the last render, because a render
     // lags a fetch that just started.
     runKey.current = queryKey
+    // The run whose last next page failed (R8), by its query key's text. Set when a
+    // next page fails, cleared when one succeeds; it counts only while the query is
+    // in error, so a rerun that lands clears it too.
+    const runKeyText = JSON.stringify(queryKey)
+    const failedNextPageOf = useRef<string | null>(null)
+    const isLoadMoreError = query.isError && failedNextPageOf.current === runKeyText
+    const { topics, ...view } = runView({
+        hasBody: body !== null,
+        pages,
+        isPending: query.isPending,
+        isError: query.isError,
+        isLoadMoreError,
+        isPlaceholderData: query.isPlaceholderData,
+    })
     const isRunFetching = () => {
         const state = queryClient.getQueryState(runKey.current)
         return state !== undefined && state.fetchStatus !== 'idle'
@@ -175,22 +193,36 @@ export function useReportRun({
         await start()
     }
     useLiveTopics(topics, () => whenIdle(() => query.refetch()))
-    const loadMore = () => {
+    const startNextPage = () => {
         if (!query.hasNextPage || query.isFetchingNextPage || waitingForMore.current) return
         waitingForMore.current = true
         setIsWaitingForMore(true)
-        void whenIdle(() => query.fetchNextPage()).finally(() => {
+        const key = runKeyText
+        void whenIdle(async () => {
+            const next = await query.fetchNextPage()
+            failedNextPageOf.current = next.isFetchNextPageError ? key : null
+        }).finally(() => {
+            // Also redraws, so the mark set above is read.
             waitingForMore.current = false
             setIsWaitingForMore(false)
         })
     }
+    // A failed next page waits for Retry: the list asks for more on every redraw,
+    // and the same request would fail again.
+    const loadMore = () => {
+        if (isLoadMoreError) return
+        startNextPage()
+    }
+    const isLoadingMore = query.isFetchingNextPage || isWaitingForMore
     return {
         ...view,
         shownRowsKey: pages[0]?.rowsKey,
         onTopRowIndex,
         hasMore: query.hasNextPage,
-        isLoadingMore: query.isFetchingNextPage || isWaitingForMore,
+        isLoadingMore,
         loadMore,
+        loadMoreFailed: isLoadMoreError && !isLoadingMore,
+        retryLoadMore: startNextPage,
         retry: () => void query.refetch(),
     }
 }

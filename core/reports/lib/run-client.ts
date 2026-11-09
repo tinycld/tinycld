@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { isRecord } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
+import { QueryRefusal } from '@tinycld/core/lib/query-errors'
 import { ClientResponseError } from 'pocketbase'
 import { mergePages } from './rows'
 import type { ReportSpec } from './spec'
@@ -45,6 +46,20 @@ export type RunOutcome = { kind: 'ok'; result: RunResult } | RunRefusal
 
 /** One page of a run, tagged with the rows key and fold key of the body that asked for it. */
 export type RunPage = RunOutcome & { rowsKey: string; foldKey: string }
+
+/**
+ * A later page's refusal (R8). It is thrown, not returned as a page, so the query
+ * keeps the pages already shown and marks only the next page failed; a first page's
+ * refusal stays the run's own state.
+ */
+export class LoadMoreRefused extends QueryRefusal {
+    readonly refusal: RunRefusal
+
+    constructor(refusal: RunRefusal) {
+        super(`reports.run: a later page was refused (${refusal.kind})`)
+        this.refusal = refusal
+    }
+}
 
 // What decides a run's rows, apart from its params (the server resolves those and
 // returns them on the result): the saved report, or the draft spec without its
