@@ -226,7 +226,7 @@ func TestAMixedCellNoticeNamesOnlyColumnsBlankOnThisPage(t *testing.T) {
 	for i, p := range pages {
 		opening, blank := false, false
 		for _, r := range p.Rows {
-			if r.Section == petty && (r.Kind == KindOpening || r.Kind == KindSubtotal) {
+			if r.Section == petty && (r.Kind == KindOpening || r.Kind == KindSubtotal) && r.Cells["balance"] == nil {
 				blank = true
 				opening = opening || r.Kind == KindOpening
 			}

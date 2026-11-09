@@ -331,6 +331,11 @@ func TestASixThousandRowGroupedReportPagesToItsEnd(t *testing.T) {
 	if want := (6004 + 4 + 999) / 1000; len(pages) != want || details != 6004 || lionTotals != 1 {
 		t.Fatalf("pages = %d (want %d), details = %d, lion subtotals = %d", len(pages), want, details, lionTotals)
 	}
+	// The page count alone matches a details-only count too: page 1's group
+	// row is one of its 1,000 counted rows.
+	if n := countedRows(pages[0].Rows); n != 1000 {
+		t.Fatalf("page 1 holds %d counted rows, want 1000", n)
+	}
 }
 
 // A page holds at most 1,000 counted rows (group, opening, detail and
@@ -345,7 +350,9 @@ func TestAGroupedPageHoldsAtMostAThousandRows(t *testing.T) {
 			details++
 		}
 	}
-	if n := countedRows(res.Rows); n != 1000 || res.Page == nil || res.Page.Size != details || res.Page.Next == "" {
+	// Page 1 is lion's group row and 999 of lion's 1,202 details: 1,000
+	// counted rows, 999 of them details.
+	if n := countedRows(res.Rows); n != 1000 || details != 999 || res.Page == nil || res.Page.Size != 999 || res.Page.Next == "" {
 		t.Fatalf("%d counted rows, %d details, page = %+v", n, details, res.Page)
 	}
 }
@@ -460,12 +467,27 @@ func TestAMalformedGroupCursorIsRefused(t *testing.T) {
 		"values with mode after": {"k": fp, "g": []any{"lion", "f1", "USD"}, "p": []any{[]any{0, "lion"}, []any{0, 1, 0, "f1"}}, "m": "after", "v": []any{"x"}},
 		"an object in the group": {"k": fp, "g": []any{map[string]any{}, "USD"}, "p": []any{[]any{0, "lion"}}, "m": "after"},
 		"an object in the path":  {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, map[string]any{}}}, "m": "after"},
+		"values of wrong length": inLeaf(fp, []any{"x", "y"}),
+		"a number for __id":      inLeaf(fp, []any{5}),
+	}
+	// The cases differ from a cursor the reader takes in one thing only.
+	if _, err := readGroupCursor(fp, testShape(), keys, 2, 1, good(inLeaf(fp, []any{"x"}))); err != nil {
+		t.Fatalf("a well-formed cursor in a leaf: %v", err)
 	}
 	for name, c := range cases {
 		if _, err := readGroupCursor(fp, testShape(), keys, 2, 1, good(c)); err == nil {
 			t.Errorf("%s: taken", name)
 		}
 	}
+	raw, _ := json.Marshal(inLeaf(fp, []any{"x"}))
+	if _, err := readGroupCursor(fp, testShape(), keys, 2, 1, encodeCursor(string(raw)+"{}")); err == nil {
+		t.Error("trailing data after the cursor: taken")
+	}
+}
+
+// inLeaf is a group cursor inside the leaf group lion/f1 with values v.
+func inLeaf(fp string, v []any) map[string]any {
+	return map[string]any{"k": fp, "g": []any{"lion", "f1", "USD"}, "p": []any{[]any{0, "lion"}, []any{0, 1, 0, "f1"}}, "m": "in", "v": v}
 }
 
 func TestAfterSQLIsTrueOnlyForARowAfterTheValues(t *testing.T) {

@@ -235,9 +235,10 @@ func TestAGroupCursorFromAnotherFoldStateIsRefused(t *testing.T) {
 		"another sort": {Sort: []ViewSort{{Col: "cost", Dir: "desc"}}},
 	} {
 		opts.Limit, opts.Cursor = 2, first.Page.Next
-		_, err := z.try(t, "ann", byNoteClosed, opts, nil)
-		requireSpecError(t, err, 400, "options.cursor", "not one this report gave")
-		_ = name
+		t.Run(name, func(t *testing.T) {
+			_, err := z.try(t, "ann", byNoteClosed, opts, nil)
+			requireSpecError(t, err, 400, "options.cursor", "not one this report gave")
+		})
 	}
 }
 
@@ -410,9 +411,44 @@ func TestAPagedGroupRunSendsAPageAndATotalStatement(t *testing.T) {
 			kinds["total"]++
 		case strings.Contains(st.sql, "__p1"):
 			kinds["page"]++
+			// The Total's probes and its o0 leg are the Total statement's.
+			if strings.Contains(st.sql, "__probe") || strings.Contains(st.sql, "FROM o0") {
+				t.Fatalf("the page statement reads the Total's probes or o0:\n%s", st.sql)
+			}
 		}
 	}
 	if kinds["total"] != 1 || kinds["page"] != 1 {
+		t.Fatalf("statements %v", kinds)
+	}
+}
+
+// The detail sort keys are compiled for the cursor's fingerprint over a w of
+// their own: the page and Total statements never read them, so they do not
+// join the site the sort key reads. The detail statement does.
+func TestThePageAndTotalStatementsComputeNoDetailSortKey(t *testing.T) {
+	z := newZoo(t)
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"species","open":true}],
+		"sort":[{"formula":{"path":[{"link":"animal"},{"link":"site"},{"field":"name"}]}}]}`
+	seen := observeReads(t)
+	z.run(t, "ann", spec, Options{Limit: 1}, nil)
+	kinds := map[string]int{}
+	for _, st := range *seen {
+		kind := "detail"
+		switch {
+		case isTotalStatement(st.sql):
+			kind = "total"
+		case strings.Contains(st.sql, "__p1"):
+			kind = "page"
+		}
+		kinds[kind]++
+		if reads := strings.Contains(st.sql, "zoo_sites"); reads != (kind == "detail") {
+			t.Fatalf("%s statement reads zoo_sites: %v\n%s", kind, reads, st.sql)
+		}
+	}
+	if kinds["total"] != 1 || kinds["page"] != 1 || kinds["detail"] != 1 {
 		t.Fatalf("statements %v", kinds)
 	}
 }

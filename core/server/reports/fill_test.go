@@ -141,8 +141,10 @@ func TestFillComputesNothingUnderAFoldedAncestor(t *testing.T) {
 	all := fillKeyset(t, z, "ann", threeFills, Options{ExpandAll: true}, 3)
 	owner := z.run(t, "ann", threeFills, Options{ExpandAll: true}, nil).Rows[0].GroupKey
 	folded := fillKeyset(t, z, "ann", threeFills, Options{ExpandAll: true, Collapse: [][]any{owner}}, 3)
-	if folded >= all {
-		t.Fatalf("level-3 keyset with the first owner folded = %d, all open = %d", folded, all)
+	// The first owner is ann, whose level-3 fill records are Eli (East) and
+	// Lia (North): folding her drops exactly those 2 of the 4.
+	if all != 4 || folded != all-2 {
+		t.Fatalf("level-3 keyset with the first owner folded = %d, all open = %d; want 2 and 4", folded, all)
 	}
 }
 

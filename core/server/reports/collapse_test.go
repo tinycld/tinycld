@@ -62,15 +62,87 @@ func TestCollapseAndExpandTogetherOnTwoLevels(t *testing.T) {
 	// weight is not money, so the keys carry no currency key.
 	leo := append(slices.Clone(north), "Leo")
 	res := z.run(t, "ann", byRegionThenName, Options{Expand: [][]any{leo}, Collapse: [][]any{south}}, nil)
-	for _, r := range res.Rows {
-		switch {
-		case r.Kind == "group" && r.Label == "North" && !r.Expanded:
-			t.Fatalf("north closed: the open level must stay open when collapse is sent")
-		case r.Kind == "group" && r.Label == "South" && r.Expanded:
-			t.Fatalf("south open: collapse must close it")
-		case r.Kind == "group" && r.Label == "Leo" && !r.Expanded:
-			t.Fatalf("Leo closed: expand must open a group of a closed level")
+	var sawNorth, sawSouth, sawLeo bool
+	for i, r := range res.Rows {
+		if r.Kind != "group" {
+			continue
 		}
+		switch r.Label {
+		case "North":
+			sawNorth = true
+			if !r.Expanded {
+				t.Fatalf("north closed: the open level must stay open when collapse is sent")
+			}
+		case "South":
+			sawSouth = true
+			if r.Expanded {
+				t.Fatalf("south open: collapse must close it")
+			}
+		case "Leo":
+			sawLeo = true
+			if !r.Expanded {
+				t.Fatalf("Leo closed: expand must open a group of a closed level")
+			}
+			if i+1 >= len(res.Rows) || res.Rows[i+1].Kind != "detail" {
+				t.Fatalf("Leo has no detail rows: %v", rowsOf(res, "kind"))
+			}
+		}
+	}
+	if !sawNorth || !sawSouth || !sawLeo {
+		t.Fatalf("north %v, south %v, Leo %v: rows %v", sawNorth, sawSouth, sawLeo, rowsOf(res, "label"))
+	}
+}
+
+// A fold of the blank group closes that group only: a nil key matches the
+// (none) group by IS, and every other group of the open level stays open.
+func TestCollapseClosesTheBlankGroup(t *testing.T) {
+	z := newZoo(t)
+	spec := `{"version":4,"source":"zoo.animals","columns":[
+		{"id":"region","path":[{"link":"site"},{"field":"region"}]},
+		{"id":"w","path":[{"field":"weight"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"region","open":true}]}`
+	open := z.run(t, "ann", spec, Options{}, nil)
+	res := z.run(t, "ann", spec, Options{Collapse: [][]any{{nil}}}, nil)
+	var blank, others int
+	for _, r := range res.Rows {
+		if r.Kind != "group" {
+			continue
+		}
+		if r.GroupKey[0] == nil {
+			blank++
+			if r.Expanded {
+				t.Fatalf("blank group open: %+v", r)
+			}
+			continue
+		}
+		others++
+		if !r.Expanded {
+			t.Fatalf("%s closed: only the blank group is folded", r.Label)
+		}
+	}
+	if blank != 1 || others == 0 || len(res.Rows) >= len(open.Rows) {
+		t.Fatalf("blank %d, others %d, rows %v (open %v)", blank, others, rowsOf(res, "label"), rowsOf(open, "label"))
+	}
+}
+
+// A pivot keeps one group statement and its row cap. A folded species hides
+// its notes and their animals too, though the note level is open: the
+// animals under it are not read, so they do not count toward the cap: the 7
+// level rows are the Total, the 2 species, zebra's 2 notes and their 2
+// animals. Before, lion's 2 animals came too, past the cap.
+func TestAFoldedGrandparentsRowsDoNotCountTowardTheRowCap(t *testing.T) {
+	z := newZoo(t)
+	withLimits(t, func(l *limits) { l.rowCap = 7 })
+	const spec = `{"version":4,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"animal","path":[{"link":"animal"},{"field":"name"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"s","col":"species","open":true},{"id":"n","col":"note","open":true},{"id":"a","col":"animal"}],
+		"pivot":{"path":[{"field":"fed"}],"bucket":"month","cell":"cost"}}`
+	res := z.run(t, "ann", spec, Options{Collapse: [][]any{{"lion", "USD"}}}, nil)
+	if len(res.Notices) != 0 || len(groupRowLabels(res)) != 6 {
+		t.Fatalf("groups %v, notices %+v", groupRowLabels(res), res.Notices)
 	}
 }
 

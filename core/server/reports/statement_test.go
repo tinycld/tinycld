@@ -17,41 +17,20 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// groupStatementOf compiles the group statement a run of raw sends for user,
-// as groupPass does (a pivot's first pass runs to find its columns).
-func (z *zoo) groupStatementOf(t *testing.T, user, raw string, opts Options) (string, dbx.Params) {
+// pageStatementOf is the page statement (J1a) a run of the grouped report raw
+// sends for user: the one that orders its rows by their paths (__p1).
+func (z *zoo) pageStatementOf(t *testing.T, user, raw string, opts Options) string {
 	t.Helper()
-	spec, _, err := Load([]byte(raw))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+	seen := observeReads(t)
+	z.run(t, user, raw, opts, nil)
+	observeRead = nil
+	for _, st := range *seen {
+		if strings.Contains(st.sql, "__p1") {
+			return st.sql
+		}
 	}
-	c, err := readerCompiler(z.app, spec, z.recs[user], nil, nil, "", "options.today")
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	expand, err := parseExpansion(opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rn := &runner{ctx: context.Background(), app: z.app, c: c, opts: opts, expand: expand, res: &Result{}, topics: map[string]bool{}}
-	s := newStmt(z.app, c.info)
-	r, err := c.rows(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pivot, err := rn.pivotPass()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctes, body, err := c.groupStatement(s, r, expand, pivot, int64(runLimits.rowCap+1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	with, err := s.with(append([]string{r.render()}, ctes...)...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return with + body, s.params
+	t.Fatalf("no page statement among %d reads", len(*seen))
+	return ""
 }
 
 var cteName = regexp.MustCompile(`(?m)(?:^WITH |,\n)(\w+) AS (?:MATERIALIZED )?\(`)
@@ -240,7 +219,7 @@ func wideSpec() string {
 // wide report's three levels have three, and no level needs its joins split.
 func TestToManyTotalsOfOneParentRowShareOneCTEPerLevel(t *testing.T) {
 	z := newZoo(t)
-	stmt, _ := z.groupStatementOf(t, "ann", wideSpec(), Options{ExpandAll: true})
+	stmt := z.pageStatementOf(t, "ann", wideSpec(), Options{ExpandAll: true})
 	var totals, chunks []string
 	for _, name := range ctesOf(stmt) {
 		switch {
@@ -290,11 +269,11 @@ func TestSidesPastTheJoinLimitAreJoinedInChunks(t *testing.T) {
 // label.
 func TestHelperColumnsOnlyForColumnsThatHaveThem(t *testing.T) {
 	z := newZoo(t)
-	stmt, _ := z.groupStatementOf(t, "ann", wideSpec(), Options{ExpandAll: true})
+	stmt := z.pageStatementOf(t, "ann", wideSpec(), Options{ExpandAll: true})
 	if m := regexp.MustCompile(` AS (vl|vc|vcur)\d+\b`).FindString(stmt); m != "" {
 		t.Fatalf("the wide report's statement selects %q", m)
 	}
-	linked, _ := z.groupStatementOf(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
+	linked := z.pageStatementOf(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"site","path":[{"link":"site"}]},{"id":"w","path":[{"field":"weight"}],"aggregate":"sum"}],
 		"groups":[{"id":"g","col":"site"}]}`, Options{ExpandAll: true})
 	if !strings.Contains(linked, " AS vl0") || strings.Contains(linked, " AS vl1") {

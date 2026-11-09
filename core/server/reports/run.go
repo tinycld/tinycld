@@ -597,8 +597,16 @@ func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	}
 	// The detail sort keys are in the cursor's fingerprint: a cursor from
 	// another sort is refused even on a page with no detail row. This compile
-	// also gives the columns their detail types (detailTypes).
-	if _, rn.groupKeys, err = c.detailSelect(r, "w"); err != nil {
+	// also gives the columns their detail types (detailTypes). It runs over a
+	// w of its own, as detailTypes does: over r, the sort keys' columns and
+	// binds would go into the page and Total statements, which never read
+	// them. A second rows() gives the same currency keys, and the levels are
+	// compiled already.
+	keysOf, err := c.rows(newStmt(rn.app, c.info))
+	if err != nil {
+		return nil, err
+	}
+	if _, rn.groupKeys, err = c.detailSelect(keysOf, "w"); err != nil {
 		return nil, err
 	}
 	rn.groupFP = groupFingerprint(c.groupLevels(), levelShape(rn.groupShape), foldPrint(rn.expand), rn.groupKeys)
@@ -1006,7 +1014,10 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 	levels, err := c.compileLevels(s, r, expand, pivot, func(n int) {
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
-			leg += " WHERE " + expand.where(c, s, n-1, "")
+			// Every enclosing group must be open, not only the parent: a
+			// row under a folded grandparent would else count toward the
+			// limit and could cut rows that show.
+			leg += " WHERE " + expand.shownUnder(c, s, n-1, "")
 		}
 		legs = append(legs, leg)
 	})
@@ -1300,7 +1311,8 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The keys order every row the pages show, not just this page's.
+	// The probe reads every row of the groups this pass reads: every open
+	// group on an unpaged run, this page's on a paged one.
 	probes := make([]condProbe, len(c.detailSortMixed))
 	for i, m := range c.detailSortMixed {
 		probes[i] = condProbe{at: m.at, sql: fmt.Sprintf("SELECT 1 FROM %s WHERE d.%s = 1", from, m.sql)}
@@ -1814,9 +1826,9 @@ func keysIn(s *stmt, cols []string, keys [][]any, encoded [][]string) string {
 			left = append(left, col+" COLLATE BINARY")
 		}
 		if len(left) > 0 {
-			keys := s.bind("[" + strings.Join(rowsOf[mask], ",") + "]")
+			param := s.bind("[" + strings.Join(rowsOf[mask], ",") + "]")
 			conds = append(conds, fmt.Sprintf("(%s) IN (SELECT %s FROM json_each(%s))",
-				strings.Join(left, ", "), strings.Join(picks, ", "), keys))
+				strings.Join(left, ", "), strings.Join(picks, ", "), param))
 		}
 		terms[i] = "(" + strings.Join(conds, " AND ") + ")"
 	}

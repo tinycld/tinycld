@@ -127,13 +127,18 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 		// the Total statement (J1a: a statement of its own) reads no fill.
 		{"a cursor page that starts inside fill groups", 4, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
-			opts := Options{ExpandAll: true, Limit: 2}
+			// Page 1 is the East site's group row alone; page 2 starts at Eli,
+			// a fill animal (no feedings) under East.
+			opts := Options{ExpandAll: true, Limit: 1}
 			first := z.run(t, "ann", sitesThenAnimals, opts, nil)
 			if first.Page == nil || first.Page.Next == "" {
 				t.Fatal("no second page")
 			}
 			opts.Cursor = first.Page.Next
-			z.run(t, "ann", sitesThenAnimals, opts, nil)
+			second := z.run(t, "ann", sitesThenAnimals, opts, nil)
+			if r := second.Rows[0]; r.Kind != KindGroup || r.Depth != 1 || r.Label != "Eli" {
+				t.Fatalf("page 2 starts at %s %q (depth %d), want the fill animal Eli", r.Kind, r.Label, r.Depth)
+			}
 		}},
 		{"three levels of fill", 3, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
