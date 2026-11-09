@@ -91,7 +91,9 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 		keysets int
 		run     func(t *testing.T, z *zoo)
 	}{
-		{"ledger, 200 accounts", 2, func(t *testing.T, z *zoo) {
+		// 3: the page and the Total statement each read f1 (J1a: the Total has a
+		// statement of its own).
+		{"ledger, 200 accounts", 3, func(t *testing.T, z *zoo) {
 			withBalanceZoo(t, z)
 			withLedgerScale(t, z, 200)
 			if _, err := runLedger(z, map[string]string{"period": ledgerPeriod}, Options{Today: "2025-07-15"}); err != nil {

@@ -43,7 +43,7 @@ func (z *zoo) groupStatementOf(t *testing.T, user, raw string, opts Options) (st
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctes, body, err := c.groupStatement(s, r, expand, pivot, int64(runLimits.rowCap+1))
+	ctes, body, err := c.groupStatement(s, r, expand, pivot, int64(runLimits.rowCap+1), true)
 	if err != nil {
 		t.Fatal(err)
 	}

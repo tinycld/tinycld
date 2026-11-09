@@ -502,7 +502,8 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 		c.probe("filter", "SELECT 1 "+r.root.render()+"\nWHERE "+r.filterMixed)
 	}
 	r.probeWheres()
-	ctes, body, err := c.groupStatement(s, r, rn.expand, pivot, int64(runLimits.rowCap+1))
+	paged := rn.pagedGroups()
+	ctes, body, err := c.groupStatement(s, r, rn.expand, pivot, int64(runLimits.rowCap+1), !paged)
 	if err != nil {
 		return nil, err
 	}
@@ -511,10 +512,49 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if paged {
+		totals, err := rn.totalPass(s, ctes)
+		if err != nil {
+			return nil, err
+		}
+		// The Totals lead, as the one statement's ORDER BY __level put them, so
+		// the cap keeps the rows it always did.
+		return rn.capLevelRows(append(totals, rows...)), nil
+	}
 	if err := rn.readProbes(s, ctes, rows, c.condProbes); err != nil {
 		return nil, err
 	}
 	return rn.capLevelRows(rows), nil
+}
+
+// pagedGroups is true for a run whose group rows page (J1a): a grouped
+// report with no pivot (a pivot's columns come from every row), no layout (a
+// statement's computed rows read every section) and no nest (child rows page
+// with their detail rows). The others keep one group statement and its cap.
+func (rn *runner) pagedGroups() bool {
+	p := rn.c.p
+	return len(p.groups) > 0 && p.pivot == nil && len(p.layout) == 0 && len(p.nest) == 0
+}
+
+// totalPass reads the Total rows (o0, one per currency) over the group
+// statement's CTEs, in a statement of their own: every row the filter keeps,
+// whatever page the group rows are on. The condition probes ride on it, as
+// it always returns a row unless there are no rows at all.
+func (rn *runner) totalPass(s *stmt, ctes []string) ([]map[string]any, error) {
+	c := rn.c
+	probes := c.probeCells()
+	if cte := c.probeCTE(); cte != "" {
+		ctes = append(ctes, cte)
+	}
+	body := "SELECT " + strings.Join(append([]string{"*"}, probes...), ", ") + " FROM o0"
+	rows, err := rn.query(s, ctes, body)
+	if err != nil {
+		return nil, err
+	}
+	if err := rn.readProbes(s, ctes, rows, c.condProbes); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // probesCTE is the CTE that computes, once, whether each condition probe
@@ -693,8 +733,11 @@ func viewSortPlans(c *compiler, keys []ViewSort) ([]sortPlan, error) {
 }
 
 // groupStatement is the UNION ALL of every level's rows (the children of
-// expanded groups only) and the layout's computed rows.
-func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64) ([]string, string, error) {
+// expanded groups only) and the layout's computed rows. withTotal false leaves
+// out the Total (o0) and the condition probes: a paged run reads them in a
+// statement of their own (totalPass). The o0 CTE stays, as a level may read its
+// frame and SQLite never computes a CTE nothing reads.
+func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64, withTotal bool) ([]string, string, error) {
 	var ctes, legs []string
 	c.levelTypes, c.sectionCur, c.fillSets = map[string]FieldType{}, map[string]currency{}, map[int]string{}
 	c.sectionMixed = map[string]bool{}
@@ -761,6 +804,9 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		}
 		levels = append(levels, levelRows{lv: lv, cells: cells, totals: totals, own: own})
 		readsSums = len(lv.childCells) > 0
+		if n == 0 && !withTotal {
+			continue
+		}
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
 			leg += " WHERE " + expand.where(c, s, n-1, "")
@@ -793,9 +839,12 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 	ctes = append(ctes, layoutCTEs...)
 	// The conditions that may read a mixed sum are probed in this statement
 	// (readProbes), over the CTEs it computes anyway.
-	probes := c.probeCells()
-	if cte := c.probeCTE(); cte != "" {
-		ctes = append(ctes, cte)
+	var probes []string
+	if withTotal {
+		probes = c.probeCells()
+		if cte := c.probeCTE(); cte != "" {
+			ctes = append(ctes, cte)
+		}
 	}
 	// The limit applies to the level rows only: computed rows sort last, so a
 	// limit on the whole statement would drop them first.
@@ -1528,7 +1577,7 @@ func compileDry(p *plan) error {
 		// refuse the same layouts.
 		pivot = make([]pivotValue, p.pivot.max)
 	}
-	if _, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1); err != nil {
+	if _, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1, true); err != nil {
 		return err
 	}
 	if err := fitRefusals(c); err != nil {

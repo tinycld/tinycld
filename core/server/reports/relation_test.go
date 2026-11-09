@@ -568,7 +568,7 @@ func TestARecordLabelIsComputedOncePerRow(t *testing.T) {
 	if derr != nil {
 		t.Fatal(derr)
 	}
-	ctes, body, gerr := c.groupStatement(s, r, &expansion{}, nil, 1)
+	ctes, body, gerr := c.groupStatement(s, r, &expansion{}, nil, 1, true)
 	if gerr != nil {
 		t.Fatal(gerr)
 	}

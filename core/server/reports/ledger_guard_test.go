@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -30,13 +31,15 @@ func TestABalanceShapedReportComputesItsBeginningBalanceOncePerStatement(t *test
 	if _, err := runLedger(z, map[string]string{"period": ledgerPeriod}, Options{Today: "2025-07-15"}); err != nil {
 		t.Fatal(err)
 	}
-	kinds := 0
+	var kinds []string
 	for _, st := range *seen {
 		kind := "detail"
-		if strings.Contains(st.sql, "__level") {
+		if isTotalStatement(st.sql) {
+			kind = "total"
+		} else if strings.Contains(st.sql, "__level") {
 			kind = "group"
 		}
-		kinds++
+		kinds = append(kinds, kind)
 		// Two lookups, on two levels (the total and the accounts) or in two
 		// selects (the shown accounts and the lines).
 		if n := strings.Count(st.sql, "(SELECT sum("); n > 4 {
@@ -60,8 +63,10 @@ func TestABalanceShapedReportComputesItsBeginningBalanceOncePerStatement(t *test
 			t.Errorf("the %s statement reads a group record by %d subqueries on a line, want at most 9", kind, byLine)
 		}
 	}
-	if kinds != 2 {
-		t.Fatalf("%d statements, want the group and the detail statement", kinds)
+	got := append([]string(nil), kinds...)
+	sort.Strings(got)
+	if !slices.Equal(got, []string{"detail", "group", "total"}) {
+		t.Fatalf("statements %v, want the group, the Total and the detail statement", got)
 	}
 }
 
