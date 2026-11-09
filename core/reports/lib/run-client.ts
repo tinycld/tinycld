@@ -10,7 +10,9 @@ import type { CatalogSource, ParamOptionsPage, Problem, ResultRow, RunResult } f
 // The report endpoints (core/server/reports/endpoint.go, catalog.go, options.go). A
 // run is a read sent by POST, because a draft spec does not fit in a URL. The
 // refusals a person can cause (400, 403, 408, 422) come back as data, so the global
-// query error handler does not report them; every other failure is thrown.
+// query error handler does not report them; every other failure is thrown. One
+// exception: useReportRun throws a later page's refusal as LoadMoreRefused, so the
+// query keeps the pages shown and marks only the next page failed (R8).
 
 export const RUN_PATH = '/api/reports/run'
 export const SOURCES_PATH = '/api/reports/sources'

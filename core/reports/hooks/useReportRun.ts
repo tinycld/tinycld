@@ -170,12 +170,17 @@ export function useReportRun({
     // waits again. The query client is read, not the last render, because a render
     // lags a fetch that just started.
     runKey.current = queryKey
-    // The run whose last next page failed (R8), by its query key's text. Set when a
-    // next page fails, cleared when one succeeds; it counts only while the query is
-    // in error, so a rerun that lands clears it too.
+    // The failed next page (R8): the run's query key text and the query's error count
+    // when that page failed. Set when a next page fails, cleared when one succeeds.
+    // It counts only while the query still holds that same error: a rerun in flight
+    // keeps it, and any later error of the run (after a rerun that landed) has a new
+    // count, so it shows as the whole-report error.
     const runKeyText = JSON.stringify(queryKey)
-    const failedNextPageOf = useRef<string | null>(null)
-    const isLoadMoreError = query.isError && failedNextPageOf.current === runKeyText
+    const failedNextPage = useRef<{ key: string; errorCount: number } | null>(null)
+    const isLoadMoreError =
+        query.isError &&
+        failedNextPage.current?.key === runKeyText &&
+        failedNextPage.current.errorCount === query.errorUpdateCount
     const { topics, ...view } = runView({
         hasBody: body !== null,
         pages,
@@ -200,7 +205,9 @@ export function useReportRun({
         const key = runKeyText
         void whenIdle(async () => {
             const next = await query.fetchNextPage()
-            failedNextPageOf.current = next.isFetchNextPageError ? key : null
+            failedNextPage.current = next.isFetchNextPageError
+                ? { key, errorCount: next.errorUpdateCount }
+                : null
         }).finally(() => {
             // Also redraws, so the mark set above is read.
             waitingForMore.current = false

@@ -142,6 +142,39 @@ describe('useReportRun', () => {
         expect(run.current.state).toBe('ready')
     })
 
+    // R8: the next-page row belongs to the failure that made it. After a good rerun,
+    // a later failure of the whole run is the whole-report error, not that row.
+    it('shows the whole-report error when a rerun fails after a good rerun', async () => {
+        const first = result([row('g:A', 'group'), row('d:1')], 'c1')
+        const last = result([row('g:A', 'group'), row('d:1'), row('total', 'total')])
+        const refusal = new FakeAnswer(400, {
+            status: 400,
+            message: 'The page cursor is not valid.',
+            data: {},
+        })
+        const failure = new FakeAnswer(404, { status: 404, message: 'Not found.', data: {} })
+        let firstPages = 0
+        answer = sent => {
+            if (sent.options.cursor) return Promise.resolve(refusal)
+            firstPages += 1
+            if (firstPages === 1) return Promise.resolve(first)
+            return Promise.resolve(firstPages === 2 ? last : failure)
+        }
+        const { result: run } = renderRun()
+        await waitFor(() => expect(run.current.hasMore).toBe(true))
+        await subscribed()
+        act(() => run.current.loadMore())
+        await waitFor(() => expect(run.current.loadMoreFailed).toBe(true))
+
+        signal()
+        await waitFor(() => expect(rowIds(run.current)).toEqual(['g:A', 'd:1', 'total']))
+        expect(run.current.loadMoreFailed).toBe(false)
+
+        signal()
+        await waitFor(() => expect(run.current.state).toBe('error'))
+        expect(run.current.loadMoreFailed).toBe(false)
+    })
+
     it('keeps a next page that a live rerun lands on', async () => {
         const first = result([row('g:A', 'group'), row('d:1')], 'c1')
         const second = result([row('d:2'), row('total', 'total')])
