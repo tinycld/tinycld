@@ -32,10 +32,12 @@ import {
  * shared by several tests, so rows are found by team names unique to the test.
  */
 
-async function seedRegions(p: Page, stem: string) {
+// Two teams `${stem} N1` and `${stem} N2` in `region` (North unless told), and
+// `${stem} S1` in South, each with one sale.
+async function seedRegions(p: Page, stem: string, region: 'north' | 'east' = 'north') {
     await openReportStub(p)
-    await addTeam(p, `${stem} N1`, 'north')
-    await addTeam(p, `${stem} N2`, 'north')
+    await addTeam(p, `${stem} N1`, region)
+    await addTeam(p, `${stem} N2`, region)
     await addTeam(p, `${stem} S1`, 'south')
     for (const [team, customer] of [
         [`${stem} N1`, 'Nia'],
@@ -247,9 +249,13 @@ test.describe('params from a source, headings and unpublished shipped reports', 
     test('a choice from a source searches, picks one record, then a whole group', async ({
         page,
     }) => {
+        // The whole group shows every team of the region that holds a sale of the
+        // shipped report's owner, and other specs (openPagedTeams) give that owner
+        // many North teams. The table draws only the rows near its view, so this
+        // test's teams sit in East, which no other spec gives the owner a sale in.
         await loginAsShippedOwner(page)
         const stem = uniqueName('Src')
-        await seedRegions(page, stem)
+        await seedRegions(page, stem, 'east')
         await openTeamTotals(page)
         await chooseParamOption(page, 'teams', {
             from: 'add-filter',
@@ -263,12 +269,12 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         await page.getByTestId('report-param-teams').click()
         const picker = page.getByTestId('report-filter-picker')
         await picker.getByTestId('report-filter-search').fill(stem)
-        await expect(picker.getByTestId('report-filter-group-north')).toHaveText('All North teams')
+        await expect(picker.getByTestId('report-filter-group-east')).toHaveText('All East teams')
         await page.keyboard.press('Escape')
         await expect(picker).toBeHidden()
-        await chooseParamOption(page, 'teams', { from: 'chip', search: stem, group: 'north' })
+        await chooseParamOption(page, 'teams', { from: 'chip', search: stem, group: 'east' })
         await expect(page.getByTestId('report-param-teams')).toHaveText(
-            `Teams: ${stem} N1, All North teams`
+            `Teams: ${stem} N1, All East teams`
         )
         await expect(rowOf(page, `${stem} N2`)).toBeVisible()
         await expect(rows.filter({ hasText: `${stem} S1` })).toHaveCount(0)
