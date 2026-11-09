@@ -64,12 +64,15 @@ type level struct {
 	// sortMixed are the sort keys (sql: where the key met a mixed sum) that
 	// order the level's rows; render probes them over the rows it shows.
 	sortMixed []condProbe
+	// recs joins the group records the level's formulas read onto its rows
+	// (gr<L>), once per level.
+	recs *recordJoins
 }
 
 // level prepares level n: its keys, its parent partition, and the order of
 // its sibling rows, which running values read.
 func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
-	lv := &level{c: c, r: r, n: n, aggNames: map[string]bool{}, visiting: map[string]bool{}, reads: map[string]bool{}}
+	lv := &level{c: c, r: r, n: n, aggNames: map[string]bool{}, visiting: map[string]bool{}, reads: map[string]bool{}, recs: newRecordJoins(r.s, "a")}
 	for i := range n {
 		lv.keys = append(lv.keys, fmt.Sprintf("k%d", i))
 	}
@@ -383,6 +386,13 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	}
 	joined, g := lv.joinSides(a, sides)
 	ctes = append(ctes, joined...)
+	// Every select of the level reads its rows from here on, so the records
+	// its formulas read are joined once, under all of them.
+	if lv.recs.any() {
+		gr := fmt.Sprintf("gr%d", lv.n)
+		ctes = append(ctes, fmt.Sprintf("%s AS (SELECT * FROM %s)", gr, lv.recs.from(g+" a")))
+		g = gr
+	}
 	if len(totals) > 0 {
 		sel := make([]string, 0, len(lv.keys)+len(totals))
 		for _, k := range lv.keys {
@@ -1143,13 +1153,15 @@ func (lc *levelCtx) record(group string, p Path, at string) (expr, error) {
 	e := recordExpr(bound)
 	// Outside the group (a level above it, the total) there is no one record,
 	// and so no amount and no currency.
-	key := "NULL"
-	e.sql = "NULL"
-	if lc.lv.n >= gi+1 {
-		key = fmt.Sprintf("a.k%d", gi)
-		e.sql = recordSQL(lc.lv.r.s, target, bound, key)
+	if lc.lv.n < gi+1 {
+		e.sql = "NULL"
+		e.cur = recordCurrency(lc.lv.r.s, target, bound, "NULL", recordCurrencyID(group, p))
+		return e, nil
 	}
-	e.cur = recordCurrency(lc.lv.r.s, target, bound, key, recordCurrencyID(group, p))
+	// The record is joined onto the level's rows once (gr<L>), however many
+	// places read it.
+	e.sql = lc.lv.recs.column(gi, target, bound)
+	e.cur = recordCurrencyBy(bound, fmt.Sprintf("a.k%d", gi), recordCurrencyID(group, p), lc.lv.recs.reader(gi, target))
 	return e, nil
 }
 

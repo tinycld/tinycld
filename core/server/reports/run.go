@@ -1093,6 +1093,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	frame := &windowFrame{
 		parent: append(prefixed("w.", c.currencies), keys...),
 		total:  prefixed("w.", c.currencies),
+		recs:   newRecordJoins(r.s, "w"),
 	}
 	visiting := map[string]bool{}
 	labels := newLabelRefs(c, r.s, frame, "w")

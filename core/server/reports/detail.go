@@ -89,6 +89,9 @@ type windowFrame struct {
 	checking bool
 	// compiled holds the formulas compiled on the frame's rows (formula).
 	compiled map[*Node]expr
+	// recs joins the group records the frame's rows read under its layers;
+	// nil for a frame that reads them by subquery.
+	recs *recordJoins
 }
 
 // hoistLayer is one select below the frame's own: values ("<sql> AS
@@ -141,8 +144,12 @@ func (f *windowFrame) hoistLayer(alias string, keys []string, sqls ...string) []
 func (f *windowFrame) from(table, alias string) string {
 	base := table + " " + alias
 	from := base
-	if len(f.hoisted) == 0 && table == alias {
+	if len(f.hoisted) == 0 && table == alias && !f.recs.any() {
 		from = table
+	}
+	// The records first: a hoisted value may read one.
+	if f.recs.any() {
+		from = f.recs.from(from)
 	}
 	for i, h := range f.hoisted {
 		if len(h.keys) == 0 {
@@ -239,12 +246,20 @@ func (rc *rowsCtx) record(group string, p Path, at string) (expr, error) {
 	k := fmt.Sprintf("k%d", gi)
 	rc.reads.key(k)
 	key := "w." + k
-	e.sql = recordSQL(rc.r.s, target, bound, key)
 	id := recordCurrencyID(group, p)
+	read := func(p *pathPlan) string { return recordSQL(rc.r.s, target, p, key) }
+	// On a detail row the record is joined under the frame once, however many
+	// cells, sort keys and window orders read it. Inside a lookup it stays a
+	// subquery on the group key, which lets the lookup be computed once per
+	// group key (rowReads.groupKeys).
+	if f := rc.detail; f != nil && f.recs != nil && !f.checking && rc.reads == nil {
+		read = f.recs.reader(gi, target)
+	}
+	e.sql = read(bound)
 	if ck, ok := c.valueCur[id]; ok {
 		e.cur = currency{key: ck, id: id}
 	} else {
-		e.cur = recordCurrency(rc.r.s, target, bound, key, id)
+		e.cur = recordCurrencyBy(bound, key, id, read)
 	}
 	return e, nil
 }
