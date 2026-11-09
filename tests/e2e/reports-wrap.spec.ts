@@ -782,7 +782,7 @@ test.describe('report rows per width', () => {
     })
 
     // F10: an open group row has no other cell on its line, so its label spans the
-    // row, as it does in the phone's blocks; a detail label gets its text's width.
+    // row, as it does in the phone's blocks; a detail label shares the spare room by Extra room (J2).
     test('on a desktop line an open group row shows its whole label across the row', async ({
         page,
     }) => {
@@ -819,18 +819,13 @@ test.describe('report rows per width', () => {
             const detail = rowOf(p, 'Wrapco Longname 00')
             await expect(detail).toBeVisible()
             const isCut = (text: Locator) => text.evaluate(el => el.scrollWidth > el.clientWidth)
-            // J2: one line shares spare room by Extra room. The detail label shares it
-            // with the other text columns, so it no longer gets its text's width and
-            // may end in "…" (was: the label is whole). The group label spans the row
-            // and stays whole, wider than the detail label's box.
+            // J2: one line shares spare room by Extra room. The label column shares it
+            // with the other growing text columns, not by its text's width: at 1100 px
+            // "Wrapco Longname 00" needs more than its box (was: the label is whole), so
+            // it is cut, while the open group label spans the row and stays whole.
             const detailLabel = detail.getByText('Wrapco Longname 00', { exact: true })
-            const detailLabelWidth = (await detailLabel.boundingBox())?.width ?? 0
-            const detailWidth = (await detail.boundingBox())?.width ?? 0
-            // The group label is whole, in a box wider than the label column.
+            await expect.poll(() => isCut(detailLabel)).toBe(true)
             await expect.poll(() => isCut(groupRow.getByText(team, { exact: true }))).toBe(false)
-            expect((await groupRow.boundingBox())?.width ?? 0).toBeGreaterThan(detailWidth + 200)
-            const groupLabel = groupRow.getByText(team, { exact: true })
-            expect((await groupLabel.boundingBox())?.width ?? 0).toBeGreaterThan(detailLabelWidth)
             // The detail row's cells keep their columns.
             const amount = await cellOf(p, 'amount', 'Wrapco Longname 00')
             const headAmount = await p.getByTestId('report-heading-amount').boundingBox()
