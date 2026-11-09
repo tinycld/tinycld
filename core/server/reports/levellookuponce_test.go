@@ -33,8 +33,8 @@ func TestALookupOnAGroupRowIsComputedOnce(t *testing.T) {
 // A having over the sums of the level below reads rt<L>, the cells of the
 // rows that pass their own having; a lookup there is computed once per row
 // too. The column reads an aggregate, so its innermost group row computes
-// the formula from the group's rows, lookups and all: each of its two
-// lookups (one per branch) has its mixed check once.
+// the formula from the group's rows, lookups and all: its two branches hold
+// one lookup, which has its mixed check once.
 func TestALookupThatAHavingAddsUpIsComputedOncePerRow(t *testing.T) {
 	z := newZoo(t)
 	seen := observeReads(t)
@@ -51,8 +51,8 @@ func TestALookupThatAHavingAddsUpIsComputedOncePerRow(t *testing.T) {
 			}
 			read = true
 			body, _, _ := strings.Cut(cte, "),\n")
-			if n := strings.Count(body, "count(DISTINCT"); n != 2 {
-				t.Fatalf("rt2 computes the mixed checks of its 2 lookups %d times:\n%s", n, body)
+			if n := strings.Count(body, "count(DISTINCT"); n != 1 {
+				t.Fatalf("rt2 computes the mixed check of its one lookup %d times:\n%s", n, body)
 			}
 		}
 	}

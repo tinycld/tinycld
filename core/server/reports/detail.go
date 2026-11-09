@@ -92,6 +92,8 @@ type windowFrame struct {
 	// recs joins the group records the frame's rows read under its layers;
 	// nil for a frame that reads them by subquery.
 	recs *recordJoins
+	// name prefixes the hoisted values' names (wh when "").
+	name string
 }
 
 // hoistLayer is one select below the frame's own: values ("<sql> AS
@@ -121,7 +123,11 @@ func (f *windowFrame) hoistLayer(alias string, keys []string, sqls ...string) []
 	for i, sql := range sqls {
 		name, ok := f.hoistedAs[sql]
 		if !ok {
-			name = fmt.Sprintf("wh%d", len(f.hoistedAs))
+			prefix := f.name
+			if prefix == "" {
+				prefix = "wh"
+			}
+			name = fmt.Sprintf("%s%d", prefix, len(f.hoistedAs))
 			f.hoistedAs[sql] = name
 			layer.cols = append(layer.cols, sql+" AS "+name)
 			layer.names = append(layer.names, name)
