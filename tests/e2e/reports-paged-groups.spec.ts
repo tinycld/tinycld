@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test'
-import { skipWithoutReportsStub } from './helpers'
+import { skipWithoutReportsStub, waitForTableFit } from './helpers'
 import { listScroller, openPagedTeams, rowIds, rowOf, scrollRowTo } from './reports-helpers'
 
 /**
@@ -87,19 +87,15 @@ async function scrollToNextGroups(page: Page, prefix: string, size: typeof DESKT
         height: size.height,
     })
     await page.setViewportSize(size)
-    // A phone width draws another list: wait for its rows before reading the list.
-    await expect(page.getByTestId('report-updating')).toHaveCount(0)
+    // setViewportSize returns before the app handles the resize, so a check made now
+    // reads the old list. At a phone width the view then swaps its list for the
+    // phone's (another list) and draws the rows again once they fit the new width;
+    // the fit marker settles in that last draw. Wait for it, then read the list.
+    await waitForTableFit(page)
     await expect(firstSale).toBeVisible()
     await expect(rowOf(page, teams[2] ?? '')).toHaveCount(0)
-    // The phone list can redraw its rows once more after the resize, which resets a
-    // scroll and detaches a row read just before: scroll in one step, from a fresh
-    // lookup of the row, until the list shows it is loading the held page.
-    await expect(async () => {
-        await scrollListToEnd(firstSale)
-        await expect(page.getByTestId('report-loading-more')).toContainText('Loading more rows…', {
-            timeout: 1000,
-        })
-    }).toPass()
+    await scrollListToEnd(firstSale)
+    await expect(page.getByTestId('report-loading-more')).toContainText('Loading more rows…')
     expect(totals(await rowIds(page))).toEqual([])
 
     release()
@@ -186,6 +182,8 @@ async function foldNearFirstPageEnd(page: Page, prefix: string, size: typeof DES
         height: size.height,
     })
     await page.setViewportSize(size)
+    // As in scrollToNextGroups: read the list only once it fits the new width.
+    await waitForTableFit(page)
     const groupB = rowOf(page, teams[1] ?? '')
     await expect(groupB).toHaveAttribute('aria-expanded', 'true')
     const rowHeight = await shortenList(page, groupB, 4)
