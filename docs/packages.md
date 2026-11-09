@@ -1242,12 +1242,17 @@ away before the run ends.
   `exists` or an aggregate column, and `with` does not apply to an `exists`
   link.
 - A page cursor is tied to the report's sort keys, its viewer sort
-  (`options.sort`), its group levels and the value types. A cursor from a
-  report that sorts or groups differently is refused. A detail or grouped
-  report pages: a page holds 200 detail rows by default, and at most 1,000
-  (`options.limit`). A grouped page also holds the group, opening and subtotal
-  rows between its detail rows; every page ends with the Total. The group
-  rows themselves are read whole, at most 5,000.
+  (`options.sort`), its group levels, its fold state (`options.expand`,
+  `options.expandAll`, `options.collapse`) and the value types. A cursor from a
+  report that sorts, groups or folds differently is refused. A detail or
+  grouped report pages: a page holds 200 rows by default, and at most 1,000
+  (`options.limit`). A grouped report (not a pivot, a layout report or a nest)
+  counts its group, opening, detail and subtotal rows in document order: a
+  closed group counts as its one row, and a group row and its opening row stay
+  on one page. Its
+  group rows page too, however many groups it has. Every page ends with the
+  Total. Pivot, layout and nest reports read their group rows whole, at most
+  5,000, and count their detail rows.
 - A formula holds at most 32 levels and 1,000 nodes. Each formula column it
   reads counts in full, as the compiler copies it in. The filter has the same
   limit.
@@ -1257,7 +1262,11 @@ away before the run ends.
   field is a source, and so is each source's fixed `Source.Currency`, even
   when two sources give the same code. An amount combines with amounts of
   its own source.
-- `options.expand` lists at most 5,000 group keys.
+- `options.expand` and `options.collapse` each list at most 5,000 group keys.
+  `options.collapse` closes groups under a level that is open by default or
+  under `options.expandAll`. When `collapse` is sent (also empty), the levels
+  open by default stay open and `expand` opens groups of closed levels; when
+  only `expand` is sent, only its groups open.
 - A layout holds at most 200 items.
 - A computed row's formula holds at most 2,000 nodes after the rows it reads
   are inlined. All computed rows together hold at most 20,000 (counted for
@@ -1268,9 +1277,10 @@ away before the run ends.
 
 **What a report returns.**
 
-- Group, pivot and nest results stop at 5,000 rows and add a notice, once per
+- Pivot, nest and layout results stop at 5,000 rows and add a notice, once per
   run. A `rowCap` or `nestCap` notice gives the rows it kept in `count`. A
-  `pivotCap` notice gives the pivot values it left out in `leftOut`. A layout
+  `pivotCap` notice gives the pivot values it left out in `leftOut`. A grouped
+  report pages its group rows instead, so it has no `rowCap` notice. A layout
   report never drops its computed rows for the cap, and it ends in those
   computed rows with no Total row.
 - Money columns group by currency. A column with more than one currency is
@@ -1308,9 +1318,10 @@ away before the run ends.
   or subtotal row carries `level`: the group level, 1 for the first. Other rows
   have none. With a skipped level (`groups[].blank`), `depth + 1` is not the
   level.
-- A grouped result pages (`page.next`); running values continue on the next
-  page. A client merges pages by row id and drops each earlier page's trailing
-  total and computed rows (a Total inside a page's slice, one per currency
+- A grouped result pages (`page.next`), its group rows too; running values
+  continue on the next page. `page.size` is the page's detail rows. A client
+  merges pages by row id and drops each earlier page's trailing total and
+  computed rows (a Total inside a page's slice, one per currency
   block, stays). Core's view also holds the newest page's trailing total and
   computed rows back while it has `page.next` (`holdWholeReportRows`), so the
   Total shows only with the last page; its column measure still reads them.
@@ -1372,7 +1383,7 @@ label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` o
 | `display.columns.<col>.whiteSpace` | `nowrap` (default: one line, ends in "…") or `normal` (the text wraps at spaces). A wrapping column is never narrower than its longest measured word (plus 2 px for the width estimate; the measure reads the first 500 rows): a smaller `width` or `minWidth`, or a `%` that gives less, is raised to it. A `minWidth` wider than the content is kept. On web a word wider than its line is clipped, not split. |
 | `display.columns.<col>.lineClamp` | 1 to 4, with `whiteSpace: "normal"`: the most lines the text wraps to (default 2). |
 | `display.columns.<col>.textOverflow` | `ellipsis` only. |
-| `display.columns.<col>.flexGrow` | 0 to 10: the column's share of spare room on one line (default 1 for text and the label column, 0 for other figures). |
+| `display.columns.<col>.flexGrow` | 0 to 10: the column's share of the spare room on one line, the room past every column's least width. While both are below their content's width, a column with 2 gets twice the room of a column with 1, whatever their content. A growing column stops at its content's width while another growing column is still below its own, and the others share what it leaves by grow; once every growing column has its content's width, the rest is shared by grow again. A column with 0 gets at most its content's width (default 1 for text and the label column, 0 for other figures). |
 | `groups[].blank` | `"skip"`: a base row whose key at this level is blank skips the level: no group row and no subtotal for it; its rows sit directly under the parent group (or layout section), one depth less per skipped level, keep their full group key (with the blank), and count in the parent's totals. Absent: a blank key forms a `(none)` group. A fill below a skipped level fills under the parent the rows reach. Refused on the first and the last group level, on a bucketed level and for any other value. |
 | `groups[].hideEmpty` | `true`: a group whose child groups are all hidden, with no shown row passed up from a skipped level, is hidden with its subtotal, as a having would hide it (a `"rows"` total above it adds nothing it did not show; a `"recompute"` total counts every row the filter keeps, the rows of hidden groups included, as with any having). Allowed on a bucketed level. Refused on the last level, and on the first group of a layout report (its sections always show). |
 | `columns[].heading` | A formula over params and values, computed once per run; the result column carries `heading: { value, type }` (text, date, datetime or number), which the view shows in place of `label` (a day in the reader's short form). Absent when the heading is blank: an unset param, a null, or an empty or whitespace-only text. `label` stays the column's name, and Customize and the builder name the column by it. Refused when it reads anything but params and values (a path is refused), or is of another type: money, yes/no, a date range and a list are refused. |

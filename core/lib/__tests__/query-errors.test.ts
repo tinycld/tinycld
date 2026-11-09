@@ -1,4 +1,4 @@
-import { reportQueryError } from '@tinycld/core/lib/query-errors'
+import { QueryRefusal, reportQueryError } from '@tinycld/core/lib/query-errors'
 import { captureExceptionToSentry } from '@tinycld/core/lib/sentry'
 import { ServerUnreachableError } from '@tinycld/core/lib/server-fetch'
 import { ClientResponseError } from 'pocketbase'
@@ -36,6 +36,17 @@ describe('reportQueryError', () => {
         )
         reportQueryError(
             responseError(0, new ServerUnreachableError(new TypeError('Failed to fetch'))),
+            queryKey,
+            vi.fn()
+        )
+        expect(captureExceptionToSentry).not.toHaveBeenCalled()
+    })
+
+    // A refusal the person caused is the screen's own state (a next page the server
+    // refused): logged, never reported as a bug.
+    it('does not report a refusal', () => {
+        reportQueryError(
+            new QueryRefusal('reports.run: a later page was refused'),
             queryKey,
             vi.fn()
         )

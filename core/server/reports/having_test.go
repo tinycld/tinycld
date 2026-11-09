@@ -66,7 +66,9 @@ const lionHidden = `{"version":4,"source":"zoo.feedings","columns":[
 // fails only when both stop working.
 func TestHiddenRowsTakeNoPlaceOnAPage(t *testing.T) {
 	z := newZoo(t)
-	withLimits(t, func(l *limits) { l.pageSize = 2 })
+	// A page counts group, opening, detail and subtotal rows (J1a): zebra's
+	// group, f3 and f4 are 3 rows, as lion's group, f1 and f2 would be.
+	withLimits(t, func(l *limits) { l.pageSize = 3 })
 	res := z.run(t, "ann", lionHidden, Options{ExpandAll: true}, nil)
 	requireOrderedRows(t, lionHidden, res, "note", nil, "f3", "f4", nil)
 	if len(res.Notices) != 0 || res.Page == nil || res.Page.Next != "" {

@@ -196,6 +196,27 @@ func TestRaggedPagesEqualTheWholeRun(t *testing.T) {
 	}
 }
 
+// Paged group rows (J1) over a skipped level: the skipped blank key draws no
+// row, so the limit does not count it (a page of it would end early and lose
+// the rows after it), the cursor still reads its order values as an enclosing
+// group of Kit, and a page that starts under it starts after "cat". Every
+// limit, with the open levels, every group open, and "lion" folded.
+func TestRaggedGroupRowsPageAtEveryLimit(t *testing.T) {
+	z := raggedZoo(t)
+	raw := fmt.Sprintf(zooRagged, "")
+	for _, opts := range []Options{{}, {ExpandAll: true}, {Collapse: [][]any{{"lion", "USD"}}}} {
+		whole := z.run(t, "ann", raw, Options{ExpandAll: opts.ExpandAll, Collapse: opts.Collapse, Limit: 1000}, nil)
+		for limit := 1; limit <= 12; limit++ {
+			opts.Limit = limit
+			pages := groupedPages(t, z, "ann", raw, opts)
+			if merged := mergedRows(t, pages); !reflect.DeepEqual(merged, whole.Rows) {
+				t.Fatalf("%+v: pages\n%v\nwhole\n%v", opts, rowsOf(&Result{Rows: merged}, "id"), rowsOf(whole, "id"))
+			}
+			requireCut(t, pages, whole, limit)
+		}
+	}
+}
+
 func TestRaggedCursorFromAnotherGroupingIsRefused(t *testing.T) {
 	z := raggedZoo(t)
 	page := z.run(t, "ann", fmt.Sprintf(zooRagged, ""), Options{ExpandAll: true, Limit: 1}, nil)

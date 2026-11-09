@@ -27,6 +27,7 @@ import {
     TableRow,
     type TableRowProps,
 } from './ReportRow'
+import { MessageBody } from './ReportStates'
 import { HEADING_LINE_HEIGHT, ROW_HEIGHT } from './report-table-layout'
 
 const TEXT_ALIGN: Record<Justify, string> = {
@@ -297,8 +298,30 @@ function HeadingRow(props: HeadingRowProps) {
 
 // D8, D12: the list ends in what comes next. While a later page is left the Total
 // is held back, and this row stands in its place; after the last page, a short
-// end row (a page footer is for exports only).
-function TableEnd({ hasMore }: { hasMore: boolean }) {
+// end row (a page footer is for exports only). A next page that failed (R8) ends
+// the list in core's error-with-Retry state: the rows above stay.
+function TableEnd({
+    hasMore,
+    failed,
+    onRetry,
+}: {
+    hasMore: boolean
+    failed: boolean
+    onRetry?: () => void
+}) {
+    if (failed) {
+        const retry = onRetry
+            ? { label: 'Retry', testID: 'report-loading-more-retry', onPress: onRetry }
+            : null
+        return (
+            <MessageBody
+                isVisible
+                testID="report-loading-more-error"
+                message="Could not load more rows"
+                action={retry}
+            />
+        )
+    }
     if (hasMore) {
         return (
             <View
@@ -374,6 +397,9 @@ interface TableListProps extends Omit<TableRowProps, 'item'> {
     onNearEnd(): void
     /** A later page is left: the list ends in "Loading more rows…", else in "End of report". */
     hasMore: boolean
+    /** The next page failed: the list ends in "Could not load more rows" with Retry. */
+    loadMoreFailed: boolean
+    onRetryMore?(): void
     onRowWidth(width: number): void
     sorting: HeadingSort
     onTopRowIndex?(index: number): void
@@ -411,6 +437,8 @@ function useTableListProps({
     onTopRowIndex,
     onNearEnd,
     hasMore,
+    loadMoreFailed,
+    onRetryMore,
 }: TableListProps) {
     const sticky = useMemo(() => stickyIndices(rows), [rows])
     const onViewableItemsChanged = useTopRowReport(onTopRowIndex)
@@ -432,7 +460,9 @@ function useTableListProps({
         onViewableItemsChanged,
         viewabilityConfig: VIEWABILITY_CONFIG,
         className: 'web:[scrollbar-gutter:stable]',
-        ListFooterComponent: <TableEnd hasMore={hasMore} />,
+        ListFooterComponent: (
+            <TableEnd hasMore={hasMore} failed={loadMoreFailed} onRetry={onRetryMore} />
+        ),
     }
 }
 
@@ -546,6 +576,10 @@ export interface ReportTableProps {
     onNearEnd(): void
     /** A later page is left: the list ends in "Loading more rows…", else in "End of report". */
     hasMore: boolean
+    /** The next page failed (R8); absent: it did not. */
+    loadMoreFailed?: boolean
+    /** Asks again for the next page that failed. */
+    onRetryMore?(): void
     /** The reader's sort (the view URL's `s=`); null: the report's own order. */
     sort: ViewSort | null
     onSortColumn(col: string): void
@@ -605,6 +639,8 @@ export function ReportTable(props: ReportTableProps) {
                 onToggleGroup={onToggleGroup}
                 onNearEnd={onNearEnd}
                 hasMore={props.hasMore}
+                loadMoreFailed={props.loadMoreFailed ?? false}
+                onRetryMore={props.onRetryMore}
                 onRowWidth={props.onRowWidth}
                 sorting={sorting}
                 onTopRowIndex={props.onTopRowIndex}

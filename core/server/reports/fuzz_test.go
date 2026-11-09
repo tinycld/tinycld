@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -182,7 +183,7 @@ func (z *zoo) engineExpanded(t *testing.T, src fuzzSource, user, filter string) 
 }
 
 func FuzzRuleParity(f *testing.F) {
-	for seed := range uint64(48) {
+	for seed := range uint64(60) {
 		f.Add(seed)
 	}
 	// One grown zoo serves every seed this process runs; a seed only reads.
@@ -203,7 +204,7 @@ func FuzzRuleParity(f *testing.F) {
 		z.fillParity(t, mux, user)
 		z.sumLookupParity(t, mux, user)
 		z.cellsParity(t, mux, user)
-		z.pagedGroupParity(t, rng, user, pagedShapes[seed%uint64(len(pagedShapes))], 1+rng.IntN(5))
+		z.pagedGroupParity(t, mux, rng, user, pagedShapes[seed%uint64(len(pagedShapes))], 1+rng.IntN(5))
 	})
 }
 
@@ -368,26 +369,28 @@ func pagedAnimals(levels int) string {
 
 // pagedShape is one grouped report the paging parity runs: its group levels
 // and its expansion state. "open" sends none (the open levels expand), "all"
-// expands every group, "none" shuts every group, and "some" expands a random
-// half of the groups, so seams fall next to shut groups.
+// expands every group, "none" shuts every group, "some" expands a random
+// half of the groups, so seams fall next to shut groups, and "fold" collapses
+// a random half of the groups the open levels show.
 type pagedShape struct {
 	levels int
 	expand string
 }
 
-// pagedShapes are taken in turn by seed, so the 48 seeds run each one four
+// pagedShapes are taken in turn by seed, so the 60 seeds run each one four
 // times: with two levels a seam falls between the levels, and with three a
 // seam falls beside rows that skip the blank middle level.
 var pagedShapes = []pagedShape{
-	{1, "open"}, {1, "all"}, {1, "none"}, {1, "some"},
-	{2, "open"}, {2, "all"}, {2, "none"}, {2, "some"},
-	{3, "open"}, {3, "all"}, {3, "none"}, {3, "some"},
+	{1, "open"}, {1, "all"}, {1, "none"}, {1, "some"}, {1, "fold"},
+	{2, "open"}, {2, "all"}, {2, "none"}, {2, "some"}, {2, "fold"},
+	{3, "open"}, {3, "all"}, {3, "none"}, {3, "some"}, {3, "fold"},
 }
 
 // pagedGroupParity: the pages of a grouped report, joined as the client joins
 // them (mergedRows: an earlier page's trailing totals dropped, no row on two
-// pages), are exactly the one-page run.
-func (z *zoo) pagedGroupParity(t *testing.T, rng *rand.Rand, user string, shape pagedShape, limit int) {
+// pages), are exactly the one-page run; with every group open, their detail
+// rows are exactly the feedings the list API lists for the reader.
+func (z *zoo) pagedGroupParity(t *testing.T, mux http.Handler, rng *rand.Rand, user string, shape pagedShape, limit int) {
 	t.Helper()
 	raw := pagedAnimals(shape.levels)
 	var opts Options
@@ -403,11 +406,52 @@ func (z *zoo) pagedGroupParity(t *testing.T, rng *rand.Rand, user string, shape 
 				opts.Expand = append(opts.Expand, row.GroupKey)
 			}
 		}
+	case "fold":
+		opts.Collapse = [][]any{}
+		for _, row := range z.run(t, user, raw, Options{Limit: 1000}, nil).Rows {
+			if row.Kind == KindGroup && rng.IntN(2) == 0 {
+				opts.Collapse = append(opts.Collapse, row.GroupKey)
+			}
+		}
 	}
 	opts.Limit = 1000
 	whole := z.run(t, user, raw, opts, nil)
 	opts.Limit = limit
-	if merged := mergedRows(t, groupedPages(t, z, user, raw, opts)); !reflect.DeepEqual(merged, whole.Rows) {
+	merged := mergedRows(t, groupedPages(t, z, user, raw, opts))
+	if !reflect.DeepEqual(merged, whole.Rows) {
 		t.Fatalf("%s, %+v, limit %d: pages\n%v\nwhole\n%v", user, shape, limit, merged, whole.Rows)
+	}
+	if shape.expand == "none" {
+		return
+	}
+	// In document order, not sorted (review A, NOTE 7): under each open animal
+	// group, in the order the groups show, exactly the feedings of that animal
+	// the list API lists for the reader, by note, then by id (the spec's sort,
+	// then the row id).
+	byAnimal := map[string][]map[string]any{}
+	for _, item := range z.listItems(t, mux, "zoo_feedings", user) {
+		animal, _ := item["animal"].(string)
+		byAnimal[animal] = append(byAnimal[animal], item)
+	}
+	var got, want []string
+	for _, row := range merged {
+		switch {
+		case row.Kind == KindDetail:
+			got = append(got, row.ID)
+		// By level, not depth: an animal under a skipped region sits a depth
+		// higher than its level.
+		case row.Kind == KindGroup && row.Expanded && row.Level == shape.levels:
+			animal, _ := row.GroupKey[shape.levels-1].(string)
+			items := slices.Clone(byAnimal[animal])
+			slices.SortFunc(items, func(a, b map[string]any) int {
+				return cmp.Or(cmp.Compare(a["note"].(string), b["note"].(string)), cmp.Compare(a["id"].(string), b["id"].(string)))
+			})
+			for _, item := range items {
+				want = append(want, fmt.Sprintf("d:%v", item["id"]))
+			}
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("%s, %+v, limit %d: detail rows\n%v\nlist API, in document order\n%v", user, shape, limit, got, want)
 	}
 }

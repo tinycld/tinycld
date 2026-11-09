@@ -117,6 +117,14 @@ type ledgerRun struct {
 
 const ledgerPeriod = `{"from":"2025-03-01","to":"2025-08-31"}`
 
+// Since J1a (core plan 2026-11-08) a page counts group, opening, detail and
+// subtotal rows, where it counted detail rows only. The golden changed for the
+// runs whose pages that moves: every run with an explicit limit (pages, all,
+// accounts, someOpen, viewSort, allDates) on n60, n200 and mixed45, whose
+// pages are now cut over those rows; and n200/default, which sends no limit
+// but holds more than one page (200) of counted rows, so it now pages. It is
+// unchanged (diffed before the update) for the runs that fit one page:
+// n60/default, mixed45/default and every collapsed run.
 func ledgerRuns() []ledgerRun {
 	period := map[string]string{"period": ledgerPeriod}
 	with := func(extra map[string]string) map[string]string {
@@ -191,6 +199,13 @@ func ledgerCanonical(t testing.TB, z *zoo, pages []*Result) string {
 				t.Fatal(err)
 			}
 			out[i].Cursor = string(raw)
+			// The encoded cursor may hold a fixture record's random id (a J1a
+			// group cursor names its group), which the replace below cannot
+			// reach inside base64: Cursor holds it decoded instead.
+			r, pg := *p, *p.Page
+			pg.Next = "<Cursor>"
+			r.Page = &pg
+			out[i].Result = &r
 		}
 	}
 	raw, err := json.MarshalIndent(out, "", " ")

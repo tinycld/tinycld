@@ -464,7 +464,9 @@ func TestABalanceShapedReportCutAtAPageSeamGoesOnOnTheNextPage(t *testing.T) {
 	withBalanceZoo(t, z)
 	params := map[string]string{"period": glJuly, "rows": `"all"`}
 	whole := runBalances(t, z, params)
-	opts := Options{Today: "2026-07-15", Limit: 1}
+	// A page counts group, opening, detail and subtotal rows (J1a): a page of
+	// 3 is Cash's group row, its opening and the 2026-07-01 Rent line.
+	opts := Options{Today: "2026-07-15", Limit: 3}
 	var pages []*Result
 	for range 100 {
 		res := z.run(t, "ann", balanceSpec(), opts, params)
@@ -498,6 +500,60 @@ func TestABalanceShapedReportCutAtAPageSeamGoesOnOnTheNextPage(t *testing.T) {
 		glDetailRow("2026-07-02", -7000, "-Split-"),
 		glSubtotalRow("1000 Cash", -7000))
 	requireGroupRows(t, rows, "1200 Petty cash", glOpeningRow(0), glSubtotalRow("1200 Petty cash", 0))
+}
+
+// J1a: a seam between two account groups (the page ends on a subtotal) goes
+// on with the next account's group row; the pages join into the one-page run.
+func TestABalanceShapedReportCutBetweenGroupsGoesOnOnTheNextPage(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	params := map[string]string{"period": glJuly, "rows": `"all"`}
+	whole := runBalances(t, z, params)
+	end := slices.IndexFunc(whole.Rows, func(r Row) bool { return r.Kind == KindSubtotal })
+	if end < 0 {
+		t.Fatal("no subtotal")
+	}
+	opts := Options{Today: "2026-07-15", Limit: end + 1 - countEnds(whole.Rows[:end+1])}
+	first := z.run(t, "ann", balanceSpec(), opts, params)
+	if last := lastCountedRow(first.Rows); last.Kind != KindSubtotal {
+		t.Fatalf("page 1 ends in %+v, want the first account's subtotal", last)
+	}
+	opts.Cursor = first.Page.Next
+	second := z.run(t, "ann", balanceSpec(), opts, params)
+	if second.Rows[0].Kind != KindGroup || second.Rows[0].ID == first.Rows[0].ID {
+		t.Fatalf("page 2 starts with %+v, want the next account's group row", second.Rows[0])
+	}
+	pages := []*Result{first}
+	for o := opts; ; {
+		res := z.run(t, "ann", balanceSpec(), o, params)
+		pages = append(pages, res)
+		if res.Page == nil || res.Page.Next == "" {
+			break
+		}
+		o.Cursor = res.Page.Next
+	}
+	if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
+		t.Fatalf("merged pages differ from the one-page run")
+	}
+}
+
+func countEnds(rows []Row) int {
+	n := 0
+	for _, r := range rows {
+		if isEnd(r) {
+			n++
+		}
+	}
+	return n
+}
+
+func lastCountedRow(rows []Row) Row {
+	for i := len(rows) - 1; i >= 0; i-- {
+		if !isEnd(rows[i]) {
+			return rows[i]
+		}
+	}
+	return Row{}
 }
 
 // On a detail row the opening's looked-up code is a subquery the currency

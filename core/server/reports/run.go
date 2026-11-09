@@ -23,9 +23,15 @@ type Options struct {
 	// level and the children of each expanded group.
 	Expand    [][]any `json:"expand,omitempty"`
 	ExpandAll bool    `json:"expandAll,omitempty"`
+	// Collapse lists groups the reader closed under a level that is open by
+	// default or under ExpandAll. Sent (even empty), it keeps the open levels
+	// open beside Expand, so a fold in a report with many open groups never
+	// lists them all (J1b, Ruling R2).
+	Collapse [][]any `json:"collapse,omitempty"`
 	// Cursor is the previous page's page.next; Limit is the page size (at
-	// most maxPage). A grouped report pages its detail rows in document
-	// order; its group rows come whole on every page (R9).
+	// most maxPage). A grouped report without pivot, layout or nest pages its
+	// group, opening, detail and subtotal rows in document order (J1a); a
+	// pivot, a layout and a nest read their group rows whole.
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
 	// Sort orders the detail rows before the report's own sort keys: the
@@ -208,16 +214,19 @@ var (
 )
 
 type limits struct {
-	timeout  time.Duration
-	rowCap   int
+	timeout time.Duration
+	rowCap  int
+	// foldCap is the most group keys options.expand or options.collapse lists.
+	foldCap  int
 	pageSize int
 	maxPage  int
 }
 
-// runLimits: each statement stops after timeout; group, pivot and nested
-// results stop at rowCap rows; a detail page holds pageSize rows unless
-// the run asks for up to maxPage.
-var runLimits = limits{timeout: 10 * time.Second, rowCap: 5000, pageSize: 200, maxPage: 1000}
+// runLimits: each statement stops after timeout; pivot, nest and layout
+// results stop at rowCap rows (a grouped report pages its group rows
+// instead); a detail page holds pageSize rows unless the run asks for up to
+// maxPage.
+var runLimits = limits{timeout: 10 * time.Second, rowCap: 5000, foldCap: 5000, pageSize: 200, maxPage: 1000}
 
 const blankLabel = "(none)"
 
@@ -237,8 +246,9 @@ type runner struct {
 	// pivotLabels their records' labels for a pivot over a link.
 	pivotValues []pivotValue
 	pivotLabels []rowLabel
-	// page is a grouped run's page: where its rows start and end in the
-	// document (pageWindow); nil when the run did not page grouped details.
+	// page is the page of a grouped run whose group rows do not page (a
+	// layout or a nest): where its rows start and end in the document
+	// (pageWindow); nil when the run did not page grouped details.
 	page *groupedPage
 	// mixedRows holds, by row id, the columns whose cell on that row is
 	// blank because a sum lookup met two currencies (push).
@@ -248,6 +258,27 @@ type runner struct {
 	mixedConditions []string
 	// headings are the run's column headings by column id (readHeadings).
 	headings map[string]*ColumnHeading
+	// A run that pages its group rows (pagedGroups) reads its cursor into
+	// groupCur, with each level's order terms (groupShape), the detail sort
+	// keys (groupKeys) and the fingerprint its cursors carry (groupFP).
+	// rawGroups and rawDetails hold the statement rows the page's group and
+	// detail rows came from, by row id, so the next cursor reads their order
+	// values.
+	groupCur   *groupCursor
+	groupShape [][]orderTerm
+	groupKeys  []sortKey
+	groupFP    string
+	rawGroups  map[string]map[string]any
+	rawDetails map[string]map[string]any
+	// anchored is how many of the cursor's anchors the page read again: those
+	// from the top that still have the cursor's order values (groupKeyset).
+	anchored int
+	// shown are the groups whose first details earlier pages showed, up to
+	// which detail row (shownBefore, readShownNow).
+	shown []held
+	// readDetails is set when the detail pass ran: such a run always had a
+	// page, even one that fits.
+	readDetails bool
 }
 
 // groupedPage is a grouped run's page: after is the open group the previous
@@ -273,18 +304,8 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	// No expansion state at all (expand absent, no expandAll): the levels
-	// marked open expand, down to the first level that is not open: a level
-	// under a closed ancestor shows nothing, so it is not fetched.
-	// expand: [] is a choice to open nothing.
-	if req.Options.Expand == nil && !req.Options.ExpandAll {
-		for i, g := range p.groups {
-			if !g.group.Open {
-				break
-			}
-			expand.open[i+1] = true
-		}
-	}
+	// No expansion state: the levels marked open expand (openLevels).
+	openLevels(p, req.Options, expand)
 	rn := &runner{
 		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
@@ -367,12 +388,27 @@ func (rn *runner) run() error {
 	if rn.c.p.pivot != nil && rn.opts.Cursor != "" {
 		return badCursor()
 	}
-	groupRows, err := rn.groupPass()
+	paged := rn.pagedGroups()
+	groupPass := rn.groupPass
+	if paged {
+		groupPass = rn.pagedGroupPass
+	}
+	groupRows, err := groupPass()
 	if err != nil {
 		return err
 	}
 	var details []map[string]any
-	if rn.c.p.pivot == nil {
+	switch {
+	case paged:
+		// The page's open innermost groups, anchors included, in document
+		// order. In mode after the cursor's own group was not read, so it is
+		// never one of them; the group cursor was read and checked already.
+		if leaves := rn.openGroups(groupRows); len(leaves) > 0 {
+			if details, err = rn.detailPass(leaves); err != nil {
+				return err
+			}
+		}
+	case rn.c.p.pivot == nil:
 		var leaves [][]any
 		grouped := len(rn.c.p.groups) > 0
 		if grouped {
@@ -402,7 +438,13 @@ func (rn *runner) run() error {
 	rn.res.Columns = rn.columns()
 	rn.markCurrencies(groupRows)
 	rn.assemble(groupRows, details, nested)
-	rn.pageWindow()
+	if paged {
+		if err := rn.cutPage(rn.pageLimit()); err != nil {
+			return err
+		}
+	} else {
+		rn.pageWindow()
+	}
 	rn.markMixedLookups()
 	// A source's Go hooks read collections no statement reads, so their
 	// topics are added by name.
@@ -536,6 +578,339 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 		return nil, err
 	}
 	return rn.capLevelRows(rows), nil
+}
+
+// pagedGroups is true for a run whose group rows page (J1a): a grouped
+// report with no pivot (a pivot's columns come from every row), no layout (a
+// statement's computed rows read every section) and no nest (child rows page
+// with their detail rows). The others keep one group statement and its cap.
+func (rn *runner) pagedGroups() bool {
+	p := rn.c.p
+	return len(p.groups) > 0 && p.pivot == nil && len(p.layout) == 0 && len(p.nest) == 0
+}
+
+// pageLimit is the most rows a page holds: options.limit up to maxPage, else
+// pageSize.
+func (rn *runner) pageLimit() int {
+	if rn.opts.Limit > 0 {
+		return min(rn.opts.Limit, runLimits.maxPage)
+	}
+	return runLimits.pageSize
+}
+
+// pagedGroupPass reads one page of a grouped run's level rows (J1a), then
+// the Total in a statement of its own. The levels compile once; the cursor
+// is read from their order terms before the page statement is written, as
+// its keyset compares their values.
+func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
+	c := rn.c
+	s := newStmt(rn.app, c.info)
+	r, err := c.rows(s)
+	if err != nil {
+		return nil, err
+	}
+	c.condProbes, c.probed = nil, nil
+	if r.filterMixed != "" {
+		c.probe("filter", "SELECT 1 "+r.root.render()+"\nWHERE "+r.filterMixed)
+	}
+	r.probeWheres()
+	levels, err := c.compileLevels(s, r, rn.expand, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	rn.groupShape = make([][]orderTerm, 0, len(levels)-1)
+	for _, l := range levels[1:] {
+		rn.groupShape = append(rn.groupShape, l.lv.terms)
+	}
+	// The detail sort keys are in the cursor's fingerprint: a cursor from
+	// another sort is refused even on a page with no detail row. This compile
+	// also gives the columns their detail types (detailTypes). It runs over a
+	// w of its own, as detailTypes does: over r, the sort keys' columns and
+	// binds would go into the page and Total statements, which never read
+	// them. A second rows() gives the same currency keys, and the levels are
+	// compiled already.
+	keysOf, err := c.rows(newStmt(rn.app, c.info))
+	if err != nil {
+		return nil, err
+	}
+	if _, rn.groupKeys, err = c.detailSelect(keysOf, "w"); err != nil {
+		return nil, err
+	}
+	rn.groupFP = groupFingerprint(c.groupLevels(), levelShape(rn.groupShape), foldPrint(rn.expand), rn.groupKeys)
+	if rn.opts.Cursor != "" {
+		cur, err := readGroupCursor(rn.groupFP, rn.groupShape, rn.groupKeys, len(c.p.groups), len(c.currencies), rn.opts.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		rn.groupCur = &cur
+	}
+	levelCTEs, pageCTEs, body, err := c.pagedGroupStatement(s, levels, rn.expand, rn.groupCur, int64(rn.pageLimit()))
+	if err != nil {
+		return nil, err
+	}
+	levelCTEs = append([]string{r.render()}, levelCTEs...)
+	rows, err := rn.query(s, slices.Concat(levelCTEs, pageCTEs), body)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > 0 && rn.groupCur != nil {
+		rn.anchored = int(toInt(rows[0]["__anchored"]))
+	}
+	rn.shown, _ = rn.shownBefore()
+	// totalPass adds the probes' CTE to the list it gets: its own copy.
+	totals, err := rn.totalPass(s, slices.Clone(levelCTEs))
+	if err != nil {
+		return nil, err
+	}
+	rn.rawGroups, rn.rawDetails = map[string]map[string]any{}, map[string]map[string]any{}
+	return append(rows, totals...), nil
+}
+
+// pagedGroupStatement selects one page of level rows (J1a) in document order:
+// the currency blocks in Total order (R7), then each level's sibling ordinal
+// down the path (a parent before its children). Its rows are the cursor's
+// anchors (the enclosing groups the page starts inside, for their subtotals)
+// and the rows after the cursor, at most limit+1 of them past the anchors,
+// so the cut (cutPage) knows whether more follow. Every o<L> keeps its
+// lookup layers and record joins (#452); the keyset and limit go on the outer
+// select. having and fill already shaped o<L>, so they apply before the
+// keyset. The levels are compiled (compileLevels) and the cursor read
+// before this is called: the cursor's shape is the levels' order terms.
+func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *expansion, cur *groupCursor, limit int64) (levelCTEs, pageCTEs []string, body string, err error) {
+	groups := len(c.p.groups)
+	unread := c.unreadCells(levels, nil)
+	for _, l := range levels[1:] {
+		l.lv.paged = true
+	}
+	for _, l := range levels {
+		levelCTEs = append(levelCTEs, l.lv.render(withoutCells(l.cells, unread), l.own, l.totals)...)
+	}
+	// The union names its columns, so each leg's own order values line up
+	// with the other legs' NULLs.
+	base := []string{"__level", "__row"}
+	for i := range groups {
+		base = append(base, fmt.Sprintf("k%d", i))
+	}
+	base = append(base, c.currencies...)
+	for _, cell := range withoutCells(levels[1].cells, unread) {
+		_, name := splitCell(cell)
+		base = append(base, name)
+	}
+	base = append(base, "__ord", "__own", "__label", "__labelcur", "__n", "__kids")
+	skipping := false
+	for n := 1; n <= groups; n++ {
+		skipping = skipping || c.skips(n)
+	}
+	legs := make([]string, 0, groups)
+	for n := 1; n <= groups; n++ {
+		cols := prefixed("o.", base)
+		// A skip level's blank key is read (its children's path, the cursor's
+		// order values) but draws no row (children), so the limit does not
+		// count it.
+		if skipping {
+			blank := "0"
+			if c.skips(n) {
+				blank = fmt.Sprintf("(o.k%d IS NULL)", n-1)
+			}
+			cols = append(cols, blank+" AS "+uncountedCell)
+		}
+		for i := 1; i <= groups; i++ {
+			if i <= n {
+				cols = append(cols, fmt.Sprintf("pp.__p%d", i))
+			} else {
+				cols = append(cols, fmt.Sprintf("NULL AS __p%d", i))
+			}
+		}
+		for m := 1; m <= groups; m++ {
+			for j := range levels[m].lv.terms {
+				if m == n {
+					cols = append(cols, "o."+orderValue(m, j))
+				} else {
+					cols = append(cols, "NULL AS "+orderValue(m, j))
+				}
+			}
+		}
+		legs = append(legs, fmt.Sprintf("SELECT %s FROM o%d o JOIN pp%d pp ON %s WHERE %s",
+			strings.Join(cols, ", "), n, n, strings.Join(c.sameGroup("o", "pp", n), " AND "), expand.shownUnder(c, s, n-1, "o.")))
+	}
+	keyset, pc, anchors := c.groupKeyset(s, levels, cur)
+	pageCTEs = c.pathCTEs()
+	// Each row carries how many anchors the page read again (pageStart starts
+	// after the deepest of them).
+	selected := "*"
+	if pc != "" {
+		pageCTEs = append(pageCTEs, pc)
+		selected = "*, (SELECT an FROM pc) AS __anchored"
+	}
+	var order []string
+	for _, ck := range c.currencies {
+		order = append(order, "("+ck+" IS NULL)", ck)
+	}
+	for i := 1; i <= groups; i++ {
+		order = append(order, fmt.Sprintf("__p%d", i))
+	}
+	rows := limitSQL(limit + 1 + int64(anchors))
+	orderBy := strings.Join(order, ", ")
+	union := strings.Join(legs, "\nUNION ALL\n")
+	if !skipping {
+		body = fmt.Sprintf("SELECT %s FROM (%s)\nWHERE %s\nORDER BY %s LIMIT %s", selected, union, keyset, orderBy, rows)
+		return levelCTEs, pageCTEs, body, nil
+	}
+	// A LIMIT would count the blank keys of skip levels, which draw no row: a
+	// page of them would end early and look like the last one. The running
+	// count of the rows that draw takes its place.
+	body = fmt.Sprintf("SELECT * FROM (SELECT %s, SUM(1 - %s) OVER (ORDER BY %s ROWS UNBOUNDED PRECEDING) AS __counted FROM (%s)\nWHERE %s)\nWHERE __counted <= %s\nORDER BY %s",
+		selected, uncountedCell, orderBy, union, keyset, rows, orderBy)
+	return levelCTEs, pageCTEs, body, nil
+}
+
+// uncountedCell is 1 on a paged level row that draws no row of its own (a
+// skip level's blank key), which the page's limit does not count.
+const uncountedCell = "__uncounted"
+
+// sameGroup matches a's row to b's by the first n group keys and the
+// currency keys, with IS, so a blank key matches a blank one.
+func (c *compiler) sameGroup(a, b string, n int) []string {
+	out := make([]string, 0, n+len(c.currencies))
+	for i := range n {
+		out = append(out, fmt.Sprintf("%s.k%d IS %s.k%d", a, i, b, i))
+	}
+	for _, ck := range c.currencies {
+		out = append(out, a+"."+ck+" IS "+b+"."+ck)
+	}
+	return out
+}
+
+// pathCTEs give each level row its path: pp<L> holds a level-L row's keys and
+// the sibling ordinals (__ord) of it and each enclosing group, __p1 to __p<L>,
+// which order the page's rows in document order.
+func (c *compiler) pathCTEs() []string {
+	groups := len(c.p.groups)
+	ctes := make([]string, 0, groups)
+	ctes = append(ctes, fmt.Sprintf("pp1 AS (SELECT %s FROM o1)", strings.Join(append(append([]string{"k0"}, c.currencies...), "__ord AS __p1"), ", ")))
+	for n := 2; n <= groups; n++ {
+		var cols []string
+		for i := range n {
+			cols = append(cols, fmt.Sprintf("o.k%d", i))
+		}
+		cols = append(cols, prefixed("o.", c.currencies)...)
+		for i := 1; i < n; i++ {
+			cols = append(cols, fmt.Sprintf("pp.__p%d", i))
+		}
+		cols = append(cols, fmt.Sprintf("o.__ord AS __p%d", n))
+		ctes = append(ctes, fmt.Sprintf("pp%d AS (SELECT %s FROM o%d o JOIN pp%d pp ON %s)",
+			n, strings.Join(cols, ", "), n, n-1, strings.Join(c.sameGroup("o", "pp", n-1), " AND ")))
+	}
+	return ctes
+}
+
+// groupKeyset selects the page's rows after a group cursor ("1" without
+// one), the CTE pc it reads ("" without one), and the number of anchors: the
+// enclosing groups of where the page starts, which the page reads again so
+// their open rows' subtotals follow their children (the path group too when
+// the page starts inside it). With d the cursor's depth, a row is kept when it
+// is an anchor, inside the path group (mode in), in a later currency block,
+// or under the path's level-(i-1) group and after its level-i group, i = 1..d.
+// "After" compares sibling ordinals with the count of siblings at or before
+// the cursor's order values (Ruling R1), so a group added or removed between
+// pages shifts no other.
+func (c *compiler) groupKeyset(s *stmt, levels []compiledLevel, cur *groupCursor) (string, string, int) {
+	if cur == nil {
+		return "1", "", 0
+	}
+	d := len(cur.Path)
+	curs := cur.Group[d:]
+	anchors := d
+	if cur.Mode == cursorAfter {
+		anchors = d - 1
+	}
+	// under is the first n of the cursor's group keys and its currency keys,
+	// on the columns of table (bare for "").
+	under := func(table string, n int) []string {
+		prefix := ""
+		if table != "" {
+			prefix = table + "."
+		}
+		out := make([]string, 0, n+len(curs))
+		for i := range n {
+			out = append(out, fmt.Sprintf("%sk%d IS %s", prefix, i, s.bind(cur.Group[i])))
+		}
+		for j, ck := range c.currencies {
+			out = append(out, prefix+ck+" IS "+s.bind(curs[j]))
+		}
+		return out
+	}
+	// An anchor is read again only while it and each anchor around it still
+	// have the cursor's order values: pc's "an" counts the anchors from the
+	// top that do. A group that sorts elsewhere now (renamed, re-weighed)
+	// counts as removed, so the page does not start at its new place and
+	// skip the rows between; the keyset still reads it there when it sorts
+	// after the cursor.
+	still := make([]string, 0, anchors+1)
+	for n := 1; n <= anchors; n++ {
+		same := under("x", n)
+		for j, v := range cur.Path[n-1] {
+			same = append(same, "x."+orderValue(n, j)+" IS "+s.bind(v))
+		}
+		still = append(still, fmt.Sprintf("WHEN NOT EXISTS (SELECT 1 FROM o%d x WHERE %s) THEN %d", n, strings.Join(same, " AND "), n-1))
+	}
+	anchored := "0"
+	if anchors > 0 {
+		anchored = fmt.Sprintf("CASE %s ELSE %d END", strings.Join(still, " "), anchors)
+	}
+	var terms []string
+	for n := 1; n <= anchors; n++ {
+		terms = append(terms, "("+strings.Join(append([]string{fmt.Sprintf("__level = %d", n)}, append(under("", n), fmt.Sprintf("(SELECT an FROM pc) >= %d", n))...), " AND ")+")")
+	}
+	if cur.Mode == cursorIn {
+		terms = append(terms, "("+strings.Join(append([]string{fmt.Sprintf("__level > %d", d)}, append(under("", d), fmt.Sprintf("(SELECT an FROM pc) >= %d", d))...), " AND ")+")")
+	}
+	if len(c.currencies) > 0 {
+		var cols []orderTerm
+		var values []any
+		for j, ck := range c.currencies {
+			blank := int64(0)
+			if curs[j] == nil {
+				blank = 1
+			}
+			cols = append(cols, orderTerm{sql: "(" + ck + " IS NULL)"}, orderTerm{sql: ck})
+			values = append(values, blank, curs[j])
+		}
+		terms = append(terms, afterSQL(s, cols, values))
+	}
+	counts := make([]string, 0, d)
+	for i := 1; i <= d; i++ {
+		xTerms := make([]orderTerm, len(levels[i].lv.terms))
+		for j, t := range levels[i].lv.terms {
+			xTerms[j] = orderTerm{sql: "x." + orderValue(i, j), desc: t.desc}
+		}
+		conds := append(under("x", i-1), "NOT "+afterSQL(s, xTerms, cur.Path[i-1]))
+		counts = append(counts, fmt.Sprintf("(SELECT count(*) FROM o%d x WHERE %s) AS c%d", i, strings.Join(conds, " AND "), i))
+		terms = append(terms, "("+strings.Join(append(under("", i-1), fmt.Sprintf("__p%d > (SELECT c%d FROM pc)", i, i)), " AND ")+")")
+	}
+	counts = append(counts, anchored+" AS an")
+	return anyOf(terms), "pc AS (SELECT " + strings.Join(counts, ", ") + ")", anchors
+}
+
+// totalPass reads the Total rows (o0, one per currency) over the group
+// statement's CTEs, in a statement of their own: every row the filter keeps,
+// whatever page the group rows are on. The condition probes ride on it, as
+// it always returns a row unless there are no rows at all.
+func (rn *runner) totalPass(s *stmt, ctes []string) ([]map[string]any, error) {
+	c := rn.c
+	probes := c.probeCells()
+	if cte := c.probeCTE(); cte != "" {
+		ctes = append(ctes, cte)
+	}
+	body := "SELECT " + strings.Join(append([]string{"*"}, probes...), ", ") + " FROM o0"
+	rows, err := rn.query(s, ctes, body)
+	if err != nil {
+		return nil, err
+	}
+	if err := rn.readProbes(s, ctes, rows, c.condProbes); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // probesCTE is the CTE that computes, once, whether each condition probe
@@ -714,102 +1089,28 @@ func viewSortPlans(c *compiler, keys []ViewSort) ([]sortPlan, error) {
 }
 
 // groupStatement is the UNION ALL of every level's rows (the children of
-// expanded groups only) and the layout's computed rows.
+// expanded groups only) and the layout's computed rows: the one group
+// statement of a run whose group rows do not page (a pivot, a layout, a nest).
 func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64) ([]string, string, error) {
 	var ctes, legs []string
-	c.levelTypes, c.sectionCur, c.fillSets = map[string]FieldType{}, map[string]currency{}, map[int]string{}
-	c.sectionMixed = map[string]bool{}
-	// readsSums is true when the level above adds this level's "rows" cells
-	// (childSum), which rt<L> then holds.
-	readsSums := false
-	// Each level's o<L> renders once every leg's cells are known: a helper
-	// column no leg has a value for is left out of all of them.
-	type levelRows struct {
-		lv            *level
-		cells, totals []string
-		own           string
-	}
-	var levels []levelRows
-	for n := 0; n <= len(c.p.groups); n++ {
-		lv, err := c.level(r, n, expand)
-		if err != nil {
-			return nil, "", err
-		}
-		cells := make([]string, 0, len(c.p.cols))
-		labels := make([]string, 0, len(c.p.cols))
-		carried := make([]string, 0, len(c.p.cols))
-		for idx, cp := range c.p.cols {
-			e, err := lv.cell(cp, lv.frame)
-			if err != nil {
-				return nil, "", err
-			}
-			cells = append(cells, fmt.Sprintf("%s AS v%d", cellSQL(e), idx))
-			ref, _ := c.columnLabel(lv.labels, cp, e)
-			labels = append(labels, ref.cells(idx)...)
-			carried = append(carried, c.carriedCell(s, cp, e, idx), mixedCell(e, idx))
-			c.levelTypes[cp.col.ID] = e.typ
-			if n == 1 {
-				c.sectionCur[cp.col.ID] = e.cur
-				c.sectionMixed[cp.col.ID] = e.blankFor() != ""
-			}
-		}
-		pivotCells, pivotMixed, err := c.pivotCells(lv, pivot)
-		if err != nil {
-			return nil, "", err
-		}
-		opening, err := lv.openingCells()
-		if err != nil {
-			return nil, "", err
-		}
-		// The labels, the carried currencies, the pivot cells' mixed helpers,
-		// then the opening cells follow the pivot cells, as in every leg of the
-		// union.
-		cells = append(append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...), opening...)
-		// A skip level's blank key passes on its shown children, so they are
-		// counted before its condition compiles.
-		lv.countShownKids()
-		// The having's aggregates join a<L>, so it compiles before render.
-		own, err := lv.own()
-		if err != nil {
-			return nil, "", err
-		}
-		var totals []string
-		if readsSums {
-			if totals, err = lv.rowsCells(); err != nil {
-				return nil, "", err
-			}
-			if pv := c.p.pivot; pv != nil && pv.cell.col.Total == TotalRows {
-				totals = append(append(totals, pivotCells...), pivotMixed...)
-			}
-		}
-		levels = append(levels, levelRows{lv: lv, cells: cells, totals: totals, own: own})
-		readsSums = len(lv.childCells) > 0
+	levels, err := c.compileLevels(s, r, expand, pivot, func(n int) {
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
-			leg += " WHERE " + expand.where(c, s, n-1, "")
+			// Every enclosing group must be open, not only the parent: a
+			// row under a folded grandparent would else count toward the
+			// limit and could cut rows that show.
+			leg += " WHERE " + expand.shownUnder(c, s, n-1, "")
 		}
 		legs = append(legs, leg)
+	})
+	if err != nil {
+		return nil, "", err
 	}
 	layoutCTEs, computed, err := c.layoutLegs(s, pivot)
 	if err != nil {
 		return nil, "", err
 	}
-	all := make([][]string, 0, len(levels)+len(computed))
-	for _, l := range levels {
-		all = append(all, l.cells)
-	}
-	for _, leg := range computed {
-		all = append(all, leg.cells)
-	}
-	unread := unreadHelpers(all)
-	// A layout's section chunks read o1.vcur<idx> by name for every column
-	// whose first-level currency has SQL (layoutLegs, lc.cellNames), so that
-	// cell stays even when its SQL is the text NULL.
-	for idx, cp := range c.p.cols {
-		if c.sectionCur[cp.col.ID].sql != "" {
-			delete(unread, fmt.Sprintf("vcur%d", idx))
-		}
-	}
+	unread := c.unreadCells(levels, computed)
 	for _, l := range levels {
 		ctes = append(ctes, l.lv.render(withoutCells(l.cells, unread), l.own, l.totals)...)
 	}
@@ -829,6 +1130,112 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 		body = append(body, "SELECT "+strings.Join(cells, ", ")+" FROM "+leg.from)
 	}
 	return ctes, strings.Join(body, "\nUNION ALL\n") + "\nORDER BY __level, __ord", nil
+}
+
+// compiledLevel is one level of a group statement, compiled and not yet
+// rendered: each level's o<L> renders once every leg's cells are known, as a
+// helper column no leg has a value for is left out of all of them.
+type compiledLevel struct {
+	lv            *level
+	cells, totals []string
+	own           string
+}
+
+// compileLevels compiles levels 0 (the Total) to the innermost group. A
+// level binds its parameters on s and the levels share compiler state (the
+// level types, the section currencies, the fill keysets), so a statement
+// compiles its levels once, in this order. compiled, when given, runs after
+// each level compiles: what it binds keeps its place among the levels'
+// parameters, so the statement's text does not move.
+func (c *compiler) compileLevels(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, compiled func(n int)) ([]compiledLevel, error) {
+	c.levelTypes, c.sectionCur, c.fillSets = map[string]FieldType{}, map[string]currency{}, map[int]string{}
+	c.sectionMixed = map[string]bool{}
+	// readsSums is true when the level above adds this level's "rows" cells
+	// (childSum), which rt<L> then holds.
+	readsSums := false
+	var levels []compiledLevel
+	for n := 0; n <= len(c.p.groups); n++ {
+		lv, err := c.level(r, n, expand)
+		if err != nil {
+			return nil, err
+		}
+		cells := make([]string, 0, len(c.p.cols))
+		labels := make([]string, 0, len(c.p.cols))
+		carried := make([]string, 0, len(c.p.cols))
+		for idx, cp := range c.p.cols {
+			e, err := lv.cell(cp, lv.frame)
+			if err != nil {
+				return nil, err
+			}
+			cells = append(cells, fmt.Sprintf("%s AS v%d", cellSQL(e), idx))
+			ref, _ := c.columnLabel(lv.labels, cp, e)
+			labels = append(labels, ref.cells(idx)...)
+			carried = append(carried, c.carriedCell(s, cp, e, idx), mixedCell(e, idx))
+			c.levelTypes[cp.col.ID] = e.typ
+			if n == 1 {
+				c.sectionCur[cp.col.ID] = e.cur
+				c.sectionMixed[cp.col.ID] = e.blankFor() != ""
+			}
+		}
+		pivotCells, pivotMixed, err := c.pivotCells(lv, pivot)
+		if err != nil {
+			return nil, err
+		}
+		opening, err := lv.openingCells()
+		if err != nil {
+			return nil, err
+		}
+		// The labels, the carried currencies, the pivot cells' mixed helpers,
+		// then the opening cells follow the pivot cells, as in every leg of the
+		// union.
+		cells = append(append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...), opening...)
+		// A skip level's blank key passes on its shown children, so they are
+		// counted before its condition compiles.
+		lv.countShownKids()
+		// The having's aggregates join a<L>, so it compiles before render.
+		own, err := lv.own()
+		if err != nil {
+			return nil, err
+		}
+		var totals []string
+		if readsSums {
+			if totals, err = lv.rowsCells(); err != nil {
+				return nil, err
+			}
+			if pv := c.p.pivot; pv != nil && pv.cell.col.Total == TotalRows {
+				totals = append(append(totals, pivotCells...), pivotMixed...)
+			}
+		}
+		levels = append(levels, compiledLevel{lv: lv, cells: cells, totals: totals, own: own})
+		readsSums = len(lv.childCells) > 0
+		if compiled != nil {
+			compiled(n)
+		}
+	}
+	return levels, nil
+}
+
+// unreadCells are the helper cells no leg of a statement over levels and the
+// layout's computed legs has a value for (unreadHelpers), but those a
+// layout's section chunks read by name.
+func (c *compiler) unreadCells(levels []compiledLevel, computed []unionLeg) map[string]bool {
+	all := make([][]string, 0, len(levels)+len(computed))
+	for _, l := range levels {
+		all = append(all, l.cells)
+	}
+	for _, leg := range computed {
+		all = append(all, leg.cells)
+	}
+	unread := unreadHelpers(all)
+	// A layout's section chunks read o1.vcur<idx> by name for every column
+	// whose first-level currency has SQL (layoutLegs, lc.cellNames), so that
+	// cell stays even when its SQL is the text NULL.
+	for idx, cp := range c.p.cols {
+		if c.sectionCur[cp.col.ID].sql != "" {
+			delete(unread, fmt.Sprintf("vcur%d", idx))
+		}
+	}
+	return unread
 }
 
 // unionLeg is one select of the group statement's UNION ALL: its cells
@@ -951,22 +1358,35 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	limit := runLimits.pageSize
-	if rn.opts.Limit > 0 {
-		limit = min(rn.opts.Limit, runLimits.maxPage)
-	}
+	limit := rn.pageLimit()
+	rn.readDetails = true
 	ctes := append([]string{r.render()}, shown...)
 	grouped := len(c.p.groups) > 0
+	paged := rn.pagedGroups()
+	// The group cursor's fingerprint and values hold the sort keys the group
+	// pass compiled: this pass orders by the same ones, or a cursor's values
+	// would be read against other columns.
+	if paged && !slices.Equal(order, rn.groupKeys) {
+		return nil, fmt.Errorf("reports: the detail sort keys %v differ from the group cursor's %v", order, rn.groupKeys)
+	}
 	from, by, levels := "("+sel+") d", orderBy(order), ""
 	var where string
-	if grouped {
+	switch {
+	case paged:
+		ctes = append(ctes, c.leafOrder(s, leaves))
+		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
+		by = "d.__g, " + by
+		if err = rn.readShownNow(s, ctes, sel, order); err == nil {
+			where = rn.pagedDetailAfter(s, order, leaves)
+		}
+	case grouped:
 		levels = c.groupLevels()
 		ctes = append(ctes, c.leafOrder(s, leaves))
 		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
 		by = "d.__g, " + by
 		rn.page = &groupedPage{}
 		where, rn.page.after, err = groupedAfter(s, levels, order, rn.opts.Cursor, leaves)
-	} else {
+	default:
 		where, err = keysetAfter(s, order, rn.opts.Cursor)
 	}
 	if err != nil {
@@ -977,13 +1397,19 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The keys order every row the pages show, not just this page's.
+	// The probe reads every row of the groups this pass reads: every open
+	// group on an unpaged run, this page's on a paged one.
 	probes := make([]condProbe, len(c.detailSortMixed))
 	for i, m := range c.detailSortMixed {
 		probes[i] = condProbe{at: m.at, sql: fmt.Sprintf("SELECT 1 FROM %s WHERE d.%s = 1", from, m.sql)}
 	}
 	if err := rn.probeConditions(s, ctes, probes); err != nil {
 		return nil, err
+	}
+	// A paged run cuts its page over every row kind (cutPage), which needs
+	// the row past the limit to know a row follows.
+	if paged {
+		return rows, nil
 	}
 	more := len(rows) > limit
 	if more {
@@ -1000,6 +1426,89 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 		rn.res.Page.Next = cursorOf(levels, order, last, group)
 	}
 	return rows, nil
+}
+
+// pagedDetailAfter selects the detail rows of a paged page: every row of the
+// page's open innermost groups, but in a group whose first details an earlier
+// page showed only its rows after them (F7's keyset). Such a group is the one
+// the cursor stopped in after a detail row, the first leaf unless it moved
+// later between pages, and each group the cursor holds (heldAfter): its rows
+// up to the cursor were shown already, wherever it is now.
+func (rn *runner) pagedDetailAfter(s *stmt, keys []sortKey, leaves [][]any) string {
+	var conds []string
+	for _, h := range rn.shown {
+		// A group that is gone (removed between pages, or sorted before the
+		// cursor now) or not a leaf of this page reads no row here. A fold
+		// change never gets here: the fold print refused the cursor.
+		at := slices.IndexFunc(leaves, func(k []any) bool { return keyString(k) == keyString(h.Group) })
+		if at < 0 {
+			continue
+		}
+		conds = append(conds, fmt.Sprintf("(d.__g <> %s OR %s)", s.bind(int64(at)), keysetCond(s, keys, h.Values)))
+	}
+	if len(conds) == 0 {
+		return "1"
+	}
+	return strings.Join(conds, " AND ")
+}
+
+// shownBefore lists the groups whose first details earlier pages showed: the
+// cursor's held groups, then the group the cursor stopped in after a detail
+// row. moved marks those that sort elsewhere now: every held group, and the
+// cursor's own group when the page did not read it again as an anchor.
+func (rn *runner) shownBefore() (out []held, moved []bool) {
+	cur := rn.groupCur
+	if cur == nil {
+		return nil, nil
+	}
+	for _, h := range cur.Held {
+		out, moved = append(out, held{Group: h.Group, Values: slices.Clone(h.Values)}), append(moved, true)
+	}
+	if cur.Values != nil {
+		out = append(out, held{Group: cur.Group, Values: slices.Clone(cur.Values)})
+		moved = append(moved, rn.anchored < len(cur.Path))
+	}
+	return out, moved
+}
+
+// readShownNow gives each moved group of shownBefore the current sort values
+// of the detail row its values end at (rn.shown). A group sorts elsewhere
+// because a value its details share changed (a sort over the group's record),
+// and the cursor holds the old one: compared with it, every detail of the
+// group would sort before or after the cursor. A row that is gone or in
+// another group now keeps the cursor's values. sel is the detail select, read
+// over ctes.
+func (rn *runner) readShownNow(s *stmt, ctes []string, sel string, keys []sortKey) error {
+	shown, moved := rn.shownBefore()
+	rn.shown = shown
+	var ids []string
+	at := map[string]int{}
+	for i, h := range shown {
+		if moved[i] {
+			id, _ := h.Values[len(h.Values)-1].(string)
+			ids = append(ids, s.bind(id))
+			at[id] = i
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := rn.query(s, ctes, fmt.Sprintf("SELECT * FROM (%s) d WHERE d.__id IN (%s)", sel, strings.Join(ids, ", ")))
+	if err != nil {
+		return err
+	}
+	groups := len(rn.c.p.groups)
+	for _, row := range rows {
+		id, _ := row["__id"].(string)
+		i, ok := at[id]
+		if !ok || keyString(rn.rowKey(row, groups)) != keyString(shown[i].Group) {
+			continue
+		}
+		for j, k := range keys {
+			shown[i].Values[j] = row[k.name]
+		}
+	}
+	return nil
 }
 
 // openGroups lists the open innermost groups in the order the report shows
@@ -1334,21 +1843,32 @@ type expansion struct {
 	// encoded holds each key's values as sqlJSON writes them, in the order
 	// of keys.
 	encoded [][]string
+	// closed holds the folded keys (options.collapse) as keyString gives
+	// them; closedKeys and closedEncoded are them as keys and encoded hold
+	// the expanded ones.
+	closed        map[string]bool
+	closedKeys    [][]any
+	closedEncoded [][]string
 }
 
-// parseExpansion reads options.expand: at most rowCap keys, since a run
-// shows no more group rows than that. The keys' values need no cap of their
-// own: a read binds them as one JSON parameter (where), a key longer than a
-// group row's matches nothing, and the request body's size limit bounds
-// what a caller can send.
-func parseExpansion(opts Options) (*expansion, error) {
-	e := &expansion{all: opts.ExpandAll, set: map[string]bool{}, open: map[int]bool{}}
-	if len(opts.Expand) > runLimits.rowCap {
-		return nil, invalid("options.expand", fmt.Sprintf("a run expands at most %d groups", runLimits.rowCap))
+// parseKeys reads a list of group keys (options.expand or options.collapse):
+// at most foldCap keys. The keys' values need no cap of their own: a read
+// binds them as one JSON parameter (keysIn), a key longer than a group row's
+// matches nothing, and the request body's size limit bounds what a caller
+// can send.
+func parseKeys(at string, keys [][]any) ([][]any, [][]string, map[string]bool, error) {
+	if len(keys) > runLimits.foldCap {
+		verb := "expands"
+		if at == "options.collapse" {
+			verb = "folds"
+		}
+		return nil, nil, nil, invalid(at, fmt.Sprintf("a run %s at most %d groups", verb, runLimits.foldCap))
 	}
-	for i, key := range opts.Expand {
+	norms, encs, set := make([][]any, 0, len(keys)), make([][]string, 0, len(keys)), map[string]bool{}
+	for i, key := range keys {
+		where := fmt.Sprintf("%s.%d", at, i)
 		if len(key) == 0 {
-			return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key is a group row's groupKey")
+			return nil, nil, nil, invalid(where, "a group key is a group row's groupKey")
 		}
 		norm := make([]any, len(key))
 		encoded := make([]string, len(key))
@@ -1365,65 +1885,73 @@ func parseExpansion(opts Options) (*expansion, error) {
 			case json.Number:
 				norm[j] = numberValue(x)
 			default:
-				return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key holds text, numbers, true, false or null")
+				return nil, nil, nil, invalid(where, "a group key holds text, numbers, true, false or null")
 			}
 			text, err := sqlJSON(norm[j])
 			if err != nil {
-				return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key holds text, numbers, true, false or null")
+				return nil, nil, nil, invalid(where, "a group key holds text, numbers, true, false or null")
 			}
 			encoded[j] = text
 		}
-		e.keys = append(e.keys, norm)
-		e.encoded = append(e.encoded, encoded)
-		e.set[keyString(norm)] = true
+		norms, encs = append(norms, norm), append(encs, encoded)
+		set[keyString(norm)] = true
+	}
+	return norms, encs, set, nil
+}
+
+// parseExpansion reads options.expand and options.collapse.
+func parseExpansion(opts Options) (*expansion, error) {
+	e := &expansion{all: opts.ExpandAll, open: map[int]bool{}}
+	var err error
+	if e.keys, e.encoded, e.set, err = parseKeys("options.expand", opts.Expand); err != nil {
+		return nil, err
+	}
+	if e.closedKeys, e.closedEncoded, e.closed, err = parseKeys("options.collapse", opts.Collapse); err != nil {
+		return nil, err
 	}
 	return e, nil
 }
 
-// where matches rows whose first depth group keys and currency keys equal
-// an expanded group key, value by value as IS compares them. A key's blank
-// values match by IS NULL, and the rest by one IN over the keys with the
-// same blanks, bound as one JSON parameter: "(k0, ck0) IN (SELECT …)". IN
-// builds its lookup once, where a correlated lookup per row (EXISTS over the
-// keys) takes time that grows with rows times keys. IN compares with =,
-// which never matches NULL, hence the split by blanks. The json_extract
-// columns carry no affinity, so the row's key keeps its own as it does in
-// IS, and COLLATE BINARY keeps IS's collation: the key list is the left
-// operand there.
-func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string {
-	own := e.whereOwn(c, s, depth, prefix)
-	if !c.skips(depth) {
-		return own
+// openLevels opens the levels marked open, down to the first level that is
+// not (a level under a closed ancestor shows nothing, so it is not fetched),
+// unless the run says what opens: expandAll opens every group, and expand
+// without collapse lists the open groups (expand: [] opens nothing). A run
+// that sends collapse keeps the open levels (Ruling R2).
+func openLevels(p *plan, opts Options, e *expansion) {
+	if opts.ExpandAll || (opts.Expand != nil && opts.Collapse == nil) {
+		return
 	}
-	// A blank key at a skip level is never a row the reader opens: it is open
-	// exactly when the group above it is, so its rows show under that group.
-	parent := e.where(c, s, depth-1, prefix)
-	return fmt.Sprintf("(%s OR (%sk%d IS NULL AND %s))", own, prefix, depth-1, parent)
+	for i, g := range p.groups {
+		if !g.group.Open {
+			break
+		}
+		e.open[i+1] = true
+	}
 }
 
-// whereOwn is where without the skip levels: the keys the reader opened.
-func (e *expansion) whereOwn(c *compiler, s *stmt, depth int, prefix string) string {
-	if e.all || e.open[depth] {
-		return "1"
-	}
-	cols := make([]string, 0, depth+len(c.currencies))
-	for i := range depth {
-		cols = append(cols, fmt.Sprintf("%sk%d", prefix, i))
-	}
-	for _, ck := range c.currencies {
-		cols = append(cols, prefix+ck)
-	}
+// keysIn matches rows whose cols equal one of keys, value by value as IS
+// compares them. A key's blank values match by IS NULL, and the rest by one
+// IN over the keys with the same blanks, bound as one JSON parameter:
+// "(k0, ck0) IN (SELECT …)". IN builds its lookup once, where a correlated
+// lookup per row (EXISTS over the keys) takes time that grows with rows times
+// keys. IN compares with =, which never matches NULL, hence the split by
+// blanks. The json_extract columns carry no affinity, so the row's key keeps
+// its own as it does in IS, and COLLATE BINARY keeps IS's collation: the key
+// list is the left operand there. "0" when no key has len(cols) values. The
+// term is never NULL (each IN leg compares only set values; blanks go through
+// IS NULL), so NOT of it is safe.
+func keysIn(s *stmt, cols []string, keys [][]any, encoded [][]string) string {
 	// blanks marks a key's blank values ("10" is a set first value, a
 	// blank second); rowsOf holds each pattern's keys, set values only.
 	var blanks []string
 	rowsOf := map[string][]string{}
-	for i, key := range e.keys {
+	for i, key := range keys {
 		if len(key) != len(cols) {
 			continue
 		}
 		mask := make([]byte, len(key))
 		var set []string
-		for j, text := range e.encoded[i] {
+		for j, text := range encoded[i] {
 			mask[j] = '0'
 			// null is nil, or a NaN, which SQLite binds as NULL.
 			if text == "null" {
@@ -1452,13 +1980,65 @@ func (e *expansion) whereOwn(c *compiler, s *stmt, depth int, prefix string) str
 			left = append(left, col+" COLLATE BINARY")
 		}
 		if len(left) > 0 {
-			keys := s.bind("[" + strings.Join(rowsOf[mask], ",") + "]")
+			param := s.bind("[" + strings.Join(rowsOf[mask], ",") + "]")
 			conds = append(conds, fmt.Sprintf("(%s) IN (SELECT %s FROM json_each(%s))",
-				strings.Join(left, ", "), strings.Join(picks, ", "), keys))
+				strings.Join(left, ", "), strings.Join(picks, ", "), param))
 		}
 		terms[i] = "(" + strings.Join(conds, " AND ") + ")"
 	}
 	return anyOf(terms)
+}
+
+// where matches rows whose first depth group keys and currency keys are an
+// open group's: every group under expandAll or an open level, else an
+// expanded key; never a folded key.
+func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string {
+	own := e.whereOwn(c, s, depth, prefix)
+	if !c.skips(depth) {
+		return own
+	}
+	// A blank key at a skip level is never a row the reader opens or folds:
+	// it is open exactly when the group above it is, so its rows show under
+	// that group.
+	parent := e.where(c, s, depth-1, prefix)
+	return fmt.Sprintf("(%s OR (%sk%d IS NULL AND %s))", own, prefix, depth-1, parent)
+}
+
+// whereOwn is where without the skip levels: the keys the reader opened and
+// did not fold.
+func (e *expansion) whereOwn(c *compiler, s *stmt, depth int, prefix string) string {
+	cols := make([]string, 0, depth+len(c.currencies))
+	for i := range depth {
+		cols = append(cols, fmt.Sprintf("%sk%d", prefix, i))
+	}
+	for _, ck := range c.currencies {
+		cols = append(cols, prefix+ck)
+	}
+	open := "1"
+	if !e.all && !e.open[depth] {
+		open = keysIn(s, cols, e.keys, e.encoded)
+	}
+	folded := keysIn(s, cols, e.closedKeys, e.closedEncoded)
+	if folded == "0" {
+		return open
+	}
+	return "(" + open + " AND NOT " + folded + ")"
+}
+
+// shownUnder is true for a row whose every enclosing group is open: the
+// groups at depths 1..depth above it. A row under a folded grandparent
+// shows nothing even when its parent's level is open.
+func (e *expansion) shownUnder(c *compiler, s *stmt, depth int, prefix string) string {
+	conds := []string{}
+	for d := 1; d <= depth; d++ {
+		if w := e.where(c, s, d, prefix); w != "1" {
+			conds = append(conds, w)
+		}
+	}
+	if len(conds) == 0 {
+		return "1"
+	}
+	return strings.Join(conds, " AND ")
 }
 
 // anyOf joins conditions with OR as a balanced tree: SQLite's parser goes a
@@ -1474,6 +2054,9 @@ func anyOf(conds []string) string {
 
 // has is true when the level-n group with key opens.
 func (e *expansion) has(c *compiler, key []any, n int) bool {
+	if e.closed[keyString(key)] {
+		return false
+	}
 	if e.all || e.open[n] || e.set[keyString(key)] {
 		return true
 	}

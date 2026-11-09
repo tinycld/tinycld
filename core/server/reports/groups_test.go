@@ -3,6 +3,7 @@ package reports
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -34,10 +35,11 @@ func TestGroupsLoadLazily(t *testing.T) {
 	}
 }
 
-// A run expands at most as many groups as it can show rows.
-func TestExpandTakesAtMostTheRowCapOfKeys(t *testing.T) {
+// The fold cap bounds a key list: the group-row cap no longer bounds a
+// grouped report.
+func TestExpandTakesAtMostTheFoldCapOfKeys(t *testing.T) {
 	z := newZoo(t)
-	withLimits(t, func(l *limits) { l.rowCap = 2 })
+	withLimits(t, func(l *limits) { l.foldCap = 2 })
 	keys := [][]any{{"lion", "USD"}, {"zebra", "USD"}}
 	z.run(t, "ann", feedingsBySpecies, Options{Expand: keys}, nil)
 	_, err := z.try(t, "ann", feedingsBySpecies, Options{Expand: append(keys, []any{"monkey", "USD"})}, nil)
@@ -65,14 +67,14 @@ func deepKeys(n int) [][]any {
 	return keys
 }
 
-// The row cap is the one bound on an expand: as many of the deepest keys
-// as a run shows rows run (5,000 keys of 7 values bind 35,000 values, as one
+// The fold cap is the one bound on an expand: as many of the deepest keys
+// as it allows run (5,000 keys of 7 values bind 35,000 values, as one
 // parameter per read), and one more key is refused.
-func TestExpandTakesTheRowCapOfTheDeepestKeys(t *testing.T) {
+func TestExpandTakesTheFoldCapOfTheDeepestKeys(t *testing.T) {
 	z := newZoo(t)
-	z.run(t, "ann", sixLevels, Options{Expand: deepKeys(runLimits.rowCap)}, nil)
-	_, err := z.try(t, "ann", sixLevels, Options{Expand: deepKeys(runLimits.rowCap + 1)}, nil)
-	requireSpecError(t, err, 400, "options.expand", fmt.Sprintf("at most %d groups", runLimits.rowCap))
+	z.run(t, "ann", sixLevels, Options{Expand: deepKeys(runLimits.foldCap)}, nil)
+	_, err := z.try(t, "ann", sixLevels, Options{Expand: deepKeys(runLimits.foldCap + 1)}, nil)
+	requireSpecError(t, err, 400, "options.expand", fmt.Sprintf("at most %d groups", runLimits.foldCap))
 }
 
 // An expanded key matches by IS, so a blank group key opens too.
@@ -290,12 +292,18 @@ func TestANestedAmountCarriesItsCurrency(t *testing.T) {
 	requireOrderedRows(t, spec, res, "cost@currency", nil, nil, "USD", "USD", nil, "USD", "USD", nil)
 }
 
-func TestGroupRowsStopAtTheRowCap(t *testing.T) {
+// A grouped report pages its group rows, so the cap does not apply to it; a
+// pivot still stops at the cap.
+func TestAGroupedReportHasNoRowCap(t *testing.T) {
 	z := newZoo(t)
 	withLimits(t, func(l *limits) { l.rowCap = 2 })
 	res := z.run(t, "ann", feedingsBySpecies, Options{}, nil)
-	if len(res.Notices) != 1 || res.Notices[0].Code != "rowCap" || res.Notices[0].Count != 2 {
-		t.Fatalf("notices = %+v", res.Notices)
+	if len(res.Notices) != 0 || !slices.Equal(groupRowLabels(res), []string{"lion", "zebra"}) {
+		t.Fatalf("groups %v, notices = %+v", groupRowLabels(res), res.Notices)
+	}
+	pivot := z.run(t, "ann", fmt.Sprintf(costBySpeciesAndMonth, ""), Options{}, nil)
+	if len(pivot.Notices) != 1 || pivot.Notices[0].Code != "rowCap" || pivot.Notices[0].Count != 2 {
+		t.Fatalf("pivot notices = %+v", pivot.Notices)
 	}
 }
 

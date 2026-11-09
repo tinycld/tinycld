@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { fakePbServer } from '../../../tests/fake-pb-server'
+import { FakeAnswer, fakePbServer } from '../../../tests/fake-pb-server'
 import type { RunBody } from '../../lib/run-client'
 import type { ResultRow, RunResult } from '../../lib/types'
 import { useReportRun } from '../useReportRun'
@@ -16,7 +16,7 @@ import { useReportRun } from '../useReportRun'
 
 const TOPIC = 'salesstub/changes'
 
-type Answer = (body: RunBody) => Promise<RunResult>
+type Answer = (body: RunBody) => Promise<RunResult | FakeAnswer>
 let answer: Answer = () => Promise.reject(new Error('no answer set'))
 const server = fakePbServer({ '/api/reports/run': sent => answer(sent as RunBody) })
 
@@ -65,6 +65,116 @@ const signal = () => act(() => server.emit(TOPIC))
 const rowIds = (run: { result: RunResult | undefined }) => run.result?.rows.map(r => r.id)
 
 describe('useReportRun', () => {
+    // R8: a refused next page keeps the rows shown and offers Retry. The list asks
+    // for more on every redraw, so loadMore must not ask again until Retry.
+    it('keeps the rows of a refused next page, asks again only on Retry, and Retry loads it', async () => {
+        const first = result([row('g:A', 'group'), row('d:1')], 'c1')
+        const second = result([row('d:2'), row('total', 'total')])
+        const refusal = new FakeAnswer(400, {
+            status: 400,
+            message: 'The page cursor is not valid.',
+            data: {},
+        })
+        let nextPages = 0
+        answer = sent => {
+            if (!sent.options.cursor) return Promise.resolve(first)
+            nextPages += 1
+            return Promise.resolve(nextPages === 1 ? refusal : second)
+        }
+        const { result: run } = renderRun()
+        await waitFor(() => expect(run.current.hasMore).toBe(true))
+
+        act(() => run.current.loadMore())
+        await waitFor(() => expect(run.current.loadMoreFailed).toBe(true))
+        expect(run.current.state).toBe('ready')
+        expect(rowIds(run.current)).toEqual(['g:A', 'd:1'])
+        // loadMore starts nothing: no loading state, and no request reaches the
+        // server (a request would arrive after a few awaits, so the test waits).
+        act(() => run.current.loadMore())
+        expect(run.current.isLoadingMore).toBe(false)
+        await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 50))
+        })
+        expect(nextPages).toBe(1)
+
+        act(() => run.current.retryLoadMore?.())
+        // While Retry runs the list shows "Loading more rows…", not the error row.
+        expect(run.current.isLoadingMore).toBe(true)
+        expect(run.current.loadMoreFailed).toBe(false)
+        await waitFor(() => expect(rowIds(run.current)).toEqual(['g:A', 'd:1', 'd:2', 'total']))
+        expect(run.current.loadMoreFailed).toBe(false)
+        expect(nextPages).toBe(2)
+    })
+
+    // TanStack keeps the error status, with the pages, through any later fetch, and
+    // a live rerun is no next page: the run must stay ready with its error row, not
+    // turn into the whole-report error, until the rerun lands.
+    it('stays ready through a live rerun after a refused next page', async () => {
+        const first = result([row('g:A', 'group'), row('d:1')], 'c1')
+        const refusal = new FakeAnswer(400, {
+            status: 400,
+            message: 'The page cursor is not valid.',
+            data: {},
+        })
+        let firstPages = 0
+        let rerun: ReturnType<typeof held<RunResult>> | undefined
+        answer = sent => {
+            if (sent.options.cursor) return Promise.resolve(refusal)
+            firstPages += 1
+            if (firstPages === 1) return Promise.resolve(first)
+            rerun = held(first)
+            return rerun.promise
+        }
+        const { result: run } = renderRun()
+        await waitFor(() => expect(run.current.hasMore).toBe(true))
+        await subscribed()
+        act(() => run.current.loadMore())
+        await waitFor(() => expect(run.current.loadMoreFailed).toBe(true))
+
+        signal()
+        await waitFor(() => expect(rerun).toBeDefined())
+        expect(run.current.state).toBe('ready')
+        expect(run.current.loadMoreFailed).toBe(true)
+        expect(rowIds(run.current)).toEqual(['g:A', 'd:1'])
+
+        act(() => rerun?.release())
+        await waitFor(() => expect(run.current.loadMoreFailed).toBe(false))
+        expect(run.current.state).toBe('ready')
+    })
+
+    // R8: the next-page row belongs to the failure that made it. After a good rerun,
+    // a later failure of the whole run is the whole-report error, not that row.
+    it('shows the whole-report error when a rerun fails after a good rerun', async () => {
+        const first = result([row('g:A', 'group'), row('d:1')], 'c1')
+        const last = result([row('g:A', 'group'), row('d:1'), row('total', 'total')])
+        const refusal = new FakeAnswer(400, {
+            status: 400,
+            message: 'The page cursor is not valid.',
+            data: {},
+        })
+        const failure = new FakeAnswer(404, { status: 404, message: 'Not found.', data: {} })
+        let firstPages = 0
+        answer = sent => {
+            if (sent.options.cursor) return Promise.resolve(refusal)
+            firstPages += 1
+            if (firstPages === 1) return Promise.resolve(first)
+            return Promise.resolve(firstPages === 2 ? last : failure)
+        }
+        const { result: run } = renderRun()
+        await waitFor(() => expect(run.current.hasMore).toBe(true))
+        await subscribed()
+        act(() => run.current.loadMore())
+        await waitFor(() => expect(run.current.loadMoreFailed).toBe(true))
+
+        signal()
+        await waitFor(() => expect(rowIds(run.current)).toEqual(['g:A', 'd:1', 'total']))
+        expect(run.current.loadMoreFailed).toBe(false)
+
+        signal()
+        await waitFor(() => expect(run.current.state).toBe('error'))
+        expect(run.current.loadMoreFailed).toBe(false)
+    })
+
     it('keeps a next page that a live rerun lands on', async () => {
         const first = result([row('g:A', 'group'), row('d:1')], 'c1')
         const second = result([row('d:2'), row('total', 'total')])
@@ -308,5 +418,51 @@ describe('useReportRun after a fold', () => {
         )
         await expandAll(fold)
         expect(sent.map(request => request.options.cursor)).toEqual([undefined, 'c1', 'c2'])
+    })
+
+    // F11 with J1a: the reader's place counts group rows. With every group closed the
+    // list held six group rows over two pages; a fold re-run loads them all again,
+    // not only up to the group in view, so the rows below the view stay.
+    it('a fold re-run over closed groups loads as many rows as the reader had', async () => {
+        const closedFirst = result(
+            [row('g:a', 'group'), row('g:b', 'group'), row('g:c', 'group')],
+            'k1'
+        )
+        const closedLast = result([
+            row('g:d', 'group'),
+            row('g:e', 'group'),
+            row('g:f', 'group'),
+            row('total', 'total'),
+        ])
+        const openedFirst = result([row('g:a', 'group'), row('d:a1'), row('g:b', 'group')], 'k1')
+        sent = []
+        answer = request => {
+            sent.push(request)
+            const isFolded = (request.options.expand ?? []).length > 0
+            if (request.options.cursor) return Promise.resolve(closedLast)
+            return Promise.resolve(isFolded ? openedFirst : closedFirst)
+        }
+        const fold = renderFold()
+        await waitFor(() => expect(fold.result.current.hasMore).toBe(true))
+        act(() => fold.result.current.loadMore())
+        await waitFor(() => expect(rowIds(fold.result.current)).toContain('g:f'))
+        act(() => fold.result.current.onTopRowIndex?.(1))
+
+        sent = []
+        fold.rerender({
+            runBody: { ...collapsed, options: { ...collapsed.options, expand: [['a']] } },
+        })
+        await waitFor(() => expect(rowIds(fold.result.current)).toContain('d:a1'))
+        await waitFor(() => expect(fold.result.current.isUpdating).toBe(false))
+        expect(sent.map(request => request.options.cursor)).toEqual([undefined, 'k1'])
+        expect(rowIds(fold.result.current)).toEqual([
+            'g:a',
+            'd:a1',
+            'g:b',
+            'g:d',
+            'g:e',
+            'g:f',
+            'total',
+        ])
     })
 })

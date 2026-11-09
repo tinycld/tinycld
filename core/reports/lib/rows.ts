@@ -80,21 +80,35 @@ export function visibleRows(
 }
 
 /**
- * Which groups a run opens: every one, those whose keys are listed, or — on the
- * first run, before any press — the levels the report marks open (the engine's
- * default, sent as no expand at all).
+ * Which groups a run opens: every one (`all`, Expand all), the levels the report
+ * marks open (`isDefault`), or only `keys` (after Collapse all). On the first two,
+ * `keys` adds groups of closed levels the reader opened, and `collapsed` holds the
+ * groups the reader closed (J1b, R2): the server gets the few folds, never the
+ * list of every other open group, which has no limit in a paged report.
  */
-export type Expansion = { all: boolean; keys: readonly unknown[][]; isDefault?: boolean }
+export type Expansion = {
+    all: boolean
+    keys: readonly unknown[][]
+    collapsed: readonly unknown[][]
+    isDefault?: boolean
+}
 
-export const DEFAULT_EXPANSION: Expansion = { all: false, keys: [], isDefault: true }
-export const NO_EXPANSION: Expansion = { all: false, keys: [] }
-export const EXPAND_ALL: Expansion = { all: true, keys: [] }
+export const DEFAULT_EXPANSION: Expansion = { all: false, keys: [], collapsed: [], isDefault: true }
+export const NO_EXPANSION: Expansion = { all: false, keys: [], collapsed: [] }
+export const EXPAND_ALL: Expansion = { all: true, keys: [], collapsed: [] }
 
 const keyText = (key: readonly unknown[] | undefined) => JSON.stringify(key ?? [])
 
-function openGroupKeys(rows: readonly ResultRow[]): unknown[][] {
-    return rows.filter(row => row.kind === 'group' && row.expanded).map(row => row.groupKey ?? [])
+const hasKey = (keys: readonly unknown[][], key: readonly unknown[]) => {
+    const text = keyText(key)
+    return keys.some(k => keyText(k) === text)
 }
+
+const withoutKeys = (keys: readonly unknown[][], drop: ReadonlySet<string>) =>
+    keys.filter(k => !drop.has(keyText(k)))
+
+const withKey = (keys: readonly unknown[][], key: unknown[]) =>
+    hasKey(keys, key) ? keys : [...keys, key]
 
 // The row and every group row whose chain of sections reaches it. Rows come parent
 // first, so one pass finds them all.
@@ -106,25 +120,53 @@ function groupAndDescendants(row: ResultRow, rows: readonly ResultRow[]): Set<st
     return ids
 }
 
+// The keys of the row's group and of every group under it.
+function subtreeKeys(row: ResultRow, rows: readonly ResultRow[]): Set<string> {
+    const ids = groupAndDescendants(row, rows)
+    return new Set(rows.filter(r => ids.has(r.id)).map(r => keyText(r.groupKey)))
+}
+
+// Under Expand all or the open levels, a press changes only the group pressed. A
+// group the reader closed opens by leaving `collapsed`; any other closed group is
+// of a closed level and opens by its key (under the open levels only). An open group the reader opened by its
+// key closes by losing it; one open by its level closes by a fold. Closing a group
+// also forgets what was opened or folded under it.
+function toggleOnOpenBase(
+    expansion: Expansion,
+    row: ResultRow,
+    rows: readonly ResultRow[]
+): Expansion {
+    const key = row.groupKey ?? []
+    if (!row.expanded) {
+        if (hasKey(expansion.collapsed, key)) {
+            return {
+                ...expansion,
+                collapsed: withoutKeys(expansion.collapsed, new Set([keyText(key)])),
+            }
+        }
+        // Under Expand all every group but the folds is open and the run sends no
+        // `expand` (expansionOptions): a key held here would never reach the
+        // engine, so a press on any other closed group changes nothing.
+        if (expansion.all) return expansion
+        return { ...expansion, keys: withKey(expansion.keys, key) }
+    }
+    const subtree = subtreeKeys(row, rows)
+    const below = new Set([...subtree].filter(text => text !== keyText(key)))
+    const keys = withoutKeys(expansion.keys, subtree)
+    const collapsed = withoutKeys(expansion.collapsed, below)
+    if (hasKey(expansion.keys, key)) return { ...expansion, keys, collapsed }
+    return { ...expansion, keys, collapsed: [...collapsed, key] }
+}
+
 export function toggleGroup(
     expansion: Expansion,
     row: ResultRow,
     rows: readonly ResultRow[]
 ): Expansion {
-    // Under Expand all, or the levels the report marks open, the open groups are the
-    // ones the result shows open.
-    const current = expansion.all || expansion.isDefault ? openGroupKeys(rows) : [...expansion.keys]
+    if (expansion.all || expansion.isDefault) return toggleOnOpenBase(expansion, row, rows)
     const key = row.groupKey ?? []
-    if (!row.expanded) {
-        const text = keyText(key)
-        return {
-            all: false,
-            keys: current.some(k => keyText(k) === text) ? current : [...current, key],
-        }
-    }
-    const closing = groupAndDescendants(row, rows)
-    const closedKeys = new Set(rows.filter(r => closing.has(r.id)).map(r => keyText(r.groupKey)))
-    return { all: false, keys: current.filter(k => !closedKeys.has(keyText(k))) }
+    if (!row.expanded) return { ...expansion, keys: withKey(expansion.keys, key) }
+    return { ...expansion, keys: withoutKeys(expansion.keys, subtreeKeys(row, rows)) }
 }
 
 export function foldAllLabel(rows: readonly ResultRow[]): 'Collapse all' | 'Expand all' | null {
@@ -137,14 +179,22 @@ export function foldAllTarget(rows: readonly ResultRow[]): Expansion {
     return foldAllLabel(rows) === 'Collapse all' ? NO_EXPANSION : EXPAND_ALL
 }
 
+// R2: with `collapse` sent (even empty), the open levels stay open and `expand`
+// only adds groups of closed levels; without it, a sent `expand` opens only its
+// own groups (after Collapse all). A default state with no change sends nothing,
+// so it is the first run's body.
 export function expansionOptions(expansion: Expansion): {
     expand?: unknown[][]
     expandAll?: boolean
+    collapse?: unknown[][]
 } {
-    if (expansion.isDefault) return {}
-    if (expansion.all) return { expandAll: true }
-    // An explicit empty list opens nothing, groups marked open included.
-    return { expand: [...expansion.keys] }
+    const collapse = [...expansion.collapsed]
+    if (expansion.all)
+        return collapse.length > 0 ? { expandAll: true, collapse } : { expandAll: true }
+    if (!expansion.isDefault) return { expand: [...expansion.keys] }
+    if (expansion.keys.length === 0 && collapse.length === 0) return {}
+    const expand = expansion.keys.length > 0 ? { expand: [...expansion.keys] } : {}
+    return { ...expand, collapse }
 }
 
 /** A result with no detail row and no group row is empty: totals alone do not count. */

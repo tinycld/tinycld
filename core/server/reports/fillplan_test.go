@@ -91,7 +91,9 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 		keysets int
 		run     func(t *testing.T, z *zoo)
 	}{
-		{"ledger, 200 accounts", 2, func(t *testing.T, z *zoo) {
+		// 3: the page and the Total statement each read f1 (J1a: the Total has a
+		// statement of its own).
+		{"ledger, 200 accounts", 3, func(t *testing.T, z *zoo) {
 			withBalanceZoo(t, z)
 			withLedgerScale(t, z, 200)
 			if _, err := runLedger(z, map[string]string{"period": ledgerPeriod}, Options{Today: "2025-07-15"}); err != nil {
@@ -121,19 +123,26 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 					{"id":"a","col":"animal","fill":{"where":{"op":"eq","args":[{"path":[{"link":"site"},{"field":"name"}]},{"record":"s","path":[{"field":"name"}]}]}}}],
 				"sort":[{"formula":{"record":"s","path":[{"field":"name"}]}}]}`, Options{ExpandAll: true}, nil)
 		}},
+		// 4: the case runs two pages, and each page statement reads f1 and f2;
+		// the Total statement (J1a: a statement of its own) reads no fill.
+		{"a cursor page that starts inside fill groups", 4, func(t *testing.T, z *zoo) {
+			withEmptyAnimals(t, z)
+			// Page 1 is the East site's group row alone; page 2 starts at Eli,
+			// a fill animal (no feedings) under East.
+			opts := Options{ExpandAll: true, Limit: 1}
+			first := z.run(t, "ann", sitesThenAnimals, opts, nil)
+			if first.Page == nil || first.Page.Next == "" {
+				t.Fatal("no second page")
+			}
+			opts.Cursor = first.Page.Next
+			second := z.run(t, "ann", sitesThenAnimals, opts, nil)
+			if r := second.Rows[0]; r.Kind != KindGroup || r.Depth != 1 || r.Label != "Eli" {
+				t.Fatalf("page 2 starts at %s %q (depth %d), want the fill animal Eli", r.Kind, r.Label, r.Depth)
+			}
+		}},
 		{"three levels of fill", 3, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
-			z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
-				{"id":"owner","path":[{"link":"animal"},{"link":"owner"}]},
-				{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
-				{"id":"animal","path":[{"link":"animal"}]},
-				{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
-				"groups":[
-					{"id":"o","col":"owner","fill":{}},
-					{"id":"s","col":"site","fill":{}},
-					{"id":"a","col":"animal","fill":{"where":{"op":"and","args":[
-						{"op":"eq","args":[{"path":[{"link":"site"}]},{"col":"site"}]},
-						{"op":"eq","args":[{"path":[{"link":"owner"}]},{"col":"owner"}]}]}}}]}`, Options{ExpandAll: true}, nil)
+			z.run(t, "ann", threeFills, Options{ExpandAll: true}, nil)
 		}},
 	}
 	for _, c := range cases {
