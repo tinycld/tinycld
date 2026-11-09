@@ -98,6 +98,7 @@ func fillKeyset(t *testing.T, z *zoo, user, raw string, opts Options, n int) int
 	if err != nil {
 		t.Fatal(err)
 	}
+	openLevels(p, opts, expand)
 	s := newStmt(z.app, c.info)
 	r, err := c.rows(s)
 	if err != nil {
@@ -116,6 +117,33 @@ func fillKeyset(t *testing.T, z *zoo, user, raw string, opts Options, n int) int
 		t.Fatal(err)
 	}
 	return count
+}
+
+// threeFills fills three levels: owner, site and animal.
+const threeFills = `{"version":4,"source":"zoo.feedings","columns":[
+	{"id":"owner","path":[{"link":"animal"},{"link":"owner"}]},
+	{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
+	{"id":"animal","path":[{"link":"animal"}]},
+	{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+	"groups":[
+		{"id":"o","col":"owner","fill":{}},
+		{"id":"s","col":"site","fill":{}},
+		{"id":"a","col":"animal","fill":{"where":{"op":"and","args":[
+			{"op":"eq","args":[{"path":[{"link":"site"}]},{"col":"site"}]},
+			{"op":"eq","args":[{"path":[{"link":"owner"}]},{"col":"owner"}]}]}}}]}`
+
+// A folded grandparent hides its grandchildren, so their fill records are
+// not computed even though their parents' level is open (parentKeys reads
+// every ancestor's fold state through shownUnder, not only the parent's).
+func TestFillComputesNothingUnderAFoldedAncestor(t *testing.T) {
+	z := newZoo(t)
+	withEmptyAnimals(t, z)
+	all := fillKeyset(t, z, "ann", threeFills, Options{ExpandAll: true}, 3)
+	owner := z.run(t, "ann", threeFills, Options{ExpandAll: true}, nil).Rows[0].GroupKey
+	folded := fillKeyset(t, z, "ann", threeFills, Options{ExpandAll: true, Collapse: [][]any{owner}}, 3)
+	if folded >= all {
+		t.Fatalf("level-3 keyset with the first owner folded = %d, all open = %d", folded, all)
+	}
 }
 
 // A collapsed parent shows no children, so its fill records are never

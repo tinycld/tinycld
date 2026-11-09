@@ -23,6 +23,11 @@ type Options struct {
 	// level and the children of each expanded group.
 	Expand    [][]any `json:"expand,omitempty"`
 	ExpandAll bool    `json:"expandAll,omitempty"`
+	// Collapse lists groups the reader closed under a level that is open by
+	// default or under ExpandAll. Sent (even empty), it keeps the open levels
+	// open beside Expand, so a fold in a report with many open groups never
+	// lists them all (J1b, Ruling R2).
+	Collapse [][]any `json:"collapse,omitempty"`
 	// Cursor is the previous page's page.next; Limit is the page size (at
 	// most maxPage). A grouped report pages its detail rows in document
 	// order; its group rows come whole on every page (R9).
@@ -194,16 +199,19 @@ var (
 )
 
 type limits struct {
-	timeout  time.Duration
-	rowCap   int
+	timeout time.Duration
+	rowCap  int
+	// foldCap is the most group keys options.expand or options.collapse lists.
+	foldCap  int
 	pageSize int
 	maxPage  int
 }
 
-// runLimits: each statement stops after timeout; group, pivot and nested
-// results stop at rowCap rows; a detail page holds pageSize rows unless
-// the run asks for up to maxPage.
-var runLimits = limits{timeout: 10 * time.Second, rowCap: 5000, pageSize: 200, maxPage: 1000}
+// runLimits: each statement stops after timeout; pivot, nest and layout
+// results stop at rowCap rows (a grouped report pages its group rows
+// instead); a detail page holds pageSize rows unless the run asks for up to
+// maxPage.
+var runLimits = limits{timeout: 10 * time.Second, rowCap: 5000, foldCap: 5000, pageSize: 200, maxPage: 1000}
 
 const blankLabel = "(none)"
 
@@ -257,18 +265,8 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	// No expansion state at all (expand absent, no expandAll): the levels
-	// marked open expand, down to the first level that is not open: a level
-	// under a closed ancestor shows nothing, so it is not fetched.
-	// expand: [] is a choice to open nothing.
-	if req.Options.Expand == nil && !req.Options.ExpandAll {
-		for i, g := range p.groups {
-			if !g.group.Open {
-				break
-			}
-			expand.open[i+1] = true
-		}
-	}
+	// No expansion state: the levels marked open expand (openLevels).
+	openLevels(p, req.Options, expand)
 	rn := &runner{
 		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
@@ -1308,21 +1306,32 @@ type expansion struct {
 	// encoded holds each key's values as sqlJSON writes them, in the order
 	// of keys.
 	encoded [][]string
+	// closed holds the folded keys (options.collapse) as keyString gives
+	// them; closedKeys and closedEncoded are them as keys and encoded hold
+	// the expanded ones.
+	closed        map[string]bool
+	closedKeys    [][]any
+	closedEncoded [][]string
 }
 
-// parseExpansion reads options.expand: at most rowCap keys, since a run
-// shows no more group rows than that. The keys' values need no cap of their
-// own: a read binds them as one JSON parameter (where), a key longer than a
-// group row's matches nothing, and the request body's size limit bounds
-// what a caller can send.
-func parseExpansion(opts Options) (*expansion, error) {
-	e := &expansion{all: opts.ExpandAll, set: map[string]bool{}, open: map[int]bool{}}
-	if len(opts.Expand) > runLimits.rowCap {
-		return nil, invalid("options.expand", fmt.Sprintf("a run expands at most %d groups", runLimits.rowCap))
+// parseKeys reads a list of group keys (options.expand or options.collapse):
+// at most foldCap keys. The keys' values need no cap of their own: a read
+// binds them as one JSON parameter (keysIn), a key longer than a group row's
+// matches nothing, and the request body's size limit bounds what a caller
+// can send.
+func parseKeys(at string, keys [][]any) ([][]any, [][]string, map[string]bool, error) {
+	if len(keys) > runLimits.foldCap {
+		verb := "expands"
+		if at == "options.collapse" {
+			verb = "folds"
+		}
+		return nil, nil, nil, invalid(at, fmt.Sprintf("a run %s at most %d groups", verb, runLimits.foldCap))
 	}
-	for i, key := range opts.Expand {
+	norms, encs, set := make([][]any, 0, len(keys)), make([][]string, 0, len(keys)), map[string]bool{}
+	for i, key := range keys {
+		where := fmt.Sprintf("%s.%d", at, i)
 		if len(key) == 0 {
-			return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key is a group row's groupKey")
+			return nil, nil, nil, invalid(where, "a group key is a group row's groupKey")
 		}
 		norm := make([]any, len(key))
 		encoded := make([]string, len(key))
@@ -1339,53 +1348,73 @@ func parseExpansion(opts Options) (*expansion, error) {
 			case json.Number:
 				norm[j] = numberValue(x)
 			default:
-				return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key holds text, numbers, true, false or null")
+				return nil, nil, nil, invalid(where, "a group key holds text, numbers, true, false or null")
 			}
 			text, err := sqlJSON(norm[j])
 			if err != nil {
-				return nil, invalid(fmt.Sprintf("options.expand.%d", i), "a group key holds text, numbers, true, false or null")
+				return nil, nil, nil, invalid(where, "a group key holds text, numbers, true, false or null")
 			}
 			encoded[j] = text
 		}
-		e.keys = append(e.keys, norm)
-		e.encoded = append(e.encoded, encoded)
-		e.set[keyString(norm)] = true
+		norms, encs = append(norms, norm), append(encs, encoded)
+		set[keyString(norm)] = true
+	}
+	return norms, encs, set, nil
+}
+
+// parseExpansion reads options.expand and options.collapse.
+func parseExpansion(opts Options) (*expansion, error) {
+	e := &expansion{all: opts.ExpandAll, open: map[int]bool{}}
+	var err error
+	if e.keys, e.encoded, e.set, err = parseKeys("options.expand", opts.Expand); err != nil {
+		return nil, err
+	}
+	if e.closedKeys, e.closedEncoded, e.closed, err = parseKeys("options.collapse", opts.Collapse); err != nil {
+		return nil, err
 	}
 	return e, nil
 }
 
-// where matches rows whose first depth group keys and currency keys equal
-// an expanded group key, value by value as IS compares them. A key's blank
-// values match by IS NULL, and the rest by one IN over the keys with the
-// same blanks, bound as one JSON parameter: "(k0, ck0) IN (SELECT …)". IN
-// builds its lookup once, where a correlated lookup per row (EXISTS over the
-// keys) takes time that grows with rows times keys. IN compares with =,
-// which never matches NULL, hence the split by blanks. The json_extract
-// columns carry no affinity, so the row's key keeps its own as it does in
-// IS, and COLLATE BINARY keeps IS's collation: the key list is the left
-// operand there.
-func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string {
-	if e.all || e.open[depth] {
-		return "1"
+// openLevels opens the levels marked open, down to the first level that is
+// not (a level under a closed ancestor shows nothing, so it is not fetched),
+// unless the run says what opens: expandAll opens every group, and expand
+// without collapse lists the open groups (expand: [] opens nothing). A run
+// that sends collapse keeps the open levels (Ruling R2).
+func openLevels(p *plan, opts Options, e *expansion) {
+	if opts.ExpandAll || (opts.Expand != nil && opts.Collapse == nil) {
+		return
 	}
-	cols := make([]string, 0, depth+len(c.currencies))
-	for i := range depth {
-		cols = append(cols, fmt.Sprintf("%sk%d", prefix, i))
+	for i, g := range p.groups {
+		if !g.group.Open {
+			break
+		}
+		e.open[i+1] = true
 	}
-	for _, ck := range c.currencies {
-		cols = append(cols, prefix+ck)
-	}
+}
+
+// keysIn matches rows whose cols equal one of keys, value by value as IS
+// compares them. A key's blank values match by IS NULL, and the rest by one
+// IN over the keys with the same blanks, bound as one JSON parameter:
+// "(k0, ck0) IN (SELECT …)". IN builds its lookup once, where a correlated
+// lookup per row (EXISTS over the keys) takes time that grows with rows times
+// keys. IN compares with =, which never matches NULL, hence the split by
+// blanks. The json_extract columns carry no affinity, so the row's key keeps
+// its own as it does in IS, and COLLATE BINARY keeps IS's collation: the key
+// list is the left operand there. "0" when no key has len(cols) values. The
+// term is never NULL (each IN leg compares only set values; blanks go through
+// IS NULL), so NOT of it is safe.
+func keysIn(s *stmt, cols []string, keys [][]any, encoded [][]string) string {
 	// blanks marks a key's blank values ("10" is a set first value, a
 	// blank second); rowsOf holds each pattern's keys, set values only.
 	var blanks []string
 	rowsOf := map[string][]string{}
-	for i, key := range e.keys {
+	for i, key := range keys {
 		if len(key) != len(cols) {
 			continue
 		}
 		mask := make([]byte, len(key))
 		var set []string
-		for j, text := range e.encoded[i] {
+		for j, text := range encoded[i] {
 			mask[j] = '0'
 			// null is nil, or a NaN, which SQLite binds as NULL.
 			if text == "null" {
@@ -1423,6 +1452,44 @@ func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string
 	return anyOf(terms)
 }
 
+// where matches rows whose first depth group keys and currency keys are an
+// open group's: every group under expandAll or an open level, else an
+// expanded key; never a folded key.
+func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string {
+	cols := make([]string, 0, depth+len(c.currencies))
+	for i := range depth {
+		cols = append(cols, fmt.Sprintf("%sk%d", prefix, i))
+	}
+	for _, ck := range c.currencies {
+		cols = append(cols, prefix+ck)
+	}
+	open := "1"
+	if !e.all && !e.open[depth] {
+		open = keysIn(s, cols, e.keys, e.encoded)
+	}
+	folded := keysIn(s, cols, e.closedKeys, e.closedEncoded)
+	if folded == "0" {
+		return open
+	}
+	return "(" + open + " AND NOT " + folded + ")"
+}
+
+// shownUnder is true for a row whose every enclosing group is open: the
+// groups at depths 1..depth above it. A row under a folded grandparent
+// shows nothing even when its parent's level is open.
+func (e *expansion) shownUnder(c *compiler, s *stmt, depth int, prefix string) string {
+	conds := []string{}
+	for d := 1; d <= depth; d++ {
+		if w := e.where(c, s, d, prefix); w != "1" {
+			conds = append(conds, w)
+		}
+	}
+	if len(conds) == 0 {
+		return "1"
+	}
+	return strings.Join(conds, " AND ")
+}
+
 // anyOf joins conditions with OR as a balanced tree: SQLite's parser goes a
 // level deeper per OR of a chain and refuses past 1,000, and the keys may
 // hold more patterns of blanks than that.
@@ -1436,6 +1503,9 @@ func anyOf(conds []string) string {
 
 // has is true when the level-n group with key opens.
 func (e *expansion) has(key []any, n int) bool {
+	if e.closed[keyString(key)] {
+		return false
+	}
 	return e.all || e.open[n] || e.set[keyString(key)]
 }
 

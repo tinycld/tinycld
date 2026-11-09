@@ -123,17 +123,7 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 		}},
 		{"three levels of fill", 3, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
-			z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
-				{"id":"owner","path":[{"link":"animal"},{"link":"owner"}]},
-				{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
-				{"id":"animal","path":[{"link":"animal"}]},
-				{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
-				"groups":[
-					{"id":"o","col":"owner","fill":{}},
-					{"id":"s","col":"site","fill":{}},
-					{"id":"a","col":"animal","fill":{"where":{"op":"and","args":[
-						{"op":"eq","args":[{"path":[{"link":"site"}]},{"col":"site"}]},
-						{"op":"eq","args":[{"path":[{"link":"owner"}]},{"col":"owner"}]}]}}}]}`, Options{ExpandAll: true}, nil)
+			z.run(t, "ann", threeFills, Options{ExpandAll: true}, nil)
 		}},
 	}
 	for _, c := range cases {
