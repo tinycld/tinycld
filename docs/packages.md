@@ -1244,11 +1244,12 @@ away before the run ends.
 - A page cursor is tied to the report's sort keys, its viewer sort
   (`options.sort`), its group levels, its fold state (`options.expand`,
   `options.expandAll`, `options.collapse`) and the value types. A cursor from a
-  report that sorts, groups or folds differently is refused. Every report
-  pages: a page holds 200 rows by default, and at most 1,000 (`options.limit`).
-  A grouped report (not a pivot, a layout report or a nest) counts its group,
-  opening, detail and subtotal rows in document order: a closed group counts
-  as its one row, and a group row and its opening row stay on one page. Its
+  report that sorts, groups or folds differently is refused. A detail or
+  grouped report pages: a page holds 200 rows by default, and at most 1,000
+  (`options.limit`). A grouped report (not a pivot, a layout report or a nest)
+  counts its group, opening, detail and subtotal rows in document order: a
+  closed group counts as its one row, and a group row and its opening row stay
+  on one page. Its
   group rows page too, however many groups it has. Every page ends with the
   Total. Pivot, layout and nest reports read their group rows whole, at most
   5,000, and count their detail rows.
@@ -1313,8 +1314,9 @@ away before the run ends.
   on a running value or percent, a child row column, an unknown column or a
   pivot report is refused under `options.sort`.
 - A grouped result pages (`page.next`), its group rows too; running values
-  continue on the next page. `page.size` is the page's detail rows. A client merges pages by row id and drops each earlier page's trailing
-  total and computed rows (a Total inside a page's slice, one per currency
+  continue on the next page. `page.size` is the page's detail rows. A client
+  merges pages by row id and drops each earlier page's trailing total and
+  computed rows (a Total inside a page's slice, one per currency
   block, stays). Core's view also holds the newest page's trailing total and
   computed rows back while it has `page.next` (`holdWholeReportRows`), so the
   Total shows only with the last page; its column measure still reads them.

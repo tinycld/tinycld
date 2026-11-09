@@ -267,7 +267,8 @@ describe('runFirstPage', () => {
     })
 
     // A server that answers fewer rows than asked (here 2 a page) is followed page
-    // by page until the target's detail rows are in, and the pages become one.
+    // by page until the target's rows (as a page counts them) are in, and the pages
+    // become one.
     // J1a: the target counts group, opening and subtotal rows too.
     it('joins pages until it holds the target rows, then follows the last cursor', async () => {
         send.mockReset()

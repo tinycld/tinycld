@@ -81,8 +81,8 @@ const occurrences = (ids: readonly string[], prefix: string) =>
  * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
  * teams of one sale each after them, and opens the report on them alone, in pages
  * of 5 rows (group, opening, detail and subtotal rows count, J1a), so team A's 9
- * rows page across its end. Then scrolls until the
- * last team's Total row is drawn: every page is merged then.
+ * rows page across its end. Then scrolls until the last team's Total row is
+ * drawn: every page is merged then.
  */
 async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
     const { firstSale, ...paged } = await openPagedTeams(page, prefix, { smallTeams })
@@ -326,14 +326,15 @@ test.describe('general-ledger: report engine v3', () => {
             'rows the list dropped between Expand all and its run'
         ).toEqual([])
         // The fold run's requests, in pages of 5 rows that count group, opening,
-        // detail and subtotal rows (J1a). The reader had 6 group rows (Collapse all)
-        // and team B's group row at the top. Request 1 (the usual size) gets team
-        // A's group, opening and first three sales; 5 of the 6 rows. Request 2 (the
-        // usual size: the rows are not all in yet) gets A's last three sales and its
-        // subtotal; team B's group and opening rows stay together on the next page
-        // (R3). Request 3 (the server's most: only team B's group row is missing)
-        // starts with it. Before J1 the target counted detail rows only (0 here), so
-        // request 2 already asked for the server's most.
+        // detail and subtotal rows (J1a). The reader had 6 group rows (Collapse all),
+        // so the target is 6 counted rows, and team B's group row at the top.
+        // Request 1 (the usual size) holds 5 counted rows: team A's group row, its
+        // opening and its first three sales. The target's sixth row, A's fourth
+        // sale, is still missing, so request 2 (the usual size) gets A's last three
+        // sales and its subtotal; team B's group and opening rows stay together on
+        // the next page (R3). Request 3 (the server's most: only team B's group row
+        // is missing) starts with it. Before J1 the target counted detail rows only
+        // (0 here), so request 2 already asked for the server's most.
         expect(
             sent.slice(0, 3).map(run => [run.cursor !== undefined, run.limit]),
             'requests of Expand all at team B'

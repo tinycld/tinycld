@@ -24,7 +24,10 @@ export type ViewSort = { col: string; dir: 'asc' | 'desc' }
 export interface RunOptions {
     expand?: unknown[][]
     expandAll?: boolean
-    /** Groups the reader closed under an open level or Expand all (J1b); not in the rows or fold key. */
+    /**
+     * Groups the reader closed under an open level or Expand all (J1b); not in the
+     * rows or fold key.
+     */
     collapse?: unknown[][]
     cursor?: string
     limit?: number
@@ -205,8 +208,9 @@ export function groupRowAt(
 
 /**
  * A run's first page, holding at least `target` rows (what a page's limit counts,
- * `pageRowCount`) and the row `untilRow` when the run has them: the server's pages are fetched in turn and joined into one
- * (mergePages), and the next page follows from the last one's cursor. A target of 0
+ * `pageRowCount`) and the row `untilRow` when the run has them: the server's pages
+ * are fetched in turn and joined into one (mergePages), and the next page follows
+ * from the last one's cursor. A target of 0
  * with no row is one page. The first request asks for the usual page or the target;
  * when a page has come and only the row is still missing, each next request asks
  * for the server's most, so a row far down takes few requests.

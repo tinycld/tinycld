@@ -782,7 +782,8 @@ test.describe('report rows per width', () => {
     })
 
     // F10: an open group row has no other cell on its line, so its label spans the
-    // row, as it does in the phone's blocks; a detail label shares the spare room by Extra room (J2).
+    // row, as it does in the phone's blocks; a detail label shares the spare room
+    // by Extra room (J2).
     test('on a desktop line an open group row shows its whole label across the row', async ({
         page,
     }) => {

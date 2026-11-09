@@ -79,8 +79,8 @@ const rowIdAt = (result: RunResult, index: number | undefined) =>
     index === undefined ? undefined : result.rows[index]?.id
 
 // Runs a report through POST /api/reports/run (R9). Every report pages by keyset; a
-// grouped one pages its detail rows in document order with the section rows between
-// them (mergePages joins the pages). The result's topics keep it live.
+// grouped one pages its group, opening, detail and subtotal rows in document order
+// (J1a; mergePages joins the pages). The result's topics keep it live.
 export function useReportRun({
     body,
     userId,
@@ -103,11 +103,12 @@ export function useReportRun({
     // How far a run's first page loads. A refetch of a run keeps its first page as
     // long as it was, up to its own last group row. A new run whose only change is a
     // fold (a group, Expand all, Collapse all) loads as many rows as the reader
-    // had (counted as a page's limit counts them), and up to the group row at or above the row at the top of the view, so the
-    // rows in view stay through the fold even when they were closed groups with no
-    // detail rows (F11). That group row must be in the shown pages, so the fold never
-    // loads past what was loaded; with none, the row count alone decides. Any other
-    // new run starts with one page.
+    // had (counted as a page's limit counts them), and up to the group row at or
+    // above the row at the top of the view, so the rows in view stay through the
+    // fold even when they were closed groups with no detail rows (F11). That group
+    // row must be in the shown pages, so the fold never loads past what was loaded;
+    // with none, the row count alone decides. Any other new run starts with one
+    // page.
     const firstPagePlace = (runBody: RunBody, queryKey: QueryKey): ReaderPlace => {
         const first = queryClient.getQueryData<InfiniteData<RunPage>>(queryKey)?.pages[0]
         if (first) {

@@ -91,7 +91,7 @@ async function scrollToNextGroups(page: Page, prefix: string, size: typeof DESKT
     // reads the old list. At a phone width the view then swaps its list for the
     // phone's (another list) and draws the rows again once they fit the new width;
     // the fit marker settles in that last draw. Wait for it, then read the list.
-    await waitForTableFit(page)
+    await waitForResizedFit(page, size)
     await expect(firstSale).toBeVisible()
     await expect(rowOf(page, teams[2] ?? '')).toHaveCount(0)
     await scrollListToEnd(firstSale)
@@ -110,6 +110,19 @@ async function scrollToNextGroups(page: Page, prefix: string, size: typeof DESKT
     }
     expect(rows[rows.length - 1]?.id).toMatch(/^total/)
     await expect(page.getByTestId('report-end')).toHaveText('End of report')
+}
+
+/**
+ * Waits until the table fits the window of `size`. The fit of the window before
+ * the resize (openPagedTeams opens it 1280 px wide) is settled too, so
+ * waitForTableFit alone can pass on it: first wait until the fit follows the new
+ * width.
+ */
+async function waitForResizedFit(page: Page, size: typeof DESKTOP) {
+    await expect
+        .poll(() => page.getByTestId('report-table').evaluate(el => Number(el.dataset.fitWidth)))
+        .toBeLessThanOrEqual(size.width)
+    await waitForTableFit(page)
 }
 
 /** The row's top edge, in px under its list's top edge. */
@@ -183,7 +196,7 @@ async function foldNearFirstPageEnd(page: Page, prefix: string, size: typeof DES
     })
     await page.setViewportSize(size)
     // As in scrollToNextGroups: read the list only once it fits the new width.
-    await waitForTableFit(page)
+    await waitForResizedFit(page, size)
     const groupB = rowOf(page, teams[1] ?? '')
     await expect(groupB).toHaveAttribute('aria-expanded', 'true')
     const rowHeight = await shortenList(page, groupB, 4)
