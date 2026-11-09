@@ -56,12 +56,12 @@ func (c *compiler) parentKeys(s *stmt, n int, expand *expansion) string {
 // records are read through its rule CTE, so a record the reader cannot list
 // never fills in.
 //
-// The join is a CROSS JOIN, so p is always the outer loop. p is few rows (the
-// currencies, or the expanded rows of the level above), and the target's
+// The join is a CROSS JOIN, so p is always the outer loop. p is the
+// currencies, or the expanded rows of the level above, and the target's
 // records are a table SQLite can search by the fill's where, or index for it.
 // With a plain join SQLite may put the records outer (it reads them in id
-// order for the UNION) and run p, a read of w, again for each record: records
-// times base rows.
+// order for the UNION) and run p, a read of w or of the keyset above, again
+// for each record: records times base rows.
 func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (string, error) {
 	target := c.groupTargets[n-1]
 	if target == nil {

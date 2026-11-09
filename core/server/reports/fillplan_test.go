@@ -55,17 +55,19 @@ func fillOuterLoops(t *testing.T, z *zoo, seen []readStatement) []string {
 				continue
 			}
 			// The keyset is a compound select: MERGE (UNION) or COMPOUND QUERY,
-			// whose second child is the select of the parent rows and records.
-			compound := children(f.id)
-			if len(compound) != 1 {
-				t.Fatalf("%s: plan %v, want one compound select", f.detail, compound)
+			// whose last select is the one of the parent rows and records.
+			var branches []planRow
+			for _, r := range children(f.id) {
+				if strings.HasPrefix(r.detail, "MERGE ") || r.detail == "COMPOUND QUERY" {
+					branches = children(r.id)
+					break
+				}
 			}
-			branches := children(compound[0].id)
-			if len(branches) != 2 {
-				t.Fatalf("%s: compound %v, want two selects", f.detail, branches)
+			if len(branches) < 2 {
+				t.Fatalf("%s: plan %v, want a compound select", f.detail, children(f.id))
 			}
 			loop := ""
-			for _, r := range children(branches[1].id) {
+			for _, r := range children(branches[len(branches)-1].id) {
 				if strings.HasPrefix(r.detail, "SCAN ") || strings.HasPrefix(r.detail, "SEARCH ") {
 					loop = r.detail
 					break
@@ -85,29 +87,30 @@ func fillOuterLoops(t *testing.T, z *zoo, seen []readStatement) []string {
 // over each shape a fill compiles to.
 func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 	cases := []struct {
-		name string
-		run  func(t *testing.T, z *zoo)
+		name    string
+		keysets int
+		run     func(t *testing.T, z *zoo)
 	}{
-		{"ledger, 200 accounts", func(t *testing.T, z *zoo) {
+		{"ledger, 200 accounts", 2, func(t *testing.T, z *zoo) {
 			withBalanceZoo(t, z)
 			withLedgerScale(t, z, 200)
 			if _, err := runLedger(z, map[string]string{"period": ledgerPeriod}, Options{Today: "2025-07-15"}); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"one level with a where", func(t *testing.T, z *zoo) {
+		{"one level with a where", 1, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
 			z.run(t, "ann", animalFill(`{"where":{"op":"eq","args":[{"path":[{"field":"active"}]},{"value":true}]}}`, ""), Options{}, nil)
 		}},
-		{"two levels, the deeper where reads its parent", func(t *testing.T, z *zoo) {
+		{"two levels, the deeper where reads its parent", 2, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
 			z.run(t, "ann", sitesThenAnimals, Options{Expand: [][]any{{z.id("east"), "USD"}}}, nil)
 		}},
-		{"two levels, every parent open", func(t *testing.T, z *zoo) {
+		{"two levels, every parent open", 2, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
 			z.run(t, "ann", sitesThenAnimals, Options{ExpandAll: true}, nil)
 		}},
-		{"a fill under a group with no fill, its where reads links and the parent record", func(t *testing.T, z *zoo) {
+		{"a fill under a group with no fill, its where reads links and the parent record", 1, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
 			z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 				{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
@@ -118,7 +121,7 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 					{"id":"a","col":"animal","fill":{"where":{"op":"eq","args":[{"path":[{"link":"site"},{"field":"name"}]},{"record":"s","path":[{"field":"name"}]}]}}}],
 				"sort":[{"formula":{"record":"s","path":[{"field":"name"}]}}]}`, Options{ExpandAll: true}, nil)
 		}},
-		{"three levels of fill", func(t *testing.T, z *zoo) {
+		{"three levels of fill", 3, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
 			z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
 				{"id":"owner","path":[{"link":"animal"},{"link":"owner"}]},
@@ -139,8 +142,8 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 			seen := observeReads(t)
 			c.run(t, z)
 			outer := fillOuterLoops(t, z, *seen)
-			if len(outer) == 0 {
-				t.Fatal("no fill keyset in the plans")
+			if len(outer) != c.keysets {
+				t.Fatalf("fill keysets in the plans: %v, want %d", outer, c.keysets)
 			}
 			for _, o := range outer {
 				if !parentLoop.MatchString(o) {
