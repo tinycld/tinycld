@@ -29,8 +29,9 @@ type Options struct {
 	// lists them all (J1b, Ruling R2).
 	Collapse [][]any `json:"collapse,omitempty"`
 	// Cursor is the previous page's page.next; Limit is the page size (at
-	// most maxPage). A grouped report pages its detail rows in document
-	// order; its group rows come whole on every page (R9).
+	// most maxPage). A grouped report without pivot, layout or nest pages its
+	// group, opening, detail and subtotal rows in document order (J1a); a
+	// pivot, a layout and a nest read their group rows whole.
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
 	// Sort orders the detail rows before the report's own sort keys: the
@@ -231,8 +232,9 @@ type runner struct {
 	// pivotLabels their records' labels for a pivot over a link.
 	pivotValues []pivotValue
 	pivotLabels []rowLabel
-	// page is a grouped run's page: where its rows start and end in the
-	// document (pageWindow); nil when the run did not page grouped details.
+	// page is the page of a grouped run whose group rows do not page (a
+	// layout or a nest): where its rows start and end in the document
+	// (pageWindow); nil when the run did not page grouped details.
 	page *groupedPage
 	// mixedRows holds, by row id, the columns whose cell on that row is
 	// blank because a sum lookup met two currencies (push).
@@ -240,7 +242,7 @@ type runner struct {
 	// mixedConditions are the conditions that read such a sum on some row
 	// (probeConditions).
 	mixedConditions []string
-	// A run that pages its group rows (pagedNow) reads its cursor into
+	// A run that pages its group rows (pagedGroups) reads its cursor into
 	// groupCur, with each level's order terms (groupShape), the detail sort
 	// keys (groupKeys) and the fingerprint its cursors carry (groupFP).
 	// rawGroups and rawDetails hold the statement rows the page's group and
@@ -364,14 +366,7 @@ func (rn *runner) run() error {
 	if rn.c.p.pivot != nil && rn.opts.Cursor != "" {
 		return badCursor()
 	}
-	// pagedNow knows an innermost group's key by its currency keys, which
-	// compiling w finds. Nothing is sent to the database.
-	if rn.pagedGroups() {
-		if _, err := rn.c.rows(newStmt(rn.app, rn.c.info)); err != nil {
-			return err
-		}
-	}
-	paged := rn.pagedNow()
+	paged := rn.pagedGroups()
 	groupPass := rn.groupPass
 	if paged {
 		groupPass = rn.pagedGroupPass
@@ -381,8 +376,17 @@ func (rn *runner) run() error {
 		return err
 	}
 	var details []map[string]any
-	// A paged run opens no innermost group, so it reads no detail row.
-	if rn.c.p.pivot == nil && !paged {
+	switch {
+	case paged:
+		// The page's open innermost groups, anchors included, in document
+		// order. In mode after the cursor's own group was not read, so it is
+		// never one of them; the group cursor was read and checked already.
+		if leaves := rn.openGroups(groupRows); len(leaves) > 0 {
+			if details, err = rn.detailPass(leaves); err != nil {
+				return err
+			}
+		}
+	case rn.c.p.pivot == nil:
 		var leaves [][]any
 		grouped := len(rn.c.p.groups) > 0
 		if grouped {
@@ -534,8 +538,7 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 		c.probe("filter", "SELECT 1 "+r.root.render()+"\nWHERE "+r.filterMixed)
 	}
 	r.probeWheres()
-	paged := rn.pagedGroups()
-	ctes, body, err := c.groupStatement(s, r, rn.expand, pivot, int64(runLimits.rowCap+1), !paged)
+	ctes, body, err := c.groupStatement(s, r, rn.expand, pivot, int64(runLimits.rowCap+1))
 	if err != nil {
 		return nil, err
 	}
@@ -543,15 +546,6 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 	rows, err := rn.query(s, ctes, body)
 	if err != nil {
 		return nil, err
-	}
-	if paged {
-		totals, err := rn.totalPass(s, ctes)
-		if err != nil {
-			return nil, err
-		}
-		// The Totals lead, as the one statement's ORDER BY __level put them, so
-		// the cap keeps the rows it always did.
-		return rn.capLevelRows(append(totals, rows...)), nil
 	}
 	if err := rn.readProbes(s, ctes, rows, c.condProbes); err != nil {
 		return nil, err
@@ -566,20 +560,6 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 func (rn *runner) pagedGroups() bool {
 	p := rn.c.p
 	return len(p.groups) > 0 && p.pivot == nil && len(p.layout) == 0 && len(p.nest) == 0
-}
-
-// pagedNow is true while this run pages its group rows. For now only a run
-// that shows no detail row (no innermost group opens) pages them; a run that
-// opens one keeps one group statement and pages its detail rows.
-func (rn *runner) pagedNow() bool {
-	if !rn.pagedGroups() {
-		return false
-	}
-	e, depth := rn.expand, len(rn.c.p.groups)
-	if e.all || e.open[depth] {
-		return false
-	}
-	return !slices.ContainsFunc(e.keys, func(k []any) bool { return len(k) == depth+len(rn.c.currencies) })
 }
 
 // pageLimit is the most rows a page holds: options.limit up to maxPage, else
@@ -643,7 +623,7 @@ func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rn.rawGroups = map[string]map[string]any{}
+	rn.rawGroups, rn.rawDetails = map[string]map[string]any{}, map[string]map[string]any{}
 	return append(rows, totals...), nil
 }
 
@@ -1019,16 +999,11 @@ func viewSortPlans(c *compiler, keys []ViewSort) ([]sortPlan, error) {
 }
 
 // groupStatement is the UNION ALL of every level's rows (the children of
-// expanded groups only) and the layout's computed rows. withTotal false leaves
-// out the Total (o0) and the condition probes: a paged run reads them in a
-// statement of their own (totalPass). The o0 CTE stays, as a level may read its
-// frame and SQLite never computes a CTE nothing reads.
-func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64, withTotal bool) ([]string, string, error) {
+// expanded groups only) and the layout's computed rows: the one group
+// statement of a run whose group rows do not page (a pivot, a layout, a nest).
+func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot []pivotValue, limit int64) ([]string, string, error) {
 	var ctes, legs []string
 	levels, err := c.compileLevels(s, r, expand, pivot, func(n int) {
-		if n == 0 && !withTotal {
-			return
-		}
 		leg := fmt.Sprintf("SELECT * FROM o%d", n)
 		if n >= 2 {
 			leg += " WHERE " + expand.where(c, s, n-1, "")
@@ -1049,12 +1024,9 @@ func (c *compiler) groupStatement(s *stmt, r *rowsCTE, expand *expansion, pivot 
 	ctes = append(ctes, layoutCTEs...)
 	// The conditions that may read a mixed sum are probed in this statement
 	// (readProbes), over the CTEs it computes anyway.
-	var probes []string
-	if withTotal {
-		probes = c.probeCells()
-		if cte := c.probeCTE(); cte != "" {
-			ctes = append(ctes, cte)
-		}
+	probes := c.probeCells()
+	if cte := c.probeCTE(); cte != "" {
+		ctes = append(ctes, cte)
 	}
 	// The limit applies to the level rows only: computed rows sort last, so a
 	// limit on the whole statement would drop them first.
@@ -1295,16 +1267,29 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	rn.readDetails = true
 	ctes := append([]string{r.render()}, shown...)
 	grouped := len(c.p.groups) > 0
+	paged := rn.pagedGroups()
+	// The group cursor's fingerprint and values hold the sort keys the group
+	// pass compiled: this pass orders by the same ones, or a cursor's values
+	// would be read against other columns.
+	if paged && !slices.Equal(order, rn.groupKeys) {
+		return nil, fmt.Errorf("reports: the detail sort keys %v differ from the group cursor's %v", order, rn.groupKeys)
+	}
 	from, by, levels := "("+sel+") d", orderBy(order), ""
 	var where string
-	if grouped {
+	switch {
+	case paged:
+		ctes = append(ctes, c.leafOrder(s, leaves))
+		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
+		by = "d.__g, " + by
+		where, err = rn.pagedDetailAfter(s, order, leaves)
+	case grouped:
 		levels = c.groupLevels()
 		ctes = append(ctes, c.leafOrder(s, leaves))
 		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
 		by = "d.__g, " + by
 		rn.page = &groupedPage{}
 		where, rn.page.after, err = groupedAfter(s, levels, order, rn.opts.Cursor, leaves)
-	} else {
+	default:
 		where, err = keysetAfter(s, order, rn.opts.Cursor)
 	}
 	if err != nil {
@@ -1323,6 +1308,11 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	if err := rn.probeConditions(s, ctes, probes); err != nil {
 		return nil, err
 	}
+	// A paged run cuts its page over every row kind (cutPage), which needs
+	// the row past the limit to know a row follows.
+	if paged {
+		return rows, nil
+	}
 	more := len(rows) > limit
 	if more {
 		rows = rows[:limit]
@@ -1338,6 +1328,26 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 		rn.res.Page.Next = cursorOf(levels, order, last, group)
 	}
 	return rows, nil
+}
+
+// pagedDetailAfter selects the detail rows of a paged page: every row of the
+// page's open innermost groups, or, when the cursor stopped after a detail
+// row of the first of them, that group's rows after it (F7's keyset) and the
+// other groups' rows.
+func (rn *runner) pagedDetailAfter(s *stmt, keys []sortKey, leaves [][]any) (string, error) {
+	cur := rn.groupCur
+	if cur == nil || cur.Values == nil {
+		return "1", nil
+	}
+	// The cursor's group is gone (removed between pages) or no longer a
+	// leaf: the group keyset already starts after it, so every row of the
+	// page's leaves follows. A fold change never gets here: the fold print
+	// refused the cursor.
+	if len(leaves) == 0 || keyString(leaves[0]) != keyString(cur.Group) {
+		return "1", nil
+	}
+	g := s.bind(int64(0))
+	return fmt.Sprintf("(d.__g > %s OR (d.__g = %s AND %s))", g, g, keysetCond(s, keys, cur.Values)), nil
 }
 
 // openGroups lists the open innermost groups in the order the report shows
@@ -1889,7 +1899,7 @@ func compileDry(p *plan) error {
 		// refuse the same layouts.
 		pivot = make([]pivotValue, p.pivot.max)
 	}
-	if _, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1, true); err != nil {
+	if _, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1); err != nil {
 		return err
 	}
 	if err := fitRefusals(c); err != nil {

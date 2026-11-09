@@ -110,6 +110,7 @@ func TestTwoLevelsPageAcrossAnOpenOuterGroup(t *testing.T) {
 		if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
 			t.Fatalf("limit %d: pages\n%v\nwhole\n%v", limit, rowsOf(&Result{Rows: got}, "id"), rowsOf(whole, "id"))
 		}
+		requireCut(t, pages, whole, limit)
 	}
 }
 
@@ -124,6 +125,7 @@ func TestHavingHidesGroupsBeforeTheKeyset(t *testing.T) {
 	if got := mergedGroupLabels(t, pages); !slices.Equal(got, groupRowLabels(whole)) || len(got) != 4 {
 		t.Fatalf("groups %v, want the four feedings over 1 (f1–f4)", got)
 	}
+	requireCut(t, pages, whole, 1)
 }
 
 // fill groups page as base groups do: a fill record with no rows is a group
@@ -137,6 +139,7 @@ func TestFillGroupsPageInTheirPlace(t *testing.T) {
 	if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
 		t.Fatalf("pages\n%v\nwhole\n%v", rowsOf(&Result{Rows: got}, "label"), rowsOf(whole, "label"))
 	}
+	requireCut(t, pages, whole, 1)
 }
 
 // A blank group key ((none)) pages in its place once.
@@ -154,6 +157,7 @@ func TestABlankGroupPagesInItsPlace(t *testing.T) {
 	if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
 		t.Fatalf("pages %v\nwhole %v", rowsOf(&Result{Rows: got}, "label"), rowsOf(whole, "label"))
 	}
+	requireCut(t, pages, whole, 1)
 }
 
 // Keyset on values (R1): a group added before the cursor, or the cursor's own
@@ -235,6 +239,160 @@ func TestAGroupCursorFromAnotherFoldStateIsRefused(t *testing.T) {
 		requireSpecError(t, err, 400, "options.cursor", "not one this report gave")
 		_ = name
 	}
+}
+
+// countedRows is the number of rows a page's limit counts (R3): group,
+// opening, detail and subtotal rows.
+func countedRows(rows []Row) int {
+	n := 0
+	for _, r := range rows {
+		if !isEnd(r) {
+			n++
+		}
+	}
+	return n
+}
+
+// requireCut fails unless pages really paged: more than one page when the
+// whole run counts more rows than limit, and no page counting more than limit
+// (a group row and its opening share a page, so at limit 1 a page may hold
+// both). A merged-equals-whole test with it fails if paging stops.
+func requireCut(t *testing.T, pages []*Result, whole *Result, limit int) {
+	t.Helper()
+	if countedRows(whole.Rows) > limit && len(pages) < 2 {
+		t.Fatalf("limit %d: %d counted rows on one page", limit, countedRows(whole.Rows))
+	}
+	for i, p := range pages {
+		counted := slices.DeleteFunc(slices.Clone(p.Rows), isEnd)
+		n := len(counted)
+		if n == 0 || (n > limit && (n != 2 || counted[0].Kind != KindGroup || counted[1].Kind != KindOpening)) {
+			t.Fatalf("limit %d: page %d counts %d rows", limit, i+1, n)
+		}
+	}
+}
+
+// Open groups: pages of every limit join into the one-page run, the open
+// groups' details span page boundaries, and every page ends in the Total.
+func TestOpenGroupsPageAtEveryLimit(t *testing.T) {
+	z := newZoo(t)
+	withF7(t, z)
+	whole := z.run(t, "ann", pagedBySpecies, Options{Limit: 1000}, nil)
+	for limit := 1; limit <= 12; limit++ {
+		pages := groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: limit})
+		if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
+			t.Fatalf("limit %d: pages\n%v\nwhole\n%v", limit, rowsOf(&Result{Rows: got}, "id"), rowsOf(whole, "id"))
+		}
+		requireCut(t, pages, whole, limit)
+		for i, p := range pages {
+			if lastTotal(t, p).Cells["cost"] != lastTotal(t, whole).Cells["cost"] {
+				t.Fatalf("limit %d page %d: total differs", limit, i+1)
+			}
+		}
+	}
+}
+
+// Two open levels page as one document.
+func TestTwoOpenLevelsPageAsOneDocument(t *testing.T) {
+	z := newZoo(t)
+	raw := pagedAnimals(2)
+	whole := z.run(t, "ann", raw, Options{Limit: 1000}, nil)
+	for limit := 1; limit <= 9; limit++ {
+		pages := groupedPages(t, z, "ann", raw, Options{Limit: limit})
+		if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
+			t.Fatalf("limit %d: pages differ from the one-page run", limit)
+		}
+		requireCut(t, pages, whole, limit)
+	}
+}
+
+// R3: a page counts group, opening, detail and subtotal rows; the group row
+// and its opening share a page, also at limit 1.
+func TestAGroupRowAndItsOpeningShareAPage(t *testing.T) {
+	z := newZoo(t)
+	first := z.run(t, "ann", pagedBySpecies, Options{Limit: 1}, nil)
+	requireRows(t, first, "kind", "group", "opening", "total")
+	second := z.run(t, "ann", pagedBySpecies, Options{Limit: 1, Cursor: first.Page.Next}, nil)
+	requireRows(t, second, "kind", "detail", "total")
+	third := z.run(t, "ann", pagedBySpecies, Options{Limit: 3}, nil)
+	requireRows(t, third, "kind", "group", "opening", "detail", "total")
+}
+
+// A viewer sort orders the details inside their groups; a page that ends
+// inside a group goes on in the viewer's order.
+func TestAViewerSortPagesInsideItsGroups(t *testing.T) {
+	z := newZoo(t)
+	withF7(t, z)
+	opts := Options{Sort: []ViewSort{{Col: "cost", Dir: "desc"}}}
+	opts.Limit = 1000
+	whole := z.run(t, "ann", pagedBySpecies, opts, nil)
+	opts.Limit = 3
+	pages := groupedPages(t, z, "ann", pagedBySpecies, opts)
+	if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
+		t.Fatalf("pages\n%v\nwhole\n%v", rowsOf(&Result{Rows: got}, "id"), rowsOf(whole, "id"))
+	}
+	requireCut(t, pages, whole, opts.Limit)
+}
+
+// Two currencies: each currency's Total keeps its place on the page that
+// holds its block's end, and every page ends in the Totals after its slice.
+func TestAPagedGroupPageKeepsEachCurrencyTotalInItsPlace(t *testing.T) {
+	z := newZoo(t)
+	withEuroLeo(t, z, 100)
+	whole := z.run(t, "ann", feedingsBySpecies, Options{ExpandAll: true, Limit: 1000}, nil)
+	requireRows(t, whole, "kind", "group", "detail", "subtotal", "total", "group", "detail", "detail", "subtotal", "group", "detail", "detail", "subtotal", "total")
+	requireRows(t, whole, "note", nil, "f7", nil, nil, nil, "f1", "f2", nil, nil, "f3", "f4", nil, nil)
+	for limit := 1; limit <= 8; limit++ {
+		pages := groupedPages(t, z, "ann", feedingsBySpecies, Options{ExpandAll: true, Limit: limit})
+		if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
+			t.Fatalf("limit %d: pages\n%v\nwhole\n%v", limit, rowsOf(&Result{Rows: got}, "id"), rowsOf(whole, "id"))
+		}
+		requireCut(t, pages, whole, limit)
+	}
+}
+
+// Closed groups in two currencies page through both currency blocks: the
+// EUR block's Total keeps its place between them (Task 4 reviewer).
+func TestClosedGroupsInTwoCurrenciesPageThroughBothBlocks(t *testing.T) {
+	z := newZoo(t)
+	withEuroLeo(t, z, 100)
+	whole := z.run(t, "ann", feedingsBySpecies, Options{Limit: 1000}, nil)
+	requireRows(t, whole, "id", `g:["lion","EUR"]`, `total:["EUR"]`, `g:["lion","USD"]`, `g:["zebra","USD"]`, `total:["USD"]`)
+	for limit := 1; limit <= 4; limit++ {
+		pages := groupedPages(t, z, "ann", feedingsBySpecies, Options{Limit: limit})
+		if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
+			t.Fatalf("limit %d: pages\n%v\nwhole\n%v", limit, rowsOf(&Result{Rows: got}, "id"), rowsOf(whole, "id"))
+		}
+		requireCut(t, pages, whole, limit)
+	}
+}
+
+// A page that ended after a detail row of a group goes on from the next group
+// when that group was removed between pages, never with a refusal: a refused
+// next page would fail on every Retry (R8).
+func TestAPageWhoseOpenGroupWasRemovedGoesOnFromTheNextGroup(t *testing.T) {
+	z := newZoo(t)
+	withF7(t, z)
+	first := z.run(t, "ann", pagedBySpecies, Options{Limit: 3}, nil)
+	requireRows(t, first, "kind", "group", "opening", "detail", "total")
+	if _, err := z.app.DB().NewQuery("DELETE FROM zoo_feedings WHERE note IN ('f1', 'f2', 'f7')").Execute(); err != nil {
+		t.Fatal(err)
+	}
+	rest := groupedPages(t, z, "ann", pagedBySpecies, Options{Limit: 3, Cursor: first.Page.Next})
+	requireRows(t, &Result{Rows: mergedRows(t, rest)}, "id", `g:["zebra","USD"]`, `opening:["zebra","USD"]`, "d:"+z.id("f3"), "d:"+z.id("f4"), `s:["zebra","USD"]`, `total:["USD"]`)
+}
+
+// A fold under an open level pages like any closed group.
+func TestAFoldedGroupPagesAsOneRow(t *testing.T) {
+	z := newZoo(t)
+	withF7(t, z)
+	opts := Options{Collapse: [][]any{{"lion", "USD"}}, Limit: 1000}
+	whole := z.run(t, "ann", pagedBySpecies, opts, nil)
+	opts.Limit = 2
+	pages := groupedPages(t, z, "ann", pagedBySpecies, opts)
+	if got := mergedRows(t, pages); !reflect.DeepEqual(got, whole.Rows) {
+		t.Fatalf("pages differ from the one-page run")
+	}
+	requireCut(t, pages, whole, opts.Limit)
 }
 
 // checkTopics (TestMain) sees the page statement and the Total statement of

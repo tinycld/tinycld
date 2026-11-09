@@ -684,6 +684,9 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n int, section, id
 // detail emits a detail row and the child rows nested under it.
 func (rn *runner) detail(t *tree, row map[string]any, section string, depth int) {
 	id := fmt.Sprintf("d:%v", row["__id"])
+	if rn.rawDetails != nil {
+		rn.rawDetails[id] = row
+	}
 	label, labelColumn := rn.firstLabel(rn.c.p.cols, row), rn.c.p.cols[0].col.ID
 	if lp := rn.c.detailLabel; lp != nil {
 		label, labelColumn = rn.groupLabel(row, *lp), repeatedColumn(rn.c.p.spec.Detail.Label)

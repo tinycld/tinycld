@@ -464,7 +464,9 @@ func TestABalanceShapedReportCutAtAPageSeamGoesOnOnTheNextPage(t *testing.T) {
 	withBalanceZoo(t, z)
 	params := map[string]string{"period": glJuly, "rows": `"all"`}
 	whole := runBalances(t, z, params)
-	opts := Options{Today: "2026-07-15", Limit: 1}
+	// A page counts group, opening, detail and subtotal rows (J1a): a page of
+	// 3 is Cash's group row, its opening and the 2026-07-01 Rent line.
+	opts := Options{Today: "2026-07-15", Limit: 3}
 	var pages []*Result
 	for range 100 {
 		res := z.run(t, "ann", balanceSpec(), opts, params)

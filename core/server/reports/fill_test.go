@@ -104,7 +104,7 @@ func fillKeyset(t *testing.T, z *zoo, user, raw string, opts Options, n int) int
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctes, _, err := c.groupStatement(s, r, expand, nil, 1000, true)
+	ctes, _, err := c.groupStatement(s, r, expand, nil, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}

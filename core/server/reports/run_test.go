@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -388,8 +389,9 @@ func TestAFormulaPathIsBlankOnGroupAndTotalRows(t *testing.T) {
 func TestTheRowCapNoticeIsGivenOnce(t *testing.T) {
 	z := newZoo(t)
 	withLimits(t, func(l *limits) { l.rowCap = 1 })
-	// The group statement (3 rows) passes the cap; the detail pass pages and has no cap.
-	res := z.run(t, "ann", feedingsBySpecies, Options{ExpandAll: true}, nil)
+	// Since J1a a grouped report pages its group rows and has no cap; a pivot
+	// keeps it, and its group statement passes it: one notice.
+	res := z.run(t, "ann", fmt.Sprintf(costBySpeciesAndMonth, ""), Options{ExpandAll: true}, nil)
 	n := 0
 	for _, notice := range res.Notices {
 		if notice.Code == "rowCap" {

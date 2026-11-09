@@ -117,6 +117,9 @@ type ledgerRun struct {
 
 const ledgerPeriod = `{"from":"2025-03-01","to":"2025-08-31"}`
 
+// Since J1a (core plan 2026-11-08) a page counts group, opening, detail and
+// subtotal rows, so runs with a limit cut their pages elsewhere; a run that
+// fits one page keeps its output (diffed before the update).
 func ledgerRuns() []ledgerRun {
 	period := map[string]string{"period": ledgerPeriod}
 	with := func(extra map[string]string) map[string]string {
@@ -191,6 +194,13 @@ func ledgerCanonical(t testing.TB, z *zoo, pages []*Result) string {
 				t.Fatal(err)
 			}
 			out[i].Cursor = string(raw)
+			// The encoded cursor may hold a fixture record's random id (a J1a
+			// group cursor names its group), which the replace below cannot
+			// reach inside base64: Cursor holds it decoded instead.
+			r, pg := *p, *p.Page
+			pg.Next = "<Cursor>"
+			r.Page = &pg
+			out[i].Result = &r
 		}
 	}
 	raw, err := json.MarshalIndent(out, "", " ")

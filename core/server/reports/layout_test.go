@@ -306,7 +306,7 @@ func layoutStatement(t *testing.T, app core.App, raw string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctes, body, err := c.groupStatement(s, r, &expansion{}, make([]pivotValue, 3), 1, true)
+	ctes, body, err := c.groupStatement(s, r, &expansion{}, make([]pivotValue, 3), 1)
 	if err != nil {
 		t.Fatal(err)
 	}

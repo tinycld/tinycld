@@ -212,13 +212,27 @@ func TestAMixedCellNoticeNamesOnlyColumnsBlankOnThisPage(t *testing.T) {
 	if namesBalance(pages[0]) {
 		t.Fatalf("page 1 (%v) names balance: %+v", groupRowLabels(pages[0]), pages[0].Notices)
 	}
+	// Since J1a a page counts group, opening, detail and subtotal rows, so at
+	// Limit 1 Petty cash's subtotal, whose balance is blank too, comes on a
+	// page of its own after its opening's: each of those pages names balance,
+	// and no other page does.
+	petty := ""
+	for _, r := range mergedRows(t, pages) {
+		if r.Kind == KindGroup && r.Label == "1200 Petty cash" {
+			petty = r.ID
+		}
+	}
 	shown := false
 	for i, p := range pages {
-		_, rows := balanceGroups(p)
-		petty := rows["1200 Petty cash"]
-		opening := len(petty) > 0 && petty[0].Kind == KindOpening
-		if opening != namesBalance(p) {
-			t.Fatalf("page %d shows Petty cash's opening %v, names balance %v: %+v", i+1, opening, namesBalance(p), p.Notices)
+		opening, blank := false, false
+		for _, r := range p.Rows {
+			if r.Section == petty && (r.Kind == KindOpening || r.Kind == KindSubtotal) {
+				blank = true
+				opening = opening || r.Kind == KindOpening
+			}
+		}
+		if blank != namesBalance(p) {
+			t.Fatalf("page %d shows a blank Petty cash balance %v, names balance %v: %+v", i+1, blank, namesBalance(p), p.Notices)
 		}
 		shown = shown || opening
 	}
