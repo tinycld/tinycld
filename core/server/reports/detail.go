@@ -94,6 +94,22 @@ type windowFrame struct {
 	recs *recordJoins
 	// name prefixes the hoisted values' names (wh when "").
 	name string
+	// lookups holds each lookup compiled on the frame's rows by its node, so
+	// the copies of one lookup in a formula (an if that reads it in both
+	// branches) are computed once (rowsCtx.lookup).
+	lookups map[string]detailLookup
+}
+
+// detailLookup is a lookup compiled on a frame's detail rows: its value as
+// the frame computes it, what it reads of the row and whether it was hoisted
+// (both recorded again in the lookup around a copy), and the wheres it handed
+// the detail select to probe (at relative to the lookup's at).
+type detailLookup struct {
+	e       expr
+	reads   *rowReads
+	hoisted bool
+	at      string
+	wheres  []condProbe
 }
 
 // hoistLayer is one select below the frame's own: values ("<sql> AS
@@ -329,9 +345,23 @@ func (rc *rowsCtx) label(e expr) string { return rc.r.c.textOf(rc.r.s, e) }
 // (hoistLookup reads that). A lookup inside it, through a column's formula,
 // adds its reads to this one's; one hoisted is a value of the row.
 func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) {
+	f := rc.detail
+	memo := f != nil && !f.checking
+	key := lookupCurrencyID(n)
+	if m, ok := f.lookupOf(key); memo && ok {
+		rc.reads.add(m.reads)
+		if m.hoisted {
+			rc.reads.value()
+		}
+		for _, w := range m.wheres {
+			rc.probeWhere(at+strings.TrimPrefix(w.at, m.at), w.sql)
+		}
+		return m.e, nil
+	}
 	around := rc.reads
 	reads := &rowReads{}
 	rc.reads = reads
+	wheres := len(rc.r.c.detailWheres)
 	e, err := lookupIn(rc, rc.r, n, at)
 	rc.reads = around
 	if err != nil {
@@ -342,7 +372,22 @@ func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) {
 	if hoisted {
 		around.value()
 	}
+	if memo {
+		if f.lookups == nil {
+			f.lookups = map[string]detailLookup{}
+		}
+		f.lookups[key] = detailLookup{e: e, reads: reads, hoisted: hoisted, at: at, wheres: slices.Clone(rc.r.c.detailWheres[wheres:])}
+	}
 	return e, nil
+}
+
+// lookupOf is the lookup compiled on the frame's rows under key, if any.
+func (f *windowFrame) lookupOf(key string) (detailLookup, bool) {
+	if f == nil {
+		return detailLookup{}, false
+	}
+	m, ok := f.lookups[key]
+	return m, ok
 }
 
 // probeWhere takes a lookup's where on a detail row, which the detail
