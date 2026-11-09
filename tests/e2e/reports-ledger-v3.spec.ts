@@ -2,21 +2,25 @@ import { expect, type Page, test } from '@playwright/test'
 import { createInvitedUser, skipWithoutReportsStub } from './helpers'
 import {
     addSale,
-    addSales,
     addTeam,
     cellOf,
     chooseOption,
-    chooseParamOption,
-    hubRow,
+    detailLabels,
     listScroller,
     loginAsShippedOwner,
+    MAX_PAGE,
+    openPagedTeams,
     openReportStub,
     openReportsHub,
+    openTeamBalance,
     pressToolbar,
+    rowIds,
     rowOf,
     SALES_SOURCE,
+    type SentRun,
     saveNewReport,
     scrollRowTo,
+    showTeams,
     startTeamSales,
     uniqueName,
 } from './reports-helpers'
@@ -35,17 +39,9 @@ import {
  * the same parts in the builder as an invited user.
  */
 
-const TEAM_BALANCE_TITLE = 'Stub team balance'
 const YEAR = new Date().getFullYear()
 const PHONE = { width: 390, height: 844 }
 const OPENING = 'Before the period'
-
-async function openTeamBalance(page: Page) {
-    await openReportsHub(page)
-    await page.getByTestId('reports-hub-tab-mine').click()
-    await hubRow(page, TEAM_BALANCE_TITLE).click()
-    await expect(page.getByTestId('report-title')).toHaveText(TEAM_BALANCE_TITLE)
-}
 
 /**
  * A team with a 10.00 sale last December and four sales this January: Ann (2.00)
@@ -67,10 +63,6 @@ async function seedTeam(page: Page, team: string) {
     }
 }
 
-async function showTeams(page: Page, search: string, teams: string[]) {
-    await chooseParamOption(page, 'teams', { from: 'add-filter', search, labels: teams })
-}
-
 /** Signs in, seeds one team and opens the report on it alone. */
 async function balanceOfOneTeam(page: Page, prefix: string) {
     await loginAsShippedOwner(page)
@@ -82,104 +74,8 @@ async function balanceOfOneTeam(page: Page, prefix: string) {
     return team
 }
 
-/**
- * The rows' ids in screen order, read in one snapshot. A row drawn twice is listed
- * twice, so a repeat can be counted (a sticky copy has its own test id and is not
- * listed).
- */
-function rowIds(page: Page) {
-    return page
-        .getByTestId('report-table')
-        .evaluate(table =>
-            [...table.querySelectorAll('[data-testid^="report-row-"]')].map(
-                el => el.getAttribute('data-testid')?.replace('report-row-', '') ?? ''
-            )
-        )
-}
-
 const occurrences = (ids: readonly string[], prefix: string) =>
     ids.filter(id => id.startsWith(prefix)).length
-
-function detailLabels(page: Page) {
-    return page.getByTestId('report-table').locator('[data-testid^="report-row-d:"]')
-}
-
-/** A run request as the client sent it, before the route below shrinks its page. */
-type SentRun = { cursor?: string; limit?: number }
-
-// The client's page sizes: its usual page (RUN_PAGE_SIZE) and the server's most
-// (RUN_MAX_PAGE), which a fold run asks for while it looks for the group in view.
-const USUAL_PAGE = 200
-const MAX_PAGE = 1000
-
-/**
- * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
- * teams of one sale each after them, and opens the report on them alone, in pages
- * of 5 detail rows, so 12 sales page across team A's end. A next page (a request
- * with a cursor) waits for `nextPages` when it is given. Team n's sales start at
- * `baseAmount` × n cents and go up a cent each.
- */
-async function openPagedTeams(
-    page: Page,
-    prefix: string,
-    smallTeams = 0,
-    nextPages?: Promise<void>,
-    baseAmount = 100
-) {
-    await loginAsShippedOwner(page)
-    const stem = uniqueName(prefix)
-    const letters = 'ABCDEFGH'.slice(0, 2 + smallTeams)
-    const teams = [...letters].map(letter => `${stem} ${letter}`)
-    await openReportStub(page)
-    for (const [i, team] of teams.entries()) {
-        await addTeam(page, team)
-        await addSales(page, {
-            team,
-            customerPrefix: `${stem}${letters[i]}`,
-            count: i < 2 ? 6 : 1,
-            firstDay: `${YEAR}-02-01`,
-            firstAmount: baseAmount * (i + 1),
-            cost: 0,
-            quantity: 1,
-        })
-    }
-    const cursors: string[] = []
-    const sent: SentRun[] = []
-    await page.route('**/api/reports/run', async route => {
-        const body = route.request().postDataJSON()
-        if (body.options?.cursor && nextPages) await nextPages
-        if (body.options?.cursor) cursors.push(body.options.cursor)
-        sent.push({ cursor: body.options?.cursor, limit: body.options?.limit })
-        // The client's page sizes become 5. A fold run asks for max(200, the detail
-        // rows in view), which is 200 here, and then the server's most while it looks
-        // for the group in view, so it also gets pages of 5 and joins them until it
-        // holds the rows that were in view.
-        const asked = body.options?.limit
-        const limit = asked === USUAL_PAGE || asked === MAX_PAGE ? 5 : asked
-        await route.continue({
-            postData: JSON.stringify({ ...body, options: { ...body.options, limit } }),
-        })
-    })
-    // Tall enough that the list draws every row of both teams at once, so one
-    // snapshot holds the whole merged list (the list draws only rows near the view).
-    await page.setViewportSize({ width: 1280, height: 1600 })
-    await openTeamBalance(page)
-    // The first run has no Teams filter, so it shows these sales too: no row
-    // tells the two runs apart. Once the run with the Teams filter has answered
-    // and the view no longer says "Updating…", every row is the new run's.
-    await expect(detailLabels(page).first()).toBeVisible()
-    const teamsRun = page.waitForResponse(
-        response =>
-            response.url().includes('/api/reports/run') &&
-            response.request().postDataJSON()?.params?.teams !== undefined
-    )
-    await showTeams(page, stem, teams)
-    await teamsRun
-    await expect(page.getByTestId('report-updating')).toHaveCount(0)
-    const firstSale = rowOf(page, `${stem}A 00`)
-    await expect(firstSale).toBeVisible()
-    return { stem, teams, cursors, sent, firstSale }
-}
 
 /**
  * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
@@ -188,7 +84,7 @@ async function openPagedTeams(
  * last team's Total row is drawn: every page is merged then.
  */
 async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
-    const { firstSale, ...paged } = await openPagedTeams(page, prefix, smallTeams)
+    const { firstSale, ...paged } = await openPagedTeams(page, prefix, { smallTeams })
     const scroller = await listScroller(firstSale)
     await expect
         .poll(async () => {
@@ -302,7 +198,10 @@ test.describe('general-ledger: report engine v3', () => {
         // Sales of 6,000.00 (team A) and 12,000.00 (team B) a cent up each: the team
         // rollups (36,000.15 and 72,000.15) stay inside the measure's worst amount
         // (−99,999.99), and only the Total (108,000.30) is wider.
-        const { teams, firstSale } = await openPagedTeams(page, 'BalEnd', 0, nextPages, 600_000)
+        const { teams, firstSale } = await openPagedTeams(page, 'BalEnd', {
+            nextPages,
+            baseAmount: 600_000,
+        })
         const loading = page.getByTestId('report-loading-more')
         await expect(loading).toContainText('Loading more rows…')
         expect(occurrences(await rowIds(page), 'total')).toBe(0)
