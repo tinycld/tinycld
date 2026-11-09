@@ -17,11 +17,11 @@ import {
     rowIds,
     rowOf,
     SALES_SOURCE,
-    type SentRun,
     saveNewReport,
     scrollRowTo,
     showTeams,
     startTeamSales,
+    USUAL_PAGE,
     uniqueName,
 } from './reports-helpers'
 
@@ -80,7 +80,8 @@ const occurrences = (ids: readonly string[], prefix: string) =>
 /**
  * Signs in, seeds two teams of six sales each (team A first), and `smallTeams` more
  * teams of one sale each after them, and opens the report on them alone, in pages
- * of 5 detail rows, so 12 sales page across team A's end. Then scrolls until the
+ * of 5 rows (group, opening, detail and subtotal rows count, J1a), so team A's 9
+ * rows page across its end. Then scrolls until the
  * last team's Total row is drawn: every page is merged then.
  */
 async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
@@ -96,14 +97,6 @@ async function pagedTeams(page: Page, prefix: string, smallTeams = 0) {
         .toBe(1)
     return paged
 }
-
-/**
- * The requests of a fold run: its first page (no cursor) and each page it joined
- * while it looked for the group in view (those ask for the server's most). A next
- * page the list asks for has a cursor and the usual size.
- */
-const foldRequests = (sent: readonly SentRun[]) =>
-    sent.filter(run => !run.cursor || run.limit === MAX_PAGE)
 
 /**
  * Records, at every change of the page from now on, each of these row ids that is
@@ -281,7 +274,7 @@ test.describe('general-ledger: report engine v3', () => {
     // F11: Expand all keeps the reader's place too. With every group closed the list
     // holds no detail rows, so the reader's place is the group row at the top of the
     // view. F7: the run loads no further than that place. After Collapse all the first
-    // page holds every group row of the report, so a run that joined pages up to the
+    // pages hold every group row of the report, so a run that joined pages up to the
     // last group row would load the whole report (team F's here). Scrolled to team B,
     // Expand all joins pages up to team B's group row, which stays in the list and in
     // view at every moment from the press to the opened run (team A's first page of 5
@@ -332,8 +325,23 @@ test.describe('general-ledger: report engine v3', () => {
             await recordedDrops(page),
             'rows the list dropped between Expand all and its run'
         ).toEqual([])
-        // Pages of 5: team A's first five sales, then its sixth and team B's group row.
-        expect(foldRequests(sent), 'requests of Expand all at team B').toHaveLength(2)
+        // The fold run's requests, in pages of 5 rows that count group, opening,
+        // detail and subtotal rows (J1a). The reader had 6 group rows (Collapse all)
+        // and team B's group row at the top. Request 1 (the usual size) gets team
+        // A's group, opening and first three sales; 5 of the 6 rows. Request 2 (the
+        // usual size: the rows are not all in yet) gets A's last three sales and its
+        // subtotal; team B's group and opening rows stay together on the next page
+        // (R3). Request 3 (the server's most: only team B's group row is missing)
+        // starts with it. Before J1 the target counted detail rows only (0 here), so
+        // request 2 already asked for the server's most.
+        expect(
+            sent.slice(0, 3).map(run => [run.cursor !== undefined, run.limit]),
+            'requests of Expand all at team B'
+        ).toEqual([
+            [false, USUAL_PAGE],
+            [true, USUAL_PAGE],
+            [true, MAX_PAGE],
+        ])
     })
 
     test('a heading sorts the rows inside their groups, and a copied link keeps it', async ({

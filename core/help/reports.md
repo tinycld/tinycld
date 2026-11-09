@@ -108,7 +108,7 @@ Records with no group always show first. In each group, the records show by name
 
 ## Fold groups
 
-To open a group level when the report opens, turn on **Open when the report opens** for that level. **Collapse all** closes the groups until you open them again.
+To open a group level when the report opens, turn on **Open when the report opens** for that level. To close or open one group, select its row. The other groups stay as they are, also the groups that load when you scroll further. **Collapse all** closes the groups until you open them again.
 
 While a report runs again, "Updating…" shows in the header. On phones and tablets it shows beside **Close** in the builder. The table does not move.
 
@@ -134,7 +134,7 @@ Numbers, amounts, percents, dates and yes/no values show **Never cut**: you can 
 
 In **Arrange**, **One line from** is the least row width at which the report uses one line; below it, the report uses an arrangement or wraps its rows. **Use from** on an arrangement is the least row width at which it is used. On a computer the rows are the window's width less the side rail.
 
-To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. On a phone, the title, the chips and the notes scroll away with the rows, so the rows get the screen; scroll back to the top to change a chip. A long report loads more rows as you scroll, also when it has groups. Until its last rows have loaded, the list ends with **Loading more rows…**; the Total shows with the last rows, and **End of report** marks the end.
+To choose where each column goes when one line does not fit, open **Arrange**, pick **Phone**, **Tablet** or **Desktop**, and turn on **Arrange columns for this width**. Inside a line, each column gets the room its content needs; a column that spans more tracks gets more of the spare room. The heading row and the open group rows stay at the top while you scroll. On a phone, the title, the chips and the notes scroll away with the rows, so the rows get the screen; scroll back to the top to change a chip. A long report loads more rows as you scroll, also when it has groups, however many groups it has. Until its last rows have loaded, the list ends with **Loading more rows…**; the Total shows with the last rows, and **End of report** marks the end. If more rows cannot load, the list ends with **Could not load more rows**. Select **Retry** to try again. The rows that show stay.
 
 ## Run a report
 
