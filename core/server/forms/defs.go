@@ -34,20 +34,24 @@ type Builtin struct {
 	// against it, so every writer gets the refusal the form shows.
 	MaxLength *int `json:"maxLength,omitempty"`
 	// RowKinds and RowShortcuts are a table built-in's line kinds and row
-	// keys. They are presentation only: ParseHosts checks that each kind
-	// names the table's own columns, and nothing else on the server reads them.
+	// keys. ParseHosts checks that each kind names the table's own columns
+	// and requires only its own columns; RowError reads the kinds to check a
+	// row. RowShortcuts is presentation only.
 	RowKinds     []RowKind `json:"rowKinds,omitempty"`
 	RowShortcuts bool      `json:"rowShortcuts,omitempty"`
 }
 
 // RowKind mirrors rowKindSchema in core/lib/forms/host.ts: a kind of line in a
 // table built-in, stored in the row's `kind` cell. Label, AddLabel, Span,
-// ColumnAt and Shortcut are presentation only.
+// ColumnAt and Shortcut are presentation only. Columns and Required are read
+// by RowError: Required lists the columns a row of this kind must fill,
+// beside each column's own Required.
 type RowKind struct {
 	Key      string            `json:"key"`
 	Label    string            `json:"label"`
 	AddLabel string            `json:"addLabel"`
 	Columns  []string          `json:"columns"`
+	Required []string          `json:"required,omitempty"`
 	Span     bool              `json:"span,omitempty"`
 	ColumnAt map[string]string `json:"columnAt,omitempty"`
 	Shortcut string            `json:"shortcut,omitempty"`
@@ -148,8 +152,9 @@ func ParseHosts(raw []byte) (*Defs, error) {
 
 // rowKindsError refuses row kinds the client schema (rowKindIssues in
 // core/lib/forms/host.ts) refuses: kinds on a built-in that is not a table, a
-// repeated kind key, a kind column the table lacks, and a span kind with other
-// than one column.
+// repeated kind key, a kind column the table lacks, a span kind with other
+// than one column, and a required key that is not one of the kind's columns
+// or is named twice.
 func rowKindsError(h *Host) error {
 	for _, b := range h.Builtins {
 		if len(b.RowKinds) == 0 {
@@ -176,6 +181,76 @@ func rowKindsError(h *Host) error {
 			if k.Span && len(k.Columns) != 1 {
 				return fmt.Errorf("forms: host %s: %s: row kind %s: a span row kind has exactly one column", h.Key, b.Key, k.Key)
 			}
+			own := map[string]bool{}
+			for _, c := range k.Columns {
+				own[c] = true
+			}
+			required := map[string]bool{}
+			for _, c := range k.Required {
+				if !own[c] {
+					return fmt.Errorf("forms: host %s: %s: row kind %s: %s is not a column of this kind", h.Key, b.Key, k.Key, c)
+				}
+				if required[c] {
+					return fmt.Errorf("forms: host %s: %s: row kind %s: duplicate required column %s", h.Key, b.Key, k.Key, c)
+				}
+				required[c] = true
+			}
+		}
+	}
+	return nil
+}
+
+// RowError checks one row of a table built-in, for the host package's Go
+// hooks: core never sees host-table rows, which live in the host's own
+// collection. The row's `kind` cell picks its RowKind; a table without row
+// kinds checks every column. It returns "<Label> is required" for the first
+// column, in the kind's column order, that the row must fill and leaves
+// blank, and "" when the row is complete. A column must be filled when it is
+// table-wide Required or in the kind's Required, and is never required when
+// it is Hidden, a toggle or computed (the same rules as the client's row
+// schema in core/lib/forms/values.ts). A row whose kind is missing or not one
+// of the table's kinds gets "<Label>: unknown row kind <kind>".
+func (b *Builtin) RowError(row map[string]any) string {
+	byKey := make(map[string]*Column, len(b.Columns))
+	for i := range b.Columns {
+		byKey[b.Columns[i].Key] = &b.Columns[i]
+	}
+	keys := make([]string, 0, len(b.Columns))
+	requiredHere := map[string]bool{}
+	if len(b.RowKinds) == 0 {
+		for _, c := range b.Columns {
+			keys = append(keys, c.Key)
+		}
+	} else {
+		kindKey, _ := row["kind"].(string)
+		kind := b.rowKind(kindKey)
+		if kind == nil {
+			return fmt.Sprintf("%s: unknown row kind %q", b.Label, kindKey)
+		}
+		keys = kind.Columns
+		for _, c := range kind.Required {
+			requiredHere[c] = true
+		}
+	}
+	for _, key := range keys {
+		c := byKey[key]
+		if c == nil || c.Hidden || c.Kind == "toggle" || c.Kind == "computed" {
+			continue
+		}
+		if !c.Required && !requiredHere[key] {
+			continue
+		}
+		if blankCell(row[key]) {
+			return c.Label + " is required"
+		}
+	}
+	return ""
+}
+
+func (b *Builtin) rowKind(key string) *RowKind {
+	for i := range b.RowKinds {
+		if b.RowKinds[i].Key == key {
+			return &b.RowKinds[i]
 		}
 	}
 	return nil

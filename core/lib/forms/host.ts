@@ -27,6 +27,12 @@ const rowKindSchema = z.object({
     addLabel: z.string().min(1).max(60),
     /** The table columns a row of this kind draws, in order. */
     columns: z.array(keySchema).min(1),
+    /**
+     * The columns a row of this kind must fill, beside each column's own
+     * `required`. Each key is one of this kind's `columns`; a hidden, toggle
+     * or computed column is never required.
+     */
+    required: z.array(keySchema).optional(),
     /** The kind's one cell spans the whole row (a description or subtotal line). */
     span: z.boolean().default(false),
     /**
@@ -41,7 +47,10 @@ export type HostRowKind = z.infer<typeof rowKindSchema>
 
 type BuiltinIssueSink = (path: (string | number)[], message: string) => void
 
-/** Row kinds belong to a table, name its columns, and place cells in the first kind's slots. */
+/**
+ * Row kinds belong to a table, name its columns, require only their own
+ * columns, and place cells in the first kind's slots.
+ */
 function rowKindIssues(
     rowKinds: HostRowKind[],
     columns: { key: string }[] | undefined,
@@ -61,6 +70,14 @@ function rowKindIssues(
         if (kind.span && kind.columns.length !== 1)
             report(['rowKinds', k, 'columns'], 'a span row kind has exactly one column')
         const own = new Set(kind.columns)
+        const requiredKeys = new Set<string>()
+        kind.required?.forEach((column, r) => {
+            if (!own.has(column))
+                report(['rowKinds', k, 'required', r], `${column} is not a column of this kind`)
+            if (requiredKeys.has(column))
+                report(['rowKinds', k, 'required', r], `duplicate required column ${column}`)
+            requiredKeys.add(column)
+        })
         for (const [column, slot] of Object.entries(kind.columnAt ?? {})) {
             if (!own.has(column))
                 report(
