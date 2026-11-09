@@ -216,6 +216,9 @@ type runner struct {
 	expand *expansion
 	res    *Result
 	topics map[string]bool
+	// ruleTopics holds the topics of each rule CTE select the run read, so
+	// its statements explain each rule once.
+	ruleTopics map[string][]string
 	// pivotValues are the pivot's columns, from its first pass, and
 	// pivotLabels their records' labels for a pivot over a link.
 	pivotValues []pivotValue
@@ -269,7 +272,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	rn := &runner{
 		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
-		topics: map[string]bool{},
+		topics: map[string]bool{}, ruleTopics: map[string][]string{},
 	}
 	if req.Loaded != nil {
 		rn.loadNotices(req.Loaded)
@@ -422,10 +425,15 @@ var observeRead func(sql string, params dbx.Params)
 // what a run explains.
 var topicsRead = changesignal.TopicsRead
 
+// checkTopics, when a test sets it, receives every read statement and the
+// topics the run found for it, so a test can compare them with the topics of
+// the whole statement. Nothing else sets it.
+var checkTopics func(ctx context.Context, app core.App, sql string, params dbx.Params, topics []string)
+
 // readRows runs one read statement with the rule CTEs and ctes under the run
-// time limit; with topics, it also returns the change-signal topics of every
-// collection the statement reads.
-func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body string, topics bool) ([]map[string]any, []string, error) {
+// time limit; with topics (a run's cache of each rule's topics), it also
+// returns the change-signal topics of every collection the statement reads.
+func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body string, topics map[string][]string) ([]map[string]any, []string, error) {
 	with, err := s.with(ctes...)
 	if err != nil {
 		return nil, nil, err
@@ -437,9 +445,12 @@ func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body st
 	ctx, cancel := context.WithTimeout(ctx, runLimits.timeout)
 	defer cancel()
 	var read []string
-	if topics {
-		if read, err = topicsRead(ctx, app, sql, s.params); err != nil {
+	if topics != nil {
+		if read, err = s.topics(ctx, app, sql, topics); err != nil {
 			return nil, nil, mapRunError(err)
+		}
+		if checkTopics != nil {
+			checkTopics(ctx, app, sql, s.params, read)
 		}
 	}
 	rows, err := app.DB().NewQuery(sql).Bind(s.params).WithContext(ctx).Rows()
@@ -456,7 +467,7 @@ func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body st
 // query runs one statement under the time limit and records the topics of
 // every collection it reads.
 func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, error) {
-	rows, topics, err := readRows(rn.ctx, rn.app, s, ctes, body, true)
+	rows, topics, err := readRows(rn.ctx, rn.app, s, ctes, body, rn.ruleTopics)
 	for _, t := range topics {
 		rn.topics[t] = true
 	}

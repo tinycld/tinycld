@@ -1,9 +1,11 @@
 package reports
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,11 +23,20 @@ type stmt struct {
 	params dbx.Params
 	rules  []string // collections, in first-use order
 	ruleOf map[string]string
-	n      int
+	// ruleReads holds each rule CTE's own select and params, by CTE name, as
+	// with rendered them, so a run finds the topics a rule reads (topics).
+	ruleReads map[string]ruleRead
+	n         int
+}
+
+// ruleRead is a rule CTE's select and its params.
+type ruleRead struct {
+	sql    string
+	params dbx.Params
 }
 
 func newStmt(app core.App, info *core.RequestInfo) *stmt {
-	return &stmt{app: app, info: info, params: dbx.Params{}, ruleOf: map[string]string{}}
+	return &stmt{app: app, info: info, params: dbx.Params{}, ruleOf: map[string]string{}, ruleReads: map[string]ruleRead{}}
 }
 
 // bind adds a value to the statement's parameters and returns its
@@ -157,6 +168,7 @@ func (s *stmt) with(ctes ...string) (string, error) {
 				return "", err
 			}
 			sql = ruleSQL
+			s.ruleReads[s.ruleOf[name]] = ruleRead{sql: ruleSQL, params: params}
 		}
 		parts = append(parts, s.ruleOf[name]+" AS ("+sql+")")
 	}
@@ -165,6 +177,47 @@ func (s *stmt) with(ctes ...string) (string, error) {
 		return "", nil
 	}
 	return "WITH " + strings.Join(parts, ",\n") + "\n", nil
+}
+
+// ruleRef is a read of a rule CTE: a scope reads its collection's rule by
+// FROM or JOIN, as "r<n> <alias>".
+var ruleRef = regexp.MustCompile(`(?:FROM|JOIN) (r\d+) `)
+
+// topics returns the change-signal topics of every collection a statement
+// built on s reads (sql, as with rendered it): the topics of the rule CTEs it
+// reads, each found by explaining the rule's own select once per run (cache
+// holds them by select). Every collection a statement reads is read through
+// its rule CTE, so the statement is not compiled a second time for them.
+func (s *stmt) topics(ctx context.Context, app core.App, sql string, cache map[string][]string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range ruleRef.FindAllStringSubmatch(sql, -1) {
+		name := m[1]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		r, ok := s.ruleReads[name]
+		if !ok {
+			return nil, fmt.Errorf("reports: the statement reads %s, which it holds no rule for", name)
+		}
+		key := r.sql + "\x00" + fmt.Sprint(r.params)
+		topics, ok := cache[key]
+		if !ok {
+			var err error
+			if topics, err = topicsRead(ctx, app, r.sql, r.params); err != nil {
+				return nil, err
+			}
+			cache[key] = topics
+		}
+		for _, t := range topics {
+			if !slices.Contains(out, t) {
+				out = append(out, t)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 func q(alias, column string) string { return "[[" + alias + "." + column + "]]" }

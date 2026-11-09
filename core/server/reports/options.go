@@ -404,7 +404,7 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 	}
 	body := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g%s FROM (%s) o\nWHERE %s\nORDER BY %s LIMIT %s",
 		cols, ranked, strings.Join(conds, " AND "), strings.Join(optionOrder(keys, typ), ", "), limitSQL(int64(limit+1)))
-	rows, _, err := readRows(ctx, c.app, s, nil, body, false)
+	rows, _, err := readRows(ctx, c.app, s, nil, body, nil)
 	if err != nil {
 		return err
 	}
@@ -447,7 +447,7 @@ func (c *compiler) optionGroups(ctx context.Context, op *optionsPlan, search str
 	key := pathExpr("o.g", op.group)
 	body := fmt.Sprintf("SELECT o.g AS g, o.gl AS gl, o.glc AS glc FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY %s LIMIT %s",
 		ranked, strings.Join(optionConds(s, search, nil), " AND "), strings.Join(keys, ", "), limitSQL(int64(maxOptionGroups+1)))
-	rows, _, err := readRows(ctx, c.app, s, nil, body, false)
+	rows, _, err := readRows(ctx, c.app, s, nil, body, nil)
 	if err != nil {
 		return err
 	}
