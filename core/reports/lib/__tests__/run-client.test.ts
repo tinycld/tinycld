@@ -9,6 +9,7 @@ import {
     isTransientRunError,
     lastGroupRowOf,
     PARAM_OPTIONS_PATH,
+    pageRowCount,
     RUN_PAGE_SIZE,
     RUN_QUERY_KEY,
     type RunBody,
@@ -180,7 +181,13 @@ describe('rowsKeyOf', () => {
             rowsKeyOf({
                 reportId: 'r1',
                 params: {},
-                options: { ...options, sort: desc, expand: [['open']], cursor: 'c' },
+                options: {
+                    ...options,
+                    sort: desc,
+                    expand: [['open']],
+                    collapse: [['b']],
+                    cursor: 'c',
+                },
             })
         ).toBe(sorted)
 
@@ -202,6 +209,8 @@ describe('foldKeyOf', () => {
         for (const changed of [
             { expand: [['a']] },
             { expandAll: true },
+            { collapse: [['b']] },
+            { expandAll: true, collapse: [['b']] },
             { cursor: 'c', limit: 5 },
         ]) {
             expect(
@@ -259,7 +268,8 @@ describe('runFirstPage', () => {
 
     // A server that answers fewer rows than asked (here 2 a page) is followed page
     // by page until the target's detail rows are in, and the pages become one.
-    it('joins pages until it holds the target detail rows, then follows the last cursor', async () => {
+    // J1a: the target counts group, opening and subtotal rows too.
+    it('joins pages until it holds the target rows, then follows the last cursor', async () => {
         send.mockReset()
         send.mockResolvedValueOnce(result([row('g:a', 'group'), row('d:1'), row('d:2')], 'c1'))
             .mockResolvedValueOnce(result([row('d:3'), row('d:4'), row('total', 'total')], 'c2'))
@@ -278,6 +288,74 @@ describe('runFirstPage', () => {
             { limit: RUN_PAGE_SIZE, cursor: undefined },
             { limit: RUN_PAGE_SIZE, cursor: 'c1' },
         ])
+    })
+
+    // J1a: a page's limit counts group, opening, detail and subtotal rows, so the
+    // reader's place counts them too; Total and computed rows never count.
+    it('counts the rows a page limit counts', () => {
+        const page = result(
+            [
+                row('g:a', 'group'),
+                row('opening:["a"]', 'opening'),
+                row('d:1'),
+                row('s:a', 'subtotal'),
+                row('total:USD', 'total'),
+                row('c:net', 'computed'),
+            ],
+            ''
+        )
+        expect(pageRowCount(page)).toBe(4)
+    })
+
+    // A pin (it passes before this task too): a grouped page that ends between
+    // groups (after a subtotal row) joins the next page with no group or subtotal
+    // row twice, and the Total last. Page 2 repeats team a's subtotal row, as a page
+    // read across a live change could, so the merge's dedupe is exercised.
+    it('joins a grouped page that ends between groups', async () => {
+        send.mockReset()
+        send.mockResolvedValueOnce(
+            result(
+                [row('g:a', 'group'), row('d:1'), row('s:a', 'subtotal'), row('total', 'total')],
+                'c1'
+            )
+        ).mockResolvedValueOnce(
+            result(
+                [
+                    row('s:a', 'subtotal'),
+                    row('g:b', 'group'),
+                    row('d:2'),
+                    row('s:b', 'subtotal'),
+                    row('total', 'total'),
+                ],
+                ''
+            )
+        )
+        const outcome = await runFirstPage(body, 5)
+        expect(outcome.kind === 'ok' && outcome.result.rows.map(r => r.id)).toEqual([
+            'g:a',
+            'd:1',
+            's:a',
+            'g:b',
+            'd:2',
+            's:b',
+            'total',
+        ])
+    })
+
+    // With every group closed a page is all group rows: the target counts them.
+    it('joins pages of closed groups until it holds the target rows', async () => {
+        send.mockReset()
+        send.mockResolvedValueOnce(result([row('g:a', 'group'), row('g:b', 'group')], 'c1'))
+            .mockResolvedValueOnce(result([row('g:c', 'group'), row('g:d', 'group')], 'c2'))
+            .mockResolvedValueOnce(result([row('g:e', 'group')], ''))
+        const outcome = await runFirstPage(body, 4)
+        expect(outcome.kind === 'ok' && outcome.result.rows.map(r => r.id)).toEqual([
+            'g:a',
+            'g:b',
+            'g:c',
+            'g:d',
+        ])
+        expect(send).toHaveBeenCalledTimes(2)
     })
 
     it('asks for as many rows as it still needs, up to the server’s 1,000', async () => {
@@ -324,12 +402,13 @@ describe('runFirstPage', () => {
         expect(send).toHaveBeenCalledTimes(2)
     })
 
-    it('keeps joining past the row it must keep until the detail target is in', async () => {
+    // J1a: the target counts group, opening and subtotal rows too (page 1 counts 2).
+    it('keeps joining past the row it must keep until the target is in', async () => {
         send.mockReset()
         send.mockResolvedValueOnce(result([row('g:a', 'group'), row('d:1')], 'c1'))
             .mockResolvedValueOnce(result([row('d:2')], 'c2'))
             .mockResolvedValueOnce(result([row('d:3')], ''))
-        const outcome = await runFirstPage(body, 2, undefined, 'g:a')
+        const outcome = await runFirstPage(body, 3, undefined, 'g:a')
         expect(outcome.kind === 'ok' && outcome.result.rows.map(r => r.id)).toEqual([
             'g:a',
             'd:1',

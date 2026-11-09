@@ -4,7 +4,7 @@ import { pb } from '@tinycld/core/lib/pocketbase'
 import { ClientResponseError } from 'pocketbase'
 import { mergePages } from './rows'
 import type { ReportSpec } from './spec'
-import type { CatalogSource, ParamOptionsPage, Problem, RunResult } from './types'
+import type { CatalogSource, ParamOptionsPage, Problem, ResultRow, RunResult } from './types'
 
 // The report endpoints (core/server/reports/endpoint.go, catalog.go, options.go). A
 // run is a read sent by POST, because a draft spec does not fit in a URL. The
@@ -21,6 +21,8 @@ export type ViewSort = { col: string; dir: 'asc' | 'desc' }
 export interface RunOptions {
     expand?: unknown[][]
     expandAll?: boolean
+    /** Groups the reader closed under an open level or Expand all (J1b); not in the rows or fold key. */
+    collapse?: unknown[][]
     cursor?: string
     limit?: number
     /** The reader's sort, before the report's own; detail rows only, inside their groups. */
@@ -64,6 +66,7 @@ export function foldKeyOf(body: RunBody): string {
     const {
         expand: _expand,
         expandAll: _expandAll,
+        collapse: _collapse,
         cursor: _cursor,
         limit: _limit,
         ...options
@@ -71,9 +74,18 @@ export function foldKeyOf(body: RunBody): string {
     return JSON.stringify({ ...body, options })
 }
 
-/** How many detail rows a run's result holds: what a page's limit counts. */
-export function detailRowCount(result: RunResult): number {
-    return result.rows.filter(row => row.kind === 'detail').length
+// What a page's limit counts (J1a, R3): group, opening, detail and subtotal rows.
+// Total and computed rows repeat on every page and never count.
+const COUNTED_KINDS: ReadonlySet<ResultRow['kind']> = new Set([
+    'group',
+    'opening',
+    'detail',
+    'subtotal',
+])
+
+/** How many rows of a run's result a page's limit counts. */
+export function pageRowCount(result: RunResult): number {
+    return result.rows.filter(row => COUNTED_KINDS.has(row.kind)).length
 }
 
 export function problemsOf(data: unknown): Problem[] {
@@ -131,9 +143,9 @@ export async function runReport(body: RunBody, signal?: AbortSignal): Promise<Ru
     }
 }
 
-/** The detail rows a run page asks for. */
+/** The rows a run page asks for (group, opening, detail and subtotal rows count, J1a). */
 export const RUN_PAGE_SIZE = 200
-/** The most detail rows the server gives a page (run.go runLimits.maxPage). */
+/** The most rows the server gives a page (run.go runLimits.maxPage). */
 export const RUN_MAX_PAGE = 1000
 
 export function withPage(body: RunBody, cursor: string, limit = RUN_PAGE_SIZE): RunBody {
@@ -175,8 +187,8 @@ export function groupRowAt(
 }
 
 /**
- * A run's first page, holding at least `target` detail rows and the row `untilRow`
- * when the run has them: the server's pages are fetched in turn and joined into one
+ * A run's first page, holding at least `target` rows (what a page's limit counts,
+ * `pageRowCount`) and the row `untilRow` when the run has them: the server's pages are fetched in turn and joined into one
  * (mergePages), and the next page follows from the last one's cursor. A target of 0
  * with no row is one page. The first request asks for the usual page or the target;
  * when a page has come and only the row is still missing, each next request asks
@@ -200,7 +212,7 @@ export async function runFirstPage(
         const outcome = await runReport(withPage(body, cursor, limit), signal)
         if (outcome.kind !== 'ok') return outcome
         results.push(outcome.result)
-        loaded += detailRowCount(outcome.result)
+        loaded += pageRowCount(outcome.result)
         holdsRow ||= outcome.result.rows.some(row => row.id === untilRow)
         cursor = outcome.result.page?.next ?? ''
     } while (cursor && (loaded < target || !holdsRow))

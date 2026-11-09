@@ -309,4 +309,50 @@ describe('useReportRun after a fold', () => {
         await expandAll(fold)
         expect(sent.map(request => request.options.cursor)).toEqual([undefined, 'c1', 'c2'])
     })
+
+    // F11 with J1a: the reader's place counts group rows. With every group closed the
+    // list held six group rows over two pages; a fold re-run loads them all again,
+    // not only up to the group in view, so the rows below the view stay.
+    it('a fold re-run over closed groups loads as many rows as the reader had', async () => {
+        const closedFirst = result(
+            [row('g:a', 'group'), row('g:b', 'group'), row('g:c', 'group')],
+            'k1'
+        )
+        const closedLast = result([
+            row('g:d', 'group'),
+            row('g:e', 'group'),
+            row('g:f', 'group'),
+            row('total', 'total'),
+        ])
+        const openedFirst = result([row('g:a', 'group'), row('d:a1'), row('g:b', 'group')], 'k1')
+        sent = []
+        answer = request => {
+            sent.push(request)
+            const isFolded = (request.options.expand ?? []).length > 0
+            if (request.options.cursor) return Promise.resolve(closedLast)
+            return Promise.resolve(isFolded ? openedFirst : closedFirst)
+        }
+        const fold = renderFold()
+        await waitFor(() => expect(fold.result.current.hasMore).toBe(true))
+        act(() => fold.result.current.loadMore())
+        await waitFor(() => expect(rowIds(fold.result.current)).toContain('g:f'))
+        act(() => fold.result.current.onTopRowIndex?.(1))
+
+        sent = []
+        fold.rerender({
+            runBody: { ...collapsed, options: { ...collapsed.options, expand: [['a']] } },
+        })
+        await waitFor(() => expect(rowIds(fold.result.current)).toContain('d:a1'))
+        await waitFor(() => expect(fold.result.current.isUpdating).toBe(false))
+        expect(sent.map(request => request.options.cursor)).toEqual([undefined, 'k1'])
+        expect(rowIds(fold.result.current)).toEqual([
+            'g:a',
+            'd:a1',
+            'g:b',
+            'g:d',
+            'g:e',
+            'g:f',
+            'total',
+        ])
+    })
 })
