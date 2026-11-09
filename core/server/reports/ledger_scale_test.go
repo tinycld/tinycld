@@ -20,7 +20,8 @@ import (
 // accounts: its beginning balance read in the line balance, the rollup, the
 // having and the opening cell, its group record read by the label, the sort
 // keys and the having, and its pages. The engine's output for each run is
-// pinned by a hash of every page (testdata/ledger_scale.golden.json), so a
+// pinned by a hash of every page (a set with EUR and blank currencies pins
+// the mixed-currency notices too) (testdata/ledger_scale.golden.json), so a
 // change to how the engine computes it cannot change a figure, a row, an
 // order, a notice or a cursor.
 //
@@ -35,7 +36,11 @@ var ledgerTypes = []string{"asset", "liability", "equity", "income", "expense"}
 // withLedgerScale adds n accounts to the balance fixture, two entries per
 // account over three years (a quarter of them with a third line), every
 // record with a fixed id so the output does not move between runs.
-func withLedgerScale(t testing.TB, z *zoo, n int) {
+func withLedgerScale(t testing.TB, z *zoo, n int) { withLedgerLines(t, z, n, false) }
+
+// withLedgerLines is withLedgerScale; with mixed, some entries are in EUR and
+// some have no currency, so lookups and totals meet two currencies.
+func withLedgerLines(t testing.TB, z *zoo, n int, mixed bool) {
 	t.Helper()
 	for i := range n {
 		number := fmt.Sprintf("%d", 6000+i)
@@ -66,10 +71,16 @@ func withLedgerScale(t testing.TB, z *zoo, n int) {
 			sides[1].credit = amount - 50
 			sides = append(sides, struct{ account, debit, credit int }{(e*3 + 1) % n, 0, 50})
 		}
+		currency := "USD"
+		if mixed && e%5 == 2 {
+			currency = "EUR"
+		} else if mixed && e%11 == 7 {
+			currency = ""
+		}
 		for j, s := range sides {
 			z.recWithID(t, ledgerID("line", line), "zoo_ledger_lines", map[string]any{
 				"entry": entry, "account": ledgerID("acct", s.account), "date": day,
-				"debit": s.debit, "credit": s.credit, "currency": "USD", "position": j + 1, "posted": e%13 != 5,
+				"debit": s.debit, "credit": s.credit, "currency": currency, "position": j + 1, "posted": e%13 != 5,
 			})
 			line++
 		}
@@ -218,12 +229,18 @@ func TestABalanceShapedReportOverManyAccountsKeepsItsOutput(t *testing.T) {
 	golden := readLedgerGolden(t)
 	update := os.Getenv("LEDGER_GOLDEN_UPDATE") != ""
 	dump := os.Getenv("LEDGER_GOLDEN_DUMP")
-	for _, n := range []int{60, 200} {
+	for _, set := range []struct {
+		n     int
+		mixed bool
+	}{{60, false}, {200, false}, {45, true}} {
 		z := newZoo(t)
 		withBalanceZoo(t, z)
-		withLedgerScale(t, z, n)
+		withLedgerLines(t, z, set.n, set.mixed)
 		for _, r := range ledgerRuns() {
-			name := fmt.Sprintf("n%d/%s", n, r.name)
+			name := fmt.Sprintf("n%d/%s", set.n, r.name)
+			if set.mixed {
+				name = fmt.Sprintf("mixed%d/%s", set.n, r.name)
+			}
 			text := ledgerCanonical(t, z, ledgerPages(t, z, r))
 			sum := sha256.Sum256([]byte(text))
 			got := hex.EncodeToString(sum[:])

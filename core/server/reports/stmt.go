@@ -187,7 +187,11 @@ var ruleRef = regexp.MustCompile(`(?:FROM|JOIN) (r\d+) `)
 // built on s reads (sql, as with rendered it): the topics of the rule CTEs it
 // reads, each found by explaining the rule's own select once per run (cache
 // holds them by select). Every collection a statement reads is read through
-// its rule CTE, so the statement is not compiled a second time for them.
+// its rule CTE, so the statement is not compiled a second time for them. The
+// result may name a collection SQLite's plan of the statement leaves out (a
+// join no value reads): that topic only signals a change that cannot change
+// the result, which costs a client one more run, never an old result; do not
+// go back to explaining the whole statement to drop it.
 func (s *stmt) topics(ctx context.Context, app core.App, sql string, cache map[string][]string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
@@ -247,6 +251,9 @@ type scope struct {
 	tms   []*tmSub
 }
 
+// newScope reads src's rule CTE as "FROM r<n> <alias>" (and join as
+// "JOIN r<n> <alias>"): stmt.topics finds the collections a statement reads by
+// that form (ruleRef).
 func newScope(s *stmt, src *Source) *scope {
 	alias := s.alias("t")
 	return &scope{

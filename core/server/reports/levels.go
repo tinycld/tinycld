@@ -416,6 +416,10 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	}
 	// The lookups the having reads are computed once per row, before it: the
 	// having, rt<L> and the probes read them, and s<L> carries them to o<L>.
+	// They are computed on every row of the level, also one under a hidden
+	// parent or one where an if would not reach them: the values are the same,
+	// only a lookup that raises an error (a sum past SQLite's integer range)
+	// could now raise it on such a row.
 	lv.pre = lv.lookupsIn(own, nil)
 	if len(lv.pre) > 0 {
 		lk := fmt.Sprintf("lk%d", lv.n)
@@ -1318,7 +1322,10 @@ func (lc *levelCtx) lookup(n *Node, at string) (expr, error) {
 	return hoistedLookup(lv.lookups, "a", nil, m.e), nil
 }
 
-// lookupRef is a reference to one of the level's lookups (kh<n>).
+// lookupRef is a reference to one of the level's lookups (kh<n>). Placement
+// finds the lookups a select reads by this name in its SQL, so every select
+// over the level's rows reads them through rowsFrom; one that does not fails
+// with "no such column", never with a wrong value.
 var lookupRef = regexp.MustCompile(`\ba\.(kh\d+)\b`)
 
 // lookupsIn names the level's lookups sql reads, with the ones those read,
