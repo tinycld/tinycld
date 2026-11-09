@@ -123,6 +123,18 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 					{"id":"a","col":"animal","fill":{"where":{"op":"eq","args":[{"path":[{"link":"site"},{"field":"name"}]},{"record":"s","path":[{"field":"name"}]}]}}}],
 				"sort":[{"formula":{"record":"s","path":[{"field":"name"}]}}]}`, Options{ExpandAll: true}, nil)
 		}},
+		// 4: the case runs two pages, and each page statement reads f1 and f2;
+		// the Total statement (J1a: a statement of its own) reads no fill.
+		{"a cursor page that starts inside fill groups", 4, func(t *testing.T, z *zoo) {
+			withEmptyAnimals(t, z)
+			opts := Options{ExpandAll: true, Limit: 2}
+			first := z.run(t, "ann", sitesThenAnimals, opts, nil)
+			if first.Page == nil || first.Page.Next == "" {
+				t.Fatal("no second page")
+			}
+			opts.Cursor = first.Page.Next
+			z.run(t, "ann", sitesThenAnimals, opts, nil)
+		}},
 		{"three levels of fill", 3, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
 			z.run(t, "ann", threeFills, Options{ExpandAll: true}, nil)
