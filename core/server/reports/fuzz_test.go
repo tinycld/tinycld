@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -385,22 +386,35 @@ func (z *zoo) pagedGroupParity(t *testing.T, mux http.Handler, rng *rand.Rand, u
 	if !reflect.DeepEqual(merged, whole.Rows) {
 		t.Fatalf("%s, %+v, limit %d: pages\n%v\nwhole\n%v", user, shape, limit, merged, whole.Rows)
 	}
-	if shape.expand != "all" {
+	if shape.expand == "none" {
 		return
 	}
-	// Merged rows come in group order, so the ids are compared sorted.
+	// In document order, not sorted (review A, NOTE 7): under each open animal
+	// group, in the order the groups show, exactly the feedings of that animal
+	// the list API lists for the reader, by note, then by id (the spec's sort,
+	// then the row id).
+	byAnimal := map[string][]map[string]any{}
+	for _, item := range z.listItems(t, mux, "zoo_feedings", user) {
+		animal, _ := item["animal"].(string)
+		byAnimal[animal] = append(byAnimal[animal], item)
+	}
 	var got, want []string
 	for _, row := range merged {
-		if row.Kind == KindDetail {
+		switch {
+		case row.Kind == KindDetail:
 			got = append(got, row.ID)
+		case row.Kind == KindGroup && row.Expanded && row.Depth == shape.levels-1:
+			animal, _ := row.GroupKey[shape.levels-1].(string)
+			items := slices.Clone(byAnimal[animal])
+			slices.SortFunc(items, func(a, b map[string]any) int {
+				return cmp.Or(cmp.Compare(a["note"].(string), b["note"].(string)), cmp.Compare(a["id"].(string), b["id"].(string)))
+			})
+			for _, item := range items {
+				want = append(want, fmt.Sprintf("d:%v", item["id"]))
+			}
 		}
 	}
-	for _, item := range z.listItems(t, mux, "zoo_feedings", user) {
-		want = append(want, fmt.Sprintf("d:%v", item["id"]))
-	}
-	slices.Sort(got)
-	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Fatalf("%s, %+v, limit %d: detail rows\n%v\nlist API\n%v", user, shape, limit, got, want)
+		t.Fatalf("%s, %+v, limit %d: detail rows\n%v\nlist API, in document order\n%v", user, shape, limit, got, want)
 	}
 }

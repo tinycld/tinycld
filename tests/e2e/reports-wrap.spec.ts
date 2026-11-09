@@ -820,13 +820,22 @@ test.describe('report rows per width', () => {
             const detail = rowOf(p, 'Wrapco Longname 00')
             await expect(detail).toBeVisible()
             const isCut = (text: Locator) => text.evaluate(el => el.scrollWidth > el.clientWidth)
-            // J2: one line shares spare room by Extra room. The label column shares it
-            // with the other growing text columns, not by its text's width: at 1100 px
-            // "Wrapco Longname 00" needs more than its box (was: the label is whole), so
-            // it is cut, while the open group label spans the row and stays whole.
+            const groupLabel = groupRow.getByText(team, { exact: true })
+            await expect.poll(() => isCut(groupLabel)).toBe(false)
+            // F10: the open group label spans the row, past the label column.
+            const labelColumn = p.getByTestId('report-heading-customer')
+            await expect
+                .poll(
+                    async () =>
+                        ((await groupLabel.boundingBox())?.width ?? 0) -
+                        ((await labelColumn.boundingBox())?.width ?? 0)
+                )
+                .toBeGreaterThan(0)
+            // J2 with review A NOTE 1: a growing column stops at its natural width while
+            // another growing column lacks room, so the short currency column ("USD")
+            // leaves the detail label the room its text needs: it is whole at 1100 px.
             const detailLabel = detail.getByText('Wrapco Longname 00', { exact: true })
-            await expect.poll(() => isCut(detailLabel)).toBe(true)
-            await expect.poll(() => isCut(groupRow.getByText(team, { exact: true }))).toBe(false)
+            await expect.poll(() => isCut(detailLabel)).toBe(false)
             // The detail row's cells keep their columns.
             const amount = await cellOf(p, 'amount', 'Wrapco Longname 00')
             const headAmount = await p.getByTestId('report-heading-amount').boundingBox()

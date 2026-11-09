@@ -121,7 +121,7 @@ function subtreeKeys(row: ResultRow, rows: readonly ResultRow[]): Set<string> {
 
 // Under Expand all or the open levels, a press changes only the group pressed. A
 // group the reader closed opens by leaving `collapsed`; any other closed group is
-// of a closed level and opens by its key. An open group the reader opened by its
+// of a closed level and opens by its key (under the open levels only). An open group the reader opened by its
 // key closes by losing it; one open by its level closes by a fold. Closing a group
 // also forgets what was opened or folded under it.
 function toggleOnOpenBase(
@@ -137,6 +137,10 @@ function toggleOnOpenBase(
                 collapsed: withoutKeys(expansion.collapsed, new Set([keyText(key)])),
             }
         }
+        // Under Expand all every group but the folds is open and the run sends no
+        // `expand` (expansionOptions): a key held here would never reach the
+        // engine, so a press on any other closed group changes nothing.
+        if (expansion.all) return expansion
         return { ...expansion, keys: withKey(expansion.keys, key) }
     }
     const subtree = subtreeKeys(row, rows)

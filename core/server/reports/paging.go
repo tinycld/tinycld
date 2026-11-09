@@ -145,13 +145,29 @@ type groupCursor struct {
 	Path   [][]any `json:"p"`           // each path level's order values, level 1 first
 	Mode   string  `json:"m"`           // cursorIn or cursorAfter
 	Values []any   `json:"v,omitempty"` // detail sort values then the id, inside an innermost group only
+	Held   []held  `json:"h,omitempty"` // groups whose first details were shown, not yet passed (heldAfter)
 }
+
+// held is an open innermost group whose details up to Values (sort values
+// then the id) an earlier page showed, and that sorts after where the reader
+// is now: it moved later between pages. The pages read none of those details
+// again when they reach it at its new place.
+type held struct {
+	Group  []any `json:"g"`
+	Values []any `json:"v"`
+}
+
+// maxHeld bounds a cursor's held groups. Each is a group that moved later
+// while the reader was inside it; past the bound the oldest is dropped, and
+// its first details may show again at its new place.
+const maxHeld = 32
 
 // groupPos is where a page ended, before it is written as a cursor.
 type groupPos struct {
 	key  []any
 	path [][]any
 	mode string
+	held []held
 }
 
 // foldPrint names a run's fold state for a group cursor's fingerprint:
@@ -211,7 +227,7 @@ func groupFingerprint(levels, shape, fold string, keys []sortKey) string {
 // groupCursorOf writes where a page ended; detail is the page's last detail
 // row when it ended on one (Mode in).
 func groupCursorOf(fp string, keys []sortKey, at groupPos, detail map[string]any) string {
-	c := groupCursor{Key: fp, Group: at.key, Path: at.path, Mode: at.mode}
+	c := groupCursor{Key: fp, Group: at.key, Path: at.path, Mode: at.mode, Held: at.held}
 	if detail != nil {
 		c.Values = make([]any, len(keys))
 		for i, k := range keys {
@@ -224,7 +240,8 @@ func groupCursorOf(fp string, keys []sortKey, at groupPos, detail map[string]any
 
 // readGroupCursor decodes a group cursor and checks it fits the report: the
 // same fingerprint, a mode the engine writes, a path of 1..groups levels each
-// of its level's width, scalars only, and detail values only inside an
+// of its level's width, scalars only (0 or 1 at an "(x IS NULL)" term, as the
+// engine writes there), and detail values only inside an
 // innermost group after a row.
 func readGroupCursor(fp string, shape [][]orderTerm, keys []sortKey, groups, currencies int, text string) (groupCursor, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(text)
@@ -248,9 +265,25 @@ func readGroupCursor(fp string, shape [][]orderTerm, keys []sortKey, groups, cur
 		if len(level) != len(shape[i]) || !scalars(level) {
 			return groupCursor{}, badCursor()
 		}
+		for j, t := range shape[i] {
+			if t.blankTerm() && !isBlankFlag(level[j]) {
+				return groupCursor{}, badCursor()
+			}
+		}
 	}
 	if !scalars(c.Group) {
 		return groupCursor{}, badCursor()
+	}
+	if len(c.Held) > maxHeld {
+		return groupCursor{}, badCursor()
+	}
+	for _, h := range c.Held {
+		if len(h.Group) != groups+currencies || !scalars(h.Group) || len(h.Values) != len(keys) {
+			return groupCursor{}, badCursor()
+		}
+		if err := readValues(keys, h.Values); err != nil {
+			return groupCursor{}, err
+		}
 	}
 	if len(c.Values) > 0 {
 		if c.Mode != cursorIn || d != groups || len(c.Values) != len(keys) {
@@ -261,6 +294,18 @@ func readGroupCursor(fp string, shape [][]orderTerm, keys []sortKey, groups, cur
 		}
 	}
 	return c, nil
+}
+
+// blankTerm is true for a level's "(x IS NULL)" term, which sorts a key's
+// blanks last: its value on a row is 0 or 1.
+func (t orderTerm) blankTerm() bool {
+	return strings.HasPrefix(t.sql, "(") && strings.HasSuffix(t.sql, " IS NULL)")
+}
+
+// isBlankFlag is true for the value an "(x IS NULL)" term gives: 0 or 1.
+func isBlankFlag(v any) bool {
+	n, ok := v.(int64)
+	return ok && (n == 0 || n == 1)
 }
 
 // scalars checks every value is a JSON scalar and turns numbers into Go

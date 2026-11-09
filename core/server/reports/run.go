@@ -254,6 +254,12 @@ type runner struct {
 	groupFP    string
 	rawGroups  map[string]map[string]any
 	rawDetails map[string]map[string]any
+	// anchored is how many of the cursor's anchors the page read again: those
+	// from the top that still have the cursor's order values (groupKeyset).
+	anchored int
+	// shown are the groups whose first details earlier pages showed, up to
+	// which detail row (shownBefore, readShownNow).
+	shown []held
 	// readDetails is set when the detail pass ran: such a run always had a
 	// page, even one that fits.
 	readDetails bool
@@ -414,7 +420,9 @@ func (rn *runner) run() error {
 	rn.markCurrencies(groupRows)
 	rn.assemble(groupRows, details, nested)
 	if paged {
-		rn.cutPage(rn.pageLimit())
+		if err := rn.cutPage(rn.pageLimit()); err != nil {
+			return err
+		}
 	} else {
 		rn.pageWindow()
 	}
@@ -626,6 +634,10 @@ func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(rows) > 0 && rn.groupCur != nil {
+		rn.anchored = int(toInt(rows[0]["__anchored"]))
+	}
+	rn.shown, _ = rn.shownBefore()
 	// totalPass adds the probes' CTE to the list it gets: its own copy.
 	totals, err := rn.totalPass(s, slices.Clone(levelCTEs))
 	if err != nil {
@@ -690,8 +702,12 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 	}
 	keyset, pc, anchors := c.groupKeyset(s, levels, cur)
 	pageCTEs = c.pathCTEs()
+	// Each row carries how many anchors the page read again (pageStart starts
+	// after the deepest of them).
+	selected := "*"
 	if pc != "" {
 		pageCTEs = append(pageCTEs, pc)
+		selected = "*, (SELECT an FROM pc) AS __anchored"
 	}
 	var order []string
 	for _, ck := range c.currencies {
@@ -700,8 +716,8 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 	for i := 1; i <= groups; i++ {
 		order = append(order, fmt.Sprintf("__p%d", i))
 	}
-	body = fmt.Sprintf("SELECT * FROM (%s)\nWHERE %s\nORDER BY %s LIMIT %s",
-		strings.Join(legs, "\nUNION ALL\n"), keyset, strings.Join(order, ", "), limitSQL(limit+1+int64(anchors)))
+	body = fmt.Sprintf("SELECT %s FROM (%s)\nWHERE %s\nORDER BY %s LIMIT %s",
+		selected, strings.Join(legs, "\nUNION ALL\n"), keyset, strings.Join(order, ", "), limitSQL(limit+1+int64(anchors)))
 	return levelCTEs, pageCTEs, body, nil
 }
 
@@ -777,12 +793,30 @@ func (c *compiler) groupKeyset(s *stmt, levels []compiledLevel, cur *groupCursor
 		}
 		return out
 	}
+	// An anchor is read again only while it and each anchor around it still
+	// have the cursor's order values: pc's "an" counts the anchors from the
+	// top that do. A group that sorts elsewhere now (renamed, re-weighed)
+	// counts as removed, so the page does not start at its new place and
+	// skip the rows between; the keyset still reads it there when it sorts
+	// after the cursor.
+	still := make([]string, 0, anchors+1)
+	for n := 1; n <= anchors; n++ {
+		same := under("x", n)
+		for j, v := range cur.Path[n-1] {
+			same = append(same, "x."+orderValue(n, j)+" IS "+s.bind(v))
+		}
+		still = append(still, fmt.Sprintf("WHEN NOT EXISTS (SELECT 1 FROM o%d x WHERE %s) THEN %d", n, strings.Join(same, " AND "), n-1))
+	}
+	anchored := "0"
+	if anchors > 0 {
+		anchored = fmt.Sprintf("CASE %s ELSE %d END", strings.Join(still, " "), anchors)
+	}
 	var terms []string
 	for n := 1; n <= anchors; n++ {
-		terms = append(terms, "("+strings.Join(append([]string{fmt.Sprintf("__level = %d", n)}, under("", n)...), " AND ")+")")
+		terms = append(terms, "("+strings.Join(append([]string{fmt.Sprintf("__level = %d", n)}, append(under("", n), fmt.Sprintf("(SELECT an FROM pc) >= %d", n))...), " AND ")+")")
 	}
 	if cur.Mode == cursorIn {
-		terms = append(terms, "("+strings.Join(append([]string{fmt.Sprintf("__level > %d", d)}, under("", d)...), " AND ")+")")
+		terms = append(terms, "("+strings.Join(append([]string{fmt.Sprintf("__level > %d", d)}, append(under("", d), fmt.Sprintf("(SELECT an FROM pc) >= %d", d))...), " AND ")+")")
 	}
 	if len(c.currencies) > 0 {
 		var cols []orderTerm
@@ -807,6 +841,7 @@ func (c *compiler) groupKeyset(s *stmt, levels []compiledLevel, cur *groupCursor
 		counts = append(counts, fmt.Sprintf("(SELECT count(*) FROM o%d x WHERE %s) AS c%d", i, strings.Join(conds, " AND "), i))
 		terms = append(terms, "("+strings.Join(append(under("", i-1), fmt.Sprintf("__p%d > (SELECT c%d FROM pc)", i, i)), " AND ")+")")
 	}
+	counts = append(counts, anchored+" AS an")
 	return anyOf(terms), "pc AS (SELECT " + strings.Join(counts, ", ") + ")", anchors
 }
 
@@ -1292,7 +1327,9 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 		ctes = append(ctes, c.leafOrder(s, leaves))
 		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
 		by = "d.__g, " + by
-		where, err = rn.pagedDetailAfter(s, order, leaves)
+		if err = rn.readShownNow(s, ctes, sel, order); err == nil {
+			where = rn.pagedDetailAfter(s, order, leaves)
+		}
 	case grouped:
 		levels = c.groupLevels()
 		ctes = append(ctes, c.leafOrder(s, leaves))
@@ -1343,23 +1380,86 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 }
 
 // pagedDetailAfter selects the detail rows of a paged page: every row of the
-// page's open innermost groups, or, when the cursor stopped after a detail
-// row of the first of them, that group's rows after it (F7's keyset) and the
-// other groups' rows.
-func (rn *runner) pagedDetailAfter(s *stmt, keys []sortKey, leaves [][]any) (string, error) {
+// page's open innermost groups, but in a group whose first details an earlier
+// page showed only its rows after them (F7's keyset). Such a group is the one
+// the cursor stopped in after a detail row, the first leaf unless it moved
+// later between pages, and each group the cursor holds (heldAfter): its rows
+// up to the cursor were shown already, wherever it is now.
+func (rn *runner) pagedDetailAfter(s *stmt, keys []sortKey, leaves [][]any) string {
+	var conds []string
+	for _, h := range rn.shown {
+		// A group that is gone (removed between pages, or sorted before the
+		// cursor now) or not a leaf of this page reads no row here. A fold
+		// change never gets here: the fold print refused the cursor.
+		at := slices.IndexFunc(leaves, func(k []any) bool { return keyString(k) == keyString(h.Group) })
+		if at < 0 {
+			continue
+		}
+		conds = append(conds, fmt.Sprintf("(d.__g <> %s OR %s)", s.bind(int64(at)), keysetCond(s, keys, h.Values)))
+	}
+	if len(conds) == 0 {
+		return "1"
+	}
+	return strings.Join(conds, " AND ")
+}
+
+// shownBefore lists the groups whose first details earlier pages showed: the
+// cursor's held groups, then the group the cursor stopped in after a detail
+// row. moved marks those that sort elsewhere now: every held group, and the
+// cursor's own group when the page did not read it again as an anchor.
+func (rn *runner) shownBefore() (out []held, moved []bool) {
 	cur := rn.groupCur
-	if cur == nil || cur.Values == nil {
-		return "1", nil
+	if cur == nil {
+		return nil, nil
 	}
-	// The cursor's group is gone (removed between pages) or no longer a
-	// leaf: the group keyset already starts after it, so every row of the
-	// page's leaves follows. A fold change never gets here: the fold print
-	// refused the cursor.
-	if len(leaves) == 0 || keyString(leaves[0]) != keyString(cur.Group) {
-		return "1", nil
+	for _, h := range cur.Held {
+		out, moved = append(out, held{Group: h.Group, Values: slices.Clone(h.Values)}), append(moved, true)
 	}
-	g := s.bind(int64(0))
-	return fmt.Sprintf("(d.__g > %s OR (d.__g = %s AND %s))", g, g, keysetCond(s, keys, cur.Values)), nil
+	if cur.Values != nil {
+		out = append(out, held{Group: cur.Group, Values: slices.Clone(cur.Values)})
+		moved = append(moved, rn.anchored < len(cur.Path))
+	}
+	return out, moved
+}
+
+// readShownNow gives each moved group of shownBefore the current sort values
+// of the detail row its values end at (rn.shown). A group sorts elsewhere
+// because a value its details share changed (a sort over the group's record),
+// and the cursor holds the old one: compared with it, every detail of the
+// group would sort before or after the cursor. A row that is gone or in
+// another group now keeps the cursor's values. sel is the detail select, read
+// over ctes.
+func (rn *runner) readShownNow(s *stmt, ctes []string, sel string, keys []sortKey) error {
+	shown, moved := rn.shownBefore()
+	rn.shown = shown
+	var ids []string
+	at := map[string]int{}
+	for i, h := range shown {
+		if moved[i] {
+			id, _ := h.Values[len(h.Values)-1].(string)
+			ids = append(ids, s.bind(id))
+			at[id] = i
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := rn.query(s, ctes, fmt.Sprintf("SELECT * FROM (%s) d WHERE d.__id IN (%s)", sel, strings.Join(ids, ", ")))
+	if err != nil {
+		return err
+	}
+	groups := len(rn.c.p.groups)
+	for _, row := range rows {
+		id, _ := row["__id"].(string)
+		i, ok := at[id]
+		if !ok || keyString(rn.rowKey(row, groups)) != keyString(shown[i].Group) {
+			continue
+		}
+		for j, k := range keys {
+			shown[i].Values[j] = row[k.name]
+		}
+	}
+	return nil
 }
 
 // openGroups lists the open innermost groups in the order the report shows

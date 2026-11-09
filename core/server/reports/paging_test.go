@@ -469,6 +469,12 @@ func TestAMalformedGroupCursorIsRefused(t *testing.T) {
 		"an object in the path":  {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{0, map[string]any{}}}, "m": "after"},
 		"values of wrong length": inLeaf(fp, []any{"x", "y"}),
 		"a number for __id":      inLeaf(fp, []any{5}),
+		// An "(x IS NULL)" term's value is a number (0 or 1), never text or
+		// blank: such a cursor would compare its level's rows by a wrong kind
+		// and read a wrong page (review B, deferral 1).
+		"a string at an IS NULL term":       {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{"0", "lion"}}, "m": "after"},
+		"a blank at an IS NULL term":        {"k": fp, "g": []any{"lion", "USD"}, "p": []any{[]any{nil, "lion"}}, "m": "after"},
+		"a string at an inner IS NULL term": {"k": fp, "g": []any{"lion", "f1", "USD"}, "p": []any{[]any{0, "lion"}, []any{0, 1, "0", "f1"}}, "m": "in", "v": []any{"x"}},
 	}
 	// The cases differ from a cursor the reader takes in one thing only.
 	if _, err := readGroupCursor(fp, testShape(), keys, 2, 1, good(inLeaf(fp, []any{"x"}))); err != nil {

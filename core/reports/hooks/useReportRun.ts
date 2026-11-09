@@ -177,11 +177,14 @@ export function useReportRun({
     // keeps it, and any later error of the run (after a rerun that landed) has a new
     // count, so it shows as the whole-report error.
     const runKeyText = JSON.stringify(queryKey)
-    const failedNextPage = useRef<{ key: string; errorCount: number } | null>(null)
+    const [failedNextPage, setFailedNextPage] = useState<{
+        key: string
+        errorCount: number
+    } | null>(null)
     const isLoadMoreError =
         query.isError &&
-        failedNextPage.current?.key === runKeyText &&
-        failedNextPage.current.errorCount === query.errorUpdateCount
+        failedNextPage?.key === runKeyText &&
+        failedNextPage.errorCount === query.errorUpdateCount
     const { topics, ...view } = runView({
         hasBody: body !== null,
         pages,
@@ -206,11 +209,10 @@ export function useReportRun({
         const key = runKeyText
         void whenIdle(async () => {
             const next = await query.fetchNextPage()
-            failedNextPage.current = next.isFetchNextPageError
-                ? { key, errorCount: next.errorUpdateCount }
-                : null
+            setFailedNextPage(
+                next.isFetchNextPageError ? { key, errorCount: next.errorUpdateCount } : null
+            )
         }).finally(() => {
-            // Also redraws, so the mark set above is read.
             waitingForMore.current = false
             setIsWaitingForMore(false)
         })

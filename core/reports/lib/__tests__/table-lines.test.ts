@@ -119,24 +119,26 @@ const labelMinOf = (levels: RowLevels) =>
 describe('fitOneLine by content', () => {
     const measures = COLS_MEASURES
 
-    // J2: the spare room goes by grow (account and number, 1 each), not first to
-    // account for what it lacks of its natural width (was 198 / 82 at 500 and
-    // 140 / 64 at 424).
+    // J2 with review A NOTE 1: the spare room goes by grow (account and number, 1
+    // each), but number is already at its natural width (64) while account lacks
+    // 60, so number takes no room until account has its natural width; the rest
+    // then goes by grow. (Under J2 alone it was 168 / 112 at 500 and 130 / 74 at
+    // 424: number passed its natural width while account was cut.)
     it('gives each column its min and the spare room to the text by grow', () => {
-        // Mins 404; 96 spare: 48 each.
+        // Mins 404; 96 spare: account's 60 first, then 36 by grow, 18 each.
         expect(fitOneLine(COLS, 500, measures)).toEqual({
-            account: 168,
-            number: 112,
+            account: 198,
+            number: 82,
             debit: 110,
             credit: 110,
         })
     })
 
     it('narrows the text toward its min before the line breaks', () => {
-        // 20 spare: 10 each.
+        // 20 spare, all to account: number is at its natural width.
         expect(fitOneLine(COLS, 424, measures)).toEqual({
-            account: 130,
-            number: 74,
+            account: 140,
+            number: 64,
             debit: 110,
             credit: 110,
         })
@@ -159,8 +161,9 @@ describe('one line shares its spare room by Extra room', () => {
     ]
 
     it('gives a Description with flexGrow 2 more of the spare room than a Name with flexGrow 1, also when Name is wider', () => {
-        // Mins 80 + 80 + 100 = 260; 220 spare by grow: 73 and 146, the 1 left over
-        // to the first column.
+        // Mins 80 + 80 + 100 = 260; 120 spare by grow: 40 and 80. Both still lack
+        // room at 380 (was 480, where Description passed its natural 165 while Name
+        // was cut: the case below refuses that, review A NOTE 1).
         const wideName = { name: m(80, 300, 1), description: m(80, 165, 2), amount: m(100, 100, 0) }
         const narrowName = {
             name: m(80, 120, 1),
@@ -168,11 +171,44 @@ describe('one line shares its spare room by Extra room', () => {
             amount: m(100, 100, 0),
         }
         for (const measures of [wideName, narrowName]) {
-            const widths = fitOneLine(COLS_J2, 480, measures)
-            expect(widths).toEqual({ name: 154, description: 226, amount: 100 })
+            const widths = fitOneLine(COLS_J2, 380, measures)
+            expect(widths).toEqual({ name: 120, description: 160, amount: 100 })
             const spare = (id: 'name' | 'description') => (widths?.[id] ?? 0) - 80
             expect(spare('description')).toBeGreaterThan(spare('name'))
         }
+    })
+
+    // Review A NOTE 1 (reports-wrap at 1100 px): "Wrapco Longname 00" needs 142 px
+    // and got 124 while the currency column held 166 px for "USD". A growing column
+    // stops at its natural width while another growing column is below its own; the
+    // room it would take goes to the others by grow. Once every column has its
+    // natural width, the rest goes by grow again, with no cap.
+    it('cuts no long text while a short growing column takes room past its natural width', () => {
+        const COLS_USD: ResultColumn[] = [
+            { id: 'customer', label: 'Customer', type: 'text' },
+            { id: 'currency', label: 'Currency', type: 'text' },
+            { id: 'amount', label: 'Amount', type: 'money', currency: 'USD' },
+        ]
+        const measures = {
+            customer: m(80, 142, 1),
+            currency: m(40, 40, 1),
+            amount: m(100, 100, 0),
+        }
+        // 50 spare: by grow alone 25 each would leave the customer cut at 105 and
+        // the currency 25 past its natural width. The currency stays at 40, so the
+        // customer takes all 50.
+        expect(fitOneLine(COLS_USD, 270, measures)).toEqual({
+            customer: 130,
+            currency: 40,
+            amount: 100,
+        })
+        // 100 spare: the customer reaches its natural 142 (62), the currency stays
+        // at 40; the 38 left go by grow, 19 each.
+        expect(fitOneLine(COLS_USD, 320, measures)).toEqual({
+            customer: 161,
+            currency: 59,
+            amount: 100,
+        })
     })
 
     it('gives a column with no Extra room its content width when there is room, and no more', () => {

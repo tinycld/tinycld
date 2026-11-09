@@ -227,6 +227,20 @@ describe('expansion state', () => {
         expect(closed).toEqual({ all: false, keys: [], collapsed: [['a']], isDefault: true })
     })
 
+    // Review B, deferral 2: under Expand all a closed group that is not a fold is
+    // one the server did not open. Toggling it must not hold a key the run body
+    // never sends: what the state holds is what the server gets.
+    it('under Expand all, toggling a closed group that is not a fold holds no key it does not send', () => {
+        const closed = group('g:c', ['c'])
+        for (const start of [EXPAND_ALL, toggleGroup(EXPAND_ALL, a, rows)]) {
+            const next = toggleGroup(start, closed, [...rows, closed])
+            const sent = expansionOptions(next)
+            const sentKeys = [...(sent.expand ?? []), ...(sent.collapse ?? [])]
+            expect(sent.expandAll).toBe(true)
+            expect(sentKeys).toEqual(expect.arrayContaining([...next.keys, ...next.collapsed]))
+        }
+    })
+
     it('Expand all and Collapse all clear collapsed', () => {
         expect(foldAllTarget([group('g:a', ['a'])]).collapsed).toEqual([])
         expect(foldAllTarget([a]).collapsed).toEqual([])

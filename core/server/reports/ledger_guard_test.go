@@ -97,8 +97,11 @@ func TestACursorPageComputesItsBeginningBalanceOncePerStatement(t *testing.T) {
 			kind = "page"
 		}
 		kinds[kind]++
-		if kind == "page" {
+		switch kind {
+		case "page":
 			requireLevelRowsOnce(t, db, st)
+		case "total":
+			requireTotalLevelRowsOnce(t, db, st)
 		}
 		if n := strings.Count(st.sql, "(SELECT sum("); n > 4 {
 			t.Errorf("the %s statement holds %d sum lookups, want at most 4", kind, n)
@@ -138,6 +141,40 @@ func requireLevelRowsOnce(t *testing.T, db *sql.DB, st readStatement) {
 	for name, how := range computed {
 		if !slices.Equal(how, []string{"MATERIALIZE"}) {
 			t.Errorf("the page statement's plan computes %s as %v, want MATERIALIZE once", name, how)
+		}
+	}
+}
+
+// pathCTEName is a CTE only a page statement needs: a level's paths (pp<L>)
+// or the cursor's sibling counts (pc).
+var pathCTEName = regexp.MustCompile(`^(pp\d+|pc)$`)
+
+// requireTotalLevelRowsOnce is requireLevelRowsOnce for the Total statement
+// (review B, deferral 3): its plan computes each o<L> it reads exactly once,
+// and with it each lookup of that level. It checks first that the statement
+// holds no path CTE, the one thing that reads an o<L> a second time; so an
+// o<L> computed once may be a co-routine here, and a Total statement that
+// gained a path CTE fails here rather than passing on a plan that happens to
+// materialize.
+func requireTotalLevelRowsOnce(t *testing.T, db *sql.DB, st readStatement) {
+	t.Helper()
+	if names := ctesOf(st.sql); slices.ContainsFunc(names, pathCTEName.MatchString) {
+		t.Fatalf("the Total statement holds a path CTE: %v", names)
+	}
+	raw, args := rawStatement(t, st.sql, st.params)
+	plan := queryPlan(t, db, raw, args)
+	computed := map[string][]string{}
+	for _, step := range plan {
+		if m := levelRowsStep.FindStringSubmatch(step); m != nil {
+			computed[m[2]] = append(computed[m[2]], m[1])
+		}
+	}
+	if len(computed) == 0 {
+		t.Fatalf("the Total statement's plan computes no o<L>:\n%s", strings.Join(plan, "\n"))
+	}
+	for name, how := range computed {
+		if len(how) != 1 {
+			t.Errorf("the Total statement's plan computes %s as %v, want once", name, how)
 		}
 	}
 }

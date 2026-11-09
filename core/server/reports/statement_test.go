@@ -215,11 +215,41 @@ func wideSpec() string {
 		"sort":[{"col":"region"}]}`
 }
 
+// groupStatementOf is the unpaged group statement a run of a pivot, layout
+// or nest report raw sends for user: the one that reads level rows (__level)
+// and orders them by no path.
+func (z *zoo) groupStatementOf(t *testing.T, user, raw string, opts Options) string {
+	t.Helper()
+	seen := observeReads(t)
+	z.run(t, user, raw, opts, nil)
+	observeRead = nil
+	for _, st := range *seen {
+		if strings.Contains(st.sql, "__level") && !strings.Contains(st.sql, "__p1") {
+			return st.sql
+		}
+	}
+	t.Fatalf("no unpaged group statement among %d reads", len(*seen))
+	return ""
+}
+
+// wideLayoutSpec is wideSpec as a layout report (a section per region): its
+// group rows are read whole, by the unpaged group statement (review A, NOTE 2).
+func wideLayoutSpec() string {
+	return strings.Replace(wideSpec(), `"sort":[{"col":"region"}]}`,
+		`"sort":[{"col":"region"}],"layout":[{"section":"n","title":"North","key":"north"},{"section":"s","title":"South","key":"south"}]}`, 1)
+}
+
 // Every to-many total a level reads of one parent row is in one CTE: the
-// wide report's three levels have three, and no level needs its joins split.
+// wide report's three levels have three, and no level needs its joins split,
+// in the page statement and in the unpaged group statement of a layout.
 func TestToManyTotalsOfOneParentRowShareOneCTEPerLevel(t *testing.T) {
 	z := newZoo(t)
-	stmt := z.pageStatementOf(t, "ann", wideSpec(), Options{ExpandAll: true})
+	requireOneTotalsCTEPerLevel(t, z.pageStatementOf(t, "ann", wideSpec(), Options{ExpandAll: true}))
+	requireOneTotalsCTEPerLevel(t, z.groupStatementOf(t, "ann", wideLayoutSpec(), Options{ExpandAll: true}))
+}
+
+func requireOneTotalsCTEPerLevel(t *testing.T, stmt string) {
+	t.Helper()
 	var totals, chunks []string
 	for _, name := range ctesOf(stmt) {
 		switch {
@@ -269,15 +299,26 @@ func TestSidesPastTheJoinLimitAreJoinedInChunks(t *testing.T) {
 // label.
 func TestHelperColumnsOnlyForColumnsThatHaveThem(t *testing.T) {
 	z := newZoo(t)
-	stmt := z.pageStatementOf(t, "ann", wideSpec(), Options{ExpandAll: true})
-	if m := regexp.MustCompile(` AS (vl|vc|vcur)\d+\b`).FindString(stmt); m != "" {
-		t.Fatalf("the wide report's statement selects %q", m)
-	}
-	linked := z.pageStatementOf(t, "ann", `{"version":4,"source":"zoo.animals","columns":[
+	const bySite = `{"version":4,"source":"zoo.animals","columns":[
 		{"id":"site","path":[{"link":"site"}]},{"id":"w","path":[{"field":"weight"}],"aggregate":"sum"}],
-		"groups":[{"id":"g","col":"site"}]}`, Options{ExpandAll: true})
-	if !strings.Contains(linked, " AS vl0") || strings.Contains(linked, " AS vl1") {
-		t.Fatalf("a link column keeps its label and a number has none:\n%s", linked)
+		"groups":[{"id":"g","col":"site"}]%s}`
+	// The page statement of a grouped report, and the unpaged group statement
+	// of a layout and of a pivot (review A, NOTE 2).
+	for name, c := range map[string]struct {
+		wide, linked string
+		statementOf  func(*testing.T, string, string, Options) string
+	}{
+		"page":  {wideSpec(), fmt.Sprintf(bySite, ""), z.pageStatementOf},
+		"group": {wideLayoutSpec(), fmt.Sprintf(bySite, `,"pivot":{"path":[{"field":"species"}],"cell":"w"}`), z.groupStatementOf},
+	} {
+		stmt := c.statementOf(t, "ann", c.wide, Options{ExpandAll: true})
+		if m := regexp.MustCompile(` AS (vl|vc|vcur)\d+\b`).FindString(stmt); m != "" {
+			t.Fatalf("%s: the wide report's statement selects %q", name, m)
+		}
+		linked := c.statementOf(t, "ann", c.linked, Options{ExpandAll: true})
+		if !strings.Contains(linked, " AS vl0") || strings.Contains(linked, " AS vl1") {
+			t.Fatalf("%s: a link column keeps its label and a number has none:\n%s", name, linked)
+		}
 	}
 }
 

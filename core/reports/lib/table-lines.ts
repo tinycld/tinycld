@@ -368,11 +368,19 @@ function measuresAt(measures: ColumnMeasures, lineWidth: number): ColumnMeasures
 
 const sum = (values: readonly number[]) => values.reduce((total, n) => total + n, 0)
 
-// The spare room by grow, in rounds: a part that reaches its max keeps it, and the
-// next round shares what is left among the others. With no max it is one round.
-// When every grower is capped, shareWidth still gives the rest to the first part
-// (the label), past its max: a row is always filled.
-function growInto(widths: number[], parts: readonly ColumnMeasure[], width: number) {
+const maxOf = (part: ColumnMeasure) => part.max ?? Number.POSITIVE_INFINITY
+
+// The spare room by grow, in rounds: a part that reaches its cap (its max unless
+// another cap is given) keeps it, and the next round shares what is left among the
+// others. With no cap it is one round. When every grower is capped, shareWidth
+// still gives the rest to the first part (the label), past its max: a row is
+// always filled.
+function growInto(
+    widths: number[],
+    parts: readonly ColumnMeasure[],
+    width: number,
+    capOf: (part: ColumnMeasure) => number = maxOf
+) {
     const capped = new Set<number>()
     for (let round = 0; round < parts.length; round++) {
         const spare = width - sum(widths)
@@ -383,7 +391,7 @@ function growInto(widths: number[], parts: readonly ColumnMeasure[], width: numb
         for (const i of open) {
             const part = parts[i]
             if (!part) continue
-            const room = (part.max ?? Infinity) - (widths[i] ?? 0)
+            const room = Math.max(0, capOf(part) - (widths[i] ?? 0))
             const add = Math.floor((spare * part.grow) / totalGrow)
             widths[i] = (widths[i] ?? 0) + Math.min(add, room)
             if (add >= room) {
@@ -398,13 +406,15 @@ function growInto(widths: number[], parts: readonly ColumnMeasure[], width: numb
 const lackOf = (part: ColumnMeasure) => Math.max(0, part.natural - part.min)
 
 // Shares `width` among the parts: each at its min; then what `lack` gives each part,
-// in proportion when the room is short; then the rest by grow, a part stopping at
-// its max. The parts add up to `width` exactly: the rounding remainder goes to the
-// first part (the label). Null when the mins do not fit.
+// in proportion when the room is short; then the rest by grow, first up to each
+// part's `firstCap` when one is given, then a part stopping at its max. The parts
+// add up to `width` exactly: the rounding remainder goes to the first part (the
+// label). Null when the mins do not fit.
 function share(
     parts: readonly ColumnMeasure[],
     width: number,
-    lack: (part: ColumnMeasure) => number
+    lack: (part: ColumnMeasure) => number,
+    firstCap?: (part: ColumnMeasure) => number
 ): number[] | null {
     if (parts.length === 0) return []
     const widths = parts.map(part => part.min)
@@ -416,10 +426,14 @@ function share(
         for (const [i, need] of lacks.entries())
             widths[i] = (widths[i] ?? 0) + Math.floor(need * fraction)
     }
+    if (firstCap) growInto(widths, parts, width, firstCap)
     growInto(widths, parts, width)
     widths[0] = (widths[0] ?? 0) + width - sum(widths)
     return widths
 }
+
+// A growing column's natural width, never past its max.
+const naturalCap = (part: ColumnMeasure) => Math.min(part.natural, maxOf(part))
 
 /**
  * Widths that share `width` by content, as CSS table-layout:auto does: the spare
@@ -434,12 +448,15 @@ export function shareWidth(parts: readonly ColumnMeasure[], width: number): numb
 /**
  * The widths of one line (J2, R10): each column at its min, then the spare room by
  * grow (Extra room, `flexGrow`), so a column with twice the grow gets twice the
- * room, whatever its content. A column with no grow gets only what it lacks of its
- * natural width, and no more, so a figure's heading does not wrap when there is
- * room.
+ * room while both lack room. A growing column stops at its natural width while
+ * another growing column is still below its own, and the others share what it
+ * leaves by grow, so no text is cut while a short column holds empty room; once
+ * every growing column has its natural width, the rest is shared by grow again. A
+ * column with no grow gets only what it lacks of its natural width, and no more,
+ * so a figure's heading does not wrap when there is room.
  */
 export function shareLineWidth(parts: readonly ColumnMeasure[], width: number): number[] | null {
-    return share(parts, width, part => (part.grow > 0 ? 0 : lackOf(part)))
+    return share(parts, width, part => (part.grow > 0 ? 0 : lackOf(part)), naturalCap)
 }
 
 /**
