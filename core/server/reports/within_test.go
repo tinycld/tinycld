@@ -30,9 +30,9 @@ func TestWithinRowCountsInItsSection(t *testing.T) {
 	requireRows(t, open, "kind", "group", "detail", "detail", "subtotal", "group", "detail", "detail", "computed", "subtotal", "group", "subtotal", "computed")
 	// Details sort by cost (f1 1000, f2 2500; f4 300, f3 700). Extra = 3500 × 0.1;
 	// the zebras' group row, subtotal and the later row add it.
-	requireRows(t, open, "cost", int64(3500), int64(1000), int64(2500), int64(3500), int64(1350), int64(300), int64(700), int64(350), int64(1350), nil, nil, int64(1350))
+	requireRows(t, open, "cost", int64(3500), int64(1000), int64(2500), int64(3500), int64(1350), int64(300), int64(700), int64(350), int64(1350), int64(0), int64(0), int64(1350))
 	// Grams is a number, not money, so × 0.1 stays a float wherever it is added.
-	requireRows(t, open, "grams", int64(1300), int64(500), int64(800), int64(1300), float64(530), int64(100), int64(300), float64(130), float64(530), nil, nil, float64(530))
+	requireRows(t, open, "grams", int64(1300), int64(500), int64(800), int64(1300), float64(530), int64(100), int64(300), float64(130), float64(530), int64(0), int64(0), float64(530))
 	extra := open.Rows[7]
 	if extra.ID != `c:extra:["USD"]` || extra.Depth != 1 || extra.Section != `g:["zebra","USD"]` || extra.CanExpand {
 		t.Fatalf("extra = %+v", extra)
@@ -44,14 +44,14 @@ func TestWithinRowIsAbsentWhileItsSectionIsFolded(t *testing.T) {
 	shut := z.run(t, "ann", fmt.Sprintf(zooWithin, ""), Options{}, nil)
 	requireRows(t, shut, "label", "Lions", "Total Lions", "Zebras", "Total Zebras", "Monkeys", "Total Monkeys", "All zebras")
 	// The folded section's rows still add it.
-	requireRows(t, shut, "cost", int64(3500), int64(3500), int64(1350), int64(1350), nil, nil, int64(1350))
+	requireRows(t, shut, "cost", int64(3500), int64(3500), int64(1350), int64(1350), int64(0), int64(0), int64(1350))
 }
 
 func TestWithinRowReadsAParam(t *testing.T) {
 	z := newZoo(t)
 	raw := fmt.Sprintf(zooWithin, `,{"row":"twice","label":"Twice","formula":{"op":"mul","args":[{"subtotal":"cats"},{"param":"k"}]}}`)
 	res := z.run(t, "ann", raw, Options{}, map[string]string{"k": `2`})
-	requireRows(t, res, "cost", int64(3500), int64(3500), int64(1350), int64(1350), nil, nil, int64(1350), int64(7000))
+	requireRows(t, res, "cost", int64(3500), int64(3500), int64(1350), int64(1350), int64(0), int64(0), int64(1350), int64(7000))
 }
 
 func TestWithinRowStaysInItsSectionOnAPage(t *testing.T) {

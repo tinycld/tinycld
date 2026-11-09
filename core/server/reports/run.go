@@ -279,6 +279,10 @@ type runner struct {
 	// readDetails is set when the detail pass ran: such a run always had a
 	// page, even one that fits.
 	readDetails bool
+	// sectionsCapped is set when the row cap dropped a first-level row (or a
+	// total), so a layout section with no row may have rows the run did not
+	// read.
+	sectionsCapped bool
 }
 
 // groupedPage is a grouped run's page: after is the open group the previous
@@ -1035,6 +1039,8 @@ func (rn *runner) capLevelRows(rows []map[string]any) []map[string]any {
 	for _, row := range rows {
 		if row["__row"] != nil || len(out) < runLimits.rowCap {
 			out = append(out, row)
+		} else if toInt(row["__level"]) <= 1 {
+			rn.sectionsCapped = true
 		}
 	}
 	return out

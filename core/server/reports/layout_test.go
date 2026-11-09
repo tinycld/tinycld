@@ -32,9 +32,9 @@ func TestLayoutSectionsAndComputedRows(t *testing.T) {
 	res := z.run(t, "ann", fmt.Sprintf(zooStatement, ""), Options{}, nil)
 	requireRows(t, res, "kind", "group", "subtotal", "group", "subtotal", "group", "subtotal", "computed", "computed")
 	requireRows(t, res, "label", "Lions", "Total Lions", "Zebras", "Total Zebras", "Monkeys", "Total Monkeys", "Lions less zebras", "All animals")
-	// Ann sees no monkey: its section is empty and counts as zero.
-	requireRows(t, res, "cost", int64(3500), int64(3500), int64(1000), int64(1000), nil, nil, int64(2500), int64(4500))
-	requireRows(t, res, "grams", int64(1300), int64(1300), int64(400), int64(400), nil, nil, int64(900), int64(1700))
+	// Ann sees no monkey: its section is empty and reads zero.
+	requireRows(t, res, "cost", int64(3500), int64(3500), int64(1000), int64(1000), int64(0), int64(0), int64(2500), int64(4500))
+	requireRows(t, res, "grams", int64(1300), int64(1300), int64(400), int64(400), int64(0), int64(0), int64(900), int64(1700))
 	// A text column has no figure on a computed row, nor on an empty
 	// section.
 	requireRows(t, res, "species", "lion", "lion", "zebra", "zebra", nil, nil, nil, nil)
@@ -50,8 +50,8 @@ func TestLayoutComputedRowsSplitThePivot(t *testing.T) {
 	z := newZoo(t)
 	res := z.run(t, "ann", fmt.Sprintf(zooStatement, `"pivot":{"path":[{"field":"fed"}],"bucket":"month","cell":"cost"},`), Options{}, nil)
 	requireRows(t, res, "label", "Lions", "Total Lions", "Zebras", "Total Zebras", "Monkeys", "Total Monkeys", "Lions less zebras", "All animals")
-	requireRows(t, res, "cost.p0", int64(1000), int64(1000), int64(700), int64(700), nil, nil, int64(300), int64(1700))
-	requireRows(t, res, "cost.p2", int64(0), int64(0), int64(300), int64(300), nil, nil, int64(-300), int64(300))
+	requireRows(t, res, "cost.p0", int64(1000), int64(1000), int64(700), int64(700), int64(0), int64(0), int64(300), int64(1700))
+	requireRows(t, res, "cost.p2", int64(0), int64(0), int64(300), int64(300), int64(0), int64(0), int64(-300), int64(300))
 }
 
 func TestLayoutErrors(t *testing.T) {
@@ -157,12 +157,70 @@ func TestLayoutComputedRowsWithNothingVisible(t *testing.T) {
 	empty = strings.Replace(empty, `"groups"`, noRows+`"groups"`, 1)
 	res := z.run(t, "ann", empty, Options{}, nil)
 	requireRows(t, res, "kind", "group", "subtotal", "computed")
-	requireRows(t, res, "cost", nil, nil, int64(5))
+	requireRows(t, res, "cost", int64(0), int64(0), int64(5))
 
 	// Without a currency column the row reads the same.
 	plain := strings.Replace(empty, `"id":"cost","path":[{"field":"cost"}]`, `"id":"cost","path":[{"field":"grams"}]`, 1)
 	res = z.run(t, "ann", plain, Options{}, nil)
-	requireRows(t, res, "cost", nil, nil, int64(5))
+	requireRows(t, res, "cost", int64(0), int64(0), int64(5))
+}
+
+// An empty section's group row and subtotal read 0 in each number column, as
+// a computed row reads the section; a derived column is computed from those
+// 0 cells, and a text column stays blank.
+func TestLayoutEmptySectionReadsZero(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"cur","path":[{"field":"cost"}],"aggregate":"sum"},
+		{"id":"pri","path":[{"field":"cost"}],"aggregate":"sum"},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
+		{"id":"each","path":[{"field":"grams"}]},
+		{"id":"chg","formula":{"op":"sub","args":[{"col":"cur"},{"col":"pri"}]}},
+		{"id":"pct","formula":{"op":"div","scale":4,"args":[{"col":"chg"},{"col":"pri"}]}},
+		{"id":"blankPct","formula":{"op":"if","args":[{"op":"eq","args":[{"col":"pri"},{"value":0}]},{"value":null},{"op":"div","scale":4,"args":[{"col":"chg"},{"col":"pri"}]}]}}],
+		"groups":[{"id":"g","col":"species"}],"layout":[
+		{"section":"cats","title":"Lions","key":"lion"},
+		{"section":"apes","title":"Monkeys","key":"monkey"}]}`, Options{}, nil)
+	requireRows(t, res, "label", "Lions", "Total Lions", "Monkeys", "Total Monkeys")
+	// Ann sees no monkey.
+	requireRows(t, res, "cur", int64(3500), int64(3500), int64(0), int64(0))
+	requireRows(t, res, "grams", int64(1300), int64(1300), int64(0), int64(0))
+	requireRows(t, res, "chg", int64(0), int64(0), int64(0), int64(0))
+	requireRows(t, res, "blankPct", 0.0, 0.0, nil, nil)
+	requireRows(t, res, "species", "lion", "lion", nil, nil)
+	// A number column with no total is blank on every section's rows.
+	requireRows(t, res, "each", nil, nil, nil, nil)
+	for _, r := range res.Rows[2:] {
+		// The percent divides 0 by 0, which the engine reads as 0.
+		if pct, ok := r.Cells["pct"].(int64); !ok || pct != 0 {
+			t.Fatalf("%s: percent %#v, want 0", r.Label, r.Cells["pct"])
+		}
+		if r.Cells["cur@currency"] != "USD" {
+			t.Fatalf("%s: currency %v, want USD", r.Label, r.Cells["cur@currency"])
+		}
+	}
+}
+
+// A section empty in one currency reads 0 in that currency.
+func TestLayoutEmptySectionInOneCurrency(t *testing.T) {
+	z := newZoo(t)
+	z.rec(t, "f7", "zoo_feedings", map[string]any{
+		"animal": z.id("zed"), "cost": 400, "currency": "EUR", "fed": "2026-03-10 00:00:00.000Z", "grams": 10, "note": "f7",
+	})
+	res := z.run(t, "ann", fmt.Sprintf(zooStatement, ""), Options{}, nil)
+	var got []any
+	for _, r := range res.Rows[:6] {
+		got = append(got, r.Label, r.Cells["cost"], r.Cells["cost@currency"])
+	}
+	want := []any{
+		"Lions", int64(0), "EUR", "Total Lions", int64(0), "EUR",
+		"Zebras", int64(400), "EUR", "Total Zebras", int64(400), "EUR",
+		"Monkeys", int64(0), "EUR", "Total Monkeys", int64(0), "EUR",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("EUR rows = %#v\nwant %#v", got, want)
+	}
 }
 
 func TestLayoutRefusesExists(t *testing.T) {

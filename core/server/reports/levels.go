@@ -1128,6 +1128,13 @@ func (p *plan) readsAnAggregate(cp *colPlan, seen map[string]bool) bool {
 	return p.formulaReadsAnAggregate(cp.col.Formula, seen)
 }
 
+// totalsRows is true when a column's cell on a group is a figure over the
+// group's rows: an aggregate, a "rows" total, or a rollup that reads one.
+func (p *plan) totalsRows(cp *colPlan) bool {
+	return cp.col.Total == TotalRows || p.readsAnAggregate(cp, map[string]bool{}) ||
+		p.formulaReadsAnAggregate(cp.col.Rollup, map[string]bool{})
+}
+
 // formulaReadsAnAggregate is true when a formula holds an aggregate operator
 // or reads ({col}) a column that reads one or is a "rows" column: on a group
 // that column's cell is a figure over the group's rows, so the formula is
