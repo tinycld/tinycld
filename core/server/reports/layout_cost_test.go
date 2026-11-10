@@ -205,3 +205,41 @@ func TestReadsLayoutRow(t *testing.T) {
 		}
 	}
 }
+
+// A computed row that reads an earlier row many times, and derived columns
+// that read a row's own cells, compile the earlier cell once: the compiler
+// reuses it, so the nodes it compiles stay far under what the caps count
+// (each read counted in full).
+func TestLayoutCompilesEachEarlierRowCellOnce(t *testing.T) {
+	z := newZoo(t)
+	// a is 20 nodes: each reader counts 1 + 20*20 nodes (about 4,030 in all),
+	// while with the memo the compiler visits about 460.
+	leaves := make([]string, 19)
+	for i := range leaves {
+		leaves[i] = `{"subtotal":"cats"}`
+	}
+	base := `{"row":"a","label":"A","formula":{"op":"add","args":[` + strings.Join(leaves, ",") + `]}}`
+	items := []string{lions, base}
+	for r := range 10 {
+		args := make([]string, 20)
+		for i := range args {
+			args[i] = `{"subtotal":"a"}`
+		}
+		items = append(items, fmt.Sprintf(`{"row":"r%d","label":"R","formula":{"op":"add","args":[%s]}}`, r, strings.Join(args, ",")))
+	}
+	spec, _, err := Load([]byte(layoutOf(strings.Join(items, ","))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, serr := bind(z.app, spec)
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	c := newCompiler(p, nil, nil, nil)
+	if err := c.compileAll(); err != nil {
+		t.Fatal(err)
+	}
+	if c.layoutNodes*4 > c.layoutCounted {
+		t.Fatalf("compiled %d formula nodes for %d counted: earlier rows are compiled again", c.layoutNodes, c.layoutCounted)
+	}
+}

@@ -26,7 +26,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		cur = "(SELECT DISTINCT " + strings.Join(c.currencies, ", ") + " FROM o1 UNION ALL SELECT " + c.noRowCurrencies(s) +
 			" WHERE NOT EXISTS (SELECT 1 FROM o1)) cur"
 	}
-	lc := &layoutCtx{c: c, s: s, items: map[string]*LayoutItem{}, within: map[string][]*LayoutItem{}, withinAt: map[string]map[string][]*LayoutItem{}, chunkOf: map[string]sectionSlot{}, keys: map[string]string{}, pivotCount: len(pivot), lookups: map[*Node]layoutLookup{}}
+	lc := &layoutCtx{c: c, s: s, items: map[string]*LayoutItem{}, within: map[string][]*LayoutItem{}, withinAt: map[string]map[string][]*LayoutItem{}, chunkOf: map[string]sectionSlot{}, keys: map[string]string{}, pivotCount: len(pivot), lookups: map[*Node]layoutLookup{}, cells: map[cellKey]cellMemo{}}
 	for idx, cp := range c.p.cols {
 		if t := c.levelTypes[cp.col.ID]; isNumeric(t) && t != Bool {
 			lc.cellNames = append(lc.cellNames, fmt.Sprintf("v%d", idx))
@@ -311,6 +311,64 @@ type layoutCtx struct {
 	lookupCTEs []string
 	lookupCols []string
 	lkUsed     []string
+	// cells holds each computed row's cell in each column once compiled, with
+	// what its select must join and probe (deps); recording are the cells
+	// being compiled now, innermost last, each collecting its deps.
+	cells     map[cellKey]cellMemo
+	recording []*layoutDeps
+}
+
+// cellKey is one computed row's cell in one result column ("" is the check
+// pass; pv<j> a pivot cell). A row's cell compiles the same in its own leg
+// and inlined into a later reader (inline sets the row's own place), so one
+// compile serves both.
+type cellKey struct {
+	item *LayoutItem
+	cell string
+}
+
+// layoutDeps is what a compiled cell needs from the select that reads it:
+// the section chunks and hoisted lookups to join, and the lookup wheres to
+// probe on its rows.
+type layoutDeps struct {
+	chunks  []int
+	wheres  []condProbe
+	lookups []string
+}
+
+type cellMemo struct {
+	e    expr
+	deps layoutDeps
+}
+
+func (lc *layoutCtx) useChunk(k int) {
+	for _, d := range lc.recording {
+		d.chunks = append(d.chunks, k)
+	}
+	if !slices.Contains(lc.used, k) {
+		lc.used = append(lc.used, k)
+	}
+}
+
+func (lc *layoutCtx) addWhere(p condProbe) {
+	for _, d := range lc.recording {
+		d.wheres = append(d.wheres, p)
+	}
+	lc.wheres = append(lc.wheres, p)
+}
+
+// replay gives the select being compiled what a reused cell needs, and the
+// cells being compiled around it too.
+func (lc *layoutCtx) replay(d layoutDeps) {
+	for _, k := range d.chunks {
+		lc.useChunk(k)
+	}
+	for _, p := range d.wheres {
+		lc.addWhere(p)
+	}
+	for _, name := range d.lookups {
+		lc.useLookup(name)
+	}
 }
 
 // layoutLookup is a layout lookup computed once: e reads its columns of lx,
@@ -323,6 +381,9 @@ type layoutLookup struct {
 }
 
 func (lc *layoutCtx) useLookup(name string) {
+	for _, d := range lc.recording {
+		d.lookups = append(d.lookups, name)
+	}
 	if !slices.Contains(lc.lkUsed, name) {
 		lc.lkUsed = append(lc.lkUsed, name)
 	}
@@ -347,7 +408,7 @@ func (lc *layoutCtx) lookupRowCTEs() []string {
 // probeWhere takes a lookup's where on the computed row being compiled,
 // probed once the sections its select joins are known (layoutLegs).
 func (lc *layoutCtx) probeWhere(at, sql string) bool {
-	lc.wheres = append(lc.wheres, condProbe{at: at, sql: sql})
+	lc.addWhere(condProbe{at: at, sql: sql})
 	return true
 }
 
@@ -456,10 +517,29 @@ func derivedSize(n *Node, cell func(id string) int) int {
 	return size
 }
 
-// cellOf is item's cell in the column being compiled (lc.cell): its cells
+// cellOf is item's cell in the column being compiled (lc.cell), compiled
+// once: a later read reuses it and replays what it joins and probes.
+func (lc *layoutCtx) cellOf(item *LayoutItem, at string) (expr, error) {
+	key := cellKey{item: item, cell: lc.cell}
+	if m, ok := lc.cells[key]; ok {
+		lc.replay(m.deps)
+		return m.e, nil
+	}
+	deps := &layoutDeps{}
+	lc.recording = append(lc.recording, deps)
+	e, err := lc.compileCell(item, at)
+	lc.recording = lc.recording[:len(lc.recording)-1]
+	if err != nil {
+		return expr{}, err
+	}
+	lc.cells[key] = cellMemo{e: e, deps: *deps}
+	return e, nil
+}
+
+// compileCell is item's cell in the column being compiled: its cells
 // formula for that column, a derived column's formula over the row's own
 // cells, else its formula, else blank.
-func (lc *layoutCtx) cellOf(item *LayoutItem, at string) (expr, error) {
+func (lc *layoutCtx) compileCell(item *LayoutItem, at string) (expr, error) {
 	// The check pass (no column) compiles the formula only: a cells formula
 	// is compiled in its own column, so the caps count every compile of it.
 	if lc.cell == "" || lc.column == nil || lc.idx < 0 {
@@ -590,9 +670,7 @@ func (lc *layoutCtx) subtotal(id, at string) (expr, error) {
 		lc.chunkOf[id] = slot
 		lc.keys[id] = lc.s.bind(sectionKey(item))
 	}
-	if !slices.Contains(lc.used, slot.chunk) {
-		lc.used = append(lc.used, slot.chunk)
-	}
+	lc.useChunk(slot.chunk)
 	// An empty section counts as zero; a section blank because a sum lookup
 	// met two currencies has no value, and neither has a row that reads it
 	// (R3).
@@ -755,7 +833,9 @@ func (lc *layoutCtx) exists(_ *Node, at string) (expr, error) { return expr{}, l
 func (lc *layoutCtx) lookup(n *Node, at string) (expr, error) {
 	if h, ok := lc.lookups[n]; ok {
 		lc.useLookup(h.name)
-		lc.wheres = append(lc.wheres, h.wheres...)
+		for _, p := range h.wheres {
+			lc.addWhere(p)
+		}
 		return h.e, nil
 	}
 	before := len(lc.wheres)
