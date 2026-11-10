@@ -73,6 +73,22 @@ async function expectMonthHeadings(p: Page) {
     }
 }
 
+// The total heading reads after March (pivot.order "spec"): further right on one
+// line, or on a later line, or further right on the same line, when the rows wrap.
+async function expectTotalAfterMarch(p: Page) {
+    const march = p.getByTestId('report-heading-amount.p2')
+    const total = p.getByTestId('report-heading-amount')
+    await expect(total).toBeVisible()
+    await expect
+        .poll(async () => {
+            const [m, t] = await Promise.all([march.boundingBox(), total.boundingBox()])
+            if (!m || !t) return false
+            const sameLine = Math.abs(t.y - m.y) < m.height / 2
+            return sameLine ? t.x > m.x : t.y > m.y
+        })
+        .toBe(true)
+}
+
 test.describe('reports: period pivot', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
@@ -117,11 +133,7 @@ test.describe('reports: period pivot', () => {
             await expect(await cellOf(p, 'amount.p2', 'Bo')).toHaveText('25.00')
             await expect(await cellOf(p, 'amount', 'Bo')).toHaveText('25.00')
             // The total column follows the months (pivot.order "spec").
-            const march = await p.getByTestId('report-heading-amount.p2').boundingBox()
-            const total = await p.getByTestId('report-heading-amount').boundingBox()
-            expect(march).not.toBeNull()
-            expect(total).not.toBeNull()
-            expect(total?.x ?? 0).toBeGreaterThan(march?.x ?? 0)
+            await expectTotalAfterMarch(p)
             expect(await waitForTableFit(p)).toBe('one-line')
         } finally {
             await close()
@@ -152,6 +164,7 @@ test.describe('reports: period pivot', () => {
                 await p.evaluate(() => document.documentElement.scrollWidth)
             ).toBeLessThanOrEqual(390)
             await expectMonthHeadings(p)
+            await expectTotalAfterMarch(p)
             await expect(await cellOf(p, 'amount.p1', 'Ann')).toHaveText('0.00')
         } finally {
             await close()
