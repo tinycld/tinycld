@@ -1,7 +1,7 @@
 // Package stub is an E2E fixture: two report sources over its own collections,
 // so the app shell's reports e2e has a to-one link, a to-many link, money, a
 // number, a date, a day kept as text and selects with no real feature package
-// installed, a heading, and three shipped reports (one published, two not). See
+// installed, a heading, and shipped reports (published and not). See
 // tinycld/tests/scripts/scaffold-reports-stub.ts for why.
 package stub
 
@@ -223,6 +223,53 @@ func Register(_ core.App) error {
 				]
 			}
 		}`)),
+	})
+	// A published statement with a percent of a section (P1): sections by a hidden
+	// status column, each customer under its section, and a computed row; every
+	// row's share divides its own amount by the Open sales total
+	// (tests/e2e/reports-period-pivot.spec.ts).
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.period_statement", Title: "Stub period statement", Revision: 1,
+		Description: "Each customer's sales by status, as a share of the open sales.",
+		Spec: json.RawMessage(`{
+			"version": 4,
+			"source": "salesstub.sales",
+			"columns": [
+				{"id": "customer", "label": "Customer", "path": [{"field": "customer"}]},
+				{"id": "amount", "label": "Amount", "path": [{"field": "amount"}], "aggregate": "sum"},
+				{"id": "share", "label": "% of open", "formula": {"op": "percentOfSection", "args": [{"col": "amount"}], "subtotal": "open", "scale": 1}},
+				{"id": "side", "hidden": true, "path": [{"field": "status"}]}
+			],
+			"groups": [
+				{"id": "section", "col": "side", "open": true, "subtotals": true},
+				{"id": "byCustomer", "col": "customer"}
+			],
+			"layout": [
+				{"section": "open", "title": "Open sales", "key": "open"},
+				{"section": "paid", "title": "Paid sales", "key": "paid"},
+				{"row": "all", "label": "All sales", "formula": {"op": "add", "args": [{"subtotal": "open"}, {"subtotal": "paid"}]}}
+			],
+			"sort": [{"col": "customer"}]
+		}`),
+	})
+	// A published month pivot over every month of the period (P2), with each
+	// customer's total after the months (P3) and the months in words (P4)
+	// (tests/e2e/reports-period-pivot.spec.ts).
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.period_pivot", Title: "Stub period pivot", Revision: 1,
+		Description: "Each customer's sales in every month of a period.",
+		Spec: json.RawMessage(`{
+			"version": 4,
+			"source": "salesstub.sales",
+			"params": [{"id": "period", "type": "dateRange", "label": "Period", "default": {"preset": "thisFiscalYear"}}],
+			"columns": [
+				{"id": "customer", "label": "Customer", "path": [{"field": "customer"}]},
+				{"id": "amount", "label": "Total", "path": [{"field": "amount"}], "aggregate": "sum"}
+			],
+			"filter": {"op": "between", "args": [{"path": [{"field": "day"}]}, {"param": "period"}]},
+			"groups": [{"id": "byCustomer", "col": "customer"}],
+			"pivot": {"path": [{"field": "day"}], "bucket": "month", "cell": "amount", "range": "period", "order": "spec"}
+		}`),
 	})
 	return nil
 }
