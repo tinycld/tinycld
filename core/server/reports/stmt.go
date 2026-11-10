@@ -227,7 +227,11 @@ func (s *stmt) topics(ctx context.Context, app core.App, sql string, cache map[s
 func q(alias, column string) string { return "[[" + alias + "." + column + "]]" }
 
 // fieldSQL reads a field from an alias. A blank date, select or relation is
-// NULL, so a blank and a hidden linked row read the same.
+// NULL, so a blank and a hidden linked row read the same. A day is compared
+// through substr(), which no index serves: measured (BenchmarkDayComparison,
+// 2026-11) a bare-column form with a date index gained nothing that matters,
+// because every read of a collection also runs its rule's id list over the
+// whole table.
 func fieldSQL(alias string, f *Field) string {
 	c := q(alias, f.Column)
 	switch f.Type {

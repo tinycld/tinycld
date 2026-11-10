@@ -655,7 +655,7 @@ func ruleReaders(raw, table string) []string {
 
 // queryPlan is SQLite's EXPLAIN QUERY PLAN of stmt, one step a line,
 // indented two spaces a level under its parent step.
-func queryPlan(t *testing.T, db *sql.DB, stmt string, args []any) []string {
+func queryPlan(t testing.TB, db *sql.DB, stmt string, args []any) []string {
 	t.Helper()
 	rows, err := db.Query("EXPLAIN QUERY PLAN "+stmt, args...)
 	if err != nil {

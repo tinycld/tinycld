@@ -2,6 +2,7 @@ package reports
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -265,26 +266,8 @@ func measureRun(tb testing.TB, z *zoo, raw string) benchStatement {
 		tb.Fatalf("read pool is %T", z.app.ConcurrentDB())
 	}
 	db := pool.DB()
-	t0 := time.Now()
-	prepared, err := db.Prepare(stmt)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	out.prepare = time.Since(t0)
-	t1 := time.Now()
-	rows, err := prepared.Query(args...)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	for rows.Next() {
-		out.rows++
-	}
-	if err := rows.Err(); err != nil {
-		tb.Fatal(err)
-	}
-	rows.Close()
-	out.run = time.Since(t1)
-	prepared.Close()
+	prepare, run, rows := timeStatement(tb, db, stmt, args)
+	out.prepare, out.run, out.rows = prepare, run, len(rows)
 	return out
 }
 
@@ -300,6 +283,190 @@ func benchRunWith(z *zoo, raw string, params map[string]json.RawMessage) (*Resul
 		return nil, err
 	}
 	return Run(context.Background(), z.app, Request{Spec: spec, Loaded: info, Params: params, Options: Options{Today: "2026-07-15"}, Auth: z.recs["ann"]})
+}
+
+// dayFilters are the day comparisons a ledger report makes: a period
+// (General Ledger), on or before a day (Balance Sheet), on or after a day.
+var dayFilters = map[string]string{
+	"between": `{"op":"between","args":[{"path":[{"field":"date"}]},{"param":"period"}]}`,
+	"lte":     `{"op":"lte","args":[{"path":[{"field":"date"}]},{"param":"asOf"}]}`,
+	"gte":     `{"op":"gte","args":[{"path":[{"field":"date"}]},{"param":"asOf"}]}`,
+}
+
+// The bounds are Date params, as in the Balance Sheet: Task 5 rewrites a
+// comparison only when its bound is a Date, so a text literal here would
+// measure a form that does not ship.
+
+// benchPeriodReport is a report on the ledger: posted lines that pass the
+// day filter, totalled by account.
+func benchPeriodReport(filter string) string {
+	net := `{"op":"sub","args":[{"path":[{"field":"debit"}]},{"path":[{"field":"credit"}]}]}`
+	return `{"version":4,"source":"zoo.ledger_lines",
+	"params":[{"id":"period","type":"dateRange","label":"Period"},{"id":"asOf","type":"date","label":"As of"}],
+	"filter":{"op":"and","args":[{"op":"eq","args":[{"path":[{"field":"posted"}]},{"value":true}]},
+		` + dayFilters[filter] + `]},
+	"columns":[{"id":"account","path":[{"link":"account"}]},
+		{"id":"net","formula":{"op":"sum","args":[` + net + `]}}],
+	"groups":[{"id":"byAccount","col":"account"}]}`
+}
+
+// substrDay is a text day read through substr() (fieldSQL), maybe inside
+// between's own substr(), before its comparison operator.
+var substrDay = regexp.MustCompile("(?:substr\\()?NULLIF\\(substr\\((`[^`]+`\\.`[^`]+`), 1, 10\\), ''\\)(?:, 1, 10\\))? (<=|<|>=|>) ")
+
+// sargableDays rewrites each day comparison of a raw statement into the
+// form a bare-column comparison would take (dayForm), so one statement is
+// timed both ways. The right side ends at the comparison's closing
+// parenthesis or at an AND at its own depth.
+func sargableDays(sql string) string {
+	var out strings.Builder
+	for {
+		loc := substrDay.FindStringSubmatchIndex(sql)
+		if loc == nil {
+			out.WriteString(sql)
+			return out.String()
+		}
+		col, op := sql[loc[2]:loc[3]], sql[loc[4]:loc[5]]
+		rest := sql[loc[1]:]
+		depth, end := 0, len(rest)
+		for i, r := range rest {
+			if r == '(' {
+				depth++
+			}
+			if r == ')' {
+				if depth == 0 {
+					end = i
+					break
+				}
+				depth--
+			}
+			if depth == 0 && strings.HasPrefix(rest[i:], " AND ") {
+				end = i
+				break
+			}
+		}
+		out.WriteString(sql[:loc[0]])
+		out.WriteString(dayForm(col, op, rest[:end]))
+		sql = rest[end:]
+	}
+}
+
+// dayForm is col op rhs on a bare day column, as the substr() form is on
+// every stored day (a text day, a PocketBase date "YYYY-MM-DD hh:mm:ss.sssZ")
+// and on a blank one, which reads NULL (an empty string sorts first, so
+// the blank is made NULL, not false, and a not() over it stays NULL).
+func dayForm(col, op, rhs string) string {
+	known := "(" + col + " <> '' OR NULL)"
+	switch op {
+	case "<":
+		return "(" + col + " < " + rhs + " AND " + known + ")"
+	case "<=":
+		return "(" + col + " < date(" + rhs + ", '+1 day') AND " + known + ")"
+	case ">":
+		return "(" + col + " >= date(" + rhs + ", '+1 day') OR (" + col + " = '' AND NULL))"
+	}
+	return "(" + col + " >= " + rhs + " OR (" + col + " = '' AND NULL))"
+}
+
+// timeStatement prepares and runs a raw statement on db, returning both
+// times and the rows as text.
+func timeStatement(tb testing.TB, db *sql.DB, stmt string, args []any) (prepare, run time.Duration, rows []string) {
+	tb.Helper()
+	t0 := time.Now()
+	prepared, err := db.Prepare(stmt)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer prepared.Close()
+	prepare = time.Since(t0)
+	t1 := time.Now()
+	res, err := prepared.Query(args...)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer res.Close()
+	cols, _ := res.Columns()
+	for res.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := res.Scan(ptrs...); err != nil {
+			tb.Fatal(err)
+		}
+		rows = append(rows, fmt.Sprint(vals...))
+	}
+	if err := res.Err(); err != nil {
+		tb.Fatal(err)
+	}
+	return prepare, time.Since(t1), rows
+}
+
+// LAYOUT_BENCH_LINES=30000 GOWORK=off go test ./reports/ -run '^$' -bench BenchmarkDayComparison -benchtime 1x
+func BenchmarkDayComparison(b *testing.B) {
+	timeout := runLimits.timeout
+	runLimits.timeout = 30 * time.Minute
+	defer func() { runLimits.timeout = timeout }()
+	for _, lines := range benchSizes() {
+		for _, filter := range []string{"between", "lte", "gte"} {
+			for _, index := range []string{"", "date", "posted, date"} {
+				b.Run(fmt.Sprintf("lines=%d/filter=%s/index=%s", lines, filter, index), func(b *testing.B) {
+					z := newZoo(b)
+					withBalanceZoo(b, z)
+					withBenchLedger(b, z, lines)
+					if index != "" {
+						if _, err := z.app.DB().NewQuery("CREATE INDEX idx_bench_lines_day ON zoo_ledger_lines (" + index + ")").Execute(); err != nil {
+							b.Fatal(err)
+						}
+						if _, err := z.app.DB().NewQuery("ANALYZE").Execute(); err != nil {
+							b.Fatal(err)
+						}
+					}
+					var group benchStatement
+					observeRead = func(sql string, params dbx.Params) {
+						if strings.Contains(sql, "__level") && len(sql) > group.bytes {
+							group.bytes, group.sql, group.params = len(sql), sql, params
+						}
+					}
+					// The ledger posts no line in March 2026 (its months and years
+					// never align there), so a 2026 period would compare nothing.
+					params := map[string]json.RawMessage{
+						"period": json.RawMessage(`{"from":"2025-03-01","to":"2025-03-31"}`),
+						"asOf":   json.RawMessage(`"2026-03-15"`),
+					}
+					if _, err := benchRunWith(z, benchPeriodReport(filter), params); err != nil {
+						b.Fatal(err)
+					}
+					observeRead = nil
+					raw, args := rawStatement(b, group.sql, group.params)
+					sargable := sargableDays(raw)
+					if sargable == raw {
+						b.Fatal("the statement has no day comparison to rewrite")
+					}
+					pool, ok := z.app.ConcurrentDB().(*dbx.DB)
+					if !ok {
+						b.Fatalf("read pool is %T", z.app.ConcurrentDB())
+					}
+					db := pool.DB()
+					_, substrRun, substrRows := timeStatement(b, db, raw, args)
+					_, sargRun, sargRows := timeStatement(b, db, sargable, args)
+					if strings.Join(substrRows, "\n") != strings.Join(sargRows, "\n") {
+						b.Fatalf("the two forms disagree:\n%v\n%v", substrRows, sargRows)
+					}
+					plan := strings.Join(queryPlan(b, db, sargable, args), "\n")
+					used := 0.0
+					if strings.Contains(plan, "idx_bench_lines_day") {
+						used = 1
+					}
+					b.ReportMetric(float64(substrRun.Microseconds())/1000, "substr-ms")
+					b.ReportMetric(float64(sargRun.Microseconds())/1000, "sargable-ms")
+					b.ReportMetric(used, "index-used")
+					b.ReportMetric(float64(len(substrRows)), "rows")
+				})
+			}
+		}
+	}
 }
 
 func benchSizes() []int {
