@@ -444,24 +444,46 @@ func (rc *rowsCtx) hoistLookup(e expr, reads *rowReads) (_ expr, hoisted bool) {
 // the check and the check, and the blank is built from the two above the
 // layer, so each is computed once.
 func hoistedLookup(frame *windowFrame, alias string, keys []string, e expr) expr {
+	return hoistLookupParts(e, func(parts []lookupPart) []string {
+		sqls := make([]string, len(parts))
+		for i, p := range parts {
+			sqls[i] = p.sql
+		}
+		return frame.hoistLayer(alias, keys, sqls...)
+	})
+}
+
+// lookupPart is one part of a lookup that a context computes once: col names
+// its role (u the value before the mixed check, s the value when there is no
+// such check, m the check, c the currency, sh the shown value).
+type lookupPart struct{ col, sql string }
+
+// hoistLookupParts computes a lookup's parts once, through hoist, which
+// returns a reference for each part in order, and rebuilds the lookup over
+// the references. A value with a mixed check is computed as its two parts
+// and the blank is built from the two references, so each is computed once.
+// The detail and level frames (hoistedLookup) and the layout
+// (layoutCtx.lookup) share this rule, so they cannot drift apart.
+func hoistLookupParts(e expr, hoist func([]lookupPart) []string) expr {
 	if e.mixed != "" && e.unguarded == "" {
 		log.Warn("a lookup with a mixed check has no unguarded value; its check is computed twice")
 	}
-	value := e.sql
+	value, valueCol := e.sql, "s"
 	if e.unguarded != "" {
-		value = e.unguarded
+		value, valueCol = e.unguarded, "u"
 	}
-	parts := []*string{&value, &e.mixed, &e.cur.sql, &e.shown}
-	var sqls []string
-	for _, p := range parts {
-		if *p != "" {
-			sqls = append(sqls, *p)
+	fields := []*string{&value, &e.mixed, &e.cur.sql, &e.shown}
+	cols := []string{valueCol, "m", "c", "sh"}
+	var parts []lookupPart
+	for i, f := range fields {
+		if *f != "" {
+			parts = append(parts, lookupPart{col: cols[i], sql: *f})
 		}
 	}
-	refs := frame.hoistLayer(alias, keys, sqls...)
-	for _, p := range parts {
-		if *p != "" {
-			*p, refs = refs[0], refs[1:]
+	refs := hoist(parts)
+	for _, f := range fields {
+		if *f != "" {
+			*f, refs = refs[0], refs[1:]
 		}
 	}
 	if e.unguarded == "" {

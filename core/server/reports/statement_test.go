@@ -50,8 +50,8 @@ var dbxToken = regexp.MustCompile(`{{(\w+)}}|\[\[([\w.]+)\]\]|{:(\w+)}`)
 
 // rawStatement rewrites a dbx statement as dbx does for SQLite, and lists its
 // arguments in placeholder order.
-func rawStatement(t *testing.T, stmt string, params dbx.Params) (string, []any) {
-	t.Helper()
+func rawStatement(tb testing.TB, stmt string, params dbx.Params) (string, []any) {
+	tb.Helper()
 	var args []any
 	out := dbxToken.ReplaceAllStringFunc(stmt, func(tok string) string {
 		m := dbxToken.FindStringSubmatch(tok)
@@ -67,7 +67,7 @@ func rawStatement(t *testing.T, stmt string, params dbx.Params) (string, []any) 
 		}
 		v, ok := params[m[3]]
 		if !ok {
-			t.Fatalf("no param %s", m[3])
+			tb.Fatalf("no param %s", m[3])
 		}
 		args = append(args, v)
 		return "?"

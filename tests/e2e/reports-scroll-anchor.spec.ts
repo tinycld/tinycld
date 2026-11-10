@@ -211,7 +211,7 @@ interface Frame {
      * on a later line of that row).
      */
     first: string
-    /** How many group rows are open. */
+    /** How many group rows are open with their rows in (not pending). */
     open: number
     /** How far the list scrolls after this frame. */
     step: number
@@ -320,7 +320,11 @@ async function scrollAndRecord(
                         state.crossed = true
                         crossed()
                     }
-                    const open = scroller.querySelectorAll('[aria-expanded="true"]').length
+                    // A pending group is drawn open before its rows land; count the
+                    // groups whose rows are in.
+                    const open = scroller.querySelectorAll(
+                        '[aria-expanded="true"]:not([aria-busy="true"])'
+                    ).length
                     const room = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
                     const next = state.crossed ? 0 : by
                     frames.push({ tops, first, open, step: next, room })
@@ -471,12 +475,14 @@ test.describe('scroll position on web', () => {
             const height =
                 ((await next.boundingBox())?.y ?? 0) - ((await start.boundingBox())?.y ?? 0)
             expect(height, 'a phone row is taller than a wheel step').toBeGreaterThan(WHEEL_STEP)
-            await toTop(start, -((height % WHEEL_STEP) + 2))
             // Expand all is held while the list scrolls; it is let go as the row first
-            // in view scrolls away, so it lands just after that.
+            // in view scrolls away, so it lands just after that. The list is placed
+            // after the press: on a phone the toolbar is in the list's header, and the
+            // click scrolls it into view, so the list is at its top after the press.
             const release = await holdRuns(p)
             await pressToolbar(p, 'report-fold-all', 'Expand all')
             await expect(p.getByTestId('report-updating')).toBeVisible()
+            await toTop(start, -((height % WHEEL_STEP) + 2))
             const recorded = await scrollAndRecord(
                 p,
                 await listScroller(start),

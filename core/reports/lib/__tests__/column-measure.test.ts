@@ -46,7 +46,7 @@ function item(
     isToggle = false
 ): VisibleRow {
     const row: ResultRow = { id: `${kind}:${label}`, kind, depth: 1, label, cells, ...extra }
-    return { row, cells, isToggle, isOpen: isToggle }
+    return { row, cells, isToggle, isOpen: isToggle, isPending: false }
 }
 
 const DETAIL = item(

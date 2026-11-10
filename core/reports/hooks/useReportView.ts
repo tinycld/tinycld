@@ -31,6 +31,7 @@ import {
     hasRows,
     toggleGroup,
     visibleRows,
+    withPendingOpen,
 } from '../lib/rows'
 import { type RunBody, refusalSortProblem, type ViewSort } from '../lib/run-client'
 import {
@@ -257,6 +258,12 @@ export function useReportView(input: ReportViewInput) {
     // subtotal row, also before a later page brings it.
     const viewSpec = input.spec ?? null
     const shownRows = useMemo(() => visibleRows(rows, viewSpec), [rows, viewSpec])
+    // The group the reader just opened shows open at once, with a spinner, until
+    // the run that opens it lands (findings: a slow statement left the press silent).
+    const pendingRows = useMemo(
+        () => withPendingOpen(shownRows, expansion, viewSpec, run.isUpdating),
+        [shownRows, expansion, viewSpec, run.isUpdating]
+    )
     const onToggleGroup = useCallback(
         (row: ResultRow) => setExpansion(reportKey, toggleGroup(expansion, row, rows)),
         [setExpansion, reportKey, expansion, rows]
@@ -289,7 +296,7 @@ export function useReportView(input: ReportViewInput) {
         isBodyShown: !(isEditing && panel === 'sheet'),
         problems: broken && !isEditing ? brokenProblems(broken) : run.problems,
         run,
-        rows: shownRows,
+        rows: pendingRows,
         columns: shownColumns(allColumns, options.display.hidden),
         allColumns,
         notices: run.result?.notices ?? NO_NOTICES,

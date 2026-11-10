@@ -111,6 +111,7 @@ const LONG_LABEL_ROW: VisibleRow = {
     cells: {},
     isToggle: false,
     isOpen: false,
+    isPending: false,
 }
 const labelMinOf = (levels: RowLevels) =>
     measureColumns({ columns: COLS, rows: [LONG_LABEL_ROW], format: DEFAULT_DISPLAY, levels })
@@ -773,7 +774,12 @@ describe('the table layout per width', () => {
         if (layout.kind !== 'blocks') throw new Error('expected lines')
         const row = { id: 'g', kind: 'group' as const, depth: 0, label: 'Assets', cells: {} }
         expect(
-            rowLayout({ row, cells: {}, isToggle: true, isOpen: false }, layout, 'account', 0)
+            rowLayout(
+                { row, cells: {}, isToggle: true, isOpen: false, isPending: false },
+                layout,
+                'account',
+                0
+            )
         ).toEqual({
             kind: 'blocks',
             root: { kind: 'cell', col: 'account', justify: 'start' },
@@ -781,7 +787,12 @@ describe('the table layout per width', () => {
         })
         const full = { number: 'A1', debit: 5, credit: 0 }
         expect(
-            rowLayout({ row, cells: full, isToggle: false, isOpen: false }, layout, 'account', 0)
+            rowLayout(
+                { row, cells: full, isToggle: false, isOpen: false, isPending: false },
+                layout,
+                'account',
+                0
+            )
         ).toBe(layout)
     })
     // E2: an opened row with no No. cell (blank on detail rows) keeps the phone lines,
@@ -797,7 +808,12 @@ describe('the table layout per width', () => {
         const row = { id: 'd:1', kind: 'detail' as const, depth: 1, label: 'Sale', cells: {} }
         const cells = { debit: 250, credit: null }
         expect(
-            rowLayout({ row, cells, isToggle: false, isOpen: false }, layout, 'account', 0)
+            rowLayout(
+                { row, cells, isToggle: false, isOpen: false, isPending: false },
+                layout,
+                'account',
+                0
+            )
         ).toBe(layout)
     })
     it('starts an arrangement from the columns', () => {
@@ -1067,6 +1083,7 @@ describe('figure-only rows in a wrapped layout', () => {
         cells,
         isToggle: false,
         isOpen: false,
+        isPending: false,
     })
 
     it('lets the label take the empty tracks of its line', () => {
@@ -1172,6 +1189,7 @@ describe('the label span of a one-line row', () => {
         cells,
         isToggle: kind === 'group',
         isOpen: kind === 'group',
+        isPending: false,
     })
 
     it('spans an open group row (no cells) across every column', () => {
@@ -1374,6 +1392,7 @@ describe('column fit in the fit', () => {
             cells: {},
             isToggle: true,
             isOpen: false,
+            isPending: false,
         }
         expect(rowLayout(group, auto, 'account', 0)).toMatchObject({ lines: { account: 2 } })
         expect('lines' in fitAt(1280).layout).toBe(false)

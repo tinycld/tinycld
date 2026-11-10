@@ -227,7 +227,12 @@ func (s *stmt) topics(ctx context.Context, app core.App, sql string, cache map[s
 func q(alias, column string) string { return "[[" + alias + "." + column + "]]" }
 
 // fieldSQL reads a field from an alias. A blank date, select or relation is
-// NULL, so a blank and a hidden linked row read the same.
+// NULL, so a blank and a hidden linked row read the same. A day is compared
+// through substr(), which no index serves. Measured 2026-11
+// (BenchmarkDayComparison, 30,000 lines): a bare-column form with a date index
+// made `between` about 40% faster and `gte` about 20% faster, but not `lte`
+// (the Balance Sheet read), so the form was not changed; see
+// docs/plans/2026-11-09-report-layout-perf.md, Results.
 func fieldSQL(alias string, f *Field) string {
 	c := q(alias, f.Column)
 	switch f.Type {

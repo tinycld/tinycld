@@ -59,6 +59,10 @@ type expr struct {
 	// link is, in a lookup's where, the stored relation column a path that
 	// ends at a to-one link follows to read sql; eq bounds that column too.
 	link storedLink
+	// scan is a sum lookup's value, mixed check and currency as one select
+	// over the looked-up rows (columns u, m, c), for a context that computes
+	// the lookup once in a CTE (layoutCtx.lookup). "" for any other value.
+	scan string
 }
 
 // storedLink is the stored relation column (col) a link path reads its

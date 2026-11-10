@@ -8,6 +8,7 @@ const row = (id: string, kind: ResultRow['kind'], extra: Partial<ResultRow> = {}
     cells: {},
     isToggle: kind === 'group',
     isOpen: extra.expanded === true,
+    isPending: false,
 })
 
 const ROWS = [

@@ -10,6 +10,8 @@ export type VisibleRow = {
     /** A group row that can open or close. */
     isToggle: boolean
     isOpen: boolean
+    /** A closed group the reader opened whose run has not landed yet: drawn open, with a spinner. */
+    isPending: boolean
 }
 
 const NO_CELLS: Record<string, CellValue> = {}
@@ -75,6 +77,7 @@ export function visibleRows(
             cells: rowCells(row, withSubtotal, spec),
             isToggle: isGroup && row.canExpand === true,
             isOpen: isGroup && row.expanded === true,
+            isPending: false,
         }
     })
 }
@@ -167,6 +170,42 @@ export function toggleGroup(
     const key = row.groupKey ?? []
     if (!row.expanded) return { ...expansion, keys: withKey(expansion.keys, key) }
     return { ...expansion, keys: withoutKeys(expansion.keys, subtreeKeys(row, rows)) }
+}
+
+/** What withPendingOpen reads of the spec: which group levels open by default. */
+export type PendingSpec = { groups?: readonly { open?: boolean }[] | null }
+
+// Whether the expansion asks this closed group open, as the engine reads it
+// (expansionOptions, R2): every group but the folds under Expand all; under the
+// open levels, a group of an open level that is not folded or one opened by its
+// key; otherwise one opened by its key.
+function asksOpen(expansion: Expansion, row: ResultRow, spec: PendingSpec | null): boolean {
+    const key = row.groupKey ?? []
+    if (hasKey(expansion.collapsed, key)) return false
+    if (expansion.all) return true
+    if (hasKey(expansion.keys, key)) return true
+    if (!expansion.isDefault) return false
+    const level = row.level ?? row.depth + 1
+    return spec?.groups?.[level - 1]?.open === true
+}
+
+/**
+ * While a run is on its way (isUpdating), a closed group the expansion asks open is
+ * drawn open and pending, so the press shows at once; the run that lands draws it
+ * open with its rows. With no run on its way the rows are returned unchanged.
+ */
+export function withPendingOpen(
+    rows: VisibleRow[],
+    expansion: Expansion,
+    spec: PendingSpec | null,
+    isUpdating: boolean
+): VisibleRow[] {
+    if (!isUpdating) return rows
+    return rows.map(item =>
+        item.isToggle && !item.isOpen && asksOpen(expansion, item.row, spec)
+            ? { ...item, row: { ...item.row, expanded: true }, isOpen: true, isPending: true }
+            : item
+    )
 }
 
 export function foldAllLabel(rows: readonly ResultRow[]): 'Collapse all' | 'Expand all' | null {

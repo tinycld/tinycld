@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import type { ReactNode } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { isFigureColumn, labelNeed } from '../lib/column-measure'
 import { type CellDisplay, cellDisplay, type NumberFormat, rowLabelText } from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
@@ -194,11 +194,37 @@ function blockKey(block: Block, index: number): string {
     return `gap-${index}`
 }
 
-function GroupCaret({ isOpen }: { isOpen: boolean }) {
+// The caret slot is CARET_SIZE square and the label starts CARET_ROOM after the
+// indent (column-measure.ts:155, 206), so the spinner takes the chevron's place in
+// that slot: a wider caret would push the label out of the measured column.
+const SPINNER_SCALE = CARET_SIZE / 20
+
+function GroupCaret({ isOpen, pendingId }: { isOpen: boolean; pendingId: string | null }) {
     const color = useThemeColor('muted-foreground')
     const Icon = isOpen ? ChevronDown : ChevronRight
+    if (pendingId !== null) return <PendingSpinner testID={pendingId} color={color} />
     return <Icon size={CARET_SIZE} color={color} />
 }
+
+// ActivityIndicator "small" is 20 px on web and native; scaled into the slot.
+function PendingSpinner({ testID, color }: { testID: string; color: string }) {
+    return (
+        <View
+            style={{ width: CARET_SIZE, height: CARET_SIZE }}
+            className="items-center justify-center"
+        >
+            <ActivityIndicator
+                testID={testID}
+                size="small"
+                color={color}
+                style={{ transform: [{ scale: SPINNER_SCALE }] }}
+            />
+        </View>
+    )
+}
+
+const pendingId = (item: VisibleRow, isCopy: boolean) =>
+    item.isPending ? `${isCopy ? 'report-sticky-pending' : 'report-pending'}-${item.row.id}` : null
 
 // An opening row's label is a note before the group's own rows, so it is quieter.
 function labelTone(kind: RowKind): string {
@@ -269,11 +295,12 @@ function GroupToggleLabel({
             accessibilityRole="button"
             accessibilityLabel={text}
             aria-expanded={item.isOpen}
+            aria-busy={item.isPending}
             onPress={() => onToggleGroup(row)}
             className="flex-row items-center gap-1 pr-3"
             style={labelStyle(row, justify, minHeight)}
         >
-            <GroupCaret isOpen={item.isOpen} />
+            <GroupCaret isOpen={item.isOpen} pendingId={pendingId(item, isCopy)} />
             <LabelText row={row} text={text} lines={lines} />
         </Pressable>
     )

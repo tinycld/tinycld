@@ -6,7 +6,9 @@ import {
     addTeam,
     cellOf,
     chooseOption,
+    detailLabels,
     groupWithTeamRegion,
+    holdRuns,
     openReportStub,
     openReportsHub,
     pressToolbar,
@@ -118,6 +120,42 @@ test.describe('group levels', () => {
             // A team with no sales has nothing to open.
             await expect(rowOf(p, `${stem} C`)).not.toHaveAttribute('aria-expanded')
             await expect(rowOf(p, `${stem} A`)).toHaveAttribute('aria-expanded', 'false')
+        } finally {
+            await close()
+        }
+    })
+
+    test('a group opened while its run is on its way turns its arrow at once and shows a spinner until the rows land', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptpend')
+        try {
+            const stem = uniqueName('Pend')
+            await seedTeams(p, stem)
+            await openReportsHub(p)
+            await groupByTeam(p, stem)
+            const team = rowOf(p, `${stem} A`)
+            await expect(team).toHaveAttribute('aria-expanded', 'false')
+            await expect(detailLabels(p)).toHaveCount(0)
+            const id = ((await team.getAttribute('data-testid')) ?? '').replace('report-row-', '')
+            const label = team.getByText(`${stem} A`, { exact: true })
+            const labelX = async () => (await label.boundingBox())?.x ?? null
+            // Read the label's place once the first run has landed and the row is still.
+            await expect.poll(labelX).not.toBeNull()
+            const before = await labelX()
+            const release = await holdRuns(p)
+            await team.click()
+            await expect(team).toHaveAttribute('aria-expanded', 'true')
+            await expect(team).toHaveAttribute('aria-busy', 'true')
+            await expect(p.getByTestId(`report-pending-${id}`)).toBeVisible()
+            await expect(detailLabels(p)).toHaveCount(0)
+            // The spinner sits in the caret's slot: the label does not move.
+            await expect.poll(labelX).toBe(before)
+            release()
+            await p.unrouteAll({ behavior: 'wait' })
+            await expect(detailLabels(p)).toHaveCount(1)
+            await expect(p.getByTestId(`report-pending-${id}`)).toHaveCount(0)
+            await expect(team).not.toHaveAttribute('aria-busy', 'true')
         } finally {
             await close()
         }

@@ -11,6 +11,7 @@ import {
     NO_EXPANSION,
     toggleGroup,
     visibleRows,
+    withPendingOpen,
 } from '../rows'
 import type { Notice, ResultRow, RunResult } from '../types'
 
@@ -731,5 +732,56 @@ describe('a computed row inside a section (G4)', () => {
         ])
         const merged = mergePages([first, page([total])])
         expect(merged.rows.map(r => r.id)).toEqual(['g:["equity"]', 'c:netIncome', 's:["equity"]'])
+    })
+})
+
+describe('withPendingOpen', () => {
+    const closed = group('g:c', ['c'])
+    const open = group('g:a', ['a'], { expanded: true })
+    const shown = visibleRows([open, closed, total])
+    const byKey = { all: false, keys: [['c']], collapsed: [] }
+
+    it('marks a closed group the expansion opens by key, while the run updates', () => {
+        const next = withPendingOpen(shown, byKey, null, true)
+        expect(next[1]).toMatchObject({ isOpen: true, isPending: true })
+        expect(next[0].isPending).toBe(false)
+    })
+
+    it('marks nothing once the run has landed', () => {
+        const next = withPendingOpen(shown, byKey, null, false)
+        expect(next).toBe(shown)
+    })
+
+    it('under Expand all marks every closed group that is not folded', () => {
+        expect(withPendingOpen(shown, EXPAND_ALL, null, true)[1].isPending).toBe(true)
+        const folded = { all: true, keys: [], collapsed: [['c']] }
+        expect(withPendingOpen(shown, folded, null, true)[1].isPending).toBe(false)
+    })
+
+    it('under the open levels marks a closed group of an open level that is not folded', () => {
+        const spec = { groups: [{ open: true }] }
+        const unfolded = { ...DEFAULT_EXPANSION, collapsed: [] }
+        expect(withPendingOpen(shown, unfolded, spec, true)[1].isPending).toBe(true)
+        const folded = { ...DEFAULT_EXPANSION, collapsed: [['c']] }
+        expect(withPendingOpen(shown, folded, spec, true)[1].isPending).toBe(false)
+        expect(withPendingOpen(shown, DEFAULT_EXPANSION, { groups: [{}] }, true)[1].isPending).toBe(
+            false
+        )
+    })
+
+    // toggleGroup reads row.expanded, so the pending row carries expanded: a
+    // second press while the run is on its way closes it, as on an open group.
+    it('lets a second press close a pending group', () => {
+        const expansion = { all: false, keys: [['c']], collapsed: [], isDefault: false }
+        const next = withPendingOpen(shown, expansion, null, true)
+        expect(next[1].row.expanded).toBe(true)
+        const closedAgain = toggleGroup(expansion, next[1].row, [open, closed, total])
+        expect(closedAgain.keys).toEqual([])
+        expect(withPendingOpen(shown, closedAgain, null, true)[1].isPending).toBe(false)
+    })
+
+    it('never marks a row that cannot open', () => {
+        const fixed = visibleRows([group('g:d', ['d'], { canExpand: false })])
+        expect(withPendingOpen(fixed, EXPAND_ALL, null, true)[0].isPending).toBe(false)
     })
 })
