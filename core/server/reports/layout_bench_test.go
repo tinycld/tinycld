@@ -31,8 +31,8 @@ import (
 // the same day a year earlier.
 const benchAsOf = `"2026-06-30"`
 
-// benchDetailTypes give a ledger account its class and kind, as the Books
-// account types do: ranks 0 skip the level.
+// benchDetailTypes give a ledger account its class and kind, as a ledger
+// package's account types do: ranks 0 skip the level.
 var benchDetailTypes = []struct {
 	typ, detail string
 }{
@@ -116,7 +116,7 @@ func benchCase(level int) string {
 	return `{"op":"case","args":[` + strings.Join(append(args, `{"value":null}`), ",") + `]}`
 }
 
-// benchBalanceSheet is the Books Balance Sheet's shape on the ledger
+// benchBalanceSheet is a ledger package's Balance Sheet shape on the ledger
 // fixture: sections by side, class and kind levels that skip, accounts with
 // a having, two day columns, derived Change and % change, Retained earnings
 // and Net income inside Equity by sum lookups, and a total of two sections.
@@ -203,7 +203,7 @@ func benchLevelsOnly() string {
 	return spec[:from] + spec[to:]
 }
 
-// benchTrialBalance is the Books Trial Balance's shape: one level of
+// benchTrialBalance is a ledger package's Trial Balance shape: one level of
 // accounts, debit and credit of the net as of a day.
 func benchTrialBalance() string {
 	net := `{"op":"sub","args":[{"path":[{"field":"debit"}]},{"path":[{"field":"credit"}]}]}`
@@ -292,10 +292,6 @@ var dayFilters = map[string]string{
 	"lte":     `{"op":"lte","args":[{"path":[{"field":"date"}]},{"param":"asOf"}]}`,
 	"gte":     `{"op":"gte","args":[{"path":[{"field":"date"}]},{"param":"asOf"}]}`,
 }
-
-// The bounds are Date params, as in the Balance Sheet: Task 5 rewrites a
-// comparison only when its bound is a Date, so a text literal here would
-// measure a form that does not ship.
 
 // benchPeriodReport is a report on the ledger: posted lines that pass the
 // day filter, totalled by account.
@@ -424,6 +420,7 @@ func BenchmarkDayComparison(b *testing.B) {
 						}
 					}
 					var group benchStatement
+					b.Cleanup(func() { observeRead = nil })
 					observeRead = func(sql string, params dbx.Params) {
 						if strings.Contains(sql, "__level") && len(sql) > group.bytes {
 							group.bytes, group.sql, group.params = len(sql), sql, params
@@ -438,7 +435,6 @@ func BenchmarkDayComparison(b *testing.B) {
 					if _, err := benchRunWith(z, benchPeriodReport(filter), params); err != nil {
 						b.Fatal(err)
 					}
-					observeRead = nil
 					raw, args := rawStatement(b, group.sql, group.params)
 					sargable := sargableDays(raw)
 					if sargable == raw {
