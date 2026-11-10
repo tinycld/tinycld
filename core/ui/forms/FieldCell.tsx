@@ -121,10 +121,10 @@ function DropBar({ fieldKey, side, isFullWidth }: DropBarProps) {
     )
 }
 
-function CellError({ message }: { message?: string }) {
+function CellError({ message, testID }: { message?: string; testID: string }) {
     if (!message) return null
     return (
-        <Text className="text-destructive text-xs mt-1" accessibilityRole="alert">
+        <Text className="text-destructive text-xs mt-1" accessibilityRole="alert" testID={testID}>
             {message}
         </Text>
     )
@@ -192,7 +192,7 @@ export function FieldCell({
             </View>
             <CellDescription text={description} />
             {children}
-            <CellError message={error} />
+            <CellError message={error} testID={`${cellTestID}-error`} />
             <DropBar fieldKey={fieldKey} side={dropIndicator} isFullWidth={effective === 'full'} />
         </View>
     )

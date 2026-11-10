@@ -56,6 +56,32 @@ describe('FieldCell', () => {
         expect(getByText('Severity is required')).toBeTruthy()
         expect(cellOf(container).getAttribute('class')).toContain('basis-1/3')
     })
+    it('gives the error its own test id from the field key', () => {
+        const { container } = render(<Cell fieldKey="severity" error="Severity is required" />)
+        expect(byId(container, 'form-field-severity-error').textContent).toBe(
+            'Severity is required'
+        )
+    })
+    it('draws no error element when the field has no error', () => {
+        const { container } = render(<Cell fieldKey="severity" />)
+        expect(byId(container, 'form-field-severity')).toBeTruthy()
+        expect(container.querySelector('[testID="form-field-severity-error"]')).toBeNull()
+    })
+    it('derives the error test id from a given cell test id', () => {
+        const { container } = render(
+            <Cell fieldKey="severity" testID="custom" error="Severity is required" />
+        )
+        expect(byId(container, 'custom-error').textContent).toBe('Severity is required')
+        expect(container.querySelector('[testID="form-field-severity-error"]')).toBeNull()
+    })
+    it('draws no error element in a bare cell', () => {
+        const { container, queryByText } = render(
+            <Cell fieldKey="severity" isBare error="Severity is required" />
+        )
+        expect(byId(container, 'form-field-severity')).toBeTruthy()
+        expect(container.querySelector('[testID="form-field-severity-error"]')).toBeNull()
+        expect(queryByText('Severity is required')).toBeNull()
+    })
     it('collapses the width class in a narrow container', () => {
         const { container } = render(
             <FieldCell
