@@ -1,13 +1,18 @@
 import { expect, type Page, test } from '@playwright/test'
 import { createInvitedUser, skipWithoutReportsStub, waitForTableFit } from './helpers'
 import {
+    addColumn,
     addSale,
     addTeam,
     cellOf,
+    chooseOption,
     hubRow,
     openReportStub,
     openReportsHub,
     rowOf,
+    SALES_SOURCE,
+    saveNewReport,
+    startReport,
     uniqueName,
 } from './reports-helpers'
 
@@ -135,6 +140,102 @@ test.describe('reports: period pivot', () => {
             // The total column follows the months (pivot.order "spec").
             await expectTotalAfterMarch(p)
             expect(await waitForTableFit(p)).toBe('one-line')
+        } finally {
+            await close()
+        }
+    })
+
+    // The builder's own controls for P2 and P3: Columns (every month of a period) and
+    // Total after the pivot columns, on a report built from nothing.
+    test('the builder shows every month of a period and puts the total after', async ({ page }) => {
+        const { p, close } = await seed(page, 'rptpdbuild', QUARTER_SALES)
+        try {
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await chooseOption(p, 'report-builder-column-1-aggregate', 'sum')
+            await p.getByTestId('report-builder-section-filter').click()
+            await p.getByTestId('report-builder-filter-add-condition').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-day')
+                .click()
+            await chooseOption(p, 'report-builder-filter-0-op', 'between')
+            await p.getByTestId('report-builder-filter-0-ask').click()
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'customer')
+            await p.getByTestId('report-builder-section-pivot').click()
+            await p.getByTestId('report-builder-pivot-on').click()
+            await p.getByTestId('report-builder-pivot-field').click()
+            await p
+                .getByTestId('report-builder-picker')
+                .getByTestId('report-builder-pick-field-day')
+                .click()
+            // Columns is offered only once the pivot is bucketed.
+            await expect(p.getByTestId('report-builder-pivot-range')).toHaveCount(0)
+            await chooseOption(p, 'report-builder-pivot-bucket', 'month')
+            await chooseOption(p, 'report-builder-pivot-cell', 'amount')
+            await chooseOption(p, 'report-builder-pivot-range', 'day')
+            await expect(p.getByTestId('report-builder-pivot-range')).toContainText(
+                'Show every month of Day'
+            )
+            await p.getByTestId('report-builder-pivot-total-after').click()
+            await saveNewReport(p, uniqueName('Every month'))
+
+            await p.getByTestId('report-add-filter').click()
+            await p.getByTestId('report-add-filter-day').click()
+            await p.getByTestId('report-period-preset-custom').click()
+            await p.getByTestId('report-period-from').fill('2026-01-01')
+            await p.getByTestId('report-period-to').fill('2026-03-31')
+            await p.keyboard.press('Escape')
+            await expect(p.getByTestId('report-period-popover')).toHaveCount(0)
+            await expectMonthHeadings(p)
+            await expect(await cellOf(p, 'amount.p1', 'Ann')).toHaveText('0.00')
+            await expect(await cellOf(p, 'amount.p2', 'Bo')).toHaveText('25.00')
+            await expectTotalAfterMarch(p)
+        } finally {
+            await close()
+        }
+    })
+
+    // The builder's section picker on a Percent of a section's total column.
+    test('the builder picks the section a percent divides by', async ({ page }) => {
+        const { p, close } = await seed(page, 'rptpdshare', [
+            { customer: 'Owed', amount: 3000, day: '2026-01-05' },
+            { customer: 'Settled', amount: 5000, day: '2026-01-06', status: 'paid' },
+        ])
+        try {
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['status'])
+            await addColumn(p, ['amount'])
+            await chooseOption(p, 'report-builder-column-2-aggregate', 'sum')
+            await p.getByTestId('report-builder-section-group').click()
+            await p.getByTestId('report-builder-group-add').click()
+            await chooseOption(p, 'report-builder-group-0-col', 'status')
+            await p.getByTestId('report-builder-section-layout').click()
+            await p.getByTestId('report-builder-layout-add-section').click()
+            await p.getByTestId('report-builder-layout-0-title').fill('Open sales')
+            await chooseOption(p, 'report-builder-layout-0-key', 'open')
+            await p.getByTestId('report-builder-layout-add-section').click()
+            await p.getByTestId('report-builder-layout-1-title').fill('Paid sales')
+            await chooseOption(p, 'report-builder-layout-1-key', 'paid')
+
+            await p.getByTestId('report-builder-add-formula').click()
+            await p.getByTestId('report-builder-column-3-label').fill('Share')
+            const formula = 'report-builder-column-3-formula'
+            await chooseOption(p, `${formula}-root-part`, 'percentOfSection')
+            // A percent shows each row's own share: it offers no total.
+            await p.getByTestId('report-builder-column-3-aggregate').click()
+            await expect(p.getByRole('menuitem')).toHaveCount(1)
+            await p.keyboard.press('Escape')
+
+            await expect(p.getByTestId(`${formula}-root-section`)).toContainText('Open sales')
+            await expect(await cellOf(p, 'formula', 'Total Open sales')).toHaveText('100.0%')
+            await chooseOption(p, `${formula}-root-section`, 'section2')
+            await expect(p.getByTestId(`${formula}-root-section`)).toContainText('Paid sales')
+            await expect(await cellOf(p, 'formula', 'Total Open sales')).toHaveText('60.0%')
         } finally {
             await close()
         }
