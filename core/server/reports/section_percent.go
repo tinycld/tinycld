@@ -120,7 +120,7 @@ func (rn *runner) sectionPercentCell(sp *sectionPercent, row map[string]any) any
 	v, err := sqlPct(nil, []driver.Value{part, whole, int64(sp.scale)})
 	if err != nil {
 		if rn.assembleErr == nil {
-			rn.assembleErr = err
+			rn.assembleErr = mapRunError(err)
 		}
 		return nil
 	}

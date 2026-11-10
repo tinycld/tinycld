@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"errors"
 	"maps"
 	"reflect"
 	"slices"
@@ -209,4 +210,17 @@ func TestPercentOfSectionReadsTheTotalWhenTheSectionIsFolded(t *testing.T) {
 	requireShares(t, sharesOf(folded), want)
 	open := z.run(t, "ann", raw, Options{ExpandAll: true}, nil)
 	requireShares(t, sharesOf(open, KindGroup, KindSubtotal, KindComputed), want)
+}
+
+// A percent multiplies its part by 100, so a part near the int64 limit
+// overflows even though the section total still fits.
+func TestPercentOfSectionReportsAnAmountTooLarge(t *testing.T) {
+	z := newZoo(t)
+	if _, err := z.app.DB().NewQuery("UPDATE zoo_feedings SET cost = 4611686018427387904 WHERE note = 'f1'").Execute(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := z.try(t, "ann", percentStatement(shareOfLions, bySpecies, sortByNote, gapRow), Options{ExpandAll: true}, nil)
+	if !errors.Is(err, ErrAmountTooLarge) {
+		t.Fatalf("err = %v, want ErrAmountTooLarge", err)
+	}
 }
