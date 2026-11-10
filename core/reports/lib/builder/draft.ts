@@ -65,6 +65,7 @@ import {
     levelValueColumns,
     readsSubtotal,
     recordGroups,
+    sectionPercentColumns,
     type TargetDraft,
 } from './formula-context'
 import { isEditableNode, settleScales } from './formula-ops'
@@ -523,17 +524,19 @@ export function withinChoices(draft: Pick<BuilderDraft, 'layout'>, index: number
 /**
  * "This column: …": number, amount and percent columns after the first (bind.go
  * layoutCells, layout.go computedLeg); the pivot's cell column shows as the pivot's
- * columns, which the row's formula fills.
+ * columns, which the row's formula fills. A Percent of a section's total is filled after
+ * the statements run, so no row sets it.
  */
 export function cellColumnIds(
     draft: Pick<BuilderDraft, 'columns' | 'pivot'>,
     types: ReadonlyMap<string, FieldType>
 ): string[] {
+    const percents = sectionPercentColumns(draft.columns)
     return draft.columns.slice(1).flatMap(column => {
         const type = types.get(column.id)
         const isNumber = type !== undefined && isNumericType(type)
         const isPivotCell = draft.pivot.on && draft.pivot.cell === column.id
-        return isNumber && !isPivotCell ? [column.id] : []
+        return isNumber && !isPivotCell && !percents.has(column.id) ? [column.id] : []
     })
 }
 

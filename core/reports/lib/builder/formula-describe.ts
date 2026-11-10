@@ -177,6 +177,11 @@ export function describeNode(ctx: ReportFormulaContext, node: SpecNode): string 
             case 'percentOfParent':
             case 'percentOfTotal':
                 return `${sub(args[0])} as % of ${part === 'percentOfParent' ? 'group' : 'total'}`
+            case 'percentOfSection': {
+                const section =
+                    here.sections.find(s => s.id === n.subtotal)?.title ?? `${n.subtotal} (missing)`
+                return `${sub(args[0])} as % of ${section}`
+            }
         }
         const sign = SIGNS[part]
         if (sign) return wrap(args.map(a => sub(a)).join(sign))

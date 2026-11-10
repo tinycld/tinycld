@@ -2232,3 +2232,57 @@ describe('statement fields set where the engine refuses them', () => {
         expect(at(withCells({ amount: NEW_ZERO }), ['layout', 1, 'cells', 'amount'])).toEqual([])
     })
 })
+
+describe('a percent of a section in the draft', () => {
+    const SHARE_META = { title: 'Shares', description: '' }
+    const shareSpec = (share: SpecNode): ReportSpec => ({
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        columns: [
+            { id: 'status', label: 'Status', path: [{ field: 'status' }] },
+            { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+            { id: 'share', label: 'Share', formula: share },
+        ],
+        groups: [{ id: 'byStatus', col: 'status', subtotals: true }],
+        layout: [
+            { section: 'open', title: 'Open', key: 'open' },
+            { section: 'paid', title: 'Paid', key: 'paid' },
+            {
+                row: 'gap',
+                label: 'Open less paid',
+                formula: { op: 'sub', args: [{ subtotal: 'open' }, { subtotal: 'paid' }] },
+            },
+        ],
+    })
+    const SHARE_NODE: SpecNode = {
+        op: 'percentOfSection',
+        args: [{ col: 'amount' }],
+        subtotal: 'open',
+        scale: 1,
+    }
+
+    it('edits a percent of a section and saves it as it was read', () => {
+        const spec = shareSpec(SHARE_NODE)
+        const draft = draftFromSpec(spec, SHARE_META, CATALOG)
+        expect(draft.columns[2]).toMatchObject({ kind: 'formula', formula: { kind: 'editable' } })
+        expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+    })
+
+    it('keeps a percent of a section it cannot write read-only', () => {
+        const spec = shareSpec({ ...SHARE_NODE, args: [{ value: 5 }] })
+        const draft = draftFromSpec(spec, SHARE_META, CATALOG)
+        expect(draft.columns[2]).toMatchObject({ kind: 'formula', formula: { kind: 'fixed' } })
+        expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+    })
+
+    // Its cells are filled after the statements run, so a computed row cannot set one.
+    it('offers no computed row cell on a percent of a section', () => {
+        const draft = draftFromSpec(shareSpec(SHARE_NODE), SHARE_META, CATALOG)
+        const types = new Map([
+            ['status', 'select' as const],
+            ['amount', 'money' as const],
+            ['share', 'percent' as const],
+        ])
+        expect(cellColumnIds(draft, types)).toEqual(['amount'])
+    })
+})
