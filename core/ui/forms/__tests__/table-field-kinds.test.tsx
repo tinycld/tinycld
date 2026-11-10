@@ -11,6 +11,7 @@ import type { TableRow } from '../../../lib/forms/values'
 import { createMatcher } from '../../../lib/shortcuts/matcher'
 import { useShortcutRegistry } from '../../../lib/shortcuts/registry'
 import { pushScope, resetScopes, ScopeProvider } from '../../../lib/shortcuts/scopes'
+import { useWindowSizeStore } from '../../../lib/stores/window-size-store'
 import { OverlayProvider } from '../../overlay'
 import { FieldInput } from '../FieldInput'
 import { tableKindKeyLabel } from '../fields/use-table-field'
@@ -29,8 +30,11 @@ const columns = [
     { key: 'rate', label: 'Rate', kind: 'number' },
 ]
 
-/** Items, span notes, and percent lines whose rate sits in the item's Qty slot. */
-function billHost(nameComponent?: string) {
+/**
+ * Items, span notes, and percent lines whose rate sits in the item's Qty slot.
+ * `lines` adds settings to the `lines` built-in.
+ */
+function billHost(nameComponent?: string, lines: Record<string, unknown> = {}) {
     const withComponent = columns.map(c =>
         c.key === 'name' && nameComponent ? { ...c, component: nameComponent } : c
     )
@@ -75,6 +79,7 @@ function billHost(nameComponent?: string) {
                             shortcut: 'Alt+5',
                         },
                     ],
+                    ...lines,
                 },
             ],
         })
@@ -238,6 +243,80 @@ describe('TableField row kinds', () => {
             ['form-table-lines-menu-duplicate', 'Duplicate⌘⌥D'],
             ['form-table-lines-menu-remove', 'Remove⌘⌥⌫'],
         ])
+    })
+})
+
+/** The open row menu's rows as [testID, text], in document order. */
+function rowMenuEntries() {
+    return [
+        ...document.body.querySelectorAll<HTMLElement>(
+            '[data-testid^="form-table-lines-menu-"], [testID^="form-table-lines-menu-"]'
+        ),
+    ]
+        .map(el => [el.getAttribute('data-testid') ?? el.getAttribute('testID'), el.textContent])
+        .filter(([id]) => !/^form-table-lines-menu-r\d$/.test(id ?? ''))
+}
+
+/**
+ * The shortcuts the registry holds now, as sorted "keys · description". Not the
+ * ids: a ShortcutButton's id carries React's useId, which differs per mount.
+ */
+const registeredIds = () =>
+    Array.from(useShortcutRegistry.getState().shortcuts.values())
+        .map(s => `${s.keys} · ${s.description}`)
+        .sort()
+
+describe('TableField insert line keys', () => {
+    it('shows the host key on Insert line below and registers no key for it', () => {
+        const plain = setUp([r1, r3, r5])
+        const idsWithout = registeredIds()
+        plain.unmount()
+        const { container } = setUp([r1, r3, r5], {
+            host: billHost(undefined, { insertShortcuts: { below: 'Alt+Enter' } }),
+        })
+        expect(registeredIds()).toEqual(idsWithout)
+        openRowMenu(container, 'r3')
+        expect(rowMenuEntries()).toEqual([
+            ['form-table-lines-menu-insert-above', 'Insert line above'],
+            ['form-table-lines-menu-insert-below', 'Insert line below⌥↵'],
+            ['form-table-lines-menu-up', 'Move up⌘⌥↑'],
+            ['form-table-lines-menu-down', 'Move down⌘⌥↓'],
+            ['form-table-lines-menu-duplicate', 'Duplicate⌘⌥D'],
+            ['form-table-lines-menu-remove', 'Remove⌘⌥⌫'],
+        ])
+    })
+
+    it('shows both insert keys when the host gives both sides', () => {
+        const { container } = setUp([r1, r3, r5], {
+            host: billHost(undefined, {
+                insertShortcuts: { above: 'Alt+Shift+Enter', below: 'Alt+Enter' },
+            }),
+        })
+        openRowMenu(container, 'r3')
+        expect(rowMenuEntries().slice(0, 2)).toEqual([
+            ['form-table-lines-menu-insert-above', 'Insert line above⌥⇧↵'],
+            ['form-table-lines-menu-insert-below', 'Insert line below⌥↵'],
+        ])
+    })
+
+    describe('on a phone', () => {
+        const realSize = useWindowSizeStore.getState()
+        const real = { width: realSize.width, height: realSize.height }
+        beforeEach(() => useWindowSizeStore.getState().setSize(400, 844))
+        afterEach(() => useWindowSizeStore.getState().setSize(real.width, real.height))
+
+        it('shows the insert key on Insert line below in the row menu sheet', () => {
+            const { container } = setUp([r1, r3], {
+                width: 400,
+                host: billHost(undefined, { insertShortcuts: { below: 'Alt+Enter' } }),
+            })
+            openRowMenu(container, 'r3')
+            const id = 'form-table-lines-menu-insert-below'
+            // A sheet row is a Pressable (testID); the web dropdown row is a div (data-testid).
+            expect(document.body.querySelector(`[data-testid="${id}"]`)).toBeNull()
+            const below = document.body.querySelector(`[testID="${id}"]`)
+            expect(below?.textContent).toBe('Insert line below⌥↵')
+        })
     })
 })
 

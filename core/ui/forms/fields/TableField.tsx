@@ -1,5 +1,5 @@
 import type { HostTableColumn } from '@tinycld/core/lib/forms/definition'
-import type { HostRowKind } from '@tinycld/core/lib/forms/host'
+import type { HostInsertShortcuts, HostRowKind } from '@tinycld/core/lib/forms/host'
 import type {
     BuiltinFieldProps,
     FieldMode,
@@ -57,6 +57,8 @@ export interface TableFieldProps {
     rowKinds?: HostRowKind[]
     /** Show and register core's row keys (remove, move, duplicate, open menu). */
     rowShortcuts?: boolean
+    /** The host's own keys for the insert actions, shown on the row menu only. */
+    insertShortcuts?: HostInsertShortcuts
     testID: string
 }
 
@@ -74,6 +76,7 @@ interface TableBase {
     columns: readonly HostTableColumn[]
     rowKinds?: HostRowKind[]
     rowShortcuts: boolean
+    insertShortcuts?: HostInsertShortcuts
     /** The wide grid's header slots: the first kind's columns, or every column. */
     slots: readonly HostTableColumn[]
 }
@@ -420,8 +423,17 @@ const ROW_KEY_HINTS = {
 }
 const NO_KEY_HINTS = { up: undefined, down: undefined, duplicate: undefined, remove: undefined }
 
+/** The key text of the insert actions: the host binds these keys, core only shows them. */
+function insertKeyHints(keys: HostInsertShortcuts | undefined) {
+    return {
+        above: keys?.above ? formatHint(keys.above).text : undefined,
+        below: keys?.below ? formatHint(keys.below).text : undefined,
+    }
+}
+
 function RowMenuItems({ base, table, row, index, count }: RowProps) {
     const hints = base.rowShortcuts ? ROW_KEY_HINTS : NO_KEY_HINTS
+    const insertHints = insertKeyHints(base.insertShortcuts)
     const itemId = (action: string) => `${base.ids}-menu-${action}`
     const insertAbove = () => table.insertNear(row.id, 0)
     const insertBelow = () => table.insertNear(row.id, 1)
@@ -433,11 +445,13 @@ function RowMenuItems({ base, table, row, index, count }: RowProps) {
         <>
             <Menu.Item
                 label="Insert line above"
+                shortcut={insertHints.above}
                 onSelect={insertAbove}
                 testID={itemId('insert-above')}
             />
             <Menu.Item
                 label="Insert line below"
+                shortcut={insertHints.below}
                 onSelect={insertBelow}
                 testID={itemId('insert-below')}
             />
@@ -865,6 +879,7 @@ export function TableField(props: TableFieldProps) {
         columns,
         rowKinds,
         rowShortcuts,
+        insertShortcuts: props.insertShortcuts,
         slots: slotsOf(columns, rowKinds),
     }
     // 0 means not measured yet: lay out wide, as FieldCell does.

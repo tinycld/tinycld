@@ -39,6 +39,17 @@ type Builtin struct {
 	// row. RowShortcuts is presentation only.
 	RowKinds     []RowKind `json:"rowKinds,omitempty"`
 	RowShortcuts bool      `json:"rowShortcuts,omitempty"`
+	// InsertShortcuts is presentation only: the keys a host binds for a
+	// table's insert actions, shown on its row menu. The server decodes it so
+	// the host file round-trips, and never reads it.
+	InsertShortcuts *InsertShortcuts `json:"insertShortcuts,omitempty"`
+}
+
+// InsertShortcuts mirrors insertShortcutsSchema in core/lib/forms/host.ts:
+// the key combos of a table's "Insert line above" and "Insert line below".
+type InsertShortcuts struct {
+	Above string `json:"above,omitempty"`
+	Below string `json:"below,omitempty"`
 }
 
 // RowKind mirrors rowKindSchema in core/lib/forms/host.ts: a kind of line in a

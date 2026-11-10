@@ -155,6 +155,27 @@ func TestLoadHosts_DecodesLockedRowKindsAndAddOnSubmit(t *testing.T) {
 	}
 }
 
+func TestLoadHosts_DecodesTheInsertShortcutsOfATable(t *testing.T) {
+	body := linesHost(`{"key":"lines","label":"Lines","kind":"table","storage":"rows",` + linesColumns +
+		`,"rowShortcuts":true,"insertShortcuts":{"below":"Alt+Enter"}},` +
+		`{"key":"notes","label":"Notes","kind":"table","storage":"rows",` + linesColumns + `}`)
+	defs, err := loadHostsJSON(t, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := defs.Host("gizmos:bill")
+	lines := h.Builtin("lines")
+	if lines == nil || lines.InsertShortcuts == nil {
+		t.Fatalf("lines must keep its insert shortcuts: %+v", lines)
+	}
+	if lines.InsertShortcuts.Below != "Alt+Enter" || lines.InsertShortcuts.Above != "" {
+		t.Fatalf("insert shortcuts = %+v", *lines.InsertShortcuts)
+	}
+	if notes := h.Builtin("notes"); notes == nil || notes.InsertShortcuts != nil {
+		t.Fatalf("a table without insertShortcuts decodes them as nil: %+v", notes)
+	}
+}
+
 func TestParseHosts_DecodesAHostColumnFlexWeight(t *testing.T) {
 	defs, err := ParseHosts([]byte(linesHost(`{"key":"lines","label":"Lines","kind":"table","storage":"rows",` +
 		`"columns":[{"key":"product","kind":"text","label":"Product"},` +

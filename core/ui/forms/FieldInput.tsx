@@ -682,6 +682,7 @@ function TableKind(props: KindProps) {
             isHostTable={resolved.builtin?.storage === 'rows'}
             rowKinds={resolved.builtin?.rowKinds}
             rowShortcuts={resolved.builtin?.rowShortcuts ?? false}
+            insertShortcuts={resolved.builtin?.insertShortcuts}
             testID={testID}
         />
     )
