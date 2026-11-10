@@ -284,3 +284,49 @@ func TestLayoutCompilesEachEarlierRowCellOnceWithDerivedColumns(t *testing.T) {
 		t.Fatalf("R3 = %+v", last.Cells)
 	}
 }
+
+func TestMaterializeSharedMarksRowsReadTwice(t *testing.T) {
+	cases := []struct {
+		name, body, want string
+		ctes             []string
+	}{
+		{"two levels", "SELECT __level FROM a0", "w AS MATERIALIZED (SELECT 1)", []string{"w AS (SELECT 1)", "a0 AS (SELECT k FROM w)", "a1 AS (SELECT k FROM w GROUP BY k)"}},
+		{"one read", "SELECT __level FROM w LIMIT 5", "w AS (SELECT 1)", []string{"w AS (SELECT 1)"}},
+		{"ws is not w", "SELECT __level FROM ws JOIN ws2", "w AS (SELECT 1)", []string{"w AS (SELECT 1)", "ws AS (SELECT w.* FROM w)"}},
+		// The __level gate: a body with no __level (a detail page, also one
+		// whose probe reads w a second time) keeps w inline.
+		{"detail with a probe", "SELECT * FROM w WHERE EXISTS (SELECT 1 FROM w WHERE x) LIMIT 5", "w AS (SELECT 1)", []string{"w AS (SELECT 1)"}},
+	}
+	for _, c := range cases {
+		got := materializeShared(c.ctes, c.body)
+		if got[0] != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got[0], c.want)
+		}
+	}
+}
+
+// A grouped statement reads w once per level: SQLite computes it once.
+func TestGroupStatementMaterializesTheRowsItReadsTwice(t *testing.T) {
+	m := measureRun(t, balanceSheetZoo(t, 40), benchBalanceSheet())
+	if !strings.Contains(m.sql, "w AS MATERIALIZED (") {
+		t.Fatal("the group statement reads w per level but does not materialize it")
+	}
+}
+
+// A detail page reads w once, under its LIMIT: it stays inline, so SQLite
+// can stop at the page.
+func TestDetailStatementKeepsTheRowsInline(t *testing.T) {
+	z := balanceSheetZoo(t, 40)
+	seen := observeReads(t)
+	if _, err := benchRunWith(z, `{"version":4,"source":"zoo.ledger_lines","columns":[{"id":"date","path":[{"field":"date"}]}]}`, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range *seen {
+		if strings.Contains(st.sql, "w AS MATERIALIZED") {
+			t.Fatalf("a flat report materializes w:\n%s", st.sql)
+		}
+	}
+	if len(*seen) == 0 {
+		t.Fatal("no statement observed")
+	}
+}

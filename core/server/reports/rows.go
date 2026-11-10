@@ -2,6 +2,8 @@ package reports
 
 import (
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -605,6 +607,39 @@ func (r *rowsCTE) render() string {
 		sql += "\nWHERE " + r.filter
 	}
 	return sql + ")"
+}
+
+// rowsRead finds a read of the report rows CTE w (not ws or w2).
+var rowsRead = regexp.MustCompile(`(?:FROM|JOIN) w\b`)
+
+// materializeShared makes w MATERIALIZED when a group statement (its body
+// names __level) reads it twice or more (one read per group level, the
+// fills): SQLite otherwise computes the rows, and reads the rule under them,
+// once per read. A detail page keeps w inline, also when a probe reads it a
+// second time, so it can stop at its LIMIT. The rule CTEs are never
+// materialized: a correlated lookup must keep searching the table by its
+// index.
+func materializeShared(ctes []string, body string) []string {
+	if !strings.Contains(body, "__level") {
+		return ctes
+	}
+	for i, cte := range ctes {
+		if !strings.HasPrefix(cte, "w AS (") {
+			continue
+		}
+		reads := len(rowsRead.FindAllString(body, -1))
+		for j, other := range ctes {
+			if j != i {
+				reads += len(rowsRead.FindAllString(other, -1))
+			}
+		}
+		if reads > 1 {
+			out := slices.Clone(ctes)
+			out[i] = "w AS MATERIALIZED (" + strings.TrimPrefix(cte, "w AS (")
+			return out
+		}
+	}
+	return ctes
 }
 
 // bucketSQL buckets a date: day, month (2026-01), quarter (2026-Q1), year,

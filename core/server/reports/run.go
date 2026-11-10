@@ -499,6 +499,7 @@ var checkTopics func(ctx context.Context, app core.App, sql string, params dbx.P
 // time limit; with topics (a run's cache of each rule's topics), it also
 // returns the change-signal topics of every collection the statement reads.
 func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body string, topics map[string][]string) ([]map[string]any, []string, error) {
+	ctes = materializeShared(ctes, body)
 	with, err := s.with(ctes...)
 	if err != nil {
 		return nil, nil, err
