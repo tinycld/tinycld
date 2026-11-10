@@ -57,6 +57,35 @@ describe('host table columns', () => {
         })
     })
 
+    describe('minimum width', () => {
+        const text = { key: 'qty', kind: 'number', label: 'Qty' }
+
+        it('keeps a minWidth on a host column without a flex weight', () => {
+            const parsed = hostColumnSchema.parse({ ...text, minWidth: 72 })
+            expect(parsed).toMatchObject({ key: 'qty', minWidth: 72 })
+        })
+
+        it('keeps a minWidth beside a flex weight', () => {
+            const parsed = hostColumnSchema.parse({ ...text, minWidth: 72, flex: 0.5 })
+            expect(parsed).toMatchObject({ key: 'qty', minWidth: 72, flex: 0.5 })
+        })
+
+        it('keeps a host column without a minWidth valid', () => {
+            const parsed = hostColumnSchema.parse(text)
+            expect(parsed.key).toBe('qty')
+            expect('minWidth' in parsed).toBe(false)
+        })
+
+        it.each([0, -1, 401, 72.5])('refuses a minWidth of %s', minWidth => {
+            expect(hostColumnSchema.safeParse({ ...text, minWidth }).success).toBe(false)
+        })
+
+        it('does not carry minWidth through a custom admin column', () => {
+            const parsed = columnSchema.parse({ ...text, minWidth: 72 })
+            expect('minWidth' in parsed).toBe(false)
+        })
+    })
+
     it('still rejects a host column of an unknown kind', () => {
         const bad = {
             ...orderHostInput,

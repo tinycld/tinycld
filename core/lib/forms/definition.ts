@@ -158,13 +158,16 @@ export type TableColumn = z.infer<typeof columnSchema>
  * table column cannot: `columnSchema` strips the key, so a definition an admin
  * edits never mounts host code. The server never reads it.
  *
- * `flex` is the column's width weight on the wide grid (default 1); it is
- * host-only for the same reason, and presentation only.
+ * `flex` is the column's width weight on the wide grid (default 1), and
+ * `minWidth` its floor in px there (whole px, 1 to 400): the slot is never
+ * narrower, and width above the floors goes by weight. Both are host-only for
+ * the same reason, and presentation only.
  */
 export const hostColumnSchema = columnSchema.and(
     z.object({
         component: z.string().min(1).optional(),
         flex: z.number().positive().max(12).optional(),
+        minWidth: z.number().int().min(1).max(400).optional(),
     })
 )
 export type HostTableColumn = z.infer<typeof hostColumnSchema>

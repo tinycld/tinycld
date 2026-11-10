@@ -4,6 +4,7 @@ import { View } from 'react-native'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FieldCell } from '../FieldCell'
 import { FormLayout } from '../FormLayout'
+import { FIELD_CELL_BORDER_WIDTH } from '../fields/table-layout'
 
 afterEach(cleanup)
 
@@ -118,7 +119,7 @@ describe('FieldCell', () => {
         expect(classOf(root)).toContain('basis-1/2')
         expect(classOf(root)).toContain('px-1.5')
         expect(classOf(root)).not.toContain('border')
-        expect(classOf(box)).toContain('border-2')
+        expect((box as HTMLElement).style.borderWidth).toBe(`${FIELD_CELL_BORDER_WIDTH}px`)
         expect(classOf(box)).toContain('rounded-md')
         expect(classOf(box)).not.toContain('basis-')
         expect(box.querySelector('[testID="child"]')).toBeTruthy()

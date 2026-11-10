@@ -174,6 +174,25 @@ func TestParseHosts_DecodesAHostColumnFlexWeight(t *testing.T) {
 	}
 }
 
+func TestParseHosts_DecodesAHostColumnMinWidth(t *testing.T) {
+	defs, err := ParseHosts([]byte(linesHost(`{"key":"lines","label":"Lines","kind":"table","storage":"rows",` +
+		`"columns":[{"key":"product","kind":"text","label":"Product"},` +
+		`{"key":"rate","kind":"number","label":"Rate","minWidth":96}]}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := defs.Host("gizmos:bill").Builtin("lines")
+	if lines == nil || len(lines.Columns) != 2 {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if lines.Columns[0].MinWidth != nil {
+		t.Fatalf("a column without minWidth decodes no floor: %v", *lines.Columns[0].MinWidth)
+	}
+	if got := lines.Columns[1].MinWidth; got == nil || *got != 96 {
+		t.Fatalf("rate column minWidth = %v, want 96", got)
+	}
+}
+
 // requiredLines is a `lines` table whose description kind must fill its description;
 // product is required on every kind (table-wide), note is hidden, taxable a toggle.
 const requiredLinesColumns = `"columns":[{"key":"product","kind":"text","label":"Product","required":true},` +

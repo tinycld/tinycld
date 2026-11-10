@@ -1,6 +1,7 @@
 import type { FieldWidth } from '@tinycld/core/lib/forms/definition'
 import type { ReactNode } from 'react'
 import { Pressable, Text, View } from 'react-native'
+import { FIELD_CELL_BORDER_WIDTH } from './fields/table-layout'
 import { type LayoutRect, type RegisterMeasure, useMeasuredRect } from './use-measure-rect'
 import { effectiveWidth, widthClass } from './widths'
 
@@ -42,7 +43,7 @@ export interface FieldCellProps {
     onPress?: () => void
 }
 
-// A border on both platforms; the border is always present so selecting a cell never shifts its layout.
+// The border's color on both platforms; its width (`BOX_BORDER_STYLE`) is always present so selecting a cell never shifts its layout.
 const SELECTED_CLASS = 'border-primary'
 const UNSELECTED_CLASS = 'border-transparent'
 const DROP_TARGET_CLASS = 'bg-primary/10'
@@ -58,8 +59,11 @@ function boxClassFor(isSelected: boolean, isDropTarget: boolean, isSelectable: b
     const tint = isDropTarget ? DROP_TARGET_CLASS : ''
     // Room inside the outline, always there, so the outline never touches the content and selecting never shifts it.
     const room = isSelectable ? 'p-2' : ''
-    return `relative rounded-md border-2 ${border} ${room} ${tint}`
+    return `relative rounded-md ${border} ${room} ${tint}`
 }
+
+// The width from the one exported size; the color class above only tints it.
+const BOX_BORDER_STYLE = { borderWidth: FIELD_CELL_BORDER_WIDTH }
 
 /** The root is the row's flex item and the measured hit area, gaps included. */
 function rootClassFor(basis: string, isDragging: boolean) {
@@ -177,6 +181,7 @@ export function FieldCell({
     const body = (
         <View
             className={boxClassFor(isSelected, Boolean(dropIndicator), Boolean(onPress))}
+            style={BOX_BORDER_STYLE}
             testID={`${cellTestID}-box`}
         >
             <View className="flex-row items-center mb-1">
