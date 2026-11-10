@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { formulaType, lookupPicks, typesOf } from '../formula-type'
 import { CATALOG, SALES_KEY, TEAMS_KEY } from './catalog-fixture'
-import { CTX, LARGER, LOOKUP, WITH_PERIOD } from './formula-fixture'
+import { CTX, LARGER, LOOKUP, SHARE, WITH_PERIOD, WITH_SECTIONS } from './formula-fixture'
 
 describe('formulaType', () => {
     const types = {
@@ -118,5 +118,11 @@ describe('formulaType of the v3 parts', () => {
             pick: 'sum' as const,
         }
         expect(lookupPicks(stale, types).map(p => p.value)).toEqual(['min', 'max', 'sum', 'count'])
+    })
+})
+
+describe('a percent of a section', () => {
+    it('is a percent', () => {
+        expect(formulaType(SHARE, typesOf(WITH_SECTIONS))).toBe('percent')
     })
 })

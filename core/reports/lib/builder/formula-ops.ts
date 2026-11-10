@@ -7,6 +7,7 @@ import {
     ARITY,
     boundChoices,
     type FormulaParam,
+    type FormulaValue,
     INF,
     isRangeParam,
     isReportPart,
@@ -60,6 +61,10 @@ const isValueList = (value: unknown) =>
     Array.isArray(value) &&
     (value.every(v => typeof v === 'string') || value.every(v => typeof v === 'number'))
 
+// formula.go percentOfSection: the operand is a number or an amount column.
+const isSectionOperand = (value: Pick<FormulaValue, 'type'>) =>
+    value.type === 'number' || value.type === 'money'
+
 const paramOf = (params: ParamTypes, node: SpecNode | undefined) =>
     node !== undefined && partOf(node) === 'param'
         ? params.find(p => p.id === node.param)
@@ -91,6 +96,18 @@ function editable(node: SpecNode, params: ParamTypes, inLookup: boolean): boolea
         case 'bound': {
             const param = params.find(p => p.id === node.param)
             return onlyKeys(node, ['param', 'bound']) && param !== undefined && isRangeParam(param)
+        }
+        case 'percentOfSection': {
+            const [arg] = node.args ?? []
+            return (
+                onlyKeys(node, ['op', 'args', 'subtotal', 'scale']) &&
+                typeof node.subtotal === 'string' &&
+                node.args?.length === 1 &&
+                hasScale(node) &&
+                arg !== undefined &&
+                arg.col !== undefined &&
+                onlyKeys(arg, ['col'])
+            )
         }
         case 'lookup':
             return (
@@ -151,6 +168,10 @@ function childContext(
         return { ...here, source: target?.key ?? null }
     }
     if (TOTAL_SET.has(part)) return { ...here, totals: false, windows: false }
+    if (part === 'percentOfSection') {
+        const values = here.values.filter(isSectionOperand)
+        return { ...here, values, totals: false, windows: false, onlyColumns: true }
+    }
     if (WINDOW_SET.has(part)) return { ...here, windows: false }
     return here
 }
@@ -239,6 +260,7 @@ export function partsAt(
 ): ReportPart[] {
     const here = contextAt(ctx, root, path)
     const slot = slotAt(root, path)
+    if (here.onlyColumns) return here.values.length > 0 ? ['field'] : []
     const hasParams = paramsFor(here, slot).length > 0
     if (slot === 'period') return hasParams ? ['param'] : []
     if (slot === 'list') return hasParams ? ['list', 'param'] : ['list']
@@ -254,6 +276,15 @@ export function partsAt(
         if (part === 'lookup') return here.lookups && here.catalog.size > 0
         if (RELATED_SET.has(part)) return here.inLookup === true && linksOf(here).length > 0
         if (TOTAL_SET.has(part)) return here.totals
+        // A column's whole formula (bind.go sectionPercent), over a section of the layout.
+        if (part === 'percentOfSection') {
+            return (
+                path.length === 0 &&
+                here.windows &&
+                here.sections.length > 0 &&
+                here.values.some(isSectionOperand)
+            )
+        }
         if (WINDOW_SET.has(part)) return here.windows
         return true
     })
@@ -385,8 +416,23 @@ export function withPart(
     const here = contextAt(ctx, root, path)
     const leaf = leafPart(here, slotAt(root, path), current, part)
     if (leaf) return leaf
-    const carried = isCarried(here, current) ? current : { value: null }
+    // A percent of a section is a whole formula: its operand moves into the new part.
+    const from =
+        partOf(current) === 'percentOfSection' ? (current.args?.[0] ?? { value: null }) : current
+    const carried = isCarried(here, from) ? from : { value: null }
     switch (part) {
+        case 'percentOfSection': {
+            const section = here.sections[0]
+            const own =
+                current.col !== undefined ? here.values.find(v => v.key === current.col) : undefined
+            const operand = own && isSectionOperand(own) ? own : here.values.find(isSectionOperand)
+            if (!section || !operand) return current
+            return settledNode(here, {
+                op: 'percentOfSection',
+                args: [{ col: operand.key }],
+                subtotal: section.id,
+            })
+        }
         case 'if':
             return { op: 'if', args: [{ value: true }, carried, { value: null }] }
         case 'case':
@@ -401,7 +447,7 @@ export function withPart(
     }
     const [min, max] = ARITY[part] ?? [1, 1]
     const filler = FILLER[part] ?? { value: 0 }
-    const seed = max === 1 ? [isCarried(here, current) ? current : filler] : seedOf(here, current)
+    const seed = max === 1 ? [isCarried(here, from) ? from : filler] : seedOf(here, from)
     const padding = Array.from({ length: Math.max(0, min - seed.length) }, () => filler)
     const args = [...seed, ...padding].slice(0, max)
     return settledNode(here, { op: OP_OF[part] ?? part, args })

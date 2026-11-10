@@ -30,7 +30,7 @@ const VALUE_PARTS = [
 ] as const
 const ARITHMETIC = ['add', 'sub', 'mul', 'div', 'round', 'min', 'max'] as const
 const TOTALS = ['sum', 'count', 'countDistinct', 'avg', 'smallest', 'largest'] as const
-const WINDOWS = ['runningSum', 'percentOfParent', 'percentOfTotal'] as const
+const WINDOWS = ['runningSum', 'percentOfParent', 'percentOfTotal', 'percentOfSection'] as const
 const LOGIC = [
     'eq',
     'ne',
@@ -84,6 +84,7 @@ export const SCALED_PARTS: ReadonlySet<string> = new Set([
     'avg',
     'percentOfParent',
     'percentOfTotal',
+    'percentOfSection',
 ])
 /** The operator a part writes when it is not the part's own id. */
 export const OP_OF: Partial<Record<ReportPart, string>> = {
@@ -112,6 +113,7 @@ export const ARITY: Readonly<Record<string, Arity>> = {
     runningSum: [1, 1],
     percentOfParent: [1, 1],
     percentOfTotal: [1, 1],
+    percentOfSection: [1, 1],
     eq: [2, 2],
     ne: [2, 2],
     lt: [2, 2],
@@ -171,6 +173,7 @@ export const PART_LABELS: Record<ReportPart, string> = {
     runningSum: 'Running sum',
     percentOfParent: 'Percent of group',
     percentOfTotal: 'Percent of total',
+    percentOfSection: "Percent of a section's total",
     eq: 'Is equal',
     ne: 'Is not equal',
     lt: 'Is less than',
@@ -244,6 +247,10 @@ export interface ReportFormulaContext {
     totals: boolean
     windows: boolean
     lookups: boolean
+    /** The layout's sections: what a Percent of a section's total divides by (layout.go). */
+    sections: readonly { id: string; title: string }[]
+    /** Inside a Percent of a section's total (set by contextAt): only a number or amount column. */
+    onlyColumns?: boolean
     /** Inside a lookup (set by contextAt): exists and notExists read the looked-up rows' links. */
     inLookup?: boolean
 }
@@ -318,7 +325,11 @@ function operatorPartOf(node: SpecNode): ReportPart | 'unknown' {
 
 export function partOf(node: SpecNode): ReportPart | 'unknown' {
     if (node.record !== undefined) return 'record'
-    if (node.col !== undefined || node.subtotal !== undefined) return 'field'
+    // A layout row reads a section as { subtotal }; on an operator, subtotal names
+    // the section a Percent of a section's total divides by.
+    if (node.col !== undefined || (node.subtotal !== undefined && node.op === undefined)) {
+        return 'field'
+    }
     if (node.path !== undefined) return 'path'
     if (node.outer !== undefined) return 'outer'
     if (node.param !== undefined) return node.bound !== undefined ? 'bound' : 'param'

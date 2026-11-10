@@ -27,8 +27,10 @@ import {
     LARGER,
     LAYOUT,
     LOOKUP,
+    SHARE,
     TEAM_WITH_SALES,
     WITH_PERIOD,
+    WITH_SECTIONS,
 } from './formula-fixture'
 
 const PARAMS = WITH_PERIOD.params
@@ -497,5 +499,81 @@ describe('the v3 lookup and leaf parts', () => {
         expect(partOf({ param: 'period', bound: 'to' })).toBe('bound')
         expect(isEditableNode({ param: 'period', bound: 'to' }, PARAMS)).toBe(true)
         expect(isEditableNode({ param: 'asOf', bound: 'to' }, PARAMS)).toBe(false)
+    })
+})
+
+describe("Percent of a section's total", () => {
+    it('is offered at the top of a column formula of a report with sections only', () => {
+        expect(partsAt(WITH_SECTIONS, { value: 0 }, [])).toContain('percentOfSection')
+        // No section, no running values (a layout row, a label), or inside another part.
+        expect(partsAt(CTX, { value: 0 }, [])).not.toContain('percentOfSection')
+        const noWindows = { ...WITH_SECTIONS, windows: false }
+        expect(partsAt(noWindows, { value: 0 }, [])).not.toContain('percentOfSection')
+        const sum: SpecNode = { op: 'add', args: [{ value: 0 }, { value: 1 }] }
+        expect(partsAt(WITH_SECTIONS, sum, [0])).not.toContain('percentOfSection')
+        const onlyText = {
+            ...WITH_SECTIONS,
+            values: [{ key: 'team', label: 'Team', type: 'text' as const }],
+        }
+        expect(partsAt(onlyText, { value: 0 }, [])).not.toContain('percentOfSection')
+    })
+    it('writes the first section and a number column, with places', () => {
+        expect(withPart(WITH_SECTIONS, { col: 'qty' }, [], 'percentOfSection')).toEqual({
+            op: 'percentOfSection',
+            args: [{ col: 'qty' }],
+            subtotal: 'open',
+            scale: 2,
+        })
+        // A text column is no operand: the first number or amount column is.
+        expect(withPart(WITH_SECTIONS, { col: 'team' }, [], 'percentOfSection')).toEqual({
+            op: 'percentOfSection',
+            args: [{ col: 'amount' }],
+            subtotal: 'open',
+            scale: 2,
+        })
+        // Another part takes the operand, not the percent, and drops the section.
+        expect(withPart(WITH_SECTIONS, SHARE, [], 'runningSum')).toEqual({
+            op: 'runningSum',
+            args: [{ col: 'amount' }],
+        })
+    })
+    it('takes only a number or amount column as its operand', () => {
+        expect(partsAt(WITH_SECTIONS, SHARE, [0])).toEqual(['field'])
+        expect(contextAt(WITH_SECTIONS, SHARE, [0]).values.map(v => v.key)).toEqual([
+            'amount',
+            'cost',
+            'qty',
+        ])
+    })
+    it('edits its own shape and keeps any other read-only', () => {
+        expect(partOf(SHARE)).toBe('percentOfSection')
+        expect(partOf({ subtotal: 'open' })).toBe('field')
+        expect(isEditableNode(SHARE, PARAMS)).toBe(true)
+        expect(isEditableNode({ ...SHARE, args: [{ value: 5 }] }, PARAMS)).toBe(false)
+        expect(
+            isEditableNode({ ...SHARE, args: [{ col: 'amount' }, { col: 'cost' }] }, PARAMS)
+        ).toBe(false)
+        expect(
+            isEditableNode(
+                { op: 'percentOfSection', args: [{ col: 'amount' }], subtotal: 'open' },
+                PARAMS
+            )
+        ).toBe(false)
+        expect(
+            isEditableNode({ op: 'percentOfSection', args: [{ col: 'amount' }], scale: 1 }, PARAMS)
+        ).toBe(false)
+        expect(
+            isEditableNode(
+                { op: 'runningSum', args: [{ col: 'amount' }], subtotal: 'open' },
+                PARAMS
+            )
+        ).toBe(false)
+    })
+    it('keeps its section when its operand or places change', () => {
+        expect(REPORT_TREE.withChildren(SHARE, [{ col: 'qty' }])).toEqual({
+            ...SHARE,
+            args: [{ col: 'qty' }],
+        })
+        expect(settleScales(WITH_SECTIONS, SHARE)).toEqual(SHARE)
     })
 })

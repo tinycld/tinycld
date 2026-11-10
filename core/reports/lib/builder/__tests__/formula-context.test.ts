@@ -18,6 +18,7 @@ import {
     readsColumn,
     recordGroups,
     rowsTotalColumns,
+    sectionPercentColumns,
     sortColumns,
     windowColumns,
 } from '../formula-context'
@@ -483,5 +484,49 @@ describe('the record a column points at', () => {
         expect(
             linkTarget(d, CATALOG, column([{ link: 'team' }, { link: 'sales' }, { field: 'id' }]))
         ).toBeUndefined()
+    })
+})
+
+describe('a percent of a section', () => {
+    const share: ColumnDraft = {
+        kind: 'formula',
+        id: 'share',
+        label: 'Share',
+        formula: {
+            kind: 'editable',
+            node: { op: 'percentOfSection', args: [{ col: 'amount' }], subtotal: 'open', scale: 1 },
+        },
+        aggregate: '',
+        scale: null,
+        format: '',
+        total: 'recompute',
+        explicitTotal: false,
+        labelField: '',
+    }
+    const withShare = (): BuilderDraft => {
+        const d = draft()
+        return { ...d, columns: [...d.columns, share] }
+    }
+
+    it("a column formula knows the layout's sections", () => {
+        const ctx = formulaContext(withShare(), CATALOG, { kind: 'column', selfKey: 'share' })
+        expect(ctx.sections).toEqual([{ id: 'open', title: 'Open' }])
+        expect(formulaContext(withShare(), CATALOG, { kind: 'layout', index: 1 }).sections).toEqual(
+            [{ id: 'open', title: 'Open' }]
+        )
+    })
+
+    // Its cells are filled after the statements run (R2): another formula would read none.
+    it('is read by no other formula, and is a percent column no total adds', () => {
+        const d = withShare()
+        expect(sectionPercentColumns(d.columns)).toEqual(new Set(['share']))
+        for (const place of [
+            { kind: 'detail' as const },
+            { kind: 'column' as const, selfKey: 'team' },
+        ]) {
+            expect(formulaContext(d, CATALOG, place).values.map(v => v.key)).not.toContain('share')
+        }
+        expect(windowColumns(d.columns).has('share')).toBe(true)
+        expect(rowsTotalColumns(columnChoices(d, CATALOG), d.columns).has('share')).toBe(false)
     })
 })

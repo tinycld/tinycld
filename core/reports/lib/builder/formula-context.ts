@@ -44,7 +44,12 @@ export type ColumnsOf = Pick<BuilderDraft, 'source' | 'columns' | 'params'> & {
  */
 export type GroupKey = { id: string; col: string; bucket?: string }
 
-const WINDOW_OPS: ReadonlySet<string> = new Set(['runningSum', 'percentOfParent', 'percentOfTotal'])
+const WINDOW_OPS: ReadonlySet<string> = new Set([
+    'runningSum',
+    'percentOfParent',
+    'percentOfTotal',
+    'percentOfSection',
+])
 
 // Every node a formula reads: its operands, a where, and a lookup's value.
 function childNodes(node: SpecNode): SpecNode[] {
@@ -90,6 +95,26 @@ export function windowColumns(columns: readonly ColumnDraft[]): ReadonlySet<stri
         (node.col !== undefined && isWindow(node.col)) ||
         childNodes(node).some(readsWindow)
     return new Set(columns.filter(c => isWindow(c.id)).map(c => c.id))
+}
+
+/**
+ * The columns that are a Percent of a section's total. The engine fills their cells
+ * after the statements run (R1), so no other formula and no computed row cell may
+ * read or write them (bind.go sectionPercents).
+ */
+export function sectionPercentColumns(columns: readonly ColumnDraft[]): ReadonlySet<string> {
+    return new Set(
+        columns
+            .filter(c => c.kind === 'formula' && c.formula.node.op === 'percentOfSection')
+            .map(c => c.id)
+    )
+}
+
+// The layout's sections, which a Percent of a section's total divides by.
+function sectionsOf(draft: Pick<BuilderDraft, 'layout'>) {
+    return draft.layout.flatMap(item =>
+        item.kind === 'section' ? [{ id: item.id, title: item.title }] : []
+    )
 }
 
 // A total reads many rows: sum, count, average, and min or max of one value
@@ -443,6 +468,7 @@ function layoutContext(
         totals: false,
         windows: false,
         lookups: true,
+        sections: sectionsOf(draft),
     }
 }
 
@@ -483,13 +509,22 @@ export function formulaContext(
             totals: false,
             windows: false,
             lookups: false,
+            sections: sectionsOf(draft),
         }
     }
     const selfKey = place.kind === 'column' ? place.selfKey : ''
     const offered = levelOffer(draft, catalog, place)
-    // Child rows have no single value on the row to read.
+    // Child rows have no single value on the row to read, and a percent of a
+    // section has none until the statements have run.
+    const percents = sectionPercentColumns(draft.columns)
     const values = columnChoices(draft, catalog)
-        .filter(choice => choice.key !== selfKey && !choice.isNested && offered(choice.key))
+        .filter(
+            choice =>
+                choice.key !== selfKey &&
+                !choice.isNested &&
+                !percents.has(choice.key) &&
+                offered(choice.key)
+        )
         .map(choice => ({ key: choice.key, label: choice.label, type: choice.type }))
     // A level's label reads its own group's record and outer ones, never an inner
     // group's: a level row has no one record of a group inside it (levels.go:492).
@@ -509,5 +544,6 @@ export function formulaContext(
         // A running value or a percent reads the rows a column shows (formula.go window).
         windows: place.kind === 'column',
         lookups: true,
+        sections: sectionsOf(draft),
     }
 }
