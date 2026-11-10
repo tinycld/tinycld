@@ -2286,3 +2286,45 @@ describe('a percent of a section in the draft', () => {
         expect(cellColumnIds(draft, types)).toEqual(['amount'])
     })
 })
+
+describe('a pivot over a whole period', () => {
+    const PERIOD_META = { title: 'Sales', description: '' }
+    const RANGED: ReportSpec = {
+        ...RICH,
+        pivot: {
+            path: [{ field: 'day' }],
+            bucket: 'month',
+            cell: 'amount',
+            maxColumns: 12,
+            range: 'period',
+            order: 'spec',
+        },
+    }
+    const issueAt = (draft: BuilderDraft, path: string) =>
+        draftIssues(draft, CATALOG).find(issue => issue.path.join('.') === path)?.message
+
+    it("keeps a pivot's range and its total after the pivot columns", () => {
+        const draft = draftFromSpec(RANGED, PERIOD_META, CATALOG)
+        expect(draft.pivot).toMatchObject({ range: 'period', totalAfter: true })
+        expect(specFromDraft(draft, CATALOG)).toEqual(RANGED)
+        const plain = draftFromSpec(RICH, PERIOD_META, CATALOG)
+        expect(plain.pivot).toMatchObject({ range: '', totalAfter: false })
+    })
+
+    it("says when a pivot range or the total's place cannot be saved", () => {
+        const draft = draftFromSpec(RANGED, PERIOD_META, CATALOG)
+        expect(issueAt(draft, 'pivot.range')).toBeUndefined()
+        expect(issueAt(draft, 'pivot.totalAfter')).toBeUndefined()
+        const unknown = { ...draft, pivot: { ...draft.pivot, range: 'gone' } }
+        expect(issueAt(unknown, 'pivot.range')).toBe('Choose a date range')
+        const noBucket = { ...draft, pivot: { ...draft.pivot, bucket: '' as const } }
+        expect(issueAt(noBucket, 'pivot.range')).toBe(
+            'Choose By: day, month, quarter, year or fiscal year'
+        )
+        // The first column labels the rows, so the pivot columns cannot come before it.
+        const first = { ...draft, pivot: { ...draft.pivot, cell: 'status' } }
+        expect(issueAt(first, 'pivot.totalAfter')).toBe(
+            'The first column labels the rows: choose another column for the cells'
+        )
+    })
+})

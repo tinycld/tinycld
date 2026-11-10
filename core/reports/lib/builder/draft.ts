@@ -253,6 +253,10 @@ const draftShape = z.object({
         explicitMax: z.boolean(),
         /** The field a pivot over a link heads its columns by; '' takes the first text field. */
         labelField: z.string(),
+        /** A date range param whose every bucket is a column (spec pivot.range); '' : only the buckets with rows. */
+        range: z.string(),
+        /** The pivot columns come just before the cell column, which follows as their total (pivot.order "spec"). */
+        totalAfter: z.boolean(),
     }),
     layout: z.array(layoutItemSchema).max(MAX_LAYOUT_ITEMS),
     /** A formula that labels each opened (detail) row; null: the first column's value (E7). */
@@ -355,6 +359,24 @@ function groupingIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         const cell = draft.columns.find(column => column.id === draft.pivot.cell)
         if (!cell || cell.aggregate === '') {
             issues.push({ path: ['pivot', 'cell'], message: 'Choose a column with a total' })
+        }
+        // bind.go pivotRange and pivot.order refusals.
+        if (draft.pivot.range !== '') {
+            const range = draft.params.find(param => param.id === draft.pivot.range)
+            if (range?.type !== 'dateRange') {
+                issues.push({ path: ['pivot', 'range'], message: 'Choose a date range' })
+            } else if (draft.pivot.bucket === '') {
+                issues.push({
+                    path: ['pivot', 'range'],
+                    message: 'Choose By: day, month, quarter, year or fiscal year',
+                })
+            }
+        }
+        if (draft.pivot.totalAfter && draft.columns[0]?.id === draft.pivot.cell) {
+            issues.push({
+                path: ['pivot', 'totalAfter'],
+                message: 'The first column labels the rows: choose another column for the cells',
+            })
         }
     }
     if (draft.layout.length > 0 && draft.groups.length === 0) {
@@ -851,6 +873,8 @@ const NO_PIVOT: BuilderDraft['pivot'] = {
     maxColumns: DEFAULT_PIVOT_COLUMNS,
     explicitMax: false,
     labelField: '',
+    range: '',
+    totalAfter: false,
 }
 
 function columnDraft(
@@ -931,6 +955,8 @@ export function draftFromSpec(
               maxColumns: spec.pivot.maxColumns ?? DEFAULT_PIVOT_COLUMNS,
               explicitMax: spec.pivot.maxColumns !== undefined,
               labelField: spec.pivot.labelField ?? '',
+              range: spec.pivot.range ?? '',
+              totalAfter: spec.pivot.order === 'spec',
           }
         : NO_PIVOT
     const params = spec.params ?? []
@@ -1272,6 +1298,8 @@ function specPivot(pivot: BuilderDraft['pivot']): NonNullable<ReportSpec['pivot'
             ? { maxColumns: pivot.maxColumns }
             : {}),
         ...(pivot.labelField !== '' ? { labelField: pivot.labelField } : {}),
+        ...(pivot.range !== '' ? { range: pivot.range } : {}),
+        ...(pivot.totalAfter ? { order: 'spec' as const } : {}),
     }
 }
 
