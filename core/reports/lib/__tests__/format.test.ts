@@ -14,6 +14,7 @@ import {
     REPORT_AMOUNT_ERROR,
     rowLabelText,
     shownColumns,
+    typedLabelText,
 } from '../format'
 import { MAX_STORED_AMOUNT } from '../money'
 import type { ResultColumn, ResultRow } from '../types'
@@ -373,6 +374,11 @@ describe('typed labels', () => {
         )
         const fiscal = labelled({ label: '2027', labelType: 'fiscalYear', labelValue: 2027 })
         expect(rowLabelText(fiscal, PLAIN)).toBe('FY 2027')
+    })
+
+    it('shows a bucketed label with no value as blank', () => {
+        expect(typedLabelText('month', null, '', PLAIN)).toBe('')
+        expect(typedLabelText('fiscalYear', null, '', PLAIN)).toBe('')
     })
 
     it('names a bucketed pivot column in words', () => {

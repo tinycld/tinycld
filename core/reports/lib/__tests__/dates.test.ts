@@ -50,8 +50,9 @@ describe('bucketWords', () => {
         expect(bucketWords('day', '2026-01-05')).toBe('Jan 5, 2026')
     })
 
-    it('bucketWords keeps a key it cannot read', () => {
+    it('keeps a key it cannot read', () => {
         expect(bucketWords('month', '2026-13')).toBe('2026-13')
+        expect(bucketWords('month', '2026-00')).toBe('2026-00')
         expect(bucketWords('month', 'soon')).toBe('soon')
         expect(bucketWords('quarter', '2026-Q5')).toBe('2026-Q5')
         expect(bucketWords('fiscalYear', 'FY')).toBe('FY')
