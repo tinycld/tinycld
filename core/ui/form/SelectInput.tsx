@@ -99,7 +99,7 @@ export function SelectInput<T extends FieldValues = Record<string, unknown>>({
             accessibilityState={{ disabled }}
             testID={testID}
         >
-            <Text className="text-foreground text-sm">{shown}</Text>
+            <Text className="shrink min-w-0 text-foreground text-sm">{shown}</Text>
             <ChevronDown size={12} color={muted} />
         </Pressable>
     )

@@ -105,7 +105,7 @@ function CheckboxRow({
             className="flex-row items-center py-1"
         >
             <Icon size={18} color={fg} />
-            <Text className="text-foreground ml-2">{option.label}</Text>
+            <Text className="shrink min-w-0 text-foreground ml-2">{option.label}</Text>
         </Pressable>
     )
 }

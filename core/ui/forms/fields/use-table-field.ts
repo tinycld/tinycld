@@ -330,7 +330,8 @@ export function useTableField(input: UseTableFieldInput) {
             }),
         [instance, name, rowKinds]
     )
-    // The ⇧? sheet lists every registered key, so a key is registered only
+    // The ⇧? sheet lists a lone registration whatever its `when` returns (so
+    // the focus-gated row keys stay listed), so a key is registered only
     // while its action is offered.
     useRegisterShortcuts(isEditable && rowShortcuts ? rowKeyShortcuts : NO_SHORTCUTS)
     useRegisterShortcuts(isEditable ? kindShortcuts : NO_SHORTCUTS)

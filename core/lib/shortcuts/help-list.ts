@@ -1,3 +1,4 @@
+import { log } from '@tinycld/core/lib/logger'
 import { create } from '@tinycld/core/lib/store'
 import { isScopeActive, pickFiring } from './matcher'
 import { nextScopeId, topScopeEntry } from './scopes'
@@ -63,7 +64,8 @@ export function helpGroups(
         else byKeys.set(s.keys, [s])
     }
     const groups: Record<string, Shortcut[]> = {}
-    for (const sameKeys of byKeys.values()) {
+    for (const registered of byKeys.values()) {
+        const sameKeys = settleByWhen(registered)
         // A global whose keys an active scoped shortcut also binds never fires
         // (the matcher's rule, `pickFiring`), so it is left out too.
         const scopedWins = pickFiring(sameKeys)?.scope !== 'global'
@@ -76,6 +78,40 @@ export function helpGroups(
         groups[key].sort((a, b) => a.description.localeCompare(b.description))
     }
     return groups
+}
+
+/**
+ * `when` only settles a group of active registrations of the same keys: the
+ * sheet lists every key, including one gated on focus (a table's row keys),
+ * so a lone registration is listed whatever its `when` returns. In a group,
+ * the ones that can fire now win, so a guard registered on the same keys
+ * neither lists a second copy nor shadows the one that can fire. When none
+ * can fire, the group lists one entry per distinct description.
+ */
+function settleByWhen(sameKeys: Shortcut[]): Shortcut[] {
+    if (sameKeys.length < 2) return sameKeys
+    const firing = sameKeys.filter(canFireNow)
+    if (firing.length > 0) return firing
+    const seen = new Set<string>()
+    return sameKeys.filter(s => {
+        if (seen.has(s.description)) return false
+        seen.add(s.description)
+        return true
+    })
+}
+
+/** A `when` that throws is treated as false, and logged so the bug is seen. */
+function canFireNow(s: Shortcut): boolean {
+    if (!s.when) return true
+    try {
+        return s.when()
+    } catch (err) {
+        log.warn('shortcuts.help', 'a shortcut when() threw; it counts as false', {
+            id: s.id,
+            error: err instanceof Error ? err.message : String(err),
+        })
+        return false
+    }
 }
 
 function addToGroup(groups: Record<string, Shortcut[]>, s: Shortcut) {

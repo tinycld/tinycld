@@ -155,7 +155,7 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
                     disabled={!canDecrement}
                     accessibilityRole="button"
                     accessibilityLabel={`Decrease ${stepName}`}
-                    className={`items-center justify-center rounded-full border border-border bg-background ${stepSize} ${canDecrement ? 'opacity-100' : 'opacity-40'}`}
+                    className={`shrink-0 items-center justify-center rounded-full border border-border bg-background ${stepSize} ${canDecrement ? 'opacity-100' : 'opacity-40'}`}
                 >
                     <Minus size={16} color={iconColor} />
                 </Pressable>
@@ -176,7 +176,9 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
                     testID={testID ?? name}
                     placeholder={placeholder}
                     placeholderTextColor={placeholderColor}
-                    className={`${isCompact ? 'w-20 px-2' : 'flex-1 px-3'} border rounded-lg py-2.5 text-center text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
+                    // min-w-0: on web the <input> otherwise keeps its intrinsic
+                    // width and pushes the + stepper into the next field.
+                    className={`${isCompact ? 'w-20 px-2' : 'flex-1 min-w-0 px-3'} border rounded-lg py-2.5 text-center text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
                     style={iosInputCenteringStyle(16)}
                 />
                 <Pressable
@@ -184,7 +186,7 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
                     disabled={!canIncrement}
                     accessibilityRole="button"
                     accessibilityLabel={`Increase ${stepName}`}
-                    className={`items-center justify-center rounded-full border border-border bg-background ${stepSize} ${canIncrement ? 'opacity-100' : 'opacity-40'}`}
+                    className={`shrink-0 items-center justify-center rounded-full border border-border bg-background ${stepSize} ${canIncrement ? 'opacity-100' : 'opacity-40'}`}
                 >
                     <Plus size={16} color={iconColor} />
                 </Pressable>

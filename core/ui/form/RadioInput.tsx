@@ -75,7 +75,7 @@ export function RadioInput<T extends FieldValues = Record<string, unknown>>({
                     disabled={disabled}
                     accessibilityLabel={option.label}
                     onPress={() => field.onChange(option.value)}
-                    className={`flex-1 items-center rounded-md border py-2 ${isSelected ? 'border-primary bg-primary' : 'border-border bg-background'}`}
+                    className={`flex-1 min-w-0 items-center rounded-md border py-2 ${isSelected ? 'border-primary bg-primary' : 'border-border bg-background'}`}
                 >
                     <Text
                         className={`text-sm font-medium ${isSelected ? 'text-primary-foreground' : 'text-foreground'}`}
@@ -99,7 +99,7 @@ export function RadioInput<T extends FieldValues = Record<string, unknown>>({
                 <View className="pt-0.5">
                     <RadioDot isSelected={isSelected} />
                 </View>
-                <View className="flex-1 gap-0.5">
+                <View className="flex-1 min-w-0 gap-0.5">
                     <Text className="text-sm font-medium text-foreground">{option.label}</Text>
                     <Description text={option.description} />
                 </View>

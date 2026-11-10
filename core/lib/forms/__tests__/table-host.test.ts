@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { definitionSchema } from '../definition'
+import { columnSchema, definitionSchema, hostColumnSchema } from '../definition'
 import { findBuiltin, hostDefSchema } from '../host'
 import { orderHost, orderHostInput } from './table-fixtures'
 
@@ -31,6 +31,30 @@ describe('host table columns', () => {
         const field = def.fields[0]
         expect(field.kind).toBe('table')
         expect(field.kind === 'table' && 'component' in field.columns[0]).toBe(false)
+    })
+
+    describe('flex weight', () => {
+        const text = { key: 'description', kind: 'text', label: 'Description' }
+
+        it('keeps a flex weight on a host column', () => {
+            const parsed = hostColumnSchema.parse({ ...text, flex: 3 })
+            expect(parsed).toMatchObject({ key: 'description', flex: 3 })
+        })
+
+        it('keeps a host column without a flex weight valid', () => {
+            const parsed = hostColumnSchema.parse(text)
+            expect(parsed.key).toBe('description')
+            expect('flex' in parsed).toBe(false)
+        })
+
+        it.each([0, -1, 13])('refuses a flex weight of %d', flex => {
+            expect(hostColumnSchema.safeParse({ ...text, flex }).success).toBe(false)
+        })
+
+        it('does not carry flex through a custom admin column', () => {
+            const parsed = columnSchema.parse({ ...text, flex: 3 })
+            expect('flex' in parsed).toBe(false)
+        })
     })
 
     it('still rejects a host column of an unknown kind', () => {

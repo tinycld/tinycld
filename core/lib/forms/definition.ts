@@ -157,9 +157,15 @@ export type TableColumn = z.infer<typeof columnSchema>
  * module `components` map that draws its cell (a product picker, say). A custom
  * table column cannot: `columnSchema` strips the key, so a definition an admin
  * edits never mounts host code. The server never reads it.
+ *
+ * `flex` is the column's width weight on the wide grid (default 1); it is
+ * host-only for the same reason, and presentation only.
  */
 export const hostColumnSchema = columnSchema.and(
-    z.object({ component: z.string().min(1).optional() })
+    z.object({
+        component: z.string().min(1).optional(),
+        flex: z.number().positive().max(12).optional(),
+    })
 )
 export type HostTableColumn = z.infer<typeof hostColumnSchema>
 

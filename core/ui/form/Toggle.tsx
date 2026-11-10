@@ -48,7 +48,9 @@ export function Toggle<T extends FieldValues = Record<string, unknown>>({
         <View className="gap-1.5 mb-3" {...wrapperProps}>
             <View className="flex-row items-center justify-between gap-2">
                 {hideLabel ? null : (
-                    <Text className="text-sm font-semibold text-foreground">{label}</Text>
+                    <Text className="shrink min-w-0 text-sm font-semibold text-foreground">
+                        {label}
+                    </Text>
                 )}
                 <Switch
                     value={Boolean(field.value)}

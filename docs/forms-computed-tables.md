@@ -8,6 +8,15 @@ Two field kinds extend the forms engine: `computed` (a formula over other fields
 - Cycles are rejected when a definition is saved.
 - One JSON fixture (`core/lib/forms/fixtures/computed-fixture.json`) runs through the TypeScript and Go evaluators.
 
+## Host table columns
+
+A host table built-in's column takes the keys of a custom table column, and two that only a host may set (a custom column an admin edits drops them):
+
+- `component`: the name of a component in the host's UI module `components` map that draws the cell.
+- `flex`: the column's width weight on the wide grid, a positive number up to 12 (default 1). The header text and each row's cell slot under it take that weight; a cell drawn in another column's slot (`columnAt`) and an empty slot take the weight of the header column above them. The phone card layout ignores it.
+
+Both are presentation only. The Go server never reads `component`; it decodes `flex` (`Column.Flex`) so the host file round-trips, and never reads it.
+
 ## Row kinds
 
 A table built-in may declare `rowKinds`: the kinds of row it holds (an item line, a description line). A row stores its kind in its `kind` cell, and draws and validates only its kind's columns. A table without `rowKinds` has one kind with every column. Each kind has:
