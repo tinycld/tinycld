@@ -364,6 +364,27 @@ describe('typed labels', () => {
         }
         expect(headingText(month, PLAIN)).toBe('2026-01')
     })
+
+    it('writes a bucketed group label and its subtotal in words', () => {
+        const month = labelled({ label: '2026-01', labelType: 'month', labelValue: '2026-01' })
+        expect(rowLabelText(month, PLAIN)).toBe('Jan 2026')
+        expect(rowLabelText({ ...month, kind: 'subtotal', label: 'Total 2026-01' }, PLAIN)).toBe(
+            'Total Jan 2026'
+        )
+        const fiscal = labelled({ label: '2027', labelType: 'fiscalYear', labelValue: 2027 })
+        expect(rowLabelText(fiscal, PLAIN)).toBe('FY 2027')
+    })
+
+    it('names a bucketed pivot column in words', () => {
+        const quarter: ResultColumn = {
+            id: 'cost.p0',
+            label: '2026-Q1',
+            type: 'money',
+            pivot: { cell: 'cost', key: '2026-Q1', labelType: 'quarter', labelValue: '2026-Q1' },
+        }
+        expect(columnName(quarter, PLAIN)).toBe('Q1 2026')
+        expect(headingText(quarter, PLAIN)).toBe('Q1 2026')
+    })
 })
 
 describe('shownColumns', () => {
