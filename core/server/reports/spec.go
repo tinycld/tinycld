@@ -251,7 +251,14 @@ type Pivot struct {
 	// LabelField is the field a pivot over a link names its columns by, as
 	// Column.LabelField.
 	LabelField string `json:"labelField,omitempty"`
+	// Order "spec" (PivotOrderSpec) puts the pivot columns just before their
+	// cell column, so its total reads after them; absent, they come after
+	// every column.
+	Order string `json:"order,omitempty"`
 }
+
+// PivotOrderSpec is the one Pivot.Order value.
+const PivotOrderSpec = "spec"
 
 // LayoutItem is a section (section, title, key: the first group's key it
 // shows) or a computed row (row, label, formula over {subtotal} leaves, and

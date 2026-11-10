@@ -10,11 +10,18 @@ import (
 	"strings"
 )
 
-// columns describes the result's columns, pivot cell columns last.
+// columns describes the result's columns. The pivot columns come after every
+// column, or under order "spec" just before their cell column, so its total
+// reads after them.
 func (rn *runner) columns() []ResultColumn {
 	c := rn.c
-	out := make([]ResultColumn, 0, len(c.p.cols))
+	pivots := rn.pivotColumns()
+	before := c.p.pivot != nil && c.p.pivot.pivot.Order == PivotOrderSpec
+	out := make([]ResultColumn, 0, len(c.p.cols)+len(pivots))
 	for _, cp := range c.p.cols {
+		if before && cp == c.p.pivot.cell {
+			out = append(out, pivots...)
+		}
 		if cp.col.Hidden {
 			continue
 		}
@@ -36,18 +43,30 @@ func (rn *runner) columns() []ResultColumn {
 		rn.currencyOfColumn(cp, &rc)
 		out = append(out, rc)
 	}
-	if pv := c.p.pivot; pv != nil {
-		cell := pv.cell
-		for j, v := range rn.pivotValues {
-			label := rn.pivotLabel(j, v.key)
-			rc := ResultColumn{
-				ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: label.text,
-				Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format,
-				Pivot: &PivotColumn{Cell: cell.col.ID, Key: v.key, LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency},
-			}
-			rn.currencyOfColumn(cell, &rc)
-			out = append(out, rc)
+	if !before {
+		out = append(out, pivots...)
+	}
+	return out
+}
+
+// pivotColumns is one column per pivot value, named by its typed label.
+func (rn *runner) pivotColumns() []ResultColumn {
+	c := rn.c
+	pv := c.p.pivot
+	if pv == nil {
+		return nil
+	}
+	cell := pv.cell
+	out := make([]ResultColumn, 0, len(rn.pivotValues))
+	for j, v := range rn.pivotValues {
+		label := rn.pivotLabel(j, v.key)
+		rc := ResultColumn{
+			ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: label.text,
+			Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format,
+			Pivot: &PivotColumn{Cell: cell.col.ID, Key: v.key, LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency},
 		}
+		rn.currencyOfColumn(cell, &rc)
+		out = append(out, rc)
 	}
 	return out
 }

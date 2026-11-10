@@ -863,6 +863,13 @@ func (b *binder) groupsAndPivot(p *plan) {
 	if pp.cell != nil && pp.cell.col.Rollup != nil {
 		b.bad(pp.cell.at+".rollup", "a pivot's cell column is totalled by its pivot columns")
 	}
+	switch {
+	case pv.Order == "":
+	case pv.Order != PivotOrderSpec:
+		b.bad("pivot.order", `order is "spec"`)
+	case len(spec.Columns) > 0 && spec.Columns[0].ID == pv.Cell:
+		b.bad("pivot.order", "the pivot cell is the first column, the label: no pivot column may come before it")
+	}
 	p.pivot = pp
 	// A pivot's innermost level never opens (its groups are the pivot's rows),
 	// so an opening row there could never show (R5e).
