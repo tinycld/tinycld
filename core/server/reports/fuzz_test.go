@@ -11,7 +11,10 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 // The rule-parity fuzz test: for a random reader, source and filter, the
@@ -204,6 +207,8 @@ func FuzzRuleParity(f *testing.F) {
 		z.fillParity(t, mux, user)
 		z.sumLookupParity(t, mux, user)
 		z.cellsParity(t, mux, user)
+		z.sectionPercentParity(t, mux, user)
+		z.periodPivotParity(t, mux, rng, user)
 		z.pagedGroupParity(t, mux, rng, user, pagedShapes[seed%uint64(len(pagedShapes))], 1+rng.IntN(5))
 	})
 }
@@ -231,6 +236,132 @@ func (z *zoo) cellsParity(t *testing.T, mux http.Handler, user string) {
 	got := res.Rows[len(res.Rows)-1].Cells["grams"]
 	if fmt.Sprint(got) != fmt.Sprint(int64(want)) {
 		t.Fatalf("%s: fed grams = %v, list API = %v", user, got, want)
+	}
+}
+
+// sectionPercentParity: on a statement with one section per species word, each
+// section's total of a percent of the hay section is that section's grams over
+// the hay section's grams, as the list API lists the reader's USD feedings and
+// the animals they read the species of (an animal the reader cannot list gives
+// no species, so its feeding is in no section). The figure is worked out with
+// integers, half away from zero, as tc_pct does; no figure when hay has none.
+func (z *zoo) sectionPercentParity(t *testing.T, mux http.Handler, user string) {
+	t.Helper()
+	sections := make([]string, len(fuzzWords))
+	for i, w := range fuzzWords {
+		sections[i] = fmt.Sprintf(`{"section":"s_%s","title":"%s","key":"%s"}`, w, w, w)
+	}
+	res := z.run(t, user, `{"version":4,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},
+		{"id":"share","formula":{"op":"percentOfSection","args":[{"col":"grams"}],"subtotal":"s_hay","scale":1}}],
+		"filter":{"op":"eq","args":[{"path":[{"field":"currency"}]},{"value":"USD"}]},
+		"groups":[{"id":"g","col":"species"}],
+		"layout":[`+strings.Join(sections, ",")+`]}`, Options{}, nil)
+	species := map[string]string{}
+	for _, a := range z.listItems(t, mux, "zoo_animals", user) {
+		id, _ := a["id"].(string)
+		s, _ := a["species"].(string)
+		species[id] = s
+	}
+	grams := map[string]int64{}
+	for _, f := range z.listItems(t, mux, "zoo_feedings", user) {
+		if f["currency"] != "USD" {
+			continue
+		}
+		animal, _ := f["animal"].(string)
+		g, _ := f["grams"].(float64)
+		grams[species[animal]] += int64(g)
+	}
+	got := map[string]any{}
+	for _, r := range res.Rows {
+		if r.Kind == KindSubtotal {
+			got[r.Label] = r.Cells["share"]
+		}
+	}
+	hay := grams["hay"]
+	for _, w := range fuzzWords {
+		share, ok := got["Total "+w]
+		if !ok {
+			t.Fatalf("%s: no total for section %s (every section shows): %v", user, w, got)
+		}
+		var want any
+		if hay != 0 {
+			want = float64((2*grams[w]*1000+hay)/(2*hay)) / 10
+		}
+		if fmt.Sprint(share) != fmt.Sprint(want) {
+			t.Fatalf("%s: %s share = %v, list API %d of %d grams = %v", user, w, share, grams[w], hay, want)
+		}
+	}
+}
+
+// periodPivotParity: a month pivot over a random span of 2026 shows every month
+// of the span, and each note's month cells and total are the sums of the grams
+// of the reader's USD feedings the list API lists in that month (0 in a month
+// with none).
+func (z *zoo) periodPivotParity(t *testing.T, mux http.Handler, rng *rand.Rand, user string) {
+	t.Helper()
+	first := 1 + rng.IntN(12)
+	last := first + rng.IntN(13-first)
+	from := fmt.Sprintf("2026-%02d-01", first)
+	to := time.Date(2026, time.Month(last+1), 0, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
+	res := z.run(t, user, `{"version":4,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
+		"columns":[{"id":"note","path":[{"field":"note"}]},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
+		"filter":{"op":"and","args":[
+			{"op":"eq","args":[{"path":[{"field":"currency"}]},{"value":"USD"}]},
+			{"op":"between","args":[{"path":[{"field":"fed"}]},{"param":"period"}]}]},
+		"groups":[{"id":"g","col":"note"}],
+		"pivot":{"path":[{"field":"fed"}],"bucket":"month","cell":"grams","range":"period"}}`,
+		Options{}, map[string]string{"period": fmt.Sprintf(`{"from":%q,"to":%q}`, from, to)})
+	months := last - first + 1
+	ids := make([]string, months)
+	for i := range months {
+		ids[i] = fmt.Sprintf("grams.p%d=2026-%02d", i, first+i)
+	}
+	if got := pivotIDs(res); !slices.Equal(got, ids) {
+		t.Fatalf("%s %s..%s: pivot columns = %v\nwant %v", user, from, to, got, ids)
+	}
+	want := map[string][]int64{}
+	for _, f := range z.listItems(t, mux, "zoo_feedings", user) {
+		fed, _ := f["fed"].(string)
+		if f["currency"] != "USD" || len(fed) < 10 || fed[:10] < from || fed[:10] > to {
+			continue
+		}
+		month, err := strconv.Atoi(fed[5:7])
+		if err != nil {
+			t.Fatalf("fed %q: %v", fed, err)
+		}
+		note, _ := f["note"].(string)
+		if want[note] == nil {
+			want[note] = make([]int64, months)
+		}
+		g, _ := f["grams"].(float64)
+		want[note][month-first] += int64(g)
+	}
+	seen := 0
+	for _, r := range res.Rows {
+		if r.Kind != KindGroup {
+			continue
+		}
+		seen++
+		cells, ok := want[r.Label]
+		if !ok {
+			t.Fatalf("%s: note %q is not in the list API's feedings %v", user, r.Label, want)
+		}
+		var total int64
+		for i, c := range cells {
+			total += c
+			if got := r.Cells[fmt.Sprintf("grams.p%d", i)]; !reflect.DeepEqual(got, c) {
+				t.Fatalf("%s: note %s month %d = %#v, list API %d", user, r.Label, first+i, got, c)
+			}
+		}
+		if !reflect.DeepEqual(r.Cells["grams"], total) {
+			t.Fatalf("%s: note %s total = %#v, list API %d", user, r.Label, r.Cells["grams"], total)
+		}
+	}
+	if seen != len(want) {
+		t.Fatalf("%s: %d note rows, list API %d notes", user, seen, len(want))
 	}
 }
 
