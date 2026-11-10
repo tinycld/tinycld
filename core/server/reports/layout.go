@@ -786,23 +786,14 @@ func (lc *layoutCtx) lookup(n *Node, at string) (expr, error) {
 		// check, a picked amount) is still computed once, its subqueries as
 		// the columns of lx<k>, so its copies are column names too.
 		var cols []string
-		ref := func(f *string, col string) {
-			if *f == "" {
-				return
+		h = hoistLookupParts(h, func(parts []lookupPart) []string {
+			refs := make([]string, len(parts))
+			for i, p := range parts {
+				cols = append(cols, p.sql+" AS "+p.col)
+				refs[i] = pick(p.col)
 			}
-			cols = append(cols, *f+" AS "+col)
-			*f = pick(col)
-		}
-		if h.mixed != "" && h.unguarded != "" {
-			// sql is the guard over the two: read them, not a third copy.
-			ref(&h.mixed, "m")
-			ref(&h.unguarded, "u")
-			h = h.guarded(h.mixed, h.unguarded)
-		} else {
-			ref(&h.sql, "s")
-		}
-		ref(&h.cur.sql, "c")
-		ref(&h.shown, "sh")
+			return refs
+		})
 		lc.lookupCTEs = append(lc.lookupCTEs, fmt.Sprintf("%s AS MATERIALIZED (SELECT %s)", name, strings.Join(cols, ", ")))
 	}
 	lc.lookups[n] = layoutLookup{name: "lx", e: h, wheres: slices.Clone(lc.wheres[before:])}
