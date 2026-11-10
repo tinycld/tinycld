@@ -274,7 +274,9 @@ function autoLines(
 
 // A pivot cell column's entry stands for all its pivot columns, each as wide
 // and as tall as the entry, side by side from where the entry is placed and
-// wrapping onto the lines below it, from the first track.
+// wrapping onto the lines below it, from the first track. When the result puts
+// the cell column right after its pivot columns (order "spec"), the entry ends
+// with the cell column too, so the total reads after them as on one line.
 function expandPivots(
     layout: DisplayLayout,
     placed: readonly Placed[],
@@ -284,18 +286,25 @@ function expandPivots(
         const pivots = columns.filter(c => c.pivot?.cell === cell.col)
         const at = placed[index]
         if (pivots.length === 0 || !at) return [cell]
+        const ids = pivots.map(p => p.id)
+        if (totalFollowsPivots(columns, cell.col)) ids.push(cell.col)
         let track = at.start - 1
         let line = at.line
-        return pivots.map(p => {
+        return ids.map(col => {
             if (track + at.span > layout.tracks) {
                 track = 0
                 line += at.lines
             }
             const start = track + 1
             track += at.span
-            return { col: p.id, line, start, span: at.span, lines: at.lines, justify: cell.justify }
+            return { col, line, start, span: at.span, lines: at.lines, justify: cell.justify }
         })
     })
+}
+
+function totalFollowsPivots(columns: readonly ResultColumn[], cell: string): boolean {
+    const at = columns.findIndex(c => c.id === cell && !c.pivot)
+    return at > 0 && columns[at - 1]?.pivot?.cell === cell
 }
 
 type Authored = { kind: 'tree'; root: Block } | { kind: 'refused'; notice?: string }

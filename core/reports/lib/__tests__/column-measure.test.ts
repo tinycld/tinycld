@@ -420,3 +420,33 @@ describe('measureKey with fits', () => {
         expect(measureKey({ ...base, fits: {} })).toBe(measureKey(base))
     })
 })
+
+describe('pivot columns', () => {
+    const SPECIES: ResultColumn = { id: 'species', label: 'Species', type: 'text' }
+    const COST: ResultColumn = { id: 'cost', label: 'Cost', type: 'money', currency: 'USD' }
+    const month = (j: number, key: string): ResultColumn => ({
+        id: `cost.p${j}`,
+        label: key,
+        type: 'text',
+        pivot: { cell: 'cost', key, labelType: 'month', labelValue: key },
+    })
+
+    it('measures a month heading in words', () => {
+        const m = measureColumns({
+            columns: [SPECIES, month(0, '2026-01')],
+            rows: [],
+            format: DEFAULT_DISPLAY,
+            levels: FLAT,
+        })
+        expect(m['cost.p0']?.natural).toBe(textWidth('Jan 2026', HEADING) + CELL_PADDING)
+    })
+
+    it('keeps the first column as the label when the total follows its pivot columns', () => {
+        const measure = (columns: ResultColumn[]) =>
+            measureColumns({ columns, rows: [GROUP], format: DEFAULT_DISPLAY, levels: GROUPED })
+        const totalAfter = measure([SPECIES, month(0, '2026-01'), month(1, '2026-02'), COST])
+        const totalFirst = measure([SPECIES, COST, month(0, '2026-01'), month(1, '2026-02')])
+        expect(totalAfter.species).toEqual(totalFirst.species)
+        expect(totalAfter.cost).toEqual(totalFirst.cost)
+    })
+})
