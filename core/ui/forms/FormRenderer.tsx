@@ -6,7 +6,7 @@ import type { FormHost } from '@tinycld/core/lib/packages/derive-form-hosts'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { FormErrorSummary } from '@tinycld/core/ui/form'
 import { type MutableRefObject, type ReactElement, type ReactNode, useRef, useState } from 'react'
-import type { UseFormReturn } from 'react-hook-form'
+import type { FieldErrors, UseFormReturn } from 'react-hook-form'
 import { type LayoutChangeEvent, ScrollView, Text, View } from 'react-native'
 import { FieldCell } from './FieldCell'
 import { FieldInput, hasPinnedRow, PinnedHostRow, rendersBare, rendersOwnLabel } from './FieldInput'
@@ -128,14 +128,24 @@ function visibleFieldsOf(
     )
 }
 
+/**
+ * A field's own error. A table field's error is filed at `errors[key].root`
+ * when the resolve covered a mounted row-cell name (a submit; the resolver
+ * nests it under the array), else at `errors[key]`; row-cell errors stay in
+ * their cells.
+ */
+function fieldErrorText(errors: FieldErrors<FormValues>, key: string): string | undefined {
+    const entry = errors[key]
+    const message = entry?.message ?? entry?.root?.message
+    return typeof message === 'string' ? message : undefined
+}
+
 function Cell(props: CellProps) {
     const { field, state, containerWidth, host, ui, form, mode, recordId, collab, design } = props
     const hideLabel = rendersOwnLabel(host, field, ui, mode)
     const onCellMeasure = design?.onCellMeasure
     const fieldState = state.fields[field.key]
-    const formError = form.formState.errors[field.key]?.message
-    const error =
-        design?.errors?.[field.key] ?? (typeof formError === 'string' ? formError : undefined)
+    const error = design?.errors?.[field.key] ?? fieldErrorText(form.formState.errors, field.key)
     return (
         <FieldCell
             fieldKey={field.key}
