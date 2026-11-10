@@ -130,7 +130,7 @@ Records with no group always show first. In each group, the records show by name
 
 ## Fold groups
 
-To open a group level when the report opens, turn on **Open when the report opens** for that level. To close or open one group, select its row. The other groups stay as they are, also the groups that load when you scroll further. **Collapse all** closes the groups until you open them again.
+To open a group level when the report opens, turn on **Open when the report opens** for that level. To close or open one group, select its row. The other groups stay as they are, also the groups that load when you scroll further. **Collapse all** closes the groups until you open them again. While the rows of a group you opened load, a spinner shows in place of its arrow. Select the row again to close it.
 
 While a report runs again, "Updating…" shows in the header. On phones and tablets it shows beside **Close** in the builder. The table does not move.
 
