@@ -127,9 +127,10 @@ type ColumnHeading struct {
 type PivotColumn struct {
 	Cell string `json:"cell"`
 	Key  any    `json:"key"`
-	// LabelType, LabelValue and LabelCurrency type a pivot over a link's
-	// column label as Row's do: the record label's typed value, which the
-	// column's Label holds as plain text.
+	// LabelType, LabelValue and LabelCurrency type the column label as Row's
+	// do: a pivot over a link's record label, an amount, or a bucket (Month,
+	// Quarter, Year, FiscalYear, Day with the raw key), which the column's
+	// Label holds as plain text.
 	LabelType     FieldType `json:"labelType,omitempty"`
 	LabelValue    any       `json:"labelValue,omitempty"`
 	LabelCurrency string    `json:"labelCurrency,omitempty"`

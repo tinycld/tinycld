@@ -179,12 +179,17 @@ func (lv *level) cellArg(cp *colPlan) (expr, error) {
 }
 
 // pivotLabel is the j-th pivot value as a column label: a record's typed
-// label for a pivot over a link, an amount typed with its currency, else the
-// value as a row label shows it.
+// label for a pivot over a link, an amount typed with its currency, a bucket
+// typed with its bucket (the client writes it in words), else the value as a
+// row label shows it.
 func (rn *runner) pivotLabel(j int, key any) rowLabel {
 	pv := rn.c.p.pivot
 	if pv.path.target != nil || pv.path.field.Type == Money {
 		return rn.pivotLabels[j]
 	}
-	return rowLabel{text: rn.display(&colPlan{col: &Column{}, path: pv.path}, key, pv.pivot.Bucket != "")}
+	label := rowLabel{text: rn.display(&colPlan{col: &Column{}, path: pv.path}, key, pv.pivot.Bucket != "")}
+	if typ := bucketType(pv.pivot.Bucket); typ != "" && key != nil && key != "" {
+		label.typ, label.value = typ, key
+	}
+	return label
 }

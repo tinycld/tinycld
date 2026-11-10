@@ -598,7 +598,11 @@ func (rn *runner) group(t *tree, row map[string]any, n, depth int, section strin
 	key := rn.rowKey(row, n)
 	id := "g:" + keyString(key)
 	g := rn.c.p.groups[n-1]
-	label := rowLabel{text: rn.display(g.col, row[fmt.Sprintf("k%d", n-1)], g.group.Bucket != "")}
+	raw := row[fmt.Sprintf("k%d", n-1)]
+	label := rowLabel{text: rn.display(g.col, raw, g.group.Bucket != "")}
+	if typ := bucketType(g.group.Bucket); typ != "" && raw != nil && raw != "" {
+		label.typ, label.value = typ, raw
+	}
 	// A key that mixes a select's values with other text reads as its group
 	// column's cell shows it.
 	if rn.c.groupShown[n-1] {
