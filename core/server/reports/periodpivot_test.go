@@ -1,7 +1,9 @@
 package reports
 
 import (
+	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -70,4 +72,92 @@ func TestPivotRangeRefusals(t *testing.T) {
 			requireSpecError(t, err, c.status, "pivot.range", c.want)
 		})
 	}
+}
+
+// zebrasBy is ann's zebra feedings in the period (f3 700, grams 300 on Jan
+// 20; f4 300, grams 100 on Mar 3) by species, pivoted on fed.
+func zebrasBy(bucket, cell, more string) string {
+	return `{"version":4,"source":"zoo.feedings","params":[` + periodParam + `],"columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"max"}],
+		"filter":{"op":"and","args":[
+			{"op":"eq","args":[{"path":[{"link":"animal"},{"field":"species"}]},{"value":"zebra"}]},
+			{"op":"between","args":[{"path":[{"field":"due"}]},{"param":"period"}]}]},
+		"groups":[{"id":"g","col":"species"}],
+		"pivot":{"path":[{"field":"fed"}],"bucket":"` + bucket + `","cell":"` + cell + `"` + more + `}}`
+}
+
+func period(from, to string) map[string]string {
+	return map[string]string{"period": fmt.Sprintf(`{"from":%q,"to":%q}`, from, to)}
+}
+
+const byPeriod = `,"range":"period"`
+
+func requirePivotIDs(t *testing.T, res *Result, want ...string) {
+	t.Helper()
+	if got := pivotIDs(res); !slices.Equal(got, want) {
+		t.Fatalf("pivot columns = %v\nwant %v", got, want)
+	}
+}
+
+func TestPeriodPivotShowsEveryMonthOfTheRange(t *testing.T) {
+	z := newZoo(t)
+	q1 := period("2026-01-01", "2026-03-31")
+	res := z.run(t, "ann", zebrasBy("month", "cost", byPeriod), Options{}, q1)
+	requirePivotIDs(t, res, "cost.p0=2026-01", "cost.p1=2026-02", "cost.p2=2026-03")
+	// Rows: the zebra group, then the total. February has no feeding: a sum
+	// reads 0 there.
+	requireRows(t, res, "cost.p0", int64(700), int64(700))
+	requireRows(t, res, "cost.p1", int64(0), int64(0))
+	requireRows(t, res, "cost.p2", int64(300), int64(300))
+	for _, c := range res.Columns {
+		if c.Pivot != nil && c.Pivot.LabelType != Month {
+			t.Fatalf("%s label type = %q", c.ID, c.Pivot.LabelType)
+		}
+	}
+	// A max over no rows stays blank, as today.
+	most := z.run(t, "ann", zebrasBy("month", "grams", byPeriod), Options{}, q1)
+	requireRows(t, most, "grams.p1", nil, nil)
+	requireRows(t, most, "grams.p0", int64(300), int64(300))
+	// Without a range, only the months with rows are columns.
+	plain := z.run(t, "ann", zebrasBy("month", "cost", ""), Options{}, q1)
+	requirePivotIDs(t, plain, "cost.p0=2026-01", "cost.p1=2026-03")
+}
+
+func TestPeriodPivotCountsEveryMonthTheRangeTouches(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", zebrasBy("month", "cost", byPeriod), Options{}, period("2026-01-15", "2026-03-10"))
+	requirePivotIDs(t, res, "cost.p0=2026-01", "cost.p1=2026-02", "cost.p2=2026-03")
+}
+
+func TestPeriodPivotByQuarter(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", zebrasBy("quarter", "cost", byPeriod), Options{}, period("2026-01-01", "2026-09-30"))
+	requirePivotIDs(t, res, "cost.p0=2026-Q1", "cost.p1=2026-Q2", "cost.p2=2026-Q3")
+	requireRows(t, res, "cost.p0", int64(1000), int64(1000))
+	requireRows(t, res, "cost.p1", int64(0), int64(0))
+}
+
+func TestPeriodPivotWiderThanItsColumnsSaysHowManyAreLeftOut(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", zebrasBy("day", "cost", byPeriod+`,"maxColumns":10`), Options{}, period("2026-01-01", "2026-01-31"))
+	ids := pivotIDs(res)
+	if len(ids) != 10 || ids[0] != "cost.p0=2026-01-01" || ids[9] != "cost.p9=2026-01-10" {
+		t.Fatalf("pivot columns = %v", ids)
+	}
+	i := slices.IndexFunc(res.Notices, func(n Notice) bool { return n.Code == "pivotCap" })
+	if i < 0 || res.Notices[i].LeftOut != 21 || res.Notices[i].Message != "The pivot shows its first 10 columns; 21 more are left out." {
+		t.Fatalf("notices = %+v", res.Notices)
+	}
+}
+
+func TestPeriodPivotOnAllDatesKeepsTodaysColumns(t *testing.T) {
+	z := newZoo(t)
+	all := map[string]string{"period": `{"preset":"allDates"}`}
+	res := z.run(t, "ann", zebrasBy("month", "cost", byPeriod), Options{}, all)
+	requirePivotIDs(t, res, "cost.p0=2026-01", "cost.p1=2026-03")
+	// period has no default: with no value it is unset.
+	unset := z.run(t, "ann", zebrasBy("month", "cost", byPeriod), Options{}, nil)
+	requirePivotIDs(t, unset, "cost.p0=2026-01", "cost.p1=2026-03")
 }

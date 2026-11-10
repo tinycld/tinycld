@@ -108,6 +108,17 @@ func (rn *runner) pivotPass() ([]pivotValue, error) {
 	if pv == nil {
 		return nil, nil
 	}
+	if keys, total, ok := rn.rangeSeries(); ok {
+		values := make([]pivotValue, len(keys))
+		for j, key := range keys {
+			values[j] = pivotValue{key: key}
+		}
+		if total > pv.max {
+			rn.noticeOnce(pivotCapNotice(pv.max, total-pv.max))
+		}
+		rn.pivotValues = values
+		return values, nil
+	}
 	s := newStmt(rn.app, c.info)
 	r, err := c.rows(s)
 	if err != nil {
@@ -157,10 +168,30 @@ func (rn *runner) pivotPass() ([]pivotValue, error) {
 	}
 	if len(rows) > pv.max {
 		left := int(toInt(rows[0]["__n"])) - pv.max
-		rn.noticeOnce(Notice{Code: "pivotCap", Message: fmt.Sprintf("The pivot shows its first %d columns; %d more are left out.", pv.max, left), LeftOut: left})
+		rn.noticeOnce(pivotCapNotice(pv.max, left))
 	}
 	rn.pivotValues = values
 	return values, nil
+}
+
+// rangeSeries is the pivot's range's buckets, at most maxColumns of them, and
+// how many there are; ok is false for a pivot with no range, or a range on
+// All dates, whose columns are the buckets that have rows.
+func (rn *runner) rangeSeries() (keys []any, total int, ok bool) {
+	pv := rn.c.p.pivot
+	if pv.pivot.Range == "" {
+		return nil, 0, false
+	}
+	v := rn.c.params[pv.pivot.Range]
+	if v.from == "" || v.to == "" {
+		return nil, 0, false
+	}
+	keys, total = bucketSeries(pv.pivot.Bucket, v.from, v.to, rn.c.fiscal, pv.max)
+	return keys, total, true
+}
+
+func pivotCapNotice(max, left int) Notice {
+	return Notice{Code: "pivotCap", Message: fmt.Sprintf("The pivot shows its first %d columns; %d more are left out.", max, left), LeftOut: left}
 }
 
 // pivotCells adds one aggregate per pivot value to the level: the cell
