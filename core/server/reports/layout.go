@@ -729,10 +729,7 @@ func (lc *layoutCtx) currencySQL(cur currency) string {
 // order. First-level groups no section names are left out.
 func (rn *runner) layoutRows(t *tree, total map[string]any) {
 	ck := rn.currencyKey(total)
-	byKey := map[string]map[string]any{}
-	for _, g := range t.children[ck] {
-		byKey[keyString([]any{g["k0"]})] = g
-	}
+	byKey := rn.sectionsByKey(t, ck)
 	for _, item := range rn.c.p.layout {
 		// A within row is emitted inside its section (groupWithLabel).
 		if item.Within != "" {
@@ -747,24 +744,42 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 			rn.push(Row{ID: id, Kind: KindComputed, Label: item.Label, Cells: rn.cells(row)}, row)
 			continue
 		}
-		key := sectionKey(item)
-		row := byKey[keyString([]any{key})]
-		if row == nil {
-			row = map[string]any{"k0": key, "__level": int64(1)}
-			for _, name := range rn.c.currencies {
-				row[name] = total[name]
-			}
-			// A section the row cap cut stays blank: it may hold rows.
-			if zero := t.computed[emptySectionID+"|"+ck]; zero != nil && !rn.sectionsCapped {
-				row = rn.withinTotal(row, zero)
-			}
-		}
+		row := rn.sectionRow(t, item, total, byKey)
 		groupKey := rn.rowKey(row, 1)
-		if sum := t.computed[sectionTotalID(item.Section)+"|"+ck]; sum != nil {
-			row = rn.withinTotal(row, sum)
-		}
 		rn.groupWithLabel(t, row, 1, 0, "", "g:"+keyString(groupKey), rowLabel{text: item.Title}, groupKey, true, item)
 	}
+}
+
+// sectionsByKey is one currency's first-level group rows by key.
+func (rn *runner) sectionsByKey(t *tree, ck string) map[string]map[string]any {
+	byKey := map[string]map[string]any{}
+	for _, g := range t.children[ck] {
+		byKey[keyString([]any{g["k0"]})] = g
+	}
+	return byKey
+}
+
+// sectionRow is a section's group row in one currency: its group's row, or
+// a zero row for a section with no rows, with its within rows added. It may
+// be the group's own row, so a caller must not change it.
+func (rn *runner) sectionRow(t *tree, item *LayoutItem, total map[string]any, byKey map[string]map[string]any) map[string]any {
+	ck := rn.currencyKey(total)
+	key := sectionKey(item)
+	row := byKey[keyString([]any{key})]
+	if row == nil {
+		row = map[string]any{"k0": key, "__level": int64(1)}
+		for _, name := range rn.c.currencies {
+			row[name] = total[name]
+		}
+		// A section the row cap cut stays blank: it may hold rows.
+		if zero := t.computed[emptySectionID+"|"+ck]; zero != nil && !rn.sectionsCapped {
+			row = rn.withinTotal(row, zero)
+		}
+	}
+	if sum := t.computed[sectionTotalID(item.Section)+"|"+ck]; sum != nil {
+		row = rn.withinTotal(row, sum)
+	}
+	return row
 }
 
 // withinTotal is a section's row with its number cells (and their currency

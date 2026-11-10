@@ -1,6 +1,9 @@
 package reports
 
-import "fmt"
+import (
+	"database/sql/driver"
+	"fmt"
+)
 
 // sectionPercent is a column whose formula is percentOfSection: each row's
 // value of arg as a percent of the named section's total of arg, at scale.
@@ -83,6 +86,45 @@ func (b *binder) sectionPercent(p *plan, cp *colPlan, sections map[string]bool) 
 		scale = *n.Scale
 	}
 	p.percents[cp.col.ID] = &sectionPercent{col: cp, arg: arg, section: n.Subtotal, scale: scale}
+}
+
+// readSectionBases reads, for one currency block, each percent column's
+// section total of its argument from the row the section shows, so a
+// folded section divides by the same total.
+func (rn *runner) readSectionBases(t *tree, total map[string]any) {
+	if len(rn.c.p.percents) == 0 {
+		return
+	}
+	ck := rn.currencyKey(total)
+	byKey := rn.sectionsByKey(t, ck)
+	for i := range rn.c.p.layout {
+		item := rn.c.p.layout[i]
+		if item.Section == "" {
+			continue
+		}
+		row := rn.sectionRow(t, item, total, byKey)
+		for id, sp := range rn.c.p.percents {
+			if sp.section == item.Section {
+				rn.sectionBases[id+"|"+ck] = row[fmt.Sprintf("v%d", rn.c.p.index(sp.arg))]
+			}
+		}
+	}
+}
+
+// sectionPercentCell is a row's own argument cell as a percent of its
+// currency block's section total, rounded as tc_pct rounds: blank for a
+// blank cell or a zero or blank total.
+func (rn *runner) sectionPercentCell(sp *sectionPercent, row map[string]any) any {
+	part := row[fmt.Sprintf("v%d", rn.c.p.index(sp.arg))]
+	whole := rn.sectionBases[sp.col.col.ID+"|"+rn.currencyKey(row)]
+	v, err := sqlPct(nil, []driver.Value{part, whole, int64(sp.scale)})
+	if err != nil {
+		if rn.assembleErr == nil {
+			rn.assembleErr = err
+		}
+		return nil
+	}
+	return v
 }
 
 // walkSpecFormulas calls visit on every node of every formula the spec

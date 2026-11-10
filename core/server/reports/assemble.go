@@ -340,8 +340,10 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 			rn.detail(t, row, "", 0)
 		}
 	}
+	rn.sectionBases = map[string]any{}
 	for _, total := range t.totals {
 		if len(rn.c.p.layout) > 0 {
+			rn.readSectionBases(t, total)
 			rn.layoutRows(t, total)
 			continue
 		}
@@ -856,6 +858,14 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 			rn.currencyCell(out, cp, row, row[fmt.Sprintf("vcur%d", idx)])
 		}
 		rn.labelCell(out, cp, row)
+	}
+	for id, sp := range rn.c.p.percents {
+		if sp.col.col.Hidden {
+			continue
+		}
+		if _, ok := row[fmt.Sprintf("v%d", rn.c.p.index(sp.col))]; ok {
+			out[id] = rn.sectionPercentCell(sp, row)
+		}
 	}
 	if pv := rn.c.p.pivot; pv != nil {
 		for j := range rn.pivotValues {
