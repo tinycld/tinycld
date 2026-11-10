@@ -65,6 +65,10 @@ type Column struct {
 	// AddOnSubmit is presentation only (Enter in the cell adds a row); the
 	// server decodes it so the host file round-trips, and never reads it.
 	AddOnSubmit bool `json:"addOnSubmit,omitempty"`
+	// Flex is presentation only (a host column's width weight on the wide
+	// grid); the server decodes it so the host file round-trips, and never
+	// reads it.
+	Flex *float64 `json:"flex,omitempty"`
 }
 
 type Page struct {

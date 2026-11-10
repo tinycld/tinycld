@@ -70,7 +70,10 @@ export function DateField({
                 onChangeText={text => onChange(text === '' ? null : text)}
                 placeholder={withTime ? 'YYYY-MM-DDTHH:mm' : 'YYYY-MM-DD'}
                 placeholderTextColor={muted}
-                style={{ color: fg, flex: 1 }}
+                // minWidth 0: react-native-web's <input> keeps its intrinsic
+                // ~150px width otherwise, which pushes the calendar button out
+                // of the border in a phone-width slot.
+                style={{ color: fg, flex: 1, minWidth: 0 }}
                 editable={!disabled}
                 autoFocus={autoFocus && !disabled}
                 onFocus={onFocus}
@@ -86,6 +89,7 @@ export function DateField({
                 title="Pick a date"
                 trigger={
                     <Pressable
+                        className="shrink-0"
                         disabled={disabled}
                         onFocus={onFocus}
                         onBlur={onBlur}

@@ -27,8 +27,10 @@ function UserChip({
     const { record } = useRecord(users, id)
     const fg = useThemeColor('foreground')
     return (
-        <View className="flex-row items-center bg-muted rounded-full px-2 py-0.5 mr-1 mb-1">
-            <Text className="text-foreground text-sm">{record?.name ?? '…'}</Text>
+        <View className="max-w-full flex-row items-center bg-muted rounded-full px-2 py-0.5 mr-1 mb-1">
+            <Text className="shrink min-w-0 text-foreground text-sm" numberOfLines={1}>
+                {record?.name ?? '…'}
+            </Text>
             <Pressable
                 onPress={onRemove}
                 disabled={disabled}

@@ -64,7 +64,9 @@ function boxClassFor(isSelected: boolean, isDropTarget: boolean, isSelectable: b
 /** The root is the row's flex item and the measured hit area, gaps included. */
 function rootClassFor(basis: string, isDragging: boolean) {
     const dim = isDragging ? 'opacity-50' : ''
-    return `relative ${basis} grow-0 shrink-0 px-1.5 mb-3 ${dim}`
+    // min-w-0: on web a flex item grows to its content's min-content width, so
+    // an input's intrinsic width would widen the cell past its basis.
+    return `relative ${basis} min-w-0 grow-0 shrink-0 px-1.5 mb-3 ${dim}`
 }
 
 function RequiredMark({ isVisible }: { isVisible: boolean }) {
@@ -83,7 +85,10 @@ function CellLabel({
 }) {
     if (!isVisible) return null
     return (
-        <Text className="text-foreground text-sm font-medium" nativeID={`form-label-${fieldKey}`}>
+        <Text
+            className="shrink min-w-0 text-foreground text-sm font-medium"
+            nativeID={`form-label-${fieldKey}`}
+        >
             {label}
         </Text>
     )
@@ -156,7 +161,7 @@ export function FieldCell({
             <View
                 ref={ref}
                 onLayout={onLayout}
-                className={`${basis} grow-0 shrink-0 px-1.5`}
+                className={`${basis} min-w-0 grow-0 shrink-0 px-1.5`}
                 testID={cellTestID}
             >
                 {children}

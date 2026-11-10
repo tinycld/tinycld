@@ -36,6 +36,11 @@ async function openWebForms(page: Page) {
 
 async function addRoleSelect(page: Page) {
     await addField(page, 'select', 'Role')
+    await addRoleOptions(page)
+}
+
+/** Fills the selected select field's options: Developer (dev) and Designer (design). */
+async function addRoleOptions(page: Page) {
     const option = (i: number, leaf: string) =>
         properties(page).locator(`[data-testid$=".options.${i}.${leaf}"]`)
     await option(0, 'label').fill('Developer')
@@ -49,6 +54,13 @@ async function addField(page: Page, kind: string, label: string) {
     await page.locator('[data-testid^="form-add-field-"]').first().click()
     await page.getByTestId(`form-kind-${kind}`).click()
     await answerPrompt(page, 'Field label', label)
+}
+
+/** Adds a field and gives it a width; a select gets the Developer / Designer options. */
+async function addSizedField(page: Page, field: SizedField) {
+    await addField(page, field.kind, field.label)
+    if (field.kind === 'select') await addRoleOptions(page)
+    await properties(page).locator(`[data-testid$=".width-${field.width}"]`).click()
 }
 
 async function saveDefinition(page: Page) {
@@ -69,7 +81,15 @@ export async function savePublication(page: Page) {
     expect((await stored).ok()).toBe(true)
 }
 
+export interface SizedField {
+    kind: 'date' | 'number' | 'select' | 'text'
+    label: string
+    width: 'full' | 'half' | 'third' | 'quarter'
+}
+
 interface PublishOptions {
+    /** More fields after the defaults, each at its own width. */
+    fields?: SizedField[]
     domains?: string
     pow?: boolean
     cvMaxSizeMb?: number
@@ -97,6 +117,7 @@ export async function publishForm(page: Page, name: string, opts: PublishOptions
         await properties(page).locator('[data-testid$=".maxSizeMb"]').fill(String(opts.cvMaxSizeMb))
     }
     if (opts.withRole) await addRoleSelect(page)
+    for (const field of opts.fields ?? []) await addSizedField(page, field)
     await saveDefinition(page)
 
     await page.getByTestId('form-tab-publish').click()

@@ -1,3 +1,4 @@
+import { log } from '@tinycld/core/lib/logger'
 import { handleKey, type KeyFacts, keyPhase } from '@tinycld/core/lib/shortcuts/dispatch'
 import { helpGroups, useShortcutHelpStore } from '@tinycld/core/lib/shortcuts/help-list'
 import { createMatcher, isScopeActive } from '@tinycld/core/lib/shortcuts/matcher'
@@ -1155,5 +1156,96 @@ describe('help list', () => {
         useShortcutHelpStore.getState().toggle()
         expect(useShortcutHelpStore.getState().isOpen).toBe(false)
         expect(useShortcutHelpStore.getState().scopeFloor).toBeNull()
+    })
+
+    describe('when', () => {
+        function formShortcut(id: string, keys: string, description: string, scopeId: number) {
+            return {
+                id,
+                keys,
+                scope: 'compose',
+                scopeId,
+                description,
+                group: 'Invoice',
+                allowInInputs: true,
+                run: () => {},
+            } satisfies Shortcut
+        }
+
+        const listedIds = (groups: Record<string, Shortcut[]>) =>
+            Object.values(groups)
+                .flat()
+                .map(s => s.id)
+                .sort()
+
+        it('lists a lone shortcut whatever its when returns, so a focus-gated key stays listed', () => {
+            const composeId = pushScope('compose')
+            register({
+                ...formShortcut('t.row-delete', '$mod+Backspace', 'Delete line', composeId),
+                when: () => false,
+            })
+            register({
+                ...formShortcut('t.post', '$mod+Enter', 'Post', composeId),
+                when: () => true,
+            })
+            register(formShortcut('t.cancel', 'Escape', 'Cancel', composeId))
+
+            const groups = helpGroups(useShortcutRegistry.getState().shortcuts, null)
+            expect(listedIds(groups)).toEqual(['t.cancel', 't.post', 't.row-delete'])
+        })
+
+        it('lists only the shortcut whose when is true, once, when the same keys are registered twice', () => {
+            const composeId = pushScope('compose')
+            register({
+                ...formShortcut('t.save-guard', '$mod+s', 'Save draft', composeId),
+                when: () => false,
+            })
+            register({
+                ...formShortcut('t.save', '$mod+s', 'Save draft', composeId),
+                when: () => true,
+            })
+
+            const groups = helpGroups(useShortcutRegistry.getState().shortcuts, null)
+            expect(groups.Invoice?.map(s => s.id)).toEqual(['t.save'])
+        })
+
+        it('lists a same-keys group as before when every when in it is false', () => {
+            const composeId = pushScope('compose')
+            register({
+                ...formShortcut('t.add-item', 'Alt+Enter', 'Add line', composeId),
+                when: () => false,
+            })
+            register({
+                ...formShortcut('t.add-note', 'Alt+Enter', 'Add note', composeId),
+                when: () => false,
+            })
+
+            const groups = helpGroups(useShortcutRegistry.getState().shortcuts, null)
+            expect(groups.Invoice?.map(s => s.description)).toEqual(['Add line', 'Add note'])
+        })
+
+        it('leaves out a same-keys shortcut whose when throws beside one whose when is true, and warns', () => {
+            const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+            const composeId = pushScope('compose')
+            register({
+                ...formShortcut('t.broken', '$mod+s', 'Save draft', composeId),
+                when: () => {
+                    throw new Error('no form')
+                },
+            })
+            register({
+                ...formShortcut('t.save', '$mod+s', 'Save draft', composeId),
+                when: () => true,
+            })
+
+            const groups = helpGroups(useShortcutRegistry.getState().shortcuts, null)
+            expect(listedIds(groups)).toEqual(['t.save'])
+            expect(warn).toHaveBeenCalledWith(
+                'shortcuts.help',
+                expect.any(String),
+                expect.objectContaining({ id: 't.broken' })
+            )
+            warn.mockRestore()
+        })
     })
 })

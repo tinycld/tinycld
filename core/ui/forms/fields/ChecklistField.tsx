@@ -57,7 +57,7 @@ function Row({ item, store, disabled, testID }: ViewProps & { item: ChecklistIte
             >
                 <Icon size={18} color={fg} />
             </Pressable>
-            <Text className={`ml-2 flex-1 ${textClass}`}>{item.text}</Text>
+            <Text className={`ml-2 flex-1 min-w-0 ${textClass}`}>{item.text}</Text>
             <Pressable
                 onPress={() => store.remove(item.id)}
                 disabled={disabled}

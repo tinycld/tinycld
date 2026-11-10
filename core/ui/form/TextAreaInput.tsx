@@ -18,7 +18,7 @@ function LabelRow({
     return (
         <View className="flex-row gap-2 items-center">
             <Icon size={16} color={mutedColor} />
-            <Text className="text-sm font-semibold text-foreground">{label}</Text>
+            <Text className="text-sm font-semibold text-foreground shrink min-w-0">{label}</Text>
         </View>
     )
 }

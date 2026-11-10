@@ -86,7 +86,7 @@ function MultiSelectRow({
             <View className={`w-4 h-4 rounded border items-center justify-center ${boxClass}`}>
                 <CheckMark isVisible={isChecked} color={primaryFg} />
             </View>
-            <Text className="text-sm text-foreground">{label}</Text>
+            <Text className="shrink min-w-0 text-sm text-foreground">{label}</Text>
         </Pressable>
     )
 }

@@ -155,6 +155,25 @@ func TestLoadHosts_DecodesLockedRowKindsAndAddOnSubmit(t *testing.T) {
 	}
 }
 
+func TestParseHosts_DecodesAHostColumnFlexWeight(t *testing.T) {
+	defs, err := ParseHosts([]byte(linesHost(`{"key":"lines","label":"Lines","kind":"table","storage":"rows",` +
+		`"columns":[{"key":"product","kind":"text","label":"Product"},` +
+		`{"key":"text","kind":"text","label":"Text","flex":3}]}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := defs.Host("gizmos:bill").Builtin("lines")
+	if lines == nil || len(lines.Columns) != 2 {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if lines.Columns[0].Flex != nil {
+		t.Fatalf("a column without flex decodes no weight: %v", *lines.Columns[0].Flex)
+	}
+	if got := lines.Columns[1].Flex; got == nil || *got != 3 {
+		t.Fatalf("text column flex = %v, want 3", got)
+	}
+}
+
 // requiredLines is a `lines` table whose description kind must fill its description;
 // product is required on every kind (table-wide), note is hidden, taxable a toggle.
 const requiredLinesColumns = `"columns":[{"key":"product","kind":"text","label":"Product","required":true},` +

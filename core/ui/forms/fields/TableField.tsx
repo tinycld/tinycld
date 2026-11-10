@@ -26,7 +26,7 @@ import { ShortcutButton } from '@tinycld/core/ui/shortcut-button'
 import { EllipsisVertical, Plus } from 'lucide-react-native'
 import { type ComponentType, type ReactNode, useState } from 'react'
 import type { UseFormGetValues } from 'react-hook-form'
-import { type HostInstance, Platform, Pressable, Text, View } from 'react-native'
+import { type HostInstance, Platform, Pressable, Text, View, type ViewStyle } from 'react-native'
 import { NARROW_BELOW } from '../widths'
 import { DateField } from './DateField'
 import { formatComputed } from './format-computed'
@@ -110,12 +110,19 @@ function rowColumns(base: TableBase, row: TableRow): HostTableColumn[] {
 interface GridSlot {
     key: string
     column: HostTableColumn | null
+    /** The slot's width weight on the wide grid: its header column's `flex`. */
+    flex: number
 }
+
+/** A column's width weight on the wide grid (a host's `flex`, default 1). */
+const flexOf = (c: HostTableColumn) => c.flex ?? 1
 
 /**
  * A grid row's cells in the header slots: a column of the first kind in its
  * own slot, another kind's column in the slot its `columnAt` names, an unused
- * slot empty. A column with no slot is drawn after the slots, so no cell is lost.
+ * slot empty. Each takes the weight of the header column above it, so the
+ * cells line up with the header. A column with no slot is drawn after the
+ * slots with its own weight, so no cell is lost.
  */
 function gridSlots(base: TableBase, row: TableRow): GridSlot[] {
     const own = rowColumns(base, row)
@@ -126,9 +133,11 @@ function gridSlots(base: TableBase, row: TableRow): GridSlot[] {
         const key = own.some(c => c.key === slot.key) ? slot.key : atSlot?.[0]
         const column = own.find(c => c.key === key) ?? null
         if (column) placed.add(column.key)
-        return { key: `slot-${slot.key}`, column }
+        return { key: `slot-${slot.key}`, column, flex: flexOf(slot) }
     })
-    const rest = own.filter(c => !placed.has(c.key)).map(c => ({ key: c.key, column: c }))
+    const rest = own
+        .filter(c => !placed.has(c.key))
+        .map(c => ({ key: c.key, column: c, flex: flexOf(c) }))
     return [...slots, ...rest]
 }
 
@@ -362,19 +371,22 @@ function CellSlot({
     row,
     column,
     className,
+    style,
     children,
 }: {
     table: TableFieldApi
     row: TableRow
     column: HostTableColumn
     className: string
+    /** The wide grid's width weight; a card leaves it unset. */
+    style?: ViewStyle
     children: ReactNode
 }) {
     const noteFocus = () => table.onCellFocus(row.id, column.key)
     const onFocus = Platform.OS === 'web' ? noteFocus : undefined
     const slotRef = table.refFor(cellKey(row.id, column.key))
     return (
-        <View ref={slotRef} onFocus={onFocus} className={className}>
+        <View ref={slotRef} onFocus={onFocus} className={className} style={style}>
             {children}
         </View>
     )
@@ -487,13 +499,27 @@ function ActionsSpacer({ isVisible }: { isVisible: boolean }) {
     return <View className="w-10" />
 }
 
+/**
+ * The grid row's menu in a box as wide as the header's `ActionsSpacer`, so the
+ * row's cell slots share the same width as the header slots above them.
+ */
+function GridRowMenu(props: RowProps) {
+    if (!props.base.isEditable) return null
+    return (
+        <View className="w-10 shrink-0 items-center">
+            <RowMenu {...props} />
+        </View>
+    )
+}
+
 function GridHeader({ base, isVisible }: { base: TableBase; isVisible: boolean }) {
     if (!isVisible) return null
     const cells = base.slots.map(c => (
         <Text
             key={c.key}
             testID={`${base.ids}-head-${c.key}`}
-            className="flex-1 px-1 text-xs font-semibold text-muted-foreground"
+            style={{ flex: flexOf(c) }}
+            className="min-w-0 px-1 text-xs font-semibold text-muted-foreground"
         >
             {headerText(c)}
         </Text>
@@ -507,9 +533,10 @@ function GridHeader({ base, isVisible }: { base: TableBase; isVisible: boolean }
 }
 
 function GridSlotCell({ base, table, row, index, slot }: RowProps & { slot: GridSlot }) {
-    if (!slot.column) return <View className="flex-1 min-w-0" />
+    const weight = { flex: slot.flex }
+    if (!slot.column) return <View style={weight} className="min-w-0" />
     return (
-        <CellSlot table={table} row={row} column={slot.column} className="flex-1 min-w-0">
+        <CellSlot table={table} row={row} column={slot.column} className="min-w-0" style={weight}>
             <CellInput base={base} table={table} column={slot.column} row={row} index={index} />
         </CellSlot>
     )
@@ -529,7 +556,7 @@ function GridRow(props: RowProps) {
     const isSpan = kindOfRow(base, row)?.span ?? false
     // A span kind's one cell runs across every slot.
     const slots = isSpan
-        ? rowColumns(base, row).map(column => ({ key: column.key, column }))
+        ? rowColumns(base, row).map(column => ({ key: column.key, column, flex: flexOf(column) }))
         : gridSlots(base, row)
     const cells = slots.map(slot => <GridSlotCell key={slot.key} {...props} slot={slot} />)
     const onBlur = rowBlurOf(table)
@@ -540,7 +567,7 @@ function GridRow(props: RowProps) {
             className="flex-row items-start gap-2 py-1 border-b border-border"
         >
             {cells}
-            <RowMenu {...props} />
+            <GridRowMenu {...props} />
         </View>
     )
 }

@@ -99,7 +99,7 @@ function FileRowView({
     const label = String(row[nameColumn] ?? row.id)
     return (
         <View className="flex-row items-center py-1">
-            <Text className="flex-1 text-foreground">{label}</Text>
+            <Text className="flex-1 min-w-0 text-foreground">{label}</Text>
             <Pressable
                 onPress={onRemove}
                 disabled={disabled}

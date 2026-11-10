@@ -22,7 +22,7 @@ function Step({
 }) {
     return (
         <Text
-            className={`text-xs mr-3 ${toneFor(isCurrent, isDone)}`}
+            className={`shrink min-w-0 text-xs mr-3 ${toneFor(isCurrent, isDone)}`}
             accessibilityState={{ selected: isCurrent }}
         >
             {isCurrent ? '● ' : '○ '}

@@ -203,7 +203,7 @@ export function RelationRecordPicker(props: RelationRecordPickerProps) {
                     accessibilityLabel={accessibilityLabel}
                     className="flex-1 flex-row items-center justify-between border rounded-lg px-2.5 py-1.5 border-border bg-background"
                 >
-                    <Text className="text-sm text-foreground" numberOfLines={1}>
+                    <Text className="shrink min-w-0 text-sm text-foreground" numberOfLines={1}>
                         {label}
                     </Text>
                     <ChevronDown size={14} color={mutedColor} />
