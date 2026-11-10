@@ -856,6 +856,9 @@ func (b *binder) groupsAndPivot(p *plan) {
 			b.bad("pivot.bucket", "only a date has a bucket")
 		}
 	}
+	if pv.Range != "" {
+		b.pivotRange(p, pp)
+	}
 	pp.cell = b.column(p, pv.Cell, "pivot.cell")
 	if pp.cell != nil && (pp.cell.col.Aggregate == "" || pp.cell.tm >= 0) {
 		b.bad("pivot.cell", "the pivot cell is a column with an aggregate, not a total across a to-many link")
@@ -875,6 +878,24 @@ func (b *binder) groupsAndPivot(p *plan) {
 	// so an opening row there could never show (R5e).
 	if last := len(spec.Groups) - 1; last >= 0 && spec.Groups[last].Opening != nil {
 		b.bad(fmt.Sprintf("groups.%d.opening", last), "this level never opens, so it has no opening row")
+	}
+}
+
+// pivotRange refuses a range that names no date range param, or a pivot
+// whose columns cannot be the range's buckets: one not over a date, or with
+// no bucket.
+func (b *binder) pivotRange(p *plan, pp *pivotPlan) {
+	pv := pp.pivot
+	i := slices.IndexFunc(p.spec.Params, func(d ParamDef) bool { return d.ID == pv.Range })
+	switch {
+	case i < 0:
+		b.missing("pivot.range", "unknown_param", fmt.Sprintf("the report has no param %q", pv.Range))
+	case p.spec.Params[i].Type != ParamDateRange:
+		b.bad("pivot.range", "range names a date range param")
+	case pp.path != nil && pp.path.field.Type != Date && pp.path.field.Type != DateTime:
+		b.bad("pivot.range", "only a pivot over a date has a range")
+	case pv.Bucket == "":
+		b.bad("pivot.range", "a range pivot needs a bucket: its columns are the range's days, months, quarters or years")
 	}
 }
 

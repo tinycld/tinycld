@@ -1,6 +1,9 @@
 package reports
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // pivotKey puts the pivot value of each base row in w as pk.
 func (r *rowsCTE) pivotKey() {
@@ -29,6 +32,64 @@ func (r *rowsCTE) pivotKey() {
 // two columns.
 func (pv *pivotPlan) byCurrency() bool {
 	return pv.path.field.Type == Money && pv.path.field.Currency != ""
+}
+
+// bucketSeries is every bucket key the days from..to touch, in order, in the
+// forms bucketSQL gives (text; a fiscal year is its end year as int64): at
+// most max keys, and how many there are. It counts by arithmetic, so a range
+// of many buckets builds only max keys.
+func bucketSeries(bucket, from, to string, fiscalStart, max int) ([]any, int) {
+	first, okFirst := bucketIndex(bucket, from, fiscalStart)
+	last, okLast := bucketIndex(bucket, to, fiscalStart)
+	if !okFirst || !okLast || last < first {
+		return nil, 0
+	}
+	total := last - first + 1
+	keys := make([]any, 0, min(total, max))
+	for i := range min(total, max) {
+		keys = append(keys, bucketKey(bucket, first+i))
+	}
+	return keys, total
+}
+
+// bucketIndex numbers a day's bucket so that buckets next to each other are
+// one apart: days since 1970, months and quarters since year 0, the year, or
+// the fiscal year's end year (tc_fiscal_year).
+func bucketIndex(bucket, day string, fiscalStart int) (int, bool) {
+	d, err := time.Parse(time.DateOnly, day)
+	if err != nil {
+		return 0, false
+	}
+	year, month := d.Year(), int(d.Month())
+	switch bucket {
+	case "day":
+		return int(d.Unix() / 86400), true
+	case "month":
+		return year*12 + month - 1, true
+	case "quarter":
+		return year*4 + (month-1)/3, true
+	case "year":
+		return year, true
+	}
+	if fiscalStart > 1 && month >= fiscalStart {
+		year++
+	}
+	return year, true
+}
+
+// bucketKey is the key of the bucket numbered i (bucketIndex).
+func bucketKey(bucket string, i int) any {
+	switch bucket {
+	case "day":
+		return time.Unix(int64(i)*86400, 0).UTC().Format(time.DateOnly)
+	case "month":
+		return fmt.Sprintf("%04d-%02d", i/12, i%12+1)
+	case "quarter":
+		return fmt.Sprintf("%04d-Q%d", i/4, i%4+1)
+	case "year":
+		return fmt.Sprintf("%04d", i)
+	}
+	return int64(i)
 }
 
 // pivotValue is one pivot column: its key, and for a pivot by currency the

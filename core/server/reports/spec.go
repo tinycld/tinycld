@@ -251,6 +251,9 @@ type Pivot struct {
 	// LabelField is the field a pivot over a link names its columns by, as
 	// Column.LabelField.
 	LabelField string `json:"labelField,omitempty"`
+	// Range names a dateRange param: when it resolves to two days, the
+	// pivot's columns are every bucket from..to touches, rows or not.
+	Range string `json:"range,omitempty"`
 	// Order "spec" (PivotOrderSpec) puts the pivot columns just before their
 	// cell column, so its total reads after them; absent, they come after
 	// every column.
