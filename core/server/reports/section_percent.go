@@ -91,23 +91,11 @@ func (b *binder) sectionPercent(p *plan, cp *colPlan, sections map[string]bool) 
 // readSectionBases reads, for one currency block, each percent column's
 // section total of its argument from the row the section shows, so a
 // folded section divides by the same total.
-func (rn *runner) readSectionBases(t *tree, total map[string]any) {
-	if len(rn.c.p.percents) == 0 {
-		return
-	}
+func (rn *runner) readSectionBases(sections map[string]map[string]any, total map[string]any) {
 	ck := rn.currencyKey(total)
-	byKey := rn.sectionsByKey(t, ck)
-	for i := range rn.c.p.layout {
-		item := rn.c.p.layout[i]
-		if item.Section == "" {
-			continue
-		}
-		row := rn.sectionRow(t, item, total, byKey)
-		for id, sp := range rn.c.p.percents {
-			if sp.section == item.Section {
-				rn.sectionBases[id+"|"+ck] = row[fmt.Sprintf("v%d", rn.c.p.index(sp.arg))]
-			}
-		}
+	for id, sp := range rn.c.p.percents {
+		row := sections[sp.section]
+		rn.sectionBases[id+"|"+ck] = row[fmt.Sprintf("v%d", rn.c.p.index(sp.arg))]
 	}
 }
 

@@ -81,6 +81,16 @@ func growZoo(t testing.TB, z *zoo, rng *rand.Rand) {
 			"fed": fmt.Sprintf("2026-%02d-%02d 00:00:00.000Z", 1+rng.IntN(12), 1+rng.IntN(28)),
 		})
 	}
+	// Every reader keeps a hay animal with a USD feeding of grams, so the hay
+	// section of sectionPercentParity always has a figure to divide by, whatever
+	// the random rows above came out as.
+	for i, reader := range readers[:3] {
+		hay := z.rec(t, fmt.Sprintf("hay%d", i), "zoo_animals", map[string]any{"name": "Hay", "species": "hay", "owner": reader})
+		z.rec(t, fmt.Sprintf("hayKeeper%d", i), "zoo_keepers", map[string]any{"user": reader, "animal": hay.Id})
+		z.rec(t, fmt.Sprintf("hayFeeding%d", i), "zoo_feedings", map[string]any{
+			"animal": hay.Id, "cost": 10, "grams": 120 + 30*i, "currency": "USD", "note": "hay", "fed": "2026-06-15 00:00:00.000Z",
+		})
+	}
 }
 
 // fuzzFilter builds one random condition as a spec node and as the same
@@ -279,16 +289,18 @@ func (z *zoo) sectionPercentParity(t *testing.T, mux http.Handler, user string) 
 			got[r.Label] = r.Cells["share"]
 		}
 	}
+	// growZoo gives every reader hay grams, so each seed checks a real share,
+	// never only the blank of a zero section.
 	hay := grams["hay"]
+	if hay == 0 {
+		t.Fatalf("%s: the reader has no hay grams: the seed data no longer exercises a share", user)
+	}
 	for _, w := range fuzzWords {
 		share, ok := got["Total "+w]
 		if !ok {
 			t.Fatalf("%s: no total for section %s (every section shows): %v", user, w, got)
 		}
-		var want any
-		if hay != 0 {
-			want = float64((2*grams[w]*1000+hay)/(2*hay)) / 10
-		}
+		want := float64((2*grams[w]*1000+hay)/(2*hay)) / 10
 		if fmt.Sprint(share) != fmt.Sprint(want) {
 			t.Fatalf("%s: %s share = %v, list API %d of %d grams = %v", user, w, share, grams[w], hay, want)
 		}

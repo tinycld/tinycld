@@ -212,43 +212,64 @@ func TestAFictionalProfitAndLossByMonthRunsOnTheMergedEngine(t *testing.T) {
 		"8000 Bank fees": 0.6, "Total Other expenses": 0.6,
 		"Net other income": 1.3, "Net income": 40.0,
 	}
+	// The section rows carry the same figures as their totals; every other row
+	// is one of figures.
+	sectionTitles := []string{"Income", "Cost of goods sold", "Expenses", "Other income", "Other expenses"}
+	seen := map[string]bool{}
 	computed := 0
 	for _, r := range res.Rows {
-		want, ok := figures[r.Label]
-		if !ok {
+		if slices.Contains(sectionTitles, r.Label) {
 			continue
 		}
+		want, ok := figures[r.Label]
+		if !ok {
+			t.Fatalf("unexpected row %q (%s)", r.Label, r.Kind)
+		}
+		seen[r.Label] = true
 		cells := []string{"amount.p0", "amount.p1", "amount.p2", "amount"}
+		var months int64
 		for i, col := range cells {
-			if got := r.Cells[col]; got != want[i] {
+			got := r.Cells[col]
+			if got != want[i] {
 				t.Fatalf("%s %s = %#v, want %d", r.Label, col, got, want[i])
 			}
+			if i < 3 {
+				months += got.(int64)
+			}
+		}
+		// The engine's months add to the engine's total, a computed row's too.
+		if total := r.Cells["amount"]; months != total {
+			t.Fatalf("%s months add to %d, its total is %v", r.Label, months, total)
 		}
 		if got := r.Cells["pct"]; got != shares[r.Label] {
 			t.Fatalf("%s %% of income = %#v, want %v", r.Label, got, shares[r.Label])
 		}
-		// A computed row's months add to its total, Net income's included.
 		if r.Kind == KindComputed {
 			computed++
-			if want[0]+want[1]+want[2] != want[3] {
-				t.Fatalf("%s months do not add to its total", r.Label)
-			}
 		}
+	}
+	if len(seen) != len(figures) {
+		t.Fatalf("saw %d of the %d expected rows: %v", len(seen), len(figures), seen)
 	}
 	if computed != 4 {
 		t.Fatalf("checked %d computed rows, want 4", computed)
 	}
 
-	// Active shows an account with a posted line in the period, at 0.
+	// Active shows an account with a posted line in the period, at 0 with a 0%
+	// share; an account with no line in the period stays out.
 	active := map[string]string{"period": quarter["period"], "rows": `"active"`}
 	all := z.run(t, "ann", raw, Options{ExpandAll: true}, active)
+	labels := rowsOf(all, "label")
+	if slices.Contains(labels, "6700 Idle expense") {
+		t.Fatalf("Active: the idle account has no line and stays out: %v", labels)
+	}
 	var shipping *Row
 	for i := range all.Rows {
 		if all.Rows[i].Label == "6800 Shipping" {
 			shipping = &all.Rows[i]
 		}
 	}
-	if shipping == nil || shipping.Cells["amount"] != int64(0) {
+	if shipping == nil || shipping.Cells["amount"] != int64(0) || shipping.Cells["pct"] != 0.0 {
 		t.Fatalf("Active: shipping row = %+v", shipping)
 	}
 }

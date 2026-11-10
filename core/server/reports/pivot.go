@@ -36,17 +36,21 @@ func (pv *pivotPlan) byCurrency() bool {
 
 // bucketSeries is every bucket key the days from..to touch, in order, in the
 // forms bucketSQL gives (text; a fiscal year is its end year as int64): at
-// most max keys, and how many there are. It counts by arithmetic, so a range
-// of many buckets builds only max keys.
-func bucketSeries(bucket, from, to string, fiscalStart, max int) ([]any, int) {
+// most limit keys, and how many there are. It counts by arithmetic, so a range
+// of many buckets builds only limit keys. A day that is not a date, or a range
+// that ends before it starts, has no buckets. bind refuses maxColumns below 1
+// (bind.go, pivot.maxColumns), but the function stays total: a limit below 1
+// builds no keys instead of panicking in make.
+func bucketSeries(bucket, from, to string, fiscalStart, limit int) ([]any, int) {
 	first, okFirst := bucketIndex(bucket, from, fiscalStart)
 	last, okLast := bucketIndex(bucket, to, fiscalStart)
 	if !okFirst || !okLast || last < first {
 		return nil, 0
 	}
 	total := last - first + 1
-	keys := make([]any, 0, min(total, max))
-	for i := range min(total, max) {
+	n := min(total, max(limit, 0))
+	keys := make([]any, 0, n)
+	for i := range n {
 		keys = append(keys, bucketKey(bucket, first+i))
 	}
 	return keys, total
@@ -190,8 +194,14 @@ func (rn *runner) rangeSeries() (keys []any, total int, ok bool) {
 	return keys, total, true
 }
 
-func pivotCapNotice(max, left int) Notice {
-	return Notice{Code: "pivotCap", Message: fmt.Sprintf("The pivot shows its first %d columns; %d more are left out.", max, left), LeftOut: left}
+func pivotCapNotice(limit, left int) Notice {
+	return Notice{Code: "pivotCap", Message: fmt.Sprintf("The pivot shows its first %d columns; %d more are left out.", limit, left), LeftOut: left}
+}
+
+// pivotBefore is true for a pivot that puts its columns just before their cell
+// column (order "spec"), so the cell column's total reads after them.
+func (p *plan) pivotBefore() bool {
+	return p.pivot != nil && p.pivot.pivot.Order == PivotOrderSpec
 }
 
 // pivotCells adds one aggregate per pivot value to the level: the cell

@@ -727,9 +727,8 @@ func (lc *layoutCtx) currencySQL(cur currency) string {
 // layoutRows emits the rows for one currency: each section's group row
 // (titled, always with its subtotal) and each computed row, in the layout's
 // order. First-level groups no section names are left out.
-func (rn *runner) layoutRows(t *tree, total map[string]any) {
+func (rn *runner) layoutRows(t *tree, total map[string]any, sections map[string]map[string]any) {
 	ck := rn.currencyKey(total)
-	byKey := rn.sectionsByKey(t, ck)
 	for _, item := range rn.c.p.layout {
 		// A within row is emitted inside its section (groupWithLabel).
 		if item.Within != "" {
@@ -744,10 +743,23 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 			rn.push(Row{ID: id, Kind: KindComputed, Label: item.Label, Cells: rn.cells(row)}, row)
 			continue
 		}
-		row := rn.sectionRow(t, item, total, byKey)
+		row := sections[item.Section]
 		groupKey := rn.rowKey(row, 1)
 		rn.groupWithLabel(t, row, 1, 0, "", "g:"+keyString(groupKey), rowLabel{text: item.Title}, groupKey, true, item)
 	}
+}
+
+// sectionRows is each section's row in one currency by section id, built once
+// for the percent bases and the layout's rows.
+func (rn *runner) sectionRows(t *tree, total map[string]any) map[string]map[string]any {
+	byKey := rn.sectionsByKey(t, rn.currencyKey(total))
+	rows := map[string]map[string]any{}
+	for _, item := range rn.c.p.layout {
+		if item.Section != "" {
+			rows[item.Section] = rn.sectionRow(t, item, total, byKey)
+		}
+	}
+	return rows
 }
 
 // sectionsByKey is one currency's first-level group rows by key.

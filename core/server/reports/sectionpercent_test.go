@@ -75,6 +75,18 @@ func TestPercentOfSectionRefusals(t *testing.T) {
 			"pivot.cell", "a column with an aggregate", 400},
 		"a computed row's cell": {percentStatement(shareOfLions, bySpecies, "", `,{"row":"r","label":"R","formula":{"subtotal":"cats"},"cells":{"share":{"value":1}}}`),
 			"layout.2.cells.share", "no cell formula", 400},
+		"an unknown argument column": {percentStatement(`{"op":"percentOfSection","args":[{"col":"nope"}],"subtotal":"cats","scale":1}`, bySpecies, "", ""),
+			"columns.3.formula.args.0", "no column", 422},
+		"a group by it": {percentStatement(shareOfLions, `[{"id":"g","col":"share"}]`, "", ""),
+			"groups.0.col", "does not group by a percent", 400},
+		"read by a sort": {percentStatement(shareOfLions, bySpecies, `"sort":[{"formula":{"col":"share"}}],`, ""),
+			"sort.0.formula", "no formula reads", 400},
+		"read by a rollup": {percentStatement(shareOfLions+`},{"id":"x","path":[{"field":"cost"}],"aggregate":"sum","rollup":{"op":"mul","args":[{"col":"share"},{"value":2}]}`, bySpecies, "", ""),
+			"columns.4.rollup.args.0", "no formula reads", 400},
+		"read by a having": {percentStatement(shareOfLions, `[{"id":"g","col":"species","having":{"op":"gt","args":[{"col":"share"},{"value":1}]}}]`, "", ""),
+			"groups.0.having.args.0", "no formula reads", 400},
+		"read by an opening": {percentStatement(shareOfLions, `[{"id":"g","col":"species","opening":{"label":"Start","cells":{"cost":{"col":"share"}}}},{"id":"n","col":"note"}]`, "", ""),
+			"groups.0.opening.cells.cost", "no formula reads", 400},
 		"subtotal beside another op": {percentStatement(`{"op":"add","subtotal":"cats","args":[{"col":"cost"},{"value":1}]}`, bySpecies, "", ""),
 			"columns.3.formula", "only percentOfSection takes a subtotal", 400},
 	}
@@ -223,4 +235,67 @@ func TestPercentOfSectionReportsAnAmountTooLarge(t *testing.T) {
 	if !errors.Is(err, ErrAmountTooLarge) {
 		t.Fatalf("err = %v, want ErrAmountTooLarge", err)
 	}
+}
+
+func TestPercentOfSectionRefusesAYesNoArgument(t *testing.T) {
+	z := newZoo(t)
+	raw := `{"version":4,"source":"zoo.animals","columns":[
+		{"id":"species","path":[{"field":"species"}]},
+		{"id":"active","path":[{"field":"active"}]},
+		{"id":"share","formula":{"op":"percentOfSection","args":[{"col":"active"}],"subtotal":"all","scale":1}}],
+		"groups":[{"id":"g","col":"species"}],
+		"layout":[{"section":"all","title":"All","key":"x"}]}`
+	_, err := z.try(t, "ann", raw, Options{}, nil)
+	requireSpecError(t, err, 400, "columns.2.formula", "not a yes/no value")
+}
+
+// A refused percent column is not in p.percents, so a reader of it is not
+// refused on its own. Binding gathers every problem and refuses the whole
+// spec, so the reader never reaches a run: the author sees the column's
+// refusal.
+func TestAReaderOfARefusedPercentColumnNeverRuns(t *testing.T) {
+	z := newZoo(t)
+	refused := `{"op":"percentOfSection","args":[{"col":"cost"}],"subtotal":"dogs","scale":1}`
+	raw := percentStatement(refused+`},{"id":"double","formula":{"op":"mul","args":[{"col":"share"},{"value":2}]}`, bySpecies, "", "")
+	_, err := z.try(t, "ann", raw, Options{}, nil)
+	requireSpecError(t, err, 422, "columns.3.formula.subtotal", "no section")
+	if err := Validate(z.app, loadSpec(t, raw)); err == nil {
+		t.Fatal("Validate accepts a reader of a refused percent column")
+	}
+}
+
+// R3: an opening row has no figure for the percent column, whatever the cells
+// it shows.
+func TestPercentOfSectionStaysBlankOnAnOpeningRow(t *testing.T) {
+	z := newZoo(t)
+	groups := `[{"id":"g","col":"species","opening":{"label":"Start","cells":{"cost":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}}}},{"id":"n","col":"note"}]`
+	res := z.run(t, "ann", percentStatement(shareOfLions, groups, sortByNote, ""), Options{ExpandAll: true}, nil)
+	openings := sharesOf(res, KindOpening)
+	if len(openings) == 0 {
+		t.Fatalf("no opening row in %v", sharesOf(res))
+	}
+	for label, share := range openings {
+		if share != nil {
+			t.Fatalf("opening row %q share = %v, want blank", label, share)
+		}
+	}
+	// The report still fills the rows around it.
+	if got := sharesOf(res, KindGroup)["Lions"]; got != 100.0 {
+		t.Fatalf("Lions share = %v, want 100.0", got)
+	}
+}
+
+// R3: detail "blank" keeps the percent off detail rows.
+func TestPercentOfSectionDetailBlank(t *testing.T) {
+	z := newZoo(t)
+	blank := shareOfLions + `,"detail":"blank"`
+	res := z.run(t, "ann", percentStatement(blank, bySpecies, sortByNote, ""), Options{ExpandAll: true}, nil)
+	for _, r := range res.Rows {
+		if r.Kind == KindDetail {
+			if _, ok := r.Cells["share"]; ok {
+				t.Fatalf("detail row %q has a share cell: %v", r.Label, r.Cells["share"])
+			}
+		}
+	}
+	requireShares(t, sharesOf(res, KindGroup), map[string]any{"Lions": 100.0, "Zebras": 28.6})
 }

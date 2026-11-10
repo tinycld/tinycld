@@ -16,7 +16,7 @@ import (
 func (rn *runner) columns() []ResultColumn {
 	c := rn.c
 	pivots := rn.pivotColumns()
-	before := c.p.pivot != nil && c.p.pivot.pivot.Order == PivotOrderSpec
+	before := c.p.pivotBefore()
 	out := make([]ResultColumn, 0, len(c.p.cols)+len(pivots))
 	for _, cp := range c.p.cols {
 		if before && cp == c.p.pivot.cell {
@@ -335,16 +335,19 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 		}
 		t.totals = []map[string]any{total}
 	}
+	// Set before any row is made: every row's cells read it (cells), and a row
+	// made before a block's bases are read finds none, so its percent is blank.
+	rn.sectionBases = map[string]any{}
 	if groups == 0 {
 		for _, row := range details {
 			rn.detail(t, row, "", 0)
 		}
 	}
-	rn.sectionBases = map[string]any{}
 	for _, total := range t.totals {
 		if len(rn.c.p.layout) > 0 {
-			rn.readSectionBases(t, total)
-			rn.layoutRows(t, total)
+			sections := rn.sectionRows(t, total)
+			rn.readSectionBases(sections, total)
+			rn.layoutRows(t, total, sections)
 			continue
 		}
 		for _, g := range t.children[rn.currencyKey(total)] {

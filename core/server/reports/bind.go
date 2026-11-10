@@ -894,7 +894,7 @@ func (b *binder) pivotRange(p *plan, pp *pivotPlan) {
 	case i < 0:
 		b.missing("pivot.range", "unknown_param", fmt.Sprintf("the report has no param %q", pv.Range))
 	case p.spec.Params[i].Type != ParamDateRange:
-		b.bad("pivot.range", "range names a date range param")
+		b.bad("pivot.range", fmt.Sprintf("range is the id of a date range param, but %q is a %s param", pv.Range, p.spec.Params[i].Type))
 	case pp.path != nil && pp.path.field.Type != Date && pp.path.field.Type != DateTime:
 		b.bad("pivot.range", "only a pivot over a date has a range")
 	case pv.Bucket == "":

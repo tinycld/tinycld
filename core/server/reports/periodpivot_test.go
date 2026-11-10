@@ -161,3 +161,50 @@ func TestPeriodPivotOnAllDatesKeepsTodaysColumns(t *testing.T) {
 	unset := z.run(t, "ann", zebrasBy("month", "cost", byPeriod), Options{}, nil)
 	requirePivotIDs(t, unset, "cost.p0=2026-01", "cost.p1=2026-03")
 }
+
+// A bucket series with no buckets: a day that is not a date, a range that ends
+// before it starts, and a limit below 1 (bind refuses that, bind.go
+// pivot.maxColumns, but the function must not panic in make).
+func TestBucketSeriesWithNoBuckets(t *testing.T) {
+	for name, c := range map[string]struct {
+		from, to string
+		limit    int
+	}{
+		"a malformed from":  {"2026-1-5", "2026-03-01", 3},
+		"a malformed to":    {"2026-01-05", "March", 3},
+		"a blank day":       {"", "2026-03-01", 3},
+		"to before from":    {"2026-03-01", "2026-01-05", 3},
+		"a limit of zero":   {"2026-01-05", "2026-03-01", 0},
+		"a negative limit":  {"2026-01-05", "2026-03-01", -4},
+		"an impossible day": {"2026-02-30", "2026-03-01", 3},
+	} {
+		t.Run(name, func(t *testing.T) {
+			keys, total := bucketSeries("month", c.from, c.to, 1, c.limit)
+			wantTotal := 0
+			if c.limit < 1 {
+				wantTotal = 3
+			}
+			if len(keys) != 0 || total != wantTotal {
+				t.Fatalf("got %#v (%d), want no keys and total %d", keys, total, wantTotal)
+			}
+		})
+	}
+}
+
+// R4: a row outside from..to (the filter does not bound the date) falls in no
+// bucket column but still counts in the cell column's total.
+func TestPeriodPivotCountsARowOutsideTheRangeInTheCellTotal(t *testing.T) {
+	z := newZoo(t)
+	raw := `{"version":4,"source":"zoo.feedings","params":[` + periodParam + `],"columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"filter":{"op":"eq","args":[{"path":[{"link":"animal"},{"field":"species"}]},{"value":"zebra"}]},
+		"groups":[{"id":"g","col":"species"}],
+		"pivot":{"path":[{"field":"fed"}],"bucket":"month","cell":"cost","range":"period"}}`
+	// Zebras: 700 on Jan 20, 300 on Mar 3 (outside the period).
+	res := z.run(t, "ann", raw, Options{}, period("2026-01-01", "2026-02-28"))
+	requirePivotIDs(t, res, "cost.p0=2026-01", "cost.p1=2026-02")
+	requireRows(t, res, "cost.p0", int64(700), int64(700))
+	requireRows(t, res, "cost.p1", int64(0), int64(0))
+	requireRows(t, res, "cost", int64(1000), int64(1000))
+}
