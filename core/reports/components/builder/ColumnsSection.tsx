@@ -49,7 +49,10 @@ export function moved<T>(items: readonly T[], from: number, to: number): T[] {
 }
 
 function offeredAggregates(builder: ReportBuilder, column: ColumnDraft): Aggregate[] {
-    if (column.kind === 'formula') return FORMULA_AGGREGATES
+    // Each row of a percent of a section shows its own share, so it has no total.
+    if (column.kind === 'formula') {
+        return column.formula.node.op === 'percentOfSection' ? [] : FORMULA_AGGREGATES
+    }
     const info = describePath(builder.catalog, builder.base.key, column.path)
     return info ? aggregatesFor(info.field, info.viaToMany) : []
 }

@@ -63,6 +63,7 @@ import {
     formulaContext,
     isNumericType,
     levelValueColumns,
+    readsColumn,
     readsSubtotal,
     recordGroups,
     sectionPercentColumns,
@@ -306,12 +307,69 @@ export function layoutWithMinWidth(
     return minWidth ? { width, minWidth, tracks, cells } : { width, tracks, cells }
 }
 
+const PERCENT_NO_TOTAL = 'A percent of a section shows each row’s own share: it has no total'
+
+function isSectionPercent(column: ColumnDraft): boolean {
+    return column.kind === 'formula' && column.formula.node.op === 'percentOfSection'
+}
+
+// section_percent.go: the section a percent divides by must be in the layout, and a
+// percent is filled after the statements, so no formula may read it.
+function sectionPercentIssues(draft: BuilderDraft): Issue[] {
+    const issues: Issue[] = []
+    const sections = new Set(
+        draft.layout.flatMap(item => (item.kind === 'section' ? [item.id] : []))
+    )
+    draft.columns.forEach((column, i) => {
+        if (column.kind !== 'formula' || !isSectionPercent(column)) return
+        const section = column.formula.node.subtotal
+        if (section && !sections.has(section)) {
+            issues.push({
+                path: ['columns', i, 'formula'],
+                message: `The layout has no section "${section}": choose a section`,
+            })
+        }
+    })
+    const percents = draft.columns.filter(isSectionPercent)
+    if (percents.length === 0) return issues
+    const reads = (formula: FormulaDraft | null | undefined) =>
+        percents.filter(percent => readsColumn(formula?.node, percent.id))
+    const refuse = (path: (string | number)[], formula: FormulaDraft | null | undefined) => {
+        const [percent] = reads(formula)
+        if (!percent) return
+        issues.push({
+            path,
+            message: `No formula reads "${percent.label}": a percent of a section is filled after the report’s totals`,
+        })
+    }
+    draft.columns.forEach((column, i) => {
+        if (column.kind === 'formula') refuse(['columns', i, 'formula'], column.formula)
+        refuse(['columns', i, 'rollup'], column.rollup)
+        refuse(['columns', i, 'heading'], column.heading)
+    })
+    draft.layout.forEach((item, i) => {
+        if (item.kind !== 'row') return
+        refuse(['layout', i, 'formula'], item.formula)
+        for (const [col, cell] of Object.entries(item.cells ?? {})) {
+            refuse(['layout', i, 'cells', col], cell)
+        }
+    })
+    draft.sort.forEach((key, i) => {
+        if (key.kind === 'formula') refuse(['sort', i, 'formula'], key.formula)
+    })
+    refuse(['detailLabel'], draft.detailLabel)
+    return issues
+}
+
 function columnIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues: Issue[] = []
     const ids = draft.columns.map(column => column.id)
     draft.columns.forEach((column, i) => {
         if (ids.indexOf(column.id) !== i) {
             issues.push({ path: ['columns', i, 'id'], message: 'Two columns have this id' })
+        }
+        if (column.kind === 'formula' && column.aggregate !== '' && isSectionPercent(column)) {
+            issues.push({ path: ['columns', i, 'aggregate'], message: PERCENT_NO_TOTAL })
         }
         if (column.kind !== 'path') return
         const info = describePath(catalog, draft.source, column.path)
@@ -718,6 +776,7 @@ export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         ...paramIssues(draft.params),
         ...groupOrderIssues(draft.params, catalog),
         ...columnIssues(draft, catalog),
+        ...sectionPercentIssues(draft),
         ...fitIssues(draft, catalog),
         ...detailBlankIssues(draft),
         ...rollupIssues(draft),

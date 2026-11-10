@@ -2285,6 +2285,68 @@ describe('a percent of a section in the draft', () => {
         ])
         expect(cellColumnIds(draft, types)).toEqual(['amount'])
     })
+
+    describe('draft issues the server would refuse', () => {
+        const issues = (draft: BuilderDraft) =>
+            draftIssues(draft, CATALOG).filter(
+                issue => issue.path[0] === 'columns' || issue.path[0] === 'sort'
+            )
+        const base = () => draftFromSpec(shareSpec(SHARE_NODE), SHARE_META, CATALOG)
+
+        it('has none for a valid percent', () => {
+            expect(issues(base())).toEqual([])
+        })
+
+        it('says a percent has no total', () => {
+            const draft = base()
+            const columns = draft.columns.map(c =>
+                c.id === 'share' ? { ...c, aggregate: 'sum' as const } : c
+            )
+            expect(issues({ ...draft, columns })).toEqual([
+                {
+                    path: ['columns', 2, 'aggregate'],
+                    message: 'A percent of a section shows each row’s own share: it has no total',
+                },
+            ])
+        })
+
+        it('says when the section is not in the layout', () => {
+            const spec = shareSpec({ ...SHARE_NODE, subtotal: 'gone' })
+            const gone = draftFromSpec(spec, SHARE_META, CATALOG)
+            expect(issues(gone)).toEqual([
+                {
+                    path: ['columns', 2, 'formula'],
+                    message: 'The layout has no section "gone": choose a section',
+                },
+            ])
+        })
+
+        it('says when another formula reads a percent of a section', () => {
+            const draft = base()
+            const reader = {
+                kind: 'formula' as const,
+                id: 'twice',
+                label: 'Twice',
+                aggregate: '' as const,
+                scale: null,
+                format: '',
+                total: 'recompute' as const,
+                explicitTotal: false,
+                labelField: '',
+                formula: {
+                    kind: 'editable' as const,
+                    node: { op: 'mul', args: [{ col: 'share' }, { value: 2 }] },
+                },
+            }
+            expect(issues({ ...draft, columns: [...draft.columns, reader] })).toEqual([
+                {
+                    path: ['columns', 3, 'formula'],
+                    message:
+                        'No formula reads "Share": a percent of a section is filled after the report’s totals',
+                },
+            ])
+        })
+    })
 })
 
 describe('a pivot over a whole period', () => {

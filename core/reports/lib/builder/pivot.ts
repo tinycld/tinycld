@@ -32,9 +32,20 @@ export function pivotRangeChoices(
     const choices = usableChoices(draft, catalog)
     const { on, range } = draft.pivot
     if (!on || range === '' || choices.some(choice => choice.value === range)) return choices
+    const { bucket } = draft.pivot
+    const only = bucket === '' ? 'columns' : BUCKET_WORDS[bucket].many
     const shown =
-        choices.length > 0 ? choices : [{ value: '', label: 'Only the columns with rows' }]
-    return [...shown, { value: range, label: `${range} (missing)` }]
+        choices.length > 0 ? choices : [{ value: '', label: `Only the ${only} with rows` }]
+    return [...shown, { value: range, label: keptLabel(draft.params, range, bucket) }]
+}
+
+// "(missing)" only for a range that is not a date range param; one that is, kept while
+// the bucket is cleared, reads as it will once By is chosen again.
+function keptLabel(params: BuilderDraft['params'], range: string, bucket: Bucket | ''): string {
+    const param = params.find(p => p.id === range)
+    if (param?.type !== 'dateRange') return `${range} (missing)`
+    const every = bucket === '' ? 'column' : BUCKET_WORDS[bucket].one
+    return `Show every ${every} of ${param.label ?? param.id}`
 }
 
 function usableChoices(

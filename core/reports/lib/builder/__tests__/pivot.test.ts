@@ -52,9 +52,31 @@ describe('pivotRangeChoices', () => {
         const draft = withPivot(draftFromSpec(BY_MONTH, META, CATALOG), { range: 'period' })
         const noRange = { ...draft, params: draft.params.filter(p => p.type !== 'dateRange') }
         expect(pivotRangeChoices(noRange, CATALOG)).toEqual([
-            { value: '', label: 'Only the columns with rows' },
+            { value: '', label: 'Only the months with rows' },
             { value: 'period', label: 'period (missing)' },
         ])
+    })
+
+    it('keeps a real date range param under its usual label while the bucket is cleared', () => {
+        const draft = withPivot(draftFromSpec(BY_MONTH, META, CATALOG), {
+            bucket: '',
+            range: 'period',
+        })
+        expect(pivotRangeChoices(draft, CATALOG)).toEqual([
+            { value: '', label: 'Only the columns with rows' },
+            { value: 'period', label: 'Show every column of Period' },
+        ])
+    })
+
+    it('marks a kept range missing when there is no bucket and no such param', () => {
+        const draft = withPivot(draftFromSpec(BY_MONTH, META, CATALOG), {
+            bucket: '',
+            range: 'asOf',
+        })
+        expect(pivotRangeChoices(draft, CATALOG).at(-1)).toEqual({
+            value: 'asOf',
+            label: 'asOf (missing)',
+        })
     })
 
     it('keeps a range that names a param that is not a date range, beside the valid choices', () => {
