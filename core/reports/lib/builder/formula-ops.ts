@@ -61,7 +61,8 @@ const isValueList = (value: unknown) =>
     Array.isArray(value) &&
     (value.every(v => typeof v === 'string') || value.every(v => typeof v === 'number'))
 
-// formula.go percentOfSection: the operand is a number or an amount column.
+// formula.go percentOfSection takes any numeric column but yes/no; the builder offers
+// the number and amount ones.
 const isSectionOperand = (value: Pick<FormulaValue, 'type'>) =>
     value.type === 'number' || value.type === 'money'
 
@@ -426,6 +427,8 @@ export function withPart(
             const own =
                 current.col !== undefined ? here.values.find(v => v.key === current.col) : undefined
             const operand = own && isSectionOperand(own) ? own : here.values.find(isSectionOperand)
+            // partsAt offers this part only with a section and an operand, so the
+            // builder never gets here without both; an unoffered part changes nothing.
             if (!section || !operand) return current
             return settledNode(here, {
                 op: 'percentOfSection',

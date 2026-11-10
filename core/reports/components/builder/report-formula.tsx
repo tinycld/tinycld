@@ -17,7 +17,7 @@ import { Text } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import type { FormulaDraft } from '../../lib/builder/draft'
 import { columnChoices, type FormulaPlace, formulaContext } from '../../lib/builder/formula-context'
-import { describeNode, linkLabel } from '../../lib/builder/formula-describe'
+import { describeNode, linkLabel, sectionLabel } from '../../lib/builder/formula-describe'
 import {
     addOperandNode,
     addOtherwise,
@@ -245,11 +245,9 @@ function SectionLeaf({ ctx, expr, set, id, where }: LeafProps) {
         isSelected: section.id === expr.subtotal,
         onSelect: () => set({ ...expr, subtotal: section.id }),
     }))
-    const current = ctx.sections.find(section => section.id === expr.subtotal)
-    const label = current ? current.title : `${expr.subtotal} (missing)`
     return (
         <PickMenu
-            label={label}
+            label={sectionLabel(ctx.sections, expr.subtotal)}
             purpose={`Section${where}`}
             items={items}
             testID={`${id}-section`}

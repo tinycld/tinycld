@@ -45,6 +45,7 @@ function usePivotFields(builder: ReportBuilder) {
     }
     const onBucketChange = (bucket: string) => {
         if (bucket === '') form.setValue('pivot.range', '', { shouldDirty: true })
+        builder.validateLists()
     }
     return {
         isOn: pivot.on,
@@ -63,11 +64,12 @@ function usePivotFields(builder: ReportBuilder) {
 interface RangeSelectProps {
     choices: PivotRangeChoice[]
     control: Control<BuilderDraft>
+    onChange: () => void
 }
 
 // Every bucket of a date range, or only those with rows; shown where it applies, or
 // where a range left from an earlier choice must be cleared.
-function RangeSelect({ choices, control }: RangeSelectProps) {
+function RangeSelect({ choices, control, onChange }: RangeSelectProps) {
     if (choices.length === 0) return null
     return (
         <SelectInput
@@ -76,6 +78,7 @@ function RangeSelect({ choices, control }: RangeSelectProps) {
             label="Columns"
             options={choices}
             testID="report-builder-pivot-range"
+            onValueChange={onChange}
         />
     )
 }
@@ -122,7 +125,11 @@ function PivotFields({ builder }: { builder: ReportBuilder }) {
                 testID="report-builder-pivot-bucket"
                 onValueChange={onBucketChange}
             />
-            <RangeSelect choices={rangeChoices} control={control} />
+            <RangeSelect
+                choices={rangeChoices}
+                control={control}
+                onChange={builder.validateLists}
+            />
             <SelectInput
                 name="pivot.cell"
                 control={control}
@@ -151,7 +158,8 @@ function PivotFields({ builder }: { builder: ReportBuilder }) {
 }
 
 // A pivot spreads a column with a total across one column per value of a field
-// (a month, a status) or per linked record (a team). It needs a group level. It may show every bucket of a period, and its total after its columns.
+// (a month, a status) or per linked record (a team). It needs a group level. It may
+// show every bucket of a period, and its total after its columns.
 export function PivotSection({
     builder,
     problems,

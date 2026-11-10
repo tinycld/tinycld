@@ -56,4 +56,18 @@ describe('pivotRangeChoices', () => {
             { value: 'period', label: 'period (missing)' },
         ])
     })
+
+    it('keeps a range that names a param that is not a date range, beside the valid choices', () => {
+        const draft = withPivot(draftFromSpec(BY_MONTH, META, CATALOG), { range: 'asOf' })
+        expect(pivotRangeChoices(draft, CATALOG)).toEqual([
+            { value: '', label: 'Only the months with rows' },
+            { value: 'period', label: 'Show every month of Period' },
+            { value: 'asOf', label: 'asOf (missing)' },
+        ])
+    })
+
+    it('adds no missing choice for a range that is offered', () => {
+        const draft = withPivot(draftFromSpec(BY_MONTH, META, CATALOG), { range: 'period' })
+        expect(pivotRangeChoices(draft, CATALOG).map(c => c.value)).toEqual(['', 'period'])
+    })
 })

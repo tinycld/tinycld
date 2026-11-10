@@ -529,4 +529,9 @@ describe('a percent of a section', () => {
         expect(windowColumns(d.columns).has('share')).toBe(true)
         expect(rowsTotalColumns(columnChoices(d, CATALOG), d.columns).has('share')).toBe(false)
     })
+
+    it("stays out of a computed row's values", () => {
+        const ctx = formulaContext(withShare(), CATALOG, { kind: 'layout', index: 1 })
+        expect(ctx.values.map(v => v.key)).toEqual(['open'])
+    })
 })

@@ -22,18 +22,19 @@ const BUCKET_WORDS: Record<Bucket, { one: string; many: string }> = {
 /**
  * The pivot's range choices: '' (the buckets with rows) and each date range param.
  * Where a range cannot apply, none; but a range left from an earlier choice (its
- * param deleted) keeps the select on screen, so the author can clear the issue.
+ * param deleted, or no longer a date range) stays on screen as a "(missing)" choice,
+ * so the author sees it and can clear the issue.
  */
 export function pivotRangeChoices(
     draft: Pick<BuilderDraft, 'source' | 'params' | 'pivot'>,
     catalog: Catalog
 ): PivotRangeChoice[] {
     const choices = usableChoices(draft, catalog)
-    if (choices.length > 0 || !draft.pivot.on || draft.pivot.range === '') return choices
-    return [
-        { value: '', label: 'Only the columns with rows' },
-        { value: draft.pivot.range, label: `${draft.pivot.range} (missing)` },
-    ]
+    const { on, range } = draft.pivot
+    if (!on || range === '' || choices.some(choice => choice.value === range)) return choices
+    const shown =
+        choices.length > 0 ? choices : [{ value: '', label: 'Only the columns with rows' }]
+    return [...shown, { value: range, label: `${range} (missing)` }]
 }
 
 function usableChoices(
