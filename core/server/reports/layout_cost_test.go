@@ -206,10 +206,10 @@ func TestReadsLayoutRow(t *testing.T) {
 	}
 }
 
-// A computed row that reads an earlier row many times, and derived columns
-// that read a row's own cells, compile the earlier cell once: the compiler
-// reuses it, so the nodes it compiles stay far under what the caps count
-// (each read counted in full).
+// A computed row that reads an earlier row many times compiles the earlier
+// cell once: the compiler reuses it, so the nodes it compiles stay far under
+// what the caps count (each read counted in full). The derived-column case is
+// the next test.
 func TestLayoutCompilesEachEarlierRowCellOnce(t *testing.T) {
 	z := newZoo(t)
 	// a is 20 nodes: each reader counts 1 + 20*20 nodes (about 4,030 in all),
@@ -241,5 +241,46 @@ func TestLayoutCompilesEachEarlierRowCellOnce(t *testing.T) {
 	}
 	if c.layoutNodes*4 > c.layoutCounted {
 		t.Fatalf("compiled %d formula nodes for %d counted: earlier rows are compiled again", c.layoutNodes, c.layoutCounted)
+	}
+}
+
+// The same with derived columns: each row's Change and % change read its cur
+// and pri cells (the memo is seeded from inside the derived column), and every
+// reader reads an earlier row 10 times. The figures check behavior, not only
+// the compile count: a is 9 Zebras totals (1000 / 700), a reader is 10 of a.
+func TestLayoutCompilesEachEarlierRowCellOnceWithDerivedColumns(t *testing.T) {
+	z := newZoo(t)
+	reads := func(n int, id string) string {
+		args := make([]string, n)
+		for i := range args {
+			args[i] = `{"subtotal":"` + id + `"}`
+		}
+		return `{"op":"add","args":[` + strings.Join(args, ",") + `]}`
+	}
+	rows := []string{`{"row":"a","label":"A","formula":` + reads(9, "stripes") + `}`}
+	for r := range 4 {
+		rows = append(rows, fmt.Sprintf(`{"row":"r%d","label":"R%d","formula":%s}`, r, r, reads(10, "a")))
+	}
+	raw := fmt.Sprintf(zooCells, ","+strings.Join(rows, ","))
+	spec, _, err := Load([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, serr := bind(z.app, spec)
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	c := newCompiler(p, nil, nil, nil)
+	if err := c.compileAll(); err != nil {
+		t.Fatal(err)
+	}
+	if c.layoutNodes*4 > c.layoutCounted {
+		t.Fatalf("compiled %d formula nodes for %d counted: earlier rows are compiled again", c.layoutNodes, c.layoutCounted)
+	}
+	res := z.run(t, "ann", raw, Options{}, asOf2027)
+	last := rowLabeled(t, res, "R3")
+	// 10 * 9 * 1000 and 10 * 9 * 700; Change is 27,000.
+	if last.Cells["cur"] != int64(90000) || last.Cells["pri"] != int64(63000) || last.Cells["chg"] != int64(27000) {
+		t.Fatalf("R3 = %+v", last.Cells)
 	}
 }
