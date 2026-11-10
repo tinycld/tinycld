@@ -739,15 +739,16 @@ describe('withPendingOpen', () => {
     const closed = group('g:c', ['c'])
     const open = group('g:a', ['a'], { expanded: true })
     const shown = visibleRows([open, closed, total])
+    const byKey = { all: false, keys: [['c']], collapsed: [] }
 
     it('marks a closed group the expansion opens by key, while the run updates', () => {
-        const next = withPendingOpen(shown, { all: false, keys: [['c']], collapsed: [] }, null, true)
+        const next = withPendingOpen(shown, byKey, null, true)
         expect(next[1]).toMatchObject({ isOpen: true, isPending: true })
         expect(next[0].isPending).toBe(false)
     })
 
     it('marks nothing once the run has landed', () => {
-        const next = withPendingOpen(shown, { all: false, keys: [['c']], collapsed: [] }, null, false)
+        const next = withPendingOpen(shown, byKey, null, false)
         expect(next).toBe(shown)
     })
 
