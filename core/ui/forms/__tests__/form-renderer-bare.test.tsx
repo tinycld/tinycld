@@ -8,6 +8,7 @@ import { defaultDefinitionFor, hostDefSchema } from '../../../lib/forms/host'
 import type { BuiltinFieldProps, FormHostUi } from '../../../lib/forms/host-ui'
 import type { FormLayoutKind } from '../FormRenderer'
 import { FormRenderer } from '../FormRenderer'
+import { FIELD_CELL_BORDER_WIDTH } from '../fields/table-layout'
 
 afterEach(cleanup)
 
@@ -96,6 +97,7 @@ describe('a bare built-in', () => {
         const { container, getByText } = render(<Harness layout="design" />)
         expect(getByText('Notes')).toBeTruthy()
         expect(classOf(byId(container, 'form-field-notes'))).toContain('mb-3')
-        expect(classOf(byId(container, 'form-field-notes-box'))).toContain('border-2')
+        const box = byId(container, 'form-field-notes-box') as HTMLElement | null
+        expect(box?.style.borderWidth).toBe(`${FIELD_CELL_BORDER_WIDTH}px`)
     })
 })

@@ -10,11 +10,17 @@ import { useShortcutRegistry } from '../../../lib/shortcuts/registry'
 import { pushScope, resetScopes, ScopeProvider } from '../../../lib/shortcuts/scopes'
 import { OverlayProvider } from '../../overlay'
 import { FieldInput } from '../FieldInput'
+import {
+    FIELD_CELL_BORDER_WIDTH,
+    TABLE_GRID_GAP,
+    TABLE_ROW_MENU_WIDTH,
+} from '../fields/table-layout'
 import { byTestId } from './table-harness'
 
 /**
- * Name is weighted 3 and Qty 2; Done has no weight. A percent row draws its
- * rate in the Qty slot (`columnAt`), and a discount row leaves the Qty slot empty.
+ * Name is weighted 3 and Qty 2 with a 96 px floor; Done has no weight and no
+ * floor. A percent row draws its rate in the Qty slot (`columnAt`), and a
+ * discount row leaves the Qty slot empty.
  */
 const host = asFormHost(
     hostDefSchema.parse({
@@ -32,7 +38,7 @@ const host = asFormHost(
                 storage: 'rows',
                 columns: [
                     { key: 'name', label: 'Name', kind: 'text', flex: 3 },
-                    { key: 'qty', label: 'Qty', kind: 'number', flex: 2 },
+                    { key: 'qty', label: 'Qty', kind: 'number', flex: 2, minWidth: 96 },
                     { key: 'done', label: 'Done', kind: 'toggle' },
                     { key: 'rate', label: 'Rate', kind: 'number' },
                 ],
@@ -143,13 +149,93 @@ describe('TableField column flex weights (wide grid)', () => {
     })
 })
 
+/** The px floor an element's inline style gives it ('0' for a column with no floor). */
+const minWidthOf = (el: HTMLElement) => el.style.minWidth
+
+/** The grid row's slot under a header column, by its test id. */
+const gridSlot = (container: HTMLElement, rowId: string, key: string) =>
+    byTestId(container, `form-table-lines-slot-${rowId}-${key}`)
+
+describe('TableField column minimum widths (wide grid)', () => {
+    it("gives a floored column's header and cell slot its minWidth with its weight, and a column without one a zero minWidth (no floor)", () => {
+        const { container } = render(<Harness width={1000} />)
+        const head = byTestId(container, 'form-table-lines-head-qty')
+        expect(minWidthOf(head)).toBe('96px')
+        expect(flexOf(head)).toBe('2')
+        const cell = slotOf(container, 'i1', 'qty')
+        expect(minWidthOf(cell)).toBe('96px')
+        expect(flexOf(cell)).toBe('2')
+        expect(minWidthOf(byTestId(container, 'form-table-lines-head-name'))).toBe('0')
+        expect(minWidthOf(slotOf(container, 'i1', 'name'))).toBe('0')
+        expect(minWidthOf(byTestId(container, 'form-table-lines-head-done'))).toBe('0')
+        expect(minWidthOf(slotOf(container, 'i1', 'done'))).toBe('0')
+    })
+
+    it('gives a columnAt cell and an empty slot the floor of the header column above them', () => {
+        const { container } = render(<Harness width={1000} />)
+        // The percent row's rate sits under Qty, so it takes Qty's floor.
+        const rate = slotOf(container, 'p1', 'rate')
+        expect(minWidthOf(rate)).toBe('96px')
+        expect(flexOf(rate)).toBe('2')
+        // The discount row draws nothing in the Qty slot.
+        const empty = gridSlot(container, 'd1', 'qty')
+        expect(empty.querySelector('[testID^="form-table-lines-d1-"]')).toBeNull()
+        expect(minWidthOf(empty)).toBe('96px')
+        expect(flexOf(empty)).toBe('2')
+    })
+
+    it('gives each grid row slot, filled or empty, its -slot-<rowId>-<key> test id', () => {
+        const { container } = render(<Harness width={1000} />)
+        const expected: [string, string, string | null][] = [
+            ['i1', 'name', 'name'],
+            ['i1', 'qty', 'qty'],
+            ['i1', 'done', 'done'],
+            ['p1', 'name', 'name'],
+            ['p1', 'qty', 'rate'],
+            ['p1', 'done', 'done'],
+            ['d1', 'name', 'name'],
+            ['d1', 'qty', null],
+            ['d1', 'done', 'done'],
+        ]
+        for (const [rowId, key, column] of expected) {
+            const slot = gridSlot(container, rowId, key)
+            expect(slot.parentElement).toBe(byTestId(container, `form-table-lines-row-${rowId}`))
+            if (column) expect(slot).toBe(slotOf(container, rowId, column))
+        }
+    })
+
+    it('draws the header and row gap and the row-menu box and header spacer from the exported sizes', () => {
+        const { container } = render(<Harness width={1000} />)
+        const header = byTestId(container, 'form-table-lines-head-name')
+            .parentElement as HTMLElement
+        const row = byTestId(container, 'form-table-lines-row-i1')
+        expect(header.style.gap).toBe(`${TABLE_GRID_GAP}px`)
+        expect(row.style.gap).toBe(`${TABLE_GRID_GAP}px`)
+        const spacer = header.lastElementChild as HTMLElement
+        expect(spacer.getAttribute('testID')).toBeNull()
+        expect(spacer.style.width).toBe(`${TABLE_ROW_MENU_WIDTH}px`)
+        let menuBox: HTMLElement | null = byTestId(container, 'form-table-lines-menu-i1')
+        while (menuBox && menuBox.parentElement !== row) menuBox = menuBox.parentElement
+        expect(menuBox).toBe(row.lastElementChild)
+        expect(menuBox?.style.width).toBe(`${TABLE_ROW_MENU_WIDTH}px`)
+    })
+
+    it('exports the grid gap, the field cell border and the row-menu width', () => {
+        expect(TABLE_GRID_GAP).toBe(8)
+        expect(FIELD_CELL_BORDER_WIDTH).toBe(2)
+        expect(TABLE_ROW_MENU_WIDTH).toBe(40)
+    })
+})
+
 describe('TableField column flex weights (phone cards)', () => {
-    it('draws the cards as before: no header, every cell, and no flex weight on a cell', () => {
+    it('draws the cards as before: no header, every cell, and no flex weight or floor on a cell', () => {
         const { container } = render(<Harness width={300} />)
         expect(container.querySelector('[testID^="form-table-lines-head-"]')).toBeNull()
+        expect(container.querySelector('[testID^="form-table-lines-slot-"]')).toBeNull()
         for (const column of ['name', 'qty', 'done']) {
             const slot = slotOf(container, 'i1', column)
             expect(flexOf(slot)).toBe('')
+            expect(minWidthOf(slot)).toBe('')
         }
     })
 })

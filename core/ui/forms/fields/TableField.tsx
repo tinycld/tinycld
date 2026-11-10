@@ -30,6 +30,7 @@ import { type HostInstance, Platform, Pressable, Text, View, type ViewStyle } fr
 import { NARROW_BELOW } from '../widths'
 import { DateField } from './DateField'
 import { formatComputed } from './format-computed'
+import { slotStyle, TABLE_GRID_GAP, TABLE_ROW_MENU_WIDTH } from './table-layout'
 import {
     ADD_BUTTON,
     cellKey,
@@ -108,21 +109,25 @@ function rowColumns(base: TableBase, row: TableRow): HostTableColumn[] {
 }
 
 interface GridSlot {
+    /** The slot's key: its header column's key, or its own column's key past the header slots. */
     key: string
+    /**
+     * `slot` when the cell sits under the header column `key`; `span` when it
+     * sits under no header column (a span kind's cell, or a column drawn after
+     * the header slots), so its test id does not name a header slot.
+     */
+    place: 'slot' | 'span'
     column: HostTableColumn | null
-    /** The slot's width weight on the wide grid: its header column's `flex`. */
-    flex: number
+    /** The slot's size on the wide grid: its header column's `flex` and `minWidth`. */
+    size: HostTableColumn
 }
-
-/** A column's width weight on the wide grid (a host's `flex`, default 1). */
-const flexOf = (c: HostTableColumn) => c.flex ?? 1
 
 /**
  * A grid row's cells in the header slots: a column of the first kind in its
  * own slot, another kind's column in the slot its `columnAt` names, an unused
- * slot empty. Each takes the weight of the header column above it, so the
- * cells line up with the header. A column with no slot is drawn after the
- * slots with its own weight, so no cell is lost.
+ * slot empty. Each takes the weight and floor of the header column above it,
+ * so the cells line up with the header. A column with no slot is drawn after
+ * the slots with its own size, so no cell is lost.
  */
 function gridSlots(base: TableBase, row: TableRow): GridSlot[] {
     const own = rowColumns(base, row)
@@ -133,13 +138,23 @@ function gridSlots(base: TableBase, row: TableRow): GridSlot[] {
         const key = own.some(c => c.key === slot.key) ? slot.key : atSlot?.[0]
         const column = own.find(c => c.key === key) ?? null
         if (column) placed.add(column.key)
-        return { key: `slot-${slot.key}`, column, flex: flexOf(slot) }
+        return { key: slot.key, place: 'slot' as const, column, size: slot }
     })
-    const rest = own
-        .filter(c => !placed.has(c.key))
-        .map(c => ({ key: c.key, column: c, flex: flexOf(c) }))
+    const rest = own.filter(c => !placed.has(c.key)).map(spanSlotOf)
     return [...slots, ...rest]
 }
+
+/** A cell under no header column: its own column's key and size. */
+const spanSlotOf = (column: HostTableColumn): GridSlot => ({
+    key: column.key,
+    place: 'span',
+    column,
+    size: column,
+})
+
+/** A span kind's cells: each runs across the slots with its own size. */
+const spanSlots = (base: TableBase, row: TableRow): GridSlot[] =>
+    rowColumns(base, row).map(spanSlotOf)
 
 function CellError({ message }: { message?: string }) {
     if (!message) return null
@@ -372,21 +387,25 @@ function CellSlot({
     column,
     className,
     style,
+    testID,
     children,
 }: {
     table: TableFieldApi
     row: TableRow
     column: HostTableColumn
-    className: string
-    /** The wide grid's width weight; a card leaves it unset. */
+    /** A card's spacing; a grid slot leaves it unset (`style` sizes it). */
+    className?: string
+    /** The wide grid's width weight and floor; a card leaves it unset. */
     style?: ViewStyle
+    /** The wide grid's slot or span id; a card leaves it unset. */
+    testID?: string
     children: ReactNode
 }) {
     const noteFocus = () => table.onCellFocus(row.id, column.key)
     const onFocus = Platform.OS === 'web' ? noteFocus : undefined
     const slotRef = table.refFor(cellKey(row.id, column.key))
     return (
-        <View ref={slotRef} onFocus={onFocus} className={className} style={style}>
+        <View ref={slotRef} onFocus={onFocus} className={className} style={style} testID={testID}>
             {children}
         </View>
     )
@@ -494,9 +513,15 @@ function RowMenu(props: RowProps) {
     )
 }
 
+/** The header row and every grid row lay their slots out with the same gap. */
+const GRID_ROW_STYLE: ViewStyle = { gap: TABLE_GRID_GAP }
+
+/** The row menu's box and the header's spacer above it: one width, never shrunk. */
+const MENU_BOX_STYLE: ViewStyle = { width: TABLE_ROW_MENU_WIDTH, flexShrink: 0 }
+
 function ActionsSpacer({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
-    return <View className="w-10" />
+    return <View style={MENU_BOX_STYLE} />
 }
 
 /**
@@ -506,26 +531,33 @@ function ActionsSpacer({ isVisible }: { isVisible: boolean }) {
 function GridRowMenu(props: RowProps) {
     if (!props.base.isEditable) return null
     return (
-        <View className="w-10 shrink-0 items-center">
+        <View style={MENU_BOX_STYLE} className="items-center">
             <RowMenu {...props} />
+        </View>
+    )
+}
+
+/**
+ * A header slot: the same box as the row slots under it (no padding of its
+ * own), with the label padded inside it. Padding on the slot itself would add
+ * to its flex base size, so header slots would not divide the width as the
+ * row slots do.
+ */
+function HeaderSlot({ base, column }: { base: TableBase; column: HostTableColumn }) {
+    return (
+        <View testID={`${base.ids}-head-${column.key}`} style={slotStyle(column)}>
+            <Text className="px-1 text-xs font-semibold text-muted-foreground">
+                {headerText(column)}
+            </Text>
         </View>
     )
 }
 
 function GridHeader({ base, isVisible }: { base: TableBase; isVisible: boolean }) {
     if (!isVisible) return null
-    const cells = base.slots.map(c => (
-        <Text
-            key={c.key}
-            testID={`${base.ids}-head-${c.key}`}
-            style={{ flex: flexOf(c) }}
-            className="min-w-0 px-1 text-xs font-semibold text-muted-foreground"
-        >
-            {headerText(c)}
-        </Text>
-    ))
+    const cells = base.slots.map(c => <HeaderSlot key={c.key} base={base} column={c} />)
     return (
-        <View className="flex-row gap-2 pb-1 border-b border-border">
+        <View style={GRID_ROW_STYLE} className="flex-row pb-1 border-b border-border">
             {cells}
             <ActionsSpacer isVisible={base.isEditable} />
         </View>
@@ -533,10 +565,11 @@ function GridHeader({ base, isVisible }: { base: TableBase; isVisible: boolean }
 }
 
 function GridSlotCell({ base, table, row, index, slot }: RowProps & { slot: GridSlot }) {
-    const weight = { flex: slot.flex }
-    if (!slot.column) return <View style={weight} className="min-w-0" />
+    const style = slotStyle(slot.size)
+    const testID = `${base.ids}-${slot.place}-${row.id}-${slot.key}`
+    if (!slot.column) return <View style={style} testID={testID} />
     return (
-        <CellSlot table={table} row={row} column={slot.column} className="min-w-0" style={weight}>
+        <CellSlot table={table} row={row} column={slot.column} style={style} testID={testID}>
             <CellInput base={base} table={table} column={slot.column} row={row} index={index} />
         </CellSlot>
     )
@@ -555,16 +588,15 @@ function GridRow(props: RowProps) {
     const { base, table, row } = props
     const isSpan = kindOfRow(base, row)?.span ?? false
     // A span kind's one cell runs across every slot.
-    const slots = isSpan
-        ? rowColumns(base, row).map(column => ({ key: column.key, column, flex: flexOf(column) }))
-        : gridSlots(base, row)
+    const slots = isSpan ? spanSlots(base, row) : gridSlots(base, row)
     const cells = slots.map(slot => <GridSlotCell key={slot.key} {...props} slot={slot} />)
     const onBlur = rowBlurOf(table)
     return (
         <View
             testID={`${base.ids}-row-${row.id}`}
             onBlur={onBlur}
-            className="flex-row items-start gap-2 py-1 border-b border-border"
+            style={GRID_ROW_STYLE}
+            className="flex-row items-start py-1 border-b border-border"
         >
             {cells}
             <GridRowMenu {...props} />

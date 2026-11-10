@@ -10,12 +10,15 @@ Two field kinds extend the forms engine: `computed` (a formula over other fields
 
 ## Host table columns
 
-A host table built-in's column takes the keys of a custom table column, and two that only a host may set (a custom column an admin edits drops them):
+A host table built-in's column takes the keys of a custom table column, and three that only a host may set (a custom column an admin edits drops them):
 
 - `component`: the name of a component in the host's UI module `components` map that draws the cell.
-- `flex`: the column's width weight on the wide grid, a positive number up to 12 (default 1). The header text and each row's cell slot under it take that weight; a cell drawn in another column's slot (`columnAt`) and an empty slot take the weight of the header column above them. The phone card layout ignores it.
+- `flex`: the column's width weight on the wide grid, a positive number up to 12 (default 1). The header slot and each row's cell slot under it take that weight; a cell drawn in another column's slot (`columnAt`) and an empty slot take the weight of the header column above them. The phone card layout ignores it.
+- `minWidth`: the column's floor on the wide grid, in whole px from 1 to 400. The header slot, each row's cell slot under it, a `columnAt` cell in that slot and an empty slot there are never narrower; width above the floors goes to the slots by their `flex` weights (a slot is the larger of its floor and its weighted share). The floors, plus the gaps between slots and the row menu, must fit the narrowest wide grid: the grid switches to cards below `NARROW_BELOW`, so that is the width to plan for. The phone card layout ignores it.
 
-Both are presentation only. The Go server never reads `component`; it decodes `flex` (`Column.Flex`) so the host file round-trips, and never reads it.
+All three are presentation only. The Go server never reads `component`; it decodes `flex` (`Column.Flex`) and `minWidth` (`Column.MinWidth`) so the host file round-trips, and never reads them.
+
+`@tinycld/core/ui/forms/fields/table-layout` exports the sizes the wide grid draws with: `TABLE_GRID_GAP` (the gap between slots, px), `FIELD_CELL_BORDER_WIDTH` (the border of a form field cell, px) and `TABLE_ROW_MENU_WIDTH` (the row menu's box at the end of each row, and the header's spacer above it, px). A host that lays out its own row under the grid (a totals row, say) uses them to line its parts up with the grid's slots instead of copying the sizes.
 
 ## Row kinds
 

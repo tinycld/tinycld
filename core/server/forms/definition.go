@@ -69,6 +69,10 @@ type Column struct {
 	// grid); the server decodes it so the host file round-trips, and never
 	// reads it.
 	Flex *float64 `json:"flex,omitempty"`
+	// MinWidth is presentation only (a host column's floor in px on the wide
+	// grid); the server decodes it so the host file round-trips, and never
+	// reads it.
+	MinWidth *float64 `json:"minWidth,omitempty"`
 }
 
 type Page struct {
