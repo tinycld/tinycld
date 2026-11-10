@@ -422,6 +422,10 @@ func (lc *layoutCtx) cellOf(item *LayoutItem, at string) (expr, error) {
 	}
 	id := lc.column.col.ID
 	switch {
+	case lc.c.p.percents[id] != nil:
+		// A computed row's or section total's percent divides its own cell;
+		// assemble fills it (sectionPercentCell).
+		return expr{sql: "NULL", typ: Percent}, nil
 	case item.Cells[id] != nil:
 		return lc.numberCell(item.Cells[id], at+".cells."+id)
 	case lc.c.p.derived[id]:

@@ -347,6 +347,9 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 	if n.Bound != "" && n.Param == "" {
 		return expr{}, invalid(at, "bound goes with a param")
 	}
+	if n.Subtotal != "" && n.Op != "" && n.Op != "percentOfSection" {
+		return expr{}, invalid(at, "only percentOfSection takes a subtotal beside its op")
+	}
 	if kinds := nodeKinds(n); kinds != 1 {
 		return expr{}, invalid(at, errNodeKind)
 	}
@@ -367,7 +370,7 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 			return e, err
 		}
 		return rangeBound(e, n.Bound, at)
-	case n.Subtotal != "":
+	case n.Subtotal != "" && n.Op == "":
 		return c.subtotal(n.Subtotal, at)
 	case n.Value != nil:
 		return literal(c, n.Value, at)
@@ -391,7 +394,7 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 		if len(n.Args) == 1 {
 			return aggregateNode(c, Aggregate(n.Op), n, at)
 		}
-	case "runningSum", "percentOfParent", "percentOfTotal":
+	case "runningSum", "percentOfParent", "percentOfTotal", "percentOfSection":
 		if len(n.Args) != 1 {
 			return expr{}, invalid(at, n.Op+" takes one value")
 		}
@@ -483,7 +486,7 @@ func nodeKinds(n *Node) int {
 	// A record leaf's path is part of it. (A lookup, whose value is a
 	// formula, is compiled before nodes are counted.)
 	path := n.Path != nil && n.Record == ""
-	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Outer != nil, n.Param != "", n.Value != nil, n.Subtotal != "", n.Record != ""} {
+	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Outer != nil, n.Param != "", n.Value != nil, n.Subtotal != "" && n.Op == "", n.Record != ""} {
 		if set {
 			kinds++
 		}

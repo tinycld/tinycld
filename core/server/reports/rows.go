@@ -396,7 +396,7 @@ func (r *rowsCTE) valueCurrencies() {
 // windowOp is true for an operator that sums the rows a report shows.
 func windowOp(n *Node) bool {
 	switch n.Op {
-	case "runningSum", "percentOfParent", "percentOfTotal":
+	case "runningSum", "percentOfParent", "percentOfTotal", "percentOfSection":
 		return true
 	}
 	return false

@@ -55,6 +55,8 @@ type plan struct {
 	options map[string]*optionsPlan
 	// derived marks the derived columns by id (derivedColumns).
 	derived map[string]bool
+	// percents binds each percentOfSection column by id (sectionPercents).
+	percents map[string]*sectionPercent
 }
 
 // optionsPlan is a choice param's options source bound to the registry: its
@@ -214,6 +216,7 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	b.sorts(p)
 	b.groupsAndPivot(p)
 	b.layout(p)
+	b.sectionPercents(p)
 	switch d := spec.Detail; {
 	case d == nil:
 	case d.Label == nil:
