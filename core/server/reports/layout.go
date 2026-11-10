@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -25,7 +26,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		cur = "(SELECT DISTINCT " + strings.Join(c.currencies, ", ") + " FROM o1 UNION ALL SELECT " + c.noRowCurrencies(s) +
 			" WHERE NOT EXISTS (SELECT 1 FROM o1)) cur"
 	}
-	lc := &layoutCtx{c: c, s: s, items: map[string]*LayoutItem{}, within: map[string][]*LayoutItem{}, withinAt: map[string]map[string][]*LayoutItem{}, chunkOf: map[string]sectionSlot{}, keys: map[string]string{}, pivotCount: len(pivot)}
+	lc := &layoutCtx{c: c, s: s, items: map[string]*LayoutItem{}, within: map[string][]*LayoutItem{}, withinAt: map[string]map[string][]*LayoutItem{}, chunkOf: map[string]sectionSlot{}, keys: map[string]string{}, pivotCount: len(pivot), lookups: map[*Node]layoutLookup{}}
 	for idx, cp := range c.p.cols {
 		if t := c.levelTypes[cp.col.ID]; isNumeric(t) && t != Bool {
 			lc.cellNames = append(lc.cellNames, fmt.Sprintf("v%d", idx))
@@ -144,7 +145,7 @@ func (c *compiler) layoutLegs(s *stmt, pivot []pivotValue) (ctes []string, legs 
 		legs = append(legs, leg)
 	}
 	c.layoutCounted += compiled
-	return lc.chunkCTEs(), legs, nil
+	return append(lc.lookupRowCTEs(), lc.chunkCTEs()...), legs, nil
 }
 
 // compiled counts a formula node compiled for a computed row (leafTracker).
@@ -169,7 +170,7 @@ func (lc *layoutCtx) computedLeg(item *LayoutItem, ord int, at, cur string) (uni
 			return unionLeg{}, invalid(at+".cells."+id, "cells name number and amount columns")
 		}
 	}
-	lc.used, lc.wheres, lc.current = nil, nil, item
+	lc.used, lc.wheres, lc.current, lc.lkUsed = nil, nil, item, nil
 	cells := []string{fmt.Sprintf("%d AS __level", len(c.p.groups)+1), s.bind(item.Row) + " AS __row"}
 	for g := range c.p.groups {
 		cells = append(cells, fmt.Sprintf("NULL AS k%d", g))
@@ -237,7 +238,8 @@ func (lc *layoutCtx) computedLeg(item *LayoutItem, ord int, at, cur string) (uni
 // tables in a join. Under maxLayoutCompiled a row cannot read enough
 // sections to join this many chunks (each chunk holds 1000 / cells sections,
 // and each section read is compiled once per cell), so the check never fires
-// today; it is a guard in case those limits change.
+// today; it is a guard in case those limits change. The select also joins
+// cur and at most lx, the one row of the hoisted lookups.
 const maxJoinedChunks = 60
 
 // joins joins the section CTEs the computed row being compiled reads, each
@@ -250,6 +252,9 @@ func (lc *layoutCtx) joins() string {
 			on = append(on, fmt.Sprintf("ls%d.%s IS cur.%s", k, ck, ck))
 		}
 		fmt.Fprintf(&out, " LEFT JOIN ls%d ON %s", k, strings.Join(on, " AND "))
+	}
+	for _, name := range lc.lkUsed {
+		fmt.Fprintf(&out, " CROSS JOIN %s", name)
 	}
 	return out.String()
 }
@@ -297,6 +302,46 @@ type layoutCtx struct {
 	// wheres are the lookups' wheres the computed row being compiled reads
 	// that may be unknown (probeWhere), probed over its select's rows.
 	wheres []condProbe
+	// lookups are the layout's lookups that read no layout row, by node, each
+	// computed once in its CTE lx<n> (lookupCTEs). One more CTE, lx, holds
+	// all their columns in one row (lookupCols), so a computed row joins one
+	// table for any number of lookups and stays under SQLite's 64 tables in a
+	// join. lkUsed is ["lx"] when the computed row being compiled reads it.
+	lookups    map[*Node]layoutLookup
+	lookupCTEs []string
+	lookupCols []string
+	lkUsed     []string
+}
+
+// layoutLookup is a layout lookup computed once: e reads its columns of lx,
+// wheres are the probes its where needs on every row that reads it, so the
+// mixedCurrency notice still names the condition.
+type layoutLookup struct {
+	name   string
+	e      expr
+	wheres []condProbe
+}
+
+func (lc *layoutCtx) useLookup(name string) {
+	if !slices.Contains(lc.lkUsed, name) {
+		lc.lkUsed = append(lc.lkUsed, name)
+	}
+}
+
+// maxLookupColumns keeps lx's one select under SQLite's 2,000 columns
+// (SQLITE_MAX_COLUMN); a lookup past it is read inline, as before the hoist.
+// A var so a test can reach the fallback with a few lookups.
+var maxLookupColumns = 1000
+
+// lookupsRoom is true while lx can take one more lookup's columns (at most 5).
+func (lc *layoutCtx) lookupsRoom() bool { return len(lc.lookupCols)+5 <= maxLookupColumns }
+
+// lookupRowCTEs are the lookups' CTEs and lx, the one row of their columns.
+func (lc *layoutCtx) lookupRowCTEs() []string {
+	if len(lc.lookupCols) == 0 {
+		return nil
+	}
+	return append(slices.Clone(lc.lookupCTEs), "lx AS MATERIALIZED (SELECT "+strings.Join(lc.lookupCols, ", ")+")")
 }
 
 // probeWhere takes a lookup's where on the computed row being compiled,
@@ -703,10 +748,99 @@ func (lc *layoutCtx) exists(_ *Node, at string) (expr, error) { return expr{}, l
 
 // lookup reads its source's rule CTE in the layout statement. There is no
 // report row to read: a column inside it is refused as above, and a param
-// resolves in the lookup itself.
+// resolves in the lookup itself. A lookup that reads no layout row is the
+// same on every computed row and currency, so it is computed once, in its
+// own CTE, and each cell reads its columns: the cells and guards that copy
+// it copy a column name, not its subqueries.
 func (lc *layoutCtx) lookup(n *Node, at string) (expr, error) {
-	return lookupIn(lc, &rowsCTE{c: lc.c, s: lc.s}, n, at)
+	if h, ok := lc.lookups[n]; ok {
+		lc.useLookup(h.name)
+		lc.wheres = append(lc.wheres, h.wheres...)
+		return h.e, nil
+	}
+	before := len(lc.wheres)
+	e, err := lookupIn(lc, &rowsCTE{c: lc.c, s: lc.s}, n, at)
+	if err != nil || readsSubtotal(n, lc.c.p) || !lc.lookupsRoom() {
+		return e, err
+	}
+	for _, sql := range []string{e.sql, e.mixed, e.unguarded, e.cur.sql, e.shown, e.scan} {
+		if readsLayoutRow(sql) {
+			return e, nil
+		}
+	}
+	k := len(lc.lookupCTEs)
+	name := fmt.Sprintf("lx%d", k)
+	// pick puts column col of lx<k> into lx as <col><k> and returns its read.
+	pick := func(col string) string {
+		lc.lookupCols = append(lc.lookupCols, fmt.Sprintf("(SELECT %s FROM %s) AS %s%d", col, name, col, k))
+		return fmt.Sprintf("lx.%s%d", col, k)
+	}
+	h := e
+	h.scan = ""
+	if e.scan != "" && e.cur.sql != "" {
+		h.mixed, h.unguarded, h.cur.sql = pick("m"), pick("u"), pick("c")
+		h = h.guarded(h.mixed, h.unguarded)
+		lc.lookupCTEs = append(lc.lookupCTEs, fmt.Sprintf("%s AS MATERIALIZED (%s)", name, e.scan))
+	} else {
+		// A lookup with no scan (count, min, max, a sum with an inner mixed
+		// check, a picked amount) is still computed once, its subqueries as
+		// the columns of lx<k>, so its copies are column names too.
+		var cols []string
+		ref := func(f *string, col string) {
+			if *f == "" {
+				return
+			}
+			cols = append(cols, *f+" AS "+col)
+			*f = pick(col)
+		}
+		if h.mixed != "" && h.unguarded != "" {
+			// sql is the guard over the two: read them, not a third copy.
+			ref(&h.mixed, "m")
+			ref(&h.unguarded, "u")
+			h = h.guarded(h.mixed, h.unguarded)
+		} else {
+			ref(&h.sql, "s")
+		}
+		ref(&h.cur.sql, "c")
+		ref(&h.shown, "sh")
+		lc.lookupCTEs = append(lc.lookupCTEs, fmt.Sprintf("%s AS MATERIALIZED (SELECT %s)", name, strings.Join(cols, ", ")))
+	}
+	lc.lookups[n] = layoutLookup{name: "lx", e: h, wheres: slices.Clone(lc.wheres[before:])}
+	lc.useLookup("lx")
+	return h, nil
 }
+
+// readsSubtotal is true when a lookup's where or value reads a layout row
+// (a {subtotal}) or a column, which differ by computed row.
+func readsSubtotal(n *Node, p *plan) bool {
+	if n == nil {
+		return false
+	}
+	if n.Subtotal != "" || n.Col != "" {
+		return true
+	}
+	if n.Op == "lookup" {
+		if v, err := p.lookupOf(n, ""); err == nil && readsSubtotal(v, p) {
+			return true
+		}
+	}
+	if readsSubtotal(n.Where, p) {
+		return true
+	}
+	return slices.ContainsFunc(n.Args, func(a *Node) bool { return readsSubtotal(a, p) })
+}
+
+// layoutRowRef finds a read of the computed row's currency (cur.) or of a
+// section chunk (ls<k>.) in compiled SQL.
+var layoutRowRef = regexp.MustCompile(`\b(?:cur|ls\d+)\.`)
+
+// readsLayoutRow is true when compiled SQL reads the computed row's own
+// currency or a section chunk, so it cannot leave the row's select. A guard:
+// no spec reaches it today. A section chunk is read only through a
+// {subtotal} (readsSubtotal), and inLevel(layoutCtx) keeps a lookup's
+// currency off the row's key (summedLookup, pickedAmount), so no lookup SQL
+// names cur.
+func readsLayoutRow(sql string) bool { return layoutRowRef.MatchString(sql) }
 func (lc *layoutCtx) only(at string) error {
 	return invalid(at, "a computed row reads sections' subtotals, earlier rows, params, values and lookups")
 }

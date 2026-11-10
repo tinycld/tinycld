@@ -280,6 +280,13 @@ func summedLookup(outer fctx, r *rowsCTE, n *Node, v expr, sc *scope, where stri
 	matched := where + " AND " + v.sql + " IS NOT NULL"
 	mixed := orSQL(fmt.Sprintf("((SELECT count(DISTINCT %s)\n%s\nWHERE %s) > 1)", v.cur.sql, from, matched), inner)
 	out = out.guarded(mixed, sum)
+	if inner == "" {
+		// One read of the matching rows: sum of no rows is NULL, count 0 and
+		// min NULL, as the three subqueries above give.
+		hit := "CASE WHEN " + v.sql + " IS NOT NULL THEN " + v.cur.sql + " END"
+		out.scan = fmt.Sprintf("SELECT sum(%s) AS u, (count(DISTINCT %s) > 1) AS m, min(%s) AS c\n%s\nWHERE %s",
+			v.sql, hit, hit, from, where)
+	}
 	id := lookupCurrencyID(n)
 	out.cur = currency{sql: fmt.Sprintf("(SELECT min(%s)\n%s\nWHERE %s)", v.cur.sql, from, matched), id: id, field: v.cur.field}
 	if ck, ok := r.c.valueCur[id]; ok && !inLevel(outer) {
