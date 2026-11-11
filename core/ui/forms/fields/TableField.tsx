@@ -325,17 +325,20 @@ function CellInput(props: CellProps) {
                 />
             )
         case 'toggle':
+            // Centered in its slot, under its centered header (HeaderSlot).
             return (
-                <Toggle
-                    control={base.control}
-                    name={name}
-                    label={label}
-                    hideLabel
-                    disabled={disabled}
-                    onFocus={onFocus}
-                    onBlur={onBlur}
-                    wrapperProps={{ testID }}
-                />
+                <View className="items-center">
+                    <Toggle
+                        control={base.control}
+                        name={name}
+                        label={label}
+                        hideLabel
+                        disabled={disabled}
+                        onFocus={onFocus}
+                        onBlur={onBlur}
+                        wrapperProps={{ testID }}
+                    />
+                </View>
             )
         case 'date':
             return (
@@ -560,7 +563,9 @@ function GridRowMenu(props: RowProps) {
 function HeaderSlot({ base, column }: { base: TableBase; column: HostTableColumn }) {
     return (
         <View testID={`${base.ids}-head-${column.key}`} style={slotStyle(column)}>
-            <Text className="px-1 text-xs font-semibold text-muted-foreground">
+            <Text
+                className={`px-1 text-xs font-semibold text-muted-foreground ${column.kind === 'toggle' ? 'text-center' : ''}`}
+            >
                 {headerText(column)}
             </Text>
         </View>
