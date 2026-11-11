@@ -76,6 +76,10 @@ type Column struct {
 	// grid); the server decodes it so the host file round-trips, and never
 	// reads it.
 	MinWidth *float64 `json:"minWidth,omitempty"`
+	// Align is presentation only (where a host column's header sits on the wide
+	// grid); the server decodes it so the host file round-trips, and never
+	// reads it.
+	Align string `json:"align,omitempty"`
 }
 
 type Page struct {

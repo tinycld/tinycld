@@ -163,14 +163,18 @@ export type TableColumn = z.infer<typeof columnSchema>
  *
  * `flex` is the column's width weight on the wide grid (default 1), and
  * `minWidth` its floor in px there (whole px, 1 to 400): the slot is never
- * narrower, and width above the floors goes by weight. Both are host-only for
- * the same reason, and presentation only.
+ * narrower, and width above the floors goes by weight. `align` places the
+ * column's header text on the wide grid, so it lines up with a cell that draws
+ * its value at the end (a number) or centered (default `center` for a toggle,
+ * `start` otherwise). All three are host-only for the same reason, and
+ * presentation only.
  */
 export const hostColumnSchema = columnSchema.and(
     z.object({
         component: z.string().min(1).optional(),
         flex: z.number().positive().max(12).optional(),
         minWidth: z.number().int().min(1).max(400).optional(),
+        align: z.enum(['start', 'center', 'end']).optional(),
     })
 )
 export type HostTableColumn = z.infer<typeof hostColumnSchema>
