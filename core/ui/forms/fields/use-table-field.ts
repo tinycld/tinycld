@@ -14,7 +14,7 @@ import { moveFocus } from '@tinycld/core/lib/move-focus'
 import type { Shortcut } from '@tinycld/core/lib/shortcuts/types'
 import { useRegisterShortcuts } from '@tinycld/core/lib/shortcuts/use-register'
 import { newRecordId } from 'pbtsdb/core'
-import { useId, useMemo, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { type Control, type UseFormGetValues, useController, useWatch } from 'react-hook-form'
 import { type HostInstance, Platform } from 'react-native'
 
@@ -108,6 +108,28 @@ function focusTarget(target: HostInstance, isTextEntry: boolean) {
     moveFocus((inner ?? el) as unknown as HostInstance)
 }
 
+/**
+ * A focus request. `rowIds` is the row order the change makes (see
+ * `rowOrderOf`); it is null once the commit that draws the change has run, or
+ * when no commit follows. `commitsLeft` counts the table commits without the
+ * change that the request may still wait through.
+ */
+interface PendingFocus {
+    key: string
+    rowIds: string | null
+    commitsLeft: number
+}
+
+/**
+ * The table commits without the row change that a request waits through
+ * before it is dropped. A row change in a transition can be passed by sync
+ * renders of the table (a resize, another field's edit); a request that waited
+ * longer could take focus from what the user focused meanwhile.
+ */
+const MAX_COMMITS_WITHOUT_CHANGE = 3
+
+const rowOrderOf = (list: readonly TableRow[]) => list.map(r => r.id).join('\n')
+
 export function useTableField(input: UseTableFieldInput) {
     const { control, getValues, name, columns, computedRows, isPendingWhenAbsent } = input
     const { isEditable, rowKinds, rowShortcuts } = input
@@ -124,6 +146,8 @@ export function useTableField(input: UseTableFieldInput) {
     // The cell that holds focus, set by each cell's focus event; read by the row keys.
     const focused = useRef<TableFocus | null>(null)
     const [menuRowId, setMenuRowId] = useState<string | null>(null)
+    // The cell a row change asked to focus; see `focusAfterChange`.
+    const pendingFocus = useRef<PendingFocus | null>(null)
 
     // Every write starts from the form's rows now, not this render's: a cell's
     // onChange earlier in the same handler, or a second press before the
@@ -164,17 +188,42 @@ export function useTableField(input: UseTableFieldInput) {
         textEntries.current.add(ownKey(key))
         return refFor(ownKey(key))
     }
-    // After the commit: React can re-insert a moved row's node, which drops its focus.
-    const focusSoon = (key: string) => {
-        requestAnimationFrame(() => {
-            const own = targets.current.get(ownKey(key))
-            const target = own ?? targets.current.get(key)
-            if (!target) return
-            const isTextEntry =
-                own !== undefined &&
-                (textEntries.current.has(ownKey(key)) || isNativeTextInput(own))
-            focusTarget(target, isTextEntry)
-        })
+    const applyPendingFocus = () => {
+        const request = pendingFocus.current
+        if (!request || request.rowIds !== null) return
+        pendingFocus.current = null
+        const own = targets.current.get(ownKey(request.key))
+        const target = own ?? targets.current.get(request.key)
+        if (!target) return
+        const isTextEntry =
+            own !== undefined &&
+            (textEntries.current.has(ownKey(request.key)) || isNativeTextInput(own))
+        focusTarget(target, isTextEntry)
+    }
+    /**
+     * Focuses `key` on the frame after the commit that draws the row change
+     * `next`: React can re-insert a moved row's node, which drops its focus,
+     * and a new row's cell is not registered before that commit. A row change
+     * can come from an async callback (a bundle's items loaded after an
+     * await), so its commit is scheduled, and a sync render of the table (a
+     * resize) can commit before it. The request therefore waits for the
+     * commit whose rows are in the order `next` makes, through at most
+     * `MAX_COMMITS_WITHOUT_CHANGE` commits without it. It is tried once on the
+     * frame after that commit and then dropped, found or not, so it cannot
+     * take focus later from what the user focused meanwhile. A newer request
+     * replaces an older one.
+     */
+    const focusAfterChange = (key: string, next: readonly TableRow[]) => {
+        pendingFocus.current = {
+            key,
+            rowIds: rowOrderOf(next),
+            commitsLeft: MAX_COMMITS_WITHOUT_CHANGE,
+        }
+    }
+    /** A focus move with no row change, which no commit follows. */
+    const focusOnNextFrame = (key: string) => {
+        pendingFocus.current = { key, rowIds: null, commitsLeft: 0 }
+        requestAnimationFrame(applyPendingFocus)
     }
     /** The row's cell in `columnKey`, else its first editable cell, else its menu button. */
     const focusKeyIn = (row: TableRow, columnKey: string) => {
@@ -191,8 +240,9 @@ export function useTableField(input: UseTableFieldInput) {
     }
     const insert = (index: number, kindKey?: string) => {
         const row = newRow(kindKey)
-        field.onChange(insertRow(currentRows(), index, row))
-        focusSoon(firstCellKey(row))
+        const next = insertRow(currentRows(), index, row)
+        field.onChange(next)
+        focusAfterChange(firstCellKey(row), next)
     }
     const add = () => insert(currentRows().length)
     /** A row of the first kind right above or below `id`. */
@@ -211,16 +261,18 @@ export function useTableField(input: UseTableFieldInput) {
         const source = before.find(r => r.id === id)
         if (!source) return
         const copyId = newRecordId()
-        field.onChange(duplicateRow(before, id, copyId))
-        focusSoon(focusKeyIn({ ...source, id: copyId }, columnKey))
+        const next = duplicateRow(before, id, copyId)
+        field.onChange(next)
+        focusAfterChange(focusKeyIn({ ...source, id: copyId }, columnKey), next)
     }
     const remove = (id: string, columnKey = MENU_COLUMN) => {
         const before = currentRows()
         const index = before.findIndex(r => r.id === id)
         if (index < 0) return
-        field.onChange(before.filter(r => r.id !== id))
+        const next = before.filter(r => r.id !== id)
+        field.onChange(next)
         const neighbour = before[index + 1] ?? before[index - 1]
-        focusSoon(neighbour ? focusKeyIn(neighbour, columnKey) : ADD_BUTTON)
+        focusAfterChange(neighbour ? focusKeyIn(neighbour, columnKey) : ADD_BUTTON, next)
     }
     const move = (id: string, delta: -1 | 1, columnKey = MENU_COLUMN) => {
         const before = currentRows()
@@ -228,11 +280,12 @@ export function useTableField(input: UseTableFieldInput) {
         if (next === before) return
         field.onChange(next)
         const row = next.find(r => r.id === id)
-        if (row) focusSoon(focusKeyIn(row, columnKey))
+        if (row) focusAfterChange(focusKeyIn(row, columnKey), next)
     }
     const replace = (id: string, replacement: TableRow[], focus?: TableFocus) => {
-        field.onChange(replaceRows(currentRows(), id, replacement))
-        if (focus) focusSoon(cellKey(focus.rowId, focus.columnKey))
+        const next = replaceRows(currentRows(), id, replacement)
+        field.onChange(next)
+        if (focus) focusAfterChange(cellKey(focus.rowId, focus.columnKey), next)
     }
     /** The next editable cell of the row, else the next row's first cell, else the add action. */
     const focusNext = (id: string, columnKey: string) => {
@@ -243,11 +296,11 @@ export function useTableField(input: UseTableFieldInput) {
         const editable = editableKeysOf(row)
         const after = editable[editable.indexOf(columnKey) + 1]
         if (after && editable.includes(columnKey)) {
-            focusSoon(cellKey(id, after))
+            focusOnNextFrame(cellKey(id, after))
             return
         }
         const nextRow = now[index + 1]
-        focusSoon(nextRow ? firstCellKey(nextRow) : ADD_BUTTON)
+        focusOnNextFrame(nextRow ? firstCellKey(nextRow) : ADD_BUTTON)
     }
     /** Enter in a cell: an `addOnSubmit` column of the last row adds a row of the first kind. */
     const submitEditing = (id: string, columnKey: string) => {
@@ -276,6 +329,20 @@ export function useTableField(input: UseTableFieldInput) {
         focused.current = null
     }
     const openMenu = (rowId: string | null) => setMenuRowId(rowId)
+
+    // No dependencies: every commit of this table may be the one that draws a requested row.
+    const committedRowOrder = rowOrderOf(rows)
+    useLayoutEffect(() => {
+        const request = pendingFocus.current
+        if (!request || request.rowIds === null) return
+        if (request.rowIds === committedRowOrder) {
+            request.rowIds = null
+            requestAnimationFrame(applyPendingFocus)
+            return
+        }
+        request.commitsLeft -= 1
+        if (request.commitsLeft <= 0) pendingFocus.current = null
+    })
 
     // The keys read the latest handlers through a ref, so the registered list
     // stays the same array for the table's life and never re-registers.

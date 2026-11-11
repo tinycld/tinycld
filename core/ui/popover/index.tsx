@@ -15,7 +15,9 @@ import React, {
     useRef,
     useState,
 } from 'react'
+import { flushSync } from 'react-dom'
 import {
+    type LayoutChangeEvent,
     Platform,
     Pressable,
     Modal as RNModal,
@@ -399,6 +401,42 @@ function OpenPopoverLayer({
     useLayoutEffect(measureAnchor, [measureAnchor])
     useLayoutEffect(() => useWindowSizeStore.subscribe(measureAnchor), [measureAnchor])
 
+    const updateSize = useCallback((w: number, h: number) => {
+        setSize(prev => (prev?.width === w && prev.height === h ? prev : { width: w, height: h }))
+    }, [])
+    const onContentLayout = useCallback(
+        (e: LayoutChangeEvent) =>
+            updateSize(e.nativeEvent.layout.width, e.nativeEvent.layout.height),
+        [updateSize]
+    )
+    // State, not a ref: on web the content View is portaled through
+    // OverlayPortal, which renders nothing until its host's DOM node exists
+    // and re-mounts the content when the target host changes (a sheet opens
+    // or closes under the popover), so the node can arrive or change after
+    // this layer's first commit, and the observer must follow it.
+    const [contentNode, setContentNode] = useState<ViewInstance | null>(null)
+    // On web, react-native-web delivers onLayout late (its own ResizeObserver
+    // callback is batched), so content that grew after the open (a picker's
+    // options from a live query) was painted for a frame at the top placed for
+    // its old size. That frame covered the resting pointer, and the option
+    // under it took the focus from the picker's search field. A browser
+    // delivers ResizeObserver callbacks after layout and before paint, so
+    // committing the new size synchronously there re-places the surface before
+    // the grown content is painted. Measured as onLayout measures (offset
+    // size), so the late onLayout that follows changes nothing. Native has no
+    // resting pointer and keeps onLayout alone.
+    useLayoutEffect(() => {
+        if (Platform.OS !== 'web' || typeof ResizeObserver === 'undefined') return
+        // On web, react-native-web's host instance is the DOM node itself.
+        const node = contentNode as unknown as HTMLElement | null
+        if (!node) return
+        const observer = new ResizeObserver(() => {
+            flushSync(() => updateSize(node.offsetWidth, node.offsetHeight))
+        })
+        observer.observe(node)
+        return () => observer.disconnect()
+    }, [contentNode, updateSize])
+
     const placed = useMemo(
         () =>
             anchorRect
@@ -510,16 +548,7 @@ function OpenPopoverLayer({
                     keyboardShouldPersistTaps="handled"
                     contentContainerStyle={SCROLL_CONTENT_STYLE}
                 >
-                    <View
-                        onLayout={e => {
-                            const { width: w, height: h } = e.nativeEvent.layout
-                            setSize(prev =>
-                                prev?.width === w && prev.height === h
-                                    ? prev
-                                    : { width: w, height: h }
-                            )
-                        }}
-                    >
+                    <View ref={setContentNode} onLayout={onContentLayout}>
                         {children}
                     </View>
                 </ScrollView>

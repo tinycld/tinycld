@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { startTransition, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { type UseFormReturn, useForm } from 'react-hook-form'
 import { Platform, Pressable, Text } from 'react-native'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -798,5 +800,144 @@ describe('TableField required columns per row kind', () => {
             'Description is required'
         )
         expect(onValid).not.toHaveBeenCalled()
+    })
+})
+
+/**
+ * Holds every animation frame until the test runs it, so a test can fire the
+ * table's focus frame before React commits the rows (a slow CPU's order).
+ */
+function holdFrames() {
+    const queue: FrameRequestCallback[] = []
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => {
+        queue.push(callback)
+        return queue.length
+    })
+    return () => {
+        for (const callback of queue.splice(0)) callback(performance.now())
+    }
+}
+
+/** The testID of the element that holds focus, or of its nearest owner with one. */
+function activeTestId() {
+    const el = document.activeElement
+    if (!(el instanceof Element)) return null
+    return el.closest('[testID]')?.getAttribute('testID') ?? null
+}
+
+function deferred() {
+    let resolve = () => {}
+    const promise = new Promise<void>(r => {
+        resolve = r
+    })
+    return { promise, resolve }
+}
+
+describe('TableField focus after a row change lands after the commit', () => {
+    const x1 = item('x1', 'X1', 1)
+    const x2 = item('x2', 'X2', 2)
+
+    it("focuses the replaced row's cell when the focus frame runs before the rows commit", async () => {
+        const runFrames = holdFrames()
+        // The bundle's items load after the pick; the cell replaces its row once they arrive.
+        const itemsLoaded = deferred()
+        const replaced = deferred()
+        function BundleCell({ table, value }: BuiltinFieldProps) {
+            const id = table?.row.id ?? 'none'
+            const pick = async () => {
+                await itemsLoaded.promise
+                table?.replaceRow([x1, x2], { rowId: 'x1', columnKey: 'qty' })
+                replaced.resolve()
+            }
+            return (
+                <Pressable testID={`bundle-${id}`} onPress={() => void pick()}>
+                    <Text>{String(value ?? '')}</Text>
+                </Pressable>
+            )
+        }
+        const { container } = setUp([r1, r3], {
+            host: billHost('BundleCell'),
+            ui: { components: { BundleCell } },
+        })
+        fireEvent.click(byTestId(container, 'bundle-r3'))
+        itemsLoaded.resolve()
+        await replaced.promise
+        // Only microtasks have run since replaceRow: React has not committed the new rows.
+        expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'r3'])
+        runFrames()
+        await waitFor(() => expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'x1', 'x2']))
+        await waitFor(() => {
+            runFrames()
+            expect(activeTestId()).toBe('form-table-lines-x1-qty')
+        })
+    })
+
+    it("focuses the replaced row's cell when the table commits once without the new rows first", async () => {
+        const runFrames = holdFrames()
+        const itemsLoaded = deferred()
+        const replaced = deferred()
+        // Renders of the untouched row's cell: each one is a render of the table above it.
+        let firstRowRenders = 0
+        function BundleCell({ table, value }: BuiltinFieldProps) {
+            const id = table?.row.id ?? 'none'
+            if (id === 'r1') firstRowRenders += 1
+            const pick = async () => {
+                await itemsLoaded.promise
+                // The row change is a transition, so a sync update can commit before it.
+                startTransition(() => {
+                    table?.replaceRow([x1, x2], { rowId: 'x1', columnKey: 'qty' })
+                })
+                replaced.resolve()
+            }
+            return (
+                <Pressable testID={`bundle-${id}`} onPress={() => void pick()}>
+                    <Text>{String(value ?? '')}</Text>
+                </Pressable>
+            )
+        }
+        const resize: { current: (width: number) => void } = { current: () => {} }
+        function ResizableHarness(props: HarnessProps) {
+            const [width, setWidth] = useState(1000)
+            resize.current = setWidth
+            return <Harness {...props} width={width} />
+        }
+        const formRef: HarnessProps['formRef'] = { current: null }
+        const { container } = render(
+            <ResizableHarness
+                rows={[r1, r3]}
+                formRef={formRef}
+                host={billHost('BundleCell')}
+                ui={{ components: { BundleCell } }}
+            />
+        )
+        fireEvent.click(byTestId(container, 'bundle-r3'))
+        itemsLoaded.resolve()
+        await replaced.promise
+        expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'r3'])
+
+        // A commit of the table that does not hold the row change comes first.
+        const rendersBefore = firstRowRenders
+        flushSync(() => resize.current(1001))
+        expect(firstRowRenders).toBeGreaterThan(rendersBefore)
+        expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'r3'])
+        runFrames()
+
+        await waitFor(() => expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'x1', 'x2']))
+        await waitFor(() => {
+            runFrames()
+            expect(activeTestId()).toBe('form-table-lines-x1-qty')
+        })
+    })
+
+    it("still focuses a new line's first cell after Add line", async () => {
+        const runFrames = holdFrames()
+        const { container, rowsNow } = setUp([r1])
+        fireEvent.click(byTestId(container, 'form-table-lines-add'))
+        await waitFor(() => expect(rowIdsOf(container, 'lines')).toHaveLength(2))
+        const added = rowsNow()[1]
+        await waitFor(() => {
+            runFrames()
+            expect(activeTestId()).toBe(`form-table-lines-${added.id}-name`)
+        })
     })
 })

@@ -374,9 +374,12 @@ function RowIndent({ indent, gap }: { indent?: number; gap: number }) {
 /**
  * One row, in whichever presentation the surface has. On web a `div` (or an
  * `a` with `href`) with a menu role: RN's Pressable renders a bare div with
- * no key handling, and a menu built from those was mouse-only. Hover moves
- * focus so the pointer and the arrow keys agree on which row is current, and
- * mousedown never steals focus from a text editor the menu acts on.
+ * no key handling, and a menu built from those was mouse-only. A pointer that
+ * moves over a row focuses it, so the pointer and the arrow keys agree on which
+ * row is current. Entering alone does not: the browser also fires mouseenter
+ * when a row slides under a resting pointer (options that load after the open,
+ * a surface that re-places), and that row must not take the focus from a
+ * search field. Mousedown never steals focus from a text editor the menu acts on.
  */
 function MenuRow({
     role,
@@ -418,6 +421,15 @@ function MenuRow({
     )
 
     if (Platform.OS === 'web' && !isSheet) {
+        // WebKit sends move events with no movement after a scroll or a
+        // reflow puts a row under a resting pointer; only a real move focuses.
+        const focusOnPointerMove = (
+            e: React.PointerEvent<HTMLElement> | React.MouseEvent<HTMLElement>
+        ) => {
+            const isRealMove = e.movementX !== 0 || e.movementY !== 0
+            if (!isRealMove) return
+            if (document.activeElement !== e.currentTarget) e.currentTarget.focus()
+        }
         const shared = {
             'aria-disabled': isDisabled || undefined,
             'aria-haspopup': isExpanded === undefined ? undefined : ('menu' as const),
@@ -426,11 +438,10 @@ function MenuRow({
             className: rowClass,
             style: { display: 'flex', cursor: isDisabled ? 'default' : 'pointer' } as const,
             onMouseDown: (e: React.MouseEvent) => e.preventDefault(),
-            onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
-                e.currentTarget.focus()
-                onHoverIn?.()
-            },
+            onMouseEnter: onHoverIn,
             onMouseLeave: onHoverOut,
+            onPointerMove: focusOnPointerMove,
+            onMouseMove: focusOnPointerMove,
         }
         // The surface is portaled, but React still bubbles its clicks up the
         // component tree, so a menu inside a pressable row would also press

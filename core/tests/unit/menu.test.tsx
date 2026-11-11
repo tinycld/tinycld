@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { cleanup, fireEvent, render as renderBare } from '@testing-library/react'
+import { act, cleanup, fireEvent, render as renderBare } from '@testing-library/react'
 import { useWindowSizeStore } from '@tinycld/core/lib/stores/window-size-store'
 import { Menu } from '@tinycld/core/ui/menu'
 import { OverlayProvider } from '@tinycld/core/ui/overlay'
@@ -199,6 +199,128 @@ describe('Menu (web)', () => {
         fireEvent.click(getByText('Show done'))
         expect(onToggle).toHaveBeenCalledTimes(1)
         expect(queryByText('Show done')).not.toBeNull()
+    })
+})
+
+/**
+ * The browser fires `mouseenter` when a layout change moves a row under a
+ * pointer that has not moved (a picker's options arriving under the pointer
+ * resting on its trigger). Only real pointer movement may move the focus, or
+ * such a row steals it from the menu's search field.
+ */
+describe('Menu (web) pointer focus', () => {
+    afterEach(() => {
+        cleanup()
+        vi.useRealTimers()
+    })
+
+    // Names the focused node, so a failure says what took the focus.
+    const focusedName = () => {
+        const el = document.activeElement
+        return el?.getAttribute('data-testid') ?? el?.getAttribute('placeholder') ?? el?.tagName
+    }
+
+    // A real move: the pointer travels, so the event carries a movement and a new position.
+    const move = (row: HTMLElement) => {
+        const init = { clientX: 24, clientY: 36, movementX: 4, movementY: 6 }
+        fireEvent.pointerMove(row, init)
+        fireEvent.mouseMove(row, init)
+    }
+
+    // What WebKit sends after a scroll or a reflow under a pointer that has not
+    // moved: an enter, then move events with no movement at the same position.
+    const slideUnder = (row: HTMLElement) => {
+        const init = { clientX: 20, clientY: 30, movementX: 0, movementY: 0 }
+        fireEvent.mouseEnter(row, init)
+        fireEvent.pointerMove(row, init)
+        fireEvent.mouseMove(row, init)
+    }
+
+    it('leaves the focus in the search field when a row only gets mouseenter', () => {
+        const { getByPlaceholderText, getByTestId } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} presentation="popover">
+                <Menu.Custom>
+                    <input placeholder="Search" />
+                </Menu.Custom>
+                <Menu.Item label="One" onSelect={() => {}} testID="one" />
+                <Menu.Item label="Two" onSelect={() => {}} testID="two" />
+            </Menu>
+        )
+        getByPlaceholderText('Search').focus()
+        expect(focusedName()).toBe('Search')
+
+        fireEvent.mouseEnter(getByTestId('two'))
+        expect(focusedName()).toBe('Search')
+    })
+
+    it('leaves the focus in the search field when a row gets a move with no movement', () => {
+        const { getByPlaceholderText, getByTestId } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} presentation="popover">
+                <Menu.Custom>
+                    <input placeholder="Search" />
+                </Menu.Custom>
+                <Menu.Item label="One" onSelect={() => {}} testID="one" />
+                <Menu.Item label="Two" onSelect={() => {}} testID="two" />
+            </Menu>
+        )
+        getByPlaceholderText('Search').focus()
+        expect(focusedName()).toBe('Search')
+
+        slideUnder(getByTestId('two'))
+        expect(focusedName()).toBe('Search')
+    })
+
+    it('focuses a row the pointer moves over', () => {
+        const { getByPlaceholderText, getByTestId } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} presentation="popover">
+                <Menu.Custom>
+                    <input placeholder="Search" />
+                </Menu.Custom>
+                <Menu.Item label="One" onSelect={() => {}} testID="one" />
+                <Menu.Item label="Two" onSelect={() => {}} testID="two" />
+            </Menu>
+        )
+        getByPlaceholderText('Search').focus()
+
+        move(getByTestId('two'))
+        expect(focusedName()).toBe('two')
+    })
+
+    it('starts the arrow keys from the row the pointer moved onto', () => {
+        const { container, getByTestId } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} presentation="popover">
+                <Menu.Item label="One" onSelect={() => {}} testID="one" />
+                <Menu.Item label="Two" onSelect={() => {}} testID="two" />
+                <Menu.Item label="Three" onSelect={() => {}} testID="three" />
+            </Menu>
+        )
+        const surface = container.querySelector<HTMLElement>('[role="menu"]')
+        if (!surface) throw new Error('no surface')
+        expect(focusedName()).toBe('one')
+
+        move(getByTestId('two'))
+        fireEvent.keyDown(surface, { key: 'ArrowDown' })
+        expect(focusedName()).toBe('three')
+    })
+
+    it('closes a hover-opened submenu after the pointer leaves its row', () => {
+        vi.useFakeTimers()
+        const { getByText, queryByTestId } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} presentation="popover">
+                <Menu.Sub label="Status">
+                    <Menu.Item label="Backlog" onSelect={() => {}} testID="sub-item" />
+                </Menu.Sub>
+            </Menu>
+        )
+        const row = getByText('Status').closest('[role="menuitem"]') as HTMLElement
+        fireEvent.mouseEnter(row)
+        expect(queryByTestId('sub-item')).not.toBeNull()
+
+        fireEvent.mouseLeave(row)
+        act(() => {
+            vi.advanceTimersByTime(500)
+        })
+        expect(queryByTestId('sub-item')).toBeNull()
     })
 })
 
