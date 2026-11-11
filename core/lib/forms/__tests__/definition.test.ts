@@ -312,3 +312,39 @@ describe('textarea maxLength', () => {
         expect(r.error?.issues.map(i => i.path.join('.'))).toContain('fields.0.maxLength')
     })
 })
+
+describe('field widths: fit content and a narrow width', () => {
+    const withTeam = (extra: Record<string, unknown>) => ({
+        version: 1,
+        pages: [{ key: 'main', title: 'Main' }],
+        fields: [{ key: 'team', page: 'main', label: 'Team', kind: 'text', ...extra }],
+    })
+
+    it('accepts a fit-content width and a narrow width on a field', () => {
+        const parsed = definitionSchema.safeParse(withTeam({ width: 'auto', narrowWidth: 'full' }))
+        expect(parsed.error?.issues ?? []).toEqual([])
+        expect(parsed.data?.fields[0]).toMatchObject({ width: 'auto', narrowWidth: 'full' })
+    })
+
+    it.each(['full', 'half', 'third', 'quarter', 'auto'])('accepts narrowWidth %s', narrowWidth => {
+        const parsed = definitionSchema.safeParse(withTeam({ width: 'quarter', narrowWidth }))
+        expect(parsed.data?.fields[0]).toMatchObject({ narrowWidth })
+    })
+
+    it('refuses an unknown narrow width', () => {
+        const parsed = definitionSchema.safeParse(withTeam({ narrowWidth: 'wide' }))
+        expect(parsed.success).toBe(false)
+        expect(parsed.error?.issues.map(i => i.path.join('.'))).toContain('fields.0.narrowWidth')
+    })
+
+    it('refuses an empty narrow width', () => {
+        const parsed = definitionSchema.safeParse(withTeam({ narrowWidth: '' }))
+        expect(parsed.success).toBe(false)
+    })
+
+    it('parses a field with no narrow width to no narrowWidth key', () => {
+        const parsed = definitionSchema.parse(withTeam({ width: 'auto' }))
+        expect(parsed.fields[0]).toMatchObject({ width: 'auto' })
+        expect('narrowWidth' in parsed.fields[0]).toBe(false)
+    })
+})

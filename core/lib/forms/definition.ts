@@ -4,7 +4,8 @@ import { computeExprSchema } from './expression'
 import type { FormHostBuiltin, FormHostDef } from './host'
 import { keySchema } from './key'
 
-export const FIELD_WIDTHS = ['full', 'half', 'third', 'quarter'] as const
+/** `auto` sizes a field by its content (never wider than the row). */
+export const FIELD_WIDTHS = ['full', 'half', 'third', 'quarter', 'auto'] as const
 export type FieldWidth = (typeof FIELD_WIDTHS)[number]
 
 export const CUSTOM_KINDS = [
@@ -98,6 +99,8 @@ const base = {
     label: z.string().trim().min(1).max(120),
     description: z.string().max(500).optional(),
     width: z.enum(FIELD_WIDTHS).default('full'),
+    /** The width on a form narrower than NARROW_BELOW; absent keeps the default mapping. */
+    narrowWidth: z.enum(FIELD_WIDTHS).optional(),
     required: z.boolean().default(false),
     hidden: z.boolean().default(false),
     placeholder: z.string().max(200).optional(),

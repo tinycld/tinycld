@@ -375,3 +375,26 @@ func TestRowError_ChecksEveryColumnOfATableWithoutKinds(t *testing.T) {
 		t.Fatalf("RowError = %q, want empty", got)
 	}
 }
+
+func TestParseHosts_DecodesALayoutNarrowWidth(t *testing.T) {
+	defs, err := ParseHosts([]byte(`{"hosts":[{"key":"gizmos:gadget","label":"Gadget","collection":"gizmos_gadgets",` +
+		`"formColumn":"form","fieldsColumn":"fields","columns":["name","tax","due","form","fields"],"builtin":[` +
+		`{"key":"name","label":"Name","kind":"text","storage":"column"},` +
+		`{"key":"tax","label":"Tax","kind":"text","storage":"column"},` +
+		`{"key":"due","label":"Due","kind":"date","storage":"column"}],` +
+		`"layout":{"pages":[{"key":"main","title":"Main"}],"fields":{` +
+		`"tax":{"width":"auto","narrowWidth":"full"},"due":{"width":"quarter"}},"rules":[]}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout := defs.Host("gizmos:gadget").Layout
+	if layout == nil {
+		t.Fatal("the host must keep its layout")
+	}
+	if tax := layout.Fields["tax"]; tax.Width != "auto" || tax.NarrowWidth != "full" {
+		t.Fatalf("tax layout = %+v, want width auto and narrowWidth full", tax)
+	}
+	if due := layout.Fields["due"]; due.Width != "quarter" || due.NarrowWidth != "" {
+		t.Fatalf("due layout = %+v, want width quarter and no narrowWidth", due)
+	}
+}

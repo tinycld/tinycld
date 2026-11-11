@@ -81,8 +81,9 @@
                     { "key": "more", "title": "More" }
                 ],
                 "fields": {
-                    "first": { "width": "half" },
+                    "first": { "width": "half", "narrowWidth": "full" },
                     "last": { "width": "half" },
+                    "due": { "width": "auto" },
                     "notes": { "page": "more", "description": "Seen by the whole team." }
                 },
                 "rules": [

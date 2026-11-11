@@ -117,11 +117,13 @@ type HostLayout struct {
 }
 
 // LayoutField places one built-in; an empty value means the first page, or
-// full width. Description is the built-in's help text on the seeded field;
-// empty means none.
+// full width. NarrowWidth is the seeded field's width on narrow forms; empty
+// means none (presentation only, never read by the server). Description is
+// the built-in's help text on the seeded field; empty means none.
 type LayoutField struct {
 	Page        string `json:"page,omitempty"`
 	Width       string `json:"width,omitempty"`
+	NarrowWidth string `json:"narrowWidth,omitempty"`
 	Description string `json:"description,omitempty"`
 }
 

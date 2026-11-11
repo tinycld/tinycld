@@ -38,6 +38,7 @@ const FIELD_PROPS: Record<string, string> = {
     description: 'description',
     placeholder: 'placeholder',
     width: 'width',
+    narrowWidth: 'narrow width',
     required: 'required',
     hidden: 'hidden',
     options: 'options',

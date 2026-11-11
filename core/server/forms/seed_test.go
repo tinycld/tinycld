@@ -281,3 +281,94 @@ func TestSeedDefaults_AppendsABuiltinWithItsLayoutDescription(t *testing.T) {
 		t.Fatalf("a built-in with no layout description must have no description key, got %v", due)
 	}
 }
+
+func TestDefaultDefinition_WritesALayoutNarrowWidthOnItsFieldOnly(t *testing.T) {
+	rawHosts, err := os.ReadFile(layoutHostsFixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs, err := ParseHosts(rawHosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := defaultDefinition(defs.Host("gizmos:gadget"))
+	for _, f := range def.Fields {
+		want := ""
+		if f.Key == "first" {
+			// "full" differs from first's width "half", so a seed that copied
+			// width into narrowWidth fails here.
+			want = "full"
+		}
+		if f.NarrowWidth != want {
+			t.Fatalf("field %s narrowWidth = %q, want %q", f.Key, f.NarrowWidth, want)
+		}
+	}
+	raw, err := json.Marshal(def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Fields []map[string]any `json:"fields"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range decoded.Fields {
+		_, has := f["narrowWidth"]
+		if f["key"] == "first" {
+			if f["narrowWidth"] != "full" {
+				t.Fatalf("first must carry narrowWidth full in its JSON, got %v", f)
+			}
+			continue
+		}
+		if has {
+			t.Fatalf("a seeded field with no narrow width must have no narrowWidth key, got %v", f)
+		}
+	}
+}
+
+func TestSeedDefaults_AppendsABuiltinWithItsLayoutNarrowWidth(t *testing.T) {
+	e := newTestEnv(t)
+	var older []Builtin
+	for _, b := range e.host.Builtins {
+		if b.Key != "owner" && b.Key != "due" {
+			older = append(older, b)
+		}
+	}
+	var form *core.Record
+	e.withBuiltins(t, older, func() {
+		def := strings.Replace(widgetDefault, `{"key":"owner","kind":"builtin","page":"main","label":"Owner","width":"full","required":false,"hidden":false},`, "", 1)
+		def = strings.Replace(def, `{"key":"due","kind":"builtin","page":"main","label":"Due","width":"full","required":false,"hidden":false},`, "", 1)
+		form = e.newForm(t, "widget", def, true)
+	})
+	e.host.Layout = &HostLayout{
+		Pages:  []Page{{Key: "main", Title: "Widget"}},
+		Fields: map[string]LayoutField{"owner": {NarrowWidth: "full"}},
+		Rules:  []Rule{},
+	}
+	if err := SeedDefaults(e.app, e.defs); err != nil {
+		t.Fatal(err)
+	}
+	form, _ = e.app.FindRecordById("forms", form.Id)
+	var def struct {
+		Fields []map[string]any `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(form.GetString("definition")), &def); err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]map[string]any{}
+	for _, f := range def.Fields {
+		key, _ := f["key"].(string)
+		byKey[key] = f
+	}
+	owner, due := byKey["owner"], byKey["due"]
+	if owner == nil || due == nil {
+		t.Fatalf("both built-ins must be appended, got fields %v", def.Fields)
+	}
+	if owner["narrowWidth"] != "full" {
+		t.Fatalf("owner narrowWidth = %v, want the layout's", owner["narrowWidth"])
+	}
+	if _, has := due["narrowWidth"]; has {
+		t.Fatalf("a built-in with no layout narrow width must have no narrowWidth key, got %v", due)
+	}
+}

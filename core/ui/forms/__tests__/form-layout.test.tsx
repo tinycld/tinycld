@@ -1,9 +1,13 @@
 // @vitest-environment happy-dom
-import { cleanup, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
+import { useForm } from 'react-hook-form'
 import { View } from 'react-native'
 import { afterEach, describe, expect, it } from 'vitest'
+import { definitionSchema } from '../../../lib/forms/definition'
+import { hostDefSchema } from '../../../lib/forms/host'
 import { FieldCell } from '../FieldCell'
 import { FormLayout } from '../FormLayout'
+import { FormRenderer } from '../FormRenderer'
 import { FIELD_CELL_BORDER_WIDTH } from '../fields/table-layout'
 
 afterEach(cleanup)
@@ -180,5 +184,185 @@ describe('FieldCell', () => {
         expect(classOf(cellOf(container))).not.toContain('opacity-50')
         rerender(<Cell isDragging />)
         expect(classOf(cellOf(container))).toContain('opacity-50')
+    })
+})
+
+const tokensOf = (el: Element) => classOf(el).split(/\s+/).filter(Boolean)
+
+/** The classes of a cell sized by its content: basis auto, never grown or shrunk, capped at the row. */
+function expectContentSized(el: Element) {
+    const tokens = tokensOf(el)
+    expect(tokens).toEqual(
+        expect.arrayContaining(['basis-auto', 'grow-0', 'shrink-0', 'max-w-full'])
+    )
+    expect(tokens).not.toContain('min-w-0')
+    expect(tokens.filter(t => /^basis-(full|1\/\d)$/.test(t))).toEqual([])
+}
+
+/** Three quarters, a fit-content cell, and a quarter that is full width on narrow screens. */
+function Row({ containerWidth }: { containerWidth: number }) {
+    return (
+        <FormLayout>
+            <FieldCell
+                fieldKey="start"
+                label="Start"
+                required={false}
+                width="quarter"
+                containerWidth={containerWidth}
+            >
+                <View />
+            </FieldCell>
+            <FieldCell
+                fieldKey="end"
+                label="End"
+                required={false}
+                width="quarter"
+                containerWidth={containerWidth}
+            >
+                <View />
+            </FieldCell>
+            <FieldCell
+                fieldKey="team"
+                label="Team"
+                required={false}
+                width="quarter"
+                narrowWidth="full"
+                containerWidth={containerWidth}
+            >
+                <View />
+            </FieldCell>
+            <FieldCell
+                fieldKey="level"
+                label="Level"
+                required={false}
+                width="auto"
+                containerWidth={containerWidth}
+            >
+                <View />
+            </FieldCell>
+        </FormLayout>
+    )
+}
+
+describe('a row with a fit-content cell and a narrow width', () => {
+    const cell = (container: HTMLElement, key: string) => byId(container, `form-field-${key}`)
+
+    it('keeps the quarters a quarter and sizes the fit-content cell by its content on a wide form', () => {
+        const { container } = render(<Row containerWidth={1280} />)
+        for (const key of ['start', 'end', 'team']) {
+            expect(tokensOf(cell(container, key))).toContain('basis-1/4')
+        }
+        expectContentSized(cell(container, 'level'))
+    })
+
+    it('halves the quarters, keeps the fit-content cell, and uses the narrow width on a narrow form', () => {
+        const { container } = render(<Row containerWidth={500} />)
+        expect(tokensOf(cell(container, 'start'))).toContain('basis-1/2')
+        expect(tokensOf(cell(container, 'end'))).toContain('basis-1/2')
+        expect(tokensOf(cell(container, 'team'))).toContain('basis-full')
+        expect(tokensOf(cell(container, 'team'))).not.toContain('basis-1/2')
+        expectContentSized(cell(container, 'level'))
+    })
+
+    it('gives a bare fit-content cell the same width classes', () => {
+        for (const width of [1280, 500]) {
+            const { container, unmount } = render(
+                <FormLayout>
+                    <FieldCell
+                        fieldKey="level"
+                        label="Level"
+                        required={false}
+                        width="auto"
+                        containerWidth={width}
+                        isBare
+                    >
+                        <View />
+                    </FieldCell>
+                </FormLayout>
+            )
+            expectContentSized(cell(container, 'level'))
+            unmount()
+        }
+    })
+
+    it('applies the narrow width to a bare cell too', () => {
+        const { container } = render(
+            <FormLayout>
+                <FieldCell
+                    fieldKey="team"
+                    label="Team"
+                    required={false}
+                    width="quarter"
+                    narrowWidth="full"
+                    containerWidth={500}
+                    isBare
+                >
+                    <View />
+                </FieldCell>
+            </FormLayout>
+        )
+        expect(tokensOf(cell(container, 'team'))).toContain('basis-full')
+    })
+})
+
+const tinyHost = {
+    ...hostDefSchema.parse({
+        key: 'gizmos:tiny',
+        label: 'Tiny',
+        collection: 'gizmos_tinies',
+        formColumn: 'form',
+        fieldsColumn: 'fields',
+        columns: ['name', 'form', 'fields'],
+        builtin: [{ key: 'name', label: 'Name', kind: 'text', storage: 'column' }],
+    }),
+    pkgSlug: 'gizmos',
+    pkgName: 'Gizmos',
+    ui: async () => ({ components: {} }),
+}
+
+const narrowDefinition = definitionSchema.parse({
+    version: 1,
+    pages: [{ key: 'main', title: 'Main' }],
+    fields: [
+        { key: 'name', kind: 'builtin', page: 'main', label: 'Name', width: 'full' },
+        { key: 'start', kind: 'text', page: 'main', label: 'Start', width: 'quarter' },
+        {
+            key: 'team',
+            kind: 'text',
+            page: 'main',
+            label: 'Team',
+            width: 'quarter',
+            narrowWidth: 'full',
+        },
+    ],
+})
+
+function RendererHarness() {
+    const form = useForm<Record<string, unknown>>({ defaultValues: {} })
+    return (
+        <FormRenderer
+            host={tinyHost}
+            ui={null}
+            definition={narrowDefinition}
+            layout="wizard"
+            form={form}
+            context={{ today: '2026-01-01', userId: 'u' }}
+        />
+    )
+}
+
+describe('FormRenderer and a field narrow width', () => {
+    const fireLayout = (node: Element, width: number) =>
+        fireEvent(node, new CustomEvent('rn-layout', { detail: { width, height: 1, x: 0, y: 0 } }))
+
+    it('passes the field narrowWidth to its cell', () => {
+        const { container } = render(<RendererHarness />)
+        const root = byId(container, 'form-renderer')
+        const teamClasses = () => tokensOf(byId(container, 'form-field-team'))
+        act(() => fireLayout(root, 1280))
+        expect(teamClasses()).toContain('basis-1/4')
+        act(() => fireLayout(root, 500))
+        expect(teamClasses()).toContain('basis-full')
+        expect(tokensOf(byId(container, 'form-field-start'))).toContain('basis-1/2')
     })
 })

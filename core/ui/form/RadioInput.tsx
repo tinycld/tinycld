@@ -1,4 +1,4 @@
-import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
+import { type Control, type FieldValues, type Path, useController, useWatch } from 'react-hook-form'
 import { Pressable, Text, View, type ViewProps } from 'react-native'
 
 export type RadioOption = {
@@ -19,8 +19,24 @@ export type RadioInputProps<T extends FieldValues = Record<string, unknown>> = {
     disabled?: boolean
     /** `segmented` lays short labels side by side; `list` stacks them with descriptions. */
     layout?: 'list' | 'segmented'
+    /**
+     * The value of the option that stands for "no value": choosing it writes
+     * undefined into the form, and it is selected while the field has no value.
+     */
+    clearValue?: string
     wrapperProps?: ViewProps
 }
+
+const SEGMENT_CLASS = {
+    selected:
+        'min-w-16 shrink-0 basis-auto items-center rounded-md border px-3 py-2 border-primary bg-primary',
+    idle: 'min-w-16 shrink-0 basis-auto items-center rounded-md border px-3 py-2 border-border bg-background',
+} as const
+
+const SEGMENT_TEXT_CLASS = {
+    selected: 'text-sm font-medium text-primary-foreground',
+    idle: 'text-sm font-medium text-foreground',
+} as const
 
 const DOT_CLASS = {
     selected: 'size-5 items-center justify-center rounded-full border-2 border-primary',
@@ -55,17 +71,26 @@ export function RadioInput<T extends FieldValues = Record<string, unknown>>({
     hideError = false,
     disabled = false,
     layout = 'list',
+    clearValue,
     wrapperProps = {},
 }: RadioInputProps<T>) {
     const {
         field,
         fieldState: { error },
     } = useController({ name, control })
+    // A controller falls back to the loaded value when the form value turns
+    // undefined, so a field that can be cleared is read through useWatch.
+    const watched = useWatch({ control, name })
+    const value = clearValue === undefined ? field.value : (watched ?? clearValue)
     const hasError = !!error
     const isSegmented = layout === 'segmented'
+    const choose = (choice: string) => field.onChange(choice === clearValue ? undefined : choice)
     const rows = options.map(option => {
-        const isSelected = field.value === option.value
+        const isSelected = value === option.value
+        const onPress = () => choose(option.value)
         if (isSegmented) {
+            const state = isSelected ? 'selected' : 'idle'
+            // A segment keeps its label whole on one line; the row wraps when they do not fit.
             return (
                 <Pressable
                     key={option.value}
@@ -74,12 +99,10 @@ export function RadioInput<T extends FieldValues = Record<string, unknown>>({
                     accessibilityState={{ checked: isSelected, disabled }}
                     disabled={disabled}
                     accessibilityLabel={option.label}
-                    onPress={() => field.onChange(option.value)}
-                    className={`flex-1 min-w-0 items-center rounded-md border py-2 ${isSelected ? 'border-primary bg-primary' : 'border-border bg-background'}`}
+                    onPress={onPress}
+                    className={SEGMENT_CLASS[state]}
                 >
-                    <Text
-                        className={`text-sm font-medium ${isSelected ? 'text-primary-foreground' : 'text-foreground'}`}
-                    >
+                    <Text className={SEGMENT_TEXT_CLASS[state]} numberOfLines={1}>
                         {option.label}
                     </Text>
                 </Pressable>
@@ -93,7 +116,7 @@ export function RadioInput<T extends FieldValues = Record<string, unknown>>({
                 accessibilityState={{ checked: isSelected, disabled }}
                 disabled={disabled}
                 accessibilityLabel={option.label}
-                onPress={() => field.onChange(option.value)}
+                onPress={onPress}
                 className="flex-row items-start gap-3 py-1.5"
             >
                 <View className="pt-0.5">
@@ -112,7 +135,7 @@ export function RadioInput<T extends FieldValues = Record<string, unknown>>({
             <View
                 accessibilityRole="radiogroup"
                 accessibilityLabel={label}
-                className={isSegmented ? 'flex-row gap-1.5' : ''}
+                className={isSegmented ? 'flex-row flex-wrap gap-1.5' : ''}
             >
                 {rows}
             </View>

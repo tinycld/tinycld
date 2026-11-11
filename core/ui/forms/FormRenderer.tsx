@@ -154,6 +154,7 @@ function Cell(props: CellProps) {
             required={fieldState?.required ?? false}
             error={error}
             width={field.width}
+            narrowWidth={field.narrowWidth}
             containerWidth={containerWidth}
             handle={design?.renderHandle?.(field.key)}
             isSelected={design?.selectedKey === field.key}

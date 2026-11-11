@@ -288,3 +288,53 @@ describe('a form host layout field with a description', () => {
         )
     })
 })
+
+describe('a form host layout field with a fit-content or narrow width', () => {
+    const sizedLayout = {
+        ...gadgetLayout,
+        fields: {
+            ...gadgetLayout.fields,
+            first: { width: 'quarter', narrowWidth: 'full' },
+            due: { width: 'auto' },
+        },
+    }
+
+    it('accepts auto and narrowWidth on a layout entry, and keeps them', () => {
+        const parsed = hostDefSchema.safeParse({ ...gadgetBase, layout: sizedLayout })
+        expect(parsed.error?.issues ?? []).toEqual([])
+        expect(parsed.data?.layout?.fields.first).toEqual({ width: 'quarter', narrowWidth: 'full' })
+        expect(parsed.data?.layout?.fields.due).toEqual({ width: 'auto' })
+    })
+
+    it('refuses an unknown narrow width', () => {
+        expect(
+            layoutIssuePaths({ ...gadgetLayout, fields: { first: { narrowWidth: 'wide' } } })
+        ).toContain('layout.fields.first.narrowWidth')
+    })
+
+    it('parses a layout entry with no narrow width to no narrowWidth key', () => {
+        const parsed = hostDefSchema.parse({ ...gadgetBase, layout: sizedLayout })
+        expect('narrowWidth' in (parsed.layout?.fields.due ?? {})).toBe(false)
+        expect('narrowWidth' in (parsed.layout?.fields.last ?? {})).toBe(false)
+    })
+
+    it('seeds the narrow width on its field only, and the fit-content width', () => {
+        const fields = defaultDefinitionFor(
+            hostDefSchema.parse({ ...gadgetBase, layout: sizedLayout })
+        ).fields
+        expect(fields.find(f => f.key === 'first')).toMatchObject({
+            width: 'quarter',
+            narrowWidth: 'full',
+        })
+        expect(fields.find(f => f.key === 'due')).toMatchObject({ width: 'auto' })
+        expect(fields.filter(f => f.key !== 'first').filter(f => 'narrowWidth' in f)).toEqual([])
+    })
+
+    it('seeds a definition that is valid for its host', () => {
+        const host = hostDefSchema.parse({ ...gadgetBase, layout: sizedLayout })
+        const parsed = definitionSchema.safeParse(defaultDefinitionFor(host))
+        expect(parsed.error?.issues ?? []).toEqual([])
+        expect(parsed.data?.fields.find(f => f.key === 'first')?.narrowWidth).toBe('full')
+        expect(parsed.success && validateDefinitionForHost(parsed.data, host)).toEqual([])
+    })
+})

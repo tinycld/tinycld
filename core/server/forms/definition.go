@@ -28,8 +28,11 @@ type Field struct {
 	Page  string `json:"page"`
 	Label string `json:"label"`
 	// Description is the help text the renderer draws with the field.
-	Description string   `json:"description,omitempty"`
-	Width       string   `json:"width,omitempty"`
+	Description string `json:"description,omitempty"`
+	Width       string `json:"width,omitempty"`
+	// NarrowWidth is presentation only (the width below the renderer's
+	// narrow breakpoint); the server never reads it.
+	NarrowWidth string   `json:"narrowWidth,omitempty"`
 	Required    bool     `json:"required"`
 	Hidden      bool     `json:"hidden"`
 	Options     []Option `json:"options,omitempty"`

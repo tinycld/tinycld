@@ -61,6 +61,9 @@ async function addSizedField(page: Page, field: SizedField) {
     await addField(page, field.kind, field.label)
     if (field.kind === 'select') await addRoleOptions(page)
     await properties(page).locator(`[data-testid$=".width-${field.width}"]`).click()
+    if (field.narrowWidth) {
+        await properties(page).locator(`[data-testid$=".narrowWidth-${field.narrowWidth}"]`).click()
+    }
 }
 
 async function saveDefinition(page: Page) {
@@ -84,8 +87,12 @@ export async function savePublication(page: Page) {
 export interface SizedField {
     kind: 'date' | 'number' | 'select' | 'text'
     label: string
-    width: 'full' | 'half' | 'third' | 'quarter'
+    width: FieldWidth
+    /** The width below the narrow breakpoint, set with the builder's "On narrow screens" control. */
+    narrowWidth?: FieldWidth
 }
+
+type FieldWidth = 'full' | 'half' | 'third' | 'quarter' | 'auto'
 
 interface PublishOptions {
     /** More fields after the defaults, each at its own width. */

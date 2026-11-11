@@ -47,8 +47,12 @@ const WIDTH_LABELS: Record<FieldWidth, string> = {
     half: 'Half',
     third: 'Third',
     quarter: 'Quarter',
+    auto: 'Fit',
 }
 const WIDTH_OPTIONS = FIELD_WIDTHS.map(w => ({ value: w, label: WIDTH_LABELS[w] }))
+/** "Default" stands for no narrowWidth at all: the field keeps the renderer's own narrow mapping. */
+const NARROW_DEFAULT = 'default'
+const NARROW_WIDTH_OPTIONS = [{ value: NARROW_DEFAULT, label: 'Default' }, ...WIDTH_OPTIONS]
 const DISPLAY_OPTIONS = [
     { value: 'dropdown', label: 'Dropdown' },
     { value: 'radio', label: 'Radio buttons' },
@@ -488,6 +492,14 @@ export function FieldProperties({ editor, fieldKey }: FieldPropertiesProps) {
                 label="Width"
                 options={WIDTH_OPTIONS}
                 layout="segmented"
+            />
+            <RadioInput
+                control={control}
+                name={`fields.${i}.narrowWidth`}
+                label="On narrow screens"
+                options={NARROW_WIDTH_OPTIONS}
+                layout="segmented"
+                clearValue={NARROW_DEFAULT}
             />
             <RequiredToggle
                 editor={editor}

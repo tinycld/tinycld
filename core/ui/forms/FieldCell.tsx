@@ -12,6 +12,8 @@ export interface FieldCellProps {
     required: boolean
     error?: string
     width: FieldWidth
+    /** The width below NARROW_BELOW; absent keeps the default mapping (see `effectiveWidth`). */
+    narrowWidth?: FieldWidth
     containerWidth: number
     children: ReactNode
     testID?: string
@@ -65,12 +67,22 @@ function boxClassFor(isSelected: boolean, isDropTarget: boolean, isSelectable: b
 // The width from the one exported size; the color class above only tints it.
 const BOX_BORDER_STYLE = { borderWidth: FIELD_CELL_BORDER_WIDTH }
 
+/**
+ * The basis plus min-w-0: on web a flex item grows to its content's
+ * min-content width, so an input's intrinsic width would widen the cell past
+ * its basis. A fit-content cell is meant to be its content's width, so it
+ * keeps that floor (its class caps it at the row instead).
+ */
+function sizingClassFor(width: FieldWidth) {
+    const basis = widthClass(width)
+    if (width === 'auto') return basis
+    return `${basis} min-w-0`
+}
+
 /** The root is the row's flex item and the measured hit area, gaps included. */
-function rootClassFor(basis: string, isDragging: boolean) {
+function rootClassFor(sizing: string, isDragging: boolean) {
     const dim = isDragging ? 'opacity-50' : ''
-    // min-w-0: on web a flex item grows to its content's min-content width, so
-    // an input's intrinsic width would widen the cell past its basis.
-    return `relative ${basis} min-w-0 grow-0 shrink-0 px-1.5 mb-3 ${dim}`
+    return `relative ${sizing} grow-0 shrink-0 px-1.5 mb-3 ${dim}`
 }
 
 function RequiredMark({ isVisible }: { isVisible: boolean }) {
@@ -142,6 +154,7 @@ export function FieldCell({
     required,
     error,
     width,
+    narrowWidth,
     containerWidth,
     children,
     testID,
@@ -156,8 +169,8 @@ export function FieldCell({
     registerMeasure,
     onPress,
 }: FieldCellProps) {
-    const effective = effectiveWidth(width, containerWidth)
-    const basis = widthClass(effective)
+    const effective = effectiveWidth(width, containerWidth, narrowWidth)
+    const sizing = sizingClassFor(effective)
     const { ref, onLayout } = useMeasuredRect(onLayoutRect, registerMeasure)
     const cellTestID = testID ?? `form-field-${fieldKey}`
     if (isBare) {
@@ -165,7 +178,7 @@ export function FieldCell({
             <View
                 ref={ref}
                 onLayout={onLayout}
-                className={`${basis} min-w-0 grow-0 shrink-0 px-1.5`}
+                className={`${sizing} grow-0 shrink-0 px-1.5`}
                 testID={cellTestID}
             >
                 {children}
@@ -175,7 +188,7 @@ export function FieldCell({
     const root = {
         ref,
         onLayout,
-        className: rootClassFor(basis, isDragging),
+        className: rootClassFor(sizing, isDragging),
         testID: cellTestID,
     }
     const body = (

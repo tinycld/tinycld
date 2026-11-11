@@ -237,8 +237,10 @@ const builtinSchema = z
 
 /**
  * The host's default form: its pages, a page and width per built-in (absent
- * means the first page, full width), an optional help text per built-in (the
- * seeded field's `description`), and its rules. It seeds the first default
+ * means the first page, full width), an optional `narrowWidth` per built-in
+ * (the seeded field's width on a narrow form; absent writes no key), an
+ * optional help text per built-in (the seeded field's `description`), and its
+ * rules. It seeds the first default
  * form, and every new form an admin starts from Settings → Forms → New form
  * (use-form-admin.ts starts from `defaultDefinitionFor`). Mirrored in Go
  * (server/forms HostLayout). A page has no description, because the Go page
@@ -252,6 +254,7 @@ export const hostLayoutSchema = z.object({
             z.object({
                 page: keySchema.optional(),
                 width: z.enum(FIELD_WIDTHS).optional(),
+                narrowWidth: z.enum(FIELD_WIDTHS).optional(),
                 description: z.string().max(500).optional(),
             })
         )
@@ -420,6 +423,7 @@ export function defaultDefinitionFor(host: FormHostDef): FormDefinition {
                 label: b.label,
                 ...(placed?.description ? { description: placed.description } : {}),
                 width: placed?.width ?? 'full',
+                ...(placed?.narrowWidth ? { narrowWidth: placed.narrowWidth } : {}),
                 required: b.required,
                 hidden: false,
             }
