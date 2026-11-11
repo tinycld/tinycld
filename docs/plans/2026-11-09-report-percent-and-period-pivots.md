@@ -77,6 +77,7 @@ None. Every Produces name of the brief is kept: `percentOfSection` with `Node.Su
 | `core/server/reports/pivot.go` | `bucketSeries`, `bucketIndex`, `bucketKey`; `pivotPass` over a resolved range | 5, 6 |
 | `core/server/reports/bind.go` | `pivot.range` refusals (`pivotRange`) | 5 |
 | `core/server/reports/periodpivot_test.go` (new) | P2 Go tests | 5, 6 |
+| `core/server/reports/pivot_test.go` | `TestPivotBucketOfARowWithNoDayHasNoTypedLabel` (a P4 case added during SDD, named here at gate 3) | 1 |
 | `core/server/reports/formula.go` | `percentOfSection` window op; `subtotal` is a leaf only when `op` is empty, refused on any other op | 7 |
 | `core/server/reports/detail.go` | `windowSQL`: `percentOfSection` placeholder (NULL, Percent, win) | 7 |
 | `core/server/reports/rows.go` | `windowOp` includes `percentOfSection` | 7 |
@@ -91,6 +92,7 @@ None. Every Produces name of the brief is kept: `percentOfSection` with `Node.Su
 | `core/reports/lib/builder/formula-parts.ts`, `formula-context.ts`, `formula-type.ts`, `formula-ops.ts` | "Percent of a section's total": part, arity, label, type, offer only on a layout report, operand a number column, `sectionPercentColumns` | 10 |
 | `core/reports/lib/builder/__tests__/formula-ops.test.ts`, `formula-type.test.ts`, `formula-context.test.ts`, `formula-fixture.ts` | builder vitest for P1 | 10 |
 | `core/reports/lib/builder/formula-describe.ts` | "<col> as % of <section>" | 11 |
+| `core/reports/components/builder/ColumnsSection.tsx` | `offeredAggregates` offers no total for a `percentOfSection` column (the engine refuses one; draft issue `PERCENT_NO_TOTAL`); added during SDD, named here at gate 3 | 11 |
 | `core/reports/components/builder/report-formula.tsx` | `SectionLeaf` (pick the section; writes `subtotal`); the sections come from `formulaContext`, which already reads the layout | 11 |
 | `core/reports/lib/builder/draft.ts` | `cellColumnIds` leaves percent columns out (11); pivot draft `range`, `totalAfter`; read/write; `draftIssues` for a range that names no date range param (12) | 11, 12 |
 | `core/reports/lib/builder/__tests__/formula-describe.test.ts`, `draft.test.ts` | P1 description and draft round trip (11); P2/P3 round trip and issues (12) | 11, 12 |
@@ -105,7 +107,7 @@ None. Every Produces name of the brief is kept: `percentOfSection` with `Node.Su
 | `docs/packages.md` | "Fields added in version 4": `columns[].formula` `percentOfSection` (`subtotal`), `pivot.range`, `pivot.order`, bucket label types | 14 |
 | `core/reports/lib/__tests__/statements-docs.test.ts` | the docs check gains the new headings and fields | 14 |
 
-The brief's Files list (cp0.md) names `pivot_test.go`, `layout_test.go` and `formula_cases_test.go`. The plan puts its Go tests in new test files, one per extension (`bucketlabel_test.go`, `pivotorder_test.go`, `periodpivot_test.go`, `sectionpercent_test.go`, `periodstatement_test.go`), as the brief allows ("one test file per extension as the core plan chooses"), and leaves those three files unchanged.
+The brief's Files list (cp0.md) names `pivot_test.go`, `layout_test.go` and `formula_cases_test.go`. The plan puts its Go tests in new test files, one per extension (`bucketlabel_test.go`, `pivotorder_test.go`, `periodpivot_test.go`, `sectionpercent_test.go`, `periodstatement_test.go`), as the brief allows ("one test file per extension as the core plan chooses"). `layout_test.go` and `formula_cases_test.go` stay unchanged; `pivot_test.go` gains one P4 case (`TestPivotBucketOfARowWithNoDayHasNoTypedLabel`).
 
 ## Tasks
 

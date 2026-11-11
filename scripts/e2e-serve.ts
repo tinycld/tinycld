@@ -42,6 +42,7 @@ import { type ChildProcess, type StdioOptions, spawn, spawnSync } from 'node:chi
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
+import { refreshReportsStub } from '../tests/scripts/scaffold-reports-stub'
 import { stopChildOnFailure } from './e2e-child'
 import { openE2eOutput, printLogTail } from './e2e-output'
 import { exportWeb } from './export-web'
@@ -149,6 +150,12 @@ function resetDataDir(dataDir: string, stdio: StdioOptions): void {
     // (fixtures are seeded by globalSetup against the running server), so the
     // build has to live here or nothing produces the binary on a clean
     // checkout. A developer with one already sees a fast no-op rebuild.
+    //
+    // The reports stub's Go source, migration and screen go into this build and
+    // the bundle, so it is refreshed from its templates first, as CI scaffolds
+    // it before both. globalSetup is too late: it runs once the servers are up.
+    // Both instances refresh, because each builds the server itself.
+    if (refreshReportsStub()) log('phase 1/3: refreshed the reports stub from its templates')
     log('phase 1/3: building the server')
     const built = spawnSync('go', ['build', '-o', 'app', '.'], {
         cwd: path.join(ROOT, 'server'),

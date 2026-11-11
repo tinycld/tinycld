@@ -22,7 +22,10 @@
  * Invocation mirrors the other scaffolders:
  *   - CI: `pnpm exec tsx tinycld/tests/scripts/scaffold-reports-stub.ts` from the
  *     workspace root, after `pnpm install` and before the bundle build.
- *   - Local: run once before `tinycld-pkg test:e2e`.
+ *   - Local: run once before `tinycld-pkg test:e2e`. After that, each e2e run
+ *     re-writes the stub's files from the templates before it builds the server
+ *     (scripts/e2e-serve.ts → refreshReportsStub), so a changed template reaches
+ *     the next local run.
  *
  * Idempotent: re-running re-emits the sources and installs only when the stub is
  * not yet a workspace member.
@@ -31,7 +34,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -50,9 +53,15 @@ function workspaceRoot(): string {
     return resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..')
 }
 
+// Both e2e servers refresh the stub at once (scripts/e2e-serve.ts) while the
+// other may be compiling it, so a file is replaced by a rename (never seen half
+// written) and left alone when it already holds these contents.
 function write(path: string, contents: string): void {
+    if (existsSync(path) && readFileSync(path, 'utf8') === contents) return
     mkdirSync(resolve(path, '..'), { recursive: true })
-    writeFileSync(path, contents)
+    const staged = `${path}.${process.pid}.tmp`
+    writeFileSync(staged, contents)
+    renameSync(staged, path)
 }
 
 function goVersions(wsRoot: string): { go: string; pocketbase: string } {
@@ -180,19 +189,32 @@ function ensureMember(wsRoot: string): boolean {
     return ensurePnpmMember(join(wsRoot, 'pnpm-workspace.yaml')) || missing
 }
 
-function ensurePnpmMember(yamlPath: string): boolean {
-    const lines = readFileSync(yamlPath, 'utf8').split('\n')
+// Reads the `packages:` block of pnpm-workspace.yaml: whether the stub is listed,
+// and the line of its last entry. null when the file has no such block.
+function packagesBlock(lines: string[]): { listed: boolean; lastEntry: number } | null {
     const pkgIdx = lines.findIndex(l => /^packages:\s*$/.test(l))
-    if (pkgIdx === -1) throw new Error(`no packages: block in ${yamlPath}`)
+    if (pkgIdx === -1) return null
     let lastEntry = pkgIdx
     for (let i = pkgIdx + 1; i < lines.length; i++) {
         const line = lines[i] ?? ''
-        if (line.trim() === `- ${STUB_DIR}`) return false
+        if (line.trim() === `- ${STUB_DIR}`) return { listed: true, lastEntry }
         if (/^\s+-\s+/.test(line)) lastEntry = i
         else if (line.trim() !== '' && !line.startsWith(' ')) break
     }
-    const indent = (lines[lastEntry] ?? '').match(/^\s*/)?.[0] ?? '  '
-    lines.splice(lastEntry + 1, 0, `${indent}- ${STUB_DIR}`)
+    return { listed: false, lastEntry }
+}
+
+export function isPnpmMember(workspaceYaml: string): boolean {
+    return packagesBlock(workspaceYaml.split('\n'))?.listed ?? false
+}
+
+function ensurePnpmMember(yamlPath: string): boolean {
+    const lines = readFileSync(yamlPath, 'utf8').split('\n')
+    const block = packagesBlock(lines)
+    if (!block) throw new Error(`no packages: block in ${yamlPath}`)
+    if (block.listed) return false
+    const indent = (lines[block.lastEntry] ?? '').match(/^\s*/)?.[0] ?? '  '
+    lines.splice(block.lastEntry + 1, 0, `${indent}- ${STUB_DIR}`)
     writeFileSync(yamlPath, lines.join('\n'))
     return true
 }
@@ -208,15 +230,37 @@ function run(cmd: string, args: string[], cwd: string, what: string): void {
     }
 }
 
-function main(): void {
-    const wsRoot = workspaceRoot()
-    console.log(`[scaffold-reports-stub] workspace root: ${wsRoot}`)
+export function writeStubFiles(wsRoot: string): string {
     const stubDir = join(wsRoot, STUB_DIR)
     writePackage(stubDir)
     writeManifest(stubDir)
     writeSources(stubDir)
     writeGoModule(stubDir, goVersions(wsRoot))
     copyTemplates(stubDir)
+    return stubDir
+}
+
+/**
+ * Re-writes an installed stub from the templates, so a local e2e run never
+ * serves a stub older than its templates (CI scaffolds it fresh every run).
+ * A workspace without the stub is left as it is: no files, no install, and the
+ * reports specs skip. The stub's routes and migration are linked to its files
+ * by path, so new contents need no packages:generate; a template added to
+ * TEMPLATES does, and comes in with the next run of this scaffolder.
+ * Returns whether it wrote the stub.
+ */
+export function refreshReportsStub(wsRoot: string = workspaceRoot()): boolean {
+    const yamlPath = join(wsRoot, 'pnpm-workspace.yaml')
+    const listed = existsSync(yamlPath) && isPnpmMember(readFileSync(yamlPath, 'utf8'))
+    if (!listed || !existsSync(join(wsRoot, STUB_DIR, 'manifest.ts'))) return false
+    writeStubFiles(wsRoot)
+    return true
+}
+
+function main(): void {
+    const wsRoot = workspaceRoot()
+    console.log(`[scaffold-reports-stub] workspace root: ${wsRoot}`)
+    const stubDir = writeStubFiles(wsRoot)
     if (ensureMember(wsRoot)) {
         spawnSync('corepack', ['enable'], {
             cwd: wsRoot,
@@ -230,4 +274,5 @@ function main(): void {
     console.log(`[scaffold-reports-stub] done — ${STUB_DIR}/ ready at ${stubDir}`)
 }
 
-main()
+// scripts/e2e-serve.ts and the unit test import this module; only a direct run scaffolds.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
