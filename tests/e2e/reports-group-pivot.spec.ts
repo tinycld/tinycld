@@ -63,8 +63,8 @@ async function pivotByMonth(p: Page) {
 }
 
 async function expectMonthPivot(p: Page) {
-    await expect(p.getByTestId('report-heading-amount.p0')).toHaveText('2026-01')
-    await expect(p.getByTestId('report-heading-amount.p1')).toHaveText('2026-02')
+    await expect(p.getByTestId('report-heading-amount.p0')).toHaveText('Jan 2026')
+    await expect(p.getByTestId('report-heading-amount.p1')).toHaveText('Feb 2026')
     await expect(await cellOf(p, 'amount.p0', 'Open')).toHaveText('10.00')
     await expect(await cellOf(p, 'amount.p1', 'Open')).toHaveText('20.00')
     await expect(await cellOf(p, 'amount.p0', 'Paid')).toHaveText('50.00')

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { describeNode } from '../formula-describe'
 import { SALES_KEY } from './catalog-fixture'
-import { CTX, IN_PERIOD, LARGER, LOOKUP, TEAM_WITH_SALES, WITH_PERIOD } from './formula-fixture'
+import {
+    CTX,
+    IN_PERIOD,
+    LARGER,
+    LOOKUP,
+    SHARE,
+    TEAM_WITH_SALES,
+    WITH_PERIOD,
+    WITH_SECTIONS,
+} from './formula-fixture'
 
 describe('describeNode', () => {
     it('says a formula as a person would', () => {
@@ -55,5 +64,14 @@ describe('describeNode for the v3 parts', () => {
         }
         expect(describeNode(WITH_PERIOD, before)).toBe('Day < {Period start}')
         expect(describeNode(WITH_PERIOD, { param: 'period', bound: 'to' })).toBe('{Period end}')
+    })
+})
+
+describe('a percent of a section', () => {
+    it('names the column and the section', () => {
+        expect(describeNode(WITH_SECTIONS, SHARE)).toBe('Amount as % of Open sales')
+        expect(describeNode(WITH_SECTIONS, { ...SHARE, subtotal: 'gone' })).toBe(
+            'Amount as % of gone (missing)'
+        )
     })
 })

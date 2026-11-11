@@ -200,6 +200,12 @@ const OPS_BY_TYPE: Record<FieldType, ConditionOp[]> = {
     datetime: ['eq', 'lt', 'lte', 'gt', 'gte', 'between', 'isEmpty', 'notEmpty'],
     bool: ['isTrue', 'isFalse'],
     select: ['eq', 'ne', 'in', 'isEmpty', 'notEmpty'],
+    // Label types only: no field has them, so no condition reads one.
+    month: [],
+    quarter: [],
+    year: [],
+    fiscalYear: [],
+    day: [],
 }
 
 export function opsFor(type: FieldType): ConditionOp[] {

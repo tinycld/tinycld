@@ -547,6 +547,10 @@ func (lc *layoutCtx) compileCell(item *LayoutItem, at string) (expr, error) {
 	}
 	id := lc.column.col.ID
 	switch {
+	case lc.c.p.percents[id] != nil:
+		// A computed row's or section total's percent divides its own cell;
+		// assemble fills it (sectionPercentCell).
+		return expr{sql: "NULL", typ: Percent}, nil
 	case item.Cells[id] != nil:
 		return lc.numberCell(item.Cells[id], at+".cells."+id)
 	case lc.c.p.derived[id]:
@@ -928,12 +932,8 @@ func (lc *layoutCtx) currencySQL(cur currency) string {
 // layoutRows emits the rows for one currency: each section's group row
 // (titled, always with its subtotal) and each computed row, in the layout's
 // order. First-level groups no section names are left out.
-func (rn *runner) layoutRows(t *tree, total map[string]any) {
+func (rn *runner) layoutRows(t *tree, total map[string]any, sections map[string]map[string]any) {
 	ck := rn.currencyKey(total)
-	byKey := map[string]map[string]any{}
-	for _, g := range t.children[ck] {
-		byKey[keyString([]any{g["k0"]})] = g
-	}
 	for _, item := range rn.c.p.layout {
 		// A within row is emitted inside its section (groupWithLabel).
 		if item.Within != "" {
@@ -948,24 +948,55 @@ func (rn *runner) layoutRows(t *tree, total map[string]any) {
 			rn.push(Row{ID: id, Kind: KindComputed, Label: item.Label, Cells: rn.cells(row)}, row)
 			continue
 		}
-		key := sectionKey(item)
-		row := byKey[keyString([]any{key})]
-		if row == nil {
-			row = map[string]any{"k0": key, "__level": int64(1)}
-			for _, name := range rn.c.currencies {
-				row[name] = total[name]
-			}
-			// A section the row cap cut stays blank: it may hold rows.
-			if zero := t.computed[emptySectionID+"|"+ck]; zero != nil && !rn.sectionsCapped {
-				row = rn.withinTotal(row, zero)
-			}
-		}
+		row := sections[item.Section]
 		groupKey := rn.rowKey(row, 1)
-		if sum := t.computed[sectionTotalID(item.Section)+"|"+ck]; sum != nil {
-			row = rn.withinTotal(row, sum)
-		}
 		rn.groupWithLabel(t, row, 1, 0, "", "g:"+keyString(groupKey), rowLabel{text: item.Title}, groupKey, true, item)
 	}
+}
+
+// sectionRows is each section's row in one currency by section id, built once
+// for the percent bases and the layout's rows.
+func (rn *runner) sectionRows(t *tree, total map[string]any) map[string]map[string]any {
+	byKey := rn.sectionsByKey(t, rn.currencyKey(total))
+	rows := map[string]map[string]any{}
+	for _, item := range rn.c.p.layout {
+		if item.Section != "" {
+			rows[item.Section] = rn.sectionRow(t, item, total, byKey)
+		}
+	}
+	return rows
+}
+
+// sectionsByKey is one currency's first-level group rows by key.
+func (rn *runner) sectionsByKey(t *tree, ck string) map[string]map[string]any {
+	byKey := map[string]map[string]any{}
+	for _, g := range t.children[ck] {
+		byKey[keyString([]any{g["k0"]})] = g
+	}
+	return byKey
+}
+
+// sectionRow is a section's group row in one currency: its group's row, or
+// a zero row for a section with no rows, with its within rows added. It may
+// be the group's own row, so a caller must not change it.
+func (rn *runner) sectionRow(t *tree, item *LayoutItem, total map[string]any, byKey map[string]map[string]any) map[string]any {
+	ck := rn.currencyKey(total)
+	key := sectionKey(item)
+	row := byKey[keyString([]any{key})]
+	if row == nil {
+		row = map[string]any{"k0": key, "__level": int64(1)}
+		for _, name := range rn.c.currencies {
+			row[name] = total[name]
+		}
+		// A section the row cap cut stays blank: it may hold rows.
+		if zero := t.computed[emptySectionID+"|"+ck]; zero != nil && !rn.sectionsCapped {
+			row = rn.withinTotal(row, zero)
+		}
+	}
+	if sum := t.computed[sectionTotalID(item.Section)+"|"+ck]; sum != nil {
+		row = rn.withinTotal(row, sum)
+	}
+	return row
 }
 
 // withinTotal is a section's row with its number cells (and their currency

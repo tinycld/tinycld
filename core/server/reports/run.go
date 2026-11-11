@@ -127,9 +127,10 @@ type ColumnHeading struct {
 type PivotColumn struct {
 	Cell string `json:"cell"`
 	Key  any    `json:"key"`
-	// LabelType, LabelValue and LabelCurrency type a pivot over a link's
-	// column label as Row's do: the record label's typed value, which the
-	// column's Label holds as plain text.
+	// LabelType, LabelValue and LabelCurrency type the column label as Row's
+	// do: a pivot over a link's record label, an amount, or a bucket (Month,
+	// Quarter, Year, FiscalYear, Day with the raw key), which the column's
+	// Label holds as plain text.
 	LabelType     FieldType `json:"labelType,omitempty"`
 	LabelValue    any       `json:"labelValue,omitempty"`
 	LabelCurrency string    `json:"labelCurrency,omitempty"`
@@ -239,6 +240,13 @@ type runner struct {
 	expand *expansion
 	res    *Result
 	topics map[string]bool
+	// sectionBases holds each percentOfSection column's section total of its
+	// argument per currency block, by column id + "|" + currency key
+	// (readSectionBases).
+	sectionBases map[string]any
+	// assembleErr is the first error assembling the rows met (a percent that
+	// overflows); run returns it.
+	assembleErr error
 	// ruleTopics holds the topics of each rule CTE select the run read, so
 	// its statements explain each rule once.
 	ruleTopics map[string][]string
@@ -407,7 +415,11 @@ func (rn *runner) run() error {
 		// The page's open innermost groups, anchors included, in document
 		// order. In mode after the cursor's own group was not read, so it is
 		// never one of them; the group cursor was read and checked already.
-		if leaves := rn.openGroups(groupRows); len(leaves) > 0 {
+		leaves, err := rn.openGroups(groupRows)
+		if err != nil {
+			return err
+		}
+		if len(leaves) > 0 {
 			if details, err = rn.detailPass(leaves); err != nil {
 				return err
 			}
@@ -416,7 +428,9 @@ func (rn *runner) run() error {
 		var leaves [][]any
 		grouped := len(rn.c.p.groups) > 0
 		if grouped {
-			leaves = rn.openGroups(groupRows)
+			if leaves, err = rn.openGroups(groupRows); err != nil {
+				return err
+			}
 		}
 		// A cursor is read even with no open group, so one whose group shut
 		// is refused rather than answered with no rows.
@@ -442,6 +456,9 @@ func (rn *runner) run() error {
 	rn.res.Columns = rn.columns()
 	rn.markCurrencies(groupRows)
 	rn.assemble(groupRows, details, nested)
+	if rn.assembleErr != nil {
+		return rn.assembleErr
+	}
 	if paged {
 		if err := rn.cutPage(rn.pageLimit()); err != nil {
 			return err
@@ -1520,11 +1537,15 @@ func (rn *runner) readShownNow(s *stmt, ctes []string, sel string, keys []sortKe
 
 // openGroups lists the open innermost groups in the order the report shows
 // them (R9a): the group rows that an assembly with no detail rows marks
-// expanded at the innermost depth. That assembly is thrown away.
-func (rn *runner) openGroups(groupRows []map[string]any) [][]any {
+// expanded at the innermost depth. That assembly is thrown away, but an error
+// it met (a percent that overflows) is the run's.
+func (rn *runner) openGroups(groupRows []map[string]any) ([][]any, error) {
 	rows, notices := rn.res.Rows, rn.res.Notices
 	rn.res.Rows, rn.res.Notices = []Row{}, slices.Clone(notices)
 	rn.assemble(groupRows, nil, nil)
+	if rn.assembleErr != nil {
+		return nil, rn.assembleErr
+	}
 	var out [][]any
 	for _, r := range rn.res.Rows {
 		if r.Kind == KindGroup && r.Expanded && r.Level == len(rn.c.p.groups) {
@@ -1532,7 +1553,7 @@ func (rn *runner) openGroups(groupRows []map[string]any) [][]any {
 		}
 	}
 	rn.res.Rows, rn.res.Notices = rows, notices
-	return out
+	return out, nil
 }
 
 // skips is true when group level n (1 for the first) passes its blank keys up.

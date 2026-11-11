@@ -2,6 +2,13 @@
 // them (run.go Result, catalog.go CatalogSource). Money cells are integer cents;
 // a percent cell is already a percent (12.5 means 12.5%).
 
+/**
+ * The types a bucketed group row's or pivot column's label carries (registry.go
+ * Month … Day), with the raw bucket key as its value. Never a field's type.
+ */
+export const BUCKET_LABEL_TYPES = ['month', 'quarter', 'year', 'fiscalYear', 'day'] as const
+export type BucketLabelType = (typeof BUCKET_LABEL_TYPES)[number]
+
 export const FIELD_TYPES = [
     'text',
     'number',
@@ -12,8 +19,15 @@ export const FIELD_TYPES = [
     'select',
     'relation',
     'percent',
+    ...BUCKET_LABEL_TYPES,
 ] as const
 export type FieldType = (typeof FIELD_TYPES)[number]
+
+const BUCKET_LABEL_SET: ReadonlySet<FieldType> = new Set(BUCKET_LABEL_TYPES)
+
+export function isBucketLabelType(type: FieldType): type is BucketLabelType {
+    return BUCKET_LABEL_SET.has(type)
+}
 
 export const AGGREGATES = ['sum', 'count', 'countDistinct', 'min', 'max', 'avg'] as const
 export type Aggregate = (typeof AGGREGATES)[number]
@@ -55,7 +69,7 @@ export interface ResultColumn {
     pivot?: {
         cell: string
         key: unknown
-        /** A pivot over a link: its column label typed, as a row's `labelType`. */
+        /** The column label typed, as a row's `labelType`: a pivot over a link's record label, an amount, or a bucket (month … day) with the raw key. */
         labelType?: FieldType
         labelValue?: CellValue
         labelCurrency?: string

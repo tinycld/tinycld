@@ -63,8 +63,10 @@ import {
     formulaContext,
     isNumericType,
     levelValueColumns,
+    readsColumn,
     readsSubtotal,
     recordGroups,
+    sectionPercentColumns,
     type TargetDraft,
 } from './formula-context'
 import { isEditableNode, settleScales } from './formula-ops'
@@ -252,6 +254,10 @@ const draftShape = z.object({
         explicitMax: z.boolean(),
         /** The field a pivot over a link heads its columns by; '' takes the first text field. */
         labelField: z.string(),
+        /** A date range param whose every bucket is a column (spec pivot.range); '' : only the buckets with rows. */
+        range: z.string(),
+        /** The pivot columns come just before the cell column, which follows as their total (pivot.order "spec"). */
+        totalAfter: z.boolean(),
     }),
     layout: z.array(layoutItemSchema).max(MAX_LAYOUT_ITEMS),
     /** A formula that labels each opened (detail) row; null: the first column's value (E7). */
@@ -301,12 +307,69 @@ export function layoutWithMinWidth(
     return minWidth ? { width, minWidth, tracks, cells } : { width, tracks, cells }
 }
 
+const PERCENT_NO_TOTAL = 'A percent of a section shows each row’s own share: it has no total'
+
+function isSectionPercent(column: ColumnDraft): boolean {
+    return column.kind === 'formula' && column.formula.node.op === 'percentOfSection'
+}
+
+// section_percent.go: the section a percent divides by must be in the layout, and a
+// percent is filled after the statements, so no formula may read it.
+function sectionPercentIssues(draft: BuilderDraft): Issue[] {
+    const issues: Issue[] = []
+    const sections = new Set(
+        draft.layout.flatMap(item => (item.kind === 'section' ? [item.id] : []))
+    )
+    draft.columns.forEach((column, i) => {
+        if (column.kind !== 'formula' || !isSectionPercent(column)) return
+        const section = column.formula.node.subtotal
+        if (section && !sections.has(section)) {
+            issues.push({
+                path: ['columns', i, 'formula'],
+                message: `The layout has no section "${section}": choose a section`,
+            })
+        }
+    })
+    const percents = draft.columns.filter(isSectionPercent)
+    if (percents.length === 0) return issues
+    const reads = (formula: FormulaDraft | null | undefined) =>
+        percents.filter(percent => readsColumn(formula?.node, percent.id))
+    const refuse = (path: (string | number)[], formula: FormulaDraft | null | undefined) => {
+        const [percent] = reads(formula)
+        if (!percent) return
+        issues.push({
+            path,
+            message: `No formula reads "${percent.label}": a percent of a section is filled after the report’s totals`,
+        })
+    }
+    draft.columns.forEach((column, i) => {
+        if (column.kind === 'formula') refuse(['columns', i, 'formula'], column.formula)
+        refuse(['columns', i, 'rollup'], column.rollup)
+        refuse(['columns', i, 'heading'], column.heading)
+    })
+    draft.layout.forEach((item, i) => {
+        if (item.kind !== 'row') return
+        refuse(['layout', i, 'formula'], item.formula)
+        for (const [col, cell] of Object.entries(item.cells ?? {})) {
+            refuse(['layout', i, 'cells', col], cell)
+        }
+    })
+    draft.sort.forEach((key, i) => {
+        if (key.kind === 'formula') refuse(['sort', i, 'formula'], key.formula)
+    })
+    refuse(['detailLabel'], draft.detailLabel)
+    return issues
+}
+
 function columnIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues: Issue[] = []
     const ids = draft.columns.map(column => column.id)
     draft.columns.forEach((column, i) => {
         if (ids.indexOf(column.id) !== i) {
             issues.push({ path: ['columns', i, 'id'], message: 'Two columns have this id' })
+        }
+        if (column.kind === 'formula' && column.aggregate !== '' && isSectionPercent(column)) {
+            issues.push({ path: ['columns', i, 'aggregate'], message: PERCENT_NO_TOTAL })
         }
         if (column.kind !== 'path') return
         const info = describePath(catalog, draft.source, column.path)
@@ -354,6 +417,24 @@ function groupingIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         const cell = draft.columns.find(column => column.id === draft.pivot.cell)
         if (!cell || cell.aggregate === '') {
             issues.push({ path: ['pivot', 'cell'], message: 'Choose a column with a total' })
+        }
+        // bind.go pivotRange and pivot.order refusals.
+        if (draft.pivot.range !== '') {
+            const range = draft.params.find(param => param.id === draft.pivot.range)
+            if (range?.type !== 'dateRange') {
+                issues.push({ path: ['pivot', 'range'], message: 'Choose a date range' })
+            } else if (draft.pivot.bucket === '') {
+                issues.push({
+                    path: ['pivot', 'range'],
+                    message: 'Choose By: day, month, quarter, year or fiscal year',
+                })
+            }
+        }
+        if (draft.pivot.totalAfter && draft.columns[0]?.id === draft.pivot.cell) {
+            issues.push({
+                path: ['pivot', 'totalAfter'],
+                message: 'The first column labels the rows: choose another column for the cells',
+            })
         }
     }
     if (draft.layout.length > 0 && draft.groups.length === 0) {
@@ -523,17 +604,19 @@ export function withinChoices(draft: Pick<BuilderDraft, 'layout'>, index: number
 /**
  * "This column: …": number, amount and percent columns after the first (bind.go
  * layoutCells, layout.go computedLeg); the pivot's cell column shows as the pivot's
- * columns, which the row's formula fills.
+ * columns, which the row's formula fills. A Percent of a section's total is filled after
+ * the statements run, so no row sets it.
  */
 export function cellColumnIds(
     draft: Pick<BuilderDraft, 'columns' | 'pivot'>,
     types: ReadonlyMap<string, FieldType>
 ): string[] {
+    const percents = sectionPercentColumns(draft.columns)
     return draft.columns.slice(1).flatMap(column => {
         const type = types.get(column.id)
         const isNumber = type !== undefined && isNumericType(type)
         const isPivotCell = draft.pivot.on && draft.pivot.cell === column.id
-        return isNumber && !isPivotCell ? [column.id] : []
+        return isNumber && !isPivotCell && !percents.has(column.id) ? [column.id] : []
     })
 }
 
@@ -693,6 +776,7 @@ export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         ...paramIssues(draft.params),
         ...groupOrderIssues(draft.params, catalog),
         ...columnIssues(draft, catalog),
+        ...sectionPercentIssues(draft),
         ...fitIssues(draft, catalog),
         ...detailBlankIssues(draft),
         ...rollupIssues(draft),
@@ -848,6 +932,8 @@ const NO_PIVOT: BuilderDraft['pivot'] = {
     maxColumns: DEFAULT_PIVOT_COLUMNS,
     explicitMax: false,
     labelField: '',
+    range: '',
+    totalAfter: false,
 }
 
 function columnDraft(
@@ -928,6 +1014,8 @@ export function draftFromSpec(
               maxColumns: spec.pivot.maxColumns ?? DEFAULT_PIVOT_COLUMNS,
               explicitMax: spec.pivot.maxColumns !== undefined,
               labelField: spec.pivot.labelField ?? '',
+              range: spec.pivot.range ?? '',
+              totalAfter: spec.pivot.order === 'spec',
           }
         : NO_PIVOT
     const params = spec.params ?? []
@@ -1269,6 +1357,8 @@ function specPivot(pivot: BuilderDraft['pivot']): NonNullable<ReportSpec['pivot'
             ? { maxColumns: pivot.maxColumns }
             : {}),
         ...(pivot.labelField !== '' ? { labelField: pivot.labelField } : {}),
+        ...(pivot.range !== '' ? { range: pivot.range } : {}),
+        ...(pivot.totalAfter ? { order: 'spec' as const } : {}),
     }
 }
 

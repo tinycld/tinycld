@@ -17,9 +17,10 @@ export {
 // (tests/scripts/scaffold-reports-stub.ts): sources salesstub.sales ("Stub sales":
 // customer, amount, cost, quantity, currency, day, booked (a day kept as text),
 // status; link team) and salesstub.teams ("Stub teams": name, region; to-many link
-// sales), both headed "Stub Sales Co", and the shipped reports "Stub larger side"
-// (published) and "Stub team totals" (unpublished) over sales
-// (reports-stub/server/register.go.txt).
+// sales), both headed "Stub Sales Co", and the shipped reports over sales
+// (reports-stub/server/register.go.txt): published "Stub larger side", "Stub
+// statement", "Stub period statement" and "Stub period pivot"; unpublished "Stub
+// team totals" and "Stub team balance".
 export const SALES_SOURCE = 'salesstub.sales'
 export const TEAMS_SOURCE = 'salesstub.teams'
 export const SHIPPED_TITLE = 'Stub larger side'

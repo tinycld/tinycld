@@ -26,6 +26,7 @@ export type SpecNode = {
     path?: SpecHop[]
     param?: string
     value?: unknown
+    /** A computed row's section or earlier row; on percentOfSection, the section it divides by. */
     subtotal?: string
     /**
      * A group whose key is a link: the leaf reads `path` from the linked record, on
@@ -272,6 +273,10 @@ export const reportSpecSchema = z.strictObject({
             cell: z.string(),
             maxColumns: z.number().int().optional(),
             labelField: z.string().optional(),
+            // A dateRange param: every bucket its from..to touches is a column.
+            range: z.string().min(1).optional(),
+            // 'spec': the pivot columns come just before their cell column.
+            order: z.literal('spec').optional(),
         })
         .nullish(),
     layout: z.array(layoutItemSchema).nullish(),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dayWords, isIsoDay, rangeChipText, rangeWords, shortDay } from '../dates'
+import { bucketWords, dayWords, isIsoDay, rangeChipText, rangeWords, shortDay } from '../dates'
 
 describe('isIsoDay', () => {
     it('accepts real days from 1900', () => {
@@ -36,5 +36,26 @@ describe('day and range words', () => {
 
     it('writes a one-day range as one day', () => {
         expect(rangeWords('2026-10-05', '2026-10-05')).toBe('October 5, 2026')
+    })
+})
+
+describe('bucketWords', () => {
+    it('writes each bucket key in words', () => {
+        expect(bucketWords('month', '2026-01')).toBe('Jan 2026')
+        expect(bucketWords('month', '2026-12')).toBe('Dec 2026')
+        expect(bucketWords('quarter', '2026-Q1')).toBe('Q1 2026')
+        expect(bucketWords('year', '2026')).toBe('2026')
+        // The engine keys a fiscal year by the year it ends in, as a number.
+        expect(bucketWords('fiscalYear', 2026)).toBe('FY 2026')
+        expect(bucketWords('day', '2026-01-05')).toBe('Jan 5, 2026')
+    })
+
+    it('keeps a key it cannot read', () => {
+        expect(bucketWords('month', '2026-13')).toBe('2026-13')
+        expect(bucketWords('month', '2026-00')).toBe('2026-00')
+        expect(bucketWords('month', 'soon')).toBe('soon')
+        expect(bucketWords('quarter', '2026-Q5')).toBe('2026-Q5')
+        expect(bucketWords('fiscalYear', 'FY')).toBe('FY')
+        expect(bucketWords('day', '2026-02-30')).toBe('2026-02-30')
     })
 })

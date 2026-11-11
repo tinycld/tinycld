@@ -158,3 +158,29 @@ func TestPivotCapNoticeCountsEveryLeftOutValue(t *testing.T) {
 		t.Fatalf("notices = %+v", res.Notices)
 	}
 }
+
+// A feeding with no day makes a (none) bucket column: no bucket key, so its
+// label stays plain text, not a month the client would write in words.
+func TestPivotBucketOfARowWithNoDayHasNoTypedLabel(t *testing.T) {
+	z := newZoo(t)
+	leo := z.recs["leo"]
+	z.rec(t, "f9", "zoo_feedings", map[string]any{"animal": leo.Id, "cost": 40, "currency": "USD", "grams": 5, "note": "f9"})
+	res := z.run(t, "ann", fmt.Sprintf(costBySpeciesAndMonth, ""), Options{}, nil)
+	var none *ResultColumn
+	for i, c := range res.Columns {
+		if c.Pivot != nil && c.Pivot.Key == nil {
+			none = &res.Columns[i]
+		}
+	}
+	if none == nil {
+		t.Fatalf("no pivot column for a missing day: %v", pivotIDs(res))
+	}
+	if none.Label != "(none)" || none.Pivot.LabelType != "" || none.Pivot.LabelValue != nil {
+		t.Fatalf("(none) column = %+v", none.Pivot)
+	}
+	for _, c := range res.Columns {
+		if c.Pivot != nil && c.Pivot.Key != nil && c.Pivot.LabelType != Month {
+			t.Fatalf("%s label type = %q", c.ID, c.Pivot.LabelType)
+		}
+	}
+}

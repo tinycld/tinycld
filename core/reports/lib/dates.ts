@@ -1,4 +1,5 @@
 import { toDateString } from '@tinycld/core/lib/dates'
+import type { BucketLabelType } from './types'
 
 // Report days are YYYY-MM-DD. Month names are local, so the words do not depend
 // on the runtime's locale data (Hermes ships little of it).
@@ -49,6 +50,36 @@ export function dayWords(day: string): string {
 
 export function shortDay(day: string): string {
     return `${monthDay(day, SHORT_MONTH_NAMES)}, ${day.slice(0, 4)}`
+}
+
+const MONTH_KEY = /^(\d{4})-(\d{2})$/
+const QUARTER_KEY = /^(\d{4})-Q([1-4])$/
+const YEAR_KEY = /^\d{4}$/
+
+/**
+ * A bucket key as the view shows it: month "Jan 2026", quarter "Q1 2026", year
+ * "2026", fiscal year "FY 2026" (the year it ends in), day "Jan 5, 2026". A key
+ * not in its bucket's form shows as it is.
+ */
+export function bucketWords(type: BucketLabelType, key: string | number): string {
+    const text = String(key)
+    switch (type) {
+        case 'month': {
+            const match = MONTH_KEY.exec(text)
+            const name = match ? SHORT_MONTH_NAMES[Number(match[2]) - 1] : undefined
+            return match && name ? `${name} ${match[1]}` : text
+        }
+        case 'quarter': {
+            const match = QUARTER_KEY.exec(text)
+            return match ? `Q${match[2]} ${match[1]}` : text
+        }
+        case 'fiscalYear':
+            return YEAR_KEY.test(text) ? `FY ${text}` : text
+        case 'day':
+            return isIsoDay(text) ? shortDay(text) : text
+        case 'year':
+            return text
+    }
 }
 
 // One day for a one-day range; the first year is dropped when both ends share it.

@@ -1,6 +1,13 @@
-import { isIsoDay, shortDay } from './dates'
+import { bucketWords, isIsoDay, shortDay } from './dates'
 import { formatMoney, groupDigits, MAX_STORED_AMOUNT, roundHalfAwayFromZero } from './money'
-import type { CellValue, FieldType, ResultColumn, ResultRow, RowKind } from './types'
+import {
+    type CellValue,
+    type FieldType,
+    isBucketLabelType,
+    type ResultColumn,
+    type ResultRow,
+    type RowKind,
+} from './types'
 
 // The Customize options of a run. They stay in the client (the server accepts and
 // ignores options.display): formatting never changes a figure.
@@ -208,6 +215,9 @@ export function typedLabelText(
     currency: string,
     format: NumberFormat
 ): string {
+    if (isBucketLabelType(type) && (typeof value === 'string' || typeof value === 'number')) {
+        return bucketWords(type, value)
+    }
     if (type === 'money' && typeof value === 'number') {
         return formatReportAmount(value, currency, format, { withSymbol: true })
     }

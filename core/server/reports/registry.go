@@ -36,7 +36,32 @@ const (
 	// Percent is never a field's type: percentOfParent and percentOfTotal
 	// return it, and the shell formats it.
 	Percent FieldType = "percent"
+	// Month, Quarter, Year, FiscalYear and Day are never a field's type: a
+	// bucketed group row's or pivot column's label carries one, with the raw
+	// bucket key as its value, so the client writes the key in words.
+	Month      FieldType = "month"
+	Quarter    FieldType = "quarter"
+	Year       FieldType = "year"
+	FiscalYear FieldType = "fiscalYear"
+	Day        FieldType = "day"
 )
+
+// bucketType is the label type of a bucket's keys, "" for no bucket.
+func bucketType(bucket string) FieldType {
+	switch bucket {
+	case "day":
+		return Day
+	case "month":
+		return Month
+	case "quarter":
+		return Quarter
+	case "year":
+		return Year
+	case "fiscalYear":
+		return FiscalYear
+	}
+	return ""
+}
 
 // Aggregate is how a column summarises in group, subtotal and total rows.
 type Aggregate string

@@ -10,11 +10,18 @@ import (
 	"strings"
 )
 
-// columns describes the result's columns, pivot cell columns last.
+// columns describes the result's columns. The pivot columns come after every
+// column, or under order "spec" just before their cell column, so its total
+// reads after them.
 func (rn *runner) columns() []ResultColumn {
 	c := rn.c
-	out := make([]ResultColumn, 0, len(c.p.cols))
+	pivots := rn.pivotColumns()
+	before := c.p.pivotBefore()
+	out := make([]ResultColumn, 0, len(c.p.cols)+len(pivots))
 	for _, cp := range c.p.cols {
+		if before && cp == c.p.pivot.cell {
+			out = append(out, pivots...)
+		}
 		if cp.col.Hidden {
 			continue
 		}
@@ -36,18 +43,30 @@ func (rn *runner) columns() []ResultColumn {
 		rn.currencyOfColumn(cp, &rc)
 		out = append(out, rc)
 	}
-	if pv := c.p.pivot; pv != nil {
-		cell := pv.cell
-		for j, v := range rn.pivotValues {
-			label := rn.pivotLabel(j, v.key)
-			rc := ResultColumn{
-				ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: label.text,
-				Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format,
-				Pivot: &PivotColumn{Cell: cell.col.ID, Key: v.key, LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency},
-			}
-			rn.currencyOfColumn(cell, &rc)
-			out = append(out, rc)
+	if !before {
+		out = append(out, pivots...)
+	}
+	return out
+}
+
+// pivotColumns is one column per pivot value, named by its typed label.
+func (rn *runner) pivotColumns() []ResultColumn {
+	c := rn.c
+	pv := c.p.pivot
+	if pv == nil {
+		return nil
+	}
+	cell := pv.cell
+	out := make([]ResultColumn, 0, len(rn.pivotValues))
+	for j, v := range rn.pivotValues {
+		label := rn.pivotLabel(j, v.key)
+		rc := ResultColumn{
+			ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: label.text,
+			Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format,
+			Pivot: &PivotColumn{Cell: cell.col.ID, Key: v.key, LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency},
 		}
+		rn.currencyOfColumn(cell, &rc)
+		out = append(out, rc)
 	}
 	return out
 }
@@ -316,6 +335,9 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 		}
 		t.totals = []map[string]any{total}
 	}
+	// Set before any row is made: every row's cells read it (cells), and a row
+	// made before a block's bases are read finds none, so its percent is blank.
+	rn.sectionBases = map[string]any{}
 	if groups == 0 {
 		for _, row := range details {
 			rn.detail(t, row, "", 0)
@@ -323,7 +345,9 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 	}
 	for _, total := range t.totals {
 		if len(rn.c.p.layout) > 0 {
-			rn.layoutRows(t, total)
+			sections := rn.sectionRows(t, total)
+			rn.readSectionBases(sections, total)
+			rn.layoutRows(t, total, sections)
 			continue
 		}
 		for _, g := range t.children[rn.currencyKey(total)] {
@@ -598,7 +622,11 @@ func (rn *runner) group(t *tree, row map[string]any, n, depth int, section strin
 	key := rn.rowKey(row, n)
 	id := "g:" + keyString(key)
 	g := rn.c.p.groups[n-1]
-	label := rowLabel{text: rn.display(g.col, row[fmt.Sprintf("k%d", n-1)], g.group.Bucket != "")}
+	raw := row[fmt.Sprintf("k%d", n-1)]
+	label := rowLabel{text: rn.display(g.col, raw, g.group.Bucket != "")}
+	if typ := bucketType(g.group.Bucket); typ != "" && raw != nil && raw != "" {
+		label.typ, label.value = typ, raw
+	}
 	// A key that mixes a select's values with other text reads as its group
 	// column's cell shows it.
 	if rn.c.groupShown[n-1] {
@@ -833,6 +861,14 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 			rn.currencyCell(out, cp, row, row[fmt.Sprintf("vcur%d", idx)])
 		}
 		rn.labelCell(out, cp, row)
+	}
+	for id, sp := range rn.c.p.percents {
+		if sp.col.col.Hidden {
+			continue
+		}
+		if _, ok := row[fmt.Sprintf("v%d", rn.c.p.index(sp.col))]; ok {
+			out[id] = rn.sectionPercentCell(sp, row)
+		}
 	}
 	if pv := rn.c.p.pivot; pv != nil {
 		for j := range rn.pivotValues {

@@ -55,6 +55,8 @@ type plan struct {
 	options map[string]*optionsPlan
 	// derived marks the derived columns by id (derivedColumns).
 	derived map[string]bool
+	// percents binds each percentOfSection column by id (sectionPercents).
+	percents map[string]*sectionPercent
 }
 
 // optionsPlan is a choice param's options source bound to the registry: its
@@ -214,6 +216,7 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	b.sorts(p)
 	b.groupsAndPivot(p)
 	b.layout(p)
+	b.sectionPercents(p)
 	switch d := spec.Detail; {
 	case d == nil:
 	case d.Label == nil:
@@ -856,6 +859,9 @@ func (b *binder) groupsAndPivot(p *plan) {
 			b.bad("pivot.bucket", "only a date has a bucket")
 		}
 	}
+	if pv.Range != "" {
+		b.pivotRange(p, pp)
+	}
 	pp.cell = b.column(p, pv.Cell, "pivot.cell")
 	if pp.cell != nil && (pp.cell.col.Aggregate == "" || pp.cell.tm >= 0) {
 		b.bad("pivot.cell", "the pivot cell is a column with an aggregate, not a total across a to-many link")
@@ -863,11 +869,36 @@ func (b *binder) groupsAndPivot(p *plan) {
 	if pp.cell != nil && pp.cell.col.Rollup != nil {
 		b.bad(pp.cell.at+".rollup", "a pivot's cell column is totalled by its pivot columns")
 	}
+	switch {
+	case pv.Order == "":
+	case pv.Order != PivotOrderSpec:
+		b.bad("pivot.order", `order is "spec"`)
+	case len(spec.Columns) > 0 && spec.Columns[0].ID == pv.Cell:
+		b.bad("pivot.order", "the pivot cell is the first column, the label: no pivot column may come before it")
+	}
 	p.pivot = pp
 	// A pivot's innermost level never opens (its groups are the pivot's rows),
 	// so an opening row there could never show (R5e).
 	if last := len(spec.Groups) - 1; last >= 0 && spec.Groups[last].Opening != nil {
 		b.bad(fmt.Sprintf("groups.%d.opening", last), "this level never opens, so it has no opening row")
+	}
+}
+
+// pivotRange refuses a range that names no date range param, or a pivot
+// whose columns cannot be the range's buckets: one not over a date, or with
+// no bucket.
+func (b *binder) pivotRange(p *plan, pp *pivotPlan) {
+	pv := pp.pivot
+	i := slices.IndexFunc(p.spec.Params, func(d ParamDef) bool { return d.ID == pv.Range })
+	switch {
+	case i < 0:
+		b.missing("pivot.range", "unknown_param", fmt.Sprintf("the report has no param %q", pv.Range))
+	case p.spec.Params[i].Type != ParamDateRange:
+		b.bad("pivot.range", fmt.Sprintf("range is the id of a date range param, but %q is a %s param", pv.Range, p.spec.Params[i].Type))
+	case pp.path != nil && pp.path.field.Type != Date && pp.path.field.Type != DateTime:
+		b.bad("pivot.range", "only a pivot over a date has a range")
+	case pv.Bucket == "":
+		b.bad("pivot.range", "a range pivot needs a bucket: its columns are the range's days, months, quarters or years")
 	}
 }
 

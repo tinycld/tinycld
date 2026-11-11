@@ -501,6 +501,15 @@ func windowSQL(op string, e expr, scale int, f *windowFrame, at string) (expr, e
 	if !isNumeric(e.typ) || e.win {
 		return expr{}, invalid(at, op+" needs a number that is not itself a running value")
 	}
+	if op == "percentOfSection" {
+		if e.typ == Bool {
+			return expr{}, invalid(at, op+" needs a number, not a yes/no value")
+		}
+		// A placeholder: the figure needs the section's total with its within
+		// rows, which only the layout's legs hold, so assemble fills it
+		// (sectionPercentCell).
+		return expr{sql: "NULL", typ: Percent, win: true}, nil
+	}
 	switch op {
 	case "runningSum":
 		over := "OVER (" + partitionBy(f.parent) + " ORDER BY " + strings.Join(f.order, ", ") + " ROWS UNBOUNDED PRECEDING)"

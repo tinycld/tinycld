@@ -93,7 +93,7 @@ interface BucketSelectProps {
     name: 'pivot.bucket' | `groups.${number}.bucket`
     control: Control<BuilderDraft>
     testID: string
-    onValueChange?: () => void
+    onValueChange?: (value: string) => void
 }
 
 /** A date's bucket; only a date field has one. */

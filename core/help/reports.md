@@ -29,10 +29,15 @@ published ones. To see all reports in the tabs again, select **Show all reports*
      conditions. Turn on **Ask when the report runs** to let each reader set the
      value from a chip above the report.
    - **Group and sort**: add group levels, each with or without subtotals, and the
-     order of the rows.
+     order of the rows. A level over a date can group by day, month, quarter, year
+     or fiscal year; its group rows are named in words, such as "Jan 2026",
+     "Q1 2026", "2026" or "FY 2026".
    - **Pivot**: spread a column with a total across one column per value, such as
      one column per month, or one column per linked record, such as one column per
-     team. Under **Show as**, choose the record's field that names its columns.
+     team. Under **Show as**, choose the record's field that names its columns. A
+     column of a month is headed in words, such as "Jan 2026". Under **Columns**,
+     choose **Show every month of …** to show every month of a period, and turn on
+     **Total after the pivot columns** to show the total after them.
    - **Add formula**: build a calculated column from parts picked from menus.
    - **Layout**: for statements, show each value of the first group level as a
      section, and add computed rows such as "Income less expenses".
@@ -75,6 +80,18 @@ To make a column's heading show a value from the report's parameters (for exampl
 A statement shows fixed sections and rows computed from them. A computed row can read the report's parameters. To put a computed row inside a section, choose the section in **Add a row to this section**. The row shows after the section's rows and before its total, while the section is open. The section's total adds the row, and a row later in the layout that reads the section reads that total. A row inside a section cannot read its own section. A section with a row inside it can always open, also when every one of its own rows is hidden, so that its total is never more than the rows you can see.
 
 A computed row can have its own formula in a column: add it under **This column: …**. A number column the row names no formula for uses the row's formula. To use only the column formulas, press **Remove** beside the row's formula; those other columns are then blank. A column whose formula reads only other columns of the same row (a Change of "Current − Prior year", a percent change) is worked out from that row's own figures, on computed rows and on section totals too.
+
+## Show a row as a percent of a section
+
+In a statement, a column can show each row as a percent of one section's total, such as each expense as a percent of income. To add one, select **Add formula**, choose **Percent of a section's total**, choose the column to divide, then open the menu that follows it, which shows a section's name, and choose the section to divide by. Each row shows its own figure divided by that section's total, times 100: the rows of each section, the group and section totals, and the computed rows. The section's own total shows 100%. When the section's total is 0 or empty, the column is empty. When the report has more than one currency, each currency divides by its own section's total. On a pivot report the percent divides the row's total across the pivot columns. This part is offered only as a column's whole formula in a report with sections, and no other formula can read that column.
+
+## Pivot by month across a whole period
+
+A pivot over a date shows one column for each day, month, quarter, year or fiscal year that has rows. To show every month of a period, also a month with no rows, open **Pivot**, choose the date field and **By** **Month**, and under **Columns** choose **Show every month of …** with the date range the report asks for. A month with no rows then shows 0 in a sum, and 0.00 when the sum is an amount. When the period has more months than **At most this many columns**, the report shows the first ones and tells you how many it left out. When the period is **All dates**, the report shows only the months that have rows.
+
+Column headings name each bucket in words: a month as "Jan 2026", a quarter as "Q1 2026", a year as "2026", a fiscal year as "FY 2026" (the year in which it ends), and a day in the short day form, such as "Jan 5, 2026".
+
+The pivot columns usually come after all the other columns. Turn on **Total after the pivot columns** to show them just before the column with the total, so that each row's total follows its months.
 
 ## Hide groups with nothing to show
 
@@ -136,7 +153,7 @@ While a report runs again, "Updating…" shows in the header. On phones and tabl
 
 ## Formulas
 
-A formula is built from parts you pick from menus: **Number**, **Text**, **Column**, **Field**, **This row's field** (inside a lookup), **Group field** and **Asked value**; **Range start or end** (the first or last day of a period you ask for, such as "Period start"); **Add**, **Subtract**, **Multiply**, **Divide** and **Round**; totals such as **Sum of** and running values such as **Running sum**; comparisons, **All of**, **Any of**, **Not** and **Is empty**; **If** and **First match**; text and date parts; and **Look up**. When the period is **All dates**, "Period start" and "Period end" have no value, so a comparison with them matches no record.
+A formula is built from parts you pick from menus: **Number**, **Text**, **Column**, **Field**, **This row's field** (inside a lookup), **Group field** and **Asked value**; **Range start or end** (the first or last day of a period you ask for, such as "Period start"); **Add**, **Subtract**, **Multiply**, **Divide** and **Round**; totals such as **Sum of** and running values such as **Running sum** and, in a statement, **Percent of a section's total**; comparisons, **All of**, **Any of**, **Not** and **Is empty**; **If** and **First match**; text and date parts; and **Look up**. When the period is **All dates**, "Period start" and "Period end" have no value, so a comparison with them matches no record.
 
 ## When columns do not fit
 

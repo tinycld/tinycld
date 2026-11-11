@@ -1,6 +1,9 @@
 package reports
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // pivotKey puts the pivot value of each base row in w as pk.
 func (r *rowsCTE) pivotKey() {
@@ -31,6 +34,68 @@ func (pv *pivotPlan) byCurrency() bool {
 	return pv.path.field.Type == Money && pv.path.field.Currency != ""
 }
 
+// bucketSeries is every bucket key the days from..to touch, in order, in the
+// forms bucketSQL gives (text; a fiscal year is its end year as int64): at
+// most limit keys, and how many there are. It counts by arithmetic, so a range
+// of many buckets builds only limit keys. A day that is not a date, or a range
+// that ends before it starts, has no buckets. bind refuses maxColumns below 1
+// (bind.go, pivot.maxColumns), but the function stays total: a limit below 1
+// builds no keys instead of panicking in make.
+func bucketSeries(bucket, from, to string, fiscalStart, limit int) ([]any, int) {
+	first, okFirst := bucketIndex(bucket, from, fiscalStart)
+	last, okLast := bucketIndex(bucket, to, fiscalStart)
+	if !okFirst || !okLast || last < first {
+		return nil, 0
+	}
+	total := last - first + 1
+	n := min(total, max(limit, 0))
+	keys := make([]any, 0, n)
+	for i := range n {
+		keys = append(keys, bucketKey(bucket, first+i))
+	}
+	return keys, total
+}
+
+// bucketIndex numbers a day's bucket so that buckets next to each other are
+// one apart: days since 1970, months and quarters since year 0, the year, or
+// the fiscal year's end year (tc_fiscal_year).
+func bucketIndex(bucket, day string, fiscalStart int) (int, bool) {
+	d, err := time.Parse(time.DateOnly, day)
+	if err != nil {
+		return 0, false
+	}
+	year, month := d.Year(), int(d.Month())
+	switch bucket {
+	case "day":
+		return int(d.Unix() / 86400), true
+	case "month":
+		return year*12 + month - 1, true
+	case "quarter":
+		return year*4 + (month-1)/3, true
+	case "year":
+		return year, true
+	}
+	if fiscalStart > 1 && month >= fiscalStart {
+		year++
+	}
+	return year, true
+}
+
+// bucketKey is the key of the bucket numbered i (bucketIndex).
+func bucketKey(bucket string, i int) any {
+	switch bucket {
+	case "day":
+		return time.Unix(int64(i)*86400, 0).UTC().Format(time.DateOnly)
+	case "month":
+		return fmt.Sprintf("%04d-%02d", i/12, i%12+1)
+	case "quarter":
+		return fmt.Sprintf("%04d-Q%d", i/4, i%4+1)
+	case "year":
+		return fmt.Sprintf("%04d", i)
+	}
+	return int64(i)
+}
+
 // pivotValue is one pivot column: its key, and for a pivot by currency the
 // key's currency.
 type pivotValue struct {
@@ -46,6 +111,17 @@ func (rn *runner) pivotPass() ([]pivotValue, error) {
 	pv := c.p.pivot
 	if pv == nil {
 		return nil, nil
+	}
+	if keys, total, ok := rn.rangeSeries(); ok {
+		values := make([]pivotValue, len(keys))
+		for j, key := range keys {
+			values[j] = pivotValue{key: key}
+		}
+		if total > pv.max {
+			rn.noticeOnce(pivotCapNotice(pv.max, total-pv.max))
+		}
+		rn.pivotValues = values
+		return values, nil
 	}
 	s := newStmt(rn.app, c.info)
 	r, err := c.rows(s)
@@ -96,10 +172,36 @@ func (rn *runner) pivotPass() ([]pivotValue, error) {
 	}
 	if len(rows) > pv.max {
 		left := int(toInt(rows[0]["__n"])) - pv.max
-		rn.noticeOnce(Notice{Code: "pivotCap", Message: fmt.Sprintf("The pivot shows its first %d columns; %d more are left out.", pv.max, left), LeftOut: left})
+		rn.noticeOnce(pivotCapNotice(pv.max, left))
 	}
 	rn.pivotValues = values
 	return values, nil
+}
+
+// rangeSeries is the pivot's range's buckets, at most maxColumns of them, and
+// how many there are; ok is false for a pivot with no range, or a range on
+// All dates, whose columns are the buckets that have rows.
+func (rn *runner) rangeSeries() (keys []any, total int, ok bool) {
+	pv := rn.c.p.pivot
+	if pv.pivot.Range == "" {
+		return nil, 0, false
+	}
+	v := rn.c.params[pv.pivot.Range]
+	if v.from == "" || v.to == "" {
+		return nil, 0, false
+	}
+	keys, total = bucketSeries(pv.pivot.Bucket, v.from, v.to, rn.c.fiscal, pv.max)
+	return keys, total, true
+}
+
+func pivotCapNotice(limit, left int) Notice {
+	return Notice{Code: "pivotCap", Message: fmt.Sprintf("The pivot shows its first %d columns; %d more are left out.", limit, left), LeftOut: left}
+}
+
+// pivotBefore is true for a pivot that puts its columns just before their cell
+// column (order "spec"), so the cell column's total reads after them.
+func (p *plan) pivotBefore() bool {
+	return p.pivot != nil && p.pivot.pivot.Order == PivotOrderSpec
 }
 
 // pivotCells adds one aggregate per pivot value to the level: the cell
@@ -179,12 +281,17 @@ func (lv *level) cellArg(cp *colPlan) (expr, error) {
 }
 
 // pivotLabel is the j-th pivot value as a column label: a record's typed
-// label for a pivot over a link, an amount typed with its currency, else the
-// value as a row label shows it.
+// label for a pivot over a link, an amount typed with its currency, a bucket
+// typed with its bucket (the client writes it in words), else the value as a
+// row label shows it.
 func (rn *runner) pivotLabel(j int, key any) rowLabel {
 	pv := rn.c.p.pivot
 	if pv.path.target != nil || pv.path.field.Type == Money {
 		return rn.pivotLabels[j]
 	}
-	return rowLabel{text: rn.display(&colPlan{col: &Column{}, path: pv.path}, key, pv.pivot.Bucket != "")}
+	label := rowLabel{text: rn.display(&colPlan{col: &Column{}, path: pv.path}, key, pv.pivot.Bucket != "")}
+	if typ := bucketType(pv.pivot.Bucket); typ != "" && key != nil && key != "" {
+		label.typ, label.value = typ, key
+	}
+	return label
 }

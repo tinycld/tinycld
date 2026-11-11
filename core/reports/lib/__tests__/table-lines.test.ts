@@ -727,6 +727,124 @@ describe('the table layout per width', () => {
             },
         })
     })
+
+    it('lays the total after its pivot columns when the result puts it there', () => {
+        const total: ResultColumn = { id: 'amount', label: 'Total', type: 'money' }
+        const [account, number, ...pivots] = PIVOTS
+        const after = [account, number, ...pivots, total].filter(
+            (c): c is ResultColumn => c !== undefined
+        )
+        const lines = (columns: ResultColumn[]) =>
+            shapeOf(
+                tableLines({
+                    columns,
+                    width: 500,
+                    measures: uniform(columns, 110),
+                    layouts: [
+                        {
+                            width: 'mobile',
+                            tracks: 4,
+                            cells: [
+                                { col: 'account', line: 1, span: 4 },
+                                { col: 'amount', line: 2 },
+                            ],
+                        },
+                    ],
+                })
+            )
+        expect(lines(after)).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'stack',
+                parts: [
+                    { kind: 'cell', col: 'account', justify: 'start' },
+                    {
+                        kind: 'side',
+                        of: 4,
+                        parts: [
+                            { block: pivotCell('amount_q1'), tracks: 1 },
+                            { block: pivotCell('amount_q2'), tracks: 1 },
+                            { block: pivotCell('amount_q3'), tracks: 1 },
+                            { block: pivotCell('amount'), tracks: 1 },
+                        ],
+                    },
+                ],
+            },
+        })
+        // With the total before its pivot columns (no order), the entry is the
+        // pivot columns only, as before.
+        const first = [account, number, total, ...pivots].filter(
+            (c): c is ResultColumn => c !== undefined
+        )
+        expect(lines(first)).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'stack',
+                parts: [
+                    { kind: 'cell', col: 'account', justify: 'start' },
+                    {
+                        kind: 'side',
+                        of: 4,
+                        parts: [
+                            { block: pivotCell('amount_q1'), tracks: 1 },
+                            { block: pivotCell('amount_q2'), tracks: 1 },
+                            { block: pivotCell('amount_q3'), tracks: 1 },
+                            { block: { kind: 'gap', lines: 1 }, tracks: 1 },
+                        ],
+                    },
+                ],
+            },
+        })
+    })
+
+    it('wraps the trailing total with its pivot columns onto the lines below', () => {
+        const total: ResultColumn = { id: 'amount', label: 'Total', type: 'money' }
+        const [account, number, ...pivots] = PIVOTS
+        const columns = [account, number, ...pivots, total].filter(
+            (c): c is ResultColumn => c !== undefined
+        )
+        const layout = tableLines({
+            columns,
+            width: 500,
+            measures: uniform(columns, 110),
+            layouts: [
+                {
+                    width: 'mobile',
+                    tracks: 2,
+                    cells: [
+                        { col: 'account', line: 1, span: 2 },
+                        { col: 'amount', line: 2 },
+                    ],
+                },
+            ],
+        })
+        expect(shapeOf(layout)).toEqual({
+            kind: 'blocks',
+            root: {
+                kind: 'stack',
+                parts: [
+                    { kind: 'cell', col: 'account', justify: 'start' },
+                    {
+                        kind: 'side',
+                        of: 2,
+                        parts: [
+                            { block: pivotCell('amount_q1'), tracks: 1 },
+                            { block: pivotCell('amount_q2'), tracks: 1 },
+                        ],
+                    },
+                    {
+                        kind: 'side',
+                        of: 2,
+                        parts: [
+                            { block: pivotCell('amount_q3'), tracks: 1 },
+                            { block: pivotCell('amount'), tracks: 1 },
+                        ],
+                    },
+                ],
+            },
+        })
+    })
+
     it('lays out automatically, and says so, when the pivot columns collide with a cell', () => {
         const auto = tableLines({ columns: PIVOTS, width: 500, layouts: [], measures: PIVOTS_110 })
         expect(auto.kind).toBe('blocks')

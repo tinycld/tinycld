@@ -43,6 +43,11 @@ const WORDS: Partial<Record<string, string>> = {
     not: 'not',
 }
 
+/** A section's title, or "<id> (missing)" when the layout no longer has it. */
+export function sectionLabel(sections: ReportFormulaContext['sections'], id: string | undefined) {
+    return sections.find(s => s.id === id)?.title ?? `${id} (missing)`
+}
+
 /** The labels of an exists link's hops: "Sales", "Team › Sales". */
 export function linkLabel(
     catalog: Catalog,
@@ -177,6 +182,8 @@ export function describeNode(ctx: ReportFormulaContext, node: SpecNode): string 
             case 'percentOfParent':
             case 'percentOfTotal':
                 return `${sub(args[0])} as % of ${part === 'percentOfParent' ? 'group' : 'total'}`
+            case 'percentOfSection':
+                return `${sub(args[0])} as % of ${sectionLabel(here.sections, n.subtotal)}`
         }
         const sign = SIGNS[part]
         if (sign) return wrap(args.map(a => sub(a)).join(sign))

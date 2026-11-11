@@ -16,8 +16,19 @@ describe('statement docs', () => {
             'Statements: sections and computed rows',
             'Hide groups with nothing to show',
             'Group by a formula',
+            'Show a row as a percent of a section',
+            'Pivot by month across a whole period',
         ]) {
             expect(help).toContain(`## ${heading}`)
+        }
+    })
+
+    it('names the pivot controls and the bucket words in the help', () => {
+        const help = read('core/help/reports.md')
+        expect(help).toContain('**Total after the pivot columns**')
+        expect(help).toContain("**Percent of a section's total**")
+        for (const words of ['"Jan 2026"', '"Q1 2026"', '"FY 2026"']) {
+            expect(help).toContain(words)
         }
     })
 
@@ -33,8 +44,19 @@ describe('statement docs', () => {
             'columns[].hidden',
             'layout[].within',
             'layout[].cells',
+            'columns[].formula',
+            'pivot.range',
+            'pivot.order',
+            'columns[].pivot.labelType',
         ]) {
             expect(table).toContain(`\`${field}\``)
         }
+    })
+
+    it('names the percent of a section operator in the version 4 table', () => {
+        const docs = read('docs/packages.md')
+        const start = docs.indexOf('**Fields added in version 4.**')
+        const table = docs.slice(start, docs.indexOf('\n\n', docs.indexOf('| Field |', start)))
+        expect(table).toContain('`percentOfSection`')
     })
 })

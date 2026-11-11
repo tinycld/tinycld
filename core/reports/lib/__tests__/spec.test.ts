@@ -234,6 +234,35 @@ describe('parseSpec', () => {
         const pivot = { path: [{ link: 'animal' }], cell: 'cost', labelField: 'name' }
         expect(parseSpec({ ...FEEDINGS, pivot })?.pivot).toEqual(pivot)
     })
+
+    it('reads a pivot over a range with its total after the pivot columns', () => {
+        const spec = {
+            ...FEEDINGS,
+            pivot: {
+                path: [{ field: 'fed' }],
+                bucket: 'month',
+                cell: 'cost',
+                range: 'period',
+                order: 'spec',
+            },
+        }
+        expect(parseSpec(spec)).toEqual(spec)
+        expect(parseSpec({ ...spec, pivot: { ...spec.pivot, order: 'after' } })).toBeNull()
+    })
+
+    it('reads a percent of a section with the section it names', () => {
+        const share = {
+            id: 'share',
+            formula: {
+                op: 'percentOfSection',
+                args: [{ col: 'cost' }],
+                subtotal: 'income',
+                scale: 1,
+            },
+        }
+        const spec = { ...FEEDINGS, columns: [...FEEDINGS.columns, share] }
+        expect(parseSpec(spec)).toEqual(spec)
+    })
 })
 
 describe('canCopyReport', () => {

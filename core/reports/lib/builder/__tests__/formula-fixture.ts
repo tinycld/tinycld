@@ -19,6 +19,7 @@ export const CTX: ReportFormulaContext = {
     totals: true,
     windows: true,
     lookups: true,
+    sections: [],
 }
 // A computed row reads params (Ruling 7) and looks values up (F16). It has no
 // report row, so "This row's field" is not offered there.
@@ -88,4 +89,20 @@ export const TEAM_WITH_SALES: SpecNode = {
         where: { op: 'gt', args: [{ path: [{ field: 'amount' }] }, { value: 0 }] },
     },
     value: { path: [{ field: 'name' }] },
+}
+
+/** A column of a report with two layout sections, and a text column beside the numbers. */
+export const WITH_SECTIONS: ReportFormulaContext = {
+    ...CTX,
+    values: [...CTX.values, { key: 'team', label: 'Team', type: 'text' }],
+    sections: [
+        { id: 'open', title: 'Open sales' },
+        { id: 'paid', title: 'Paid sales' },
+    ],
+}
+export const SHARE: SpecNode = {
+    op: 'percentOfSection',
+    args: [{ col: 'amount' }],
+    subtotal: 'open',
+    scale: 1,
 }

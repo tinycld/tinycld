@@ -17,7 +17,7 @@ import { Text } from 'react-native'
 import type { ReportBuilder } from '../../hooks/useReportBuilder'
 import type { FormulaDraft } from '../../lib/builder/draft'
 import { columnChoices, type FormulaPlace, formulaContext } from '../../lib/builder/formula-context'
-import { describeNode, linkLabel } from '../../lib/builder/formula-describe'
+import { describeNode, linkLabel, sectionLabel } from '../../lib/builder/formula-describe'
 import {
     addOperandNode,
     addOtherwise,
@@ -235,6 +235,26 @@ function BoundLeaf({ ctx, root, path, expr, set, id, where }: LeafProps) {
     )
 }
 
+// The section whose total a Percent of a section's total divides by (layout.go):
+// it sits at the top of a column formula, so the column's context holds the sections.
+function SectionLeaf({ ctx, expr, set, id, where }: LeafProps) {
+    if (partOf(expr) !== 'percentOfSection') return null
+    const items: PickItem[] = ctx.sections.map(section => ({
+        id: section.id,
+        label: section.title,
+        isSelected: section.id === expr.subtotal,
+        onSelect: () => set({ ...expr, subtotal: section.id }),
+    }))
+    return (
+        <PickMenu
+            label={sectionLabel(ctx.sections, expr.subtotal)}
+            purpose={`Section${where}`}
+            items={items}
+            testID={`${id}-section`}
+        />
+    )
+}
+
 function WholeCents({ isVisible, testID }: { isVisible: boolean; testID: string }) {
     if (!isVisible) return null
     return (
@@ -408,6 +428,7 @@ function ReportFormulaLeaf(props: LeafProps) {
             <RecordLeaf {...props} />
             <ParamLeaf {...props} />
             <BoundLeaf {...props} />
+            <SectionLeaf {...props} />
             <PlacesLeaf {...props} />
             <LookupLeaf {...props} />
             <ExistsLeaf {...props} />

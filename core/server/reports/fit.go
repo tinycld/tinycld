@@ -143,8 +143,10 @@ func fitRefusals(c *compiler) error {
 		return nil
 	}
 	problems := map[string]validation.Error{}
-	// The label column is the spec's first column; c.p.cols moves a pivot's
-	// cell column to the end, so its order is not the spec's.
+	// The label column is the spec's first column. c.p.cols keeps the spec's
+	// order, and pivot columns (after every column, or under order "spec"
+	// before their cell column, which is never first) never come first, so
+	// the label is the same in both orders.
 	label := c.p.spec.Columns[0].ID
 	for _, cp := range c.p.cols {
 		f, ok := d.Columns[cp.col.ID]
