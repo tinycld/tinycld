@@ -24,8 +24,11 @@ file, a **table** or a **calculated value**. The feature that owns a record
 can also give it its own table or calculated value; you can move and rename
 those, but not change their columns or formula.
 
-Each field has a width: full, half, third or quarter of the form. On a narrow
-screen a quarter becomes a half, and halves and thirds become full width.
+Each field has a width: full, half, third or quarter of the form, or fit,
+the width of the field's content (never wider than the form). On a narrow
+screen a quarter becomes a half, halves and thirds become full width, and a
+fit field keeps its content's width. A field can also have its own width for
+narrow screens, which it then uses there instead.
 
 ## Tables and calculated values
 
@@ -112,7 +115,7 @@ To collect forms from a website, see [Web forms](help://core:web-forms).
 
 ## Editing a form
 
-The editor shows the form as users see it. Select a field to edit its label, width (Full, Half, Third or Quarter), requirement, default and kind-specific settings in the panel. Drag a field by its handle to move it, also onto another page: a chip with its label follows the pointer and a bar shows where it lands. On a phone or a tablet, hold the handle for a moment before you drag. To move a field without dragging, use **Page**, **Move up** and **Move down** in its panel. **Add field** at the end of a page asks for the field's label, then adds a field of the chosen kind and opens its panel. **Add page** appends a page; a page can be deleted only when it is empty.
+The editor shows the form as users see it. Select a field to edit its label, width (Full, Half, Third, Quarter or Fit), its width **On narrow screens** (**Default** keeps the rule above), requirement, default and kind-specific settings in the panel. Drag a field by its handle to move it, also onto another page: a chip with its label follows the pointer and a bar shows where it lands. On a phone or a tablet, hold the handle for a moment before you drag. To move a field without dragging, use **Page**, **Move up** and **Move down** in its panel. **Add field** at the end of a page asks for the field's label, then adds a field of the chosen kind and opens its panel. **Add page** appends a page; a page can be deleted only when it is empty.
 
 To add a table or a calculated value, select **Add field**, then **Table** or **Calculated value** under **Tables and totals**. A new table has one text column, Item. A new calculated value starts at 0.
 

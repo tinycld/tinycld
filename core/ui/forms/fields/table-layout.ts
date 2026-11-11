@@ -6,6 +6,13 @@ export const TABLE_GRID_GAP = 8
 /** A form field cell's border, px: always drawn (transparent when unselected) so selecting never shifts layout. */
 export const FIELD_CELL_BORDER_WIDTH = 2
 
+/**
+ * How far a table input's text sits in from its slot edge, px: its 1px border plus
+ * its 12px (`px-3`) padding. A header is inset as far, so its label lines up with
+ * the text under it, not with the input's border.
+ */
+export const TABLE_INPUT_TEXT_INSET = 13
+
 /** The row menu's box at the end of each grid row, px; the header's spacer is as wide so the slots line up. */
 export const TABLE_ROW_MENU_WIDTH = 40
 

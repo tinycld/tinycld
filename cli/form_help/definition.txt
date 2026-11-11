@@ -19,6 +19,11 @@ starting with a letter, and is unique in its list.
   "description": "We reply here." is optional help text shown with the
   field (at most 500 characters).
 
+  "width" is one of: full (default), half, third, quarter, auto (the width
+  of the field's content). "narrowWidth" is optional, one of the same five:
+  the width on a form narrower than 640 px. Without it a quarter field is
+  half wide there, auto stays auto, and the others are full width.
+
   kind is one of: text, textarea, richtext, markdown, number, date, toggle,
   select, user, checklist, file, computed, table. A host may allow fewer:
   run `tinycld form hosts`. Options by kind:

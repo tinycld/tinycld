@@ -13,8 +13,9 @@ import (
 // defaultDefinition mirrors defaultDefinitionFor in core/lib/forms/host.ts:
 // every builtin in declared order, on one full-width page named after the
 // host, or, when the host declares a layout, on the layout's pages with the
-// page and width it gives each one (the first page and full width otherwise)
-// and the layout's rules. Every slice and map is non-nil, because the client
+// page and width it gives each one (the first page and full width otherwise),
+// the narrow width and help text it gives each one (none otherwise), and the
+// layout's rules. Every slice and map is non-nil, because the client
 // schema rejects a JSON null where it expects a list or an object
 // (core/lib/forms/fixtures/seeded-definition.json, layout-definition.json).
 func defaultDefinition(host *Host) *Definition {
@@ -35,39 +36,37 @@ func defaultDefinition(host *Host) *Definition {
 	}
 	first := def.Pages[0].Key
 	for _, b := range host.Builtins {
-		page, width, description := first, "full", ""
-		if layout != nil {
-			placed := layout.Fields[b.Key]
-			if placed.Page != "" {
-				page = placed.Page
-			}
-			if placed.Width != "" {
-				width = placed.Width
-			}
-			description = placed.Description
+		placed := layoutField(host, b.Key)
+		page, width := first, "full"
+		if placed.Page != "" {
+			page = placed.Page
 		}
-		def.Fields = append(def.Fields, builtinRef(b, page, width, description))
+		if placed.Width != "" {
+			width = placed.Width
+		}
+		def.Fields = append(def.Fields, builtinRef(b, page, width, placed))
 	}
 	return def
 }
 
-// builtinRef is a form field that places built-in b. A host's help text for a
-// built-in (its layout description) reaches every form seeded from the host,
-// and a stored form that gains the built-in later.
-func builtinRef(b Builtin, page, width, description string) Field {
+// builtinRef is a form field that places built-in b on page at width. A
+// host's help text and narrow width for a built-in (from its layout entry
+// placed) reach every form seeded from the host, and a stored form that gains
+// the built-in later.
+func builtinRef(b Builtin, page, width string, placed LayoutField) Field {
 	return Field{
-		Key: b.Key, Kind: "builtin", Page: page, Label: b.Label, Description: description,
-		Width: width, Required: b.Required,
+		Key: b.Key, Kind: "builtin", Page: page, Label: b.Label, Description: placed.Description,
+		Width: width, NarrowWidth: placed.NarrowWidth, Required: b.Required,
 	}
 }
 
-// layoutDescription is the help text a host's layout gives built-in key, or
-// "" when the host has no layout or the layout gives it none.
-func layoutDescription(host *Host, key string) string {
+// layoutField is the layout entry a host gives built-in key, or the zero
+// entry when the host has no layout or the layout does not name the key.
+func layoutField(host *Host, key string) LayoutField {
 	if host.Layout == nil {
-		return ""
+		return LayoutField{}
 	}
-	return host.Layout.Fields[key].Description
+	return host.Layout.Fields[key]
 }
 
 func slugOf(label string) string {
@@ -222,10 +221,13 @@ func reconcileDefinition(def map[string]any, host *Host) (added, removed []strin
 		if present[b.Key] {
 			continue
 		}
-		ref := builtinRef(b, page, "full", layoutDescription(host, b.Key))
+		ref := builtinRef(b, page, "full", layoutField(host, b.Key))
 		field := map[string]any{
 			"key": ref.Key, "kind": ref.Kind, "page": ref.Page, "label": ref.Label,
 			"width": ref.Width, "required": ref.Required, "hidden": false,
+		}
+		if ref.NarrowWidth != "" {
+			field["narrowWidth"] = ref.NarrowWidth
 		}
 		if ref.Description != "" {
 			field["description"] = ref.Description

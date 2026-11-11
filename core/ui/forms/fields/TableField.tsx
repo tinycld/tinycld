@@ -1,5 +1,5 @@
 import type { HostTableColumn } from '@tinycld/core/lib/forms/definition'
-import type { HostRowKind } from '@tinycld/core/lib/forms/host'
+import type { HostInsertShortcuts, HostRowKind } from '@tinycld/core/lib/forms/host'
 import type {
     BuiltinFieldProps,
     FieldMode,
@@ -30,7 +30,12 @@ import { type HostInstance, Platform, Pressable, Text, View, type ViewStyle } fr
 import { NARROW_BELOW } from '../widths'
 import { DateField } from './DateField'
 import { formatComputed } from './format-computed'
-import { slotStyle, TABLE_GRID_GAP, TABLE_ROW_MENU_WIDTH } from './table-layout'
+import {
+    slotStyle,
+    TABLE_GRID_GAP,
+    TABLE_INPUT_TEXT_INSET,
+    TABLE_ROW_MENU_WIDTH,
+} from './table-layout'
 import {
     ADD_BUTTON,
     cellKey,
@@ -57,6 +62,8 @@ export interface TableFieldProps {
     rowKinds?: HostRowKind[]
     /** Show and register core's row keys (remove, move, duplicate, open menu). */
     rowShortcuts?: boolean
+    /** The host's own keys for the insert actions, shown on the row menu only. */
+    insertShortcuts?: HostInsertShortcuts
     testID: string
 }
 
@@ -74,6 +81,7 @@ interface TableBase {
     columns: readonly HostTableColumn[]
     rowKinds?: HostRowKind[]
     rowShortcuts: boolean
+    insertShortcuts?: HostInsertShortcuts
     /** The wide grid's header slots: the first kind's columns, or every column. */
     slots: readonly HostTableColumn[]
 }
@@ -322,17 +330,20 @@ function CellInput(props: CellProps) {
                 />
             )
         case 'toggle':
+            // Centered in its slot, under its centered header (HeaderSlot).
             return (
-                <Toggle
-                    control={base.control}
-                    name={name}
-                    label={label}
-                    hideLabel
-                    disabled={disabled}
-                    onFocus={onFocus}
-                    onBlur={onBlur}
-                    wrapperProps={{ testID }}
-                />
+                <View className="items-center">
+                    <Toggle
+                        control={base.control}
+                        name={name}
+                        label={label}
+                        hideLabel
+                        disabled={disabled}
+                        onFocus={onFocus}
+                        onBlur={onBlur}
+                        wrapperProps={{ testID }}
+                    />
+                </View>
             )
         case 'date':
             return (
@@ -420,8 +431,17 @@ const ROW_KEY_HINTS = {
 }
 const NO_KEY_HINTS = { up: undefined, down: undefined, duplicate: undefined, remove: undefined }
 
+/** The key text of the insert actions: the host binds these keys, core only shows them. */
+function insertKeyHints(keys: HostInsertShortcuts | undefined) {
+    return {
+        above: keys?.above ? formatHint(keys.above).text : undefined,
+        below: keys?.below ? formatHint(keys.below).text : undefined,
+    }
+}
+
 function RowMenuItems({ base, table, row, index, count }: RowProps) {
     const hints = base.rowShortcuts ? ROW_KEY_HINTS : NO_KEY_HINTS
+    const insertHints = insertKeyHints(base.insertShortcuts)
     const itemId = (action: string) => `${base.ids}-menu-${action}`
     const insertAbove = () => table.insertNear(row.id, 0)
     const insertBelow = () => table.insertNear(row.id, 1)
@@ -433,11 +453,13 @@ function RowMenuItems({ base, table, row, index, count }: RowProps) {
         <>
             <Menu.Item
                 label="Insert line above"
+                shortcut={insertHints.above}
                 onSelect={insertAbove}
                 testID={itemId('insert-above')}
             />
             <Menu.Item
                 label="Insert line below"
+                shortcut={insertHints.below}
                 onSelect={insertBelow}
                 testID={itemId('insert-below')}
             />
@@ -543,10 +565,22 @@ function GridRowMenu(props: RowProps) {
  * to its flex base size, so header slots would not divide the width as the
  * row slots do.
  */
+const HEADER_TEXT_STYLE = { paddingHorizontal: TABLE_INPUT_TEXT_INSET }
+
+const HEADER_ALIGN_CLASS = { start: 'text-left', center: 'text-center', end: 'text-right' } as const
+
+function headerAlignClass(column: HostTableColumn) {
+    const align = column.align ?? (column.kind === 'toggle' ? 'center' : 'start')
+    return HEADER_ALIGN_CLASS[align]
+}
+
 function HeaderSlot({ base, column }: { base: TableBase; column: HostTableColumn }) {
     return (
         <View testID={`${base.ids}-head-${column.key}`} style={slotStyle(column)}>
-            <Text className="px-1 text-xs font-semibold text-muted-foreground">
+            <Text
+                className={`text-xs font-semibold text-muted-foreground ${headerAlignClass(column)}`}
+                style={HEADER_TEXT_STYLE}
+            >
                 {headerText(column)}
             </Text>
         </View>
@@ -865,6 +899,7 @@ export function TableField(props: TableFieldProps) {
         columns,
         rowKinds,
         rowShortcuts,
+        insertShortcuts: props.insertShortcuts,
         slots: slotsOf(columns, rowKinds),
     }
     // 0 means not measured yet: lay out wide, as FieldCell does.

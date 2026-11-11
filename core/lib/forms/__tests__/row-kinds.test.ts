@@ -108,6 +108,61 @@ describe('host row kinds', () => {
     })
 })
 
+describe('host insertShortcuts', () => {
+    /** The host with `insertShortcuts` set on its `lines` table (absent when undefined). */
+    const withInsert = (insertShortcuts?: unknown) => {
+        const input = hostInput()
+        const lines =
+            insertShortcuts === undefined
+                ? input.builtin[1]
+                : { ...input.builtin[1], insertShortcuts }
+        return { ...input, builtin: [input.builtin[0], lines] }
+    }
+
+    it('keeps the insert keys of a table built-in, and accepts a table without them', () => {
+        const none = hostDefSchema.safeParse(withInsert())
+        expect(none.success).toBe(true)
+        expect(none.data?.builtin[1].insertShortcuts).toBeUndefined()
+        const below = hostDefSchema.safeParse(withInsert({ below: 'Alt+Enter' }))
+        expect(below.success).toBe(true)
+        expect(below.data?.builtin[1].insertShortcuts).toEqual({ below: 'Alt+Enter' })
+        const both = hostDefSchema.safeParse(
+            withInsert({ above: 'Alt+Shift+Enter', below: 'Alt+Enter' })
+        )
+        expect(both.success).toBe(true)
+        expect(both.data?.builtin[1].insertShortcuts).toEqual({
+            above: 'Alt+Shift+Enter',
+            below: 'Alt+Enter',
+        })
+    })
+
+    it('refuses an empty key and an unknown side', () => {
+        expect(issuesOf(withInsert({ below: '' }))).toContain('builtin.1.insertShortcuts.below')
+        expect(
+            issuesOf(withInsert({ after: 'Alt+Enter' })).some(p =>
+                p.startsWith('builtin.1.insertShortcuts')
+            )
+        ).toBe(true)
+    })
+
+    it('refuses insertShortcuts on a built-in that is not a table', () => {
+        const input = hostInput()
+        const bad = {
+            ...input,
+            builtin: [
+                { ...input.builtin[0], insertShortcuts: { below: 'Alt+Enter' } },
+                input.builtin[1],
+            ],
+        }
+        const result = hostDefSchema.safeParse(bad)
+        expect(result.success).toBe(false)
+        const issue = result.error?.issues.find(
+            i => i.path.join('.') === 'builtin.0.insertShortcuts'
+        )
+        expect(issue?.message).toBe('insertShortcuts is for a table built-in')
+    })
+})
+
 describe('row kinds in the submit schema', () => {
     const host = hostDefSchema.parse(hostInput())
     const def = defaultDefinitionFor(host)

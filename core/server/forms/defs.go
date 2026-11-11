@@ -39,6 +39,17 @@ type Builtin struct {
 	// row. RowShortcuts is presentation only.
 	RowKinds     []RowKind `json:"rowKinds,omitempty"`
 	RowShortcuts bool      `json:"rowShortcuts,omitempty"`
+	// InsertShortcuts is presentation only: the keys a host binds for a
+	// table's insert actions, shown on its row menu. The server decodes it so
+	// the host file round-trips, and never reads it.
+	InsertShortcuts *InsertShortcuts `json:"insertShortcuts,omitempty"`
+}
+
+// InsertShortcuts mirrors insertShortcutsSchema in core/lib/forms/host.ts:
+// the key combos of a table's "Insert line above" and "Insert line below".
+type InsertShortcuts struct {
+	Above string `json:"above,omitempty"`
+	Below string `json:"below,omitempty"`
 }
 
 // RowKind mirrors rowKindSchema in core/lib/forms/host.ts: a kind of line in a
@@ -106,11 +117,13 @@ type HostLayout struct {
 }
 
 // LayoutField places one built-in; an empty value means the first page, or
-// full width. Description is the built-in's help text on the seeded field;
-// empty means none.
+// full width. NarrowWidth is the seeded field's width on narrow forms; empty
+// means none (presentation only, never read by the server). Description is
+// the built-in's help text on the seeded field; empty means none.
 type LayoutField struct {
 	Page        string `json:"page,omitempty"`
 	Width       string `json:"width,omitempty"`
+	NarrowWidth string `json:"narrowWidth,omitempty"`
 	Description string `json:"description,omitempty"`
 }
 

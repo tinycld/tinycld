@@ -155,6 +155,27 @@ func TestLoadHosts_DecodesLockedRowKindsAndAddOnSubmit(t *testing.T) {
 	}
 }
 
+func TestLoadHosts_DecodesTheInsertShortcutsOfATable(t *testing.T) {
+	body := linesHost(`{"key":"lines","label":"Lines","kind":"table","storage":"rows",` + linesColumns +
+		`,"rowShortcuts":true,"insertShortcuts":{"below":"Alt+Enter"}},` +
+		`{"key":"notes","label":"Notes","kind":"table","storage":"rows",` + linesColumns + `}`)
+	defs, err := loadHostsJSON(t, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := defs.Host("gizmos:bill")
+	lines := h.Builtin("lines")
+	if lines == nil || lines.InsertShortcuts == nil {
+		t.Fatalf("lines must keep its insert shortcuts: %+v", lines)
+	}
+	if lines.InsertShortcuts.Below != "Alt+Enter" || lines.InsertShortcuts.Above != "" {
+		t.Fatalf("insert shortcuts = %+v", *lines.InsertShortcuts)
+	}
+	if notes := h.Builtin("notes"); notes == nil || notes.InsertShortcuts != nil {
+		t.Fatalf("a table without insertShortcuts decodes them as nil: %+v", notes)
+	}
+}
+
 func TestParseHosts_DecodesAHostColumnFlexWeight(t *testing.T) {
 	defs, err := ParseHosts([]byte(linesHost(`{"key":"lines","label":"Lines","kind":"table","storage":"rows",` +
 		`"columns":[{"key":"product","kind":"text","label":"Product"},` +
@@ -352,5 +373,28 @@ func TestRowError_ChecksEveryColumnOfATableWithoutKinds(t *testing.T) {
 	}
 	if got := lines.RowError(map[string]any{"id": "r1", "product": "Widget"}); got != "" {
 		t.Fatalf("RowError = %q, want empty", got)
+	}
+}
+
+func TestParseHosts_DecodesALayoutNarrowWidth(t *testing.T) {
+	defs, err := ParseHosts([]byte(`{"hosts":[{"key":"gizmos:gadget","label":"Gadget","collection":"gizmos_gadgets",` +
+		`"formColumn":"form","fieldsColumn":"fields","columns":["name","tax","due","form","fields"],"builtin":[` +
+		`{"key":"name","label":"Name","kind":"text","storage":"column"},` +
+		`{"key":"tax","label":"Tax","kind":"text","storage":"column"},` +
+		`{"key":"due","label":"Due","kind":"date","storage":"column"}],` +
+		`"layout":{"pages":[{"key":"main","title":"Main"}],"fields":{` +
+		`"tax":{"width":"auto","narrowWidth":"full"},"due":{"width":"quarter"}},"rules":[]}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout := defs.Host("gizmos:gadget").Layout
+	if layout == nil {
+		t.Fatal("the host must keep its layout")
+	}
+	if tax := layout.Fields["tax"]; tax.Width != "auto" || tax.NarrowWidth != "full" {
+		t.Fatalf("tax layout = %+v, want width auto and narrowWidth full", tax)
+	}
+	if due := layout.Fields["due"]; due.Width != "quarter" || due.NarrowWidth != "" {
+		t.Fatalf("due layout = %+v, want width quarter and no narrowWidth", due)
 	}
 }

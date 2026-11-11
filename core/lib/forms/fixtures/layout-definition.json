@@ -26,6 +26,7 @@
             "page": "details",
             "label": "First",
             "width": "half",
+            "narrowWidth": "full",
             "required": false,
             "hidden": false
         },
@@ -43,7 +44,7 @@
             "kind": "builtin",
             "page": "details",
             "label": "Due",
-            "width": "full",
+            "width": "auto",
             "required": false,
             "hidden": false
         },

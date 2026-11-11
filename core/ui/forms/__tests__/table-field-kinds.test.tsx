@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { startTransition, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { type UseFormReturn, useForm } from 'react-hook-form'
 import { Platform, Pressable, Text } from 'react-native'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,6 +13,7 @@ import type { TableRow } from '../../../lib/forms/values'
 import { createMatcher } from '../../../lib/shortcuts/matcher'
 import { useShortcutRegistry } from '../../../lib/shortcuts/registry'
 import { pushScope, resetScopes, ScopeProvider } from '../../../lib/shortcuts/scopes'
+import { useWindowSizeStore } from '../../../lib/stores/window-size-store'
 import { OverlayProvider } from '../../overlay'
 import { FieldInput } from '../FieldInput'
 import { tableKindKeyLabel } from '../fields/use-table-field'
@@ -29,8 +32,11 @@ const columns = [
     { key: 'rate', label: 'Rate', kind: 'number' },
 ]
 
-/** Items, span notes, and percent lines whose rate sits in the item's Qty slot. */
-function billHost(nameComponent?: string) {
+/**
+ * Items, span notes, and percent lines whose rate sits in the item's Qty slot.
+ * `lines` adds settings to the `lines` built-in.
+ */
+function billHost(nameComponent?: string, lines: Record<string, unknown> = {}) {
     const withComponent = columns.map(c =>
         c.key === 'name' && nameComponent ? { ...c, component: nameComponent } : c
     )
@@ -75,6 +81,7 @@ function billHost(nameComponent?: string) {
                             shortcut: 'Alt+5',
                         },
                     ],
+                    ...lines,
                 },
             ],
         })
@@ -238,6 +245,80 @@ describe('TableField row kinds', () => {
             ['form-table-lines-menu-duplicate', 'Duplicate⌘⌥D'],
             ['form-table-lines-menu-remove', 'Remove⌘⌥⌫'],
         ])
+    })
+})
+
+/** The open row menu's rows as [testID, text], in document order. */
+function rowMenuEntries() {
+    return [
+        ...document.body.querySelectorAll<HTMLElement>(
+            '[data-testid^="form-table-lines-menu-"], [testID^="form-table-lines-menu-"]'
+        ),
+    ]
+        .map(el => [el.getAttribute('data-testid') ?? el.getAttribute('testID'), el.textContent])
+        .filter(([id]) => !/^form-table-lines-menu-r\d$/.test(id ?? ''))
+}
+
+/**
+ * The shortcuts the registry holds now, as sorted "keys · description". Not the
+ * ids: a ShortcutButton's id carries React's useId, which differs per mount.
+ */
+const registeredIds = () =>
+    Array.from(useShortcutRegistry.getState().shortcuts.values())
+        .map(s => `${s.keys} · ${s.description}`)
+        .sort()
+
+describe('TableField insert line keys', () => {
+    it('shows the host key on Insert line below and registers no key for it', () => {
+        const plain = setUp([r1, r3, r5])
+        const idsWithout = registeredIds()
+        plain.unmount()
+        const { container } = setUp([r1, r3, r5], {
+            host: billHost(undefined, { insertShortcuts: { below: 'Alt+Enter' } }),
+        })
+        expect(registeredIds()).toEqual(idsWithout)
+        openRowMenu(container, 'r3')
+        expect(rowMenuEntries()).toEqual([
+            ['form-table-lines-menu-insert-above', 'Insert line above'],
+            ['form-table-lines-menu-insert-below', 'Insert line below⌥↵'],
+            ['form-table-lines-menu-up', 'Move up⌘⌥↑'],
+            ['form-table-lines-menu-down', 'Move down⌘⌥↓'],
+            ['form-table-lines-menu-duplicate', 'Duplicate⌘⌥D'],
+            ['form-table-lines-menu-remove', 'Remove⌘⌥⌫'],
+        ])
+    })
+
+    it('shows both insert keys when the host gives both sides', () => {
+        const { container } = setUp([r1, r3, r5], {
+            host: billHost(undefined, {
+                insertShortcuts: { above: 'Alt+Shift+Enter', below: 'Alt+Enter' },
+            }),
+        })
+        openRowMenu(container, 'r3')
+        expect(rowMenuEntries().slice(0, 2)).toEqual([
+            ['form-table-lines-menu-insert-above', 'Insert line above⌥⇧↵'],
+            ['form-table-lines-menu-insert-below', 'Insert line below⌥↵'],
+        ])
+    })
+
+    describe('on a phone', () => {
+        const realSize = useWindowSizeStore.getState()
+        const real = { width: realSize.width, height: realSize.height }
+        beforeEach(() => useWindowSizeStore.getState().setSize(400, 844))
+        afterEach(() => useWindowSizeStore.getState().setSize(real.width, real.height))
+
+        it('shows the insert key on Insert line below in the row menu sheet', () => {
+            const { container } = setUp([r1, r3], {
+                width: 400,
+                host: billHost(undefined, { insertShortcuts: { below: 'Alt+Enter' } }),
+            })
+            openRowMenu(container, 'r3')
+            const id = 'form-table-lines-menu-insert-below'
+            // A sheet row is a Pressable (testID); the web dropdown row is a div (data-testid).
+            expect(document.body.querySelector(`[data-testid="${id}"]`)).toBeNull()
+            const below = document.body.querySelector(`[testID="${id}"]`)
+            expect(below?.textContent).toBe('Insert line below⌥↵')
+        })
     })
 })
 
@@ -719,5 +800,144 @@ describe('TableField required columns per row kind', () => {
             'Description is required'
         )
         expect(onValid).not.toHaveBeenCalled()
+    })
+})
+
+/**
+ * Holds every animation frame until the test runs it, so a test can fire the
+ * table's focus frame before React commits the rows (a slow CPU's order).
+ */
+function holdFrames() {
+    const queue: FrameRequestCallback[] = []
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => {
+        queue.push(callback)
+        return queue.length
+    })
+    return () => {
+        for (const callback of queue.splice(0)) callback(performance.now())
+    }
+}
+
+/** The testID of the element that holds focus, or of its nearest owner with one. */
+function activeTestId() {
+    const el = document.activeElement
+    if (!(el instanceof Element)) return null
+    return el.closest('[testID]')?.getAttribute('testID') ?? null
+}
+
+function deferred() {
+    let resolve = () => {}
+    const promise = new Promise<void>(r => {
+        resolve = r
+    })
+    return { promise, resolve }
+}
+
+describe('TableField focus after a row change lands after the commit', () => {
+    const x1 = item('x1', 'X1', 1)
+    const x2 = item('x2', 'X2', 2)
+
+    it("focuses the replaced row's cell when the focus frame runs before the rows commit", async () => {
+        const runFrames = holdFrames()
+        // The bundle's items load after the pick; the cell replaces its row once they arrive.
+        const itemsLoaded = deferred()
+        const replaced = deferred()
+        function BundleCell({ table, value }: BuiltinFieldProps) {
+            const id = table?.row.id ?? 'none'
+            const pick = async () => {
+                await itemsLoaded.promise
+                table?.replaceRow([x1, x2], { rowId: 'x1', columnKey: 'qty' })
+                replaced.resolve()
+            }
+            return (
+                <Pressable testID={`bundle-${id}`} onPress={() => void pick()}>
+                    <Text>{String(value ?? '')}</Text>
+                </Pressable>
+            )
+        }
+        const { container } = setUp([r1, r3], {
+            host: billHost('BundleCell'),
+            ui: { components: { BundleCell } },
+        })
+        fireEvent.click(byTestId(container, 'bundle-r3'))
+        itemsLoaded.resolve()
+        await replaced.promise
+        // Only microtasks have run since replaceRow: React has not committed the new rows.
+        expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'r3'])
+        runFrames()
+        await waitFor(() => expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'x1', 'x2']))
+        await waitFor(() => {
+            runFrames()
+            expect(activeTestId()).toBe('form-table-lines-x1-qty')
+        })
+    })
+
+    it("focuses the replaced row's cell when the table commits once without the new rows first", async () => {
+        const runFrames = holdFrames()
+        const itemsLoaded = deferred()
+        const replaced = deferred()
+        // Renders of the untouched row's cell: each one is a render of the table above it.
+        let firstRowRenders = 0
+        function BundleCell({ table, value }: BuiltinFieldProps) {
+            const id = table?.row.id ?? 'none'
+            if (id === 'r1') firstRowRenders += 1
+            const pick = async () => {
+                await itemsLoaded.promise
+                // The row change is a transition, so a sync update can commit before it.
+                startTransition(() => {
+                    table?.replaceRow([x1, x2], { rowId: 'x1', columnKey: 'qty' })
+                })
+                replaced.resolve()
+            }
+            return (
+                <Pressable testID={`bundle-${id}`} onPress={() => void pick()}>
+                    <Text>{String(value ?? '')}</Text>
+                </Pressable>
+            )
+        }
+        const resize: { current: (width: number) => void } = { current: () => {} }
+        function ResizableHarness(props: HarnessProps) {
+            const [width, setWidth] = useState(1000)
+            resize.current = setWidth
+            return <Harness {...props} width={width} />
+        }
+        const formRef: HarnessProps['formRef'] = { current: null }
+        const { container } = render(
+            <ResizableHarness
+                rows={[r1, r3]}
+                formRef={formRef}
+                host={billHost('BundleCell')}
+                ui={{ components: { BundleCell } }}
+            />
+        )
+        fireEvent.click(byTestId(container, 'bundle-r3'))
+        itemsLoaded.resolve()
+        await replaced.promise
+        expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'r3'])
+
+        // A commit of the table that does not hold the row change comes first.
+        const rendersBefore = firstRowRenders
+        flushSync(() => resize.current(1001))
+        expect(firstRowRenders).toBeGreaterThan(rendersBefore)
+        expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'r3'])
+        runFrames()
+
+        await waitFor(() => expect(rowIdsOf(container, 'lines')).toEqual(['r1', 'x1', 'x2']))
+        await waitFor(() => {
+            runFrames()
+            expect(activeTestId()).toBe('form-table-lines-x1-qty')
+        })
+    })
+
+    it("still focuses a new line's first cell after Add line", async () => {
+        const runFrames = holdFrames()
+        const { container, rowsNow } = setUp([r1])
+        fireEvent.click(byTestId(container, 'form-table-lines-add'))
+        await waitFor(() => expect(rowIdsOf(container, 'lines')).toHaveLength(2))
+        const added = rowsNow()[1]
+        await waitFor(() => {
+            runFrames()
+            expect(activeTestId()).toBe(`form-table-lines-${added.id}-name`)
+        })
     })
 })

@@ -120,6 +120,8 @@ A table field in a form (an order's lines) has row keys when its host built-in s
 
 A table with row kinds (`rowKinds`) adds a line of a kind from the add actions. The first kind's add button is a `ShortcutButton` with that kind's `shortcut`; every other kind's `shortcut` is registered by the table while it is editable, adds that kind's line after the focused line, and is listed by its `addLabel`. A column with `addOnSubmit: true` adds a line of the first kind when Enter is pressed in it on the last line.
 
+A table built-in may also set `insertShortcuts: { above?, below? }`: key combos (written like a row kind's `shortcut`, e.g. `Alt+Enter`) that the host binds itself for "Insert line above" and "Insert line below". The first row kind's `shortcut` adds a line after the focused line, so it is the key of "Insert line below". Core registers no key for `insertShortcuts` and changes no action: it only shows the given keys on the row menu, on the dropdown and on the phone sheet. A side left out shows no key.
+
 Every table action reads the rows current when it runs, so two keys pressed before a re-render both apply.
 
 ## How it works

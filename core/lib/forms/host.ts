@@ -45,6 +45,19 @@ const rowKindSchema = z.object({
 })
 export type HostRowKind = z.infer<typeof rowKindSchema>
 
+/**
+ * Key combos a host binds itself for a table's "Insert line above" / "Insert
+ * line below". Core registers no key for them; it only shows them on the row
+ * menu, so the menu can name the host's key.
+ */
+const insertShortcutsSchema = z
+    .object({
+        above: z.string().min(1).optional(),
+        below: z.string().min(1).optional(),
+    })
+    .strict()
+export type HostInsertShortcuts = z.infer<typeof insertShortcutsSchema>
+
 type BuiltinIssueSink = (path: (string | number)[], message: string) => void
 
 /**
@@ -132,6 +145,8 @@ const builtinSchema = z
         rowKinds: z.array(rowKindSchema).min(1).optional(),
         /** The table registers core's row keys (remove, move, duplicate, open menu). */
         rowShortcuts: z.boolean().default(false),
+        /** The host's keys for the row menu's insert actions; shown, never bound. */
+        insertShortcuts: insertShortcutsSchema.optional(),
     })
     .superRefine((b, ctx) => {
         if (b.rowKinds) {
@@ -151,6 +166,12 @@ const builtinSchema = z
                 code: 'custom',
                 path: ['maxLength'],
                 message: 'maxLength is for a text built-in',
+            })
+        if (b.insertShortcuts !== undefined && b.kind !== 'table')
+            ctx.addIssue({
+                code: 'custom',
+                path: ['insertShortcuts'],
+                message: 'insertShortcuts is for a table built-in',
             })
         if (b.kind === 'section' && b.storage !== 'none')
             ctx.addIssue({ code: 'custom', path: ['storage'], message: 'a section has no storage' })
@@ -216,8 +237,10 @@ const builtinSchema = z
 
 /**
  * The host's default form: its pages, a page and width per built-in (absent
- * means the first page, full width), an optional help text per built-in (the
- * seeded field's `description`), and its rules. It seeds the first default
+ * means the first page, full width), an optional `narrowWidth` per built-in
+ * (the seeded field's width on a narrow form; absent writes no key), an
+ * optional help text per built-in (the seeded field's `description`), and its
+ * rules. It seeds the first default
  * form, and every new form an admin starts from Settings → Forms → New form
  * (use-form-admin.ts starts from `defaultDefinitionFor`). Mirrored in Go
  * (server/forms HostLayout). A page has no description, because the Go page
@@ -231,6 +254,7 @@ export const hostLayoutSchema = z.object({
             z.object({
                 page: keySchema.optional(),
                 width: z.enum(FIELD_WIDTHS).optional(),
+                narrowWidth: z.enum(FIELD_WIDTHS).optional(),
                 description: z.string().max(500).optional(),
             })
         )
@@ -399,6 +423,7 @@ export function defaultDefinitionFor(host: FormHostDef): FormDefinition {
                 label: b.label,
                 ...(placed?.description ? { description: placed.description } : {}),
                 width: placed?.width ?? 'full',
+                ...(placed?.narrowWidth ? { narrowWidth: placed.narrowWidth } : {}),
                 required: b.required,
                 hidden: false,
             }

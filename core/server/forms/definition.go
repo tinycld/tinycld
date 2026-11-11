@@ -28,8 +28,11 @@ type Field struct {
 	Page  string `json:"page"`
 	Label string `json:"label"`
 	// Description is the help text the renderer draws with the field.
-	Description string   `json:"description,omitempty"`
-	Width       string   `json:"width,omitempty"`
+	Description string `json:"description,omitempty"`
+	Width       string `json:"width,omitempty"`
+	// NarrowWidth is presentation only (the width below the renderer's
+	// narrow breakpoint); the server never reads it.
+	NarrowWidth string   `json:"narrowWidth,omitempty"`
 	Required    bool     `json:"required"`
 	Hidden      bool     `json:"hidden"`
 	Options     []Option `json:"options,omitempty"`
@@ -73,6 +76,10 @@ type Column struct {
 	// grid); the server decodes it so the host file round-trips, and never
 	// reads it.
 	MinWidth *float64 `json:"minWidth,omitempty"`
+	// Align is presentation only (where a host column's header sits on the wide
+	// grid); the server decodes it so the host file round-trips, and never
+	// reads it.
+	Align string `json:"align,omitempty"`
 }
 
 type Page struct {

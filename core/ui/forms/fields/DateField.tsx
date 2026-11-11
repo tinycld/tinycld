@@ -63,7 +63,12 @@ export function DateField({
         setIsOpen(false)
     }
     return (
-        <View className="flex-row items-center border border-border rounded-md px-2">
+        // Height, padding and text size match SelectInput's trigger, so a date sits
+        // level with the selects beside it in a form row.
+        <View
+            className="flex-row items-center gap-2 border border-border rounded-md px-3"
+            style={{ minHeight: 44 }}
+        >
             <PlainInput
                 ref={inputRef}
                 value={value ?? ''}
@@ -73,7 +78,7 @@ export function DateField({
                 // minWidth 0: react-native-web's <input> keeps its intrinsic
                 // ~150px width otherwise, which pushes the calendar button out
                 // of the border in a phone-width slot.
-                style={{ color: fg, flex: 1, minWidth: 0 }}
+                style={{ color: fg, flex: 1, minWidth: 0, fontSize: 14 }}
                 editable={!disabled}
                 autoFocus={autoFocus && !disabled}
                 onFocus={onFocus}
@@ -96,7 +101,7 @@ export function DateField({
                         accessibilityLabel="Open calendar"
                         testID={testID ? `${testID}-open` : undefined}
                     >
-                        <CalendarDays size={18} color={fg} />
+                        <CalendarDays size={16} color={muted} />
                     </Pressable>
                 }
             >
