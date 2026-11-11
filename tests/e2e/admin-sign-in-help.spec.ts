@@ -143,8 +143,14 @@ test.describe('admin sign-in help', () => {
         await inviteePage.getByTestId('new-password').fill('MemberChose123!')
         await inviteePage.getByTestId('new-password-confirm').fill('MemberChose123!')
         const saved = inviteePage.waitForResponse(r => r.url().includes('/confirm-password-reset'))
+        // After the save the page sends the sheet back to the app. A goto that
+        // starts before that redirect is aborted by it, so wait for it.
+        const backToApp = inviteePage.waitForRequest(r =>
+            r.url().startsWith('tinycld://auth/callback')
+        )
         await inviteePage.getByTestId('new-password-submit').click()
         expect((await saved).status()).toBe(204)
+        expect((await backToApp).url()).toContain('result=password_changed')
 
         // The new password now signs in; with a passkey on file the next step
         // is the second factor, not another password change.
