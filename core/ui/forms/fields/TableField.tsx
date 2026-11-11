@@ -30,7 +30,12 @@ import { type HostInstance, Platform, Pressable, Text, View, type ViewStyle } fr
 import { NARROW_BELOW } from '../widths'
 import { DateField } from './DateField'
 import { formatComputed } from './format-computed'
-import { slotStyle, TABLE_GRID_GAP, TABLE_ROW_MENU_WIDTH } from './table-layout'
+import {
+    slotStyle,
+    TABLE_GRID_GAP,
+    TABLE_INPUT_TEXT_INSET,
+    TABLE_ROW_MENU_WIDTH,
+} from './table-layout'
 import {
     ADD_BUTTON,
     cellKey,
@@ -560,6 +565,8 @@ function GridRowMenu(props: RowProps) {
  * to its flex base size, so header slots would not divide the width as the
  * row slots do.
  */
+const HEADER_TEXT_STYLE = { paddingHorizontal: TABLE_INPUT_TEXT_INSET }
+
 const HEADER_ALIGN_CLASS = { start: 'text-left', center: 'text-center', end: 'text-right' } as const
 
 function headerAlignClass(column: HostTableColumn) {
@@ -570,7 +577,10 @@ function headerAlignClass(column: HostTableColumn) {
 function HeaderSlot({ base, column }: { base: TableBase; column: HostTableColumn }) {
     return (
         <View testID={`${base.ids}-head-${column.key}`} style={slotStyle(column)}>
-            <Text className={`px-1 text-xs font-semibold text-muted-foreground ${headerAlignClass(column)}`}>
+            <Text
+                className={`text-xs font-semibold text-muted-foreground ${headerAlignClass(column)}`}
+                style={HEADER_TEXT_STYLE}
+            >
                 {headerText(column)}
             </Text>
         </View>
