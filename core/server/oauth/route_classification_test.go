@@ -107,6 +107,19 @@ func TestConsentSurfacesAreNotExempt(t *testing.T) {
 	}
 }
 
+// A batch runs record writes of any collection in one request. A scope names
+// collections, so no scope can cover a batch, and an OAuth bearer must never
+// reach it: the batch handler does not run the per-collection scope check for
+// the operations inside it.
+func TestBatchIsNotAvailableToOAuthTokens(t *testing.T) {
+	if got := ScopeForRoute("POST", "/api/batch"); len(got) != 0 {
+		t.Errorf("POST /api/batch resolved to %q, want default-deny", got)
+	}
+	if ScopeForRoute("POST", "/api/batch").isExempt() {
+		t.Error("/api/batch must not be scope-exempt")
+	}
+}
+
 // The credential-less endpoints must STAY exempt or the device flow cannot start.
 func TestCredentiallessEndpointsStayExempt(t *testing.T) {
 	for _, p := range []string{"/oauth/device", "/oauth/token", "/oauth/revoke"} {
