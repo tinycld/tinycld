@@ -24,6 +24,9 @@ export const ToolbarIconButton = forwardRef<PressableInstance, ToolbarIconButton
         if (Platform.OS === 'web') {
             return (
                 <button
+                    // A Popover or Menu anchors its surface to this node; without
+                    // it the surface cannot be placed and stays transparent.
+                    ref={ref as unknown as React.Ref<HTMLButtonElement>}
                     type="button"
                     title={label}
                     aria-label={label}
