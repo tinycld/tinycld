@@ -687,19 +687,19 @@ export async function preloadStores() {
 }
 
 export async function clearStores() {
-    // The live queries go FIRST: a live query whose source collection has been
-    // cleaned up throws on its next change, and cleanup() drains the sources.
+    // The warmed queries are this module's own; the next sign-in warms them again.
     const lqs = preloadedQueries.splice(0, preloadedQueries.length)
     for (const lq of lqs) {
         await lq.cleanup()
     }
-    for (const s of Object.values(stores)) {
-        // cleanup() on an already cleaned-up collection throws an invalid
-        // status-transition error, and repeated teardowns are a legal path
-        // (sign out, then "change server" runs logout() a second time).
-        if (s.status === 'cleaned-up') continue
-        await s.cleanup()
-    }
+    // Evict the rows instead of cleaning the collections up. The screens still
+    // mounted at sign-out, and the live queries react-db keeps pooled for a few
+    // seconds after they unmount, read these collections; a cleaned-up source
+    // fails every one of them with a "was manually cleaned up" error. Evicting
+    // takes the previous user's rows out of the store and leaves the
+    // collections and their readers alive. pbtsdb reloads every live subset
+    // when the next user signs in.
+    await Promise.all(Object.values(stores).map(s => s.evict(Array.from(s.keys(), String))))
 }
 
 // Single teardown point for everything cached per-session in memory. On web
