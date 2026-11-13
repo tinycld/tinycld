@@ -324,8 +324,11 @@ function withPrefix(prefix: string, color: string) {
     }
 }
 
+// The dev server classifies with a local fake so no one needs an OpenRouter key.
+const goTags = process.env.TINYCLD_CLASSIFIER_REAL === '1' ? [] : ['-tags', 'classifierfake']
+
 function buildPbSync() {
-    const buildResult = spawn('go', ['build', '-o', 'app', '.'], {
+    const buildResult = spawn('go', ['build', ...goTags, '-o', 'app', '.'], {
         cwd: path.join(ROOT, 'server'),
         stdio: 'inherit',
     })
@@ -344,7 +347,7 @@ function buildPbSync() {
 function rebuildPb(): Promise<boolean> {
     const onOut = withPrefix('go', '\x1b[34m') // blue
     const onErr = withPrefix('go', '\x1b[31m')
-    const child = spawn('go', ['build', '-o', 'app', '.'], {
+    const child = spawn('go', ['build', ...goTags, '-o', 'app', '.'], {
         cwd: path.join(ROOT, 'server'),
         stdio: ['ignore', 'pipe', 'pipe'],
     })

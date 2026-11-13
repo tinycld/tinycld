@@ -158,7 +158,7 @@ function resetDataDir(dataDir: string, stdio: StdioOptions): void {
     // Both instances refresh, because each builds the server itself.
     if (refreshReportsStub()) log('phase 1/3: refreshed the reports stub from its templates')
     log('phase 1/3: building the server')
-    const built = spawnSync('go', ['build', '-o', 'app', '.'], {
+    const built = spawnSync('go', ['build', '-tags', 'classifierfake', '-o', 'app', '.'], {
         cwd: path.join(ROOT, 'server'),
         stdio,
     })
