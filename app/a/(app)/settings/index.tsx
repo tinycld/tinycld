@@ -31,6 +31,7 @@ import {
     ShieldAlert,
     ShieldCheck,
     Sliders,
+    Sparkles,
     Tag,
     User,
     Users,
@@ -257,6 +258,12 @@ const CORE_SYSTEM_LINKS = [
     },
     { label: 'Web Push', route: 'settings/web-push', keyPrefix: 'vapid.', Icon: Bell },
     { label: 'Mail Sending', route: 'settings/mail-sending', keyPrefix: 'mail.', Icon: Send },
+    {
+        label: 'AI classification',
+        route: 'settings/ai-classification',
+        keyPrefix: 'classifier.',
+        Icon: Sparkles,
+    },
 ] as const
 
 function SystemSettings({ isVisible }: { isVisible: boolean }) {
