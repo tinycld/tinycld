@@ -33,6 +33,29 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_RejectsNaNBudget(t *testing.T) {
+	for _, v := range []string{"NaN", "Inf", "-Inf"} {
+		app := newApp(t, map[string]string{KeyAPIKey: "k", KeyBudget: v})
+		if got := LoadConfig(app).Budget; got != 5 {
+			t.Fatalf("%s -> %v", v, got)
+		}
+	}
+}
+
+func TestBudget_FailsClosedOnLookupError(t *testing.T) {
+	app := newApp(t, map[string]string{KeyAPIKey: "k"})
+	if _, err := app.DB().NewQuery("DROP TABLE classifier_usage").Execute(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := checkBudget(app, LoadConfig(app), 0.1, now); err == nil || errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("want lookup error, got %v", err)
+	}
+	if err := addUsage(app, 0.1, now); err == nil {
+		t.Fatal("addUsage should fail")
+	}
+}
+
 func TestAvailable_FalseWithoutKeyOrWithBadStatus(t *testing.T) {
 	if Available(newApp(t, map[string]string{})) {
 		t.Fatal("no key")

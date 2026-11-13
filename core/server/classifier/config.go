@@ -2,6 +2,7 @@ package classifier
 
 import (
 	"errors"
+	"math"
 	"strconv"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -33,7 +34,7 @@ type Config struct {
 
 func floatSetting(app core.App, key string, fallback float64) float64 {
 	v, err := strconv.ParseFloat(syscfg.Get(app, key), 64)
-	if err != nil || v < 0 {
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
 		return fallback
 	}
 	return v

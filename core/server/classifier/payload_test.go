@@ -4,7 +4,22 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestBuildPayload_TruncatesOnRuneBoundary(t *testing.T) {
+	b, err := buildPayload(tax, map[string]any{"subject": strings.Repeat("é", 400)}, StageFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subj := decode(t, b)["state"].(map[string]any)["record"].(map[string]any)["subject"].(string)
+	if !utf8.ValidString(subj) || len(subj) > 512 {
+		t.Fatalf("bad truncation: %d bytes", len(subj))
+	}
+	if got := truncateUTF8(strings.Repeat("é", 10), 5); got != "éé" {
+		t.Fatalf("got %q", got)
+	}
+}
 
 var tax = []TaxonomyLabel{
 	{ID: "c1", Name: "action-required", AssignWhen: "Needs a reply"},
