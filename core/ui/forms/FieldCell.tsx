@@ -142,9 +142,10 @@ function CellError({ message, testID }: { message?: string; testID: string }) {
     )
 }
 
+// Under the input, so the inputs of a row line up whether or not a field has a hint.
 function CellDescription({ text }: { text?: string }) {
     if (!text) return null
-    return <Text className="text-muted-foreground text-xs mb-1">{text}</Text>
+    return <Text className="text-muted-foreground text-xs mt-1">{text}</Text>
 }
 
 export function FieldCell({
@@ -203,8 +204,8 @@ export function FieldCell({
                 <RequiredMark isVisible={required} />
                 {badge}
             </View>
-            <CellDescription text={description} />
             {children}
+            <CellDescription text={description} />
             <CellError message={error} testID={`${cellTestID}-error`} />
             <DropBar fieldKey={fieldKey} side={dropIndicator} isFullWidth={effective === 'full'} />
         </View>

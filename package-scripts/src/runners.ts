@@ -56,6 +56,30 @@ export function buildLintCommand(
     }
 }
 
+// A file filter that arrives as one quoted word (`-- "a.test b.test"`, or a
+// list a caller built as one string) reaches vitest as ONE filter that matches
+// no path; with the shared config's passWithNoTests the run then exits 0
+// having run nothing, which reads as a pass. So each word of a positional
+// argument becomes its own filter. A word right after a flag without `=` is
+// that flag's value (`-t "adds a row"`) and stays whole.
+function splitFileFilters(passthrough: string[]): string[] {
+    return passthrough.flatMap((arg, i) => {
+        const previous = passthrough[i - 1]
+        const isFlagValue = previous?.startsWith('-') && !previous.includes('=')
+        if (arg.startsWith('-') || isFlagValue) return [arg]
+        return arg.split(/\s+/).filter(Boolean)
+    })
+}
+
+// A filtered run that matches no test file must fail: the caller asked for
+// specific tests, and passWithNoTests (right for a member with no tests yet)
+// would report their absence as success.
+function failWhenNothingMatches(passthrough: string[]): string[] {
+    if (passthrough.length === 0) return []
+    if (passthrough.some(arg => arg.startsWith('--passWithNoTests'))) return []
+    return ['--passWithNoTests=false']
+}
+
 export function buildTestCommand(
     pkg: CurrentPackage,
     _appDir: string,
@@ -63,7 +87,13 @@ export function buildTestCommand(
 ): Command {
     return {
         bin: 'vitest',
-        args: ['run', '--config', vitestConfigFor(pkg), ...passthrough],
+        args: [
+            'run',
+            '--config',
+            vitestConfigFor(pkg),
+            ...failWhenNothingMatches(passthrough),
+            ...splitFileFilters(passthrough),
+        ],
         cwd: pkg.dir,
     }
 }
