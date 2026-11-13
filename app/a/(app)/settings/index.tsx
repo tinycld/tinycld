@@ -304,6 +304,7 @@ function SystemSettings({ isVisible }: { isVisible: boolean }) {
                 <SettingsLink
                     key={`${group.pkgSlug}:${panel.slug}`}
                     label={`${group.packageName} — ${panel.label}`}
+                    testID={`settings-system-${group.pkgSlug}-${panel.slug}`}
                     onPress={() =>
                         router.push(
                             orgHref('settings/system/[...section]', {
