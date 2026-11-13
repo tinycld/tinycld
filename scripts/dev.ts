@@ -44,6 +44,12 @@ import * as net from 'node:net'
 import * as path from 'node:path'
 // fb-watchman has no published @types package; declare the surface we use.
 import watchman from 'fb-watchman'
+import {
+    PAUSE_PB_SIGNAL,
+    RESUME_PB_SIGNAL,
+    removeDevPbState,
+    writeDevPbState,
+} from './dev-pb-control'
 import { upstreamHeaders } from './dev-proxy-headers'
 import { isPortFree } from './port-probe'
 
@@ -775,6 +781,8 @@ async function main() {
 
     const publicUrl = `${useSsl ? 'https' : 'http'}://localhost:${block.proxy}`
     const pbDataDir = resolvePbDataDir()
+    // PocketBase puts its data next to the binary when --dir is not given.
+    const effectiveDataDir = pbDataDir ?? path.join(ROOT, 'server', 'pb_data')
 
     // The PB child is swapped out on rebuild; hold a mutable ref so the
     // watcher + shutdown handler always target the current process.
@@ -835,6 +843,7 @@ async function main() {
         shuttingDown = true
         process.stdout.write(`\nshutting down (${signal})\n`)
         disposeWatcher?.()
+        removeDevPbState(effectiveDataDir)
         server.close()
         intentionallyKilled.add(pbRef.current)
         pbRef.current.kill('SIGTERM')
@@ -877,6 +886,63 @@ async function main() {
         shutdown('SIGTERM')
     })
 
+    const pbLog = withPrefix('pb-control', '\x1b[34m')
+
+    const stopPb = async (): Promise<boolean> => {
+        const old = pbRef.current
+        intentionallyKilled.add(old)
+        old.kill('SIGTERM')
+        // Wait for the port to actually free up before respawning;
+        // otherwise the new PB races the old one and EADDRINUSE.
+        if (await waitForPortFree(block.pb, 5_000)) return true
+        pbLog(`pb did not release :${block.pb}, sending SIGKILL\n`)
+        old.kill('SIGKILL')
+        if (await waitForPortFree(block.pb, 2_000)) return true
+        pbLog(`pb still holding :${block.pb}\n`)
+        return false
+    }
+
+    const startPb = async () => {
+        pbRef.current = spawnPbBinary(block.pb, publicUrl, pbDataDir)
+        attachPbExitHandler(pbRef.current)
+        try {
+            await waitForUpstream(block.pb, 'pb', 30_000)
+            pbLog('pb up\n')
+        } catch (err) {
+            pbLog(
+                `pb failed to accept connections: ${err instanceof Error ? err.message : String(err)}\n`
+            )
+        }
+    }
+
+    // A rebuild restart and a pause or resume from reset-dev-db can arrive
+    // together; running them one at a time keeps two of them from stopping
+    // or spawning PB at once.
+    let pbOps: Promise<void> = Promise.resolve()
+    const serializePbOp = (op: () => Promise<void>) => {
+        pbOps = pbOps.then(op, op)
+        return pbOps
+    }
+    let pbPaused = false
+
+    process.on(PAUSE_PB_SIGNAL, () => {
+        void serializePbOp(async () => {
+            if (pbPaused) return
+            pbLog('pausing pb for a data dir reset\n')
+            pbPaused = true
+            await stopPb()
+        })
+    })
+    process.on(RESUME_PB_SIGNAL, () => {
+        void serializePbOp(async () => {
+            if (!pbPaused) return
+            pbLog('resuming pb\n')
+            pbPaused = false
+            await startPb()
+        })
+    })
+    writeDevPbState(effectiveDataDir, { pid: process.pid, pbPort: block.pb, publicUrl })
+
     if (!skipPbWatch) {
         const watcherLog = withPrefix('pb-watch', '\x1b[34m')
         let pending: NodeJS.Timeout | null = null
@@ -900,30 +966,19 @@ async function main() {
                     )
                     return
                 }
-                watcherLog(`rebuilt in ${dt}ms, restarting pb\n`)
-                const old = pbRef.current
-                intentionallyKilled.add(old)
-                old.kill('SIGTERM')
-                // Wait for the port to actually free up before respawning;
-                // otherwise the new PB races the old one and EADDRINUSE.
-                if (!(await waitForPortFree(block.pb, 5_000))) {
-                    watcherLog(`pb did not release :${block.pb}, sending SIGKILL\n`)
-                    old.kill('SIGKILL')
-                    if (!(await waitForPortFree(block.pb, 2_000))) {
-                        watcherLog(`pb still holding :${block.pb}; giving up this restart\n`)
+                await serializePbOp(async () => {
+                    // The resume spawns the new binary, so there is nothing to restart.
+                    if (pbPaused) {
+                        watcherLog(`rebuilt in ${dt}ms; pb is paused, resume starts it\n`)
                         return
                     }
-                }
-                pbRef.current = spawnPbBinary(block.pb, publicUrl, pbDataDir)
-                attachPbExitHandler(pbRef.current)
-                try {
-                    await waitForUpstream(block.pb, 'pb', 30_000)
-                    watcherLog('pb back up\n')
-                } catch (err) {
-                    watcherLog(
-                        `pb failed to accept connections: ${err instanceof Error ? err.message : String(err)}\n`
-                    )
-                }
+                    watcherLog(`rebuilt in ${dt}ms, restarting pb\n`)
+                    if (!(await stopPb())) {
+                        watcherLog('giving up this restart\n')
+                        return
+                    }
+                    await startPb()
+                })
             } finally {
                 inFlight = false
                 if (queued) {

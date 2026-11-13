@@ -61,6 +61,8 @@ server/pb_test_data/
 server/pb_test_data_*/
 # Throwaway DB the live CLI smoke test seeds (scripts/cli-smoke.ts).
 server/pb_smoke_data/
+# Which dev.ts serves a data dir (scripts/dev-pb-control.ts).
+server/*.dev.json
 # Promoted web bundle the e2e static-serve flow (scripts/e2e-serve.ts) builds.
 server/pb_test_releases*/
 # Package-set build archives the dev server writes (core/server/coreserver/pkg_build.go).
