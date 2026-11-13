@@ -7,7 +7,6 @@ import { Text, View } from 'react-native'
 import { useSystemSettings } from '../../setup/system-settings-store'
 import {
     CLASSIFIER_DEFAULTS,
-    type ClassifierFormInput,
     type ClassifierFormValues,
     classifierSchema,
 } from './classifier-schema'
@@ -37,19 +36,19 @@ function useClassifierVerify() {
 }
 
 function useClassifierSave(
-    form: ReturnType<typeof useForm<ClassifierFormInput, unknown, ClassifierFormValues>>,
+    form: ReturnType<typeof useForm<ClassifierFormValues>>,
     upsert: ReturnType<typeof useSystemSettings>['upsert']
 ) {
     return form.handleSubmit(async data => {
         try {
             await upsert.mutateAsync({
                 key: 'classifier.monthly_budget_usd',
-                value: String(data.budget),
+                value: String(Number(data.budget)),
                 isSecret: false,
             })
             await upsert.mutateAsync({
                 key: 'classifier.full_evidence_threshold',
-                value: String(data.fullThreshold),
+                value: String(Number(data.fullThreshold)),
                 isSecret: false,
             })
             if (data.apiKey) {
@@ -120,14 +119,15 @@ export function ClassifierPanel() {
     const usage = useClassifierUsage()
     const verify = useClassifierVerify()
     const status = byKey.get('classifier.status')?.value || 'ok'
+    const storedBudget = Number(
+        byKey.get('classifier.monthly_budget_usd')?.value || CLASSIFIER_DEFAULTS.budget
+    )
     const form = useForm({
         resolver: zodResolver(classifierSchema),
         values: {
             apiKey: '',
-            budget: Number(
-                byKey.get('classifier.monthly_budget_usd')?.value || CLASSIFIER_DEFAULTS.budget
-            ),
-            fullThreshold: Number(
+            budget: String(storedBudget),
+            fullThreshold: String(
                 byKey.get('classifier.full_evidence_threshold')?.value ||
                     CLASSIFIER_DEFAULTS.fullThreshold
             ),
@@ -171,11 +171,7 @@ export function ClassifierPanel() {
                 keyboardType="decimal-pad"
                 testID="classifier-full-threshold"
             />
-            <MonthSpend
-                costUsd={usage.costUsd}
-                calls={usage.calls}
-                budget={Number(form.getValues('budget'))}
-            />
+            <MonthSpend costUsd={usage.costUsd} calls={usage.calls} budget={storedBudget} />
             <SaveRow
                 testID="classifier-save"
                 onPress={onSubmit}
