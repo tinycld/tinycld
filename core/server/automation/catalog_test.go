@@ -329,3 +329,15 @@ func TestCatalogCarriesRelationMatchAndCreate(t *testing.T) {
 		t.Fatalf("catalog field lost the relation options: %+v", p.Field)
 	}
 }
+
+func TestResolveTrigger_ExtraFields(t *testing.T) {
+	app, _ := catalogApp(t)
+	got := resolveTrigger(app, "cat", TriggerDef{
+		ID: "item-created", Collection: "cat_items", On: "create",
+		ExtraFields: []ExtraField{{Key: "author_known", Label: "Author is known", Type: "boolean"}},
+	})
+	last := got.Fields[len(got.Fields)-1]
+	if last.Key != "fields.author_known" || last.Type != "boolean" || last.Label != "Author is known" {
+		t.Fatalf("%+v", last)
+	}
+}

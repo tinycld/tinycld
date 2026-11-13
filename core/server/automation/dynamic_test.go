@@ -30,7 +30,7 @@ func dynamicApp(t *testing.T) (core.App, *Engine, *core.Record, func(channel, an
 	RegisterRuleFilter("posts:post-created", func(_ core.App, cfg map[string]any, rec *core.Record) bool {
 		return cfg["channel"] == rec.GetString("channel")
 	})
-	RegisterFieldsResolver("posts:post-created", func(_ core.App, _ map[string]any, rec *core.Record) []DynamicField {
+	RegisterFieldsResolver("posts:post-created", func(_ core.App, _ string, _ map[string]any, rec *core.Record) []DynamicField {
 		var answers map[string]any
 		_ = rec.UnmarshalJSONField("answers", &answers)
 		return []DynamicField{{Key: "answer", Label: "Answer", Type: "text", Value: answers["answer"]}}
@@ -203,5 +203,21 @@ func TestMarkdownTriggerFieldIsNotEscapedAgain(t *testing.T) {
 	}
 	if want := "**Steps:**\n- one / \\*b\\*"; got.Params["md"] != want {
 		t.Fatalf("markdown param = %q, want %q", got.Params["md"], want)
+	}
+}
+
+func TestDynamicFields_PassesPersonalOwnerOnly(t *testing.T) {
+	ResetRegistriesForTest()
+	t.Cleanup(ResetRegistriesForTest)
+	var seen []string
+	RegisterFieldsResolver("posts:post-created", func(_ core.App, owner string, _ map[string]any, _ *core.Record) []DynamicField {
+		seen = append(seen, owner)
+		return nil
+	})
+	rec := core.NewRecord(core.NewBaseCollection("posts"))
+	dynamicFields(nil, "posts:post-created", ruleOwnerForFields("personal", "u1"), nil, rec)
+	dynamicFields(nil, "posts:post-created", ruleOwnerForFields("org", "admin1"), nil, rec)
+	if seen[0] != "u1" || seen[1] != "" {
+		t.Fatalf("owners = %v", seen)
 	}
 }

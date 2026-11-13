@@ -45,6 +45,11 @@ export interface RecordTriggerDefBase<C extends string, F extends string> {
     fields?: FieldRef<F>[]
     /** override the auto-detected user/owner/author owner column */
     ownerField?: F
+    /**
+     * Values beyond the record's columns, computed per rule by the trigger's
+     * Go FieldsResolver. Rules read them as `fields.<key>`.
+     */
+    extraFields?: { key: string; label: string; type: FieldType }[]
 }
 
 export type RecordTriggerDef<S = AnySchema> = {

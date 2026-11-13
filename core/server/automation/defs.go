@@ -74,6 +74,17 @@ type TriggerDef struct {
 	Fields     []FieldRef `json:"fields"`
 	OwnerField string     `json:"ownerField"`
 	Synthetic  string     `json:"synthetic"`
+	// ExtraFields are values beyond the record's columns, supplied per rule
+	// by the trigger's FieldsResolver.
+	ExtraFields []ExtraField `json:"extraFields"`
+}
+
+// ExtraField is a value a trigger offers beyond its record's columns, filled
+// at run time by the trigger's FieldsResolver. Rules read it as fields.<Key>.
+type ExtraField struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Type  string `json:"type"`
 }
 
 type RecordOp struct {

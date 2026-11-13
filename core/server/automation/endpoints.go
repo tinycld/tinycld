@@ -110,7 +110,7 @@ func (e *Engine) dryRun(caller *core.Record, triggerRef string, config map[strin
 		if !ruleAllowed(e.app, triggerRef, config, r) {
 			continue
 		}
-		if EvaluateConditionsWith(ast, r, trigger, dynamicValues(dynamicFields(e.app, triggerRef, config, r))) {
+		if EvaluateConditionsWith(ast, r, trigger, dynamicValues(dynamicFields(e.app, triggerRef, ruleOwnerForFields("personal", caller.Id), config, r))) {
 			out.Matches = append(out.Matches, dryRunMatch{ID: r.Id, Summary: triggerSummary(r, trigger)})
 		}
 	}

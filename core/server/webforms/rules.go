@@ -46,7 +46,7 @@ var kindTypes = map[string]string{
 
 // formFields exposes each answer of the rule's form as fields.<key>. A file
 // field gives its file names; checklists and tables give no field.
-func formFields(app core.App, config map[string]any, record *core.Record) []automation.DynamicField {
+func formFields(app core.App, _ string, config map[string]any, record *core.Record) []automation.DynamicField {
 	form, err := app.FindRecordById("forms", configForm(config))
 	if err != nil {
 		return nil

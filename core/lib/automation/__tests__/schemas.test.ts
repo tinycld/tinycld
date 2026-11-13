@@ -137,6 +137,23 @@ describe('validateDefinitions', () => {
         expect(validateDefinitions('core', synthetic, { allowSynthetic: true })).toEqual([])
     })
 
+    it('rejects an extra field whose key is not snake_case', () => {
+        const bad: AutomationDefinitions = {
+            triggers: [
+                {
+                    id: 'thing-created',
+                    label: 'A thing is created',
+                    collection: 'c',
+                    on: 'create',
+                    extraFields: [{ key: 'Bad-Key', label: 'Bad', type: 'boolean' }],
+                },
+            ],
+        }
+        expect(
+            validateDefinitions('gizmos', bad).some(e => e.includes("extra field 'Bad-Key'"))
+        ).toBe(true)
+    })
+
     it('rejects a watch clause on a non-update trigger', () => {
         const bad: AutomationDefinitions = {
             triggers: [

@@ -102,6 +102,29 @@ describe('mergeAutomationDefs', () => {
         expect(merged.packages[1].slug).toBe('gizmos')
     })
 
+    it('carries a trigger extraFields into the merged defs', () => {
+        const extraFields = [{ key: 'author_known', label: 'Author is known', type: 'boolean' }]
+        const merged = mergeAutomationDefs([
+            {
+                slug: 'gizmos',
+                defs: {
+                    triggers: [
+                        {
+                            id: 'message-received',
+                            label: 'A message arrives',
+                            collection: 'gizmos_messages',
+                            on: 'create',
+                            extraFields: [
+                                { key: 'author_known', label: 'Author is known', type: 'boolean' },
+                            ],
+                        },
+                    ],
+                },
+            },
+        ])
+        expect(merged.packages[1].triggers[0]).toMatchObject({ extraFields })
+    })
+
     it('throws when a feature declares a synthetic trigger', () => {
         expect(() =>
             mergeAutomationDefs([
