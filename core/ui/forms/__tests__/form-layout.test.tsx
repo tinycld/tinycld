@@ -86,6 +86,29 @@ describe('FieldCell', () => {
         expect(container.querySelector('[testID="form-field-severity-error"]')).toBeNull()
         expect(queryByText('Severity is required')).toBeNull()
     })
+    // The hint draws under the input, so a field with a hint keeps its input level with
+    // the inputs of the other fields in its row (human, 2026-11-12).
+    it('draws the description after the input and before the error, both shown', () => {
+        const { container, getByText } = render(
+            <Cell description="How bad it is" error="Severity is required" />
+        )
+        const child = byId(container, 'child')
+        const hint = getByText('How bad it is')
+        const error = byId(container, 'form-field-sev-error')
+        expect(child.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        expect(hint.compareDocumentPosition(error) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        expect(error.textContent).toBe('Severity is required')
+        expect(classOf(hint)).toContain('mt-1')
+        expect(classOf(hint)).not.toContain('mb-1')
+    })
+    it('draws the description after the input in a designer cell too', () => {
+        const { container, getByText } = render(
+            <Cell description="How bad it is" onPress={() => undefined} />
+        )
+        const child = byId(container, 'child')
+        const hint = getByText('How bad it is')
+        expect(child.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
     it('collapses the width class in a narrow container', () => {
         const { container } = render(
             <FieldCell
