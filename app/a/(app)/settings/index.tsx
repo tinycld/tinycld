@@ -116,6 +116,7 @@ function PackageAccountLinks() {
         <SettingsLink
             key={`${group.pkgSlug}:${panel.slug}`}
             label={panel.label}
+            testID={`settings-account-${group.pkgSlug}-${panel.slug}`}
             onPress={() =>
                 router.push(
                     orgHref('settings/account/[...section]', {
@@ -201,6 +202,7 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
                             <SettingsLink
                                 key={panel.slug}
                                 label={panel.label}
+                                testID={`settings-org-${group.pkgSlug}-${panel.slug}`}
                                 onPress={() =>
                                     router.push(
                                         orgHref('settings/[...section]', {
@@ -293,6 +295,7 @@ function SystemSettings({ isVisible }: { isVisible: boolean }) {
                 <SettingsLink
                     key={route}
                     label={label}
+                    testID={`settings-system-${route.split('/').pop()}`}
                     onPress={() => router.push(orgHref(route))}
                     icon={<Icon size={20} color={foregroundColor} />}
                 />
@@ -362,16 +365,19 @@ function SettingsLink({
     label,
     onPress,
     icon,
+    testID,
 }: {
     label: string
     onPress: () => void
     icon: React.ReactNode
+    testID?: string
 }) {
     const mutedColor = useThemeColor('muted-foreground')
 
     return (
         <Pressable
             onPress={onPress}
+            testID={testID}
             className="flex-row items-center justify-between px-4 py-3.5"
             style={({ pressed }) => [pressed && { opacity: 0.7 }]}
         >
