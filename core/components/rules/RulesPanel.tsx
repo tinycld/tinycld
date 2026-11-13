@@ -28,8 +28,6 @@ export interface RulesPanelProps {
     scope: 'personal' | 'org'
     pkgFilter?: string
     canEdit: boolean
-    /** Hides catalog entries that do not apply here; must be a stable reference. */
-    filterCatalog?: (catalog: CatalogResponse) => CatalogResponse
 }
 
 function useScopedRules(scope: 'personal' | 'org') {
@@ -114,9 +112,9 @@ function nextOrderFor(allRules: Rules[]): number {
     return Math.max(...allRules.map(r => r.order)) + 1
 }
 
-export function RulesPanel({ scope, pkgFilter, canEdit, filterCatalog }: RulesPanelProps) {
+export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
     const { data: rawRules, isReady } = useScopedRules(scope)
-    const { catalog, isReady: catalogReady } = useAutomationCatalog(filterCatalog)
+    const { catalog, isReady: catalogReady } = useAutomationCatalog()
     const { reorder } = useRuleMutations()
     const openCreate = useRulesUiStore(s => s.openCreate)
     const builder = useRulesUiStore(s => s.builder)
@@ -169,7 +167,6 @@ export function RulesPanel({ scope, pkgFilter, canEdit, filterCatalog }: RulesPa
                 presetPkg={builder.mode === 'create' ? builder.presetPkg : undefined}
                 nextOrder={builder.mode === 'create' ? builder.nextOrder : 0}
                 preset={preset}
-                filterCatalog={filterCatalog}
             />
             <RunHistory ruleId={historyRuleId} onClose={closeHistory} />
         </View>
