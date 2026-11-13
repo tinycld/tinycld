@@ -31,6 +31,29 @@ describe('buildTestCommand', () => {
         const cmd = buildTestCommand(appPkg, appDir)
         expect(cmd.args).toContain(path.join('/ws/app', 'vitest.config.ts'))
     })
+    it('passes each file as its own filter, also when they arrive as one word', () => {
+        const cmd = buildTestCommand(featurePkg, appDir, ['a.test.ts b.test.ts', 'c.test.ts'])
+        expect(cmd.args.slice(3)).toEqual([
+            '--passWithNoTests=false',
+            'a.test.ts',
+            'b.test.ts',
+            'c.test.ts',
+        ])
+    })
+    it('keeps a flag value whole', () => {
+        const cmd = buildTestCommand(featurePkg, appDir, ['-t', 'adds a row', 'a.test.ts'])
+        expect(cmd.args.slice(4)).toEqual(['-t', 'adds a row', 'a.test.ts'])
+    })
+    it('fails a filtered run that matches no test file', () => {
+        expect(buildTestCommand(featurePkg, appDir, ['a.test.ts']).args).toContain(
+            '--passWithNoTests=false'
+        )
+    })
+    it('leaves an unfiltered run and an explicit passWithNoTests alone', () => {
+        expect(buildTestCommand(featurePkg, appDir).args).not.toContain('--passWithNoTests=false')
+        const explicit = buildTestCommand(featurePkg, appDir, ['--passWithNoTests', 'a.test.ts'])
+        expect(explicit.args.slice(3)).toEqual(['--passWithNoTests', 'a.test.ts'])
+    })
 })
 
 describe('buildLintCommand', () => {

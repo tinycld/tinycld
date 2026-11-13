@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 // preloadStores' job changed shape with pbtsdb 0.10: `preload()` on an
 // on-demand collection fetches nothing, so warming a store now means running
-// the same live queries the app is about to run, and clearStores has to tear
-// those queries down BEFORE their source collections.
+// the same live queries the app is about to run. clearStores tears those
+// queries down and evicts every row, but leaves the source collections alive.
 //
 // The pbtsdb factory is replaced with local-only TanStack DB collections: the
 // real module graph, real createLiveQueryCollection, no network. Each fake
@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
     started: [] as string[],
     /** Collection names still live (not cleaned up), by cleanup order. */
     cleanupOrder: [] as string[],
+    /** Puts a row in a fake collection, by name; set as each one is created. */
+    seed: new Map<string, (id: string) => Promise<unknown>>(),
 }))
 
 vi.mock('pocketbase', async () => {
@@ -40,8 +42,8 @@ vi.mock('@tanstack/db', async () => {
     return {
         ...actual,
         // Records each warmed live query's teardown in the SAME list as the
-        // source collections' so their relative order is assertable — the
-        // property clearStores exists to preserve.
+        // source collections', so a test can see that only queries were
+        // torn down.
         createLiveQueryCollection: (
             ...args: Parameters<typeof actual.createLiveQueryCollection>
         ) => {
@@ -74,17 +76,22 @@ vi.mock('pbtsdb', async () => {
                 h.started.push(name)
                 started()
             }
+            h.seed.set(name, id => collection.insert({ id }).isPersisted.promise)
             const cleanup = collection.cleanup.bind(collection)
             collection.cleanup = async () => {
                 h.cleanupOrder.push(name)
                 return cleanup()
             }
-            // pbtsdb's collections expose reload() and accept(); the
-            // local-only options do not, and preloadStores and seedUser call them.
+            // pbtsdb's collections expose reload(), accept() and evict(); the
+            // local-only options do not, and preloadStores, seedUser and
+            // clearStores call them.
             return Object.assign(collection, {
                 collectionName: name,
                 reload: async () => {},
                 accept: async () => {},
+                evict: async (ids: readonly string[]) => {
+                    if (ids.length > 0) await collection.delete([...ids]).isPersisted.promise
+                },
             })
         },
     }
@@ -126,23 +133,22 @@ describe('preloadStores', () => {
         await clearStores()
     })
 
-    it('tears the warmed queries down before their source collections', async () => {
+    it('drops the warmed queries and every row, but keeps the collections', async () => {
         h.authRecord = { id: 'u1' }
         const { preloadStores, clearStores, stores } = await loadModule()
 
         await preloadStores()
+        await h.seed.get('users')?.('u1')
+        expect(stores.users.size).toBe(1)
         await clearStores()
 
-        // A live query over a cleaned-up source throws on its next change, so
-        // every warmed query must be gone before the first store is.
-        const lastQuery = h.cleanupOrder.lastIndexOf('live-query')
-        const firstStore = h.cleanupOrder.findIndex(n => n !== 'live-query')
-        expect(lastQuery, 'no warmed query was torn down').toBeGreaterThanOrEqual(0)
-        expect(firstStore, 'no store was torn down').toBeGreaterThanOrEqual(0)
-        expect(lastQuery).toBeLessThan(firstStore)
-
+        expect(h.cleanupOrder, 'no warmed query was torn down').toContain('live-query')
+        // A screen still mounted at sign-out reads these collections; a
+        // cleaned-up source would fail its live queries.
+        expect(h.cleanupOrder.filter(n => n !== 'live-query')).toEqual([])
         for (const store of Object.values(stores)) {
-            expect(store.status).toBe('cleaned-up')
+            expect(store.status).not.toBe('cleaned-up')
+            expect(store.size).toBe(0)
         }
     })
 
