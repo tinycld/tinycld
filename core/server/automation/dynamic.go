@@ -49,6 +49,24 @@ func RegisterFieldsResolver(triggerRef string, r FieldsResolver) {
 	fieldsResolvers[triggerRef] = r
 }
 
+// ExtraFieldFilter reports whether a trigger's declared extra field applies on
+// this deployment. A field it refuses is left out of the catalog, so the rule
+// builder never offers a value the trigger cannot supply here.
+type ExtraFieldFilter func(app core.App, key string) bool
+
+func RegisterExtraFieldFilter(triggerRef string, f ExtraFieldFilter) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	extraFieldFilters[triggerRef] = f
+}
+
+func extraFieldOffered(app core.App, triggerRef, key string) bool {
+	registryMu.RLock()
+	f := extraFieldFilters[triggerRef]
+	registryMu.RUnlock()
+	return f == nil || f(app, key)
+}
+
 func RegisterRuleFilter(triggerRef string, f RuleFilter) {
 	registryMu.Lock()
 	defer registryMu.Unlock()

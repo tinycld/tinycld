@@ -120,14 +120,15 @@ type namedSendGuard struct {
 }
 
 var (
-	registryMu      sync.RWMutex
-	actionHandlers  = map[string]ActionHandler{}
-	ownerResolvers  = map[string]OwnerResolver{}
-	triggerFilters  = map[string]TriggerFilter{}
-	fieldsResolvers = map[string]FieldsResolver{}
-	ruleFilters     = map[string]RuleFilter{}
-	ruleScopes      = map[string]RuleScope{}
-	runObservers    = map[string][]RunObserver{}
+	registryMu        sync.RWMutex
+	actionHandlers    = map[string]ActionHandler{}
+	ownerResolvers    = map[string]OwnerResolver{}
+	triggerFilters    = map[string]TriggerFilter{}
+	fieldsResolvers   = map[string]FieldsResolver{}
+	extraFieldFilters = map[string]ExtraFieldFilter{}
+	ruleFilters       = map[string]RuleFilter{}
+	ruleScopes        = map[string]RuleScope{}
+	runObservers      = map[string][]RunObserver{}
 	// actionRef -> paramKey -> authorizer
 	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
 	// actionRef -> authorizer
@@ -272,6 +273,7 @@ func ResetRegistriesForTest() {
 	ownerResolvers = map[string]OwnerResolver{}
 	triggerFilters = map[string]TriggerFilter{}
 	fieldsResolvers = map[string]FieldsResolver{}
+	extraFieldFilters = map[string]ExtraFieldFilter{}
 	ruleFilters = map[string]RuleFilter{}
 	ruleScopes = map[string]RuleScope{}
 	runObservers = map[string][]RunObserver{}

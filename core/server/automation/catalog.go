@@ -220,6 +220,9 @@ func resolveTrigger(app core.App, pkg string, t TriggerDef) catalogTrigger {
 	}
 	out.Fields = resolveTriggerFields(app, col, t)
 	for _, x := range t.ExtraFields {
+		if !extraFieldOffered(app, out.Ref, x.Key) {
+			continue
+		}
 		out.Fields = append(out.Fields, catalogField{Key: DynamicPrefix + x.Key, Label: x.Label, Type: x.Type})
 	}
 	return out
