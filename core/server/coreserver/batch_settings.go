@@ -9,10 +9,11 @@ import (
 // The batch API runs several record writes in one database transaction; the
 // client's atomic() mutations depend on it. A batch holds the only write
 // connection until it ends, so the timeout is also the longest time one batch
-// can block every other write.
+// can block every other write. It stays at PocketBase's default: a batch that
+// needs longer must do less work for each row, not hold the connection longer.
 const (
 	batchMaxRequests = 1100
-	batchTimeoutSecs = 30
+	batchTimeoutSecs = 3
 	batchMaxBodySize = 8 << 20
 )
 

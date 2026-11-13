@@ -29,7 +29,7 @@ func TestApplyBatchSettings_EnablesBatchWithCoreLimits(t *testing.T) {
 		t.Fatalf("applyBatchSettings: %v", err)
 	}
 
-	want := core.BatchConfig{Enabled: true, MaxRequests: 1100, Timeout: 30, MaxBodySize: 8 << 20}
+	want := core.BatchConfig{Enabled: true, MaxRequests: 1100, Timeout: 3, MaxBodySize: 8 << 20}
 	if got := app.Settings().Batch; got != want {
 		t.Fatalf("batch settings = %+v, want %+v", got, want)
 	}
@@ -91,8 +91,8 @@ func TestBatch_LargestAllowedBatchCompletes(t *testing.T) {
 	}).Test(t)
 	took := time.Since(started)
 	t.Logf("1,100 creates in one batch took %s", took)
-	if took > 15*time.Second {
-		t.Fatalf("1,100 creates took %s; the batch timeout is 30s", took)
+	if took > time.Second {
+		t.Fatalf("1,100 creates took %s; the batch timeout is 3s", took)
 	}
 
 	total, err := app.CountRecords("widgets")
