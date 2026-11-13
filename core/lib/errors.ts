@@ -9,6 +9,10 @@ function getBaseMessage(error: Record<string, unknown>): string {
     let msg = ''
     if (typeof error.message === 'string') msg = error.message
 
+    // A failed atomic write carries the failed operation's message itself;
+    // its cause is the whole-batch error, which only says the batch failed.
+    if (error.name === 'BatchMutationError') return msg
+
     const nested = error.originalError ?? error.cause
     if (isRecord(nested) && typeof nested.message === 'string' && nested.message) {
         msg = nested.message
