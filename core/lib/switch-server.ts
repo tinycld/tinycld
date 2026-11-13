@@ -56,8 +56,8 @@ async function clearPerServerState(): Promise<void> {
 // Why a reload rather than an in-place swap: `pb` follows the address for free
 // (PB_SERVER_ADDR is a live Proxy the SDK re-reads per call), but the pbtsdb
 // collections, the QueryClient and PBTSDBProvider are module-eval singletons
-// bound to the old server, and clearStores() is terminal — nothing re-creates
-// them. Only a fresh module graph rebinds them. On a managed deployment
+// bound to the old server, and nothing re-creates them (clearStores() only
+// evicts their rows). Only a fresh module graph rebinds them. On a managed deployment
 // this is doubly required: each org runs a different build with a different
 // package set, so continuing on the previous bundle would be wrong regardless.
 //

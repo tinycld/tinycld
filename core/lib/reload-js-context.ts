@@ -18,8 +18,8 @@ export class ReloadUnavailableError extends Error {
 // Why that distinction is load-bearing: a server switch points `pb` at the new
 // host via the PB_SERVER_ADDR proxy, but the pbtsdb collections, the QueryClient
 // and PBTSDBProvider are module-eval singletons bound to the OLD server, and
-// nothing re-creates them (clearStores() is terminal — see the 'cleaned-up'
-// skip in pocketbase.ts). Only a fresh module graph rebinds them. So a reload
+// nothing re-creates them (clearStores() only evicts their rows). Only a fresh
+// module graph rebinds them. So a reload
 // that no-ops leaves `pb` on server B while every collection still reads server
 // A — a half-switch that presents as success.
 //
