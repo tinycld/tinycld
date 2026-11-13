@@ -3,6 +3,7 @@ package classifier
 import (
 	"net/http"
 
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -29,6 +30,15 @@ func Register(app core.App, adminOnly func(*core.RequestEvent) error) {
 			}
 			return e.JSON(http.StatusOK, map[string]any{"ok": true, "error": ""})
 		}).BindFunc(adminOnly)
+		// Members cannot read system_settings, so this is how their
+		// settings screens learn whether the feature is on. It exposes only
+		// the boolean, never the key or the status.
+		se.Router.GET("/api/classifier/status", func(e *core.RequestEvent) error {
+			if e.Auth.GetString("role") == "guest" {
+				return e.ForbiddenError("A guest cannot read the classifier status.", nil)
+			}
+			return e.JSON(http.StatusOK, map[string]any{"available": Available(e.App)})
+		}).Bind(apis.RequireAuth())
 		return se.Next()
 	})
 }
