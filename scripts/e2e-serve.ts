@@ -44,6 +44,7 @@ import * as net from 'node:net'
 import * as path from 'node:path'
 import { refreshReportsStub } from '../tests/scripts/scaffold-reports-stub'
 import { stopChildOnFailure } from './e2e-child'
+import { mailListenerEnv } from './e2e-mail-ports'
 import { openE2eOutput, printLogTail } from './e2e-output'
 import { exportWeb } from './export-web'
 import { promoteRelease } from './promote-release'
@@ -214,8 +215,8 @@ function promote(distDir: string, releasesDir: string, releaseId: string): void 
 // plus --dev (mail → LogSender for the email-log e2e helpers) and --typesDir
 // (OnServe runs GenerateSchemas). --releasesDir is THE switch that turns on
 // static serving; without it the server would serve only --publicDir and a
-// proxy-to-Metro would be required. IMAP_ADDR=:1193 matches dev.ts so the
-// IMAP e2e suite finds the listener. --hooksWatch=false: the hooks dir is the
+// proxy-to-Metro would be required. The mail listener ports come from
+// scripts/e2e-mail-ports.ts. --hooksWatch=false: the hooks dir is the
 // workspace's shared server/pb_hooks, and PocketBase restarts itself when a
 // file there changes — a generator run anywhere in the workspace would restart
 // this server mid-run and fail the requests in flight. A run serves the hooks
@@ -246,19 +247,8 @@ function serve(opts: {
         path.join(ROOT, 'core', 'types'),
         'serve',
     ]
-    // Mail listeners bind FIXED ports, so a second instance on the same box
-    // would collide with the first (PB logs "address already in use" and
-    // carries on, but the noise is misleading). Offset them alongside the
-    // HTTP port; the IMAP e2e suite talks to the primary, whose :1193 matches
-    // dev.ts and mail's tests/imap-helpers.ts.
-    const mailEnv = mirrorReleasesFrom
-        ? {
-              IMAP_ADDR: ':1293',
-              IMAPS_ADDR: ':2093',
-              SMTP_ADDR: ':1687',
-              SMTPS_ADDR: ':1466',
-          }
-        : { IMAP_ADDR: ':1193' }
+    // The second instance is the one that mirrors the first's releases.
+    const mailEnv = mailListenerEnv(process.env, mirrorReleasesFrom ? 'second' : 'primary')
     return spawn(PB_BINARY, args, {
         cwd: ROOT,
         stdio: opts.stdio,
