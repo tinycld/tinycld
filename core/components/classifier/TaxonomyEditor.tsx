@@ -41,20 +41,30 @@ function useTaxonomyEditor(app: string, scope: TaxonomyScope, presets: TaxonomyP
         }),
         [rows]
     )
-    // `values` re-syncs the form when the stored taxonomy changes.
+    // Live data re-syncs the form, but never while it saves (each optimistic
+    // write would churn it) and never over a field the user has edited
+    // (keepDirtyValues). Undefined `values` makes react-hook-form skip the reset.
     const {
         control,
         handleSubmit,
         formState: { errors, isSubmitted },
-    } = useForm<TaxonomyFormValues>({ resolver: zodResolver(taxonomySchema), values })
+    } = useForm<TaxonomyFormValues>({
+        resolver: zodResolver(taxonomySchema),
+        values: isReady && !save.isPending ? values : undefined,
+        resetOptions: { keepDirtyValues: true },
+    })
     const { fields, append, remove, move, replace } = useFieldArray({ control, name: 'rows' })
 
     // The preset picker is not part of the saved taxonomy, so it has its own form.
-    const { control: presetControl } = useForm({ defaultValues: { preset: '' } })
+    const { control: presetControl, setValue: setPreset } = useForm({
+        defaultValues: { preset: '' },
+    })
     const presetOptions = presets.map(p => ({ value: p.id, label: p.label }))
     const applyPreset = (id: string) => {
         const preset = presets.find(p => p.id === id)
         if (preset) replace(preset.rows)
+        // Back to empty so choosing the same preset again fires onValueChange.
+        setPreset('preset', '')
     }
     const addRow = () => append(EMPTY_ROW)
     const submit = () => handleSubmit(next => save.mutate(next))()

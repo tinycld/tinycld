@@ -3,16 +3,11 @@ import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
-import { COLOR_PALETTE } from '@tinycld/core/ui/color-picker'
+import { DEFAULT_LABEL_COLOR } from '@tinycld/core/ui/color-picker'
 import { materialize } from 'pbtsdb'
 import { newRecordId } from 'pbtsdb/core'
 import { useMemo } from 'react'
 import type { TaxonomyFormValues } from './taxonomy-schema'
-
-// Same default as the label manager, so a label created here looks like one
-// created there.
-const DEFAULT_LABEL_COLOR =
-    COLOR_PALETTE.find(s => s.hex === '#4A86E8')?.hex ?? COLOR_PALETTE[0].hex
 
 export type TaxonomyScope = 'org' | 'personal'
 
