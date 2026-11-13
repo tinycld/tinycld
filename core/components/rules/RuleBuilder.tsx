@@ -1,6 +1,7 @@
 import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { EmptyState } from '@tinycld/core/components/EmptyState'
+import type { CatalogResponse } from '@tinycld/core/lib/automation/api'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
 import { emptyDraft, recordToDraft } from '@tinycld/core/lib/automation/draft'
 import { extendCatalogForDraft } from '@tinycld/core/lib/automation/form-trigger'
@@ -37,6 +38,8 @@ export interface RuleBuilderProps {
     nextOrder?: number
     /** Seeds a NEW rule's trigger and config (ignored when editing). */
     preset?: BuilderPreset
+    /** Hides catalog entries that do not apply here; must be a stable reference. */
+    filterCatalog?: (catalog: CatalogResponse) => CatalogResponse
 }
 
 // Loads the record being edited (if any). Returns `isReady: true` for the
@@ -82,10 +85,11 @@ function BuilderContent({
     presetPkg,
     nextOrder = 0,
     preset,
+    filterCatalog,
     sessionKey,
 }: Omit<RuleBuilderProps, 'isOpen'> & { sessionKey: number }) {
     const { record, isReady: recordReady } = useEditingRecord(ruleId)
-    const { catalog, isReady: catalogReady } = useAutomationCatalog()
+    const { catalog, isReady: catalogReady } = useAutomationCatalog(filterCatalog)
     const { save } = useRuleMutations()
 
     // ruleId set but the record vanished (deleted while the builder was
@@ -333,6 +337,7 @@ export function RuleBuilder({
     presetPkg,
     nextOrder,
     preset,
+    filterCatalog,
 }: RuleBuilderProps) {
     // Dialog content can outlive a close (close animation, or a
     // caller — Task 7's panel — that mounts one RuleBuilder instance and just
@@ -362,6 +367,7 @@ export function RuleBuilder({
                 presetPkg={presetPkg}
                 nextOrder={nextOrder}
                 preset={preset}
+                filterCatalog={filterCatalog}
                 sessionKey={session.current.count}
             />
         </Dialog>

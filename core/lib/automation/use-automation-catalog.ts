@@ -3,7 +3,15 @@ import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useMemo } from 'react'
 import type { CatalogAction, CatalogResponse, CatalogTrigger } from './api'
 
-export function useAutomationCatalog(): { catalog: CatalogResponse | undefined; isReady: boolean } {
+// filterCatalog lets a screen hide catalog entries that do not apply to its
+// deployment. It must be a stable reference (module scope or memoized) or the
+// catalog is rebuilt on every render.
+export function useAutomationCatalog(
+    filterCatalog?: (catalog: CatalogResponse) => CatalogResponse
+): {
+    catalog: CatalogResponse | undefined
+    isReady: boolean
+} {
     const [catalogCollection] = useStore('automation_catalog')
     // Ordered by ref so the menus built from this catalog are stable. Without
     // it row order is whatever the store hands back, which varies run to run:
@@ -28,7 +36,8 @@ export function useAutomationCatalog(): { catalog: CatalogResponse | undefined; 
             if (row.kind === 'action')
                 actions.push({ ...(def as CatalogAction), available: row.available })
         }
-        return { triggers, actions }
-    }, [rows])
+        const full = { triggers, actions }
+        return filterCatalog ? filterCatalog(full) : full
+    }, [rows, filterCatalog])
     return { catalog, isReady }
 }
