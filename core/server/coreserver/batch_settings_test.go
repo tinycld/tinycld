@@ -103,3 +103,45 @@ func TestBatch_LargestAllowedBatchCompletes(t *testing.T) {
 		t.Fatalf("widgets = %d, want %d", total, count)
 	}
 }
+
+// A batch holds the only write connection for as long as it runs, so a caller
+// with no account must not be able to start one, whatever the rules of the
+// collections in it allow.
+func TestBatch_RefusesACallerThatIsNotSignedIn(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Cleanup()
+	if err := applyBatchSettings(app); err != nil {
+		t.Fatal(err)
+	}
+	requireBatchAuth(app)
+
+	open := ""
+	widgets := core.NewBaseCollection("widgets")
+	widgets.Fields.Add(&core.TextField{Name: "name"})
+	widgets.CreateRule = &open
+	if err := app.Save(widgets); err != nil {
+		t.Fatal(err)
+	}
+
+	(&tests.ApiScenario{
+		Method:                http.MethodPost,
+		URL:                   "/api/batch",
+		Body:                  strings.NewReader(`{"requests":[{"method":"POST","url":"/api/collections/widgets/records","body":{"name":"w"}}]}`),
+		Headers:               map[string]string{"Content-Type": "application/json"},
+		ExpectedStatus:        http.StatusUnauthorized,
+		ExpectedContent:       []string{`"message"`},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+
+	total, err := app.CountRecords("widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 0 {
+		t.Fatalf("widgets = %d, want 0: the batch must not run", total)
+	}
+}

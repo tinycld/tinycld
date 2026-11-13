@@ -924,7 +924,8 @@ A hook that holds a process lock across `e.Next()` must not take it when
 `e.App.IsTransactional()`: the transaction holds the write connection, and a
 request outside it can hold the lock while it waits for that connection.
 
-An OAuth token cannot call the batch API, and read-only mode refuses it.
+A caller with no account and an OAuth token cannot call the batch API, and
+read-only mode refuses it.
 
 Test a hook in a batch with `tests.ApiScenario` against `/api/batch` after
 setting `app.Settings().Batch.Enabled = true` on the test app.

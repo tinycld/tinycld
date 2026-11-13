@@ -81,6 +81,11 @@ var systemFields = map[string]bool{
 // from a package's Register() function to add that package's collections to the
 // audit log. Pass nil for config to use default org resolution and label extraction.
 func RegisterCollection(app *pocketbase.PocketBase, collectionName string, config *CollectionConfig) {
+	bindCollection(app, collectionName, config)
+}
+
+// bindCollection takes core.App so a tests.TestApp can bind the hooks.
+func bindCollection(app core.App, collectionName string, config *CollectionConfig) {
 	if config == nil {
 		config = &CollectionConfig{}
 	}

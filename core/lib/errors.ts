@@ -128,13 +128,29 @@ export interface FormErrorHandler<T extends FieldValues = FieldValues> {
     getValues: () => T
     /** Short label describing what the form was doing, surfaced in telemetry. */
     operation?: string
+    /**
+     * The collection whose fields the form edits. An `atomic()` write needs
+     * it: a field error of a failed row goes on the form only when the row is
+     * of this collection, and to a toast otherwise.
+     */
+    collection?: string
+}
+
+// An atomic write saves rows of several collections, and two of them can have
+// a field of the same name, so the field name alone does not say that an
+// error belongs to the form.
+function belongsToForm(error: unknown, collection: string | undefined): boolean {
+    if (!isRecord(error) || error.name !== 'BatchMutationError') return true
+    return collection !== undefined && error.collection === collection
 }
 
 export function handleMutationErrorsWithForm<T extends FieldValues = FieldValues>(
     form: FormErrorHandler<T>
 ) {
     return (error: unknown) => {
-        const validationErrors = extractValidationErrors(error)
+        const validationErrors = belongsToForm(error, form.collection)
+            ? extractValidationErrors(error)
+            : null
 
         if (validationErrors) {
             const formValues = form.getValues()

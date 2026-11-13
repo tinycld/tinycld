@@ -17,12 +17,26 @@ const (
 )
 
 // RegisterBatchSettings applies the batch settings on every start, so a
-// deployment cannot drift from them: an atomic mutation against a server with
+// restart always puts them back: an atomic mutation against a server with
 // batch off fails for every user. A start that cannot store them fails.
 func RegisterBatchSettings(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		if err := applyBatchSettings(e.App); err != nil {
 			return err
+		}
+		return e.Next()
+	})
+	requireBatchAuth(app)
+}
+
+// requireBatchAuth refuses a batch from a caller with no account. PocketBase
+// leaves the batch route open and lets each operation's collection rules
+// decide, but a batch holds the only write connection while it runs, and that
+// must not be available to an anonymous caller.
+func requireBatchAuth(app core.App) {
+	app.OnBatchRequest().BindFunc(func(e *core.BatchRequestEvent) error {
+		if e.Auth == nil {
+			return e.UnauthorizedError("Sign in to send a batch request.", nil)
 		}
 		return e.Next()
 	})

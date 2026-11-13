@@ -30,6 +30,7 @@ import (
 // RegisterSharedCore instead of Register's own tail. If it should not, record
 // the divergence in the embedder's parity allowlist with a reason.
 var hostHookCounts = map[string]int{
+	"OnBatchRequest":                      1, // a batch needs a signed-in caller (shared, via RegisterSharedCore)
 	"OnBootstrap":                         7,
 	"OnBootstrapClear":                    2, // PocketBase's own __pbCronStop__ and the fork's notify reload guard
 	"OnCollectionAfterCreateError":        1,
