@@ -317,6 +317,22 @@ describe('column fit in the measure', () => {
         it('does not raise a one-line column: it ends in …', () => {
             expect(run({ memo: { minWidth: '5ch' } }).memo?.min).toBeLessThan(cellWord)
         })
+
+        it('holds a sub-account path at its longest word, which ends after a colon', () => {
+            const PATH = 'Software Subscriptions:Design Tools'
+            const pathRow = item('detail', PATH, { memo: PATH, debit: 1200 })
+            const wrap = { whiteSpace: 'normal', minWidth: '5ch' } as const
+            const m = measureColumns({
+                columns: COLUMNS,
+                rows: [pathRow],
+                format: DEFAULT_DISPLAY,
+                levels: GROUPED,
+                fits: { account: wrap, memo: wrap },
+            })
+            const word = textWidth('Subscriptions:', CELL)
+            expect(m.account?.min).toBe(INDENT + INDENT + word + CELL_PADDING / 2 + WORD_MARGIN)
+            expect(m.memo?.min).toBe(word + CELL_PADDING + WORD_MARGIN)
+        })
     })
 
     it('keeps a % for the fit to resolve at the line width', () => {

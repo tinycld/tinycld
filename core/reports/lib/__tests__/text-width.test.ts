@@ -56,4 +56,36 @@ describe('longestWordWidth', () => {
         expect(longestWordWidth('Void reversal', CELL)).toBe(58)
         expect(longestWordWidth('', CELL)).toBe(0)
     })
+
+    it('ends a word after a colon, which stays with the word before it', () => {
+        const name = 'Software Subscriptions:Design Tools'
+        // "Subscriptions:" is the widest word, not "Subscriptions:Design".
+        expect(longestWordWidth(name, CELL)).toBe(textWidth('Subscriptions:', CELL))
+        expect(longestWordWidth(name, BOLD)).toBe(textWidth('Subscriptions:', BOLD))
+        expect(longestWordWidth(name, BOLD)).toBeLessThan(textWidth('Subscriptions:Design', BOLD))
+        // The break is after the colon: "Expenses:" and "Subscriptions", never ":Subscriptions".
+        expect(longestWordWidth('Expenses:Subscriptions', CELL)).toBe(
+            textWidth('Subscriptions', CELL)
+        )
+        expect(longestWordWidth('Incomprehensibilities:Tax', CELL)).toBe(
+            textWidth('Incomprehensibilities:', CELL)
+        )
+        // Every colon in a path ends a word.
+        expect(longestWordWidth('Assets:Current:Receivable', CELL)).toBe(
+            textWidth('Receivable', CELL)
+        )
+    })
+
+    it('measures a name without a colon as before: only white space ends a word', () => {
+        expect(longestWordWidth('Incomprehensibilities Wholesale', CELL)).toBe(
+            textWidth('Incomprehensibilities', CELL)
+        )
+        // No other mark is a break: a slash or a hyphen stays inside its word.
+        expect(longestWordWidth('Meals/Entertainment costs', CELL)).toBe(
+            textWidth('Meals/Entertainment', CELL)
+        )
+        expect(longestWordWidth('Reversal of JE-12345678', CELL)).toBe(
+            textWidth('JE-12345678', CELL)
+        )
+    })
 })

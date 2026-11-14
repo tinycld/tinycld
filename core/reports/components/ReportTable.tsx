@@ -15,6 +15,7 @@ import type { VisibleRow } from '../lib/rows'
 import type { ViewSort } from '../lib/run-client'
 import { stickyIndices } from '../lib/sticky'
 import type { Justify, LayoutSource, LineLayout } from '../lib/table-lines'
+import { breakAfterColons } from '../lib/text-width'
 import type { ResultColumn, ResultRow } from '../lib/types'
 import {
     amountJustify,
@@ -73,13 +74,15 @@ function SortIcon({ kind, isVisible }: { kind: SortIconKind; isVisible: boolean 
     return <Icon size={SORT_ICON_SIZE} color={color} />
 }
 
+// The heading's least width is its longest word, which ends after a colon too.
 function HeadingText({ text, justify }: { text: string; justify: Justify }) {
+    const shown = breakAfterColons(text)
     return (
         <Text
             numberOfLines={2}
             className={`shrink text-xs font-semibold uppercase text-muted-foreground ${TEXT_ALIGN[justify]}`}
         >
-            {text}
+            {shown}
         </Text>
     )
 }

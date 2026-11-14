@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, type Locator, test } from '@playwright/test'
 import { createInvitedUser, skipWithoutReportsStub, waitForTableFit } from './helpers'
 import {
     addColumn,
@@ -13,6 +13,38 @@ import {
     startReport,
     uniqueName,
 } from './reports-helpers'
+
+/**
+ * The words of a label's text, each with its client rects: a word split across lines
+ * has two. White space ends a word, and so does a colon, which stays with the word
+ * before it ("Subscriptions:" then "Design"). A zero-width space (U+200B) is a break
+ * mark, not part of a word.
+ */
+function labelWords(label: Locator) {
+    return label.evaluate(element => {
+        const zeroWidthSpace = String.fromCharCode(0x200b)
+        const wordPattern = new RegExp(`[^\\s:${zeroWidthSpace}]*:|[^\\s:${zeroWidthSpace}]+`, 'g')
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        const found: { word: string; rects: number; width: number; top: number; bottom: number }[] =
+            []
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            for (const match of (node.textContent ?? '').matchAll(wordPattern)) {
+                const range = document.createRange()
+                range.setStart(node, match.index)
+                range.setEnd(node, match.index + match[0].length)
+                const rects = range.getClientRects()
+                found.push({
+                    word: match[0],
+                    rects: rects.length,
+                    width: rects[0]?.width ?? 0,
+                    top: rects[0]?.top ?? 0,
+                    bottom: rects[0]?.bottom ?? 0,
+                })
+            }
+        }
+        return { box: element.getBoundingClientRect().width, found }
+    })
+}
 
 /**
  * Spec v4 column fit set in the builder: a figure is never cut, the report is one
@@ -173,21 +205,7 @@ test.describe('report column fit', () => {
             expect(amountBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(
                 (labelBox?.y ?? 0) + (labelBox?.height ?? 0)
             )
-            // Each word is one DOM range: a word split across lines has two client rects.
-            const words = () =>
-                label.evaluate(element => {
-                    const node = element.firstChild
-                    const text = node?.textContent ?? ''
-                    const box = element.getBoundingClientRect().width
-                    const found = [...text.matchAll(/\S+/g)].map(match => {
-                        const range = document.createRange()
-                        range.setStart(node as Node, match.index)
-                        range.setEnd(node as Node, match.index + match[0].length)
-                        const rects = range.getClientRects()
-                        return { word: match[0], rects: rects.length, width: rects[0]?.width ?? 0 }
-                    })
-                    return { box, found }
-                })
+            const words = () => labelWords(label)
             await expect
                 .poll(async () => (await words()).found.filter(w => w.rects !== 1).map(w => w.word))
                 .toEqual([])
@@ -201,6 +219,81 @@ test.describe('report column fit', () => {
             expect(box).toBeGreaterThanOrEqual(widest)
             // The label wraps: it is narrower than its whole text.
             expect(box).toBeLessThan(found.reduce((sum, w) => sum + w.width, 0))
+        } finally {
+            await close()
+        }
+    })
+
+    test('a wrapping column breaks a path after its colon, which stays on the first line', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptcolon')
+        try {
+            const team = uniqueName('Colon Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            // "Antidisestablishment:Incomprehensibilities" (about 315 px) is wider than a
+            // phone's label room; each of its two parts (about 160 px) is not.
+            const prefix = 'Fitco Antidisestablishment:Incomprehensibilities'
+            await addSales(p, {
+                team,
+                customerPrefix: prefix,
+                count: 1,
+                firstDay: '2026-01-05',
+                firstAmount: 12345,
+                cost: 100,
+                quantity: 1,
+            })
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await addColumn(p, ['cost'])
+            await addColumn(p, ['quantity'])
+            await chooseOption(p, 'report-builder-column-0-fit-wrap', '3')
+            await chooseOption(p, 'report-builder-column-0-fit-min', '6')
+            await saveNewReport(p, uniqueName('Colon'))
+            const label = p
+                .locator('[data-testid^="report-row-d:"]')
+                .first()
+                .locator('div[dir="auto"]')
+            const amount = p
+                .locator('[data-testid^="report-cell-amount-d:"]')
+                .first()
+                .locator('div[dir="auto"]')
+
+            await p.setViewportSize({ width: 390, height: 844 })
+            expect(await waitForTableFit(p)).toBe('auto')
+            // A break mark after the colon does not change the name text matching finds.
+            await expect(p.getByText(`${prefix} 00`, { exact: true })).toBeVisible()
+            // The label's least width is its longest word up to the colon, so the label
+            // shares line 1 with the amount.
+            await expect
+                .poll(async () => {
+                    const labelBox = await label.boundingBox()
+                    const amountBox = await amount.boundingBox()
+                    return (
+                        (amountBox?.y ?? Number.POSITIVE_INFINITY) <
+                        (labelBox?.y ?? 0) + (labelBox?.height ?? 0)
+                    )
+                })
+                .toBe(true)
+            const lines = async () => {
+                const { found } = await labelWords(label)
+                const before = found.find(w => w.word === 'Antidisestablishment:')
+                const after = found.find(w => w.word === 'Incomprehensibilities')
+                return {
+                    splitWords: found.filter(w => w.rects !== 1).map(w => w.word),
+                    // The colon is drawn on the line of the word before it.
+                    colonWithWordBefore: before !== undefined && before.rects === 1,
+                    afterOnNextLine:
+                        before !== undefined &&
+                        after !== undefined &&
+                        after.top >= before.bottom - 1,
+                }
+            }
+            await expect
+                .poll(lines)
+                .toEqual({ splitWords: [], colonWithWordBefore: true, afterOnNextLine: true })
         } finally {
             await close()
         }
