@@ -891,6 +891,45 @@ implement authorization manually. When changing API rules on a collection,
 check whether a Go hook also accesses that collection and update its filters to
 match.
 
+### Hooks inside a transaction
+
+The batch API (`/api/batch`, which the client's `atomic()` uses) is on, and any
+signed-in client can call it. It runs several record writes in one database
+transaction, so every record hook of every package must be correct there.
+Three facts set the rules:
+
+- In a batch, `e.App` is the transaction. An `app` captured by the closure is
+  not: it sees committed rows only, and a write through it waits for the single
+  write connection that the batch holds, until the batch times out.
+- A batch nests its operations. `e.Next()` of one operation returns after all
+  later operations ran.
+- A batch can roll back after every hook returned success (timeout, client
+  disconnect, commit error).
+
+The rules, for every hook that runs before the commit (`OnRecord*Request`,
+`OnRecordCreate/Update/Delete`, their `Execute` forms):
+
+1. **Read and write through `e.App`**, never through a captured `app`. Pass
+   `e.App` to helpers.
+2. **A side effect that leaves the database waits for the commit** — mail,
+   push, a webhook, a background job, a file write, in-memory state. Use an
+   `OnRecordAfter*Success` hook (PocketBase runs it at commit), or
+   `e.App.TxInfo().OnComplete(func(txErr error) error { ... })` and act only
+   when `txErr == nil`. Outside a transaction `e.App.TxInfo()` is nil and the
+   effect can run at once.
+3. **State kept for an after-success hook stays until the commit.** That hook
+   runs after `e.Next()` returned when the request is in a transaction.
+
+A hook that holds a process lock across `e.Next()` must not take it when
+`e.App.IsTransactional()`: the transaction holds the write connection, and a
+request outside it can hold the lock while it waits for that connection.
+
+A caller with no account and an OAuth token cannot call the batch API, and
+read-only mode refuses it.
+
+Test a hook in a batch with `tests.ApiScenario` against `/api/batch` after
+setting `app.Settings().Batch.Enabled = true` on the test app.
+
 ### Registries: how core learns what a package provides
 
 **Core must not name a package.** Not a slug, not a scope, not a collection,

@@ -113,7 +113,19 @@ available in production.
   })
   ```
 - A mutation that fails without an explicit `onError` surfaces a **default error toast + Sentry capture**, so optimistic updates never revert silently. Provide `onError` only to handle the failure better (a form via `handleMutationErrorsWithForm`, inline UI); pass a no-op only when a failure is genuinely fine to swallow, with a comment saying why.
-- For multi-step mutations, yield each Transaction sequentially, or yield an array for parallel execution
+- For multi-step mutations, yield each Transaction sequentially, or yield an array for parallel execution. These are N independent requests: if a later step fails, the earlier steps stay saved.
+- **Atomic mutations** — when a partial result is a defect (a document and its lines, a move between two rows), wrap the writes in `atomic` from `@tinycld/core/lib/mutations`. Every mutation made in the callback goes to the server in one request and one database transaction: all are saved, or none, and every optimistic change rolls back on failure.
+  ```ts
+  const save = useMutation({
+      mutationFn: (values: FormValues) =>
+          atomic(() => {
+              ordersCollection.update(id, draft => { draft.note = values.note })
+              for (const line of values.lines) linesCollection.insert(line)
+          }),
+      onError: handleMutationErrorsWithForm({ setError, getValues, collection: 'orders' }),
+  })
+  ```
+  Give `handleMutationErrorsWithForm` the `collection` the form edits: rows of several collections can have a field of the same name, so a field error of the failed row goes on the form only when that row is of this collection, and to a toast otherwise. The callback is synchronous — never `await` in it; the calls only record the mutations. A mutation that is one atomic write needs no generator. In a generator, `yield atomic(() => { ... })` waits for the one request. `atomic` does not detect a stale editor, a file upload cannot be part of it, and one batch holds at most 1,100 operations.
 - Use `performMutations` from `@tinycld/core/lib/mutations` when you need to await Transactions inside an async function
 - Core collections are configured in `tinycld/core/lib/pocketbase.ts`; each feature registers its own in `collections.ts` (via the manifest's `collections.register`). **Every collection is `syncMode: 'on-demand'` + `realtime: 'query'`** (core spreads a shared `onDemand` const into each one): only the rows a live query asks for enter the store, and the realtime subscription carries that same filter, so a filtered view stays correct across updates — the server emits a delete to a subscription a row leaves. Nothing holds a whole collection in memory, so a `.toArray` / `readCollectionCached` read answers "among the rows we hold", not "among all rows".
 - `relations` declares where PocketBase's expanded records are filed — rows never carry `expand`, so read a relation from its own collection with `materialize()` or a join inside the live query that needs it. A join or `materialize()` over an on-demand target **batch-loads that target by id, once per query** (not once per row), and nothing at all for rows already held. A filed row lives only as long as a parent row in the store files it: it leaves when the last parent filing it leaves, or when a parent fetch no longer expands it. Add `alwaysFetchRelations` (expanded on every request of the parent) only when the parent collection is the sole path by which rows enter the target — a target no query of its own loads; otherwise it only enlarges every parent request. `collection.fetchRelations('<path>')` expands a path for the one query that reads through it.
