@@ -2,6 +2,7 @@ package classifier
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,18 +75,81 @@ func TestTaxonomyLabel_CannotBeDeletedWhileReferenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := core.NewRecord(tax)
-	row.Set("app", "mail")
+	row.Set("app", "posts")
 	row.Set("name", "Junk")
 	row.Set("label", label.Id)
 	row.Set("assign_when", "junk")
 	if err := app.Save(row); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.Delete(label); err == nil {
+	err = app.Delete(label)
+	if err == nil {
 		t.Fatal("deleting a referenced label succeeded")
+	}
+	// The web client matches this text (the REST layer words it "required
+	// relation reference") to explain the refusal.
+	if !strings.Contains(err.Error(), "required reference") {
+		t.Fatalf("unexpected error text: %v", err)
 	}
 	if _, err := app.FindRecordById("classifier_labels", row.Id); err != nil {
 		t.Fatalf("taxonomy row gone: %v", err)
+	}
+}
+
+// Labels and taxonomy rows both cascade from their user, while a taxonomy row
+// blocks deleting its label. Deleting a user must still succeed, and remove both.
+func TestDeleteUser_RemovesPersonalTaxonomyAndLabel(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	labels := core.NewBaseCollection("labels")
+	labels.Fields.Add(&core.TextField{Name: "name", Required: true})
+	labels.Fields.Add(&core.RelationField{Name: "user", CollectionId: users.Id, CascadeDelete: true, MaxSelect: 1})
+	if err := app.Save(labels); err != nil {
+		t.Fatal(err)
+	}
+	tax := core.NewBaseCollection("classifier_labels")
+	tax.Fields.Add(&core.TextField{Name: "name", Required: true})
+	tax.Fields.Add(&core.RelationField{Name: "label", Required: true, CollectionId: labels.Id, MaxSelect: 1})
+	tax.Fields.Add(&core.RelationField{Name: "user", CollectionId: users.Id, CascadeDelete: true, MaxSelect: 1})
+	if err := app.Save(tax); err != nil {
+		t.Fatal(err)
+	}
+
+	user := core.NewRecord(users)
+	user.SetEmail("tax@example.com")
+	user.SetPassword("password123")
+	if err := app.Save(user); err != nil {
+		t.Fatal(err)
+	}
+	label := core.NewRecord(labels)
+	label.Set("name", "Mine")
+	label.Set("user", user.Id)
+	if err := app.Save(label); err != nil {
+		t.Fatal(err)
+	}
+	row := core.NewRecord(tax)
+	row.Set("name", "Mine")
+	row.Set("label", label.Id)
+	row.Set("user", user.Id)
+	if err := app.Save(row); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Delete(user); err != nil {
+		t.Fatalf("deleting the user failed: %v", err)
+	}
+	if _, err := app.FindRecordById("classifier_labels", row.Id); err == nil {
+		t.Error("taxonomy row survived the user")
+	}
+	if _, err := app.FindRecordById("labels", label.Id); err == nil {
+		t.Error("personal label survived the user")
 	}
 }
 

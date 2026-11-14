@@ -47,37 +47,43 @@ export function useTaxonomy(app: string, scope: TaxonomyScope) {
 
     const save = useMutation({
         mutationFn: mutation(function* (values: TaxonomyFormValues) {
-            const byName = new Map(scopeLabels.map(l => [l.name.trim().toLowerCase(), l.id]))
+            const byName = new Map(scopeLabels.map(l => [l.name.trim().toLowerCase(), l]))
+            // A label another taxonomy row already points at cannot back a new
+            // row: the (app, user, label) index allows one row per label.
+            const usedLabelIds = new Set(rows.map(r => r.labelId))
             const keep = new Set<string>()
             for (const [order, row] of values.rows.entries()) {
                 const name = row.name.trim()
                 const key = name.toLowerCase()
-                let labelId = byName.get(key)
-                if (!labelId) {
-                    labelId = newRecordId()
-                    yield labels.insert({
-                        id: labelId,
-                        name,
-                        color: DEFAULT_LABEL_COLOR,
-                        user: userId,
-                    })
-                    byName.set(key, labelId)
-                }
                 const existing = rows.find(r => r.name.trim().toLowerCase() === key)
                 if (existing) {
+                    // The label stays: a member may have renamed it since, and
+                    // re-resolving by name could move the row to a different label.
                     keep.add(existing.id)
                     yield taxonomy.update(existing.id, d => {
                         d.name = name
-                        d.label = labelId
                         d.assign_when = row.assignWhen.trim()
                         d.auto_action = row.autoAction
                         d.order = order
                     })
                 } else {
+                    const found = byName.get(key)
+                    const reusable = found && !usedLabelIds.has(found.id) ? found : undefined
+                    const labelId = reusable?.id ?? newRecordId()
+                    if (!reusable) {
+                        yield labels.insert({
+                            id: labelId,
+                            name,
+                            color: DEFAULT_LABEL_COLOR,
+                            user: userId,
+                        })
+                    }
+                    usedLabelIds.add(labelId)
                     yield taxonomy.insert({
                         id: newRecordId(),
                         app,
-                        name,
+                        // The reused label's spelling, so the chip and the badge match.
+                        name: reusable?.name ?? name,
                         label: labelId,
                         assign_when: row.assignWhen.trim(),
                         auto_action: row.autoAction,

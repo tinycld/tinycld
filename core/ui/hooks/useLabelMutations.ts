@@ -1,10 +1,15 @@
 import { and, eq } from '@tanstack/db'
 import { useAuth } from '@tinycld/core/lib/auth'
-import { captureException } from '@tinycld/core/lib/errors'
+import { captureException, errorToString } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
+import { notify } from '@tinycld/core/lib/notify/dispatcher'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
 import { newRecordId } from 'pbtsdb/core'
+
+const REQUIRED_REFERENCE = /required (relation )?reference/i
+const LABEL_IN_USE_MESSAGE =
+    'This label is used by AI classification. Remove it from the AI classification labels first.'
 
 export function useLabelMutations() {
     const [labelsCollection, assignmentsCollection] = useStore('labels', 'label_assignments')
@@ -57,7 +62,26 @@ export function useLabelMutations() {
         mutationFn: mutation(function* (labelId: string) {
             yield labelsCollection.delete(labelId)
         }),
-        onError,
+        onError: (error: unknown) => {
+            // PocketBase refuses the delete when a required relation still points
+            // at the label; its generic text does not say what to do.
+            if (REQUIRED_REFERENCE.test(errorToString(error))) {
+                notify.emit({
+                    event: 'mutation.error',
+                    title: "The label wasn't deleted",
+                    body: LABEL_IN_USE_MESSAGE,
+                    data: { operation: 'labels.delete', error: errorToString(error) },
+                })
+                return
+            }
+            onError(error)
+            notify.emit({
+                event: 'mutation.error',
+                title: 'Something went wrong',
+                body: errorToString(error),
+                data: { operation: 'labels.delete', error: errorToString(error) },
+            })
+        },
     })
 
     const assignLabel = useMutation({
