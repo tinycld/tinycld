@@ -315,7 +315,7 @@ function BuilderFooter({
                 />
             </View>
             <Dialog.CancelButton onPress={onCancel} />
-            <Button onPress={onSave} disabled={isSaving} size="sm">
+            <Button onPress={onSave} disabled={isSaving} size="sm" testID="rule-builder-save">
                 {isSaving ? <ButtonSpinner /> : null}
                 <ButtonText>Save</ButtonText>
             </Button>

@@ -317,6 +317,24 @@ const label_assignments = newCollection('label_assignments', {
     ...indexing,
 })
 
+const classifier_labels = newCollection('classifier_labels', {
+    ...onDemand,
+    relations: { label: labels, user: users },
+    ...indexing,
+})
+
+const classifications = newCollection('classifications', {
+    omitOnInsert: ['created'],
+    ...onDemand,
+    relations: { user: users, classifier_label: classifier_labels },
+    ...indexing,
+})
+
+const classifier_usage = newCollection('classifier_usage', {
+    ...onDemand,
+    ...indexing,
+})
+
 const org_pkg_access = newCollection('org_pkg_access', {
     omitOnInsert: ['created', 'updated'],
     ...onDemand,
@@ -533,6 +551,9 @@ const coreStores = {
     user_preferences,
     labels,
     label_assignments,
+    classifier_labels,
+    classifications,
+    classifier_usage,
     org_pkg_access,
     pkg_registry,
     pkg_build,

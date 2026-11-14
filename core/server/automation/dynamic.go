@@ -24,9 +24,19 @@ type DynamicField struct {
 	Options []string
 }
 
-// FieldsResolver returns a rule's dynamic fields for a record, from the
-// rule's trigger_config. It must not error: a missing value is absent.
-type FieldsResolver func(app core.App, config map[string]any, record *core.Record) []DynamicField
+// FieldsResolver returns a rule's dynamic fields for a record. owner is the
+// rule's owner for a personal rule and "" for an org rule, so a value that
+// depends on the user (is the sender in MY contacts) is offered only where
+// there is one user to answer for. It must not error: a missing value is
+// absent.
+type FieldsResolver func(app core.App, owner string, config map[string]any, record *core.Record) []DynamicField
+
+func ruleOwnerForFields(scope, owner string) string {
+	if scope == "personal" {
+		return owner
+	}
+	return ""
+}
 
 // RuleFilter reports whether a rule, by its trigger_config, wants a record —
 // a web form rule wants only its own form's submissions. Unlike a
@@ -37,6 +47,24 @@ func RegisterFieldsResolver(triggerRef string, r FieldsResolver) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	fieldsResolvers[triggerRef] = r
+}
+
+// ExtraFieldFilter reports whether a trigger's declared extra field applies on
+// this deployment. A field it refuses is left out of the catalog, so the rule
+// builder never offers a value the trigger cannot supply here.
+type ExtraFieldFilter func(app core.App, key string) bool
+
+func RegisterExtraFieldFilter(triggerRef string, f ExtraFieldFilter) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	extraFieldFilters[triggerRef] = f
+}
+
+func extraFieldOffered(app core.App, triggerRef, key string) bool {
+	registryMu.RLock()
+	f := extraFieldFilters[triggerRef]
+	registryMu.RUnlock()
+	return f == nil || f(app, key)
 }
 
 func RegisterRuleFilter(triggerRef string, f RuleFilter) {
@@ -84,14 +112,14 @@ func ruleAllowed(app core.App, triggerRef string, config map[string]any, record 
 	return f == nil || record == nil || f(app, config, record)
 }
 
-func dynamicFields(app core.App, triggerRef string, config map[string]any, record *core.Record) []DynamicField {
+func dynamicFields(app core.App, triggerRef, owner string, config map[string]any, record *core.Record) []DynamicField {
 	registryMu.RLock()
 	r := fieldsResolvers[triggerRef]
 	registryMu.RUnlock()
 	if r == nil || record == nil {
 		return nil
 	}
-	return r(app, config, record)
+	return r(app, owner, config, record)
 }
 
 func dynamicValues(fields []DynamicField) map[string]any {

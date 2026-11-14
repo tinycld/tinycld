@@ -57,5 +57,13 @@ export function useSystemSettings(
         onError: options.onError,
     })
 
-    return { byKey, upsert, isReady }
+    const remove = useMutation({
+        mutationFn: mutation(function* (key: string) {
+            const existing = byKey.get(key)
+            if (existing) yield systemSettings.delete(existing.id)
+        }),
+        onError: options.onError,
+    })
+
+    return { byKey, upsert, remove, isReady }
 }

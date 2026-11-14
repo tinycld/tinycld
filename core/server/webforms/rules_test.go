@@ -31,7 +31,7 @@ func TestFormFieldsMapsKindsAndValues(t *testing.T) {
 	f := newFixture(t, rulesDef)
 	sub := storeForTest(t, f, map[string]any{"name": "Ada", "age": 36, "ok": true, "role": "dev"}, upload{"files.cv", "cv.pdf", "application/pdf", []byte("%PDF-1.4\n%%EOF\n")})
 	got := map[string]automation.DynamicField{}
-	for _, d := range formFields(f.app, map[string]any{"form": f.form.Id}, sub) {
+	for _, d := range formFields(f.app, "", map[string]any{"form": f.form.Id}, sub) {
 		got[d.Key] = d
 	}
 	if got["name"].Value != "Ada" || got["name"].Type != "text" {

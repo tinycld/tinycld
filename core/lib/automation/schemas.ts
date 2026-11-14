@@ -86,6 +86,21 @@ function checkActionParams(
     return paramKeys
 }
 
+function checkExtraFields(
+    errors: string[],
+    pkgSlug: string,
+    triggerId: string,
+    extraFields: { key: string }[] = []
+) {
+    for (const x of extraFields) {
+        if (!/^[a-z][a-z0-9_]*$/.test(x.key)) {
+            errors.push(
+                `${pkgSlug}: trigger '${triggerId}' extra field '${x.key}' must be snake_case`
+            )
+        }
+    }
+}
+
 /**
  * Structural validation of a package's automation definitions. Collection and
  * column EXISTENCE is not checked here — the package's own typecheck enforces
@@ -120,6 +135,7 @@ export function validateDefinitions(
                     `${pkgSlug}: trigger '${t.id}' has an empty fields list — omit fields to expose all columns`
                 )
             }
+            checkExtraFields(errors, pkgSlug, t.id, t.extraFields)
         }
     }
     const actionIds = new Set<string>()

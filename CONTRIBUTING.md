@@ -246,6 +246,7 @@ message prefixes — the `pkg` attribute replaces them.
 
 ## Scripts Reference
 - `pnpm run dev` starts Expo + PocketBase together (generator runs first). It reuses whatever is in `tinycld/server/pb_data` — it does not seed.
+- Dev and e2e servers build with `-tags classifierfake`, so AI classification uses a local fake (key `test-key`; put `[jev:<label>]` in a subject to choose a label). Set `TINYCLD_CLASSIFIER_REAL=1` to call OpenRouter.
 - `pnpm run db:reset` wipes `tinycld/server/pb_data`, re-runs migrations, and seeds a test user + org. **Run this once on a fresh checkout to get something to log in with.** It prints a boxed login summary at the end (see "Logging in for local dev" below).
 - `pnpm run db:seed` seeds into the current database without wiping it; also prints the login summary.
 - `pnpm run typecheck` runs `tinycld-pkg typecheck` (tsc for this member).

@@ -21,6 +21,8 @@ import (
 	"tinycld.org/core/autoupgrade"
 	"tinycld.org/core/backup"
 	"tinycld.org/core/changesignal"
+	"tinycld.org/core/classifier"
+	_ "tinycld.org/core/classifier/fakeprovider"
 	"tinycld.org/core/forms"
 	"tinycld.org/core/groups"
 	"tinycld.org/core/logging"
@@ -489,6 +491,11 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	// package Register, so with no packages linked this serves an empty result
 	// rather than failing.
 	search.Register(app)
+
+	// AI classification: the admin "verify key" route. The fake provider is
+	// imported for its classifierfake-tagged init, which swaps the default
+	// provider in dev and e2e builds only.
+	classifier.Register(app, requireAdmin)
 
 	// Data-free change signals (topic collection/<name>) after each committed
 	// record write. Live reports and live view collections listen to them.

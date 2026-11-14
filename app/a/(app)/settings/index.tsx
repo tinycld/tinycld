@@ -31,6 +31,7 @@ import {
     ShieldAlert,
     ShieldCheck,
     Sliders,
+    Sparkles,
     Tag,
     User,
     Users,
@@ -115,6 +116,7 @@ function PackageAccountLinks() {
         <SettingsLink
             key={`${group.pkgSlug}:${panel.slug}`}
             label={panel.label}
+            testID={`settings-account-${group.pkgSlug}-${panel.slug}`}
             onPress={() =>
                 router.push(
                     orgHref('settings/account/[...section]', {
@@ -200,6 +202,7 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
                             <SettingsLink
                                 key={panel.slug}
                                 label={panel.label}
+                                testID={`settings-org-${group.pkgSlug}-${panel.slug}`}
                                 onPress={() =>
                                     router.push(
                                         orgHref('settings/[...section]', {
@@ -257,6 +260,12 @@ const CORE_SYSTEM_LINKS = [
     },
     { label: 'Web Push', route: 'settings/web-push', keyPrefix: 'vapid.', Icon: Bell },
     { label: 'Mail Sending', route: 'settings/mail-sending', keyPrefix: 'mail.', Icon: Send },
+    {
+        label: 'AI classification',
+        route: 'settings/ai-classification',
+        keyPrefix: 'classifier.',
+        Icon: Sparkles,
+    },
 ] as const
 
 function SystemSettings({ isVisible }: { isVisible: boolean }) {
@@ -286,6 +295,7 @@ function SystemSettings({ isVisible }: { isVisible: boolean }) {
                 <SettingsLink
                     key={route}
                     label={label}
+                    testID={`settings-system-${route.split('/').pop()}`}
                     onPress={() => router.push(orgHref(route))}
                     icon={<Icon size={20} color={foregroundColor} />}
                 />
@@ -294,6 +304,7 @@ function SystemSettings({ isVisible }: { isVisible: boolean }) {
                 <SettingsLink
                     key={`${group.pkgSlug}:${panel.slug}`}
                     label={`${group.packageName} — ${panel.label}`}
+                    testID={`settings-system-${group.pkgSlug}-${panel.slug}`}
                     onPress={() =>
                         router.push(
                             orgHref('settings/system/[...section]', {
@@ -355,16 +366,19 @@ function SettingsLink({
     label,
     onPress,
     icon,
+    testID,
 }: {
     label: string
     onPress: () => void
     icon: React.ReactNode
+    testID?: string
 }) {
     const mutedColor = useThemeColor('muted-foreground')
 
     return (
         <Pressable
             onPress={onPress}
+            testID={testID}
             className="flex-row items-center justify-between px-4 py-3.5"
             style={({ pressed }) => [pressed && { opacity: 0.7 }]}
         >
