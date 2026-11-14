@@ -108,6 +108,8 @@ func call(ctx context.Context, app core.App, cfg Config, taxonomy []TaxonomyLabe
 func post(ctx context.Context, app core.App, cfg Config, payload []byte, taxonomy []TaxonomyLabel, estimate float64) (Result, *Failure) {
 	resp, err := providerFor(app).Decide(ctx, cfg.APIKey, payload)
 	if err != nil {
+		// The key travels in a header, never in the error text.
+		log.WarnContext(ctx, "classifier transport error", "err", err)
 		// Nothing proves the request was not billed, so the estimate counts.
 		return Result{}, &Failure{Code: "transport_error", Retryable: true, CostUSD: estimate}
 	}

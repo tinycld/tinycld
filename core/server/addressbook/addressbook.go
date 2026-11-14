@@ -40,7 +40,13 @@ func IsKnown(ctx context.Context, app core.App, userID, email string) (known boo
 	if l == nil {
 		return false, false
 	}
-	known, err := l(ctx, app, userID, strings.ToLower(strings.TrimSpace(email)))
+	email = strings.ToLower(strings.TrimSpace(email))
+	// Contacts may have no email, so "" would match them; an empty sender is
+	// unknown, not known.
+	if email == "" {
+		return false, false
+	}
+	known, err := l(ctx, app, userID, email)
 	if err != nil {
 		log.WarnContext(ctx, "address book lookup failed", "err", err)
 		return false, false

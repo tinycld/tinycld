@@ -20,4 +20,23 @@ test('admin enters a key, verifies it, and sees month spend', async ({ page }) =
     await expect(page.getByTestId('classifier-verify-result')).toHaveText('Connected')
     await expect(page.getByTestId('classifier-status')).toHaveCount(0)
     await expect(page.getByTestId('classifier-month-spend')).toContainText('calls')
+
+    // Typing a new key disables Verify until it is saved.
+    await page.getByTestId('classifier-api-key').fill('unsaved')
+    await expect(page.getByTestId('classifier-verify')).toBeDisabled()
+    await expect(page.getByTestId('classifier-unsaved-key-hint')).toBeVisible()
+    await page.getByTestId('classifier-api-key').fill('')
+    await expect(page.getByTestId('classifier-verify')).toBeEnabled()
+
+    // Removing the key turns the feature off.
+    await page.getByTestId('classifier-remove-key').click()
+    await expect(page.getByTestId('classifier-remove-key')).toHaveCount(0)
+    await expect(page.getByTestId('classifier-verify')).toBeDisabled()
+    await expect(page.getByTestId('classifier-api-key')).toHaveAttribute('placeholder', 'sk-or-…')
+
+    // Later specs rely on a stored key.
+    await page.getByTestId('classifier-api-key').fill('test-key')
+    await page.getByTestId('classifier-save').click()
+    await expect(page.getByTestId('classifier-save')).toBeDisabled()
+    await expect(page.getByTestId('classifier-remove-key')).toBeVisible()
 })

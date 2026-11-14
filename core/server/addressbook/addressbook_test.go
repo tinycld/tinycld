@@ -30,3 +30,16 @@ func TestIsKnown(t *testing.T) {
 		t.Fatal("lookup error: want ok=false")
 	}
 }
+
+func TestIsKnownEmptyEmailSkipsLookup(t *testing.T) {
+	ResetForTest()
+	t.Cleanup(ResetForTest)
+	called := false
+	RegisterLookup(func(_ context.Context, _ core.App, _, _ string) (bool, error) {
+		called = true
+		return true, nil
+	})
+	if known, ok := IsKnown(context.Background(), nil, "u", "  "); ok || known || called {
+		t.Fatalf("empty email: want unknown without lookup, got known=%v ok=%v called=%v", known, ok, called)
+	}
+}

@@ -114,8 +114,44 @@ function VerifyResult({ result }: { result: VerifyResponse | undefined }) {
     )
 }
 
+function UnsavedKeyHint({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return (
+        <Text
+            testID="classifier-unsaved-key-hint"
+            className="text-muted-foreground"
+            style={{ fontSize: 13 }}
+        >
+            Save the key before you verify it. Verify tests the saved key.
+        </Text>
+    )
+}
+
+function RemoveKeyButton({
+    isVisible,
+    isPending,
+    onPress,
+}: {
+    isVisible: boolean
+    isPending: boolean
+    onPress: () => void
+}) {
+    if (!isVisible) return null
+    return (
+        <ServerActionButton
+            testID="classifier-remove-key"
+            onPress={onPress}
+            isDisabled={isPending}
+            variant="outline"
+            size="sm"
+        >
+            <ButtonText>Remove key</ButtonText>
+        </ServerActionButton>
+    )
+}
+
 export function ClassifierPanel() {
-    const { byKey, upsert } = useSystemSettings('classifier')
+    const { byKey, upsert, remove } = useSystemSettings('classifier')
     const usage = useClassifierUsage()
     const verify = useClassifierVerify()
     const status = byKey.get('classifier.status')?.value || 'ok'
@@ -136,6 +172,7 @@ export function ClassifierPanel() {
     })
     const onSubmit = useClassifierSave(form, upsert)
     const hasKey = byKey.has('classifier.api_key')
+    const hasUnsavedKey = form.watch('apiKey') !== ''
     return (
         <Panel label="AI classification">
             <PanelIntro>
@@ -181,11 +218,17 @@ export function ClassifierPanel() {
             <ServerActionButton
                 testID="classifier-verify"
                 onPress={verify.run}
-                isDisabled={!hasKey || verify.isPending}
+                isDisabled={!hasKey || hasUnsavedKey || verify.isPending}
                 size="sm"
             >
                 <ButtonText>{verify.isPending ? 'Verifying…' : 'Verify connection'}</ButtonText>
             </ServerActionButton>
+            <UnsavedKeyHint isVisible={hasUnsavedKey} />
+            <RemoveKeyButton
+                isVisible={hasKey}
+                isPending={remove.isPending}
+                onPress={() => remove.mutate('classifier.api_key')}
+            />
             <VerifyResult result={verify.result} />
         </Panel>
     )
