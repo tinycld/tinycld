@@ -15,6 +15,7 @@ import {
     rowLayout,
     type SidePart,
 } from '../lib/table-lines'
+import { breakAfterColons } from '../lib/text-width'
 import type { ResultColumn, ResultRow, RowKind } from '../lib/types'
 import {
     CARET_SIZE,
@@ -236,13 +237,18 @@ function labelTone(kind: RowKind): string {
 // longest word; if the estimate is short, the word is clipped, as CSS does.
 const WHOLE_WORDS = 'web:break-normal'
 
+// Only a text that may wrap gets a break mark after its colons (text-width.ts
+// breakAfterColons), so a one-line text copies and reads as the plain text.
+const wrappedText = (text: string, lines: number) => (lines > 1 ? breakAfterColons(text) : text)
+
 function LabelText({ row, text, lines = 1 }: { row: ResultRow; text: string; lines?: number }) {
+    const shown = wrappedText(text, lines)
     return (
         <Text
             numberOfLines={lines}
             className={`min-w-0 flex-1 text-sm ${WHOLE_WORDS} ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`}
         >
-            {text}
+            {shown}
         </Text>
     )
 }
@@ -371,12 +377,12 @@ export function RowCell({
 }: RowCellProps) {
     const { row } = item
     const display = cellDisplay(column, row, item.cells[column.id], format)
+    const isFigure = isFigureColumn(column)
+    // A figure is never wrapped (column-measure.ts wholeMeasure): a time keeps its colon whole.
+    const shown = isFigure ? display.text : wrappedText(display.text, lines)
     const text = (
-        <Text
-            numberOfLines={lines}
-            className={cellTextClass(display, justify, row.kind, isFigureColumn(column))}
-        >
-            {display.text}
+        <Text numberOfLines={lines} className={cellTextClass(display, justify, row.kind, isFigure)}>
+            {shown}
         </Text>
     )
     const testID = `${isCopy ? 'report-sticky-cell' : 'report-cell'}-${column.id}-${row.id}`

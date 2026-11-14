@@ -60,7 +60,26 @@ export function textWidth(text: string, style: TextStyle): number {
     return Math.ceil(sum * FONT_PX[style.size])
 }
 
+// A word ends at white space or after a colon, which stays with the word before it,
+// so "Subscriptions:Design" is two words. breakAfterColons lets the drawn text
+// break at the same place.
+const WORD = /[^\s:]*:|[^\s:]+/g
+
 /** The widest word: the least width a text can wrap into without cutting a word. */
 export function longestWordWidth(text: string, style: TextStyle): number {
-    return Math.max(0, ...text.split(/\s+/).map(word => textWidth(word, style)))
+    const words = text.match(WORD) ?? []
+    return Math.max(0, ...words.map(word => textWidth(word, style)))
+}
+
+const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b)
+
+/**
+ * The text as a wrapping cell draws it: a zero-width space after each colon that
+ * is not followed by white space. A colon itself never lets a line break before a letter
+ * (Unicode line breaking, UAX #14 LB29), the zero-width space does (LB8) on web,
+ * iOS and Android, so the text breaks where longestWordWidth ends a word. Draw
+ * only: measure and name the plain text.
+ */
+export function breakAfterColons(text: string): string {
+    return text.replace(/:(?=\S)/g, `:${ZERO_WIDTH_SPACE}`)
 }
