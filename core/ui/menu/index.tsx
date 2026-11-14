@@ -221,11 +221,15 @@ function MenuItem({
     indent,
     testID,
 }: MenuItemProps) {
-    const { close } = usePopoverContext()
+    const { close, focusTrigger } = usePopoverContext()
+    // The focus goes to the trigger first: this row leaves the page as the
+    // menu closes, and a dialog the row opens keeps whatever held the focus
+    // to hand it back on close.
     const select = useCallback(() => {
+        focusTrigger()
         onSelect?.()
         close()
-    }, [onSelect, close])
+    }, [focusTrigger, onSelect, close])
     return (
         <MenuRow
             role="menuitem"

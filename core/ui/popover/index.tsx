@@ -51,6 +51,14 @@ interface PopoverContextValue {
     subSlot: HTMLElement | null
     /** The surface's DOM node on web, for roving focus. */
     surfaceNode: () => HTMLElement | null
+    /**
+     * Web: moves the focus back to the trigger (or, when the trigger takes no
+     * focus, to what held it when the surface opened). A menu row calls it
+     * before its action, because the row leaves the page as the surface closes:
+     * a dialog the action opens would otherwise find the focus on the page body
+     * and hand it back there. A no-op in a sheet, which holds the page inert.
+     */
+    focusTrigger: () => void
 }
 
 const PopoverContext = createContext<PopoverContextValue | null>(null)
@@ -258,7 +266,20 @@ function SHEET_CONTEXT(isOpen: boolean, close: () => void): PopoverContextValue 
         surfaceRect: null,
         subSlot: null,
         surfaceNode: () => null,
+        focusTrigger: () => {},
     }
+}
+
+// Native skips it: there `focus()` is not a no-op (it sends the view a focus
+// command), and the page-body fallback it guards against is a browser behavior.
+function focusOpener(anchor: PopoverAnchor, opener: HTMLElement | null) {
+    if (Platform.OS !== 'web') return
+    const trigger = isPoint(anchor) ? null : (anchor.current as unknown as HTMLElement | null)
+    if (trigger && trigger.tabIndex >= 0) {
+        trigger.focus()
+        return
+    }
+    if (opener?.isConnected && opener !== document.body) opener.focus()
 }
 
 type PressableChildProps = { onPress?: (e: unknown) => void; ref?: React.Ref<ViewInstance> }
@@ -361,7 +382,7 @@ function OpenPopoverLayer({
 }: PopoverLayerProps) {
     const viewportWidth = useWindowSizeStore(s => s.width)
     const viewportHeight = useWindowSizeStore(s => s.height)
-    const [anchorRect, setAnchorRect] = useState<Rect | null>(null)
+    const [measured, setMeasured] = useState<{ anchor: Rect; viewport: Size } | null>(null)
     const [size, setSize] = useState<Size | null>(null)
     const [surfaceRect, setSurfaceRect] = useState<Rect | null>(null)
     const [subSlot, setSubSlot] = useState<HTMLElement | null>(null)
@@ -377,13 +398,23 @@ function OpenPopoverLayer({
     // Measure the anchor before first paint, on open and again on resize. A
     // menu opened from the keyboard or by a parent flipping `isOpen` never
     // touched its trigger, so the measurement cannot live in a click handler.
-    const measureAnchor = useCallback(() => {
+    // A layout effect keyed on the viewport, not a listener on its store: a
+    // resize that crosses a breakpoint re-renders the page around the trigger,
+    // and the store's listeners run before React commits that render, so a
+    // listener measured the trigger where it was. This runs after that commit.
+    // The anchor is kept with the viewport it was measured in, so placement
+    // never pairs a new viewport with an old anchor.
+    useLayoutEffect(() => {
+        const viewport = { width: viewportWidth, height: viewportHeight }
         if (isPoint(anchor)) {
-            setAnchorRect({
-                x: anchor.x,
-                y: anchor.y + ANDROID_STATUS_BAR_OFFSET,
-                width: 0,
-                height: 0,
+            setMeasured({
+                anchor: {
+                    x: anchor.x,
+                    y: anchor.y + ANDROID_STATUS_BAR_OFFSET,
+                    width: 0,
+                    height: 0,
+                },
+                viewport,
             })
             return
         }
@@ -391,15 +422,27 @@ function OpenPopoverLayer({
         if (!node) return
         if (Platform.OS === 'web') {
             const rect = (node as unknown as HTMLElement).getBoundingClientRect()
-            setAnchorRect({ x: rect.left, y: rect.top, width: rect.width, height: rect.height })
+            setMeasured({
+                anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+                viewport,
+            })
             return
         }
         node.measureInWindow((x, y, w, h) => {
-            setAnchorRect({ x, y: y + ANDROID_STATUS_BAR_OFFSET, width: w, height: h })
+            setMeasured({
+                anchor: { x, y: y + ANDROID_STATUS_BAR_OFFSET, width: w, height: h },
+                viewport,
+            })
         })
-    }, [anchor])
-    useLayoutEffect(measureAnchor, [measureAnchor])
-    useLayoutEffect(() => useWindowSizeStore.subscribe(measureAnchor), [measureAnchor])
+    }, [anchor, viewportWidth, viewportHeight])
+
+    // What held the focus as the surface opened, read before the surface's
+    // own focus handling (a passive effect) moves it.
+    const openerRef = useRef<HTMLElement | null>(null)
+    useLayoutEffect(() => {
+        if (Platform.OS === 'web') openerRef.current = document.activeElement as HTMLElement | null
+    }, [])
+    const focusTrigger = useCallback(() => focusOpener(anchor, openerRef.current), [anchor])
 
     const updateSize = useCallback((w: number, h: number) => {
         setSize(prev => (prev?.width === w && prev.height === h ? prev : { width: w, height: h }))
@@ -439,15 +482,15 @@ function OpenPopoverLayer({
 
     const placed = useMemo(
         () =>
-            anchorRect
+            measured
                 ? placePopover({
-                      anchor: anchorRect,
+                      anchor: measured.anchor,
                       size,
-                      viewport: { width: viewportWidth, height: viewportHeight },
+                      viewport: measured.viewport,
                       placement,
                   })
                 : null,
-        [anchorRect, size, viewportWidth, viewportHeight, placement]
+        [measured, size, placement]
     )
 
     // Publish where the surface landed, for submenus. After the position is
@@ -512,8 +555,9 @@ function OpenPopoverLayer({
                 Platform.OS === 'web'
                     ? (surfaceRef.current as unknown as HTMLElement | null)
                     : null,
+            focusTrigger,
         }),
-        [close, surfaceRect, subSlot]
+        [close, surfaceRect, subSlot, focusTrigger]
     )
 
     const surfaceStyle = {

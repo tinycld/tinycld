@@ -69,8 +69,9 @@ export function ShortcutButton({
     const a11y = shortcutA11yProps(shortcut.keys, hint, accessibilityHint)
     const ActionButton = serverAction ? ServerActionButton : Button
 
+    // A disabled button's shortcut does nothing, so its tooltip must not offer it.
     return (
-        <Tooltip label={`${label} ${hint.text}`}>
+        <Tooltip label={`${label} ${hint.text}`} isVisible={!isDisabled}>
             <ActionButton
                 {...a11y}
                 onPress={onPress}
