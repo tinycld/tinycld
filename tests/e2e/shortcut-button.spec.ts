@@ -72,11 +72,19 @@ test.describe('shortcut buttons', () => {
         await expect(hint).toBeHidden()
     })
 
-    test('the tooltip and aria-keyshortcuts name the shortcut', async () => {
+    // A disabled button's shortcut does nothing, so its tooltip must not offer
+    // it: the empty name keeps Create disabled until a name is typed.
+    test('the tooltip and aria-keyshortcuts name the shortcut, only while the button is enabled', async () => {
         await openNamePrompt()
         const submit = page.getByTestId('app-password-name-submit')
-        await expect(submit).toHaveAttribute('aria-keyshortcuts', ARIA_KEYS)
         const tooltip = page.locator('.tinycld-tooltip', { has: submit })
+        await expect(submit).toBeDisabled()
+        await expect(tooltip).toHaveCount(1)
+        await expect(tooltip).not.toHaveAttribute('data-tooltip')
+
+        await page.getByPlaceholder(NAME_PLACEHOLDER).fill('Thunderbird')
+        await expect(submit).toBeEnabled()
+        await expect(submit).toHaveAttribute('aria-keyshortcuts', ARIA_KEYS)
         await expect(tooltip).toHaveAttribute('data-tooltip', `Create ${HINT}`)
     })
 

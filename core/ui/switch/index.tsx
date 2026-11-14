@@ -1,7 +1,7 @@
 'use client'
 import { tva } from '@gluestack-ui/utils/nativewind-utils'
 import React from 'react'
-import { Pressable, type PressableProps, View } from 'react-native'
+import { Platform, Pressable, type PressableProps, View } from 'react-native'
 
 const trackStyle = tva({
     base: 'flex-row items-center justify-start w-[44px] h-[28px] rounded-full px-[3px] bg-border data-[checked=true]:bg-primary data-[checked=true]:justify-end data-[disabled=true]:opacity-40 data-[invalid=true]:border-2 data-[invalid=true]:border-danger web:cursor-pointer',
@@ -31,6 +31,7 @@ export const Switch = React.forwardRef<React.ComponentRef<typeof Pressable>, Swi
             isInvalid,
             className,
             accessibilityLabel,
+            onKeyDown,
             ...rest
         },
         ref
@@ -47,6 +48,17 @@ export const Switch = React.forwardRef<React.ComponentRef<typeof Pressable>, Swi
             onValueChange?.(next)
         }
 
+        // Space toggles a switch (WAI-ARIA). react-native-web's Pressable presses on
+        // Space only for a button role, so the switch role answers it here; Enter
+        // already presses it. preventDefault keeps Space from scrolling the page.
+        const handleKeyDown: PressableProps['onKeyDown'] = event => {
+            onKeyDown?.(event)
+            if (Platform.OS !== 'web' || event.defaultPrevented) return
+            if (event.nativeEvent.key !== ' ') return
+            event.preventDefault()
+            onPress()
+        }
+
         const dataChecked = checked ? 'true' : 'false'
         const dataDisabled = isDisabledFinal ? 'true' : 'false'
         const dataInvalid = isInvalid ? 'true' : 'false'
@@ -61,6 +73,7 @@ export const Switch = React.forwardRef<React.ComponentRef<typeof Pressable>, Swi
                 aria-disabled={isDisabledFinal}
                 disabled={isDisabledFinal}
                 onPress={onPress}
+                onKeyDown={handleKeyDown}
                 data-checked={dataChecked}
                 data-disabled={dataDisabled}
                 data-invalid={dataInvalid}
