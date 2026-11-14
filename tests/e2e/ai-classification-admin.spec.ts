@@ -34,6 +34,21 @@ test('admin enters a key, verifies it, and sees month spend', async ({ page }) =
     await expect(page.getByTestId('classifier-verify')).toBeDisabled()
     await expect(page.getByTestId('classifier-api-key')).toHaveAttribute('placeholder', 'sk-or-…')
 
+    // The automatic action threshold persists across leaving and reopening the panel.
+    const threshold = page.getByTestId('classifier-auto-action-threshold')
+    await expect(threshold).toHaveValue('0.9')
+    await threshold.fill('0.95')
+    await page.getByTestId('classifier-save').click()
+    await expect(page.getByTestId('classifier-save')).toBeDisabled()
+    await page.getByTestId('nav-settings').click()
+    await page.getByTestId('settings-index').waitFor({ state: 'visible' })
+    await page.getByTestId('settings-system-ai-classification').click()
+    await expect(threshold).toHaveValue('0.95')
+    await threshold.fill('0.9')
+    await page.getByTestId('classifier-save').click()
+    await expect(page.getByTestId('classifier-save')).toBeDisabled()
+    await expect(threshold).toHaveValue('0.9')
+
     // Later specs rely on a stored key.
     await page.getByTestId('classifier-api-key').fill('test-key')
     await page.getByTestId('classifier-save').click()

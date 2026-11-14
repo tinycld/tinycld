@@ -15,9 +15,13 @@ const (
 	KeyFullThreshold = "classifier.full_evidence_threshold"
 	KeyStatus        = "classifier.status"
 
-	defaultBudget        = 5.0
-	defaultFullThreshold = 0.7
-	StatusOK             = "ok"
+	KeyAutoActionThreshold = "classifier.auto_action_threshold"
+
+	defaultBudget              = 5.0
+	defaultFullThreshold       = 0.7
+	defaultAutoActionThreshold = 0.9
+	minAutoActionThreshold     = 0.5
+	StatusOK                   = "ok"
 )
 
 var (
@@ -30,6 +34,9 @@ type Config struct {
 	Status        string
 	Budget        float64
 	FullThreshold float64
+	// AutoActionThreshold is the confidence an app needs before it acts on a
+	// result by itself (for example archiving).
+	AutoActionThreshold float64
 }
 
 func floatSetting(app core.App, key string, fallback float64) float64 {
@@ -47,10 +54,22 @@ func LoadConfig(app core.App) Config {
 		Budget:        floatSetting(app, KeyBudget, defaultBudget),
 		FullThreshold: floatSetting(app, KeyFullThreshold, defaultFullThreshold),
 	}
+	cfg.AutoActionThreshold = autoActionThreshold(app)
 	if cfg.Status == "" {
 		cfg.Status = StatusOK
 	}
 	return cfg
+}
+
+// autoActionThreshold falls back to the default for an out-of-range value
+// instead of clamping: below 0.5 the model's pick is little better than a
+// coin flip, so a bad entry must not lower the bar for automatic actions.
+func autoActionThreshold(app core.App) float64 {
+	v, err := strconv.ParseFloat(syscfg.Get(app, KeyAutoActionThreshold), 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < minAutoActionThreshold || v > 1 {
+		return defaultAutoActionThreshold
+	}
+	return v
 }
 
 // Available reports whether classification may run: an admin has entered a

@@ -51,6 +51,11 @@ function useClassifierSave(
                 value: String(Number(data.fullThreshold)),
                 isSecret: false,
             })
+            await upsert.mutateAsync({
+                key: 'classifier.auto_action_threshold',
+                value: String(Number(data.autoActionThreshold)),
+                isSecret: false,
+            })
             if (data.apiKey) {
                 await upsert.mutateAsync({
                     key: 'classifier.api_key',
@@ -167,6 +172,10 @@ export function ClassifierPanel() {
                 byKey.get('classifier.full_evidence_threshold')?.value ||
                     CLASSIFIER_DEFAULTS.fullThreshold
             ),
+            autoActionThreshold: String(
+                byKey.get('classifier.auto_action_threshold')?.value ||
+                    CLASSIFIER_DEFAULTS.autoActionThreshold
+            ),
         },
         mode: 'onChange',
     })
@@ -208,6 +217,17 @@ export function ClassifierPanel() {
                 keyboardType="decimal-pad"
                 testID="classifier-full-threshold"
             />
+            <TextInput
+                control={form.control}
+                name="autoActionThreshold"
+                label="Automatic action threshold"
+                keyboardType="decimal-pad"
+                testID="classifier-auto-action-threshold"
+            />
+            <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
+                Apps take their automatic action (such as archiving) only at or above this
+                confidence.
+            </Text>
             <MonthSpend costUsd={usage.costUsd} calls={usage.calls} budget={storedBudget} />
             <SaveRow
                 testID="classifier-save"

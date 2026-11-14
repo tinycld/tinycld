@@ -24,7 +24,10 @@ func CreateCollections(t testing.TB, app core.App) {
 
 	tax := core.NewBaseCollection("classifier_labels")
 	tax.Fields.Add(&core.TextField{Name: "app", Required: true})
-	tax.Fields.Add(&core.RelationField{Name: "label", Required: true, CollectionId: labels.Id, MaxSelect: 1})
+	tax.Fields.Add(&core.TextField{Name: "name", Required: true})
+	// No cascade: a referenced label must not be deletable, or any member
+	// could remove an org option by deleting the core label.
+	tax.Fields.Add(&core.RelationField{Name: "label", Required: true, CollectionId: labels.Id, MaxSelect: 1, CascadeDelete: false})
 	tax.Fields.Add(&core.TextField{Name: "assign_when", Required: true})
 	tax.Fields.Add(&core.BoolField{Name: "auto_action"})
 	tax.Fields.Add(&core.NumberField{Name: "order"})

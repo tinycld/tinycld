@@ -23,13 +23,18 @@ migrate(
             deleteRule: `(${ADMIN} && user = "") || (${MEMBER} && user = @request.auth.id)`,
             fields: [
                 { id: 'cll_app', name: 'app', type: 'text', required: true, max: 64 },
+                // The taxonomy owns the option name the model sees. Taking it from
+                // the core label would let any member rename it for everyone.
+                { id: 'cll_name', name: 'name', type: 'text', required: true, max: 60 },
                 {
                     id: 'cll_label',
                     name: 'label',
                     type: 'relation',
                     required: true,
                     collectionId: labels.id,
-                    cascadeDelete: true,
+                    // Not cascade: any member can delete a core label, which would
+                    // silently remove an org option. A referenced label is undeletable.
+                    cascadeDelete: false,
                     maxSelect: 1,
                 },
                 { id: 'cll_assign_when', name: 'assign_when', type: 'text', required: true, max: 2000 },
@@ -47,6 +52,7 @@ migrate(
             indexes: [
                 'CREATE INDEX `idx_classifier_labels_scope` ON `classifier_labels` (`app`, `user`, `order`)',
                 'CREATE UNIQUE INDEX `idx_classifier_labels_label` ON `classifier_labels` (`app`, `user`, `label`)',
+                'CREATE UNIQUE INDEX `idx_classifier_labels_name` ON `classifier_labels` (`app`, `user`, `name`)',
             ],
         })
         app.save(taxonomy)

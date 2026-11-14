@@ -4,7 +4,6 @@ import { useAuth } from '@tinycld/core/lib/auth'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { DEFAULT_LABEL_COLOR } from '@tinycld/core/ui/color-picker'
-import { materialize } from 'pbtsdb'
 import { newRecordId } from 'pbtsdb/core'
 import { useMemo } from 'react'
 import type { TaxonomyFormValues } from './taxonomy-schema'
@@ -24,15 +23,7 @@ export function useTaxonomy(app: string, scope: TaxonomyScope) {
                 .from({ t: taxonomy })
                 .where(({ t }) => and(eq(t.app, app), eq(t.user, userId)))
                 .orderBy(({ t }) => t.order)
-                .select(({ t }) => ({
-                    ...t,
-                    labelRow: materialize(
-                        query
-                            .from({ l: labels })
-                            .where(({ l }) => eq(l.id, t.label))
-                            .findOne()
-                    ),
-                })),
+                .select(({ t }) => ({ ...t })),
     })
     // Stable identity: the editor resets its form whenever this changes.
     const rows = useMemo(
@@ -40,7 +31,7 @@ export function useTaxonomy(app: string, scope: TaxonomyScope) {
             data.map(r => ({
                 id: r.id,
                 labelId: r.label,
-                name: r.labelRow?.name ?? '',
+                name: r.name,
                 assignWhen: r.assign_when,
                 autoAction: r.auto_action,
             })),
@@ -72,10 +63,12 @@ export function useTaxonomy(app: string, scope: TaxonomyScope) {
                     })
                     byName.set(key, labelId)
                 }
-                const existing = rows.find(r => r.labelId === labelId)
+                const existing = rows.find(r => r.name.trim().toLowerCase() === key)
                 if (existing) {
                     keep.add(existing.id)
                     yield taxonomy.update(existing.id, d => {
+                        d.name = name
+                        d.label = labelId
                         d.assign_when = row.assignWhen.trim()
                         d.auto_action = row.autoAction
                         d.order = order
@@ -84,6 +77,7 @@ export function useTaxonomy(app: string, scope: TaxonomyScope) {
                     yield taxonomy.insert({
                         id: newRecordId(),
                         app,
+                        name,
                         label: labelId,
                         assign_when: row.assignWhen.trim(),
                         auto_action: row.autoAction,

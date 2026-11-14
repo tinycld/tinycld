@@ -15,6 +15,10 @@ export const classifierSchema = z.object({
         value => Number(value) >= 0 && Number(value) <= 1,
         'Use a value from 0 to 1'
     ),
+    autoActionThreshold: numberText.refine(
+        value => Number(value) >= 0.5 && Number(value) <= 1,
+        'Use a value from 0.5 to 1'
+    ),
 })
 
 export type ClassifierFormValues = z.infer<typeof classifierSchema>
@@ -22,4 +26,5 @@ export type ClassifierFormValues = z.infer<typeof classifierSchema>
 export const CLASSIFIER_DEFAULTS = {
     budget: 5,
     fullThreshold: 0.7,
+    autoActionThreshold: 0.9,
 }

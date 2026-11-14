@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"tinycld.org/core/classifier/classifiertest"
 	"tinycld.org/core/syscfg"
@@ -39,6 +40,52 @@ func TestLoadConfig_RejectsNaNBudget(t *testing.T) {
 		if got := LoadConfig(app).Budget; got != 5 {
 			t.Fatalf("%s -> %v", v, got)
 		}
+	}
+}
+
+func TestLoadConfig_AutoActionThreshold(t *testing.T) {
+	cases := map[string]float64{
+		"": 0.9, "0.4": 0.9, "0.5": 0.5, "0.75": 0.75, "1": 1, "1.1": 0.9,
+		"abc": 0.9, "NaN": 0.9, "Inf": 0.9, "-Inf": 0.9,
+	}
+	for in, want := range cases {
+		app := newApp(t, map[string]string{KeyAPIKey: "k", KeyAutoActionThreshold: in})
+		if got := LoadConfig(app).AutoActionThreshold; got != want {
+			t.Errorf("threshold %q = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// A taxonomy row's label relation is required and non-cascade, so PocketBase
+// must refuse to delete a label a taxonomy row still points at.
+func TestTaxonomyLabel_CannotBeDeletedWhileReferenced(t *testing.T) {
+	app := newApp(t, nil)
+	labels, err := app.FindCollectionByNameOrId("labels")
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := core.NewRecord(labels)
+	label.Set("name", "Junk")
+	if err := app.Save(label); err != nil {
+		t.Fatal(err)
+	}
+	tax, err := app.FindCollectionByNameOrId("classifier_labels")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := core.NewRecord(tax)
+	row.Set("app", "mail")
+	row.Set("name", "Junk")
+	row.Set("label", label.Id)
+	row.Set("assign_when", "junk")
+	if err := app.Save(row); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Delete(label); err == nil {
+		t.Fatal("deleting a referenced label succeeded")
+	}
+	if _, err := app.FindRecordById("classifier_labels", row.Id); err != nil {
+		t.Fatalf("taxonomy row gone: %v", err)
 	}
 }
 
