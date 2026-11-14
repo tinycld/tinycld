@@ -1,5 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { COLOR_PALETTE, ColorPickerGrid } from '@tinycld/core/ui/color-picker'
+import { ColorPickerGrid, DEFAULT_LABEL_COLOR } from '@tinycld/core/ui/color-picker'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { Divider } from '@tinycld/core/ui/divider'
 import { type Control, useForm, zodResolver } from '@tinycld/core/ui/form'
@@ -69,12 +69,6 @@ function FieldError({ message }: { message: string | undefined }) {
     if (!message) return null
     return <Text className="px-3 pb-1 text-xs text-danger">{message}</Text>
 }
-
-// Default new-label color: Cornflower Blue. Picked from the shared
-// COLOR_PALETTE rather than the deleted LABEL_COLORS[0] (which was
-// red — too alarming as a first-impression default).
-const DEFAULT_LABEL_COLOR =
-    COLOR_PALETTE.find(s => s.hex === '#4A86E8')?.hex ?? COLOR_PALETTE[0].hex
 
 function LabelRow({
     label,

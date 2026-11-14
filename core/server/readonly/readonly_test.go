@@ -54,6 +54,12 @@ func TestMiddlewareRefusesWritesWhileActive(t *testing.T) {
 	}
 }
 
+// A batch is one POST that carries many writes. The mode refuses it as a
+// whole, before any operation in it runs.
+func TestMiddlewareRefusesABatchWhileActive(t *testing.T) {
+	scenario(t, http.MethodPost, "/api/batch", true, http.StatusServiceUnavailable, []string{`"code":"read_only"`})
+}
+
 func TestMiddlewareLetsReadsThrough(t *testing.T) {
 	for _, m := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
 		scenario(t, m, "/api/x", true, http.StatusOK, nil)

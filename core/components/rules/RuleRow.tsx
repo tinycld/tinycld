@@ -44,6 +44,7 @@ export function RuleRow({ rule, catalog, canEdit, lastRun, showScopeBadge }: Rul
 
     return (
         <View
+            testID="rule-row"
             className="flex-row items-center gap-3 px-3 py-3 border-b border-border"
             style={{ opacity: missingPkg ? 0.6 : 1 }}
         >
@@ -202,7 +203,11 @@ function RuleRowMenu({
     return (
         <Menu
             trigger={
-                <Pressable className="p-1.5 rounded-full" accessibilityLabel="More actions">
+                <Pressable
+                    className="p-1.5 rounded-full"
+                    accessibilityLabel="More actions"
+                    testID="rule-row-menu"
+                >
                     <MoreVertical size={16} color={mutedColor} />
                 </Pressable>
             }
@@ -218,6 +223,7 @@ function RuleRowMenu({
             <Menu.Separator />
             <Menu.Item
                 label="Delete"
+                testID="rule-row-delete"
                 icon={Trash2}
                 onSelect={onRequestDelete}
                 isDisabled={!canEdit}

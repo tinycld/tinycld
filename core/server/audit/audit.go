@@ -81,6 +81,11 @@ var systemFields = map[string]bool{
 // from a package's Register() function to add that package's collections to the
 // audit log. Pass nil for config to use default org resolution and label extraction.
 func RegisterCollection(app *pocketbase.PocketBase, collectionName string, config *CollectionConfig) {
+	bindCollection(app, collectionName, config)
+}
+
+// bindCollection takes core.App so a tests.TestApp can bind the hooks.
+func bindCollection(app core.App, collectionName string, config *CollectionConfig) {
 	if config == nil {
 		config = &CollectionConfig{}
 	}
@@ -101,8 +106,10 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 			return err
 		}
 		record, info := e.Record, requestInfoOf(e.RequestEvent)
-		logWhenWritable(app, collectionName, record.Id, func() {
-			logCreate(app, record, info, collectionName, extractLabel)
+		afterCommit(e.App, func() {
+			logWhenWritable(app, collectionName, record.Id, func() {
+				logCreate(app, record, info, collectionName, extractLabel)
+			})
 		})
 		return nil
 	})
@@ -113,8 +120,10 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 			return err
 		}
 		record, info := e.Record, requestInfoOf(e.RequestEvent)
-		logWhenWritable(app, collectionName, record.Id, func() {
-			logUpdate(app, record, original, info, collectionName, extractLabel, redact)
+		afterCommit(e.App, func() {
+			logWhenWritable(app, collectionName, record.Id, func() {
+				logUpdate(app, record, original, info, collectionName, extractLabel, redact)
+			})
 		})
 		return nil
 	})
@@ -127,9 +136,31 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 			return err
 		}
 		info := requestInfoOf(e.RequestEvent)
-		logWhenWritable(app, collectionName, recordID, func() {
-			logDelete(app, recordID, label, snapshot, info, collectionName)
+		afterCommit(e.App, func() {
+			logWhenWritable(app, collectionName, recordID, func() {
+				logDelete(app, recordID, label, snapshot, info, collectionName)
+			})
 		})
+		return nil
+	})
+}
+
+// afterCommit runs write for a change that is certain. Outside a transaction
+// the change is committed when the request hook's e.Next() returns, so write
+// runs at once. Inside one (a batch request) the change can still roll back
+// after every hook returned, so write waits for the commit and is dropped on
+// a rollback: an audit row for a change that does not exist is worse than a
+// late one.
+func afterCommit(app core.App, write func()) {
+	txInfo := app.TxInfo()
+	if txInfo == nil {
+		write()
+		return
+	}
+	txInfo.OnComplete(func(txErr error) error {
+		if txErr == nil {
+			write()
+		}
 		return nil
 	})
 }

@@ -270,7 +270,7 @@ test.describe('reports: paged groups', () => {
     }) => {
         // The default 1600 px window: page 1 is shorter than the list, so the list
         // asks for page 2 at once, and that request is refused.
-        const { teams, firstSale } = await openPagedTeams(page, 'PgRetry', {
+        const { teams, firstSale, releaseReruns } = await openPagedTeams(page, 'PgRetry', {
             smallTeams: SMALL_TEAMS,
             pageRows: PAGE_ROWS,
             refuseFirstNextPage: true,
@@ -284,6 +284,7 @@ test.describe('reports: paged groups', () => {
         expect(totals(await rowIds(page))).toEqual([])
 
         await page.getByTestId('report-loading-more-retry').click()
+        releaseReruns()
         const rows = await scrollThrough(page, firstSale)
         expect(rows.some(row => row.text.includes(teams[2] ?? '?'))).toBe(true)
         expect(rows[rows.length - 1]?.id).toMatch(/^total/)

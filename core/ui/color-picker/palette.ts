@@ -125,3 +125,8 @@ export const COLOR_PALETTE: readonly Swatch[] = [
     { hex: '#20124D', label: 'Dark purple 3' },
     { hex: '#4C1130', label: 'Dark magenta 3' },
 ]
+
+// Default new-label color: Cornflower Blue. Picked from the palette rather
+// than its first entry (black), which is a poor first-impression default.
+export const DEFAULT_LABEL_COLOR =
+    COLOR_PALETTE.find(s => s.hex === '#4A86E8')?.hex ?? COLOR_PALETTE[0].hex

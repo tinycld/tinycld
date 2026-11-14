@@ -329,3 +329,42 @@ func TestCatalogCarriesRelationMatchAndCreate(t *testing.T) {
 		t.Fatalf("catalog field lost the relation options: %+v", p.Field)
 	}
 }
+
+func TestResolveTrigger_ExtraFields(t *testing.T) {
+	app, _ := catalogApp(t)
+	got := resolveTrigger(app, "cat", TriggerDef{
+		ID: "item-created", Collection: "cat_items", On: "create",
+		ExtraFields: []ExtraField{{Key: "author_known", Label: "Author is known", Type: "boolean"}},
+	})
+	last := got.Fields[len(got.Fields)-1]
+	if last.Key != "fields.author_known" || last.Type != "boolean" || last.Label != "Author is known" {
+		t.Fatalf("%+v", last)
+	}
+}
+
+func TestCatalogExtraFieldFilterHidesRefusedFields(t *testing.T) {
+	app, _ := catalogApp(t)
+	defs := &Defs{Packages: []PackageDefs{{Slug: "cat", Triggers: []TriggerDef{{
+		ID: "item-created", Label: "An item is created", Collection: "cat_items", On: "create",
+		ExtraFields: []ExtraField{
+			{Key: "always", Label: "Always", Type: "text"},
+			{Key: "optional", Label: "Optional", Type: "boolean"},
+		},
+	}}}}}
+	keys := func() map[string]bool {
+		out := map[string]bool{}
+		for _, tr := range NewEngine(app, defs).buildCatalog(app).Triggers {
+			for _, f := range tr.Fields {
+				out[f.Key] = true
+			}
+		}
+		return out
+	}
+	if got := keys(); !got["fields.always"] || !got["fields.optional"] {
+		t.Fatalf("no filter: %v", got)
+	}
+	RegisterExtraFieldFilter("cat:item-created", func(_ core.App, key string) bool { return key != "optional" })
+	if got := keys(); !got["fields.always"] || got["fields.optional"] {
+		t.Fatalf("filtered: %v", got)
+	}
+}

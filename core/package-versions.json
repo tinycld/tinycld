@@ -30,7 +30,7 @@
     "@shopify/flash-list": "github:nathanstitt/flash-list#265c951ddb7781b29345902b8a20d048a769b682",
     "lucide-react-native": "1.52.0",
     "react-hook-form": "7.89.0",
-    "pbtsdb": "2.1.1",
+    "pbtsdb": "2.1.3",
     "@tanstack/db": "0.12.1",
     "@tanstack/react-db": "0.5.5",
     "@tanstack/react-query": "5.104.1",

@@ -1,6 +1,7 @@
+import { BatchMutationError } from 'pbtsdb'
 import { ClientResponseError } from 'pocketbase'
 import { describe, expect, it } from 'vitest'
-import { extractValidationErrors } from '../../lib/errors'
+import { errorToString, extractValidationErrors } from '../../lib/errors'
 
 // The error a pbtsdb insert/update rejects with is the SDK's raw
 // ClientResponseError, whose `.response` is the parsed PocketBase error BODY:
@@ -58,5 +59,31 @@ describe('extractValidationErrors', () => {
 
     it('returns null for a plain Error', () => {
         expect(extractValidationErrors(new Error('boom'))).toBeNull()
+    })
+})
+
+describe('a failed atomic write', () => {
+    // What pbtsdb throws: the failed operation's PocketBase error body in
+    // `response`, and the whole-batch ClientResponseError as `cause`.
+    const batchError = (response: { message: string; data: Record<string, unknown> }) =>
+        new BatchMutationError({
+            index: 1,
+            collection: 'widgets',
+            recordId: 'rec123',
+            response: { status: 400, ...response },
+            cause: new Error('Batch transaction failed.'),
+        })
+
+    it('maps the field errors of the failed operation', () => {
+        const error = batchError({
+            message: 'Failed to create record.',
+            data: { title: { code: 'validation_required', message: 'Cannot be blank.' } },
+        })
+        expect(extractValidationErrors(error)).toEqual({ title: 'Cannot be blank.' })
+    })
+
+    it('reports the message of the failed operation, not of the batch wrapper', () => {
+        const error = batchError({ message: 'The period is closed through 2026-06-30.', data: {} })
+        expect(errorToString(error)).toBe('The period is closed through 2026-06-30.')
     })
 })

@@ -9,9 +9,41 @@ import { log } from '@tinycld/core/lib/logger'
 import { notify } from '@tinycld/core/lib/notify/dispatcher'
 import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
 import { writesAvailability } from '@tinycld/core/lib/writes-available'
+import { batch } from 'pbtsdb'
+
+// A generator yields what it must wait for: a pbtsdb Transaction (one request
+// for one row) or a Promise (an atomic() batch), alone or as an array to wait
+// for in parallel.
+type MutationYield = Transaction<Record<string, unknown>> | Promise<unknown>
+type TransactionYield = MutationYield | MutationYield[]
+
+const settled = (value: MutationYield): Promise<unknown> =>
+    'when' in value ? value.when('settled') : value
+
+// Drive a Transaction-yielding generator to completion, awaiting each yielded
+// Transaction or Promise (or array, in parallel) before resuming. Takes an
+// already-created iterator so callers that must invoke the generator fn exactly
+// once (to detect whether it IS a generator by inspecting its return value) can
+// hand the result straight in without re-invoking.
+async function drainTransactions<TResult>(
+    gen: Generator<TransactionYield, TResult, void>
+): Promise<TResult> {
+    let result = gen.next()
+    while (!result.done) {
+        const value = result.value
+        if (Array.isArray(value)) {
+            await Promise.all(value.map(settled))
+        } else {
+            await settled(value)
+        }
+        result = gen.next()
+    }
+
+    return result.value
+}
 
 /**
- * Awaits each yielded Transaction sequentially, or an array of Transactions in parallel.
+ * Awaits each yielded Transaction or Promise sequentially, or an array of them in parallel.
  *
  * @example
  * ```ts
@@ -21,41 +53,36 @@ import { writesAvailability } from '@tinycld/core/lib/writes-available'
  * })
  * ```
  */
-type TransactionYield =
-    | Transaction<Record<string, unknown>>
-    | Transaction<Record<string, unknown>>[]
-
-// Drive a Transaction-yielding generator to completion, awaiting each yielded
-// Transaction (or array, in parallel) before resuming. Takes an already-created
-// iterator so callers that must invoke the generator fn exactly once (to detect
-// whether it IS a generator by inspecting its return value) can hand the result
-// straight in without re-invoking.
-async function drainTransactions<TResult>(
-    gen: Generator<TransactionYield, TResult, void>
-): Promise<TResult> {
-    let result = gen.next()
-    while (!result.done) {
-        const value = result.value
-        if (Array.isArray(value)) {
-            await Promise.all(value.map(tx => tx.when('settled')))
-        } else {
-            await value.when('settled')
-        }
-        result = gen.next()
-    }
-
-    return result.value
-}
-
 export async function performMutations<TResult = void>(
-    fn: () => Generator<
-        Transaction<Record<string, unknown>> | Transaction<Record<string, unknown>>[],
-        TResult,
-        void
-    >
+    fn: () => Generator<TransactionYield, TResult, void>
 ): Promise<TResult> {
     return drainTransactions(fn())
 }
+
+/**
+ * Runs the collection mutations made in `fn` as one request and one database
+ * transaction: all of them are saved, or none. Use it when a partial result
+ * is a defect (a document and its lines, a transfer between two rows).
+ *
+ * `fn` is synchronous: the calls only record the mutations, and the one
+ * request is sent when `fn` returns. Never `await` inside it.
+ *
+ * @example
+ * ```ts
+ * const save = useMutation({
+ *     mutationFn: (values: FormValues) =>
+ *         atomic(() => {
+ *             ordersCollection.update(id, draft => { draft.note = values.note })
+ *             for (const line of values.lines) linesCollection.insert(line)
+ *         }),
+ *     onError: handleMutationErrorsWithForm({ setError, getValues }),
+ * })
+ * ```
+ *
+ * It does not detect a stale editor; it only makes the write atomic. File
+ * uploads cannot be part of it.
+ */
+export const atomic = batch
 
 // A generator's return value is an iterator: it has both `.next()` and is
 // iterable via Symbol.iterator. Duck-typing on the RETURNED object is robust
@@ -77,11 +104,7 @@ function isTransactionGenerator(
 
 type GeneratorMutationFn<TData, TVariables> = (
     variables: TVariables
-) => Generator<
-    Transaction<Record<string, unknown>> | Transaction<Record<string, unknown>>[],
-    TData,
-    void
->
+) => Generator<TransactionYield, TData, void>
 
 type GeneratorMutationOptions<TData = unknown, TError = Error, TVariables = void> = Omit<
     UseMutationOptions<TData, TError, TVariables>,

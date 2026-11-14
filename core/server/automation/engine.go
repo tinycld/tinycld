@@ -392,7 +392,7 @@ func (e *Engine) dispatch(ctx context.Context, ev event) {
 		if !ruleAllowed(e.app, ev.TriggerRef, config, ev.Record) {
 			continue // not this rule's record (another form): no run row
 		}
-		fields := dynamicFields(e.app, ev.TriggerRef, config, ev.Record)
+		fields := dynamicFields(e.app, ev.TriggerRef, ruleOwnerForFields(rule.GetString("scope"), rule.GetString("owner")), config, ev.Record)
 		dyn := dynamicValues(fields)
 		start := time.Now()
 
