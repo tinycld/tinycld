@@ -419,6 +419,11 @@ test.describe('report rows per width', () => {
             }
             // Sets the chip's value with the keyboard, holds the run it starts until the
             // focus is back on the chip, then lets the run land as itself or as a failure.
+            // A failure stays in place until the returned function is called: a report on
+            // screen runs again after each change to the rows it read, and another worker
+            // adds sales to the same collection, so a rerun can start right after the
+            // failed run lands. With the route gone, that rerun reaches the server and
+            // replaces the error with rows.
             const runFromChip = async (amount: string, answer?: 'fail') => {
                 let release = () => {}
                 const held = new Promise<void>(resolve => {
@@ -440,7 +445,10 @@ test.describe('report rows per width', () => {
                 await expect.poll(focusedTestId).toBe('report-param-amount')
                 await keepChip()
                 release()
-                await p.unrouteAll({ behavior: 'wait' })
+                const endAnswer = () => p.unrouteAll({ behavior: 'wait' })
+                if (answer === 'fail') return endAnswer
+                await endAnswer()
+                return async () => {}
             }
 
             // The asked amount gets its chip once it has a value; every sale is 10.00 or more.
@@ -464,10 +472,11 @@ test.describe('report rows per width', () => {
             await expect.poll(focusedTestId).toBe('report-param-amount')
 
             // Rows → a failed run.
-            await runFromChip('10.10', 'fail')
+            const endFailure = await runFromChip('10.10', 'fail')
             await expect(p.getByTestId('report-error')).toBeVisible()
             expect(await isSameChip()).toBe(true)
             await expect.poll(focusedTestId).toBe('report-param-amount')
+            await endFailure()
         } finally {
             await close()
         }

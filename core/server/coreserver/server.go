@@ -412,6 +412,8 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 // bind in guard → demo-audit → disabled order.
 func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterPkgEnableHook(app)
+	// Every composition that serves the record API needs the batch API on.
+	RegisterBatchSettings(app)
 	// Automatic package updates: the write guard, the policy hook and the
 	// status route are the same everywhere; the Delegate behind them is not.
 	RegisterAutoUpgrade(app)

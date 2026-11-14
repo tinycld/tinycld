@@ -236,7 +236,11 @@ export interface PagedTeamsOptions {
     baseAmount?: number
     /** The rows a page holds once the route shrinks the client's sizes (default 5). */
     pageRows?: number
-    /** Refuses (400) the first next page of the run filtered to the teams, once. */
+    /**
+     * Refuses (400) the first next page of the run filtered to the teams, once. After
+     * it, a rerun of that run waits until the test calls the returned `releaseReruns`
+     * (call it after the Retry press).
+     */
     refuseFirstNextPage?: boolean
     /**
      * The window height the report opens at (default 1600, which draws every row of
@@ -276,13 +280,25 @@ export async function openPagedTeams(page: Page, prefix: string, opts: PagedTeam
     }
     const cursors: string[] = []
     const sent: SentRun[] = []
+    // From the refused next page until the test calls releaseReruns, a rerun of the
+    // teams run waits. A report on screen runs again after each change to the rows it
+    // read, and another worker adds sales to the same collection. A rerun that lands
+    // clears the failed-page row and lets the list load the next page itself, so the
+    // Retry the test is about to press would be gone. While a rerun is in flight the
+    // row stays, and Retry waits for the rerun before it loads the page.
+    let heldReruns: Promise<void> | undefined
+    let releaseReruns = () => {}
     await page.route('**/api/reports/run', async route => {
         const body = route.request().postDataJSON()
         const cursor: string | undefined = body.options?.cursor
         // Only the run filtered to these teams: the first, unfiltered run pages too.
         const isTeamsRun = body.params?.teams !== undefined
+        if (!cursor && isTeamsRun && heldReruns) await heldReruns
         if (cursor && isRefusing && isTeamsRun) {
             isRefusing = false
+            heldReruns = new Promise<void>(resolve => {
+                releaseReruns = resolve
+            })
             await route.fulfill({
                 status: 400,
                 contentType: 'application/json',
@@ -321,7 +337,15 @@ export async function openPagedTeams(page: Page, prefix: string, opts: PagedTeam
     await expect(page.getByTestId('report-updating')).toHaveCount(0)
     const firstSale = rowOf(page, `${stem}A 00`)
     await expect(firstSale).toBeVisible()
-    return { stem, teams, cursors, sent, firstSale }
+    return {
+        stem,
+        teams,
+        cursors,
+        sent,
+        firstSale,
+        // With refuseFirstNextPage: lets the reruns that waited since the refusal go on.
+        releaseReruns: () => releaseReruns(),
+    }
 }
 
 export async function chooseOption(page: Page, selectTestId: string, value: string) {
