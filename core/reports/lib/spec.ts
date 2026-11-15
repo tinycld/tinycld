@@ -169,6 +169,9 @@ export const specColumnSchema = z.strictObject({
     hidden: z.boolean().optional(),
     // A formula over params and values the heading shows in place of the label.
     heading: specNodeSchema.optional(),
+    // A group id: the column totals on that group's level and the levels inside it;
+    // the outer levels' group and subtotal rows and the Total leave it blank.
+    blankAbove: z.string().optional(),
     // The shipped report the column's figures open, filtered to each figure's rows.
     drill: specDrillSchema.optional(),
 })

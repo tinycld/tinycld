@@ -111,6 +111,12 @@ type colPlan struct {
 	tm    int       // index of the path's to-many aggregate hop, or -1
 	nest  int       // nest level, 1 for the first; 0 when not nested
 	scale int
+	// blankLevel is the level (1 for the first group) the column totals up to
+	// (Column.BlankAbove); 0 for every level.
+	blankLevel int
+	// blankReadLevel is the deepest blankLevel among the column itself and the
+	// columns its formula reads: the level the column's cells start at.
+	blankReadLevel int
 }
 
 type groupPlan struct {
@@ -217,6 +223,9 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	b.nestLabelBlanks(p)
 	b.sorts(p)
 	b.groupsAndPivot(p)
+	b.blankAbove(p)
+	p.blankReadLevels()
+	b.blankAboveHavings(p)
 	b.layout(p)
 	b.sectionPercents(p)
 	b.drills(p)
@@ -896,6 +905,97 @@ func (b *binder) groupsAndPivot(p *plan) {
 	// so an opening row there could never show (R5e).
 	if last := len(spec.Groups) - 1; last >= 0 && spec.Groups[last].Opening != nil {
 		b.bad(fmt.Sprintf("groups.%d.opening", last), "this level never opens, so it has no opening row")
+	}
+}
+
+// blankAbove binds each column's blankAbove to the level of its group.
+// Refused where the column has no totals of its own to stop at a level (a
+// rollup, a total of the rows shown, a pivot's cell column, child rows),
+// where it shows the group itself (a column a group groups by), and for a
+// group the report does not have (422 unknown_group).
+func (b *binder) blankAbove(p *plan) {
+	spec := p.spec
+	for _, cp := range p.cols {
+		c := cp.col
+		if c.BlankAbove == "" {
+			continue
+		}
+		at := cp.at + ".blankAbove"
+		gi := slices.IndexFunc(spec.Groups, func(g Group) bool { return g.ID == c.BlankAbove })
+		switch {
+		case gi < 0:
+			b.missing(at, "unknown_group", fmt.Sprintf("the report has no group %q", c.BlankAbove))
+		case c.Rollup != nil:
+			b.bad(at, "a rollup already replaces the column's totals: it does not go with blankAbove")
+		case c.Total == TotalRows:
+			b.bad(at, "a total of the rows shown adds the rows of every level: it does not go with blankAbove")
+		case spec.Pivot != nil && spec.Pivot.Cell == c.ID:
+			b.bad(at, "a pivot's cell column is totalled by its pivot columns")
+		case cp.nest > 0:
+			b.bad(at, "a child row column has no totals to leave blank")
+		case slices.ContainsFunc(spec.Groups, func(g Group) bool { return g.Col == c.ID }):
+			b.bad(at, "the column a group groups by labels that group's rows, so it cannot be blank on them")
+		default:
+			cp.blankLevel = gi + 1
+		}
+	}
+}
+
+// blankRead is the first column n reads (through the formula columns it
+// reads) that is blank above a level deeper than above, or nil.
+func (p *plan) blankRead(n *Node, above int) *colPlan {
+	seen := map[string]bool{}
+	var find func(n *Node) *colPlan
+	find = func(n *Node) *colPlan {
+		if n == nil {
+			return nil
+		}
+		if cp := p.byID[n.Col]; n.Col != "" && cp != nil && !seen[n.Col] {
+			seen[n.Col] = true
+			if cp.blankLevel > above {
+				return cp
+			}
+			for _, read := range []*Node{cp.col.Formula, cp.col.Rollup} {
+				if found := find(read); found != nil {
+					return found
+				}
+			}
+		}
+		for _, a := range append(slices.Clone(n.Args), n.Where) {
+			if found := find(a); found != nil {
+				return found
+			}
+		}
+		return nil
+	}
+	return find(n)
+}
+
+// blankReadLevels sets each column's blankReadLevel, after blankAbove bound
+// the levels: a column that reads a blankAbove column is blank where it is.
+func (p *plan) blankReadLevels() {
+	for _, cp := range p.cols {
+		cp.blankReadLevel = cp.blankLevel
+		// A rollup runs on the group and total rows, where the column's cell is
+		// that rollup, so a blank column it reads blanks the cell as a formula's does.
+		for _, read := range []*Node{cp.col.Formula, cp.col.Rollup} {
+			for blank := p.blankRead(read, cp.blankReadLevel); blank != nil; blank = p.blankRead(read, cp.blankReadLevel) {
+				cp.blankReadLevel = blank.blankLevel
+			}
+		}
+	}
+}
+
+// blankAboveHavings refuses a group's having that reads a column blank above
+// that group's level (directly or through the formula columns it reads): the
+// column has no value on the group's rows, so the having would hide every
+// group.
+func (b *binder) blankAboveHavings(p *plan) {
+	for gi, g := range p.spec.Groups {
+		blank := p.blankRead(g.Having, gi+1)
+		if blank != nil {
+			b.bad(fmt.Sprintf("groups.%d.having", gi), fmt.Sprintf("having of group %q reads column %q, which is blank above group %q", g.ID, blank.col.ID, p.spec.Groups[blank.blankLevel-1].ID))
+		}
 	}
 }
 

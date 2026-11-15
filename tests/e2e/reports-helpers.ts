@@ -16,8 +16,9 @@ export {
 // Helpers for the reports specs. Fixture names come from the salesstub package
 // (tests/scripts/scaffold-reports-stub.ts): sources salesstub.sales ("Stub sales":
 // customer, amount, cost, quantity, currency, day, booked (a day kept as text),
-// status; link team) and salesstub.teams ("Stub teams": name, region; to-many link
-// sales), both headed "Stub Sales Co", and the shipped reports over sales
+// status; link team), salesstub.teams ("Stub teams": name, region; to-many link
+// sales) and salesstub.activity ("Stub activity": the union of sales and returns,
+// with kind), all headed "Stub Sales Co", and the shipped reports over sales
 // (reports-stub/server/register.go.txt): published "Stub larger side", "Stub
 // statement", "Stub period statement" and "Stub period pivot"; unpublished "Stub
 // team totals" and "Stub team balance", and the drill reports: published "Stub
@@ -25,6 +26,7 @@ export {
 // "Stub sales by team" (only the shipped owner may open it).
 export const SALES_SOURCE = 'salesstub.sales'
 export const TEAMS_SOURCE = 'salesstub.teams'
+export const ACTIVITY_SOURCE = 'salesstub.activity'
 export const SHIPPED_TITLE = 'Stub larger side'
 export const TEAM_TOTALS_TITLE = 'Stub team totals'
 /** The heading the stub's sources print above a report's title. */
@@ -156,6 +158,24 @@ export async function addSales(page: Page, sales: StubSales) {
     await page.getByTestId('salesstub-sales-quantity').fill(String(sales.quantity))
     await page.getByTestId('salesstub-sales-create').click()
     await expect(page.getByTestId('salesstub-sales-saved')).toHaveText(`Saved ${sales.count} sales`)
+}
+
+export interface StubReturn {
+    team: string
+    customer: string
+    /** Cents. */
+    amount: number
+    day: string
+}
+
+export async function addReturn(page: Page, ret: StubReturn) {
+    await page.getByTestId('salesstub-return-team').click()
+    await page.getByRole('menuitem', { name: ret.team, exact: true }).click()
+    await page.getByTestId('salesstub-return-customer').fill(ret.customer)
+    await page.getByTestId('salesstub-return-amount').fill(String(ret.amount))
+    await page.getByTestId('salesstub-return-day').fill(ret.day)
+    await page.getByTestId('salesstub-return-create').click()
+    await expect(page.getByTestId('salesstub-return-saved')).toHaveText(`Saved ${ret.customer}`)
 }
 
 /** New report → pick a source → the builder opens on a draft. */

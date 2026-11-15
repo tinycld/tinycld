@@ -181,6 +181,12 @@ func (b *binder) drillLevels(p *plan, dp *drillPlan, at string) {
 			b.bad(lat, fmt.Sprintf("%s is not a group of the report", g))
 			continue
 		}
+		// Above its blankAbove level (its own, or one a column it reads
+		// carries) the column's cell is blank: no figure there to open.
+		if blank := p.blankRead(&Node{Col: dp.col.col.ID}, n); blank != nil {
+			b.bad(lat, fmt.Sprintf("column %q is blank above group %q, so the %s rows have no figure to open", blank.col.ID, p.spec.Groups[blank.blankLevel-1].ID, g))
+			continue
+		}
 		dp.order = append(dp.order, n)
 		dp.levels[n] = b.drillParts(p, dp, dp.drill.Levels[g], lat, n, false)
 	}

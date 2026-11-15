@@ -3,8 +3,10 @@ package reports
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -67,15 +69,12 @@ func CheckSources(app core.App) error {
 
 // checkSource runs under mu (read).
 func checkSource(app core.App, src *Source) []string {
-	col, err := app.FindCollectionByNameOrId(src.Collection)
-	if err != nil {
-		return []string{fmt.Sprintf("collection %q does not exist", src.Collection)}
+	if len(src.Parts) > 0 {
+		return checkUnionSource(app, src)
 	}
-	if col.Name != src.Collection {
-		return []string{fmt.Sprintf("collection %q must be named %q, not by id", src.Collection, col.Name)}
-	}
-	if col.System {
-		return []string{fmt.Sprintf("collection %q is a system collection", col.Name)}
+	col, msg := partCollection(app, src.Collection)
+	if msg != "" {
+		return []string{msg}
 	}
 	var problems []string
 	for _, f := range src.Fields {
@@ -84,21 +83,11 @@ func checkSource(app core.App, src *Source) []string {
 		}
 	}
 	for _, l := range src.Links {
-		if msg := checkLink(app, src, col, l); msg != "" {
+		if msg := checkLink(app, src, l); msg != "" {
 			problems = append(problems, fmt.Sprintf("link %q: %s", l.Key, msg))
 		}
 	}
-	for _, w := range src.Watch {
-		wc, err := app.FindCollectionByNameOrId(w)
-		switch {
-		case err != nil:
-			problems = append(problems, fmt.Sprintf("watched collection %q does not exist", w))
-		case wc.Name != w:
-			problems = append(problems, fmt.Sprintf("watched collection %q must be named %q, not by id", w, wc.Name))
-		case wc.System:
-			problems = append(problems, fmt.Sprintf("watched collection %q is a system collection", w))
-		}
-	}
+	problems = append(problems, checkWatch(app, src)...)
 	if msg := checkRule(app, col); msg != "" {
 		problems = append(problems, msg)
 	}
@@ -160,19 +149,196 @@ var compatible = map[FieldType][]string{
 	Relation: {core.FieldTypeRelation},
 }
 
-func checkLink(app core.App, src *Source, col *core.Collection, l Link) string {
+// partCollection finds a collection a source reads, by its name, and refuses
+// a system collection.
+func partCollection(app core.App, name string) (*core.Collection, string) {
+	col, err := app.FindCollectionByNameOrId(name)
+	if err != nil {
+		return nil, fmt.Sprintf("collection %q does not exist", name)
+	}
+	if col.Name != name {
+		return nil, fmt.Sprintf("collection %q must be named %q, not by id", name, col.Name)
+	}
+	if col.System {
+		return nil, fmt.Sprintf("collection %q is a system collection", col.Name)
+	}
+	return col, ""
+}
+
+func checkWatch(app core.App, src *Source) []string {
+	var problems []string
+	for _, w := range src.Watch {
+		wc, err := app.FindCollectionByNameOrId(w)
+		switch {
+		case err != nil:
+			problems = append(problems, fmt.Sprintf("watched collection %q does not exist", w))
+		case wc.Name != w:
+			problems = append(problems, fmt.Sprintf("watched collection %q must be named %q, not by id", w, wc.Name))
+		case wc.System:
+			problems = append(problems, fmt.Sprintf("watched collection %q is a system collection", w))
+		}
+	}
+	return problems
+}
+
+// checkUnionSource checks each part of a union as checkSource checks a
+// source's one collection, and that the parts agree: every part that maps a
+// key maps it to a column of one PocketBase type, so the union's column has
+// one type. A part collection must have a list rule (R2).
+func checkUnionSource(app core.App, src *Source) []string {
+	cols := make([]*core.Collection, len(src.Parts))
+	for i, p := range src.Parts {
+		col, msg := partCollection(app, p.Collection)
+		if msg != "" {
+			return []string{msg}
+		}
+		cols[i] = col
+	}
+	var problems []string
+	for _, f := range src.Fields {
+		if f.Key == idField.Key {
+			continue
+		}
+		first, firstType := "", ""
+		for i, p := range src.Parts {
+			column, ok := p.Columns[f.Key]
+			if !ok {
+				continue
+			}
+			mapped := f
+			mapped.Column = column
+			if msg := checkField(cols[i], mapped); msg != "" {
+				problems = append(problems, fmt.Sprintf("field %q: part %q: %s", f.Key, p.Collection, msg))
+				continue
+			}
+			typ := cols[i].Fields.GetByName(column).Type()
+			if first == "" {
+				first, firstType = fmt.Sprintf("column %q of %q", column, p.Collection), typ
+			} else if typeClass(typ) != typeClass(firstType) {
+				problems = append(problems, fmt.Sprintf("field %q: column %q of %q is of type %s, but %s is of type %s",
+					f.Key, column, p.Collection, typ, first, firstType))
+			}
+		}
+	}
+	// A key that is not a field (a link's Field, a BackField of a link from
+	// another source) is projected too, so its column must exist.
+	isField := map[string]bool{}
+	for _, f := range src.Fields {
+		isField[f.Key] = true
+	}
+	for i, p := range src.Parts {
+		for _, key := range slices.Sorted(maps.Keys(p.Columns)) {
+			column := p.Columns[key]
+			if !isField[key] && cols[i].Fields.GetByName(column) == nil {
+				problems = append(problems, fmt.Sprintf("key %q: part %q: column %q does not exist", key, p.Collection, column))
+			}
+		}
+	}
+	for _, l := range src.Links {
+		if msg := checkLink(app, src, l); msg != "" {
+			problems = append(problems, fmt.Sprintf("link %q: %s", l.Key, msg))
+		}
+	}
+	problems = append(problems, checkWatch(app, src)...)
+	for _, col := range cols {
+		if col.ListRule == nil {
+			problems = append(problems, fmt.Sprintf("part collection %q has no list rule: only superusers may list it", col.Name))
+			continue
+		}
+		if msg := checkRule(app, col); msg != "" {
+			problems = append(problems, msg)
+		}
+	}
+	return problems
+}
+
+// typeClass groups the PocketBase types that fit one report Field type, so
+// parts may mix them: days stored as date or autodate, strings stored as
+// text, email or url. Any other type is its own class.
+func typeClass(t string) string {
+	switch t {
+	case core.FieldTypeDate, core.FieldTypeAutodate:
+		return core.FieldTypeDate
+	case core.FieldTypeText, core.FieldTypeEmail, core.FieldTypeURL:
+		return core.FieldTypeText
+	}
+	return t
+}
+
+// ownedColumn is a stored relation column a link follows: its collection and
+// column name.
+type ownedColumn struct{ collection, column string }
+
+// linkOwners are the stored columns a source's key reads: on a one-collection
+// source the column of that name (a link's Field or BackField is a column
+// there), on a union each part's mapped column (a part that maps none has
+// none).
+func linkOwners(src *Source, key string) []ownedColumn {
+	if len(src.Parts) == 0 {
+		return []ownedColumn{{src.Collection, key}}
+	}
+	var out []ownedColumn
+	for _, p := range src.Parts {
+		if column, ok := p.Columns[key]; ok {
+			out = append(out, ownedColumn{p.Collection, column})
+		}
+	}
+	return out
+}
+
+func sourceCollections(app core.App, src *Source) ([]*core.Collection, string) {
+	names := src.collections()
+	out := make([]*core.Collection, 0, len(names))
+	for _, name := range names {
+		col, err := app.FindCollectionByNameOrId(name)
+		if err != nil {
+			return nil, fmt.Sprintf("collection %q does not exist", name)
+		}
+		out = append(out, col)
+	}
+	return out, ""
+}
+
+// checkLink checks the stored relations a link follows: a to-one link's Field
+// on this source, a to-many link's BackField on its target, each a single
+// visible relation that points at the other side. On a union the relation is
+// every part's column for that key, and the other side's collection is any of
+// its parts'.
+func checkLink(app core.App, src *Source, l Link) string {
 	target := sources[l.Target]
 	if target == nil {
 		return fmt.Sprintf("target source %q is not registered", l.Target)
 	}
-	targetCol, err := app.FindCollectionByNameOrId(target.Collection)
-	if err != nil {
-		return fmt.Sprintf("target collection %q does not exist", target.Collection)
+	targetCols, msg := sourceCollections(app, target)
+	if msg != "" {
+		return "target " + msg
 	}
-	owner, column, pointsAt := col, l.Field, targetCol
+	srcCols, msg := sourceCollections(app, src)
+	if msg != "" {
+		return msg
+	}
+	owners, pointsAt := linkOwners(src, l.Field), targetCols
 	if l.Cardinality == ToMany {
-		owner, column, pointsAt = targetCol, l.BackField, col
+		owners, pointsAt = linkOwners(target, l.BackField), srcCols
+		if len(owners) == 0 {
+			return fmt.Sprintf("no part of %q maps %q", l.Target, l.BackField)
+		}
+	} else if len(owners) == 0 {
+		return fmt.Sprintf("no part of %q maps %q", src.Key, l.Field)
 	}
+	for _, o := range owners {
+		owner, err := app.FindCollectionByNameOrId(o.collection)
+		if err != nil {
+			return fmt.Sprintf("collection %q does not exist", o.collection)
+		}
+		if msg := relationCheck(owner, o.column, pointsAt); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+func relationCheck(owner *core.Collection, column string, pointsAt []*core.Collection) string {
 	rel, ok := owner.Fields.GetByName(column).(*core.RelationField)
 	if !ok {
 		return fmt.Sprintf("%q is not a relation field of %q", column, owner.Name)
@@ -183,8 +349,12 @@ func checkLink(app core.App, src *Source, col *core.Collection, l Link) string {
 	if rel.GetHidden() {
 		return fmt.Sprintf("relation %q of %q is hidden from the API", column, owner.Name)
 	}
-	if rel.CollectionId != pointsAt.Id {
-		return fmt.Sprintf("relation %q of %q does not point at %q", column, owner.Name, pointsAt.Name)
+	if !slices.ContainsFunc(pointsAt, func(c *core.Collection) bool { return c.Id == rel.CollectionId }) {
+		names := make([]string, len(pointsAt))
+		for i, c := range pointsAt {
+			names[i] = strconv.Quote(c.Name)
+		}
+		return fmt.Sprintf("relation %q of %q does not point at %s", column, owner.Name, strings.Join(names, " or "))
 	}
 	return ""
 }

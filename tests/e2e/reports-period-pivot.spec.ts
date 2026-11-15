@@ -236,6 +236,16 @@ test.describe('reports: period pivot', () => {
             await chooseOption(p, `${formula}-root-section`, 'section2')
             await expect(p.getByTestId(`${formula}-root-section`)).toContainText('Paid sales')
             await expect(await cellOf(p, 'formula', 'Total Open sales')).toHaveText('60.0%')
+
+            // A section the layout no longer has: Save is refused, and the refusal shows
+            // under the percent's formula, the only place that column's issue can be seen.
+            await p.getByTestId('report-builder-layout-1-remove').click()
+            await p.getByTestId('report-builder-title').fill('Percent of a gone section')
+            await p.getByTestId('report-builder-save').click()
+            await expect(p.getByTestId(`${formula}-error`)).toContainText(
+                'The layout has no section "section2"'
+            )
+            await expect(p.getByTestId('report-builder')).toBeVisible()
         } finally {
             await close()
         }

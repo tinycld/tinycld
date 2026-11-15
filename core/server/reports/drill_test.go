@@ -239,6 +239,32 @@ func TestADrillIsRefusedWhereItCannotOpen(t *testing.T) {
 	}
 }
 
+// blankAboveAnimal totals grams only up to the animal level (blankAbove "a"),
+// so its species rows (group g) leave the cell blank.
+func blankAboveAnimal(spec string) string {
+	return strings.Replace(spec, `{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"`, `{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum","blankAbove":"a"`, 1)
+}
+
+func TestADrillIsRefusedOnALevelWhereBlankAboveLeavesTheColumnBlank(t *testing.T) {
+	z := newZoo(t)
+	shipDrillTarget(t, nil, false)
+	onAnimal := `{"report":"zoo.drill_target","levels":{"a":{"animals":{"groupKey":"a"},"period":{"param":"period"}}}}`
+	t.Run("the column's own blankAbove", func(t *testing.T) {
+		requireSpecError(t, z.validate(t, blankAboveAnimal(drilledFeedingsOn("grams", goodDrill))), 400, "columns.2.drill.levels.g", `blank above group "a"`)
+	})
+	t.Run("a formula column that reads it", func(t *testing.T) {
+		// The secret column's slot carries a formula over grams in place of its cost.
+		spec := blankAboveAnimal(drilledFeedingsOn("animal", "{}"))
+		spec = strings.Replace(spec, `{"id":"animal","path":[{"link":"animal"}],"drill":{}}`, `{"id":"animal","path":[{"link":"animal"}]},{"id":"double","formula":{"op":"mul","args":[{"col":"grams"},{"value":2}]},"drill":`+goodDrill+`}`, 1)
+		requireSpecError(t, z.validate(t, spec), 400, "columns.2.drill.levels.g", `column "grams" is blank above group "a"`)
+	})
+	t.Run("a drill from the level it totals up to validates", func(t *testing.T) {
+		if err := z.validate(t, blankAboveAnimal(drilledFeedingsOn("grams", onAnimal))); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 // drilledPivotTmpl groups the reader's feedings by species, then animal,
 // with a pivot by fed (pivot is its JSON) on grams; %s is the drill of
 // column drillCol: grams (2) or cost (3).

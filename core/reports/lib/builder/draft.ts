@@ -50,6 +50,7 @@ import {
     emptyGroup,
     filterGroupSchema,
     filterToNode,
+    type GroupDraft,
     groupOrderChoices,
     type LevelScope,
     nodeToFilter,
@@ -168,6 +169,8 @@ const columnFields = {
     heading: formulaDraftSchema.nullable().optional(),
     /** Computed to group or sort by, never shown (G7). */
     hidden: z.boolean().optional(),
+    /** The group the column totals up to; absent: every row (G2). */
+    blankAbove: z.string().optional(),
     /** The column's drill, kept as the spec says it: the builder shows it, never edits it (Q10). */
     drill: specDrillSchema.optional(),
 }
@@ -761,6 +764,210 @@ function rollupIssues(draft: BuilderDraft): Issue[] {
     })
 }
 
+export type BlankAboveDraft = Pick<BuilderDraft, 'groups' | 'columns' | 'pivot'>
+
+const BLANK_ABOVE_GONE = 'This group level was removed: choose another, or On every row'
+const BLANK_ABOVE_ROLLUP = 'A formula on group and total rows already replaces the totals'
+const BLANK_ABOVE_ROWS =
+    'Totals that add the rows shown add every level: they cannot stop at a group'
+const BLANK_ABOVE_PIVOT = "A pivot's cell column is totalled by its pivot columns"
+const BLANK_ABOVE_NESTED = 'A child row column has no totals'
+const BLANK_ABOVE_GROUPED = 'A column a group is grouped by shows the group on its total rows'
+
+// bind.go blankAbove: a column with totals of its own, on a grouped report.
+function blankAboveRefusal(draft: BlankAboveDraft, index: number) {
+    const column = draft.columns[index]
+    if (!column) return undefined
+    if (column.rollup) return BLANK_ABOVE_ROLLUP
+    if (column.total === 'rows') return BLANK_ABOVE_ROWS
+    if (draft.pivot.on && draft.pivot.cell === column.id) return BLANK_ABOVE_PIVOT
+    if (nestDepth(column) > 0) return BLANK_ABOVE_NESTED
+    if (draft.groups.some(g => g.col === column.id)) return BLANK_ABOVE_GROUPED
+    return undefined
+}
+
+/**
+ * "Totals" is offered on a grouped report, on a column with an aggregate or a formula (a
+ * column with neither never totals, so the choice would do nothing) which can stop at a level.
+ */
+export function offersBlankAbove(draft: BlankAboveDraft, index: number): boolean {
+    const column = draft.columns[index]
+    if (draft.groups.length === 0 || !column) return false
+    if (column.aggregate === '' && column.kind !== 'formula') return false
+    return blankAboveRefusal(draft, index) === undefined
+}
+
+/** The level a column is blank above: its group's place (1 is the first), 0 for every row. */
+function blankLevel(draft: BlankAboveDraft, column: ColumnDraft) {
+    if (!column.blankAbove) return 0
+    return draft.groups.findIndex(g => g.id === column.blankAbove) + 1
+}
+
+/**
+ * The first column `node` reads, directly or through the formula and rollup columns it
+ * reads, that is blank above a level deeper than `above` (bind.go blankRead).
+ */
+function blankRead(
+    draft: BlankAboveDraft,
+    node: SpecNode | undefined,
+    above: number,
+    only?: string
+) {
+    const seen = new Set<string>()
+    const find = (read: SpecNode | undefined): ColumnDraft | undefined => {
+        if (!read) return undefined
+        for (const column of draft.columns) {
+            if (seen.has(column.id) || !readsColumn(read, column.id)) continue
+            seen.add(column.id)
+            if (blankLevel(draft, column) > above && (only === undefined || column.id === only)) {
+                return column
+            }
+            const through = column.kind === 'formula' ? find(column.formula.node) : undefined
+            const found = through ?? find(column.rollup?.node)
+            if (found) return found
+        }
+        return undefined
+    }
+    return find(node)
+}
+
+// The columns and formulas a having reads: a column condition reads its column.
+function havingNodes(group: GroupDraft): SpecNode[] {
+    return group.items.flatMap((item): SpecNode[] => {
+        if (item.kind === 'fixed') return [item.node]
+        if (item.kind === 'related') return havingNodes(item.where)
+        if (item.kind === 'group') return havingNodes(item)
+        return item.subject === 'column' ? [{ col: item.col }] : []
+    })
+}
+
+function groupName(draft: BlankAboveDraft, level: number) {
+    const group = draft.groups[level - 1]
+    const column = draft.columns.find(c => c.id === group?.col)
+    return column?.label ?? group?.id ?? ''
+}
+
+// bind.go blankAboveHavings and section_percent.go: a having above the column's level, and a
+// percent of a section (whose sections are the first level), read the column where it is blank.
+// A having's error shows under the group's having; a percent's under its formula, where the
+// formula editor shows the column's other refusals.
+function blankReadIssues(draft: BlankAboveDraft): Issue[] {
+    const having = draft.groups.flatMap((group, i): Issue[] => {
+        for (const node of havingNodes(group.having)) {
+            const blank = blankRead(draft, node, i + 1)
+            if (!blank) continue
+            const above = groupName(draft, blankLevel(draft, blank))
+            return [
+                {
+                    path: ['groups', i, 'having'],
+                    message: `This reads "${blank.label}", which is blank above ${above}: read a column that shows on this group`,
+                },
+            ]
+        }
+        return []
+    })
+    const percents = draft.columns.flatMap((column, i): Issue[] => {
+        if (column.kind !== 'formula' || column.formula.node.op !== 'percentOfSection') return []
+        const blank = blankRead(draft, column.formula.node.args?.[0], 1)
+        if (!blank) return []
+        const above = groupName(draft, blankLevel(draft, blank))
+        return [
+            {
+                path: ['columns', i, 'formula'],
+                message: `This reads "${blank.label}", which is blank above ${above}: the section's total is blank`,
+            },
+        ]
+    })
+    return [...having, ...percents]
+}
+
+/**
+ * drill.go drillLevels: a drilled column opens its report from each drill level's rows, so
+ * it cannot be blank there. The first drilled column that would be, read through column
+ * `only` when given, and the level it drills from.
+ */
+function blankDrill(draft: BlankAboveDraft, only?: string) {
+    for (const column of draft.columns) {
+        for (const id of Object.keys(column.drill?.levels ?? {})) {
+            const level = draft.groups.findIndex(g => g.id === id) + 1
+            if (level === 0) continue
+            const blank = blankRead(draft, { col: column.id }, level, only)
+            if (blank) return { drilled: column, blank, level }
+        }
+    }
+    return undefined
+}
+
+/** One "Up to <group>" choice per group level, named by the column it groups by. */
+export function blankAboveChoices(draft: BlankAboveDraft): { id: string; label: string }[] {
+    const labels = new Map(draft.columns.map(column => [column.id, column.label]))
+    return draft.groups.map(g => ({ id: g.id, label: `Up to ${labels.get(g.col) ?? g.id}` }))
+}
+
+/**
+ * The group levels column `index` cannot stop at: a having or a percent of a section
+ * would read it where it is blank. Those are left out of the menu, except the level
+ * already set, whose error stays in view.
+ */
+export function blankAboveTrips(draft: BlankAboveDraft, index: number): ReadonlySet<string> {
+    const id = draft.columns[index]?.id
+    if (id === undefined) return new Set()
+    const tripped = draft.groups.filter(group => {
+        const set = { ...draft, columns: withBlankAbove(draft.columns, index, group.id) }
+        const havings = set.groups.some((g, i) =>
+            havingNodes(g.having).some(node => blankRead(set, node, i + 1, id))
+        )
+        const percents = set.columns.some(
+            column =>
+                column.kind === 'formula' &&
+                column.formula.node.op === 'percentOfSection' &&
+                blankRead(set, column.formula.node.args?.[0], 1, id)
+        )
+        return havings || percents || blankDrill(set, id) !== undefined
+    })
+    return new Set(tripped.map(group => group.id))
+}
+
+/**
+ * The Totals chip's text. A chosen group that the draft no longer holds reads "Choose a
+ * group", not "On every row": the draft still stores that id, and its error is in view.
+ */
+export function blankAboveLabel(draft: BlankAboveDraft, current: string | undefined): string {
+    if (current === undefined) return 'On every row'
+    const choice = blankAboveChoices(draft).find(c => c.id === current)
+    return choice?.label ?? 'Choose a group'
+}
+
+/** The columns with column `index` totalled up to `group`, or on every row for undefined. */
+export function withBlankAbove(
+    columns: ColumnDraft[],
+    index: number,
+    group: string | undefined
+): ColumnDraft[] {
+    // An undefined blankAbove is "every row": specColumns writes the key only when set.
+    return columns.map((column, i) => (i === index ? { ...column, blankAbove: group } : column))
+}
+
+function blankAboveIssues(draft: BuilderDraft): Issue[] {
+    const groups = new Set(draft.groups.map(g => g.id))
+    return draft.columns.flatMap((column, i): Issue[] => {
+        if (!column.blankAbove) return []
+        const path = ['columns', i, 'blankAbove']
+        if (!groups.has(column.blankAbove)) return [{ path, message: BLANK_ABOVE_GONE }]
+        const message = blankAboveRefusal(draft, i) ?? blankDrillMessage(draft, column)
+        return message ? [{ path, message }] : []
+    })
+}
+
+// The drill is kept as read and never edited here, so its error shows under the
+// Totals choice that made it blank.
+function blankDrillMessage(draft: BlankAboveDraft, column: ColumnDraft) {
+    const found = blankDrill(draft, column.id)
+    if (!found) return undefined
+    const rows = groupName(draft, found.level)
+    return `"${found.drilled.label}" opens a report from the ${rows} rows, where this column is blank: total it up to ${rows} or above`
+}
+
 // bind.go groupsAndPivot: an opening row shows under a level that opens, in the
 // report's own-row columns, with its label in the first.
 function openingIssues(draft: BuilderDraft): Issue[] {
@@ -791,6 +998,8 @@ export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         ...fitIssues(draft, catalog),
         ...detailBlankIssues(draft),
         ...rollupIssues(draft),
+        ...blankAboveIssues(draft),
+        ...blankReadIssues(draft),
         ...openingIssues(draft),
         ...hiddenIssues(draft),
         ...levelFieldIssues(draft),
@@ -969,6 +1178,7 @@ function columnDraft(
         ...(fit ? { fit } : {}),
         ...(column.heading ? { heading: formulaDraft(column.heading, params) } : {}),
         ...(column.hidden ? { hidden: true } : {}),
+        ...(column.blankAbove ? { blankAbove: column.blankAbove } : {}),
         ...(column.drill ? { drill: column.drill } : {}),
     } as const
     if (column.formula) {
@@ -1157,6 +1367,7 @@ function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecC
         if (column.rollup) out.rollup = specFormula(column.rollup, levelCtx)
         if (column.heading) out.heading = specFormula(column.heading, headingCtx)
         if (column.hidden) out.hidden = true
+        if (column.blankAbove) out.blankAbove = column.blankAbove
         if (column.drill) out.drill = column.drill
         return out
     })

@@ -60,6 +60,24 @@ describe('statement docs', () => {
         expect(table).toContain('`percentOfSection`')
     })
 
+    it('names the Totals choice in the help', () => {
+        const help = read('core/help/reports.md')
+        expect(help).toContain('**Totals**')
+        expect(help).toContain('**On every row**')
+        expect(help).toContain('**Up to')
+    })
+
+    it('shows a union source in Report sources and blankAbove in the version 4 table', () => {
+        const docs = read('docs/packages.md')
+        const sources = docs.slice(docs.indexOf('### Report sources'))
+        expect(sources).toContain('Parts: []reports.SourcePart{')
+        expect(sources).toContain('Values:')
+        const start = docs.indexOf('**Fields added in version 4.**')
+        const table = docs.slice(start, docs.indexOf('\n\n', docs.indexOf('| Field |', start)))
+        expect(table).toContain('`columns[].blankAbove`')
+        expect(table).toContain('`unknown_group`')
+    })
+
     it('names drills, open links and the drill panel in the help and the docs', () => {
         const help = read('core/help/reports.md')
         expect(help).toContain('## Open the rows behind a figure')

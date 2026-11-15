@@ -6,13 +6,13 @@
  * Why a stub: the reports hub, view and builder read report sources, which only
  * packages register, and core must not name a package. App-shell CI installs no
  * feature package, so without a stub the reports e2e (tests/e2e/reports-*.spec.ts)
- * has nothing to report on. The stub registers two sources from Go (a to-one and
+ * has nothing to report on. The stub registers three sources from Go (a to-one and
  * a to-many link, money with a currency field, a number, a date, a day kept as
- * text, selects and a heading) over its own collections and shipped reports,
- * published and unpublished, over the spec parts they exercise (the drill reports
- * open another shipped report). Its landing screen adds rows through the UI, as
- * the specs must. Its sale screen is the record a report's detail row opens
- * (`detail.open`).
+ * text, selects and a heading; one a union of sales and returns) over its own
+ * collections and shipped reports, published and unpublished, over the spec parts
+ * they exercise (the drill reports open another shipped report). Its landing
+ * screen adds rows through the UI, as the specs must. Its sale screen is the
+ * record a report's detail row opens (`detail.open`).
  *
  * Writes every file itself, as scaffold-forms-host-stub.ts does: no bootstrap
  * preset ships a migration, a Go module and collections together. The screen,
@@ -147,7 +147,11 @@ export function registerCollections(newCollection: ReturnType<typeof createColle
         omitOnInsert: ['created', 'updated'] as const,
         ...onDemand,
     })
-    return { salesstub_teams, salesstub_sales }
+    const salesstub_returns = newCollection('salesstub_returns', {
+        omitOnInsert: ['created', 'updated'] as const,
+        ...onDemand,
+    })
+    return { salesstub_teams, salesstub_sales, salesstub_returns }
 }
 `
     )
@@ -155,7 +159,10 @@ export function registerCollections(newCollection: ReturnType<typeof createColle
         join(dir, 'types.ts'),
         `import type { Schema } from '@tinycld/core/types/pbSchema'
 
-export type SalesstubSchema = Pick<Schema, 'salesstub_teams' | 'salesstub_sales'>
+export type SalesstubSchema = Pick<
+    Schema,
+    'salesstub_teams' | 'salesstub_sales' | 'salesstub_returns'
+>
 `
     )
 }

@@ -80,6 +80,12 @@ func (b *binder) sectionPercent(p *plan, cp *colPlan, sections map[string]bool) 
 		b.merge(unknownColumn(at+".args.0", n.Args[0].Col))
 		return
 	}
+	// A layout's sections are the first level: a column blank above a deeper
+	// level has no value on them, so there is no total to divide by.
+	if blank := p.blankRead(n.Args[0], 1); blank != nil {
+		b.bad(at+".args.0", fmt.Sprintf("percentOfSection reads column %q, which is blank above group %q: the total of section %q is blank", blank.col.ID, p.spec.Groups[blank.blankLevel-1].ID, n.Subtotal))
+		return
+	}
 	// A missing or bad scale is refused where the formula compiles (needScale).
 	scale := 0
 	if n.Scale != nil {

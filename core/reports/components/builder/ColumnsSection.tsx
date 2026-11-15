@@ -15,13 +15,19 @@ import {
     pathLabel,
 } from '../../lib/builder/columns'
 import {
+    type BlankAboveDraft,
+    blankAboveChoices,
+    blankAboveLabel,
+    blankAboveTrips,
     type ColumnDraft,
     type FormulaDraft,
     formulaDraft,
+    offersBlankAbove,
     offersDetailBlank,
     showsDetailLabel,
     showsHeading,
     showsHidden,
+    withBlankAbove,
 } from '../../lib/builder/draft'
 import { linkTarget, rowsTotalColumns } from '../../lib/builder/formula-context'
 import { isFigureType } from '../../lib/column-measure'
@@ -193,6 +199,7 @@ function ColumnRow({
                 index={index}
             />
             <ColumnRollup builder={builder} columns={columns} index={index} />
+            <ColumnBlankAbove builder={builder} columns={columns} index={index} />
             <DetailField builder={builder} columns={columns} index={index} />
             <HeadingField builder={builder} columns={columns} index={index} />
             <HiddenField builder={builder} columns={columns} index={index} />
@@ -339,6 +346,75 @@ function ColumnRollup({ builder, columns, index }: Omit<ColumnPartProps, 'source
                 onChange={setRollup}
                 testID={`${testID}-formula`}
             />
+        </View>
+    )
+}
+
+const EVERY_ROW = 'On every row'
+
+// The Totals menu's items: every row, then one "Up to <group>" per level, by index
+// (R11), the current choice selected. A level a having or a percent of a section would
+// read the column at, blank, is not offered; the id keeps the level's own index.
+function blankAboveItems(
+    draft: BlankAboveDraft,
+    index: number,
+    current: string | undefined,
+    choose: (group: string | undefined) => void
+): PickItem[] {
+    const trips = blankAboveTrips(draft, index)
+    const levels = blankAboveChoices(draft).flatMap((choice, i): PickItem[] => {
+        if (trips.has(choice.id) && current !== choice.id) return []
+        return [
+            {
+                id: `up-${i}`,
+                label: choice.label,
+                isSelected: current === choice.id,
+                onSelect: () => choose(choice.id),
+            },
+        ]
+    })
+    const every: PickItem = {
+        id: 'every',
+        label: EVERY_ROW,
+        isSelected: current === undefined,
+        onSelect: () => choose(undefined),
+    }
+    return [every, ...levels]
+}
+
+/**
+ * "Totals" (G2): the column's total on every row, or only up to a group level, so the
+ * outer levels and the Total leave it blank (a figure they would count twice). Offered
+ * on a grouped report, never with a formula on group and total rows, Add the rows
+ * shown, a pivot's cell column or a column a group groups by; a choice set before
+ * that stays in view, with its refusal, so it can be set back.
+ */
+function ColumnBlankAbove({ builder, columns, index }: Omit<ColumnPartProps, 'source'>) {
+    const control = builder.form.control
+    const groups = useWatch({ control, name: 'groups' })
+    const pivot = useWatch({ control, name: 'pivot' })
+    const column = columns[index]
+    const draft = { groups, columns, pivot }
+    if (!column) return null
+    if (column.blankAbove === undefined && !offersBlankAbove(draft, index)) return null
+    const testID = `report-builder-column-${index}-blank-above`
+    const state = builder.form.getFieldState(`columns.${index}.blankAbove`, builder.form.formState)
+    const choose = (group: string | undefined) =>
+        builder.setColumns(withBlankAbove(columns, index, group))
+    const items = blankAboveItems(draft, index, column.blankAbove, choose)
+    const shown = blankAboveLabel(draft, column.blankAbove)
+    return (
+        <View className="gap-1">
+            <View className="flex-row items-center gap-2">
+                <Text className="text-xs text-muted-foreground">Totals</Text>
+                <PickMenu
+                    label={shown}
+                    purpose={`Totals of ${column.label}`}
+                    items={items}
+                    testID={testID}
+                />
+            </View>
+            <FieldError message={state.error?.message} testID={`${testID}-error`} />
         </View>
     )
 }
@@ -588,14 +664,19 @@ function ColumnFormula({ builder, columns, index }: Omit<ColumnPartProps, 'sourc
         builder.setColumns(
             columns.map((c, i) => (i === index && c.kind === 'formula' ? { ...c, formula } : c))
         )
+    const testID = `report-builder-column-${index}-formula`
+    const state = builder.form.getFieldState(`columns.${index}.formula`, builder.form.formState)
     return (
-        <ReportFormula
-            builder={builder}
-            place={{ kind: 'column', selfKey: column.id }}
-            formula={column.formula}
-            onChange={setFormula}
-            testID={`report-builder-column-${index}-formula`}
-        />
+        <>
+            <ReportFormula
+                builder={builder}
+                place={{ kind: 'column', selfKey: column.id }}
+                formula={column.formula}
+                onChange={setFormula}
+                testID={testID}
+            />
+            <FieldError message={state.error?.message} testID={`${testID}-error`} />
+        </>
     )
 }
 
