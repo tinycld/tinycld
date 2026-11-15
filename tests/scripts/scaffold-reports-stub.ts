@@ -8,10 +8,11 @@
  * feature package, so without a stub the reports e2e (tests/e2e/reports-*.spec.ts)
  * has nothing to report on. The stub registers two sources from Go (a to-one and
  * a to-many link, money with a currency field, a number, a date, a day kept as
- * text, selects and a heading) over its own collections and two shipped reports
- * (a published one with a formula the builder cannot edit, and an unpublished one
- * over the spec v2 parts), and its landing screen adds rows through the UI, as the
- * specs must.
+ * text, selects and a heading) over its own collections and shipped reports,
+ * published and unpublished, over the spec parts they exercise (the drill reports
+ * open another shipped report). Its landing screen adds rows through the UI, as
+ * the specs must. Its sale screen is the record a report's detail row opens
+ * (`detail.open`).
  *
  * Writes every file itself, as scaffold-forms-host-stub.ts does: no bootstrap
  * preset ships a migration, a Go module and collections together. The screen,
@@ -43,7 +44,9 @@ export const STUB_SLUG = 'salesstub'
 export const STUB_PACKAGE = '@tinycld/salesstub'
 const TEMPLATES_DIR = resolve(fileURLToPath(import.meta.url), '..', 'reports-stub')
 const TEMPLATES: [string, string][] = [
+    ['screens/_layout.tsx.txt', `tinycld/${STUB_SLUG}/screens/_layout.tsx`],
     ['screens/index.tsx.txt', `tinycld/${STUB_SLUG}/screens/index.tsx`],
+    ['screens/sale/[id].tsx.txt', `tinycld/${STUB_SLUG}/screens/sale/[id].tsx`],
     ['pb-migrations/2090000300_salesstub.js.txt', 'pb-migrations/2090000300_salesstub.js'],
     ['server/register.go.txt', 'server/register.go'],
 ]

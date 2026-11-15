@@ -1,8 +1,9 @@
 import type { ToolbarItem } from '@tinycld/core/components/ResponsiveToolbar'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
-import { View } from 'react-native'
+import { Platform, View } from 'react-native'
 import type { ReportViewModel } from '../hooks/useReportView'
+import type { RowDrill } from '../hooks/useRowLinks'
 import { shownRunKey, type TableLayout, useTableLayout } from '../hooks/useTableLayout'
 import { layoutNoticeOf } from '../lib/notices'
 import { ReportControls } from './ReportControls'
@@ -81,6 +82,8 @@ interface BodyProps {
     table: TableLayout
     /** D9: the top area that scrolls away with the rows (a phone); not given, it stays above. */
     top?: ReactNode
+    /** The report shown, so its figures and rows open; not given (the builder's preview), they are plain. */
+    drill?: RowDrill
 }
 
 // The body of every state but the table's: each shows only in its own state.
@@ -139,7 +142,7 @@ function StateBodies({ model }: { model: ReportViewModel }) {
     )
 }
 
-export function ReportBody({ model, table, top }: BodyProps) {
+export function ReportBody({ model, table, top, drill }: BodyProps) {
     const states = <StateBodies model={model} />
     // D9 with F11: on a phone the list holds the top area in every state, so the
     // states are drawn inside it, under the top area; elsewhere they stand alone.
@@ -147,12 +150,12 @@ export function ReportBody({ model, table, top }: BodyProps) {
     return (
         <>
             {fixedStates}
-            <TableBody model={model} table={table} top={top} states={states} />
+            <TableBody model={model} table={table} top={top} states={states} drill={drill} />
         </>
     )
 }
 
-function TableBody({ model, table, top, states }: BodyProps & { states: ReactNode }) {
+function TableBody({ model, table, top, states, drill }: BodyProps & { states: ReactNode }) {
     const isReady = model.state === 'ready'
     if (!isReady && top === undefined) return null
     const body = isReady ? undefined : states
@@ -177,13 +180,14 @@ function TableBody({ model, table, top, states }: BodyProps & { states: ReactNod
             onTopRowIndex={model.run.onTopRowIndex}
             top={top}
             body={body}
+            drill={drill}
         />
     )
 }
 
-function ViewBody({ model, table, top }: BodyProps) {
+function ViewBody({ model, table, top, drill }: BodyProps) {
     if (!model.isBodyShown) return null
-    return <ReportBody model={model} table={table} top={top} />
+    return <ReportBody model={model} table={table} top={top} drill={drill} />
 }
 
 interface ReportTopProps {
@@ -200,6 +204,7 @@ function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTo
             <ReportHeader
                 title={model.title}
                 onBack={model.onBack}
+                backLabel={model.backLabel}
                 actions={toolbarItems(model)}
                 isUpdating={model.isUpdating}
                 isUpdatingLive={!model.isUpdatingInBuilder}
@@ -210,6 +215,7 @@ function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTo
                 layoutNotice={layoutNotice}
                 isLive={model.isBodyShown}
                 isCompact={isCompact}
+                width={model.viewWidth}
             />
             <ReportDocumentHeader
                 heading={model.heading}
@@ -221,7 +227,30 @@ function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTo
     )
 }
 
-export function ReportView({ model, side }: { model: ReportViewModel; side?: ReactNode }) {
+// While the side covers the report as a page, the report under it leaves the
+// accessibility tree and, on web, the tab order (`inert`, which react-native-web
+// passes to the DOM). Props only, so the report neither remounts nor reruns (R14).
+function coveredProps(isCovered: boolean) {
+    const hidden = {
+        'aria-hidden': isCovered,
+        accessibilityElementsHidden: isCovered,
+        importantForAccessibility: isCovered ? 'no-hide-descendants' : 'auto',
+    } as const
+    return Platform.OS === 'web' ? { ...hidden, inert: isCovered } : hidden
+}
+
+export function ReportView({
+    model,
+    side,
+    drill,
+    isCovered = false,
+}: {
+    model: ReportViewModel
+    side?: ReactNode
+    drill?: RowDrill
+    /** The side covers the report as a page (the drill panel under 1360 px). */
+    isCovered?: boolean
+}) {
     const table = useTableLayout(model)
     const isSortMenuShown = table.layout.kind === 'blocks'
     // The table's layout notice joins the run's in the band, once the table is drawn.
@@ -244,9 +273,9 @@ export function ReportView({ model, side }: { model: ReportViewModel; side?: Rea
     const listTop = isTopInList ? top : undefined
     return (
         <View testID="report-screen" className="flex-1 flex-row bg-background">
-            <View className="min-w-0 flex-1">
+            <View className="min-w-0 flex-1" {...coveredProps(isCovered)}>
                 {fixedTop}
-                <ViewBody model={model} table={table} top={listTop} />
+                <ViewBody model={model} table={table} top={listTop} drill={drill} />
             </View>
             <ReportCustomizePanel model={model} />
             {side}

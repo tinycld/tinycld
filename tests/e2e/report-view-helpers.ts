@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test'
-import { navigateToPackage } from './helpers.ts'
+import { inStatement, navigateToPackage } from './helpers.ts'
 
 // Helpers for any spec that drives the reports hub and core's report view: they
 // name no source, so a package's own report e2e uses them through
@@ -62,22 +62,36 @@ export async function pressToolbar(page: Page, testId: string, label: string) {
     }
 }
 
-/** The label cell of the row whose label is `label` (a group row's is its toggle). */
-export function rowOf(page: Page, label: string): Locator {
-    return page
-        .getByTestId('report-table')
+// The report's own table, or the table inside `scope` (the drill panel).
+function tableOf(page: Page, scope?: Locator): Locator {
+    return scope ? scope.getByTestId('report-table') : inStatement(page, 'report-table')
+}
+
+/**
+ * The label cell of the row whose label is `label` (a group row's is its toggle),
+ * in the report's own table, or in `scope` (the drill panel).
+ */
+export function rowOf(page: Page, label: string, scope?: Locator): Locator {
+    return tableOf(page, scope)
         .locator('[data-testid^="report-row-"]')
         .filter({ has: page.getByText(label, { exact: true }) })
         .first()
 }
 
 /** The cell of `columnId` (not the first column) in the row whose label is `label`. */
-export async function cellOf(page: Page, columnId: string, label: string): Promise<Locator> {
-    const labelCell = rowOf(page, label)
+export async function cellOf(
+    page: Page,
+    columnId: string,
+    label: string,
+    scope?: Locator
+): Promise<Locator> {
+    const labelCell = rowOf(page, label, scope)
     await expect(labelCell).toBeVisible()
     const testId = await labelCell.getAttribute('data-testid')
     if (!testId) throw new Error(`no row labelled ${label}`)
-    return page.getByTestId(`report-cell-${columnId}-${testId.replace('report-row-', '')}`)
+    return tableOf(page, scope).getByTestId(
+        `report-cell-${columnId}-${testId.replace('report-row-', '')}`
+    )
 }
 
 export interface ParamPick {
@@ -96,10 +110,17 @@ export interface ParamPick {
  * pressed and has none. The kind is read from the options' role (a checkbox or a
  * radio) before the press, never from whether Apply happens to be on screen.
  */
-export async function chooseParamOption(page: Page, paramId: string, pick: ParamPick) {
-    if (pick.from === 'chip') await page.getByTestId(`report-param-${paramId}`).click()
+export async function chooseParamOption(
+    page: Page,
+    paramId: string,
+    pick: ParamPick,
+    scope?: Locator
+) {
+    // The chip and Add filter are the view's own; the picker is one, on the page.
+    const own = (testId: string) => (scope ? scope.getByTestId(testId) : inStatement(page, testId))
+    if (pick.from === 'chip') await own(`report-param-${paramId}`).click()
     else {
-        await page.getByTestId('report-add-filter').click()
+        await own('report-add-filter').click()
         await page.getByTestId(`report-add-filter-${paramId}`).click()
     }
     const picker = page.getByTestId('report-filter-picker')

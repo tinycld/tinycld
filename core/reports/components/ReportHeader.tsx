@@ -2,6 +2,7 @@ import { ResponsiveToolbar, type ToolbarItem } from '@tinycld/core/components/Re
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ArrowLeft } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
+import { HUB_BACK_LABEL } from '../lib/report-back'
 import { ReportUpdating } from './ReportUpdating'
 
 export const REPORT_TAP_TARGET = 44
@@ -9,7 +10,8 @@ export const REPORT_TAP_TARGET = 44
 // The narrowest the title gets before an action folds into "⋯".
 const TITLE_MIN_WIDTH = 160
 
-function ReportBackLink({ onBack }: { onBack: () => void }) {
+/** The link back to where the report was opened from: the hub, or the report it was drilled from. */
+export function ReportBackLink({ label, onBack }: { label: string; onBack: () => void }) {
     const muted = useThemeColor('muted-foreground')
     return (
         <Pressable
@@ -20,7 +22,9 @@ function ReportBackLink({ onBack }: { onBack: () => void }) {
             style={{ minHeight: REPORT_TAP_TARGET }}
         >
             <ArrowLeft size={16} color={muted} />
-            <Text className="text-sm text-muted-foreground">Reports</Text>
+            <Text numberOfLines={1} className="text-sm text-muted-foreground">
+                {label}
+            </Text>
         </Pressable>
     )
 }
@@ -49,12 +53,15 @@ function headerItems(title: string, actions: ToolbarItem[]): ToolbarItem[] {
 export function ReportHeader({
     title,
     onBack,
+    backLabel = HUB_BACK_LABEL,
     actions,
     isUpdating = false,
     isUpdatingLive = true,
 }: {
     title: string
     onBack: () => void
+    /** The back link's text: the source report's title after a drill (D3). */
+    backLabel?: string
     actions: ToolbarItem[]
     isUpdating?: boolean
     /** False while another surface (the builder over the view) shows "Updating…". */
@@ -63,7 +70,7 @@ export function ReportHeader({
     return (
         <View className="gap-1 px-4 pt-2">
             <View className="flex-row items-center justify-between gap-2">
-                <ReportBackLink onBack={onBack} />
+                <ReportBackLink label={backLabel} onBack={onBack} />
                 <ReportUpdating isUpdating={isUpdating} isLive={isUpdatingLive} />
             </View>
             <ResponsiveToolbar items={headerItems(title, actions)} className="" />

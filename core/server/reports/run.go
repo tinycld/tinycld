@@ -114,6 +114,16 @@ type ResultColumn struct {
 	// Heading is the value the column's heading shows (Column.Heading), absent
 	// when the column has none or it is blank this run.
 	Heading *ColumnHeading `json:"heading,omitempty"`
+	// Drill is the report the column's figures open (Column.Drill), absent
+	// when the column has none or the reader may not view it; the rows'
+	// <id>@drill cells then are absent too.
+	Drill *DrillTarget `json:"drill,omitempty"`
+}
+
+// DrillTarget is the report a drilled column opens, as the reader sees it.
+type DrillTarget struct {
+	ReportID string `json:"reportId"`
+	Title    string `json:"title"`
 }
 
 // ColumnHeading is a column's heading this run: a text, a day or a number.
@@ -162,7 +172,11 @@ type Row struct {
 	// Section is the group row this row belongs to.
 	Section string `json:"section,omitempty"`
 	// Parent is the row a nested child row hangs under.
-	Parent   string `json:"parent,omitempty"`
+	Parent string `json:"parent,omitempty"`
+	// Open is the app path a detail row opens (Detail.Open), under the
+	// report's package; absent when the report has no open or the row's value
+	// is not such a path. Only detail rows have one.
+	Open     string `json:"open,omitempty"`
 	GroupKey []any  `json:"groupKey,omitempty"`
 	Expanded bool   `json:"expanded,omitempty"`
 	// CanExpand says a group row has rows to open (false for a pivot's
@@ -240,6 +254,12 @@ type runner struct {
 	expand *expansion
 	res    *Result
 	topics map[string]bool
+	// openDropped is set once a detail row's open value was dropped, so a run
+	// logs a bad open path once, not once per row.
+	openDropped bool
+	// drillTargets is each drilled column's target the reader may view, by
+	// column id; a column the reader may not open is absent.
+	drillTargets map[string]*DrillTarget
 	// sectionBases holds each percentOfSection column's section total of its
 	// argument per currency block, by column id + "|" + currency key
 	// (readSectionBases).
@@ -360,7 +380,9 @@ func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[str
 	if specErr != nil {
 		return nil, specErr
 	}
-	return newCompilerWithFiscal(p, app, info, params, fiscal), nil
+	c := newCompilerWithFiscal(p, app, info, params, fiscal)
+	c.given = given
+	return c, nil
 }
 
 // todayOf reads the reader's day, given at at in the request.
@@ -396,6 +418,9 @@ func rowCapNotice() Notice {
 }
 
 func (rn *runner) run() error {
+	if err := rn.resolveDrills(); err != nil {
+		return err
+	}
 	// A pivot report has no detail rows to page.
 	if rn.c.p.pivot != nil && rn.opts.Cursor != "" {
 		return badCursor()
@@ -1209,10 +1234,14 @@ func (c *compiler) compileLevels(s *stmt, r *rowsCTE, expand *expansion, pivot [
 		if err != nil {
 			return nil, err
 		}
+		drill, err := lv.drillCells(pivot)
+		if err != nil {
+			return nil, err
+		}
 		// The labels, the carried currencies, the pivot cells' mixed helpers,
-		// then the opening cells follow the pivot cells, as in every leg of the
-		// union.
-		cells = append(append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...), opening...)
+		// then the opening cells, then the drill cells follow the pivot cells,
+		// as in every leg of the union.
+		cells = append(append(append(append(append(append(cells, pivotCells...), labels...), carried...), pivotMixed...), opening...), drill...)
 		// A skip level's blank key passes on its shown children, so they are
 		// counted before its condition compiles.
 		lv.countShownKids()
@@ -1773,6 +1802,16 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		sel = append(sel, ref.value+" AS __label", ref.currency+" AS __labelcur")
 		// The first column sorts by the label: sortable when the label is.
 		c.sortable[c.p.cols[0].col.ID] = !win
+	}
+	if d := c.p.spec.Detail; d != nil && d.Open != nil {
+		e, err := compileFormula(&rowsCtx{r: r, visiting: visiting, detail: frame, idText: true}, d.Open, "detail.open")
+		if err != nil {
+			return "", nil, err
+		}
+		if e.typ != Text {
+			return "", nil, invalid("detail.open", "open is a text: the path the row opens")
+		}
+		sel = append(sel, cellSQL(e)+" AS __open")
 	}
 	if len(c.p.nest) > 0 {
 		sel = append(sel, r.nestParent()+" AS __n0")

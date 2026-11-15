@@ -1,7 +1,7 @@
 import { type ElementHandle, expect, type Locator, type Page } from '@playwright/test'
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import PocketBase from 'pocketbase'
-import { loginAs, navigateToPackage } from './helpers'
+import { inStatement, loginAs, navigateToPackage } from './helpers'
 import { chooseParamOption, hubRow, openReportsHub, rowOf } from './report-view-helpers'
 
 export {
@@ -20,7 +20,9 @@ export {
 // sales), both headed "Stub Sales Co", and the shipped reports over sales
 // (reports-stub/server/register.go.txt): published "Stub larger side", "Stub
 // statement", "Stub period statement" and "Stub period pivot"; unpublished "Stub
-// team totals" and "Stub team balance".
+// team totals" and "Stub team balance", and the drill reports: published "Stub
+// drilled sales" and "Stub drilled by month", whose Amount opens the unpublished
+// "Stub sales by team" (only the shipped owner may open it).
 export const SALES_SOURCE = 'salesstub.sales'
 export const TEAMS_SOURCE = 'salesstub.teams'
 export const SHIPPED_TITLE = 'Stub larger side'
@@ -35,6 +37,42 @@ export const SHIPPED_FORMULA = {
         { col: 'amount' },
         { col: 'cost' },
     ],
+}
+
+/** The drill reports (register.go.txt): two drilled reports and the target they open. */
+export const DRILLED_TITLE = 'Stub drilled sales'
+export const DRILLED_PIVOT_TITLE = 'Stub drilled by month'
+export const DRILL_TARGET_TITLE = 'Stub sales by team'
+
+/** Opens a published report from the hub. */
+export async function openDrilled(page: Page, title: string) {
+    await openReportsHub(page)
+    await page.getByTestId('reports-hub-tab-published').click()
+    await hubRow(page, title).click()
+    await expect(inStatement(page, 'report-title')).toHaveText(title)
+}
+
+/**
+ * Sets a Custom period on the period chip of the report, or of `scope` (the drill
+ * panel, whose keys carry the `d.` prefix), and closes its popover.
+ */
+export async function setPeriod(page: Page, from: string, to: string, scope?: Locator) {
+    const chip = scope
+        ? scope.getByTestId('report-param-period')
+        : inStatement(page, 'report-param-period')
+    await chip.click()
+    await page.getByTestId('report-period-preset-custom').click()
+    await page.getByTestId('report-period-from').fill(from)
+    await page.getByTestId('report-period-to').fill(to)
+    const key = scope ? 'd.p-period' : 'p-period'
+    await expect.poll(() => new URL(page.url()).searchParams.get(key)).toBe(`${from}..${to}`)
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('report-period-popover')).toHaveCount(0)
+}
+
+/** The drill panel (D4); its own helpers' scope. */
+export function drillPanel(page: Page): Locator {
+    return page.getByTestId('report-drill-panel')
 }
 
 let counter = 0

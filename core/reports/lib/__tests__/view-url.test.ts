@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_DISPLAY } from '../format'
-import type { ParamValue } from '../params'
+import { type ParamValue, rangeValue } from '../params'
 import type { ParamDef } from '../spec'
 import type { ResultColumn } from '../types'
 import {
+    clearedDrillKeys,
+    DRILL_KEY,
+    DRILL_PREFIX,
     decodeSort,
     encodeSort,
+    FROM_KEY,
     nextSort,
     parseViewOptions,
     reportLink,
@@ -266,5 +270,78 @@ describe('sort choices', () => {
             'Sort: Amount, ascending'
         )
         expect(sortChipLabel(columns, DEFAULT_DISPLAY, { col: 'gone', dir: 'asc' })).toBe('Sort')
+    })
+})
+
+describe('two report views on one route (D4)', () => {
+    const DEFS: ParamDef[] = [{ id: 'period', type: 'dateRange', default: { preset: 'thisMonth' } }]
+    const SEARCH = {
+        'p-period': 'lastMonth',
+        s: 'amount:asc',
+        [DRILL_KEY]: 'r2',
+        'd.p-period': '2026-03-01..2026-03-31',
+        'd.s': 'amount:desc',
+        'd.hide': 'cost',
+        [FROM_KEY]: 'r0',
+    }
+
+    it('names its keys', () => {
+        expect([FROM_KEY, DRILL_KEY, DRILL_PREFIX]).toEqual(['from', 'd', 'd.'])
+    })
+
+    it('reads only the prefixed keys under the prefix', () => {
+        const drill = parseViewOptions(DEFS, SEARCH, DRILL_PREFIX)
+        expect(drill.params.period).toEqual(rangeValue('2026-03-01', '2026-03-31'))
+        expect(drill.sort).toEqual({ col: 'amount', dir: 'desc' })
+        expect(drill.display.hidden).toEqual(['cost'])
+    })
+
+    it('never reads a prefixed key without the prefix', () => {
+        const main = parseViewOptions(DEFS, SEARCH)
+        expect(main.params.period).toEqual({ kind: 'preset', preset: 'lastMonth' })
+        expect(main.sort).toEqual({ col: 'amount', dir: 'asc' })
+        expect(main.display.hidden).toEqual([])
+    })
+
+    it('writes only prefixed keys under the prefix', () => {
+        const written = serializeViewOptions(
+            DEFS,
+            parseViewOptions(DEFS, SEARCH, DRILL_PREFIX),
+            DRILL_PREFIX
+        )
+        expect(Object.keys(written).every(key => key.startsWith(DRILL_PREFIX))).toBe(true)
+        expect(written['d.p-period']).toBe('2026-03-01..2026-03-31')
+        expect(written['d.s']).toBe('amount:desc')
+    })
+
+    it('clears every drill key and leaves the others', () => {
+        // toStrictEqual: toEqual ignores undefined keys, so it would pass a clear that clears nothing.
+        expect(clearedDrillKeys(SEARCH)).toStrictEqual({
+            d: undefined,
+            'd.p-period': undefined,
+            'd.s': undefined,
+            'd.hide': undefined,
+        })
+    })
+
+    it('copies a link with no from, d or d. key', () => {
+        // Both views are copied: the drill panel's options must not write a drill key either.
+        const mainLink = reportLink('https://x.test', 'r1', DEFS, parseViewOptions(DEFS, SEARCH))
+        const drillLink = reportLink(
+            'https://x.test',
+            'r1',
+            DEFS,
+            parseViewOptions(DEFS, SEARCH, DRILL_PREFIX)
+        )
+        for (const link of [mainLink, drillLink]) {
+            const query = new URL(link).searchParams
+            expect(
+                [...query.keys()].filter(
+                    key => key === FROM_KEY || key === DRILL_KEY || key.startsWith(DRILL_PREFIX)
+                )
+            ).toEqual([])
+        }
+        expect(new URL(mainLink).searchParams.get('p-period')).toBe('lastMonth')
+        expect(new URL(drillLink).searchParams.get('p-period')).toBe('2026-03-01..2026-03-31')
     })
 })

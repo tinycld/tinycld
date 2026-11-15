@@ -2,8 +2,15 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import type { ReactNode } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
+import type { RowLinks } from '../hooks/useRowLinks'
 import { isFigureColumn, labelNeed } from '../lib/column-measure'
-import { type CellDisplay, cellDisplay, type NumberFormat, rowLabelText } from '../lib/format'
+import {
+    type CellDisplay,
+    cellDisplay,
+    headingText,
+    type NumberFormat,
+    rowLabelText,
+} from '../lib/format'
 import type { VisibleRow } from '../lib/rows'
 import { groupChain } from '../lib/sticky'
 import {
@@ -17,6 +24,7 @@ import {
 } from '../lib/table-lines'
 import { breakAfterColons } from '../lib/text-width'
 import type { ResultColumn, ResultRow, RowKind } from '../lib/types'
+import { DrillFigure, OpenRowLabel, RowFrame } from './ReportLinks'
 import {
     CARET_SIZE,
     CONTINUATION_LINE_HEIGHT,
@@ -241,14 +249,13 @@ const WHOLE_WORDS = 'web:break-normal'
 // breakAfterColons), so a one-line text copies and reads as the plain text.
 const wrappedText = (text: string, lines: number) => (lines > 1 ? breakAfterColons(text) : text)
 
+const labelTextClass = (row: ResultRow) =>
+    `min-w-0 flex-1 text-sm ${WHOLE_WORDS} ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`
+
 function LabelText({ row, text, lines = 1 }: { row: ResultRow; text: string; lines?: number }) {
-    const shown = wrappedText(text, lines)
     return (
-        <Text
-            numberOfLines={lines}
-            className={`min-w-0 flex-1 text-sm ${WHOLE_WORDS} ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`}
-        >
-            {shown}
+        <Text numberOfLines={lines} className={labelTextClass(row)}>
+            {wrappedText(text, lines)}
         </Text>
     )
 }
@@ -263,6 +270,8 @@ interface RowLabelProps {
     isCopy?: boolean
     /** The lines its text may wrap to (the layout's lines); absent: one. */
     lines?: number
+    /** What the row opens; absent: a plain label (the builder's preview). */
+    links?: RowLinks
 }
 
 // Child rows indent the label only, so the figures stay aligned. It grows to fill
@@ -317,6 +326,21 @@ export function RowLabel(props: RowLabelProps) {
     if (props.item.isToggle) return <GroupToggleLabel {...props} />
     const { item, format, justify = 'start', minHeight = ROW_HEIGHT, isCopy = false, lines } = props
     const text = rowLabelText(item.row, format)
+    const href = props.links && !isCopy ? props.links.rowHref(item.row) : null
+    if (props.links && href !== null) {
+        const links = props.links
+        return (
+            <OpenRowLabel
+                href={href}
+                testID={labelId(item.row, isCopy)}
+                text={text}
+                textClass={labelTextClass(item.row)}
+                lines={lines ?? 1}
+                style={labelStyle(item.row, justify, minHeight)}
+                onPress={() => links.onRow(item.row)}
+            />
+        )
+    }
     return (
         <View
             testID={labelId(item.row, isCopy)}
@@ -359,11 +383,12 @@ interface RowCellProps {
     isCopy?: boolean
     /** The lines its text may wrap to (the layout's lines); absent: one. */
     lines?: number
+    links?: RowLinks
 }
 
 // A group row's label is its one accessible toggle. Its figures take the same
 // press but are not a button and have no tab stop, so a closed group's figures
-// stay readable.
+// stay readable. A drilled figure is a link instead (D1).
 export function RowCell({
     item,
     column,
@@ -374,19 +399,42 @@ export function RowCell({
     minHeight = ROW_HEIGHT,
     isCopy = false,
     lines = 1,
+    links,
 }: RowCellProps) {
     const { row } = item
     const display = cellDisplay(column, row, item.cells[column.id], format)
     const isFigure = isFigureColumn(column)
     // A figure is never wrapped (column-measure.ts wholeMeasure): a time keeps its colon whole.
     const shown = isFigure ? display.text : wrappedText(display.text, lines)
+    const textClass = cellTextClass(display, justify, row.kind, isFigure)
+    const testID = `${isCopy ? 'report-sticky-cell' : 'report-cell'}-${column.id}-${row.id}`
+    const style = cellBoxStyle(width, minHeight)
+    // A figure whose column drills, on a row with a @drill cell, opens the rows
+    // behind it; on a group row this press replaces the fold (the label still folds).
+    const href = links ? links.figureHref(column, row) : null
+    if (links && href !== null) {
+        const name = `Show transactions: ${rowLabelText(row, format)}, ${headingText(column, format)}, ${display.text}`
+        return (
+            <DrillFigure
+                href={href}
+                testID={testID}
+                style={style}
+                name={name}
+                text={shown}
+                textClass={textClass}
+                lines={lines}
+                isShown={links.isFigureShown(column, row)}
+                isCopy={isCopy}
+                figureKey={links.figureKey(column, row)}
+                onPress={() => links.onFigure(column, row)}
+            />
+        )
+    }
     const text = (
-        <Text numberOfLines={lines} className={cellTextClass(display, justify, row.kind, isFigure)}>
+        <Text numberOfLines={lines} className={textClass}>
             {shown}
         </Text>
     )
-    const testID = `${isCopy ? 'report-sticky-cell' : 'report-cell'}-${column.id}-${row.id}`
-    const style = cellBoxStyle(width, minHeight)
     if (!item.isToggle) {
         return (
             <View testID={testID} className="justify-center px-3" style={style}>
@@ -428,13 +476,23 @@ export interface TableRowProps {
     format: NumberFormat
     onToggleGroup(row: ResultRow): void
     isCopy?: boolean
+    /** What figures and rows open (useRowLinks); absent: all plain. */
+    links?: RowLinks
 }
 
 // Each column at the width the line gave it; a cell too narrow for its text ends
 // in "…" (numberOfLines), or wraps to the lines its fit allows, so nothing runs
 // past the table's edge. A group row's
 // label also takes the empty cells before its first value (oneLineLabelSpan).
-function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: TableRowProps) {
+function OneLineRow({
+    item,
+    columns,
+    layout,
+    format,
+    onToggleGroup,
+    isCopy,
+    links,
+}: TableRowProps) {
     if (layout.kind !== 'one-line') return null
     const [label, ...amounts] = columns
     const span = oneLineLabelSpan(
@@ -457,10 +515,16 @@ function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: Ta
                 minHeight={ROW_HEIGHT}
                 isCopy={isCopy}
                 lines={layout.lines?.[column.id]}
+                links={links}
             />
         ))
     return (
-        <View className={`flex-row bg-background ${ROW_RULE[item.row.kind]}`}>
+        <RowFrame
+            row={item.row}
+            links={links}
+            isCopy={isCopy}
+            className={`flex-row bg-background ${ROW_RULE[item.row.kind]}`}
+        >
             <View style={labelBox}>
                 <RowLabel
                     item={item}
@@ -468,14 +532,15 @@ function OneLineRow({ item, columns, layout, format, onToggleGroup, isCopy }: Ta
                     onToggleGroup={onToggleGroup}
                     isCopy={isCopy}
                     lines={label ? layout.lines?.[label.id] : undefined}
+                    links={links}
                 />
             </View>
             {cells}
-        </View>
+        </RowFrame>
     )
 }
 
-function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: TableRowProps) {
+function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy, links }: TableRowProps) {
     const [label] = columns
     const rowLines = rowLayout(item, layout, label?.id ?? '', labelNeed(item, format))
     if (rowLines.kind !== 'blocks') return null
@@ -492,6 +557,7 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: Tab
                     minHeight={minHeight}
                     isCopy={isCopy}
                     lines={rowLines.lines?.[col]}
+                    links={links}
                 />
             )
         }
@@ -507,11 +573,17 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: Tab
                 minHeight={minHeight}
                 isCopy={isCopy}
                 lines={rowLines.lines?.[col]}
+                links={links}
             />
         )
     }
     return (
-        <View className={`bg-background ${ROW_RULE[item.row.kind]}`}>
+        <RowFrame
+            row={item.row}
+            links={links}
+            isCopy={isCopy}
+            className={`bg-background ${ROW_RULE[item.row.kind]}`}
+        >
             <RootBlockView
                 root={rowLines.root}
                 indent={rowLines.indent}
@@ -519,7 +591,7 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy }: Tab
                 firstHeight={ROW_HEIGHT}
                 restHeight={restHeight}
             />
-        </View>
+        </RowFrame>
     )
 }
 

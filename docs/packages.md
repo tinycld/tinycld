@@ -1440,6 +1440,8 @@ label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` o
 | `pivot.range` | The id of a `dateRange` param. When the param resolves to both bounds, the pivot has one column for every bucket its `from`..`to` touches, in order, whether or not a row falls in it (a sum reads 0 there; min, max and average stay blank), at most `maxColumns`, then the `pivotCap` notice with the count left out in `leftOut`. A row outside the range counts only in the cell column. On All dates, or with no `range`, the columns are the buckets that have rows. Refused when the param is unknown (422 `unknown_param`) or not a `dateRange`, on a pivot with no `bucket`, and on a pivot not over a date. |
 | `pivot.order` | `"spec"`: the result keeps the spec's column order and puts the pivot columns just before their cell column, which follows them as the row's total. Absent: the pivot columns come after every column. Refused for any other value and when the cell column is the spec's first column. |
 | `columns[].pivot.labelType` | On a bucketed pivot column (and as `labelType` on a bucketed group row and its subtotal): `month`, `quarter`, `year`, `fiscalYear` or `day`, with the raw key in `labelValue` (`"2026-01"`, `"2026-Q1"`, `"2026"`, the fiscal year's end year as a number, `"2026-01-05"`). `label`, `pivot.key` and the group key stay the raw key; the view writes it in words (English): "Jan 2026", "Q1 2026", "2026", "FY 2026", the short day. These types are never a field's type. |
+| `columns[].drill` | `{ report, levels, pivotCells? }`: a figure of this column opens the shipped report `report` (a key of the report's own package) filtered to the figure's rows. `levels.<group id>.<param id>` gives each target param's value on that level's group and subtotal rows: a formula (`groupKey` reads a level's group value; a relation reads as its id), `{ "range": { "from": …, "to": … } }`, `{ "group": <formula> }` (a whole group of the target's `optionsFrom.group`), or `{ "param": "<id>" }` (the value the reader ran, copied). `pivotCells`, on a pivot's cell column only, lays values over the level's for each pivot cell; there `{ "pivotBound": "from" \| "to" }` is the cell's first or last day, cut to the pivot's range. A blank value leaves that figure with no target. Not on the first, a hidden or a percent column. The result column carries `drill: { reportId, title }` and each group or subtotal row of a drilled level `<col>@drill` (the target's params in the run request's form; with `pivotCells`, also `<col>.p<j>@drill` for pivot cell `j`), only for a reader who may view the target. |
+| `detail.open` | A text formula: the app path a detail row opens, for example `concat("<slug>/entries/", [id])`. It must start with the report's package slug and a `/` and hold only letters, digits, `-`, `_` and `/`; any other value gives that row no link (logged once per run). A relation inside it reads as its record id. Not on a pivot report. Detail rows carry `open`. |
 
 `<col>` is a spec column id. A pivot's cell columns (one per pivot value) all take
 the fit of their spec column.
@@ -1543,6 +1545,13 @@ reports.RegisterShipped(reports.Shipped{
   reports that already exist. Both run for one report, so the share code must
   be idempotent: add only the shares that are missing. Core has no share API
   for this.
+- A drilled figure (`columns[].drill`) opens its target beside the report in a
+  480 px panel (`DETAIL_PANEL_WIDTH`) when the window is 1360 px or wider
+  (`DETAIL_PANEL_MIN_WINDOW`, `@tinycld/core/lib/detail-surface`), else as its
+  own screen with `from=<source id>`, whose back link names the source. The
+  panel's state is in the source's URL (`d=<target id>` and the target's
+  options under the `d.` prefix), so a reload keeps it; a copied link never
+  holds it. A target the reader may not view gives plain figures.
 - A shipped report cannot be deleted while the package ships it. The
   server answers "This report ships with a package. An admin who owns or
   edits it can unpublish it instead." Only an admin with update access (the

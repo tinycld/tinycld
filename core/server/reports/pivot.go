@@ -2,6 +2,7 @@ package reports
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -94,6 +95,56 @@ func bucketKey(bucket string, i int) any {
 		return fmt.Sprintf("%04d", i)
 	}
 	return int64(i)
+}
+
+// bucketDays is the first and last day of the bucket whose key is key (in
+// bucketKey's forms; a fiscal year is its end year), false for a key that is
+// no bucket (a blank date's).
+func bucketDays(bucket string, key any, fiscalStart int) (first, last string, ok bool) {
+	text, _ := key.(string)
+	var start, end time.Time
+	switch bucket {
+	case "day":
+		d, err := time.Parse(time.DateOnly, text)
+		if err != nil {
+			return "", "", false
+		}
+		start, end = d, d
+	case "month":
+		d, err := time.Parse("2006-01", text)
+		if err != nil {
+			return "", "", false
+		}
+		start, end = d, d.AddDate(0, 1, -1)
+	case "quarter":
+		var y, q int
+		if n, err := fmt.Sscanf(text, "%4d-Q%d", &y, &q); err != nil || n != 2 || q < 1 || q > 4 {
+			return "", "", false
+		}
+		start = time.Date(y, time.Month(3*q-2), 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(0, 3, -1)
+	case "year":
+		y, err := strconv.Atoi(text)
+		if err != nil || len(text) != 4 {
+			return "", "", false
+		}
+		start = time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(1, 0, -1)
+	case "fiscalYear":
+		y, isYear := key.(int64)
+		if !isYear {
+			return "", "", false
+		}
+		startYear, month := int(y), max(fiscalStart, 1)
+		if month > 1 {
+			startYear--
+		}
+		start = time.Date(startYear, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(1, 0, -1)
+	default:
+		return "", "", false
+	}
+	return start.Format(time.DateOnly), end.Format(time.DateOnly), true
 }
 
 // pivotValue is one pivot column: its key, and for a pivot by currency the

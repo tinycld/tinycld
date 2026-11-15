@@ -36,6 +36,19 @@ export type RowKind = 'detail' | 'group' | 'opening' | 'subtotal' | 'computed' |
 
 export type CellValue = number | string | boolean | null
 
+/** The report a drilled column's figures open (run.go DrillTarget). */
+export interface DrillTarget {
+    reportId: string
+    title: string
+}
+
+/**
+ * A `<col>@drill` cell: the target's param values by param id, each in the run
+ * request's JSON form. Read it only through `drillCellParams` (drill.ts): cells
+ * stay typed as `CellValue`, which every other cell is (R12).
+ */
+export type DrillParams = Record<string, unknown>
+
 export const PARAM_TYPES = [
     'date',
     'asOf',
@@ -87,6 +100,8 @@ export interface ResultColumn {
     sortable?: boolean
     /** What the heading shows in place of `label` this run (a day, a text or a number). */
     heading?: { value: CellValue; type: FieldType }
+    /** The report this column's figures open; absent when it has none or the reader may not view it. */
+    drill?: DrillTarget
 }
 
 export interface ResultRow {
@@ -102,6 +117,8 @@ export interface ResultRow {
     section?: string
     /** The row a nested child row hangs under. */
     parent?: string
+    /** The app path a detail row opens (spec `detail.open`). */
+    open?: string
     groupKey?: unknown[]
     expanded?: boolean
     canExpand?: boolean
