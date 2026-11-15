@@ -1,0 +1,9 @@
+import { Stack } from 'expo-router'
+
+// Makes the stub's screens one route of the app's package tabs (PackageTabs declares
+// one screen per package), so the sale screen a report row opens is reachable. A Stack,
+// as real packages use, keeps the screens under a pushed record mounted, so a record
+// opened from a report leaves the stub's earlier screens (and their typed input) intact.
+export default function SalesStubLayout() {
+    return <Stack screenOptions={{ headerShown: false }} />
+}

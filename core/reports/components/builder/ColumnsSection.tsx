@@ -26,7 +26,7 @@ import {
 import { linkTarget, rowsTotalColumns } from '../../lib/builder/formula-context'
 import { isFigureType } from '../../lib/column-measure'
 import type { ParamDef, SpecHop } from '../../lib/spec'
-import type { Aggregate, Problem } from '../../lib/types'
+import type { Aggregate, Problem, ResultColumn } from '../../lib/types'
 import { BuilderSection } from './BuilderSection'
 import { ColumnFitField } from './ColumnFitField'
 import { ColumnPicker } from './ColumnPicker'
@@ -94,6 +94,31 @@ interface ColumnRowProps {
     rowsTotalIds: ReadonlySet<string>
     /** The columns that are never cut (numbers, amounts, percents, dates, yes/no). */
     figureIds: ReadonlySet<string>
+    /** The run's columns: the drill note names the drilled report's title from them. */
+    resultColumns: readonly ResultColumn[]
+}
+
+// A drill is set in the spec only (Q10): the builder keeps it as it is and names the
+// report its figures open (the run's title for the reader, else the shipped key).
+function DrillNote({
+    column,
+    index,
+    resultColumns,
+}: {
+    column: ColumnDraft
+    index: number
+    resultColumns: readonly ResultColumn[]
+}) {
+    if (!column.drill) return null
+    const title = resultColumns.find(result => result.id === column.id)?.drill?.title
+    return (
+        <Text
+            testID={`report-builder-column-${index}-drill`}
+            className="text-xs text-muted-foreground"
+        >
+            {`Figures open ${title ?? column.drill.report}`}
+        </Text>
+    )
 }
 
 function ColumnRow({
@@ -103,6 +128,7 @@ function ColumnRow({
     numericIds,
     rowsTotalIds,
     figureIds,
+    resultColumns,
 }: ColumnRowProps) {
     const source = useWatch({ control: builder.form.control, name: 'source' })
     const column = columns[index]
@@ -172,6 +198,7 @@ function ColumnRow({
             <HiddenField builder={builder} columns={columns} index={index} />
             <LinkLabelField builder={builder} columns={columns} index={index} source={source} />
             <ColumnFormula builder={builder} columns={columns} index={index} />
+            <DrillNote column={column} index={index} resultColumns={resultColumns} />
         </View>
     )
 }
@@ -575,9 +602,11 @@ function ColumnFormula({ builder, columns, index }: Omit<ColumnPartProps, 'sourc
 export function ColumnsSection({
     builder,
     problems,
+    resultColumns,
 }: {
     builder: ReportBuilder
     problems: Problem[]
+    resultColumns: readonly ResultColumn[]
 }) {
     const columns = useWatch({ control: builder.form.control, name: 'columns' })
     const choices = useColumnChoices(builder)
@@ -636,6 +665,7 @@ export function ColumnsSection({
             numericIds={numericIds}
             rowsTotalIds={rowsTotalIds}
             figureIds={figureIds}
+            resultColumns={resultColumns}
         />
     ))
     return (

@@ -222,6 +222,7 @@ func (lc *layoutCtx) computedLeg(item *LayoutItem, ord int, at, cur string) (uni
 	for idx := range c.p.cols {
 		cells = append(cells, blankOpeningCells(idx)...)
 	}
+	cells = append(cells, blankDrillCells(c.p, lc.pivotCount)...)
 	// The level rows' last columns, so every leg of the union has the same.
 	cells = append(cells, fmt.Sprintf("%d AS __ord", ord), "1 AS __own", "NULL AS __label", "NULL AS __labelcur", "NULL AS __n", "NULL AS __kids")
 	if len(lc.used) > maxJoinedChunks {

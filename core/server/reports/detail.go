@@ -2,6 +2,7 @@ package reports
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -20,6 +21,9 @@ type rowsCtx struct {
 	// reads records what the lookup being compiled reads of the row; nil
 	// outside a lookup.
 	reads *rowReads
+	// idText reads a relation inside a text operator as its record's id, not
+	// its label: a detail row's open path holds ids (R2).
+	idText bool
 }
 
 // rowReads is what a lookup on a detail row reads of the report's row,
@@ -301,7 +305,7 @@ func (rc *rowsCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (exp
 	}
 	// The argument compiles in a context of its own, which records nothing.
 	rc.reads.value()
-	e, err := rc.aggregateArg(rc.r, rc.visiting, op, arg, scale, at)
+	e, err := rc.aggregateArg(rc.r, rc.visiting, rc.idText, op, arg, scale, at)
 	if err != nil {
 		return expr{}, err
 	}
@@ -339,7 +343,12 @@ func (rc *rowsCtx) window(op string, arg *Node, scale int, at string) (expr, err
 func (rc *rowsCtx) bind(v any) string   { return rc.r.s.bind(v) }
 func (rc *rowsCtx) fiscalStart() string { return rc.bind(int64(rc.r.c.fiscal)) }
 func (rc *rowsCtx) filter() bool        { return false }
-func (rc *rowsCtx) label(e expr) string { return rc.r.c.textOf(rc.r.s, e) }
+func (rc *rowsCtx) label(e expr) string {
+	if rc.idText {
+		return e.sql
+	}
+	return rc.r.c.textOf(rc.r.s, e)
+}
 
 // lookup compiles a lookup on the row, recording what it reads of the row
 // (hoistLookup reads that). A lookup inside it, through a column's formula,
@@ -525,4 +534,18 @@ func partitionBy(keys []string) string {
 		return ""
 	}
 	return "PARTITION BY " + strings.Join(keys, ", ")
+}
+
+// openPathRe is the characters an open path may hold: no scheme, query,
+// fragment, dot or space reaches the router.
+var openPathRe = regexp.MustCompile(`^[A-Za-z0-9_/-]+$`)
+
+// openPath keeps a detail row's open value when it is a path under the
+// report's package: "<slug>/" then segments that are none of them empty.
+func openPath(slug, v string) (string, bool) {
+	rest, ok := strings.CutPrefix(v, slug+"/")
+	if !ok || rest == "" || !openPathRe.MatchString(v) || strings.Contains(v, "//") || strings.HasSuffix(v, "/") {
+		return "", false
+	}
+	return v, true
 }

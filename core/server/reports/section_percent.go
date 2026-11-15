@@ -166,7 +166,9 @@ func walkSpecFormulas(p *plan, visit func(n *Node, at string, columnRoot bool)) 
 	}
 	if s.Detail != nil {
 		walk(s.Detail.Label, "detail.label", false)
+		walk(s.Detail.Open, "detail.open", false)
 	}
+	s.drillNodes(func(n *Node, at string) { walk(n, at, false) })
 	for i := range s.Params {
 		if o := s.Params[i].OptionsFrom; o != nil {
 			walk(o.Where, fmt.Sprintf("params.%d.optionsFrom.where", i), false)

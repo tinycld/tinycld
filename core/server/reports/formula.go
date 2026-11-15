@@ -358,6 +358,8 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 		return expr{}, invalid(at, errNodeKind)
 	}
 	switch {
+	case n.GroupKey != "" || n.PivotBound != "":
+		return compileDrillLeaf(c, n, at)
 	case n.Record != "":
 		return c.record(n.Record, n.Path, at)
 	case n.Col != "":
@@ -483,14 +485,14 @@ type leafTracker interface {
 }
 
 // errNodeKind refuses a node that is not exactly one kind of node.
-const errNodeKind = "a formula node is one of op, col, path, outer, param, value, subtotal or record"
+const errNodeKind = "a formula node is one of op, col, path, outer, param, value, subtotal, record, groupKey or pivotBound"
 
 func nodeKinds(n *Node) int {
 	kinds := 0
 	// A record leaf's path is part of it. (A lookup, whose value is a
 	// formula, is compiled before nodes are counted.)
 	path := n.Path != nil && n.Record == ""
-	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Outer != nil, n.Param != "", n.Value != nil, n.Subtotal != "" && n.Op == "", n.Record != ""} {
+	for _, set := range []bool{n.Op != "", n.Col != "", path, n.Outer != nil, n.Param != "", n.Value != nil, n.Subtotal != "" && n.Op == "", n.Record != "", n.GroupKey != "", n.PivotBound != ""} {
 		if set {
 			kinds++
 		}
@@ -1253,8 +1255,8 @@ func (ctxBase) record(_ string, _ Path, at string) (expr, error) {
 
 // aggregateArg compiles an aggregate's argument over one base row and
 // checks that op accepts it.
-func (ctxBase) aggregateArg(r *rowsCTE, visiting map[string]bool, op Aggregate, arg *Node, scale int, at string) (expr, error) {
-	inner := &rowsCtx{r: r, inAggregate: true, visiting: visiting}
+func (ctxBase) aggregateArg(r *rowsCTE, visiting map[string]bool, idText bool, op Aggregate, arg *Node, scale int, at string) (expr, error) {
+	inner := &rowsCtx{r: r, inAggregate: true, visiting: visiting, idText: idText}
 	e, err := compileFormula(inner, arg, at+".args.0")
 	if err != nil {
 		return expr{}, err

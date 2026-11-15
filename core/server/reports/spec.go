@@ -83,9 +83,87 @@ type DisplayCell struct {
 }
 
 // Detail shapes detail rows: Label is a formula on a detail row that labels
-// it (the first column's value without it).
+// it (the first column's value without it); Open is a text formula on a
+// detail row, the app path under the report's package that the row opens
+// (D2). A relation in a text operator inside Open reads as its record's id,
+// also inside an aggregate or a lookup there.
 type Detail struct {
 	Label *Node `json:"label,omitempty"`
+	Open  *Node `json:"open,omitempty"`
+}
+
+// Drill is a column's drill: the shipped report it opens (Report, a key of
+// the report's own package) and the target's param values per drilled
+// group level (Levels, by group id, then by target param id). PivotCells,
+// on the pivot's cell column only, are laid over a level's values on its
+// pivot cells.
+type Drill struct {
+	Report     string                           `json:"report"`
+	Levels     map[string]map[string]DrillValue `json:"levels"`
+	PivotCells map[string]DrillValue            `json:"pivotCells,omitempty"`
+}
+
+// DrillValue is one of: a formula on the drilled level, a date range from
+// two formulas, a whole group of a choice param's options from a formula,
+// or a copy of a param of the report as the run was given it (R1, R3, R4).
+type DrillValue struct {
+	Formula *Node
+	Range   *DrillRange
+	Group   *Node
+	Param   string
+}
+
+type DrillRange struct {
+	From *Node `json:"from"`
+	To   *Node `json:"to"`
+}
+
+func (v DrillValue) MarshalJSON() ([]byte, error) {
+	switch {
+	case v.Range != nil:
+		return json.Marshal(struct {
+			Range *DrillRange `json:"range"`
+		}{v.Range})
+	case v.Group != nil:
+		return json.Marshal(struct {
+			Group *Node `json:"group"`
+		}{v.Group})
+	case v.Param != "":
+		return json.Marshal(struct {
+			Param string `json:"param"`
+		}{v.Param})
+	}
+	return json.Marshal(v.Formula)
+}
+
+// UnmarshalJSON reads a value's form by its one key (R1): range, group, or
+// param as a string; anything else is a formula. Every part decodes
+// strictly, as Load decodes the spec: a custom decoder does not inherit
+// DisallowUnknownFields.
+func (v *DrillValue) UnmarshalJSON(raw []byte) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return err
+	}
+	if len(keys) == 1 {
+		switch {
+		case keys["range"] != nil:
+			return strictJSON(keys["range"], &v.Range)
+		case keys["group"] != nil:
+			return strictJSON(keys["group"], &v.Group)
+		case keys["param"] != nil:
+			if err := json.Unmarshal(keys["param"], &v.Param); err == nil {
+				return nil
+			}
+		}
+	}
+	return strictJSON(raw, &v.Formula)
+}
+
+func strictJSON(raw []byte, dst any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
 }
 
 // Hop is one step of a path: a link to follow, or the field to read last.
@@ -140,6 +218,10 @@ type Column struct {
 	// reader's short day form). Label stays the column's name in Customize
 	// and the builder. A heading that is blank (an unset param) shows Label.
 	Heading *Node `json:"heading,omitempty"`
+	// Drill opens a shipped report of the same package from this column's
+	// figures on group and subtotal rows, filtered to the rows behind each
+	// figure (D1).
+	Drill *Drill `json:"drill,omitempty"`
 }
 
 // DetailBlank is the one Column.Detail value.
@@ -179,6 +261,12 @@ type Node struct {
 	Outer Path `json:"outer,omitempty"`
 	// Bound reads a date range param's first ("from") or last ("to") day.
 	Bound string `json:"bound,omitempty"`
+	// GroupKey reads, in a drill value only, the key of a group at or above
+	// the drilled level (a bucket's key as text, a link's record id).
+	GroupKey string `json:"groupKey,omitempty"`
+	// PivotBound reads, in a drill's pivotCells only, the first ("from") or
+	// last ("to") day of the pivot cell's bucket, cut to the pivot's range.
+	PivotBound string `json:"pivotBound,omitempty"`
 }
 
 // SortKey sorts by a column or by a formula ("asc" by default). On a group

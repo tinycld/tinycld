@@ -15,9 +15,11 @@ import {
     paramDefSchema,
     type ReportSpec,
     type SpecColumn,
+    type SpecDrill,
     type SpecGroup,
     type SpecNode,
     type SpecSortKey,
+    specDrillSchema,
     specHopSchema,
     specNodeSchema,
 } from '../spec'
@@ -166,6 +168,8 @@ const columnFields = {
     heading: formulaDraftSchema.nullable().optional(),
     /** Computed to group or sort by, never shown (G7). */
     hidden: z.boolean().optional(),
+    /** The column's drill, kept as the spec says it: the builder shows it, never edits it (Q10). */
+    drill: specDrillSchema.optional(),
 }
 export const columnDraftSchema = z.union([
     z.object({
@@ -262,6 +266,12 @@ const draftShape = z.object({
     layout: z.array(layoutItemSchema).max(MAX_LAYOUT_ITEMS),
     /** A formula that labels each opened (detail) row; null: the first column's value (E7). */
     detailLabel: formulaDraftSchema.nullable(),
+    /**
+     * The path an opened row opens (spec detail.open). Kept as the raw spec node, not a
+     * formula draft as detailLabel is: the builder shows it and never edits it (Q10), so
+     * a draft round trip could only change it.
+     */
+    detailOpen: specNodeSchema.optional(),
     /** The one-line width gate and the line layouts per width (E14), kept as the spec says them. */
     display: z.object({
         oneLine: displayOneLineSchema.optional(),
@@ -497,6 +507,7 @@ function levelIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
 
 const LAYOUT_HAVING = "A layout's sections are fixed rows: hide rows on a deeper group"
 const PIVOT_DETAIL = 'A pivot report has no opened rows to label: turn the row label off'
+const PIVOT_OPEN = 'A pivot report has no detail rows to open'
 const HIDE_EMPTY_LAST = 'The last level has no child groups to be empty of'
 const HIDE_EMPTY_SECTIONS = "A layout's sections always show: hide empty groups on a deeper level"
 const READS_OWN_SECTION = 'A row inside a section adds to it, so it cannot read that section'
@@ -790,6 +801,8 @@ export function draftIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     if (firstProblem) issues.push({ path: ['filter'], message: firstProblem })
     if (draft.pivot.on && draft.detailLabel !== null)
         issues.push({ path: ['detailLabel'], message: PIVOT_DETAIL })
+    if (draft.pivot.on && draft.detailOpen)
+        issues.push({ path: ['detailOpen'], message: PIVOT_OPEN })
     const columnIds = draft.columns.map(column => column.id)
     return [...issues, ...levelIssues(draft, catalog), ...displayIssues(draft.display, columnIds)]
 }
@@ -956,6 +969,7 @@ function columnDraft(
         ...(fit ? { fit } : {}),
         ...(column.heading ? { heading: formulaDraft(column.heading, params) } : {}),
         ...(column.hidden ? { hidden: true } : {}),
+        ...(column.drill ? { drill: column.drill } : {}),
     } as const
     if (column.formula) {
         return {
@@ -1045,6 +1059,7 @@ export function draftFromSpec(
         pivot,
         layout: (spec.layout ?? []).map(item => layoutItemDraft(item, params)),
         detailLabel: spec.detail?.label ? formulaDraft(spec.detail.label, params) : null,
+        ...(spec.detail?.open ? { detailOpen: spec.detail.open } : {}),
         display: {
             ...(spec.display?.oneLine ? { oneLine: spec.display.oneLine } : {}),
             layouts: spec.display?.layouts ?? [],
@@ -1142,6 +1157,7 @@ function specColumns(draft: BuilderDraft, catalog: Catalog, types: Types): SpecC
         if (column.rollup) out.rollup = specFormula(column.rollup, levelCtx)
         if (column.heading) out.heading = specFormula(column.heading, headingCtx)
         if (column.hidden) out.hidden = true
+        if (column.drill) out.drill = column.drill
         return out
     })
 }
@@ -1240,6 +1256,20 @@ export function levelScope(draft: ColumnsOf, catalog: Catalog, index: number): L
     return { columns, records: recordGroups({ ...draft, groups }, catalog) }
 }
 
+/** Every param a drill's values read: formulas, range bounds, groups and `{ param }` copies. */
+function paramsInDrill(drill: SpecDrill | undefined, into: Set<string>) {
+    if (!drill) return
+    const values = [...Object.values(drill.pivotCells ?? {})]
+    for (const level of Object.values(drill.levels)) values.push(...Object.values(level))
+    for (const value of values) {
+        if ('range' in value) {
+            paramsInNode(value.range.from, into)
+            paramsInNode(value.range.to, into)
+        } else if ('group' in value) paramsInNode(value.group, into)
+        else paramsInNode(value, into)
+    }
+}
+
 /**
  * The params something in the draft still reads, plus newly asked ones (R20): a
  * filter, having or fill condition, or a formula anywhere. A param stays while
@@ -1252,6 +1282,7 @@ export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[
         if (column.kind === 'formula') node(column.formula.node)
         node(column.rollup?.node)
         node(column.heading?.node)
+        paramsInDrill(column.drill, read)
     }
     for (const group of draft.groups) {
         paramsInGroup(group.having, read)
@@ -1266,6 +1297,7 @@ export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[
         for (const cell of Object.values(item.cells ?? {})) node(cell.node)
     }
     node(draft.detailLabel?.node)
+    node(draft.detailOpen)
     // A kept param's options can be filtered by another param, which then stays too,
     // and so on (params.go optionsFrom.where).
     const byId = new Map([...draft.params, ...added].map(p => [p.id, p]))
@@ -1419,9 +1451,12 @@ export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec
     if (draft.groups.length > 0) spec.groups = specGroups(draft, catalog)
     if (draft.pivot.on) spec.pivot = specPivot(draft.pivot)
     if (draft.layout.length > 0) spec.layout = specLayout(draft, catalog, types)
-    if (draft.detailLabel) {
+    if (draft.detailLabel || draft.detailOpen) {
         const ctx = formulaContext(draft, catalog, { kind: 'detail' })
-        spec.detail = { label: specFormula(draft.detailLabel, ctx) }
+        spec.detail = {
+            ...(draft.detailLabel ? { label: specFormula(draft.detailLabel, ctx) } : {}),
+            ...(draft.detailOpen ? { open: draft.detailOpen } : {}),
+        }
     } else if (draft.explicit.detail) spec.detail = {}
     const display = specDisplay(draft)
     if (display) spec.display = display

@@ -40,6 +40,7 @@ func (rn *runner) columns() []ResultColumn {
 		}
 		rc.Sortable = c.p.pivot == nil && c.sortable[cp.col.ID]
 		rc.Heading = rn.headings[cp.col.ID]
+		rc.Drill = rn.drillTargets[cp.col.ID]
 		rn.currencyOfColumn(cp, &rc)
 		out = append(out, rc)
 	}
@@ -64,6 +65,7 @@ func (rn *runner) pivotColumns() []ResultColumn {
 			ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: label.text,
 			Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format,
 			Pivot: &PivotColumn{Cell: cell.col.ID, Key: v.key, LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency},
+			Drill: rn.pivotDrill(cell),
 		}
 		rn.currencyOfColumn(cell, &rc)
 		out = append(out, rc)
@@ -748,8 +750,10 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n, depth int, sect
 	if rn.rawGroups != nil {
 		rn.rawGroups[id] = row
 	}
+	cells := rn.cells(row)
+	rn.drillCellsOf(row, n, cells)
 	rn.push(Row{
-		ID: id, Kind: KindGroup, Depth: depth, Level: n, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: rn.cells(row),
+		ID: id, Kind: KindGroup, Depth: depth, Level: n, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: cells,
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
 	}, row)
 	if expanded && opening != nil {
@@ -777,8 +781,12 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n, depth int, sect
 		}
 	}
 	if subtotal && (expanded || len(p.layout) > 0) {
+		// Each row owns its cells: a client that edits one row's must not
+		// change the other's.
+		subCells := rn.cells(row)
+		rn.drillCellsOf(row, n, subCells)
 		rn.push(Row{
-			ID: "s:" + keyString(key), Kind: KindSubtotal, Depth: depth, Level: n, Label: "Total " + label.text, Section: id, GroupKey: key, Cells: rn.cells(row),
+			ID: "s:" + keyString(key), Kind: KindSubtotal, Depth: depth, Level: n, Label: "Total " + label.text, Section: id, GroupKey: key, Cells: subCells,
 			LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
 		}, row)
 	}
@@ -803,11 +811,29 @@ func (rn *runner) detail(t *tree, row map[string]any, section string, depth int)
 	}
 	rn.push(Row{
 		ID: id, Kind: KindDetail, Depth: depth, Label: label.text, LabelColumn: labelColumn, Section: section, Cells: rn.detailCells(rn.cells(row)),
-		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
+		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency, Open: rn.openOf(row),
 	}, row)
 	if len(t.nested) > 0 {
 		rn.nestedRows(t, 0, row["__n0"], id, section, depth+1)
 	}
+}
+
+// openOf is a detail row's open path, or "" when the report has none or the
+// value is not a path of the report's package (logged once per run).
+func (rn *runner) openOf(row map[string]any) string {
+	v, _ := row["__open"].(string)
+	if v == "" {
+		return ""
+	}
+	slug, _, _ := strings.Cut(rn.c.p.base.Key, ".")
+	if path, ok := openPath(slug, v); ok {
+		return path
+	}
+	if !rn.openDropped {
+		rn.openDropped = true
+		log.WarnContext(rn.ctx, "a detail row's open path is not a path of its package; the row opens nothing", "source", rn.c.p.base.Key, "value", v)
+	}
+	return ""
 }
 
 // detailCells is a detail row's cells without those of the columns blank on

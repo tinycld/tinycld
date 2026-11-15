@@ -82,7 +82,11 @@ function Sections({
     return (
         <View>
             <DetailsSection builder={builder} problems={problems} />
-            <ColumnsSection builder={builder} problems={problems} />
+            <ColumnsSection
+                builder={builder}
+                problems={problems}
+                resultColumns={preview.allColumns}
+            />
             <FilterSection builder={builder} problems={problems} />
             <GroupSortSection builder={builder} problems={problems} />
             <PivotSection builder={builder} problems={problems} />

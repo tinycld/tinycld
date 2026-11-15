@@ -63,6 +63,11 @@ describe('refreshReportsStub', () => {
 
         const template = fs.readFileSync(path.join(TEMPLATES, 'server', 'register.go.txt'), 'utf8')
         expect(readStub('server/register.go')).toBe(template)
+        const saleScreen = fs.readFileSync(
+            path.join(TEMPLATES, 'screens', 'sale', '[id].tsx.txt'),
+            'utf8'
+        )
+        expect(readStub('tinycld/salesstub/screens/sale/[id].tsx')).toBe(saleScreen)
         expect(readStub('manifest.ts')).toContain("slug: 'salesstub'")
         expect(readStub('server/go.mod')).toContain('github.com/pocketbase/pocketbase v0.40.4')
         expect(spawnSync).not.toHaveBeenCalled()

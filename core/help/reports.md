@@ -193,6 +193,20 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
 - A report that is open stays current: when someone changes the data it reads, it
   runs again.
 
+## Open the rows behind a figure
+
+In some reports a figure opens the report that lists the rows behind it, such as the rows that add up to a group's total. On a computer, the figure underlines when you point at it. Select it to open that report, filtered to the figure's rows and period.
+
+- On a window 1360 pixels wide or wider, the report opens in a panel at the right, beside the report you are reading. The figure you selected stays marked. Select another figure to show its rows in the same panel. The panel has its own filters and sort, and its lines open their records. Select **Open as full report** to open it as its own screen, or **Close** (or press Esc) to close it. Opening **Customize** closes the panel, and selecting a figure closes **Customize**. A link copied with **Copy link** does not open the panel.
+- On a narrower window, and on a phone, the report opens as its own screen. Its back link shows the name of the report you came from and returns to it as you left it.
+- To open the report in a new browser tab, ⌘-click the figure.
+
+When you cannot open the report behind a figure, the figure is plain and does not open.
+
+## Open a row's record
+
+In some reports each line opens the record it comes from, on that record's own screen in its app. Select the line, or its name, to open the record. Back returns to the report as you left it.
+
 ## Share and publish
 
 Select **Share** to add people or groups as **Viewer** (can run it) or **Editor**
