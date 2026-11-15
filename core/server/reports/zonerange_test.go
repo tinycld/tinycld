@@ -413,3 +413,21 @@ func TestTypedDayAgainstADateColumnIgnoresTheZone(t *testing.T) {
 		t.Fatalf("a zone changed a date column's statements:\n got  %v\n want %v", got, utc)
 	}
 }
+
+// A between of a Date field with two typed days ignores the zone too: the
+// bounds of a 3-argument between are zoned only for a DateTime value.
+func TestTypedDayBetweenAgainstADateColumnIgnoresTheZone(t *testing.T) {
+	z := newZoo(t)
+	const spec = `{"version":4,"source":"zoo.feedings",
+		"columns":[{"id":"note","path":[{"field":"note"}]}],
+		"filter":{"op":"between","args":[{"path":[{"field":"fed"}]},{"value":"2026-01-05"},{"value":"2026-01-20"}]},
+		"sort":[{"col":"note"}]}`
+	seen := observeReads(t)
+	requireDetails(t, z.run(t, "ann", spec, Options{}, nil), "note", "f1", "f3")
+	utc := sameShape(*seen)
+	*seen = nil
+	requireDetails(t, z.run(t, "ann", spec, Options{TimeZone: chicagoZone}, nil), "note", "f1", "f3")
+	if got := sameShape(*seen); !reflect.DeepEqual(got, utc) {
+		t.Fatalf("a zone changed a between over a date column's statements:\n got  %v\n want %v", got, utc)
+	}
+}
