@@ -1,5 +1,20 @@
 import type { RecordLabelDecl } from '../record-labels/label'
 
+/**
+ * A record panel a package draws beside a report (manifest `reportPanels`, D5). A
+ * report's detail row whose `open` is `<slug>/<path>/<segments…>` opens
+ * `component` in the report's side panel on a window of 1360 px or more, else
+ * pushes the path. `path` is one or more segments of `[A-Za-z0-9_-]` joined by
+ * `/`. `component` is a module path under the package's `tinycld/<slug>/`,
+ * resolved as `<package name>/<component>` through the package's exports map; its
+ * default export is a React component that takes `ReportPanelProps`
+ * (`@tinycld/core/reports/hooks/usePanelTitle`).
+ */
+export interface ReportPanelDecl {
+    path: string
+    component: string
+}
+
 export interface PackageManifest {
     name: string
     slug: string
@@ -308,6 +323,12 @@ export interface PackageManifest {
      * steps are a0 (workspace), a1 (apps), a2 (email), a3 (team).
      */
     setupSteps?: { id: string; label: string; module: string; order?: string }[]
+
+    /**
+     * Record panels this package draws beside a report (ReportPanelDecl). The
+     * generator lists them in `lib/generated/report-panels.ts`.
+     */
+    reportPanels?: ReportPanelDecl[]
 }
 
 export interface PackagePort {

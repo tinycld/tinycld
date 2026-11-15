@@ -64,6 +64,9 @@ vi.mock('@tinycld/app-generated/package-help', () => ({
 vi.mock('@tinycld/app-generated/package-icons', () => ({
     packageIcons: {},
 }))
+vi.mock('@tinycld/app-generated/report-panels', () => ({
+    reportPanels: [],
+}))
 
 // @react-native-async-storage/async-storage requires the RN module bridge and
 // is pulled in transitively by `~/lib/store`. Substitute a minimal in-memory

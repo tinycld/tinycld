@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import type { ReportPanelDecl } from '../core/lib/packages/types'
 import type { RecordLabelDecl } from '../core/lib/record-labels/label'
 
 export interface PackageManifest {
@@ -89,6 +90,8 @@ export interface PackageManifest {
      * steps are a0 (workspace), a1 (apps), a2 (email), a3 (team).
      */
     setupSteps?: { id: string; label: string; module: string; order?: string }[]
+    // Record panels beside a report. See ReportPanelDecl in core/lib/packages/types.ts.
+    reportPanels?: ReportPanelDecl[]
 }
 
 // Keep in step with core/lib/packages/types.ts's PackagePort.
