@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     dateTimeText,
     formatDateTime,
+    hour24,
     isTwelveHour,
     readerTimeZone,
     timeZoneWords,
@@ -40,6 +41,12 @@ describe('formatDateTime', () => {
 
     it('writes an unknown zone as UTC, as the server reads it', () => {
         expect(formatDateTime(AT, 'Not/AZone', true)).toBe('Nov 14, 2026, 10:07 PM')
+    })
+
+    it('writes the names the server reads as UTC as UTC', () => {
+        for (const zone of ['', 'Local', 'GMT']) {
+            expect(formatDateTime(AT, zone, true)).toBe('Nov 14, 2026, 10:07 PM')
+        }
     })
 
     it('reads an instant written with a T', () => {
@@ -88,6 +95,23 @@ describe('isTwelveHour', () => {
     })
 })
 
+describe('hour24', () => {
+    const parts = (hour: string, dayPeriod?: string): Intl.DateTimeFormatPart[] => [
+        { type: 'hour', value: hour },
+        ...(dayPeriod ? [{ type: 'dayPeriod' as const, value: dayPeriod }] : []),
+    ]
+
+    it('reads a day period when the engine ignores the hour cycle', () => {
+        expect(hour24(parts('12', 'AM'))).toBe(0)
+        expect(hour24(parts('12', 'PM'))).toBe(12)
+        expect(hour24(parts('4', 'PM'))).toBe(16)
+    })
+
+    it('reads hour 24 with no period as midnight', () => {
+        expect(hour24(parts('24'))).toBe(0)
+    })
+})
+
 describe('timeZoneWords', () => {
     it('names a zone by its generic name', () => {
         expect(timeZoneWords(CHICAGO)).toBe('Central Time')
@@ -97,6 +121,50 @@ describe('timeZoneWords', () => {
         expect(timeZoneWords('UTC')).toBe('UTC')
         expect(timeZoneWords('Etc/UTC')).toBe('UTC')
         expect(timeZoneWords('Not/AZone')).toBe('UTC')
+        expect(timeZoneWords('')).toBe('UTC')
+        expect(timeZoneWords('Local')).toBe('UTC')
+        expect(timeZoneWords('GMT')).toBe('UTC')
+    })
+
+    describe('fallbacks', () => {
+        const RealDateTimeFormat = Intl.DateTimeFormat
+
+        // Wraps the real constructor; `override` may replace what one style answers.
+        function spyOnZoneNames(
+            override: (style: string) => Intl.DateTimeFormatPart[] | 'throw' | undefined
+        ) {
+            return vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(((
+                locale?: Intl.LocalesArgument,
+                options?: Intl.DateTimeFormatOptions
+            ) => {
+                const real = new RealDateTimeFormat(locale, options)
+                const style = options?.timeZoneName
+                if (!style) return real
+                const answer = override(style)
+                if (answer === 'throw') throw new RangeError('invalid timeZoneName')
+                if (!answer) return real
+                return { formatToParts: () => answer } as unknown as Intl.DateTimeFormat
+            }) as unknown as typeof Intl.DateTimeFormat)
+        }
+
+        afterEach(() => {
+            vi.restoreAllMocks()
+        })
+
+        it('makes the long name generic when the generic style is refused', () => {
+            spyOnZoneNames(style => (style === 'longGeneric' ? 'throw' : undefined))
+            expect(timeZoneWords(CHICAGO)).toBe('Central Time')
+        })
+
+        it("falls back to the zone's city when both styles give a GMT offset", () => {
+            spyOnZoneNames(() => [{ type: 'timeZoneName', value: 'GMT-06:00' }])
+            expect(timeZoneWords(CHICAGO)).toBe('Chicago time')
+        })
+
+        it('does not take a short name for words', () => {
+            spyOnZoneNames(() => [{ type: 'timeZoneName', value: 'CST' }])
+            expect(timeZoneWords(CHICAGO)).toBe('Chicago time')
+        })
     })
 
     it("defaults to the reader's zone", () => {

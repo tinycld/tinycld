@@ -53,7 +53,8 @@ export function readerTimeZone(): string {
 
 function isKnownZone(timeZone: string): boolean {
     try {
-        return new Intl.DateTimeFormat('en-US', { timeZone }).resolvedOptions().timeZone !== ''
+        new Intl.DateTimeFormat('en-US', { timeZone })
+        return true
     } catch (error) {
         if (error instanceof RangeError) return false
         throw error
@@ -63,13 +64,16 @@ function isKnownZone(timeZone: string): boolean {
 const formatters = new Map<string, Intl.DateTimeFormat>()
 
 // A zone Intl does not know reads as UTC, as the server reads it (R2), so the
-// cells and the rows a filter keeps agree.
+// cells and the rows a filter keeps agree. The cache is keyed by the zone used, so
+// unknown names never add entries.
 function wallClockFormat(timeZone: string): Intl.DateTimeFormat {
     const known = formatters.get(timeZone)
     if (known) return known
     const zone = isKnownZone(timeZone) ? timeZone : 'UTC'
+    const cached = formatters.get(zone)
+    if (cached) return cached
     const made = new Intl.DateTimeFormat('en-US', { ...WALL_CLOCK, timeZone: zone })
-    formatters.set(timeZone, made)
+    formatters.set(zone, made)
     return made
 }
 
@@ -81,7 +85,7 @@ function partOf(parts: readonly Intl.DateTimeFormatPart[], type: Intl.DateTimeFo
 
 // The hour on a 24-hour clock. An engine that ignores hourCycle answers with a
 // day period (AM/PM), which is read too.
-function hour24(parts: readonly Intl.DateTimeFormatPart[]): number {
+export function hour24(parts: readonly Intl.DateTimeFormatPart[]): number {
     const hour = Number(partOf(parts, 'hour'))
     const period = partOf(parts, 'dayPeriod')
     if (!period) return hour % 24
@@ -127,7 +131,9 @@ function zoneName(timeZone: string, style: 'long' | 'longGeneric'): string | nul
             timeZoneName: style,
         }).formatToParts(REFERENCE_DAY)
         const name = partOf(parts, 'timeZoneName')
-        return name && !name.startsWith('GMT') ? name : null
+        // A short name ("CST") or a GMT offset is not words; an engine that ignores
+        // the style may answer with one.
+        return name.includes(' ') && !name.startsWith('GMT') ? name : null
     } catch (error) {
         // An engine without the generic style refuses it.
         if (error instanceof RangeError || error instanceof TypeError) return null
