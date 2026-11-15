@@ -145,7 +145,10 @@ var compatible = map[FieldType][]string{
 	Date:     {core.FieldTypeDate, core.FieldTypeAutodate},
 	DateTime: {core.FieldTypeDate, core.FieldTypeAutodate},
 	Bool:     {core.FieldTypeBool},
-	Select:   {core.FieldTypeSelect},
+	// A view's computed column is text, never select (T3); its stored values
+	// are not checked against the options, and one no option names shows as
+	// stored (R16).
+	Select:   {core.FieldTypeSelect, core.FieldTypeText},
 	Relation: {core.FieldTypeRelation},
 }
 
