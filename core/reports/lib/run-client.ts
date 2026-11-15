@@ -3,6 +3,7 @@ import { isRecord } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { QueryRefusal } from '@tinycld/core/lib/query-errors'
 import { ClientResponseError } from 'pocketbase'
+import { readerTimeZone } from './date-time'
 import { mergePages } from './rows'
 import type { ReportSpec } from './spec'
 import type { CatalogSource, ParamOptionsPage, Problem, ResultRow, RunResult } from './types'
@@ -35,6 +36,11 @@ export interface RunOptions {
     sort?: ViewSort[]
     /** The reader's day, which presets resolve against. */
     today: string
+    /**
+     * The reader's IANA zone (T2), added by runReport when it sends the body, so it
+     * is never in the rows or fold key.
+     */
+    timeZone?: string
 }
 
 export type RunBody =
@@ -146,12 +152,15 @@ export function isTransientRunError(error: unknown): boolean {
 }
 
 export async function runReport(body: RunBody, signal?: AbortSignal): Promise<RunOutcome> {
+    // The zone goes on the sent body only: it is read once per app start (R3), so
+    // it never needs to split a cached run.
+    const sent = { ...body, options: { ...body.options, timeZone: readerTimeZone() } }
     try {
         // requestKey null: two reports may run at once (a frozen tab, the builder's
         // preview); the SDK would otherwise cancel one for the other.
         const result = await pb.send<RunResult>(RUN_PATH, {
             method: 'POST',
-            body,
+            body: sent,
             signal,
             requestKey: null,
         })
@@ -256,6 +265,8 @@ export type ParamOptionsBody = ({ reportId: string } | { spec: ReportSpec }) & {
     params?: Record<string, unknown>
     /** The reader's day, which presets resolve against. */
     today: string
+    /** The reader's IANA zone (T2), added by fetchParamOptions when it sends the body. */
+    timeZone?: string
 }
 
 /** One page of a choice param's options, read under the reader's rules. */
@@ -266,7 +277,7 @@ export async function fetchParamOptions(
     // requestKey null: a picker's searches overlap; each one's signal cancels it.
     return pb.send<ParamOptionsPage>(PARAM_OPTIONS_PATH, {
         method: 'POST',
-        body,
+        body: { ...body, timeZone: readerTimeZone() },
         signal,
         requestKey: null,
     })

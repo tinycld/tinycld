@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { ClientResponseError } from 'pocketbase'
 import { describe, expect, it, vi } from 'vitest'
+import { readerTimeZone } from '../date-time'
 import {
     fetchParamOptions,
     foldKeyOf,
@@ -9,6 +10,7 @@ import {
     isTransientRunError,
     lastGroupRowOf,
     PARAM_OPTIONS_PATH,
+    type ParamOptionsBody,
     pageRowCount,
     RUN_PAGE_SIZE,
     RUN_QUERY_KEY,
@@ -17,6 +19,7 @@ import {
     refusalSortProblem,
     rowsKeyOf,
     runFirstPage,
+    runReport,
 } from '../run-client'
 import type { ReportSpec } from '../spec'
 import type { ResultRow, RunResult } from '../types'
@@ -105,7 +108,7 @@ describe('fetchParamOptions', () => {
         await expect(fetchParamOptions(body, signal)).resolves.toEqual(page)
         expect(send).toHaveBeenCalledWith(PARAM_OPTIONS_PATH, {
             method: 'POST',
-            body,
+            body: { ...body, timeZone: readerTimeZone() },
             signal,
             requestKey: null,
         })
@@ -562,5 +565,41 @@ describe('refusalSortProblem', () => {
                 { path: 'source', code: 'unknown_source', message: 'y' },
             ])
         ).toBeNull()
+    })
+})
+
+describe("the reader's time zone (T2)", () => {
+    const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const empty: RunResult = {
+        columns: [],
+        rows: [],
+        notices: [],
+        topics: [],
+        page: null,
+        params: [],
+    }
+
+    it('rides on every run, outside the rows and fold keys', async () => {
+        send.mockReset()
+        send.mockResolvedValueOnce(empty)
+        const body: RunBody = { reportId: 'r1', params: {}, options: { today: '2026-11-06' } }
+        await runReport(body)
+        const sent = (send.mock.calls[0]?.[1] as { body: RunBody }).body
+        expect(sent.options.timeZone).toBe(zone)
+        expect(sent.options.today).toBe('2026-11-06')
+        // Read once per app start (R3): the zone never splits a cached run.
+        expect(body.options.timeZone).toBeUndefined()
+        expect(rowsKeyOf(body)).toBe('report:r1')
+        expect(foldKeyOf(body)).not.toContain('timeZone')
+    })
+
+    it('rides on every param-options request', async () => {
+        send.mockReset()
+        send.mockResolvedValueOnce({ options: [], groups: [] })
+        const body: ParamOptionsBody = { reportId: 'r1', param: 'accounts', today: '2026-11-01' }
+        await fetchParamOptions(body)
+        const sent = (send.mock.calls[0]?.[1] as { body: ParamOptionsBody }).body
+        expect(sent.timeZone).toBe(zone)
+        expect(body.timeZone).toBeUndefined()
     })
 })
