@@ -2,7 +2,8 @@
 // so the app shell's reports e2e has a to-one link, a to-many link, money, a
 // number, a date, a day kept as text and selects with no real feature package
 // installed, a heading, and shipped reports (published and not). Its drill
-// reports' figures open another shipped report. See
+// reports' figures open another shipped report. Its sales carry their date-time
+// `created`, and one report's rows open the stub's record panel. See
 // tinycld/tests/scripts/scaffold-reports-stub.ts for why.
 package stub
 
@@ -28,6 +29,8 @@ func Register(_ core.App) error {
 			{Key: "day", Label: "Day", Type: reports.Date, Aggregates: reports.MinMax},
 			// A day kept as text, read as a date (E1).
 			{Key: "booked", Column: "booked_on", Label: "Booked", Type: reports.Date, TextDay: true, Aggregates: reports.MinMax},
+			// The record's own autodate, an instant (T1, T2).
+			{Key: "created", Label: "Created", Type: reports.DateTime, Aggregates: reports.MinMax},
 			{Key: "status", Label: "Status", Type: reports.Select, Options: []reports.Option{
 				{Value: "open", Label: "Open"}, {Value: "paid", Label: "Paid"},
 			}},
@@ -383,6 +386,27 @@ func Register(_ core.App) error {
 			"pivot": {"path": [{"field": "day"}], "bucket": "month", "cell": "amount", "range": "period", "order": "spec"}
 		}`),
 	})
+	// A published report over the sales' date-time `created`
+	// (tests/e2e/reports-zone-record-panel.spec.ts): its period compares instants
+	// in the reader's time zone, its cells show day and time there, and a row opens
+	// the stub's record panel (manifest reportPanels, path "panel") beside the report.
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.by_time", Title: "Stub sales by time", Revision: 1,
+		Description: "Each sale in a period with the time it was entered.",
+		Spec: json.RawMessage(strings.ReplaceAll(`{
+			"version": 4,
+			"source": "salesstub.sales",
+			"params": [{"id": "period", "type": "dateRange", "label": "Period", "default": {"preset": "thisMonth"}}],
+			"columns": [
+				{"id": "created", "label": "Created", "path": [{"field": "created"}]},
+				{"id": "customer", "label": "Customer", "path": [{"field": "customer"}]},
+				{"id": "amount", "label": "Amount", "path": [{"field": "amount"}]}
+			],
+			"filter": {"op": "between", "args": [{"path": [{"field": "created"}]}, {"param": "period"}]},
+			"sort": [{"col": "created", "dir": "desc"}, {"formula": {"path": [{"field": "id"}]}}],
+			"detail": {"label": {"path": [{"field": "created"}]}, "open": PANEL_OPEN}
+		}`, "PANEL_OPEN", panelOpen)),
+	})
 	return nil
 }
 
@@ -410,3 +434,7 @@ const teamOpening = `{"op": "coalesce", "args": [{"op": "lookup", "source": "sal
 
 // saleOpen is the stub sale screen a detail row opens (detail.open).
 const saleOpen = `{"op": "concat", "args": [{"value": "salesstub/sale/"}, {"path": [{"field": "id"}]}]}`
+
+// panelOpen is the stub record a "Stub sales by time" row opens: beside the report
+// on a wide window (manifest reportPanels, path "panel"), else as a screen.
+const panelOpen = `{"op": "concat", "args": [{"value": "salesstub/panel/"}, {"path": [{"field": "id"}]}]}`

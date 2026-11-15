@@ -1,0 +1,14 @@
+import { useLocalSearchParams } from 'expo-router'
+import { View } from 'react-native'
+import RecordPanel from '../../components/record-panel'
+
+// E2E fixture: the record's own screen. A row press pushes it below 1360 px, and the
+// record panel's Open as full screen pushes it on a wide window.
+export default function StubPanelScreen() {
+    const { id } = useLocalSearchParams<{ id: string }>()
+    return (
+        <View testID="stub-panel-screen" className="flex-1 bg-background">
+            <RecordPanel segments={[id]} />
+        </View>
+    )
+}
