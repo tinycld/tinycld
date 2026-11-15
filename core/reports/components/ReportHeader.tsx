@@ -11,11 +11,19 @@ export const REPORT_TAP_TARGET = 44
 const TITLE_MIN_WIDTH = 160
 
 /** The link back to where the report was opened from: the hub, or the report it was drilled from. */
-export function ReportBackLink({ label, onBack }: { label: string; onBack: () => void }) {
+export function ReportBackLink({
+    label,
+    onBack,
+    testID = 'report-back',
+}: {
+    label: string
+    onBack: () => void
+    testID?: string
+}) {
     const muted = useThemeColor('muted-foreground')
     return (
         <Pressable
-            testID="report-back"
+            testID={testID}
             accessibilityRole="link"
             onPress={onBack}
             className="flex-row items-center gap-1 self-start"

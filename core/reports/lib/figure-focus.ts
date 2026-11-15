@@ -25,6 +25,15 @@ export function figureKey(scope: ReportUIScope, columnId: string, rowId: string)
     return `${scope}|${columnId}|${rowId}`
 }
 
+// A row label is filed with the figures under a column id no column can have
+// (column ids start with a letter), so the record panel's close finds it (R12).
+const OPEN_ROW = '@open'
+
+/** A row label's focus key: the record link of a detail row. */
+export function rowFocusKey(scope: ReportUIScope, rowId: string): string {
+    return figureKey(scope, OPEN_ROW, rowId)
+}
+
 /** Files a drawn figure; the returned function removes it, unless a newer one took the key. */
 export function registerFigure(key: string, node: FocusTarget): () => void {
     figures.set(key, node)

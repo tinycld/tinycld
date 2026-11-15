@@ -337,6 +337,8 @@ export function RowLabel(props: RowLabelProps) {
                 textClass={labelTextClass(item.row)}
                 lines={lines ?? 1}
                 style={labelStyle(item.row, justify, minHeight)}
+                isShown={links.isRowShown(item.row)}
+                focusKey={links.rowKey(item.row)}
                 onPress={() => links.onRow(item.row)}
             />
         )
@@ -523,7 +525,7 @@ function OneLineRow({
             row={item.row}
             links={links}
             isCopy={isCopy}
-            className={`flex-row bg-background ${ROW_RULE[item.row.kind]}`}
+            className={`flex-row ${ROW_RULE[item.row.kind]}`}
         >
             <View style={labelBox}>
                 <RowLabel
@@ -578,12 +580,7 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy, links
         )
     }
     return (
-        <RowFrame
-            row={item.row}
-            links={links}
-            isCopy={isCopy}
-            className={`bg-background ${ROW_RULE[item.row.kind]}`}
-        >
+        <RowFrame row={item.row} links={links} isCopy={isCopy} className={ROW_RULE[item.row.kind]}>
             <RootBlockView
                 root={rowLines.root}
                 indent={rowLines.indent}

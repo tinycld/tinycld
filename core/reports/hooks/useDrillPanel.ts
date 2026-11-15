@@ -4,12 +4,15 @@ import { useDetailSurface } from '@tinycld/core/lib/use-detail-surface'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback } from 'react'
 import { firstOf, fullReportHref } from '../lib/drill'
-import { type FocusTarget, focusFigure, focusNode } from '../lib/figure-focus'
+import { type FocusTarget, focusFigure, focusNode, rowFocusKey } from '../lib/figure-focus'
+import { recordPanelOf } from '../lib/record-panel'
+import { registeredPanels } from '../lib/registered-panels'
 import { UNREADABLE_SPEC } from '../lib/spec'
-import { clearedDrillKeys, DRILL_KEY, DRILL_PREFIX } from '../lib/view-url'
-import { useReportUIStore } from '../stores/report-ui-store'
+import { clearedDrillKeys, DRILL_KEY, DRILL_PREFIX, RECORD_KEY } from '../lib/view-url'
+import { recordTitleOf, useReportUIStore } from '../stores/report-ui-store'
 import { useReportRecord } from './useReportRecord'
 import { useReportView } from './useReportView'
+import { useOpenRecordScreen } from './useRowLinks'
 
 export interface DrillPanelInput {
     /** The report the panel shows (the route's `d`). */
@@ -82,9 +85,71 @@ export function useDrillPanel({ targetId, sourceId, sourceTitle }: DrillPanelInp
 
 export type DrillPanelModel = ReturnType<typeof useDrillPanel>
 
-/** Whether the drill panel shows as a page that covers the report beside it. */
-export function useIsDrillPage(): boolean {
-    const targetId = firstOf(useLocalSearchParams()[DRILL_KEY])
+export interface RecordPanelInput {
+    /** The app path the panel shows (the route's `dr`). */
+    open: string
+    /** The report beside it, for the page form's back link. */
+    sourceTitle: string
+}
+
+/**
+ * The record panel (D5): a package's component for the route's `dr`, beside the
+ * report on a wide window and a page over it below 1360 px (style values only, so
+ * a crossing never remounts it). Null when no registered panel names the path (a
+ * stale link, a removed package): the report shows alone (R10).
+ */
+export function useRecordPanel({ open, sourceTitle }: RecordPanelInput) {
+    const router = useRouter()
+    const search = useLocalSearchParams()
     const surface = useDetailSurface()
-    return Boolean(targetId) && surface === 'page'
+    const openScreen = useOpenRecordScreen()
+    // The title of this record only: a replaced record shows none until its
+    // component names it, and the same record keeps its own (R13).
+    const title = useReportUIStore(s => recordTitleOf(s.recordTitle, open))
+    // Keyed by the row presses that opened a record, as the drill panel's title is:
+    // only a press moves the focus to the title, never a reload or a pasted link.
+    const titleKey = useReportUIStore(s => s.recordOpens)
+    const titleRef = useCallback((node: FocusTarget | null) => {
+        const ui = useReportUIStore.getState()
+        if (!node || ui.recordOpens <= ui.recordFocused) return
+        ui.noteRecordFocused()
+        focusNode(node)
+    }, [])
+    const match = recordPanelOf(open, registeredPanels)
+    const entry = match
+        ? registeredPanels.find(panel => panel.slug === match.slug && panel.path === match.path)
+        : undefined
+    if (!match || !entry) return null
+    return {
+        open,
+        title,
+        segments: match.segments,
+        Component: entry.Component,
+        isPage: surface === 'page',
+        backLabel: sourceTitle,
+        titleRef,
+        titleKey,
+        // Closing is a view change on the source's route; the focus goes back to the
+        // pressed row's label when it is still drawn (R12).
+        onClose: () => {
+            router.setParams(clearedDrillKeys(search))
+            const row = useReportUIStore.getState().openedRow
+            focusFigure(row === null ? null : rowFocusKey('main', row))
+        },
+        onOpenFull: () => openScreen(open),
+        // The boundary calls it after a failure: the next record loads the chunk again (R14).
+        reloadChunk: entry.reload,
+    }
+}
+
+export type RecordPanelModel = NonNullable<ReturnType<typeof useRecordPanel>>
+
+/** Whether the side panel (a drill or a registered record) shows as a page that covers the report. */
+export function useIsDrillPage(): boolean {
+    const search = useLocalSearchParams()
+    const surface = useDetailSurface()
+    const targetId = firstOf(search[DRILL_KEY])
+    const open = firstOf(search[RECORD_KEY])
+    const hasRecord = open !== undefined && recordPanelOf(open, registeredPanels) !== null
+    return surface === 'page' && (Boolean(targetId) || hasRecord)
 }

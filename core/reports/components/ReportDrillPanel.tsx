@@ -1,16 +1,26 @@
 import { LoadingState } from '@tinycld/core/components/LoadingState'
 import { DETAIL_PANEL_WIDTH } from '@tinycld/core/lib/detail-surface'
+import { log } from '@tinycld/core/lib/logger'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { LayerEscape } from '@tinycld/core/ui/overlay'
 import { useLocalSearchParams } from 'expo-router'
 import { Maximize2, X } from 'lucide-react-native'
+import { Component, type ReactNode, Suspense } from 'react'
 import { Pressable, Text, View } from 'react-native'
-import { type DrillPanelInput, type DrillPanelModel, useDrillPanel } from '../hooks/useDrillPanel'
+import {
+    type DrillPanelInput,
+    type DrillPanelModel,
+    type RecordPanelInput,
+    type RecordPanelModel,
+    useDrillPanel,
+    useRecordPanel,
+} from '../hooks/useDrillPanel'
+import { PanelTitleProvider } from '../hooks/usePanelTitle'
 import type { ReportViewModel } from '../hooks/useReportView'
 import { useTableLayout } from '../hooks/useTableLayout'
 import { firstOf } from '../lib/drill'
 import { layoutNoticeOf } from '../lib/notices'
-import { DRILL_KEY } from '../lib/view-url'
+import { DRILL_KEY, RECORD_KEY } from '../lib/view-url'
 import { ReportControls } from './ReportControls'
 import { ReportDocumentHeader } from './ReportDocumentHeader'
 import { REPORT_TAP_TARGET, ReportBackLink } from './ReportHeader'
@@ -31,20 +41,33 @@ const PAGE_STYLE = {
 } as const
 const TAP_STYLE = { minHeight: REPORT_TAP_TARGET, minWidth: REPORT_TAP_TARGET }
 
-function PageBack({ panel }: { panel: DrillPanelModel }) {
-    if (!panel.isPage) return null
-    return <ReportBackLink label={panel.backLabel} onBack={panel.onClose} />
+interface PanelPageBackProps {
+    isVisible: boolean
+    label: string
+    onBack: () => void
+    testID?: string
 }
 
-function CloseButton({ panel }: { panel: DrillPanelModel }) {
+function PanelPageBack({ isVisible, label, onBack, testID }: PanelPageBackProps) {
+    if (!isVisible) return null
+    return <ReportBackLink label={label} onBack={onBack} testID={testID} />
+}
+
+interface PanelCloseButtonProps {
+    isVisible: boolean
+    testID: string
+    onClose: () => void
+}
+
+function PanelCloseButton({ isVisible, testID, onClose }: PanelCloseButtonProps) {
     const muted = useThemeColor('muted-foreground')
-    if (panel.isPage) return null
+    if (!isVisible) return null
     return (
         <Pressable
-            testID="report-drill-close"
+            testID={testID}
             accessibilityRole="button"
             accessibilityLabel="Close"
-            onPress={panel.onClose}
+            onPress={onClose}
             className="items-center justify-center"
             style={TAP_STYLE}
         >
@@ -53,19 +76,26 @@ function CloseButton({ panel }: { panel: DrillPanelModel }) {
     )
 }
 
-function OpenFullButton({ panel }: { panel: DrillPanelModel }) {
+interface OpenFullButtonProps {
+    isVisible: boolean
+    testID: string
+    label: string
+    onPress: () => void
+}
+
+function OpenFullButton({ isVisible, testID, label, onPress }: OpenFullButtonProps) {
     const color = useThemeColor('foreground')
-    if (panel.recordState !== 'ready') return null
+    if (!isVisible) return null
     return (
         <Pressable
-            testID="report-drill-open-full"
+            testID={testID}
             accessibilityRole="button"
-            onPress={panel.onOpenFull}
+            onPress={onPress}
             className="flex-row items-center gap-1.5 px-2"
             style={{ minHeight: REPORT_TAP_TARGET }}
         >
             <Maximize2 size={16} color={color} />
-            <Text className="text-sm text-foreground">Open as full report</Text>
+            <Text className="text-sm text-foreground">{label}</Text>
         </Pressable>
     )
 }
@@ -73,7 +103,11 @@ function OpenFullButton({ panel }: { panel: DrillPanelModel }) {
 function DrillPanelHeader({ panel }: { panel: DrillPanelModel }) {
     return (
         <View testID="report-drill-panel-header" className="gap-1 border-b border-border px-4 py-2">
-            <PageBack panel={panel} />
+            <PanelPageBack
+                isVisible={panel.isPage}
+                label={panel.backLabel}
+                onBack={panel.onClose}
+            />
             <View className="flex-row items-center gap-2">
                 <View
                     key={panel.titleKey}
@@ -87,8 +121,17 @@ function DrillPanelHeader({ panel }: { panel: DrillPanelModel }) {
                         {panel.title}
                     </Text>
                 </View>
-                <OpenFullButton panel={panel} />
-                <CloseButton panel={panel} />
+                <OpenFullButton
+                    isVisible={panel.recordState === 'ready'}
+                    testID="report-drill-open-full"
+                    label="Open as full report"
+                    onPress={panel.onOpenFull}
+                />
+                <PanelCloseButton
+                    isVisible={!panel.isPage}
+                    testID="report-drill-close"
+                    onClose={panel.onClose}
+                />
             </View>
         </View>
     )
@@ -178,9 +221,138 @@ function DrillPanel(props: DrillPanelInput) {
     )
 }
 
+function RecordPanelHeader({ panel }: { panel: RecordPanelModel }) {
+    return (
+        <View
+            testID="report-record-panel-header"
+            className="gap-1 border-b border-border px-4 py-2"
+        >
+            <PanelPageBack
+                isVisible={panel.isPage}
+                label={panel.backLabel}
+                onBack={panel.onClose}
+                testID="report-record-panel-back"
+            />
+            <View className="flex-row items-center gap-2">
+                <View
+                    key={panel.titleKey}
+                    ref={panel.titleRef}
+                    testID="report-record-panel-title"
+                    tabIndex={-1}
+                    accessibilityRole="header"
+                    className="min-w-0 flex-1"
+                >
+                    <Text numberOfLines={1} className="text-lg font-semibold text-foreground">
+                        {panel.title}
+                    </Text>
+                </View>
+                <OpenFullButton
+                    isVisible
+                    testID="report-record-panel-full"
+                    label="Open as full screen"
+                    onPress={panel.onOpenFull}
+                />
+                <PanelCloseButton
+                    isVisible={!panel.isPage}
+                    testID="report-record-panel-close"
+                    onClose={panel.onClose}
+                />
+            </View>
+        </View>
+    )
+}
+
+interface RecordBoundaryState {
+    hasError: boolean
+}
+
+interface RecordBoundaryProps {
+    children: ReactNode
+    /** Drops the panel's failed chunk, so the next record loads it again (R14). */
+    onError: () => void
+}
+
+// A package's panel that fails to load or throws: the panel says so and keeps its
+// header (Open as full screen, ✕) and Escape; the report beside it stays usable.
+// It is keyed by the record's path, so another record starts fresh (R14).
+class RecordBoundary extends Component<RecordBoundaryProps, RecordBoundaryState> {
+    state: RecordBoundaryState = { hasError: false }
+
+    static getDerivedStateFromError(): RecordBoundaryState {
+        return { hasError: true }
+    }
+
+    // Runs after the error text replaced the panel, so the reload starts no load
+    // for this record; the next record opened in the panel loads the chunk again.
+    componentDidCatch(error: Error) {
+        log.error('reports.record-panel', error)
+        this.props.onError()
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <MessageBody
+                    isVisible
+                    testID="report-record-panel-error"
+                    message="Could not load this record"
+                />
+            )
+        }
+        return this.props.children
+    }
+}
+
+function RecordPanelLoading() {
+    return (
+        <View testID="report-record-panel-loading" className="flex-1">
+            <LoadingState />
+        </View>
+    )
+}
+
+function RecordBody({ panel }: { panel: RecordPanelModel }) {
+    const { Component: Panel, segments, open, reloadChunk } = panel
+    return (
+        <View className="min-h-0 flex-1">
+            <PanelTitleProvider open={open}>
+                <RecordBoundary key={open} onError={reloadChunk}>
+                    <Suspense fallback={<RecordPanelLoading />}>
+                        <Panel segments={segments} />
+                    </Suspense>
+                </RecordBoundary>
+            </PanelTitleProvider>
+        </View>
+    )
+}
+
+function RecordPanel({ panel }: { panel: RecordPanelModel }) {
+    return (
+        <View
+            testID="report-record-panel"
+            role="complementary"
+            aria-label={panel.title || 'Record'}
+            className="border-border bg-background"
+            style={panel.isPage ? PAGE_STYLE : PANEL_STYLE}
+        >
+            <LayerEscape onEscape={panel.onClose} />
+            <RecordPanelHeader panel={panel} />
+            <RecordBody panel={panel} />
+        </View>
+    )
+}
+
+function RecordPanelHost(props: RecordPanelInput) {
+    const panel = useRecordPanel(props)
+    if (!panel) return null
+    return <RecordPanel panel={panel} />
+}
+
 /**
- * The report a figure drilled to (the route's `d`), in ReportView's side slot. It
- * draws nothing without `d`, so Escape is registered only while it is open.
+ * The report's side panel, in ReportView's side slot: the report a figure drilled
+ * to (the route's `d`), or the record a row opened (`dr`, D5). One at a time; a
+ * hand-edited URL that holds both shows the drill. It draws nothing without either,
+ * so Escape is registered only while it is open.
  */
 export function ReportDrillPanel({
     sourceId,
@@ -189,7 +361,12 @@ export function ReportDrillPanel({
     sourceId: string
     sourceTitle: string
 }) {
-    const targetId = firstOf(useLocalSearchParams()[DRILL_KEY])
-    if (!targetId) return null
-    return <DrillPanel targetId={targetId} sourceId={sourceId} sourceTitle={sourceTitle} />
+    const search = useLocalSearchParams()
+    const targetId = firstOf(search[DRILL_KEY])
+    const open = firstOf(search[RECORD_KEY])
+    if (targetId) {
+        return <DrillPanel targetId={targetId} sourceId={sourceId} sourceTitle={sourceTitle} />
+    }
+    if (open) return <RecordPanelHost open={open} sourceTitle={sourceTitle} />
+    return null
 }

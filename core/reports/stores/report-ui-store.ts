@@ -35,6 +35,14 @@ const withScope = (
     return { scopes: { ...state.scopes, [key]: { ...state.scopes[key], ...patch } } }
 }
 
+/** A record panel's title and the record path it names (R13). */
+export type RecordTitle = { open: string; title: string }
+
+/** The title the record panel shows for `open`: empty until its component names it. */
+export function recordTitleOf(named: RecordTitle | null, open: string): string {
+    return named?.open === open ? named.title : ''
+}
+
 interface ReportUIState {
     expansion: Record<string, Expansion>
     // Each view keeps its own popover and Customize, so a chip of one id in the
@@ -62,6 +70,27 @@ interface ReportUIState {
     /** The figure (figureKey) whose press opened the drill panel; its close sends the focus back there. */
     drillOrigin: string | null
     setDrillOrigin: (key: string | null) => void
+    // The detail row whose press opened the record panel (D5, R11). Many rows can
+    // open one record, so the row id marks the pressed one. Not in the URL: a reload
+    // shows the panel with no row marked (Q1).
+    openedRow: string | null
+    // A row press that opens a record beside the report: marks the row and counts
+    // the press (the panel title takes the focus). The report's Customize closes:
+    // one side surface at a time. The title is not touched: it belongs to its
+    // record path (recordTitle), and a press that opens the same record keeps it.
+    openRecord: (rowId: string) => void
+    recordOpens: number
+    // The recordOpens count whose press has moved the focus to the panel title.
+    recordFocused: number
+    noteRecordFocused: () => void
+    /**
+     * The record panel's title, as the package's component names it
+     * (usePanelTitle), with the record path it names. The header shows it only
+     * while that path is the route's dr (recordTitleOf), so a replaced record never
+     * shows the previous title (R13).
+     */
+    recordTitle: RecordTitle | null
+    setRecordTitle: (open: string, title: string) => void
     // A visit opened from the hub starts with no surface open; its open groups stay.
     startVisit: () => void
     /** The builder's open record picker, by its value's test id; one at a time. */
@@ -83,6 +112,18 @@ export const useReportUIStore = create<ReportUIState>()(set => ({
     noteDrillFocused: () => set(state => ({ drillFocused: state.drillOpens })),
     drillOrigin: null,
     setDrillOrigin: key => set({ drillOrigin: key }),
+    openedRow: null,
+    openRecord: rowId =>
+        set(state => ({
+            ...withScope(state, 'main', { isCustomizeOpen: false }),
+            openedRow: rowId,
+            recordOpens: state.recordOpens + 1,
+        })),
+    recordOpens: 0,
+    recordFocused: 0,
+    noteRecordFocused: () => set(state => ({ recordFocused: state.recordOpens })),
+    recordTitle: null,
+    setRecordTitle: (open, title) => set({ recordTitle: { open, title } }),
     setBuilderPicker: picker => set({ builderPicker: picker }),
     arrangeWidth: 'mobile',
     setArrangeWidth: width => set({ arrangeWidth: width }),
@@ -101,5 +142,13 @@ export const useReportUIStore = create<ReportUIState>()(set => ({
     openShare: reportId => set({ shareReportId: reportId }),
     closeShare: () => set({ shareReportId: null }),
     startVisit: () =>
-        set({ scopes: { main: CLOSED, drill: CLOSED }, builderPicker: null, drillOrigin: null }),
+        set({
+            scopes: { main: CLOSED, drill: CLOSED },
+            builderPicker: null,
+            drillOrigin: null,
+            openedRow: null,
+            recordTitle: null,
+            recordOpens: 0,
+            recordFocused: 0,
+        }),
 }))
