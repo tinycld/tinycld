@@ -164,12 +164,12 @@ test.describe('reports: zone times and record panel', () => {
         await expect(title).toHaveText(`Stub record ${b.id}`)
 
         // Open as full screen pushes the record's own screen.
+        const screen = page.getByTestId('stub-panel-screen')
         await panel.getByTestId('report-record-panel-full').click()
-        await expect(page.getByTestId('stub-panel-screen')).toBeVisible()
+        await expect(screen).toBeVisible()
         await expect
             .poll(() => new URL(page.url()).pathname)
             .toMatch(new RegExp(`/salesstub/panel/${b.id}$`))
-        const screen = page.getByTestId('stub-panel-screen')
         await expect(screen.getByTestId('stub-record-panel-body')).toHaveText(b.id)
     })
 
@@ -183,6 +183,7 @@ test.describe('reports: zone times and record panel', () => {
         await expect
             .poll(() => new URL(page.url()).pathname)
             .toMatch(new RegExp(`/salesstub/panel/${sale.id}$`))
+        await expect.poll(() => param(page, 'dr')).toBeNull()
         await expect(recordPanel(page)).toHaveCount(0)
     })
 })
