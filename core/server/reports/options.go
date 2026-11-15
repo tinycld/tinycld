@@ -316,7 +316,7 @@ type ParamOptions struct {
 // reader, under the reader's list rules, as a run of the same spec and
 // params would read them. It writes nothing.
 func ReadParamOptions(ctx context.Context, app core.App, req OptionsRequest) (*ParamOptions, error) {
-	c, err := readerCompiler(app, req.Spec, req.Auth, req.Headers, req.Params, req.Today, "today")
+	c, err := readerCompiler(app, req.Spec, req.Auth, req.Headers, req.Params, req.Today, "today", "")
 	if err != nil {
 		return nil, err
 	}

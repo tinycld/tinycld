@@ -40,6 +40,13 @@ type Options struct {
 	// Today is the reader's day (YYYY-MM-DD) for period presets; the
 	// default is today in UTC.
 	Today string `json:"today,omitempty"`
+	// TimeZone is the reader's IANA zone (Intl's resolvedOptions().timeZone).
+	// A date range, a date or asOf param, and a range's bound compared with a
+	// date-time compare the instants of the reader's local days; a missing or
+	// unknown zone, a name of UTC itself ("UTC", "Etc/UTC", "Etc/GMT", "GMT")
+	// and "Local" are UTC (readerZone). Buckets and date
+	// parts keep the UTC day (Q7).
+	TimeZone string `json:"timeZone,omitempty"`
 	// Display holds the shell's display options (number format, hidden
 	// columns). The server does not read them: formatting stays in the
 	// client.
@@ -324,7 +331,7 @@ type groupedPage struct {
 // Run runs a report for its reader. The statements read only rows the
 // reader's list rules allow; they never write.
 func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
-	c, err := readerCompiler(app, req.Spec, req.Auth, req.Headers, req.Params, req.Options.Today, "options.today")
+	c, err := readerCompiler(app, req.Spec, req.Auth, req.Headers, req.Params, req.Options.Today, "options.today", req.Options.TimeZone)
 	if err != nil {
 		return nil, err
 	}
@@ -357,10 +364,10 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 }
 
 // readerCompiler binds a spec for its reader and resolves its params for the
-// reader's day (today, given at todayAt): what every read of a report, a run
-// or a param's options, starts from. A report never reads as a superuser or
-// as nobody.
-func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[string]string, given map[string]json.RawMessage, today, todayAt string) (*compiler, error) {
+// reader's day (today, given at todayAt) in the reader's zone (timeZone):
+// what every read of a report, a run or a param's options, starts from. A
+// report never reads as a superuser or as nobody.
+func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[string]string, given map[string]json.RawMessage, today, todayAt, timeZone string) (*compiler, error) {
 	if auth == nil || auth.IsSuperuser() {
 		return nil, ErrNoReader
 	}
@@ -368,7 +375,8 @@ func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[str
 	if specErr != nil {
 		return nil, specErr
 	}
-	day, err := todayOf(today, todayAt)
+	loc := readerZone(timeZone)
+	day, err := todayOf(today, todayAt, loc)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +384,7 @@ func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[str
 	// One read of the fiscal start month serves the presets and the
 	// formulas, so a settings change mid-read cannot make them disagree.
 	fiscal := fiscalStartOf(p.base, app, info)
-	params, specErr := resolveParams(p.spec.Params, given, periodContext{today: day, fiscalStart: fiscal})
+	params, specErr := resolveParams(p.spec.Params, given, periodContext{today: day, fiscalStart: fiscal, loc: loc})
 	if specErr != nil {
 		return nil, specErr
 	}
@@ -385,10 +393,15 @@ func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[str
 	return c, nil
 }
 
-// todayOf reads the reader's day, given at at in the request.
-func todayOf(s, at string) (time.Time, error) {
+// todayOf reads the reader's day, given at at in the request. With none it
+// is today in the reader's zone (loc; nil is UTC).
+func todayOf(s, at string, loc *time.Location) (time.Time, error) {
 	if s == "" {
-		return time.Now().UTC().Truncate(24 * time.Hour), nil
+		if loc == nil {
+			return time.Now().UTC().Truncate(24 * time.Hour), nil
+		}
+		now := time.Now().In(loc)
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), nil
 	}
 	if !isDay(s) {
 		return time.Time{}, invalid(at, "today is YYYY-MM-DD")

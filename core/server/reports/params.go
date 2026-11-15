@@ -58,12 +58,17 @@ type paramValue struct {
 	to     string
 	// currency is an amount's currency code; "" is an amount in any currency.
 	currency string
+	// dayZ, fromZ and toZ are the day, or the range's first and last day, in
+	// the reader's zone (withZonedDays); nil for a UTC reader.
+	dayZ, fromZ, toZ *zonedDay
 }
 
-// periodContext is what a preset is resolved against.
+// periodContext is what a preset is resolved against, and the reader's zone
+// (nil is UTC) a day of a param is read in.
 type periodContext struct {
 	today       time.Time
 	fiscalStart int
+	loc         *time.Location
 }
 
 // anyDay resolves a preset where its day does not matter: checking a
@@ -166,7 +171,7 @@ func resolveParams(defs []ParamDef, given map[string]json.RawMessage, pc periodC
 		if err != nil {
 			return nil, err
 		}
-		out[d.ID] = v
+		out[d.ID] = withZonedDays(v, pc.loc)
 	}
 	return out, nil
 }
@@ -481,7 +486,7 @@ func paramExpr(c fctx, v paramValue) (expr, error) {
 		case v.from == "" && v.to == "":
 			return expr{rng: true, all: true, lo: "NULL", hi: "NULL"}, nil
 		}
-		return expr{rng: true, lo: c.bind(v.from), hi: c.bind(v.to)}, nil
+		return expr{rng: true, lo: c.bind(v.from), hi: c.bind(v.to), zonedFrom: v.fromZ, zonedTo: v.toZ}, nil
 	case ParamChoice:
 		if v.multiple {
 			list, err := jsonList(c.bind, texts(v.list))
@@ -505,7 +510,7 @@ func paramExpr(c fctx, v paramValue) (expr, error) {
 	if v.unset {
 		return expr{sql: "NULL", typ: typ, unset: true}, nil
 	}
-	return expr{sql: c.bind(v.value), typ: typ}, nil
+	return expr{sql: c.bind(v.value), typ: typ, zoned: v.dayZ}, nil
 }
 
 // rangeBound is a date range param's first (from) or last (to) day as a
@@ -519,9 +524,9 @@ func rangeBound(e expr, bound, at string) (expr, error) {
 	if !e.rng {
 		return expr{}, invalid(at, "bound reads a date range's start or end")
 	}
-	day := e.lo
+	day, zoned := e.lo, e.zonedFrom
 	if bound == "to" {
-		day = e.hi
+		day, zoned = e.hi, e.zonedTo
 	}
-	return expr{sql: day, typ: Date}, nil
+	return expr{sql: day, typ: Date, zoned: zoned}, nil
 }

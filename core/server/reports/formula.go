@@ -63,6 +63,12 @@ type expr struct {
 	// over the looked-up rows (columns u, m, c), for a context that computes
 	// the lookup once in a CTE (layoutCtx.lookup). "" for any other value.
 	scan string
+	// zoned is a day of the reader's zone (a date or asOf param, or a range's
+	// bound); zonedFrom and zonedTo are a date range's first and last day. A
+	// comparison or a between of a date-time with them compares the instants
+	// of those local days (R1). All nil for a UTC reader, whose SQL stays as
+	// it was.
+	zoned, zonedFrom, zonedTo *zonedDay
 }
 
 // storedLink is the stored relation column (col) a link path reads its
@@ -849,9 +855,12 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if !ordered(args[0].typ, args[1].typ) {
 			return expr{}, invalid(at, fmt.Sprintf("%s compares numbers, dates or text, not %s and %s", n.Op, args[0].typ, args[1].typ))
 		}
+		if e, ok := zonedCompare(c, n.Op, args[0], args[1]); ok {
+			return e, nil
+		}
 		return expr{sql: "(" + args[0].sql + " " + comparisons[n.Op] + " " + args[1].sql + ")", typ: Bool}, nil
 	case "between":
-		return between(args, at)
+		return between(c, args, at)
 	case "in":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err
@@ -1065,7 +1074,7 @@ var conditionOps = map[string]bool{
 
 var comparisons = map[string]string{"lt": "<", "lte": "<=", "gt": ">", "gte": ">="}
 
-func between(args []expr, at string) (expr, error) {
+func between(c fctx, args []expr, at string) (expr, error) {
 	// A date range has no single value to compare: it is only ever the bounds.
 	for i, a := range args {
 		if a.rng && (len(args) != 2 || i != 1) {
@@ -1074,19 +1083,25 @@ func between(args []expr, at string) (expr, error) {
 	}
 	switch {
 	case len(args) == 2 && args[1].rng:
-		x := args[0]
+		x, r := args[0], args[1]
 		if !isDateLike(x.typ) {
 			return expr{}, invalid(at+".args.0", "a date range holds dates")
 		}
-		if args[1].all {
+		if r.all {
 			// All dates: every row, a row with no day too (R1).
 			return expr{sql: "1", typ: Bool}, nil
 		}
+		if x.typ == DateTime && r.zonedFrom != nil {
+			return zonedSpan(c, x, r.zonedFrom.start, r.zonedTo.end), nil
+		}
 		day := "substr(" + x.sql + ", 1, 10)"
-		return expr{sql: "(" + day + " >= " + args[1].lo + " AND " + day + " <= " + args[1].hi + ")", typ: Bool}, nil
+		return expr{sql: "(" + day + " >= " + r.lo + " AND " + day + " <= " + r.hi + ")", typ: Bool}, nil
 	case len(args) == 3:
 		if !ordered(args[0].typ, args[1].typ) || !ordered(args[0].typ, args[2].typ) {
 			return expr{}, invalid(at, "between compares numbers, dates or text")
+		}
+		if lo, hi := args[1].zoned, args[2].zoned; args[0].typ == DateTime && lo != nil && hi != nil {
+			return zonedSpan(c, args[0], lo.start, hi.end), nil
 		}
 		return expr{sql: "(" + args[0].sql + " >= " + args[1].sql + " AND " + args[0].sql + " <= " + args[2].sql + ")", typ: Bool}, nil
 	}
