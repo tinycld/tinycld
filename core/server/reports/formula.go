@@ -1091,7 +1091,7 @@ func between(c fctx, args []expr, at string) (expr, error) {
 			// All dates: every row, a row with no day too (R1).
 			return expr{sql: "1", typ: Bool}, nil
 		}
-		if x.typ == DateTime && r.zonedFrom != nil {
+		if x.typ == DateTime && r.zonedFrom != nil && r.zonedTo != nil {
 			return zonedSpan(c, x, r.zonedFrom.start, r.zonedTo.end), nil
 		}
 		day := "substr(" + x.sql + ", 1, 10)"
@@ -1100,8 +1100,17 @@ func between(c fctx, args []expr, at string) (expr, error) {
 		if !ordered(args[0].typ, args[1].typ) || !ordered(args[0].typ, args[2].typ) {
 			return expr{}, invalid(at, "between compares numbers, dates or text")
 		}
-		if lo, hi := args[1].zoned, args[2].zoned; args[0].typ == DateTime && lo != nil && hi != nil {
-			return zonedSpan(c, args[0], lo.start, hi.end), nil
+		// Each bound is zoned alone, as the same bound of a gte or lte is.
+		if lo, hi := args[1].zoned, args[2].zoned; args[0].typ == DateTime && (lo != nil || hi != nil) {
+			x := args[0].sql
+			low, high := x+" >= "+args[1].sql, x+" <= "+args[2].sql
+			if lo != nil {
+				low = x + " >= " + c.bind(lo.start)
+			}
+			if hi != nil {
+				high = x + " < " + c.bind(hi.end)
+			}
+			return expr{sql: "(" + low + " AND " + high + ")", typ: Bool}, nil
 		}
 		return expr{sql: "(" + args[0].sql + " >= " + args[1].sql + " AND " + args[0].sql + " <= " + args[2].sql + ")", typ: Bool}, nil
 	}

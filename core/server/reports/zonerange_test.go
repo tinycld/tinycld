@@ -145,7 +145,7 @@ func TestBetweenAcrossDSTStart(t *testing.T) {
 // where (a formula that reads the params day and period).
 func sightingsWhere(where string) string {
 	return `{"version":4,"source":"zoo.sightings",
-	"params":[{"id":"day","type":"date"},{"id":"period","type":"dateRange"}],
+	"params":[{"id":"day","type":"date"},{"id":"period","type":"dateRange"},{"id":"asof","type":"asOf"}],
 	"columns":[{"id":"note","path":[{"field":"note"}]},{"id":"seen","path":[{"field":"seen"}]}],
 	"filter":` + where + `,"sort":[{"col":"seen"}]}`
 }
@@ -173,22 +173,26 @@ func TestDayComparisonsOfADateTimeInTheZone(t *testing.T) {
 	fromEnd := []any{"after14"}
 	beforeStart := all[:9]
 	beforeEnd := all[:11]
-	params := map[string]string{"day": `"2026-11-14"`, "period": nov14}
+	params := map[string]string{"day": `"2026-11-14"`, "period": nov14, "asof": `"2026-11-14"`}
 	for name, c := range map[string]struct {
 		where string
 		want  []any
 	}{
-		"gte a day":               {opOf("gte", seenLeaf, dayLeaf), fromStart},
-		"gt a day":                {opOf("gt", seenLeaf, dayLeaf), fromEnd},
-		"lt a day":                {opOf("lt", seenLeaf, dayLeaf), beforeStart},
-		"lte a day":               {opOf("lte", seenLeaf, dayLeaf), beforeEnd},
-		"a day lte":               {opOf("lte", dayLeaf, seenLeaf), fromStart},
-		"a day gt":                {opOf("gt", dayLeaf, seenLeaf), beforeStart},
-		"gte the range's from":    {opOf("gte", seenLeaf, fromBound), fromStart},
-		"gt the range's from":     {opOf("gt", seenLeaf, fromBound), fromEnd},
-		"lt the range's to":       {opOf("lt", seenLeaf, toBound), beforeStart},
-		"lte the range's to":      {opOf("lte", seenLeaf, toBound), beforeEnd},
-		"between a day and a day": {`{"op":"between","args":[` + seenLeaf + `,` + dayLeaf + `,` + dayLeaf + `]}`, []any{"start14", "end14"}},
+		"gte a day":                    {opOf("gte", seenLeaf, dayLeaf), fromStart},
+		"gt a day":                     {opOf("gt", seenLeaf, dayLeaf), fromEnd},
+		"lt a day":                     {opOf("lt", seenLeaf, dayLeaf), beforeStart},
+		"lte a day":                    {opOf("lte", seenLeaf, dayLeaf), beforeEnd},
+		"a day lte":                    {opOf("lte", dayLeaf, seenLeaf), fromStart},
+		"a day gt":                     {opOf("gt", dayLeaf, seenLeaf), beforeStart},
+		"a day gte":                    {opOf("gte", dayLeaf, seenLeaf), beforeEnd},
+		"a day lt":                     {opOf("lt", dayLeaf, seenLeaf), fromEnd},
+		"gte an asOf param":            {opOf("gte", seenLeaf, `{"param":"asof"}`), fromStart},
+		"between a day and an instant": {`{"op":"between","args":[` + seenLeaf + `,` + dayLeaf + `,{"value":"2026-11-15 05:59:59.000Z"}]}`, []any{"start14", "end14"}},
+		"gte the range's from":         {opOf("gte", seenLeaf, fromBound), fromStart},
+		"gt the range's from":          {opOf("gt", seenLeaf, fromBound), fromEnd},
+		"lt the range's to":            {opOf("lt", seenLeaf, toBound), beforeStart},
+		"lte the range's to":           {opOf("lte", seenLeaf, toBound), beforeEnd},
+		"between a day and a day":      {`{"op":"between","args":[` + seenLeaf + `,` + dayLeaf + `,` + dayLeaf + `]}`, []any{"start14", "end14"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			res := z.run(t, "ann", sightingsWhere(c.where), Options{TimeZone: chicagoZone}, params)

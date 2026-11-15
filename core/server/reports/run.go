@@ -43,9 +43,8 @@ type Options struct {
 	// TimeZone is the reader's IANA zone (Intl's resolvedOptions().timeZone).
 	// A date range, a date or asOf param, and a range's bound compared with a
 	// date-time compare the instants of the reader's local days; a missing or
-	// unknown zone, a name of UTC itself ("UTC", "Etc/UTC", "Etc/GMT", "GMT")
-	// and "Local" are UTC (readerZone). Buckets and date
-	// parts keep the UTC day (Q7).
+	// unknown zone, a name of UTC itself (utcNames, zone.go) and "Local" are
+	// UTC (readerZone). Buckets and date parts keep the UTC day (Q7).
 	TimeZone string `json:"timeZone,omitempty"`
 	// Display holds the shell's display options (number format, hidden
 	// columns). The server does not read them: formatting stays in the
