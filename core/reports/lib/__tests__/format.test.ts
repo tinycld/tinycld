@@ -17,6 +17,7 @@ import {
     shownColumns,
     timeZoneWords,
     typedLabelText,
+    zoneLine,
 } from '../format'
 import { MAX_STORED_AMOUNT } from '../money'
 import type { ResultColumn, ResultRow } from '../types'
@@ -480,5 +481,46 @@ describe('date-time cells (T1)', () => {
 
     it('exports the zone words a package screen reads', () => {
         expect(timeZoneWords('America/Chicago')).toBe('Central Time')
+    })
+})
+
+describe('zoneLine (T1, R5)', () => {
+    const CHICAGO = 'America/Chicago'
+    const USER: ResultColumn = { id: 'user', label: 'User', type: 'text' }
+    const DAY: ResultColumn = { id: 'day', label: 'Day', type: 'date' }
+    const CREATED: ResultColumn = { id: 'created', label: 'Created', type: 'datetime' }
+    const ENTRY: ResultColumn = {
+        id: 'entry',
+        label: 'Entry',
+        type: 'relation',
+        labelCell: 'entry@label',
+        labelType: 'datetime',
+    }
+
+    it('names the zone once when a shown column is a date-time', () => {
+        expect(zoneLine([DAY, CREATED], CHICAGO)).toBe('Times in Central Time')
+        expect(zoneLine([CREATED, { ...CREATED, id: 'updated' }], CHICAGO)).toBe(
+            'Times in Central Time'
+        )
+    })
+
+    it('is null when no shown column is a date-time', () => {
+        expect(zoneLine([DAY, USER], CHICAGO)).toBeNull()
+        expect(zoneLine([], CHICAGO)).toBeNull()
+    })
+
+    it('counts a link whose record label is a date-time', () => {
+        expect(zoneLine([USER, ENTRY], CHICAGO)).toBe('Times in Central Time')
+    })
+
+    // The first column cannot be hidden (shownColumns), so the date-time is second.
+    it('is null when Customize hid the only date-time column', () => {
+        const columns = [USER, CREATED]
+        expect(zoneLine(shownColumns(columns, ['created']), CHICAGO)).toBeNull()
+        expect(zoneLine(shownColumns(columns, []), CHICAGO)).toBe('Times in Central Time')
+    })
+
+    it("names the reader's zone by default", () => {
+        expect(zoneLine([CREATED])).toBe(`Times in ${timeZoneWords()}`)
     })
 })

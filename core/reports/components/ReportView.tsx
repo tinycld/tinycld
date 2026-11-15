@@ -221,6 +221,7 @@ function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTo
                 heading={model.heading}
                 title={model.title}
                 periodWords={model.periodWords}
+                zoneWords={model.zoneWords}
                 isThousands={model.display.divideBy1000}
             />
         </>

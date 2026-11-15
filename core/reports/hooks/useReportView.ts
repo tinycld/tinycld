@@ -9,7 +9,7 @@ import { router, useFocusEffect, useIsFocused, useLocalSearchParams } from 'expo
 import { useCallback, useEffectEvent, useMemo } from 'react'
 import type { ReportAccess } from '../lib/access'
 import { todayIso } from '../lib/dates'
-import { DEFAULT_DISPLAY, type DisplayOptions, shownColumns } from '../lib/format'
+import { DEFAULT_DISPLAY, type DisplayOptions, shownColumns, zoneLine } from '../lib/format'
 import { panelSurface } from '../lib/panel-surface'
 import { chipLabelAsks } from '../lib/param-options'
 import {
@@ -198,6 +198,7 @@ export function useReportView(input: ReportViewInput) {
     const closeShare = useReportUIStore(s => s.closeShare)
     const rows = run.result?.rows ?? NO_ROWS
     const allColumns = run.result?.columns ?? NO_COLUMNS
+    const columns = shownColumns(allColumns, options.display.hidden)
     const resolved: Record<string, ResolvedParam> = Object.fromEntries(
         (run.result?.params ?? []).map(p => [p.id, p])
     )
@@ -319,7 +320,9 @@ export function useReportView(input: ReportViewInput) {
         problems: broken && !isEditing ? brokenProblems(broken) : run.problems,
         run,
         rows: pendingRows,
-        columns: shownColumns(allColumns, options.display.hidden),
+        columns,
+        // Required in the model, so a hand-built model states its line too (B4).
+        zoneWords: zoneLine(columns),
         allColumns,
         notices: run.result?.notices ?? NO_NOTICES,
         isUpdating: run.isUpdating,

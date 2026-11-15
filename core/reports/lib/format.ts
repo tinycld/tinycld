@@ -290,3 +290,15 @@ export function shownColumns(
 ): ResultColumn[] {
     return columns.filter((column, index) => index === 0 || !hidden.includes(column.id))
 }
+
+/**
+ * The document header's zone line (T1): "Times in Central Time" when a shown column
+ * is a date-time, or a link whose record label is one; else null. Only the columns
+ * are read: rows page in later, and the line must not appear late (R5).
+ */
+export function zoneLine(columns: readonly ResultColumn[], timeZone?: string): string | null {
+    const hasDateTime = columns.some(
+        column => column.type === 'datetime' || column.labelType === 'datetime'
+    )
+    return hasDateTime ? `Times in ${timeZoneWords(timeZone)}` : null
+}
