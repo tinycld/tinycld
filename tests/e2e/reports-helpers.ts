@@ -16,8 +16,9 @@ export {
 // Helpers for the reports specs. Fixture names come from the salesstub package
 // (tests/scripts/scaffold-reports-stub.ts): sources salesstub.sales ("Stub sales":
 // customer, amount, cost, quantity, currency, day, booked (a day kept as text),
-// status; link team) and salesstub.teams ("Stub teams": name, region; to-many link
-// sales), both headed "Stub Sales Co", and the shipped reports over sales
+// status; link team), salesstub.teams ("Stub teams": name, region; to-many link
+// sales) and salesstub.activity ("Stub activity": the union of sales and returns,
+// with kind), all headed "Stub Sales Co", and the shipped reports over sales
 // (reports-stub/server/register.go.txt): published "Stub larger side", "Stub
 // statement", "Stub period statement" and "Stub period pivot"; unpublished "Stub
 // team totals" and "Stub team balance", and the drill reports: published "Stub

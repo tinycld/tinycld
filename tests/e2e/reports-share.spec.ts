@@ -7,6 +7,7 @@ import {
     TEST_USER_USERNAME,
 } from './helpers'
 import {
+    ACTIVITY_SOURCE,
     addColumn,
     addSale,
     addTeam,
@@ -20,6 +21,7 @@ import {
     saveNewReport,
     startReport,
     superuserClient,
+    TEAMS_SOURCE,
     uniqueName,
 } from './reports-helpers'
 
@@ -264,9 +266,14 @@ test.describe('sharing reports', () => {
         await login(page, { startAt: '/a/reports?package=salesstub' })
         await expect(page.getByTestId('reports-hub-filter')).toContainText('Sales Stub')
         await page.getByTestId('reports-hub-new').click()
-        await expect(
-            page.getByTestId('reports-new-dialog').locator('[data-testid^="reports-new-source-"]')
-        ).toHaveCount(2)
+        const dialog = page.getByTestId('reports-new-dialog')
+        const stubSources = [SALES_SOURCE, TEAMS_SOURCE, ACTIVITY_SOURCE]
+        await expect(dialog.locator('[data-testid^="reports-new-source-"]')).toHaveCount(
+            stubSources.length
+        )
+        for (const key of stubSources) {
+            await expect(dialog.getByTestId(`reports-new-source-${key}`)).toBeVisible()
+        }
         await page.keyboard.press('Escape')
         await page.getByTestId('reports-hub-show-all').click()
         await expect(page.getByTestId('reports-hub-filter')).toHaveCount(0)
