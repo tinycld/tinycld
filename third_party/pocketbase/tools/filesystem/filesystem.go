@@ -290,7 +290,7 @@ func (s *System) UploadFile(file *File, fileKey string) error {
 	if len(originalName) > 255 {
 		// keep only the first 255 chars as a very rudimentary measure
 		// to prevent the metadata to grow too big in size
-		originalName = originalName[:255]
+		originalName = truncateOriginalName(originalName) // fork: rune-safe cut, see filesystem_tinycld.go
 	}
 	opts := &blob.WriterOptions{
 		ContentType: mt.String(),
@@ -332,7 +332,7 @@ func (s *System) UploadMultipart(fh *multipart.FileHeader, fileKey string) error
 	if len(originalName) > 255 {
 		// keep only the first 255 chars as a very rudimentary measure
 		// to prevent the metadata to grow too big in size
-		originalName = originalName[:255]
+		originalName = truncateOriginalName(originalName) // fork: rune-safe cut, see filesystem_tinycld.go
 	}
 	opts := &blob.WriterOptions{
 		ContentType: mt.String(),
