@@ -1,10 +1,10 @@
-# Report zone times and the record panel — Part 1 (Tasks 1–6)
+# Report zone times and the record panel — Part 1 (Tasks 1–6, with 4b)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** The report engine reads a `Select` field over a text column and a source over a view collection (T3); a report cell, row label, option and chip of a date-time shows day and time in the reader's zone and the document header names the zone (T1); a date range or a day comparison over a date-time keeps the instants of the reader's local days, in a run and in param options (T2); a package declares `reportPanels` in its manifest and the generator writes `lib/generated/report-panels.ts` (D5, first half).
+**Goal:** The report engine reads a `Select` field over a text column and a source over a view collection (T3); a report cell, row label, option and chip of a date-time shows day and time in the reader's zone and the document header names the zone (T1); a date range or a day comparison over a date-time (with a day param, a range's bound or a day typed in a condition, Q3) keeps the instants of the reader's local days, in a run and in param options (T2); a package declares `reportPanels` in its manifest and the generator writes `lib/generated/report-panels.ts` (D5, first half).
 
-**Architecture:** See the outline `docs/plans/2026-11-15-report-zone-times-and-record-panel.md` (Architecture, Names changed, Rulings R1–R19). T3 is one entry of `check.go`'s `compatible` map, proven over a `zoo_*` view. T1 is a new pure module `core/reports/lib/date-time.ts` (Intl for the wall-clock numbers, core's own month words) that `format.ts` re-exports and calls from `cellDisplay`. T2 is a new engine file `zone.go` (the zone, a zoned day, the zoned comparisons) that `params.go`, `formula.go` and `run.go` call; the client adds `timeZone` to the run and param-options bodies when it sends them. D5's generator is `scripts/gen-report-panels.ts`, called from `generate.ts`.
+**Architecture:** See the outline `docs/plans/2026-11-15-report-zone-times-and-record-panel.md` (Architecture, Names changed, Rulings R1–R19). T3 is one entry of `check.go`'s `compatible` map, proven over a `zoo_*` view. T1 is a new pure module `core/reports/lib/date-time.ts` (Intl for the wall-clock numbers, core's own month words) that `format.ts` re-exports and calls from `cellDisplay`. T2 is a new engine file `zone.go` (the zone, a zoned day, the zoned comparisons) that `params.go`, `formula.go` and `run.go` call (Task 4); Task 4b zones a day typed in a condition through a new `fctx` method, `readerDay` (Q3); the client adds `timeZone` to the run and param-options bodies when it sends them. D5's generator is `scripts/gen-report-panels.ts`, called from `generate.ts`.
 
 **Tech Stack:** Go 1.26 (PocketBase, SQLite, `time`, `time/tzdata`), TypeScript (React Native + web, Hermes `Intl`), vitest.
 
@@ -23,6 +23,7 @@ Each item below was found while this part was written. Each one is now applied t
 - **C5 — the T3 view fixture.** `zoo_feedings` has no `created` column (`NewBaseCollection` adds only `id`), and every zoo user is signed in, so `@request.auth.id != ""` refuses no reader. `addZooFeedLog` adds an autodate `created` to `zoo_feedings` and one feeding with note "secret", and the view's list rule is `@request.auth.role = "member" && note != "secret"`: a guest (`z.person(t, "gus", "guest")`) is the refused reader. *Applied to the outline.*
 - **C6 — an existing test changes in Task 5.** `run-client.test.ts` "posts the request to the param-options route and returns the page" expects the exact body; it now expects the body with `timeZone: readerTimeZone()`. *Applied to the outline.*
 - **C7 — guards among the new tests.** `TestSelectOverNumberIsStillRefused` (Task 1) passes before the change; `TestDateColumnIgnoresTheZone` and `TestDatePartsAndDayBucketsKeepTheUTCDay` (Task 4) are red first only because `Options.TimeZone` does not compile. Each pins a rule the change must keep; the steps say so. *Applied to the outline.*
+- **C8 — Q3 answered (human, 2026-11-15): a typed day is zoned too.** Task 4b (after Task 4) gives a text literal that is a day `expr.zoned` through `fctx.readerDay`, so `zonedCompare` and `between` compare it with a `DateTime` as a `date` param. A `DateTime` compared with a `Date` column is unchanged. `TestTypedDayAgainstADateColumnIgnoresTheZone` is a guard (C7). *Applied to the outline (R1, Architecture, Names changed, Task 4b, Task 9, Coverage check).*
 
 ## Global Constraints
 
@@ -43,6 +44,7 @@ Each item below was found while this part was written. Each one is now applied t
 4. A date-time column sized by a first page of short times later shows "Sep 30, 2026, 12:59 PM" uncut — Task 2 column-measure test.
 5. A stored value no option of a select-over-text names: the cell holds it and the group is labelled with it — Task 1 `TestSelectOverTextShowsAnUnnamedValueAsItself`.
 6. A device whose `Intl` leaves out `hourCycle` (a Hermes build) but gives `hour12: false`: cells use the 24-hour clock — Task 2 `isTwelveHour`. The reviewer confirms on RN 0.88 Hermes which of the two `resolvedOptions()` gives (R4).
+7. A day typed in a condition (Q3): compared with a `DateTime` it has the same edges as a `date` param in the reader's zone; for a UTC reader its statements are today's; against a `Date` column it does not move — Task 4b `TestTypedDayComparisonsOfADateTimeInTheZone`, `TestTypedDayWithNoZoneIsUTC`, `TestTypedDayAgainstADateColumnIgnoresTheZone`. A text literal that is not a day (an instant) is not zoned — `TestTypedInstantIsNotZoned`.
 
 ---
 
@@ -1678,6 +1680,262 @@ Expected: `ok  tinycld.org/core/reports`. A failure here is a regression of a UT
 - [ ] **Step 9: Hand the diff to the driver**
 
 No commit. The diff: `zone.go`, `zonerange_test.go` (new), `run.go`, `params.go`, `formula.go`, `options.go`.
+
+---
+
+### Task 4b: T2 Go — a typed day in the reader's zone (Q3)
+
+The human's answer to Q3 (2026-11-15): a day typed in a condition (`gte(seen, {value: "2026-11-14"})`, `between(seen, {value: d1}, {value: d2})`) is a day of the reader's zone too, when the other side is a `DateTime`. `literal` gives a text literal that is a day (`isDay`) its zoned day on `expr.zoned`, as `paramExpr` does for a `date` param; `zonedCompare` and `between` (Task 4) then compare it as instants with no change. A literal only reaches the compiler through `fctx`, so `fctx` gains `readerDay(day string) *zonedDay`, which each context reads from its compiler's zone (`compiler.loc`, set by `readerCompiler`). A UTC reader and a dry compile have no `loc`, so their SQL stays as today's (R1). A typed day against a `Date` or text column is not zoned (`zonedCompare` needs a `DateTime` side).
+
+This task touches 12 files, but 8 of them gain one line each: the `fctx` method must land in every context at once, or the package does not compile. About 130 lines with the tests.
+
+**Files:**
+- Modify: `core/server/reports/formula.go` (`expr.zoned` comment, Task 4 Step 6; `fctx`, after `fiscalStart() string`, line 287 before Task 4, about 293 after it; `literal`, the `case string:` lines 541–542 before Task 4, about 547–548 after it)
+- Modify: `core/server/reports/zone.go` (`(*compiler).readerDay`, at the end)
+- Modify: `core/server/reports/rows.go` (`compiler`, after `fiscal int`, line 22; import `time`)
+- Modify: `core/server/reports/run.go` (`readerCompiler`: `c.loc = loc`; the `Options.TimeZone` comment)
+- Modify: one `readerDay` line beside `fiscalStart` in `detail.go` (`rowsCtx`, line 344), `heading.go` (`headingCtx`, line 46), `join.go` (`joinCtx`, line 169; `fillCtx` embeds it), `layout.go` (`layoutCtx`, line 965), `levels.go` (`levelCtx`, line 1346), `lookup.go` (`lookupCtx`, line 583), `formula_cases_test.go` (`tableCtx`, line 152; `tableLookupCtx`, line 248)
+- Test: `core/server/reports/zonerange_test.go` (append)
+
+**Interfaces:**
+- Consumes: `zoneDay`, `zonedDay`, `zonedCompare`, `between(c, args, at)`, `isDay`, `readerCompiler`'s `loc` (Task 4); test helpers `addZooSightings`, `sightingsWhere`, `opOf`, `seenLeaf`, `dayLeaf`, `nov14`, `chicagoZone`, `sameShape`, `observeReads`, `requireDetails` (Task 4 and the package's tests).
+- Produces: `compiler.loc *time.Location`; `(c *compiler) readerDay(day string) *zonedDay` (nil when `loc` is nil); `fctx.readerDay(day string) *zonedDay`; `expr.zoned` on a text literal that is a day, for a reader with a zone. Test helper `typedDay(day string) string` (`{"value":"<day>"}`).
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `core/server/reports/zonerange_test.go`:
+
+```go
+// typedDay is a day typed in a condition: a builder filter's {value}.
+func typedDay(day string) string { return `{"value":"` + day + `"}` }
+
+// Q3: a day typed in a condition is a day of the reader's zone, as a date
+// param is: a comparison or a between of a date-time with it compares the
+// instants of that local day, with the same edges (R1).
+func TestTypedDayComparisonsOfADateTimeInTheZone(t *testing.T) {
+	z := newZoo(t)
+	addZooSightings(t, z)
+	all := []any{"before8", "start8", "end8", "after8", "before1", "start1", "end1", "after1", "before14", "start14", "end14", "after14"}
+	day := typedDay("2026-11-14")
+	params := map[string]string{"day": `"2026-11-14"`, "period": nov14}
+	betweenOf := func(lo, hi string) string {
+		return `{"op":"between","args":[` + seenLeaf + `,` + lo + `,` + hi + `]}`
+	}
+	for name, c := range map[string]struct {
+		where string
+		want  []any
+	}{
+		"gte a typed day":                   {opOf("gte", seenLeaf, day), []any{"start14", "end14", "after14"}},
+		"gt a typed day":                    {opOf("gt", seenLeaf, day), []any{"after14"}},
+		"lt a typed day":                    {opOf("lt", seenLeaf, day), all[:9]},
+		"lte a typed day":                   {opOf("lte", seenLeaf, day), all[:11]},
+		"a typed day lte":                   {opOf("lte", day, seenLeaf), []any{"start14", "end14", "after14"}},
+		"a typed day gt":                    {opOf("gt", day, seenLeaf), all[:9]},
+		"between two typed days":            {betweenOf(day, day), []any{"start14", "end14"}},
+		"between typed days, the DST end":   {betweenOf(typedDay("2026-11-01"), typedDay("2026-11-01")), []any{"start1", "end1"}},
+		"between typed days, the DST start": {betweenOf(typedDay("2026-03-08"), typedDay("2026-03-08")), []any{"start8", "end8"}},
+		"between a typed day and a param":   {betweenOf(typedDay("2026-11-01"), dayLeaf), []any{"start1", "end1", "after1", "before14", "start14", "end14"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := z.run(t, "ann", sightingsWhere(c.where), Options{TimeZone: chicagoZone}, params)
+			requireDetails(t, res, "note", c.want...)
+		})
+	}
+}
+
+// R1: for a UTC reader (no zone, a name of UTC itself, a name the server does
+// not know) a typed day compares as before, with the statements of a run
+// with no zone; a Chicago run's statements differ, so the compare can see a
+// zone.
+func TestTypedDayWithNoZoneIsUTC(t *testing.T) {
+	z := newZoo(t)
+	addZooSightings(t, z)
+	spec := sightingsWhere(opOf("gte", seenLeaf, typedDay("2026-11-14")))
+	reads := func(zone string, want ...any) []readStatement {
+		seen := observeReads(t)
+		requireDetails(t, z.run(t, "ann", spec, Options{TimeZone: zone}, nil), "note", want...)
+		return sameShape(*seen)
+	}
+	none := reads("", "before14", "start14", "end14", "after14")
+	if chicago := reads(chicagoZone, "start14", "end14", "after14"); reflect.DeepEqual(chicago, none) {
+		t.Fatal("a Chicago run sent the statements of a run with no zone: the compare cannot see a zone")
+	}
+	for _, zone := range []string{"UTC", "Not/AZone"} {
+		if got := reads(zone, "before14", "start14", "end14", "after14"); !reflect.DeepEqual(got, none) {
+			t.Fatalf("zone %q: the statements differ from a run with no zone:\n got  %v\n want %v", zone, got, none)
+		}
+	}
+}
+
+// Text that is not a day (an instant) is not zoned: it compares as before.
+func TestTypedInstantIsNotZoned(t *testing.T) {
+	z := newZoo(t)
+	addZooSightings(t, z)
+	spec := sightingsWhere(opOf("gte", seenLeaf, typedDay("2026-11-14 06:00:00.000Z")))
+	seen := observeReads(t)
+	requireDetails(t, z.run(t, "ann", spec, Options{}, nil), "note", "start14", "end14", "after14")
+	utc := sameShape(*seen)
+	*seen = nil
+	requireDetails(t, z.run(t, "ann", spec, Options{TimeZone: chicagoZone}, nil), "note", "start14", "end14", "after14")
+	if got := sameShape(*seen); !reflect.DeepEqual(got, utc) {
+		t.Fatalf("a zone changed the statements of a typed instant:\n got  %v\n want %v", got, utc)
+	}
+}
+
+// A Date field is a day: a typed day compares with it as before, zone or not.
+func TestTypedDayAgainstADateColumnIgnoresTheZone(t *testing.T) {
+	z := newZoo(t)
+	const spec = `{"version":4,"source":"zoo.feedings",
+		"columns":[{"id":"note","path":[{"field":"note"}]}],
+		"filter":{"op":"gte","args":[{"path":[{"field":"fed"}]},{"value":"2026-01-20"}]},
+		"sort":[{"col":"note"}]}`
+	seen := observeReads(t)
+	requireDetails(t, z.run(t, "ann", spec, Options{}, nil), "note", "f2", "f3", "f4")
+	utc := sameShape(*seen)
+	*seen = nil
+	requireDetails(t, z.run(t, "ann", spec, Options{TimeZone: chicagoZone}, nil), "note", "f2", "f3", "f4")
+	if got := sameShape(*seen); !reflect.DeepEqual(got, utc) {
+		t.Fatalf("a zone changed a date column's statements:\n got  %v\n want %v", got, utc)
+	}
+}
+```
+
+(`ann` sees the feedings of leo and zed only: f1 Jan 5, f2 Feb 10, f3 Jan 20, f4 Mar 3.)
+
+- [ ] **Step 2: Run the tests to see them fail**
+
+Run: `cd /Users/nas/tmp/tinycld/books-reports/tinycld/core/server && go test ./reports/ -run 'TestTypedDay|TestTypedInstant' -count=1`
+Expected: FAIL. Each of the ten `TestTypedDayComparisonsOfADateTimeInTheZone` cases fails with the UTC rows, for example `gte a typed day`: `detail note = []interface {}{"before14", "start14", "end14", "after14"}`, and `between two typed days`: `detail note = []interface {}(nil)` (today a typed day compares as text, and no instant of Nov 14 is `<= "2026-11-14"`). `TestTypedDayWithNoZoneIsUTC` fails on its Chicago run with the same four rows. `TestTypedDayAgainstADateColumnIgnoresTheZone` and `TestTypedInstantIsNotZoned` pass: they are guards (C7) that the change must keep. The instant guard bites: with `if isDay(x)` made `if true`, `zoneDay` cannot parse the text and starts the day in year 1, and the Chicago run returns all twelve sightings.
+
+- [ ] **Step 3: The compiler holds the reader's zone**
+
+In `core/server/reports/rows.go`, add `"time"` to the standard imports (after `"strings"`), and in `compiler`, after `fiscal int` (line 22), add:
+
+```go
+	// loc is the reader's zone, nil for a UTC reader and a dry compile: a
+	// day typed in a condition is a day of it (readerDay, R1).
+	loc *time.Location
+```
+
+In `core/server/reports/run.go`, in `readerCompiler` (Task 4 Step 4), after `c.given = given`, add:
+
+```go
+	c.loc = loc
+```
+
+and in the `Options.TimeZone` comment, replace
+
+```go
+	// A date range, a date or asOf param, and a range's bound compared with a
+	// date-time compare the instants of the reader's local days; a missing or
+```
+
+with:
+
+```go
+	// A date range, a date or asOf param, a range's bound and a day typed in
+	// a condition compared with a date-time compare the instants of the
+	// reader's local days; a missing or
+```
+
+At the end of `core/server/reports/zone.go`, add:
+
+```go
+// readerDay is day (YYYY-MM-DD) in the reader's zone, nil for a UTC reader
+// and a dry compile, whose SQL stays as it was (R1).
+func (c *compiler) readerDay(day string) *zonedDay {
+	if c.loc == nil {
+		return nil
+	}
+	z := zoneDay(day, c.loc)
+	return &z
+}
+```
+
+- [ ] **Step 4: Every formula context reads it**
+
+In `core/server/reports/formula.go`, in `fctx`, after `fiscalStart() string` (line 287 before Task 4, about 293 after it), add:
+
+```go
+	// readerDay is day (YYYY-MM-DD) in the reader's zone, nil for a UTC
+	// reader (R1).
+	readerDay(day string) *zonedDay
+```
+
+Add one method beside each context's `fiscalStart`:
+
+```go
+func (rc *rowsCtx) readerDay(day string) *zonedDay { return rc.r.c.readerDay(day) }      // detail.go, after line 344
+func (h *headingCtx) readerDay(day string) *zonedDay { return h.c.readerDay(day) }       // heading.go, after line 46
+func (j *joinCtx) readerDay(day string) *zonedDay { return j.r.c.readerDay(day) }        // join.go, after line 169
+func (lc *layoutCtx) readerDay(day string) *zonedDay { return lc.c.readerDay(day) }      // layout.go, after line 965
+func (lc *levelCtx) readerDay(day string) *zonedDay { return lc.lv.c.readerDay(day) }    // levels.go, after line 1346
+func (l *lookupCtx) readerDay(day string) *zonedDay { return l.r.c.readerDay(day) }      // lookup.go, after line 583
+func (l *tableLookupCtx) readerDay(day string) *zonedDay { return l.outer.readerDay(day) } // formula_cases_test.go, after line 248
+```
+
+(The trailing comments say where each line goes; do not copy them.) In `formula_cases_test.go`, before `func (c *tableCtx) fiscalStart() string {` (line 152), add:
+
+```go
+// readerDay: the formula table runs in UTC.
+func (c *tableCtx) readerDay(string) *zonedDay { return nil }
+
+```
+
+`fillCtx` (fill.go) embeds `*joinCtx` and needs no line.
+
+- [ ] **Step 5: Zone a typed day**
+
+In `core/server/reports/formula.go`, in `literal`, replace (lines 541–542 before Task 4, about 547–548 after it):
+
+```go
+	case string:
+		return expr{sql: c.bind(x), typ: Text, text: &x}, nil
+```
+
+with:
+
+```go
+	case string:
+		// A day typed in a condition is a day of the reader's zone, as a
+		// date param is (R1, Q3); it stays text for every other use.
+		var zoned *zonedDay
+		if isDay(x) {
+			zoned = c.readerDay(x)
+		}
+		return expr{sql: c.bind(x), typ: Text, text: &x, zoned: zoned}, nil
+```
+
+In `expr` (Task 4 Step 6), replace the first two lines of the `zoned` comment:
+
+```go
+	// zoned is a day of the reader's zone (a date or asOf param, or a range's
+	// bound); zonedFrom and zonedTo are a date range's first and last day. A
+```
+
+with:
+
+```go
+	// zoned is a day of the reader's zone (a date or asOf param, a range's
+	// bound, or a day typed in a condition); zonedFrom and zonedTo are a
+	// date range's first and last day. A
+```
+
+Then rewrap that comment to the file's width. Run `gofmt -w core/server/reports/formula.go core/server/reports/zone.go core/server/reports/rows.go core/server/reports/run.go core/server/reports/detail.go core/server/reports/heading.go core/server/reports/join.go core/server/reports/layout.go core/server/reports/levels.go core/server/reports/lookup.go core/server/reports/formula_cases_test.go core/server/reports/zonerange_test.go` (it realigns each block of one-line methods).
+
+- [ ] **Step 6: Run the tests to see them pass**
+
+Run: `cd /Users/nas/tmp/tinycld/books-reports/tinycld/core/server && go test ./reports/ -run 'TestTypedDay|TestTypedInstant|TestBetween|TestDayComparisons|TestZone|TestDateColumnIgnores|TestDateParts' -count=1`
+Expected: PASS (the ten typed-day cases, the three guards, and Task 4's tests unchanged).
+
+- [ ] **Step 7: Run the whole reports package**
+
+Run: `cd /Users/nas/tmp/tinycld/books-reports/tinycld/core/server && go vet ./reports/ && go test ./reports/ -count=1`
+Expected: `ok  tinycld.org/core/reports` (about 95 s). No other test runs with a zone, so a failure here is a regression of a UTC run or of a literal: diagnose it at its source.
+
+- [ ] **Step 8: Hand the diff to the driver**
+
+No commit. The diff: `formula.go`, `zone.go`, `rows.go`, `run.go`, `detail.go`, `heading.go`, `join.go`, `layout.go`, `levels.go`, `lookup.go`, `formula_cases_test.go`, `zonerange_test.go`.
 
 ---
 

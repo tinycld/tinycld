@@ -4,7 +4,7 @@
 
 **Goal:** A detail row whose `open` names a package's registered record panel opens that record in a 480 px panel beside the report on a window of 1360 px or more (`dr=<app path>` in the URL, the pressed row marked), the help and the package docs name the date-time, zone and panel rules, the `salesstub` e2e package ships a date-time report and a record panel, and the core e2e proves T1 and D5 end to end.
 
-**Architecture:** See the outline, `docs/plans/2026-11-15-report-zone-times-and-record-panel.md` (Architecture, Names changed N1–N5, Rulings R1–R19). Part 1 (Tasks 1–6) built T3, T1, T2 and the D5 generator: `lib/generated/report-panels.ts`, the ambient module `@tinycld/app-generated/report-panels`, core's unit-setup mock `{ reportPanels: [] }`, `ReportPanelEntry` in `core/reports/lib/record-panel.ts`, `ReportPanelProps` in `core/reports/hooks/usePanelTitle.ts`, `dateTimeText`, `zoneLine` and `ReportViewModel.zoneWords`. Here: the pure rules (`recordPanelOf`, `rowOpensInPanel`, `recordPanelParams`, `isRowShown`) and the `dr` key (Task 7); the one reader of the generated list (`registered-panels.ts`), the UI-store fields, the row press, the row mark and the record mode of `ReportDrillPanel` (Task 8); help and docs (Task 9); the stub (Task 10); the e2e (Task 11).
+**Architecture:** See the outline, `docs/plans/2026-11-15-report-zone-times-and-record-panel.md` (Architecture, Names changed N1–N5, Rulings R1–R19). Part 1 (Tasks 1–6, with 4b) built T3, T1, T2 (with a day typed in a condition zoned too, Q3) and the D5 generator: `lib/generated/report-panels.ts`, the ambient module `@tinycld/app-generated/report-panels`, core's unit-setup mock `{ reportPanels: [] }`, `ReportPanelEntry` in `core/reports/lib/record-panel.ts`, `ReportPanelProps` in `core/reports/hooks/usePanelTitle.ts`, `dateTimeText`, `zoneLine` and `ReportViewModel.zoneWords`. Here: the pure rules (`recordPanelOf`, `rowOpensInPanel`, `recordPanelParams`, `isRowShown`) and the `dr` key (Task 7); the one reader of the generated list (`registered-panels.ts`), the UI-store fields, the row press, the row mark and the record mode of `ReportDrillPanel` (Task 8); help and docs (Task 9); the stub (Task 10); the e2e (Task 11).
 
 **Tech Stack:** TypeScript (React Native + web, expo-router, NativeWind), Zustand, vitest, Playwright; Go only in the stub template.
 
@@ -1300,7 +1300,7 @@ The view (press, mark, 480 px width, title, focus, Escape, reload, Customize, Op
         expect(section).toContain('date and a time')
         expect(section).toContain('your time zone')
         expect(section).toContain('**Times in Central Time**')
-        expect(section).toContain('a day you type in a filter')
+        expect(section).toContain('The period chip and a day you type in a filter')
         const opens = help.slice(help.indexOf("## Open a row's record"))
         expect(opens).toContain('in a panel at the right')
     })
@@ -1318,7 +1318,8 @@ The view (press, mark, 480 px width, title, focus, Escape, reload, Customize, Op
         expect(sources).toContain('CAST(')
         expect(sources).toContain("in the reader's time zone")
         expect(sources).toContain('keep the UTC day')
-        expect(sources).toContain('a literal day')
+        expect(sources).toContain('a day typed in a condition')
+        expect(sources).toContain('with a `Date` column still compares in UTC')
         expect(sources).toContain('`timeZone` with every param-options request')
         expect(sources).toContain('dateTimeText')
         const shippedAt = docs.indexOf('### Shipped and saved reports')
@@ -1334,7 +1335,7 @@ The view (press, mark, 480 px width, title, focus, Escape, reload, Customize, Op
 - [ ] **Step 2: Run them and see them fail**
 
 Run: `/Users/nas/tmp/tinycld/books-reports/node_modules/.bin/vitest run core/reports/lib/__tests__/statements-docs.test.ts`
-Expected: FAIL: "names date-time columns…" (`expected -1 to be greater than -1`) and "names record panels…" (`| \`reportPanels[]\` |` missing); the seven older tests pass. The new assertions on the limit of a typed day (`a day you type in a filter`, `a literal day`) and on the param-options body's top-level `timeZone` pin the outline's R1 limit (and Q3) and Task 5's request shape: the help and the docs must say what a reader in another zone gets from a condition with a typed day, and which key each request carries.
+Expected: FAIL: "names date-time columns…" (`expected -1 to be greater than -1`) and "names record panels…" (`| \`reportPanels[]\` |` missing); the seven older tests pass. The new assertions on a typed day (`The period chip and a day you type in a filter`, `a day typed in a condition`), on the one limit left (`with a \`Date\` column still compares in UTC`) and on the param-options body's top-level `timeZone` pin the outline's R1 (Q3 answered: a typed day is zoned too, Task 4b) and Task 5's request shape: the help and the docs must say that a typed day is a day of the reader's zone, that a `DateTime` compared with a `Date` column is not, and which key each request carries.
 
 - [ ] **Step 3: The help**
 
@@ -1347,7 +1348,7 @@ Expected: FAIL: "names date-time columns…" (`expected -1 to be greater than -1
 
 Some columns hold a date and a time, such as when a record was changed. The report shows them in your time zone: "Nov 14, 2026, 4:07 PM", or with a 24-hour clock when your device uses one. When the report shows such a column, the line under the title names your time zone once, for example **Times in Central Time**.
 
-The period chip also uses your time zone for these columns: a day starts and ends at your midnight, not at midnight UTC. A report that groups or pivots such a column by day, month or year uses the UTC date. A condition that compares such a column with a day you type in a filter, such as "on or after Nov 14, 2026", also uses the UTC date; use the period chip to filter by your own days. A column that holds only a date, such as a due date, is the same in every time zone.
+The period chip and a day you type in a filter, such as "on or after Nov 14, 2026", also use your time zone for these columns: a day starts and ends at your midnight, not at midnight UTC. A report that groups or pivots such a column by day, month or year uses the UTC date. A column that holds only a date, such as a due date, is the same in every time zone.
 ```
 
 - Replace the paragraph under `## Open a row's record` with:
@@ -1383,16 +1384,16 @@ Field reference table, after the `setupSteps[]` row:
   A run reads the view under its list rule. Register the view's sources with
   `changesignal.RegisterView`, so an open report stays current.
 - A `DateTime` field holds an instant. A date range (`between` with a
-  `dateRange` param), a `date` or `asOf` param, and a range's `bound` compare
-  with it in the reader's time zone: the client sends `options.timeZone` (an
-  IANA name, from `Intl`) with every run and
-  `timeZone` with every param-options request, and the engine compares with
-  the UTC instants of the reader's midnights
+  `dateRange` param), a `date` or `asOf` param, a range's `bound`, and
+  a day typed in a condition (a literal `{"value": "2026-11-14"}`, such as a
+  builder filter's value) compare with it in the reader's time zone: the
+  client sends `options.timeZone` (an IANA name, from `Intl`) with every run
+  and `timeZone` with every param-options request, and the engine compares
+  with the UTC instants of the reader's midnights
   (`x >= <first day's midnight> AND x < <midnight after the last day>`). A
   missing or unknown zone, a name of UTC itself (`UTC`, `Etc/UTC`,
   `Etc/GMT`, `GMT`) and `Local` are UTC. A condition that compares a
-  `DateTime` with a literal day (a value typed in a filter, not a param), or
-  with a `Date` column, still compares in UTC. Buckets and date parts of a
+  `DateTime` with a `Date` column still compares in UTC. Buckets and date parts of a
   `DateTime` (`year`, `month`, a group or pivot by day) keep the UTC day. A
   `Date` field is a day and never moves. The view shows a `DateTime` cell as
   day and time in the reader's zone and names the zone once under the title
