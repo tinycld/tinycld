@@ -42,10 +42,11 @@ func (h *headingCtx) param(id, at string) (expr, error) {
 	}
 	return paramLeaf(h.c, h.s, h, id, v)
 }
-func (h *headingCtx) bind(v any) string   { return h.s.bind(v) }
-func (h *headingCtx) fiscalStart() string { return h.bind(int64(h.c.fiscal)) }
-func (h *headingCtx) filter() bool        { return false }
-func (h *headingCtx) label(e expr) string { return h.c.textOf(h.s, e) }
+func (h *headingCtx) bind(v any) string              { return h.s.bind(v) }
+func (h *headingCtx) fiscalStart() string            { return h.bind(int64(h.c.fiscal)) }
+func (h *headingCtx) readerDay(day string) *zonedDay { return h.c.readerDay(day) }
+func (h *headingCtx) filter() bool                   { return false }
+func (h *headingCtx) label(e expr) string            { return h.c.textOf(h.s, e) }
 func (h *headingCtx) currencySQL(cur currency) string {
 	return currencyCode(h, h.c, cur, func(string) string { return "NULL" })
 }

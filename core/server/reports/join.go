@@ -167,6 +167,7 @@ func (j *joinCtx) exists(n *Node, at string) (expr, error) {
 
 func (j *joinCtx) bind(v any) string                       { return j.sc.s.bind(v) }
 func (j *joinCtx) fiscalStart() string                     { return j.bind(int64(j.r.c.fiscal)) }
+func (j *joinCtx) readerDay(day string) *zonedDay          { return j.r.c.readerDay(day) }
 func (j *joinCtx) filter() bool                            { return j.isFilter }
 func (j *joinCtx) label(e expr) string                     { return j.r.c.textOf(j.sc.s, e) }
 func (j *joinCtx) lookup(n *Node, at string) (expr, error) { return lookupIn(j, j.r, n, at) }

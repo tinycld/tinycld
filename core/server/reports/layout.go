@@ -961,10 +961,11 @@ func readsLayoutRow(sql string) bool { return layoutRowRef.MatchString(sql) }
 func (lc *layoutCtx) only(at string) error {
 	return invalid(at, "a computed row reads sections' subtotals, earlier rows, params, values and lookups")
 }
-func (lc *layoutCtx) bind(v any) string   { return lc.s.bind(v) }
-func (lc *layoutCtx) fiscalStart() string { return lc.bind(int64(lc.c.fiscal)) }
-func (lc *layoutCtx) filter() bool        { return false }
-func (lc *layoutCtx) label(e expr) string { return lc.c.textOf(lc.s, e) }
+func (lc *layoutCtx) bind(v any) string              { return lc.s.bind(v) }
+func (lc *layoutCtx) fiscalStart() string            { return lc.bind(int64(lc.c.fiscal)) }
+func (lc *layoutCtx) readerDay(day string) *zonedDay { return lc.c.readerDay(day) }
+func (lc *layoutCtx) filter() bool                   { return false }
+func (lc *layoutCtx) label(e expr) string            { return lc.c.textOf(lc.s, e) }
 
 // currencySQL reads a currency key from the computed row's currency (cur).
 func (lc *layoutCtx) currencySQL(cur currency) string {

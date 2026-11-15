@@ -41,8 +41,9 @@ type Options struct {
 	// default is today in UTC.
 	Today string `json:"today,omitempty"`
 	// TimeZone is the reader's IANA zone (Intl's resolvedOptions().timeZone).
-	// A date range, a date or asOf param, and a range's bound compared with a
-	// date-time compare the instants of the reader's local days; a missing or
+	// A date range, a date or asOf param, a range's bound and a day typed in
+	// a condition compared with a date-time compare the instants of the
+	// reader's local days; a missing or
 	// unknown zone, a name of UTC itself (utcNames, zone.go) and "Local" are
 	// UTC (readerZone). Buckets and date parts keep the UTC day (Q7).
 	TimeZone string `json:"timeZone,omitempty"`
@@ -389,6 +390,7 @@ func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[str
 	}
 	c := newCompilerWithFiscal(p, app, info, params, fiscal)
 	c.given = given
+	c.loc = loc
 	return c, nil
 }
 

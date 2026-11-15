@@ -340,9 +340,10 @@ func (rc *rowsCtx) window(op string, arg *Node, scale int, at string) (expr, err
 	return windowSQL(op, e, scale, rc.detail, at)
 }
 
-func (rc *rowsCtx) bind(v any) string   { return rc.r.s.bind(v) }
-func (rc *rowsCtx) fiscalStart() string { return rc.bind(int64(rc.r.c.fiscal)) }
-func (rc *rowsCtx) filter() bool        { return false }
+func (rc *rowsCtx) bind(v any) string              { return rc.r.s.bind(v) }
+func (rc *rowsCtx) fiscalStart() string            { return rc.bind(int64(rc.r.c.fiscal)) }
+func (rc *rowsCtx) readerDay(day string) *zonedDay { return rc.r.c.readerDay(day) }
+func (rc *rowsCtx) filter() bool                   { return false }
 func (rc *rowsCtx) label(e expr) string {
 	if rc.idText {
 		return e.sql

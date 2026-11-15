@@ -149,6 +149,9 @@ func (c *tableCtx) bind(v any) string {
 	return "{:" + name + "}"
 }
 
+// readerDay: the formula table runs in UTC.
+func (c *tableCtx) readerDay(string) *zonedDay { return nil }
+
 func (c *tableCtx) fiscalStart() string {
 	if c.fiscal == 0 {
 		return c.bind(int64(1))
@@ -244,10 +247,11 @@ func (l *tableLookupCtx) lookup(n *Node, at string) (expr, error) { return l.out
 func (l *tableLookupCtx) record(g string, p Path, at string) (expr, error) {
 	return l.outer.record(g, p, at)
 }
-func (l *tableLookupCtx) bind(v any) string   { return l.outer.bind(v) }
-func (l *tableLookupCtx) fiscalStart() string { return l.outer.fiscalStart() }
-func (l *tableLookupCtx) filter() bool        { return false }
-func (l *tableLookupCtx) label(e expr) string { return l.outer.label(e) }
+func (l *tableLookupCtx) bind(v any) string              { return l.outer.bind(v) }
+func (l *tableLookupCtx) fiscalStart() string            { return l.outer.fiscalStart() }
+func (l *tableLookupCtx) readerDay(day string) *zonedDay { return l.outer.readerDay(day) }
+func (l *tableLookupCtx) filter() bool                   { return false }
+func (l *tableLookupCtx) label(e expr) string            { return l.outer.label(e) }
 func (l *tableLookupCtx) currencySQL(cur currency) string {
 	return l.outer.currencySQL(cur)
 }

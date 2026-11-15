@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -20,6 +21,9 @@ type compiler struct {
 	// unchanged (R4); nil in a dry compile.
 	given  map[string]json.RawMessage
 	fiscal int
+	// loc is the reader's zone, nil for a UTC reader and a dry compile: a
+	// day typed in a condition is a day of it (readerDay, R1).
+	loc *time.Location
 	// fixedCur is each source's fixed currency as this read's reader got it
 	// (fixedCurrency). It outlives a statement, so rows() leaves it.
 	fixedCur map[string]string

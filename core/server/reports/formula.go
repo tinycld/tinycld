@@ -63,11 +63,11 @@ type expr struct {
 	// over the looked-up rows (columns u, m, c), for a context that computes
 	// the lookup once in a CTE (layoutCtx.lookup). "" for any other value.
 	scan string
-	// zoned is a day of the reader's zone (a date or asOf param, or a range's
-	// bound); zonedFrom and zonedTo are a date range's first and last day. A
-	// comparison or a between of a date-time with them compares the instants
-	// of those local days (R1). All nil for a UTC reader, whose SQL stays as
-	// it was.
+	// zoned is a day of the reader's zone (a date or asOf param, a range's
+	// bound, or a day typed in a condition); zonedFrom and zonedTo are a date
+	// range's first and last day. A comparison or a between of a date-time
+	// with them compares the instants of those local days (R1). All nil for a
+	// UTC reader, whose SQL stays as it was.
 	zoned, zonedFrom, zonedTo *zonedDay
 }
 
@@ -291,6 +291,9 @@ type fctx interface {
 	bind(v any) string
 	// fiscalStart is the SQL of the base source's fiscal start month.
 	fiscalStart() string
+	// readerDay is day (YYYY-MM-DD) in the reader's zone, nil for a UTC
+	// reader (R1).
+	readerDay(day string) *zonedDay
 	// filter is true while compiling a filter.
 	filter() bool
 	// label is a relation value read as text: the label of the record it
@@ -545,7 +548,13 @@ func literal(c fctx, raw json.RawMessage, at string) (expr, error) {
 	case bool:
 		return expr{sql: c.bind(x), typ: Bool}, nil
 	case string:
-		return expr{sql: c.bind(x), typ: Text, text: &x}, nil
+		// A day typed in a condition is a day of the reader's zone, as a
+		// date param is (R1, Q3); it stays text for every other use.
+		var zoned *zonedDay
+		if isDay(x) {
+			zoned = c.readerDay(x)
+		}
+		return expr{sql: c.bind(x), typ: Text, text: &x, zoned: zoned}, nil
 	case json.Number:
 		return expr{sql: c.bind(numberValue(x)), typ: Number}, nil
 	case []any:

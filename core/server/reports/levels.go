@@ -1342,10 +1342,11 @@ func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, er
 	return windowSQL(op, e, scale, lc.lv.frame, at)
 }
 
-func (lc *levelCtx) bind(v any) string   { return lc.lv.r.s.bind(v) }
-func (lc *levelCtx) fiscalStart() string { return lc.bind(int64(lc.lv.c.fiscal)) }
-func (lc *levelCtx) filter() bool        { return lc.cond }
-func (lc *levelCtx) label(e expr) string { return lc.lv.c.textOf(lc.lv.r.s, e) }
+func (lc *levelCtx) bind(v any) string              { return lc.lv.r.s.bind(v) }
+func (lc *levelCtx) fiscalStart() string            { return lc.bind(int64(lc.lv.c.fiscal)) }
+func (lc *levelCtx) readerDay(day string) *zonedDay { return lc.lv.c.readerDay(day) }
+func (lc *levelCtx) filter() bool                   { return lc.cond }
+func (lc *levelCtx) label(e expr) string            { return lc.lv.c.textOf(lc.lv.r.s, e) }
 func (lc *levelCtx) currencySQL(cur currency) string {
 	return currencyCode(lc, lc.lv.c, cur, func(key string) string { return "a." + key })
 }

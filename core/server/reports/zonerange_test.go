@@ -319,3 +319,97 @@ func TestRunEndpointTakesTimeZone(t *testing.T) {
 	}
 	sc.Test(t)
 }
+
+// typedDay is a day typed in a condition: a builder filter's {value}.
+func typedDay(day string) string { return `{"value":"` + day + `"}` }
+
+// Q3: a day typed in a condition is a day of the reader's zone, as a date
+// param is: a comparison or a between of a date-time with it compares the
+// instants of that local day, with the same edges (R1).
+func TestTypedDayComparisonsOfADateTimeInTheZone(t *testing.T) {
+	z := newZoo(t)
+	addZooSightings(t, z)
+	all := []any{"before8", "start8", "end8", "after8", "before1", "start1", "end1", "after1", "before14", "start14", "end14", "after14"}
+	day := typedDay("2026-11-14")
+	params := map[string]string{"day": `"2026-11-14"`, "period": nov14}
+	betweenOf := func(lo, hi string) string {
+		return `{"op":"between","args":[` + seenLeaf + `,` + lo + `,` + hi + `]}`
+	}
+	for name, c := range map[string]struct {
+		where string
+		want  []any
+	}{
+		"gte a typed day":                    {opOf("gte", seenLeaf, day), []any{"start14", "end14", "after14"}},
+		"gt a typed day":                     {opOf("gt", seenLeaf, day), []any{"after14"}},
+		"lt a typed day":                     {opOf("lt", seenLeaf, day), all[:9]},
+		"lte a typed day":                    {opOf("lte", seenLeaf, day), all[:11]},
+		"a typed day lte":                    {opOf("lte", day, seenLeaf), []any{"start14", "end14", "after14"}},
+		"a typed day gt":                     {opOf("gt", day, seenLeaf), all[:9]},
+		"between two typed days":             {betweenOf(day, day), []any{"start14", "end14"}},
+		"between typed days, the DST end":    {betweenOf(typedDay("2026-11-01"), typedDay("2026-11-01")), []any{"start1", "end1"}},
+		"between typed days, the DST start":  {betweenOf(typedDay("2026-03-08"), typedDay("2026-03-08")), []any{"start8", "end8"}},
+		"between a typed day and a param":    {betweenOf(typedDay("2026-11-01"), dayLeaf), []any{"start1", "end1", "after1", "before14", "start14", "end14"}},
+		"between an instant and a typed day": {betweenOf(typedDay("2026-11-14 06:00:00.000Z"), day), []any{"start14", "end14"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := z.run(t, "ann", sightingsWhere(c.where), Options{TimeZone: chicagoZone}, params)
+			requireDetails(t, res, "note", c.want...)
+		})
+	}
+}
+
+// R1: for a UTC reader (no zone, a name of UTC itself, a name the server does
+// not know) a typed day compares as before, with the statements of a run
+// with no zone; a Chicago run's statements differ, so the compare can see a
+// zone.
+func TestTypedDayWithNoZoneIsUTC(t *testing.T) {
+	z := newZoo(t)
+	addZooSightings(t, z)
+	spec := sightingsWhere(opOf("gte", seenLeaf, typedDay("2026-11-14")))
+	reads := func(zone string, want ...any) []readStatement {
+		seen := observeReads(t)
+		requireDetails(t, z.run(t, "ann", spec, Options{TimeZone: zone}, nil), "note", want...)
+		return sameShape(*seen)
+	}
+	none := reads("", "before14", "start14", "end14", "after14")
+	if chicago := reads(chicagoZone, "start14", "end14", "after14"); reflect.DeepEqual(chicago, none) {
+		t.Fatal("a Chicago run sent the statements of a run with no zone: the compare cannot see a zone")
+	}
+	for _, zone := range []string{"UTC", "Not/AZone"} {
+		if got := reads(zone, "before14", "start14", "end14", "after14"); !reflect.DeepEqual(got, none) {
+			t.Fatalf("zone %q: the statements differ from a run with no zone:\n got  %v\n want %v", zone, got, none)
+		}
+	}
+}
+
+// Text that is not a day (an instant) is not zoned: it compares as before.
+func TestTypedInstantIsNotZoned(t *testing.T) {
+	z := newZoo(t)
+	addZooSightings(t, z)
+	spec := sightingsWhere(opOf("gte", seenLeaf, typedDay("2026-11-14 06:00:00.000Z")))
+	seen := observeReads(t)
+	requireDetails(t, z.run(t, "ann", spec, Options{}, nil), "note", "start14", "end14", "after14")
+	utc := sameShape(*seen)
+	*seen = nil
+	requireDetails(t, z.run(t, "ann", spec, Options{TimeZone: chicagoZone}, nil), "note", "start14", "end14", "after14")
+	if got := sameShape(*seen); !reflect.DeepEqual(got, utc) {
+		t.Fatalf("a zone changed the statements of a typed instant:\n got  %v\n want %v", got, utc)
+	}
+}
+
+// A Date field is a day: a typed day compares with it as before, zone or not.
+func TestTypedDayAgainstADateColumnIgnoresTheZone(t *testing.T) {
+	z := newZoo(t)
+	const spec = `{"version":4,"source":"zoo.feedings",
+		"columns":[{"id":"note","path":[{"field":"note"}]}],
+		"filter":{"op":"gte","args":[{"path":[{"field":"fed"}]},{"value":"2026-01-20"}]},
+		"sort":[{"col":"note"}]}`
+	seen := observeReads(t)
+	requireDetails(t, z.run(t, "ann", spec, Options{}, nil), "note", "f2", "f3", "f4")
+	utc := sameShape(*seen)
+	*seen = nil
+	requireDetails(t, z.run(t, "ann", spec, Options{TimeZone: chicagoZone}, nil), "note", "f2", "f3", "f4")
+	if got := sameShape(*seen); !reflect.DeepEqual(got, utc) {
+		t.Fatalf("a zone changed a date column's statements:\n got  %v\n want %v", got, utc)
+	}
+}

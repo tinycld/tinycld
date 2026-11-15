@@ -110,3 +110,13 @@ func zonedCompare(c fctx, op string, a, b expr) (expr, bool) {
 	}
 	return expr{sql: "(" + a.sql + cmp + c.bind(bound) + ")", typ: Bool}, true
 }
+
+// readerDay is day (YYYY-MM-DD) in the reader's zone, nil for a UTC reader
+// and a dry compile, whose SQL stays as it was (R1).
+func (c *compiler) readerDay(day string) *zonedDay {
+	if c.loc == nil {
+		return nil
+	}
+	z := zoneDay(day, c.loc)
+	return &z
+}
