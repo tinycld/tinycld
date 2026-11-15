@@ -100,6 +100,31 @@ function OpenFullButton({ isVisible, testID, label, onPress }: OpenFullButtonPro
     )
 }
 
+interface PanelTitleProps {
+    titleKey: number
+    titleRef: DrillPanelModel['titleRef']
+    title: string
+    testID: string
+}
+
+// The focus lands on it when a press opens the panel; its key remounts it per press.
+function PanelTitle({ titleKey, titleRef, title, testID }: PanelTitleProps) {
+    return (
+        <View
+            key={titleKey}
+            ref={titleRef}
+            testID={testID}
+            tabIndex={-1}
+            accessibilityRole="header"
+            className="min-w-0 flex-1"
+        >
+            <Text numberOfLines={1} className="text-lg font-semibold text-foreground">
+                {title}
+            </Text>
+        </View>
+    )
+}
+
 function DrillPanelHeader({ panel }: { panel: DrillPanelModel }) {
     return (
         <View testID="report-drill-panel-header" className="gap-1 border-b border-border px-4 py-2">
@@ -109,18 +134,12 @@ function DrillPanelHeader({ panel }: { panel: DrillPanelModel }) {
                 onBack={panel.onClose}
             />
             <View className="flex-row items-center gap-2">
-                <View
-                    key={panel.titleKey}
-                    ref={panel.titleRef}
+                <PanelTitle
+                    titleKey={panel.titleKey}
+                    titleRef={panel.titleRef}
+                    title={panel.title}
                     testID="report-drill-panel-title"
-                    tabIndex={-1}
-                    accessibilityRole="header"
-                    className="min-w-0 flex-1"
-                >
-                    <Text numberOfLines={1} className="text-lg font-semibold text-foreground">
-                        {panel.title}
-                    </Text>
-                </View>
+                />
                 <OpenFullButton
                     isVisible={panel.recordState === 'ready'}
                     testID="report-drill-open-full"
@@ -234,18 +253,12 @@ function RecordPanelHeader({ panel }: { panel: RecordPanelModel }) {
                 testID="report-record-panel-back"
             />
             <View className="flex-row items-center gap-2">
-                <View
-                    key={panel.titleKey}
-                    ref={panel.titleRef}
+                <PanelTitle
+                    titleKey={panel.titleKey}
+                    titleRef={panel.titleRef}
+                    title={panel.title}
                     testID="report-record-panel-title"
-                    tabIndex={-1}
-                    accessibilityRole="header"
-                    className="min-w-0 flex-1"
-                >
-                    <Text numberOfLines={1} className="text-lg font-semibold text-foreground">
-                        {panel.title}
-                    </Text>
-                </View>
+                />
                 <OpenFullButton
                     isVisible
                     testID="report-record-panel-full"
@@ -282,8 +295,10 @@ class RecordBoundary extends Component<RecordBoundaryProps, RecordBoundaryState>
         return { hasError: true }
     }
 
-    // Runs after the error text replaced the panel, so the reload starts no load
-    // for this record; the next record opened in the panel loads the chunk again.
+    // The boundary cannot tell a failed chunk from a throw while rendering, so every
+    // error drops the chunk; for a chunk that loaded, the next load is a cheap
+    // re-import. It runs after the error text replaced the panel, so the reload
+    // starts no load for this record; the next record opened loads the chunk again.
     componentDidCatch(error: Error) {
         log.error('reports.record-panel', error)
         this.props.onError()
@@ -331,7 +346,7 @@ function RecordPanel({ panel }: { panel: RecordPanelModel }) {
         <View
             testID="report-record-panel"
             role="complementary"
-            aria-label={panel.title || 'Record'}
+            aria-label={panel.ariaLabel}
             className="border-border bg-background"
             style={panel.isPage ? PAGE_STYLE : PANEL_STYLE}
         >

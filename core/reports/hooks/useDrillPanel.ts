@@ -123,6 +123,7 @@ export function useRecordPanel({ open, sourceTitle }: RecordPanelInput) {
     return {
         open,
         title,
+        ariaLabel: title || 'Record',
         segments: match.segments,
         Component: entry.Component,
         isPage: surface === 'page',
