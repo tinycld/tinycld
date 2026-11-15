@@ -156,3 +156,16 @@ func TestSelectOverNumberIsStillRefused(t *testing.T) {
 		t.Fatalf("CheckSources = %v, want it to contain %q", err, want)
 	}
 }
+
+// A select over a real select column still checks each option against the
+// column's values: zoo_sites.region holds north and south only.
+func TestSelectOverSelectRefusesAnOptionTheColumnLacks(t *testing.T) {
+	z := newZoo(t)
+	RegisterSource(Source{Key: "zoo.regions", Collection: "zoo_sites", Label: "Regions",
+		Fields: []Field{{Key: "region", Label: "Region", Type: Select, Options: []Option{{Value: "east", Label: "East"}}}}})
+	err := CheckSources(z.app)
+	want := `option "east" is not a value of column "region"`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("CheckSources = %v, want it to contain %q", err, want)
+	}
+}
