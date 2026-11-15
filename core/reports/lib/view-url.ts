@@ -38,6 +38,8 @@ export const FROM_KEY = 'from'
 /** The report the drill panel shows (D4); its view options carry `DRILL_PREFIX`. */
 export const DRILL_KEY = 'd'
 export const DRILL_PREFIX = 'd.'
+/** The record a package panel shows beside the report (D5): an app path. Never part of a copied link. */
+export const RECORD_KEY = 'dr'
 
 export type SearchParams = Record<string, string | string[] | undefined>
 
@@ -200,18 +202,23 @@ export function serializeViewOptions(
     return Object.fromEntries(Object.entries(out).map(([key, value]) => [`${prefix}${key}`, value]))
 }
 
-/** Every drill key of the route, cleared: router.setParams removes an undefined key. */
+/**
+ * Every key of the side panel, cleared (a drill's and a record's: one side surface
+ * at a time, R7). router.setParams removes an undefined key.
+ */
 export function clearedDrillKeys(search: SearchParams): Record<string, undefined> {
     const out: Record<string, undefined> = {}
     for (const key of Object.keys(search)) {
-        if (key === DRILL_KEY || key.startsWith(DRILL_PREFIX)) out[key] = undefined
+        if (key === DRILL_KEY || key === RECORD_KEY || key.startsWith(DRILL_PREFIX)) {
+            out[key] = undefined
+        }
     }
     return out
 }
 
 /**
  * The full link to a report as the reader sees it; `origin` is the server's address.
- * It writes no prefix, so no `from`, `d` or `d.` key can reach a copied link (R10).
+ * It writes no prefix, so no `from`, `d`, `d.` or `dr` key can reach a copied link.
  */
 export function reportLink(
     origin: string,
