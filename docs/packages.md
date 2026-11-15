@@ -1629,7 +1629,7 @@ reports.RegisterShipped(reports.Shipped{
   holds it. A target the reader may not view gives plain figures.
 - A detail row's record (`detail.open`) can open beside the report in the
   same 480 px panel. Declare the panel in the manifest:
-  `reportPanels: [{ path: 'history', component: 'components/history/RecordHistoryPanel' }]`.
+  `reportPanels: [{ path: 'history', component: 'components/history/Panel' }]`.
   A row whose `open` is `<slug>/<path>/` and at least one more segment opens
   in the panel when the window is 1360 px or wider and the screen hosts a
   panel; the component gets `ReportPanelProps` (`{ segments }`: the segments

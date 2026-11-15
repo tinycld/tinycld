@@ -55,9 +55,9 @@ function isKnownZone(timeZone: string): boolean {
     try {
         new Intl.DateTimeFormat('en-US', { timeZone })
         return true
-    } catch (error) {
-        if (error instanceof RangeError) return false
-        throw error
+    } catch {
+        // Whatever an engine throws for a name it cannot use, the zone reads as unknown.
+        return false
     }
 }
 
@@ -134,18 +134,29 @@ function zoneName(timeZone: string, style: 'long' | 'longGeneric'): string | nul
         // A short name ("CST") or a GMT offset is not words; an engine that ignores
         // the style may answer with one.
         return name.includes(' ') && !name.startsWith('GMT') ? name : null
-    } catch (error) {
-        // An engine without the generic style refuses it.
-        if (error instanceof RangeError || error instanceof TypeError) return null
-        throw error
+    } catch {
+        // An engine without the generic style refuses it, with whatever error type it
+        // uses; this runs in render, where a throw would crash the report.
+        return null
     }
 }
 
+const zoneWords = new Map<string, string>()
+
 /**
  * A zone in words for the header's line (R6): "Central Time"; "UTC" for UTC and
- * for a zone Intl does not know; else the zone's city ("Chicago time").
+ * for a zone Intl does not know; else the zone's city ("Chicago time"). Cached per
+ * zone: the header asks on every render, and building formatters is slow on Hermes.
  */
 export function timeZoneWords(timeZone = readerTimeZone()): string {
+    const known = zoneWords.get(timeZone)
+    if (known !== undefined) return known
+    const words = wordsOfZone(timeZone)
+    zoneWords.set(timeZone, words)
+    return words
+}
+
+function wordsOfZone(timeZone: string): string {
     if (UTC_ZONES.has(timeZone) || !isKnownZone(timeZone)) return 'UTC'
     const generic = zoneName(timeZone, 'longGeneric')
     if (generic) return generic

@@ -8,7 +8,7 @@ export interface RegisteredPanel {
     slug: string
     path: string
     Component: PreloadableComponent<ReportPanelProps>
-    /** Drops a failed chunk, so the next record opened in this panel loads it again. */
+    /** Drops a failed chunk, so the next row press on this panel loads it again. */
     reload: () => void
 }
 
@@ -17,7 +17,8 @@ export interface RegisteredPanel {
  * promise for the session, so a chunk that failed once (offline) would fail every
  * later record of the panel. The panel's error boundary calls reload after it
  * catches, when the failed panel has left the screen, so no render starts a load
- * that the same render then drops.
+ * that the same render then drops. The boundary clears its error on the next row
+ * press, and that render loads the fresh chunk.
  */
 export function reloadableChunk(
     load: ReportPanelEntry['load']

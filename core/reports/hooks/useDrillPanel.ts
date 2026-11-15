@@ -70,6 +70,7 @@ export function useDrillPanel({ targetId, sourceId, sourceTitle }: DrillPanelInp
     return {
         targetId,
         title: record.record?.title ?? '',
+        ariaLabel: record.record?.title || 'Report',
         isPage: surface === 'page',
         recordState: record.state,
         retryRecord: record.retry,

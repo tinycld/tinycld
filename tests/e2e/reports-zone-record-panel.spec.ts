@@ -184,8 +184,11 @@ test.describe('reports: zone times and record panel', () => {
         await expect
             .poll(() => new URL(page.url()).pathname)
             .toMatch(new RegExp(`/salesstub/panel/${sale.id}$`))
-        // The push leaves the report route, so this reads the pushed screen's URL, not the
-        // report's. The recordPanel count below is what proves no panel opened on the report.
+        // The push leaves the report route, so its URL is the screen's. Going back shows
+        // the report again: it must hold no `dr` and no record panel, so the press opened
+        // a screen only and never also set the panel's key.
+        await page.goBack()
+        await expect(rowLabel(page, sale)).toBeVisible()
         await expect.poll(() => param(page, 'dr')).toBeNull()
         await expect(recordPanel(page)).toHaveCount(0)
     })

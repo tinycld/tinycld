@@ -130,6 +130,7 @@ describe('timeZoneWords', () => {
         const RealDateTimeFormat = Intl.DateTimeFormat
 
         // Wraps the real constructor; `override` may replace what one style answers.
+        // timeZoneWords caches per zone, so each test names a zone of its own.
         function spyOnZoneNames(
             override: (style: string) => Intl.DateTimeFormatPart[] | 'throw' | undefined
         ) {
@@ -153,17 +154,34 @@ describe('timeZoneWords', () => {
 
         it('makes the long name generic when the generic style is refused', () => {
             spyOnZoneNames(style => (style === 'longGeneric' ? 'throw' : undefined))
-            expect(timeZoneWords(CHICAGO)).toBe('Central Time')
+            expect(timeZoneWords('America/Denver')).toBe('Mountain Time')
         })
 
         it("falls back to the zone's city when both styles give a GMT offset", () => {
             spyOnZoneNames(() => [{ type: 'timeZoneName', value: 'GMT-06:00' }])
-            expect(timeZoneWords(CHICAGO)).toBe('Chicago time')
+            expect(timeZoneWords('America/Regina')).toBe('Regina time')
         })
 
         it('does not take a short name for words', () => {
             spyOnZoneNames(() => [{ type: 'timeZoneName', value: 'CST' }])
-            expect(timeZoneWords(CHICAGO)).toBe('Chicago time')
+            expect(timeZoneWords('America/Winnipeg')).toBe('Winnipeg time')
+        })
+
+        // An engine may refuse with an error type that is not a RangeError; the
+        // header still has a line to show.
+        it('falls back to the zone city when the engine throws any error type', () => {
+            vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((() => {
+                throw new Error('engine failure')
+            }) as unknown as typeof Intl.DateTimeFormat)
+            expect(timeZoneWords('America/Edmonton')).toBe('UTC')
+        })
+
+        it('builds its formatters once per zone', () => {
+            const spy = spyOnZoneNames(() => undefined)
+            expect(timeZoneWords('Europe/Paris')).toBe('Central European Time')
+            const built = spy.mock.calls.length
+            expect(timeZoneWords('Europe/Paris')).toBe('Central European Time')
+            expect(spy.mock.calls.length).toBe(built)
         })
     })
 

@@ -228,7 +228,7 @@ function DrillPanel(props: DrillPanelInput) {
         <View
             testID="report-drill-panel"
             role="complementary"
-            aria-label={panel.title || 'Report'}
+            aria-label={panel.ariaLabel}
             className="border-border bg-background"
             style={panel.isPage ? PAGE_STYLE : PANEL_STYLE}
         >
@@ -283,11 +283,14 @@ interface RecordBoundaryProps {
     children: ReactNode
     /** Drops the panel's failed chunk, so the next record loads it again (R14). */
     onError: () => void
+    /** Changes with each row press; a press while the error shows tries the load again. */
+    resetKey: number
 }
 
 // A package's panel that fails to load or throws: the panel says so and keeps its
 // header (Open as full screen, ✕) and Escape; the report beside it stays usable.
-// It is keyed by the record's path, so another record starts fresh (R14).
+// It is keyed by the record's path, so another record starts fresh; a new row press
+// on the same record clears the error, so the reloaded chunk loads again (R14).
 class RecordBoundary extends Component<RecordBoundaryProps, RecordBoundaryState> {
     state: RecordBoundaryState = { hasError: false }
 
@@ -295,10 +298,17 @@ class RecordBoundary extends Component<RecordBoundaryProps, RecordBoundaryState>
         return { hasError: true }
     }
 
+    componentDidUpdate(prev: RecordBoundaryProps) {
+        if (this.state.hasError && prev.resetKey !== this.props.resetKey) {
+            this.setState({ hasError: false })
+        }
+    }
+
     // The boundary cannot tell a failed chunk from a throw while rendering, so every
     // error drops the chunk; for a chunk that loaded, the next load is a cheap
     // re-import. It runs after the error text replaced the panel, so the reload
-    // starts no load for this record; the next record opened loads the chunk again.
+    // starts no load for this record; the next row press clears the error and loads
+    // the chunk again.
     componentDidCatch(error: Error) {
         log.error('reports.record-panel', error)
         this.props.onError()
@@ -331,7 +341,7 @@ function RecordBody({ panel }: { panel: RecordPanelModel }) {
     return (
         <View className="min-h-0 flex-1">
             <PanelTitleProvider open={open}>
-                <RecordBoundary key={open} onError={reloadChunk}>
+                <RecordBoundary key={open} onError={reloadChunk} resetKey={panel.titleKey}>
                     <Suspense fallback={<RecordPanelLoading />}>
                         <Panel segments={segments} />
                     </Suspense>
