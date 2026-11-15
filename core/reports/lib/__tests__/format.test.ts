@@ -6,6 +6,7 @@ import {
     cellType,
     columnName,
     DEFAULT_DISPLAY,
+    dateTimeText,
     formatReportAmount,
     formatReportPercent,
     headingText,
@@ -14,6 +15,7 @@ import {
     REPORT_AMOUNT_ERROR,
     rowLabelText,
     shownColumns,
+    timeZoneWords,
     typedLabelText,
 } from '../format'
 import { MAX_STORED_AMOUNT } from '../money'
@@ -449,5 +451,34 @@ describe('columnName (G3)', () => {
             heading: { value: '2026-11-08', type: 'date' },
         }
         expect(columnName(column, DEFAULT_DISPLAY)).toBe('Current')
+    })
+})
+
+describe('date-time cells (T1)', () => {
+    const AT = '2026-11-14 22:07:00.000Z'
+    const CREATED: ResultColumn = { id: 'created', label: 'Created', type: 'datetime' }
+    const DAY: ResultColumn = { id: 'day', label: 'Day', type: 'date' }
+
+    // Zone-free: each compares with dateTimeText, which holds in any test zone (R17).
+    it("shows a date-time cell as its day and time in the reader's zone", () => {
+        const text = cellDisplay(CREATED, row('detail'), AT, PLAIN).text
+        expect(text).toBe(dateTimeText(AT))
+        expect(text).toMatch(/^[A-Z][a-z]{2} \d{1,2}, 2026, \d{1,2}:\d{2}/)
+    })
+
+    it('labels a row typed datetime with the same text', () => {
+        const labelled: ResultRow = { ...row('detail'), labelType: 'datetime', labelValue: AT }
+        expect(rowLabelText(labelled, PLAIN)).toBe(dateTimeText(AT))
+    })
+
+    it('keeps a date cell a day', () => {
+        expect(cellDisplay(DAY, row('detail'), '2026-11-14', PLAIN).text).toBe('Nov 14, 2026')
+        expect(cellDisplay(DAY, row('detail'), '2026-11-14 00:00:00.000Z', PLAIN).text).toBe(
+            'Nov 14, 2026'
+        )
+    })
+
+    it('exports the zone words a package screen reads', () => {
+        expect(timeZoneWords('America/Chicago')).toBe('Central Time')
     })
 })

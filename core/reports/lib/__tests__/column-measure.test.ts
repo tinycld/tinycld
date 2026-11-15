@@ -156,6 +156,25 @@ describe('measureColumns', () => {
         expect(m.account.min).toBe(labelChrome(GROUPED) + TEXT_MIN_WIDTH)
         expect(m.account.grow).toBe(1)
     })
+
+    // C1: a date-time is a figure, never cut, so its column and a date-time row
+    // label keep room for the widest date and time a later page may bring.
+    it('keeps room for a date and a time in a date-time column and label', () => {
+        const AT = '2026-01-02 03:04:00.000Z'
+        const at: ResultColumn = { id: 'at', label: 'At', type: 'datetime' }
+        const short = item('detail', AT, { at: AT }, { labelType: 'datetime', labelValue: AT })
+        const m = measureColumns({
+            columns: [COLUMNS[0] as ResultColumn, at],
+            rows: [short],
+            format: DEFAULT_DISPLAY,
+            levels: FLAT,
+        })
+        const worst = textWidth('Sep 30, 2026, 12:59 PM', CELL)
+        expect(m.at.natural).toBeGreaterThanOrEqual(worst + CELL_PADDING)
+        expect(m.account.natural).toBeGreaterThanOrEqual(
+            INDENT + short.row.depth * INDENT + worst + CELL_PADDING / 2
+        )
+    })
 })
 
 describe('the label chrome', () => {

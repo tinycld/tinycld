@@ -77,9 +77,11 @@ export function isFigureColumn(column: ResultColumn): boolean {
 // numbers are formatted as the column draws them (currency, ÷1000, cents, a minus
 // or parentheses), so the worst case follows the reader's number format.
 const WORST_DAY = shortDay('2026-09-30')
+// A date-time shows its time too (dateTimeText); 12-hour is the wider clock.
+const WORST_DATE_TIME = `${WORST_DAY}, 12:59 PM`
 const WORST_TEXT: Partial<Record<FieldType, string>> = {
     date: WORST_DAY,
-    datetime: WORST_DAY,
+    datetime: WORST_DATE_TIME,
     bool: 'Yes',
     percent: '-100.0%',
 }
@@ -225,7 +227,8 @@ function labelWidths(
         isTyped = true
         if (row.labelType === 'date' || row.labelType === 'datetime') {
             const start = INDENT + row.depth * INDENT
-            widest = Math.max(widest, start + textWidth(WORST_DAY, CELL) + CELL_PADDING / 2)
+            const worst = row.labelType === 'datetime' ? WORST_DATE_TIME : WORST_DAY
+            widest = Math.max(widest, start + textWidth(worst, CELL) + CELL_PADDING / 2)
         }
     }
     return { widest, longestWord, isTyped }
