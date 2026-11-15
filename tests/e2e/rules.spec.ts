@@ -39,6 +39,18 @@ async function openOverflowMenu(page: Page, ruleName: string) {
     await ruleRow(page, ruleName).getByLabel('More actions').click()
 }
 
+async function createManualRule(page: Page, ruleName: string) {
+    await page.getByText('New rule', { exact: true }).first().click()
+    await expect(page.getByText('New rule', { exact: true }).last()).toBeVisible()
+    await page.getByPlaceholder('Rule name').fill(ruleName)
+    await selectFromMenu(page, page.getByText('Select a trigger…', { exact: true }), 'Run manually')
+    await page.getByText('add action', { exact: true }).click()
+    await page.getByText('Send me a notification', { exact: true }).click()
+    await page.getByText('Title').locator('..').getByRole('textbox').first().fill('t')
+    await page.getByText('Save', { exact: true }).click()
+    await expect(page.getByText(ruleName, { exact: true })).toBeVisible()
+}
+
 test.describe('Rules', () => {
     test('create a manual rule, run it now, and see the notification', async ({ page }) => {
         await login(page)
@@ -144,6 +156,53 @@ test.describe('Rules', () => {
         await confirm.getByText('Delete', { exact: true }).last().click()
 
         await expect(page.getByText(ruleName, { exact: true })).not.toBeVisible()
+    })
+
+    // WAI-ARIA switch: Space toggles it; Enter does too, as a press of any
+    // focused control does on web.
+    test('the enabled switch toggles from the keyboard', async ({ page }) => {
+        await login(page)
+        await navigateToRulesSettings(page)
+        const ruleName = `E2E keyboard switch rule ${Date.now()}`
+        await createManualRule(page, ruleName)
+
+        const row = ruleRow(page, ruleName)
+        const enabled = row.getByRole('switch')
+        await expect(enabled).toHaveAttribute('aria-checked', 'true')
+        await enabled.focus()
+        await page.keyboard.press('Space')
+        await expect(enabled).toHaveAttribute('aria-checked', 'false')
+        await expect(enabled).toBeFocused()
+        await page.keyboard.press('Space')
+        await expect(enabled).toHaveAttribute('aria-checked', 'true')
+        await page.keyboard.press('Enter')
+        await expect(enabled).toHaveAttribute('aria-checked', 'false')
+    })
+
+    // The chosen row leaves the page as the menu closes, so the dialog it
+    // opens must find the focus on the menu's trigger, and give it back there.
+    test('a dialog opened from a row menu gives the focus back to the menu trigger', async ({
+        page,
+    }) => {
+        await login(page)
+        await navigateToRulesSettings(page)
+        const ruleName = `E2E menu focus rule ${Date.now()}`
+        await createManualRule(page, ruleName)
+
+        const trigger = ruleRow(page, ruleName).getByLabel('More actions')
+        await trigger.focus()
+        await page.keyboard.press('Enter')
+        const menu = page.getByRole('menu')
+        await expect(menu).toBeVisible()
+        await page.keyboard.press('End')
+        await expect(page.getByTestId('rule-row-delete')).toBeFocused()
+        await page.keyboard.press('Enter')
+
+        const confirm = page.getByRole('dialog')
+        await expect(confirm.getByText(`Delete "${ruleName}"?`, { exact: true })).toBeVisible()
+        await page.keyboard.press('Escape')
+        await expect(confirm).toBeHidden()
+        await expect(trigger).toBeFocused()
     })
 
     test('run history shows a matched run', async ({ page }) => {

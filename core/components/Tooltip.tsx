@@ -66,6 +66,9 @@ const tooltipCSS = `
     .tinycld-tooltip:hover::after {
         opacity: 1;
     }
+    .tinycld-tooltip:not([data-tooltip])::after {
+        display: none;
+    }
 `
 
 export interface TooltipProps {
@@ -76,10 +79,15 @@ export interface TooltipProps {
      * a scrolling list, where an above-bubble is clipped by the row above it.
      */
     position?: 'above' | 'below'
+    /**
+     * False shows no bubble but keeps the wrapper, so the control is not
+     * re-mounted (and does not lose the focus) when the tooltip turns on or off.
+     */
+    isVisible?: boolean
     children: ReactNode
 }
 
-export function Tooltip({ label, position = 'above', children }: TooltipProps) {
+export function Tooltip({ label, position = 'above', isVisible = true, children }: TooltipProps) {
     useWebStyles('tinycld-tooltip', tooltipCSS)
     // Inverted against the page, the way a tooltip reads on every platform:
     // the bubble is foreground-on-background, not another card.
@@ -95,7 +103,7 @@ export function Tooltip({ label, position = 'above', children }: TooltipProps) {
 
     return (
         <div
-            data-tooltip={label}
+            data-tooltip={isVisible ? label : undefined}
             className={`tinycld-tooltip tinycld-tooltip-${position}`}
             style={themeVars as never}
         >
