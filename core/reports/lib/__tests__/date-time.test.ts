@@ -169,11 +169,23 @@ describe('timeZoneWords', () => {
 
         // An engine may refuse with an error type that is not a RangeError; the
         // header still has a line to show.
-        it('falls back to the zone city when the engine throws any error type', () => {
+        it('reads an unknown zone as UTC when the engine throws a plain Error', () => {
             vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((() => {
                 throw new Error('engine failure')
             }) as unknown as typeof Intl.DateTimeFormat)
             expect(timeZoneWords('America/Edmonton')).toBe('UTC')
+        })
+
+        // zoneName's catch takes any error type, not only a RangeError.
+        it('falls back to the long name when the generic style throws a plain Error', () => {
+            vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(((
+                locale?: Intl.LocalesArgument,
+                options?: Intl.DateTimeFormatOptions
+            ) => {
+                if (options?.timeZoneName === 'longGeneric') throw new Error('engine failure')
+                return new RealDateTimeFormat(locale, options)
+            }) as unknown as typeof Intl.DateTimeFormat)
+            expect(timeZoneWords('Asia/Tokyo')).toBe('Japan Time')
         })
 
         it('builds its formatters once per zone', () => {
