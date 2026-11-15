@@ -614,3 +614,66 @@ describe('statement fields (G4, G8)', () => {
         expect(row?.cells).toEqual({ cost: { value: 1 } })
     })
 })
+
+describe('drills and opened rows (D1, D2)', () => {
+    const drill = {
+        report: 'zoo.drill_target',
+        levels: {
+            g: {
+                species: { groupKey: 'g' },
+                period: { param: 'period' },
+                animals: { group: { groupKey: 'g' } },
+                fedOn: { op: 'max', args: [{ path: [{ field: 'fed' }] }] },
+            },
+        },
+        pivotCells: {
+            period: { range: { from: { pivotBound: 'from' }, to: { pivotBound: 'to' } } },
+        },
+    }
+    const withDrill = (value: unknown) => ({
+        ...FEEDINGS,
+        columns: FEEDINGS.columns.map(c => (c.id === 'cost' ? { ...c, drill: value } : c)),
+    })
+
+    it('parses a column drill in every value form', () => {
+        expect(parseSpec(withDrill(drill))).toEqual(withDrill(drill))
+    })
+
+    it('refuses a drill value with an unknown key', () => {
+        const bad = {
+            ...drill,
+            pivotCells: { period: { range: { from: { value: 1 }, to: { value: 2 }, x: 1 } } },
+        }
+        expect(parseSpec(withDrill(bad))).toBeNull()
+    })
+
+    it('refuses a pivotBound that is not from or to', () => {
+        const bad = {
+            report: 'zoo.drill_target',
+            levels: { g: { fedOn: { pivotBound: 'middle' } } },
+        }
+        expect(parseSpec(withDrill(bad))).toBeNull()
+    })
+
+    it('parses an empty detail, which only the engine refuses at bind', () => {
+        expect(parseSpec({ ...FEEDINGS, detail: {} })?.detail).toEqual({})
+    })
+
+    it('parses detail.open with or without a label', () => {
+        const open = {
+            op: 'concat',
+            args: [{ value: 'zoo/feedings/' }, { path: [{ field: 'note' }] }],
+        }
+        expect(parseSpec({ ...FEEDINGS, detail: { open } })?.detail).toEqual({ open })
+        expect(
+            parseSpec({ ...FEEDINGS, detail: { label: { col: 'note' }, open } })?.detail
+        ).toEqual({
+            label: { col: 'note' },
+            open,
+        })
+    })
+
+    it('keeps parsing a spec without them', () => {
+        expect(parseSpec(FEEDINGS)).toEqual(FEEDINGS)
+    })
+})

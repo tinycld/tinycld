@@ -1,4 +1,4 @@
-import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
+import { breakpointFor, useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { log } from '@tinycld/core/lib/logger'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
@@ -22,6 +22,7 @@ import {
     postedParams,
     withoutOptional,
 } from '../lib/params'
+import { HUB_BACK_LABEL } from '../lib/report-back'
 import {
     DEFAULT_EXPANSION,
     type Expansion,
@@ -46,6 +47,7 @@ import {
 import { rowLevelsOf } from '../lib/table-lines'
 import type { Notice, ResolvedParam, ResultColumn, ResultRow, RunResult } from '../lib/types'
 import {
+    clearedDrillKeys,
     decodeSort,
     encodeSort,
     nextSort,
@@ -55,7 +57,7 @@ import {
     serializeViewOptions,
     type ViewOptions,
 } from '../lib/view-url'
-import { useReportUIStore } from '../stores/report-ui-store'
+import { type ReportSurface, type ReportUIScope, useReportUIStore } from '../stores/report-ui-store'
 import { type OptionsSource, useParamOptionLabels } from './useParamOptions'
 import { type ReportRun, useReportRun } from './useReportRun'
 
@@ -141,6 +143,8 @@ export interface ReportViewInput {
     broken: BrokenMark | null
     isEditing: boolean
     onBack(): void
+    /** The back link's text; absent: "Reports" (the hub). */
+    backLabel?: string
     onEdit?(): void
     /** Why a report that cannot run cannot be fixed here either (its source is gone). */
     missingNote?: string | null
@@ -152,29 +156,43 @@ export interface ReportViewInput {
      * subtotal row.
      */
     spec?: ReportSpec | null
+    /**
+     * The key prefix of this view's options in the route (the drill panel's is
+     * DRILL_PREFIX), so two views on one route never read or write each other's.
+     */
+    urlPrefix?: string
+    /** The UI store scope of this view's popovers and Customize. */
+    uiScope?: ReportUIScope
+    /** The view's own width (the 480 px drill panel); absent: the window's. */
+    viewWidth?: number
 }
 
 export function useReportView(input: ReportViewInput) {
     const { reportKey, defs, source, broken, isEditing } = input
+    const prefix = input.urlPrefix ?? ''
+    const scope = input.uiScope ?? 'main'
     const { user } = useAuth()
     const search = useLocalSearchParams()
-    const options = parseViewOptions(defs, search)
+    const options = parseViewOptions(defs, search, prefix)
     const expansion = useReportUIStore(s => s.expansion[reportKey]) ?? DEFAULT_EXPANSION
     const setExpansion = useReportUIStore(s => s.setExpansion)
     const body = broken && !isEditing ? null : runBody(source, defs, options, expansion)
     const run = useReportRun({ body, userId: user.id })
-    const breakpoint = useBreakpoint()
+    const windowBreakpoint = useBreakpoint()
+    // A view narrower than the window (the drill panel) lays itself out by its own width.
+    const breakpoint =
+        input.viewWidth === undefined ? windowBreakpoint : breakpointFor(input.viewWidth)
     // The builder and Customize draw on this surface; the view reads it too.
     const panel = panelSurface(breakpoint)
     const { org } = useOrgInfo()
     // A tab left for another package stays mounted (frozen); only the focused
     // screen draws surfaces.
     const isFocused = useIsFocused()
-    const storedSurface = useReportUIStore(s => s.surface)
+    const storedSurface = useReportUIStore(s => s.scopes[scope].surface)
     const openSurface = useReportUIStore(s => s.openSurface)
     const closeSurface = useReportUIStore(s => s.closeSurface)
     const closeSurfaceOf = useReportUIStore(s => s.closeSurfaceOf)
-    const isCustomizeOpen = useReportUIStore(s => s.isCustomizeOpen) && isFocused
+    const isCustomizeOpen = useReportUIStore(s => s.scopes[scope].isCustomizeOpen) && isFocused
     const openCustomize = useReportUIStore(s => s.openCustomize)
     const closeCustomize = useReportUIStore(s => s.closeCustomize)
     const closeShare = useReportUIStore(s => s.closeShare)
@@ -195,12 +213,12 @@ export function useReportView(input: ReportViewInput) {
     )
 
     // setParams replaces the history entry, so a change adds none; defaults are left out.
-    const write = (next: ViewOptions) => router.setParams(serializeViewOptions(defs, next))
+    const write = (next: ViewOptions) => router.setParams(serializeViewOptions(defs, next, prefix))
     // A preset or a picked value closes its popover; a typed custom date keeps it open,
     // so a date error stays in view.
     const onApplyParam = (id: string, value: ParamValue, keepOpen = false) => {
         write({ ...options, params: { ...options.params, [id]: value } })
-        if (!keepOpen) closeSurface()
+        if (!keepOpen) closeSurface(scope)
     }
     const onRemoveParam = (id: string) => {
         write({
@@ -209,7 +227,7 @@ export function useReportView(input: ReportViewInput) {
                 Object.entries(options.params).filter(([key]) => key !== id)
             ),
         })
-        closeSurface()
+        closeSurface(scope)
     }
     const onEmptyAction = () => {
         if (action?.kind === 'clear-filters')
@@ -217,8 +235,10 @@ export function useReportView(input: ReportViewInput) {
         if (action?.kind === 'preset')
             onApplyParam(action.paramId, { kind: 'preset', preset: action.preset })
     }
+    // Only the main view copies a link (the panel's options are the full report's,
+    // one press away).
     const onCopyLink =
-        source?.kind === 'saved'
+        source?.kind === 'saved' && prefix === ''
             ? () => {
                   const link = reportLink(
                       getResolvedAddress() ?? '',
@@ -247,9 +267,10 @@ export function useReportView(input: ReportViewInput) {
 
     // A surface left open would come back with this screen, or show over the next one.
     const closeOnBlur = useEffectEvent(() => {
-        closeSurface()
-        closeCustomize()
-        closeShare()
+        closeSurface(scope)
+        closeCustomize(scope)
+        // Share is one global dialog that only the main view opens; a panel view must not close it.
+        if (scope === 'main') closeShare()
     })
     useFocusEffect(useCallback(() => () => closeOnBlur(), []))
 
@@ -274,9 +295,9 @@ export function useReportView(input: ReportViewInput) {
     const onSortColumn = useCallback(
         (col: string) => {
             const next = nextSort(decodeSort(sortText), col)
-            router.setParams({ [SORT_KEY]: next ? encodeSort(next) : undefined })
+            router.setParams({ [`${prefix}${SORT_KEY}`]: next ? encodeSort(next) : undefined })
         },
-        [sortText]
+        [sortText, prefix]
     )
 
     return {
@@ -284,6 +305,7 @@ export function useReportView(input: ReportViewInput) {
         access: input.access,
         isEditing,
         onBack: input.onBack,
+        backLabel: input.backLabel ?? HUB_BACK_LABEL,
         onEdit: input.onEdit ?? null,
         missingNote: input.missingNote ?? null,
         onShare: input.onShare ?? null,
@@ -306,6 +328,7 @@ export function useReportView(input: ReportViewInput) {
         // stays, empty and silent, so one live region speaks.
         isUpdatingInBuilder: isEditing && panel !== 'inline',
         breakpoint,
+        viewWidth: input.viewWidth,
         panelSurface: panel,
         layouts: input.spec?.display?.layouts ?? NO_LAYOUTS,
         fit: displayFitOf(input.spec),
@@ -327,14 +350,19 @@ export function useReportView(input: ReportViewInput) {
         onFoldAll: () => setExpansion(reportKey, foldAllTarget(rows)),
         onToggleGroup,
         surface: isFocused ? storedSurface : null,
-        onOpenSurface: openSurface,
-        onCloseSurface: closeSurface,
-        onCloseSurfaceOf: closeSurfaceOf,
+        onOpenSurface: (surface: ReportSurface) => openSurface(surface, scope),
+        onCloseSurface: () => closeSurface(scope),
+        onCloseSurfaceOf: (kind: ReportSurface['kind']) => closeSurfaceOf(kind, scope),
         onApplyParam,
         onRemoveParam,
         isCustomizeOpen,
-        onOpenCustomize: openCustomize,
-        onCloseCustomize: closeCustomize,
+        // One side surface at a time: the main view's Customize closes the drill panel
+        // (a figure press closes Customize, useOpenDrill).
+        onOpenCustomize: () => {
+            openCustomize(scope)
+            if (scope === 'main') router.setParams(clearedDrillKeys(search))
+        },
+        onCloseCustomize: () => closeCustomize(scope),
         onDisplayChange: (display: DisplayOptions) => write({ ...options, display }),
         // The reader's params stay for the run; only the number display goes back.
         onResetDisplay: () => write({ ...options, display: DEFAULT_DISPLAY }),
@@ -344,7 +372,7 @@ export function useReportView(input: ReportViewInput) {
         onClearSort: () => write({ ...options, sort: null }),
         onSetSort: (sort: ViewSort | null) => {
             write({ ...options, sort })
-            closeSurface()
+            closeSurface(scope)
         },
         // A run refused for the reader's sort offers Clear sort (R8).
         sortProblem: refusalSortProblem(run.problems),
@@ -352,9 +380,15 @@ export function useReportView(input: ReportViewInput) {
     }
 }
 
-// onSetSort and fit are optional: a hand-built model has neither;
-// then the Sort chip is not shown and the table takes the default fit.
-export type ReportViewModel = Omit<ReturnType<typeof useReportView>, 'onSetSort' | 'fit'> & {
+// onSetSort, fit, backLabel and viewWidth are optional: a hand-built model has none
+// of them; then the Sort chip is not shown, the table takes the default fit, the
+// back link reads Reports and the view's width is the window's.
+export type ReportViewModel = Omit<
+    ReturnType<typeof useReportView>,
+    'onSetSort' | 'fit' | 'backLabel' | 'viewWidth'
+> & {
     onSetSort?(sort: ViewSort | null): void
     fit?: DisplayFit
+    backLabel?: string
+    viewWidth?: number
 }

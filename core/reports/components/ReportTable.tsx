@@ -8,6 +8,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react-native'
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { ActivityIndicator, Animated, Platform, Pressable, Text, View } from 'react-native'
+import { type RowDrill, useRowLinks } from '../hooks/useRowLinks'
 import { useScrollAwayTop } from '../hooks/useScrollAwayTop'
 import { useStable } from '../hooks/useStable'
 import { headingText, type NumberFormat } from '../lib/format'
@@ -437,6 +438,7 @@ function useTableListProps({
     layout,
     format,
     onToggleGroup,
+    links,
     onTopRowIndex,
     onNearEnd,
     hasMore,
@@ -446,8 +448,8 @@ function useTableListProps({
     const sticky = useMemo(() => stickyIndices(rows), [rows])
     const onViewableItemsChanged = useTopRowReport(onTopRowIndex)
     const extraData = useMemo<TableData>(
-        () => ({ columns, layout, format, onToggleGroup, rows }),
-        [columns, layout, format, onToggleGroup, rows]
+        () => ({ columns, layout, format, onToggleGroup, links, rows }),
+        [columns, layout, format, onToggleGroup, links, rows]
     )
     const { listRef, keyExtractor } = useNewRunAtTop(runKey)
     return {
@@ -599,6 +601,11 @@ export interface ReportTableProps {
      * area in place of the rows, so the top area stays mounted whatever the run gives.
      */
     body?: ReactNode
+    /**
+     * The report shown, for its figures' drills and its rows' records (D1, D2). Not
+     * given (the builder's preview): figures and rows are plain and do not open.
+     */
+    drill?: RowDrill
 }
 
 const NO_ROWS: VisibleRow[] = []
@@ -615,6 +622,7 @@ export function ReportTable(props: ReportTableProps) {
     const columns = useStable(props.columns)
     const format = useStable(props.format)
     const sorting = useHeadingSort(props.sort, props.onSortColumn)
+    const links = useRowLinks(props.drill)
     const isStateShown = body !== undefined && props.top !== undefined
     if (columns.length === 0 && !isStateShown) return null
     const rows = isStateShown ? NO_ROWS : props.rows
@@ -640,6 +648,7 @@ export function ReportTable(props: ReportTableProps) {
                 layout={layout}
                 format={format}
                 onToggleGroup={onToggleGroup}
+                links={links}
                 onNearEnd={onNearEnd}
                 hasMore={props.hasMore}
                 loadMoreFailed={props.loadMoreFailed ?? false}

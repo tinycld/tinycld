@@ -521,27 +521,37 @@ export async function openSettingsItem(page: Page, label: string) {
 }
 
 /**
+ * A test id in the report itself, never in its drill panel (D4): with the panel
+ * open, the panel draws its own chips, table, rows and cells under the same ids.
+ */
+export function inStatement(page: Page, testId: string): Locator {
+    return page.locator(`[data-testid="${testId}"]:not([data-testid="report-drill-panel"] *)`)
+}
+
+/**
  * Waits until the report table's layout is fitted to the width its rows have now
  * (the table's data-fit-width equals the row probe's width), and returns the rule
  * that laid it out: 'one-line', 'desktop', 'tablet', 'mobile' or 'auto'. Call it
- * after each setViewportSize before reading the table's geometry.
+ * after each setViewportSize before reading the table's geometry. With no scope it
+ * reads the report's own table, not its drill panel's; pass the panel to read that.
  */
-export async function waitForTableFit(page: Page): Promise<string> {
+export async function waitForTableFit(page: Page, scope?: Locator): Promise<string> {
+    const table = scope ? scope.getByTestId('report-table') : inStatement(page, 'report-table')
     let layout = ''
     await expect
         .poll(
             async () => {
-                layout = await page.evaluate(() => {
-                    const table = document.querySelector<HTMLElement>(
-                        '[data-testid="report-table"]'
-                    )
-                    const probe = table?.querySelector<HTMLElement>(
+                // evaluateAll does not wait for the table: a poll reads what is drawn now.
+                layout = await table.evaluateAll(tables => {
+                    const [element] = tables
+                    if (!(element instanceof HTMLElement)) return ''
+                    const probe = element.querySelector<HTMLElement>(
                         '[data-testid="report-width-probe"]'
                     )
-                    if (!table || !probe || table.dataset.fitWidth === undefined) return ''
+                    if (!probe || element.dataset.fitWidth === undefined) return ''
                     const drawn = probe.getBoundingClientRect().width
-                    const isSettled = Math.abs(drawn - Number(table.dataset.fitWidth)) < 1
-                    return isSettled ? (table.dataset.layout ?? '') : ''
+                    const isSettled = Math.abs(drawn - Number(element.dataset.fitWidth)) < 1
+                    return isSettled ? (element.dataset.layout ?? '') : ''
                 })
                 return layout
             },

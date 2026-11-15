@@ -1,0 +1,35 @@
+import { eq } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
+import { useStore } from '@tinycld/core/lib/pocketbase'
+import { router, useLocalSearchParams } from 'expo-router'
+import { Pressable, Text, View } from 'react-native'
+
+// E2E fixture screen: the record a report's detail row opens (detail.open,
+// "salesstub/sale/<id>"), with a Back that returns to the report.
+export default function StubSale() {
+    const { id } = useLocalSearchParams<{ id: string }>()
+    const [sales] = useStore('salesstub_sales')
+    const { data: sale } = useLiveQuery({
+        queryKey: ['salesstub.sale', id],
+        query: q =>
+            q
+                .from({ sale: sales })
+                .where(({ sale }) => eq(sale.id, id))
+                .findOne(),
+    })
+    return (
+        <View testID="stub-sale-screen" className="flex-1 gap-2 bg-background p-4">
+            <Pressable
+                testID="stub-sale-back"
+                accessibilityRole="link"
+                onPress={() => router.back()}
+                className="self-start"
+            >
+                <Text className="text-sm text-primary">Back</Text>
+            </Pressable>
+            <Text testID="stub-sale-customer" className="text-lg font-semibold text-foreground">
+                {sale?.customer ?? ''}
+            </Text>
+        </View>
+    )
+}

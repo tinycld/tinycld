@@ -1,13 +1,18 @@
 import { expect, type Page, type Route, test } from '@playwright/test'
-import { skipWithoutReportsStub } from './helpers'
+import { createInvitedUser, skipWithoutReportsStub } from './helpers'
 import {
     addSale,
     addTeam,
+    cellOf,
+    DRILLED_TITLE,
+    drillPanel,
     hubRow,
     loginAsShippedOwner,
+    openDrilled,
     openReportStub,
     openReportsHub,
     rowOf,
+    setPeriod,
     TEAM_TOTALS_TITLE,
     uniqueName,
 } from './reports-helpers'
@@ -24,6 +29,9 @@ import {
  * (run-client.ts refusalOf), so one failed request shows the error state. Every
  * request fails until the test lifts the failure just before it presses Retry, so
  * a second request the screen might send cannot clear the state before it is read.
+ *
+ * The drill panel's own states run on "Stub drilled sales" at 1440 px, whose figures
+ * open the unpublished "Stub sales by team" in a panel.
  */
 
 const NOT_FOUND = {
@@ -112,5 +120,61 @@ test.describe('report failure states', () => {
         await expect(picker.getByTestId('report-filter-load-error')).toHaveCount(0)
         await picker.getByTestId('report-filter-search').fill(team)
         await expect(picker.getByRole('checkbox', { name: team, exact: true })).toBeVisible()
+    })
+
+    test('the drill panel shows its own loading, its error with Retry, and no access', async ({
+        page,
+    }) => {
+        await loginAsShippedOwner(page)
+        const team = uniqueName('Panel states')
+        await openReportStub(page)
+        await addTeam(page, team, 'east')
+        await addSale(page, { team, customer: 'Pia', amount: 100, cost: 0, day: '2037-01-05' })
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await openDrilled(page, DRILLED_TITLE)
+        await setPeriod(page, '2037-01-01', '2037-12-31')
+        const sourcePath = new URL(page.url()).pathname
+        const sourceId = sourcePath.split('/').pop() ?? ''
+        const figure = await cellOf(page, 'amount', team)
+
+        // The panel's runs (any report but the source) are held, then failed, until lifted.
+        const panelRuns = { mode: 'hold' as 'hold' | 'fail' | 'pass' }
+        let release = () => {}
+        const held = new Promise<void>(resolve => {
+            release = resolve
+        })
+        await page.route('**/api/reports/run', async route => {
+            const body = route.request().postDataJSON() as { reportId?: string } | null
+            if (body?.reportId === sourceId || panelRuns.mode === 'pass') return route.continue()
+            if (panelRuns.mode === 'hold') await held
+            return route.fulfill(NOT_FOUND)
+        })
+        await figure.click()
+        const panel = drillPanel(page)
+        await expect(panel.getByTestId('report-loading')).toBeVisible()
+        await expect(rowOf(page, team)).toBeVisible()
+        panelRuns.mode = 'fail'
+        release()
+        await expect(panel.getByTestId('report-error-message')).toHaveText(
+            'Could not load this report'
+        )
+        panelRuns.mode = 'pass'
+        await panel.getByTestId('report-retry').click()
+        await expect(rowOf(page, 'Pia', panel)).toBeVisible()
+        await expect(panel.getByTestId('report-error')).toHaveCount(0)
+        const targetId = new URL(page.url()).searchParams.get('d') ?? ''
+
+        // A member may read the source (published) but not its target (unpublished).
+        const member = await createInvitedUser(page, 'panelna')
+        try {
+            const p = member.inviteePage
+            await p.setViewportSize({ width: 1440, height: 900 })
+            // Opening a pasted link is a full load by nature.
+            await p.goto(`${sourcePath}?d=${targetId}`)
+            await expect(drillPanel(p).getByTestId('report-drill-no-access')).toBeVisible()
+            await expect(p.getByTestId('report-title')).toHaveText(DRILLED_TITLE)
+        } finally {
+            await member.close()
+        }
     })
 })

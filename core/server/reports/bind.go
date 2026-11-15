@@ -57,6 +57,8 @@ type plan struct {
 	derived map[string]bool
 	// percents binds each percentOfSection column by id (sectionPercents).
 	percents map[string]*sectionPercent
+	// drills binds each drilled column, in column order (drill.go).
+	drills []*drillPlan
 }
 
 // optionsPlan is a choice param's options source bound to the registry: its
@@ -226,12 +228,17 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	b.blankAboveHavings(p)
 	b.layout(p)
 	b.sectionPercents(p)
-	switch d := spec.Detail; {
-	case d == nil:
-	case d.Label == nil:
-		b.bad("detail", "detail has a label")
-	case spec.Pivot != nil:
-		b.bad("detail.label", "a pivot report has no detail rows to label")
+	b.drills(p)
+	if d := spec.Detail; d != nil {
+		if d.Label == nil && d.Open == nil {
+			b.bad("detail", "detail has a label or an open")
+		}
+		if spec.Pivot != nil && d.Label != nil {
+			b.bad("detail.label", "a pivot report has no detail rows to label")
+		}
+		if spec.Pivot != nil && d.Open != nil {
+			b.bad("detail.open", "a pivot report has no detail rows to open")
+		}
 	}
 	b.display(p)
 	b.hiddenColumns(p)
@@ -506,6 +513,14 @@ func (b *binder) formulaSizes(p *plan) {
 	if d := p.spec.Detail; d != nil && d.Label != nil {
 		check("detail.label", p.nodeSize(d.Label, memo, map[string]bool{}, true))
 	}
+	if d := p.spec.Detail; d != nil && d.Open != nil {
+		check("detail.open", p.nodeSize(d.Open, memo, map[string]bool{}, true))
+	}
+	p.spec.drillNodes(func(n *Node, at string) {
+		if n != nil {
+			check(at, p.nodeSize(n, memo, map[string]bool{}, true))
+		}
+	})
 }
 
 // columnSize is a column's inlined size: 1 for a path column.

@@ -1,7 +1,8 @@
 // Package stub is an E2E fixture: three report sources (one of them a union of two collections) over its own collections,
 // so the app shell's reports e2e has a to-one link, a to-many link, money, a
 // number, a date, a day kept as text and selects with no real feature package
-// installed, a heading, and shipped reports (published and not). See
+// installed, a heading, and shipped reports (published and not). Its drill
+// reports' figures open another shipped report. See
 // tinycld/tests/scripts/scaffold-reports-stub.ts for why.
 package stub
 
@@ -293,6 +294,95 @@ func Register(_ core.App) error {
 			"pivot": {"path": [{"field": "day"}], "bucket": "month", "cell": "amount", "range": "period", "order": "spec"}
 		}`),
 	})
+	// The drill reports (D1, D2; tests/e2e/reports-drill.spec.ts). "Stub sales by
+	// team" is the target: unpublished, so only the shipped owner may open it and a
+	// member's figures stay plain. Its detail rows open the stub's sale screen, and
+	// below 600 px its rows wrap, so the 480 px drill panel shows its Sort chip.
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.drill_target", Title: "Stub sales by team", Revision: 1, Unpublished: true,
+		Description: "Each team's sales in a period, line by line.",
+		Spec: json.RawMessage(strings.ReplaceAll(`{
+			"version": 4,
+			"source": "salesstub.sales",
+			"params": [
+				{"id": "period", "type": "dateRange", "label": "Period", "default": {"preset": "thisMonthToDate"}},
+				{"id": "teams", "type": "choice", "label": "Teams", "multiple": true,
+				 "optionsFrom": {"source": "salesstub.teams", "value": [{"field": "id"}], "label": [{"field": "name"}], "group": [{"field": "region"}], "groupLabel": "All {group} teams"}}
+			],
+			"columns": [
+				{"id": "team", "label": "Team", "path": [{"link": "team"}]},
+				{"id": "day", "label": "Day", "path": [{"field": "day"}]},
+				{"id": "amount", "label": "Amount", "path": [{"field": "amount"}], "aggregate": "sum"}
+			],
+			"filter": {"op": "and", "args": [
+				{"op": "between", "args": [{"path": [{"field": "day"}]}, {"param": "period"}]},
+				{"op": "in", "args": [{"path": [{"link": "team"}]}, {"param": "teams"}]}
+			]},
+			"groups": [{"id": "byTeam", "col": "team", "open": true, "subtotals": true,
+				"label": {"record": "byTeam", "path": [{"field": "name"}]}}],
+			"sort": [{"col": "day"}],
+			"detail": {"label": {"path": [{"field": "customer"}]}, "open": SALE_OPEN},
+			"display": {
+				"oneLine": {"minWidth": "600px"},
+				"layouts": [{"width": "mobile", "tracks": 2, "cells": [
+					{"col": "team", "line": 1, "span": 2},
+					{"col": "day", "line": 2},
+					{"col": "amount", "line": 2}
+				]}]
+			}
+		}`, "SALE_OPEN", saleOpen)),
+	})
+	// Sales by region, then team; an Amount opens the target filtered to the group
+	// (a region as a whole group of teams, a team by its id), with the period the
+	// reader ran.
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.drilled", Title: "Stub drilled sales", Revision: 1,
+		Description: "Sales by region and team; an amount opens the sales behind it.",
+		Spec: json.RawMessage(`{
+			"version": 4,
+			"source": "salesstub.sales",
+			"params": [{"id": "period", "type": "dateRange", "label": "Period", "default": {"preset": "thisFiscalYear"}}],
+			"columns": [
+				{"id": "team", "label": "Team", "path": [{"link": "team"}]},
+				{"id": "region", "hidden": true, "path": [{"link": "team"}, {"field": "region"}]},
+				{"id": "amount", "label": "Amount", "path": [{"field": "amount"}], "aggregate": "sum",
+				 "drill": {"report": "salesstub.drill_target", "levels": {
+					"byRegion": {"period": {"param": "period"}, "teams": {"group": {"groupKey": "byRegion"}}},
+					"byTeam": {"period": {"param": "period"}, "teams": {"record": "byTeam", "path": [{"field": "id"}]}}}}}
+			],
+			"filter": {"op": "between", "args": [{"path": [{"field": "day"}]}, {"param": "period"}]},
+			"groups": [
+				{"id": "byRegion", "col": "region", "open": true, "subtotals": true,
+				 "label": {"op": "case", "args": [
+					{"op": "eq", "args": [{"col": "region"}, {"value": "north"}]}, {"value": "North"},
+					{"op": "eq", "args": [{"col": "region"}, {"value": "south"}]}, {"value": "South"},
+					{"value": "East"}]}},
+				{"id": "byTeam", "col": "team", "label": {"record": "byTeam", "path": [{"field": "name"}]}}
+			],
+			"sort": [{"formula": {"record": "byTeam", "path": [{"field": "name"}]}}]
+		}`),
+	})
+	// A month pivot of each team's sales; a month cell opens the target cut to that
+	// month inside the period, the team's total with the whole period.
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.drilled_pivot", Title: "Stub drilled by month", Revision: 1,
+		Description: "Each team's sales in every month; a month opens its sales.",
+		Spec: json.RawMessage(`{
+			"version": 4,
+			"source": "salesstub.sales",
+			"params": [{"id": "period", "type": "dateRange", "label": "Period", "default": {"preset": "thisFiscalYear"}}],
+			"columns": [
+				{"id": "team", "label": "Team", "path": [{"link": "team"}]},
+				{"id": "amount", "label": "Total", "path": [{"field": "amount"}], "aggregate": "sum",
+				 "drill": {"report": "salesstub.drill_target",
+					"levels": {"byTeam": {"period": {"param": "period"}, "teams": {"record": "byTeam", "path": [{"field": "id"}]}}},
+					"pivotCells": {"period": {"range": {"from": {"pivotBound": "from"}, "to": {"pivotBound": "to"}}}}}}
+			],
+			"filter": {"op": "between", "args": [{"path": [{"field": "day"}]}, {"param": "period"}]},
+			"groups": [{"id": "byTeam", "col": "team", "label": {"record": "byTeam", "path": [{"field": "name"}]}}],
+			"pivot": {"path": [{"field": "day"}], "bucket": "month", "cell": "amount", "range": "period", "order": "spec"}
+		}`),
+	})
 	return nil
 }
 
@@ -317,3 +407,6 @@ const teamOpening = `{"op": "coalesce", "args": [{"op": "lookup", "source": "sal
 		{"op": "eq", "args": [{"path": [{"link": "team"}]}, {"record": "byTeam", "path": [{"field": "id"}]}]},
 		{"op": "lt", "args": [{"path": [{"field": "day"}]}, {"param": "period", "bound": "from"}]}]},
 	"value": {"path": [{"field": "amount"}]}, "pick": "sum"}, {"value": 0}]}`
+
+// saleOpen is the stub sale screen a detail row opens (detail.open).
+const saleOpen = `{"op": "concat", "args": [{"value": "salesstub/sale/"}, {"path": [{"field": "id"}]}]}`

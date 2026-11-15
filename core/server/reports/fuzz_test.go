@@ -203,6 +203,12 @@ func FuzzRuleParity(f *testing.F) {
 	z := newZoo(f)
 	growZoo(f, z, rand.New(rand.NewPCG(1, 2)))
 	mux := z.mux(f)
+	// A published drill target, owned by an admin, every reader may open.
+	z.person(f, "drill_owner", "admin")
+	RegisterShipped(Shipped{Key: "zoo.drill_target", Title: "Feedings by animal", Spec: json.RawMessage(drillTarget), Revision: 1})
+	if err := ReconcileShipped(z.app); err != nil {
+		f.Fatal(err)
+	}
 	f.Fuzz(func(t *testing.T, seed uint64) {
 		rng := rand.New(rand.NewPCG(seed, 7))
 		src := fuzzSources[rng.IntN(len(fuzzSources))]
@@ -219,8 +225,54 @@ func FuzzRuleParity(f *testing.F) {
 		z.cellsParity(t, mux, user)
 		z.sectionPercentParity(t, mux, user)
 		z.periodPivotParity(t, mux, rng, user)
+		z.drillParity(t, user)
 		z.pagedGroupParity(t, mux, rng, user, pagedShapes[seed%uint64(len(pagedShapes))], 1+rng.IntN(5))
 	})
+}
+
+// drilledBySpecies totals the reader's grams by species; a row drills to
+// the target filtered to its species.
+const drilledBySpecies = `{"version":4,"source":"zoo.feedings","columns":[
+	{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+	{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum","drill":{"report":"zoo.drill_target","levels":{"g":{"species":{"groupKey":"g"}}}}}],
+	"groups":[{"id":"g","col":"species"}]}`
+
+// drillParity: each species row's grams equals the total of the drill
+// target run, as the same reader, with that row's @drill params; a row with
+// a species always has them.
+func (z *zoo) drillParity(t *testing.T, user string) {
+	t.Helper()
+	res := z.run(t, user, drilledBySpecies, Options{}, nil)
+	for _, row := range res.Rows {
+		if row.Kind != KindGroup {
+			continue
+		}
+		params, ok := row.Cells["grams@drill"].(DrillParams)
+		blank := len(row.GroupKey) == 0 || row.GroupKey[0] == nil || row.GroupKey[0] == ""
+		// A guest may not view a published report (the reports read rule), so
+		// carol's rows must have no drill; every other reader's must.
+		if user == "carol" {
+			if ok {
+				t.Fatalf("carol, a guest, drills on %s", row.Label)
+			}
+			continue
+		}
+		if !ok {
+			if !blank {
+				t.Fatalf("%s: species %s has no drill", user, row.Label)
+			}
+			continue
+		}
+		given := map[string]string{}
+		for id, raw := range params {
+			given[id] = string(raw)
+		}
+		target := z.run(t, user, drillTarget, Options{}, given)
+		total := target.Rows[len(target.Rows)-1]
+		if total.Kind != KindTotal || fmt.Sprint(total.Cells["grams"]) != fmt.Sprint(row.Cells["grams"]) {
+			t.Fatalf("%s: species %s grams %v, its drill's total %v (%s)", user, row.Label, row.Cells["grams"], total.Cells["grams"], total.Kind)
+		}
+	}
 }
 
 // cellsParity: a computed row's cell from a sum lookup at the as-of day equals

@@ -91,7 +91,9 @@ func (b *binder) lookups(p *plan) {
 	}
 	if d := p.spec.Detail; d != nil {
 		walk(d.Label, "detail.label")
+		walk(d.Open, "detail.open")
 	}
+	p.spec.drillNodes(walk)
 }
 
 // lookupIn compiles a lookup in a context whose rows CTE is r: the smallest
@@ -580,7 +582,24 @@ func (l *lookupCtx) exists(n *Node, at string) (expr, error) {
 func (l *lookupCtx) bind(v any) string   { return l.r.s.bind(v) }
 func (l *lookupCtx) fiscalStart() string { return l.bind(int64(l.r.c.fiscal)) }
 func (l *lookupCtx) filter() bool        { return l.inWhere }
-func (l *lookupCtx) label(e expr) string { return l.r.c.textOf(l.r.s, e) }
+func (l *lookupCtx) label(e expr) string {
+	if readsIDText(l.outer) {
+		return e.sql
+	}
+	return l.r.c.textOf(l.r.s, e)
+}
+
+// readsIDText is whether f, or the context a lookup in it was compiled in,
+// reads a relation in text as its id (rowsCtx.idText).
+func readsIDText(f fctx) bool {
+	switch c := f.(type) {
+	case *rowsCtx:
+		return c.idText
+	case *lookupCtx:
+		return readsIDText(c.outer)
+	}
+	return false
+}
 
 // currencySQL reads a currency key on the report's row, as a column does:
 // through outer.

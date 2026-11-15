@@ -3,34 +3,26 @@ import { router, useLocalSearchParams } from 'expo-router'
 import { useState } from 'react'
 import { View } from 'react-native'
 import { ReportBuilderPanel } from '../components/builder/ReportBuilderPanel'
+import { ReportDrillPanel } from '../components/ReportDrillPanel'
 import { ReportHeader } from '../components/ReportHeader'
 import { LoadingBody, MessageBody } from '../components/ReportStates'
 import { ReportView } from '../components/ReportView'
 import { ReportShareDialog } from '../components/share/ReportShareDialog'
-import { useBackToReports } from '../hooks/useBackToReports'
+import { useBackToReports, useReportBack } from '../hooks/useBackToReports'
+import { useIsDrillPage } from '../hooks/useDrillPanel'
 import { useHubActions } from '../hooks/useHubActions'
 import { copyTitle, MAX_TITLE, useReportBuilder } from '../hooks/useReportBuilder'
 import { useReportCatalog } from '../hooks/useReportCatalog'
 import { useReportRecord } from '../hooks/useReportRecord'
 import { useReportView } from '../hooks/useReportView'
 import type { Catalog } from '../lib/builder/columns'
-import { type BrokenMark, canCopyReport } from '../lib/spec'
+import { HUB_BACK_LABEL } from '../lib/report-back'
+import { canCopyReport, UNREADABLE_SPEC } from '../lib/spec'
 import type { CatalogSource } from '../lib/types'
-import { EDIT_KEY } from '../lib/view-url'
+import { EDIT_KEY, FROM_KEY } from '../lib/view-url'
 import { useReportUIStore } from '../stores/report-ui-store'
 
 type RecordModel = ReturnType<typeof useReportRecord>
-
-// A stored spec this app cannot read (a newer spec version) cannot run here.
-const UNREADABLE: BrokenMark = {
-    status: 400,
-    problems: {
-        spec: {
-            code: 'unreadable',
-            message: 'This report was saved by a newer version of the app.',
-        },
-    },
-}
 
 const NOT_INSTALLED = 'This kind of report is not installed'
 
@@ -38,6 +30,7 @@ interface FrameProps {
     title: string
     state: 'loading' | 'error' | 'no-access' | 'unknown-source'
     onBack: () => void
+    backLabel?: string
     onRetry?: () => void
 }
 
@@ -47,11 +40,11 @@ export function catalogFrameState(catalog: { isError: boolean }): FrameProps['st
 }
 
 /** The report screen before its record or catalog is ready, or when it cannot be shown. */
-export function ReportFrame({ title, state, onBack, onRetry }: FrameProps) {
+export function ReportFrame({ title, state, onBack, backLabel, onRetry }: FrameProps) {
     const retry = onRetry ? { label: 'Retry', testID: 'report-retry', onPress: onRetry } : null
     return (
         <View testID="report-screen" className="flex-1 bg-background">
-            <ReportHeader title={title} onBack={onBack} actions={[]} />
+            <ReportHeader title={title} onBack={onBack} backLabel={backLabel} actions={[]} />
             <LoadingBody isVisible={state === 'loading'} />
             <MessageBody
                 isVisible={state === 'error'}
@@ -85,11 +78,17 @@ function useDesignability(record: RecordModel) {
     }
 }
 
-function SavedReportView({ record, onBack }: { record: RecordModel; onBack: () => void }) {
+interface ReportBack {
+    label: string
+    onBack: () => void
+}
+
+function SavedReportView({ record, back }: { record: RecordModel; back: ReportBack }) {
     const report = record.record
     const openShare = useReportUIStore(s => s.openShare)
     const actions = useHubActions()
     const { canDesign, missingNote } = useDesignability(record)
+    const isCovered = useIsDrillPage()
     // The Save as prompt is a modal toggle: local UI state.
     const [isSavingAs, setSavingAs] = useState(false)
     const canCopy = report !== undefined && canCopyReport(report)
@@ -99,9 +98,10 @@ function SavedReportView({ record, onBack }: { record: RecordModel; onBack: () =
         defs: record.spec?.params ?? [],
         source: report && record.spec ? { kind: 'saved', reportId: report.id } : null,
         access: record.access,
-        broken: record.broken ?? (record.spec ? null : UNREADABLE),
+        broken: record.broken ?? (record.spec ? null : UNREADABLE_SPEC),
         isEditing: false,
-        onBack,
+        onBack: back.onBack,
+        backLabel: back.label,
         onEdit: canDesign ? () => router.setParams({ [EDIT_KEY]: '1' }) : undefined,
         missingNote,
         onShare: report ? () => openShare(report.id) : undefined,
@@ -112,9 +112,16 @@ function SavedReportView({ record, onBack }: { record: RecordModel; onBack: () =
         setSavingAs(false)
         if (report) actions.saveCopy(report, title)
     }
+    // The figure opens its report beside this one on a wide window (D4), else as a screen.
+    const drill = report
+        ? { sourceId: report.id, hasPanel: true, scope: 'main' as const }
+        : undefined
+    const side = report ? (
+        <ReportDrillPanel sourceId={report.id} sourceTitle={report.title} />
+    ) : null
     return (
         <>
-            <ReportView model={model} />
+            <ReportView model={model} drill={drill} side={side} isCovered={isCovered} />
             <ReportShareDialog />
             <PromptDialog
                 isOpen={isSavingAs}
@@ -131,7 +138,7 @@ function SavedReportView({ record, onBack }: { record: RecordModel; onBack: () =
     )
 }
 
-function EditingBody({ record, onBack }: { record: RecordModel; onBack: () => void }) {
+function EditingBody({ record, back }: { record: RecordModel; back: ReportBack }) {
     const catalog = useReportCatalog()
     const report = record.record
     const spec = record.spec
@@ -141,24 +148,25 @@ function EditingBody({ record, onBack }: { record: RecordModel; onBack: () => vo
             <ReportFrame
                 title={report?.title ?? ''}
                 state={catalogFrameState(catalog)}
-                onBack={onBack}
+                onBack={back.onBack}
+                backLabel={back.label}
                 onRetry={catalog.retry}
             />
         )
     }
     // A report whose source is gone cannot be designed; its view names what is missing.
-    if (!report || !spec || !base) return <SavedReportView record={record} onBack={onBack} />
-    return <EditingReport record={record} catalog={catalog.byKey} base={base} onBack={onBack} />
+    if (!report || !spec || !base) return <SavedReportView record={record} back={back} />
+    return <EditingReport record={record} catalog={catalog.byKey} base={base} back={back} />
 }
 
 interface EditingReportProps {
     record: RecordModel
     catalog: Catalog
     base: CatalogSource
-    onBack: () => void
+    back: ReportBack
 }
 
-function EditingReport({ record, catalog, base, onBack }: EditingReportProps) {
+function EditingReport({ record, catalog, base, back }: EditingReportProps) {
     const builder = useReportBuilder({
         mode: 'edit',
         catalog,
@@ -174,7 +182,8 @@ function EditingReport({ record, catalog, base, onBack }: EditingReportProps) {
         access: record.access,
         broken: null,
         isEditing: true,
-        onBack,
+        onBack: back.onBack,
+        backLabel: back.label,
         spec: builder.previewSpec,
     })
     return (
@@ -182,18 +191,36 @@ function EditingReport({ record, catalog, base, onBack }: EditingReportProps) {
     )
 }
 
+// A drilled report (`from`) names its source on its back link; the hub's reads
+// Reports and reads no record.
 export function ReportScreen({ reportId }: { reportId: string }) {
+    const search = useLocalSearchParams<{ [FROM_KEY]?: string }>()
+    const fromId = search[FROM_KEY]
+    if (fromId) return <ReportFromSource reportId={reportId} fromId={fromId} />
+    return <ReportFromHub reportId={reportId} />
+}
+
+function ReportFromSource({ reportId, fromId }: { reportId: string; fromId: string }) {
+    const back = useReportBack(fromId)
+    return <ReportScreenBody reportId={reportId} back={back} />
+}
+
+function ReportFromHub({ reportId }: { reportId: string }) {
+    const onBack = useBackToReports()
+    return <ReportScreenBody reportId={reportId} back={{ label: HUB_BACK_LABEL, onBack }} />
+}
+
+function ReportScreenBody({ reportId, back }: { reportId: string; back: ReportBack }) {
     const record = useReportRecord(reportId)
     const search = useLocalSearchParams<{ [EDIT_KEY]?: string }>()
-    const onBack = useBackToReports()
-    if (record.state === 'loading') return <ReportFrame title="" state="loading" onBack={onBack} />
+    const frame = { onBack: back.onBack, backLabel: back.label }
+    if (record.state === 'loading') return <ReportFrame title="" state="loading" {...frame} />
     if (record.state === 'error') {
-        return <ReportFrame title="" state="error" onBack={onBack} onRetry={record.retry} />
+        return <ReportFrame title="" state="error" onRetry={record.retry} {...frame} />
     }
-    if (record.state === 'missing')
-        return <ReportFrame title="" state="no-access" onBack={onBack} />
+    if (record.state === 'missing') return <ReportFrame title="" state="no-access" {...frame} />
     if (search[EDIT_KEY] === '1' && record.access.canEdit) {
-        return <EditingBody record={record} onBack={onBack} />
+        return <EditingBody record={record} back={back} />
     }
-    return <SavedReportView record={record} onBack={onBack} />
+    return <SavedReportView record={record} back={back} />
 }

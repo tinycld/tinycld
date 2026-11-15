@@ -845,6 +845,9 @@ type levelCtx struct {
 	// A lookup is hoisted into it (lookup). nil for a select that reads the
 	// level's rows directly (a having, a sort key, a label).
 	rows *windowFrame
+	// drill is set while a drill value compiles on this level: only then are
+	// groupKey and pivotBound read (R7).
+	drill *drillLeafState
 }
 
 func (lc *levelCtx) col(id, at string) (expr, error) {
@@ -1317,7 +1320,7 @@ func (lc *levelCtx) param(id, at string) (expr, error) {
 }
 
 func (lc *levelCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (expr, error) {
-	e, err := lc.aggregateArg(lc.lv.r, lc.visiting, op, arg, scale, at)
+	e, err := lc.aggregateArg(lc.lv.r, lc.visiting, false, op, arg, scale, at)
 	if err != nil {
 		return expr{}, err
 	}

@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -15,6 +16,9 @@ type compiler struct {
 	app    core.App // nil when dry (Validate)
 	info   *core.RequestInfo
 	params map[string]paramValue
+	// given is the run's params as posted, which a drill's param copy writes
+	// unchanged (R4); nil in a dry compile.
+	given  map[string]json.RawMessage
 	fiscal int
 	// fixedCur is each source's fixed currency as this read's reader got it
 	// (fixedCurrency). It outlives a statement, so rows() leaves it.
@@ -297,7 +301,9 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	}
 	if d := c.p.spec.Detail; d != nil {
 		r.formulaCurrencies(d.Label)
+		r.formulaCurrencies(d.Open)
 	}
+	c.p.spec.drillNodes(func(n *Node, _ string) { r.formulaCurrencies(n) })
 	c.groupTargets = make([]*Source, len(c.p.groups))
 	c.groupOptions, c.groupShown = make([][]Option, len(c.p.groups)), make([]bool, len(c.p.groups))
 	for i, g := range c.p.groups {
@@ -392,7 +398,9 @@ func (r *rowsCTE) valueCurrencies() {
 	}
 	if d := r.c.p.spec.Detail; d != nil {
 		walk(d.Label, "detail.label", false)
+		walk(d.Open, "detail.open", false)
 	}
+	r.c.p.spec.drillNodes(func(n *Node, at string) { walk(n, at, false) })
 }
 
 // windowOp is true for an operator that sums the rows a report shows.

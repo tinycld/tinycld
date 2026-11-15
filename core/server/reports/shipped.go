@@ -36,8 +36,13 @@ type Shipped struct {
 }
 
 var (
+	// shippedMu guards shipped only; never hold it across a Validate, which
+	// reads shipped again for a drill's target (shippedParamDefs).
 	shippedMu sync.Mutex
 	shipped   = map[string]Shipped{}
+	// reconcileMu keeps reconciles one at a time, so two of them never
+	// create the same missing report.
+	reconcileMu sync.Mutex
 )
 
 // RegisterShipped adds a package's shipped report. Registering a key again
@@ -77,6 +82,22 @@ func isShipped(key string) bool {
 	return ok
 }
 
+// shippedParamDefs is the params of the shipped report key, read from its
+// spec; false when no package ships key or its spec does not load.
+func shippedParamDefs(key string) ([]ParamDef, bool) {
+	shippedMu.Lock()
+	s, ok := shipped[key]
+	shippedMu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	spec, _, err := Load(s.Spec)
+	if err != nil {
+		return nil, false
+	}
+	return spec.Params, true
+}
+
 // ReconcileShipped makes the stored reports match the shipped ones. A
 // missing report is created and owned by the first admin, and published by
 // them unless it is Unpublished; with no admin yet it waits until one appears (shipForAdmin). A
@@ -85,12 +106,15 @@ func isShipped(key string) bool {
 // them. A spec that does not validate is skipped and named in the returned
 // error, so one broken report does not stop the others.
 func ReconcileShipped(app core.App) error {
+	reconcileMu.Lock()
+	defer reconcileMu.Unlock()
 	shippedMu.Lock()
-	defer shippedMu.Unlock()
+	all := maps.Clone(shipped)
+	shippedMu.Unlock()
 	var errs []error
 	var admin *core.Record
-	for _, key := range slices.Sorted(maps.Keys(shipped)) {
-		s := shipped[key]
+	for _, key := range slices.Sorted(maps.Keys(all)) {
+		s := all[key]
 		rec, err := app.FindFirstRecordByFilter(reportsCollection, "shipped_key = {:k}", dbx.Params{"k": key})
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			errs = append(errs, fmt.Errorf("shipped report %q: %w", key, err))
@@ -200,4 +224,32 @@ func firstAdmin(app core.App, except string) (*core.Record, error) {
 		}
 	}
 	return nil, nil
+}
+
+// drillTargets finds the stored report of each shipped key and keeps those
+// the reader may view (R8). A key with no stored report yet, or one the
+// reader may not view, maps to nil; any other read error fails the run.
+func drillTargets(app core.App, info *core.RequestInfo, keys []string) (map[string]*DrillTarget, error) {
+	out := map[string]*DrillTarget{}
+	for _, key := range keys {
+		if _, seen := out[key]; seen {
+			continue
+		}
+		out[key] = nil
+		rec, err := app.FindFirstRecordByFilter(reportsCollection, "shipped_key = {:k}", dbx.Params{"k": key})
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if _, err := FindViewableRecord(app, info, reportsCollection, rec.Id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, err
+		}
+		out[key] = &DrillTarget{ReportID: rec.Id, Title: rec.GetString("title")}
+	}
+	return out, nil
 }

@@ -48,7 +48,9 @@ func resolveAliases(spec *Spec) []Alias {
 	}
 	if spec.Detail != nil {
 		a.node(base, spec.Detail.Label)
+		a.node(base, spec.Detail.Open)
 	}
+	spec.drillNodes(func(n *Node, _ string) { a.node(base, n) })
 	for i := range spec.Layout {
 		a.node(base, spec.Layout[i].Formula)
 	}

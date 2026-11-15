@@ -11,14 +11,15 @@ const TOGGLE_STYLE = { minHeight: REPORT_TAP_TARGET }
 
 // On a phone a band of more than BAND_LINES lines is cut there until the reader
 // asks for all of it (H5). The choice is this band's own UI state.
-function useNoticeBand(notices: Notice[], isCompact: boolean) {
+function useNoticeBand(notices: Notice[], isCompact: boolean, width?: number) {
     const [isExpanded, setIsExpanded] = useState(false)
-    const width = useWindowWidth() - BAND_PADDING
+    const windowWidth = useWindowWidth()
+    const bandWidth = (width ?? windowWidth) - BAND_PADDING
     const isCut =
         isCompact &&
         isBandCut(
             notices.map(notice => notice.message),
-            width
+            bandWidth
         )
     return {
         isCut,
@@ -78,8 +79,16 @@ function BandToggle(props: {
     )
 }
 
-function NoticeBand({ notices, isCompact }: { notices: Notice[]; isCompact: boolean }) {
-    const band = useNoticeBand(notices, isCompact)
+function NoticeBand({
+    notices,
+    isCompact,
+    width,
+}: {
+    notices: Notice[]
+    isCompact: boolean
+    width?: number
+}) {
+    const band = useNoticeBand(notices, isCompact, width)
     if (notices.length === 0) return null
     const body = band.isCapped ? noticeParagraph(notices) : noticeLines(notices)
     return (
@@ -110,14 +119,17 @@ export function ReportNotices({
     layoutNotice,
     isLive = true,
     isCompact = false,
+    width,
 }: {
     notices: Notice[]
     layoutNotice?: string
     isLive?: boolean
     isCompact?: boolean
+    /** The view's own width (the drill panel); absent: the window's. */
+    width?: number
 }) {
     const all = bandNotices(notices, layoutNotice)
-    if (!isLive) return <NoticeBand notices={all} isCompact={isCompact} />
+    if (!isLive) return <NoticeBand notices={all} isCompact={isCompact} width={width} />
     return (
         <View
             testID="report-notices-region"
@@ -125,7 +137,7 @@ export function ReportNotices({
             aria-live="polite"
             accessibilityLiveRegion="polite"
         >
-            <NoticeBand notices={all} isCompact={isCompact} />
+            <NoticeBand notices={all} isCompact={isCompact} width={width} />
         </View>
     )
 }

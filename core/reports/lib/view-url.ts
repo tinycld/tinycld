@@ -33,6 +33,12 @@ const COLUMN_ID = /^[A-Za-z][A-Za-z0-9_.]*$/
 export const SORT_KEY = 's'
 const SORT_SEPARATOR = ':'
 
+/** The report a drilled report was opened from (D3); never part of a copied link. */
+export const FROM_KEY = 'from'
+/** The report the drill panel shows (D4); its view options carry `DRILL_PREFIX`. */
+export const DRILL_KEY = 'd'
+export const DRILL_PREFIX = 'd.'
+
 export type SearchParams = Record<string, string | string[] | undefined>
 
 export interface ViewOptions {
@@ -131,23 +137,37 @@ export function decodeSort(raw: string | undefined): ViewSort | null {
     return { col, dir }
 }
 
-export function parseViewOptions(defs: readonly ParamDef[], search: SearchParams): ViewOptions {
+/**
+ * With a prefix it reads only that view's keys (the drill panel's, `DRILL_PREFIX`),
+ * so two views on one route never read each other's.
+ */
+export function parseViewOptions(
+    defs: readonly ParamDef[],
+    search: SearchParams,
+    prefix = ''
+): ViewOptions {
     const params: Record<string, ParamValue> = {}
     for (const def of defs) {
-        const raw = first(search[paramKey(def.id)])
+        const raw = first(search[`${prefix}${paramKey(def.id)}`])
         const value = raw === undefined ? null : decodeParamValue(def, raw)
         if (value) params[def.id] = value
     }
     return {
         params,
         display: {
-            divideBy1000: parseFlag(first(search.div1000), DEFAULT_DISPLAY.divideBy1000),
-            withoutCents: parseFlag(first(search.nocents), DEFAULT_DISPLAY.withoutCents),
-            negative: first(search.negative) === 'parens' ? 'parens' : 'minus',
-            negativeRed: parseFlag(first(search.red), DEFAULT_DISPLAY.negativeRed),
-            hidden: parseHidden(first(search.hide)),
+            divideBy1000: parseFlag(
+                first(search[`${prefix}div1000`]),
+                DEFAULT_DISPLAY.divideBy1000
+            ),
+            withoutCents: parseFlag(
+                first(search[`${prefix}nocents`]),
+                DEFAULT_DISPLAY.withoutCents
+            ),
+            negative: first(search[`${prefix}negative`]) === 'parens' ? 'parens' : 'minus',
+            negativeRed: parseFlag(first(search[`${prefix}red`]), DEFAULT_DISPLAY.negativeRed),
+            hidden: parseHidden(first(search[`${prefix}hide`])),
         },
-        sort: decodeSort(first(search[SORT_KEY])),
+        sort: decodeSort(first(search[`${prefix}${SORT_KEY}`])),
     }
 }
 
@@ -159,7 +179,8 @@ function flag(on: boolean, fallback: boolean): string | undefined {
 // Every key is present; a default is undefined so router.setParams removes it.
 export function serializeViewOptions(
     defs: readonly ParamDef[],
-    options: ViewOptions
+    options: ViewOptions,
+    prefix = ''
 ): Record<string, string | undefined> {
     const out: Record<string, string | undefined> = {}
     for (const def of defs) {
@@ -176,10 +197,22 @@ export function serializeViewOptions(
     out.red = flag(display.negativeRed, DEFAULT_DISPLAY.negativeRed)
     out.hide = display.hidden.length > 0 ? display.hidden.join(LIST_SEPARATOR) : undefined
     out[SORT_KEY] = options.sort ? encodeSort(options.sort) : undefined
+    return Object.fromEntries(Object.entries(out).map(([key, value]) => [`${prefix}${key}`, value]))
+}
+
+/** Every drill key of the route, cleared: router.setParams removes an undefined key. */
+export function clearedDrillKeys(search: SearchParams): Record<string, undefined> {
+    const out: Record<string, undefined> = {}
+    for (const key of Object.keys(search)) {
+        if (key === DRILL_KEY || key.startsWith(DRILL_PREFIX)) out[key] = undefined
+    }
     return out
 }
 
-/** The full link to a report as the reader sees it; `origin` is the server's address. */
+/**
+ * The full link to a report as the reader sees it; `origin` is the server's address.
+ * It writes no prefix, so no `from`, `d` or `d.` key can reach a copied link (R10).
+ */
 export function reportLink(
     origin: string,
     reportId: string,

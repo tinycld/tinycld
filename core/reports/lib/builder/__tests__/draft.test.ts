@@ -2653,11 +2653,132 @@ describe('a column totalled up to a group', () => {
         })
     })
 
+    // drill.go drillLevels: a drilled column has a figure on each drill level's rows.
+    it('refuses a total up to a group below a level the column drills from, and leaves that group out of the menu', () => {
+        const drilledFrom = (group: string): ReportSpec => ({
+            ...UP_TO_TEAM,
+            columns: UP_TO_TEAM.columns.map(c =>
+                c.id === 'amount'
+                    ? { ...c, drill: { report: 'sales.by_status', levels: { [group]: {} } } }
+                    : c
+            ),
+        })
+        const fromStatus = draftFromSpec(drilledFrom('byStatus'), META, CATALOG)
+        expect(draftIssues(fromStatus, CATALOG)).toContainEqual({
+            path: ['columns', 3, 'blankAbove'],
+            message:
+                '"Amount" opens a report from the Status rows, where this column is blank: total it up to Status or above',
+        })
+        expect([...blankAboveTrips(fromStatus, 3)]).toEqual(['byTeam'])
+        const fromTeam = draftFromSpec(drilledFrom('byTeam'), META, CATALOG)
+        expect(issuePaths(fromTeam)).toEqual([])
+        expect([...blankAboveTrips(fromTeam, 3)]).toEqual([])
+    })
+
     it('names the Totals chip: every row, the chosen level, or Choose a group when the level is gone', () => {
         const draft = draftFromSpec(UP_TO_TEAM, META, CATALOG)
         expect(blankAboveLabel(draft, undefined)).toBe('On every row')
         expect(blankAboveLabel(draft, 'byTeam')).toBe('Up to Team')
         const removed = { ...draft, groups: draft.groups.slice(0, 1) }
         expect(blankAboveLabel(removed, 'byTeam')).toBe('Choose a group')
+    })
+})
+
+describe('a drill and an open row in the builder (D1, D2)', () => {
+    const DRILLED: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        params: [
+            { id: 'period', type: 'dateRange', label: 'Day', default: { preset: 'thisMonth' } },
+        ],
+        columns: [
+            { id: 'status', label: 'Status', path: [{ field: 'status' }] },
+            {
+                id: 'amount',
+                label: 'Amount',
+                path: [{ field: 'amount' }],
+                aggregate: 'sum',
+                drill: {
+                    report: 'sales.by_status',
+                    levels: {
+                        byStatus: { status: { groupKey: 'byStatus' }, period: { param: 'period' } },
+                    },
+                },
+            },
+        ],
+        filter: { op: 'between', args: [{ path: [{ field: 'day' }] }, { param: 'period' }] },
+        groups: [{ id: 'byStatus', col: 'status', subtotals: true }],
+        detail: {
+            open: {
+                op: 'concat',
+                args: [{ value: 'sales/sale/' }, { path: [{ field: 'status' }] }],
+            },
+        },
+    }
+
+    it('saves the drill and the open path as they were read', () => {
+        // toEqual, not a JSON text compare: the key order of specFromDraft's columns is not the spec's.
+        const draft = draftFromSpec(DRILLED, META, CATALOG)
+        expect(specFromDraft(draft, CATALOG)).toEqual(DRILLED)
+    })
+
+    it('keeps a label beside the open path', () => {
+        const spec: ReportSpec = {
+            ...DRILLED,
+            detail: { label: { col: 'status' }, open: DRILLED.detail?.open },
+        }
+        expect(specFromDraft(draftFromSpec(spec, META, CATALOG), CATALOG).detail).toEqual(
+            spec.detail
+        )
+    })
+
+    const ids = (spec: ReportSpec) =>
+        specFromDraft(draftFromSpec(spec, META, CATALOG), CATALOG).params?.map(p => p.id)
+    const noFilter: ReportSpec = { ...DRILLED, filter: undefined }
+    const column = (drill: unknown) =>
+        DRILLED.columns.map(c => (c.id === 'amount' ? { ...c, drill } : c)) as ReportSpec['columns']
+
+    it('keeps a param that only a drill value copies', () => {
+        expect(ids(noFilter)).toEqual(['period'])
+    })
+
+    it('keeps a param that only a drill range, group or formula reads', () => {
+        const levels = (value: unknown) => ({ report: 'r', levels: { byStatus: { x: value } } })
+        const reads = { param: 'period' }
+        for (const value of [
+            { range: { from: reads, to: { value: 1 } } },
+            { group: { op: 'concat', args: [reads] } },
+            { op: 'max', args: [reads] },
+        ]) {
+            const spec = { ...noFilter, columns: column(levels(value)) }
+            expect(ids(spec)).toEqual(['period'])
+        }
+    })
+
+    it('keeps a param that only a drill pivot cell reads', () => {
+        const drill = {
+            report: 'r',
+            levels: { byStatus: {} },
+            pivotCells: { x: { param: 'period' } },
+        }
+        expect(ids({ ...noFilter, columns: column(drill) })).toEqual(['period'])
+    })
+
+    it('keeps a param that only the open path reads', () => {
+        const spec: ReportSpec = {
+            ...noFilter,
+            columns: DRILLED.columns.map(c => ({ ...c, drill: undefined })),
+            detail: { open: { op: 'concat', args: [{ param: 'period' }] } },
+        }
+        expect(ids(spec)).toEqual(['period'])
+    })
+
+    it('flags an open path on a pivot report, and only then', () => {
+        const draft = draftFromSpec(DRILLED, META, CATALOG)
+        const issue = { path: ['detailOpen'], message: 'A pivot report has no detail rows to open' }
+        expect(
+            draftIssues({ ...draft, pivot: { ...draft.pivot, on: true } }, CATALOG)
+        ).toContainEqual(issue)
+        expect(draftIssues(draft, CATALOG)).not.toContainEqual(issue)
     })
 })

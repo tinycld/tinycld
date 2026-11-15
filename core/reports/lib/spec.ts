@@ -49,6 +49,10 @@ export type SpecNode = {
     outer?: SpecHop[]
     /** With `param` on a date range: its first ('from') or last ('to') day. */
     bound?: 'from' | 'to'
+    /** In a drill value only: the key of a group at or above the drilled level. */
+    groupKey?: string
+    /** In a drill's pivotCells only: the first or last day of the pivot cell's bucket. */
+    pivotBound?: 'from' | 'to'
 }
 
 // Input and output are one type, so a form schema built on this one types its values.
@@ -69,6 +73,8 @@ export const specNodeSchema: z.ZodType<SpecNode, SpecNode> = z.lazy(() =>
         pick: z.enum(['min', 'max', 'sum', 'count']).optional(),
         outer: z.array(specHopSchema).optional(),
         bound: z.enum(['from', 'to']).optional(),
+        groupKey: z.string().optional(),
+        pivotBound: z.enum(['from', 'to']).optional(),
     })
 )
 
@@ -119,6 +125,26 @@ export const paramDefSchema = z.strictObject({
 })
 export type ParamDef = z.infer<typeof paramDefSchema>
 
+/**
+ * A drill value (spec.go DrillValue, R1): a range from two formulas, a whole
+ * group of a choice param's options, a copy of a param of the report, or a
+ * formula. A bare `{ param }` is always the copy, as the engine reads it.
+ */
+export const specDrillValueSchema = z.union([
+    z.strictObject({ range: z.strictObject({ from: specNodeSchema, to: specNodeSchema }) }),
+    z.strictObject({ group: specNodeSchema }),
+    z.strictObject({ param: z.string() }),
+    specNodeSchema,
+])
+
+/** A column's drill: the shipped report it opens and the target's values per group level. */
+export const specDrillSchema = z.strictObject({
+    report: z.string(),
+    levels: z.record(z.string(), z.record(z.string(), specDrillValueSchema)),
+    pivotCells: z.record(z.string(), specDrillValueSchema).optional(),
+})
+export type SpecDrill = z.infer<typeof specDrillSchema>
+
 export const specColumnSchema = z.strictObject({
     id: z.string(),
     label: z.string().optional(),
@@ -146,6 +172,8 @@ export const specColumnSchema = z.strictObject({
     // A group id: the column totals on that group's level and the levels inside it;
     // the outer levels' group and subtotal rows and the Total leave it blank.
     blankAbove: z.string().optional(),
+    // The shipped report the column's figures open, filtered to each figure's rows.
+    drill: specDrillSchema.optional(),
 })
 export type SpecColumn = z.infer<typeof specColumnSchema>
 
@@ -284,7 +312,9 @@ export const reportSpecSchema = z.strictObject({
         .nullish(),
     layout: z.array(layoutItemSchema).nullish(),
     // A formula on each detail row that labels it (the first column's value without it).
-    detail: z.strictObject({ label: specNodeSchema.optional() }).nullish(),
+    detail: z
+        .strictObject({ label: specNodeSchema.optional(), open: specNodeSchema.optional() })
+        .nullish(),
     display: z
         .strictObject({
             oneLine: displayOneLineSchema.optional(),
@@ -320,6 +350,17 @@ export type BrokenMark = z.infer<typeof brokenSchema>
 export function parseBroken(value: unknown): BrokenMark | null {
     const parsed = brokenSchema.safeParse(value)
     return parsed.success ? parsed.data : null
+}
+
+/** A stored spec this app cannot read (a newer spec version) cannot run here. */
+export const UNREADABLE_SPEC: BrokenMark = {
+    status: 400,
+    problems: {
+        spec: {
+            code: 'unreadable',
+            message: 'This report was saved by a newer version of the app.',
+        },
+    },
 }
 
 // The server refuses to copy a report that cannot run, so a copy is offered only for a
