@@ -338,7 +338,11 @@ describe('two report views on one route (D4)', () => {
             const query = new URL(link).searchParams
             expect(
                 [...query.keys()].filter(
-                    key => key === FROM_KEY || key === DRILL_KEY || key.startsWith(DRILL_PREFIX)
+                    key =>
+                        key === FROM_KEY ||
+                        key === DRILL_KEY ||
+                        key === RECORD_KEY ||
+                        key.startsWith(DRILL_PREFIX)
                 )
             ).toEqual([])
         }
