@@ -16,7 +16,7 @@ import { newRecordId } from 'pbtsdb/core'
 import { useState } from 'react'
 import { ScrollView, Text, View } from 'react-native'
 
-// E2E fixture screen: adds teams and sales through the UI, as the reports specs
+// E2E fixture screen: adds teams, sales and returns through the UI, as the reports specs
 // must set their data up.
 
 const teamSchema = z.object({
@@ -44,6 +44,13 @@ const manySalesSchema = z.object({
     quantity: z.number().int(),
 })
 type ManySalesValues = z.infer<typeof manySalesSchema>
+const returnSchema = z.object({
+    team: z.string().min(1, 'Choose a team'),
+    customer: z.string().trim().min(1).max(200),
+    amount: z.number().int(),
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date as YYYY-MM-DD'),
+})
+type ReturnValues = z.infer<typeof returnSchema>
 
 const REGION_OPTIONS = [
     { value: 'north', label: 'North' },
@@ -327,6 +334,77 @@ function ManySalesForm() {
     )
 }
 
+function ReturnForm() {
+    const { user } = useAuth()
+    const [returns] = useStore('salesstub_returns')
+    const [saved, setSaved] = useState('')
+    const teamOptions = useTeamOptions()
+    const form = useForm<ReturnValues>({
+        resolver: zodResolver(returnSchema),
+        mode: 'onChange',
+        defaultValues: { team: '', customer: '', amount: 0, day: '' },
+    })
+    const create = useMutation({
+        mutationFn: function* (values: ReturnValues) {
+            yield returns.insert({
+                id: newRecordId(),
+                owner: user.id,
+                team: values.team,
+                customer: values.customer,
+                amount: values.amount,
+                currency: 'USD',
+                day: `${values.day} 00:00:00.000Z`,
+            })
+        },
+        onSuccess: (_data, values) => {
+            setSaved(`Saved ${values.customer}`)
+            form.reset({ ...values, customer: '', amount: 0 })
+        },
+    })
+    const onCreate = () => {
+        void form.handleSubmit(values => create.mutate(values))()
+    }
+    return (
+        <View className="gap-2">
+            <Text className="text-base font-semibold text-foreground">New return</Text>
+            <SelectInput
+                name="team"
+                control={form.control}
+                label="Team"
+                options={teamOptions}
+                testID="salesstub-return-team"
+            />
+            <TextInput
+                name="customer"
+                control={form.control}
+                label="Customer"
+                testID="salesstub-return-customer"
+            />
+            <NumberInput
+                name="amount"
+                control={form.control}
+                label="Amount (cents)"
+                testID="salesstub-return-amount"
+            />
+            <TextInput
+                name="day"
+                control={form.control}
+                label="Day"
+                placeholder="YYYY-MM-DD"
+                testID="salesstub-return-day"
+            />
+            <Button
+                onPress={onCreate}
+                isDisabled={create.isPending}
+                testID="salesstub-return-create"
+            >
+                <ButtonText>Add return</ButtonText>
+            </Button>
+            <SavedNote text={saved} testID="salesstub-return-saved" />
+        </View>
+    )
+}
+
 export default function ReportStubIndex() {
     return (
         <ScrollView className="flex-1 bg-background" contentContainerClassName="gap-6 p-4">
@@ -336,6 +414,7 @@ export default function ReportStubIndex() {
             <TeamForm />
             <SaleForm />
             <ManySalesForm />
+            <ReturnForm />
         </ScrollView>
     )
 }

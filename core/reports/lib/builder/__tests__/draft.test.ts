@@ -5,11 +5,15 @@ import {
     type ParamDef,
     type ReportSpec,
     type SpecNode,
+    specColumnSchema,
 } from '../../spec'
 import { placeCells, startingLayout } from '../../table-lines'
 import { MAX_COLUMNS } from '../columns'
 import {
     type BuilderDraft,
+    blankAboveChoices,
+    blankAboveLabel,
+    blankAboveTrips,
     builderSchema,
     type ColumnDraft,
     cellColumnIds,
@@ -25,6 +29,7 @@ import {
     layoutWithMinWidth,
     levelScope,
     NEVER_CUT,
+    offersBlankAbove,
     offersBlankSkip,
     offersDetailBlank,
     offersHaving,
@@ -41,6 +46,7 @@ import {
     showsHideEmpty,
     specFromDraft,
     tidyFit,
+    withBlankAbove,
     withinChoices,
 } from '../draft'
 import { emptyCondition, emptyGroup } from '../filter'
@@ -2388,5 +2394,270 @@ describe('a pivot over a whole period', () => {
         expect(issueAt(first, 'pivot.totalAfter')).toBe(
             'The first column labels the rows: choose another column for the cells'
         )
+    })
+})
+
+// G2: a column totals only up to a group level; the outer levels and the Total
+// leave it blank (spec.go Column.BlankAbove).
+describe('a column totalled up to a group', () => {
+    const UP_TO_TEAM: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        columns: [
+            { id: 'customer', label: 'Customer', path: [{ field: 'customer' }] },
+            { id: 'status', label: 'Status', path: [{ field: 'status' }] },
+            { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+            {
+                id: 'amount',
+                label: 'Amount',
+                path: [{ field: 'amount' }],
+                aggregate: 'sum',
+                blankAbove: 'byTeam',
+            },
+        ],
+        groups: [
+            { id: 'byStatus', col: 'status' },
+            { id: 'byTeam', col: 'team' },
+        ],
+    }
+    const issuePaths = (draft: BuilderDraft) => {
+        const parsed = builderSchema(CATALOG).safeParse(draft)
+        return parsed.success ? [] : parsed.error.issues.map(issue => issue.path.join('.'))
+    }
+
+    it('reads blankAbove from a spec and writes it back; a spec without it stays without', () => {
+        const draft = draftFromSpec(UP_TO_TEAM, META, CATALOG)
+        expect(draft.columns[3]?.blankAbove).toBe('byTeam')
+        expect(issuePaths(draft)).toEqual([])
+        expect(specFromDraft(draft, CATALOG)).toEqual(UP_TO_TEAM)
+        const amount = {
+            id: 'amount',
+            label: 'Amount',
+            path: [{ field: 'amount' }],
+            aggregate: 'sum' as const,
+        }
+        const without = { ...UP_TO_TEAM, columns: [...UP_TO_TEAM.columns.slice(0, 3), amount] }
+        const saved = specFromDraft(draftFromSpec(without, META, CATALOG), CATALOG)
+        expect(saved.columns[3]).not.toHaveProperty('blankAbove')
+    })
+
+    it('parses blankAbove on a spec column, and a column without it', () => {
+        expect(specColumnSchema.parse(UP_TO_TEAM.columns[3]).blankAbove).toBe('byTeam')
+        expect(specColumnSchema.parse(UP_TO_TEAM.columns[0])).not.toHaveProperty('blankAbove')
+    })
+
+    it('writes "Up to <group>" as the group id and "On every row" as no key', () => {
+        const draft = draftFromSpec(UP_TO_TEAM, META, CATALOG)
+        expect(blankAboveChoices(draft)).toEqual([
+            { id: 'byStatus', label: 'Up to Status' },
+            { id: 'byTeam', label: 'Up to Team' },
+        ])
+        const everyRow = { ...draft, columns: withBlankAbove(draft.columns, 3, undefined) }
+        expect(specFromDraft(everyRow, CATALOG).columns[3]).not.toHaveProperty('blankAbove')
+        const upToStatus = { ...draft, columns: withBlankAbove(draft.columns, 3, 'byStatus') }
+        expect(specFromDraft(upToStatus, CATALOG).columns[3]?.blankAbove).toBe('byStatus')
+    })
+
+    it('is offered only on a grouped report, never with a rollup, a rows total or on a pivot cell', () => {
+        const draft = draftFromSpec(UP_TO_TEAM, META, CATALOG)
+        expect(offersBlankAbove(draft, 3)).toBe(true)
+        expect(offersBlankAbove({ ...draft, groups: [] }, 3)).toBe(false)
+        const set = (patch: Partial<ColumnDraft>) => ({
+            ...draft,
+            columns: draft.columns.map((c, i) =>
+                i === 3 ? ({ ...c, ...patch } as ColumnDraft) : c
+            ),
+        })
+        expect(offersBlankAbove(set({ total: 'rows' }), 3)).toBe(false)
+        expect(offersBlankAbove(set({ rollup: { kind: 'editable', node: { value: 0 } } }), 3)).toBe(
+            false
+        )
+        expect(
+            offersBlankAbove({ ...draft, pivot: { ...draft.pivot, on: true, cell: 'amount' } }, 3)
+        ).toBe(false)
+        // A column a group groups by shows the group on its total rows.
+        expect(offersBlankAbove(draft, 2)).toBe(false)
+    })
+
+    it('refuses what the engine refuses, a removed group included (Review Focus 3)', () => {
+        const draft = draftFromSpec(UP_TO_TEAM, META, CATALOG)
+        expect(issuePaths({ ...draft, groups: draft.groups.slice(0, 1) })).toContain(
+            'columns.3.blankAbove'
+        )
+        const rows = {
+            ...draft,
+            columns: draft.columns.map((c, i) => (i === 3 ? { ...c, total: 'rows' as const } : c)),
+        }
+        expect(issuePaths(rows)).toContain('columns.3.blankAbove')
+    })
+
+    // "Totals" is the column's totals, so it is offered on a column that has some: an
+    // aggregate or a formula; a text column and the label column have none.
+    it('offers Totals only on a column with an aggregate or a formula', () => {
+        const draft = draftFromSpec(UP_TO_TEAM, META, CATALOG)
+        const aggregate = (index: number, value: ColumnDraft['aggregate']) => ({
+            ...draft,
+            columns: draft.columns.map((c, i) => (i === index ? { ...c, aggregate: value } : c)),
+        })
+        expect(offersBlankAbove(draft, 0)).toBe(false)
+        expect(offersBlankAbove(aggregate(0, 'count'), 0)).toBe(true)
+        expect(offersBlankAbove(aggregate(3, ''), 3)).toBe(false)
+        const formula: ColumnDraft = {
+            kind: 'formula',
+            id: 'twice',
+            label: 'Twice',
+            formula: {
+                kind: 'editable',
+                node: { op: 'add', args: [{ col: 'amount' }, { col: 'amount' }] },
+            },
+            aggregate: '',
+            scale: null,
+            format: '',
+            total: 'recompute',
+            explicitTotal: false,
+            labelField: '',
+        }
+        expect(offersBlankAbove({ ...draft, columns: [...draft.columns, formula] }, 4)).toBe(true)
+    })
+
+    describe('a column read where it is blank', () => {
+        const issues = (draft: BuilderDraft) =>
+            draftIssues(draft, CATALOG).map(issue => `${issue.path.join('.')}: ${issue.message}`)
+        const twice: SpecNode = { op: 'add', args: [{ col: 'amount' }, { col: 'amount' }] }
+        const having = (col: string): SpecNode => ({
+            op: 'gt',
+            args: [{ col }, { value: 0 }],
+        })
+        // Status (level 1) › team (level 2); amount is blank above team.
+        const spec = (groupHaving: SpecNode | undefined, teamHaving?: SpecNode): ReportSpec => ({
+            ...UP_TO_TEAM,
+            columns: [
+                ...UP_TO_TEAM.columns,
+                { id: 'twice', label: 'Twice', formula: twice },
+                {
+                    id: 'share',
+                    label: 'Share',
+                    formula: {
+                        op: 'percentOfSection',
+                        args: [{ col: 'twice' }],
+                        subtotal: 'open',
+                        scale: 1,
+                    },
+                },
+            ],
+            groups: [
+                { id: 'byStatus', col: 'status', ...(groupHaving ? { having: groupHaving } : {}) },
+                { id: 'byTeam', col: 'team', ...(teamHaving ? { having: teamHaving } : {}) },
+            ],
+            layout: [{ section: 'open', title: 'Open', key: 'open' }],
+        })
+        const withoutShare = (s: ReportSpec): ReportSpec => ({
+            ...s,
+            columns: s.columns.filter(c => c.id !== 'share'),
+            layout: [],
+        })
+
+        it('flags a having that reads it above its level, directly or through a formula column', () => {
+            for (const col of ['amount', 'twice']) {
+                const draft = draftFromSpec(withoutShare(spec(having(col))), META, CATALOG)
+                expect(issues(draft)).toEqual([
+                    expect.stringMatching(/^groups\.0\.having: .*Amount.*Team/),
+                ])
+            }
+        })
+
+        it('lets a having on the level itself read it', () => {
+            const draft = draftFromSpec(
+                withoutShare(spec(undefined, having('amount'))),
+                META,
+                CATALOG
+            )
+            expect(issues(draft)).toEqual([])
+        })
+
+        it('flags a percent of a section that reads it past the first group', () => {
+            const draft = draftFromSpec(spec(undefined), META, CATALOG)
+            expect(issues(draft)).toEqual([
+                expect.stringMatching(/^columns\.5\.formula: .*Amount.*Team/),
+            ])
+            const onFirst = {
+                ...UP_TO_TEAM,
+                columns: UP_TO_TEAM.columns.map(c =>
+                    c.id === 'amount' ? { ...c, blankAbove: 'byStatus' } : c
+                ),
+            }
+            const first = spec(undefined)
+            const draftFirst = draftFromSpec(
+                { ...first, columns: [...onFirst.columns, ...first.columns.slice(4)] },
+                META,
+                CATALOG
+            )
+            expect(issues(draftFirst)).toEqual([])
+        })
+
+        it('offers no level that would trip either refusal, and keeps the level already set', () => {
+            const read = draftFromSpec(spec(having('twice')), META, CATALOG)
+            const column = (d: BuilderDraft) => d.columns.findIndex(c => c.id === 'amount')
+            const unset = {
+                ...read,
+                columns: withBlankAbove(read.columns, column(read), undefined),
+            }
+            // A having on the first level, and a percent of a section, both stop at the first group.
+            expect([...blankAboveTrips(unset, column(unset))]).toEqual(['byTeam'])
+            // A level that trips nothing: the first group, and a report whose readers are gone.
+            const noReaders = draftFromSpec(withoutShare(spec(undefined)), META, CATALOG)
+            expect([...blankAboveTrips(noReaders, column(noReaders))]).toEqual([])
+        })
+
+        it('offers no level a having reads it at, even when another column already trips that having', () => {
+            // The having reads Early first (blank above team), then Amount: the group reports
+            // Early alone, whichever level Amount is set to.
+            const early = {
+                id: 'early',
+                label: 'Early',
+                formula: twice,
+                blankAbove: 'byTeam',
+            }
+            const base = spec(having('amount'))
+            const crowded = draftFromSpec(
+                {
+                    ...base,
+                    columns: [
+                        ...base.columns.slice(0, 3),
+                        early,
+                        {
+                            id: 'amount',
+                            label: 'Amount',
+                            path: [{ field: 'amount' }],
+                            aggregate: 'sum',
+                        },
+                    ],
+                    groups: [
+                        {
+                            id: 'byStatus',
+                            col: 'status',
+                            having: {
+                                op: 'and',
+                                args: [having('early'), having('amount')],
+                            },
+                        },
+                        { id: 'byTeam', col: 'team' },
+                    ],
+                    layout: [],
+                },
+                META,
+                CATALOG
+            )
+            const amount = crowded.columns.findIndex(c => c.id === 'amount')
+            expect([...blankAboveTrips(crowded, amount)]).toEqual(['byTeam'])
+        })
+    })
+
+    it('names the Totals chip: every row, the chosen level, or Choose a group when the level is gone', () => {
+        const draft = draftFromSpec(UP_TO_TEAM, META, CATALOG)
+        expect(blankAboveLabel(draft, undefined)).toBe('On every row')
+        expect(blankAboveLabel(draft, 'byTeam')).toBe('Up to Team')
+        const removed = { ...draft, groups: draft.groups.slice(0, 1) }
+        expect(blankAboveLabel(removed, 'byTeam')).toBe('Choose a group')
     })
 })

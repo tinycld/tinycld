@@ -11,6 +11,7 @@ package reports
 import (
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"sort"
@@ -128,11 +129,27 @@ type Link struct {
 	BackField string
 }
 
+// SourcePart is one collection of a union source. The source's rows are the
+// rows of every part's collection, each read under that collection's own list
+// rule. Columns maps a source key (a field's key, a to-one link's Field, or
+// the BackField of a to-many link from another source) to this part's column;
+// a key the part does not map reads NULL on its rows. Values gives a field of
+// the source a constant on every row of this part (a document kind).
+type SourcePart struct {
+	Collection string
+	Columns    map[string]string
+	Values     map[string]any
+}
+
 // Source is a collection a report can start from or reach through a link.
 type Source struct {
 	Key        string // "<package>.<name>", stable
 	Collection string
-	Label      string
+	// Parts makes the source a union of collections (see SourcePart). A union
+	// sets Parts and leaves Collection empty; its fields name no Column (each
+	// part maps its own) and its to-one links' Field is a key the parts map.
+	Parts []SourcePart
+	Label string
 	// PrimaryKey must be "" or "id": PocketBase relations point at id.
 	PrimaryKey string
 	Fields     []Field
@@ -201,6 +218,11 @@ func RegisterSource(src Source) {
 	src.Fields = slices.Clone(src.Fields)
 	src.Links = slices.Clone(src.Links)
 	src.Aliases = maps.Clone(src.Aliases)
+	src.Parts = slices.Clone(src.Parts)
+	for i := range src.Parts {
+		src.Parts[i].Columns = maps.Clone(src.Parts[i].Columns)
+		src.Parts[i].Values = maps.Clone(src.Parts[i].Values)
+	}
 	if err := validateSource(&src); err != nil {
 		panic(fmt.Sprintf("reports.RegisterSource(%q): %v", src.Key, err))
 	}
@@ -216,8 +238,14 @@ func validateSource(src *Source) error {
 	if !sourceKeyRe.MatchString(src.Key) {
 		return fmt.Errorf("key must look like \"<package>.<name>\"")
 	}
-	if src.Collection == "" || src.Label == "" {
+	union := len(src.Parts) > 0
+	switch {
+	case src.Label == "" || (src.Collection == "" && !union):
 		return fmt.Errorf("a source needs a collection and a label")
+	case union && src.Collection != "":
+		return fmt.Errorf("a union source names its collections in its parts, not in Collection")
+	case union && len(src.Parts) < 2:
+		return fmt.Errorf("a union source has at least two parts")
 	}
 	if src.PrimaryKey != "" && src.PrimaryKey != "id" {
 		return fmt.Errorf("primary key must be id: PocketBase relations point at id")
@@ -243,6 +271,9 @@ func validateSource(src *Source) error {
 		if err := claim(f.Key); err != nil {
 			return err
 		}
+		if union && f.Column != "" && f.Column != f.Key {
+			return fmt.Errorf("field %q: a union source's parts map its columns", f.Key)
+		}
 		if f.Column == "" {
 			f.Column = f.Key
 		}
@@ -256,6 +287,11 @@ func validateSource(src *Source) error {
 		}
 		if err := validateLink(l); err != nil {
 			return fmt.Errorf("link %q: %w", l.Key, err)
+		}
+	}
+	if union {
+		if err := validateParts(src); err != nil {
+			return err
 		}
 	}
 	for from, to := range src.Aliases {
@@ -406,4 +442,125 @@ func ResetForTesting() {
 	shippedMu.Lock()
 	shipped = map[string]Shipped{}
 	shippedMu.Unlock()
+}
+
+// validateParts checks a union's parts against its fields and links: every
+// part has its own collection, maps keys to columns and gives fields constants
+// that fit them, and every field and to-one link is read by at least one part.
+func validateParts(src *Source) error {
+	fields := map[string]*Field{}
+	for i := range src.Fields {
+		fields[src.Fields[i].Key] = &src.Fields[i]
+	}
+	seen := map[string]bool{}
+	read := map[string]bool{}
+	// A link's Field is a stored column, so a constant cannot give it.
+	mapped := map[string]bool{}
+	for i, p := range src.Parts {
+		if p.Collection == "" {
+			return fmt.Errorf("part %d needs a collection", i)
+		}
+		if seen[p.Collection] {
+			return fmt.Errorf("part %d: collection %q is a part twice", i, p.Collection)
+		}
+		seen[p.Collection] = true
+		for _, key := range slices.Sorted(maps.Keys(p.Columns)) {
+			column := p.Columns[key]
+			switch {
+			case key == idField.Key || !memberKeyRe.MatchString(key):
+				return fmt.Errorf("part %q: %q is not a key a part maps", p.Collection, key)
+			case column == "":
+				return fmt.Errorf("part %q: key %q maps no column", p.Collection, key)
+			}
+			read[key] = true
+			mapped[key] = true
+		}
+		for _, key := range slices.Sorted(maps.Keys(p.Values)) {
+			v := p.Values[key]
+			f := fields[key]
+			switch {
+			case f == nil || key == idField.Key:
+				return fmt.Errorf("part %q: value %q is not a field of the source", p.Collection, key)
+			case p.Columns[key] != "":
+				return fmt.Errorf("part %q: %q is both a column and a value", p.Collection, key)
+			case !constantFits(f, v):
+				return fmt.Errorf("part %q: value %v does not fit the %s field %q", p.Collection, v, f.Type, key)
+			}
+			read[key] = true
+		}
+	}
+	for _, f := range src.Fields {
+		if f.Key != idField.Key && !read[f.Key] {
+			return fmt.Errorf("field %q: no part maps it or gives it a value", f.Key)
+		}
+	}
+	for _, l := range src.Links {
+		if l.Cardinality == ToOne && !mapped[l.Field] {
+			return fmt.Errorf("link %q: no part maps its field %q", l.Key, l.Field)
+		}
+	}
+	return nil
+}
+
+// constantFits is whether a part's constant can be a value of f: text for a
+// text field, one of its options for a select, a number for a number or money
+// field, true or false for a yes/no field.
+func constantFits(f *Field, v any) bool {
+	switch f.Type {
+	case Text:
+		_, ok := v.(string)
+		return ok
+	case Select:
+		s, ok := v.(string)
+		return ok && slices.ContainsFunc(f.Options, func(o Option) bool { return o.Value == s })
+	case Number, Money:
+		switch n := v.(type) {
+		case int, int64:
+			return true
+		case float64:
+			return !math.IsNaN(n) && !math.IsInf(n, 0)
+		}
+	case Bool:
+		_, ok := v.(bool)
+		return ok
+	}
+	return false
+}
+
+// collections are the collections a source reads: its one collection, or
+// each part's, in part order.
+func (s *Source) collections() []string {
+	if len(s.Parts) == 0 {
+		return []string{s.Collection}
+	}
+	out := make([]string, len(s.Parts))
+	for i, p := range s.Parts {
+		out[i] = p.Collection
+	}
+	return out
+}
+
+// unionKeys are the keys a union's rule CTE projects besides id, sorted: its
+// fields, its to-one links' fields and every key a part maps or gives a value.
+func (s *Source) unionKeys() []string {
+	set := map[string]bool{}
+	for _, f := range s.Fields {
+		if f.Key != idField.Key {
+			set[f.Key] = true
+		}
+	}
+	for _, l := range s.Links {
+		if l.Cardinality == ToOne {
+			set[l.Field] = true
+		}
+	}
+	for _, p := range s.Parts {
+		for k := range p.Columns {
+			set[k] = true
+		}
+		for k := range p.Values {
+			set[k] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(set))
 }

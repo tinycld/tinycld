@@ -140,6 +140,11 @@ type Column struct {
 	// reader's short day form). Label stays the column's name in Customize
 	// and the builder. A heading that is blank (an unset param) shows Label.
 	Heading *Node `json:"heading,omitempty"`
+	// BlankAbove names a group: the column totals on that group's level and the
+	// levels inside it, and leaves its cell blank on the group and subtotal
+	// rows of outer levels, layout sections and the Total (no currency cell
+	// either). For a figure the outer levels would count twice.
+	BlankAbove string `json:"blankAbove,omitempty"`
 }
 
 // DetailBlank is the one Column.Detail value.

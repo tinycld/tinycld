@@ -551,12 +551,53 @@ func (lc *layoutCtx) compileCell(item *LayoutItem, at string) (expr, error) {
 		// A computed row's or section total's percent divides its own cell;
 		// assemble fills it (sectionPercentCell).
 		return expr{sql: "NULL", typ: Percent}, nil
+	case lc.blankCell(item, id):
+		return expr{sql: "NULL", typ: lc.typ}, nil
 	case item.Cells[id] != nil:
 		return lc.numberCell(item.Cells[id], at+".cells."+id)
 	case lc.c.p.derived[id]:
 		return compileFormula(&derivedCtx{layoutCtx: lc, item: item, visiting: map[string]bool{}}, lc.column.col.Formula, at)
 	}
 	return lc.formulaCell(item, at)
+}
+
+// blankCell is true when item's cell in column id reads a section's cell in a
+// column blank above the sections' level (blankAbove past the first group):
+// the sections have no value there, so the row has none, not a figure
+// computed from blanks (add and sub would read them as 0).
+func (lc *layoutCtx) blankCell(item *LayoutItem, id string) bool {
+	cp := lc.c.p.byID[id]
+	switch {
+	case cp == nil || lc.c.p.percents[id] != nil:
+		return false
+	case item.Cells[id] != nil:
+		return lc.readsBlankSection(item, item.Cells[id], cp)
+	case lc.c.p.derived[id]:
+		return lc.readsBlankSection(item, cp.col.Formula, cp)
+	}
+	return lc.readsBlankSection(item, item.Formula, cp)
+}
+
+// readsBlankSection walks n, a formula of item evaluated in column cp: a
+// section read is blank in a column that is, or reads, a column blank above
+// the sections' level (blankReadLevel, so a non-derived column counts), an
+// earlier row read is blank when that row's own cell is, and a {col} read
+// (a derived column's) is the row's cell in that column.
+func (lc *layoutCtx) readsBlankSection(item *LayoutItem, n *Node, cp *colPlan) bool {
+	if n == nil {
+		return false
+	}
+	switch {
+	case n.Subtotal != "":
+		id := strings.TrimSuffix(n.Subtotal, bareSection)
+		if earlier, ok := lc.items[id]; ok && earlier.Row != "" {
+			return lc.blankCell(earlier, cp.col.ID)
+		}
+		return cp.blankReadLevel > 1
+	case n.Col != "":
+		return lc.blankCell(item, n.Col)
+	}
+	return slices.ContainsFunc(n.Args, func(a *Node) bool { return lc.readsBlankSection(item, a, cp) })
 }
 
 // formulaCell is item's formula in the column being compiled, blank for a

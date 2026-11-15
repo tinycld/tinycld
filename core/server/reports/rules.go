@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -50,9 +51,53 @@ func ruleSelect(app core.App, col *core.Collection, info *core.RequestInfo) (str
 	return fmt.Sprintf("SELECT %s.* FROM %s WHERE +%s.%s IN (SELECT %s FROM (%s))", table, table, table, id, id, built.SQL()), built.Params(), nil
 }
 
+// unionSelect is a union source's rule CTE: each part's rule select
+// (ruleSelect, the part's own list rule), projected to the source's keys and
+// joined by UNION ALL. A key a part does not map reads NULL there; a part's
+// constants are bound, under names that hold the source key, so two unions in
+// one statement never bind one name twice.
+func unionSelect(app core.App, src *Source, info *core.RequestInfo) (string, dbx.Params, error) {
+	keys := src.unionKeys()
+	stem := "u_" + strings.ReplaceAll(src.Key, ".", "_")
+	params := dbx.Params{}
+	selects := make([]string, 0, len(src.Parts))
+	for i, part := range src.Parts {
+		col, err := app.FindCachedCollectionByNameOrId(part.Collection)
+		if err != nil {
+			return "", nil, fmt.Errorf("reports: collection %q: %w", part.Collection, err)
+		}
+		ruleSQL, ruleParams, err := ruleSelect(app, col, info)
+		if err != nil {
+			return "", nil, err
+		}
+		if err := mergeParams(params, ruleParams); err != nil {
+			return "", nil, err
+		}
+		cols := make([]string, 0, len(keys)+1)
+		cols = append(cols, "[[p.id]] AS [[id]]")
+		for _, key := range keys {
+			column, mapped := part.Columns[key]
+			value, constant := part.Values[key]
+			switch {
+			case mapped:
+				cols = append(cols, fmt.Sprintf("[[p.%s]] AS [[%s]]", column, key))
+			case constant:
+				name := fmt.Sprintf("%s_%d_%s", stem, i, key)
+				params[name] = value
+				cols = append(cols, fmt.Sprintf("{:%s} AS [[%s]]", name, key))
+			default:
+				cols = append(cols, fmt.Sprintf("NULL AS [[%s]]", key))
+			}
+		}
+		selects = append(selects, "SELECT "+strings.Join(cols, ", ")+" FROM ("+ruleSQL+") p")
+	}
+	return strings.Join(selects, "\nUNION ALL\n"), params, nil
+}
+
 // mergeParams copies src into dst for a statement that holds several rule
-// CTEs. Each rule is built with its own {:p0}, so the same name with another
-// value would silently change one rule; it is an error instead.
+// CTEs. PocketBase picks the placeholder names of a rule's filter literals
+// itself, so two rule builds must never bind one name to different values: the
+// later value would silently change the earlier rule. That is an error instead.
 func mergeParams(dst, src dbx.Params) error {
 	for k, v := range src {
 		if old, ok := dst[k]; ok && !reflect.DeepEqual(old, v) {

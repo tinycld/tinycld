@@ -840,14 +840,23 @@ func repeatedColumn(n *Node) string {
 // money column's currency. Only rows of the group statement carry __level;
 // their cells have the type of the column's aggregate, not of a detail row.
 func (rn *runner) cells(row map[string]any) map[string]any {
-	_, grouped := row["__level"]
+	level, grouped := row["__level"]
 	out := map[string]any{}
 	for idx, cp := range rn.c.p.cols {
 		if cp.col.Hidden {
 			continue
 		}
+		// A column blank above its level, or reading one that is, sends no cell,
+		// currency or label on the rows of outer levels and the Total
+		// (blankAbove). A layout's computed rows (__level len(groups)+1, the SQL
+		// level field, past every group) keep theirs unless they read sections
+		// above the level, which leaves the cell blank.
+		if grouped && toInt(level) < int64(cp.blankReadLevel) {
+			continue
+		}
 		name := fmt.Sprintf("v%d", idx)
-		if _, ok := row[name]; !ok {
+		v, ok := row[name]
+		if !ok || (grouped && cp.blankReadLevel > 0 && v == nil && toInt(level) > int64(len(rn.c.p.groups))) {
 			continue
 		}
 		out[cp.col.ID] = rn.cellValue(cp, row[name], grouped)
@@ -864,6 +873,9 @@ func (rn *runner) cells(row map[string]any) map[string]any {
 	}
 	for id, sp := range rn.c.p.percents {
 		if sp.col.col.Hidden {
+			continue
+		}
+		if grouped && toInt(level) < int64(sp.col.blankReadLevel) {
 			continue
 		}
 		if _, ok := row[fmt.Sprintf("v%d", rn.c.p.index(sp.col))]; ok {

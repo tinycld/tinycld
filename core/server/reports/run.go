@@ -470,7 +470,10 @@ func (rn *runner) run() error {
 	// A source's Go hooks read collections no statement reads, so their
 	// topics are added by name.
 	for _, src := range Sources(rn.app) {
-		if rn.topics[changesignal.Topic(src.Collection)] {
+		reads := slices.ContainsFunc(src.collections(), func(c string) bool {
+			return rn.topics[changesignal.Topic(c)]
+		})
+		if reads {
 			for _, w := range src.Watch {
 				rn.topics[changesignal.Topic(w)] = true
 			}

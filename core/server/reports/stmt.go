@@ -138,8 +138,38 @@ func (s *stmt) alias(prefix string) string {
 	return fmt.Sprintf("%s%d", prefix, s.n)
 }
 
-// rule names the CTE that holds the rows of collection the reader may list.
-// Every reference to the collection reads it, never the table.
+// unionRulePrefix marks a union source's entry in stmt.rules: "union:<key>".
+// A collection name never holds a colon.
+const unionRulePrefix = "union:"
+
+// sourceRule names the rule CTE a source's rows are read from: its
+// collection's, or its union's.
+func (s *stmt) sourceRule(src *Source) string {
+	if len(src.Parts) > 0 {
+		return s.rule(unionRulePrefix + src.Key)
+	}
+	return s.rule(src.Collection)
+}
+
+// ruleRead is the select and params of one entry of s.rules.
+func (s *stmt) ruleRead(name string) (string, dbx.Params, error) {
+	if key, union := strings.CutPrefix(name, unionRulePrefix); union {
+		src := lookupRegistered(key)
+		if src == nil {
+			return "", nil, fmt.Errorf("reports: union source %q is not registered", key)
+		}
+		return unionSelect(s.app, src, s.info)
+	}
+	col, err := s.app.FindCachedCollectionByNameOrId(name)
+	if err != nil {
+		return "", nil, fmt.Errorf("reports: collection %q: %w", name, err)
+	}
+	return ruleSelect(s.app, col, s.info)
+}
+
+// rule names the CTE that holds the rows the reader may list of a s.rules
+// entry: a collection, or a union source (union:<source key>). Every
+// reference to that collection or union reads the CTE, never the table.
 func (s *stmt) rule(collection string) string {
 	if name, ok := s.ruleOf[collection]; ok {
 		return name
@@ -156,11 +186,7 @@ func (s *stmt) with(ctes ...string) (string, error) {
 	for _, name := range s.rules {
 		sql := "SELECT 1 AS id WHERE 0"
 		if s.app != nil {
-			col, err := s.app.FindCachedCollectionByNameOrId(name)
-			if err != nil {
-				return "", fmt.Errorf("reports: collection %q: %w", name, err)
-			}
-			ruleSQL, params, err := ruleSelect(s.app, col, s.info)
+			ruleSQL, params, err := s.ruleRead(name)
 			if err != nil {
 				return "", err
 			}
@@ -263,7 +289,7 @@ func newScope(s *stmt, src *Source) *scope {
 	alias := s.alias("t")
 	return &scope{
 		s: s, src: src, alias: alias,
-		from:  s.rule(src.Collection) + " " + alias,
+		from:  s.sourceRule(src) + " " + alias,
 		joins: map[string]string{},
 	}
 }
@@ -286,7 +312,7 @@ func (sc *scope) join(hops []hopPlan) string {
 			kind = "JOIN"
 		}
 		sc.sql = append(sc.sql, fmt.Sprintf("%s %s %s ON %s = %s",
-			kind, sc.s.rule(h.to.Collection), next, q(next, "id"), q(alias, h.link.Field)))
+			kind, sc.s.sourceRule(h.to), next, q(next, "id"), q(alias, h.link.Field)))
 		sc.joins[key] = next
 		alias = next
 	}

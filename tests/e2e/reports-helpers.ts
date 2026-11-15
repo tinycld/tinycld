@@ -23,6 +23,7 @@ export {
 // team totals" and "Stub team balance".
 export const SALES_SOURCE = 'salesstub.sales'
 export const TEAMS_SOURCE = 'salesstub.teams'
+export const ACTIVITY_SOURCE = 'salesstub.activity'
 export const SHIPPED_TITLE = 'Stub larger side'
 export const TEAM_TOTALS_TITLE = 'Stub team totals'
 /** The heading the stub's sources print above a report's title. */
@@ -118,6 +119,24 @@ export async function addSales(page: Page, sales: StubSales) {
     await page.getByTestId('salesstub-sales-quantity').fill(String(sales.quantity))
     await page.getByTestId('salesstub-sales-create').click()
     await expect(page.getByTestId('salesstub-sales-saved')).toHaveText(`Saved ${sales.count} sales`)
+}
+
+export interface StubReturn {
+    team: string
+    customer: string
+    /** Cents. */
+    amount: number
+    day: string
+}
+
+export async function addReturn(page: Page, ret: StubReturn) {
+    await page.getByTestId('salesstub-return-team').click()
+    await page.getByRole('menuitem', { name: ret.team, exact: true }).click()
+    await page.getByTestId('salesstub-return-customer').fill(ret.customer)
+    await page.getByTestId('salesstub-return-amount').fill(String(ret.amount))
+    await page.getByTestId('salesstub-return-day').fill(ret.day)
+    await page.getByTestId('salesstub-return-create').click()
+    await expect(page.getByTestId('salesstub-return-saved')).toHaveText(`Saved ${ret.customer}`)
 }
 
 /** New report → pick a source → the builder opens on a draft. */

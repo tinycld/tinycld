@@ -1,6 +1,6 @@
 /// <reference path="../../tinycld/server/pb_data/types.d.ts" />
 // E2E fixture: the collections behind the salesstub report sources.
-// Teams are shared by every signed-in user; a sale belongs to its owner alone,
+// Teams are shared by every signed-in user; a sale or a return belongs to its owner alone,
 // so a report over sales shows each reader only their own rows.
 const SIGNED_IN = '@request.auth.id != ""'
 const OWN = '@request.auth.id != "" && owner = @request.auth.id'
@@ -57,8 +57,30 @@ migrate(
             ],
         })
         app.save(sales)
+        const returns = new Collection({
+            id: 'pbc_salesstub_returns',
+            name: 'salesstub_returns',
+            type: 'base',
+            system: false,
+            listRule: OWN,
+            viewRule: OWN,
+            createRule: OWN,
+            updateRule: OWN,
+            deleteRule: OWN,
+            fields: [
+                { id: 'salesstub_returns_owner', name: 'owner', type: 'relation', collectionId: users.id, required: true, maxSelect: 1, cascadeDelete: false },
+                { id: 'salesstub_returns_team', name: 'team', type: 'relation', collectionId: teams.id, maxSelect: 1, cascadeDelete: false },
+                { id: 'salesstub_returns_customer', name: 'customer', type: 'text', max: 200 },
+                { id: 'salesstub_returns_amount', name: 'amount', type: 'number', onlyInt: true },
+                { id: 'salesstub_returns_currency', name: 'currency', type: 'text', max: 3 },
+                { id: 'salesstub_returns_day', name: 'day', type: 'date' },
+                ...stamps('salesstub_returns'),
+            ],
+        })
+        app.save(returns)
     },
     app => {
+        app.delete(app.findCollectionByNameOrId('salesstub_returns'))
         app.delete(app.findCollectionByNameOrId('salesstub_sales'))
         app.delete(app.findCollectionByNameOrId('salesstub_teams'))
     }

@@ -443,6 +443,11 @@ func (l *lookupCtx) storedLinkCol(hops []hopPlan) string {
 	if len(hops) != 1 {
 		return ""
 	}
+	// A union's link column is NULL on a part that does not map it, as a
+	// view's may be.
+	if len(hops[0].from.Parts) > 0 {
+		return ""
+	}
 	col, err := l.r.c.p.app.FindCachedCollectionByNameOrId(hops[0].from.Collection)
 	if err != nil {
 		// Without the bound the lookup is still right, only slower.

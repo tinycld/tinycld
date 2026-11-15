@@ -852,6 +852,16 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 	if cp == nil {
 		return expr{}, unknownColumn(at, id)
 	}
+	// Above its blankAbove level the column has no value: its own cell, and
+	// every formula of the level that reads it (a rollup, a having, a sort
+	// key, a derived column), read blank there.
+	if lc.lv.n < cp.blankLevel {
+		e, err := lc.recompute(cp, at)
+		if err != nil {
+			return expr{}, err
+		}
+		return e.withoutValue(), nil
+	}
 	if cp.col.Rollup != nil {
 		return lc.rollup(cp)
 	}
@@ -1188,6 +1198,12 @@ func (lv *level) readsRowValue(n *Node, inAggregate bool, seen map[string]bool) 
 	}
 	if n.Col != "" && !inAggregate && !seen[n.Col] {
 		cp := lv.c.p.byID[n.Col]
+		// A column blank above its level (blankAbove) has no value to compute
+		// from there: a formula that reads it is blank as a whole, not a figure
+		// computed from a blank (add would read it as 0).
+		if cp != nil && lv.n < cp.blankLevel {
+			return true
+		}
 		// A column with a rollup shows the rollup on the level's rows.
 		if cp != nil && cp.col.Rollup != nil {
 			seen[n.Col] = true

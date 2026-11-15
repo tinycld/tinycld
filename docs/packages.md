@@ -1171,6 +1171,48 @@ reports.RegisterSource(reports.Source{
 })
 ```
 
+**Union sources.** A source can read several collections of one shape as one
+source: set `Parts` and leave `Collection` empty. Each part is a collection,
+read under its own list rule; `Columns` maps a source key to that part's
+column, and `Values` gives a field a constant on every row of the part. A key
+a part does not map reads blank there.
+
+```go
+reports.RegisterSource(reports.Source{
+    Key:   "zoo.meals",
+    Label: "Meals",
+    Parts: []reports.SourcePart{
+        {Collection: "zoo_feedings", Columns: map[string]string{"cost": "cost", "currency": "currency", "animal": "animal"}, Values: map[string]any{"kind": "feeding"}},
+        {Collection: "zoo_treats", Columns: map[string]string{"cost": "price", "currency": "currency", "animal": "animal"}, Values: map[string]any{"kind": "treat"}},
+    },
+    Fields: []reports.Field{
+        {Key: "kind", Label: "Kind", Type: reports.Select, Options: []reports.Option{{Value: "feeding", Label: "Feeding"}, {Value: "treat", Label: "Treat"}}},
+        {Key: "cost", Label: "Cost", Type: reports.Money, Aggregates: reports.SumAll, Currency: "currency"},
+        {Key: "currency", Label: "Currency", Type: reports.Text},
+    },
+    Links: []reports.Link{
+        {Key: "animal", Label: "Animal", Target: "zoo.animals", Cardinality: reports.ToOne, Field: "animal"},
+    },
+})
+```
+
+- A union has at least two parts, each its own collection with a list rule
+  (`CheckSources` refuses a part whose list rule is superusers only). Its
+  fields name no `Column`; every field and every to-one link's `Field` is
+  mapped (or, for a field, given a value) by at least one part. A link's
+  `Field` must be in some part's `Columns`: a `Values` entry does not count.
+- Every part that maps a key maps it to a column of the same type class: date
+  and autodate are one class, text, email and url are one class, and every
+  other PocketBase type is a class of its own. A constant is text for a text
+  field, an option's value for a select, a finite number for a number or money
+  field, `true` or `false` for a yes/no field.
+- A union reads like any source: its links, links to it (a to-one relation
+  that points at one of its part collections; a to-many link whose
+  `BackField` some part maps: a part that maps none joins no row), record
+  groups, labels, fill, param options, lookups (a sum across the parts is one
+  source, one currency) and change topics (every part's collection). A
+  row's id is its part record's id.
+
 - Every link declares its cardinality. A to-one link names its single
   relation `Field` on this source. A to-many link names its `BackField`: the
   single relation on the target that points back at this source.
@@ -1434,6 +1476,7 @@ label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` o
 | `groups[].hideEmpty` | `true`: a group whose child groups are all hidden, with no shown row passed up from a skipped level, is hidden with its subtotal, as a having would hide it (a `"rows"` total above it adds nothing it did not show; a `"recompute"` total counts every row the filter keeps, the rows of hidden groups included, as with any having). Allowed on a bucketed level. Refused on the last level, and on the first group of a layout report (its sections always show). |
 | `columns[].heading` | A formula over params and values, computed once per run; the result column carries `heading: { value, type }` (text, date, datetime or number), which the view shows in place of `label` (a day in the reader's short form). Absent when the heading is blank: an unset param, a null, or an empty or whitespace-only text. `label` stays the column's name, and Customize and the builder name the column by it. Refused when it reads anything but params and values (a path is refused), or is of another type: money, yes/no, a date range and a list are refused. |
 | `columns[].hidden` | `true`: the column is computed (a group, sort or section key, a `{col}` read) but the result leaves it and its cells out: no heading, no cell, no Customize entry, no arrangement, no export column, not a viewer sort key. Refused on the first column, on the first column of each nest level (it labels the child rows), on a column `display.columns` or `display.layouts` names, on a column a group's `opening` names, and on a pivot's cell column. |
+| `columns[].blankAbove` | The id of a group: the column totals on that group's level, the levels inside it and the detail rows; the group and subtotal rows of the levels above it, the layout sections when the group is not the first, and the Total leave the cell out (no `<col>@currency` and no `<col>@label` cell either). A `{col}` read of it on those levels reads blank, so a column that reads it (also through other formula columns, in a column's formula or its `rollup`) sends no cell, `@currency` or `@label` on the group, section, computed and Total rows of those levels, and a layout computed row that reads a section is blank there too. For a figure the levels above would count twice. Refused on a pivot's cell column, with `rollup`, with `total: "rows"`, on a child-row column, and on a column a group groups by (400, `columns.<i>.blankAbove`); for a group `having` that reads it, directly or through formula or rollup columns, when the column's group is deeper than the having's own group, where the column is blank (400, `groups.<i>.having`); for a `percentOfSection` whose argument is, or reads through formula or rollup columns, a blank-above column set to any group past the first, since sections are the first level (400, `columns.<i>.formula.args.0`); and for a group the report does not have (422 `unknown_group`, at `columns.<i>.blankAbove`). |
 | `layout[].within` | On a computed row: the id of a section earlier in the layout. The row is emitted after that section's rows and before its subtotal, at depth 1, only while the section is open, with `section` naming the section's group row; it never opens. A section with a within row can always open, also when a deeper level's having hides every one of its own rows. The section's group row and subtotal add it, and a later row's `{ subtotal: <section> }` reads the total with it (and with every within row of that section before the reader). Its formulas read lookups, params, values, earlier computed rows and other sections; reading its own section is refused. |
 | `layout[].cells` | On a computed row: `{ <col id>: formula }`, the row's cell in that column (same leaves as `formula`). A number column it does not name takes `formula`; with no `formula` that cell is blank. A row with neither is refused, and so is a cell on the first column, a non-number column or a pivot's cell column. A **derived column** (a formula column with no aggregate or rollup that reads only `{col}`, `{param}`, values and scalar operators) is computed on every computed row, and on a section total that holds a within row, from that row's own cells. Any computed row, top-level or within, may read `{param}`. |
 | `columns[].formula` `percentOfSection` | `{ op: "percentOfSection", args: [{ col }], subtotal, scale }`, in a layout report: the row's value of a numeric column (the engine accepts a number, amount or percent column, not a yes/no one; the builder offers number and amount) ÷ the total of that column in the layout section `subtotal` names × 100, at `scale` places, half away from zero. Type percent. Every detail, group, subtotal, section and computed row divides its own cell; a section's total is read with its `within` rows, also when the section is folded. On a pivot report the argument is the row's total across the pivot. Each currency divides by its own section's total; a total of 0 or blank gives no figure; an opening row stays blank. It is a column's whole formula and no other formula reads that column. Refused outside a layout report, when `subtotal` names no section (422 `unknown_subtotal`), when the argument is not a `{ col }` of a numeric column (a yes/no column is refused), inside any other operator, on a column with `aggregate`, and on a pivot's cell column; `subtotal` on any other operator is refused. |
