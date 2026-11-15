@@ -1304,12 +1304,13 @@ reports.RegisterSource(reports.Source{
   (`x >= <first day's midnight> AND x < <midnight after the last day>`). A
   missing or unknown zone, a name of UTC itself (`UTC`, `Etc/UTC`,
   `Etc/GMT`, `GMT`) and `Local` are UTC. A condition that compares a
-  `DateTime` with a `Date` column still compares in UTC. Buckets and date parts of a
-  `DateTime` (`year`, `month`, a group or pivot by day) keep the UTC day. A
-  `Date` field is a day and never moves. The view shows a `DateTime` cell as
-  day and time in the reader's zone and names the zone once under the title
-  ("Times in Central Time"); a package screen writes the same text with
-  `dateTimeText(value)` from `@tinycld/core/reports/lib/format`.
+  `DateTime` with a `Date` column still compares in UTC. Buckets and date
+  parts of a `DateTime` (`year`, `month`, a group or pivot by day)
+  keep the UTC day. A `Date` field is a day and never moves. The view shows a
+  `DateTime` cell as day and time in the reader's zone and names the zone
+  once under the title ("Times in Central Time"); a package screen writes the
+  same text with `dateTimeText(value)` from
+  `@tinycld/core/reports/lib/format`.
 - A path that ends at a to-one link, or at the `id` field, is a relation
   value: it carries the target source. A formula, filter or column may use it
   as a value (the linked record's id; blank when the reader cannot see it).
