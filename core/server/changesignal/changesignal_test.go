@@ -134,32 +134,28 @@ func TestSeparateWritesInOneWindowSendOneMessage(t *testing.T) {
 	}
 }
 
+// The windows fire on demand, not on the wall clock: with real timers a slow
+// runner stretched the writes past a fixed collect period and the test saw
+// one message where the signaler had sent one per window.
 func TestSteadyStreamIsNotStarved(t *testing.T) {
 	app := newZooApp(t, testWindow)
+	timers := manualTimers(t, app)
 	l := listen(t, app, "collection/zoo_animals", true)
 
-	col, err := app.FindCollectionByNameOrId("zoo_animals")
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	// t.Fatal must not run on this goroutine (go vet: testinggoroutine).
-	go func() {
-		defer close(done)
-		for range 12 {
-			rec := core.NewRecord(col)
-			rec.Set("name", "Stream")
-			if err := app.Save(rec); err != nil {
-				t.Errorf("save: %v", err)
-				return
-			}
-			time.Sleep(testWindow / 4)
+	for window := range 3 {
+		// Writes that keep coming inside a window must not push its end out:
+		// the first one arms the window and the rest join it.
+		for range 4 {
+			saveAnimal(t, app, "Stream")
 		}
-	}()
-	got := l.collect(3 * testWindow)
-	<-done
-	if len(got) < 2 {
-		t.Fatalf("%d messages in three windows of steady writes, want at least 2", len(got))
+		fire := timers.armed(t, 1)
+		fire()
+		if got := l.next(t); got.Name != "collection/zoo_animals" {
+			t.Fatalf("window %d: message for %q", window, got.Name)
+		}
+	}
+	if got := l.collect(testWindow); len(got) != 0 {
+		t.Fatalf("%d extra messages after three windows", len(got))
 	}
 }
 
