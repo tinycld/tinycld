@@ -179,10 +179,13 @@ test.describe('reports: zone times and record panel', () => {
         await page.setViewportSize(NARROW)
         await openDrilled(page, ZONE_TITLE)
         await rowLabel(page, sale).click()
-        await expect(page.getByTestId('stub-panel-screen')).toBeVisible()
+        const screen = page.getByTestId('stub-panel-screen')
+        await expect(screen).toBeVisible()
         await expect
             .poll(() => new URL(page.url()).pathname)
             .toMatch(new RegExp(`/salesstub/panel/${sale.id}$`))
+        // The push leaves the report route, so this reads the pushed screen's URL, not the
+        // report's. The recordPanel count below is what proves no panel opened on the report.
         await expect.poll(() => param(page, 'dr')).toBeNull()
         await expect(recordPanel(page)).toHaveCount(0)
     })
