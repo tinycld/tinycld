@@ -1,7 +1,7 @@
 ---
 title: Reports
 summary: Make a report from your data, run it, share it, and publish it to everyone
-tags: [reports, report builder, share report, publish, filter, group, pivot, formula, totals, groups, lookup, formulas, phone, sort, opening row, all dates]
+tags: [reports, report builder, share report, publish, filter, group, pivot, formula, totals, groups, lookup, formulas, phone, sort, opening row, all dates, time zone, date and time]
 order: 40
 ---
 
@@ -195,6 +195,12 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
 - A report that is open stays current: when someone changes the data it reads, it
   runs again.
 
+## Dates with a time
+
+Some columns hold a date and a time, such as when a record was changed. The report shows them in your time zone: "Nov 14, 2026, 4:07 PM", or with a 24-hour clock when your device uses one. When the report shows such a column, the line under the title names your time zone once, for example **Times in Central Time**.
+
+The period chip and a day you type in a filter, such as "on or after Nov 14, 2026", also use your time zone for these columns: a day starts and ends at your midnight, not at midnight UTC. A report that groups or pivots such a column by day, month or year uses the UTC date. A column that holds only a date, such as a due date, is the same in every time zone.
+
 ## Open the rows behind a figure
 
 In some reports a figure opens the report that lists the rows behind it, such as the rows that add up to a group's total. On a computer, the figure underlines when you point at it. Select it to open that report, filtered to the figure's rows and period.
@@ -208,6 +214,8 @@ When you cannot open the report behind a figure, the figure is plain and does no
 ## Open a row's record
 
 In some reports each line opens the record it comes from, on that record's own screen in its app. Select the line, or its name, to open the record. Back returns to the report as you left it.
+
+Some apps show the record beside the report. On a window 1360 pixels wide or wider, the record then opens in a panel at the right and the line stays marked. Select another line to show its record in the same panel. Select **Open as full screen** to open the record on its own screen, or **Close** (or press Esc) to close the panel. Opening **Customize** closes the panel. A link copied with **Copy link** does not open it. On a narrower window, and on a phone, the record opens on its own screen.
 
 ## Share and publish
 

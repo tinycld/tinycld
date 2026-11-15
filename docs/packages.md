@@ -281,6 +281,7 @@ export default manifest
 | `slots[]` | Names of sidebar slots this package exposes for *other* packages to render into. Free-form strings; duplicates within one manifest are a generator error. Render with `<SidebarSlot target="<this-slug>" slot="<name>" />` from `@tinycld/core/components/sidebar-primitives`. |
 | `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order?, label? }` is generator-validated. `label` names the contribution where the host lays the slot out as tabs. `target: 'core'` renders into a slot core owns (see [Setup wizard steps](#setup-wizard-steps-setupsteps)). |
 | `setupSteps[]` | Steps this package adds to the first-run setup wizard (`id`, `label`, `module`, `order?`). See [Setup wizard steps](#setup-wizard-steps-setupsteps) below. |
+| `reportPanels[]` | Panels for this package's own app paths that a report's detail row opens beside the report: `{ path, component }`. `path` is one or more segments of letters, digits, `-` and `_`, under the package slug, distinct within the package; `component` is a module path under `tinycld/<slug>/`, resolved through the package's `exports` map as `settings[].component` is, whose default export takes `ReportPanelProps`. Emitted to `lib/generated/report-panels.ts`. See [Shipped and saved reports](#shipped-and-saved-reports). |
 | `help.directory` | `<id>.md` topics and any images they reference (relative to the directory) surfaced in the in-app help hub. |
 | `seed.script` | Dev sample-data function. |
 | `server` | Go server extension: `package` is the subdir, `module` is its Go module path. The module exports ONE entry point, `Register(app *pocketbase.PocketBase)`, called by the generated registrar — the same call in every composition. |
@@ -561,6 +562,9 @@ The generated runtime artifacts that must exist on disk live under
   explicitly). Help topics are parsed markdown content, so they're pre-extracted
   to a generated file rather than derived at runtime.
 - **`package-icons.ts`** — the nav/lucide icon map for installed packages.
+- **`report-panels.ts`** — every installed package's `reportPanels`, as
+  `{ slug, path, load }` (`load` imports the component). Only
+  `core/reports/lib/registered-panels.ts` reads it.
 - **`<slug>-api.ts`** — one per package declaring `payloads`: TypeScript
   interfaces/consts emitted from the package's Go payload structs (see the
   `payloads` field reference). Orphans from removed members are pruned.
@@ -1279,6 +1283,33 @@ reports.RegisterSource(reports.Source{
   `YYYY-MM-DD`. Filters, buckets, presets and pivots treat it as a date.
   `CheckSources` refuses `TextDay` on any other type, and on a column that is
   not text.
+- A `Select` field may read a text column as well as a select column. Its
+  `Options` give the labels; a stored value that no option names shows as
+  itself. `CheckSources` checks the options against the values only of a
+  select column (a text column has none).
+- A source may read a view collection. PocketBase types a bare column of the
+  view's query as its source field (an autodate `created` reads as `DateTime`),
+  a `CAST(… AS TEXT)` column as text, and any other computed column as json,
+  which no field reads: cast every computed column a field reads, for example
+  `CAST(CASE WHEN f.grams >= 500 THEN 'big' ELSE 'small' END AS TEXT) AS size`.
+  A run reads the view under its list rule. Register the view's sources with
+  `changesignal.RegisterView`, so an open report stays current.
+- A `DateTime` field holds an instant. A date range (`between` with a
+  `dateRange` param), a `date` or `asOf` param, a range's `bound`, and
+  a day typed in a condition (a literal `{"value": "2026-11-14"}`, such as a
+  builder filter's value) compare with it in the reader's time zone: the
+  client sends `options.timeZone` (an IANA name, from `Intl`) with every run
+  and `timeZone` with every param-options request, and the engine compares
+  with the UTC instants of the reader's midnights
+  (`x >= <first day's midnight> AND x < <midnight after the last day>`). A
+  missing or unknown zone, a name of UTC itself (`UTC`, `Etc/UTC`,
+  `Etc/GMT`, `GMT`) and `Local` are UTC. A condition that compares a
+  `DateTime` with a `Date` column still compares in UTC. Buckets and date parts of a
+  `DateTime` (`year`, `month`, a group or pivot by day) keep the UTC day. A
+  `Date` field is a day and never moves. The view shows a `DateTime` cell as
+  day and time in the reader's zone and names the zone once under the title
+  ("Times in Central Time"); a package screen writes the same text with
+  `dateTimeText(value)` from `@tinycld/core/reports/lib/format`.
 - A path that ends at a to-one link, or at the `id` field, is a relation
   value: it carries the target source. A formula, filter or column may use it
   as a value (the linked record's id; blank when the reader cannot see it).
@@ -1595,6 +1626,21 @@ reports.RegisterShipped(reports.Shipped{
   panel's state is in the source's URL (`d=<target id>` and the target's
   options under the `d.` prefix), so a reload keeps it; a copied link never
   holds it. A target the reader may not view gives plain figures.
+- A detail row's record (`detail.open`) can open beside the report in the
+  same 480 px panel. Declare the panel in the manifest:
+  `reportPanels: [{ path: 'history', component: 'components/history/RecordHistoryPanel' }]`.
+  A row whose `open` is `<slug>/<path>/` and at least one more segment opens
+  in the panel when the window is 1360 px or wider and the screen hosts a
+  panel; the component gets `ReportPanelProps` (`{ segments }`: the segments
+  after `<slug>/<path>/`) and names the record with `usePanelTitle(title)`
+  (both from `@tinycld/core/reports/hooks/usePanelTitle`; outside the panel
+  the hook does nothing). Below 1360 px, and on a phone, the row pushes the
+  path as before, so the package also serves the path as a screen, usually
+  with the same component. The panel's header has **Open as full screen**
+  (pushes the path), ✕ and Escape. Its state is in the source's URL
+  (`dr=<app path>`), so a reload keeps it; a copied link never holds it. A
+  drill and a record share the side: opening one closes the other, and
+  Customize closes both. The pressed row is marked (`aria-selected`).
 - A shipped report cannot be deleted while the package ships it. The
   server answers "This report ships with a package. An admin who owns or
   edits it can unpublish it instead." Only an admin with update access (the
