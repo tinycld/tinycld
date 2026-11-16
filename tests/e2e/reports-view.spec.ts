@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, test } from '@playwright/test'
 import { createInvitedUser, loginAs, skipWithoutReportsStub } from './helpers'
+import { toolbarHasMore } from './report-view-helpers'
 import {
     addColumn,
     addSale,
@@ -448,6 +449,22 @@ test.describe('the report view', () => {
             release()
             await p.unrouteAll({ behavior: 'wait' })
             await expect(sheetSlot.getByTestId('report-updating')).toHaveCount(0)
+
+            // A report being edited offers no Export. A phone folds Export out of the
+            // row, so check at a desktop width, where the builder sits beside the report
+            // and the row has room: no Export button, and no export rows under "⋯".
+            await p.setViewportSize({ width: 1280, height: 720 })
+            await expect(sheet).toHaveAttribute('role', 'complementary')
+            await expect(p.getByTestId('report-fold-all')).toBeVisible()
+            await expect(p.getByTestId('report-export-open')).toHaveCount(0)
+            if (await toolbarHasMore(p)) {
+                await p.getByTestId('toolbar-more-button').click()
+                await expect(p.getByRole('menuitem').first()).toBeVisible()
+                await expect(p.getByTestId('report-export-pdf')).toHaveCount(0)
+                await expect(p.getByTestId('report-export-xlsx')).toHaveCount(0)
+                await expect(p.getByTestId('report-export-csv')).toHaveCount(0)
+                await p.keyboard.press('Escape')
+            }
             await p.getByTestId('report-builder-close').click()
             await p.getByText('Discard', { exact: true }).click()
             await expect(sheet).toBeHidden()

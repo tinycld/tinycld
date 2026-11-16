@@ -65,6 +65,7 @@ export function ReportHeader({
     actions,
     isUpdating = false,
     isUpdatingLive = true,
+    busyLabel,
 }: {
     title: string
     onBack: () => void
@@ -74,12 +75,14 @@ export function ReportHeader({
     isUpdating?: boolean
     /** False while another surface (the builder over the view) shows "Updating…". */
     isUpdatingLive?: boolean
+    /** Work of the reader's own in progress ("Preparing…"), shown in place of "Updating…". */
+    busyLabel?: string
 }) {
     return (
         <View className="gap-1 px-4 pt-2">
             <View className="flex-row items-center justify-between gap-2">
                 <ReportBackLink label={backLabel} onBack={onBack} />
-                <ReportUpdating isUpdating={isUpdating} isLive={isUpdatingLive} />
+                <ReportUpdating isUpdating={isUpdating} isLive={isUpdatingLive} label={busyLabel} />
             </View>
             <ResponsiveToolbar items={headerItems(title, actions)} className="" />
         </View>

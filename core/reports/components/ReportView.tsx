@@ -6,6 +6,7 @@ import type { ReportViewModel } from '../hooks/useReportView'
 import type { RowDrill } from '../hooks/useRowLinks'
 import { shownRunKey, type TableLayout, useTableLayout } from '../hooks/useTableLayout'
 import { layoutNoticeOf } from '../lib/notices'
+import { exportToolbarItem } from './export/ReportExportMenu'
 import { ReportControls } from './ReportControls'
 import { ReportCustomizePanel } from './ReportCustomizePanel'
 import { ReportDocumentHeader } from './ReportDocumentHeader'
@@ -61,6 +62,7 @@ function toolbarItems(model: ReportViewModel): ToolbarItem[] {
     if (model.onCopyLink) {
         items.push(toolbarButton('copy-link', 'Copy link', 'report-copy-link', model.onCopyLink))
     }
+    if (model.export) items.push(exportToolbarItem(model.export))
     return items
 }
 
@@ -199,6 +201,8 @@ interface ReportTopProps {
 
 // Everything above the rows: the header, the chips, the notices and the document header.
 function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTopProps) {
+    // The status slot says so at every width, also when Export is folded into "⋯" (D3).
+    const busyLabel = model.export?.isPreparing ? 'Preparing…' : undefined
     return (
         <>
             <ReportHeader
@@ -208,6 +212,7 @@ function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTo
                 actions={toolbarItems(model)}
                 isUpdating={model.isUpdating}
                 isUpdatingLive={!model.isUpdatingInBuilder}
+                busyLabel={busyLabel}
             />
             <ReportControls model={model} isSortMenuShown={isSortMenuShown} />
             <ReportNotices
