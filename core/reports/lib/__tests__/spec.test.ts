@@ -144,6 +144,33 @@ describe('parseSpec', () => {
         }
     })
 
+    // R1 and R2: groups[].inline and groups[].muted are conditions on the group's
+    // level, at version 4.
+    it('reads a group with inline and muted and keeps both', () => {
+        const inline = {
+            op: 'eq',
+            args: [{ op: 'count', args: [{ path: [{ field: 'id' }] }] }, { value: 1 }],
+        }
+        const muted = { op: 'not', args: [{ record: 'a', path: [{ field: 'active' }] }] }
+        const spec = {
+            ...FEEDINGS,
+            columns: [...FEEDINGS.columns, { id: 'animal', path: [{ link: 'animal' }] }],
+            groups: [
+                { id: 'g', col: 'species', subtotals: true, open: true, inline },
+                { id: 'a', col: 'animal', muted },
+            ],
+        }
+        const parsed = parseSpec(spec)
+        expect(parsed).toEqual(spec)
+        expect(parsed?.groups?.[0]?.inline).toEqual(inline)
+        expect(parsed?.groups?.[1]?.muted).toEqual(muted)
+        expect(parseSpec(FEEDINGS)?.groups?.[0]).toEqual({
+            id: 'g',
+            col: 'species',
+            subtotals: true,
+        })
+    })
+
     it('refuses a spec from a newer version of the app as unreadable', () => {
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION })).not.toBeNull()
         expect(parseSpec({ ...FEEDINGS, version: CURRENT_SPEC_VERSION + 1 })).toBeNull()

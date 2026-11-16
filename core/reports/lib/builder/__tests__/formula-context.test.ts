@@ -68,6 +68,8 @@ function draft(): BuilderDraft {
                 open: false,
                 label: null,
                 having: emptyGroup(),
+                inline: emptyGroup(),
+                muted: emptyGroup(),
                 fill: { on: false, where: emptyGroup() },
             },
         ],
@@ -110,6 +112,8 @@ function levelsDraft(): BuilderDraft {
         open: false,
         label: null,
         having: emptyGroup(),
+        inline: emptyGroup(),
+        muted: emptyGroup(),
         fill: { on: false, where: emptyGroup() },
     })
     return {
@@ -396,6 +400,8 @@ describe('the record a column points at', () => {
         open: false,
         label: null,
         having: emptyGroup(),
+        inline: emptyGroup(),
+        muted: emptyGroup(),
         fill: { on: false, where: emptyGroup() },
     })
     function targets(): BuilderDraft {

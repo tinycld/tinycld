@@ -77,6 +77,8 @@ func (b *binder) lookups(p *plan) {
 			walk(g.Fill.Where, fmt.Sprintf("groups.%d.fill.where", i))
 		}
 		walk(g.Having, fmt.Sprintf("groups.%d.having", i))
+		walk(g.Inline, fmt.Sprintf("groups.%d.inline", i))
+		walk(g.Muted, fmt.Sprintf("groups.%d.muted", i))
 		if g.Opening != nil {
 			for _, id := range g.Opening.cellIDs() {
 				walk(g.Opening.Cells[id], fmt.Sprintf("groups.%d.opening.cells.%s", i, id))

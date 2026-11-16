@@ -299,6 +299,8 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	for _, g := range c.p.groups {
 		r.formulaCurrencies(g.group.Label)
 		r.formulaCurrencies(g.group.Having)
+		r.formulaCurrencies(g.group.Inline)
+		r.formulaCurrencies(g.group.Muted)
 	}
 	for _, s := range c.p.sort {
 		r.formulaCurrencies(s.formula)
@@ -396,6 +398,8 @@ func (r *rowsCTE) valueCurrencies() {
 	for _, g := range r.c.p.groups {
 		walk(g.group.Label, g.at+".label", false)
 		walk(g.group.Having, g.at+".having", false)
+		walk(g.group.Inline, g.at+".inline", false)
+		walk(g.group.Muted, g.at+".muted", false)
 	}
 	for _, s := range r.c.p.sort {
 		walk(s.formula, s.at, false)
