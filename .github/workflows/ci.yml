@@ -202,9 +202,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 2
+      # This job installs nothing. Without the switch, setup-node reads
+      # `packageManager` from package.json and fails to find pnpm for its cache.
       - uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
+          package-manager-cache: false
       - name: Select specs
         id: select
         env:
