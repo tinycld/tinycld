@@ -187,6 +187,57 @@ describe('Menu (web)', () => {
         expect(onOpenChange).toHaveBeenLastCalledWith(false)
     })
 
+    it('draws a description under the label, also on a disabled row, and typeahead reads the label', () => {
+        const { container, getByTestId } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} presentation="popover">
+                <Menu.Item label="Download PDF" onSelect={() => {}} testID="pdf" />
+                <Menu.Item
+                    label="Email report…"
+                    description="Email sending is not set up"
+                    onSelect={() => {}}
+                    isDisabled
+                    testID="email"
+                />
+                <Menu.Item
+                    label="Share"
+                    description="Anyone with the link"
+                    onSelect={() => {}}
+                    testID="share"
+                />
+            </Menu>
+        )
+        const email = getByTestId('email')
+        const emailNote = email.querySelector('[testid="email-description"]')
+        expect(emailNote?.textContent).toBe('Email sending is not set up')
+        expect(email.getAttribute('aria-disabled')).toBe('true')
+
+        const share = getByTestId('share')
+        const shareNote = share.querySelector('[testid="share-description"]')
+        expect(shareNote?.textContent).toBe('Anyone with the link')
+        // The description is a line of its own under the label, not appended to it.
+        const label = Array.from(share.querySelectorAll('*')).find(
+            el => el.textContent === 'Share' && el.children.length === 0
+        )
+        expect(label).toBeTruthy()
+        expect(
+            (label as Element).compareDocumentPosition(shareNote as Element) &
+                Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy()
+
+        // A row without a description draws none.
+        expect(container.querySelector('[testid="pdf-description"]')).toBeNull()
+
+        // Typeahead matches the label: "s" finds Share, "a" (its description) finds nothing.
+        const surface = container.querySelector<HTMLElement>('[role="menu"]')
+        if (!surface) throw new Error('no surface')
+        const focused = () => document.activeElement?.getAttribute('data-testid')
+        expect(focused()).toBe('pdf')
+        fireEvent.keyDown(surface, { key: 'a' })
+        expect(focused()).toBe('pdf')
+        fireEvent.keyDown(surface, { key: 's' })
+        expect(focused()).toBe('share')
+    })
+
     it('renders a checkbox row that toggles without closing', () => {
         const onToggle = vi.fn()
         const { getByText, queryByText } = render(
@@ -354,6 +405,27 @@ describe('Menu (phone)', () => {
         expect(sheet.contains(getByText('Delete'))).toBe(true)
         fireEvent.click(getByText('Rename'))
         expect(onSelect).toHaveBeenCalledTimes(1)
+    })
+
+    it('draws a row’s description under its label in the sheet', () => {
+        const { container, getByText } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} testID="sheet">
+                <Menu.Item
+                    label="Email report…"
+                    description="Email sending is not set up"
+                    onSelect={() => {}}
+                    isDisabled
+                    testID="email"
+                />
+            </Menu>
+        )
+        const sheet = sheetOf(container)
+        const note = sheet.querySelector('[testid="email-description"]')
+        expect(note?.textContent).toBe('Email sending is not set up')
+        const label = getByText('Email report…')
+        expect(
+            label.compareDocumentPosition(note as Element) & Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy()
     })
 
     it('rests on the bottom edge for a trigger low on the screen', () => {

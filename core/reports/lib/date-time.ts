@@ -51,6 +51,11 @@ export function readerTimeZone(): string {
     return readDeviceClock().timeZone
 }
 
+/** Whether the reader's clock is 12-hour, as the view's date-time cells show it. */
+export function readerHour12(): boolean {
+    return readDeviceClock().hour12
+}
+
 function isKnownZone(timeZone: string): boolean {
     try {
         new Intl.DateTimeFormat('en-US', { timeZone })

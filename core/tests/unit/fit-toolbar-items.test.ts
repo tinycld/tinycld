@@ -1,5 +1,6 @@
 import {
     fitToolbarItems,
+    isCollapsible,
     keyToolbarItems,
     type ToolbarItem,
 } from '@tinycld/core/components/toolbar/fit-toolbar-items'
@@ -22,6 +23,13 @@ const foldable = (key: string): ToolbarItem => ({
     key,
     element: null,
     overflow: { label: key, onPress: () => {} },
+})
+// The item's own menu rows, listed in "⋯" in place of the item.
+const withRows = (key: string): ToolbarItem => ({
+    type: 'custom',
+    key,
+    element: null,
+    overflow: { rows: null },
 })
 const hidden = (key: string): ToolbarItem => ({
     type: 'custom',
@@ -180,5 +188,20 @@ describe('fitToolbarItems', () => {
         const result = solve([btn('a'), hidden('h'), foldable('f')], 80)
         expect(result.visible).toEqual(['a'])
         expect(result.overflow).toEqual(['f'])
+    })
+
+    it('folds a custom item that lists its own rows, as the other overflow forms do', () => {
+        expect(isCollapsible(withRows('export'))).toBe(true)
+        expect(solve([btn('a'), withRows('export')], 120)).toEqual({
+            visible: ['a', 'export'],
+            overflow: [],
+            showMore: false,
+        })
+        // 78 cannot hold both (80); the rows item is last, so it folds first.
+        expect(solve([btn('a'), withRows('export')], 78)).toEqual({
+            visible: ['a'],
+            overflow: ['export'],
+            showMore: true,
+        })
     })
 })

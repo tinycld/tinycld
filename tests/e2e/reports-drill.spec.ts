@@ -289,6 +289,9 @@ test.describe('reports: drill', () => {
         ]) {
             await expect(panel.getByTestId(id)).toHaveCount(0)
         }
+        // The drill panel has no Export; the report beside it has its one.
+        await expect(panel.getByTestId('report-export-open')).toHaveCount(0)
+        await expect(page.getByTestId('report-export-open')).toHaveCount(1)
         await expect(panel.getByTestId('report-param-teams')).toHaveText(`Teams: ${ann}`)
 
         // The panel's Sort chip sorts the panel's rows only.

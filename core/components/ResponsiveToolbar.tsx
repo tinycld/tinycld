@@ -359,6 +359,7 @@ function OverflowItem({ item }: { item: ToolbarItem }) {
 
 function CustomOverflowItem({ overflow }: { overflow: ToolbarOverflow | undefined }) {
     if (overflow === undefined || overflow === 'hide') return null
+    if ('rows' in overflow) return <>{overflow.rows}</>
     if ('children' in overflow) {
         return (
             <Menu.Sub label={overflow.label} icon={overflow.icon} isDisabled={overflow.isDisabled}>

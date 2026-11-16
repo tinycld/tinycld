@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test'
+import { type Download, expect, type Locator, type Page } from '@playwright/test'
 import { inStatement, navigateToPackage } from './helpers.ts'
 
 // Helpers for any spec that drives the reports hub and core's report view: they
@@ -38,12 +38,12 @@ function isInFittedRow(locator: Locator): Promise<boolean> {
 }
 
 /**
- * A toolbar action, folded into "More actions" when the row is narrow. The toolbar
- * draws after the report loads, and after a width change it refits its items
- * (until then they can run past the row's edge), so wait for a fitted row before
- * choosing a branch.
+ * Where a toolbar action is: its own button in the fitted row, or folded into
+ * "More actions". The toolbar draws after the report loads, and after a width
+ * change it refits its items (until then they can run past the row's edge), so
+ * wait for a fitted row before choosing a branch.
  */
-export async function pressToolbar(page: Page, testId: string, label: string) {
+async function toolbarBranch(page: Page, testId: string): Promise<'button' | 'more'> {
     const button = page.getByTestId(testId)
     const more = page.getByTestId('toolbar-more-button')
     // The branch is the one the poll accepted: asking again could see a refit.
@@ -55,11 +55,57 @@ export async function pressToolbar(page: Page, testId: string, label: string) {
         return found.branch
     }
     await expect.poll(fitted).not.toBeNull()
-    if (found.branch === 'button') await button.click()
+    return found.branch === 'button' ? 'button' : 'more'
+}
+
+/**
+ * Whether the fitted toolbar row shows "More actions". As `toolbarBranch`, it
+ * waits for a fitted row first, so a row still refitting after a width change
+ * is never read.
+ */
+export async function toolbarHasMore(page: Page): Promise<boolean> {
+    const more = page.getByTestId('toolbar-more-button')
+    const items = page.locator('[data-testid="toolbar-row"] [data-testid^="toolbar-item-"]')
+    // The answer is the one the poll accepted: asking again could see a refit.
+    const found: { hasMore: boolean | null } = { hasMore: null }
+    const fitted = async () => {
+        if (await isInFittedRow(more)) found.hasMore = true
+        else if ((await more.count()) === 0 && (await isInFittedRow(items))) found.hasMore = false
+        else found.hasMore = null
+        return found.hasMore
+    }
+    await expect.poll(fitted).not.toBeNull()
+    return found.hasMore === true
+}
+
+/** A toolbar action, folded into "More actions" when the row is narrow. */
+export async function pressToolbar(page: Page, testId: string, label: string) {
+    if ((await toolbarBranch(page, testId)) === 'button') await page.getByTestId(testId).click()
     else {
-        await more.click()
+        await page.getByTestId('toolbar-more-button').click()
         await page.getByRole('menuitem', { name: label }).click()
     }
+}
+
+export type ReportExportFormat = 'pdf' | 'xlsx' | 'csv'
+
+/**
+ * Opens the menu that holds the export rows: the Export button's own menu when it
+ * is in the fitted row, else "More actions", where the rows are entries of their own.
+ */
+export async function openExportMenu(page: Page) {
+    const branch = await toolbarBranch(page, 'report-export-open')
+    await page
+        .getByTestId(branch === 'button' ? 'report-export-open' : 'toolbar-more-button')
+        .click()
+}
+
+/** Downloads the report in `format` through the export menu, and returns the download. */
+export async function downloadReport(page: Page, format: ReportExportFormat): Promise<Download> {
+    await openExportMenu(page)
+    const download = page.waitForEvent('download')
+    await page.getByTestId(`report-export-${format}`).click()
+    return download
 }
 
 // The report's own table, or the table inside `scope` (the drill panel).

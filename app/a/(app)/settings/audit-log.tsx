@@ -39,6 +39,8 @@ const ACTION_OPTIONS = [
     { label: 'Account removed, data deleted', value: 'account_offboard.delete_data' },
     { label: 'Account removed, data reassigned', value: 'account_offboard.reassign' },
     { label: 'Account removed, data kept', value: 'account_offboard.keep' },
+    { label: 'Report downloaded', value: 'report.export' },
+    { label: 'Report emailed', value: 'report.email' },
 ] as const
 
 const RESOURCE_TYPE_OPTIONS = [
@@ -85,6 +87,8 @@ const ACTION_BADGE_CLASS = {
     'account_offboard.delete_data': 'bg-danger-soft',
     'account_offboard.reassign': 'bg-accent',
     'account_offboard.keep': 'bg-accent',
+    'report.export': 'bg-accent',
+    'report.email': 'bg-accent',
 } as const
 const ACTION_TEXT_CLASS = {
     created: 'text-success-soft-foreground',
@@ -105,6 +109,8 @@ const ACTION_TEXT_CLASS = {
     'account_offboard.delete_data': 'text-danger-soft-foreground',
     'account_offboard.reassign': 'text-accent-foreground',
     'account_offboard.keep': 'text-accent-foreground',
+    'report.export': 'text-accent-foreground',
+    'report.email': 'text-accent-foreground',
 } as const
 
 type AuditAction = keyof typeof ACTION_BADGE_CLASS

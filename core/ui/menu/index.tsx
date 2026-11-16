@@ -188,6 +188,8 @@ function isEditable(target: EventTarget | null): boolean {
 
 export interface MenuItemProps {
     label: string
+    /** A second, muted line under the label (why a row is disabled, what it does). */
+    description?: string
     icon?: LucideIcon
     /** Any leading node; takes precedence over `icon` and `colorDot`. */
     leading?: ReactNode
@@ -209,6 +211,7 @@ export interface MenuItemProps {
 
 function MenuItem({
     label,
+    description,
     icon,
     leading,
     colorDot,
@@ -234,6 +237,7 @@ function MenuItem({
         <MenuRow
             role="menuitem"
             label={label}
+            description={description}
             leading={<RowLeading icon={icon} leading={leading} colorDot={colorDot} />}
             trailing={<RowTrailing shortcut={shortcut} isChecked={isSelected} />}
             onActivate={select}
@@ -342,6 +346,7 @@ interface MenuRowProps {
     role: 'menuitem' | 'menuitemcheckbox'
     isChecked?: boolean
     label: string
+    description?: string
     leading?: ReactNode
     trailing?: ReactNode
     onActivate: () => void
@@ -375,6 +380,70 @@ function RowIndent({ indent, gap }: { indent?: number; gap: number }) {
     return <View style={{ width: indent * INDENT_STEP, marginRight: -gap }} />
 }
 
+// A disabled row dims its label, icon and trailing mark. Its description stays at
+// full strength: it says why the row is disabled, and dimmed muted text is
+// unreadable (worst in dark mode).
+const DISABLED_CLASS = 'opacity-40'
+
+/** The row's leading or trailing node, dimmed when the row is disabled. */
+function RowPart({
+    isDisabled,
+    isTrailing = false,
+    children,
+}: {
+    isDisabled: boolean
+    /** The wrapper takes the trailing node's push to the row's end. */
+    isTrailing?: boolean
+    children: ReactNode
+}) {
+    if (!isDisabled || !children) return <>{children}</>
+    const style = isTrailing ? TRAILING_STYLE : undefined
+    return (
+        <View className={`${DISABLED_CLASS} flex-row items-center`} style={style}>
+            {children}
+        </View>
+    )
+}
+
+/**
+ * The row's label, and under it the muted description when there is one. A
+ * row without a description draws the label alone, as it always has.
+ */
+function RowLabel({
+    label,
+    description,
+    textClass,
+    isDisabled,
+    testID,
+}: {
+    label: string
+    description?: string
+    textClass: string
+    isDisabled: boolean
+    testID?: string
+}) {
+    const labelClass = isDisabled ? `${textClass} ${DISABLED_CLASS}` : textClass
+    const labelText = (
+        <Text className={labelClass} numberOfLines={1}>
+            {label}
+        </Text>
+    )
+    if (!description) return labelText
+    const descriptionTestID = testID ? `${testID}-description` : undefined
+    return (
+        <View className="flex-shrink min-w-0">
+            {labelText}
+            <Text
+                className="text-xs text-muted-foreground"
+                numberOfLines={1}
+                testID={descriptionTestID}
+            >
+                {description}
+            </Text>
+        </View>
+    )
+}
+
 /**
  * One row, in whichever presentation the surface has. On web a `div` (or an
  * `a` with `href`) with a menu role: RN's Pressable renders a bare div with
@@ -389,6 +458,7 @@ function MenuRow({
     role,
     isChecked,
     label,
+    description,
     leading,
     trailing,
     onActivate,
@@ -411,16 +481,22 @@ function MenuRow({
         isDestructive ? 'text-danger' : 'text-foreground'
     }`
     const rowClass = `${isSheet ? SHEET_ROW_CLASS : ROW_CLASS} ${
-        isDisabled ? 'opacity-40' : 'hover:bg-accent focus:bg-accent'
+        isDisabled ? '' : 'hover:bg-accent focus:bg-accent'
     } web:outline-none web:cursor-pointer`
     const content = (
         <>
             <RowIndent indent={indent} gap={isSheet ? SHEET_ROW_GAP : ROW_GAP} />
-            {leading}
-            <Text className={textClass} numberOfLines={1}>
-                {label}
-            </Text>
-            {trailing}
+            <RowPart isDisabled={isDisabled}>{leading}</RowPart>
+            <RowLabel
+                label={label}
+                description={description}
+                textClass={textClass}
+                isDisabled={isDisabled}
+                testID={testID}
+            />
+            <RowPart isDisabled={isDisabled} isTrailing>
+                {trailing}
+            </RowPart>
         </>
     )
 

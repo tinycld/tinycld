@@ -95,16 +95,17 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 	if err != nil {
 		return nil, err
 	}
+	limit := rn.rowCap()
 	body := fmt.Sprintf("SELECT %s\n%s\nWHERE %s IN %s\nORDER BY __parent, %s LIMIT %s",
 		strings.Join(sel, ", "), sc.render(), back, ids,
-		strings.Join(append(order, "__id"), ", "), limitSQL(int64(runLimits.rowCap+1)))
+		strings.Join(append(order, "__id"), ", "), limitSQL(int64(limit+1)))
 	rows, err := rn.query(s, nil, body)
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) > runLimits.rowCap {
-		rows = rows[:runLimits.rowCap]
-		rn.noticeOnce(Notice{Code: "nestCap", Message: fmt.Sprintf("The report shows the first %d child rows.", runLimits.rowCap), Count: runLimits.rowCap})
+	if len(rows) > limit {
+		rows = rows[:limit]
+		rn.noticeOnce(Notice{Code: "nestCap", Message: fmt.Sprintf("The report shows the first %d child rows.", limit), Count: limit})
 	}
 	return rows, nil
 }

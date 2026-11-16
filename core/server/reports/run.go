@@ -72,6 +72,10 @@ type Request struct {
 	// Headers are the request's headers as a rule's @request.headers sees
 	// them.
 	Headers map[string]string
+	// RowCap is the most rows a pivot, nest or layout run reads before it
+	// stops with a rowCap or nestCap notice.
+	// 0: the default cap. Only the export read sets it; the run endpoint never does.
+	RowCap int
 }
 
 // Result is the run's answer, in the shell's ReportModel row shape.
@@ -264,6 +268,9 @@ type runner struct {
 	expand *expansion
 	res    *Result
 	topics map[string]bool
+	// askedRowCap is the request's RowCap (0: runLimits.rowCap); read it
+	// through rowCap.
+	askedRowCap int
 	// openDropped is set once a detail row's open value was dropped, so a run
 	// logs a bad open path once, not once per row.
 	openDropped bool
@@ -349,7 +356,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	// No expansion state: the levels marked open expand (openLevels).
 	openLevels(p, req.Options, expand)
 	rn := &runner{
-		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand,
+		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
 		topics: map[string]bool{}, ruleTopics: map[string][]string{},
 	}
@@ -430,9 +437,19 @@ func (rn *runner) noticeOnce(n Notice) {
 	}
 }
 
+// rowCap is the most rows a pivot, nest or layout pass reads: the request's
+// RowCap when it is set, else runLimits.rowCap.
+func (rn *runner) rowCap() int {
+	if rn.askedRowCap > 0 {
+		return rn.askedRowCap
+	}
+	return runLimits.rowCap
+}
+
 // rowCapNotice says the row cap applied.
-func rowCapNotice() Notice {
-	return Notice{Code: "rowCap", Message: fmt.Sprintf("The report shows its first %d rows.", runLimits.rowCap), Count: runLimits.rowCap}
+func (rn *runner) rowCapNotice() Notice {
+	limit := rn.rowCap()
+	return Notice{Code: "rowCap", Message: fmt.Sprintf("The report shows its first %d rows.", limit), Count: limit}
 }
 
 func (rn *runner) run() error {
@@ -633,7 +650,7 @@ func (rn *runner) groupPass() ([]map[string]any, error) {
 		c.probe("filter", "SELECT 1 "+r.root.render()+"\nWHERE "+r.filterMixed)
 	}
 	r.probeWheres()
-	ctes, body, err := c.groupStatement(s, r, rn.expand, pivot, int64(runLimits.rowCap+1))
+	ctes, body, err := c.groupStatement(s, r, rn.expand, pivot, int64(rn.rowCap()+1))
 	if err != nil {
 		return nil, err
 	}
@@ -1095,13 +1112,14 @@ func (rn *runner) capLevelRows(rows []map[string]any) []map[string]any {
 			levels++
 		}
 	}
-	if levels <= runLimits.rowCap {
+	limit := rn.rowCap()
+	if levels <= limit {
 		return rows
 	}
-	rn.noticeOnce(rowCapNotice())
+	rn.noticeOnce(rn.rowCapNotice())
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		if row["__row"] != nil || len(out) < runLimits.rowCap {
+		if row["__row"] != nil || len(out) < limit {
 			out = append(out, row)
 		} else if toInt(row["__level"]) <= 1 {
 			rn.sectionsCapped = true
