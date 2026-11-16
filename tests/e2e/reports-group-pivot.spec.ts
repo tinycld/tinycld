@@ -1,42 +1,36 @@
-import { expect, type Locator, type Page, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import type { Locator, Page } from '@playwright/test'
+import { skipWithoutReportsStub } from './helpers'
+import { expect, shareMember, test } from './member-fixtures'
 import {
     addColumn,
-    addSale,
-    addTeam,
     cellOf,
     chooseOption,
-    openReportStub,
     openReportsHub,
     rowOf,
     SALES_SOURCE,
     saveNewReport,
+    seedStub,
     startReport,
     uniqueName,
 } from './reports-helpers'
 
 /**
  * Group levels with subtotals, folding on the report view, and a pivot, against
- * the salesstub package. A fresh invited member owns every sale the report reads.
+ * the salesstub package. The file's shared member owns the three sales every test
+ * but one reads; no test adds a sale to them. The pivot by team has its own member,
+ * because its columns are the teams.
  */
-async function seedSales(page: Page, label: string) {
-    const invited = await createInvitedUser(page, label)
-    const p = invited.inviteePage
+shareMember('rptgroup', async p => {
     const team = uniqueName('Team')
-    await openReportStub(p)
-    await addTeam(p, team)
-    await addSale(p, { team, customer: 'Alpha', amount: 1000, cost: 0, day: '2026-01-10' })
-    await addSale(p, { team, customer: 'Beta', amount: 2000, cost: 0, day: '2026-02-10' })
-    await addSale(p, {
-        team,
-        customer: 'Gamma',
-        amount: 5000,
-        cost: 0,
-        day: '2026-01-20',
-        status: 'paid',
+    await seedStub(p, {
+        teams: [{ name: team }],
+        sales: [
+            { team, customer: 'Alpha', amount: 1000, cost: 0, day: '2026-01-10' },
+            { team, customer: 'Beta', amount: 2000, cost: 0, day: '2026-02-10' },
+            { team, customer: 'Gamma', amount: 5000, cost: 0, day: '2026-01-20', status: 'paid' },
+        ],
     })
-    return { p, close: invited.close }
-}
+})
 
 // Columns customer (the draft's first), status and a summed amount; one group
 // level on status.
@@ -73,152 +67,121 @@ async function expectMonthPivot(p: Page) {
 test.describe('grouping and pivoting a report', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
-    test('a group level with subtotals opens and closes on the report view', async ({ page }) => {
-        const { p, close } = await seedSales(page, 'rptgroup')
-        try {
-            await openReportsHub(p)
-            await groupByStatus(p)
-            await saveNewReport(p, uniqueName('By status'))
-            const table = p.getByTestId('report-table')
-            // A closed group shows its figures.
-            await expect(await cellOf(p, 'amount', 'Open')).toHaveText('30.00')
-            await expect(p.getByTestId('report-fold-all')).toHaveText('Expand all')
+    test('a group level with subtotals opens and closes on the report view', async ({ p }) => {
+        await openReportsHub(p)
+        await groupByStatus(p)
+        await saveNewReport(p, uniqueName('By status'))
+        const table = p.getByTestId('report-table')
+        // A closed group shows its figures.
+        await expect(await cellOf(p, 'amount', 'Open')).toHaveText('30.00')
+        await expect(p.getByTestId('report-fold-all')).toHaveText('Expand all')
 
-            await rowOf(p, 'Open').click()
-            await expect(table.getByText('Alpha', { exact: true })).toBeVisible()
-            await expect(await cellOf(p, 'amount', 'Total Open')).toHaveText('$30.00')
-            // An open group with a subtotal row shows no figures of its own: it draws
-            // no cells, and its label spans the row (F10).
-            await expect(await cellOf(p, 'amount', 'Open')).toHaveCount(0)
-            await expect(await cellOf(p, 'status', 'Open')).toHaveCount(0)
-            const width = async (locator: Locator) => (await locator.boundingBox())?.width ?? 0
-            const headings = ['customer', 'status', 'amount'].map(id =>
-                width(p.getByTestId(`report-heading-${id}`))
-            )
-            const rowWidth = (await Promise.all(headings)).reduce((sum, w) => sum + w, 0)
-            expect(await width(rowOf(p, 'Open'))).toBeGreaterThanOrEqual(rowWidth - 2)
-            await expect(p.getByTestId('report-fold-all')).toHaveText('Collapse all')
+        await rowOf(p, 'Open').click()
+        await expect(table.getByText('Alpha', { exact: true })).toBeVisible()
+        await expect(await cellOf(p, 'amount', 'Total Open')).toHaveText('$30.00')
+        // An open group with a subtotal row shows no figures of its own: it draws
+        // no cells, and its label spans the row (F10).
+        await expect(await cellOf(p, 'amount', 'Open')).toHaveCount(0)
+        await expect(await cellOf(p, 'status', 'Open')).toHaveCount(0)
+        const width = async (locator: Locator) => (await locator.boundingBox())?.width ?? 0
+        const headings = ['customer', 'status', 'amount'].map(id =>
+            width(p.getByTestId(`report-heading-${id}`))
+        )
+        const rowWidth = (await Promise.all(headings)).reduce((sum, w) => sum + w, 0)
+        expect(await width(rowOf(p, 'Open'))).toBeGreaterThanOrEqual(rowWidth - 2)
+        await expect(p.getByTestId('report-fold-all')).toHaveText('Collapse all')
 
-            await p.getByTestId('report-fold-all').click()
-            await expect(table.getByText('Alpha', { exact: true })).toHaveCount(0)
-            await p.getByTestId('report-fold-all').click()
-            await expect(table.getByText('Gamma', { exact: true })).toBeVisible()
-        } finally {
-            await close()
-        }
+        await p.getByTestId('report-fold-all').click()
+        await expect(table.getByText('Alpha', { exact: true })).toHaveCount(0)
+        await p.getByTestId('report-fold-all').click()
+        await expect(table.getByText('Gamma', { exact: true })).toBeVisible()
     })
 
     test('a sort orders the rows, and a group without subtotals keeps its figures', async ({
-        page,
+        p,
     }) => {
-        const { p, close } = await seedSales(page, 'rptsort')
-        try {
-            await openReportsHub(p)
-            await startReport(p, SALES_SOURCE)
-            await addColumn(p, ['status'])
-            await addColumn(p, ['amount'])
-            await chooseOption(p, 'report-builder-column-2-aggregate', 'sum')
-            await p.getByTestId('report-builder-section-group').click()
-            await chooseOption(p, 'report-builder-sort-add-menu', 'customer')
-            await chooseOption(p, 'report-builder-sort-0-col', 'amount')
-            await p
-                .getByTestId('report-builder-sort-0')
-                .getByRole('radio', { name: 'Z to A', exact: true })
-                .click()
-            const rows = p.getByTestId('report-table').locator('[data-testid^="report-row-"]')
-            await expect(rows).toHaveText(['Gamma', 'Beta', 'Alpha', 'Total'])
+        await openReportsHub(p)
+        await startReport(p, SALES_SOURCE)
+        await addColumn(p, ['status'])
+        await addColumn(p, ['amount'])
+        await chooseOption(p, 'report-builder-column-2-aggregate', 'sum')
+        await p.getByTestId('report-builder-section-group').click()
+        await chooseOption(p, 'report-builder-sort-add-menu', 'customer')
+        await chooseOption(p, 'report-builder-sort-0-col', 'amount')
+        await p
+            .getByTestId('report-builder-sort-0')
+            .getByRole('radio', { name: 'Z to A', exact: true })
+            .click()
+        const rows = p.getByTestId('report-table').locator('[data-testid^="report-row-"]')
+        await expect(rows).toHaveText(['Gamma', 'Beta', 'Alpha', 'Total'])
 
-            await p.getByTestId('report-builder-group-add').click()
-            await chooseOption(p, 'report-builder-group-0-col', 'status')
-            await p.getByTestId('report-builder-group-0-subtotals').click()
-            await rowOf(p, 'Open').click()
-            // The sort orders the groups too; an open group's rows follow it.
-            await expect(rows).toHaveText(['Paid', 'Open', 'Beta', 'Alpha', 'Total'])
-            await expect(await cellOf(p, 'amount', 'Open')).toHaveText('30.00')
+        await p.getByTestId('report-builder-group-add').click()
+        await chooseOption(p, 'report-builder-group-0-col', 'status')
+        await p.getByTestId('report-builder-group-0-subtotals').click()
+        await rowOf(p, 'Open').click()
+        // The sort orders the groups too; an open group's rows follow it.
+        await expect(rows).toHaveText(['Paid', 'Open', 'Beta', 'Alpha', 'Total'])
+        await expect(await cellOf(p, 'amount', 'Open')).toHaveText('30.00')
 
-            await p.getByTestId('report-builder-sort-0-remove').click()
-            await expect(p.getByTestId('report-builder-sort-0')).toHaveCount(0)
-            await p.getByTestId('report-builder-group-0-remove').click()
-            await expect(rows).toHaveCount(4)
-        } finally {
-            await close()
-        }
+        await p.getByTestId('report-builder-sort-0-remove').click()
+        await expect(p.getByTestId('report-builder-sort-0')).toHaveCount(0)
+        await p.getByTestId('report-builder-group-0-remove').click()
+        await expect(rows).toHaveCount(4)
     })
 
-    test('a pivot splits the total by month', async ({ page }) => {
-        const { p, close } = await seedSales(page, 'rptpivot')
-        try {
-            await openReportsHub(p)
-            await groupByStatus(p)
-            await pivotByMonth(p)
-            await expectMonthPivot(p)
-        } finally {
-            await close()
-        }
+    test('a pivot splits the total by month', async ({ p }) => {
+        await openReportsHub(p)
+        await groupByStatus(p)
+        await pivotByMonth(p)
+        await expectMonthPivot(p)
     })
 
     // pivot.go: a pivot over a link names its columns by the records' label field,
     // which "Show as" picks.
     test('a pivot by a linked team names its columns by the team, or by another field', async ({
-        page,
+        freshMember,
     }) => {
-        const { inviteePage: p, close } = await createInvitedUser(page, 'rptpivotrec')
-        try {
-            const stem = uniqueName('PvT')
-            await openReportStub(p)
-            await addTeam(p, `${stem} A`, 'north')
-            await addTeam(p, `${stem} B`, 'south')
-            await addSale(p, {
-                team: `${stem} A`,
-                customer: 'Alpha',
-                amount: 1000,
-                cost: 0,
-                day: '2026-01-10',
-            })
-            await addSale(p, {
-                team: `${stem} B`,
-                customer: 'Beta',
-                amount: 2000,
-                cost: 0,
-                day: '2026-01-11',
-            })
-            await openReportsHub(p)
-            await groupByStatus(p)
-            await p.getByTestId('report-builder-section-pivot').click()
-            await p.getByTestId('report-builder-pivot-on').click()
-            await expect(p.getByTestId('report-builder-pivot-label-field')).toHaveCount(0)
-            await p.getByTestId('report-builder-pivot-field').click()
-            await p
-                .getByTestId('report-builder-picker')
-                .getByTestId('report-builder-pick-record-team')
-                .click()
-            await chooseOption(p, 'report-builder-pivot-cell', 'amount')
-            await expect(p.getByTestId('report-heading-amount.p0')).toHaveText(`${stem} A`)
-            await expect(p.getByTestId('report-heading-amount.p1')).toHaveText(`${stem} B`)
-            await expect(await cellOf(p, 'amount.p1', 'Open')).toHaveText('20.00')
+        const p = freshMember.page
+        const stem = uniqueName('PvT')
+        await seedStub(p, {
+            teams: [
+                { name: `${stem} A`, region: 'north' },
+                { name: `${stem} B`, region: 'south' },
+            ],
+            sales: [
+                { team: `${stem} A`, customer: 'Alpha', amount: 1000, cost: 0, day: '2026-01-10' },
+                { team: `${stem} B`, customer: 'Beta', amount: 2000, cost: 0, day: '2026-01-11' },
+            ],
+        })
+        await openReportsHub(p)
+        await groupByStatus(p)
+        await p.getByTestId('report-builder-section-pivot').click()
+        await p.getByTestId('report-builder-pivot-on').click()
+        await expect(p.getByTestId('report-builder-pivot-label-field')).toHaveCount(0)
+        await p.getByTestId('report-builder-pivot-field').click()
+        await p
+            .getByTestId('report-builder-picker')
+            .getByTestId('report-builder-pick-record-team')
+            .click()
+        await chooseOption(p, 'report-builder-pivot-cell', 'amount')
+        await expect(p.getByTestId('report-heading-amount.p0')).toHaveText(`${stem} A`)
+        await expect(p.getByTestId('report-heading-amount.p1')).toHaveText(`${stem} B`)
+        await expect(await cellOf(p, 'amount.p1', 'Open')).toHaveText('20.00')
 
-            await chooseOption(p, 'report-builder-pivot-label-field', 'region')
-            await expect(p.getByTestId('report-builder-pivot-label-field')).toContainText('Region')
-            await expect(p.getByTestId('report-heading-amount.p0')).toHaveText('North')
-            await expect(p.getByTestId('report-heading-amount.p1')).toHaveText('South')
-        } finally {
-            await close()
-        }
+        await chooseOption(p, 'report-builder-pivot-label-field', 'region')
+        await expect(p.getByTestId('report-builder-pivot-label-field')).toContainText('Region')
+        await expect(p.getByTestId('report-heading-amount.p0')).toHaveText('North')
+        await expect(p.getByTestId('report-heading-amount.p1')).toHaveText('South')
     })
 
     test('on a phone a group and a pivot are set in the builder sheet and show in Preview', async ({
-        page,
+        p,
     }) => {
-        const { p, close } = await seedSales(page, 'rptphonep')
-        try {
-            await openReportsHub(p)
-            await p.setViewportSize({ width: 390, height: 844 })
-            await groupByStatus(p)
-            await pivotByMonth(p)
-            await p.getByTestId('report-builder-mode-preview').click()
-            await expectMonthPivot(p)
-        } finally {
-            await close()
-        }
+        await openReportsHub(p)
+        await p.setViewportSize({ width: 390, height: 844 })
+        await groupByStatus(p)
+        await pivotByMonth(p)
+        await p.getByTestId('report-builder-mode-preview').click()
+        await expectMonthPivot(p)
     })
 })

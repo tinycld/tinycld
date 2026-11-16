@@ -1,18 +1,17 @@
-import { expect, type Locator, type Page, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub, waitForTableFit } from './helpers'
+import type { Locator, Page } from '@playwright/test'
+import { skipWithoutReportsStub, waitForTableFit } from './helpers'
+import { expect, shareMember, test } from './member-fixtures'
 import {
     addColumn,
-    addSale,
-    addTeam,
     cellOf,
     chooseOption,
     detailLabels,
     listScroller,
-    openReportStub,
     openReportsHub,
     rowOf,
     SALES_SOURCE,
     saveNewReport,
+    seedStub,
     startReport,
     uniqueName,
 } from './reports-helpers'
@@ -23,9 +22,30 @@ import {
  * status level's "Show a group's rows in its place where…" (a count of 1) draws
  * no Open row and no "Total Open" row, and Ada stands where Open would. Paid has
  * two customers and is drawn as before. The customer level's "Show a group in
- * muted text where…" (a quantity over 2) mutes Ben. A fresh invited member owns
- * the sales, so the report reads only this test's rows.
+ * muted text where…" (a quantity over 2) mutes Ben. The file's shared member owns
+ * the three sales, so the report reads only these rows; each test saves its own
+ * report and adds no sale.
  */
+
+shareMember('rptinl', async p => {
+    const team = uniqueName('Inline')
+    const sales = (
+        [
+            ['Ada', 'open', 1, 100],
+            ['Bea', 'paid', 2, 300],
+            ['Ben', 'paid', 3, 200],
+        ] as const
+    ).map(([customer, status, quantity, amount]) => ({
+        team,
+        customer,
+        amount,
+        cost: 0,
+        quantity,
+        day: '2026-07-05',
+        status,
+    }))
+    await seedStub(p, { teams: [{ name: team }], sales })
+})
 
 async function pickIn(p: Page, trigger: string, key: string) {
     await p.getByTestId(trigger).click()
@@ -33,16 +53,6 @@ async function pickIn(p: Page, trigger: string, key: string) {
 }
 
 async function inlineAndMutedReport(p: Page) {
-    const team = uniqueName('Inline')
-    await openReportStub(p)
-    await addTeam(p, team)
-    for (const [customer, status, quantity, amount] of [
-        ['Ada', 'open', 1, 100],
-        ['Bea', 'paid', 2, 300],
-        ['Ben', 'paid', 3, 200],
-    ] as const) {
-        await addSale(p, { team, customer, amount, cost: 0, quantity, day: '2026-07-05', status })
-    }
     await openReportsHub(p)
     await startReport(p, SALES_SOURCE)
     await addColumn(p, ['amount'])
@@ -90,83 +100,71 @@ test.describe('reports: inline and muted groups', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('an inlined group shows its child in its place, and a muted child is drawn muted', async ({
-        page,
+        p,
     }) => {
-        const { inviteePage: p, close } = await createInvitedUser(page, 'rptinl')
-        try {
-            await inlineAndMutedReport(p)
-            const ada = rowOf(p, 'Ada')
-            const paid = rowOf(p, 'Paid')
-            await expect(ada).toBeVisible()
-            await expect(paid).toBeVisible()
-            // The one-child group draws neither its row nor its total.
-            await expect(rowOf(p, 'Open')).toHaveCount(0)
-            await expect(rowOf(p, 'Total Open')).toHaveCount(0)
-            // Its child stands at the first level's indent.
-            await waitForTableFit(p)
-            await expect.poll(indentOf([ada, 'Ada'], [paid, 'Paid'])).toBe(0)
+        await inlineAndMutedReport(p)
+        const ada = rowOf(p, 'Ada')
+        const paid = rowOf(p, 'Paid')
+        await expect(ada).toBeVisible()
+        await expect(paid).toBeVisible()
+        // The one-child group draws neither its row nor its total.
+        await expect(rowOf(p, 'Open')).toHaveCount(0)
+        await expect(rowOf(p, 'Total Open')).toHaveCount(0)
+        // Its child stands at the first level's indent.
+        await waitForTableFit(p)
+        await expect.poll(indentOf([ada, 'Ada'], [paid, 'Paid'])).toBe(0)
 
-            // A press on the inlined group's child opens its detail rows.
-            await expect(ada).toHaveAttribute('aria-expanded', 'false')
-            await ada.click()
-            await expect(ada).toHaveAttribute('aria-expanded', 'true')
-            await expect(detailLabels(p)).toHaveCount(1)
+        // A press on the inlined group's child opens its detail rows.
+        await expect(ada).toHaveAttribute('aria-expanded', 'false')
+        await ada.click()
+        await expect(ada).toHaveAttribute('aria-expanded', 'true')
+        await expect(detailLabels(p)).toHaveCount(1)
 
-            // The drawn group opens to its two rows and its total, and folds again.
-            await paid.click()
-            await expect(paid).toHaveAttribute('aria-expanded', 'true')
-            await expect(rowOf(p, 'Bea')).toBeVisible()
-            await expect(rowOf(p, 'Ben')).toBeVisible()
-            await expect(rowOf(p, 'Total Paid')).toBeVisible()
-            await expect.poll(indentOf([rowOf(p, 'Bea'), 'Bea'], [paid, 'Paid'])).toBeGreaterThan(0)
+        // The drawn group opens to its two rows and its total, and folds again.
+        await paid.click()
+        await expect(paid).toHaveAttribute('aria-expanded', 'true')
+        await expect(rowOf(p, 'Bea')).toBeVisible()
+        await expect(rowOf(p, 'Ben')).toBeVisible()
+        await expect(rowOf(p, 'Total Paid')).toBeVisible()
+        await expect.poll(indentOf([rowOf(p, 'Bea'), 'Bea'], [paid, 'Paid'])).toBeGreaterThan(0)
 
-            // Ben (quantity 3) is muted: its label and figure share one color, which
-            // is not the color of Bea's label.
-            const benLabel = await textColor(labelIn(rowOf(p, 'Ben'), 'Ben'))
-            const benFigure = await textColor(await cellOf(p, 'amount', 'Ben'))
-            const beaLabel = await textColor(labelIn(rowOf(p, 'Bea'), 'Bea'))
-            expect(benFigure).toBe(benLabel)
-            expect(benLabel).not.toBe(beaLabel)
+        // Ben (quantity 3) is muted: its label and figure share one color, which
+        // is not the color of Bea's label.
+        const benLabel = await textColor(labelIn(rowOf(p, 'Ben'), 'Ben'))
+        const benFigure = await textColor(await cellOf(p, 'amount', 'Ben'))
+        const beaLabel = await textColor(labelIn(rowOf(p, 'Bea'), 'Bea'))
+        expect(benFigure).toBe(benLabel)
+        expect(benLabel).not.toBe(beaLabel)
 
-            await paid.click()
-            await expect(paid).toHaveAttribute('aria-expanded', 'false')
-            await expect(rowOf(p, 'Bea')).toHaveCount(0)
-            await expect(rowOf(p, 'Total Paid')).toHaveCount(0)
-            await paid.click()
-            await expect(paid).toHaveAttribute('aria-expanded', 'true')
-            await expect(rowOf(p, 'Total Paid')).toBeVisible()
-        } finally {
-            await close()
-        }
+        await paid.click()
+        await expect(paid).toHaveAttribute('aria-expanded', 'false')
+        await expect(rowOf(p, 'Bea')).toHaveCount(0)
+        await expect(rowOf(p, 'Total Paid')).toHaveCount(0)
+        await paid.click()
+        await expect(paid).toHaveAttribute('aria-expanded', 'true')
+        await expect(rowOf(p, 'Total Paid')).toBeVisible()
     })
 
     test('on a phone, the inlined child shows beside the drawn group and opens its rows', async ({
-        page,
+        p,
     }) => {
-        const { inviteePage: p, close } = await createInvitedUser(page, 'rptinlph')
-        try {
-            await inlineAndMutedReport(p)
-            await p.setViewportSize({ width: 390, height: 844 })
-            // The phone layout: the report's title scrolls with the rows, inside the table.
-            await expect(p.getByTestId('report-table').getByTestId('report-title')).toBeVisible()
-            await waitForTableFit(p)
-            const ada = rowOf(p, 'Ada')
-            await expect(ada).toBeVisible()
-            await expect(rowOf(p, 'Paid')).toBeVisible()
-            await expect(rowOf(p, 'Open')).toHaveCount(0)
-            // No sideways scroll: neither the list's own scroller nor the page.
-            const scroller = await listScroller(ada)
-            await expect
-                .poll(() => scroller.evaluate(el => el.scrollWidth - el.clientWidth))
-                .toBe(0)
-            expect(
-                await p.evaluate(() => document.documentElement.scrollWidth)
-            ).toBeLessThanOrEqual(390)
-            await ada.click()
-            await expect(ada).toHaveAttribute('aria-expanded', 'true')
-            await expect(detailLabels(p)).toHaveCount(1)
-        } finally {
-            await close()
-        }
+        await inlineAndMutedReport(p)
+        await p.setViewportSize({ width: 390, height: 844 })
+        // The phone layout: the report's title scrolls with the rows, inside the table.
+        await expect(p.getByTestId('report-table').getByTestId('report-title')).toBeVisible()
+        await waitForTableFit(p)
+        const ada = rowOf(p, 'Ada')
+        await expect(ada).toBeVisible()
+        await expect(rowOf(p, 'Paid')).toBeVisible()
+        await expect(rowOf(p, 'Open')).toHaveCount(0)
+        // No sideways scroll: neither the list's own scroller nor the page.
+        const scroller = await listScroller(ada)
+        await expect.poll(() => scroller.evaluate(el => el.scrollWidth - el.clientWidth)).toBe(0)
+        expect(await p.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+            390
+        )
+        await ada.click()
+        await expect(ada).toHaveAttribute('aria-expanded', 'true')
+        await expect(detailLabels(p)).toHaveCount(1)
     })
 })

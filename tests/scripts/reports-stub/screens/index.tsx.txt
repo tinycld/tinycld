@@ -51,6 +51,28 @@ const returnSchema = z.object({
     day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date as YYYY-MM-DD'),
 })
 type ReturnValues = z.infer<typeof returnSchema>
+// A whole data set in one save. A sale and a return name their team; the team is
+// one of the set's own or one saved before.
+const dataSetSchema = z.object({
+    label: z.string().min(1),
+    teams: z.array(teamSchema).default([]),
+    sales: z.array(saleSchema).default([]),
+    returns: z.array(returnSchema).default([]),
+})
+function parseDataSet(json: string) {
+    try {
+        return dataSetSchema.safeParse(JSON.parse(json))
+    } catch {
+        return undefined
+    }
+}
+const dataSetFormSchema = z.object({
+    json: z
+        .string()
+        .min(1)
+        .refine(json => parseDataSet(json)?.success === true, 'Enter a data set as JSON'),
+})
+type DataSetFormValues = z.infer<typeof dataSetFormSchema>
 
 const REGION_OPTIONS = [
     { value: 'north', label: 'North' },
@@ -405,6 +427,92 @@ function ReturnForm() {
     )
 }
 
+// Teams, sales and returns in one save, for a spec's whole seed: each screen
+// change and each form round is most of a second of a spec's time. The rows are
+// saved one after the other, in the order given, so their record order is the
+// set's order.
+function DataSetForm() {
+    const { user } = useAuth()
+    const [teams, sales, returns] = useStore(
+        'salesstub_teams',
+        'salesstub_sales',
+        'salesstub_returns'
+    )
+    const [saved, setSaved] = useState('')
+    const teamOptions = useTeamOptions()
+    const form = useForm<DataSetFormValues>({
+        resolver: zodResolver(dataSetFormSchema),
+        mode: 'onChange',
+        defaultValues: { json: '' },
+    })
+    const create = useMutation({
+        mutationFn: function* (values: DataSetFormValues) {
+            const data = dataSetSchema.parse(JSON.parse(values.json))
+            const teamIds = new Map(teamOptions.map(option => [option.label, option.value]))
+            const teamId = (name: string) => {
+                const id = teamIds.get(name)
+                if (!id) throw new Error(`no team named ${name}`)
+                return id
+            }
+            for (const team of data.teams) {
+                const id = newRecordId()
+                teamIds.set(team.name, id)
+                yield teams.insert({ id, name: team.name, region: team.region })
+            }
+            for (const sale of data.sales) {
+                yield sales.insert({
+                    id: newRecordId(),
+                    owner: user.id,
+                    team: teamId(sale.team),
+                    customer: sale.customer,
+                    amount: sale.amount,
+                    cost: sale.cost,
+                    quantity: sale.quantity,
+                    currency: 'USD',
+                    day: `${sale.day} 00:00:00.000Z`,
+                    booked_on: sale.day,
+                    status: sale.status,
+                })
+            }
+            for (const ret of data.returns) {
+                yield returns.insert({
+                    id: newRecordId(),
+                    owner: user.id,
+                    team: teamId(ret.team),
+                    customer: ret.customer,
+                    amount: ret.amount,
+                    currency: 'USD',
+                    day: `${ret.day} 00:00:00.000Z`,
+                })
+            }
+            return data.label
+        },
+        onSuccess: label => {
+            setSaved(`Saved ${label}`)
+            form.reset({ json: '' })
+        },
+        onError: error => setSaved(`Not saved: ${error.message}`),
+    })
+    const onCreate = () => {
+        void form.handleSubmit(values => create.mutate(values))()
+    }
+    return (
+        <View className="gap-2">
+            <Text className="text-base font-semibold text-foreground">Data set</Text>
+            <TextInput
+                name="json"
+                control={form.control}
+                label="Teams, sales and returns (JSON)"
+                testID="salesstub-data-json"
+            />
+            <Button onPress={onCreate} isDisabled={create.isPending} testID="salesstub-data-create">
+                <ButtonText>Add data set</ButtonText>
+            </Button>
+            <SavedNote text={saved} testID="salesstub-data-saved" />
+        </View>
+    )
+}
+
 export default function ReportStubIndex() {
     return (
         <ScrollView className="flex-1 bg-background" contentContainerClassName="gap-6 p-4">
@@ -415,6 +523,7 @@ export default function ReportStubIndex() {
             <SaleForm />
             <ManySalesForm />
             <ReturnForm />
+            <DataSetForm />
         </ScrollView>
     )
 }

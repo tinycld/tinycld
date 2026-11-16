@@ -1,8 +1,7 @@
-import { type Browser, expect, type Locator, type Page, test } from '@playwright/test'
-import { createInvitedUser, inStatement, skipWithoutReportsStub, waitForTableFit } from './helpers'
+import type { Browser, Locator, Page } from '@playwright/test'
+import { inStatement, skipWithoutReportsStub, waitForTableFit } from './helpers'
+import { expect, test } from './member-fixtures'
 import {
-    addSale,
-    addTeam,
     cellOf,
     DRILL_TARGET_TITLE,
     DRILLED_PIVOT_TITLE,
@@ -15,6 +14,7 @@ import {
     openReportsHub,
     pressToolbar,
     rowOf,
+    seedStub,
     setPeriod,
     uniqueName,
 } from './reports-helpers'
@@ -44,11 +44,12 @@ interface SeedTeam {
 }
 
 async function seed(page: Page, teams: SeedTeam[]) {
-    await openReportStub(page)
-    for (const team of teams) {
-        await addTeam(page, team.name, 'east')
-        for (const sale of team.sales) await addSale(page, { team: team.name, cost: 0, ...sale })
-    }
+    await seedStub(page, {
+        teams: teams.map(team => ({ name: team.name, region: 'east' as const })),
+        sales: teams.flatMap(team =>
+            team.sales.map(sale => ({ team: team.name, cost: 0, ...sale }))
+        ),
+    })
 }
 
 /** The report id of a report screen's URL (`…/reports/<id>`). */
@@ -496,6 +497,7 @@ test.describe('reports: drill', () => {
 
     test('rows open their record, the keyboard opens a figure, and a reader without the target sees plain figures', async ({
         page,
+        freshMember,
     }) => {
         await loginAsShippedOwner(page)
         const team = uniqueName('Drill Rows')
@@ -587,37 +589,30 @@ test.describe('reports: drill', () => {
         )
 
         // A member may read the published source but not its target: plain figures.
-        const member = await createInvitedUser(page, 'drill')
-        try {
-            const p = member.inviteePage
-            const own = uniqueName('Drill Member')
-            await seed(p, [
-                { name: own, sales: [{ customer: 'Oz', amount: 800, day: '2036-07-07' }] },
-            ])
-            await p.setViewportSize(WIDE)
-            await openDrilled(p, DRILLED_TITLE)
-            await setPeriod(p, '2036-01-01', '2036-12-31')
-            const plain = await cellOf(p, 'amount', own)
-            await expect(plain).toHaveText('8.00')
-            await expect(p.getByRole('link', { name: /^Show transactions:/ })).toHaveCount(0)
-            const path = new URL(p.url()).pathname
-            await plain.click()
-            await expect(drillPanel(p)).toHaveCount(0)
-            expect(new URL(p.url()).pathname).toBe(path)
+        const p = freshMember.page
+        const own = uniqueName('Drill Member')
+        await seed(p, [{ name: own, sales: [{ customer: 'Oz', amount: 800, day: '2036-07-07' }] }])
+        await p.setViewportSize(WIDE)
+        await openDrilled(p, DRILLED_TITLE)
+        await setPeriod(p, '2036-01-01', '2036-12-31')
+        const plain = await cellOf(p, 'amount', own)
+        await expect(plain).toHaveText('8.00')
+        await expect(p.getByRole('link', { name: /^Show transactions:/ })).toHaveCount(0)
+        const path = new URL(p.url()).pathname
+        await plain.click()
+        await expect(drillPanel(p)).toHaveCount(0)
+        expect(new URL(p.url()).pathname).toBe(path)
 
-            // A back link to a report the reader cannot view reads "Reports" and opens the hub.
-            // Opening a pasted link is a full load by nature.
-            const pasted = new URL(p.url())
-            pasted.searchParams.set('from', targetId)
-            await p.goto(pasted.toString())
-            await expect(p.getByTestId('report-title')).toHaveText(DRILLED_TITLE)
-            await expect(rowOf(p, own)).toBeVisible()
-            await expect(p.getByTestId('report-back')).toHaveText('Reports')
-            await p.getByTestId('report-back').click()
-            await expect(p.getByTestId('reports-hub')).toBeVisible()
-        } finally {
-            await member.close()
-        }
+        // A back link to a report the reader cannot view reads "Reports" and opens the hub.
+        // Opening a pasted link is a full load by nature.
+        const pasted = new URL(p.url())
+        pasted.searchParams.set('from', targetId)
+        await p.goto(pasted.toString())
+        await expect(p.getByTestId('report-title')).toHaveText(DRILLED_TITLE)
+        await expect(rowOf(p, own)).toBeVisible()
+        await expect(p.getByTestId('report-back')).toHaveText('Reports')
+        await p.getByTestId('report-back').click()
+        await expect(p.getByTestId('reports-hub')).toBeVisible()
     })
 
     test("a record opened from a report keeps the package's own screens, and Back returns to the report", async ({
