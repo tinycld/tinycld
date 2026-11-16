@@ -578,6 +578,7 @@ describe("the reader's time zone (T2)", () => {
         rows: [],
         notices: [],
         topics: [],
+        headerLines: [],
         page: null,
         params: [],
     }
