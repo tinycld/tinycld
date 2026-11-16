@@ -8,6 +8,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/guestauth"
+	"tinycld.org/core/usernames"
 )
 
 // setupApp builds the minimal collection graph driveshare touches:
@@ -59,8 +61,13 @@ func mkUser(t *testing.T, app *tests.TestApp, email string) *core.Record {
 	if err != nil {
 		t.Fatal(err)
 	}
+	username, err := guestauth.PickAvailableUsername(app, usernames.Derive(email))
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := core.NewRecord(col)
 	r.SetEmail(email)
+	r.Set("username", username)
 	r.Set("name", strings.Split(email, "@")[0])
 	r.SetVerified(true)
 	r.SetPassword("Password123!")

@@ -7,6 +7,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/guestauth"
+	"tinycld.org/core/usernames"
 )
 
 // search_disabled_test.go covers the seams Search's security checks pass
@@ -39,8 +41,13 @@ func setupUsersApp(t *testing.T) (*tests.TestApp, *core.Record) {
 		t.Fatal(err)
 	}
 
+	username, err := guestauth.PickAvailableUsername(app, usernames.Derive("enabled@test.local"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	user := core.NewRecord(users)
 	user.SetEmail("enabled@test.local")
+	user.Set("username", username)
 	user.SetPassword("Password123!")
 	if err := app.Save(user); err != nil {
 		t.Fatal(err)
