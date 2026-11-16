@@ -104,6 +104,9 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 		default:
 			return invalid(at+".type", fmt.Sprintf("unknown param type %q", d.Type))
 		}
+		if err := checkHeader(d, at+".header"); err != nil {
+			return err
+		}
 		if d.Default != nil {
 			// A preset default must be a real preset; its day does not matter.
 			if _, err := parseParam(d, d.Default, anyDay, at+".default"); err != nil {
@@ -112,6 +115,45 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 		}
 	}
 	return nil
+}
+
+// checkHeader refuses a header line on any param but a single choice of
+// listed options (the run names the chosen option's label, which only a
+// listed option has), and a header that does not name the option.
+func checkHeader(d ParamDef, at string) *SpecError {
+	switch {
+	case d.Header == "":
+		return nil
+	case d.Type != ParamChoice || d.Multiple || d.OptionsFrom != nil:
+		return invalid(at, "only a single choice param with listed options has a header line")
+	case !strings.Contains(d.Header, HeaderLabelToken):
+		return invalid(at, "a header line names the chosen option with "+HeaderLabelToken)
+	case characters(d.Header) > maxLabel:
+		return invalid(at, fmt.Sprintf("a header line has at most %d characters", maxLabel))
+	}
+	return nil
+}
+
+// headerLines are the lines a run prints under the period: one per param
+// with a header, in param order, with the chosen option's label in place of
+// HeaderLabelToken. An unset param gives "", so line i stays the i-th param
+// with a header; the shell shows no line for it.
+func headerLines(defs []ParamDef, values map[string]paramValue) []string {
+	out := []string{}
+	for _, d := range defs {
+		if d.Header == "" {
+			continue
+		}
+		line := ""
+		if v := values[d.ID]; !v.unset {
+			i := slices.IndexFunc(d.Options, func(o Option) bool { return o.Value == v.value })
+			if i >= 0 {
+				line = strings.ReplaceAll(d.Header, HeaderLabelToken, d.Options[i].Label)
+			}
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // checkGroupLabel refuses a group pick text that has no group to name, or

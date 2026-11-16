@@ -354,6 +354,7 @@ describe('mergePages', () => {
         topics: ['collection/zoo_feedings'],
         page: { size: ids.length, next: 'next' },
         params: [],
+        headerLines: [],
     })
 
     it('keeps every page’s detail rows and the newest total', () => {
@@ -608,6 +609,7 @@ describe('holdWholeReportRows', () => {
         topics: [],
         page: { size: rows.length, next },
         params: [],
+        headerLines: [],
     })
     const net: ResultRow = {
         id: 'c:net',
@@ -725,6 +727,7 @@ describe('a computed row inside a section (G4)', () => {
             topics: [],
             page: next ? { next, size: 1 } : { size: 1 },
             params: [],
+            headerLines: [],
         })
         const first = page([section(true), inside], 'p2')
         expect(holdWholeReportRows(first).result.rows.map(r => r.id)).toEqual([

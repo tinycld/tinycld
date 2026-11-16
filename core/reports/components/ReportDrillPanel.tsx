@@ -206,6 +206,7 @@ function DrillReport({ view, targetId }: { view: ReportViewModel; targetId: stri
                 title={view.title}
                 periodWords={view.periodWords}
                 zoneWords={view.zoneWords}
+                headerLines={view.headerLines}
                 isThousands={view.display.divideBy1000}
             />
             <ReportBody

@@ -223,6 +223,43 @@ func TestCheckParamDefsRefusesBadDeclarations(t *testing.T) {
 	}
 }
 
+// basisParam is a choice of accrual (the default) or cash whose header line
+// names the chosen option (N1).
+func basisParam(header string) ParamDef {
+	return ParamDef{
+		ID: "basis", Type: ParamChoice, Default: json.RawMessage(`"accrual"`), Header: header,
+		Options: []Option{{Value: "accrual", Label: "Accrual"}, {Value: "cash", Label: "Cash"}},
+	}
+}
+
+// A header line (N1) is only for a choice param, and names the chosen option
+// with {label}.
+func TestCheckParamDefsRefusesABadHeader(t *testing.T) {
+	text := ParamDef{ID: "note", Type: ParamText, Header: "{label} basis"}
+	requireSpecError(t, checkParamDefs([]ParamDef{text}), 400, "params.0.header", "header")
+	requireSpecError(t, checkParamDefs([]ParamDef{basisParam("Cash basis")}), 400, "params.0.header", "{label}")
+	// The refusal names the param that carries the header, not the first.
+	second := []ParamDef{basisParam("{label} basis"), {ID: "note", Type: ParamText, Header: "{label} basis"}}
+	requireSpecError(t, checkParamDefs(second), 400, "params.1.header", "header")
+}
+
+func TestAChoiceParamWithAHeaderBinds(t *testing.T) {
+	if err := checkParamDefs([]ParamDef{basisParam("{label} basis")}); err != nil {
+		t.Fatalf("a choice header: %v", err)
+	}
+	app := withZooRegistry(t)
+	spec := loadSpec(t, `{"version":4,"source":"zoo.feedings",
+		"params":[{"id":"basis","type":"choice","default":"accrual","header":"{label} basis",
+			"options":[{"value":"accrual","label":"Accrual"},{"value":"cash","label":"Cash"}]}],
+		"columns":[{"id":"note","path":[{"field":"note"}]}]}`)
+	if got := spec.Params[0].Header; got != "{label} basis" {
+		t.Fatalf("header = %q", got)
+	}
+	if err := Validate(app, spec); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 // groupedTeams is a multiple choice of records whose group pick reads label.
 func groupedTeams(label string, group Path) ParamDef {
 	return ParamDef{ID: "teams", Type: ParamChoice, Multiple: true, OptionsFrom: &OptionsFrom{

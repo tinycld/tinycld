@@ -252,14 +252,21 @@ func Register(_ core.App) error {
 	})
 	// A published statement with a percent of a section (P1): sections by a hidden
 	// status column, each customer under its section, and a computed row; every
-	// row's share divides its own amount by the Open sales total
+	// row's share divides its own amount by the Open sales total. Its period and
+	// basis filter nothing: the period gives the document header its period line,
+	// and the basis header line prints the chosen option under it (N1)
 	// (tests/e2e/reports-period-pivot.spec.ts).
 	reports.RegisterShipped(reports.Shipped{
-		Key: "salesstub.period_statement", Title: "Stub period statement", Revision: 1,
+		Key: "salesstub.period_statement", Title: "Stub period statement", Revision: 2,
 		Description: "Each customer's sales by status, as a share of the open sales.",
 		Spec: json.RawMessage(`{
 			"version": 4,
 			"source": "salesstub.sales",
+			"params": [
+				{"id": "period", "type": "dateRange", "label": "Period", "default": {"preset": "thisFiscalYear"}},
+				{"id": "basis", "type": "choice", "label": "Basis", "default": "accrual", "header": "{label} basis",
+					"options": [{"value": "accrual", "label": "Accrual"}, {"value": "cash", "label": "Cash"}]}
+			],
 			"columns": [
 				{"id": "customer", "label": "Customer", "path": [{"field": "customer"}]},
 				{"id": "amount", "label": "Amount", "path": [{"field": "amount"}], "aggregate": "sum"},

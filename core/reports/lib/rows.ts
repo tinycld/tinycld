@@ -295,6 +295,7 @@ const EMPTY_RESULT: RunResult = {
     topics: [],
     page: null,
     params: [],
+    headerLines: [],
 }
 
 // A computed row inside a section (layout[].within) belongs to that section: it

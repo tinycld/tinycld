@@ -17,6 +17,15 @@ function Line({
     )
 }
 
+// A chosen option the report prints under its period (N1), such as "Cash basis".
+function HeaderLine({ id, text }: { id: string; text: string }) {
+    return (
+        <Text testID={`report-header-param-${id}`} className="text-sm text-muted-foreground">
+            {text}
+        </Text>
+    )
+}
+
 interface ReportDocumentHeaderProps {
     /** The source's heading, else the organization's name (E9). */
     heading: string
@@ -24,6 +33,8 @@ interface ReportDocumentHeaderProps {
     periodWords: string | null
     /** "Times in Central Time" when a shown column is a date-time (T1); else null. */
     zoneWords: string | null
+    /** The run's header lines with the ids of their params (spec.ts headerLinesOf). */
+    headerLines: readonly { id: string; text: string }[]
     isThousands: boolean
 }
 
@@ -34,10 +45,14 @@ export function ReportDocumentHeader({
     title,
     periodWords,
     zoneWords,
+    headerLines,
     isThousands,
 }: ReportDocumentHeaderProps) {
     const businessName = heading.trim() || null
     const thousandsNote = isThousands ? 'Amounts in thousands' : null
+    const paramLines = headerLines.map(line => (
+        <HeaderLine key={line.id} id={line.id} text={line.text} />
+    ))
     return (
         <View
             testID="report-document-header"
@@ -56,6 +71,7 @@ export function ReportDocumentHeader({
                 testID="report-document-period"
                 className="text-sm text-muted-foreground"
             />
+            {paramLines}
             <Line
                 text={zoneWords}
                 testID="report-document-zone"

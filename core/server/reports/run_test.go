@@ -206,6 +206,56 @@ func TestRunNeedsAReader(t *testing.T) {
 	}
 }
 
+// basisSpec has a basis choice whose header names the chosen option (N1);
+// more params are spliced in after it.
+func basisSpec(more string) string {
+	return `{"version":4,"source":"zoo.feedings","params":[
+		{"id":"basis","type":"choice","default":"accrual","header":"{label} basis",
+			"options":[{"value":"accrual","label":"Accrual"},{"value":"cash","label":"Cash"}]}` + more + `],
+		"columns":[{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`
+}
+
+func TestRunGivesAHeaderLineForTheChosenOption(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", basisSpec(""), Options{}, nil)
+	if want := []string{"Accrual basis"}; !reflect.DeepEqual(res.HeaderLines, want) {
+		t.Fatalf("at the default: headerLines = %#v, want %#v", res.HeaderLines, want)
+	}
+	res = z.run(t, "ann", basisSpec(""), Options{}, map[string]string{"basis": `"cash"`})
+	if want := []string{"Cash basis"}; !reflect.DeepEqual(res.HeaderLines, want) {
+		t.Fatalf("with cash: headerLines = %#v, want %#v", res.HeaderLines, want)
+	}
+}
+
+func TestRunWithNoHeaderGivesAnEmptyListNeverNull(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", feedingsByDay, Options{}, nil)
+	if res.HeaderLines == nil || len(res.HeaderLines) != 0 {
+		t.Fatalf("headerLines = %#v, want an empty list", res.HeaderLines)
+	}
+	body, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"headerLines":[]`) {
+		t.Fatalf("JSON has no empty headerLines list: %s", body)
+	}
+}
+
+// Every choice param with a header gives one line, in param order; a choice
+// with no header gives none.
+func TestRunGivesOneHeaderLinePerHeaderInParamOrder(t *testing.T) {
+	z := newZoo(t)
+	spec := basisSpec(`,
+		{"id":"plain","type":"choice","default":"hay","options":[{"value":"hay","label":"Hay"}]},
+		{"id":"kind","type":"choice","default":"hay","header":"Feed: {label}",
+			"options":[{"value":"hay","label":"Hay"},{"value":"fish","label":"Fish"}]}`)
+	res := z.run(t, "ann", spec, Options{}, map[string]string{"basis": `"cash"`, "kind": `"fish"`})
+	if want := []string{"Cash basis", "Feed: Fish"}; !reflect.DeepEqual(res.HeaderLines, want) {
+		t.Fatalf("headerLines = %#v, want %#v", res.HeaderLines, want)
+	}
+}
+
 func TestRunReturnsSpecErrors(t *testing.T) {
 	z := newZoo(t)
 	_, err := z.try(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"sort":[{"col":"x"}]}`, Options{}, nil)
