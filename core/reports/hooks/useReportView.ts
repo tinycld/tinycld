@@ -59,6 +59,7 @@ import {
 } from '../lib/view-url'
 import { type ReportSurface, type ReportUIScope, useReportUIStore } from '../stores/report-ui-store'
 import { type OptionsSource, useParamOptionLabels } from './useParamOptions'
+import { type ReportExportModel, useReportExport } from './useReportExport'
 import { type ReportRun, useReportRun } from './useReportRun'
 
 export type ViewSource = { kind: 'saved'; reportId: string } | { kind: 'draft'; spec: ReportSpec }
@@ -77,6 +78,7 @@ const NO_COLUMNS: ResultColumn[] = []
 const NO_NOTICES: Notice[] = []
 const NO_ROWS: ResultRow[] = []
 const NO_LAYOUTS: readonly DisplayLayout[] = []
+const NO_RESOLVED: ResolvedParam[] = []
 
 function viewState(input: {
     source: ViewSource | null
@@ -196,6 +198,7 @@ export function useReportView(input: ReportViewInput) {
     const openCustomize = useReportUIStore(s => s.openCustomize)
     const closeCustomize = useReportUIStore(s => s.closeCustomize)
     const closeShare = useReportUIStore(s => s.closeShare)
+    const closeEmail = useReportUIStore(s => s.closeEmail)
     const rows = run.result?.rows ?? NO_ROWS
     const allColumns = run.result?.columns ?? NO_COLUMNS
     const columns = shownColumns(allColumns, options.display.hidden)
@@ -212,6 +215,20 @@ export function useReportView(input: ReportViewInput) {
         chipLabelAsks(defs, options.params),
         posted
     )
+    const state = viewState({ source, broken, isEditing, run })
+    const exportModel = useReportExport({
+        source,
+        body,
+        display: options.display,
+        state,
+        isUpdating: run.isUpdating,
+        isEditing,
+        isMainView: prefix === '',
+        isFocused,
+        title: input.title,
+        defs,
+        resolved: run.result?.params ?? NO_RESOLVED,
+    })
 
     // setParams replaces the history entry, so a change adds none; defaults are left out.
     const write = (next: ViewOptions) => router.setParams(serializeViewOptions(defs, next, prefix))
@@ -270,8 +287,12 @@ export function useReportView(input: ReportViewInput) {
     const closeOnBlur = useEffectEvent(() => {
         closeSurface(scope)
         closeCustomize(scope)
-        // Share is one global dialog that only the main view opens; a panel view must not close it.
-        if (scope === 'main') closeShare()
+        // Share and Email are global dialogs that only the main view opens; a panel view
+        // must not close them.
+        if (scope === 'main') {
+            closeShare()
+            closeEmail()
+        }
     })
     useFocusEffect(useCallback(() => () => closeOnBlur(), []))
 
@@ -313,7 +334,7 @@ export function useReportView(input: ReportViewInput) {
         onSaveAs: input.onSaveAs ?? null,
         options,
         display: options.display,
-        state: viewState({ source, broken, isEditing, run }),
+        state,
         // On a phone the builder's full-height sheet shows the report in its Preview,
         // so the view under it does not draw a second copy.
         isBodyShown: !(isEditing && panel === 'sheet'),
@@ -380,18 +401,22 @@ export function useReportView(input: ReportViewInput) {
         // A run refused for the reader's sort offers Clear sort (R8).
         sortProblem: refusalSortProblem(run.problems),
         onCopyLink,
+        // Null where Export is not offered (a draft, the builder, the drill panel).
+        export: exportModel,
     }
 }
 
-// onSetSort, fit, backLabel and viewWidth are optional: a hand-built model has none
-// of them; then the Sort chip is not shown, the table takes the default fit, the
-// back link reads Reports and the view's width is the window's.
+// onSetSort, fit, backLabel, viewWidth and export are optional: a hand-built model
+// has none of them; then the Sort chip is not shown, the table takes the default
+// fit, the back link reads Reports, the view's width is the window's and the
+// toolbar has no Export.
 export type ReportViewModel = Omit<
     ReturnType<typeof useReportView>,
-    'onSetSort' | 'fit' | 'backLabel' | 'viewWidth'
+    'onSetSort' | 'fit' | 'backLabel' | 'viewWidth' | 'export'
 > & {
     onSetSort?(sort: ViewSort | null): void
     fit?: DisplayFit
     backLabel?: string
     viewWidth?: number
+    export?: ReportExportModel | null
 }

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: letter {{.Orientation}};
+    margin: 36pt;
+    @bottom-left { content: {{.MadeCSS}}; font-size: 7pt; color: #555555; }
+    @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #555555; }
+}
+html { font-family: sans-serif; font-size: {{.Pt}}pt; color: #1a1a1a; background: #ffffff; }
+body { margin: 0; }
+.header { text-align: center; padding-bottom: 8pt; border-bottom: 1pt solid {{.Brand}}; margin-bottom: 8pt; }
+.logo { max-height: 48pt; max-width: 180pt; margin-bottom: 6pt; }
+/* Semibold is drawn with font-weight: bold: the bundled fonts have no 600
+   face, and omnidoc draws 600 with the regular face. */
+.heading { font-size: 12pt; font-weight: bold; margin: 0; }
+.title { font-size: 15pt; font-weight: bold; margin: 2pt 0 0 0; }
+.line { margin: 2pt 0 0 0; color: #444444; }
+.notice { margin: 0 0 4pt 0; color: #444444; }
+.empty { margin: 12pt 0 0 0; color: #444444; }
+table { width: 100%; border-collapse: collapse; }
+table.next { page-break-before: always; }
+thead { display: table-header-group; }
+th { text-align: left; font-weight: bold; padding: 3pt 4pt; border-bottom: 1pt solid {{.Brand}}; vertical-align: bottom; }
+td { padding: 2pt 4pt; vertical-align: top; }
+tr { break-inside: avoid; }
+.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+tr.semibold td { font-weight: bold; }
+tr.rule td { border-top: 0.5pt solid #1a1a1a; }
+tr.rule-heavy td { border-top: 1.5pt solid #1a1a1a; }
+td.red { color: #c62828; }
+</style>
+</head>
+<body>
+<div class="header">
+{{- if .Logo}}
+<img class="logo" src="{{.Logo}}" alt="">
+{{- end}}
+<p class="heading">{{.Heading}}</p>
+<p class="title">{{.Title}}</p>
+{{- range .Lines}}
+<p class="line">{{.}}</p>
+{{- end}}
+</div>
+{{- range .Notices}}
+<p class="notice">{{.}}</p>
+{{- end}}
+{{- if .Empty}}
+<p class="empty">{{.Empty}}</p>
+{{- end}}
+{{- range $i, $set := .Sets}}
+<table{{if $i}} class="next"{{end}}>
+<thead><tr><th style="{{$.LabelWidth}}">{{$.LabelHeading}}</th>{{range $set.Headings}}<th{{if .Num}} class="num"{{end}}>{{.Text}}</th>{{end}}</tr></thead>
+<tbody>
+{{- range $set.Rows}}
+<tr{{if .Class}} class="{{.Class}}"{{end}}><td style="{{.Indent}}">{{.Label}}</td>{{range .Cells}}<td{{if .Class}} class="{{.Class}}"{{end}}>{{.Text}}</td>{{end}}</tr>
+{{- end}}
+</tbody>
+</table>
+{{- end}}
+</body>
+</html>

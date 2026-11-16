@@ -159,6 +159,47 @@ describe('ResponsiveToolbar', () => {
         expect(q(container, 'toolbar-more')).toBeNull()
     })
 
+    it('lists a folded item’s own rows at the top level of the More menu', () => {
+        const onPdf = vi.fn()
+        const onCsv = vi.fn()
+        const items: ToolbarItem[] = [
+            button('a'),
+            {
+                type: 'custom',
+                key: 'export',
+                element: <Text>Export</Text>,
+                overflow: {
+                    rows: (
+                        <>
+                            <Menu.Item label="Download PDF" onSelect={onPdf} />
+                            <Menu.Item label="Download CSV" onSelect={onCsv} />
+                        </>
+                    ),
+                },
+            },
+        ]
+        const { container, getByRole, queryByText } = render(<ResponsiveToolbar items={items} />)
+        fireLayout(q(container, 'toolbar-item-a'), 40)
+        fireLayout(q(container, 'toolbar-item-export'), 80)
+        fireLayout(q(container, 'toolbar-more'), 34)
+        fireLayout(q(container, 'toolbar-row'), 100)
+
+        expect(queryByText('Export')).toBeNull()
+        fireEvent.click(q(container, 'toolbar-more-button') as Element)
+
+        const menu = container.querySelector('[role="menu"]') as HTMLElement
+        // Both rows belong to the More menu itself: no submenu row holds them.
+        const topLevel = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+            .filter(row => row.closest('[role="menu"]') === menu)
+            .map(row => row.textContent)
+        expect(topLevel).toEqual(['Download PDF', 'Download CSV'])
+        expect(menu.querySelector('[aria-haspopup="menu"]')).toBeNull()
+
+        fireEvent.click(getByRole('menuitem', { name: 'Download CSV' }))
+        expect(onCsv).toHaveBeenCalledTimes(1)
+        expect(onPdf).not.toHaveBeenCalled()
+    })
+
     it('renders separators inline and folds them with their group', () => {
         const items: ToolbarItem[] = [
             button('a'),

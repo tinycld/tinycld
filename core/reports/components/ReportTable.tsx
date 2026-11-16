@@ -6,8 +6,17 @@ import {
 } from '@shopify/flash-list'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react-native'
-import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
-import { ActivityIndicator, Animated, Platform, Pressable, Text, View } from 'react-native'
+import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+    ActivityIndicator,
+    Animated,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
+    Platform,
+    Pressable,
+    Text,
+    View,
+} from 'react-native'
 import { type RowDrill, useRowLinks } from '../hooks/useRowLinks'
 import { useScrollAwayTop } from '../hooks/useScrollAwayTop'
 import { useStable } from '../hooks/useStable'
@@ -412,11 +421,12 @@ interface TableListProps extends Omit<TableRowProps, 'item'> {
 // A run with a new design, new params or a new sort is another list, so it starts at
 // the top (F11). The list stays mounted (a remount would mount the phone's top area
 // in its header again and take the focus off the chip that started the run), so the
-// scroll goes back to the top instead. Row keys carry the run: FlashList keeps the
-// row in view anchored when the rows change, which a live re-run of the same run
-// needs, but a row of the earlier run (the same row in a new sort) must not pull
-// the new run's scroll back down to it.
-function useNewRunAtTop(runKey: string) {
+// scroll goes back to the top instead. Row keys carry the run: a row of the earlier
+// run (the same row in a new sort) must not pull the new run's scroll back down to
+// it through FlashList's anchor. They also carry the anchor's epoch
+// (useAnchorAwayFromTop), so no anchor taken before the anchor last turned on matches
+// a row.
+function useNewRunAtTop(runKey: string, anchorEpoch: number) {
     const listRef = useRef<FlashListRef<VisibleRow>>(null)
     const shownKey = useRef(runKey)
     useLayoutEffect(() => {
@@ -424,13 +434,56 @@ function useNewRunAtTop(runKey: string) {
         shownKey.current = runKey
         listRef.current?.scrollToOffset({ offset: 0, animated: false })
     }, [runKey])
-    const keyExtractor = useCallback((item: VisibleRow) => `${runKey}:${item.row.id}`, [runKey])
+    const keyExtractor = useCallback(
+        (item: VisibleRow) => `${runKey}:${anchorEpoch}:${item.row.id}`,
+        [runKey, anchorEpoch]
+    )
     return { listRef, keyExtractor }
 }
 
+const ANCHOR_AT_TOP = { disabled: true }
+const ANCHOR_AWAY_FROM_TOP = { disabled: false }
+
+interface AnchorState {
+    isAtTop: boolean
+    /** Counts the times the anchor turned on: a part of every row key. */
+    epoch: number
+}
+
+const ANCHOR_START: AnchorState = { isAtTop: true, epoch: 0 }
+
+// FlashList keeps the row in view in place when rows are added above it. A live
+// re-run of the same run (same runKey) needs that while the reader is scrolled down,
+// so the row they read does not move. At the top it would hide the new rows of a
+// newest-first report above the view, so there the anchor is off and the list stays
+// at the top, showing them. Only offset 0 is the top: there the browser's own scroll
+// anchoring does nothing, and at any other offset FlashList's anchor is on and turns
+// the browser's off.
+// FlashList keeps the row it last anchored while its anchor is off, and corrects
+// against it when the anchor turns on: after a re-run added rows at the top, that
+// would jump the list down past them. So each time the anchor turns on, the epoch
+// in the row keys (useNewRunAtTop) changes in the same render: the old anchor's key
+// matches no row, FlashList corrects nothing, and it anchors the row in view now.
+// The state changes only when the reader leaves or reaches the top, so a scroll does
+// not redraw the list.
+function useAnchorAwayFromTop() {
+    const [anchor, setAnchor] = useState(ANCHOR_START)
+    const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const isAtTop = e.nativeEvent.contentOffset.y <= 0
+        setAnchor(shown => {
+            if (shown.isAtTop === isAtTop) return shown
+            const epoch = isAtTop ? shown.epoch : shown.epoch + 1
+            return { isAtTop, epoch }
+        })
+    }, [])
+    const maintainVisibleContentPosition = anchor.isAtTop ? ANCHOR_AT_TOP : ANCHOR_AWAY_FROM_TOP
+    return { onScroll, maintainVisibleContentPosition, anchorEpoch: anchor.epoch }
+}
+
 // What both list variants give FlashList: the rows, the sticky rows, the rows'
-// redraw signal, the top-row report, the list's ref and row keys, the next-page
-// signal and the end row. Each variant adds its header and sticky config.
+// redraw signal, the top-row report, the list's ref and row keys, the anchor and
+// the scroll handler that sets it, the next-page signal and the end row. Each
+// variant adds its header and sticky config.
 function useTableListProps({
     rows,
     runKey,
@@ -451,12 +504,15 @@ function useTableListProps({
         () => ({ columns, layout, format, onToggleGroup, links, rows }),
         [columns, layout, format, onToggleGroup, links, rows]
     )
-    const { listRef, keyExtractor } = useNewRunAtTop(runKey)
+    const { onScroll, maintainVisibleContentPosition, anchorEpoch } = useAnchorAwayFromTop()
+    const { listRef, keyExtractor } = useNewRunAtTop(runKey, anchorEpoch)
     return {
         ref: listRef,
         data: rows,
         renderItem: renderTableItem,
         keyExtractor,
+        onScroll,
+        maintainVisibleContentPosition,
         getItemType: rowType,
         extraData,
         stickyHeaderIndices: sticky,
@@ -532,6 +588,16 @@ function ScrollAwayList(props: TableListProps & { top: ReactNode; body: ReactNod
     )
     const sticky = isTableShown ? away.stickyConfig : NO_HEADING_STICKY
     const footer = isTableShown ? listProps.ListFooterComponent : null
+    const onListScroll = listProps.onScroll
+    const onAwayScroll = away.onScroll
+    // The floating heading follows the scroll, and so does the anchor.
+    const onScroll = useCallback(
+        (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+            onAwayScroll(e)
+            onListScroll(e)
+        },
+        [onAwayScroll, onListScroll]
+    )
     return (
         <View className="min-h-0 flex-1">
             <FloatingHeading
@@ -547,7 +613,7 @@ function ScrollAwayList(props: TableListProps & { top: ReactNode; body: ReactNod
                 {...listProps}
                 ListFooterComponent={footer}
                 stickyHeaderConfig={sticky}
-                onScroll={away.onScroll}
+                onScroll={onScroll}
                 ListHeaderComponent={header}
             />
         </View>

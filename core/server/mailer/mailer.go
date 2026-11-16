@@ -235,6 +235,19 @@ func deliveryEnabled(app core.App) bool {
 	return !strings.EqualFold(syscfg.Get(app, keyDeliveryEnabled), "false")
 }
 
+// CaptureLogOn reports whether outbound email is captured instead of sent:
+// TINYCLD_EMAIL_LOG names a log file (e2e), or the process runs with --dev,
+// where DefaultSender is a LogSender.
+func CaptureLogOn() bool {
+	return os.Getenv("TINYCLD_EMAIL_LOG") != "" || devAutoLog
+}
+
+// FromAddress returns app's configured default From address, or the package
+// default: the address a send on behalf of a user goes out from.
+func FromAddress(app core.App) string {
+	return fromAddress(app)
+}
+
 // fromAddress returns app's configured default From, or the package default.
 func fromAddress(app core.App) string {
 	if v := syscfg.Get(app, keyFromAddress); v != "" {
@@ -316,6 +329,9 @@ type loggedEmail struct {
 	Text        string      `json:"text,omitempty"`
 	HTML        string      `json:"html,omitempty"`
 	Attachments int         `json:"attachments,omitempty"`
+	ReplyTo     string      `json:"reply_to,omitempty"`
+	// AttachmentNames are the file names of the attachments, in order.
+	AttachmentNames []string `json:"attachment_names,omitempty"`
 
 	Headers map[string]string `json:"headers,omitempty"`
 }
@@ -388,6 +404,7 @@ func (l *LogSender) Send(_ context.Context, msg *Message) error {
 		Subject:   msg.Subject,
 		Text:      msg.Text,
 		HTML:      msg.HTML,
+		ReplyTo:   msg.ReplyTo,
 		Headers:   msg.Headers,
 	})
 	return nil
@@ -419,16 +436,22 @@ func (l *LogSender) SendFull(_ context.Context, req *SendRequest) (*SendResult, 
 	}
 	fmt.Println("╰──────────────────────────────────────────────────────────╯")
 
+	var attachmentNames []string
+	for _, a := range req.Attachments {
+		attachmentNames = append(attachmentNames, a.Name)
+	}
 	appendToEmailLog(loggedEmail{
-		Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-		To:          req.To,
-		Cc:          req.Cc,
-		Bcc:         req.Bcc,
-		From:        req.From,
-		Subject:     req.Subject,
-		Text:        req.TextBody,
-		HTML:        req.HTMLBody,
-		Attachments: len(req.Attachments),
+		Timestamp:       time.Now().UTC().Format(time.RFC3339Nano),
+		To:              req.To,
+		Cc:              req.Cc,
+		Bcc:             req.Bcc,
+		From:            req.From,
+		Subject:         req.Subject,
+		Text:            req.TextBody,
+		HTML:            req.HTMLBody,
+		Attachments:     len(req.Attachments),
+		ReplyTo:         req.ReplyTo,
+		AttachmentNames: attachmentNames,
 	})
 	messageID := req.MessageID
 	if messageID == "" {

@@ -6,6 +6,8 @@ import type { ReportViewModel } from '../hooks/useReportView'
 import type { RowDrill } from '../hooks/useRowLinks'
 import { shownRunKey, type TableLayout, useTableLayout } from '../hooks/useTableLayout'
 import { layoutNoticeOf } from '../lib/notices'
+import { ReportEmailDialog } from './export/ReportEmailDialog'
+import { exportToolbarItem } from './export/ReportExportMenu'
 import { ReportControls } from './ReportControls'
 import { ReportCustomizePanel } from './ReportCustomizePanel'
 import { ReportDocumentHeader } from './ReportDocumentHeader'
@@ -61,6 +63,7 @@ function toolbarItems(model: ReportViewModel): ToolbarItem[] {
     if (model.onCopyLink) {
         items.push(toolbarButton('copy-link', 'Copy link', 'report-copy-link', model.onCopyLink))
     }
+    if (model.export) items.push(exportToolbarItem(model.export))
     return items
 }
 
@@ -199,6 +202,8 @@ interface ReportTopProps {
 
 // Everything above the rows: the header, the chips, the notices and the document header.
 function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTopProps) {
+    // The status slot says so at every width, also when Export is folded into "⋯" (D3).
+    const busyLabel = model.export?.isPreparing ? 'Preparing…' : undefined
     return (
         <>
             <ReportHeader
@@ -208,6 +213,7 @@ function ReportTop({ model, isSortMenuShown, layoutNotice, isCompact }: ReportTo
                 actions={toolbarItems(model)}
                 isUpdating={model.isUpdating}
                 isUpdatingLive={!model.isUpdatingInBuilder}
+                busyLabel={busyLabel}
             />
             <ReportControls model={model} isSortMenuShown={isSortMenuShown} />
             <ReportNotices
@@ -238,6 +244,16 @@ function coveredProps(isCovered: boolean) {
         importantForAccessibility: isCovered ? 'no-hide-descendants' : 'auto',
     } as const
     return Platform.OS === 'web' ? { ...hidden, inert: isCovered } : hidden
+}
+
+/** The "Email report" dialog of a view that offers Export. */
+function EmailDialog({ model }: { model: ReportViewModel }) {
+    if (!model.export) return null
+    // A report with no period names none in the subject and the message.
+    const periodWords = model.periodWords ?? ''
+    return (
+        <ReportEmailDialog model={model.export} heading={model.heading} periodWords={periodWords} />
+    )
 }
 
 export function ReportView({
@@ -279,6 +295,7 @@ export function ReportView({
                 <ViewBody model={model} table={table} top={listTop} drill={drill} />
             </View>
             <ReportCustomizePanel model={model} />
+            <EmailDialog model={model} />
             {side}
         </View>
     )

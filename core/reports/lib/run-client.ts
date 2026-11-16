@@ -4,6 +4,7 @@ import { pb } from '@tinycld/core/lib/pocketbase'
 import { QueryRefusal } from '@tinycld/core/lib/query-errors'
 import { ClientResponseError } from 'pocketbase'
 import { readerTimeZone } from './date-time'
+import type { DisplayOptions } from './format'
 import { mergePages } from './rows'
 import type { ReportSpec } from './spec'
 import type { CatalogSource, ParamOptionsPage, Problem, ResultRow, RunResult } from './types'
@@ -41,6 +42,12 @@ export interface RunOptions {
      * is never in the rows or fold key.
      */
     timeZone?: string
+    /**
+     * The reader's number format and hidden columns. Sent by an export only
+     * (export-client.ts), whose file shows it; a run does not read it, because the
+     * view formats its own cells.
+     */
+    display?: DisplayOptions
 }
 
 export type RunBody =

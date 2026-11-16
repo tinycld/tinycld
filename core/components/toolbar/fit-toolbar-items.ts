@@ -7,6 +7,8 @@ import type { ReactElement, ReactNode } from 'react'
  *
  * - `{ onPress }` folds into the More menu as one row.
  * - `{ children }` folds in as a submenu holding those `Menu.*` rows.
+ * - `{ rows }` folds in as those `Menu.*` rows, listed in the More menu itself
+ *   in place of the item (no submenu row).
  * - `'hide'` simply drops: for chrome that informs rather than acts (a presence
  *   stack, a word count) and has nothing to offer as a menu row.
  *
@@ -15,6 +17,7 @@ import type { ReactElement, ReactNode } from 'react'
 export type ToolbarOverflow =
     | { label: string; icon?: LucideIcon; onPress: () => void; isDisabled?: boolean }
     | { label: string; icon?: LucideIcon; children: ReactNode; isDisabled?: boolean }
+    | { rows: ReactNode }
     | 'hide'
 
 export type ToolbarItem =
