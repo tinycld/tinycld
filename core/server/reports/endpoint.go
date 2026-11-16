@@ -38,7 +38,8 @@ func sortedKeys(refused map[string]string) []string {
 // signed-in users: a draft spec, or a saved report the caller can view;
 // POST /api/reports/param-options, the options of a choice param read from a
 // source (ReadParamOptions), for the same draft or saved report; and
-// GET /api/reports/sources, the catalog the builder offers (Catalog).
+// GET /api/reports/sources, the catalog the builder offers (Catalog); and
+// POST /api/reports/export, a saved report as a file (handleExport).
 // Saved reports and their shares are bound by RegisterSharing.
 //
 // The run and param-options endpoints are read endpoints by POST because a
@@ -65,6 +66,8 @@ func Register(app core.App) {
 			Bind(apis.RequireAuth("users"), apis.BodyLimit(maxRunBody))
 		e.Router.GET("/api/reports/sources", handleSources).
 			Bind(apis.RequireAuth("users"))
+		e.Router.POST("/api/reports/export", handleExport).
+			Bind(apis.RequireAuth("users"), apis.BodyLimit(maxRunBody))
 		return e.Next()
 	})
 }
@@ -169,6 +172,16 @@ const noAccess = "You cannot view this report."
 // rule that cannot be built, is a server fault: it is logged and answered
 // 500, never as a refusal.
 func viewableSpec(re *core.RequestEvent, id string) ([]byte, error) {
+	rec, err := viewableReport(re, id)
+	if err != nil {
+		return nil, err
+	}
+	return specBytes(rec), nil
+}
+
+// viewableReport reads a saved report record for the caller, with
+// viewableSpec's check and answers.
+func viewableReport(re *core.RequestEvent, id string) (*core.Record, error) {
 	ctx := re.Request.Context()
 	col, err := re.App.FindCachedCollectionByNameOrId(reportsCollection)
 	if err != nil {
@@ -191,7 +204,7 @@ func viewableSpec(re *core.RequestEvent, id string) ([]byte, error) {
 	if !ok {
 		return nil, re.ForbiddenError(noAccess, fieldError("reportId", "no_access", noAccess))
 	}
-	return specBytes(rec), nil
+	return rec, nil
 }
 
 // withSavedTopics adds the saved-report collections to a run's topics, so

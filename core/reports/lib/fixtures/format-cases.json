@@ -1,0 +1,3166 @@
+{
+    "cells": [
+        {
+            "name": "money USD on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "$1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money EUR on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "EUR"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "€1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money GBP on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "GBP"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "£1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money CAD on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "CAD"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "CA$1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money AUD on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "AUD"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "A$1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money JPY on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "JPY"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "¥1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money CHF on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "CHF"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "CHF 1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money MXN on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "MXN"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "MX$1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money INR on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "INR"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "₹1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money CNY on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "CNY"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "CN¥1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money BRL on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "BRL"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "R$1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money SEK on a subtotal row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "SEK"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "SEK 1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money in an unknown three-letter code",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "QQQ"
+            },
+            "row": {
+                "id": "r-total",
+                "kind": "total",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "QQQ 1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money in a code that is not three letters",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "ZOOX"
+            },
+            "row": {
+                "id": "r-total",
+                "kind": "total",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "1,234.50 ZOOX",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money from a currency cell",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currencyCell": "amt@currency"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {
+                    "amt@currency": "EUR"
+                }
+            },
+            "value": -98765,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "-€987.65",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money on a detail row has no symbol",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money on an opening row has no symbol",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-opening",
+                "kind": "opening",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -500,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "-5.00",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money on a group row has no symbol",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money on a computed row has a symbol",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-computed",
+                "kind": "computed",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "$1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "money on a total row has a symbol",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-total",
+                "kind": "total",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123450,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "$1,234.50",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "divide by 1000 alone",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -123456789,
+            "display": {
+                "divideBy1000": true,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "-1,234.57",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "without cents alone",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -123456789,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": true,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "-1,234,568",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "negative in parentheses alone",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -123456789,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "parens",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "(1,234,567.89)",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "negative in red alone",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -123456789,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": true,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "-1,234,567.89",
+            "isRed": true,
+            "isError": false
+        },
+        {
+            "name": "a positive in red stays black",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 123456789,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": true,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "1,234,567.89",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "every number format option on a total row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-total",
+                "kind": "total",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -123456789,
+            "display": {
+                "divideBy1000": true,
+                "withoutCents": true,
+                "negative": "parens",
+                "negativeRed": true,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "($1,235)",
+            "isRed": true,
+            "isError": false
+        },
+        {
+            "name": "every number format option on a detail row",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -123456789,
+            "display": {
+                "divideBy1000": true,
+                "withoutCents": true,
+                "negative": "parens",
+                "negativeRed": true,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "(1,235)",
+            "isRed": true,
+            "isError": false
+        },
+        {
+            "name": "an amount above 2^53-1",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-total",
+                "kind": "total",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 9007199254740992,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "Too large",
+            "isRed": false,
+            "isError": true
+        },
+        {
+            "name": "a negative that rounds to zero without cents",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -40,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": true,
+                "negative": "minus",
+                "negativeRed": true,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "0",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a negative that rounds to zero in thousands",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -400,
+            "display": {
+                "divideBy1000": true,
+                "withoutCents": false,
+                "negative": "parens",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "$0.00",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a negative fraction of a cent",
+            "column": {
+                "id": "amt",
+                "label": "Amount",
+                "type": "money",
+                "currency": "USD"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -0.4,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "$0.00",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "percent 12.345",
+            "column": {
+                "id": "pct",
+                "label": "Share",
+                "type": "percent"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 12.345,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "12.3%",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "percent -0.05",
+            "column": {
+                "id": "pct",
+                "label": "Share",
+                "type": "percent"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -0.05,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "-0.1%",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "percent of a number column by format",
+            "column": {
+                "id": "pct",
+                "label": "Share",
+                "type": "number",
+                "format": "percent"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 50,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "50.0%",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a non-finite percent",
+            "column": {
+                "id": "pct",
+                "label": "Share",
+                "type": "percent"
+            },
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": null,
+            "nonFinite": "Infinity",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a safe integer",
+            "column": {
+                "id": "n",
+                "label": "Grams",
+                "type": "number"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 1234567,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "1,234,567",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a negative integer",
+            "column": {
+                "id": "n",
+                "label": "Grams",
+                "type": "number"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -42,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "-42",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a fraction with more than 6 places",
+            "column": {
+                "id": "n",
+                "label": "Grams",
+                "type": "number"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 1234.56789012,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "1,234.56789",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a fraction that ties at 6 places rounds away from zero",
+            "column": {
+                "id": "n",
+                "label": "Grams",
+                "type": "number"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 1.0078125,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "1.007813",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a small fraction that ties at 6 places",
+            "column": {
+                "id": "n",
+                "label": "Grams",
+                "type": "number"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 0.0078125,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "0.007813",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "another fraction that ties at 6 places",
+            "column": {
+                "id": "n",
+                "label": "Grams",
+                "type": "number"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 2.5390625,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "2.539063",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a negative number that rounds to zero",
+            "column": {
+                "id": "n",
+                "label": "Grams",
+                "type": "number"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -1e-7,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "-0",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a count on a group row",
+            "column": {
+                "id": "n",
+                "label": "Species",
+                "type": "text",
+                "totalType": "number",
+                "aggregate": "count"
+            },
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 3,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "3",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "bool true",
+            "column": {
+                "id": "b",
+                "label": "Active",
+                "type": "bool"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": true,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "Yes",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "bool false",
+            "column": {
+                "id": "b",
+                "label": "Active",
+                "type": "bool"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": false,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "No",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a date",
+            "column": {
+                "id": "d",
+                "label": "Fed",
+                "type": "date"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "2026-11-15",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "Nov 15, 2026",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a date stored as an instant",
+            "column": {
+                "id": "d",
+                "label": "Fed",
+                "type": "date"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "2026-03-03 00:00:00.000Z",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "Mar 3, 2026",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a date-time in America/Chicago at 12 hours",
+            "column": {
+                "id": "at",
+                "label": "At",
+                "type": "datetime"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "2026-11-14 22:07:00.000Z",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "America/Chicago",
+            "hour12": true,
+            "text": "Nov 14, 2026, 4:07 PM",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a date-time in America/Chicago at 24 hours",
+            "column": {
+                "id": "at",
+                "label": "At",
+                "type": "datetime"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "2026-11-14 22:07:00.000Z",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "America/Chicago",
+            "hour12": false,
+            "text": "Nov 14, 2026, 16:07",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a date-time in UTC at 12 hours",
+            "column": {
+                "id": "at",
+                "label": "At",
+                "type": "datetime"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "2026-11-14 22:07:00.000Z",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": true,
+            "text": "Nov 14, 2026, 10:07 PM",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a date-time in UTC at 24 hours",
+            "column": {
+                "id": "at",
+                "label": "At",
+                "type": "datetime"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "2026-11-14 22:07:00.000Z",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "Nov 14, 2026, 22:07",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a summer date-time in America/Chicago",
+            "column": {
+                "id": "at",
+                "label": "At",
+                "type": "datetime"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "2026-07-04 05:30:00.000Z",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "America/Chicago",
+            "hour12": true,
+            "text": "Jul 4, 2026, 12:30 AM",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a select option",
+            "column": {
+                "id": "s",
+                "label": "Region",
+                "type": "select",
+                "options": [
+                    {
+                        "value": "north",
+                        "label": "North"
+                    },
+                    {
+                        "value": "south",
+                        "label": "South"
+                    }
+                ]
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "north",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "North",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a select value with no option",
+            "column": {
+                "id": "s",
+                "label": "Region",
+                "type": "select",
+                "options": [
+                    {
+                        "value": "north",
+                        "label": "North"
+                    }
+                ]
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "west",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "west",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a link with a label",
+            "column": {
+                "id": "animal",
+                "label": "Animal",
+                "type": "relation",
+                "labelCell": "animal@label",
+                "labelType": "text"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {
+                    "animal@label": "Leo"
+                }
+            },
+            "value": "zooanimal00001",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "Leo",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a link with a date label",
+            "column": {
+                "id": "animal",
+                "label": "Animal",
+                "type": "relation",
+                "labelCell": "animal@label",
+                "labelType": "date"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {
+                    "animal@label": "2020-05-01"
+                }
+            },
+            "value": "zooanimal00001",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "May 1, 2020",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a blank link on a detail row",
+            "column": {
+                "id": "animal",
+                "label": "Animal",
+                "type": "relation",
+                "labelCell": "animal@label",
+                "labelType": "text"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {
+                    "animal@label": null
+                }
+            },
+            "value": null,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "(none)",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a blank link on a group row",
+            "column": {
+                "id": "animal",
+                "label": "Animal",
+                "type": "relation",
+                "labelCell": "animal@label",
+                "labelType": "text"
+            },
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "",
+                "cells": {
+                    "animal@label": null
+                }
+            },
+            "value": null,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a text",
+            "column": {
+                "id": "t",
+                "label": "Note",
+                "type": "text"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": "Fed at noon",
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "Fed at noon",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "a null cell",
+            "column": {
+                "id": "t",
+                "label": "Note",
+                "type": "text"
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": null,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "",
+            "isRed": false,
+            "isError": false
+        }
+    ],
+    "labels": [
+        {
+            "name": "a text label",
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "Leo",
+                "cells": {}
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Leo"
+        },
+        {
+            "name": "a money label on a group row",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "300.00",
+                "cells": {},
+                "labelType": "money",
+                "labelValue": 30000,
+                "labelCurrency": "EUR"
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "€300.00"
+        },
+        {
+            "name": "a typed money label on a subtotal row",
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "Total 300.00",
+                "cells": {},
+                "labelType": "money",
+                "labelValue": 30000,
+                "labelCurrency": "EUR"
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Total €300.00"
+        },
+        {
+            "name": "a money label in thousands",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "1234.56",
+                "cells": {},
+                "labelType": "money",
+                "labelValue": 123456,
+                "labelCurrency": "USD"
+            },
+            "display": {
+                "divideBy1000": true,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "$1.23"
+        },
+        {
+            "name": "a month bucket",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "2026-01",
+                "cells": {},
+                "labelType": "month",
+                "labelValue": "2026-01"
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Jan 2026"
+        },
+        {
+            "name": "a month bucket on a subtotal row",
+            "row": {
+                "id": "r-subtotal",
+                "kind": "subtotal",
+                "depth": 0,
+                "label": "Total 2026-01",
+                "cells": {},
+                "labelType": "month",
+                "labelValue": "2026-01"
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Total Jan 2026"
+        },
+        {
+            "name": "a quarter bucket",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "2026-Q1",
+                "cells": {},
+                "labelType": "quarter",
+                "labelValue": "2026-Q1"
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Q1 2026"
+        },
+        {
+            "name": "a year bucket",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "2026",
+                "cells": {},
+                "labelType": "year",
+                "labelValue": 2026
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "2026"
+        },
+        {
+            "name": "a fiscal-year bucket",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "2027",
+                "cells": {},
+                "labelType": "fiscalYear",
+                "labelValue": 2027
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "FY 2027"
+        },
+        {
+            "name": "a day bucket",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "2026-01-05",
+                "cells": {},
+                "labelType": "day",
+                "labelValue": "2026-01-05"
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Jan 5, 2026"
+        },
+        {
+            "name": "a date label",
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "2026-03-03",
+                "cells": {},
+                "labelType": "date",
+                "labelValue": "2026-03-03"
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Mar 3, 2026"
+        },
+        {
+            "name": "a yes/no label",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "true",
+                "cells": {},
+                "labelType": "bool",
+                "labelValue": true
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Yes"
+        },
+        {
+            "name": "a number label",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "1234.5",
+                "cells": {},
+                "labelType": "number",
+                "labelValue": 1234.5
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "1,234.5"
+        },
+        {
+            "name": "a typed label with no value",
+            "row": {
+                "id": "r-group",
+                "kind": "group",
+                "depth": 0,
+                "label": "(none)",
+                "cells": {},
+                "labelType": "money",
+                "labelValue": null
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "(none)"
+        }
+    ],
+    "headings": [
+        {
+            "name": "a plain label",
+            "column": {
+                "id": "cost",
+                "label": "Cost",
+                "type": "money"
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Cost"
+        },
+        {
+            "name": "a run heading of a day",
+            "column": {
+                "id": "bal",
+                "label": "Balance",
+                "type": "money",
+                "heading": {
+                    "value": "2026-03-31",
+                    "type": "date"
+                }
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Mar 31, 2026"
+        },
+        {
+            "name": "a run heading of a text",
+            "column": {
+                "id": "bal",
+                "label": "Balance",
+                "type": "money",
+                "heading": {
+                    "value": "Closing",
+                    "type": "text"
+                }
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Closing"
+        },
+        {
+            "name": "a blank run heading",
+            "column": {
+                "id": "bal",
+                "label": "Balance",
+                "type": "money",
+                "heading": {
+                    "value": null,
+                    "type": "date"
+                }
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Balance"
+        },
+        {
+            "name": "a pivot heading over a month",
+            "column": {
+                "id": "p1",
+                "label": "2026-01",
+                "type": "money",
+                "pivot": {
+                    "cell": "cost",
+                    "key": "2026-01",
+                    "labelType": "month",
+                    "labelValue": "2026-01"
+                }
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Jan 2026"
+        },
+        {
+            "name": "a pivot heading over a fiscal year",
+            "column": {
+                "id": "p2",
+                "label": "2027",
+                "type": "money",
+                "pivot": {
+                    "cell": "cost",
+                    "key": 2027,
+                    "labelType": "fiscalYear",
+                    "labelValue": 2027
+                }
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "FY 2027"
+        },
+        {
+            "name": "a pivot heading over a typed amount",
+            "column": {
+                "id": "p3",
+                "label": "300",
+                "type": "money",
+                "pivot": {
+                    "cell": "cost",
+                    "key": 30000,
+                    "labelType": "money",
+                    "labelValue": 30000,
+                    "labelCurrency": "EUR"
+                }
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "€300.00"
+        },
+        {
+            "name": "a pivot heading over a text",
+            "column": {
+                "id": "p4",
+                "label": "lion",
+                "type": "money",
+                "pivot": {
+                    "cell": "cost",
+                    "key": "lion",
+                    "labelType": "text",
+                    "labelValue": "lion"
+                }
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "lion"
+        }
+    ],
+    "periods": [
+        {
+            "name": "a period of one day",
+            "def": {
+                "id": "period",
+                "type": "dateRange",
+                "label": "Period"
+            },
+            "resolved": {
+                "id": "period",
+                "type": "dateRange",
+                "from": "2026-03-03",
+                "to": "2026-03-03"
+            },
+            "text": "March 3, 2026"
+        },
+        {
+            "name": "a period of one year",
+            "def": {
+                "id": "period",
+                "type": "dateRange",
+                "label": "Period"
+            },
+            "resolved": {
+                "id": "period",
+                "type": "dateRange",
+                "from": "2026-01-01",
+                "to": "2026-12-31"
+            },
+            "text": "January 1 – December 31, 2026"
+        },
+        {
+            "name": "a period of two years",
+            "def": {
+                "id": "period",
+                "type": "dateRange",
+                "label": "Period"
+            },
+            "resolved": {
+                "id": "period",
+                "type": "dateRange",
+                "from": "2025-07-01",
+                "to": "2026-06-30"
+            },
+            "text": "July 1, 2025 – June 30, 2026"
+        },
+        {
+            "name": "an as-of day",
+            "def": {
+                "id": "asof",
+                "type": "asOf",
+                "label": "As of"
+            },
+            "resolved": {
+                "id": "asof",
+                "type": "asOf",
+                "value": "2026-11-15"
+            },
+            "text": "As of November 15, 2026"
+        },
+        {
+            "name": "a single day",
+            "def": {
+                "id": "day",
+                "type": "date",
+                "label": "Day"
+            },
+            "resolved": {
+                "id": "day",
+                "type": "date",
+                "value": "2026-11-15"
+            },
+            "text": "November 15, 2026"
+        },
+        {
+            "name": "all dates",
+            "def": {
+                "id": "period",
+                "type": "dateRange",
+                "label": "Period"
+            },
+            "resolved": {
+                "id": "period",
+                "type": "dateRange"
+            },
+            "text": "All dates"
+        },
+        {
+            "name": "an unset param",
+            "def": {
+                "id": "period",
+                "type": "dateRange",
+                "label": "Period"
+            },
+            "resolved": {
+                "id": "period",
+                "type": "dateRange",
+                "unset": true
+            },
+            "text": null
+        }
+    ],
+    "zones": [
+        {
+            "name": "a date-time column in America/Chicago",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "at",
+                    "label": "At",
+                    "type": "datetime"
+                }
+            ],
+            "timeZone": "America/Chicago",
+            "text": "Times in Central Time"
+        },
+        {
+            "name": "a date-time column in America/New_York",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "at",
+                    "label": "At",
+                    "type": "datetime"
+                }
+            ],
+            "timeZone": "America/New_York",
+            "text": "Times in Eastern Time"
+        },
+        {
+            "name": "a date-time column in Europe/London",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "at",
+                    "label": "At",
+                    "type": "datetime"
+                }
+            ],
+            "timeZone": "Europe/London",
+            "text": "Times in United Kingdom Time"
+        },
+        {
+            "name": "a date-time column in Asia/Tokyo",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "at",
+                    "label": "At",
+                    "type": "datetime"
+                }
+            ],
+            "timeZone": "Asia/Tokyo",
+            "text": "Times in Japan Standard Time"
+        },
+        {
+            "name": "a date-time column in Australia/Sydney",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "at",
+                    "label": "At",
+                    "type": "datetime"
+                }
+            ],
+            "timeZone": "Australia/Sydney",
+            "text": "Times in Australian Eastern Time"
+        },
+        {
+            "name": "a date-time column in Asia/Kolkata",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "at",
+                    "label": "At",
+                    "type": "datetime"
+                }
+            ],
+            "timeZone": "Asia/Kolkata",
+            "text": "Times in India Standard Time"
+        },
+        {
+            "name": "a date-time column in UTC",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "at",
+                    "label": "At",
+                    "type": "datetime"
+                }
+            ],
+            "timeZone": "UTC",
+            "text": "Times in UTC"
+        },
+        {
+            "name": "a date-time column in Etc/UTC",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "at",
+                    "label": "At",
+                    "type": "datetime"
+                }
+            ],
+            "timeZone": "Etc/UTC",
+            "text": "Times in UTC"
+        },
+        {
+            "name": "a date-time column in an unknown zone",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "at",
+                    "label": "At",
+                    "type": "datetime"
+                }
+            ],
+            "timeZone": "Mars/Olympus_Mons",
+            "text": "Times in UTC"
+        },
+        {
+            "name": "a link whose label is a date-time",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                },
+                {
+                    "id": "visit",
+                    "label": "Visit",
+                    "type": "relation",
+                    "labelCell": "visit@label",
+                    "labelType": "datetime"
+                }
+            ],
+            "timeZone": "America/Chicago",
+            "text": "Times in Central Time"
+        },
+        {
+            "name": "no date-time column",
+            "columns": [
+                {
+                    "id": "name",
+                    "label": "Name",
+                    "type": "text"
+                },
+                {
+                    "id": "cost",
+                    "label": "Cost",
+                    "type": "money",
+                    "currency": "USD"
+                }
+            ],
+            "timeZone": "America/Chicago",
+            "text": null
+        }
+    ],
+    "params": [
+        {
+            "name": "one choice",
+            "def": {
+                "id": "region",
+                "type": "choice",
+                "label": "Region",
+                "options": [
+                    {
+                        "value": "north",
+                        "label": "North"
+                    },
+                    {
+                        "value": "south",
+                        "label": "South"
+                    },
+                    {
+                        "value": "east",
+                        "label": "East"
+                    }
+                ]
+            },
+            "resolved": {
+                "id": "region",
+                "type": "choice",
+                "value": "north"
+            },
+            "labels": {},
+            "text": "North"
+        },
+        {
+            "name": "two choices",
+            "def": {
+                "id": "regions",
+                "type": "choice",
+                "label": "Regions",
+                "options": [
+                    {
+                        "value": "north",
+                        "label": "North"
+                    },
+                    {
+                        "value": "south",
+                        "label": "South"
+                    },
+                    {
+                        "value": "east",
+                        "label": "East"
+                    }
+                ],
+                "multiple": true
+            },
+            "resolved": {
+                "id": "regions",
+                "type": "choice",
+                "list": ["north", "south"]
+            },
+            "labels": {},
+            "text": "North, South"
+        },
+        {
+            "name": "three choices are counted",
+            "def": {
+                "id": "regions",
+                "type": "choice",
+                "label": "Regions",
+                "options": [
+                    {
+                        "value": "north",
+                        "label": "North"
+                    },
+                    {
+                        "value": "south",
+                        "label": "South"
+                    },
+                    {
+                        "value": "east",
+                        "label": "East"
+                    }
+                ],
+                "multiple": true
+            },
+            "resolved": {
+                "id": "regions",
+                "type": "choice",
+                "list": ["north", "south", "east"]
+            },
+            "labels": {},
+            "text": "3 selected"
+        },
+        {
+            "name": "a choice from a source by its label",
+            "def": {
+                "id": "animals",
+                "type": "choice",
+                "label": "Animals",
+                "multiple": true,
+                "optionsFrom": {
+                    "source": "zoo.animals",
+                    "value": [
+                        {
+                            "field": "id"
+                        }
+                    ],
+                    "label": [
+                        {
+                            "field": "name"
+                        }
+                    ],
+                    "group": [
+                        {
+                            "field": "species"
+                        }
+                    ],
+                    "groupLabel": "All {group} animals"
+                }
+            },
+            "resolved": {
+                "id": "animals",
+                "type": "choice",
+                "list": ["zooanimal00001"]
+            },
+            "labels": {
+                "zooanimal00001": "Leo"
+            },
+            "text": "Leo"
+        },
+        {
+            "name": "a whole group from a source",
+            "def": {
+                "id": "animals",
+                "type": "choice",
+                "label": "Animals",
+                "multiple": true,
+                "optionsFrom": {
+                    "source": "zoo.animals",
+                    "value": [
+                        {
+                            "field": "id"
+                        }
+                    ],
+                    "label": [
+                        {
+                            "field": "name"
+                        }
+                    ],
+                    "group": [
+                        {
+                            "field": "species"
+                        }
+                    ],
+                    "groupLabel": "All {group} animals"
+                }
+            },
+            "resolved": {
+                "id": "animals",
+                "type": "choice",
+                "list": [],
+                "groups": ["lion"]
+            },
+            "labels": {
+                "group:lion": "Lion"
+            },
+            "text": "All Lion animals"
+        },
+        {
+            "name": "a text",
+            "def": {
+                "id": "note",
+                "type": "text",
+                "label": "Note"
+            },
+            "resolved": {
+                "id": "note",
+                "type": "text",
+                "value": "noon"
+            },
+            "labels": {},
+            "text": "“noon”"
+        },
+        {
+            "name": "a number",
+            "def": {
+                "id": "grams",
+                "type": "number",
+                "label": "Grams"
+            },
+            "resolved": {
+                "id": "grams",
+                "type": "number",
+                "value": 42
+            },
+            "labels": {},
+            "text": "42"
+        },
+        {
+            "name": "an amount in a currency",
+            "def": {
+                "id": "over",
+                "type": "amount",
+                "label": "Over"
+            },
+            "resolved": {
+                "id": "over",
+                "type": "amount",
+                "value": {
+                    "amount": 150000,
+                    "currency": "USD"
+                }
+            },
+            "labels": {},
+            "text": "USD 1,500.00"
+        },
+        {
+            "name": "an amount in any currency",
+            "def": {
+                "id": "over",
+                "type": "amount",
+                "label": "Over"
+            },
+            "resolved": {
+                "id": "over",
+                "type": "amount",
+                "value": {
+                    "amount": 150000,
+                    "currency": ""
+                }
+            },
+            "labels": {},
+            "text": "1,500.00"
+        },
+        {
+            "name": "an unset param",
+            "def": {
+                "id": "region",
+                "type": "choice",
+                "label": "Region",
+                "options": [
+                    {
+                        "value": "north",
+                        "label": "North"
+                    },
+                    {
+                        "value": "south",
+                        "label": "South"
+                    },
+                    {
+                        "value": "east",
+                        "label": "East"
+                    }
+                ]
+            },
+            "resolved": {
+                "id": "region",
+                "type": "choice",
+                "unset": true
+            },
+            "labels": {},
+            "text": "Any"
+        }
+    ],
+    "empty": [
+        {
+            "name": "a period",
+            "def": {
+                "id": "period",
+                "type": "dateRange",
+                "label": "Period"
+            },
+            "resolved": {
+                "id": "period",
+                "type": "dateRange",
+                "from": "2026-01-01",
+                "to": "2026-03-31"
+            },
+            "text": "No rows for January 1 – March 31, 2026"
+        },
+        {
+            "name": "all dates",
+            "def": {
+                "id": "period",
+                "type": "dateRange",
+                "label": "Period"
+            },
+            "resolved": {
+                "id": "period",
+                "type": "dateRange"
+            },
+            "text": "No rows for all dates"
+        },
+        {
+            "name": "an as-of day",
+            "def": {
+                "id": "asof",
+                "type": "asOf",
+                "label": "As of"
+            },
+            "resolved": {
+                "id": "asof",
+                "type": "asOf",
+                "value": "2026-11-15"
+            },
+            "text": "No rows as of November 15, 2026"
+        },
+        {
+            "name": "a single day",
+            "def": {
+                "id": "day",
+                "type": "date",
+                "label": "Day"
+            },
+            "resolved": {
+                "id": "day",
+                "type": "date",
+                "value": "2026-11-15"
+            },
+            "text": "No rows on November 15, 2026"
+        },
+        {
+            "name": "an unset param",
+            "def": {
+                "id": "period",
+                "type": "dateRange",
+                "label": "Period"
+            },
+            "resolved": {
+                "id": "period",
+                "type": "dateRange",
+                "unset": true
+            },
+            "text": "No rows"
+        },
+        {
+            "name": "no date param",
+            "def": null,
+            "resolved": null,
+            "text": "No rows"
+        }
+    ],
+    "fileNames": [
+        {
+            "name": "a period",
+            "title": "Feeding Costs",
+            "defs": [
+                {
+                    "id": "period",
+                    "type": "dateRange",
+                    "label": "Period"
+                }
+            ],
+            "params": [
+                {
+                    "id": "period",
+                    "type": "dateRange",
+                    "from": "2026-01-01",
+                    "to": "2026-11-15"
+                }
+            ],
+            "today": "2026-11-16",
+            "ext": "csv",
+            "text": "feeding-costs-2026-01-01-to-2026-11-15.csv"
+        },
+        {
+            "name": "an as-of report",
+            "title": "Animal Balances",
+            "defs": [
+                {
+                    "id": "asof",
+                    "type": "asOf",
+                    "label": "As of"
+                }
+            ],
+            "params": [
+                {
+                    "id": "asof",
+                    "type": "asOf",
+                    "value": "2026-11-15"
+                }
+            ],
+            "today": "2026-11-16",
+            "ext": "xlsx",
+            "text": "animal-balances-as-of-2026-11-15.xlsx"
+        },
+        {
+            "name": "a single day",
+            "title": "Daily Feedings",
+            "defs": [
+                {
+                    "id": "day",
+                    "type": "date",
+                    "label": "Day"
+                }
+            ],
+            "params": [
+                {
+                    "id": "day",
+                    "type": "date",
+                    "value": "2026-03-03"
+                }
+            ],
+            "today": "2026-11-16",
+            "ext": "pdf",
+            "text": "daily-feedings-2026-03-03.pdf"
+        },
+        {
+            "name": "the first date param names the date",
+            "title": "Feeding Costs",
+            "defs": [
+                {
+                    "id": "region",
+                    "type": "choice",
+                    "label": "Region",
+                    "options": [
+                        {
+                            "value": "north",
+                            "label": "North"
+                        },
+                        {
+                            "value": "south",
+                            "label": "South"
+                        },
+                        {
+                            "value": "east",
+                            "label": "East"
+                        }
+                    ]
+                },
+                {
+                    "id": "period",
+                    "type": "dateRange",
+                    "label": "Period"
+                },
+                {
+                    "id": "asof",
+                    "type": "asOf",
+                    "label": "As of"
+                }
+            ],
+            "params": [
+                {
+                    "id": "region",
+                    "type": "choice",
+                    "value": "north"
+                },
+                {
+                    "id": "period",
+                    "type": "dateRange",
+                    "from": "2026-01-01",
+                    "to": "2026-03-31"
+                },
+                {
+                    "id": "asof",
+                    "type": "asOf",
+                    "value": "2026-11-15"
+                }
+            ],
+            "today": "2026-11-16",
+            "ext": "csv",
+            "text": "feeding-costs-2026-01-01-to-2026-03-31.csv"
+        },
+        {
+            "name": "no date param is the reader day",
+            "title": "Keeper List",
+            "defs": [
+                {
+                    "id": "region",
+                    "type": "choice",
+                    "label": "Region",
+                    "options": [
+                        {
+                            "value": "north",
+                            "label": "North"
+                        },
+                        {
+                            "value": "south",
+                            "label": "South"
+                        },
+                        {
+                            "value": "east",
+                            "label": "East"
+                        }
+                    ]
+                }
+            ],
+            "params": [
+                {
+                    "id": "region",
+                    "type": "choice",
+                    "value": "north"
+                }
+            ],
+            "today": "2026-11-16",
+            "ext": "pdf",
+            "text": "keeper-list-2026-11-16.pdf"
+        },
+        {
+            "name": "no params at all is the reader day",
+            "title": "Keeper List",
+            "defs": [],
+            "params": [],
+            "today": "2026-11-16",
+            "ext": "csv",
+            "text": "keeper-list-2026-11-16.csv"
+        },
+        {
+            "name": "all dates is the reader day",
+            "title": "Feeding Costs",
+            "defs": [
+                {
+                    "id": "period",
+                    "type": "dateRange",
+                    "label": "Period"
+                }
+            ],
+            "params": [
+                {
+                    "id": "period",
+                    "type": "dateRange"
+                }
+            ],
+            "today": "2026-11-16",
+            "ext": "csv",
+            "text": "feeding-costs-2026-11-16.csv"
+        },
+        {
+            "name": "an unset date param is the reader day",
+            "title": "Feeding Costs",
+            "defs": [
+                {
+                    "id": "period",
+                    "type": "dateRange",
+                    "label": "Period"
+                }
+            ],
+            "params": [
+                {
+                    "id": "period",
+                    "type": "dateRange",
+                    "unset": true
+                }
+            ],
+            "today": "2026-11-16",
+            "ext": "csv",
+            "text": "feeding-costs-2026-11-16.csv"
+        },
+        {
+            "name": "a Cyrillic title keeps its letters",
+            "title": "Отчёт О Кормлении",
+            "defs": [],
+            "params": [],
+            "today": "2026-11-16",
+            "ext": "csv",
+            "text": "отчёт-о-кормлении-2026-11-16.csv"
+        },
+        {
+            "name": "a Devanagari title keeps its letters and marks",
+            "title": "खर्च रिपोर्ट",
+            "defs": [],
+            "params": [],
+            "today": "2026-11-16",
+            "ext": "pdf",
+            "text": "खर्च-रिपोर्ट-2026-11-16.pdf"
+        },
+        {
+            "name": "a Japanese title keeps its letters",
+            "title": "給餌の記録",
+            "defs": [],
+            "params": [],
+            "today": "2026-11-16",
+            "ext": "xlsx",
+            "text": "給餌の記録-2026-11-16.xlsx"
+        },
+        {
+            "name": "a title of 200 characters is cut to 80 and never ends in -",
+            "title": "Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeeper Zookeepers",
+            "defs": [],
+            "params": [],
+            "today": "2026-11-16",
+            "ext": "csv",
+            "text": "zookeeper-zookeeper-zookeeper-zookeeper-zookeeper-zookeeper-zookeeper-zookeeper-2026-11-16.csv"
+        },
+        {
+            "name": "a title of punctuation only",
+            "title": "?!/...",
+            "defs": [],
+            "params": [],
+            "today": "2026-11-16",
+            "ext": "csv",
+            "text": "report-2026-11-16.csv"
+        },
+        {
+            "name": "slashes, dots and quotes are removed",
+            "title": "../../etc/Feeding \"Costs\" Keeper's.csv",
+            "defs": [],
+            "params": [],
+            "today": "2026-11-16",
+            "ext": "csv",
+            "text": "etcfeeding-costs-keeperscsv-2026-11-16.csv"
+        },
+        {
+            "name": "runs of spaces and dashes are one dash",
+            "title": "  Profit -  and --  Loss  ",
+            "defs": [],
+            "params": [],
+            "today": "2026-11-16",
+            "ext": "pdf",
+            "text": "profit-and-loss-2026-11-16.pdf"
+        }
+    ]
+}
