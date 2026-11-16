@@ -234,7 +234,7 @@ func (c *compiler) lookupWhereOwner(at string) string {
 		if parts[2] == "fill" && len(parts) == 4 {
 			return ""
 		}
-		whats := map[string]string{"having": "the having", "label": "the label", "fill": "the fill", "opening": "the opening row"}
+		whats := map[string]string{"having": "the having", "inline": "the inline condition", "muted": "the muted condition", "label": "the label", "fill": "the fill", "opening": "the opening row"}
 		if what, ok := whats[parts[2]]; ok {
 			return fmt.Sprintf("%s of the %q group", what, columnName(c.p.groups[i].col))
 		}
@@ -250,13 +250,18 @@ func columnName(cp *colPlan) string {
 }
 
 // conditionWords names a condition by its spec path for a notice: the
-// filter, or a group's having or fill by the group's column.
+// filter, or a group's having, inline or muted condition or fill by the
+// group's column.
 func (c *compiler) conditionWords(at string) string {
 	for i, g := range c.p.groups {
 		name := columnName(g.col)
 		switch at {
 		case fmt.Sprintf("groups.%d.having", i):
 			return fmt.Sprintf("The having of the %q group", name)
+		case fmt.Sprintf("groups.%d.inline", i):
+			return fmt.Sprintf("The inline condition of the %q group", name)
+		case fmt.Sprintf("groups.%d.muted", i):
+			return fmt.Sprintf("The muted condition of the %q group", name)
 		case fmt.Sprintf("groups.%d.fill.where", i):
 			return fmt.Sprintf("The fill of the %q group", name)
 		}
@@ -352,9 +357,7 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 			rn.layoutRows(t, total, sections)
 			continue
 		}
-		for _, g := range t.children[rn.currencyKey(total)] {
-			rn.group(t, g, 1, 0, "")
-		}
+		rn.children(t, rn.rowKey(total, 0), 1, 0, "")
 		rn.push(Row{ID: "total" + rn.currencySuffix(total), Kind: KindTotal, Label: "Total", Cells: rn.cells(total)}, total)
 	}
 }
@@ -553,12 +556,15 @@ func (rn *runner) pageStart(rows []Row) int {
 	// moved group read at its new place by the keyset is not one: starting
 	// after it would skip the rows before it.
 	for n := rn.anchored; n >= 1; n-- {
-		// A skip level's blank key draws no row: its children follow the
-		// anchor above it.
+		// A skip level's blank key and an inlined group draw no row: their
+		// children follow the anchor above them.
 		if rn.c.skips(n) && cur.Group[n-1] == nil {
 			continue
 		}
 		id := "g:" + keyString(append(slices.Clone(cur.Group[:n]), cur.Group[d:]...))
+		if raw, ok := rn.rawGroups[id]; ok && rn.passesUp(raw, n) {
+			continue
+		}
 		i := slices.IndexFunc(rows[start:], func(r Row) bool { return r.ID == id })
 		if i < 0 {
 			log.WarnContext(rn.ctx, "page start group not among the rows", "group", id)
@@ -643,11 +649,12 @@ func (rn *runner) group(t *tree, row map[string]any, n, depth int, section strin
 }
 
 // children emits the level-n groups under a parent key. A blank key at a skip
-// level emits no row of its own: its children come in its place, at the same
-// depth, under the same section.
+// level and an inlined group emit no row of their own (no group row, no
+// opening row, no subtotal): their children come in their place, at the same
+// depth, under the same section, whatever the reader opened or folded.
 func (rn *runner) children(t *tree, parent []any, n, depth int, section string) {
 	for _, child := range t.children[keyString(parent)] {
-		if rn.c.skips(n) && child[fmt.Sprintf("k%d", n-1)] == nil {
+		if rn.passesUp(child, n) {
 			key := rn.rowKey(child, n)
 			// A paged run's cursor reads the order values of every enclosing
 			// group, this one too (cursorAt).
@@ -659,6 +666,16 @@ func (rn *runner) children(t *tree, parent []any, n, depth int, section string) 
 		}
 		rn.group(t, child, n, depth, section)
 	}
+}
+
+// passesUp is true for a level-n statement row that draws no row of its own:
+// a skip level's blank key, or a group its level's inline condition holds
+// for.
+func (rn *runner) passesUp(row map[string]any, n int) bool {
+	if rn.c.skips(n) && row[fmt.Sprintf("k%d", n-1)] == nil {
+		return true
+	}
+	return rn.c.inlines(n) && toInt(row["__inline"]) == 1
 }
 
 // rowLabel is a group row's label: its text and, for a label that is not
@@ -754,7 +771,7 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n, depth int, sect
 	rn.drillCellsOf(row, n, cells)
 	rn.push(Row{
 		ID: id, Kind: KindGroup, Depth: depth, Level: n, Label: label.text, Section: section, GroupKey: key, Expanded: expanded, CanExpand: canOpen, Cells: cells,
-		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
+		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency, Muted: toInt(row["__muted"]) == 1,
 	}, row)
 	if expanded && opening != nil {
 		rn.push(Row{ID: "opening:" + keyString(key), Kind: KindOpening, Depth: depth + 1, Label: opening.Label, Section: id, GroupKey: key, Cells: rn.openingCells(row, opening)}, row)

@@ -816,18 +816,48 @@ globs. Environment is `node`; setup is `tests/unit-setup.ts`.
 
 ### Playwright (`playwright.config.ts`)
 
-Playwright generates **one project per workspace member**, derived from the
-`node_modules/@tinycld/*` workspace symlinks (project name = `@tinycld/mail`,
-etc.), with `testDir` pointing at that member's `tests/`. Run one package's
-specs with:
+The app shell's `playwright.config.ts` is the canonical config: the two
+`webServer` entries, the `globalSetup` that seeds the fixtures, the browser
+project and the reporter. Core re-exports it as
+`@tinycld/core/playwright-config`. A member with e2e specs has its own
+`playwright.config.ts` that spreads that config and sets `testDir` to its own
+specs through the `node_modules/<package name>` symlink; it can also set a
+`timeout` or its own `projects`. There is no workspace-wide config: each
+member's suite is its own Playwright run.
 
 ```sh
-pnpm run test:e2e --project=@tinycld/mail
+# The suite of one member (from that member; the app shell is `tinycld/`)
+pnpm exec tinycld-pkg test:e2e
+pnpm exec tinycld-pkg test:e2e -- -g "title"        # Playwright arguments go after --
+
+# Every feature member that has a playwright.config.ts, one run for each (from tinycld/)
+pnpm run pkg:test:e2e
+
+# Named spec files of one or more members, from any directory in the workspace
+pnpm exec tinycld-pkg test:e2e tinycld/tests/e2e/help.spec.ts mail/tests/mail-inbox.spec.ts
 ```
 
-Playwright **owns the server lifecycle** — it resets the DB and starts
-PocketBase + Expo itself (`webServer.reuseExistingServer: false`). Never start
-or kill servers manually around a Playwright run.
+The last form is one Playwright run for all the files: one server start, one
+web export and one fixture seed. `package-scripts/src/multi-member.config.ts`
+builds its config from the configs of the members that own the files. Each
+member becomes a project (`mail`, or `books:<project>` for a member with its
+own projects) that keeps the member's `testDir`, `timeout` and project
+settings, and selects only the named files. The members share the one seeded
+database. A member that starts its own servers or global setup is refused.
+Give the files as paths from the current directory or the workspace root,
+before any `--`. Use this form, not one command for each file or member: each
+command starts the servers, builds the export and seeds again. `--skip-export`
+serves the bundle of the last export; use it only when no source file changed
+since then.
+
+Playwright **owns the server lifecycle**. `pnpm run e2e:serve` clears the test
+data dir, builds the web export, and serves it and the API from one PocketBase
+listener on `E2E_PORT` (7200 when unset); a second instance on `E2E_PORT_2`
+(7201) serves a copy of the same export for the specs that need two servers.
+There is no Metro in an e2e run. Never start or kill servers manually around a
+Playwright run. Off CI the config has `reuseExistingServer`, so a server that
+another workspace left on those ports is tested in place of this one: check
+that the ports are free first.
 
 ---
 
@@ -1436,8 +1466,11 @@ away before the run ends.
 - A result column may carry `heading: { value, type }` (see `columns[].heading`
   in "Fields added in version 4"); the view shows it in place of `label`. A group
   or subtotal row carries `level`: the group level, 1 for the first. Other rows
-  have none. With a skipped level (`groups[].blank`), `depth + 1` is not the
-  level.
+  have none. With a skipped level (`groups[].blank`) or an inlined group
+  (`groups[].inline`), `depth + 1` is not the level: an inlined group's child
+  rows carry its depth and its `section`, their own `level`, and keep its key
+  in `groupKey`. A group row of a level whose `groups[].muted` holds carries
+  `muted: true` (absent otherwise, and never on a subtotal or total row).
 - A grouped result pages (`page.next`), its group rows too; running values
   continue on the next page. `page.size` is the page's detail rows. A client
   merges pages by row id and drops each earlier page's trailing total and
@@ -1507,9 +1540,11 @@ label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` o
 | `display.columns.<col>.flexGrow` | 0 to 10: the column's share of the spare room on one line, the room past every column's least width. While both are below their content's width, a column with 2 gets twice the room of a column with 1, whatever their content. A growing column stops at its content's width while another growing column is still below its own, and the others share what it leaves by grow; once every growing column has its content's width, the rest is shared by grow again. A column with 0 gets at most its content's width (default 1 for text and the label column, 0 for other figures). |
 | `groups[].blank` | `"skip"`: a base row whose key at this level is blank skips the level: no group row and no subtotal for it; its rows sit directly under the parent group (or layout section), one depth less per skipped level, keep their full group key (with the blank), and count in the parent's totals. Absent: a blank key forms a `(none)` group. A fill below a skipped level fills under the parent the rows reach. Refused on the first and the last group level, on a bucketed level and for any other value. |
 | `groups[].hideEmpty` | `true`: a group whose child groups are all hidden, with no shown row passed up from a skipped level, is hidden with its subtotal, as a having would hide it (a `"rows"` total above it adds nothing it did not show; a `"recompute"` total counts every row the filter keeps, the rows of hidden groups included, as with any having). Allowed on a bucketed level. Refused on the last level, and on the first group of a layout report (its sections always show). |
+| `groups[].inline` | A condition on the level, read as `having` reads it (the level's totals, columns, record fields and params; an unset param matches as in `having`). A group for which it holds draws no group row, no subtotal and no opening row; its child rows take its place, at its depth, with its `section`, in its place in the order, and keep its key in their `groupKey`. The group counts as open: its children show whatever the level's `open` and the reader's expansion say, and `options.expand` and `options.collapse` keys that name it are ignored; its children open and fold as usual. A page's row count does not count it. Its rows count in the parent's totals and in the Total as before; exports and drills read the same rows. Refused (400, `groups.<i>.inline`) on the last level (a pivot's too), on a bucketed level, on the first group of a layout report (its sections always show), when the formula is not a condition, and when it reads a value of one row. |
+| `groups[].muted` | A condition on the level, read as `having` reads it. A group row for which it holds carries `muted: true`, and core's view draws its label and figures in muted text (red and error figures keep their tone). Subtotal and total rows are never muted. Exports ignore it: put any words the reader needs in the label. Refused (400, `groups.<i>.muted`) when the formula is not a condition, and when it reads a value of one row. |
 | `columns[].heading` | A formula over params and values, computed once per run; the result column carries `heading: { value, type }` (text, date, datetime or number), which the view shows in place of `label` (a day in the reader's short form). Absent when the heading is blank: an unset param, a null, or an empty or whitespace-only text. `label` stays the column's name, and Customize and the builder name the column by it. Refused when it reads anything but params and values (a path is refused), or is of another type: money, yes/no, a date range and a list are refused. |
 | `columns[].hidden` | `true`: the column is computed (a group, sort or section key, a `{col}` read) but the result leaves it and its cells out: no heading, no cell, no Customize entry, no arrangement, no export column, not a viewer sort key. Refused on the first column, on the first column of each nest level (it labels the child rows), on a column `display.columns` or `display.layouts` names, on a column a group's `opening` names, and on a pivot's cell column. |
-| `columns[].blankAbove` | The id of a group: the column totals on that group's level, the levels inside it and the detail rows; the group and subtotal rows of the levels above it, the layout sections when the group is not the first, and the Total leave the cell out (no `<col>@currency` and no `<col>@label` cell either). A `{col}` read of it on those levels reads blank, so a column that reads it (also through other formula columns, in a column's formula or its `rollup`) sends no cell, `@currency` or `@label` on the group, section, computed and Total rows of those levels, and a layout computed row that reads a section is blank there too. For a figure the levels above would count twice. Refused on a pivot's cell column, with `rollup`, with `total: "rows"`, on a child-row column, and on a column a group groups by (400, `columns.<i>.blankAbove`); for a group `having` that reads it, directly or through formula or rollup columns, when the column's group is deeper than the having's own group, where the column is blank (400, `groups.<i>.having`); for a `percentOfSection` whose argument is, or reads through formula or rollup columns, a blank-above column set to any group past the first, since sections are the first level (400, `columns.<i>.formula.args.0`); for a `drill` level above the column's group, on the column itself or on a column that reads it, where the drilled figure is blank (400, `columns.<i>.drill.levels.<group id>` of the drilled column); and for a group the report does not have (422 `unknown_group`, at `columns.<i>.blankAbove`). |
+| `columns[].blankAbove` | The id of a group: the column totals on that group's level, the levels inside it and the detail rows; the group and subtotal rows of the levels above it, the layout sections when the group is not the first, and the Total leave the cell out (no `<col>@currency` and no `<col>@label` cell either). A `{col}` read of it on those levels reads blank, so a column that reads it (also through other formula columns, in a column's formula or its `rollup`) sends no cell, `@currency` or `@label` on the group, section, computed and Total rows of those levels, and a layout computed row that reads a section is blank there too. For a figure the levels above would count twice. Refused on a pivot's cell column, with `rollup`, with `total: "rows"`, on a child-row column, and on a column a group groups by (400, `columns.<i>.blankAbove`); for a group `having`, `inline` or `muted` that reads it, directly or through formula or rollup columns, when the column's group is deeper than the condition's own group, where the column is blank (400, `groups.<i>.having`, `groups.<i>.inline` or `groups.<i>.muted`); for a `percentOfSection` whose argument is, or reads through formula or rollup columns, a blank-above column set to any group past the first, since sections are the first level (400, `columns.<i>.formula.args.0`); for a `drill` level above the column's group, on the column itself or on a column that reads it, where the drilled figure is blank (400, `columns.<i>.drill.levels.<group id>` of the drilled column); and for a group the report does not have (422 `unknown_group`, at `columns.<i>.blankAbove`). |
 | `params[].header` | On a single `choice` param with listed `options`: a line the document header prints under the period, with `{label}` where the chosen option's label goes (`"{label} basis"` prints "Cash basis"). The result carries `headerLines`: one line per param with a header, in param order (`""` while the param is unset, which prints no line; `[]`, never `null`, when no param has one). The builder keeps the header as the spec gives it and offers no editor for it, and keeps its param while the header is there. Refused (400, `params.<i>.header`) on any other param type, on a multiple choice, on a choice with `optionsFrom`, without `{label}`, and over 200 characters. |
 | `layout[].within` | On a computed row: the id of a section earlier in the layout. The row is emitted after that section's rows and before its subtotal, at depth 1, only while the section is open, with `section` naming the section's group row; it never opens. A section with a within row can always open, also when a deeper level's having hides every one of its own rows. The section's group row and subtotal add it, and a later row's `{ subtotal: <section> }` reads the total with it (and with every within row of that section before the reader). Its formulas read lookups, params, values, earlier computed rows and other sections; reading its own section is refused. |
 | `layout[].cells` | On a computed row: `{ <col id>: formula }`, the row's cell in that column (same leaves as `formula`). A number column it does not name takes `formula`; with no `formula` that cell is blank. A row with neither is refused, and so is a cell on the first column, a non-number column or a pivot's cell column. A **derived column** (a formula column with no aggregate or rollup that reads only `{col}`, `{param}`, values and scalar operators) is computed on every computed row, and on a section total that holds a within row, from that row's own cells. Any computed row, top-level or within, may read `{param}`. |
@@ -1750,8 +1785,9 @@ pnpm run dev                         # packages:generate, then Expo + PocketBase
 pnpm run checks                      # biome + tsc (lints app + all linked siblings)
 pnpm run test                        # vitest for the app shell
 pnpm run pkg:test:unit               # vitest across every present member
-pnpm run test:e2e                    # playwright (all linked siblings)
-pnpm run test:e2e --project=@tinycld/mail   # a single package's e2e specs
+pnpm run test:e2e                    # playwright for the app shell's own specs
+pnpm run pkg:test:e2e                # playwright for every feature member, one run for each
+pnpm exec tinycld-pkg test:e2e tests/e2e/help.spec.ts ../mail/tests/mail-inbox.spec.ts   # named spec files of any members, one run
 pnpm run test:server                 # Go tests (no_ui build tag)
 ```
 

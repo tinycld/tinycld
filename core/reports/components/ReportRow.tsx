@@ -11,7 +11,7 @@ import {
     type NumberFormat,
     rowLabelText,
 } from '../lib/format'
-import type { VisibleRow } from '../lib/rows'
+import { type FigureTone, figureTone, isMutedGroup, type VisibleRow } from '../lib/rows'
 import { groupChain } from '../lib/sticky'
 import {
     type Block,
@@ -235,9 +235,11 @@ function PendingSpinner({ testID, color }: { testID: string; color: string }) {
 const pendingId = (item: VisibleRow, isCopy: boolean) =>
     item.isPending ? `${isCopy ? 'report-sticky-pending' : 'report-pending'}-${item.row.id}` : null
 
-// An opening row's label is a note before the group's own rows, so it is quieter.
-function labelTone(kind: RowKind): string {
-    return kind === 'opening' ? 'text-muted-foreground' : 'text-foreground'
+// An opening row's label is a note before the group's own rows, so it is quieter;
+// a muted group row's label is quieter too (R2).
+function labelTone(row: ResultRow): string {
+    const isQuiet = row.kind === 'opening' || isMutedGroup(row)
+    return isQuiet ? 'text-muted-foreground' : 'text-foreground'
 }
 
 // react-native-web gives a Text of more lines `overflow-wrap: break-word`, which
@@ -256,7 +258,7 @@ const wordsClass = (breakWords: boolean) => (breakWords ? BREAK_WORDS : WHOLE_WO
 const wrappedText = (text: string, lines: number) => (lines > 1 ? breakAfterColons(text) : text)
 
 const labelTextClass = (row: ResultRow, breakWords: boolean) =>
-    `min-w-0 flex-1 text-sm ${wordsClass(breakWords)} ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`
+    `min-w-0 flex-1 text-sm ${wordsClass(breakWords)} ${labelTone(row)} ${ROW_WEIGHT[row.kind]}`
 
 function LabelText({
     row,
@@ -389,17 +391,23 @@ export function cellBoxStyle(width: number | undefined, minHeight: number) {
     return { width, minHeight, flexGrow: width === undefined ? 1 : 0 }
 }
 
+const FIGURE_TONE: Record<FigureTone, string> = {
+    danger: 'text-danger',
+    muted: 'text-muted-foreground',
+    normal: 'text-foreground',
+}
+
 function cellTextClass(
     display: CellDisplay,
     justify: Justify,
-    kind: RowKind,
+    row: ResultRow,
     isFigure: boolean,
     breakWords: boolean
 ): string {
-    const tone = display.isRed || display.isError ? 'text-danger' : 'text-foreground'
+    const tone = FIGURE_TONE[figureTone(row, display)]
     const digits = isFigure ? 'tabular-nums' : ''
     const words = wordsClass(breakWords)
-    return `text-sm ${words} ${TEXT_ALIGN[justify]} ${digits} ${tone} ${ROW_WEIGHT[kind]}`
+    return `text-sm ${words} ${TEXT_ALIGN[justify]} ${digits} ${tone} ${ROW_WEIGHT[row.kind]}`
 }
 
 interface RowCellProps {
@@ -440,7 +448,7 @@ export function RowCell({
     const isFigure = isFigureColumn(column)
     // A figure is never wrapped (column-measure.ts wholeMeasure): a time keeps its colon whole.
     const shown = isFigure ? display.text : wrappedText(display.text, lines)
-    const textClass = cellTextClass(display, justify, row.kind, isFigure, breakWords)
+    const textClass = cellTextClass(display, justify, row, isFigure, breakWords)
     const testID = `${isCopy ? 'report-sticky-cell' : 'report-cell'}-${column.id}-${row.id}`
     const style = cellBoxStyle(width, minHeight)
     // A figure whose column drills, on a row with a @drill cell, opens the rows

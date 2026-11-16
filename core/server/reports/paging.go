@@ -218,9 +218,13 @@ func levelShape(levels [][]orderTerm) string {
 	return b.String()
 }
 
-// groupFingerprint ties a group cursor to the group levels, each level's
+// groupFingerprint ties a group cursor to the group levels, the levels that
+// inline their groups (compiler.inlineLevels, "" when none does), each level's
 // order shape, the fold state and the detail sort keys (R9d, R6).
-func groupFingerprint(levels, shape, fold string, keys []sortKey) string {
+func groupFingerprint(levels, inline, shape, fold string, keys []sortKey) string {
+	if inline != "" {
+		levels += "|inline:" + inline
+	}
 	return fingerprint(levels+"|shape:"+shape+"|fold:"+fold, keys)
 }
 

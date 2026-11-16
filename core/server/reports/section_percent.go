@@ -154,6 +154,8 @@ func walkSpecFormulas(p *plan, visit func(n *Node, at string, columnRoot bool)) 
 		g, at := &s.Groups[i], fmt.Sprintf("groups.%d", i)
 		walk(g.Label, at+".label", false)
 		walk(g.Having, at+".having", false)
+		walk(g.Inline, at+".inline", false)
+		walk(g.Muted, at+".muted", false)
 		if g.Fill != nil {
 			walk(g.Fill.Where, at+".fill.where", false)
 		}

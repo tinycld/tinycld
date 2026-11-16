@@ -210,6 +210,13 @@ export const specGroupSchema = z.strictObject({
     blank: z.literal('skip').optional(),
     // Hides a group whose child groups are all hidden, with its subtotal.
     hideEmpty: z.boolean().optional(),
+    // A condition on the level, read as having is: a group for which it holds draws
+    // no group row and no subtotal, and its child rows stand in its place. Not on
+    // the last level, a bucketed level, or a layout's first group.
+    inline: specNodeSchema.optional(),
+    // A condition on the level, read as having is: a group row for which it holds
+    // is drawn in muted text (`muted` on the row).
+    muted: specNodeSchema.optional(),
 })
 export type SpecGroup = z.infer<typeof specGroupSchema>
 

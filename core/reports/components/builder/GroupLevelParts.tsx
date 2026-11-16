@@ -19,6 +19,8 @@ import {
     showsBlankSkip,
     showsHaving,
     showsHideEmpty,
+    showsInline,
+    showsMuted,
 } from '../../lib/builder/draft'
 import type { GroupDraft } from '../../lib/builder/filter'
 import type { FormulaPlace } from '../../lib/builder/formula-context'
@@ -29,7 +31,9 @@ import { FieldError, NEW_FORMULA } from './parts'
 import { ReportFormula } from './report-formula'
 
 // The parts of a group level after its column: its label, "Show every <record>"
-// with its conditions (a fill, R6), and "Show only groups where…" (having, R18).
+// with its conditions (a fill, R6), "Show only groups where…" (having, R18), "Show a
+// group's rows in its place where…" (inline, R1) and "Show a group in muted text
+// where…" (muted, R2).
 
 /** The group's own field of its record, when the formula is just that ({record, path: [field]}). */
 export function bareRecordField(node: SpecNode | undefined, group: string): string | undefined {
@@ -226,31 +230,85 @@ export function GroupFill({
  * A layout's first group has none (its sections are fixed rows); one read back
  * there stays in view, with its refusal, so it can be removed.
  */
-export function GroupHaving({ builder, groups, index }: Omit<LevelPartProps, 'target'>) {
+export function GroupHaving(props: Omit<LevelPartProps, 'target'>) {
+    return (
+        <LevelCondition
+            {...props}
+            field="having"
+            heading="Show only groups where…"
+            shows={showsHaving}
+        />
+    )
+}
+
+/**
+ * "Show a group's rows in its place where…": a group these conditions hold for draws no
+ * row and no subtotal, and its child rows stand in its place (R1). Not on the last
+ * level, a bucketed level or a layout's first group; one read back there stays in
+ * view, with its refusal, so it can be removed.
+ */
+export function GroupInline(props: Omit<LevelPartProps, 'target'>) {
+    return (
+        <LevelCondition
+            {...props}
+            field="inline"
+            heading="Show a group's rows in its place where…"
+            shows={showsInline}
+        />
+    )
+}
+
+/** "Show a group in muted text where…": on every level (R2). */
+export function GroupMuted(props: Omit<LevelPartProps, 'target'>) {
+    return (
+        <LevelCondition
+            {...props}
+            field="muted"
+            heading="Show a group in muted text where…"
+            shows={showsMuted}
+        />
+    )
+}
+
+type LevelConditionField = 'having' | 'inline' | 'muted'
+
+// A level's conditions on its totals, its columns and its records, as having reads them.
+function LevelCondition({
+    builder,
+    groups,
+    index,
+    field,
+    heading,
+    shows,
+}: Omit<LevelPartProps, 'target'> & {
+    field: LevelConditionField
+    heading: string
+    shows: (draft: Pick<BuilderDraft, 'layout' | 'groups'>, index: number) => boolean
+}) {
     const control = builder.form.control
     const source = useWatch({ control, name: 'source' })
     const columns = useWatch({ control, name: 'columns' })
     const params = useWatch({ control, name: 'params' })
     const layout = useWatch({ control, name: 'layout' })
     const group = groups[index]
-    if (!group || !showsHaving({ layout, groups }, index)) return null
+    if (!group || !shows({ layout, groups }, index)) return null
     // Read with useWatch, so the condition menus follow other sections (F27).
     const level = levelScope({ source, columns, groups, params }, builder.catalog, index)
-    const state = builder.form.getFieldState(`groups.${index}.having`, builder.form.formState)
+    const state = builder.form.getFieldState(`groups.${index}.${field}`, builder.form.formState)
+    const onChange = (root: GroupDraft, ...added: ParamDef[]) =>
+        setLevel(builder, groups, index, { [field]: root }, ...added)
     return (
         <View className="gap-1">
-            <Text className="text-xs text-muted-foreground">Show only groups where…</Text>
+            <Text className="text-xs text-muted-foreground">{heading}</Text>
             <ConditionTree
                 builder={builder}
-                root={group.having}
+                root={group[field]}
                 baseKey={source}
-                testID={`report-builder-group-${index}-having`}
+                testID={`report-builder-group-${index}-${field}`}
                 level={level}
                 group={group.id}
                 error={state.error?.message}
-                onChange={(having, ...added) =>
-                    setLevel(builder, groups, index, { having }, ...added)
-                }
+                onChange={onChange}
             />
         </View>
     )

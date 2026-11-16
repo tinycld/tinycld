@@ -35,6 +35,7 @@ import {
     offersHaving,
     offersHidden,
     offersHideEmpty,
+    offersInline,
     openingCellRows,
     openingDraft,
     setOpeningCell,
@@ -44,6 +45,8 @@ import {
     showsHeading,
     showsHidden,
     showsHideEmpty,
+    showsInline,
+    showsMuted,
     specFromDraft,
     tidyFit,
     withBlankAbove,
@@ -881,6 +884,8 @@ describe('spec version 2 in the builder', () => {
                     open: false,
                     label: null,
                     having: emptyGroup(),
+                    inline: emptyGroup(),
+                    muted: emptyGroup(),
                     fill: { on: false, where: emptyGroup() },
                 },
             ],
@@ -2838,5 +2843,189 @@ describe('a drill and an open row in the builder (D1, D2)', () => {
             draftIssues({ ...draft, pivot: { ...draft.pivot, on: true } }, CATALOG)
         ).toContainEqual(issue)
         expect(draftIssues(draft, CATALOG)).not.toContainEqual(issue)
+    })
+})
+
+// R1 and R2: a level's "Show a group's rows in its place where…" (inline) and "Show a
+// group in muted text where…" (muted) are conditions on the level, as having is.
+describe('inline and muted group conditions in the builder', () => {
+    const gt = (col: string, value: number): SpecNode => ({
+        op: 'gt',
+        args: [{ col }, { value }],
+    })
+    const lt = (col: string, value: number): SpecNode => ({
+        op: 'lt',
+        args: [{ col }, { value }],
+    })
+    // Status › team › customer, with no layout: inline on status, muted on team.
+    const NESTED: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        columns: [
+            { id: 'customer', label: 'Customer', path: [{ field: 'customer' }] },
+            { id: 'status', label: 'Status', path: [{ field: 'status' }] },
+            { id: 'team', label: 'Team', path: [{ link: 'team' }] },
+            { id: 'amount', label: 'Amount', path: [{ field: 'amount' }], aggregate: 'sum' },
+        ],
+        groups: [
+            { id: 'byStatus', col: 'status', subtotals: true, inline: lt('amount', 50) },
+            { id: 'byTeam', col: 'team', muted: gt('amount', 100) },
+            { id: 'byCustomer', col: 'customer' },
+        ],
+    }
+    const at = (draft: BuilderDraft, path: (string | number)[]) =>
+        draftIssues(draft, CATALOG).filter(issue => issue.path.join('.') === path.join('.'))
+    const withGroup = (draft: BuilderDraft, index: number, part: Partial<GroupLevel>) => ({
+        ...draft,
+        groups: draft.groups.map((g, i) => (i === index ? { ...g, ...part } : g)),
+    })
+    type GroupLevel = BuilderDraft['groups'][number]
+
+    it('keeps inline and muted as condition trees through a round trip', () => {
+        const draft = draftFromSpec(NESTED, META, CATALOG)
+        expect(draft.groups[0]?.inline.items).toEqual([
+            expect.objectContaining({
+                kind: 'condition',
+                subject: 'column',
+                col: 'amount',
+                op: 'lt',
+            }),
+        ])
+        expect(draft.groups[1]?.muted.items).toEqual([
+            expect.objectContaining({
+                kind: 'condition',
+                subject: 'column',
+                col: 'amount',
+                op: 'gt',
+            }),
+        ])
+        expect(draft.groups[2]?.inline.items).toEqual([])
+        expect(draft.groups[2]?.muted.items).toEqual([])
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        expect(draftIssues(draft, CATALOG)).toEqual([])
+        expect(specFromDraft(draft, CATALOG)).toEqual(NESTED)
+        // Cleared, a level writes neither field.
+        const cleared = {
+            ...draft,
+            groups: draft.groups.map(g => ({ ...g, inline: emptyGroup(), muted: emptyGroup() })),
+        }
+        const saved = specFromDraft(cleared, CATALOG)
+        expect(saved.groups?.[0]).not.toHaveProperty('inline')
+        expect(saved.groups?.[1]).not.toHaveProperty('muted')
+    })
+
+    it('offers inline on every level but the last, a bucketed one and a layout first group', () => {
+        const draft = draftFromSpec(NESTED, META, CATALOG)
+        expect([0, 1, 2].map(i => offersInline(draft, i))).toEqual([true, true, false])
+        const bucketed = withGroup(draft, 1, { bucket: 'month' })
+        expect(offersInline(bucketed, 1)).toBe(false)
+        const section = { kind: 'section' as const, id: 'open', title: 'Open', key: 'open' }
+        const laidOut = { ...draft, layout: [section] }
+        expect([0, 1, 2].map(i => offersInline(laidOut, i))).toEqual([false, true, false])
+    })
+
+    it('flags inline where the engine refuses it, with the engine message', () => {
+        const draft = draftFromSpec(NESTED, META, CATALOG)
+        const onLast = withGroup(draft, 2, { inline: draft.groups[0]?.inline })
+        expect(at(onLast, ['groups', 2, 'inline'])).toEqual([
+            {
+                path: ['groups', 2, 'inline'],
+                message: expect.stringMatching(
+                    /^the last level has no child rows to show in the group's place$/i
+                ),
+            },
+        ])
+        const onBucket = withGroup(withGroup(draft, 1, { bucket: 'month' }), 1, {
+            inline: draft.groups[0]?.inline,
+        })
+        expect(at(onBucket, ['groups', 1, 'inline'])).toEqual([
+            {
+                path: ['groups', 1, 'inline'],
+                message: expect.stringMatching(/^a bucketed level always shows its groups$/i),
+            },
+        ])
+        const section = { kind: 'section' as const, id: 'open', title: 'Open', key: 'open' }
+        expect(at({ ...draft, layout: [section] }, ['groups', 0, 'inline'])).toEqual([
+            {
+                path: ['groups', 0, 'inline'],
+                message: expect.stringMatching(/^a layout's sections always show$/i),
+            },
+        ])
+    })
+
+    it('shows inline where it is offered or holds conditions, and muted on every level', () => {
+        const draft = draftFromSpec(NESTED, META, CATALOG)
+        expect([0, 1, 2].map(i => showsInline(draft, i))).toEqual([true, true, false])
+        const onLast = withGroup(draft, 2, { inline: draft.groups[0]?.inline })
+        expect(showsInline(onLast, 2)).toBe(true)
+        const section = { kind: 'section' as const, id: 'open', title: 'Open', key: 'open' }
+        const laidOut = { ...draft, layout: [section] }
+        expect(showsInline(laidOut, 0)).toBe(true)
+        expect(showsInline(withGroup(laidOut, 0, { inline: emptyGroup() }), 0)).toBe(false)
+        expect([0, 1, 2].map(i => showsMuted(draft, i))).toEqual([true, true, true])
+        expect([0, 1, 2].map(i => showsMuted(laidOut, i))).toEqual([true, true, true])
+    })
+
+    it('names an inline or muted condition the draft can no longer run, at its own path', () => {
+        const draft = draftFromSpec(NESTED, META, CATALOG)
+        const columns = draft.columns.filter(c => c.id !== 'amount')
+        const paths = draftIssues({ ...draft, columns }, CATALOG).map(i => i.path.join('.'))
+        expect(paths).toContain('groups.0.inline')
+        expect(paths).toContain('groups.1.muted')
+        expect(paths).not.toContain('groups.0.having')
+        expect(paths).not.toContain('groups.1.having')
+    })
+
+    // bind.go blankAboveHavings: amount is blank above team, so a condition on status
+    // that reads it reads a blank.
+    describe('a column read where it is blank', () => {
+        const UP_TO_TEAM = (field: 'inline' | 'muted', onStatus: boolean): ReportSpec => ({
+            ...NESTED,
+            columns: NESTED.columns.map(c =>
+                c.id === 'amount' ? { ...c, blankAbove: 'byTeam' } : c
+            ),
+            groups: [
+                {
+                    id: 'byStatus',
+                    col: 'status',
+                    ...(onStatus ? { [field]: gt('amount', 0) } : {}),
+                },
+                { id: 'byTeam', col: 'team', ...(onStatus ? {} : { [field]: gt('amount', 0) }) },
+                { id: 'byCustomer', col: 'customer' },
+            ],
+        })
+
+        it('flags an inline or muted that reads it above its level, at its own path', () => {
+            for (const field of ['inline', 'muted'] as const) {
+                const draft = draftFromSpec(UP_TO_TEAM(field, true), META, CATALOG)
+                expect(
+                    draftIssues(draft, CATALOG).map(i => `${i.path.join('.')}: ${i.message}`)
+                ).toEqual([
+                    expect.stringMatching(new RegExp(`^groups\\.0\\.${field}: .*Amount.*Team`)),
+                ])
+                // On the level itself (team), the same condition reads a figure.
+                const own = draftFromSpec(UP_TO_TEAM(field, false), META, CATALOG)
+                expect(own.groups[1]?.[field].items).toHaveLength(1)
+                expect(draftIssues(own, CATALOG)).toEqual([])
+            }
+        })
+
+        it('offers no total-up-to level that an inline or muted would read blank', () => {
+            for (const field of ['inline', 'muted'] as const) {
+                const read = draftFromSpec(UP_TO_TEAM(field, true), META, CATALOG)
+                const amount = read.columns.findIndex(c => c.id === 'amount')
+                const unset = {
+                    ...read,
+                    columns: withBlankAbove(read.columns, amount, undefined),
+                }
+                // A total up to Team or up to Customer both leave Amount blank on
+                // the status rows the condition reads (bind.go blankRead(node, gi+1)).
+                expect([...blankAboveTrips(unset, amount)]).toEqual(['byTeam', 'byCustomer'])
+                const cleared =
+                    field === 'inline' ? { inline: emptyGroup() } : { muted: emptyGroup() }
+                const none = withGroup(unset, 0, cleared)
+                expect([...blankAboveTrips(none, amount)]).toEqual([])
+            }
+        })
     })
 })

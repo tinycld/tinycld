@@ -109,11 +109,11 @@ function findAppDir(workspaceRoot: string, cwd: string): string {
     throw new Error(`No app shell (member named "tinycld") under ${workspaceRoot}`)
 }
 
-// The current scope target = nearest ancestor of cwd that is a feature package
+// The scope target of a directory = its nearest ancestor (or itself) that is a feature package
 // (has manifest.ts), the app shell (name "app"), or core (name "@tinycld/core").
 // core, like the app shell, has no manifest.ts — it's the shared lib, not a
 // feature — so it's matched by name.
-function findCurrentPackage(start: string, appDir: string): CurrentPackage | null {
+export function packageForDir(start: string, appDir: string): CurrentPackage | null {
     let dir = realpathExisting(start)
     const root = path.dirname(appDir) // workspace root
     while (true) {
@@ -133,6 +133,6 @@ function findCurrentPackage(start: string, appDir: string): CurrentPackage | nul
 export function discover(cwd: string = process.cwd()): Discovery {
     const workspaceRoot = findWorkspaceRoot(cwd)
     const appDir = findAppDir(workspaceRoot, cwd)
-    const currentPackage = findCurrentPackage(cwd, appDir)
+    const currentPackage = packageForDir(cwd, appDir)
     return { workspaceRoot, appDir: fs.realpathSync(appDir), currentPackage }
 }

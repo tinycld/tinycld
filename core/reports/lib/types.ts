@@ -132,6 +132,11 @@ export interface ResultRow {
     labelType?: FieldType
     labelValue?: CellValue
     labelCurrency?: string
+    /**
+     * A group row its level's `muted` condition holds for: its label and figures are
+     * drawn in muted text. Never set on a subtotal or total row.
+     */
+    muted?: boolean
 }
 
 export interface Notice {

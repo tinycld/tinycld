@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
 import { type CurrentPackage, discover } from './discovery'
+import { buildSpecFilesCommand, groupSpecFiles, SKIP_EXPORT_ENV } from './e2e-specs'
 import { resolveTopic } from './help-screenshots'
 import { runAll } from './orchestrator'
 import {
@@ -45,10 +46,11 @@ async function runForPackage(
     pkg: CurrentPackage,
     appDir: string,
     passthrough: string[],
-    ownArgs: string[] = []
+    ownArgs: string[] = [],
+    env: Record<string, string> = {}
 ): Promise<number> {
     for (const cmd of commandsFor(verb, pkg, appDir, passthrough, ownArgs)) {
-        const code = await runCommand(cmd)
+        const code = await runCommand({ ...cmd, env: { ...cmd.env, ...env } })
         if (code !== 0) return code
     }
     return 0
@@ -59,7 +61,8 @@ async function main() {
     const [verb, ...rest] = argv as [Verb, ...string[]]
     if (!verb) {
         console.error(
-            'usage: tinycld-pkg <typecheck|test|test:e2e|check|help:screenshots> [--all] [--bail] [-- <runner args>]'
+            'usage: tinycld-pkg <typecheck|test|test:e2e|check|help:screenshots> [--all] [--bail] [-- <runner args>]\n' +
+                '       tinycld-pkg test:e2e <spec file>... [--skip-export] [-- <playwright args>]'
         )
         process.exit(2)
     }
@@ -71,6 +74,18 @@ async function main() {
     const passthrough = sepIndex === -1 ? [] : rest.slice(sepIndex + 1)
     const all = ownArgs.includes('--all')
     const bail = ownArgs.includes('--bail')
+    const skipExport = ownArgs.includes('--skip-export')
+    // Spec files named before `--`, from any members: one Playwright run (one
+    // server start, one export, one seed) for the whole call.
+    const specFiles = verb === 'test:e2e' ? ownArgs.filter(arg => !arg.startsWith('--')) : []
+    if (skipExport && verb !== 'test:e2e') {
+        console.error('--skip-export applies to test:e2e only')
+        process.exit(2)
+    }
+    if (all && specFiles.length > 0) {
+        console.error('Cannot combine --all with spec files.')
+        process.exit(2)
+    }
 
     if (all && passthrough.length > 0) {
         console.error(
@@ -102,11 +117,19 @@ async function main() {
         process.exit(result.exitCode)
     }
 
+    if (specFiles.length > 0) {
+        const members = groupSpecFiles(specFiles, { cwd: process.cwd(), workspaceRoot, appDir })
+        const cmd = buildSpecFilesCommand(members, appDir, passthrough)
+        const env = skipExport ? { ...cmd.env, ...SKIP_EXPORT_ENV } : cmd.env
+        process.exit(await runCommand({ ...cmd, env }))
+    }
+
     if (!currentPackage) {
         console.error('Not inside a package or the app shell.')
         process.exit(2)
     }
-    const code = await runForPackage(verb, currentPackage, appDir, passthrough, ownArgs)
+    const env = skipExport ? SKIP_EXPORT_ENV : {}
+    const code = await runForPackage(verb, currentPackage, appDir, passthrough, ownArgs, env)
     process.exit(code)
 }
 

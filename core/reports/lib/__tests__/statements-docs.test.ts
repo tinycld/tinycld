@@ -67,9 +67,17 @@ describe('statement docs', () => {
             'pivot.range',
             'pivot.order',
             'columns[].pivot.labelType',
+            'groups[].inline',
+            'groups[].muted',
         ]) {
             expect(table).toContain(`\`${field}\``)
         }
+    })
+
+    it('names the inline and muted group choices in the help', () => {
+        const help = read('core/help/reports.md')
+        expect(help).toContain("Show a group's rows in its place where…")
+        expect(help).toContain('Show a group in muted text where…')
     })
 
     it('names the percent of a section operator in the version 4 table', () => {

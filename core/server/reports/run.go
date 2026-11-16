@@ -175,9 +175,11 @@ type Row struct {
 	Kind  string `json:"kind"`
 	Depth int    `json:"depth"`
 	// Level is a group or subtotal row's group level (1 for the first
-	// group). With a skipped level (Group.Blank) depth + 1 is no longer the
-	// level, and a client that reads a row's group from its depth would read
-	// the wrong one. 0 (absent) on every other row.
+	// group). With a skipped level (Group.Blank) or an inlined group
+	// (Group.Inline) depth + 1 is no longer the level, and a client that
+	// reads a row's group from its depth would read the wrong one. A child
+	// row of an inlined group has its depth and section, and its groupKey
+	// still holds the inlined group's key. 0 (absent) on every other row.
 	Level int    `json:"level,omitempty"`
 	Label string `json:"label"`
 	// LabelColumn names the column whose cell the label repeats, so the
@@ -195,8 +197,11 @@ type Row struct {
 	Expanded bool   `json:"expanded,omitempty"`
 	// CanExpand says a group row has rows to open (false for a pivot's
 	// innermost group), so the client never repeats that rule.
-	CanExpand bool           `json:"canExpand,omitempty"`
-	Cells     map[string]any `json:"cells"`
+	CanExpand bool `json:"canExpand,omitempty"`
+	// Muted marks a group row whose level's Group.Muted condition holds; a
+	// view draws its label and figures in muted text. Never on another kind.
+	Muted bool           `json:"muted,omitempty"`
+	Cells map[string]any `json:"cells"`
 	// LabelType is set when a group row's label (and its subtotal's), or a
 	// detail row's record label or label formula, is a value that is not
 	// text: an amount, a number, a percent, a date or a yes/no. LabelValue is that value as a cell of the type holds it (an
@@ -721,7 +726,7 @@ func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	if _, rn.groupKeys, err = c.detailSelect(keysOf, "w"); err != nil {
 		return nil, err
 	}
-	rn.groupFP = groupFingerprint(c.groupLevels(), levelShape(rn.groupShape), foldPrint(rn.expand), rn.groupKeys)
+	rn.groupFP = groupFingerprint(c.groupLevels(), c.inlineLevels(), levelShape(rn.groupShape), foldPrint(rn.expand), rn.groupKeys)
 	if rn.opts.Cursor != "" {
 		cur, err := readGroupCursor(rn.groupFP, rn.groupShape, rn.groupKeys, len(c.p.groups), len(c.currencies), rn.opts.Cursor)
 		if err != nil {
@@ -781,21 +786,28 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 		_, name := splitCell(cell)
 		base = append(base, name)
 	}
-	base = append(base, "__ord", "__own", "__label", "__labelcur", "__n", "__kids")
+	base = append(base, "__ord", "__own", "__label", "__labelcur", "__n", "__kids", "__inline", "__muted")
 	skipping := false
 	for n := 1; n <= groups; n++ {
-		skipping = skipping || c.skips(n)
+		skipping = skipping || c.skips(n) || c.inlines(n)
 	}
 	legs := make([]string, 0, groups)
 	for n := 1; n <= groups; n++ {
 		cols := prefixed("o.", base)
-		// A skip level's blank key is read (its children's path, the cursor's
-		// order values) but draws no row (children), so the limit does not
-		// count it.
+		// A skip level's blank key and an inlined group are read (their
+		// children's path, the cursor's order values) but draw no row
+		// (children), so the limit does not count them.
 		if skipping {
-			blank := "0"
+			var uncounted []string
 			if c.skips(n) {
-				blank = fmt.Sprintf("(o.k%d IS NULL)", n-1)
+				uncounted = append(uncounted, fmt.Sprintf("(o.k%d IS NULL)", n-1))
+			}
+			if c.inlines(n) {
+				uncounted = append(uncounted, "(o.__inline = 1)")
+			}
+			blank := "0"
+			if len(uncounted) > 0 {
+				blank = "(" + strings.Join(uncounted, " OR ") + ")"
 			}
 			cols = append(cols, blank+" AS "+uncountedCell)
 		}
@@ -841,8 +853,9 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 		body = fmt.Sprintf("SELECT %s FROM (%s)\nWHERE %s\nORDER BY %s LIMIT %s", selected, union, keyset, orderBy, rows)
 		return levelCTEs, pageCTEs, body, nil
 	}
-	// A LIMIT would count the blank keys of skip levels, which draw no row: a
-	// page of them would end early and look like the last one. The running
+	// A LIMIT would count the blank keys of skip levels and the inlined
+	// groups, which draw no row: a page of them would end early and look like
+	// the last one. The running
 	// count of the rows that draw takes its place.
 	body = fmt.Sprintf("SELECT * FROM (SELECT %s, SUM(1 - %s) OVER (ORDER BY %s ROWS UNBOUNDED PRECEDING) AS __counted FROM (%s)\nWHERE %s)\nWHERE __counted <= %s\nORDER BY %s",
 		selected, uncountedCell, orderBy, union, keyset, rows, orderBy)
@@ -850,7 +863,8 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 }
 
 // uncountedCell is 1 on a paged level row that draws no row of its own (a
-// skip level's blank key), which the page's limit does not count.
+// skip level's blank key, an inlined group), which the page's limit does not
+// count.
 const uncountedCell = "__uncounted"
 
 // sameGroup matches a's row to b's by the first n group keys and the
@@ -1289,6 +1303,9 @@ func (c *compiler) compileLevels(s *stmt, r *rowsCTE, expand *expansion, pivot [
 		if err != nil {
 			return nil, err
 		}
+		if err := lv.groupConditions(); err != nil {
+			return nil, err
+		}
 		var totals []string
 		if readsSums {
 			if totals, err = lv.rowsCells(); err != nil {
@@ -1627,6 +1644,51 @@ func (rn *runner) openGroups(groupRows []map[string]any) ([][]any, error) {
 // skips is true when group level n (1 for the first) passes its blank keys up.
 func (c *compiler) skips(n int) bool {
 	return n >= 1 && n <= len(c.p.groups) && c.p.groups[n-1].group.Blank == GroupBlankSkip
+}
+
+// inlines is true when group level n (1 for the first) has an inline
+// condition: its groups that meet it pass their rows up.
+func (c *compiler) inlines(n int) bool {
+	return n >= 1 && n <= len(c.p.groups) && c.p.groups[n-1].group.Inline != nil
+}
+
+// inlineLevels is one flag per group level, "i" for a level with an inline
+// condition and "-" for one without, or "" when no level has one: a group
+// cursor's fingerprint holds it, as an inlined group draws no row and moves
+// its children up.
+func (c *compiler) inlineLevels() string {
+	flags := make([]byte, len(c.p.groups))
+	found := false
+	for i := range c.p.groups {
+		flags[i] = '-'
+		if c.inlines(i + 1) {
+			flags[i], found = 'i', true
+		}
+	}
+	if !found {
+		return ""
+	}
+	return string(flags)
+}
+
+// inlinedRow is true for a row (its keys under prefix) whose level-n group is
+// inlined: one of il<n> with the row's first n group keys and its currency
+// keys whose __inline is 1. The keys compare as JSON arrays, so a blank key
+// matches a blank one as IS matches it, and an unqualified key (prefix "")
+// still reads the outer row.
+func (c *compiler) inlinedRow(n int, prefix string) string {
+	outer := make([]string, 0, n+len(c.currencies))
+	inner := make([]string, 0, n+len(c.currencies))
+	for i := range n {
+		outer = append(outer, fmt.Sprintf("%sk%d", prefix, i))
+		inner = append(inner, fmt.Sprintf("k%d", i))
+	}
+	for _, ck := range c.currencies {
+		outer = append(outer, prefix+ck)
+		inner = append(inner, ck)
+	}
+	return fmt.Sprintf("(json_array(%s) IN (SELECT json_array(%s) FROM il%d WHERE __inline = 1))",
+		strings.Join(outer, ", "), strings.Join(inner, ", "), n)
 }
 
 // groupLevels names the report's group levels (column, bucket and blank) for
@@ -2099,15 +2161,39 @@ func keysIn(s *stmt, cols []string, keys [][]any, encoded [][]string) string {
 // open group's: every group under expandAll or an open level, else an
 // expanded key; never a folded key.
 func (e *expansion) where(c *compiler, s *stmt, depth int, prefix string) string {
+	return e.whereAt(c, s, depth, prefix, true)
+}
+
+// whereAt is where; with exact false it may also match a closed group of an
+// inline level whose parent is open (it does not read which groups are
+// inlined), for a fill's parent keys (mayShowUnder).
+func (e *expansion) whereAt(c *compiler, s *stmt, depth int, prefix string, exact bool) string {
 	own := e.whereOwn(c, s, depth, prefix)
-	if !c.skips(depth) {
-		return own
+	if c.skips(depth) {
+		// A blank key at a skip level is never a row the reader opens or
+		// folds: it is open exactly when the group above it is, so its rows
+		// show under that group.
+		parent := e.whereAt(c, s, depth-1, prefix, exact)
+		own = fmt.Sprintf("(%s OR (%sk%d IS NULL AND %s))", own, prefix, depth-1, parent)
 	}
-	// A blank key at a skip level is never a row the reader opens or folds:
-	// it is open exactly when the group above it is, so its rows show under
-	// that group.
-	parent := e.where(c, s, depth-1, prefix)
-	return fmt.Sprintf("(%s OR (%sk%d IS NULL AND %s))", own, prefix, depth-1, parent)
+	if c.inlines(depth) {
+		// An inlined group is not a row the reader opens or folds either: its
+		// rows show where it would, so a key of expand or collapse that names
+		// it is not read. A first-level group sits under the Total, which is
+		// always open.
+		parent := "1"
+		if depth > 1 {
+			parent = e.whereAt(c, s, depth-1, prefix, exact)
+		}
+		if !exact {
+			if own == "1" || parent == "1" {
+				return "1"
+			}
+			return fmt.Sprintf("(%s OR %s)", own, parent)
+		}
+		own = fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", c.inlinedRow(depth, prefix), parent, own)
+	}
+	return own
 }
 
 // whereOwn is where without the skip levels: the keys the reader opened and
@@ -2135,9 +2221,22 @@ func (e *expansion) whereOwn(c *compiler, s *stmt, depth int, prefix string) str
 // groups at depths 1..depth above it. A row under a folded grandparent
 // shows nothing even when its parent's level is open.
 func (e *expansion) shownUnder(c *compiler, s *stmt, depth int, prefix string) string {
+	return e.shownUnderAt(c, s, depth, prefix, true)
+}
+
+// mayShowUnder is shownUnder that does not read which groups are inlined
+// (whereAt, exact false): it also matches a row under a closed group of an
+// inline level whose parent is open. A fill's parent keys read it: il<L> may
+// read the sums of the level below, whose rows the fill's keyset makes, so
+// reading il<L> there would be circular.
+func (e *expansion) mayShowUnder(c *compiler, s *stmt, depth int, prefix string) string {
+	return e.shownUnderAt(c, s, depth, prefix, false)
+}
+
+func (e *expansion) shownUnderAt(c *compiler, s *stmt, depth int, prefix string, exact bool) string {
 	conds := []string{}
 	for d := 1; d <= depth; d++ {
-		if w := e.where(c, s, d, prefix); w != "1" {
+		if w := e.whereAt(c, s, d, prefix, exact); w != "1" {
 			conds = append(conds, w)
 		}
 	}

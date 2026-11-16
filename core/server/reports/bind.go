@@ -497,6 +497,12 @@ func (b *binder) formulaSizes(p *plan) {
 		if h := p.spec.Groups[i].Having; h != nil {
 			check(fmt.Sprintf("groups.%d.having", i), p.nodeSize(h, memo, map[string]bool{}, true))
 		}
+		if n := p.spec.Groups[i].Inline; n != nil {
+			check(fmt.Sprintf("groups.%d.inline", i), p.nodeSize(n, memo, map[string]bool{}, true))
+		}
+		if n := p.spec.Groups[i].Muted; n != nil {
+			check(fmt.Sprintf("groups.%d.muted", i), p.nodeSize(n, memo, map[string]bool{}, true))
+		}
 		if o := p.spec.Groups[i].Opening; o != nil {
 			for _, id := range o.cellIDs() {
 				if n := o.Cells[id]; n != nil {
@@ -844,6 +850,14 @@ func (b *binder) groupsAndPivot(p *plan) {
 		if g.HideEmpty && i == len(spec.Groups)-1 {
 			b.bad(at+".hideEmpty", "the last level has no child groups to be empty of")
 		}
+		// A pivot's last level is the last level: its rows are the pivot's.
+		switch {
+		case g.Inline == nil:
+		case i == len(spec.Groups)-1:
+			b.bad(at+".inline", "the last level has no child rows to show in the group's place")
+		case g.Bucket != "":
+			b.bad(at+".inline", "a bucketed level always shows its groups")
+		}
 		// One refusal per column, however many levels group by it.
 		if g.Bucket == "" && cp.col.Rollup != nil && !groupedRollup[cp] {
 			groupedRollup[cp] = true
@@ -986,15 +1000,20 @@ func (p *plan) blankReadLevels() {
 	}
 }
 
-// blankAboveHavings refuses a group's having that reads a column blank above
-// that group's level (directly or through the formula columns it reads): the
-// column has no value on the group's rows, so the having would hide every
-// group.
+// blankAboveHavings refuses a group's having, inline or muted condition that
+// reads a column blank above that group's level (directly or through the
+// formula columns it reads): the column has no value on the group's rows, so
+// the condition would fail on every group.
 func (b *binder) blankAboveHavings(p *plan) {
 	for gi, g := range p.spec.Groups {
-		blank := p.blankRead(g.Having, gi+1)
-		if blank != nil {
-			b.bad(fmt.Sprintf("groups.%d.having", gi), fmt.Sprintf("having of group %q reads column %q, which is blank above group %q", g.ID, blank.col.ID, p.spec.Groups[blank.blankLevel-1].ID))
+		for _, c := range []struct {
+			name string
+			node *Node
+		}{{"having", g.Having}, {"inline", g.Inline}, {"muted", g.Muted}} {
+			blank := p.blankRead(c.node, gi+1)
+			if blank != nil {
+				b.bad(fmt.Sprintf("groups.%d.%s", gi, c.name), fmt.Sprintf("%s of group %q reads column %q, which is blank above group %q", c.name, g.ID, blank.col.ID, p.spec.Groups[blank.blankLevel-1].ID))
+			}
 		}
 	}
 }
@@ -1123,6 +1142,9 @@ func (b *binder) layout(p *plan) {
 	// The last-level refusal (groupsAndPivot) already names a one-level spec.
 	if len(p.spec.Groups) > 1 && p.spec.Groups[0].HideEmpty {
 		b.bad("groups.0.hideEmpty", "a layout's sections are fixed rows: hide empty groups on a deeper group")
+	}
+	if len(p.spec.Groups) > 1 && p.spec.Groups[0].Inline != nil {
+		b.bad("groups.0.inline", "a layout's sections always show")
 	}
 	seen := map[string]bool{}
 	keys := map[string]bool{}
