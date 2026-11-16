@@ -2,22 +2,23 @@
 /**
  * Reset Database Script
  *
- * Deletes server/pb_data, starts PocketBase to run migrations,
- * then seeds the database with a test user and org.
+ * Builds a fresh database in a temp directory: starts PocketBase on a free
+ * port to run migrations, seeds a test user and org, then moves the result
+ * over server/pb_data. A running `pnpm run dev` keeps its proxy and Expo up:
+ * the script pauses only its PocketBase for the swap (see dev-pb-control.ts).
  *
  * Usage:
  *   pnpm exec tsx scripts/reset-dev-db.ts [options]
  *
  * Options:
- *   --url <url>        PocketBase URL (default: http://127.0.0.1:7100)
+ *   --url <url>        URL PocketBase serves on with --keep-running
+ *                      (default: http://127.0.0.1:7100)
  *   --browse-url <url> URL the developer opens in the browser (cosmetic — it's
- *                      printed in the seed's login summary). Defaults to --url
- *                      with 127.0.0.1 → localhost. Set this when the developer
- *                      browses somewhere other than PB itself (e.g. a dev proxy
- *                      on another port).
+ *                      printed in the seed's login summary). Defaults to the
+ *                      running dev proxy, else --url with 127.0.0.1 → localhost.
  *   --data-dir <dir>   Data directory (default: server/pb_data)
  *   --skip-build       Skip building PocketBase
- *   --keep-running     Keep server running after seeding (default: false)
+ *   --keep-running     Serve the new data dir on --url after the swap
  *   --help             Show this help message
  *
  * Environment variables (from .env):
@@ -28,8 +29,17 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
+import * as net from 'node:net'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import { loadEnv } from '@tinycld/core/lib/load-env'
+import {
+    type DevPbState,
+    PAUSE_PB_SIGNAL,
+    RESUME_PB_SIGNAL,
+    readLiveDevPbState,
+} from './dev-pb-control'
+import { isPortFree } from './port-probe'
 
 function log(...args: unknown[]) {
     process.stdout.write(`[reset-dev-db] ${args.join(' ')}\n`)
@@ -51,16 +61,18 @@ interface Config {
 
 function printUsage(): void {
     process.stdout.write(
-        `Reset the dev database: delete pb_data, run migrations, and seed a test user + org.\n\n` +
+        `Reset the dev database: seed a fresh one in a temp dir, then swap it over pb_data.\n\n` +
             `Usage:\n` +
             `  pnpm exec tsx scripts/reset-dev-db.ts [options]\n\n` +
             `Options:\n` +
-            `  --url <url>        PocketBase URL (default: http://127.0.0.1:7100)\n` +
+            `  --url <url>        URL PocketBase serves on with --keep-running\n` +
+            `                     (default: http://127.0.0.1:7100)\n` +
             `  --browse-url <url> URL the developer opens in the browser (cosmetic; printed in\n` +
-            `                     the seed login summary). Defaults to --url with 127.0.0.1 → localhost.\n` +
+            `                     the seed login summary). Defaults to the running dev proxy,\n` +
+            `                     else --url with 127.0.0.1 → localhost.\n` +
             `  --data-dir <dir>   Data directory (default: server/pb_data)\n` +
             `  --skip-build       Skip building PocketBase\n` +
-            `  --keep-running     Keep the server running after seeding (default: exit after seed)\n` +
+            `  --keep-running     Serve the new data dir on --url after the swap (default: exit)\n` +
             `  --help             Show this help message\n`
     )
 }
@@ -112,26 +124,26 @@ function parseArgs(): Config {
 }
 
 const CONFIG = parseArgs()
-const PB_URL = CONFIG.url
-const parsedUrl = new URL(PB_URL)
-const PB_HOST = parsedUrl.hostname
-const PB_PORT = parseInt(parsedUrl.port || '8090', 10)
 const PB_DATA_DIR = path.join(process.cwd(), CONFIG.dataDir)
 const PB_BINARY = path.join(process.cwd(), 'server/app')
+const MIGRATIONS_DIR = path.join(process.cwd(), 'server/pb_migrations')
 
-// The URL the developer actually opens. Prefer an explicit --browse-url (the
-// dev proxy, which may live on a different port than PB), otherwise fall back to
-// the PB URL with 127.0.0.1 → localhost for readability.
-const BROWSE_URL = (CONFIG.browseUrl ?? PB_URL.replace('127.0.0.1', 'localhost')).replace(/\/$/, '')
+// The URL the developer actually opens. Prefer an explicit --browse-url, then
+// the proxy of a dev.ts that serves this data dir, otherwise --url with
+// 127.0.0.1 → localhost for readability.
+function browseUrl(dev: DevPbState | null): string {
+    const url = CONFIG.browseUrl ?? dev?.publicUrl ?? CONFIG.url.replace('127.0.0.1', 'localhost')
+    return url.replace(/\/$/, '')
+}
 
 async function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function waitForPocketBase(maxAttempts = 30): Promise<boolean> {
+async function waitForPocketBase(url: string, maxAttempts = 30): Promise<boolean> {
     for (let i = 0; i < maxAttempts; i++) {
         try {
-            const response = await fetch(`${PB_URL}/api/health`)
+            const response = await fetch(`${url}/api/health`)
             if (response.ok) {
                 return true
             }
@@ -143,38 +155,74 @@ async function waitForPocketBase(maxAttempts = 30): Promise<boolean> {
     return false
 }
 
-function killExistingPocketBase(): void {
-    log('Killing existing PocketBase on port', PB_PORT)
-    try {
-        // -sTCP:LISTEN restricts the match to the process LISTENING on the
-        // port. Without it, lsof also returns clients with an open connection
-        // to that port (e.g. a browser tab or the seed's fetch), and kill -9'ing
-        // those would take out unrelated processes rather than just the server.
-        const result = spawnSync('lsof', ['-ti', `:${PB_PORT}`, '-sTCP:LISTEN'], {
-            encoding: 'utf-8',
+function freePort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer()
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', () => {
+            const { port } = server.address() as net.AddressInfo
+            server.close(() => resolve(port))
         })
-        if (result.stdout.trim()) {
-            const pids = result.stdout.trim().split('\n')
-            for (const pid of pids) {
-                spawnSync('kill', ['-9', pid])
-            }
-            log('Killed', pids.length, 'process(es)')
-        } else {
-            log('No existing process found')
-        }
-    } catch {
-        log('No existing process found')
+    })
+}
+
+async function waitForPortFree(port: number, timeoutMs: number): Promise<boolean> {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+        if (await isPortFree(port)) return true
+        await sleep(100)
+    }
+    return false
+}
+
+// The PIDs that hold the SQLite database of dataDir open. A PocketBase that
+// still has it open would keep serving the deleted files, or write its WAL
+// back into the new database.
+function databaseHolders(dataDir: string): string[] {
+    const dbFile = path.join(dataDir, 'data.db')
+    if (!fs.existsSync(dbFile)) return []
+    const result = spawnSync('lsof', ['-t', dbFile], { encoding: 'utf-8' })
+    return result.stdout.trim().split('\n').filter(Boolean)
+}
+
+async function pauseDevPocketBase(dev: DevPbState): Promise<void> {
+    log(`Pausing the PocketBase of dev server pid ${dev.pid}`)
+    process.kill(dev.pid, PAUSE_PB_SIGNAL)
+    if (!(await waitForPortFree(dev.pbPort, 15_000))) {
+        throw new Error(`dev PocketBase did not release :${dev.pbPort}`)
     }
 }
 
-function deletePbData(): void {
-    log('Deleting', PB_DATA_DIR)
-    if (fs.existsSync(PB_DATA_DIR)) {
-        fs.rmSync(PB_DATA_DIR, { recursive: true, force: true })
-        log('Deleted')
-    } else {
-        log('No data directory found, skipping')
+async function resumeDevPocketBase(dev: DevPbState): Promise<void> {
+    log(`Resuming the PocketBase of dev server pid ${dev.pid}`)
+    process.kill(dev.pid, RESUME_PB_SIGNAL)
+    if (!(await waitForPocketBase(`http://127.0.0.1:${dev.pbPort}`))) {
+        throw new Error(`dev PocketBase did not come back on :${dev.pbPort}`)
     }
+}
+
+// A rename fails across volumes (the temp dir can be on another one), so copy
+// in that case.
+function moveDir(from: string, to: string): void {
+    try {
+        fs.renameSync(from, to)
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err
+        fs.cpSync(from, to, { recursive: true })
+        fs.rmSync(from, { recursive: true, force: true })
+    }
+}
+
+function replacePbData(seededDir: string): void {
+    const holders = databaseHolders(PB_DATA_DIR)
+    if (holders.length > 0) {
+        throw new Error(
+            `${PB_DATA_DIR} is open in pid ${holders.join(', ')}; stop that PocketBase first`
+        )
+    }
+    log('Replacing', PB_DATA_DIR)
+    fs.rmSync(PB_DATA_DIR, { recursive: true, force: true })
+    moveDir(seededDir, PB_DATA_DIR)
 }
 
 function buildPocketBase(): void {
@@ -227,13 +275,13 @@ function getCredentials(): { email: string; password: string; generated: boolean
     return resolvedCredentials
 }
 
-function createSuperuser(): void {
+function createSuperuser(dataDir: string): void {
     const { email, password, generated } = getCredentials()
     log('Creating superuser:', email)
 
     const result = spawnSync(
         PB_BINARY,
-        ['superuser', 'upsert', email, password, '--dir', PB_DATA_DIR],
+        ['superuser', 'upsert', email, password, '--dir', dataDir],
         {
             stdio: 'inherit',
         }
@@ -255,21 +303,12 @@ function createSuperuser(): void {
 // async logs don't land between the box borders. stderr is always echoed.
 let relayPbStdout = true
 
-async function startPocketBase(): Promise<ReturnType<typeof spawn>> {
-    log(`Starting PocketBase at ${PB_HOST}:${PB_PORT}...`)
-    const migrationsDir = path.join(process.cwd(), 'server/pb_migrations')
+function startPocketBase(url: string, dataDir: string): ReturnType<typeof spawn> {
+    const { host } = new URL(url)
+    log(`Starting PocketBase at ${host}...`)
     const pb = spawn(
         PB_BINARY,
-        [
-            '--dev',
-            '--dir',
-            PB_DATA_DIR,
-            '--migrationsDir',
-            migrationsDir,
-            '--http',
-            `${PB_HOST}:${PB_PORT}`,
-            'serve',
-        ],
+        ['--dev', '--dir', dataDir, '--migrationsDir', MIGRATIONS_DIR, '--http', host, 'serve'],
         {
             stdio: ['ignore', 'pipe', 'pipe'],
             detached: false,
@@ -309,8 +348,8 @@ async function startPocketBase(): Promise<ReturnType<typeof spawn>> {
 // SIGTERM gets PocketBase to start shutting down (background goroutines like
 // the push scheduler and drive watcher get notified), but exit can take more
 // than 5s on a busy machine. Critically, the SQLite WAL only checkpoints on
-// graceful exit — if we proceed before PB is gone, dev.ts opens the same DB
-// while seed-PB is still flushing and we get stale/inconsistent reads.
+// graceful exit — if we move the data dir before PB is gone, the copy can miss
+// writes that are still in the WAL.
 // So: SIGTERM, wait up to 15s, escalate to SIGKILL, then wait for the
 // process to actually be reaped before returning.
 async function stopPocketBase(child: ReturnType<typeof spawn>): Promise<void> {
@@ -337,7 +376,7 @@ async function stopPocketBase(child: ReturnType<typeof spawn>): Promise<void> {
     await waitForExit(5_000)
 }
 
-async function runSeedScript(): Promise<void> {
+async function runSeedScript(url: string, browse: string): Promise<void> {
     log('Running seed script...')
     const { email, password, generated } = getCredentials()
 
@@ -348,7 +387,7 @@ async function runSeedScript(): Promise<void> {
         'tsx',
         'scripts/seed-db.ts',
         '--url',
-        PB_URL,
+        url,
         '--admin-email',
         email,
         '--admin-pw',
@@ -368,7 +407,7 @@ async function runSeedScript(): Promise<void> {
             env: {
                 ...process.env,
                 NODE_OPTIONS: '--preserve-symlinks',
-                TINYCLD_BROWSE_URL: BROWSE_URL,
+                TINYCLD_BROWSE_URL: browse,
             },
         })
 
@@ -384,19 +423,13 @@ async function runSeedScript(): Promise<void> {
     })
 }
 
-async function main() {
-    let pb: ReturnType<typeof spawn> | null = null
-
+async function seedFreshDataDir(dataDir: string, browse: string): Promise<void> {
+    createSuperuser(dataDir)
+    const url = `http://127.0.0.1:${await freePort()}`
+    const pb = startPocketBase(url, dataDir)
     try {
-        killExistingPocketBase()
-        deletePbData()
-        buildPocketBase()
-        createSuperuser()
-        pb = await startPocketBase()
-
         log('Waiting for PocketBase to be ready...')
-        const ready = await waitForPocketBase()
-        if (!ready) {
+        if (!(await waitForPocketBase(url))) {
             throw new Error('PocketBase failed to start within timeout')
         }
         log('PocketBase is ready')
@@ -408,29 +441,63 @@ async function main() {
         // creds, the /_/ and /admin URLs) is printed by the seed script.
         relayPbStdout = false
 
-        await runSeedScript()
+        await runSeedScript(url, browse)
+    } finally {
+        await stopPocketBase(pb)
+    }
+}
 
-        if (CONFIG.keepRunning) {
-            log('Keeping server running (Ctrl+C to stop)')
-            await new Promise<void>(resolve => {
-                process.on('SIGINT', () => {
-                    resolve()
-                })
-                process.on('SIGTERM', () => {
-                    resolve()
-                })
-            })
+async function serveUntilSignal(): Promise<void> {
+    relayPbStdout = true
+    const pb = startPocketBase(CONFIG.url, PB_DATA_DIR)
+    if (!(await waitForPocketBase(CONFIG.url))) {
+        await stopPocketBase(pb)
+        throw new Error('PocketBase failed to start within timeout')
+    }
+    log('Keeping server running (Ctrl+C to stop)')
+    await new Promise<void>(resolve => {
+        process.on('SIGINT', () => resolve())
+        process.on('SIGTERM', () => resolve())
+    })
+    await stopPocketBase(pb)
+}
+
+async function main() {
+    const seededDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tinycld-reset-'))
+    let pausedDev: DevPbState | null = null
+
+    try {
+        const dev = readLiveDevPbState(PB_DATA_DIR)
+        if (dev && CONFIG.keepRunning) {
+            throw new Error(
+                `--keep-running: dev server pid ${dev.pid} already serves ${PB_DATA_DIR}`
+            )
         }
+
+        buildPocketBase()
+        await seedFreshDataDir(seededDir, browseUrl(dev))
+
+        if (dev) {
+            pausedDev = dev
+            await pauseDevPocketBase(dev)
+        }
+        replacePbData(seededDir)
+        if (pausedDev) {
+            const resumed = pausedDev
+            pausedDev = null
+            await resumeDevPocketBase(resumed)
+        }
+
+        if (CONFIG.keepRunning) await serveUntilSignal()
 
         log('Done!')
     } catch (err) {
         logError('Failed:', err)
-        process.exit(1)
+        process.exitCode = 1
     } finally {
-        if (pb) {
-            const child = pb
-            await stopPocketBase(child)
-        }
+        // Never leave the dev server without its PocketBase.
+        if (pausedDev) process.kill(pausedDev.pid, RESUME_PB_SIGNAL)
+        fs.rmSync(seededDir, { recursive: true, force: true })
     }
 }
 
