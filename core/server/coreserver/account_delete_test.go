@@ -7,6 +7,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/guestauth"
+	"tinycld.org/core/usernames"
 )
 
 // The pb_test_data directory is intentionally not committed (it's a runtime
@@ -28,8 +30,14 @@ func createTestUser(app core.App, email, password string) (*core.Record, error) 
 	if err != nil {
 		return nil, err
 	}
+	// Set the username: the fixture's random one can match a fixture user's.
+	username, err := guestauth.PickAvailableUsername(app, usernames.Derive(email))
+	if err != nil {
+		return nil, err
+	}
 	r := core.NewRecord(coll)
 	r.SetEmail(email)
+	r.Set("username", username)
 	r.Set("name", "Test User")
 	r.SetVerified(true)
 	r.SetPassword(password)

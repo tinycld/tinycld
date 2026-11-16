@@ -111,21 +111,14 @@ func seedMentionFixture(t *testing.T) *mentionFixture {
 	t.Helper()
 	app := setupCommentMentionTestApp(t)
 
-	usersCol, _ := app.FindCollectionByNameOrId("users")
-	authorUser := core.NewRecord(usersCol)
-	authorUser.SetEmail("author@test.local")
+	authorUser := mkUser(t, app, "author@test.local", false)
 	authorUser.Set("name", "Alice")
-	authorUser.SetVerified(true)
-	authorUser.SetPassword("Password123!")
 	if err := app.Save(authorUser); err != nil {
 		t.Fatal(err)
 	}
 
-	mentionUser := core.NewRecord(usersCol)
-	mentionUser.SetEmail("mention@test.local")
+	mentionUser := mkUser(t, app, "mention@test.local", false)
 	mentionUser.Set("name", "Bob")
-	mentionUser.SetVerified(true)
-	mentionUser.SetPassword("Password123!")
 	if err := app.Save(mentionUser); err != nil {
 		t.Fatal(err)
 	}

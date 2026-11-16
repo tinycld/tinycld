@@ -9,7 +9,9 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"tinycld.org/core/classifier/classifiertest"
+	"tinycld.org/core/guestauth"
 	"tinycld.org/core/syscfg"
+	"tinycld.org/core/usernames"
 )
 
 func newApp(t *testing.T, settings map[string]string) *tests.TestApp {
@@ -122,8 +124,13 @@ func TestDeleteUser_RemovesPersonalTaxonomyAndLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	username, err := guestauth.PickAvailableUsername(app, usernames.Derive("tax@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	user := core.NewRecord(users)
 	user.SetEmail("tax@example.com")
+	user.Set("username", username)
 	user.SetPassword("password123")
 	if err := app.Save(user); err != nil {
 		t.Fatal(err)

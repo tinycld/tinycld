@@ -5,6 +5,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/guestauth"
+	"tinycld.org/core/usernames"
 )
 
 func TestSetPasswordIsAcceptedAndSaves(t *testing.T) {
@@ -20,8 +22,13 @@ func TestSetPasswordIsAcceptedAndSaves(t *testing.T) {
 
 	var hashes []string
 	for _, email := range []string{"a@test.local", "b@test.local"} {
+		username, err := guestauth.PickAvailableUsername(app, usernames.Derive(email))
+		if err != nil {
+			t.Fatal(err)
+		}
 		r := core.NewRecord(users)
 		r.SetEmail(email)
+		r.Set("username", username)
 		SetPassword(r, "Password123!")
 		if err := app.Save(r); err != nil {
 			t.Fatalf("save %s: %v", email, err)

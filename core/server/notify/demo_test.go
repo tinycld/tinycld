@@ -6,6 +6,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/guestauth"
+	"tinycld.org/core/usernames"
 )
 
 // isDemoUser is the gate used by sendExpoPush to suppress external
@@ -37,8 +39,13 @@ func mkUser(t *testing.T, app core.App, email string, demo bool) *core.Record {
 	if err != nil {
 		t.Fatal(err)
 	}
+	username, err := guestauth.PickAvailableUsername(app, usernames.Derive(email))
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := core.NewRecord(col)
 	r.SetEmail(email)
+	r.Set("username", username)
 	r.Set("name", "T")
 	r.SetVerified(true)
 	r.SetPassword("Password123!")
