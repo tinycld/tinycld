@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useReportUIStore } from '../report-ui-store'
+import { recordTitleOf, useReportUIStore } from '../report-ui-store'
 
 const state = () => useReportUIStore.getState()
 
@@ -53,6 +53,71 @@ describe('the report UI store per view', () => {
         expect(state().drillOrigin).toBe('amount|g:east')
         state().startVisit()
         expect(state().drillOrigin).toBeNull()
+    })
+
+    // A fictional record path: core names no real package.
+    const OPEN = 'gizmos/history/c/1'
+
+    it('opens a record: marks its row and counts the press', () => {
+        const before = state().recordOpens
+        state().openRecord('d:row1')
+        expect(state().openedRow).toBe('d:row1')
+        expect(state().recordOpens).toBe(before + 1)
+    })
+
+    it("closes the report's Customize when a record opens, and leaves the drill view's", () => {
+        state().openCustomize()
+        state().openCustomize('drill')
+        state().openRecord('d:row1')
+        expect(state().scopes.main.isCustomizeOpen).toBe(false)
+        expect(state().scopes.drill.isCustomizeOpen).toBe(true)
+    })
+
+    it("keeps a record's newest title", () => {
+        state().openRecord('d:row1')
+        state().setRecordTitle(OPEN, 'Gizmo 1001')
+        state().setRecordTitle(OPEN, 'Gizmo 1001 (paid)')
+        expect(recordTitleOf(state().recordTitle, OPEN)).toBe('Gizmo 1001 (paid)')
+    })
+
+    it('shows no title for another record until its panel names it', () => {
+        state().setRecordTitle(OPEN, 'Gizmo 1001')
+        expect(recordTitleOf(state().recordTitle, 'gizmos/history/c/2')).toBe('')
+        expect(recordTitleOf(null, OPEN)).toBe('')
+    })
+
+    // Many rows open one record. A press on another of them leaves dr and the
+    // panel's component as they are (no remount, so usePanelTitle does not run
+    // again): the title stays and the mark moves (C6).
+    it('keeps the title and moves the mark when another row opens the same record', () => {
+        state().openRecord('d:a')
+        state().setRecordTitle(OPEN, 'Gizmo 1001')
+        state().openRecord('d:b')
+        expect(state().openedRow).toBe('d:b')
+        expect(recordTitleOf(state().recordTitle, OPEN)).toBe('Gizmo 1001')
+        // A second press on the opened row keeps it too.
+        state().openRecord('d:b')
+        expect(recordTitleOf(state().recordTitle, OPEN)).toBe('Gizmo 1001')
+    })
+
+    it('marks a record open as focused only once, until the next press', () => {
+        state().openRecord('d:row1')
+        expect(state().recordOpens).toBeGreaterThan(state().recordFocused)
+        state().noteRecordFocused()
+        expect(state().recordFocused).toBe(state().recordOpens)
+        state().openRecord('d:row2')
+        expect(state().recordOpens).toBe(state().recordFocused + 1)
+    })
+
+    it('starts a visit with no record opened', () => {
+        state().openRecord('d:row1')
+        state().setRecordTitle(OPEN, 'Gizmo 1001')
+        state().noteRecordFocused()
+        state().startVisit()
+        expect(state().openedRow).toBeNull()
+        expect(state().recordTitle).toBeNull()
+        expect(state().recordOpens).toBe(0)
+        expect(state().recordFocused).toBe(0)
     })
 
     it('starts a visit with both views closed', () => {

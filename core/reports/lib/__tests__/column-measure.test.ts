@@ -156,6 +156,25 @@ describe('measureColumns', () => {
         expect(m.account.min).toBe(labelChrome(GROUPED) + TEXT_MIN_WIDTH)
         expect(m.account.grow).toBe(1)
     })
+
+    // C1: a date-time is a figure, never cut, so its column and a date-time row
+    // label keep room for the widest date and time a later page may bring.
+    it('keeps room for a date and a time in a date-time column and label', () => {
+        const AT = '2026-01-02 03:04:00.000Z'
+        const at: ResultColumn = { id: 'at', label: 'At', type: 'datetime' }
+        const short = item('detail', AT, { at: AT }, { labelType: 'datetime', labelValue: AT })
+        const m = measureColumns({
+            columns: [COLUMNS[0] as ResultColumn, at],
+            rows: [short],
+            format: DEFAULT_DISPLAY,
+            levels: FLAT,
+        })
+        const worst = textWidth('Sep 30, 2026, 12:59 PM', CELL)
+        expect(m.at.natural).toBeGreaterThanOrEqual(worst + CELL_PADDING)
+        expect(m.account.natural).toBeGreaterThanOrEqual(
+            INDENT + short.row.depth * INDENT + worst + CELL_PADDING / 2
+        )
+    })
 })
 
 describe('the label chrome', () => {
@@ -332,6 +351,52 @@ describe('column fit in the measure', () => {
             const word = textWidth('Subscriptions:', CELL)
             expect(m.account?.min).toBe(INDENT + INDENT + word + CELL_PADDING / 2 + WORD_MARGIN)
             expect(m.memo?.min).toBe(word + CELL_PADDING + WORD_MARGIN)
+        })
+    })
+
+    // overflowWrap "anywhere" (CSS): a word wider than its line may break, so the
+    // min-content size counts the break chances inside a word and the longest word
+    // no longer holds the column.
+    describe('a wrapping column set to break long words', () => {
+        const LONG = 'Fitco Antidisestablishmentarianism Wholesale'
+        const LONG_ROW = item('detail', LONG, { memo: LONG, name: LONG, debit: 1200 })
+        const run = (fits: Record<string, ColumnFit>) =>
+            measureColumns({
+                columns: COLUMNS,
+                rows: [LONG_ROW],
+                format: DEFAULT_DISPLAY,
+                levels: GROUPED,
+                fits,
+            })
+        const breaks = { whiteSpace: 'normal', overflowWrap: 'anywhere' } as const
+        const cellWord = longestWordWidth(LONG, CELL) + CELL_PADDING
+        const floor = TEXT_MIN_WIDTH + CELL_PADDING
+
+        it('narrows to the eight-letter floor, not its longest word, and keeps its natural width', () => {
+            // The word is much wider than eight letters, so the two rules differ.
+            expect(cellWord).toBeGreaterThan(floor + 40)
+            const m = run({ memo: breaks, account: breaks })
+            expect(m.memo?.min).toBe(floor)
+            expect(m.memo?.natural).toBe(textWidth(LONG, CELL) + CELL_PADDING)
+            expect(m.memo?.lines).toBe(2)
+            // The label column takes the same rule over its chrome.
+            expect(m.account?.min).toBe(labelChrome(GROUPED) + TEXT_MIN_WIDTH)
+            // Without the setting the same column is held at its longest word.
+            expect(run({ memo: { whiteSpace: 'normal' } }).memo?.min).toBe(cellWord + WORD_MARGIN)
+        })
+
+        it('keeps a minWidth wider than the floor as set, never raised to the word', () => {
+            expect(ch(12)).toBeGreaterThan(floor)
+            expect(ch(12)).toBeLessThan(cellWord)
+            expect(run({ memo: { ...breaks, minWidth: '12ch' } }).memo?.min).toBe(ch(12))
+        })
+
+        it("still holds the heading's longest word", () => {
+            // "CUSTOMER" is wider than the floor and narrower than the row's word.
+            const headingWord = longestWordWidth('Customer name', HEADING) + CELL_PADDING
+            expect(headingWord).toBeGreaterThan(floor)
+            expect(headingWord).toBeLessThan(cellWord)
+            expect(run({ name: breaks }).name?.min).toBe(headingWord)
         })
     })
 

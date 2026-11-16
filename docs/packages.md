@@ -281,6 +281,7 @@ export default manifest
 | `slots[]` | Names of sidebar slots this package exposes for *other* packages to render into. Free-form strings; duplicates within one manifest are a generator error. Render with `<SidebarSlot target="<this-slug>" slot="<name>" />` from `@tinycld/core/components/sidebar-primitives`. |
 | `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order?, label? }` is generator-validated. `label` names the contribution where the host lays the slot out as tabs. `target: 'core'` renders into a slot core owns (see [Setup wizard steps](#setup-wizard-steps-setupsteps)). |
 | `setupSteps[]` | Steps this package adds to the first-run setup wizard (`id`, `label`, `module`, `order?`). See [Setup wizard steps](#setup-wizard-steps-setupsteps) below. |
+| `reportPanels[]` | Panels for this package's own app paths that a report's detail row opens beside the report: `{ path, component }`. `path` is one or more segments of letters, digits, `-` and `_`, under the package slug, distinct within the package; `component` is a module path under `tinycld/<slug>/`, resolved through the package's `exports` map as `settings[].component` is, whose default export takes `ReportPanelProps`. Emitted to `lib/generated/report-panels.ts`. See [Shipped and saved reports](#shipped-and-saved-reports). |
 | `help.directory` | `<id>.md` topics and any images they reference (relative to the directory) surfaced in the in-app help hub. |
 | `seed.script` | Dev sample-data function. |
 | `server` | Go server extension: `package` is the subdir, `module` is its Go module path. The module exports ONE entry point, `Register(app *pocketbase.PocketBase)`, called by the generated registrar — the same call in every composition. |
@@ -561,6 +562,9 @@ The generated runtime artifacts that must exist on disk live under
   explicitly). Help topics are parsed markdown content, so they're pre-extracted
   to a generated file rather than derived at runtime.
 - **`package-icons.ts`** — the nav/lucide icon map for installed packages.
+- **`report-panels.ts`** — every installed package's `reportPanels`, as
+  `{ slug, path, load }` (`load` imports the component). Only
+  `core/reports/lib/registered-panels.ts` reads it.
 - **`<slug>-api.ts`** — one per package declaring `payloads`: TypeScript
   interfaces/consts emitted from the package's Go payload structs (see the
   `payloads` field reference). Orphans from removed members are pruned.
@@ -1279,6 +1283,34 @@ reports.RegisterSource(reports.Source{
   `YYYY-MM-DD`. Filters, buckets, presets and pivots treat it as a date.
   `CheckSources` refuses `TextDay` on any other type, and on a column that is
   not text.
+- A `Select` field may read a text column as well as a select column. Its
+  `Options` give the labels; a stored value that no option names shows as
+  itself. `CheckSources` checks the options against the values only of a
+  select column (a text column has none).
+- A source may read a view collection. PocketBase types a bare column of the
+  view's query as its source field (an autodate `created` reads as `DateTime`),
+  a `CAST(… AS TEXT)` column as text, and any other computed column as json,
+  which no field reads: cast every computed column a field reads, for example
+  `CAST(CASE WHEN f.grams >= 500 THEN 'big' ELSE 'small' END AS TEXT) AS size`.
+  A run reads the view under its list rule. Register the view's sources with
+  `changesignal.RegisterView`, so an open report stays current.
+- A `DateTime` field holds an instant. A date range (`between` with a
+  `dateRange` param), a `date` or `asOf` param, a range's `bound`, and
+  a day typed in a condition (a literal `{"value": "2026-11-14"}`, such as a
+  builder filter's value) compare with it in the reader's time zone: the
+  client sends `options.timeZone` (an IANA name, from `Intl`) with every run
+  and `timeZone` with every param-options request, and the engine compares
+  with the UTC instants of the reader's midnights
+  (`x >= <first day's midnight> AND x < <midnight after the last day>`). A
+  missing or unknown zone, a name of UTC itself (`UTC`, `Etc/UTC`,
+  `Etc/GMT`, `GMT`) and `Local` are UTC. A condition that compares a
+  `DateTime` with a `Date` column still compares in UTC. Buckets and date
+  parts of a `DateTime` (`year`, `month`, a group or pivot by day)
+  keep the UTC day. A `Date` field is a day and never moves. The view shows a
+  `DateTime` cell as day and time in the reader's zone and names the zone
+  once under the title ("Times in Central Time"); a package screen writes the
+  same text with `dateTimeText(value)` from
+  `@tinycld/core/reports/lib/format`.
 - A path that ends at a to-one link, or at the `id` field, is a relation
   value: it carries the target source. A formula, filter or column may use it
   as a value (the linked record's id; blank when the reader cannot see it).
@@ -1468,9 +1500,10 @@ label is one) is refused: a figure takes only `flexGrow` and `minWidth` `auto` o
 | `display.columns.<col>.width` | A length (`12ch`, `120px`, `25%`): the column is exactly this wide. `ch` and `px` are the text's width (the cell's padding is added); `%` is the cell's whole width as a part of the line. |
 | `display.columns.<col>.minWidth` | `auto` (default: eight letters for text, the whole value for a figure), `min-content` (the longest word), `max-content` (the whole value), or a length. |
 | `display.columns.<col>.maxWidth` | `none` (default) or a length; never under `minWidth`. |
-| `display.columns.<col>.whiteSpace` | `nowrap` (default: one line, ends in "…") or `normal` (the text wraps at spaces). A wrapping column is never narrower than its longest measured word (plus 2 px for the width estimate; the measure reads the first 500 rows): a smaller `width` or `minWidth`, or a `%` that gives less, is raised to it. A `minWidth` wider than the content is kept. On web a word wider than its line is clipped, not split. |
+| `display.columns.<col>.whiteSpace` | `nowrap` (default: one line, ends in "…") or `normal` (the text wraps at spaces). Unless `overflowWrap: "anywhere"` is set, a wrapping column is never narrower than its longest measured word (plus 2 px for the width estimate; the measure reads the first 500 rows): a smaller `width` or `minWidth`, or a `%` that gives less, is raised to it. A `minWidth` wider than the content is kept. On web a word wider than its line is clipped, not split, unless `overflowWrap: "anywhere"` is set. |
 | `display.columns.<col>.lineClamp` | 1 to 4, with `whiteSpace: "normal"`: the most lines the text wraps to (default 2). |
 | `display.columns.<col>.textOverflow` | `ellipsis` only. |
+| `display.columns.<col>.overflowWrap` | `anywhere` only, with `whiteSpace: "normal"` and a column of 2 or more lines (`lineClamp` absent or 2 to 4; refused with `lineClamp: 1`): a word wider than its line breaks inside the word, on web and native. The longest word then does not hold the column: its automatic least width is eight letters (never under the heading's longest word, and never more than its content's width); `width` and `minWidth` apply as on any text column. Absent: words are kept whole. Refused on a figure column. |
 | `display.columns.<col>.flexGrow` | 0 to 10: the column's share of the spare room on one line, the room past every column's least width. While both are below their content's width, a column with 2 gets twice the room of a column with 1, whatever their content. A growing column stops at its content's width while another growing column is still below its own, and the others share what it leaves by grow; once every growing column has its content's width, the rest is shared by grow again. A column with 0 gets at most its content's width (default 1 for text and the label column, 0 for other figures). |
 | `groups[].blank` | `"skip"`: a base row whose key at this level is blank skips the level: no group row and no subtotal for it; its rows sit directly under the parent group (or layout section), one depth less per skipped level, keep their full group key (with the blank), and count in the parent's totals. Absent: a blank key forms a `(none)` group. A fill below a skipped level fills under the parent the rows reach. Refused on the first and the last group level, on a bucketed level and for any other value. |
 | `groups[].hideEmpty` | `true`: a group whose child groups are all hidden, with no shown row passed up from a skipped level, is hidden with its subtotal, as a having would hide it (a `"rows"` total above it adds nothing it did not show; a `"recompute"` total counts every row the filter keeps, the rows of hidden groups included, as with any having). Allowed on a bucketed level. Refused on the last level, and on the first group of a layout report (its sections always show). |
@@ -1595,6 +1628,21 @@ reports.RegisterShipped(reports.Shipped{
   panel's state is in the source's URL (`d=<target id>` and the target's
   options under the `d.` prefix), so a reload keeps it; a copied link never
   holds it. A target the reader may not view gives plain figures.
+- A detail row's record (`detail.open`) can open beside the report in the
+  same 480 px panel. Declare the panel in the manifest:
+  `reportPanels: [{ path: 'history', component: 'components/history/Panel' }]`.
+  A row whose `open` is `<slug>/<path>/` and at least one more segment opens
+  in the panel when the window is 1360 px or wider and the screen hosts a
+  panel; the component gets `ReportPanelProps` (`{ segments }`: the segments
+  after `<slug>/<path>/`) and names the record with `usePanelTitle(title)`
+  (both from `@tinycld/core/reports/hooks/usePanelTitle`; outside the panel
+  the hook does nothing). Below 1360 px, and on a phone, the row pushes the
+  path as before, so the package also serves the path as a screen, usually
+  with the same component. The panel's header has **Open as full screen**
+  (pushes the path), ✕ and Escape. Its state is in the source's URL
+  (`dr=<app path>`), so a reload keeps it; a copied link never holds it. A
+  drill and a record share the side: opening one closes the other, and
+  Customize closes both. The pressed row is marked (`aria-selected`).
 - A shipped report cannot be deleted while the package ships it. The
   server answers "This report ships with a package. An admin who owns or
   edits it can unpublish it instead." Only an admin with update access (the

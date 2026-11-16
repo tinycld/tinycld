@@ -579,9 +579,10 @@ func (l *lookupCtx) exists(n *Node, at string) (expr, error) {
 	return l.sc.exists(l.prefix, link, n.Where, mk, at)
 }
 
-func (l *lookupCtx) bind(v any) string   { return l.r.s.bind(v) }
-func (l *lookupCtx) fiscalStart() string { return l.bind(int64(l.r.c.fiscal)) }
-func (l *lookupCtx) filter() bool        { return l.inWhere }
+func (l *lookupCtx) bind(v any) string              { return l.r.s.bind(v) }
+func (l *lookupCtx) fiscalStart() string            { return l.bind(int64(l.r.c.fiscal)) }
+func (l *lookupCtx) readerDay(day string) *zonedDay { return l.r.c.readerDay(day) }
+func (l *lookupCtx) filter() bool                   { return l.inWhere }
 func (l *lookupCtx) label(e expr) string {
 	if readsIDText(l.outer) {
 		return e.sql

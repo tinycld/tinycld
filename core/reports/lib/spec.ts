@@ -245,16 +245,29 @@ const fitLength = z.string().regex(FIT_LENGTH)
 const pxLength = z.string().regex(PX_LENGTH)
 
 // One column's fit, after CSS (design §3.2). The engine refuses each setting that
-// could cut a figure; flexGrow is free on every column.
-export const columnFitSchema = z.strictObject({
-    width: fitLength.optional(),
-    minWidth: z.union([z.enum(['auto', 'min-content', 'max-content']), fitLength]).optional(),
-    maxWidth: z.union([z.literal('none'), fitLength]).optional(),
-    whiteSpace: z.enum(['nowrap', 'normal']).optional(),
-    lineClamp: z.number().int().min(1).max(4).optional(),
-    textOverflow: z.literal('ellipsis').optional(),
-    flexGrow: z.number().int().min(0).max(10).optional(),
-})
+// could cut a figure; flexGrow is free on every column. overflowWrap "anywhere" lets
+// a wrapping column break a word wider than its line (fit.go columnFit: only with
+// whiteSpace normal, and not with lineClamp 1, a line that never breaks a word). The
+// issues are filed on the fit itself, where the builder reads a column's fit error.
+export const columnFitSchema = z
+    .strictObject({
+        width: fitLength.optional(),
+        minWidth: z.union([z.enum(['auto', 'min-content', 'max-content']), fitLength]).optional(),
+        maxWidth: z.union([z.literal('none'), fitLength]).optional(),
+        whiteSpace: z.enum(['nowrap', 'normal']).optional(),
+        lineClamp: z.number().int().min(1).max(4).optional(),
+        textOverflow: z.literal('ellipsis').optional(),
+        overflowWrap: z.enum(['anywhere']).optional(),
+        flexGrow: z.number().int().min(0).max(10).optional(),
+    })
+    .superRefine((fit, ctx) => {
+        if (fit.overflowWrap === undefined) return
+        if (fit.whiteSpace !== 'normal') {
+            ctx.addIssue({ code: 'custom', message: 'overflowWrap goes with whiteSpace normal' })
+        } else if (fit.lineClamp === 1) {
+            ctx.addIssue({ code: 'custom', message: 'overflowWrap needs lineClamp 2 or more' })
+        }
+    })
 export type ColumnFit = z.infer<typeof columnFitSchema>
 
 // The least row width at which the report is drawn on one line.

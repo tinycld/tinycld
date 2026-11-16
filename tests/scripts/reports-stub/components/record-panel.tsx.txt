@@ -1,0 +1,16 @@
+import { type ReportPanelProps, usePanelTitle } from '@tinycld/core/reports/hooks/usePanelTitle'
+import { Text, View } from 'react-native'
+
+// E2E fixture: the record panel a "Stub sales by time" row opens beside the report
+// (manifest reportPanels, path "panel"); the stub's panel screen shows the same
+// component on its own, where usePanelTitle does nothing.
+export default function RecordPanel({ segments }: ReportPanelProps) {
+    usePanelTitle(`Stub record ${segments[0] ?? ''}`)
+    return (
+        <View testID="stub-record-panel" className="flex-1 bg-background p-4">
+            <Text testID="stub-record-panel-body" className="text-base text-foreground">
+                {segments.join('/')}
+            </Text>
+        </View>
+    )
+}

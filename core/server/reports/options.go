@@ -268,6 +268,9 @@ type OptionsRequest struct {
 	// Today is the reader's day (YYYY-MM-DD) for their period presets.
 	Params map[string]json.RawMessage
 	Today  string
+	// TimeZone is the reader's IANA zone, as Options.TimeZone: a where that
+	// compares a date-time with a day or range param reads its local days.
+	TimeZone string
 	// Auth is the reader; Headers the request's headers as a rule's
 	// @request.headers sees them.
 	Auth    *core.Record
@@ -316,7 +319,7 @@ type ParamOptions struct {
 // reader, under the reader's list rules, as a run of the same spec and
 // params would read them. It writes nothing.
 func ReadParamOptions(ctx context.Context, app core.App, req OptionsRequest) (*ParamOptions, error) {
-	c, err := readerCompiler(app, req.Spec, req.Auth, req.Headers, req.Params, req.Today, "today")
+	c, err := readerCompiler(app, req.Spec, req.Auth, req.Headers, req.Params, req.Today, "today", req.TimeZone)
 	if err != nil {
 		return nil, err
 	}
@@ -599,6 +602,7 @@ type paramOptionsBody struct {
 	Limit    int                        `json:"limit"`
 	Params   map[string]json.RawMessage `json:"params"`
 	Today    string                     `json:"today"`
+	TimeZone string                     `json:"timeZone"`
 }
 
 // handleParamOptions answers POST /api/reports/param-options: one page of a
@@ -619,7 +623,7 @@ func handleParamOptions(re *core.RequestEvent) error {
 	}
 	res, err := ReadParamOptions(re.Request.Context(), re.App, OptionsRequest{
 		Spec: spec, Param: body.Param, Search: body.Search, Group: body.Group, After: body.After,
-		Values: body.Values, Limit: body.Limit, Params: body.Params, Today: body.Today,
+		Values: body.Values, Limit: body.Limit, Params: body.Params, Today: body.Today, TimeZone: body.TimeZone,
 		Auth: re.Auth, Headers: ruleHeaders(re.Request.Header),
 	})
 	if err != nil {

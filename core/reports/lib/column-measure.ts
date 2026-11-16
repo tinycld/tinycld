@@ -24,6 +24,8 @@ export type ColumnMeasure = {
     grow: number
     max?: number
     lines?: number
+    /** Its text may break a word wider than its line (overflowWrap "anywhere"). */
+    breakWords?: true
     pct?: { width?: number; min?: number; max?: number }
 }
 export type ColumnMeasures = Record<string, ColumnMeasure>
@@ -77,9 +79,11 @@ export function isFigureColumn(column: ResultColumn): boolean {
 // numbers are formatted as the column draws them (currency, ÷1000, cents, a minus
 // or parentheses), so the worst case follows the reader's number format.
 const WORST_DAY = shortDay('2026-09-30')
+// A date-time shows its time too (dateTimeText); 12-hour is the wider clock.
+const WORST_DATE_TIME = `${WORST_DAY}, 12:59 PM`
 const WORST_TEXT: Partial<Record<FieldType, string>> = {
     date: WORST_DAY,
-    datetime: WORST_DAY,
+    datetime: WORST_DATE_TIME,
     bool: 'Yes',
     percent: '-100.0%',
 }
@@ -225,7 +229,8 @@ function labelWidths(
         isTyped = true
         if (row.labelType === 'date' || row.labelType === 'datetime') {
             const start = INDENT + row.depth * INDENT
-            widest = Math.max(widest, start + textWidth(WORST_DAY, CELL) + CELL_PADDING / 2)
+            const worst = row.labelType === 'datetime' ? WORST_DATE_TIME : WORST_DAY
+            widest = Math.max(widest, start + textWidth(worst, CELL) + CELL_PADDING / 2)
         }
     }
     return { widest, longestWord, isTyped }
@@ -311,20 +316,24 @@ function holdLongestWord(out: ColumnMeasure, c: Content) {
 // it, `minWidth` raises its least width (never under the heading's longest word),
 // `maxWidth` caps it but never under its least. A wrap may narrow it to its
 // longest word (or eight letters), never cutting a word: after width, minWidth and
-// maxWidth, a wrap is raised to its longest word (holdLongestWord).
+// maxWidth, a wrap is raised to its longest word (holdLongestWord). A wrap with
+// overflowWrap "anywhere" breaks a word wider than its line, so, as CSS's
+// min-content counts the break chances inside a word, its automatic least width is
+// the floor rule alone and its longest word does not hold it.
 function fitted(c: Content, fit: ColumnFit | undefined, grow: number): ColumnMeasure {
     const out: ColumnMeasure = { natural: c.natural, min: autoMin(c), grow: fit?.flexGrow ?? grow }
     if (!fit) return out
     const pct: Pct = {}
     const wraps = fit.whiteSpace === 'normal'
-    if (wraps) {
-        out.lines = fit.lineClamp ?? DEFAULT_LINE_CLAMP
+    const breaksWords = wraps && fit.overflowWrap === 'anywhere'
+    if (wraps) out.lines = fit.lineClamp ?? DEFAULT_LINE_CLAMP
+    if (breaksWords) out.breakWords = true
+    if (wraps && !breaksWords)
         out.min = Math.max(c.headingMin, Math.min(c.natural, Math.max(c.minContent, c.floor)))
-    }
     applyWidth(out, c, fit.width, pct)
     applyMin(out, c, fit.minWidth, pct)
     applyMax(out, c, fit.maxWidth, pct)
-    if (wraps) holdLongestWord(out, c)
+    if (wraps && !breaksWords) holdLongestWord(out, c)
     if (Object.keys(pct).length > 0) out.pct = pct
     return out
 }

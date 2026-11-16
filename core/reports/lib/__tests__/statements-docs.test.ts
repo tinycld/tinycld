@@ -93,4 +93,54 @@ describe('statement docs', () => {
         expect(shipped).toContain('DETAIL_PANEL_MIN_WINDOW')
         expect(shipped).toContain('1360 px')
     })
+
+    it('names date-time columns, the time zone and the zone line in the help', () => {
+        const help = read('core/help/reports.md')
+        const at = help.indexOf('## Dates with a time')
+        expect(at).toBeGreaterThan(-1)
+        const section = help.slice(at, help.indexOf('\n## ', at + 1))
+        expect(section).toContain('date and a time')
+        expect(section).toContain('your time zone')
+        expect(section).toContain('**Times in Central Time**')
+        expect(section).toContain('The period chip and a day you type in a filter')
+        const opens = help.slice(help.indexOf("## Open a row's record"))
+        expect(opens).toContain('in a panel at the right')
+    })
+
+    it('names record panels, Select over text, view sources and the zone rule in the docs', () => {
+        const docs = read('docs/packages.md')
+        const fields = docs.slice(
+            docs.indexOf('### Field reference'),
+            docs.indexOf('#### Help screenshots')
+        )
+        expect(fields).toContain('| `reportPanels[]` |')
+        const sources = docs.slice(
+            docs.indexOf('### Report sources'),
+            docs.indexOf('### Shipped and saved reports')
+        )
+        expect(sources).toContain('A `Select` field may read a text column')
+        expect(sources).toContain('view collection')
+        expect(sources).toContain('CAST(')
+        expect(sources).toContain("in the reader's time zone")
+        expect(sources).toContain('keep the UTC day')
+        expect(sources).toContain('a day typed in a condition')
+        expect(sources).toContain('with a `Date` column still compares in UTC')
+        expect(sources).toContain('`timeZone` with every param-options request')
+        expect(sources).toContain('dateTimeText')
+        const shippedAt = docs.indexOf('### Shipped and saved reports')
+        const shipped = docs.slice(shippedAt, docs.indexOf('\n### ', shippedAt + 1))
+        for (const name of [
+            'reportPanels',
+            'ReportPanelProps',
+            'usePanelTitle',
+            '`dr=<app path>`',
+        ]) {
+            expect(shipped).toContain(name)
+        }
+        const generated = docs.slice(
+            docs.indexOf('### D. `lib/generated/*`'),
+            docs.indexOf('### E. ')
+        )
+        expect(generated).toContain('`report-panels.ts`')
+    })
 })

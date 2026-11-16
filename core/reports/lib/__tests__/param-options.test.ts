@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { dateTimeText } from '../format'
 import {
     chipLabelAsks,
     labelsOfPages,
@@ -6,6 +7,7 @@ import {
     optionText,
     toggleGroup,
 } from '../param-options'
+import { chipText } from '../params'
 import type { ParamDef } from '../spec'
 
 describe('options from a source', () => {
@@ -169,5 +171,28 @@ describe('which chips read labels', () => {
             })
         ).toEqual([])
         expect(chipLabelAsks([teams], {})).toEqual([])
+    })
+})
+
+describe('a date-time option (T1)', () => {
+    const AT = '2026-11-14 22:07:00.000Z'
+    const option = { value: 'e1', label: AT, type: 'datetime' as const }
+    const ENTRY: ParamDef = {
+        id: 'entry',
+        type: 'choice',
+        label: 'Entry',
+        optionsFrom: {
+            source: 'zoo.entries',
+            value: [{ field: 'id' }],
+            label: [{ field: 'created' }],
+        },
+    }
+
+    it('writes the option and its chip as a date-time cell', () => {
+        expect(optionText(option)).toBe(dateTimeText(AT))
+        const labels = labelsOfPages([{ options: [option], groups: [] }])
+        expect(chipText(ENTRY, { kind: 'choice', values: ['e1'] }, labels)).toBe(
+            `Entry: ${dateTimeText(AT)}`
+        )
     })
 })

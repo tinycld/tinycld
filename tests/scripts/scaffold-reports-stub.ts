@@ -12,7 +12,9 @@
  * collections and shipped reports, published and unpublished, over the spec parts
  * they exercise (the drill reports open another shipped report). Its landing
  * screen adds rows through the UI, as the specs must. Its sale screen is the
- * record a report's detail row opens (`detail.open`).
+ * record a report's detail row opens (`detail.open`). Its record panel
+ * (`reportPanels`, path `panel`) is the record a "Stub sales by time" row opens
+ * beside the report, and its panel screen the same record pushed on a narrow window.
  *
  * Writes every file itself, as scaffold-forms-host-stub.ts does: no bootstrap
  * preset ships a migration, a Go module and collections together. The screen,
@@ -47,6 +49,8 @@ const TEMPLATES: [string, string][] = [
     ['screens/_layout.tsx.txt', `tinycld/${STUB_SLUG}/screens/_layout.tsx`],
     ['screens/index.tsx.txt', `tinycld/${STUB_SLUG}/screens/index.tsx`],
     ['screens/sale/[id].tsx.txt', `tinycld/${STUB_SLUG}/screens/sale/[id].tsx`],
+    ['screens/panel/[id].tsx.txt', `tinycld/${STUB_SLUG}/screens/panel/[id].tsx`],
+    ['components/record-panel.tsx.txt', `tinycld/${STUB_SLUG}/components/record-panel.tsx`],
     ['pb-migrations/2090000300_salesstub.js.txt', 'pb-migrations/2090000300_salesstub.js'],
     ['server/register.go.txt', 'server/register.go'],
 ]
@@ -89,6 +93,7 @@ function writePackage(stubDir: string): void {
             './collections': `${src}/collections.ts`,
             './types': `${src}/types.ts`,
             './screens/*': `${src}/screens/*.tsx`,
+            './components/*': `${src}/components/*.tsx`,
         },
         peerDependencies: {},
     }
@@ -122,6 +127,7 @@ function writeManifest(stubDir: string): void {
     migrations: { directory: 'pb-migrations' },
     collections: { register: 'collections', types: 'types' },
     server: { package: 'server', module: 'tinycld.org/packages/${STUB_SLUG}' },
+    reportPanels: [{ path: 'panel', component: 'components/record-panel' }],
 }
 
 export default manifest

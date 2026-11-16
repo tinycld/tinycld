@@ -28,6 +28,42 @@ interface UseFocusTrapOptions {
     restore?: boolean
 }
 
+const AUTOFOCUS_SELECTOR = '[data-autofocus="true"]'
+
+/**
+ * The `dataSet` for an input that takes `autoFocus`: the caller's own, plus
+ * the `data-autofocus` marker when `autoFocus` is set. react-native-web hands
+ * `autoFocus` to React DOM, which focuses the input at mount and writes no
+ * attribute; a popover surface is still hidden at that mount, so the focus is
+ * lost, and the marker is how the surface finds the input when it shows.
+ */
+export function autoFocusDataSet({
+    autoFocus,
+    dataSet,
+}: {
+    autoFocus?: boolean | null
+    dataSet?: Record<string, string | number | undefined>
+}) {
+    if (!autoFocus) return dataSet
+    return { ...dataSet, autofocus: 'true' }
+}
+
+/**
+ * Focus `initial` if given, else — unless the focus is already inside — the
+ * input that asked for focus (`autoFocusDataSet`), else the container's first
+ * focusable, else the container itself. Web only.
+ */
+export function moveFocusIn(container: HTMLElement, initial?: { focus: () => void } | null) {
+    if (Platform.OS !== 'web') return
+    if (initial) initial.focus()
+    else if (!container.contains(document.activeElement)) {
+        const asked = container.querySelector<HTMLElement>(AUTOFOCUS_SELECTOR)
+        const target = asked ?? focusables(container)[0]
+        if (target) target.focus()
+        else container.focus()
+    }
+}
+
 /**
  * Focus for a layer on web: move it in on open, keep it in while open, hand
  * it back on close. Native has no focus ring to manage.
@@ -48,13 +84,7 @@ export function useLayerFocus({
         if (!container) return
         const previous = document.activeElement as HTMLElement | null
 
-        const initial = initialFocusRef?.current
-        if (initial) initial.focus()
-        else if (!container.contains(document.activeElement)) {
-            const first = focusables(container)[0]
-            if (first) first.focus()
-            else container.focus()
-        }
+        moveFocusIn(container, initialFocusRef?.current)
 
         const onKeyDown = (event: KeyboardEvent) => {
             if (!trap || event.key !== 'Tab') return

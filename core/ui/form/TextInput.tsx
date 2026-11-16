@@ -1,4 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { autoFocusDataSet } from '@tinycld/core/ui/overlay/focus'
 import type { ComponentType, ReactNode, Ref } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import type { TextInputProps as RNTextInputProps, TextInputInstance } from 'react-native'
@@ -93,6 +94,7 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
                     // look belong to this component.
                     {...inputProps}
                     ref={inputRef}
+                    dataSet={autoFocusDataSet(inputProps)}
                     value={field.value || ''}
                     onChangeText={value => {
                         field.onChange(value)

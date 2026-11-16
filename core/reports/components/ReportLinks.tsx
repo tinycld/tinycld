@@ -85,17 +85,28 @@ interface OpenRowLabelProps {
     textClass: string
     lines: number
     style: ViewStyle
+    /** The record panel shows this row's record (R11); the one row marked. */
+    isShown: boolean
+    /** The label's key (rowFocusKey), under which it takes the focus back when the panel closes. */
+    focusKey: string
     onPress(): void
 }
 
 /** A row's label that opens its record (D2), named "Open: <label>". */
 export function OpenRowLabel(props: OpenRowLabelProps) {
+    // The label is the row's one accessible control (RowFrame is not), so it carries
+    // the selected state; React Native maps aria-selected to accessibilityState. Only
+    // the opened row carries it: ARIA has no selected state for a link, so the other
+    // rows leave it out rather than say "false".
+    const ref = useFigureRef(props.focusKey, false)
     return (
         <Link href={props.href} asChild>
             <Pressable
+                ref={ref}
                 testID={props.testID}
                 accessibilityRole="link"
                 accessibilityLabel={`Open: ${props.text}`}
+                aria-selected={props.isShown || undefined}
                 onPress={linkPress(props.onPress)}
                 className="flex-row items-center pr-3 web:cursor-pointer"
                 style={props.style}
@@ -127,14 +138,16 @@ interface RowFrameProps {
  */
 export function RowFrame({ row, links, isCopy, className, children }: RowFrameProps) {
     const href = links && !isCopy ? links.rowHref(row) : null
-    if (!links || href === null) return <View className={className}>{children}</View>
+    // The row whose record the panel shows takes the selected-row token, as a shown figure does.
+    const tone = links && href !== null && links.isRowShown(row) ? 'bg-accent' : 'bg-background'
+    if (!links || href === null) return <View className={`${className} ${tone}`}>{children}</View>
     return (
         <Pressable
             accessible={false}
             focusable={false}
             tabIndex={-1}
             onPress={linkPress(() => links.onRow(row))}
-            className={`${className} web:cursor-pointer`}
+            className={`${className} ${tone} web:cursor-pointer`}
         >
             {children}
         </Pressable>

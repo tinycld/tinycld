@@ -164,6 +164,7 @@ func fitRefusals(c *compiler) error {
 			{"whiteSpace", f.WhiteSpace != ""},
 			{"lineClamp", f.LineClamp != 0},
 			{"textOverflow", f.TextOverflow != ""},
+			{"overflowWrap", f.OverflowWrap != ""},
 		} {
 			if s.isSet {
 				problems[at+s.name] = validation.NewError("invalid", neverCutMessage)
@@ -207,6 +208,16 @@ func (b *binder) columnFit(f ColumnFit, at string) {
 	}
 	if f.TextOverflow != "" && f.TextOverflow != "ellipsis" {
 		b.bad(at+".textOverflow", "textOverflow is ellipsis")
+	}
+	switch {
+	case f.OverflowWrap == "":
+	case f.OverflowWrap != "anywhere":
+		b.bad(at+".overflowWrap", "overflowWrap is anywhere")
+	case f.WhiteSpace != "normal":
+		b.bad(at+".overflowWrap", "overflowWrap goes with whiteSpace normal")
+	case f.LineClamp == 1:
+		// A one-line column never breaks a word (linesOf and breakWordsOf skip it).
+		b.bad(at+".overflowWrap", "overflowWrap needs lineClamp 2 or more")
 	}
 	if f.FlexGrow != nil && (*f.FlexGrow < 0 || *f.FlexGrow > maxFlexGrow) {
 		b.bad(at+".flexGrow", fmt.Sprintf("flexGrow is 0 to %d", maxFlexGrow))

@@ -1802,7 +1802,12 @@ describe('column fit in the builder', () => {
             oneLine: { minWidth: '1040px' },
             columns: {
                 amount: { flexGrow: 0 },
-                customer: { minWidth: '7.5ch', whiteSpace: 'normal', lineClamp: 2 },
+                customer: {
+                    minWidth: '7.5ch',
+                    whiteSpace: 'normal',
+                    lineClamp: 2,
+                    overflowWrap: 'anywhere',
+                },
             },
             layouts: [
                 {
@@ -1824,6 +1829,7 @@ describe('column fit in the builder', () => {
             minWidth: '7.5ch',
             whiteSpace: 'normal',
             lineClamp: 2,
+            overflowWrap: 'anywhere',
         })
         expect(draft.display.oneLine).toEqual({ minWidth: '1040px' })
         expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
@@ -1831,15 +1837,37 @@ describe('column fit in the builder', () => {
         expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(FIT_SPEC))
     })
 
+    it('keeps a column set to break long words through the draft', () => {
+        const breaks: ColumnFit = { whiteSpace: 'normal', lineClamp: 2, overflowWrap: 'anywhere' }
+        const spec: ReportSpec = {
+            ...FIT_SPEC,
+            display: { columns: { customer: breaks } },
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(draft.columns[0]?.fit).toEqual(breaks)
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        expect(specFromDraft(draft, CATALOG).display?.columns?.customer).toEqual(breaks)
+        expect(tidyFit(breaks)).toEqual(breaks)
+    })
+
     it('writes each fit in the engine order, the columns in byte order, and no empty fit', () => {
         const draft = draftFromSpec(FIT_SPEC, META, CATALOG)
-        const shuffled: ColumnFit = { lineClamp: 2, whiteSpace: 'normal', minWidth: '7.5ch' }
+        const shuffled: ColumnFit = {
+            flexGrow: 1,
+            overflowWrap: 'anywhere',
+            lineClamp: 2,
+            textOverflow: 'ellipsis',
+            whiteSpace: 'normal',
+            minWidth: '7.5ch',
+        }
         const columns = draft.columns.map(column =>
             column.id === 'customer' ? { ...column, fit: shuffled } : { ...column, fit: {} }
         )
         const saved = specFromDraft({ ...draft, columns }, CATALOG)
+        // Go's ColumnFit field order: overflowWrap sits between textOverflow and flexGrow.
         expect(JSON.stringify(saved.display?.columns)).toBe(
-            JSON.stringify({ customer: { minWidth: '7.5ch', whiteSpace: 'normal', lineClamp: 2 } })
+            '{"customer":{"minWidth":"7.5ch","whiteSpace":"normal","lineClamp":2,' +
+                '"textOverflow":"ellipsis","overflowWrap":"anywhere","flexGrow":1}}'
         )
     })
 

@@ -41,3 +41,9 @@ declare module '@tinycld/app-generated/package-help' {
     export const packageHelp: HelpGroup[]
     export const helpImages: HelpImageRegistry
 }
+
+declare module '@tinycld/app-generated/report-panels' {
+    import type { ReportPanelEntry } from '@tinycld/core/reports/lib/record-panel'
+
+    export const reportPanels: ReportPanelEntry[]
+}

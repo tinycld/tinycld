@@ -22,14 +22,18 @@ interface ReportDocumentHeaderProps {
     heading: string
     title: string
     periodWords: string | null
+    /** "Times in Central Time" when a shown column is a date-time (T1); else null. */
+    zoneWords: string | null
     isThousands: boolean
 }
 
-// The finished-document strip above the table: who, what and which period.
+// The finished-document strip above the table: who, what, which period and, for
+// date-times, which zone.
 export function ReportDocumentHeader({
     heading,
     title,
     periodWords,
+    zoneWords,
     isThousands,
 }: ReportDocumentHeaderProps) {
     const businessName = heading.trim() || null
@@ -50,6 +54,11 @@ export function ReportDocumentHeader({
             <Line
                 text={periodWords}
                 testID="report-document-period"
+                className="text-sm text-muted-foreground"
+            />
+            <Line
+                text={zoneWords}
+                testID="report-document-zone"
                 className="text-sm text-muted-foreground"
             />
             <Line

@@ -1,7 +1,7 @@
 ---
 title: Reports
 summary: Make a report from your data, run it, share it, and publish it to everyone
-tags: [reports, report builder, share report, publish, filter, group, pivot, formula, totals, groups, lookup, formulas, phone, sort, opening row, all dates]
+tags: [reports, report builder, share report, publish, filter, group, pivot, formula, totals, groups, lookup, formulas, phone, sort, opening row, all dates, time zone, date and time]
 order: 40
 ---
 
@@ -168,7 +168,8 @@ When the columns do not fit on one line (or the rows are narrower than **One lin
 To change how a column fits, open the column in **Columns**:
 
 - **Narrowest** is the least width a text column gets before the report wraps its rows: **Automatic** (about eight letters), **Whole value** (never cut), or a number of letters.
-- **Long text** keeps the text on **One line, ends in …**, or wraps it to 2 or 3 lines. A column that wraps is never narrower than its longest word, whatever its **Narrowest** setting, so its words stay whole. A colon ends a word too: a name such as Expenses:Travel can go on to the next line after its colon, and the colon stays on the first line.
+- **Long text** keeps the text on **One line, ends in …**, or wraps it to 2 or 3 lines. A column that wraps is never narrower than its longest word, whatever its **Narrowest** setting, so its words stay whole, unless **Long words** is **Break long words**. A colon ends a word too: a name such as Expenses:Travel can go on to the next line after its colon, and the colon stays on the first line.
+- **Long words** shows while a column wraps. **Keep words whole** (the default) keeps the column at least as wide as its longest word. **Break long words** lets a word that is wider than its line go on to the next line inside the word, so one long name or code does not make the column wide and push the rows onto more lines.
 - **Extra room** is the column's share of the spare room on one line: **None**, **Normal**, **Double** or **Triple**. A column with **Double** gets twice the spare room of a column with **Normal**, whichever column has the longer text, but no column takes room past its values' width while another column's text is still cut. Text and the first column start at **Normal**; other numbers, amounts, percents, dates and yes/no values start at **None**. In a pivot, the setting applies to every column the pivot makes from that column.
 
 Numbers, amounts, percents, dates and yes/no values show **Never cut**: you can change only their extra room.
@@ -195,6 +196,12 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
 - A report that is open stays current: when someone changes the data it reads, it
   runs again.
 
+## Dates with a time
+
+Some columns hold a date and a time, such as when a record was changed. The report shows them in your time zone: "Nov 14, 2026, 4:07 PM", or with a 24-hour clock when your device uses one. When the report shows such a column, the line under the title names your time zone once, for example **Times in Central Time**.
+
+The period chip and a day you type in a filter, such as "on or after Nov 14, 2026", also use your time zone for these columns: a day starts and ends at your midnight, not at midnight UTC. A report that groups or pivots such a column by day, month or year uses the UTC date. A column that holds only a date, such as a due date, is the same in every time zone.
+
 ## Open the rows behind a figure
 
 In some reports a figure opens the report that lists the rows behind it, such as the rows that add up to a group's total. On a computer, the figure underlines when you point at it. Select it to open that report, filtered to the figure's rows and period.
@@ -208,6 +215,8 @@ When you cannot open the report behind a figure, the figure is plain and does no
 ## Open a row's record
 
 In some reports each line opens the record it comes from, on that record's own screen in its app. Select the line, or its name, to open the record. Back returns to the report as you left it.
+
+Some apps show the record beside the report. On a window 1360 pixels wide or wider, the record then opens in a panel at the right and the line stays marked. Select another line to show its record in the same panel. Select **Open as full screen** to open the record on its own screen, or **Close** (or press Esc) to close the panel. Opening **Customize** closes the panel. A link copied with **Copy link** does not open it. On a narrower window, and on a phone, the record opens on its own screen.
 
 ## Share and publish
 

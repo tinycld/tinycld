@@ -1,3 +1,4 @@
+import { autoFocusDataSet } from '@tinycld/core/ui/overlay/focus'
 import { forwardRef } from 'react'
 import {
     Platform,
@@ -15,7 +16,14 @@ import {
 export const PlainInput = forwardRef<TextInputInstance, TextInputProps>(
     function PlainInput(props, ref) {
         const { style, ...rest } = props
-        return <TextInput ref={ref} style={[styles.base, style]} {...rest} />
+        return (
+            <TextInput
+                ref={ref}
+                style={[styles.base, style]}
+                {...rest}
+                dataSet={autoFocusDataSet(rest)}
+            />
+        )
     }
 )
 

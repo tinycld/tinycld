@@ -1,9 +1,11 @@
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
+import { useDetailSurface } from '@tinycld/core/lib/use-detail-surface'
 import { type Href, useLocalSearchParams, useNavigation, useRouter } from 'expo-router'
 import { CommonActions, type NavigationState } from 'expo-router/react-navigation'
-import { useMemo, useRef } from 'react'
-import { drillHref, isDrillShown, shownDrillParams, useOpenDrill } from '../lib/drill'
-import { figureKey } from '../lib/figure-focus'
+import { useCallback, useMemo, useRef } from 'react'
+import { drillHref, firstOf, isDrillShown, shownDrillParams, useOpenDrill } from '../lib/drill'
+import { figureKey, rowFocusKey } from '../lib/figure-focus'
+import { isRowShown, recordPanelParams, rowOpensInPanel } from '../lib/record-panel'
 import {
     type OpenedRecord,
     openedRecordOf,
@@ -11,7 +13,9 @@ import {
     routeKeysOf,
     tabRouteOf,
 } from '../lib/record-return'
+import { registeredPanels } from '../lib/registered-panels'
 import type { ResultColumn, ResultRow } from '../lib/types'
+import { RECORD_KEY } from '../lib/view-url'
 import { type ReportUIScope, useReportUIStore } from '../stores/report-ui-store'
 import { useStable } from './useStable'
 
@@ -31,31 +35,78 @@ export interface RowLinks {
     isFigureShown(column: ResultColumn, row: ResultRow): boolean
     rowHref(row: ResultRow): Href | null
     onRow(row: ResultRow): void
+    /** The row label's key (rowFocusKey): the record panel's close sends the focus back there. */
+    rowKey(row: ResultRow): string
+    /** The record panel shows this row's record, opened by a press on this row (R11). */
+    isRowShown(row: ResultRow): boolean
 }
 
-// Only the drill keys mark a figure, so the links change only when they do.
 /**
- * The table's links, or undefined where figures and rows are plain (the builder's
- * preview passes no drill). They keep their identity while the drill keys stay, so
- * FlashList redraws the rows (extraData) only when a figure's mark may change.
+ * A record's own screen, pushed in its package's tab; Back from it returns to the
+ * report (watchRecordReturn). A row press and the record panel's Open as full
+ * screen both open it.
  */
-export function useRowLinks(drill: RowDrill | undefined): RowLinks | undefined {
+export function useOpenRecordScreen(): (path: string) => void {
     const router = useRouter()
     const navigation = useRouteNavigation()
     const orgHref = useOrgHref()
-    const shown = useStable(shownDrillParams(useLocalSearchParams()))
+    return useCallback(
+        (path: string) => {
+            watchRecordReturn(navigation, tabNameOf(path))
+            router.push(orgHref(path))
+        },
+        [navigation, router, orgHref]
+    )
+}
+
+/**
+ * A row press that opens its record beside the report (D5): a registered panel's
+ * path, a wide window and a view that hosts the side panel. False: the row opens as
+ * a screen.
+ */
+function useOpenRecordPanel(hasPanel: boolean) {
+    const router = useRouter()
+    const search = useLocalSearchParams()
+    const surface = useDetailSurface()
+    const openRecord = useReportUIStore(s => s.openRecord)
+    return (row: ResultRow): boolean => {
+        const open = row.open
+        if (!open || !rowOpensInPanel({ open, surface, hasPanel, panels: registeredPanels })) {
+            return false
+        }
+        router.setParams(recordPanelParams(open, search))
+        openRecord(row.id)
+        return true
+    }
+}
+
+/**
+ * The table's links, or undefined where figures and rows are plain (the builder's
+ * preview passes no drill). They keep their identity while the drill keys, the
+ * shown record and the pressed row stay, so FlashList redraws the rows (extraData)
+ * only when a figure's or a row's mark may change.
+ */
+export function useRowLinks(drill: RowDrill | undefined): RowLinks | undefined {
+    const orgHref = useOrgHref()
+    const search = useLocalSearchParams()
+    const shown = useStable(shownDrillParams(search))
+    const shownRecord = firstOf(search[RECORD_KEY])
+    const openedRow = useReportUIStore(s => s.openedRow)
+    const openScreen = useOpenRecordScreen()
     const openDrill = useOpenDrill({
         sourceId: drill?.sourceId ?? '',
         hasPanel: drill?.hasPanel ?? false,
     })
-    // The press reads the newest handler, so the links need not change with it.
-    const latest = useRef(openDrill)
-    latest.current = openDrill
+    const openPanel = useOpenRecordPanel(drill?.hasPanel ?? false)
+    // The presses read the newest handlers, so the links need not change with them.
+    const latest = useRef({ openDrill, openPanel })
+    latest.current = { openDrill, openPanel }
     const sourceId = drill?.sourceId
     const scope = drill?.scope ?? 'main'
     const setDrillOrigin = useReportUIStore(s => s.setDrillOrigin)
     return useMemo<RowLinks | undefined>(() => {
         if (sourceId === undefined) return undefined
+        const record = { [RECORD_KEY]: shownRecord }
         return {
             figureHref: (column, row) => {
                 const href = drillHref(column, row, sourceId)
@@ -63,18 +114,19 @@ export function useRowLinks(drill: RowDrill | undefined): RowLinks | undefined {
             },
             onFigure: (column, row) => {
                 setDrillOrigin(figureKey(scope, column.id, row.id))
-                latest.current(column, row)
+                latest.current.openDrill(column, row)
             },
             figureKey: (column, row) => figureKey(scope, column.id, row.id),
             isFigureShown: (column, row) => isDrillShown(column, row, shown),
             rowHref: row => (row.open ? orgHref(row.open) : null),
             onRow: row => {
-                if (!row.open) return
-                watchRecordReturn(navigation, tabNameOf(row.open))
-                router.push(orgHref(row.open))
+                if (!row.open || latest.current.openPanel(row)) return
+                openScreen(row.open)
             },
+            rowKey: row => rowFocusKey(scope, row.id),
+            isRowShown: row => isRowShown(row, openedRow, record),
         }
-    }, [sourceId, scope, shown, orgHref, router, navigation, setDrillOrigin])
+    }, [sourceId, scope, shown, shownRecord, openedRow, orgHref, openScreen, setDrillOrigin])
 }
 
 // useNavigation's own default type (its getState may be undefined), read off a call

@@ -12,6 +12,7 @@ import {
     FROM_KEY,
     nextSort,
     parseViewOptions,
+    RECORD_KEY,
     reportLink,
     SORT_KEY,
     serializeViewOptions,
@@ -337,11 +338,35 @@ describe('two report views on one route (D4)', () => {
             const query = new URL(link).searchParams
             expect(
                 [...query.keys()].filter(
-                    key => key === FROM_KEY || key === DRILL_KEY || key.startsWith(DRILL_PREFIX)
+                    key =>
+                        key === FROM_KEY ||
+                        key === DRILL_KEY ||
+                        key === RECORD_KEY ||
+                        key.startsWith(DRILL_PREFIX)
                 )
             ).toEqual([])
         }
         expect(new URL(mainLink).searchParams.get('p-period')).toBe('lastMonth')
         expect(new URL(drillLink).searchParams.get('p-period')).toBe('2026-03-01..2026-03-31')
+    })
+
+    it('names the record key', () => {
+        expect(RECORD_KEY).toBe('dr')
+    })
+
+    it('clears the record panel with the drill keys (one side surface, R7)', () => {
+        expect(clearedDrillKeys({ dr: 'x', d: 'r', other: '1' })).toStrictEqual({
+            dr: undefined,
+            d: undefined,
+        })
+    })
+
+    it('copies a link with no dr, whatever the route holds', () => {
+        const search = { ...SEARCH, dr: 'gizmos/history/c/1' }
+        const link = new URL(
+            reportLink('https://x.test', 'r1', DEFS, parseViewOptions(DEFS, search))
+        )
+        expect(link.searchParams.has('dr')).toBe(false)
+        expect(link.searchParams.get('p-period')).toBe('lastMonth')
     })
 })

@@ -194,6 +194,17 @@ describe('drillPanelParams', () => {
         expect(drillPanelParams(COLUMN, rowWith(undefined))).toBeNull()
     })
 
+    it('closes an open record panel (one side surface, R7)', () => {
+        expect(
+            drillPanelParams(COLUMN, rowWith(drill), { dr: 'gizmos/history/c/1' })
+        ).toStrictEqual({
+            dr: undefined,
+            d: 'r2',
+            'd.p-period': '2026-03-01..2026-03-31',
+            'd.p-status': 'paid',
+        })
+    })
+
     it('knows the figure whose drill the panel shows', () => {
         const shown = {
             'p-period': 'lastMonth',

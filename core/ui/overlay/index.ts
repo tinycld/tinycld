@@ -9,7 +9,7 @@
 // dependency turns into an import cycle the bundler resolves differently from
 // the test runner.
 export { LayerEscape, LayerScope } from './escape'
-export { useLayerFocus } from './focus'
+export { moveFocusIn, useLayerFocus } from './focus'
 export {
     OverlayHost,
     type OverlayHostName,

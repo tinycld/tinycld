@@ -15,7 +15,7 @@ export {
 
 // Helpers for the reports specs. Fixture names come from the salesstub package
 // (tests/scripts/scaffold-reports-stub.ts): sources salesstub.sales ("Stub sales":
-// customer, amount, cost, quantity, currency, day, booked (a day kept as text),
+// customer, amount, cost, quantity, currency, day, booked (a day kept as text), created (a date-time),
 // status; link team), salesstub.teams ("Stub teams": name, region; to-many link
 // sales) and salesstub.activity ("Stub activity": the union of sales and returns,
 // with kind), all headed "Stub Sales Co", and the shipped reports over sales
@@ -23,7 +23,8 @@ export {
 // statement", "Stub period statement" and "Stub period pivot"; unpublished "Stub
 // team totals" and "Stub team balance", and the drill reports: published "Stub
 // drilled sales" and "Stub drilled by month", whose Amount opens the unpublished
-// "Stub sales by team" (only the shipped owner may open it).
+// "Stub sales by team" (only the shipped owner may open it). The published "Stub
+// sales by time" shows `created` and opens each row in the stub's record panel (path `panel`).
 export const SALES_SOURCE = 'salesstub.sales'
 export const TEAMS_SOURCE = 'salesstub.teams'
 export const ACTIVITY_SOURCE = 'salesstub.activity'
@@ -45,6 +46,9 @@ export const SHIPPED_FORMULA = {
 export const DRILLED_TITLE = 'Stub drilled sales'
 export const DRILLED_PIVOT_TITLE = 'Stub drilled by month'
 export const DRILL_TARGET_TITLE = 'Stub sales by team'
+
+/** The zone report (register.go.txt `salesstub.by_time`): a date-time column; its rows open the stub's record panel. */
+export const ZONE_TITLE = 'Stub sales by time'
 
 /** Opens a published report from the hub. */
 export async function openDrilled(page: Page, title: string) {
@@ -75,6 +79,11 @@ export async function setPeriod(page: Page, from: string, to: string, scope?: Lo
 /** The drill panel (D4); its own helpers' scope. */
 export function drillPanel(page: Page): Locator {
     return page.getByTestId('report-drill-panel')
+}
+
+/** The record panel (D5) a detail row opens beside the report. */
+export function recordPanel(page: Page): Locator {
+    return page.getByTestId('report-record-panel')
 }
 
 let counter = 0

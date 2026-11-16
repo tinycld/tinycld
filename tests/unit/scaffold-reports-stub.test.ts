@@ -68,6 +68,25 @@ describe('refreshReportsStub', () => {
             'utf8'
         )
         expect(readStub('tinycld/salesstub/screens/sale/[id].tsx')).toBe(saleScreen)
+        const recordPanel = fs.readFileSync(
+            path.join(TEMPLATES, 'components', 'record-panel.tsx.txt'),
+            'utf8'
+        )
+        expect(readStub('tinycld/salesstub/components/record-panel.tsx')).toBe(recordPanel)
+        const panelScreen = fs.readFileSync(
+            path.join(TEMPLATES, 'screens', 'panel', '[id].tsx.txt'),
+            'utf8'
+        )
+        expect(readStub('tinycld/salesstub/screens/panel/[id].tsx')).toBe(panelScreen)
+        expect(readStub('manifest.ts')).toContain(
+            "reportPanels: [{ path: 'panel', component: 'components/record-panel' }]"
+        )
+        const pkg = JSON.parse(readStub('package.json'))
+        expect(pkg.exports['./components/*']).toBe('./tinycld/salesstub/components/*.tsx')
+        expect(template).toContain('Key: "salesstub.by_time"')
+        expect(template).toContain(
+            '{Key: "created", Label: "Created", Type: reports.DateTime, Aggregates: reports.MinMax}'
+        )
         expect(readStub('manifest.ts')).toContain("slug: 'salesstub'")
         expect(readStub('server/go.mod')).toContain('github.com/pocketbase/pocketbase v0.40.4')
         expect(spawnSync).not.toHaveBeenCalled()

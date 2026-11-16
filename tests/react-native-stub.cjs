@@ -33,8 +33,18 @@ function stringifyAria(props) {
     return out
 }
 
+// react-native-web writes `dataSet` as data-* attributes, keys hyphenated
+// (fitWidth → data-fit-width); a component may mark an element that way.
+function dataAttributes(dataSet) {
+    const out = {}
+    for (const key of Object.keys(dataSet ?? {})) {
+        out[`data-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`] = dataSet[key]
+    }
+    return out
+}
+
 function host(tag) {
-    const Host = React.forwardRef(function Host({ style, onLayout, ...props }, ref) {
+    const Host = React.forwardRef(function Host({ style, onLayout, dataSet, ...props }, ref) {
         const node = React.useRef(null)
         const setRef = React.useCallback(
             (el) => {
@@ -51,7 +61,12 @@ function host(tag) {
             el.addEventListener(LAYOUT_EVENT, handler)
             return () => el.removeEventListener(LAYOUT_EVENT, handler)
         }, [onLayout])
-        return React.createElement(tag, { ...stringifyAria(props), ref: setRef, style: flattenStyle(style) })
+        return React.createElement(tag, {
+            ...stringifyAria(props),
+            ...dataAttributes(dataSet),
+            ref: setRef,
+            style: flattenStyle(style),
+        })
     })
     Host.displayName = tag
     return Host

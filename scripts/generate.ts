@@ -37,6 +37,7 @@ import {
 import { buildPackageIconsSource } from './gen-icons'
 import { checkNotifyEventsModule } from './gen-notify'
 import { orphanPayloadFiles, planPayloadEmits, runPayloadEmits } from './gen-payload-types'
+import { buildReportPanelsSource } from './gen-report-panels'
 import {
     APP_OWNED_ORG_ROUTE_DIRS,
     assertSlugNotAppOwned,
@@ -641,6 +642,11 @@ async function main() {
     fs.writeFileSync(
         path.join(GENERATED_DIR, 'package-icons.ts'),
         buildPackageIconsSource(features.map(f => ({ name: f.name, manifest: f.manifest })))
+    )
+
+    fs.writeFileSync(
+        path.join(GENERATED_DIR, 'report-panels.ts'),
+        buildReportPanelsSource(features.map(f => ({ name: f.name, manifest: f.manifest })))
     )
 
     // --- 5. uniwind-sources.css (core + features, real paths) --------------

@@ -13,12 +13,13 @@ import {
 import table from '../fixtures/display-cells.json'
 import { DEFAULT_DISPLAY } from '../format'
 import type { VisibleRow } from '../rows'
-import { type DisplayCell, type DisplayLayout, displayCellSchema } from '../spec'
+import { type ColumnFit, type DisplayCell, type DisplayLayout, displayCellSchema } from '../spec'
 import {
     ARRANGEMENT_NOTICE,
     atWidth,
     type Block,
     continuationIndent,
+    FLAT_LEVELS,
     fitOneLine,
     fitTable,
     isFigureColumn,
@@ -1586,5 +1587,89 @@ describe('an authored layout gives up indent before it is given up (G9)', () => 
 
     it('still does not try a layout below its minWidth', () => {
         expect(fitAt(378, [{ ...mobile, minWidth: '400px' }]).source).toBe('auto')
+    })
+})
+
+// An audit log's phone arrangement: line 1 the date and the event, line 2
+// the user, the record type and the record (wrapping to two lines). One unbroken
+// token in a Record value must not push every row to the automatic lines.
+describe('a wrapping column that breaks long words keeps its arrangement on a phone', () => {
+    const columns: ResultColumn[] = [
+        { id: 'created', label: 'Date changed', type: 'datetime' },
+        { id: 'user', label: 'User', type: 'text' },
+        { id: 'event', label: 'Event', type: 'select' },
+        { id: 'type', label: 'Record type', type: 'select' },
+        { id: 'record', label: 'Record', type: 'text' },
+    ]
+    const mobile: DisplayLayout = {
+        width: 'mobile',
+        tracks: 7,
+        cells: [
+            { col: 'created', line: 1, span: 5 },
+            { col: 'event', line: 1, span: 2, justify: 'end' },
+            { col: 'user', line: 2, span: 2 },
+            { col: 'type', line: 2, span: 2 },
+            { col: 'record', line: 2, span: 3 },
+        ],
+    }
+    const at = '2026-11-14 09:15:00.000Z'
+    const auditRow = (n: number, record: string): VisibleRow => {
+        const cells: Record<string, CellValue> = {
+            created: at,
+            user: 'Sam Rivera',
+            event: 'Updated',
+            type: 'Journal entry',
+            record,
+        }
+        const row: ResultRow = {
+            id: `d:${n}`,
+            kind: 'detail',
+            depth: 0,
+            label: at,
+            labelType: 'datetime',
+            labelValue: at,
+            cells,
+        }
+        return { row, cells, isToggle: false, isOpen: false, isPending: false }
+    }
+    // A 19-character unbroken token, as an e2e record name, among short names. Line 2
+    // then needs User and Record type at the eight-letter floor plus Record: with the
+    // token as Record's least width that is more than 375; at the floor, well under 360.
+    const TOKEN = 'w12-1794785303992-1'
+    const rows = [auditRow(1, 'INV-1001'), auditRow(2, TOKEN), auditRow(3, 'Rent')]
+    const recordFit = {
+        flexGrow: 2,
+        whiteSpace: 'normal',
+        lineClamp: 2,
+        textOverflow: 'ellipsis',
+    } as const
+    const fitAt = (width: number, record: ColumnFit) =>
+        fitTable({
+            columns,
+            width,
+            layouts: [mobile],
+            oneLine: { minWidth: '760px' },
+            measures: measureColumns({
+                columns,
+                rows,
+                format: DEFAULT_DISPLAY,
+                levels: FLAT_LEVELS,
+                fits: {
+                    created: { minWidth: 'max-content' },
+                    event: { minWidth: 'max-content' },
+                    record,
+                },
+            }),
+        }).source
+
+    it('chooses the phone arrangement at 375 and 360 when Record may break a word', () => {
+        const breaks: ColumnFit = { ...recordFit, overflowWrap: 'anywhere' }
+        expect(fitAt(375, breaks)).toBe('mobile')
+        expect(fitAt(360, breaks)).toBe('mobile')
+    })
+
+    it('falls to the automatic lines when Record keeps its words whole (the defect)', () => {
+        expect(fitAt(375, recordFit)).toBe('auto')
+        expect(fitAt(360, recordFit)).toBe('auto')
     })
 })

@@ -1,3 +1,4 @@
+import { dateTimeText, timeZoneWords } from './date-time'
 import { bucketWords, isIsoDay, shortDay } from './dates'
 import { formatMoney, groupDigits, MAX_STORED_AMOUNT, roundHalfAwayFromZero } from './money'
 import {
@@ -37,6 +38,9 @@ export type CellDisplay = {
     isRed: boolean
     isError: boolean
 }
+
+// A package screen writes a date-time, and the zone line, as a report does (spec T1).
+export { dateTimeText, timeZoneWords }
 
 // Integer cents divided by `divisor`, half away from zero. A float division near
 // 2^53 can land on the wrong side of a half, so the remainder is split off with
@@ -196,7 +200,11 @@ export function cellDisplay(
     }
     if (typeof value === 'number') return plainDisplay(formatNumber(value), align)
     if (typeof value === 'boolean') return plainDisplay(value ? 'Yes' : 'No', align)
-    if ((type === 'date' || type === 'datetime') && typeof value === 'string') {
+    // A date-time is an instant: its day and time in the reader's zone. A date is a day.
+    if (type === 'datetime' && typeof value === 'string') {
+        return plainDisplay(dateTimeText(value), align)
+    }
+    if (type === 'date' && typeof value === 'string') {
         return plainDisplay(dayText(value), align)
     }
     if (type === 'select') {
@@ -281,4 +289,16 @@ export function shownColumns(
     hidden: readonly string[]
 ): ResultColumn[] {
     return columns.filter((column, index) => index === 0 || !hidden.includes(column.id))
+}
+
+/**
+ * The document header's zone line (T1): "Times in Central Time" when a shown column
+ * is a date-time, or a link whose record label is one; else null. Only the columns
+ * are read: rows page in later, and the line must not appear late (R5).
+ */
+export function zoneLine(columns: readonly ResultColumn[], timeZone?: string): string | null {
+    const hasDateTime = columns.some(
+        column => column.type === 'datetime' || column.labelType === 'datetime'
+    )
+    return hasDateTime ? `Times in ${timeZoneWords(timeZone)}` : null
 }
