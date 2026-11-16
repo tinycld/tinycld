@@ -4,6 +4,7 @@ import { buildSections, type SearchSection } from '@tinycld/core/lib/search/buil
 import { searchPackages } from '@tinycld/core/lib/search/registry'
 import type { ParsedQuery, SearchRow } from '@tinycld/core/lib/search/types'
 import { useDebouncedValue } from '@tinycld/core/lib/use-debounced-value'
+import { useMemo } from 'react'
 
 const MIN_QUERY_LENGTH = 2
 const DEBOUNCE_MS = 300
@@ -36,11 +37,19 @@ export function useSearchResults(parsed: ParsedQuery): {
     /** Packages that failed or timed out server-side; rows are missing for these. */
     partial: string[]
 } {
-    const query = useDebouncedValue(parsed.include.join(' '), DEBOUNCE_MS)
-    const not = useDebouncedValue(parsed.exclude.join(' '), DEBOUNCE_MS)
-    // Chips are already validated against installed slugs by parseQuery, so
-    // they can be forwarded as-is; the server drops any it does not know.
-    const chips = parsed.chips
+    // One debounced value for the whole request: separate timers would let a
+    // new chip go out paired with the previous query text. Chips are already
+    // validated against installed slugs by parseQuery, so they can be
+    // forwarded as-is; the server drops any it does not know.
+    const typed = useMemo(
+        () => ({
+            query: parsed.include.join(' '),
+            not: parsed.exclude.join(' '),
+            chips: parsed.chips,
+        }),
+        [parsed]
+    )
+    const { query, not, chips } = useDebouncedValue(typed, DEBOUNCE_MS)
     const enabled = query.length >= MIN_QUERY_LENGTH
 
     const { data, isFetching } = useQuery({

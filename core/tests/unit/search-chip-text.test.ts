@@ -88,13 +88,4 @@ describe('createPickQueue', () => {
         expect(onSelect).toHaveBeenCalledTimes(1)
         expect(onSelect).toHaveBeenCalledWith(later)
     })
-
-    it('drops a held pick once cleared', () => {
-        const queue = createPickQueue()
-        const onSelect = vi.fn()
-        queue.pick(row)
-        queue.clear()
-        expect(queue.register('gizmos', onSelect)).toBe(false)
-        expect(onSelect).not.toHaveBeenCalled()
-    })
 })

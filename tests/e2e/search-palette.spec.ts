@@ -214,6 +214,32 @@ test.describe('Search palette', () => {
         expect(page.url()).toBe(url)
     })
 
+    // Reopening must start a fresh session. The palette once stayed mounted while
+    // closed, so its debounced query outlived the close: reopening within the
+    // debounce window showed the old rows and re-sent the old search. The new
+    // term's response is the sync point, so every request made after the reopen
+    // is recorded by the time it lands.
+    test('reopening does not re-send the previous search', async ({ page }) => {
+        await login(page)
+        await navigateToPackage(page, ALPHA)
+        await openPalette(page)
+        await typeAndWait(page, 'onboarding')
+        await expect(page.getByRole('option').first()).toBeVisible()
+        await page.keyboard.press('Escape')
+        await expect(paletteDialog(page)).toHaveCount(0)
+
+        const searches: string[] = []
+        page.on('request', r => {
+            if (r.url().includes('/api/search')) searches.push(r.url())
+        })
+        await openPalette(page)
+        await expect(page.getByRole('option')).toHaveCount(0)
+        await typeAndWait(page, 'roadmap')
+
+        expect(searches.length).toBeGreaterThan(0)
+        expect(searches.every(url => new URL(url).searchParams.get('q') === 'roadmap')).toBe(true)
+    })
+
     // The canonical config emulates reduced motion (playwright.config.ts), as a user
     // who turned motion off: the panel then opens at rest. Its open animation is set
     // inline (PaletteCard), so it runs only where its @keyframes are defined.
