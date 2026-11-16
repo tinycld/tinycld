@@ -315,6 +315,14 @@ type Group struct {
 	// no shown row passed up from a skipped level below it, with its subtotal,
 	// as a having would hide it.
 	HideEmpty bool `json:"hideEmpty,omitempty"`
+	// Inline is a condition on the group's level, as Having is; a group that
+	// meets it draws no group row and no subtotal: its child rows take its
+	// place, at its depth, and count in the totals above as before. Not on
+	// the last level, a bucketed level or a layout's first group.
+	Inline *Node `json:"inline,omitempty"`
+	// Muted is a condition on the group's level, as Having is; a group row
+	// that meets it carries Row.Muted, which a view draws in muted text.
+	Muted *Node `json:"muted,omitempty"`
 }
 
 // GroupBlankSkip is the one Group.Blank value.

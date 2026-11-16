@@ -1,3 +1,4 @@
+import type { CellDisplay } from './format'
 import type { CellValue, Notice, ResultRow, RunResult } from './types'
 
 // The rows of a run as the table draws them. Groups load lazily on the server
@@ -235,6 +236,24 @@ export function expansionOptions(expansion: Expansion): {
     const expand = expansion.keys.length > 0 ? { expand: [...expansion.keys] } : {}
     return { ...expand, collapse }
 }
+
+export type FigureTone = 'muted' | 'danger' | 'normal'
+
+/**
+ * The tone a cell is drawn in: a red or error figure keeps its danger tone on any
+ * row; another figure of a muted group row is muted (R2).
+ */
+export function figureTone(
+    row: Pick<ResultRow, 'kind' | 'muted'>,
+    display: Pick<CellDisplay, 'isRed' | 'isError'>
+): FigureTone {
+    if (display.isRed || display.isError) return 'danger'
+    return isMutedGroup(row) ? 'muted' : 'normal'
+}
+
+/** A group row its level's muted condition holds for; subtotal and total rows never are. */
+export const isMutedGroup = (row: Pick<ResultRow, 'kind' | 'muted'>) =>
+    row.kind === 'group' && row.muted === true
 
 /** A result with no detail row and no group row is empty: totals alone do not count. */
 export function hasRows(rows: readonly ResultRow[]): boolean {

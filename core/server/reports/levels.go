@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
 	"slices"
@@ -62,6 +63,11 @@ type level struct {
 	reads map[string]bool
 	// havingMixed is the having's condMixed (own).
 	havingMixed string
+	// inline and muted are the group's inline and muted conditions on the
+	// level's rows (groupConditions), "" where the group has none; il<L>
+	// selects their values (__inline, __muted) beside the shown rows.
+	inline, muted           string
+	inlineMixed, mutedMixed string
 	// sortMixed are the sort keys (sql: where the key met a mixed sum) that
 	// order the level's rows; render probes them over the rows it shows.
 	sortMixed []condProbe
@@ -356,8 +362,9 @@ func (lv *level) isGroupColumn(cp *colPlan) bool {
 }
 
 // render returns the level's CTEs; o<L> selects the given cells of its shown
-// rows (base), then __own, the row's label and its currency, and its count of
-// base rows. o<L> holds only the rows a run shows, so __own is 1 on each, and
+// rows (base), then __own, the row's label and its currency, its count of base
+// rows, its shown children, and its inline and muted values (0 on a level with
+// neither). o<L> holds only the rows a run shows, so __own is 1 on each, and
 // a running value or a percent over its rows adds the shown rows only.
 func (lv *level) render(cells []string, own string, totals []string) []string {
 	ctes, g := lv.base(own, totals)
@@ -385,6 +392,11 @@ func (lv *level) render(cells []string, own string, totals []string) []string {
 		kids = lv.kids
 	}
 	out = append(out, "1 AS __own", lv.label.value+" AS __label", lv.label.currency+" AS __labelcur", "a.__n AS __n", kids+" AS __kids")
+	conds := []string{"0 AS __inline", "0 AS __muted"}
+	if lv.inline != "" || lv.muted != "" {
+		conds = []string{"a.__inline AS __inline", "a.__muted AS __muted"}
+	}
+	out = append(out, conds...)
 	materialized := ""
 	if lv.paged {
 		for j, t := range lv.terms {
@@ -451,7 +463,7 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	// parent or one where an if would not reach them: the values are the same,
 	// only a lookup that raises an error (a sum past SQLite's integer range)
 	// could now raise it on such a row.
-	lv.pre = lv.lookupsIn(own, nil)
+	lv.pre = lv.lookupsIn(strings.Join([]string{own, lv.inline, lv.muted}, "\n"), nil)
 	if len(lv.pre) > 0 {
 		lk := fmt.Sprintf("lk%d", lv.n)
 		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (SELECT * FROM %s)", lk, lv.lookupLayers(g, lv.pre)))
@@ -489,7 +501,73 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (SELECT a.* FROM %s WHERE %s)", s, lv.rowsFrom(g, nil, where), where))
 		g = s
 	}
+	if lv.inline != "" || lv.muted != "" {
+		ctes = append(ctes, lv.groupConditionsCTE(g))
+		g = fmt.Sprintf("il%d", lv.n)
+	}
 	return ctes, g
+}
+
+// groupConditionsCTE is il<L>: the level's shown rows (table) with the values
+// of its inline and muted conditions, __inline and __muted (0 where the group
+// has none). It is materialized, as the expansion of each level below reads
+// it (inlinedRow). The mixed sums the conditions met are probed over the same
+// rows.
+func (lv *level) groupConditionsCTE(table string) string {
+	at := lv.c.p.groups[lv.n-1].at
+	for _, m := range []struct{ at, sql string }{{at + ".inline", lv.inlineMixed}, {at + ".muted", lv.mutedMixed}} {
+		if m.sql != "" {
+			lv.c.probe(m.at, fmt.Sprintf("SELECT 1 FROM %s WHERE %s", lv.rowsFrom(table, nil, m.sql), m.sql))
+		}
+	}
+	inline, muted := cmp.Or(lv.inline, "0"), cmp.Or(lv.muted, "0")
+	sel := fmt.Sprintf("a.*, %s AS __inline, %s AS __muted", inline, muted)
+	return fmt.Sprintf("il%d AS MATERIALIZED (SELECT %s FROM %s)", lv.n, sel, lv.rowsFrom(table, nil, sel))
+}
+
+// groupConditions compiles the group's inline and muted conditions on the
+// level's rows, as having compiles the having: each reads what a having
+// reads, and an unset param in it matches every group.
+func (lv *level) groupConditions() error {
+	if lv.n == 0 {
+		return nil
+	}
+	g := lv.c.p.groups[lv.n-1].group
+	var err error
+	if lv.inline, lv.inlineMixed, err = lv.groupCondition("inline", g.Inline); err != nil {
+		return err
+	}
+	lv.muted, lv.mutedMixed, err = lv.groupCondition("muted", g.Muted)
+	return err
+}
+
+// groupCondition compiles one group condition named name ("inline" or
+// "muted"): its SQL, 1 or 0 on a row of the level ("" for no node), and its
+// condMixed.
+func (lv *level) groupCondition(name string, node *Node) (string, string, error) {
+	if node == nil {
+		return "", "", nil
+	}
+	at := lv.c.p.groups[lv.n-1].at + "." + name
+	e, err := compileFormula(&levelCtx{lv: lv, visiting: lv.visiting, cond: true}, node, at)
+	if err != nil {
+		return "", "", err
+	}
+	if e.win {
+		return "", "", invalid(at, "a running value or a percent is not a condition on a group")
+	}
+	if e.typ != Bool && e.typ != "" {
+		return "", "", invalid(at, name+" is a condition")
+	}
+	// A row's value is blank on a group of rows, so such a condition would
+	// fail on every group.
+	if lv.readsRowValue(node, false, map[string]bool{}) {
+		return "", "", invalid(at, name+" reads a group's totals, keys and records, not a value of one row")
+	}
+	if e.unset {
+		return "1", "", nil
+	}
+	return "COALESCE(" + e.sql + ", 0)", e.condMixed, nil
 }
 
 // maxSideJoins keeps each select that joins a level's side CTEs under

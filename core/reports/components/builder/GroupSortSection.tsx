@@ -20,7 +20,9 @@ import {
     GroupFill,
     GroupHaving,
     GroupHideEmpty,
+    GroupInline,
     GroupLabel,
+    GroupMuted,
     GroupOpening,
     setLevel,
 } from './GroupLevelParts'
@@ -151,6 +153,8 @@ function GroupRow({ builder, groups, index, choices }: GroupRowProps) {
             <GroupLabel {...part} labelField={labelField} />
             <GroupFill {...part} above={above} />
             <GroupHaving builder={builder} groups={groups} index={index} />
+            <GroupInline builder={builder} groups={groups} index={index} />
+            <GroupMuted builder={builder} groups={groups} index={index} />
             <GroupBlank builder={builder} groups={groups} index={index} />
             <GroupHideEmpty builder={builder} groups={groups} index={index} />
             <GroupOpening builder={builder} groups={groups} index={index} />
@@ -192,6 +196,8 @@ function GroupRows({ builder }: { builder: ReportBuilder }) {
                 open: false,
                 label: null,
                 having: emptyGroup(),
+                inline: emptyGroup(),
+                muted: emptyGroup(),
                 fill: { on: false, where: emptyGroup() },
             },
         ])

@@ -411,7 +411,7 @@ func testShape() [][]orderTerm {
 
 func TestAGroupCursorReadsBackWhatItWrote(t *testing.T) {
 	keys := []sortKey{{name: "s0", col: "note", typ: Text}, {name: "__id"}}
-	fp := groupFingerprint("species/;note/", levelShape(testShape()), foldPrint(&expansion{open: map[int]bool{1: true}}), keys)
+	fp := groupFingerprint("species/;note/", "", levelShape(testShape()), foldPrint(&expansion{open: map[int]bool{1: true}}), keys)
 	at := groupPos{key: []any{"lion", "f1", "USD"}, path: [][]any{{int64(0), "lion"}, {int64(0), int64(12), int64(0), "f1"}}, mode: cursorIn}
 	text := groupCursorOf(fp, keys, at, map[string]any{"s0": "f2", "__id": "abc"})
 	cur, err := readGroupCursor(fp, testShape(), keys, 2, 1, text)
@@ -437,7 +437,7 @@ func TestAGroupFingerprintChangesWithTheFoldState(t *testing.T) {
 	all := &expansion{all: true, open: map[int]bool{}, set: map[string]bool{}, closed: map[string]bool{}}
 	prints := map[string]bool{}
 	for _, e := range []*expansion{base, folded, all} {
-		prints[groupFingerprint("species/", shape, foldPrint(e), keys)] = true
+		prints[groupFingerprint("species/", "", shape, foldPrint(e), keys)] = true
 	}
 	if len(prints) != 3 {
 		t.Fatalf("fingerprints = %v, want three", prints)
@@ -452,7 +452,7 @@ func TestAGroupFingerprintChangesWithTheFoldState(t *testing.T) {
 
 func TestAMalformedGroupCursorIsRefused(t *testing.T) {
 	keys := []sortKey{{name: "__id"}}
-	fp := groupFingerprint("species/;note/", levelShape(testShape()), "", keys)
+	fp := groupFingerprint("species/;note/", "", levelShape(testShape()), "", keys)
 	good := func(c map[string]any) string {
 		raw, _ := json.Marshal(c)
 		return encodeCursor(string(raw))

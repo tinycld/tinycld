@@ -33,6 +33,8 @@ func resolveAliases(spec *Spec) []Alias {
 		g := &spec.Groups[i]
 		a.node(base, g.Label)
 		a.node(base, g.Having)
+		a.node(base, g.Inline)
+		a.node(base, g.Muted)
 		if g.Fill != nil {
 			// A fill's where reads the records the group links to.
 			a.node(a.targets[g.ID], g.Fill.Where)

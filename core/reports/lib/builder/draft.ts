@@ -239,6 +239,10 @@ export const groupLevelSchema = z.object({
     blank: z.enum(['group', 'skip']).optional(),
     /** Hide a group when every row in it is hidden (G5). */
     hideEmpty: z.boolean().optional(),
+    /** Show a group's rows in its place where…: conditions read as having's are (R1). */
+    inline: filterGroupSchema,
+    /** Show a group in muted text where…: conditions read as having's are (R2). */
+    muted: filterGroupSchema,
 })
 export type GroupLevelDraft = z.infer<typeof groupLevelSchema>
 
@@ -485,8 +489,9 @@ function groupingIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     return issues
 }
 
-// A level's having reads its columns and records; its fill reads the linked records
-// and the groups above it (F21).
+// A level's having, inline and muted read its columns and records; its fill reads the
+// linked records and the groups above it (F21). An inline where it is not offered has
+// its refusal from levelFieldIssues instead.
 function levelIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
     const issues: Issue[] = []
     draft.groups.forEach((group, i) => {
@@ -495,6 +500,11 @@ function levelIssues(draft: BuilderDraft, catalog: Catalog): Issue[] {
         if (!offersHaving(draft, i) && hasHaving(draft, i))
             issues.push({ path: ['groups', i, 'having'], message: LAYOUT_HAVING })
         else if (having) issues.push({ path: ['groups', i, 'having'], message: having })
+        const [inline] = conditionProblems(group.inline, catalog, draft.source, level)
+        if (inline && inlineRefusal(draft, i) === undefined)
+            issues.push({ path: ['groups', i, 'inline'], message: inline })
+        const [muted] = conditionProblems(group.muted, catalog, draft.source, level)
+        if (muted) issues.push({ path: ['groups', i, 'muted'], message: muted })
         if (!group.fill.on) return
         const [fill] = conditionProblems(
             group.fill.where,
@@ -513,6 +523,10 @@ const PIVOT_DETAIL = 'A pivot report has no opened rows to label: turn the row l
 const PIVOT_OPEN = 'A pivot report has no detail rows to open'
 const HIDE_EMPTY_LAST = 'The last level has no child groups to be empty of'
 const HIDE_EMPTY_SECTIONS = "A layout's sections always show: hide empty groups on a deeper level"
+// bind.go's inline refusals, in the builder's sentence case.
+const INLINE_LAST = "The last level has no child rows to show in the group's place"
+const INLINE_BUCKET = 'A bucketed level always shows its groups'
+const INLINE_SECTIONS = "A layout's sections always show"
 const READS_OWN_SECTION = 'A row inside a section adds to it, so it cannot read that section'
 const CELL_COLUMN =
     "A row's column formula fills a number, amount or percent column after the first, not the pivot's cell column"
@@ -566,6 +580,39 @@ export function offersHideEmpty(draft: HideEmptyDraft, index: number): boolean {
 /** The hide-empty control shows where it is offered, or where it is on to turn off. */
 export function showsHideEmpty(draft: HideEmptyDraft, index: number): boolean {
     return offersHideEmpty(draft, index) || draft.groups[index]?.hideEmpty === true
+}
+
+type InlineDraft = Pick<BuilderDraft, 'groups' | 'layout'>
+
+/**
+ * Why a level cannot show its groups' rows in their place (bind.go groupsAndPivot,
+ * layout), or undefined: the last level (a pivot's too) has no child rows, a bucketed
+ * level always shows its groups, and a layout's sections always show.
+ */
+function inlineRefusal(draft: InlineDraft, index: number) {
+    if (index === draft.groups.length - 1) return INLINE_LAST
+    if (draft.groups[index]?.bucket !== '') return INLINE_BUCKET
+    if (index === 0 && draft.layout.length > 0) return INLINE_SECTIONS
+    return undefined
+}
+
+const hasInline = (draft: Pick<BuilderDraft, 'groups'>, index: number) =>
+    (draft.groups[index]?.inline.items.length ?? 0) > 0
+
+/** "Show a group's rows in its place where…" (R1): see inlineRefusal. */
+export function offersInline(draft: InlineDraft, index: number): boolean {
+    if (!draft.groups[index]) return false
+    return inlineRefusal(draft, index) === undefined
+}
+
+/** The inline editor shows where it is offered, or where it holds conditions to remove. */
+export function showsInline(draft: InlineDraft, index: number): boolean {
+    return offersInline(draft, index) || hasInline(draft, index)
+}
+
+/** "Show a group in muted text where…" (R2) is offered on every level. */
+export function showsMuted(draft: Pick<BuilderDraft, 'groups'>, index: number): boolean {
+    return draft.groups[index] !== undefined
 }
 
 type HiddenDraft = Pick<BuilderDraft, 'columns' | 'display' | 'pivot' | 'groups'>
@@ -634,7 +681,7 @@ export function cellColumnIds(
     })
 }
 
-// bind.go groupsAndPivot: a level's blank and hideEmpty, where they are not offered.
+// bind.go groupsAndPivot: a level's blank, hideEmpty and inline, where they are not offered.
 function levelFieldIssues(draft: BuilderDraft): Issue[] {
     return draft.groups.flatMap((group, i): Issue[] => {
         const issues: Issue[] = []
@@ -642,6 +689,8 @@ function levelFieldIssues(draft: BuilderDraft): Issue[] {
         if (blank) issues.push({ path: ['groups', i, 'blank'], message: blank })
         const hideEmpty = group.hideEmpty ? hideEmptyRefusal(draft, i) : undefined
         if (hideEmpty) issues.push({ path: ['groups', i, 'hideEmpty'], message: hideEmpty })
+        const inline = hasInline(draft, i) ? inlineRefusal(draft, i) : undefined
+        if (inline) issues.push({ path: ['groups', i, 'inline'], message: inline })
         return issues
     })
 }
@@ -847,25 +896,34 @@ function groupName(draft: BlankAboveDraft, level: number) {
     return column?.label ?? group?.id ?? ''
 }
 
-// bind.go blankAboveHavings and section_percent.go: a having above the column's level, and a
-// percent of a section (whose sections are the first level), read the column where it is blank.
-// A having's error shows under the group's having; a percent's under its formula, where the
-// formula editor shows the column's other refusals.
+// A level's conditions that read its totals, columns and records as having does.
+const LEVEL_CONDITIONS = ['having', 'inline', 'muted'] as const
+
+// Every column and formula a level's conditions read.
+const levelConditionNodes = (group: GroupLevelDraft) =>
+    LEVEL_CONDITIONS.flatMap(field => havingNodes(group[field]))
+
+// bind.go blankAboveHavings and section_percent.go: a having, inline or muted above the
+// column's level, and a percent of a section (whose sections are the first level), read the
+// column where it is blank. A condition's error shows under its own editor; a percent's under
+// its formula, where the formula editor shows the column's other refusals.
 function blankReadIssues(draft: BlankAboveDraft): Issue[] {
-    const having = draft.groups.flatMap((group, i): Issue[] => {
-        for (const node of havingNodes(group.having)) {
-            const blank = blankRead(draft, node, i + 1)
-            if (!blank) continue
-            const above = groupName(draft, blankLevel(draft, blank))
-            return [
-                {
-                    path: ['groups', i, 'having'],
-                    message: `This reads "${blank.label}", which is blank above ${above}: read a column that shows on this group`,
-                },
-            ]
-        }
-        return []
-    })
+    const having = draft.groups.flatMap((group, i): Issue[] =>
+        LEVEL_CONDITIONS.flatMap((field): Issue[] => {
+            for (const node of havingNodes(group[field])) {
+                const blank = blankRead(draft, node, i + 1)
+                if (!blank) continue
+                const above = groupName(draft, blankLevel(draft, blank))
+                return [
+                    {
+                        path: ['groups', i, field],
+                        message: `This reads "${blank.label}", which is blank above ${above}: read a column that shows on this group`,
+                    },
+                ]
+            }
+            return []
+        })
+    )
     const percents = draft.columns.flatMap((column, i): Issue[] => {
         if (column.kind !== 'formula' || column.formula.node.op !== 'percentOfSection') return []
         const blank = blankRead(draft, column.formula.node.args?.[0], 1)
@@ -905,7 +963,7 @@ export function blankAboveChoices(draft: BlankAboveDraft): { id: string; label: 
 }
 
 /**
- * The group levels column `index` cannot stop at: a having or a percent of a section
+ * The group levels column `index` cannot stop at: a having, inline or muted condition, a drill, or a percent of a section
  * would read it where it is blank. Those are left out of the menu, except the level
  * already set, whose error stays in view.
  */
@@ -915,7 +973,7 @@ export function blankAboveTrips(draft: BlankAboveDraft, index: number): Readonly
     const tripped = draft.groups.filter(group => {
         const set = { ...draft, columns: withBlankAbove(draft.columns, index, group.id) }
         const havings = set.groups.some((g, i) =>
-            havingNodes(g.having).some(node => blankRead(set, node, i + 1, id))
+            levelConditionNodes(g).some(node => blankRead(set, node, i + 1, id))
         )
         const percents = set.columns.some(
             column =>
@@ -1316,6 +1374,8 @@ function groupLevelDraft(g: SpecGroup, read: LevelRead): GroupLevelDraft {
         open: g.open === true,
         label: g.label ? formulaDraft(g.label, params) : null,
         having: nodeToFilter(g.having, catalog, read.baseKey, level),
+        inline: nodeToFilter(g.inline, catalog, read.baseKey, level),
+        muted: nodeToFilter(g.muted, catalog, read.baseKey, level),
         fill: {
             on: g.fill !== undefined,
             where: nodeToFilter(g.fill?.where, catalog, read.fillSource, undefined, read.above),
@@ -1497,6 +1557,8 @@ export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[
     }
     for (const group of draft.groups) {
         paramsInGroup(group.having, read)
+        paramsInGroup(group.inline, read)
+        paramsInGroup(group.muted, read)
         if (group.fill.on) paramsInGroup(group.fill.where, read)
         node(group.label?.node)
         for (const cell of Object.values(group.opening?.cells ?? {})) node(cell.node)
@@ -1569,6 +1631,8 @@ function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
         const level = levelScope(draft, catalog, index)
         const ctx = formulaContext(draft, catalog, { kind: 'level', index })
         const having = filterToNode(g.having, catalog, draft.source, level)
+        const inline = filterToNode(g.inline, catalog, draft.source, level)
+        const muted = filterToNode(g.muted, catalog, draft.source, level)
         const fillSource = groupTarget(draft, catalog, g)?.key ?? draft.source
         const above = aboveOf(draft.groups, index, draft.columns)
         const where = g.fill.on
@@ -1586,6 +1650,8 @@ function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
             ...(g.opening ? { opening: specOpening(g.opening, ctx) } : {}),
             ...(g.blank === 'skip' ? { blank: 'skip' as const } : {}),
             ...(g.hideEmpty ? { hideEmpty: true } : {}),
+            ...(inline ? { inline } : {}),
+            ...(muted ? { muted } : {}),
         }
     })
 }

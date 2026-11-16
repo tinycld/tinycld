@@ -3,6 +3,7 @@ import {
     DEFAULT_EXPANSION,
     EXPAND_ALL,
     expansionOptions,
+    figureTone,
     foldAllLabel,
     foldAllTarget,
     hasRows,
@@ -783,5 +784,83 @@ describe('withPendingOpen', () => {
     it('never marks a row that cannot open', () => {
         const fixed = visibleRows([group('g:d', ['d'], { canExpand: false })])
         expect(withPendingOpen(fixed, EXPAND_ALL, null, true)[0].isPending).toBe(false)
+    })
+})
+
+// R1: an inlined first-level group (cat) draws no row and no subtotal; its child
+// group row stands at depth 0 with level 2 and keeps the inlined key. Lion is a
+// drawn group of the same level with its children and subtotal.
+describe('an inlined group', () => {
+    const spec = { groups: [{ subtotals: true }, {}] }
+    const f6 = group('g:cat,f6', ['cat', 'f6', 'USD'], { depth: 0, level: 2, cells: { cost: 99 } })
+    const lion = group('g:lion', ['lion', 'USD'], { depth: 0, level: 1, expanded: true })
+    const f1 = group('g:lion,f1', ['lion', 'f1', 'USD'], {
+        depth: 1,
+        level: 2,
+        section: 'g:lion',
+        cells: { cost: 1000 },
+    })
+    const rows = [f6, lion, f1, subtotal('s:lion', 'g:lion'), total]
+
+    it('keeps each child row of an inlined group with its figures and its toggle', () => {
+        const shown = visibleRows(rows, spec)
+        expect(shown[0].row.id).toBe('g:cat,f6')
+        expect(shown[0].cells).toEqual({ cost: 99 })
+        expect(shown[0]).toMatchObject({ isToggle: true, isOpen: false })
+        // The drawn group's own subtotal follows it, so its row shows no figures.
+        expect(shown[1].cells).toEqual({})
+        expect(shown[2].cells).toEqual({ cost: 1000 })
+        // Opened, the child still ends in no subtotal row.
+        const opened = { ...f6, expanded: true }
+        const withDetail = visibleRows([opened, detail('d:f6', 'g:cat,f6'), lion, total], spec)
+        expect(withDetail[0].cells).toEqual({ cost: 99 })
+        expect(withDetail[0]).toMatchObject({ isToggle: true, isOpen: true })
+    })
+
+    it('folds and opens a child of an inlined group by its full key', () => {
+        expect(toggleGroup(NO_EXPANSION, f6, rows).keys).toEqual([['cat', 'f6', 'USD']])
+        expect(toggleGroup(DEFAULT_EXPANSION, f6, rows).keys).toEqual([['cat', 'f6', 'USD']])
+        const opened = { ...f6, expanded: true }
+        const openRows = [opened, lion, f1, subtotal('s:lion', 'g:lion'), total]
+        expect(toggleGroup(EXPAND_ALL, opened, openRows).collapsed).toEqual([['cat', 'f6', 'USD']])
+        expect(foldAllLabel(rows)).toBe('Collapse all')
+        expect(foldAllTarget(rows)).toBe(NO_EXPANSION)
+        expect(foldAllTarget([f6, total])).toBe(EXPAND_ALL)
+    })
+
+    it('passes muted through on the row', () => {
+        const muted = group('g:mo', ['mo', 'USD'], { muted: true })
+        const shown = visibleRows([muted, f6, total])
+        expect(shown[0].row.muted).toBe(true)
+        expect(shown[1].row.muted).toBeUndefined()
+    })
+})
+
+// R2: a muted group row draws its label and figures muted; red and error figures
+// keep their tone, and a row without muted is drawn as before.
+describe('figureTone', () => {
+    const display = (isRed: boolean, isError: boolean) => ({
+        text: '1.00',
+        align: 'right' as const,
+        isRed,
+        isError,
+    })
+    const muted = group('g:mo', ['mo', 'USD'], { muted: true })
+    const plain = group('g:leo', ['leo', 'USD'])
+
+    it('keeps red and error figures danger on a muted row', () => {
+        expect(figureTone(muted, display(true, false))).toBe('danger')
+        expect(figureTone(muted, display(false, true))).toBe('danger')
+    })
+
+    it('mutes another figure of a muted group row', () => {
+        expect(figureTone(muted, display(false, false))).toBe('muted')
+    })
+
+    it('draws a row without muted as before', () => {
+        expect(figureTone(plain, display(false, false))).toBe('normal')
+        expect(figureTone(plain, display(true, false))).toBe('danger')
+        expect(figureTone(plain, display(false, true))).toBe('danger')
+        expect(figureTone(subtotal('s:mo', 'g:mo'), display(false, false))).toBe('normal')
     })
 })

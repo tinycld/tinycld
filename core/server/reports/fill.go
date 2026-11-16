@@ -34,7 +34,10 @@ func (lv *level) fillRows() string {
 // or collapsed row, or one under a folded ancestor, shows no children, so its
 // fill records are never computed. At a skip level the blank key is open when
 // its parent is (expansion.where), so a fill below it fills under the parent
-// the rows reach.
+// the rows reach. Under an inline level every group whose parent is open
+// fills (expansion.mayShowUnder): the keys are read before the level knows
+// which of its groups are inlined, and a closed group's fill rows show
+// nothing.
 func (c *compiler) parentKeys(s *stmt, n int, expand *expansion) string {
 	if n == 1 {
 		if len(c.currencies) == 0 {
@@ -43,7 +46,7 @@ func (c *compiler) parentKeys(s *stmt, n int, expand *expansion) string {
 		cks := strings.Join(c.currencies, ", ")
 		return fmt.Sprintf("SELECT DISTINCT %s FROM w UNION ALL SELECT %s WHERE NOT EXISTS (SELECT 1 FROM w)", cks, c.noRowCurrencies(s))
 	}
-	expanded := expand.shownUnder(c, s, n-1, "")
+	expanded := expand.mayShowUnder(c, s, n-1, "")
 	if set, ok := c.fillSets[n-1]; ok {
 		return fmt.Sprintf("SELECT * FROM %s WHERE %s", set, expanded)
 	}
