@@ -191,8 +191,8 @@ test.describe('report-exports: download', () => {
     }) => {
         // Another worker's sale would rerun the report through its live topic; the
         // run count below is about the export alone, so topic subscriptions are
-        // answered here and never reach the server. Realtime is cut before login
-        // (lesson 22), so no subscription made before the route reaches the server.
+        // answered here and never reach the server. Realtime is cut before login,
+        // so no subscription made before the route reaches the server.
         await page.route('**/api/realtime', route =>
             route.request().method() === 'POST' ? route.fulfill({ status: 204 }) : route.fallback()
         )

@@ -16,7 +16,7 @@ import type { ParamDef } from '../spec'
 import type { ResolvedParam } from '../types'
 
 // The file name list is the one the Go suite runs (export_format_test.go), so the
-// name the dialog shows and the name of the file the server sends cannot differ (D6).
+// name the dialog shows and the name of the file the server sends cannot differ.
 type FileNameCase = {
     name: string
     title: string
