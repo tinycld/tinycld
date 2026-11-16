@@ -812,18 +812,48 @@ globs. Environment is `node`; setup is `tests/unit-setup.ts`.
 
 ### Playwright (`playwright.config.ts`)
 
-Playwright generates **one project per workspace member**, derived from the
-`node_modules/@tinycld/*` workspace symlinks (project name = `@tinycld/mail`,
-etc.), with `testDir` pointing at that member's `tests/`. Run one package's
-specs with:
+The app shell's `playwright.config.ts` is the canonical config: the two
+`webServer` entries, the `globalSetup` that seeds the fixtures, the browser
+project and the reporter. Core re-exports it as
+`@tinycld/core/playwright-config`. A member with e2e specs has its own
+`playwright.config.ts` that spreads that config and sets `testDir` to its own
+specs through the `node_modules/<package name>` symlink; it can also set a
+`timeout` or its own `projects`. There is no workspace-wide config: each
+member's suite is its own Playwright run.
 
 ```sh
-pnpm run test:e2e --project=@tinycld/mail
+# The suite of one member (from that member; the app shell is `tinycld/`)
+pnpm exec tinycld-pkg test:e2e
+pnpm exec tinycld-pkg test:e2e -- -g "title"        # Playwright arguments go after --
+
+# Every feature member that has a playwright.config.ts, one run for each (from tinycld/)
+pnpm run pkg:test:e2e
+
+# Named spec files of one or more members, from any directory in the workspace
+pnpm exec tinycld-pkg test:e2e tinycld/tests/e2e/help.spec.ts mail/tests/mail-inbox.spec.ts
 ```
 
-Playwright **owns the server lifecycle** — it resets the DB and starts
-PocketBase + Expo itself (`webServer.reuseExistingServer: false`). Never start
-or kill servers manually around a Playwright run.
+The last form is one Playwright run for all the files: one server start, one
+web export and one fixture seed. `package-scripts/src/multi-member.config.ts`
+builds its config from the configs of the members that own the files. Each
+member becomes a project (`mail`, or `books:<project>` for a member with its
+own projects) that keeps the member's `testDir`, `timeout` and project
+settings, and selects only the named files. The members share the one seeded
+database. A member that starts its own servers or global setup is refused.
+Give the files as paths from the current directory or the workspace root,
+before any `--`. Use this form, not one command for each file or member: each
+command starts the servers, builds the export and seeds again. `--skip-export`
+serves the bundle of the last export; use it only when no source file changed
+since then.
+
+Playwright **owns the server lifecycle**. `pnpm run e2e:serve` clears the test
+data dir, builds the web export, and serves it and the API from one PocketBase
+listener on `E2E_PORT` (7200 when unset); a second instance on `E2E_PORT_2`
+(7201) serves a copy of the same export for the specs that need two servers.
+There is no Metro in an e2e run. Never start or kill servers manually around a
+Playwright run. Off CI the config has `reuseExistingServer`, so a server that
+another workspace left on those ports is tested in place of this one: check
+that the ports are free first.
 
 ---
 
@@ -1701,8 +1731,8 @@ pnpm run dev                         # packages:generate, then Expo + PocketBase
 pnpm run checks                      # biome + tsc (lints app + all linked siblings)
 pnpm run test                        # vitest for the app shell
 pnpm run pkg:test:unit               # vitest across every present member
-pnpm run test:e2e                    # playwright (all linked siblings)
-pnpm run test:e2e --project=@tinycld/mail   # a single package's e2e specs
+pnpm run test:e2e                    # playwright for the app shell's own specs
+pnpm run pkg:test:e2e                # playwright for every feature member, one run for each
 pnpm exec tinycld-pkg test:e2e tests/e2e/help.spec.ts ../mail/tests/mail-inbox.spec.ts   # named spec files of any members, one run
 pnpm run test:server                 # Go tests (no_ui build tag)
 ```
