@@ -7,9 +7,10 @@ import { defaultFlexGrow } from '../../lib/column-measure'
 import type { ColumnFit } from '../../lib/spec'
 import { FieldError, IconButton } from './parts'
 
-// Design §3.6: a text column sets its narrowest width, whether long text wraps and
-// its share of extra room; a figure is never cut, so it sets only extra room. Width,
-// widest and % settings are kept as read (CLI or API) and not offered here.
+// Design §3.6: a text column sets its narrowest width, whether long text wraps (and,
+// while it wraps, whether it breaks long words) and its share of extra room; a figure
+// is never cut, so it sets only extra room. Width, widest and % settings are kept as
+// read (CLI or API) and not offered here.
 
 const NARROWEST: { id: string; label: string; minWidth?: string }[] = [
     { id: 'auto', label: 'Automatic' },
@@ -24,6 +25,13 @@ const LONG_TEXT: { id: string; label: string; lines?: number }[] = [
     { id: 'one', label: 'One line, ends in …' },
     { id: '2', label: 'Wrap to 2 lines', lines: 2 },
     { id: '3', label: 'Wrap to 3 lines', lines: 3 },
+]
+// A wrapping column keeps its words whole by default; "Break long words" sets
+// overflowWrap "anywhere", so a word wider than its line breaks and no longer
+// holds the column at its width.
+const LONG_WORDS: { id: string; label: string; overflowWrap?: 'anywhere' }[] = [
+    { id: 'whole', label: 'Keep words whole' },
+    { id: 'break', label: 'Break long words', overflowWrap: 'anywhere' },
 ]
 // "Normal" is the default of text and the label column; other figures default to "None".
 const EXTRA_ROOM = [
@@ -53,6 +61,7 @@ function useColumnFit(
         isSelected: item.minWidth === fit.minWidth,
         onSelect: () => setFit({ ...fit, minWidth: item.minWidth }),
     }))
+    // One line drops the word setting: it goes only with a wrap (fit.go columnFit).
     const longText: PickItem[] = LONG_TEXT.map(item => ({
         id: item.id,
         label: item.label,
@@ -62,7 +71,14 @@ function useColumnFit(
                 ...fit,
                 whiteSpace: item.lines ? 'normal' : undefined,
                 lineClamp: item.lines,
+                overflowWrap: item.lines ? fit.overflowWrap : undefined,
             }),
+    }))
+    const longWords: PickItem[] = LONG_WORDS.map(item => ({
+        id: item.id,
+        label: item.label,
+        isSelected: item.overflowWrap === fit.overflowWrap,
+        onSelect: () => setFit({ ...fit, overflowWrap: item.overflowWrap }),
     }))
     // The column's default share is not written.
     const extraRoom: PickItem[] = EXTRA_ROOM.map(item => ({
@@ -77,10 +93,14 @@ function useColumnFit(
         column,
         narrowest,
         longText,
+        longWords,
+        isWrapping: lines !== undefined && lines > 1,
         extraRoom,
         narrowestLabel:
             NARROWEST.find(item => item.minWidth === fit.minWidth)?.label ?? fit.minWidth ?? '',
         longTextLabel: LONG_TEXT.find(item => item.lines === lines)?.label ?? '',
+        longWordsLabel:
+            LONG_WORDS.find(item => item.overflowWrap === fit.overflowWrap)?.label ?? '',
         extraRoomLabel: EXTRA_ROOM.find(item => item.grow === grow)?.label ?? String(grow),
         hasFit: column?.fit !== undefined,
         error: error?.message,
@@ -153,7 +173,30 @@ function TextFitMenus({
                 items={fit.longText}
                 testID={`${testID}-wrap`}
             />
+            <LongWordsMenu isVisible={fit.isWrapping} fit={fit} name={name} testID={testID} />
         </>
+    )
+}
+
+function LongWordsMenu({
+    isVisible,
+    fit,
+    name,
+    testID,
+}: {
+    isVisible: boolean
+    fit: ColumnFitState
+    name: string
+    testID: string
+}) {
+    if (!isVisible) return null
+    return (
+        <PickMenu
+            label={`Long words: ${fit.longWordsLabel}`}
+            purpose={`${name} long words`}
+            items={fit.longWords}
+            testID={`${testID}-words`}
+        />
     )
 }
 

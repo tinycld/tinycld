@@ -48,15 +48,23 @@ export type Block =
 /**
  * One line, each column at its width; or blocks whose side parts carry px widths.
  * `lines`: the columns whose text wraps, and to how many lines (absent: one).
+ * `breakWords`: the wrapping columns whose text breaks a word wider than its line
+ * (overflowWrap "anywhere"; absent: words are kept whole).
  */
 export type LineLayout =
-    | { kind: 'one-line'; widths: Record<string, number>; lines?: Record<string, number> }
+    | {
+          kind: 'one-line'
+          widths: Record<string, number>
+          lines?: Record<string, number>
+          breakWords?: Record<string, true>
+      }
     | {
           kind: 'blocks'
           root: Block
           indent: number
           notice?: string
           lines?: Record<string, number>
+          breakWords?: Record<string, true>
       }
 /** Which rule laid the rows out: one line, an author arrangement, or automatic lines. */
 export type LayoutSource = 'one-line' | DisplayWidth | 'auto'
@@ -609,6 +617,14 @@ function linesOf(measures: ColumnMeasures): Record<string, number> | undefined {
     return wrapping.length > 0 ? Object.fromEntries(wrapping) : undefined
 }
 
+// The wrapping columns that break long words; carried as `lines` is.
+function breakWordsOf(measures: ColumnMeasures): Record<string, true> | undefined {
+    const breaking = Object.entries(measures).flatMap(([id, m]) =>
+        m.breakWords && m.lines !== undefined && m.lines > 1 ? [[id, true] as const] : []
+    )
+    return breaking.length > 0 ? Object.fromEntries(breaking) : undefined
+}
+
 // The indents an authored arrangement is tried at: the full continuation indent,
 // then one group level fewer at a time down to none, then 0. A phone that cannot
 // give the figures line its full indent draws the author's lines a little less
@@ -636,8 +652,9 @@ export function fitTable(input: FitTableInput): { layout: LineLayout; source: La
     const measures =
         input.measures ?? measureColumns({ columns, rows: [], format: DEFAULT_DISPLAY, levels })
     const lines = linesOf(measures)
+    const breakWords = breakWordsOf(measures)
     const withLines = <T extends LineLayout>(layout: T): T =>
-        lines ? { ...layout, lines } : layout
+        lines ? { ...layout, lines, ...(breakWords ? { breakWords } : {}) } : layout
     const isOneLineWidth = width >= gateOf(input.oneLine?.minWidth)
     const widths = isOneLineWidth ? fitOneLine(columns, width, measuresAt(measures, width)) : null
     if (widths) return { layout: withLines({ kind: 'one-line', widths }), source: 'one-line' }
@@ -774,6 +791,7 @@ export function rowLayout(
             root: labelOnly,
             indent: layout.indent,
             ...(layout.lines ? { lines: layout.lines } : {}),
+            ...(layout.breakWords ? { breakWords: layout.breakWords } : {}),
         }
     if (item.row.kind === 'detail') return layout
     const keeps = (col: string) => col === labelId || hasValue(item.cells[col])

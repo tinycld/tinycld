@@ -57,6 +57,9 @@ type ColumnFit struct {
 	WhiteSpace   string `json:"whiteSpace,omitempty"`
 	LineClamp    int    `json:"lineClamp,omitempty"`
 	TextOverflow string `json:"textOverflow,omitempty"`
+	// OverflowWrap "anywhere" lets a wrapping column break a word wider than
+	// its line; only with WhiteSpace "normal".
+	OverflowWrap string `json:"overflowWrap,omitempty"`
 	// FlexGrow is a pointer: 0 (no share of the spare room) is a setting.
 	FlexGrow *int `json:"flexGrow,omitempty"`
 }

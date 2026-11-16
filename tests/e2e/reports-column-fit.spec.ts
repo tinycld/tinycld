@@ -8,6 +8,7 @@ import {
     chooseOption,
     openReportStub,
     openReportsHub,
+    pressToolbar,
     SALES_SOURCE,
     saveNewReport,
     startReport,
@@ -219,6 +220,95 @@ test.describe('report column fit', () => {
             expect(box).toBeGreaterThanOrEqual(widest)
             // The label wraps: it is narrower than its whole text.
             expect(box).toBeLessThan(found.reduce((sum, w) => sum + w.width, 0))
+        } finally {
+            await close()
+        }
+    })
+
+    test('a wrapping column set to break long words splits a word wider than its line on a phone and keeps its line', async ({
+        page,
+    }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptbreak')
+        try {
+            const team = uniqueName('Break Team')
+            await openReportStub(p)
+            await addTeam(p, team)
+            // One 45-letter word (about 360 px) is wider than any line a phone gives
+            // the label, so kept whole it would hold the label at that width.
+            const word = 'Pneumonoultramicroscopicsilicovolcanoconiosis'
+            await addSales(p, {
+                team,
+                customerPrefix: `Fitco ${word}`,
+                count: 1,
+                firstDay: '2026-01-05',
+                firstAmount: 12345,
+                cost: 100,
+                quantity: 1,
+            })
+            await openReportsHub(p)
+            await startReport(p, SALES_SOURCE)
+            await addColumn(p, ['amount'])
+            await addColumn(p, ['cost'])
+            await addColumn(p, ['quantity'])
+            await chooseOption(p, 'report-builder-column-0-fit-wrap', '2')
+            await chooseOption(p, 'report-builder-column-0-fit-words', 'break')
+            await expect(p.getByTestId('report-builder-column-0-fit-words')).toContainText(
+                'Break long words'
+            )
+            await saveNewReport(p, uniqueName('Break'))
+            const label = p
+                .locator('[data-testid^="report-row-d:"]')
+                .first()
+                .locator('div[dir="auto"]')
+            const amount = p
+                .locator('[data-testid^="report-cell-amount-d:"]')
+                .first()
+                .locator('div[dir="auto"]')
+            const sharesLine = async () => {
+                const labelBox = await label.boundingBox()
+                const amountBox = await amount.boundingBox()
+                return (
+                    (amountBox?.y ?? Number.POSITIVE_INFINITY) <
+                    (labelBox?.y ?? 0) + (labelBox?.height ?? 0)
+                )
+            }
+            const fits = () =>
+                label.evaluate(element => ({
+                    overflowWrap: getComputedStyle(element).overflowWrap,
+                    // Nothing clipped or drawn past the label's box, nor the box past its cell.
+                    fitsItsBox: element.scrollWidth <= element.clientWidth,
+                    fitsItsCell:
+                        element.getBoundingClientRect().width <=
+                        (element.parentElement?.getBoundingClientRect().width ?? 0) + 0.5,
+                }))
+            const splitWords = async () =>
+                (await labelWords(label)).found.filter(w => w.rects > 1).map(w => w.word)
+
+            // A label, amount, cost and quantity do not fit one line on a phone, with
+            // short words or long ones (the "never splits a word" test above): both
+            // phones get the automatic lines, where the label shares line 1 with the
+            // amount. Held at its 45-letter word, the label would take line 1 alone.
+            for (const viewport of [
+                { width: 390, height: 844 },
+                { width: 375, height: 812 },
+            ]) {
+                await p.setViewportSize(viewport)
+                expect(await waitForTableFit(p)).toBe('auto')
+                await expect(label).toContainText(word.slice(0, 12))
+                await expect.poll(sharesLine).toBe(true)
+                await expect.poll(splitWords).toContain(word)
+                expect(await fits()).toEqual({
+                    overflowWrap: 'anywhere',
+                    fitsItsBox: true,
+                    fitsItsCell: true,
+                })
+            }
+
+            await p.setViewportSize({ width: 1280, height: 800 })
+            await pressToolbar(p, 'report-edit-open', 'Edit report')
+            await expect(p.getByTestId('report-builder-column-0-fit-words')).toContainText(
+                'Break long words'
+            )
         } finally {
             await close()
         }

@@ -244,17 +244,33 @@ function labelTone(kind: RowKind): string {
 // splits a word wider than its line. The measure gives a wrapping column its
 // longest word; if the estimate is short, the word is clipped, as CSS does.
 const WHOLE_WORDS = 'web:break-normal'
+// A column set to overflowWrap "anywhere" breaks a word wider than its line, and
+// its measure does not hold its longest word (column-measure.ts fitted). Native
+// needs nothing: React Native Text already splits a word wider than its line.
+const BREAK_WORDS = 'web:[overflow-wrap:anywhere]'
+
+const wordsClass = (breakWords: boolean) => (breakWords ? BREAK_WORDS : WHOLE_WORDS)
 
 // Only a text that may wrap gets a break mark after its colons (text-width.ts
 // breakAfterColons), so a one-line text copies and reads as the plain text.
 const wrappedText = (text: string, lines: number) => (lines > 1 ? breakAfterColons(text) : text)
 
-const labelTextClass = (row: ResultRow) =>
-    `min-w-0 flex-1 text-sm ${WHOLE_WORDS} ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`
+const labelTextClass = (row: ResultRow, breakWords: boolean) =>
+    `min-w-0 flex-1 text-sm ${wordsClass(breakWords)} ${labelTone(row.kind)} ${ROW_WEIGHT[row.kind]}`
 
-function LabelText({ row, text, lines = 1 }: { row: ResultRow; text: string; lines?: number }) {
+function LabelText({
+    row,
+    text,
+    lines = 1,
+    breakWords = false,
+}: {
+    row: ResultRow
+    text: string
+    lines?: number
+    breakWords?: boolean
+}) {
     return (
-        <Text numberOfLines={lines} className={labelTextClass(row)}>
+        <Text numberOfLines={lines} className={labelTextClass(row, breakWords)}>
             {wrappedText(text, lines)}
         </Text>
     )
@@ -270,6 +286,8 @@ interface RowLabelProps {
     isCopy?: boolean
     /** The lines its text may wrap to (the layout's lines); absent: one. */
     lines?: number
+    /** Its text breaks a word wider than its line (the layout's breakWords). */
+    breakWords?: boolean
     /** What the row opens; absent: a plain label (the builder's preview). */
     links?: RowLinks
 }
@@ -298,6 +316,7 @@ function GroupToggleLabel({
     minHeight = ROW_HEIGHT,
     isCopy = false,
     lines,
+    breakWords,
 }: RowLabelProps) {
     const { row } = item
     const text = rowLabelText(row, format)
@@ -316,7 +335,7 @@ function GroupToggleLabel({
             style={labelStyle(row, justify, minHeight)}
         >
             <GroupCaret isOpen={item.isOpen} pendingId={pendingId(item, isCopy)} />
-            <LabelText row={row} text={text} lines={lines} />
+            <LabelText row={row} text={text} lines={lines} breakWords={breakWords} />
         </Pressable>
     )
 }
@@ -324,7 +343,15 @@ function GroupToggleLabel({
 /** A row's label: a group's is its fold toggle. */
 export function RowLabel(props: RowLabelProps) {
     if (props.item.isToggle) return <GroupToggleLabel {...props} />
-    const { item, format, justify = 'start', minHeight = ROW_HEIGHT, isCopy = false, lines } = props
+    const {
+        item,
+        format,
+        justify = 'start',
+        minHeight = ROW_HEIGHT,
+        isCopy = false,
+        lines,
+        breakWords = false,
+    } = props
     const text = rowLabelText(item.row, format)
     const href = props.links && !isCopy ? props.links.rowHref(item.row) : null
     if (props.links && href !== null) {
@@ -334,7 +361,7 @@ export function RowLabel(props: RowLabelProps) {
                 href={href}
                 testID={labelId(item.row, isCopy)}
                 text={text}
-                textClass={labelTextClass(item.row)}
+                textClass={labelTextClass(item.row, breakWords)}
                 lines={lines ?? 1}
                 style={labelStyle(item.row, justify, minHeight)}
                 isShown={links.isRowShown(item.row)}
@@ -349,7 +376,7 @@ export function RowLabel(props: RowLabelProps) {
             className="flex-row items-center pr-3"
             style={labelStyle(item.row, justify, minHeight)}
         >
-            <LabelText row={item.row} text={text} lines={lines} />
+            <LabelText row={item.row} text={text} lines={lines} breakWords={breakWords} />
         </View>
     )
 }
@@ -366,11 +393,13 @@ function cellTextClass(
     display: CellDisplay,
     justify: Justify,
     kind: RowKind,
-    isFigure: boolean
+    isFigure: boolean,
+    breakWords: boolean
 ): string {
     const tone = display.isRed || display.isError ? 'text-danger' : 'text-foreground'
     const digits = isFigure ? 'tabular-nums' : ''
-    return `text-sm ${WHOLE_WORDS} ${TEXT_ALIGN[justify]} ${digits} ${tone} ${ROW_WEIGHT[kind]}`
+    const words = wordsClass(breakWords)
+    return `text-sm ${words} ${TEXT_ALIGN[justify]} ${digits} ${tone} ${ROW_WEIGHT[kind]}`
 }
 
 interface RowCellProps {
@@ -385,6 +414,8 @@ interface RowCellProps {
     isCopy?: boolean
     /** The lines its text may wrap to (the layout's lines); absent: one. */
     lines?: number
+    /** Its text breaks a word wider than its line (the layout's breakWords). */
+    breakWords?: boolean
     links?: RowLinks
 }
 
@@ -401,6 +432,7 @@ export function RowCell({
     minHeight = ROW_HEIGHT,
     isCopy = false,
     lines = 1,
+    breakWords = false,
     links,
 }: RowCellProps) {
     const { row } = item
@@ -408,7 +440,7 @@ export function RowCell({
     const isFigure = isFigureColumn(column)
     // A figure is never wrapped (column-measure.ts wholeMeasure): a time keeps its colon whole.
     const shown = isFigure ? display.text : wrappedText(display.text, lines)
-    const textClass = cellTextClass(display, justify, row.kind, isFigure)
+    const textClass = cellTextClass(display, justify, row.kind, isFigure, breakWords)
     const testID = `${isCopy ? 'report-sticky-cell' : 'report-cell'}-${column.id}-${row.id}`
     const style = cellBoxStyle(width, minHeight)
     // A figure whose column drills, on a row with a @drill cell, opens the rows
@@ -503,6 +535,8 @@ function OneLineRow({
     )
     const spanned = amounts.slice(0, span).map(column => column.id)
     const labelBox = oneLineLabelStyle(layout, label?.id, spanned)
+    const labelLines = label ? layout.lines?.[label.id] : undefined
+    const labelBreaks = label ? layout.breakWords?.[label.id] : undefined
     const cells = amounts
         .slice(span)
         .map((column, i) => (
@@ -517,6 +551,7 @@ function OneLineRow({
                 minHeight={ROW_HEIGHT}
                 isCopy={isCopy}
                 lines={layout.lines?.[column.id]}
+                breakWords={layout.breakWords?.[column.id]}
                 links={links}
             />
         ))
@@ -533,7 +568,8 @@ function OneLineRow({
                     format={format}
                     onToggleGroup={onToggleGroup}
                     isCopy={isCopy}
-                    lines={label ? layout.lines?.[label.id] : undefined}
+                    lines={labelLines}
+                    breakWords={labelBreaks}
                     links={links}
                 />
             </View>
@@ -559,6 +595,7 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy, links
                     minHeight={minHeight}
                     isCopy={isCopy}
                     lines={rowLines.lines?.[col]}
+                    breakWords={rowLines.breakWords?.[col]}
                     links={links}
                 />
             )
@@ -575,6 +612,7 @@ function BlocksRow({ item, columns, layout, format, onToggleGroup, isCopy, links
                 minHeight={minHeight}
                 isCopy={isCopy}
                 lines={rowLines.lines?.[col]}
+                breakWords={rowLines.breakWords?.[col]}
                 links={links}
             />
         )

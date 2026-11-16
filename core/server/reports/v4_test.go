@@ -60,6 +60,11 @@ func TestColumnFitIsChecked(t *testing.T) {
 		"lineClamp without normal":    {note(`{"lineClamp":2}`), "display.columns.note.lineClamp", "lineClamp goes with whiteSpace normal", 400},
 		"lineClamp 5":                 {note(`{"whiteSpace":"normal","lineClamp":5}`), "display.columns.note.lineClamp", "lineClamp is 1 to 4", 400},
 		"clip is not offered":         {note(`{"textOverflow":"clip"}`), "display.columns.note.textOverflow", "textOverflow is ellipsis", 400},
+		"overflowWrap break-word":     {note(`{"whiteSpace":"normal","overflowWrap":"break-word"}`), "display.columns.note.overflowWrap", "overflowWrap is anywhere", 400},
+		"overflowWrap without normal": {note(`{"overflowWrap":"anywhere"}`), "display.columns.note.overflowWrap", "overflowWrap goes with whiteSpace normal", 400},
+		"overflowWrap with nowrap":    {note(`{"whiteSpace":"nowrap","overflowWrap":"anywhere"}`), "display.columns.note.overflowWrap", "overflowWrap goes with whiteSpace normal", 400},
+		// A one-line column never breaks a word, so the setting would be stored and never drawn.
+		"overflowWrap on one line":    {note(`{"whiteSpace":"normal","lineClamp":1,"overflowWrap":"anywhere"}`), "display.columns.note.overflowWrap", "overflowWrap needs lineClamp 2 or more", 400},
 		"flexGrow 11":                 {note(`{"flexGrow":11}`), "display.columns.note.flexGrow", "flexGrow is 0 to 10", 400},
 		"flexGrow below 0":            {note(`{"flexGrow":-1}`), "display.columns.note.flexGrow", "flexGrow is 0 to 10", 400},
 		"an unknown column":           {`{"columns":{"zz":{"flexGrow":1}}}`, "display.columns.zz", "the report has no column", 422},
@@ -83,6 +88,8 @@ func TestColumnFitIsChecked(t *testing.T) {
 		"min and max in different units": note(`{"minWidth":"30ch","maxWidth":"200px"}`),
 		"an empty fit":                   note(`{}`),
 		"wrap with the default clamp":    note(`{"whiteSpace":"normal"}`),
+		"wrap that breaks long words":    note(`{"whiteSpace":"normal","lineClamp":2,"overflowWrap":"anywhere"}`),
+		"one line keeping its words":     note(`{"whiteSpace":"normal","lineClamp":1}`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			spec, _, err := Load([]byte(fmt.Sprintf(base, display)))
@@ -115,6 +122,7 @@ func TestAFigureIsNeverCut(t *testing.T) {
 		"a date that wraps":          {spec(animal, `{"fed":{"whiteSpace":"normal"}}`), "display.columns.fed.whiteSpace"},
 		"a summed number with a max": {spec(animal, `{"grams":{"maxWidth":"10ch"}}`), "display.columns.grams.maxWidth"},
 		"money with an ellipsis":     {spec(animal, `{"cost":{"textOverflow":"ellipsis"}}`), "display.columns.cost.textOverflow"},
+		"money that breaks words":    {spec(animal, `{"cost":{"whiteSpace":"normal","overflowWrap":"anywhere"}}`), "display.columns.cost.overflowWrap"},
 		"a formula giving money":     {spec(animal, `{"double":{"minWidth":"min-content"}}`), "display.columns.double.minWidth"},
 		"a label typed as a date":    {spec(`{"id":"animal","path":[{"link":"animal"}],"labelField":"born"}`, `{"animal":{"width":"20ch"}}`), "display.columns.animal.width"},
 		// Text in its detail rows, a number (a count) in its group rows (TotalType).

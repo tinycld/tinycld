@@ -7,6 +7,7 @@ import {
     parseBroken,
     parseFitLength,
     parseSpec,
+    reportSpecSchema,
 } from '../spec'
 
 const FEEDINGS = {
@@ -504,6 +505,9 @@ describe('column fit (spec version 4)', () => {
         },
     }
 
+    const WRAP = { whiteSpace: 'normal', lineClamp: 2 }
+    const ANYWHERE = { overflowWrap: 'anywhere' }
+
     it('reads every fit setting as it is', () => {
         expect(parseSpec(FIT)).toEqual(FIT)
     })
@@ -519,6 +523,40 @@ describe('column fit (spec version 4)', () => {
         expect(withDisplay({ columns: { note: { textOverflow: 'clip' } } })).toBeNull()
         expect(withDisplay({ columns: { note: { lineClamp: 5 } } })).toBeNull()
         expect(withDisplay({ columns: { note: { colour: 'red' } } })).toBeNull()
+    })
+
+    it('takes overflowWrap anywhere only on a column that wraps', () => {
+        const withNote = (note: unknown) =>
+            parseSpec({ ...FEEDINGS, display: { columns: { note } } })
+        const breaks = { ...FEEDINGS, display: { columns: { note: { ...WRAP, ...ANYWHERE } } } }
+        expect(parseSpec(breaks)).toEqual(breaks)
+        expect(withNote({ ...WRAP, overflowWrap: 'break-word' })).toBeNull()
+        expect(withNote({ ...WRAP, overflowWrap: 'normal' })).toBeNull()
+        expect(withNote(ANYWHERE)).toBeNull()
+        expect(withNote({ whiteSpace: 'nowrap', ...ANYWHERE })).toBeNull()
+    })
+
+    it('refuses overflowWrap on a column of one line, which never breaks a word', () => {
+        const withNote = (note: unknown) =>
+            parseSpec({ ...FEEDINGS, display: { columns: { note } } })
+        expect(withNote({ whiteSpace: 'normal', lineClamp: 1, ...ANYWHERE })).toBeNull()
+        expect(withNote({ whiteSpace: 'normal', lineClamp: 1 })).not.toBeNull()
+        expect(withNote({ whiteSpace: 'normal', lineClamp: 3, ...ANYWHERE })).not.toBeNull()
+    })
+
+    it('files an overflowWrap refusal on the fit itself, where the builder reads it', () => {
+        const pathsOf = (note: unknown) => {
+            const parsed = reportSpecSchema.safeParse({
+                ...FEEDINGS,
+                display: { columns: { note } },
+            })
+            return parsed.success ? [] : parsed.error.issues.map(issue => issue.path.join('.'))
+        }
+        expect(pathsOf(ANYWHERE)).toEqual(['display.columns.note'])
+        expect(pathsOf({ whiteSpace: 'nowrap', ...ANYWHERE })).toEqual(['display.columns.note'])
+        expect(pathsOf({ whiteSpace: 'normal', lineClamp: 1, ...ANYWHERE })).toEqual([
+            'display.columns.note',
+        ])
     })
 
     it('parses a length into its number and unit', () => {

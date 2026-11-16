@@ -1615,6 +1615,7 @@ export function tidyFit(fit: ColumnFit | undefined): ColumnFit | undefined {
         ...(fit.whiteSpace !== undefined ? { whiteSpace: fit.whiteSpace } : {}),
         ...(fit.lineClamp !== undefined ? { lineClamp: fit.lineClamp } : {}),
         ...(fit.textOverflow !== undefined ? { textOverflow: fit.textOverflow } : {}),
+        ...(fit.overflowWrap !== undefined ? { overflowWrap: fit.overflowWrap } : {}),
         ...(fit.flexGrow !== undefined ? { flexGrow: fit.flexGrow } : {}),
     }
     return Object.keys(tidy).length > 0 ? tidy : undefined
