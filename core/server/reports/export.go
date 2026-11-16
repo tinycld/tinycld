@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"tinycld.org/core/audit"
+	"tinycld.org/core/branding"
 	"tinycld.org/core/pdfrender"
 )
 
@@ -33,6 +34,7 @@ const (
 	exportDisabled    = "Your account is disabled."
 	exportBadFormat   = "The format is not pdf, xlsx or csv."
 	exportSheetRows   = "This report has more than 50,000 rows. Narrow the period."
+	exportPDFRows     = "This report has more than 5,000 rows. Narrow the period or download CSV."
 	exportTooLong     = "The report took too long to export."
 	exportCannotWrite = "Could not create the file."
 )
@@ -56,24 +58,39 @@ type exportBody struct {
 }
 
 // exportWriter writes one format: its file extension and type, the most
-// rows it holds (read at call time), whether it opens every group, and the
-// writer.
+// rows it holds (read at call time), whether it opens every group, whether
+// it prints a header block, and the writer.
 type exportWriter struct {
 	Ext       string
 	Mime      string
 	MaxRows   func() int
 	ExpandAll bool
+	// Header says the file prints the header block (the params line and the
+	// organization), so the export reads the param labels and the branding.
+	Header bool
 	// TooMany is the refusal of a report past MaxRows.
 	TooMany string
 	Write   func(ctx context.Context, d *exportData) ([]byte, error)
 }
 
-// exportWriters are the formats an export writes, by the body's format.
+// exportWriters are the formats an export writes, by the body's format. A
+// PDF keeps the reader's folds and sort; a CSV and an Excel file open every
+// group.
 var exportWriters = map[string]exportWriter{
 	"csv": {
 		Ext: "csv", Mime: "text/csv; charset=utf-8",
 		MaxRows:   func() int { return exportLimits.sheetRows },
 		ExpandAll: true, TooMany: exportSheetRows, Write: writeCSV,
+	},
+	"xlsx": {
+		Ext: "xlsx", Mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		MaxRows:   func() int { return exportLimits.sheetRows },
+		ExpandAll: true, Header: true, TooMany: exportSheetRows, Write: writeXLSX,
+	},
+	"pdf": {
+		Ext: "pdf", Mime: "application/pdf",
+		MaxRows:   func() int { return exportLimits.pdfRows },
+		ExpandAll: false, Header: true, TooMany: exportPDFRows, Write: writePDF,
 	},
 }
 
@@ -112,6 +129,41 @@ type exportData struct {
 	Display     exportDisplay
 	Format      *exportFormatter
 	Made        time.Time
+	// Org is the organization's name, logo and brand color; the zero Org for
+	// a format with no header block.
+	Org branding.Org
+}
+
+// headingText is the header's first line: the source's heading, else the
+// organization's name.
+func (d *exportData) headingText() string {
+	if d.Heading != "" {
+		return d.Heading
+	}
+	return d.Org.Name
+}
+
+// periodWords is the report's period in words; "" for a report with none.
+func (d *exportData) periodWords() string {
+	period := firstDateParam(d.Defs)
+	if period == nil {
+		return ""
+	}
+	return d.Format.PeriodWords(period, resolvedOf(d.Params, period.ID))
+}
+
+// emptyText is the view's text for a report with no rows.
+func (d *exportData) emptyText() string {
+	period := firstDateParam(d.Defs)
+	if period == nil {
+		return d.Format.EmptyText(nil, nil)
+	}
+	return d.Format.EmptyText(period, resolvedOf(d.Params, period.ID))
+}
+
+// paramsLine names every param but the period with its value.
+func (d *exportData) paramsLine() string {
+	return d.Format.ParamsLine(d.Defs, d.Params, d.ParamLabels)
 }
 
 // exportFile is a written file and what its audit row names.
@@ -195,9 +247,14 @@ func buildExport(re *core.RequestEvent, body exportBody) (*exportFile, error) {
 	if res == nil {
 		return nil, re.Error(http.StatusUnprocessableEntity, writer.TooMany, nil)
 	}
-	labels, err := readParamLabels(ctx, re, spec, body, res.Params)
-	if err != nil {
-		return nil, exportRunError(re, ctx, err)
+	labels := map[string]map[string]string{}
+	var org branding.Org
+	if writer.Header {
+		labels, err = readParamLabels(ctx, re, spec, body, res.Params)
+		if err != nil {
+			return nil, exportRunError(re, ctx, err)
+		}
+		org = branding.Load(re.App)
 	}
 	if ctx.Err() != nil {
 		return nil, exportRunError(re, ctx, ctx.Err())
@@ -222,9 +279,14 @@ func buildExport(re *core.RequestEvent, body exportBody) (*exportFile, error) {
 		Display:     display,
 		Format:      newExportFormatter(display, body.Options.TimeZone, body.Hour12),
 		Made:        time.Now(),
+		Org:         org,
 	}
 	bytes, err := writer.Write(ctx, data)
 	if err != nil {
+		// The PDF render has a deadline of its own and wraps it in its error.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, re.Error(http.StatusRequestTimeout, exportTooLong, nil)
+		}
 		log.ErrorContext(re.Request.Context(), "report export: file not written", "reportId", rec.Id, "format", body.Format, "err", err)
 		return nil, re.InternalServerError(exportCannotWrite, nil)
 	}

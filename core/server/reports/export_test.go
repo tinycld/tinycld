@@ -2,16 +2,19 @@ package reports
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nathanstitt/omnidoc/pkg/xlsx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/hook"
@@ -337,6 +340,156 @@ func TestExportWritesOneAuditRowPerDownload(t *testing.T) {
 	// Four feedings and the total.
 	if meta.Format != "csv" || meta.Rows != 5 {
 		t.Fatalf("metadata = %+v, want format csv and 5 rows", meta)
+	}
+}
+
+// buildExportAs reads a saved report as user through buildExport in format,
+// with params and options as the run endpoint takes them.
+func buildExportAs(t *testing.T, s *savedZoo, user, reportID, format, params, options string) *exportFile {
+	t.Helper()
+	var body exportBody
+	raw := fmt.Sprintf(`{"reportId":%q,"params":%s,"options":%s,"format":%q,"hour12":false}`, reportID, params, options, format)
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	re := &core.RequestEvent{App: s.app, Auth: s.recs[user]}
+	re.Request = httptest.NewRequest(http.MethodPost, exportURL, nil)
+	re.Response = httptest.NewRecorder()
+	file, err := buildExport(re, body)
+	if err != nil {
+		t.Fatalf("buildExport as %s: %v", format, err)
+	}
+	return file
+}
+
+// exportBodyIn asks for a saved report in format on the reader's day
+// 2026-11-16.
+func exportBodyIn(reportID, format string) string {
+	return fmt.Sprintf(`{"reportId":%q,"params":{},"options":{"today":"2026-11-16","timeZone":"UTC"},"format":%q,"hour12":false}`, reportID, format)
+}
+
+var attachmentName = regexp.MustCompile(`filename="([^"]+)"`)
+
+// requireFile fails unless the answer is a file of type mime whose name ends
+// in ext.
+func requireFile(t *testing.T, rec *httptest.ResponseRecorder, mime, ext string) {
+	t.Helper()
+	requireStatus(t, rec, http.StatusOK)
+	if got := rec.Header().Get("Content-Type"); got != mime {
+		t.Fatalf("Content-Type = %q, want %q", got, mime)
+	}
+	m := attachmentName.FindStringSubmatch(rec.Header().Get("Content-Disposition"))
+	if m == nil || !strings.HasSuffix(m[1], ext) {
+		t.Fatalf("Content-Disposition = %q, want a file name ending %s", rec.Header().Get("Content-Disposition"), ext)
+	}
+}
+
+func TestExportAnswersAnExcelFile(t *testing.T) {
+	s := newSavedZoo(t)
+	rep := s.saved(t, "costs", "ann", "Feeding Costs", feedingsFlat, false)
+	rec := s.exportAs(t, "ann", exportBodyIn(rep.Id, "xlsx"))
+	requireFile(t, rec, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx")
+	if _, err := xlsx.OpenBytes(context.Background(), rec.Body.Bytes()); err != nil {
+		t.Fatalf("the file is not an Excel file: %v", err)
+	}
+}
+
+func TestExportAnswersAPDFFile(t *testing.T) {
+	s := newSavedZoo(t)
+	hermeticExportFonts(t)
+	rep := s.saved(t, "costs", "ann", "Feeding Costs", feedingsFlat, false)
+	rec := s.exportAs(t, "ann", exportBodyIn(rep.Id, "pdf"))
+	requireFile(t, rec, "application/pdf", ".pdf")
+	if !bytes.HasPrefix(rec.Body.Bytes(), []byte("%PDF-")) {
+		t.Fatalf("the file does not start %%PDF-: %q", rec.Body.Bytes()[:min(rec.Body.Len(), 20)])
+	}
+}
+
+// A PDF holds fewer rows than a CSV: past its limit a PDF is refused with its
+// own sentence while the same report is a CSV file; Excel has the CSV's limit.
+func TestExportRefusesEachFormatPastItsLimit(t *testing.T) {
+	s := newSavedZoo(t)
+	hermeticExportFonts(t)
+	rep := s.saved(t, "costs", "ann", "Feeding Costs", feedingsFlat, false)
+	s.feeding(t, "f7", s.recs["leo"], 400, "2026-04-01", 10)
+	// ann's report is now five feedings and a total: six rows.
+	keepExportLimits(t)
+	exportLimits.pdfRows = 5
+	requireStatus(t, s.exportAs(t, "ann", exportBodyIn(rep.Id, "pdf")), http.StatusUnprocessableEntity,
+		`"message":"This report has more than 5,000 rows. Narrow the period or download CSV."`)
+	requireStatus(t, s.exportAs(t, "ann", exportBodyIn(rep.Id, "csv")), http.StatusOK)
+
+	exportLimits.pdfRows = 5000
+	exportLimits.sheetRows = 5
+	requireStatus(t, s.exportAs(t, "ann", exportBodyIn(rep.Id, "xlsx")), http.StatusUnprocessableEntity,
+		`"message":"This report has more than 50,000 rows. Narrow the period."`)
+}
+
+// Each format's download writes its own audit row with its format.
+func TestExportAuditsEveryFormat(t *testing.T) {
+	s := newSavedZoo(t)
+	hermeticExportFonts(t)
+	rep := s.saved(t, "costs", "ann", "Feeding Costs", feedingsFlat, false)
+	for _, format := range []string{"csv", "xlsx", "pdf"} {
+		requireStatus(t, s.exportAs(t, "ann", exportBodyIn(rep.Id, format)), http.StatusOK)
+	}
+	var formats []string
+	for _, row := range exportAuditRows(t, s.app) {
+		var meta struct {
+			Format string `json:"format"`
+		}
+		if err := json.Unmarshal([]byte(row.GetString("metadata")), &meta); err != nil {
+			t.Fatalf("metadata %s: %v", row.GetString("metadata"), err)
+		}
+		formats = append(formats, meta.Format)
+	}
+	slices.Sort(formats)
+	if want := []string{"csv", "pdf", "xlsx"}; !slices.Equal(formats, want) {
+		t.Fatalf("audit formats = %q, want %q", formats, want)
+	}
+}
+
+// A deadline reached while the file is written is the export's time-out,
+// not a failure to write.
+func TestExportPastItsDeadlineInTheWriterIsATimeout(t *testing.T) {
+	s := newSavedZoo(t)
+	rep := s.saved(t, "costs", "ann", "Feeding Costs", feedingsFlat, false)
+	keepExportLimits(t)
+	exportLimits.timeout = time.Second
+	saved := exportWriters["csv"]
+	t.Cleanup(func() { exportWriters["csv"] = saved })
+	slow := saved
+	slow.Write = func(ctx context.Context, _ *exportData) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	exportWriters["csv"] = slow
+	requireStatus(t, s.exportAs(t, "ann", csvExportBody(rep.Id)), http.StatusRequestTimeout,
+		`"message":"The report took too long to export."`)
+}
+
+// feedingsAtSite names a site param from a source; the run never reads the
+// sites.
+const feedingsAtSite = `{"version":4,"source":"zoo.feedings","params":[
+	{"id":"site","type":"choice","label":"Site","optionsFrom":{"source":"zoo.sites","value":[{"field":"id"}],"label":[{"field":"name"}]}}],
+	"columns":[{"id":"note","path":[{"field":"note"}]},{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+	"sort":[{"col":"note"}]}`
+
+// A CSV has no params line, so its export reads no param labels: with the
+// labels' source unreadable the CSV is still written.
+func TestCSVExportReadsNoParamLabels(t *testing.T) {
+	s := newSavedZoo(t)
+	rep := s.saved(t, "site", "ann", "Feedings at a Site", feedingsAtSite, false)
+	body := fmt.Sprintf(`{"reportId":%q,"params":{"site":%q},"options":{"today":"2026-11-16"},"format":"csv","hour12":false}`, rep.Id, s.id("north"))
+	requireStatus(t, s.exportAs(t, "ann", body), http.StatusOK)
+
+	if _, err := s.app.DB().NewQuery("ALTER TABLE zoo_sites RENAME TO gone_zoo_sites").Execute(); err != nil {
+		t.Fatal(err)
+	}
+	rec := s.exportAs(t, "ann", body)
+	requireStatus(t, rec, http.StatusOK)
+	if got, want := firstFields(csvRecords(t, rec.Body.Bytes())), []string{"f1", "f2", "f3", "f4", "Total"}; !slices.Equal(got, want) {
+		t.Fatalf("rows = %q, want %q", got, want)
 	}
 }
 
