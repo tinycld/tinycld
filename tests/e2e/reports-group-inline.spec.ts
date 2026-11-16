@@ -86,7 +86,7 @@ const textColor = (element: Locator) =>
         return getComputedStyle(leaf).color
     })
 
-test.describe('customer-balance: inline and muted groups', () => {
+test.describe('reports: inline and muted groups', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('an inlined group shows its child in its place, and a muted child is drawn muted', async ({
