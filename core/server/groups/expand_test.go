@@ -6,6 +6,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/guestauth"
+	"tinycld.org/core/usernames"
 )
 
 // newZooApp builds the two core collections plus a fictional package table,
@@ -68,8 +70,13 @@ func newZooApp(t *testing.T) *tests.TestApp {
 func zooUser(t *testing.T, app core.App, email string) *core.Record {
 	t.Helper()
 	users, _ := app.FindCollectionByNameOrId("users")
+	username, err := guestauth.PickAvailableUsername(app, usernames.Derive(email))
+	if err != nil {
+		t.Fatal(err)
+	}
 	u := core.NewRecord(users)
 	u.SetEmail(email)
+	u.Set("username", username)
 	u.Set("name", "T")
 	u.SetVerified(true)
 	u.SetPassword("Password123!")

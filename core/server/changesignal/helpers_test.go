@@ -1,6 +1,7 @@
 package changesignal
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -78,6 +79,64 @@ func (l *listener) collect(d time.Duration) []subscriptions.Message {
 			got = append(got, msg)
 		case <-deadline:
 			return got
+		}
+	}
+}
+
+// next returns the next message. The bound only stops a test whose message
+// never comes; a passing run does not wait for it.
+func (l *listener) next(t *testing.T) subscriptions.Message {
+	t.Helper()
+	select {
+	case msg := <-l.conn.Channel():
+		return msg
+	case <-time.After(5 * time.Second):
+		t.Fatal("no message")
+		return subscriptions.Message{}
+	}
+}
+
+// timerQueue holds the windows the signaler armed and has not yet fired.
+type timerQueue struct {
+	window time.Duration
+	mu     sync.Mutex
+	queued []func()
+}
+
+// manualTimers makes the app's signaler arm its windows in a queue that the
+// test fires, so no assertion depends on how fast the machine runs.
+func manualTimers(t *testing.T, app core.App) *timerQueue {
+	t.Helper()
+	s, _ := app.Store().Get(storeKey).(*signaler)
+	if s == nil {
+		t.Fatal("app has no signaler")
+	}
+	q := &timerQueue{window: s.window}
+	s.afterFunc = func(d time.Duration, f func()) {
+		if d != q.window {
+			t.Errorf("armed for %v, want the window %v", d, q.window)
+		}
+		q.mu.Lock()
+		q.queued = append(q.queued, f)
+		q.mu.Unlock()
+	}
+	return q
+}
+
+// armed checks that exactly want windows are queued, and returns a func that
+// fires them all.
+func (q *timerQueue) armed(t *testing.T, want int) func() {
+	t.Helper()
+	q.mu.Lock()
+	queued := q.queued
+	q.queued = nil
+	q.mu.Unlock()
+	if len(queued) != want {
+		t.Fatalf("%d windows armed, want %d", len(queued), want)
+	}
+	return func() {
+		for _, f := range queued {
+			f()
 		}
 	}
 }

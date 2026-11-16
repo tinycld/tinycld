@@ -57,8 +57,18 @@ const INSTALLED_SLUGS = searchPackages.map(p => p.slug)
 // overlay engine like every other surface: the engine owns the outside-press
 // and Escape dismissal, and the host keeps it above any package's own scroll
 // container.
+//
+// Everything that belongs to one palette session lives in OpenSearchPalette,
+// which mounts on open and unmounts on close. A component that stayed mounted
+// while closed would carry the debounced query and any held pick into the next
+// session, and reopening would briefly re-send the previous search.
 export function SearchPalette() {
     const isOpen = useSearchPaletteStore(s => s.isOpen)
+    if (!isOpen || typeof document === 'undefined') return null
+    return <OpenSearchPalette />
+}
+
+function OpenSearchPalette() {
     const text = useSearchPaletteStore(s => s.text)
     const selectedRowId = useSearchPaletteStore(s => s.selectedRowId)
     const setText = useSearchPaletteStore(s => s.setText)
@@ -73,7 +83,8 @@ export function SearchPalette() {
 
     // Picks run through the queue: a row whose adapter is still loading is
     // held and opened when the adapter registers. The palette closes only
-    // when a handler actually ran, either way.
+    // when a handler actually ran, either way. The queue dies with this
+    // component, so a held pick cannot open on a later use.
     const picks = useRef(createPickQueue()).current
     const registerHandler = useCallback(
         (slug: string, handler: (row: SearchRow) => void) => {
@@ -102,11 +113,6 @@ export function SearchPalette() {
     const inputRef = useRef<TextInputInstance>(null)
 
     useEffect(() => {
-        if (!isOpen) {
-            // A pick still waiting for its adapter must not open on a later use.
-            picks.clear()
-            return
-        }
         // Focus the input on open. RN's TextInput needs a microtask before its
         // DOM node is mounted under the portal, so we defer via
         // requestAnimationFrame.
@@ -114,13 +120,13 @@ export function SearchPalette() {
             inputRef.current?.focus()
         })
         return () => cancelAnimationFrame(raf)
-    }, [isOpen, picks])
+    }, [])
 
     // Anything outside the card closes it — matches Spotlight. The card is
     // state from a callback ref so the layer sees the node once it mounts.
     const [card, setCard] = useState<ViewInstance | null>(null)
     useOverlayLayer({
-        isOpen,
+        isOpen: true,
         nodes: () => [card as unknown as Node | null],
         onDismiss: close,
     })
@@ -130,7 +136,6 @@ export function SearchPalette() {
     // keys, so ArrowUp/ArrowDown need a listener above it. Escape is the
     // overlay engine's, which listens the same way.
     useEffect(() => {
-        if (!isOpen || typeof document === 'undefined') return
         function onKeyDown(event: KeyboardEvent) {
             const key = event.key
             if (key === 'ArrowDown') {
@@ -159,9 +164,7 @@ export function SearchPalette() {
         }
         document.addEventListener('keydown', onKeyDown, true)
         return () => document.removeEventListener('keydown', onKeyDown, true)
-    }, [isOpen, parsed.chips, parsed.remainder, moveSelection, selectedRow, selectRow, setText])
-
-    if (!isOpen || typeof document === 'undefined') return null
+    }, [parsed.chips, parsed.remainder, moveSelection, selectedRow, selectRow, setText])
 
     const remainder = parsed.remainder
 

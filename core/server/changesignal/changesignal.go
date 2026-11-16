@@ -27,10 +27,13 @@ const storeKey = "tinycld.changesignal"
 const payload = "{}"
 
 type signaler struct {
-	app     core.App
-	window  time.Duration
-	mu      sync.Mutex
-	pending map[string]bool
+	app    core.App
+	window time.Duration
+	// afterFunc runs f once d has passed. Tests replace it to fire windows
+	// on demand instead of on the wall clock.
+	afterFunc func(d time.Duration, f func())
+	mu        sync.Mutex
+	pending   map[string]bool
 }
 
 // Register binds the change signal to app's record writes. PocketBase runs
@@ -41,7 +44,12 @@ func Register(app core.App) {
 }
 
 func register(app core.App, window time.Duration) *signaler {
-	s := &signaler{app: app, window: window, pending: map[string]bool{}}
+	s := &signaler{
+		app:       app,
+		window:    window,
+		afterFunc: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
+		pending:   map[string]bool{},
+	}
 	// The store is shared with every transaction app cloned from app, which
 	// is how Touch finds the signaler from inside a transaction.
 	app.Store().Set(storeKey, s)
@@ -99,7 +107,7 @@ func (s *signaler) schedule(topic string) {
 		return
 	}
 	s.pending[topic] = true
-	time.AfterFunc(s.window, func() {
+	s.afterFunc(s.window, func() {
 		s.mu.Lock()
 		delete(s.pending, topic)
 		s.mu.Unlock()

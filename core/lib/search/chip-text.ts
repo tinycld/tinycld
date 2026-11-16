@@ -71,9 +71,5 @@ export function createPickQueue() {
             handler(row)
             return true
         },
-        /** Forgets a held row: a pick made before the palette closed must not open on the next load. */
-        clear() {
-            held = null
-        },
     }
 }

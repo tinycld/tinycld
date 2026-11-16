@@ -10,7 +10,9 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/types"
 
+	"tinycld.org/core/guestauth"
 	"tinycld.org/core/rlstest"
+	"tinycld.org/core/usernames"
 )
 
 // allowAuthedWrites gives a fixture collection the update/delete rules a real
@@ -463,8 +465,13 @@ func relationGateApp(t *testing.T) (app *tests.TestApp, u1, u2, rule, crate, box
 	users, _ := app.FindCollectionByNameOrId("users")
 
 	newUser := func(email string) *core.Record {
+		username, err := guestauth.PickAvailableUsername(app, usernames.Derive(email))
+		if err != nil {
+			t.Fatal(err)
+		}
 		r := core.NewRecord(users)
 		r.SetEmail(email)
+		r.Set("username", username)
 		r.SetPassword("Password123!")
 		r.SetVerified(true)
 		if err := app.Save(r); err != nil {

@@ -31,7 +31,7 @@ func (app *BaseApp) runInTransaction(db dbx.Builder, fn func(txApp App) error, i
 		var txApp *BaseApp
 		txErr := txOrDB.Transactional(func(tx *dbx.Tx) error {
 			txApp = app.createTxApp(tx, isForAuxDB)
-			return fn(txApp)
+			return runTxFunc(txApp, fn) // fork: OnBeforeCommit callbacks
 		})
 
 		// execute all after event calls on transaction complete
@@ -74,6 +74,8 @@ type TxAppInfo struct {
 	afterFuncs []func(txErr error) error
 	mu         sync.Mutex
 	isForAuxDB bool
+
+	beforeCommitFuncs []func(txApp App) error // fork: see db_tx_tinycld.go
 }
 
 // OnComplete registers the provided callback that will be invoked

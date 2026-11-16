@@ -1,11 +1,11 @@
 package coreserver
 
 import (
-	"strconv"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/guestauth"
 	"tinycld.org/core/usernames"
 )
 
@@ -60,9 +60,13 @@ func makeUser(t *testing.T, app core.App, email string) *core.Record {
 	if err != nil {
 		t.Fatal(err)
 	}
+	username, err := guestauth.PickAvailableUsername(app, usernames.Derive(email))
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := core.NewRecord(col)
 	r.SetEmail(email)
-	r.Set("username", uniqueDerivedUsername(t, app, email))
+	r.Set("username", username)
 	r.Set("name", "Original Name")
 	r.SetVerified(true)
 	r.SetPassword("Password123!")
@@ -81,23 +85,6 @@ func makeUserWithRole(t *testing.T, app core.App, email, role string) *core.Reco
 		t.Fatalf("set role on %s: %v", email, err)
 	}
 	return r
-}
-
-// uniqueDerivedUsername derives a username from email and adds a numeric
-// suffix if the base is already taken. Mirrors the production backfill so
-// short prefixes like "ma@..." and "mb@..." (both → "user") don't collide.
-func uniqueDerivedUsername(t *testing.T, app core.App, email string) string {
-	t.Helper()
-	base := usernames.Derive(email)
-	candidate := base
-	for i := 2; ; i++ {
-		existing, _ := app.FindFirstRecordByFilter(
-			"users", "username = {:u}", map[string]any{"u": candidate})
-		if existing == nil {
-			return candidate
-		}
-		candidate = base + strconv.Itoa(i)
-	}
 }
 
 // updateAsAuthenticated invokes the OnRecordUpdateRequest hook chain the

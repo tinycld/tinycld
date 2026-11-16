@@ -106,12 +106,24 @@ function PreviewModalContent({
                 </Text>
                 <View className="flex-row items-center gap-1">
                     {onPrevious && (
-                        <Pressable onPress={onPrevious} className="p-1.5 rounded-md" hitSlop={8}>
+                        <Pressable
+                            onPress={onPrevious}
+                            className="p-1.5 rounded-md"
+                            hitSlop={8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Previous file"
+                        >
                             <ChevronLeft size={20} color={mutedColor} />
                         </Pressable>
                     )}
                     {onNext && (
-                        <Pressable onPress={onNext} className="p-1.5 rounded-md" hitSlop={8}>
+                        <Pressable
+                            onPress={onNext}
+                            className="p-1.5 rounded-md"
+                            hitSlop={8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Next file"
+                        >
                             <ChevronRight size={20} color={mutedColor} />
                         </Pressable>
                     )}
@@ -126,6 +138,7 @@ function PreviewModalContent({
                                     disabled={action.isPending}
                                     className="flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-surface-secondary border border-border"
                                     hitSlop={8}
+                                    accessibilityRole="button"
                                     accessibilityLabel={action.label}
                                 >
                                     <ActionIcon size={16} color={mutedColor} />
@@ -139,11 +152,23 @@ function PreviewModalContent({
                             )
                         })}
                     {onDownload && (
-                        <Pressable onPress={onDownload} className="p-1.5 rounded-md" hitSlop={8}>
+                        <Pressable
+                            onPress={onDownload}
+                            className="p-1.5 rounded-md"
+                            hitSlop={8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Download"
+                        >
                             <Download size={18} color={mutedColor} />
                         </Pressable>
                     )}
-                    <Pressable onPress={onClose} className="p-1.5 rounded-md ml-1" hitSlop={8}>
+                    <Pressable
+                        onPress={onClose}
+                        className="p-1.5 rounded-md ml-1"
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Close preview"
+                    >
                         <X size={20} color={mutedColor} />
                     </Pressable>
                 </View>
