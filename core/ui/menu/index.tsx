@@ -188,6 +188,8 @@ function isEditable(target: EventTarget | null): boolean {
 
 export interface MenuItemProps {
     label: string
+    /** A second, muted line under the label (why a row is disabled, what it does). */
+    description?: string
     icon?: LucideIcon
     /** Any leading node; takes precedence over `icon` and `colorDot`. */
     leading?: ReactNode
@@ -209,6 +211,7 @@ export interface MenuItemProps {
 
 function MenuItem({
     label,
+    description,
     icon,
     leading,
     colorDot,
@@ -234,6 +237,7 @@ function MenuItem({
         <MenuRow
             role="menuitem"
             label={label}
+            description={description}
             leading={<RowLeading icon={icon} leading={leading} colorDot={colorDot} />}
             trailing={<RowTrailing shortcut={shortcut} isChecked={isSelected} />}
             onActivate={select}
@@ -342,6 +346,7 @@ interface MenuRowProps {
     role: 'menuitem' | 'menuitemcheckbox'
     isChecked?: boolean
     label: string
+    description?: string
     leading?: ReactNode
     trailing?: ReactNode
     onActivate: () => void
@@ -376,6 +381,42 @@ function RowIndent({ indent, gap }: { indent?: number; gap: number }) {
 }
 
 /**
+ * The row's label, and under it the muted description when there is one. A
+ * row without a description draws the label alone, as it always has.
+ */
+function RowLabel({
+    label,
+    description,
+    textClass,
+    testID,
+}: {
+    label: string
+    description?: string
+    textClass: string
+    testID?: string
+}) {
+    const labelText = (
+        <Text className={textClass} numberOfLines={1}>
+            {label}
+        </Text>
+    )
+    if (!description) return labelText
+    const descriptionTestID = testID ? `${testID}-description` : undefined
+    return (
+        <View className="flex-shrink min-w-0">
+            {labelText}
+            <Text
+                className="text-xs text-muted-foreground"
+                numberOfLines={1}
+                testID={descriptionTestID}
+            >
+                {description}
+            </Text>
+        </View>
+    )
+}
+
+/**
  * One row, in whichever presentation the surface has. On web a `div` (or an
  * `a` with `href`) with a menu role: RN's Pressable renders a bare div with
  * no key handling, and a menu built from those was mouse-only. A pointer that
@@ -389,6 +430,7 @@ function MenuRow({
     role,
     isChecked,
     label,
+    description,
     leading,
     trailing,
     onActivate,
@@ -417,9 +459,12 @@ function MenuRow({
         <>
             <RowIndent indent={indent} gap={isSheet ? SHEET_ROW_GAP : ROW_GAP} />
             {leading}
-            <Text className={textClass} numberOfLines={1}>
-                {label}
-            </Text>
+            <RowLabel
+                label={label}
+                description={description}
+                textClass={textClass}
+                testID={testID}
+            />
             {trailing}
         </>
     )
