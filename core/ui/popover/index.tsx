@@ -1,6 +1,11 @@
 import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useWindowSizeStore } from '@tinycld/core/lib/stores/window-size-store'
-import { OverlayPortal, useLayerFocus, useOverlayLayer } from '@tinycld/core/ui/overlay'
+import {
+    moveFocusIn,
+    OverlayPortal,
+    useLayerFocus,
+    useOverlayLayer,
+} from '@tinycld/core/ui/overlay'
 import { Sheet, type SheetSide } from '@tinycld/core/ui/sheet'
 import React, {
     createContext,
@@ -525,6 +530,18 @@ function OpenPopoverLayer({
         container: surfaceNode as unknown as HTMLElement | null,
         trap: focus === 'trap',
     })
+    // On web an unplaced surface is `visibility: hidden`, where focus() does
+    // nothing, so the open's focus-in (above) and an `autoFocus` input's mount
+    // focus are lost in a browser; move the focus in again once the surface
+    // shows (moveFocusIn picks the input marked by autoFocusDataSet first). It
+    // also ran on open, for an environment with no layout, where the surface
+    // never shows.
+    const isShown = Boolean(placed && size)
+    useEffect(() => {
+        if (Platform.OS !== 'web' || !isShown) return
+        const node = surfaceNode as unknown as HTMLElement | null
+        if (node) moveFocusIn(node)
+    }, [isShown, surfaceNode])
 
     // A DOM listener rather than a prop: react-native's View has no
     // `onKeyDown` in its types, and the surface only needs the key on web.
@@ -569,8 +586,13 @@ function OpenPopoverLayer({
         width,
         // Invisible until measured and placed, so the first frame never shows
         // the surface at the origin.
-        opacity: placed && size ? 1 : 0,
+        opacity: isShown ? 1 : 0,
     }
+    // On web, opacity 0 alone still lays the surface out where clicks, screen
+    // readers and visibility checks reach it at its unplaced spot. `visibility:
+    // hidden` keeps its layout box, so the content is still measured. Native
+    // keeps opacity alone: it has no resting pointer and no `visibility` style.
+    const surfaceClassName = `${SURFACE_CLASS} ${isShown ? '' : 'web:invisible'} ${className ?? ''}`
 
     const surface = (
         <PopoverContext.Provider value={context}>
@@ -580,7 +602,7 @@ function OpenPopoverLayer({
                 role={role}
                 tabIndex={-1}
                 pointerEvents={pointerTransparent ? 'none' : 'auto'}
-                className={`${SURFACE_CLASS} ${className ?? ''}`}
+                className={surfaceClassName}
                 style={[SURFACE_SHADOW, surfaceStyle]}
             >
                 {/* Measurement sits on the scroll CONTENT: placement derives

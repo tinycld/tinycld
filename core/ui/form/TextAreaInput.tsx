@@ -1,4 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { autoFocusDataSet } from '@tinycld/core/ui/overlay/focus'
 import type { ComponentType } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import type { TextInputProps as RNTextInputProps } from 'react-native'
@@ -77,6 +78,7 @@ export function TextAreaInput<T extends FieldValues = Record<string, unknown>>(
             <RNTextInput
                 // Spread before the owned props for the same reason as TextInput.
                 {...inputProps}
+                dataSet={autoFocusDataSet(inputProps)}
                 multiline
                 numberOfLines={numberOfLines}
                 value={field.value || ''}

@@ -662,13 +662,14 @@ function OpenableSub({ label, icon, leading, isDisabled = false, testID, childre
     }, [cancelClose, close])
 
     const panelRef = useRef<ViewInstance | null>(null)
+    // The panel mounts on the state change this follows and stays hidden
+    // until it is placed, so a focus that does not land now is left pending
+    // for SubSurface, which serves it when the panel shows. A panel already
+    // shown takes the focus at once.
+    const pendingFocus = useRef(false)
     const focusFirstRow = () => {
         if (Platform.OS !== 'web') return
-        // The panel mounts on the state change this follows; wait a frame.
-        requestAnimationFrame(() => {
-            const panel = panelRef.current as unknown as HTMLElement | null
-            panel?.querySelector<HTMLElement>(ROW_SELECTOR)?.focus()
-        })
+        pendingFocus.current = !focusFirstPanelRow(panelRef)
     }
 
     return (
@@ -700,6 +701,7 @@ function OpenableSub({ label, icon, leading, isDisabled = false, testID, childre
             />
             <SubSurface
                 panelRef={panelRef}
+                pendingFocus={pendingFocus}
                 isOpen={isOpen}
                 rowRect={rowRect}
                 onHoverIn={cancelClose}
@@ -715,8 +717,18 @@ function OpenableSub({ label, icon, leading, isDisabled = false, testID, childre
     )
 }
 
+/** Focus the panel's first row; whether the focus landed (a hidden panel takes none). */
+function focusFirstPanelRow(panelRef: React.MutableRefObject<ViewInstance | null>) {
+    const panel = panelRef.current as unknown as HTMLElement | null
+    const row = panel?.querySelector<HTMLElement>(ROW_SELECTOR)
+    if (!row) return false
+    row.focus()
+    return document.activeElement === row
+}
+
 function SubSurface({
     panelRef,
+    pendingFocus,
     isOpen,
     rowRect,
     onHoverIn,
@@ -725,6 +737,8 @@ function SubSurface({
     children,
 }: {
     panelRef: React.MutableRefObject<ViewInstance | null>
+    /** Raised by an activation of the row: focus the first row once the panel shows. */
+    pendingFocus: React.MutableRefObject<boolean>
     isOpen: boolean
     rowRect: Rect | null
     onHoverIn: () => void
@@ -763,6 +777,19 @@ function SubSurface({
         }
     }, [isOpen, panelRef])
 
+    const isShown = Boolean(surfaceRect && rowRect && size)
+    // Tried when the panel opens and again when it shows: focus() does
+    // nothing while it is hidden, and an environment with no layout never
+    // shows it. Served once; a close drops a request not yet served.
+    useEffect(() => {
+        if (!isOpen) {
+            pendingFocus.current = false
+            return
+        }
+        if (Platform.OS !== 'web' || !pendingFocus.current) return
+        if (focusFirstPanelRow(panelRef) || isShown) pendingFocus.current = false
+    }, [isOpen, isShown, panelRef, pendingFocus])
+
     if (!isOpen) return null
 
     // Window coordinates from the pure function, then converted into the
@@ -784,6 +811,10 @@ function SubSurface({
                   }
               })()
             : { opacity: 0 }
+    // As the root surface: on web an unplaced panel is also `visibility:
+    // hidden`, so it takes no clicks and no focus at its unplaced spot while
+    // keeping the layout box onLayout measures. Native keeps opacity alone.
+    const panelClassName = `absolute min-w-[200px] border border-border bg-background rounded-lg py-1 ${isShown ? '' : 'web:invisible'}`
 
     const panel = (
         <View
@@ -795,7 +826,7 @@ function SubSurface({
                     prev?.width === width && prev.height === height ? prev : { width, height }
                 )
             }}
-            className="absolute min-w-[200px] border border-border bg-background rounded-lg py-1"
+            className={panelClassName}
             style={[SUB_SHADOW, placedStyle, { zIndex: 50, elevation: 24 }]}
         >
             {children}
