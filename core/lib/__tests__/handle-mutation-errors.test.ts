@@ -1,6 +1,7 @@
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { BatchMutationError } from 'pbtsdb'
+import { ClientResponseError } from 'pocketbase'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
@@ -127,6 +128,88 @@ describe('handleMutationErrorsWithForm with a failed atomic write', () => {
         handler(memoTooLong('orders'))
         expect(setError).not.toHaveBeenCalled()
         expect(useToastStore.getState().toasts).toHaveLength(1)
+    })
+})
+
+// A form that draws a refusal in its own summary asks for the server's message
+// on `root` instead of a toast that leaves the form.
+describe('handleMutationErrorsWithForm with rootMessage', () => {
+    beforeEach(() => {
+        useToastStore.setState({ toasts: [] })
+    })
+    afterEach(() => {
+        useToastStore.setState({ toasts: [] })
+    })
+
+    const refusal = (status: number, message: string, data: Record<string, unknown> = {}) =>
+        new ClientResponseError({
+            url: 'http://localhost/api/reports/email',
+            status,
+            response: { status, message, data },
+        })
+
+    it('puts a message-only refusal on root, with no toast', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ to: '', subject: '' }),
+            rootMessage: true,
+        })
+        handler(refusal(429, 'Too many emails. Try again in a minute.'))
+        expect(setError).toHaveBeenCalledWith('root', {
+            type: 'server',
+            message: 'Too many emails. Try again in a minute.',
+        })
+        expect(setError).toHaveBeenCalledTimes(1)
+        expect(useToastStore.getState().toasts).toHaveLength(0)
+    })
+
+    it('maps known field errors inline and also sets the root message', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ to: '', subject: '' }),
+            rootMessage: true,
+        })
+        handler(
+            refusal(400, 'The email was not sent.', {
+                to: { code: 'invalid_email', message: 'Must be a valid email address.' },
+            })
+        )
+        expect(setError).toHaveBeenCalledWith(
+            'to',
+            expect.objectContaining({ message: 'Must be a valid email address.' })
+        )
+        expect(setError).toHaveBeenCalledWith(
+            'root',
+            expect.objectContaining({
+                type: 'server',
+                message: expect.stringContaining('The email was not sent.'),
+            })
+        )
+        expect(useToastStore.getState().toasts).toHaveLength(0)
+    })
+
+    it('does not set an error key the form does not know as a field', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ to: '', subject: '' }),
+            rootMessage: true,
+        })
+        handler(
+            refusal(400, 'The email was not sent.', {
+                unknown_field: { code: 'x', message: 'bad' },
+            })
+        )
+        expect(setError).not.toHaveBeenCalledWith('unknown_field', expect.anything())
+        expect(setError).toHaveBeenCalledWith(
+            'root',
+            expect.objectContaining({
+                type: 'server',
+                message: expect.stringContaining('The email was not sent.'),
+            })
+        )
     })
 })
 

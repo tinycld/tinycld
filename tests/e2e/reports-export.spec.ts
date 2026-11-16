@@ -7,6 +7,7 @@ import {
     addSale,
     addTeam,
     cellOf,
+    holdRuns,
     loginAsShippedOwner,
     openReportStub,
     openTeamBalance,
@@ -309,8 +310,18 @@ test.describe('report-exports: download', () => {
         await expect(offlineNotice).toBeHidden({ timeout: 2_000 })
         await expect(exportButton).toBeEnabled()
 
-        // An empty report exports its headings.
+        // While a changed run loads, the view still shows the last result, whose
+        // period would name the file: Export waits. The empty period is a
+        // body this test has not run, so the run is not served from the cache.
+        const releaseRun = await holdRuns(page)
         await setPeriod(page, EMPTY_FROM, EMPTY_TO)
+        await expect(page.getByTestId('report-updating')).toBeVisible()
+        await expect(rowOf(page, customer)).toBeVisible()
+        await expect(exportButton).toBeDisabled()
+        releaseRun()
+        await page.unrouteAll({ behavior: 'wait' })
+
+        // An empty report exports its headings.
         await expect(page.getByTestId('report-empty')).toBeVisible()
         await expect(exportButton).toBeEnabled()
         const download = await downloadReport(page, 'xlsx')

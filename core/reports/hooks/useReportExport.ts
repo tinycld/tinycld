@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 import { errorToString } from '@tinycld/core/lib/errors'
 import { log } from '@tinycld/core/lib/logger'
 import { useMutation } from '@tinycld/core/lib/mutations'
@@ -6,7 +7,6 @@ import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { useWritesAvailable } from '@tinycld/core/lib/use-writes-available'
 import { todayIso } from '../lib/dates'
 import {
-    canExport,
     type ExportFormat,
     ExportRefusal,
     type ExportRequest,
@@ -14,12 +14,15 @@ import {
     exportFormatEntry,
     exportOffered,
     exportRequestOf,
+    fetchEmailStatus,
     fetchExport,
+    isExportDisabled,
 } from '../lib/export-client'
 import type { DisplayOptions } from '../lib/format'
 import type { RunBody } from '../lib/run-client'
 import type { ParamDef } from '../lib/spec'
 import type { ResolvedParam } from '../lib/types'
+import { useReportUIStore } from '../stores/report-ui-store'
 import type { ViewSource, ViewState } from './useReportView'
 
 export interface ReportExportInput {
@@ -28,9 +31,13 @@ export interface ReportExportInput {
     body: RunBody | null
     display: DisplayOptions
     state: ViewState
+    /** A changed run loads while the view still shows the last result. */
+    isUpdating: boolean
     isEditing: boolean
     /** False for the drill panel, which has no Export. */
     isMainView: boolean
+    /** Only the focused screen draws the email dialog. */
+    isFocused: boolean
     title: string
     defs: readonly ParamDef[]
     /** The run's resolved params, which name the file's date part. */
@@ -44,6 +51,23 @@ export interface ReportExportModel {
     request: ExportRequest | null
     title: string
     fileNameOf(format: ExportFormat): string
+    email: ReportEmailModel
+}
+
+export interface ReportEmailModel {
+    /** undefined until the server answers; true when the read failed (the send refuses then). */
+    canSend: boolean | undefined
+    isOpen: boolean
+    onOpen(): void
+    onClose(): void
+}
+
+const EMAIL_STATUS_STALE_MS = 5 * 60 * 1000
+
+/** "Email report…" waits for the status; a failed read leaves it to the send's own refusal. */
+function canSendOf(status: { data?: { canSend: boolean }; isError: boolean }) {
+    if (status.isError) return true
+    return status.data?.canSend
 }
 
 interface DownloadVariables {
@@ -107,7 +131,18 @@ export function useReportExport(input: ReportExportInput): ReportExportModel | n
         isEditing: input.isEditing,
         isMainView: input.isMainView,
     })
-    if (!isOffered) return null
+    const emailStatus = useQuery({
+        queryKey: ['reports', 'email-status'],
+        queryFn: fetchEmailStatus,
+        staleTime: EMAIL_STATUS_STALE_MS,
+        retry: false,
+        enabled: isOffered,
+    })
+    const emailReportId = useReportUIStore(s => s.emailReportId)
+    const openEmail = useReportUIStore(s => s.openEmail)
+    const closeEmail = useReportUIStore(s => s.closeEmail)
+    if (!isOffered || input.source?.kind !== 'saved') return null
+    const reportId = input.source.reportId
     const saved = savedBodyOf(input.body)
     const request = saved ? exportRequestOf(saved, input.display) : null
     // The day the server names the file by: the run's day, the reader's own.
@@ -122,7 +157,13 @@ export function useReportExport(input: ReportExportInput): ReportExportModel | n
         })
     const isPreparing = mutation.isPending
     return {
-        isDisabled: isPreparing || !writes.available || !canExport(input.state) || !request,
+        isDisabled: isExportDisabled({
+            isPreparing,
+            writesAvailable: writes.available,
+            state: input.state,
+            hasRequest: request !== null,
+            isUpdating: input.isUpdating,
+        }),
         isPreparing,
         onDownload: (format: ExportFormat) => {
             if (!request) return
@@ -131,5 +172,11 @@ export function useReportExport(input: ReportExportInput): ReportExportModel | n
         request,
         title: input.title,
         fileNameOf,
+        email: {
+            canSend: canSendOf(emailStatus),
+            isOpen: emailReportId === reportId && input.isFocused,
+            onOpen: () => openEmail(reportId),
+            onClose: closeEmail,
+        },
     }
 }

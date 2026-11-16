@@ -6,6 +6,7 @@ import type { ReportViewModel } from '../hooks/useReportView'
 import type { RowDrill } from '../hooks/useRowLinks'
 import { shownRunKey, type TableLayout, useTableLayout } from '../hooks/useTableLayout'
 import { layoutNoticeOf } from '../lib/notices'
+import { ReportEmailDialog } from './export/ReportEmailDialog'
 import { exportToolbarItem } from './export/ReportExportMenu'
 import { ReportControls } from './ReportControls'
 import { ReportCustomizePanel } from './ReportCustomizePanel'
@@ -245,6 +246,16 @@ function coveredProps(isCovered: boolean) {
     return Platform.OS === 'web' ? { ...hidden, inert: isCovered } : hidden
 }
 
+/** The "Email report" dialog of a view that offers Export. */
+function EmailDialog({ model }: { model: ReportViewModel }) {
+    if (!model.export) return null
+    // A report with no period names none in the subject and the message.
+    const periodWords = model.periodWords ?? ''
+    return (
+        <ReportEmailDialog model={model.export} heading={model.heading} periodWords={periodWords} />
+    )
+}
+
 export function ReportView({
     model,
     side,
@@ -284,6 +295,7 @@ export function ReportView({
                 <ViewBody model={model} table={table} top={listTop} drill={drill} />
             </View>
             <ReportCustomizePanel model={model} />
+            <EmailDialog model={model} />
             {side}
         </View>
     )

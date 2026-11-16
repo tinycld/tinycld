@@ -120,6 +120,17 @@ describe('the report UI store per view', () => {
         expect(state().recordFocused).toBe(0)
     })
 
+    it('opens the email dialog for one report and closes it, leaving the share dialog alone', () => {
+        state().openShare('rpt000000000002')
+        state().openEmail('rpt000000000001')
+        expect(state().emailReportId).toBe('rpt000000000001')
+        expect(state().shareReportId).toBe('rpt000000000002')
+        state().closeEmail()
+        expect(state().emailReportId).toBeNull()
+        expect(state().shareReportId).toBe('rpt000000000002')
+        state().closeShare()
+    })
+
     it('starts a visit with both views closed', () => {
         state().openCustomize()
         state().openSurface({ kind: 'add-filter' }, 'drill')

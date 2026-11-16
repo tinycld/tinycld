@@ -4,7 +4,8 @@ import type { DisplayWidth } from '../lib/spec'
 
 // Shared UI state of the reports screens. One chip popover or sheet is open at a
 // time; open groups last for the session per report (not persisted, not in the
-// URL); the share dialog can be opened from the hub and from a report.
+// URL); the share dialog can be opened from the hub and from a report; the email
+// dialog from a report's Export menu.
 
 export type ReportSurface =
     | { kind: 'param'; paramId: string }
@@ -59,6 +60,10 @@ interface ReportUIState {
     closeCustomize: (scope?: ReportUIScope) => void
     openShare: (reportId: string) => void
     closeShare: () => void
+    /** The report whose "Email report" dialog is open; only the main view opens it. */
+    emailReportId: string | null
+    openEmail: (reportId: string) => void
+    closeEmail: () => void
     // Counts figure presses that opened a drill into the panel; the panel title is
     // keyed on it, so only such a press moves the focus there.
     drillOpens: number
@@ -141,6 +146,9 @@ export const useReportUIStore = create<ReportUIState>()(set => ({
     closeCustomize: scope => set(state => withScope(state, scope, { isCustomizeOpen: false })),
     openShare: reportId => set({ shareReportId: reportId }),
     closeShare: () => set({ shareReportId: null }),
+    emailReportId: null,
+    openEmail: reportId => set({ emailReportId: reportId }),
+    closeEmail: () => set({ emailReportId: null }),
     startVisit: () =>
         set({
             scopes: { main: CLOSED, drill: CLOSED },

@@ -198,6 +198,7 @@ export function useReportView(input: ReportViewInput) {
     const openCustomize = useReportUIStore(s => s.openCustomize)
     const closeCustomize = useReportUIStore(s => s.closeCustomize)
     const closeShare = useReportUIStore(s => s.closeShare)
+    const closeEmail = useReportUIStore(s => s.closeEmail)
     const rows = run.result?.rows ?? NO_ROWS
     const allColumns = run.result?.columns ?? NO_COLUMNS
     const columns = shownColumns(allColumns, options.display.hidden)
@@ -220,8 +221,10 @@ export function useReportView(input: ReportViewInput) {
         body,
         display: options.display,
         state,
+        isUpdating: run.isUpdating,
         isEditing,
         isMainView: prefix === '',
+        isFocused,
         title: input.title,
         defs,
         resolved: run.result?.params ?? NO_RESOLVED,
@@ -284,8 +287,12 @@ export function useReportView(input: ReportViewInput) {
     const closeOnBlur = useEffectEvent(() => {
         closeSurface(scope)
         closeCustomize(scope)
-        // Share is one global dialog that only the main view opens; a panel view must not close it.
-        if (scope === 'main') closeShare()
+        // Share and Email are global dialogs that only the main view opens; a panel view
+        // must not close them.
+        if (scope === 'main') {
+            closeShare()
+            closeEmail()
+        }
     })
     useFocusEffect(useCallback(() => () => closeOnBlur(), []))
 

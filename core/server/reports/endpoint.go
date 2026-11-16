@@ -39,7 +39,9 @@ func sortedKeys(refused map[string]string) []string {
 // POST /api/reports/param-options, the options of a choice param read from a
 // source (ReadParamOptions), for the same draft or saved report; and
 // GET /api/reports/sources, the catalog the builder offers (Catalog); and
-// POST /api/reports/export, a saved report as a file (handleExport).
+// POST /api/reports/export, a saved report as a file (handleExport);
+// POST /api/reports/email, that file sent as an email (handleEmail); and
+// GET /api/reports/email-status, whether the server can send one.
 // Saved reports and their shares are bound by RegisterSharing.
 //
 // The run and param-options endpoints are read endpoints by POST because a
@@ -68,6 +70,10 @@ func Register(app core.App) {
 			Bind(apis.RequireAuth("users"))
 		e.Router.POST("/api/reports/export", handleExport).
 			Bind(apis.RequireAuth("users"), apis.BodyLimit(maxRunBody))
+		e.Router.POST("/api/reports/email", handleEmail).
+			Bind(apis.RequireAuth("users"), apis.BodyLimit(maxRunBody))
+		e.Router.GET("/api/reports/email-status", handleEmailStatus).
+			Bind(apis.RequireAuth("users"))
 		return e.Next()
 	})
 }

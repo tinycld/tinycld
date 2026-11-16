@@ -12,7 +12,8 @@ import type { ParamDef } from './spec'
 import type { ResolvedParam } from './types'
 
 // The export route (core/server/reports/export.go): the whole report as a file,
-// made on the server with the view's state. The client never makes a file.
+// made on the server with the view's state. The client never makes a file. The
+// email routes send that file as an attachment.
 
 export const EXPORT_PATH = '/api/reports/export'
 
@@ -201,6 +202,60 @@ const EXPORTABLE: ReadonlySet<ViewState> = new Set<ViewState>(['ready', 'empty']
 /** A report shown with rows, or with none (the file then holds its headings). */
 export function canExport(state: ViewState): boolean {
     return EXPORTABLE.has(state)
+}
+
+/**
+ * The Export button, its rows and "Email report…" are disabled while a file is
+ * prepared, while writes are unavailable (offline), for a report that cannot be
+ * exported, with no request, and while a changed run loads: the view then still
+ * shows the last result, whose period names the file, so the name and the file
+ * would differ.
+ */
+export function isExportDisabled(input: {
+    isPreparing: boolean
+    writesAvailable: boolean
+    state: ViewState
+    hasRequest: boolean
+    isUpdating: boolean
+}): boolean {
+    return (
+        input.isPreparing ||
+        !input.writesAvailable ||
+        !canExport(input.state) ||
+        !input.hasRequest ||
+        input.isUpdating
+    )
+}
+
+// The email routes (core/server/reports/export_email.go).
+export const EMAIL_PATH = '/api/reports/email'
+export const EMAIL_STATUS_PATH = '/api/reports/email-status'
+
+export interface ReportEmail {
+    to: string[]
+    cc: string[]
+    subject: string
+    message: string
+}
+
+/**
+ * Sends the report's file as an email. Through `pb.send`, so a refusal is a
+ * ClientResponseError whose message and field errors the form reads.
+ */
+export async function sendReportEmail(
+    request: ExportRequest,
+    format: ExportFormat,
+    email: ReportEmail
+): Promise<{ sent: boolean; recipients: number }> {
+    return pb.send(EMAIL_PATH, {
+        method: 'POST',
+        body: { ...request, format, ...email },
+    })
+}
+
+/** Whether the server can send a report email. */
+export async function fetchEmailStatus(): Promise<{ canSend: boolean }> {
+    return pb.send(EMAIL_STATUS_PATH, { method: 'GET' })
 }
 
 /** Export is offered for a saved report in the main view, when it is not being edited. */

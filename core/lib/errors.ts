@@ -134,6 +134,31 @@ export interface FormErrorHandler<T extends FieldValues = FieldValues> {
      * of this collection, and to a toast otherwise.
      */
     collection?: string
+    /**
+     * For a form that draws refusals in its own `FormErrorSummary`: the
+     * server's message goes on `root` (type `server`) in place of a toast that
+     * leaves the form, and the field errors the form knows still go inline.
+     */
+    rootMessage?: boolean
+}
+
+function setKnownFieldErrors<T extends FieldValues>(
+    form: FormErrorHandler<T>,
+    validationErrors: Record<string, string> | null
+) {
+    if (!validationErrors) return
+    const formFields = Object.keys(form.getValues() as Record<string, unknown>)
+    for (const [field, message] of Object.entries(validationErrors)) {
+        if (formFields.includes(field)) {
+            form.setError(field as Path<T>, { type: 'manual', message })
+        }
+    }
+}
+
+/** The server's own sentence when it sent one, else the full error text. */
+function rootMessageOf(error: unknown): string {
+    const base = isRecord(error) ? getBaseMessage(error) : ''
+    return base || errorToString(error)
 }
 
 // An atomic write saves rows of several collections, and two of them can have
@@ -151,6 +176,12 @@ export function handleMutationErrorsWithForm<T extends FieldValues = FieldValues
         const validationErrors = belongsToForm(error, form.collection)
             ? extractValidationErrors(error)
             : null
+
+        if (form.rootMessage) {
+            setKnownFieldErrors(form, validationErrors)
+            form.setError('root', { type: 'server', message: rootMessageOf(error) })
+            return
+        }
 
         if (validationErrors) {
             const formValues = form.getValues()

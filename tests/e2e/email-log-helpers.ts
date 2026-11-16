@@ -13,6 +13,8 @@ export interface CapturedEmail {
     text?: string
     html?: string
     attachments?: number
+    reply_to?: string
+    attachment_names?: string[]
 }
 
 export function readEmailLog(): CapturedEmail[] {

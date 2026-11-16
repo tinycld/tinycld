@@ -7,6 +7,7 @@ import {
     exportFileName,
     exportOffered,
     exportRequestOf,
+    isExportDisabled,
 } from '../export-client'
 import fixture from '../fixtures/format-cases.json'
 import type { DisplayOptions } from '../format'
@@ -138,6 +139,34 @@ describe('canExport', () => {
         ['invalid', false],
     ] as const)('%s → %s', (state, expected) => {
         expect(canExport(state)).toBe(expected)
+    })
+})
+
+// The menu and "Email report…" cannot be pressed while a changed run loads: the
+// view still shows the last result, whose period names the file.
+describe('isExportDisabled', () => {
+    const OPEN = {
+        isPreparing: false,
+        writesAvailable: true,
+        state: 'ready',
+        hasRequest: true,
+        isUpdating: false,
+    } as const
+
+    it('is enabled for a shown report with a request, online, at rest', () => {
+        expect(isExportDisabled(OPEN)).toBe(false)
+        expect(isExportDisabled({ ...OPEN, state: 'empty' })).toBe(false)
+    })
+
+    it.each([
+        ['while the run is updating', { isUpdating: true }],
+        ['while a file is prepared', { isPreparing: true }],
+        ['offline', { writesAvailable: false }],
+        ['with no request', { hasRequest: false }],
+        ['while the report loads', { state: 'loading' }],
+        ['for an invalid report', { state: 'invalid' }],
+    ] as const)('is disabled %s', (_name, change) => {
+        expect(isExportDisabled({ ...OPEN, ...change })).toBe(true)
     })
 })
 

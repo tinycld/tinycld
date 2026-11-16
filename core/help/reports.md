@@ -218,6 +218,29 @@ In some reports each line opens the record it comes from, on that record's own s
 
 Some apps show the record beside the report. On a window 1360 pixels wide or wider, the record then opens in a panel at the right and the line stays marked. Select another line to show its record in the same panel. Select **Open as full screen** to open the record on its own screen, or **Close** (or press Esc) to close the panel. Opening **Customize** closes the panel. A link copied with **Copy link** does not open it. On a narrower window, and on a phone, the record opens on its own screen.
 
+## Download or email a report
+
+To download a report, select **Export**, then **Download PDF**, **Download Excel** or **Download CSV**. While the file is made, **Export** reads "Preparing…". On the web your browser saves the file. In the app on a phone or tablet, the share sheet opens with it. On a phone, and on a window too narrow for the toolbar, the entries are under **More actions** (⋯).
+
+What each file holds:
+
+- The **PDF** is the report as you see it: your open and folded groups, your sort, your hidden columns and your number format. Each page ends with its page number and the time the file was made.
+- **Excel** and **CSV** hold every row with every group open, in report order. Their numbers are raw, so a spreadsheet can calculate with them. A money column with more than one currency gets a column with each row's currency code.
+
+The file is named after the report and its dates, for example `monthly-sales-2026-01-01-to-2026-11-15.pdf`. A report with no period uses today's date.
+
+A file holds only the rows your access lets you see in the report. Some reports are too large for a file:
+
+- A PDF of more than 5,000 rows: "This report has more than 5,000 rows. Narrow the period or download CSV."
+- An Excel or CSV file of more than 50,000 rows: "This report has more than 50,000 rows. Narrow the period."
+- A file that takes more than a minute to make: "The report took too long to export."
+
+To email a report, select **Export**, then **Email report…**. Type one or more addresses in **To** (and, if you like, **Cc**), separated by commas, semicolons or spaces. The subject and the message are filled in for you; change them as you like. Under **Attach as**, choose PDF, Excel or CSV; the line under it names the file. Press ⌘↵ or select **Send**; press Esc to cancel.
+
+The message comes from the server's own address, in your name ("*your name* via *your organization*"), and replies go to your own email address. A message goes to at most 10 addresses, and you can send at most 20 report emails an hour. A file larger than 10 MB cannot be emailed; download it instead. When this server cannot send email, **Email report…** is shown but cannot be selected, and says "Email sending is not set up". No address is remembered for the next email.
+
+Every download and every email is recorded in **Settings → Audit Log**.
+
 ## Share and publish
 
 Select **Share** to add people or groups as **Viewer** (can run it) or **Editor**

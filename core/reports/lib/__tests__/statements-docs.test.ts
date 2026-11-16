@@ -23,6 +23,25 @@ describe('statement docs', () => {
         }
     })
 
+    it('has a help section on downloading and emailing a report', () => {
+        const help = read('core/help/reports.md')
+        const at = help.indexOf('## Download or email a report')
+        expect(at).toBeGreaterThanOrEqual(0)
+        const end = help.indexOf('\n## ', at + 1)
+        const section = help.slice(at, end === -1 ? undefined : end)
+        for (const words of [
+            'To download a report, select **Export**, then **Download PDF**, **Download Excel** or **Download CSV**.',
+            'To email a report, select **Export**, then **Email report…**',
+            '⌘↵',
+            'Email sending is not set up',
+            '**Settings → Audit Log**',
+            '**More actions**',
+        ]) {
+            expect(section).toContain(words)
+        }
+        expect(section).not.toMatch(/Ctrl|Cmd/)
+    })
+
     it('names the pivot controls and the bucket words in the help', () => {
         const help = read('core/help/reports.md')
         expect(help).toContain('**Total after the pivot columns**')

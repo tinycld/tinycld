@@ -9,10 +9,14 @@ import { REPORT_TAP_TARGET } from '../ReportHeader'
 
 const PREPARING = 'Preparing…'
 const EXPORT = 'Export'
+const EMAIL = 'Email report…'
+const EMAIL_NOT_SET_UP = 'Email sending is not set up'
 
 /**
- * The export rows: one download per format. The Export button's menu holds them,
- * and on a narrow toolbar "⋯" lists them as its own entries.
+ * The export rows: one download per format, a rule, then "Email report…". The
+ * Export button's menu holds them, and on a narrow toolbar "⋯" lists them as its
+ * own entries. "Email report…" waits for the server's email status; when the
+ * server cannot send, it stays, disabled, and says why.
  */
 export function ExportMenuRows({ model }: { model: ReportExportModel }) {
     const rows = EXPORT_FORMATS.map(entry => (
@@ -24,7 +28,21 @@ export function ExportMenuRows({ model }: { model: ReportExportModel }) {
             onSelect={() => model.onDownload(entry.format)}
         />
     ))
-    return <>{rows}</>
+    const isEmailDisabled = model.isDisabled || model.email.canSend !== true
+    const emailDescription = model.email.canSend === false ? EMAIL_NOT_SET_UP : undefined
+    return (
+        <>
+            {rows}
+            <Menu.Separator />
+            <Menu.Item
+                testID="report-export-email"
+                label={EMAIL}
+                isDisabled={isEmailDisabled}
+                description={emailDescription}
+                onSelect={model.email.onOpen}
+            />
+        </>
+    )
 }
 
 /** In "⋯" a rule sets the export rows apart from the toolbar's other entries. */
