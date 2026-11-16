@@ -87,6 +87,9 @@ type Result struct {
 	// Params are the report's params as this run resolved them, in spec
 	// order, so the shell shows the period the server ran.
 	Params []ResolvedParam `json:"params"`
+	// HeaderLines are the lines the report prints under its period: one per
+	// param with a header (ParamDef.Header), in spec order, never nil.
+	HeaderLines []string `json:"headerLines"`
 }
 
 type ResultColumn struct {
@@ -357,6 +360,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 		return nil, err
 	}
 	rn.res.Params = resolvedParams(p.spec.Params, params)
+	rn.res.HeaderLines = headerLines(p.spec.Params, params)
 	if h := p.base.Heading; h != nil {
 		rn.res.Heading = strings.TrimSpace(h(app, c.info))
 	}

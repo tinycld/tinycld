@@ -41,6 +41,8 @@ import {
     type DisplayFit,
     type DisplayLayout,
     displayFitOf,
+    type HeaderLine,
+    headerLinesOf,
     type ParamDef,
     type ReportSpec,
 } from '../lib/spec'
@@ -77,6 +79,7 @@ const NO_COLUMNS: ResultColumn[] = []
 const NO_NOTICES: Notice[] = []
 const NO_ROWS: ResultRow[] = []
 const NO_LAYOUTS: readonly DisplayLayout[] = []
+const NO_HEADER_LINES: HeaderLine[] = []
 
 function viewState(input: {
     source: ViewSource | null
@@ -125,6 +128,12 @@ function runBody(
 function headingOf(result: RunResult | undefined, orgName: string | undefined): string {
     if (!result) return ''
     return result.heading || orgName || ''
+}
+
+// The chosen options the run prints under the period (N1); none until a run answers.
+function headerLinesFor(defs: readonly ParamDef[], result: RunResult | undefined): HeaderLine[] {
+    if (!result) return NO_HEADER_LINES
+    return headerLinesOf({ params: defs }, result)
 }
 
 // A param's options are read against what the view runs: the saved report, or the draft.
@@ -343,6 +352,7 @@ export function useReportView(input: ReportViewInput) {
         postedParams: posted,
         optionLabels,
         periodWords: periodWords(period, periodResolved),
+        headerLines: headerLinesFor(defs, run.result),
         emptyMessage: emptyMessage(period, periodResolved),
         emptyAction: action,
         onEmptyAction,

@@ -176,6 +176,11 @@ export interface RunResult {
     heading?: string
     page: RunPage | null
     params: ResolvedParam[]
+    /**
+     * The lines printed under the period: one per choice param with a `header`, in
+     * param order, with the chosen option's label; '' for a param that is unset.
+     */
+    headerLines: string[]
 }
 
 /**

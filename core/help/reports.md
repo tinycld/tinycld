@@ -185,7 +185,8 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
   adds a chip for a filter you can set while you read. On a narrow screen, swipe the
   chips sideways to see the rest; the right edge fades while there are more. In the period chip, **All dates** shows
   every row, also a row with no date. A link copied with **Copy link** opens the
-  report with the same choices.
+  report with the same choices. Some reports print a choice you made under the
+  period, such as **Cash basis**.
 - To sort, press a column heading: each press sorts up, then down, then back to the
   report's order. When the rows wrap (on a phone), use the **Sort** chip above the
   report instead (on a phone, scroll back to the top to reach it).

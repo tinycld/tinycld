@@ -10,6 +10,7 @@ const result = (topics: string[]): RunResult => ({
     topics,
     page: null,
     params: [],
+    headerLines: [],
 })
 const ok = (topics = ['collection/sales']): RunOutcome => ({ kind: 'ok', result: result(topics) })
 const problem = { path: 'columns.0', code: 'unknown_field', message: 'no field "x"' }

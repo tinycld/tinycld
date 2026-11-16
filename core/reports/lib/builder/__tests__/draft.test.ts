@@ -1196,6 +1196,36 @@ describe('the group pick text of a param from a source', () => {
     })
 })
 
+// N1: a choice param's header line is kept through the builder, which offers no editor
+// for it.
+describe('the header line of a choice param', () => {
+    const basis: ParamDef = {
+        id: 'basis',
+        type: 'choice',
+        label: 'Basis',
+        default: 'accrual',
+        header: '{label} basis',
+        options: [
+            { value: 'accrual', label: 'Accrual' },
+            { value: 'cash', label: 'Cash' },
+        ],
+    }
+    const spec: ReportSpec = {
+        version: CURRENT_SPEC_VERSION,
+        source: SALES_KEY,
+        params: [basis],
+        columns: [{ id: 'status', label: 'Status', path: [{ field: 'status' }] }],
+    }
+
+    it('round-trips a spec with a header through the draft unchanged', () => {
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        expect(draft.params[0]?.header).toBe('{label} basis')
+        expect(specFromDraft(draft, CATALOG)).toEqual(spec)
+        expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(spec))
+    })
+})
+
 // E1: a grouped param from a source orders its groups (spec.go OptionsFrom.GroupOrder):
 // by name, by the group field's declared options, or by a field of the source.
 describe('the group order of a param from a source', () => {

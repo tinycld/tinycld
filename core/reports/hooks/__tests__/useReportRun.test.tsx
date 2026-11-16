@@ -37,6 +37,7 @@ const result = (rows: ResultRow[], next = ''): RunResult => ({
     topics: [TOPIC],
     page: next ? { next, size: rows.length } : null,
     params: [],
+    headerLines: [],
 })
 
 /** A server answer held until the test lets it go; an aborted request drops it. */

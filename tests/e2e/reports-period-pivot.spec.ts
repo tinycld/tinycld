@@ -94,8 +94,53 @@ async function expectTotalAfterMarch(p: Page) {
         .toBe(true)
 }
 
+// The basis line (N1) sits under the period line inside the document header.
+async function expectBasisUnderPeriod(p: Page) {
+    const header = p.getByTestId('report-document-header')
+    const basis = header.getByTestId('report-header-param-basis')
+    const period = header.getByTestId('report-document-period')
+    await expect(basis).toBeVisible()
+    await expect(period).toBeVisible()
+    await expect
+        .poll(async () => {
+            const [b, d] = await Promise.all([basis.boundingBox(), period.boundingBox()])
+            if (!b || !d) return false
+            return b.y >= d.y + d.height - 1
+        })
+        .toBe(true)
+}
+
 test.describe('reports: period pivot', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+
+    test('the document header prints the chosen basis under the period', async ({ page }) => {
+        const { p, close } = await seed(page, 'rptbasis', [])
+        try {
+            await openShipped(p, STATEMENT)
+            const basis = p.getByTestId('report-header-param-basis')
+            await expect(basis).toHaveText('Accrual basis')
+            await expectBasisUnderPeriod(p)
+            await p.getByTestId('report-param-basis').click()
+            await p.getByTestId('report-filter-option-cash').click()
+            await expect(basis).toHaveText('Cash basis')
+            await expectBasisUnderPeriod(p)
+        } finally {
+            await close()
+        }
+    })
+
+    test('the basis line still shows under the period on a phone', async ({ page }) => {
+        const { p, close } = await seed(page, 'rptbasisphone', [])
+        try {
+            await openShipped(p, STATEMENT)
+            await expect(p.getByTestId('report-document-title')).toHaveText(STATEMENT)
+            await p.setViewportSize({ width: 390, height: 844 })
+            await expect(p.getByTestId('report-header-param-basis')).toHaveText('Accrual basis')
+            await expectBasisUnderPeriod(p)
+        } finally {
+            await close()
+        }
+    })
 
     test('a percent of a section divides every row by the open sales total', async ({ page }) => {
         const { p, close } = await seed(page, 'rptshare', [

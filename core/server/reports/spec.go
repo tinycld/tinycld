@@ -392,7 +392,14 @@ type ParamDef struct {
 	// place of Options.
 	OptionsFrom *OptionsFrom `json:"optionsFrom,omitempty"`
 	Multiple    bool         `json:"multiple,omitempty"`
+	// Header is a single choice param's line under the report's period, with
+	// HeaderLabelToken where the chosen option's label goes ("{label} basis").
+	// A run gives the line in Result.HeaderLines.
+	Header string `json:"header,omitempty"`
 }
+
+// HeaderLabelToken stands for the chosen option's label in ParamDef.Header.
+const HeaderLabelToken = "{label}"
 
 // OptionsFrom reads a choice param's options from a source, under the
 // reader's list rules: Value is what the param holds, Label what the picker
