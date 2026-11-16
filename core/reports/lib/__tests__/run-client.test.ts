@@ -252,6 +252,7 @@ describe('runFirstPage', () => {
         topics: [],
         page: next ? { next, size: rows.length } : null,
         params: [],
+        headerLines: [],
     })
     const sentOptions = () =>
         send.mock.calls.map(([, init]) => {
@@ -476,6 +477,7 @@ describe('lastGroupRowOf', () => {
         topics: [],
         page: null,
         params: [],
+        headerLines: [],
     })
 
     it('reads the last group row across the pages, in document order', () => {
@@ -509,6 +511,7 @@ describe('groupRowAt', () => {
         topics: [],
         page: null,
         params: [],
+        headerLines: [],
     })
     const pages = [
         resultOf([rowOf('g:a', 'group'), rowOf('d:1', 'detail')]),
@@ -575,6 +578,7 @@ describe("the reader's time zone (T2)", () => {
         rows: [],
         notices: [],
         topics: [],
+        headerLines: [],
         page: null,
         params: [],
     }

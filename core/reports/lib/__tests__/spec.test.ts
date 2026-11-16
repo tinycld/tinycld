@@ -4,11 +4,14 @@ import {
     CURRENT_SPEC_VERSION,
     canCopyReport,
     displayFitOf,
+    headerLinesOf,
+    paramDefSchema,
     parseBroken,
     parseFitLength,
     parseSpec,
     reportSpecSchema,
 } from '../spec'
+import type { RunResult } from '../types'
 
 const FEEDINGS = {
     version: 4,
@@ -740,5 +743,62 @@ describe('drills and opened rows (D1, D2)', () => {
 
     it('keeps parsing a spec without them', () => {
         expect(parseSpec(FEEDINGS)).toEqual(FEEDINGS)
+    })
+})
+
+// N1: a choice param's header line names the chosen option under the period.
+describe('a header line on a choice param (N1)', () => {
+    const BASIS = {
+        id: 'basis',
+        type: 'choice',
+        default: 'accrual',
+        header: '{label} basis',
+        options: [
+            { value: 'accrual', label: 'Accrual' },
+            { value: 'cash', label: 'Cash' },
+        ],
+    }
+    const PLAIN = { id: 'plain', type: 'choice', options: [{ value: 'hay', label: 'Hay' }] }
+    const KIND = {
+        id: 'kind',
+        type: 'choice',
+        header: 'Feed: {label}',
+        options: [
+            { value: 'hay', label: 'Hay' },
+            { value: 'fish', label: 'Fish' },
+        ],
+    }
+    const result = (headerLines: string[]): RunResult => ({
+        columns: [],
+        rows: [],
+        notices: [],
+        topics: [],
+        page: null,
+        params: [],
+        headerLines,
+    })
+
+    it('accepts a header on a choice param and keeps it through parse', () => {
+        expect(paramDefSchema.parse(BASIS)).toEqual(BASIS)
+        const withBasis = { ...FEEDINGS, params: [...FEEDINGS.params, BASIS] }
+        expect(parseSpec(withBasis)).toEqual(withBasis)
+        expect(parseSpec(withBasis)?.params?.[1]?.header).toBe('{label} basis')
+    })
+
+    it('pairs each line with the choice param that has a header, in param order', () => {
+        const spec = parseSpec({ ...FEEDINGS, params: [...FEEDINGS.params, BASIS, PLAIN, KIND] })
+        expect(spec).not.toBeNull()
+        if (!spec) return
+        expect(headerLinesOf(spec, result(['Cash basis', 'Feed: Fish']))).toEqual([
+            { id: 'basis', text: 'Cash basis' },
+            { id: 'kind', text: 'Feed: Fish' },
+        ])
+    })
+
+    it('gives no lines for a spec with no header', () => {
+        const spec = parseSpec(FEEDINGS)
+        expect(spec).not.toBeNull()
+        if (!spec) return
+        expect(headerLinesOf(spec, result([]))).toEqual([])
     })
 })

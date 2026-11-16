@@ -1,5 +1,5 @@
 import { z } from '@tinycld/core/ui/form'
-import { AGGREGATES, PARAM_TYPES, type Problem } from './types'
+import { AGGREGATES, PARAM_TYPES, type Problem, type RunResult } from './types'
 
 // The report spec as core/server/reports/spec.go reads it. A stored spec was
 // decoded strictly and saved as the engine re-encodes it, so this schema is strict
@@ -122,6 +122,8 @@ export const paramDefSchema = z.strictObject({
     options: z.array(optionSchema).optional(),
     optionsFrom: optionsFromSchema.optional(),
     multiple: z.boolean().optional(),
+    /** A single choice's line under the period, `{label}` for the chosen option (N1). */
+    header: z.string().optional(),
 })
 export type ParamDef = z.infer<typeof paramDefSchema>
 
@@ -348,6 +350,27 @@ export type ReportSpec = z.infer<typeof reportSpecSchema>
 export function parseSpec(value: unknown): ReportSpec | null {
     const parsed = reportSpecSchema.safeParse(value)
     return parsed.success ? parsed.data : null
+}
+
+/** One line printed under the period, with the id of the choice param it names (N1). */
+export interface HeaderLine {
+    id: string
+    text: string
+}
+
+/**
+ * The run's header lines with their params: the server gives line i for the i-th choice
+ * param with a `header` (params.go headerLines), and '' for one that is unset, which
+ * prints no line.
+ */
+export function headerLinesOf(
+    spec: { params?: readonly ParamDef[] | null },
+    result: Pick<RunResult, 'headerLines'>
+): HeaderLine[] {
+    const headed = (spec.params ?? []).filter(param => param.type === 'choice' && param.header)
+    return headed
+        .map((param, i) => ({ id: param.id, text: result.headerLines[i] ?? '' }))
+        .filter(line => line.text !== '')
 }
 
 /** The fit settings of a spec's display that the table reads besides its arrangements. */

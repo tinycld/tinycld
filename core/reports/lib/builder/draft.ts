@@ -1543,8 +1543,8 @@ function paramsInDrill(drill: SpecDrill | undefined, into: Set<string>) {
 
 /**
  * The params something in the draft still reads, plus newly asked ones (R20): a
- * filter, having or fill condition, or a formula anywhere. A param stays while
- * anything reads it, and leaves with the last part that does.
+ * filter, having or fill condition, a formula anywhere, or the param's own header
+ * line. A param stays while anything reads it, and leaves with the last part that does.
  */
 export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[] {
     const read = paramsInGroup(draft.filter, new Set<string>())
@@ -1571,6 +1571,9 @@ export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[
     }
     node(draft.detailLabel?.node)
     node(draft.detailOpen)
+    // A param with a header prints its line under the period (N1), so it stays though
+    // nothing else reads it. The builder keeps the header as the spec gave it.
+    for (const param of draft.params) if (param.header) read.add(param.id)
     // A kept param's options can be filtered by another param, which then stays too,
     // and so on (params.go optionsFrom.where).
     const byId = new Map([...draft.params, ...added].map(p => [p.id, p]))
