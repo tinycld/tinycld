@@ -204,6 +204,7 @@ cd tinycld
 pnpm run checks                     # biome + tsc + core-isolation + fork-drift checks
 pnpm run test                       # vitest (this member)
 pnpm run test:e2e                   # playwright (this member)
+pnpm exec tinycld-pkg test:e2e tests/e2e/help.spec.ts ../contacts/tests/e2e/boots.spec.ts   # named spec files of any members, one run
 cd server && go build -o tinycld . && ./tinycld --help
 ```
 

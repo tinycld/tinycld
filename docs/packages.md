@@ -1703,6 +1703,7 @@ pnpm run test                        # vitest for the app shell
 pnpm run pkg:test:unit               # vitest across every present member
 pnpm run test:e2e                    # playwright (all linked siblings)
 pnpm run test:e2e --project=@tinycld/mail   # a single package's e2e specs
+pnpm exec tinycld-pkg test:e2e tests/e2e/help.spec.ts ../mail/tests/mail-inbox.spec.ts   # named spec files of any members, one run
 pnpm run test:server                 # Go tests (no_ui build tag)
 ```
 
