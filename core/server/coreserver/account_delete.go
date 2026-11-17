@@ -191,6 +191,9 @@ func handleAccountEnable(app core.App, re *core.RequestEvent) error {
 	if err != nil {
 		return re.NotFoundError("user not found", err)
 	}
+	if offboard.IsOffboarded(target) {
+		return re.BadRequestError("This user was deleted and cannot be enabled", nil)
+	}
 	target.Set("disabled", false)
 	if err := app.Save(target); err != nil {
 		return apierr.Wrap(re, http.StatusInternalServerError, "Could not enable the account", err)

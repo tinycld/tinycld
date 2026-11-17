@@ -2,11 +2,15 @@ package coreserver
 
 import (
 	"reflect"
+	"strings"
 
+	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/audit"
 	"tinycld.org/core/authfactor"
+	"tinycld.org/core/offboard"
+	"tinycld.org/core/usernames"
 )
 
 // selfEditableUserFields lists the fields the record's own user is allowed
@@ -53,6 +57,10 @@ var selfEditableUserFields = map[string]bool{
 // one (users.manageRule already waives `oldPassword` for them). Only an owner
 // may set an owner's password, and the member must choose a new password at
 // their next sign-in (see markPasswordChange).
+//
+// `username` so an owner or admin can rename a login (checkUsernameChange);
+// a package that derives something from the username follows the rename
+// with its own users hook.
 var adminEditableUserFields = map[string]bool{
 	"name":     true,
 	"avatar":   true,
@@ -60,6 +68,29 @@ var adminEditableUserFields = map[string]bool{
 	"role":     true,
 	"disabled": true,
 	"password": true,
+	"username": true,
+}
+
+// tombstonePrefix starts every deleted user's username (see offboard). A live
+// user may not take it, so a live login can never look like a deleted one.
+const tombstonePrefix = "deleted-"
+
+// checkUsernameChange validates an admin rename. Uniqueness is the unique
+// index's job: PocketBase returns it as a field error.
+func checkUsernameChange(record, original *core.Record) error {
+	name := record.GetString("username")
+	if name == original.GetString("username") {
+		return nil
+	}
+	if !usernames.Valid(name) {
+		return validation.Errors{"username": validation.NewError("username_invalid",
+			"Use 3-32 characters: lowercase letters, digits, dash or underscore.")}
+	}
+	if strings.HasPrefix(name, tombstonePrefix) {
+		return validation.Errors{"username": validation.NewError("username_reserved",
+			"Usernames that start with deleted- are reserved.")}
+	}
+	return nil
 }
 
 // markPasswordChange keeps must_change_password in step with who set the
@@ -181,6 +212,12 @@ func registerUsersFieldGuardCore(app core.App) {
 			return e.Next()
 		}
 
+		// A deleted user is a tombstone: its fields belong to the server, and
+		// re-enabling it would bring back an account that was removed.
+		if offboard.IsOffboarded(original) {
+			return e.ForbiddenError("This user was deleted and cannot be changed", nil)
+		}
+
 		isSelf := e.Auth.Id == e.Record.Id
 
 		// Demo accounts are shared across anonymous visitors via /api/demo/start.
@@ -227,6 +264,9 @@ func registerUsersFieldGuardCore(app core.App) {
 		// users record to edit another user.
 		if !isOrgAdmin(e.Auth) {
 			return e.ForbiddenError("Org admin role required", nil)
+		}
+		if err := checkUsernameChange(e.Record, original); err != nil {
+			return err
 		}
 
 		passwordSet := markPasswordChange(e.Record, original, true)
