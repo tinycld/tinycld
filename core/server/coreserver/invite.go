@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"tinycld.org/core/apierr"
 	"tinycld.org/core/approutes"
 
 	"github.com/pocketbase/pocketbase"
@@ -196,7 +197,7 @@ func handleInviteMember(app core.App, jobs *background.Jobs, re *core.RequestEve
 		if strings.Contains(lower, "username") && strings.Contains(lower, "unique") {
 			return re.BadRequestError("That username is already taken", err)
 		}
-		return re.BadRequestError("Failed to invite member", err)
+		return apierr.Wrap(re, http.StatusBadRequest, "Failed to invite member", err)
 	}
 
 	// Existing verified users get a "you've been added" email (skipped for
