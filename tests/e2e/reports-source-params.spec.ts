@@ -1,21 +1,21 @@
-import { expect, type Locator, type Page, test } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { createInvitedUser, login, skipWithoutReportsStub } from './helpers'
+import { expect, test } from './member-fixtures'
 import {
     addColumn,
-    addSale,
-    addTeam,
     chooseOption,
     chooseParamOption,
     hubRow,
     loginAsShippedOwner,
-    openReportStub,
     openReportsHub,
     pressToolbar,
     rowOf,
     SALES_SOURCE,
     SHIPPED_TITLE,
     STUB_HEADING,
+    type StubSale,
     saveNewReport,
+    seedStub,
     startReport,
     TEAM_TOTALS_TITLE,
     uniqueName,
@@ -33,19 +33,28 @@ import {
  */
 
 // Two teams `${stem} N1` and `${stem} N2` in `region` (North unless told), and
-// `${stem} S1` in South, each with one sale.
-async function seedRegions(p: Page, stem: string, region: 'north' | 'east' = 'north') {
-    await openReportStub(p)
-    await addTeam(p, `${stem} N1`, region)
-    await addTeam(p, `${stem} N2`, region)
-    await addTeam(p, `${stem} S1`, 'south')
-    for (const [team, customer] of [
-        [`${stem} N1`, 'Nia'],
-        [`${stem} N2`, 'Ned'],
-        [`${stem} S1`, 'Sol'],
-    ] as const) {
-        await addSale(p, { team, customer, amount: 100, cost: 0, day: '2026-01-05' })
-    }
+// `${stem} S1` in South, each with one sale, then `moreSales`: all in one save.
+async function seedRegions(
+    p: Page,
+    stem: string,
+    region: 'north' | 'east' = 'north',
+    moreSales: StubSale[] = []
+) {
+    const sales = (
+        [
+            [`${stem} N1`, 'Nia'],
+            [`${stem} N2`, 'Ned'],
+            [`${stem} S1`, 'Sol'],
+        ] as const
+    ).map(([team, customer]) => ({ team, customer, amount: 100, cost: 0, day: '2026-01-05' }))
+    await seedStub(p, {
+        teams: [
+            { name: `${stem} N1`, region },
+            { name: `${stem} N2`, region },
+            { name: `${stem} S1`, region: 'south' },
+        ],
+        sales: [...sales, ...moreSales],
+    })
 }
 
 // A draft over sales whose team condition is asked when run as "is any of", its
@@ -368,8 +377,7 @@ test.describe('params from a source, headings and unpublished shipped reports', 
             { length: 12 },
             (_, i) => `${stem} T${String(i + 1).padStart(2, '0')}`
         )
-        await openReportStub(page)
-        for (const name of names) await addTeam(page, name, 'north')
+        await seedStub(page, { teams: names.map(name => ({ name, region: 'north' })) })
         await openTeamTotals(page)
 
         // The server pages by 50; the searched list asks for pages of 10 instead
@@ -474,55 +482,51 @@ test.describe('params from a source, headings and unpublished shipped reports', 
     // names a field, and the reader picks a whole group with "All <group>". A
     // fresh member owns only this test's sales, so each customer shows once.
     test('Ask when run can list the teams by region, and a whole region is picked at once', async ({
-        page,
+        freshMember,
     }) => {
-        const { inviteePage: p, close } = await createInvitedUser(page, 'rptaskgrp')
-        try {
-            const stem = uniqueName('Grp')
-            await seedRegions(p, stem)
-            await openReportsHub(p)
-            await startReport(p, SALES_SOURCE)
-            await p.getByTestId('report-builder-section-filter').click()
-            await p.getByTestId('report-builder-filter-add-condition').click()
-            await p
-                .getByTestId('report-builder-picker')
-                .getByTestId('report-builder-pick-record-team')
-                .click()
-            await chooseOption(p, 'report-builder-filter-0-op', 'in')
-            await p.getByTestId('report-builder-filter-0-ask').click()
-            const grouping = p.getByTestId('report-builder-filter-0-options-group')
-            await expect(grouping).toHaveText('No groups')
-            await grouping.click()
-            await p
-                .getByTestId('report-builder-picker')
-                .getByTestId('report-builder-pick-field-region')
-                .click()
-            await expect(grouping).toHaveText('Region')
+        const p = freshMember.page
+        const stem = uniqueName('Grp')
+        await seedRegions(p, stem)
+        await openReportsHub(p)
+        await startReport(p, SALES_SOURCE)
+        await p.getByTestId('report-builder-section-filter').click()
+        await p.getByTestId('report-builder-filter-add-condition').click()
+        await p
+            .getByTestId('report-builder-picker')
+            .getByTestId('report-builder-pick-record-team')
+            .click()
+        await chooseOption(p, 'report-builder-filter-0-op', 'in')
+        await p.getByTestId('report-builder-filter-0-ask').click()
+        const grouping = p.getByTestId('report-builder-filter-0-options-group')
+        await expect(grouping).toHaveText('No groups')
+        await grouping.click()
+        await p
+            .getByTestId('report-builder-picker')
+            .getByTestId('report-builder-pick-field-region')
+            .click()
+        await expect(grouping).toHaveText('Region')
 
-            await chooseParamOption(p, 'team', { from: 'add-filter', search: stem, group: 'north' })
-            await expect(p.getByTestId('report-param-team')).toHaveText('Team: All North')
-            const table = p.getByTestId('report-table')
-            await expect(table.getByText('Nia', { exact: true })).toBeVisible()
-            await expect(table.getByText('Ned', { exact: true })).toBeVisible()
-            await expect(table.getByText('Sol', { exact: true })).toHaveCount(0)
+        await chooseParamOption(p, 'team', { from: 'add-filter', search: stem, group: 'north' })
+        await expect(p.getByTestId('report-param-team')).toHaveText('Team: All North')
+        const table = p.getByTestId('report-table')
+        await expect(table.getByText('Nia', { exact: true })).toBeVisible()
+        await expect(table.getByText('Ned', { exact: true })).toBeVisible()
+        await expect(table.getByText('Sol', { exact: true })).toHaveCount(0)
 
-            // The group pick can have its own text, with {group} for the group's name.
-            const groupText = p.getByTestId('report-builder-filter-0-group-label')
-            await groupText.fill('Every team')
-            await expect(p.getByText('Write {group} where the group’s name goes')).toBeVisible()
-            await groupText.fill('Every {group} team')
-            await expect(p.getByText('Write {group} where the group’s name goes')).toHaveCount(0)
-            await expect(p.getByTestId('report-param-team')).toHaveText('Team: Every North team')
+        // The group pick can have its own text, with {group} for the group's name.
+        const groupText = p.getByTestId('report-builder-filter-0-group-label')
+        await groupText.fill('Every team')
+        await expect(p.getByText('Write {group} where the group’s name goes')).toBeVisible()
+        await groupText.fill('Every {group} team')
+        await expect(p.getByText('Write {group} where the group’s name goes')).toHaveCount(0)
+        await expect(p.getByTestId('report-param-team')).toHaveText('Team: Every North team')
 
-            // Without groups a whole-group pick no longer fits the param (view-url.ts
-            // reads each value against its param), so the filter is unset again.
-            await p.getByTestId('report-builder-filter-0-options-group-clear').click()
-            await expect(grouping).toHaveText('No groups')
-            await expect(groupText).toHaveCount(0)
-            await expect(table.getByText('Sol', { exact: true })).toBeVisible()
-        } finally {
-            await close()
-        }
+        // Without groups a whole-group pick no longer fits the param (view-url.ts
+        // reads each value against its param), so the filter is unset again.
+        await p.getByTestId('report-builder-filter-0-options-group-clear').click()
+        await expect(grouping).toHaveText('No groups')
+        await expect(groupText).toHaveCount(0)
+        await expect(table.getByText('Sol', { exact: true })).toBeVisible()
     })
 
     // E1: "Order the groups by" orders the regions a team list is grouped in: by
@@ -534,10 +538,13 @@ test.describe('params from a source, headings and unpublished shipped reports', 
     }) => {
         await login(page)
         const stem = uniqueName('Ord')
-        await openReportStub(page)
-        await addTeam(page, `${stem} E1`, 'east')
-        await addTeam(page, `${stem} N1`, 'north')
-        await addTeam(page, `${stem} S1`, 'south')
+        await seedStub(page, {
+            teams: [
+                { name: `${stem} E1`, region: 'east' },
+                { name: `${stem} N1`, region: 'north' },
+                { name: `${stem} S1`, region: 'south' },
+            ],
+        })
         await askTeamsByRegion(page)
         const byName = ['All East', 'All North', 'All South']
         const declared = ['All North', 'All South', 'All East']
@@ -566,10 +573,13 @@ test.describe('params from a source, headings and unpublished shipped reports', 
     }) => {
         await login(page)
         const stem = uniqueName('PathOrd')
-        await openReportStub(page)
-        await addTeam(page, `!${stem} A`, 'south')
-        await addTeam(page, `!${stem} B`, 'east')
-        await addTeam(page, `!${stem} C`, 'north')
+        await seedStub(page, {
+            teams: [
+                { name: `!${stem} A`, region: 'south' },
+                { name: `!${stem} B`, region: 'east' },
+                { name: `!${stem} C`, region: 'north' },
+            ],
+        })
         await askTeamsByRegion(page)
         const byName = ['All East', 'All North', 'All South']
         const bySmallestName = ['All South', 'All East', 'All North']
@@ -625,15 +635,10 @@ test.describe('params from a source, headings and unpublished shipped reports', 
     test('a having on a money total asks an amount, kept to its currency', async ({ page }) => {
         await login(page)
         const stem = uniqueName('Amt')
-        await seedRegions(page, stem)
         // N1 adds up to 4.00 USD, N2 to 1.00 USD.
-        await addSale(page, {
-            team: `${stem} N1`,
-            customer: 'Nia',
-            amount: 300,
-            cost: 0,
-            day: '2026-01-06',
-        })
+        await seedRegions(page, stem, 'north', [
+            { team: `${stem} N1`, customer: 'Nia', amount: 300, cost: 0, day: '2026-01-06' },
+        ])
         await openReportsHub(page)
         await startReport(page, SALES_SOURCE)
         await page.getByTestId('report-builder-add-column').click()

@@ -1,17 +1,9 @@
-import {
-    type Browser,
-    type ElementHandle,
-    expect,
-    type Locator,
-    type Page,
-    test,
-} from '@playwright/test'
-import { createInvitedUser, loginAs, skipWithoutReportsStub } from './helpers'
+import type { Browser, ElementHandle, Locator, Page } from '@playwright/test'
+import { loginAs, skipWithoutReportsStub } from './helpers'
+import { expect, shareMember, test } from './member-fixtures'
 import {
     addColumn,
     addSale,
-    addSales,
-    addTeam,
     chooseOption,
     holdRuns,
     listScroller,
@@ -22,6 +14,7 @@ import {
     SALES_SOURCE,
     saveNewReport,
     scrollRowTo,
+    seedStub,
     startReport,
     uniqueName,
 } from './reports-helpers'
@@ -41,6 +34,9 @@ import {
  *   The list holds the row first in view at the scroll offset; it once held the
  *   row first in view when the scroll started, and the rows opened between the
  *   two moved the content down.
+ *
+ * The file's shared member owns the 40 sales the two Expand all tests read; they
+ * add none. The test that adds a sale in another browser has its own member.
  */
 
 const GROUPS = 40
@@ -50,20 +46,28 @@ function dayOf(i: number): string {
     return new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10)
 }
 
-async function groupedByDay(p: Page) {
+// Customers Anchor 00…39, amounts 1000…1039, one day apart from dayOf(0).
+async function seedAnchorSales(p: Page) {
     const team = uniqueName('Team')
-    await openReportStub(p)
-    await addTeam(p, team)
-    // Customers Anchor 00…39, amounts 1000…1039, one day apart from dayOf(0).
-    await addSales(p, {
-        team,
-        customerPrefix: 'Anchor',
-        count: GROUPS,
-        firstDay: dayOf(0),
-        firstAmount: 1000,
-        cost: 400,
-        quantity: 3,
+    await seedStub(p, {
+        teams: [{ name: team }],
+        sales: Array.from({ length: GROUPS }, (_, i) => ({
+            team,
+            customer: `Anchor ${String(i).padStart(2, '0')}`,
+            amount: 1000 + i,
+            cost: 400,
+            quantity: 3,
+            day: dayOf(i),
+        })),
     })
+    return team
+}
+
+shareMember('rptanchor', async p => {
+    await seedAnchorSales(p)
+})
+
+async function groupedByDay(p: Page) {
     await openReportsHub(p)
     await startReport(p, SALES_SOURCE)
     await addColumn(p, ['amount'])
@@ -77,7 +81,6 @@ async function groupedByDay(p: Page) {
     await p.getByTestId('report-builder-group-add').click()
     await chooseOption(p, 'report-builder-group-0-col', 'booked')
     await saveNewReport(p, uniqueName('Anchor'))
-    return team
 }
 
 // Scrolls the row's top edge to `below` px under the list's top edge and checks it
@@ -373,150 +376,128 @@ test.describe('scroll position on web', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('rows opening or arriving above a still list keep the row in view in place', async ({
-        page,
+        freshMember,
         browser,
     }) => {
-        const { inviteePage: p, user, close } = await createInvitedUser(page, 'rptanchor')
-        try {
-            const team = await groupedByDay(p)
-            const target = rowOf(p, dayOf(25))
-            await expect(target).toHaveAttribute('aria-expanded', 'false')
-            await toTop(target)
-            await expectHeldWhile(
-                p,
-                target,
-                () => pressToolbar(p, 'report-fold-all', 'Expand all'),
-                async () => {
-                    await expect(target).toHaveAttribute('aria-expanded', 'true')
-                    await expect(rowOf(p, 'Anchor 25')).toBeInViewport()
-                }
-            )
+        const { page: p, user } = freshMember
+        const team = await seedAnchorSales(p)
+        await groupedByDay(p)
+        const target = rowOf(p, dayOf(25))
+        await expect(target).toHaveAttribute('aria-expanded', 'false')
+        await toTop(target)
+        await expectHeldWhile(
+            p,
+            target,
+            () => pressToolbar(p, 'report-fold-all', 'Expand all'),
+            async () => {
+                await expect(target).toHaveAttribute('aria-expanded', 'true')
+                await expect(rowOf(p, 'Anchor 25')).toBeInViewport()
+            }
+        )
 
-            // A sale added in another browser makes a new day at the top; the report
-            // re-runs live, and the new day's rows make the list taller.
-            await toTop(target)
-            const height = await contentHeight(target)
-            await expectHeldWhile(
-                p,
-                target,
-                async () => {
-                    const rerun = p.waitForResponse('**/api/reports/run')
-                    await addSaleElsewhere(browser, user, team)
-                    await rerun
-                },
-                () => expect.poll(() => contentHeight(target)).toBeGreaterThan(height)
-            )
-        } finally {
-            await close()
-        }
+        // A sale added in another browser makes a new day at the top; the report
+        // re-runs live, and the new day's rows make the list taller.
+        await toTop(target)
+        const height = await contentHeight(target)
+        await expectHeldWhile(
+            p,
+            target,
+            async () => {
+                const rerun = p.waitForResponse('**/api/reports/run')
+                await addSaleElsewhere(browser, user, team)
+                await rerun
+            },
+            () => expect.poll(() => contentHeight(target)).toBeGreaterThan(height)
+        )
     })
 
     test('rows opening above a list that is moving keep the row in view in place', async ({
-        page,
+        p,
     }) => {
-        const { inviteePage: p, close } = await createInvitedUser(page, 'rptanchormv')
-        try {
-            await groupedByDay(p)
-            const target = rowOf(p, dayOf(25))
-            // The row above the target is still 2 px in view, so it is the first row
-            // in view while Expand all runs. A 4 px move then makes the target first,
-            // and the list keeps moving a pixel each frame until the groups open.
-            await toTop(target, 2)
-            const before = (await target.boundingBox())?.y ?? -1
-            const release = await holdRuns(p)
-            await pressToolbar(p, 'report-fold-all', 'Expand all')
-            await expect(p.getByTestId('report-updating')).toBeVisible()
-            const stop = await jiggleAndWatch(p, target, await listScroller(target))
-            release()
-            await p.unrouteAll({ behavior: 'wait' })
-            await expect(target).toHaveAttribute('aria-expanded', 'true')
-            await expect(rowOf(p, 'Anchor 25')).toBeInViewport()
-            const tops = await stop()
-            expect(tops.length).toBeGreaterThan(0)
-            const moved = Math.max(...tops.map(top => Math.abs(top - before)))
-            expect(moved, 'largest move of the row beyond the list moves').toBeLessThanOrEqual(2)
-        } finally {
-            await close()
-        }
+        await groupedByDay(p)
+        const target = rowOf(p, dayOf(25))
+        // The row above the target is still 2 px in view, so it is the first row
+        // in view while Expand all runs. A 4 px move then makes the target first,
+        // and the list keeps moving a pixel each frame until the groups open.
+        await toTop(target, 2)
+        const before = (await target.boundingBox())?.y ?? -1
+        const release = await holdRuns(p)
+        await pressToolbar(p, 'report-fold-all', 'Expand all')
+        await expect(p.getByTestId('report-updating')).toBeVisible()
+        const stop = await jiggleAndWatch(p, target, await listScroller(target))
+        release()
+        await p.unrouteAll({ behavior: 'wait' })
+        await expect(target).toHaveAttribute('aria-expanded', 'true')
+        await expect(rowOf(p, 'Anchor 25')).toBeInViewport()
+        const tops = await stop()
+        expect(tops.length).toBeGreaterThan(0)
+        const moved = Math.max(...tops.map(top => Math.abs(top - before)))
+        expect(moved, 'largest move of the row beyond the list moves').toBeLessThanOrEqual(2)
     })
 
     test('on a phone, rows opening above right after a wheel scroll move nothing in view', async ({
-        page,
+        p,
     }) => {
-        const { inviteePage: p, close } = await createInvitedUser(page, 'rptanchorph')
-        try {
-            await groupedByDay(p)
-            // At 844 px high the far end of the rows the list draws ahead crosses a row
-            // edge on the same scroll step as the top of the view does; the list then
-            // renders and takes the new first row anyway. At 800 px the two happen
-            // apart, so the step that changes the first row renders nothing. The test
-            // checks that it rendered nothing (below), so a geometry that closes that
-            // window fails the test.
-            await p.setViewportSize({ width: 390, height: 800 })
-            // The rows are drawn wrapped (by other code) before the list is used. The
-            // last column (booked) cannot share line 1 when one line does not fit.
-            const start = rowOf(p, dayOf(10))
-            const startId = ((await start.getAttribute('data-testid')) ?? '').replace(
-                'report-row-',
-                ''
-            )
-            const startBooked = p.getByTestId(`report-cell-booked-${startId}`)
-            await expect
-                .poll(async () => {
-                    const label = await start.boundingBox()
-                    const booked = await startBooked.boundingBox()
-                    return label && booked ? booked.y >= label.y + label.height - 1 : false
-                })
-                .toBe(true)
-            // Start so that the wheel steps take the next row exactly 2 px past the list
-            // top: the row change is then clear-cut (rows level with the edge are
-            // ambiguous), and it happens on a step of its own.
-            const next = rowOf(p, dayOf(11))
-            const height =
-                ((await next.boundingBox())?.y ?? 0) - ((await start.boundingBox())?.y ?? 0)
-            expect(height, 'a phone row is taller than a wheel step').toBeGreaterThan(WHEEL_STEP)
-            // Expand all is held while the list scrolls; it is let go as the row first
-            // in view scrolls away, so it lands just after that. The list is placed
-            // after the press: on a phone the toolbar is in the list's header, and the
-            // click scrolls it into view, so the list is at its top after the press.
-            const release = await holdRuns(p)
-            await pressToolbar(p, 'report-fold-all', 'Expand all')
-            await expect(p.getByTestId('report-updating')).toBeVisible()
-            await toTop(start, -((height % WHEEL_STEP) + 2))
-            const recorded = await scrollAndRecord(
-                p,
-                await listScroller(start),
-                WHEEL_STEP,
-                release
-            )
-            const { frames, renders, rows } = await recorded()
-            await p.unrouteAll({ behavior: 'wait' })
-            const opened = frames.findIndex(frame => frame.open > 0)
-            // The groups opened while the list was moving, not before or after.
-            expect(opened).toBeGreaterThan(0)
-            expect(frames.length - opened).toBeGreaterThanOrEqual(30)
-            // The list did not render from the step that changed the first row until
-            // the opened rows arrived: its first render after that step has more rows.
-            // A render there takes the new first row to hold, and a list that holds
-            // the row from the last render would then pass. So when other row heights
-            // or another window of rows drawn ahead make that step render, the test
-            // fails here.
-            const crossed = frames.findIndex(frame => frame.step === 0)
-            expect(crossed, 'the first row changed').toBeGreaterThan(0)
-            const sinceCrossed = renders.filter(render => render.frame >= crossed)
-            expect(sinceCrossed.length, 'the list rendered the opened rows').toBeGreaterThan(0)
-            expect(
-                sinceCrossed[0].rows,
-                'rows in the first render after the row change'
-            ).toBeGreaterThan(rows)
-            const found = jumps(frames)
-            // The frame the groups opened on was compared with the one before it, and
-            // no compared step met the end of the list.
-            expect(found.compared).toContain(opened)
-            expect(found.clamped).toEqual([])
-            expect(found.largest, 'largest jump beyond the scroll').toBeLessThanOrEqual(2)
-        } finally {
-            await close()
-        }
+        await groupedByDay(p)
+        // At 844 px high the far end of the rows the list draws ahead crosses a row
+        // edge on the same scroll step as the top of the view does; the list then
+        // renders and takes the new first row anyway. At 800 px the two happen
+        // apart, so the step that changes the first row renders nothing. The test
+        // checks that it rendered nothing (below), so a geometry that closes that
+        // window fails the test.
+        await p.setViewportSize({ width: 390, height: 800 })
+        // The rows are drawn wrapped (by other code) before the list is used. The
+        // last column (booked) cannot share line 1 when one line does not fit.
+        const start = rowOf(p, dayOf(10))
+        const startId = ((await start.getAttribute('data-testid')) ?? '').replace('report-row-', '')
+        const startBooked = p.getByTestId(`report-cell-booked-${startId}`)
+        await expect
+            .poll(async () => {
+                const label = await start.boundingBox()
+                const booked = await startBooked.boundingBox()
+                return label && booked ? booked.y >= label.y + label.height - 1 : false
+            })
+            .toBe(true)
+        // Start so that the wheel steps take the next row exactly 2 px past the list
+        // top: the row change is then clear-cut (rows level with the edge are
+        // ambiguous), and it happens on a step of its own.
+        const next = rowOf(p, dayOf(11))
+        const height = ((await next.boundingBox())?.y ?? 0) - ((await start.boundingBox())?.y ?? 0)
+        expect(height, 'a phone row is taller than a wheel step').toBeGreaterThan(WHEEL_STEP)
+        // Expand all is held while the list scrolls; it is let go as the row first
+        // in view scrolls away, so it lands just after that. The list is placed
+        // after the press: on a phone the toolbar is in the list's header, and the
+        // click scrolls it into view, so the list is at its top after the press.
+        const release = await holdRuns(p)
+        await pressToolbar(p, 'report-fold-all', 'Expand all')
+        await expect(p.getByTestId('report-updating')).toBeVisible()
+        await toTop(start, -((height % WHEEL_STEP) + 2))
+        const recorded = await scrollAndRecord(p, await listScroller(start), WHEEL_STEP, release)
+        const { frames, renders, rows } = await recorded()
+        await p.unrouteAll({ behavior: 'wait' })
+        const opened = frames.findIndex(frame => frame.open > 0)
+        // The groups opened while the list was moving, not before or after.
+        expect(opened).toBeGreaterThan(0)
+        expect(frames.length - opened).toBeGreaterThanOrEqual(30)
+        // The list did not render from the step that changed the first row until
+        // the opened rows arrived: its first render after that step has more rows.
+        // A render there takes the new first row to hold, and a list that holds
+        // the row from the last render would then pass. So when other row heights
+        // or another window of rows drawn ahead make that step render, the test
+        // fails here.
+        const crossed = frames.findIndex(frame => frame.step === 0)
+        expect(crossed, 'the first row changed').toBeGreaterThan(0)
+        const sinceCrossed = renders.filter(render => render.frame >= crossed)
+        expect(sinceCrossed.length, 'the list rendered the opened rows').toBeGreaterThan(0)
+        expect(
+            sinceCrossed[0].rows,
+            'rows in the first render after the row change'
+        ).toBeGreaterThan(rows)
+        const found = jumps(frames)
+        // The frame the groups opened on was compared with the one before it, and
+        // no compared step met the end of the list.
+        expect(found.compared).toContain(opened)
+        expect(found.clamped).toEqual([])
+        expect(found.largest, 'largest jump beyond the scroll').toBeLessThanOrEqual(2)
     })
 })

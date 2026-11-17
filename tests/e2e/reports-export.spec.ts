@@ -4,15 +4,13 @@ import { authStorageKey } from './auth-key-helpers'
 import { openSettingsItem, skipWithoutReportsStub, waitForTableFit } from './helpers'
 import { downloadReport, openExportMenu } from './report-view-helpers'
 import {
-    addSale,
-    addTeam,
     cellOf,
     holdRuns,
     loginAsShippedOwner,
-    openReportStub,
     openTeamBalance,
     pressToolbar,
     rowOf,
+    seedStub,
     setPeriod,
     TEAM_BALANCE_TITLE,
     uniqueName,
@@ -53,9 +51,10 @@ async function seedSale(page: Page, prefix: string): Promise<string> {
     await loginAsShippedOwner(page)
     const team = uniqueName(`${prefix} team`)
     const customer = uniqueName(`${prefix} rep`)
-    await openReportStub(page)
-    await addTeam(page, team)
-    await addSale(page, { team, customer, amount: SALE_AMOUNT, cost: 100, day: SALE_DAY })
+    await seedStub(page, {
+        teams: [{ name: team }],
+        sales: [{ team, customer, amount: SALE_AMOUNT, cost: 100, day: SALE_DAY }],
+    })
     return customer
 }
 

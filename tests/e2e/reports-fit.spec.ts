@@ -1,15 +1,13 @@
-import { expect, type Page, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub, waitForTableFit } from './helpers'
+import type { Page } from '@playwright/test'
+import { skipWithoutReportsStub, waitForTableFit } from './helpers'
+import { expect, test } from './member-fixtures'
 import {
     addColumn,
-    addSale,
-    addSales,
-    addTeam,
     chooseOption,
-    openReportStub,
     openReportsHub,
     SALES_SOURCE,
     saveNewReport,
+    seedStub,
     startReport,
     uniqueName,
 } from './reports-helpers'
@@ -74,75 +72,72 @@ test.describe('report fit at four widths', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a ledger-like report fits 390, 768, 1024 and 1280 with nothing cut that must not be', async ({
-        page,
+        freshMember,
     }) => {
-        const { inviteePage: p, close } = await createInvitedUser(page, 'rptfit')
-        try {
-            const team = uniqueName('Northwest Regional Wholesale')
-            await openReportStub(p)
-            await addTeam(p, team)
-            // Six-figure amounts: wider than the measure's worst case, so the
-            // columns must take their width from the rows.
-            await addSales(p, {
-                team,
-                customerPrefix: 'Fitco Wholesale Partners of the Northwest',
-                count: 5,
-                firstDay: '2026-01-05',
-                firstAmount: 12345678,
-                cost: 4000000,
-                quantity: 12,
-            })
-            await addSale(p, {
-                team,
-                customer: 'Fitco Wholesale Partners of the Northwest 05',
-                amount: 12345683,
-                cost: 4000000,
-                quantity: 12,
-                day: '2026-01-10',
-                status: 'paid',
-            })
-            await openReportsHub(p)
-            await startReport(p, SALES_SOURCE)
-            for (const keys of [
-                ['status'],
-                ['currency'],
-                ['team', 'name'],
-                ['day'],
-                ['amount'],
-                ['cost'],
-                ['quantity'],
-            ]) {
-                await addColumn(p, keys)
-            }
-            await chooseOption(p, 'report-builder-column-5-aggregate', 'sum')
-            await chooseOption(p, 'report-builder-column-6-aggregate', 'sum')
-            await p.getByTestId('report-builder-section-group').click()
-            await p.getByTestId('report-builder-group-add').click()
-            await chooseOption(p, 'report-builder-group-0-col', 'status')
-            await p.getByTestId('report-builder-group-0-open').click()
-            await saveNewReport(p, uniqueName('Fit'))
+        const p = freshMember.page
+        const team = uniqueName('Northwest Regional Wholesale')
+        const customer = 'Fitco Wholesale Partners of the Northwest'
+        // Six-figure amounts: wider than the measure's worst case, so the
+        // columns must take their width from the rows. Five open sales one day
+        // apart, each amount one more, then a paid one.
+        const openSales = Array.from({ length: 5 }, (_, i) => ({
+            team,
+            customer: `${customer} 0${i}`,
+            amount: 12345678 + i,
+            cost: 4000000,
+            quantity: 12,
+            day: `2026-01-0${5 + i}`,
+        }))
+        await seedStub(p, {
+            teams: [{ name: team }],
+            sales: [
+                ...openSales,
+                {
+                    team,
+                    customer: `${customer} 05`,
+                    amount: 12345683,
+                    cost: 4000000,
+                    quantity: 12,
+                    day: '2026-01-10',
+                    status: 'paid',
+                },
+            ],
+        })
+        await openReportsHub(p)
+        await startReport(p, SALES_SOURCE)
+        for (const keys of [
+            ['status'],
+            ['currency'],
+            ['team', 'name'],
+            ['day'],
+            ['amount'],
+            ['cost'],
+            ['quantity'],
+        ]) {
+            await addColumn(p, keys)
+        }
+        await chooseOption(p, 'report-builder-column-5-aggregate', 'sum')
+        await chooseOption(p, 'report-builder-column-6-aggregate', 'sum')
+        await p.getByTestId('report-builder-section-group').click()
+        await p.getByTestId('report-builder-group-add').click()
+        await chooseOption(p, 'report-builder-group-0-col', 'status')
+        await p.getByTestId('report-builder-group-0-open').click()
+        await saveNewReport(p, uniqueName('Fit'))
 
-            for (const size of WIDTHS) {
-                await p.setViewportSize(size)
-                await expect(p.getByTestId('report-table')).toHaveCSS('opacity', '1')
-                const layout = await waitForTableFit(p)
-                // Eight columns never fit one line on a phone, and there is no arrangement.
-                if (size.width === 390) expect(layout).toBe('auto')
-                // The checks below read the drawn cells: there must be some.
-                // The Total's id carries its currency (total:["USD"]).
-                await expect(p.locator('[data-testid^="report-row-total"]').first()).toBeVisible()
-                await expect(
-                    p.locator('[data-testid^="report-cell-amount-"]').first()
-                ).toBeVisible()
-                await expect
-                    .poll(() => fitProblems(p), { message: `fit at ${size.width}` })
-                    .toEqual([])
-                expect(
-                    await p.evaluate(() => document.documentElement.scrollWidth)
-                ).toBeLessThanOrEqual(size.width)
-            }
-        } finally {
-            await close()
+        for (const size of WIDTHS) {
+            await p.setViewportSize(size)
+            await expect(p.getByTestId('report-table')).toHaveCSS('opacity', '1')
+            const layout = await waitForTableFit(p)
+            // Eight columns never fit one line on a phone, and there is no arrangement.
+            if (size.width === 390) expect(layout).toBe('auto')
+            // The checks below read the drawn cells: there must be some.
+            // The Total's id carries its currency (total:["USD"]).
+            await expect(p.locator('[data-testid^="report-row-total"]').first()).toBeVisible()
+            await expect(p.locator('[data-testid^="report-cell-amount-"]').first()).toBeVisible()
+            await expect.poll(() => fitProblems(p), { message: `fit at ${size.width}` }).toEqual([])
+            expect(
+                await p.evaluate(() => document.documentElement.scrollWidth)
+            ).toBeLessThanOrEqual(size.width)
         }
     })
 })

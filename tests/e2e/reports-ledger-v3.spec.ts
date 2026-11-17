@@ -1,8 +1,7 @@
-import { expect, type Page, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import type { Page } from '@playwright/test'
+import { skipWithoutReportsStub } from './helpers'
+import { expect, test } from './member-fixtures'
 import {
-    addSale,
-    addTeam,
     cellOf,
     chooseOption,
     detailLabels,
@@ -10,7 +9,6 @@ import {
     loginAsShippedOwner,
     MAX_PAGE,
     openPagedTeams,
-    openReportStub,
     openReportsHub,
     openTeamBalance,
     pressToolbar,
@@ -19,6 +17,7 @@ import {
     SALES_SOURCE,
     saveNewReport,
     scrollRowTo,
+    seedStub,
     showTeams,
     startTeamSales,
     USUAL_PAGE,
@@ -49,18 +48,16 @@ const OPENING = 'Before the period'
  * 15.00, 19.00, 20.00; the Total's balance 20.00.
  */
 async function seedTeam(page: Page, team: string) {
-    await openReportStub(page)
-    await addTeam(page, team)
-    const sales = [
-        ['Old', 1000, `${YEAR - 1}-12-15`],
-        ['Ann', 200, `${YEAR}-01-05`],
-        ['Bea', 300, `${YEAR}-01-05`],
-        ['Cy', 400, `${YEAR}-01-07`],
-        ['Dee', 100, `${YEAR}-01-08`],
-    ] as const
-    for (const [customer, amount, day] of sales) {
-        await addSale(page, { team, customer, amount, cost: 0, day })
-    }
+    await seedStub(page, {
+        teams: [{ name: team }],
+        sales: [
+            { team, customer: 'Old', amount: 1000, cost: 0, day: `${YEAR - 1}-12-15` },
+            { team, customer: 'Ann', amount: 200, cost: 0, day: `${YEAR}-01-05` },
+            { team, customer: 'Bea', amount: 300, cost: 0, day: `${YEAR}-01-05` },
+            { team, customer: 'Cy', amount: 400, cost: 0, day: `${YEAR}-01-07` },
+            { team, customer: 'Dee', amount: 100, cost: 0, day: `${YEAR}-01-08` },
+        ],
+    })
 }
 
 /** Signs in, seeds one team and opens the report on it alone. */
@@ -508,81 +505,80 @@ test.describe('general-ledger: report engine v3', () => {
     // and a row that starts each group (Task 18). The asked period (this fiscal year)
     // keeps every sale, all dated this January.
     test('the builder counts a lookup on this row, shows a formula on group and total rows, and starts each group with a row', async ({
-        page,
+        freshMember,
     }) => {
-        const { inviteePage: p, close } = await createInvitedUser(page, 'rptv3build')
-        try {
-            const team = uniqueName('Built')
-            await openReportStub(p)
-            await addTeam(p, team)
-            await addSale(p, { team, customer: 'Ada', amount: 1000, cost: 0, day: `${YEAR}-01-05` })
-            await addSale(p, { team, customer: 'Abe', amount: 500, cost: 0, day: `${YEAR}-01-05` })
-            await addSale(p, { team, customer: 'Cy', amount: 200, cost: 0, day: `${YEAR}-01-09` })
-            await openReportsHub(p)
-            // Columns customer (0), team (1) and the amount summed (2).
-            await startTeamSales(p)
+        const p = freshMember.page
+        const team = uniqueName('Built')
+        await seedStub(p, {
+            teams: [{ name: team }],
+            sales: [
+                { team, customer: 'Ada', amount: 1000, cost: 0, day: `${YEAR}-01-05` },
+                { team, customer: 'Abe', amount: 500, cost: 0, day: `${YEAR}-01-05` },
+                { team, customer: 'Cy', amount: 200, cost: 0, day: `${YEAR}-01-09` },
+            ],
+        })
+        await openReportsHub(p)
+        // Columns customer (0), team (1) and the amount summed (2).
+        await startTeamSales(p)
 
-            // How many sales share this row's day: Count, with This row's field.
-            await p.getByTestId('report-builder-add-formula').click()
-            const f = 'report-builder-column-3-formula'
-            await chooseOption(p, `${f}-root-part`, 'lookup')
-            await chooseOption(p, `${f}-root-source`, SALES_SOURCE)
-            await chooseOption(p, `${f}-0-part`, 'eq')
-            await chooseOption(p, `${f}-0-0-part`, 'path')
-            await pickIn(p, `${f}-0-0-path`, 'report-builder-pick-field-day')
-            await chooseOption(p, `${f}-0-1-part`, 'outer')
-            await pickIn(p, `${f}-0-1-outer`, 'report-builder-pick-field-day')
-            await chooseOption(p, `${f}-1-part`, 'path')
-            await pickIn(p, `${f}-1-path`, 'report-builder-pick-field-customer')
-            await chooseOption(p, `${f}-root-pick`, 'count')
-            await expect(p.getByTestId(`${f}-summary`)).toHaveText(
-                "= count Customer in Stub sales where Day = this row's Day"
-            )
+        // How many sales share this row's day: Count, with This row's field.
+        await p.getByTestId('report-builder-add-formula').click()
+        const f = 'report-builder-column-3-formula'
+        await chooseOption(p, `${f}-root-part`, 'lookup')
+        await chooseOption(p, `${f}-root-source`, SALES_SOURCE)
+        await chooseOption(p, `${f}-0-part`, 'eq')
+        await chooseOption(p, `${f}-0-0-part`, 'path')
+        await pickIn(p, `${f}-0-0-path`, 'report-builder-pick-field-day')
+        await chooseOption(p, `${f}-0-1-part`, 'outer')
+        await pickIn(p, `${f}-0-1-outer`, 'report-builder-pick-field-day')
+        await chooseOption(p, `${f}-1-part`, 'path')
+        await pickIn(p, `${f}-1-path`, 'report-builder-pick-field-customer')
+        await chooseOption(p, `${f}-root-pick`, 'count')
+        await expect(p.getByTestId(`${f}-summary`)).toHaveText(
+            "= count Customer in Stub sales where Day = this row's Day"
+        )
 
-            // Range start or end: an asked period offers its first day (column 4).
-            await p.getByTestId('report-builder-section-filter').click()
-            await pickIn(p, 'report-builder-filter-add-condition', 'report-builder-pick-field-day')
-            await chooseOption(p, 'report-builder-filter-0-op', 'between')
-            await p.getByTestId('report-builder-filter-0-ask').click()
-            await chooseOption(p, 'report-builder-filter-0-default', 'thisFiscalYear')
-            await p.getByTestId('report-builder-add-formula').click()
-            const b = 'report-builder-column-4-formula'
-            await chooseOption(p, `${b}-root-part`, 'bound')
-            await expect(p.getByTestId(`${b}-root-bound`)).toContainText('Day start')
+        // Range start or end: an asked period offers its first day (column 4).
+        await p.getByTestId('report-builder-section-filter').click()
+        await pickIn(p, 'report-builder-filter-add-condition', 'report-builder-pick-field-day')
+        await chooseOption(p, 'report-builder-filter-0-op', 'between')
+        await p.getByTestId('report-builder-filter-0-ask').click()
+        await chooseOption(p, 'report-builder-filter-0-default', 'thisFiscalYear')
+        await p.getByTestId('report-builder-add-formula').click()
+        const b = 'report-builder-column-4-formula'
+        await chooseOption(p, `${b}-root-part`, 'bound')
+        await expect(p.getByTestId(`${b}-root-bound`)).toContainText('Day start')
 
-            // On group and total rows the amount shows its largest sale, not the sum.
-            const r = 'report-builder-column-2-rollup'
-            await chooseOption(p, r, 'custom')
-            await chooseOption(p, `${r}-formula-root-part`, 'largest')
-            await chooseOption(p, `${r}-formula-0-part`, 'path')
-            await pickIn(p, `${r}-formula-0-path`, 'report-builder-pick-field-amount')
+        // On group and total rows the amount shows its largest sale, not the sum.
+        const r = 'report-builder-column-2-rollup'
+        await chooseOption(p, r, 'custom')
+        await chooseOption(p, `${r}-formula-root-part`, 'largest')
+        await chooseOption(p, `${r}-formula-0-part`, 'path')
+        await pickIn(p, `${r}-formula-0-path`, 'report-builder-pick-field-amount')
 
-            // Open teams, each starting with a row that adds up the team's amounts.
-            await p.getByTestId('report-builder-section-group').click()
-            await p.getByTestId('report-builder-group-add').click()
-            await chooseOption(p, 'report-builder-group-0-col', 'team')
-            await p.getByTestId('report-builder-group-0-open').click()
-            const o = 'report-builder-group-0-opening'
-            await p.getByTestId(o).click()
-            await p.getByTestId(`${o}-label`).fill('Brought forward')
-            await p.getByTestId(`${o}-cell-amount-add`).click()
-            const cell = `${o}-cell-amount-formula`
-            await chooseOption(p, `${cell}-root-part`, 'sum')
-            await chooseOption(p, `${cell}-0-part`, 'path')
-            await pickIn(p, `${cell}-0-path`, 'report-builder-pick-field-amount')
-            await saveNewReport(p, uniqueName('Built v3'))
+        // Open teams, each starting with a row that adds up the team's amounts.
+        await p.getByTestId('report-builder-section-group').click()
+        await p.getByTestId('report-builder-group-add').click()
+        await chooseOption(p, 'report-builder-group-0-col', 'team')
+        await p.getByTestId('report-builder-group-0-open').click()
+        const o = 'report-builder-group-0-opening'
+        await p.getByTestId(o).click()
+        await p.getByTestId(`${o}-label`).fill('Brought forward')
+        await p.getByTestId(`${o}-cell-amount-add`).click()
+        const cell = `${o}-cell-amount-formula`
+        await chooseOption(p, `${cell}-root-part`, 'sum')
+        await chooseOption(p, `${cell}-0-part`, 'path')
+        await pickIn(p, `${cell}-0-path`, 'report-builder-pick-field-amount')
+        await saveNewReport(p, uniqueName('Built v3'))
 
-            const ids = await rowIds(p)
-            const group = ids.findIndex(id => id.startsWith('g:'))
-            expect(ids[group + 1]).toMatch(/^opening:/)
-            await expect(await cellOf(p, 'amount', 'Brought forward')).toHaveText(/^\$?17\.00$/)
-            await expect(await cellOf(p, 'amount', 'Ada')).toHaveText('10.00')
-            await expect(await cellOf(p, 'amount', `Total ${team}`)).toHaveText(/^\$?10\.00$/)
-            await expect(await cellOf(p, 'formula', 'Ada')).toHaveText('2')
-            await expect(await cellOf(p, 'formula', 'Abe')).toHaveText('2')
-            await expect(await cellOf(p, 'formula', 'Cy')).toHaveText('1')
-        } finally {
-            await close()
-        }
+        const ids = await rowIds(p)
+        const group = ids.findIndex(id => id.startsWith('g:'))
+        expect(ids[group + 1]).toMatch(/^opening:/)
+        await expect(await cellOf(p, 'amount', 'Brought forward')).toHaveText(/^\$?17\.00$/)
+        await expect(await cellOf(p, 'amount', 'Ada')).toHaveText('10.00')
+        await expect(await cellOf(p, 'amount', `Total ${team}`)).toHaveText(/^\$?10\.00$/)
+        await expect(await cellOf(p, 'formula', 'Ada')).toHaveText('2')
+        await expect(await cellOf(p, 'formula', 'Abe')).toHaveText('2')
+        await expect(await cellOf(p, 'formula', 'Cy')).toHaveText('1')
     })
 })

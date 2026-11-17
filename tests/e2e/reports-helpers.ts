@@ -138,6 +138,33 @@ export async function addSale(page: Page, sale: StubSale) {
     await expect(page.getByTestId('salesstub-sale-saved')).toHaveText(`Saved ${sale.customer}`)
 }
 
+export interface StubData {
+    teams?: { name: string; region?: keyof typeof REGION_LABELS }[]
+    sales?: StubSale[]
+    returns?: StubReturn[]
+}
+
+/**
+ * Saves teams, sales and returns in one save through the stub's "Data set" form,
+ * in the order given (teams, then sales, then returns). Use it for a spec's seed:
+ * a round of the single forms for each row was most of the time of many specs. A
+ * sale or a return can name a team of the set or one saved before. Opens the stub
+ * screen first when the page is not on it.
+ */
+export async function seedStub(page: Page, data: StubData) {
+    if ((await page.getByTestId('salesstub-landing').count()) === 0) await openReportStub(page)
+    const label = uniqueName('set')
+    const json = JSON.stringify({
+        label,
+        teams: (data.teams ?? []).map(team => ({ region: 'north', ...team })),
+        sales: (data.sales ?? []).map(sale => ({ quantity: 0, status: 'open', ...sale })),
+        returns: data.returns ?? [],
+    })
+    await page.getByTestId('salesstub-data-json').fill(json)
+    await page.getByTestId('salesstub-data-create').click()
+    await expect(page.getByTestId('salesstub-data-saved')).toHaveText(`Saved ${label}`)
+}
+
 export interface StubSales {
     team: string
     /** Customers are named `${customerPrefix} 00`, `${customerPrefix} 01`, … */
@@ -332,19 +359,19 @@ export async function openPagedTeams(page: Page, prefix: string, opts: PagedTeam
     const stem = uniqueName(prefix)
     const letters = 'ABCDEFGH'.slice(0, 2 + smallTeams)
     const teams = [...letters].map(letter => `${stem} ${letter}`)
-    await openReportStub(page)
-    for (const [i, team] of teams.entries()) {
-        await addTeam(page, team)
-        await addSales(page, {
+    // The first two teams have six sales, from 1 February, a day apart and a cent
+    // up each; the rest have one.
+    const sales = teams.flatMap((team, i) =>
+        Array.from({ length: i < 2 ? 6 : 1 }, (_, n) => ({
             team,
-            customerPrefix: `${stem}${letters[i]}`,
-            count: i < 2 ? 6 : 1,
-            firstDay: `${YEAR}-02-01`,
-            firstAmount: baseAmount * (i + 1),
+            customer: `${stem}${letters[i]} ${String(n).padStart(2, '0')}`,
+            amount: baseAmount * (i + 1) + n,
             cost: 0,
             quantity: 1,
-        })
-    }
+            day: `${YEAR}-02-${String(n + 1).padStart(2, '0')}`,
+        }))
+    )
+    await seedStub(page, { teams: teams.map(name => ({ name })), sales })
     const cursors: string[] = []
     const sent: SentRun[] = []
     // From the refused next page until the test calls releaseReruns, a rerun of the
