@@ -122,7 +122,9 @@ type Link struct {
 	Label       string
 	Target      string // the target source's key
 	Cardinality Cardinality
-	// Field is, for ToOne, the single relation column on this source.
+	// Field is, for ToOne, the single relation column on this source. On a
+	// to-one link between two unions a part may map it to a text column that
+	// holds the id of a row of one of the target's parts.
 	Field string
 	// BackField is, for ToMany, the single relation column on the target
 	// that points back at this source.

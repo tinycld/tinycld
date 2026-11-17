@@ -1246,10 +1246,30 @@ reports.RegisterSource(reports.Source{
   groups, labels, fill, param options, lookups (a sum across the parts is one
   source, one currency) and change topics (every part's collection). A
   row's id is its part record's id.
+- A to-one link between two unions may follow a text column. A relation
+  points at one collection, so a part cannot use one to name a row of
+  whichever target part holds it. When the link's source and its target are
+  both unions, a part may map the link's `Field` to a visible text column
+  that holds the id of a row of one of the target's parts. Other parts of the
+  same union may still map a relation. A to-many link's `BackField` must
+  still be a relation. The run joins the text id to the target union's rows
+  as it joins a relation (`target.id = row.<Field>`), so the target's list
+  rules still apply: a row whose target the reader cannot list gets no link.
+  The join names no part, so the stored id must be the id of a row of one of
+  the target's parts, and ids must be unique across the target's parts
+  (PocketBase's random 15-character ids are). `CheckSources` refuses a text
+  link column on a source or target that is not a union, or on a to-many
+  link (`"x" is not a relation field of "c"`), a hidden text column
+  (`text "x" of "c" is hidden from the API`), a column that is neither text
+  nor a relation (`"x" is not a relation or text field of "c"`), and a
+  column that does not exist (`column "x" of "c" does not exist`). It cannot
+  check that each stored id names a target row: an id that names none, or a
+  row the reader cannot see, reads as no link.
 
 - Every link declares its cardinality. A to-one link names its single
   relation `Field` on this source. A to-many link names its `BackField`: the
-  single relation on the target that points back at this source.
+  single relation on the target that points back at this source. A to-one
+  link between two unions may read a text id column instead (see above).
 - Field types are `Text`, `Number`, `Money` (integer cents), `Date`,
   `DateTime`, `Bool`, `Select` (with `Options` for the labels) and
   `Relation`. A money field names a `Currency` text field of the same source,
@@ -1354,7 +1374,8 @@ When the server starts, core checks every source against the database:
 
 - The collection and each column exist, with matching types.
 - No column is hidden from the API.
-- Each link follows its relation.
+- Each link follows its relation (or, for a to-one link between two unions, a
+  text id column).
 - The collection's list rule can be built for a reader.
 
 A source that fails is refused: core logs it, and reports cannot use it. A
