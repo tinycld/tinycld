@@ -14,12 +14,13 @@ import (
 
 // CheckSources checks every registered source against app's database: its
 // collection and columns exist with matching types, no column is hidden from
-// the API, each link follows a single relation to its target, and the
-// collection's list rule can be built for a reader. A source that fails, or
-// links to one that fails, is refused for app: Sources(app) leaves it out and
-// a report on app that names it gets an unknown-source error. Each call
-// replaces app's refusals and changes no other app's. The result names every
-// refused source and why.
+// the API, each link follows a single relation to its target (or, for a
+// to-one link between two unions, a text column that holds the target row's
+// id), and the collection's list rule can be built for a reader. A source
+// that fails, or links to one that fails, is refused for app: Sources(app)
+// leaves it out and a report on app that names it gets an unknown-source
+// error. Each call replaces app's refusals and changes no other app's. The
+// result names every refused source and why.
 //
 // The server runs it once for each app at start, after migrations. A package
 // calls it in its tests after its migrations apply, so a broken source fails
@@ -268,8 +269,8 @@ func typeClass(t string) string {
 	return t
 }
 
-// ownedColumn is a stored relation column a link follows: its collection and
-// column name.
+// ownedColumn is a stored column (relation, or text id) a link follows: its
+// collection and column name.
 type ownedColumn struct{ collection, column string }
 
 // linkOwners are the stored columns a source's key reads: on a one-collection
@@ -306,7 +307,8 @@ func sourceCollections(app core.App, src *Source) ([]*core.Collection, string) {
 // on this source, a to-many link's BackField on its target, each a single
 // visible relation that points at the other side. On a union the relation is
 // every part's column for that key, and the other side's collection is any of
-// its parts'.
+// its parts'. A to-one link between two unions may instead read a visible
+// text column of a part that holds the id of a row of the target.
 func checkLink(app core.App, src *Source, l Link) string {
 	target := sources[l.Target]
 	if target == nil {
@@ -329,20 +331,42 @@ func checkLink(app core.App, src *Source, l Link) string {
 	} else if len(owners) == 0 {
 		return fmt.Sprintf("no part of %q maps %q", src.Key, l.Field)
 	}
+	// A relation points at one collection, so a union part cannot link by one
+	// to a row of whichever target part holds it. On a to-one link between
+	// two unions a part may store that id in a text column instead. The run
+	// joins it to the target union's rule rows by id, as it joins a relation,
+	// so the target parts' list rules still decide whether the row links.
+	textOK := l.Cardinality == ToOne && len(src.Parts) > 0 && len(target.Parts) > 0
 	for _, o := range owners {
 		owner, err := app.FindCollectionByNameOrId(o.collection)
 		if err != nil {
 			return fmt.Sprintf("collection %q does not exist", o.collection)
 		}
-		if msg := relationCheck(owner, o.column, pointsAt); msg != "" {
+		if msg := relationCheck(owner, o.column, pointsAt, textOK); msg != "" {
 			return msg
 		}
 	}
 	return ""
 }
 
-func relationCheck(owner *core.Collection, column string, pointsAt []*core.Collection) string {
-	rel, ok := owner.Fields.GetByName(column).(*core.RelationField)
+// relationCheck checks one stored column a link follows: a single visible
+// relation that points at a collection of pointsAt, or, when textOK, a
+// visible text column that holds such a row's id.
+func relationCheck(owner *core.Collection, column string, pointsAt []*core.Collection, textOK bool) string {
+	field := owner.Fields.GetByName(column)
+	if field == nil {
+		return fmt.Sprintf("column %q of %q does not exist", column, owner.Name)
+	}
+	if text, isText := field.(*core.TextField); isText && textOK {
+		if text.GetHidden() {
+			return fmt.Sprintf("text %q of %q is hidden from the API", column, owner.Name)
+		}
+		return ""
+	}
+	rel, ok := field.(*core.RelationField)
+	if !ok && textOK {
+		return fmt.Sprintf("%q is not a relation or text field of %q", column, owner.Name)
+	}
 	if !ok {
 		return fmt.Sprintf("%q is not a relation field of %q", column, owner.Name)
 	}
