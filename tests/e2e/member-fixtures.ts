@@ -1,4 +1,10 @@
-import { type Browser, test as base, type Page, type WorkerInfo } from '@playwright/test'
+import {
+    type Browser,
+    type BrowserContext,
+    test as base,
+    type Page,
+    type WorkerInfo,
+} from '@playwright/test'
 import {
     acceptInvite,
     appShell,
@@ -7,6 +13,7 @@ import {
     openMembers,
     sendInvite,
 } from './helpers.ts'
+import { settleRealtimeReleases, trackRealtimeClients } from './realtime-release.ts'
 
 // Cheap throwaway members for specs whose rows must be apart from every other
 // spec's (a report reads all the rows its reader may see, so a shared user sees
@@ -61,9 +68,17 @@ async function inviteMember(
     const user = newInvitedUser(label)
     const token = await sendInvite(ownerMembersPage, user)
     const context = await browser.newContext(contextOptions(info))
+    trackRealtimeClients(context)
     const page = await context.newPage()
     await acceptInvite(page, token, user, name)
     return { user, context, page }
+}
+
+// Each context here is signed in, so its close leaves realtime clients that
+// the fork keeps detached until they are released (see realtime-release.ts).
+async function closeTracked(context: BrowserContext) {
+    await context.close()
+    await settleRealtimeReleases()
 }
 
 // The shared member of each spec file that called shareMember, by file path.
@@ -73,10 +88,11 @@ export const test = base.extend<{ p: Page; freshMember: FreshMember }, { ownerMe
     ownerMembersPage: [
         async ({ browser }, use, workerInfo) => {
             const context = await browser.newContext(contextOptions(workerInfo))
+            trackRealtimeClients(context)
             const page = await context.newPage()
             await openMembers(page)
             await use(page)
-            await context.close()
+            await closeTracked(context)
         },
         { scope: 'worker' },
     ],
@@ -91,11 +107,12 @@ export const test = base.extend<{ p: Page; freshMember: FreshMember }, { ownerMe
             ...contextOptions(testInfo),
             storageState: session.storageState,
         })
+        trackRealtimeClients(context)
         const page = await context.newPage()
         await page.goto('/')
         await appShell(page).waitFor({ state: 'visible', timeout: 15_000 })
         await use(page)
-        await context.close()
+        await closeTracked(context)
     },
 
     /** A new member for this test only, signed in on its own page. */
@@ -107,7 +124,7 @@ export const test = base.extend<{ p: Page; freshMember: FreshMember }, { ownerMe
             'fresh'
         )
         await use({ page, user })
-        await context.close()
+        await closeTracked(context)
     },
 })
 
@@ -134,7 +151,7 @@ export function shareMember(
         )
         if (seed) await seed(page)
         shared.set(testInfo.file, { user, storageState: await context.storageState() })
-        await context.close()
+        await closeTracked(context)
     })
 }
 
