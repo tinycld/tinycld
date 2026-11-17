@@ -71,8 +71,8 @@ You cannot change your own username. Ask another owner or admin.
 To remove someone, open **Settings → Members**, select the person, and click
 **Remove**. Choose what happens to their work:
 
-- **Keep their work** — their files, events and comments stay, shown as by
-  "Deleted user". This is the default.
+- **Keep their work** — their files, events and comments stay, with their name
+  on them. This is the default.
 - **Reassign to another member** — the work moves to the person you choose.
 - **Delete everything** — the work is deleted. You cannot undo this.
 

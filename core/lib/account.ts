@@ -59,9 +59,9 @@ export async function enableAccount(userId: string): Promise<void> {
 // deleteAccount irreversibly anonymizes the caller's own account, confirmed by
 // re-typing their email.
 //
-// `plan` is optional: omitting it leaves authored content in place (attributed
-// to "Deleted user"), which is the safe default — a malformed request must
-// never be read as "delete everything I ever wrote".
+// `plan` is optional: omitting it leaves authored content in place, still
+// credited to the user by name, which is the safe default — a malformed
+// request must never be read as "delete everything I ever wrote".
 export async function deleteMyAccount(email: string, plan?: OffboardPlan): Promise<OffboardResult> {
     return (await pb.send('/api/account/delete', {
         method: 'POST',

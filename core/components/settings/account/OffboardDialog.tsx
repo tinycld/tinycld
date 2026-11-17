@@ -239,7 +239,7 @@ function KeepOption({
         >
             <Text className="text-foreground font-semibold">Keep their work</Text>
             <Text className="text-muted-foreground text-[13px]">
-                Files, events and comments stay, shown as by “Deleted user”.
+                Files, events and comments stay, with their name on them.
             </Text>
         </Pressable>
     )

@@ -120,13 +120,14 @@ func TestOffboardUser_ReassignRewritesOwnedFKs(t *testing.T) {
 		t.Errorf("created_by: got %s, want %s", updated.GetString("created_by"), bob.Id)
 	}
 
-	// Alice's PII is scrubbed.
+	// Alice keeps her name, so her work stays credited to her; her email and
+	// sign-in are scrubbed.
 	scrubbed, err := app.FindRecordById("users", alice.Id)
 	if err != nil {
 		t.Fatalf("re-find alice: %v", err)
 	}
-	if scrubbed.GetString("name") != "Deleted user" {
-		t.Errorf("name = %q, want %q", scrubbed.GetString("name"), "Deleted user")
+	if scrubbed.GetString("name") != "T" || !IsOffboarded(scrubbed) {
+		t.Errorf("name = %q offboarded=%v, want the name kept and offboarded", scrubbed.GetString("name"), IsOffboarded(scrubbed))
 	}
 	if scrubbed.Email() == "alice@test.local" {
 		t.Error("expected email to be scrubbed")
@@ -155,8 +156,8 @@ func TestOffboardUser_KeepLeavesContent(t *testing.T) {
 		t.Errorf("created_by = %q, want %q", kept.GetString("created_by"), alice.Id)
 	}
 	scrubbed, _ := app.FindRecordById("users", alice.Id)
-	if scrubbed.GetString("name") != "Deleted user" {
-		t.Errorf("name = %q, want %q", scrubbed.GetString("name"), "Deleted user")
+	if scrubbed.GetString("name") != "T" || !IsOffboarded(scrubbed) {
+		t.Errorf("name = %q offboarded=%v, want the name kept and offboarded", scrubbed.GetString("name"), IsOffboarded(scrubbed))
 	}
 }
 
@@ -195,7 +196,7 @@ func TestOffboardUser_ReassignRequiresSuccessor(t *testing.T) {
 
 	// Alice must NOT have been anonymized on a rejected plan.
 	still, _ := app.FindRecordById("users", alice.Id)
-	if still.GetString("name") == "Deleted user" {
+	if IsOffboarded(still) {
 		t.Error("user should not be anonymized when the plan is rejected")
 	}
 }
@@ -327,8 +328,8 @@ func TestAnonymizeUser(t *testing.T) {
 		t.Fatalf("AnonymizeUser: %v", err)
 	}
 	scrubbed, _ := app.FindRecordById("users", alice.Id)
-	if scrubbed.GetString("name") != "Deleted user" {
-		t.Errorf("name = %q, want %q", scrubbed.GetString("name"), "Deleted user")
+	if scrubbed.GetString("name") != "T" || !IsOffboarded(scrubbed) {
+		t.Errorf("name = %q offboarded=%v, want the name kept and offboarded", scrubbed.GetString("name"), IsOffboarded(scrubbed))
 	}
 	if scrubbed.Verified() {
 		t.Error("expected verified=false after anonymize")
