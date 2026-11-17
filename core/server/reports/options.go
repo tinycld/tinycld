@@ -441,15 +441,40 @@ func optionOrder(keys []string, typ FieldType) []string {
 // shows the record's label, never its id, and a select's its option's
 // label.
 func (c *compiler) optionGroups(ctx context.Context, op *optionsPlan, search string, res *ParamOptions) error {
+	return c.readOptionGroups(ctx, op, res, func(s *stmt) ([]string, error) {
+		return optionConds(s, search, nil), nil
+	})
+}
+
+// pickedGroups reads into res the groups among groups (group values, as a
+// whole-group pick posts them) that the reader may list, as optionGroups
+// shows them, in the group order.
+func (c *compiler) pickedGroups(ctx context.Context, op *optionsPlan, groups []string, res *ParamOptions) error {
+	return c.readOptionGroups(ctx, op, res, func(s *stmt) ([]string, error) {
+		list, err := jsonList(s.bind, texts(groups))
+		if err != nil {
+			return nil, err
+		}
+		return []string{"o.g IN " + list}, nil
+	})
+}
+
+// readOptionGroups reads into res the groups of the options that meet the
+// conditions conds gives on the options select (o).
+func (c *compiler) readOptionGroups(ctx context.Context, op *optionsPlan, res *ParamOptions, conds func(*stmt) ([]string, error)) error {
 	s := newStmt(c.app, c.info)
 	ranked, keys, err := c.rankedOptionsSQL(s, op)
+	if err != nil {
+		return err
+	}
+	where, err := conds(s)
 	if err != nil {
 		return err
 	}
 	typ := shownType(op.group)
 	key := pathExpr("o.g", op.group)
 	body := fmt.Sprintf("SELECT o.g AS g, o.gl AS gl, o.glc AS glc FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY %s LIMIT %s",
-		ranked, strings.Join(optionConds(s, search, nil), " AND "), strings.Join(keys, ", "), limitSQL(int64(maxOptionGroups+1)))
+		ranked, strings.Join(where, " AND "), strings.Join(keys, ", "), limitSQL(int64(maxOptionGroups+1)))
 	rows, _, err := readRows(ctx, c.app, s, nil, body, nil)
 	if err != nil {
 		return err

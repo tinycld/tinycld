@@ -372,7 +372,9 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 		return nil, err
 	}
 	rn.res.Params = resolvedParams(p.spec.Params, params)
-	rn.res.HeaderLines = headerLines(p.spec.Params, params)
+	if rn.res.HeaderLines, err = c.headerLines(ctx); err != nil {
+		return nil, err
+	}
 	if h := p.base.Heading; h != nil {
 		rn.res.Heading = strings.TrimSpace(h(app, c.info))
 	}

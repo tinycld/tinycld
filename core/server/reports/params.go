@@ -2,6 +2,7 @@ package reports
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -117,17 +118,17 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 	return nil
 }
 
-// checkHeader refuses a header line on any param but a single choice of
-// listed options (the run names the chosen option's label, which only a
-// listed option has), and a header that does not name the option.
+// checkHeader refuses a header line on any param but a choice (the run
+// names the picked options' labels, which only a choice has), and a header
+// that does not name the picks.
 func checkHeader(d ParamDef, at string) *SpecError {
 	switch {
 	case d.Header == "":
 		return nil
-	case d.Type != ParamChoice || d.Multiple || d.OptionsFrom != nil:
-		return invalid(at, "only a single choice param with listed options has a header line")
+	case d.Type != ParamChoice:
+		return invalid(at, "only a choice param has a header line")
 	case !strings.Contains(d.Header, HeaderLabelToken):
-		return invalid(at, "a header line names the chosen option with "+HeaderLabelToken)
+		return invalid(at, "a header line names the chosen options with "+HeaderLabelToken)
 	case characters(d.Header) > maxLabel:
 		return invalid(at, fmt.Sprintf("a header line has at most %d characters", maxLabel))
 	}
@@ -135,25 +136,85 @@ func checkHeader(d ParamDef, at string) *SpecError {
 }
 
 // headerLines are the lines a run prints under the period: one per param
-// with a header, in param order, with the chosen option's label in place of
-// HeaderLabelToken. An unset param gives "", so line i stays the i-th param
-// with a header; the shell shows no line for it.
-func headerLines(defs []ParamDef, values map[string]paramValue) []string {
+// with a header, in param order, with the picks' labels joined by ", " in
+// place of HeaderLabelToken (pickLabels). An unset param, or one with no
+// pick the reader may list, gives "", so line i stays the i-th param with a
+// header; the shell shows no line for it.
+func (c *compiler) headerLines(ctx context.Context) ([]string, error) {
 	out := []string{}
-	for _, d := range defs {
+	for _, d := range c.p.spec.Params {
 		if d.Header == "" {
 			continue
 		}
+		labels, err := c.pickLabels(ctx, d, c.params[d.ID])
+		if err != nil {
+			return nil, err
+		}
 		line := ""
-		if v := values[d.ID]; !v.unset {
-			i := slices.IndexFunc(d.Options, func(o Option) bool { return o.Value == v.value })
-			if i >= 0 {
-				line = strings.ReplaceAll(d.Header, HeaderLabelToken, d.Options[i].Label)
-			}
+		if len(labels) > 0 {
+			line = strings.ReplaceAll(d.Header, HeaderLabelToken, strings.Join(labels, ", "))
 		}
 		out = append(out, line)
 	}
-	return out
+	return out, nil
+}
+
+// pickLabels are a choice's picks as the header names them. A listed
+// option's label comes in the order of the options. A choice from a source
+// reads its labels from the options source under the reader's rules, as the
+// picker shows them: the picked records in the options' order, then each
+// whole group by its group pick text (groupPickText) in the groups' order. A
+// pick the reader may not list has no label.
+func (c *compiler) pickLabels(ctx context.Context, d ParamDef, v paramValue) ([]string, error) {
+	if v.unset {
+		return nil, nil
+	}
+	values := v.list
+	if s, ok := v.value.(string); ok && !v.multiple {
+		values = []string{s}
+	}
+	if d.OptionsFrom == nil {
+		return listedLabels(d.Options, values), nil
+	}
+	op := c.p.options[d.ID]
+	if op == nil {
+		return nil, fmt.Errorf("reports: param %q has no options source", d.ID)
+	}
+	labels := []string{}
+	if len(values) > 0 {
+		page := &ParamOptions{}
+		if err := c.optionsPage(ctx, op, OptionsRequest{Values: values}, len(values), page); err != nil {
+			return nil, err
+		}
+		for _, o := range page.Options {
+			labels = append(labels, optionText(o.Label, o.Type, o.Currency))
+		}
+	}
+	if len(v.groups) > 0 {
+		groups := &ParamOptions{}
+		if err := c.pickedGroups(ctx, op, v.groups, groups); err != nil {
+			return nil, err
+		}
+		for _, g := range groups.Groups {
+			labels = append(labels, groupPickText(d, optionText(g.Label, g.Type, g.Currency)))
+		}
+	}
+	return labels, nil
+}
+
+// listedLabels are the labels of the listed options whose value is one of
+// values, in the options' order; a value two options share names the first.
+func listedLabels(options []Option, values []string) []string {
+	labels := []string{}
+	seen := map[string]bool{}
+	for _, o := range options {
+		if seen[o.Value] || !slices.Contains(values, o.Value) {
+			continue
+		}
+		seen[o.Value] = true
+		labels = append(labels, o.Label)
+	}
+	return labels
 }
 
 // checkGroupLabel refuses a group pick text that has no group to name, or

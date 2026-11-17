@@ -278,6 +278,13 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         )
         await expect(rowOf(page, `${stem} N2`)).toBeVisible()
         await expect(rows.filter({ hasText: `${stem} S1` })).toHaveCount(0)
+        // The document header names both picks: the record by its label, the whole
+        // group by its group text (the param's header "Teams: {label}").
+        const headerLine = page.getByTestId('report-header-param-teams')
+        await expect(headerLine).toHaveText(`Teams: ${stem} N1, All East teams`)
+        // Unsetting the param removes the line.
+        await page.getByTestId('report-filter-remove-teams').click()
+        await expect(headerLine).toHaveCount(0)
     })
 
     test('on a phone the source picker is a sheet and the page does not scroll sideways', async ({
