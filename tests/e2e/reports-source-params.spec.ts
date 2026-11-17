@@ -14,6 +14,7 @@ import {
     SHIPPED_TITLE,
     STUB_HEADING,
     type StubSale,
+    type StubTeam,
     saveNewReport,
     seedStub,
     startReport,
@@ -38,7 +39,8 @@ async function seedRegions(
     p: Page,
     stem: string,
     region: 'north' | 'east' = 'north',
-    moreSales: StubSale[] = []
+    moreSales: StubSale[] = [],
+    moreTeams: StubTeam[] = []
 ) {
     const sales = (
         [
@@ -52,6 +54,7 @@ async function seedRegions(
             { name: `${stem} N1`, region },
             { name: `${stem} N2`, region },
             { name: `${stem} S1`, region: 'south' },
+            ...moreTeams,
         ],
         sales: [...sales, ...moreSales],
     })
@@ -535,15 +538,13 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         const { inviteePage: p, close } = await createInvitedUser(page, 'rptaskblank')
         try {
             const stem = uniqueName('Blank')
-            await seedRegions(p, stem)
-            await addTeam(p, `${stem} X1`, 'none')
-            await addSale(p, {
-                team: `${stem} X1`,
-                customer: 'Xan',
-                amount: 100,
-                cost: 0,
-                day: '2026-01-05',
-            })
+            await seedRegions(
+                p,
+                stem,
+                'north',
+                [{ team: `${stem} X1`, customer: 'Xan', amount: 100, cost: 0, day: '2026-01-05' }],
+                [{ name: `${stem} X1`, region: 'none' }]
+            )
             await askTeamsByRegion(p)
 
             await p.getByTestId('report-add-filter').click()
