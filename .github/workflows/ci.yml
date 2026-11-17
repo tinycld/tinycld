@@ -181,10 +181,53 @@ jobs:
         working-directory: ws/tinycld/cli
         run: go build ./... && go test ./...
 
+  # Chooses the specs this run needs and the number of shards to run them on
+  # (scripts/e2e-select.ts has the rules). A pull request that changes only
+  # reports or only forms runs only the specs of that area; any other change,
+  # and every push to main, runs the whole suite. The script imports only node
+  # builtins, so this job needs no install and takes seconds.
+  e2e-plan:
+    name: E2E plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+      specs: ${{ steps.select.outputs.specs }}
+      shards: ${{ steps.select.outputs.shards }}
+      shard_total: ${{ steps.select.outputs.shard_total }}
+    steps:
+      # A pull request is checked out as its merge commit, whose first parent is
+      # the base branch: the diff to that parent is what the PR changes. Depth 2
+      # fetches that parent.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      # This job installs nothing. Without the switch, setup-node reads
+      # `packageManager` from package.json and fails to find pnpm for its cache.
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Select specs
+        id: select
+        env:
+          SELECT_ARGS: ${{ github.event_name == 'pull_request' && '--base HEAD^1 --head HEAD' || '--all' }}
+        run: node scripts/e2e-select.ts $SELECT_ARGS
+
+  # The suite in shards, each a whole job of its own (install, stubs, bundle,
+  # server). The shards share nothing, so they start at once: the setup is paid
+  # in runner minutes, not in the time a developer waits.
   e2e:
-    name: E2E (app shell)
+    name: E2E shard ${{ matrix.shard }}/${{ needs.e2e-plan.outputs.shard_total }}
+    needs: e2e-plan
+    if: needs.e2e-plan.outputs.mode != 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      # A failed shard must not cancel the others: their failures are wanted too.
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.e2e-plan.outputs.shards) }}
     steps:
       # app+core assembled by bootstrap as usual, then we scaffold a tiny
       # shortcut-stub package locally so the keyboard-shortcut tests have
@@ -261,7 +304,11 @@ jobs:
           # The bundle was built by the action above; reuse it (seed + promote
           # + serve still run, just not a second export).
           TINYCLD_E2E_SKIP_EXPORT: '1'
-        run: pnpm exec tinycld-pkg test:e2e
+          # Empty when the whole suite runs. Spec paths have no spaces, so the
+          # unquoted expansion below splits them into arguments.
+          SPECS: ${{ needs.e2e-plan.outputs.specs }}
+          SHARD: ${{ matrix.shard }}/${{ needs.e2e-plan.outputs.shard_total }}
+        run: pnpm exec tinycld-pkg test:e2e $SPECS -- --shard="$SHARD"
       # Capture Playwright's per-failure artifacts (trace, screenshot,
       # video, error-context.md) so a CI failure can be diagnosed
       # without a re-run. `if: failure()` skips the upload on green
@@ -270,8 +317,28 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-artifacts
+          name: playwright-artifacts-${{ matrix.shard }}
           path: |
             ws/tinycld/test-results/
             ws/tinycld/playwright-report/
           retention-days: 14
+
+  # One check with a fixed name for the whole e2e result, whatever the number of
+  # shards: a branch rule (or a reader) looks at this one.
+  e2e-result:
+    name: E2E (app shell)
+    needs: [e2e-plan, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the plan and the shards
+        env:
+          PLAN: ${{ needs.e2e-plan.result }}
+          MODE: ${{ needs.e2e-plan.outputs.mode }}
+          SHARDS: ${{ needs.e2e.result }}
+        run: |
+          echo "plan: $PLAN, mode: $MODE, shards: $SHARDS"
+          [ "$PLAN" = "success" ] || exit 1
+          # No spec to run is the one case where skipped shards are a pass.
+          if [ "$MODE" = "none" ]; then [ "$SHARDS" = "skipped" ]; else [ "$SHARDS" = "success" ]; fi

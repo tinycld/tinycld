@@ -284,6 +284,28 @@ leaner shell. Use these instead, from `tests/e2e/helpers.ts` (re-exported as
 A URL wait is right only when the URL itself is the observable under test — see
 `drive/tests/open-in-app.spec.ts`, where a query param is how the stub opener
 signals it ran.
+
+**An e2e test's time is its screen changes, not its assertions.** Each navigation,
+dialog or server round is a wait of most of a second, on CI and on a fast machine
+alike. Keep the setup of a test short:
+
+- A spec that needs a member of its own (its rows apart from every other spec's)
+  imports `test` from `tests/e2e/member-fixtures.ts` (also in
+  `@tinycld/core/e2e-helpers`). `shareMember(label, seed)` at the top of the file
+  makes one member and runs the seed once; each test gets `p`, its own page signed
+  in as that member. A test that changes the rows other tests read takes
+  `freshMember`. `createInvitedUser` is for a test of the invite itself, or one
+  that needs the owner's page after it.
+- Seed all the rows of a test in one save where the screen has a form for it (the
+  reports stub has `seedStub`), not one form round for each row.
+
+**CI runs only the specs a pull request can break.** `scripts/e2e-select.ts` maps
+changed files to specs: a change inside reports or inside forms runs the specs of
+that area (forms also runs reports, which imports it), a change to documents runs
+none, and any other change runs the whole suite, in shards. A push to `main` always
+runs the whole suite. When a file outside an area starts to import from it, or an
+area gains a directory, update `AREAS` in that script.
+
 - `pnpm run export:web` runs `expo export --platform web` for production web builds.
 - `pnpm run export:ios` and `pnpm run export:android` produce platform-specific exports (used by the docker/EAS build pipelines, not for local launch).
 

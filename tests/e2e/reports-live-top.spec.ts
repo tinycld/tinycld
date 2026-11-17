@@ -1,9 +1,9 @@
-import { type Browser, type ElementHandle, expect, type Page, test } from '@playwright/test'
-import { createInvitedUser, loginAs, skipWithoutReportsStub } from './helpers'
+import type { Browser, ElementHandle, Page } from '@playwright/test'
+import { loginAs, skipWithoutReportsStub } from './helpers'
+import { expect, test } from './member-fixtures'
 import {
     addColumn,
     addSales,
-    addTeam,
     chooseOption,
     listScroller,
     openReportStub,
@@ -11,6 +11,7 @@ import {
     rowOf,
     SALES_SOURCE,
     saveNewReport,
+    seedStub,
     startReport,
     uniqueName,
 } from './reports-helpers'
@@ -39,16 +40,16 @@ interface LiveReport {
 async function newestFirst(p: Page): Promise<LiveReport> {
     const team = uniqueName('Team')
     const stem = uniqueName('Live')
-    await openReportStub(p)
-    await addTeam(p, team)
-    await addSales(p, {
-        team,
-        customerPrefix: `${stem} Old`,
-        count: OLD_SALES,
-        firstDay: '2026-01-01',
-        firstAmount: 1000,
-        cost: 400,
-        quantity: 1,
+    await seedStub(p, {
+        teams: [{ name: team }],
+        sales: Array.from({ length: OLD_SALES }, (_, i) => ({
+            team,
+            customer: `${stem} Old ${String(i).padStart(2, '0')}`,
+            amount: 1000 + i,
+            cost: 400,
+            quantity: 1,
+            day: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
+        })),
     })
     await openReportsHub(p)
     await startReport(p, SALES_SOURCE)
@@ -182,37 +183,29 @@ test.describe('report-exports: live rows at the top', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a reader at the top of a wide report sees the rows a live run adds', async ({
-        page,
+        freshMember,
         browser,
     }) => {
-        const { inviteePage: p, user, close } = await createInvitedUser(page, 'rptlivetop')
-        try {
-            const report = await newestFirst(p)
-            await expectNewRowsShownAtTop(p, browser, user, report)
-        } finally {
-            await close()
-        }
+        const { page: p, user } = freshMember
+        const report = await newestFirst(p)
+        await expectNewRowsShownAtTop(p, browser, user, report)
     })
 
     test('a reader at the top of a phone report sees the rows a live run adds', async ({
-        page,
+        freshMember,
         browser,
     }) => {
-        const { inviteePage: p, user, close } = await createInvitedUser(page, 'rptlivetopph')
-        try {
-            const report = await newestFirst(p)
-            await p.setViewportSize({ width: 390, height: 844 })
-            // The phone list is drawn: its top area (the title) is the list's header.
-            await expect
-                .poll(async () => {
-                    const title = await p.getByTestId('report-title').boundingBox()
-                    const table = await p.getByTestId('report-table').boundingBox()
-                    return title && table ? title.y >= table.y : false
-                })
-                .toBe(true)
-            await expectNewRowsShownAtTop(p, browser, user, report)
-        } finally {
-            await close()
-        }
+        const { page: p, user } = freshMember
+        const report = await newestFirst(p)
+        await p.setViewportSize({ width: 390, height: 844 })
+        // The phone list is drawn: its top area (the title) is the list's header.
+        await expect
+            .poll(async () => {
+                const title = await p.getByTestId('report-title').boundingBox()
+                const table = await p.getByTestId('report-table').boundingBox()
+                return title && table ? title.y >= table.y : false
+            })
+            .toBe(true)
+        await expectNewRowsShownAtTop(p, browser, user, report)
     })
 })

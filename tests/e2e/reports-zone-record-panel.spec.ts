@@ -1,12 +1,10 @@
 import { expect, type Page, test } from '@playwright/test'
 import { inStatement, login, skipWithoutReportsStub } from './helpers'
 import {
-    addSale,
-    addTeam,
     openDrilled,
-    openReportStub,
     pressToolbar,
     recordPanel,
+    seedStub,
     superuserClient,
     uniqueName,
     ZONE_TITLE,
@@ -36,13 +34,12 @@ interface Sale {
 
 /** Adds `count` sales through the stub's screen and reads back their ids and `created`. */
 async function seedSales(page: Page, count: number): Promise<Sale[]> {
-    await openReportStub(page)
     const team = uniqueName('Zone Team')
-    await addTeam(page, team, 'east')
     const customers = Array.from({ length: count }, (_, i) => uniqueName(`Zone ${i}`))
-    for (const customer of customers) {
-        await addSale(page, { team, customer, amount: 100, cost: 0, day: SALE_DAY })
-    }
+    await seedStub(page, {
+        teams: [{ name: team, region: 'east' }],
+        sales: customers.map(customer => ({ team, customer, amount: 100, cost: 0, day: SALE_DAY })),
+    })
     // Read-only: the server sets `created`, which the cells must show in the zone.
     const pb = await superuserClient()
     return Promise.all(

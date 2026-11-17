@@ -292,13 +292,14 @@ export async function signInAsCollaborator(
 // Usernames stay within 32 characters. Pass an `email` so the account can drive
 // email-addressed flows (e.g. password reset by email). Pass a `name` when a spec
 // finds the invitee by name (a share candidate).
+//
+// This costs two full app boots and an owner sign-in for each call. A spec that
+// only needs a member of its own (its rows apart from every other spec's) gets
+// one far cheaper from tests/e2e/member-fixtures.ts.
 let invitedCount = 0
 
-export async function createInvitedUser(
-    page: Page,
-    label: string,
-    options: { name?: string } = {}
-): Promise<{ user: InvitedUser; inviteePage: Page; close: () => Promise<void> }> {
+/** Unique credentials for a throwaway member (createInvitedUser's comment has the format). */
+export function newInvitedUser(label: string): InvitedUser {
     invitedCount += 1
     const stamp = `${Date.now()}-${process.env.TEST_WORKER_INDEX ?? '0'}-${invitedCount}`
     const user: InvitedUser = {
@@ -308,16 +309,27 @@ export async function createInvitedUser(
     }
     // A longer one is refused by the invite form, and the test then fails far from here.
     expect(user.username.length, `username ${user.username}`).toBeLessThanOrEqual(32)
+    return user
+}
 
-    // --- Owner sends the invite (username + email) from Settings → Members ---
+/** Signs the owner (the shared TEST_USER) in and opens Settings → Members. */
+export async function openMembers(page: Page) {
     await login(page)
     await navigateToPackage(page, 'settings')
     // SPA-click into Members — a page.goto here is the hard-nav this file's
     // own docs forbid (tears down the SPA and cancels in-flight chunk loads).
     await page.getByText('Members', { exact: true }).first().click()
-    // No URL wait: the very next getByText auto-waits for 'Invite' to be
-    // actionable, which proves the Members screen rendered. The URL only
-    // proves the router accepted the push.
+}
+
+/**
+ * Sends an invite from the Members screen `page` is on, and returns the token of
+ * its accept link. The page is on the Members screen again when this returns, so
+ * one page can send any number of invites.
+ */
+export async function sendInvite(page: Page, user: InvitedUser): Promise<string> {
+    // No URL wait: getByText auto-waits for 'Invite' to be actionable, which
+    // proves the Members screen rendered. The URL only proves the router
+    // accepted the push.
     await page.getByText('Invite', { exact: true }).click()
     await expect(page.getByText('Invite a teammate', { exact: true })).toBeVisible({
         timeout: 10_000,
@@ -332,23 +344,46 @@ export async function createInvitedUser(
     const tokenMatch = urlText?.match(/\/accept-invite\/([0-9a-f]{64})/)
     if (!tokenMatch) throw new Error(`invite link had no token: ${urlText}`)
     await page.getByTestId('invite-link-done').click()
+    return tokenMatch[1]
+}
 
-    // --- Invitee accepts in a fresh context and sets its password ---
-    const inviteeContext = await page.context().browser()!.newContext()
-    const inviteePage = await inviteeContext.newPage()
+/** The invitee opens the accept link on `inviteePage`, sets a password and lands in the app. */
+export async function acceptInvite(
+    inviteePage: Page,
+    token: string,
+    user: InvitedUser,
+    name = 'Invited Tester'
+) {
     // The prefixed path buildInviteURL mints (approutes.Href). The server used
     // to also forward the pre-/a shape, which this line exercised; that
     // redirect is gone, so the legacy form now 404s like any other unknown
     // path.
-    await inviteePage.goto(`/a/accept-invite/${tokenMatch[1]}`)
+    await inviteePage.goto(`/a/accept-invite/${token}`)
     await expect(inviteePage.getByText("You're invited", { exact: true })).toBeVisible({
         timeout: 10_000,
     })
-    await inviteePage.getByTestId('name').fill(options.name ?? 'Invited Tester')
+    await inviteePage.getByTestId('name').fill(name)
     await inviteePage.getByTestId('password').fill(user.password)
     await inviteePage.getByTestId('confirmPassword').fill(user.password)
     await inviteePage.getByText(/Set password and sign in/i).click()
     await appShell(inviteePage).waitFor({ state: 'visible', timeout: 15_000 })
+}
+
+export async function createInvitedUser(
+    page: Page,
+    label: string,
+    options: { name?: string } = {}
+): Promise<{ user: InvitedUser; inviteePage: Page; close: () => Promise<void> }> {
+    const user = newInvitedUser(label)
+
+    // --- Owner sends the invite (username + email) from Settings → Members ---
+    await openMembers(page)
+    const token = await sendInvite(page, user)
+
+    // --- Invitee accepts in a fresh context and sets its password ---
+    const inviteeContext = await page.context().browser()!.newContext()
+    const inviteePage = await inviteeContext.newPage()
+    await acceptInvite(inviteePage, token, user, options.name)
 
     return { user, inviteePage, close: () => inviteeContext.close() }
 }

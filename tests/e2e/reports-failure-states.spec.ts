@@ -1,17 +1,16 @@
-import { expect, type Page, type Route, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import type { Page, Route } from '@playwright/test'
+import { skipWithoutReportsStub } from './helpers'
+import { expect, test } from './member-fixtures'
 import {
-    addSale,
-    addTeam,
     cellOf,
     DRILLED_TITLE,
     drillPanel,
     hubRow,
     loginAsShippedOwner,
     openDrilled,
-    openReportStub,
     openReportsHub,
     rowOf,
+    seedStub,
     setPeriod,
     TEAM_TOTALS_TITLE,
     uniqueName,
@@ -56,9 +55,10 @@ async function failUntilLifted(
 async function seedTeam(page: Page): Promise<string> {
     await loginAsShippedOwner(page)
     const team = uniqueName('Failing team')
-    await openReportStub(page)
-    await addTeam(page, team)
-    await addSale(page, { team, customer: 'Fay', amount: 100, cost: 0, day: '2026-01-05' })
+    await seedStub(page, {
+        teams: [{ name: team }],
+        sales: [{ team, customer: 'Fay', amount: 100, cost: 0, day: '2026-01-05' }],
+    })
     return team
 }
 
@@ -124,12 +124,14 @@ test.describe('report failure states', () => {
 
     test('the drill panel shows its own loading, its error with Retry, and no access', async ({
         page,
+        freshMember,
     }) => {
         await loginAsShippedOwner(page)
         const team = uniqueName('Panel states')
-        await openReportStub(page)
-        await addTeam(page, team, 'east')
-        await addSale(page, { team, customer: 'Pia', amount: 100, cost: 0, day: '2037-01-05' })
+        await seedStub(page, {
+            teams: [{ name: team, region: 'east' }],
+            sales: [{ team, customer: 'Pia', amount: 100, cost: 0, day: '2037-01-05' }],
+        })
         await page.setViewportSize({ width: 1440, height: 900 })
         await openDrilled(page, DRILLED_TITLE)
         await setPeriod(page, '2037-01-01', '2037-12-31')
@@ -165,16 +167,11 @@ test.describe('report failure states', () => {
         const targetId = new URL(page.url()).searchParams.get('d') ?? ''
 
         // A member may read the source (published) but not its target (unpublished).
-        const member = await createInvitedUser(page, 'panelna')
-        try {
-            const p = member.inviteePage
-            await p.setViewportSize({ width: 1440, height: 900 })
-            // Opening a pasted link is a full load by nature.
-            await p.goto(`${sourcePath}?d=${targetId}`)
-            await expect(drillPanel(p).getByTestId('report-drill-no-access')).toBeVisible()
-            await expect(p.getByTestId('report-title')).toHaveText(DRILLED_TITLE)
-        } finally {
-            await member.close()
-        }
+        const p = freshMember.page
+        await p.setViewportSize({ width: 1440, height: 900 })
+        // Opening a pasted link is a full load by nature.
+        await p.goto(`${sourcePath}?d=${targetId}`)
+        await expect(drillPanel(p).getByTestId('report-drill-no-access')).toBeVisible()
+        await expect(p.getByTestId('report-title')).toHaveText(DRILLED_TITLE)
     })
 })

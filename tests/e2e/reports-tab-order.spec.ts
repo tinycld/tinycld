@@ -1,16 +1,15 @@
-import { expect, type Page, test } from '@playwright/test'
-import { createInvitedUser, skipWithoutReportsStub } from './helpers'
+import type { Page } from '@playwright/test'
+import { skipWithoutReportsStub } from './helpers'
+import { expect, test } from './member-fixtures'
 import {
     addColumn,
-    addSale,
-    addTeam,
     chooseOption,
-    openReportStub,
     openReportsHub,
     pressToolbar,
     rowOf,
     SALES_SOURCE,
     saveNewReport,
+    seedStub,
     startReport,
     uniqueName,
 } from './reports-helpers'
@@ -58,63 +57,52 @@ async function labelsOf(p: Page, ids: string[]): Promise<string[]> {
 test.describe('tab order on web', () => {
     test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
 
-    test('Tab follows the screen order after a sort change and a fold', async ({ page }) => {
-        const { inviteePage: p, close } = await createInvitedUser(page, 'rpttab')
-        try {
-            const team = uniqueName('Team')
-            await openReportStub(p)
-            await addTeam(p, team)
-            for (const [customer, status] of [
-                ['Tab A', 'open'],
-                ['Tab B', 'open'],
-                ['Tab C', 'open'],
-                ['Tab D', 'paid'],
-                ['Tab E', 'paid'],
-            ] as const) {
-                await addSale(p, {
-                    team,
-                    customer,
-                    amount: 100,
-                    cost: 0,
-                    day: '2026-01-05',
-                    status,
-                })
-            }
-            await openReportsHub(p)
-            await startReport(p, SALES_SOURCE)
-            await addColumn(p, ['amount'])
-            await chooseOption(p, 'report-builder-column-1-aggregate', 'sum')
-            await addColumn(p, ['status'])
-            await p.getByTestId('report-builder-section-group').click()
-            await p.getByTestId('report-builder-group-add').click()
-            await chooseOption(p, 'report-builder-group-0-col', 'status')
-            await p.getByTestId('report-builder-group-add').click()
-            await chooseOption(p, 'report-builder-group-1-col', 'customer')
-            await saveNewReport(p, uniqueName('Tab order'))
-            const open = rowOf(p, 'Open')
-            await open.click()
-            await expect(open).toHaveAttribute('aria-expanded', 'true')
+    test('Tab follows the screen order after a sort change and a fold', async ({ freshMember }) => {
+        const p = freshMember.page
+        const team = uniqueName('Team')
+        const sale = { team, amount: 100, cost: 0, day: '2026-01-05' }
+        await seedStub(p, {
+            teams: [{ name: team }],
+            sales: [
+                { ...sale, customer: 'Tab A', status: 'open' },
+                { ...sale, customer: 'Tab B', status: 'open' },
+                { ...sale, customer: 'Tab C', status: 'open' },
+                { ...sale, customer: 'Tab D', status: 'paid' },
+                { ...sale, customer: 'Tab E', status: 'paid' },
+            ],
+        })
+        await openReportsHub(p)
+        await startReport(p, SALES_SOURCE)
+        await addColumn(p, ['amount'])
+        await chooseOption(p, 'report-builder-column-1-aggregate', 'sum')
+        await addColumn(p, ['status'])
+        await p.getByTestId('report-builder-section-group').click()
+        await p.getByTestId('report-builder-group-add').click()
+        await chooseOption(p, 'report-builder-group-0-col', 'status')
+        await p.getByTestId('report-builder-group-add').click()
+        await chooseOption(p, 'report-builder-group-1-col', 'customer')
+        await saveNewReport(p, uniqueName('Tab order'))
+        const open = rowOf(p, 'Open')
+        await open.click()
+        await expect(open).toHaveAttribute('aria-expanded', 'true')
 
-            // Status Z to A puts the Paid group, drawn after Open so far, first.
-            await pressToolbar(p, 'report-edit-open', 'Edit report')
-            await p.getByTestId('report-builder-section-group').click()
-            await chooseOption(p, 'report-builder-sort-add-menu', 'status')
-            await p
-                .getByTestId('report-builder-sort-0')
-                .getByRole('radio', { name: 'Z to A', exact: true })
-                .click()
-            await p.getByTestId('report-builder-save').click()
-            await expect(p.getByTestId('report-builder')).toBeHidden()
-            const paid = rowOf(p, 'Paid')
-            await paid.click()
-            await expect(paid).toHaveAttribute('aria-expanded', 'true')
+        // Status Z to A puts the Paid group, drawn after Open so far, first.
+        await pressToolbar(p, 'report-edit-open', 'Edit report')
+        await p.getByTestId('report-builder-section-group').click()
+        await chooseOption(p, 'report-builder-sort-add-menu', 'status')
+        await p
+            .getByTestId('report-builder-sort-0')
+            .getByRole('radio', { name: 'Z to A', exact: true })
+            .click()
+        await p.getByTestId('report-builder-save').click()
+        await expect(p.getByTestId('report-builder')).toBeHidden()
+        const paid = rowOf(p, 'Paid')
+        await paid.click()
+        await expect(paid).toHaveAttribute('aria-expanded', 'true')
 
-            const expected = ['Paid', 'Tab D', 'Tab E', 'Open', 'Tab A', 'Tab B', 'Tab C']
-            await expect.poll(async () => labelsOf(p, await screenOrder(p))).toEqual(expected)
-            const onScreen = await screenOrder(p)
-            expect(await tabOrder(p, onScreen.length)).toEqual(onScreen)
-        } finally {
-            await close()
-        }
+        const expected = ['Paid', 'Tab D', 'Tab E', 'Open', 'Tab A', 'Tab B', 'Tab C']
+        await expect.poll(async () => labelsOf(p, await screenOrder(p))).toEqual(expected)
+        const onScreen = await screenOrder(p)
+        expect(await tabOrder(p, onScreen.length)).toEqual(onScreen)
     })
 })

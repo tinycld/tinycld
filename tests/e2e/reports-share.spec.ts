@@ -9,16 +9,14 @@ import {
 import {
     ACTIVITY_SOURCE,
     addColumn,
-    addSale,
-    addTeam,
     chooseOption,
     hubRow,
-    openReportStub,
     openReportsHub,
     pressToolbar,
     SALES_SOURCE,
     SHIPPED_TITLE,
     saveNewReport,
+    seedStub,
     startReport,
     superuserClient,
     TEAMS_SOURCE,
@@ -42,9 +40,10 @@ import {
 async function ownerReport(page: Page, customer: string) {
     await login(page)
     const team = uniqueName('Team')
-    await openReportStub(page)
-    await addTeam(page, team)
-    await addSale(page, { team, customer, amount: 1000, cost: 0, day: '2026-01-05' })
+    await seedStub(page, {
+        teams: [{ name: team }],
+        sales: [{ team, customer, amount: 1000, cost: 0, day: '2026-01-05' }],
+    })
     await openReportsHub(page)
     await startReport(page, SALES_SOURCE)
     await addColumn(page, ['amount'])
@@ -92,14 +91,11 @@ test.describe('sharing reports', () => {
         try {
             const collabCustomer = uniqueName('Collab customer')
             const team = uniqueName('Collab team')
-            await openReportStub(c)
-            await addTeam(c, team)
-            await addSale(c, {
-                team,
-                customer: collabCustomer,
-                amount: 500,
-                cost: 0,
-                day: '2026-01-06',
+            await seedStub(c, {
+                teams: [{ name: team }],
+                sales: [
+                    { team, customer: collabCustomer, amount: 500, cost: 0, day: '2026-01-06' },
+                ],
             })
             await openReportsHub(c)
             await c.getByTestId('reports-hub-tab-shared').click()
