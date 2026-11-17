@@ -39,7 +39,8 @@ export function optionText(option: ParamOption | ParamOptionGroup): string {
  * The loaded options in sections. An ungrouped param's options are one section with
  * no head. A grouped param's options sit under their groups in the server's order;
  * an option with no group is in the blank group ("" value, which the server lists
- * first). The options of a group the server did not list (past the 200 it lists,
+ * first), shown first with no head: it has no name to show, so it has no whole-group
+ * pick either. The options of a group the server did not list (past the 200 it lists,
  * `groupsCut`) have no label to head them, so they share one Other section.
  */
 export function optionSections(
@@ -57,7 +58,8 @@ export function optionSections(
     const sections: OptionSection[] = []
     for (const group of groups.values()) {
         const inGroup = options.filter(o => groupOf(o) === group.value)
-        if (inGroup.length > 0) sections.push({ group, options: inGroup })
+        if (inGroup.length === 0) continue
+        sections.push({ group: group.value === '' ? null : group, options: inGroup })
     }
     const other = options.filter(o => !groups.has(groupOf(o)))
     if (other.length > 0) sections.push({ group: null, isOther: true, options: other })

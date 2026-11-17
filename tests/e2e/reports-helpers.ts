@@ -98,7 +98,7 @@ export async function openReportStub(page: Page) {
     await navigateToPackage(page, 'salesstub', { waitFor: page.getByTestId('salesstub-landing') })
 }
 
-const REGION_LABELS = { north: 'North', south: 'South', east: 'East' } as const
+const REGION_LABELS = { north: 'North', south: 'South', east: 'East', none: 'No region' } as const
 
 export async function addTeam(
     page: Page,
@@ -138,8 +138,13 @@ export async function addSale(page: Page, sale: StubSale) {
     await expect(page.getByTestId('salesstub-sale-saved')).toHaveText(`Saved ${sale.customer}`)
 }
 
+export interface StubTeam {
+    name: string
+    region?: keyof typeof REGION_LABELS
+}
+
 export interface StubData {
-    teams?: { name: string; region?: keyof typeof REGION_LABELS }[]
+    teams?: StubTeam[]
     sales?: StubSale[]
     returns?: StubReturn[]
 }
@@ -156,7 +161,11 @@ export async function seedStub(page: Page, data: StubData) {
     const label = uniqueName('set')
     const json = JSON.stringify({
         label,
-        teams: (data.teams ?? []).map(team => ({ region: 'north', ...team })),
+        // The stub stores "No region" as a blank region (screens/index.tsx teamSchema).
+        teams: (data.teams ?? []).map(({ name, region = 'north' }) => ({
+            name,
+            region: region === 'none' ? '' : region,
+        })),
         sales: (data.sales ?? []).map(sale => ({ quantity: 0, status: 'open', ...sale })),
         returns: data.returns ?? [],
     })
