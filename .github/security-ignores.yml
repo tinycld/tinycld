@@ -20,6 +20,15 @@ ignores:
           under expo/metro build tooling. Nothing short of an upstream fix
           unblocks this.
       expires: 2027-01-15
+    - id: GHSA-fc5q-39xc-vjpf
+      reason: >-
+          picomatch ReDoS through repeated extglobs. No patched release exists
+          upstream (latest published version is 4.0.7, the vulnerable one);
+          patched_versions is null in the advisory. Pulled in transitively
+          under expo/metro build tooling (@expo/cli, @expo/metro-config,
+          tinyglobby, fdir, micromatch), which matches our own glob patterns,
+          not user input. Nothing short of an upstream fix unblocks this.
+      expires: 2027-01-15
 # ignores:
 #     - id: GHSA-xxxx-xxxx-xxxx
 #       reason: Reachable only from the CLI --debug path, which the server excludes.
