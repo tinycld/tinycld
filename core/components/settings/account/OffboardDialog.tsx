@@ -150,8 +150,8 @@ export function ConfirmInput({
     )
 }
 
-// ContentPlanPicker: reassign the subject's records to a peer, or delete them.
-// Returns the plan the caller submits.
+// ContentPlanPicker: keep the subject's records (admin removal only), reassign
+// them to a peer, or delete them. Returns the plan the caller submits.
 //
 // `value` may be undefined — nothing highlighted — for callers that require an
 // explicit choice before submitting (self-delete). Callers with an honest
@@ -165,17 +165,23 @@ export function ContentPlanPicker({
     value,
     onChange,
     disabled,
+    allowKeep = false,
 }: {
     peers: Peer[]
     subjectLabel: string
     value: OffboardPlan | undefined
     onChange: (plan: OffboardPlan) => void
     disabled?: boolean
+    /** Offer "Keep their work" (admin removal). */
+    allowKeep?: boolean
 }) {
-    // No peers means there is nobody to reassign to, so the only real choice
-    // is delete-or-keep. Hide the picker rather than offer a dead option.
-    if (peers.length === 0) return null
+    const hasPeers = peers.length > 0
+    // With no keep option and no peers, the only choice left is delete-or-
+    // nothing, which the caller's own default covers. Hide the picker rather
+    // than offer a dead option.
+    if (!allowKeep && !hasPeers) return null
 
+    const isKeep = value?.mode === 'keep'
     const isReassign = value?.mode === 'reassign'
     const isDelete = value?.mode === 'delete_my_data'
     return (
@@ -183,6 +189,80 @@ export function ContentPlanPicker({
             <Text className="text-foreground text-sm font-semibold">
                 What happens to {subjectLabel} files, documents and comments?
             </Text>
+            <KeepOption
+                isVisible={allowKeep}
+                isActive={isKeep}
+                disabled={disabled}
+                onPress={() => onChange({ mode: 'keep' })}
+            />
+            <ReassignOptions
+                isVisible={hasPeers}
+                peers={peers}
+                value={value}
+                isReassign={isReassign}
+                disabled={disabled}
+                onChange={onChange}
+            />
+            <Pressable
+                testID="offboard-plan-delete"
+                disabled={disabled}
+                onPress={() => onChange({ mode: 'delete_my_data' })}
+                className={`rounded-lg border p-3 ${isDelete ? 'border-error' : 'border-border'}`}
+            >
+                <Text className="text-foreground font-semibold">Delete everything</Text>
+                <Text className="text-muted-foreground text-[13px]">
+                    Permanently removes the content. This cannot be undone.
+                </Text>
+            </Pressable>
+        </View>
+    )
+}
+
+function KeepOption({
+    isVisible,
+    isActive,
+    disabled,
+    onPress,
+}: {
+    isVisible: boolean
+    isActive: boolean
+    disabled?: boolean
+    onPress: () => void
+}) {
+    if (!isVisible) return null
+    return (
+        <Pressable
+            testID="offboard-plan-keep"
+            disabled={disabled}
+            onPress={onPress}
+            className={`rounded-lg border p-3 ${isActive ? 'border-primary' : 'border-border'}`}
+        >
+            <Text className="text-foreground font-semibold">Keep their work</Text>
+            <Text className="text-muted-foreground text-[13px]">
+                Files, events and comments stay, shown as by “Deleted user”.
+            </Text>
+        </Pressable>
+    )
+}
+
+function ReassignOptions({
+    isVisible,
+    peers,
+    value,
+    isReassign,
+    disabled,
+    onChange,
+}: {
+    isVisible: boolean
+    peers: Peer[]
+    value: OffboardPlan | undefined
+    isReassign: boolean
+    disabled?: boolean
+    onChange: (plan: OffboardPlan) => void
+}) {
+    if (!isVisible) return null
+    return (
+        <>
             <Pressable
                 disabled={disabled}
                 onPress={() =>
@@ -217,17 +297,7 @@ export function ContentPlanPicker({
                     ))}
                 </View>
             )}
-            <Pressable
-                disabled={disabled}
-                onPress={() => onChange({ mode: 'delete_my_data' })}
-                className={`rounded-lg border p-3 ${isDelete ? 'border-error' : 'border-border'}`}
-            >
-                <Text className="text-foreground font-semibold">Delete everything</Text>
-                <Text className="text-muted-foreground text-[13px]">
-                    Permanently removes the content. This cannot be undone.
-                </Text>
-            </Pressable>
-        </View>
+        </>
     )
 }
 
