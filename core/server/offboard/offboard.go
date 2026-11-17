@@ -9,9 +9,11 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
 
 	"tinycld.org/core/groups"
 	"tinycld.org/core/logging"
+	"tinycld.org/core/usernames"
 )
 
 var log = logging.ForPackage("offboard")
@@ -58,6 +60,12 @@ const deletedEmailDomain = "@deleted.tinycld.org"
 // sentinelEmail is the email anonymizeUser writes for a user id.
 func sentinelEmail(id string) string {
 	return "deleted-" + id + deletedEmailDomain
+}
+
+// tombstoneUsername is the username anonymizeUser writes. It is a valid
+// username, so the row still saves, and the id makes it unique.
+func tombstoneUsername(id string) string {
+	return usernames.TombstonePrefix + id
 }
 
 // IsOffboarded reports whether user has been anonymized by OffboardUser or
@@ -291,8 +299,9 @@ func writeOffboardAudit(app core.App, leaverUserID, actorUserID string, mode Mod
 	}
 }
 
-// AnonymizeUser overwrites PII on the users record and invalidates the session
-// (sentinel email, random password, refreshed token key). It skips the
+// AnonymizeUser turns the users record into a tombstone and invalidates the
+// session (sentinel email, random password, refreshed token key). The name and
+// avatar stay, so the person's work stays credited to them. It skips the
 // registered Handlers, so it is not an account delete: use OffboardUser with
 // ModeKeep for that.
 func AnonymizeUser(app core.App, userID string) error {
@@ -309,11 +318,15 @@ func anonymizeUser(app core.App, userID string) error {
 		return err
 	}
 	user.SetEmail(sentinelEmail(userID))
-	user.Set("name", "Deleted user")
-	user.Set("avatar", "")
 	user.SetVerified(false)
 	user.SetPassword(randomPwd)
 	user.RefreshTokenKey()
+	// A tombstone: the row, name and avatar stay so authored work keeps its
+	// author, but the username is freed for a new person, the account holds no
+	// seat and cannot sign in, and lists hide it by `deleted`.
+	user.Set("username", tombstoneUsername(userID))
+	user.Set("disabled", true)
+	user.Set("deleted", types.NowDateTime())
 	return app.Save(user)
 }
 

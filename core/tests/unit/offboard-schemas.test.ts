@@ -7,6 +7,10 @@ import {
 } from '../../components/settings/account/offboard-schemas'
 
 describe('offboardPlanSchema', () => {
+    it('accepts keep', () => {
+        expect(offboardPlanSchema.safeParse({ mode: 'keep' }).success).toBe(true)
+    })
+
     it('accepts delete and a reassign with a successor', () => {
         expect(offboardPlanSchema.safeParse({ mode: 'delete_my_data' }).success).toBe(true)
         expect(
@@ -53,14 +57,7 @@ describe('removeMemberSchemaFor', () => {
 })
 
 describe('defaultRemovalPlan', () => {
-    it('reassigns to the first peer when there is one', () => {
-        expect(defaultRemovalPlan([{ id: 'u2' }, { id: 'u3' }])).toEqual({
-            mode: 'reassign',
-            successor_user_id: 'u2',
-        })
-    })
-
-    it('deletes when there is nobody to reassign to', () => {
-        expect(defaultRemovalPlan([])).toEqual({ mode: 'delete_my_data' })
+    it("keeps the member's work, credited to the deleted user", () => {
+        expect(defaultRemovalPlan()).toEqual({ mode: 'keep' })
     })
 })
