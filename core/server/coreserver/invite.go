@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/background"
 	"tinycld.org/core/notify"
+	"tinycld.org/core/offboard"
 	"tinycld.org/core/readonly"
 	"tinycld.org/core/usernames"
 )
@@ -106,6 +108,15 @@ func handleInviteMember(app core.App, jobs *background.Jobs, re *core.RequestEve
 
 	existing, _ := app.FindFirstRecordByFilter(
 		"users", "username = {:u}", map[string]any{"u": req.Username})
+	// A user deleted before deleting freed the username still holds it. Free
+	// it now and invite a new person: the deleted account must never get an
+	// invite link, which would bring it back.
+	if existing != nil && offboard.IsOffboarded(existing) {
+		if err := offboard.AnonymizeUser(app, existing.Id); err != nil {
+			return apierr.Wrap(re, http.StatusInternalServerError, "Could not free the username", err)
+		}
+		existing = nil
+	}
 	if existing != nil {
 		userRecord = existing
 	} else {
@@ -290,6 +301,10 @@ type acceptInviteRequest struct {
 	Name     string `json:"name"`
 }
 
+// errInviteWithdrawn refuses an invite whose user was removed: accepting it
+// would bring the deleted account back.
+var errInviteWithdrawn = errors.New("this invitation was withdrawn")
+
 // findInviteToken looks up an invite token and validates it is unused and unexpired.
 // Returns the token record and a zero-valued (statusCode, errMsg) on success,
 // or (nil, non-zero status, message) on failure.
@@ -326,6 +341,9 @@ func handleGetAcceptInvite(app core.App, re *core.RequestEvent) error {
 	user, err := app.FindRecordById("users", record.GetString("user"))
 	if err != nil {
 		return re.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+	}
+	if offboard.IsOffboarded(user) {
+		return re.JSON(http.StatusGone, map[string]string{"error": errInviteWithdrawn.Error()})
 	}
 
 	return re.JSON(http.StatusOK, map[string]any{
@@ -368,6 +386,9 @@ func handlePostAcceptInvite(app core.App, re *core.RequestEvent) error {
 		if err != nil {
 			return fmt.Errorf("user not found")
 		}
+		if offboard.IsOffboarded(user) {
+			return errInviteWithdrawn
+		}
 
 		user.SetPassword(body.Password)
 		if body.Name != "" {
@@ -387,6 +408,9 @@ func handlePostAcceptInvite(app core.App, re *core.RequestEvent) error {
 		email = user.GetString("email")
 		return nil
 	})
+	if errors.Is(err, errInviteWithdrawn) {
+		return re.JSON(http.StatusGone, map[string]string{"error": err.Error()})
+	}
 	if err != nil {
 		return re.BadRequestError(err.Error(), err)
 	}
