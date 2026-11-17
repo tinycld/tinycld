@@ -11,6 +11,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/mailer"
+	"tinycld.org/core/offboard"
 )
 
 // RegisterInviteLinkEndpoints wires the admin-facing endpoints that surface
@@ -38,7 +39,8 @@ func RegisterInviteLinkEndpoints(app core.App) {
 func resolveInvitedUserAsAdmin(app core.App, re *core.RequestEvent) (*core.Record, error) {
 	userID := re.Request.PathValue("userId")
 	user, err := app.FindRecordById("users", userID)
-	if err != nil || user == nil {
+	// A removed account gets no invite link: it would bring the account back.
+	if err != nil || user == nil || offboard.IsOffboarded(user) {
 		return nil, re.NotFoundError("user not found", err)
 	}
 	if re.Auth == nil {

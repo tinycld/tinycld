@@ -30,6 +30,8 @@ func setupInviteTestApp(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 	users.Fields.Add(&core.BoolField{Name: "is_demo"})
+	// The seat rule reads disabled, as the real users collection has it.
+	users.Fields.Add(&core.BoolField{Name: "disabled"})
 	users.Fields.Add(&core.SelectField{
 		Name:      "role",
 		Values:    []string{"owner", "admin", "member", "guest"},

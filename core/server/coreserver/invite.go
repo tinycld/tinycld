@@ -5,18 +5,21 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"net/http"
 	"strings"
 	"time"
 
+	"tinycld.org/core/apierr"
 	"tinycld.org/core/approutes"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/background"
 	"tinycld.org/core/notify"
+	"tinycld.org/core/offboard"
 	"tinycld.org/core/readonly"
 	"tinycld.org/core/usernames"
 )
@@ -84,6 +87,9 @@ func handleInviteMember(app core.App, jobs *background.Jobs, re *core.RequestEve
 		return re.BadRequestError(
 			"username must be 3-32 chars, lowercase letters, digits, dash or underscore", nil)
 	}
+	if usernames.Reserved(req.Username) {
+		return re.BadRequestError("Usernames that start with "+usernames.TombstonePrefix+" are reserved", nil)
+	}
 
 	validRoles := map[string]bool{"admin": true, "member": true, "guest": true}
 	if !validRoles[req.Role] {
@@ -105,6 +111,11 @@ func handleInviteMember(app core.App, jobs *background.Jobs, re *core.RequestEve
 
 	existing, _ := app.FindFirstRecordByFilter(
 		"users", "username = {:u}", map[string]any{"u": req.Username})
+	// A user deleted before deleting freed the username still holds it. The
+	// deleted account must never get an invite link, which would bring it back.
+	if existing != nil && offboard.IsOffboarded(existing) {
+		return re.BadRequestError("This username belongs to a removed account", nil)
+	}
 	if existing != nil {
 		userRecord = existing
 	} else {
@@ -196,7 +207,7 @@ func handleInviteMember(app core.App, jobs *background.Jobs, re *core.RequestEve
 		if strings.Contains(lower, "username") && strings.Contains(lower, "unique") {
 			return re.BadRequestError("That username is already taken", err)
 		}
-		return re.BadRequestError("Failed to invite member", err)
+		return apierr.Wrap(re, http.StatusBadRequest, "Failed to invite member", err)
 	}
 
 	// Existing verified users get a "you've been added" email (skipped for
@@ -289,6 +300,10 @@ type acceptInviteRequest struct {
 	Name     string `json:"name"`
 }
 
+// errInviteWithdrawn refuses an invite whose user was removed: accepting it
+// would bring the deleted account back.
+var errInviteWithdrawn = errors.New("this invitation was withdrawn")
+
 // findInviteToken looks up an invite token and validates it is unused and unexpired.
 // Returns the token record and a zero-valued (statusCode, errMsg) on success,
 // or (nil, non-zero status, message) on failure.
@@ -325,6 +340,9 @@ func handleGetAcceptInvite(app core.App, re *core.RequestEvent) error {
 	user, err := app.FindRecordById("users", record.GetString("user"))
 	if err != nil {
 		return re.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+	}
+	if offboard.IsOffboarded(user) {
+		return re.JSON(http.StatusGone, map[string]string{"error": errInviteWithdrawn.Error()})
 	}
 
 	return re.JSON(http.StatusOK, map[string]any{
@@ -367,6 +385,9 @@ func handlePostAcceptInvite(app core.App, re *core.RequestEvent) error {
 		if err != nil {
 			return fmt.Errorf("user not found")
 		}
+		if offboard.IsOffboarded(user) {
+			return errInviteWithdrawn
+		}
 
 		user.SetPassword(body.Password)
 		if body.Name != "" {
@@ -386,6 +407,9 @@ func handlePostAcceptInvite(app core.App, re *core.RequestEvent) error {
 		email = user.GetString("email")
 		return nil
 	})
+	if errors.Is(err, errInviteWithdrawn) {
+		return re.JSON(http.StatusGone, map[string]string{"error": err.Error()})
+	}
 	if err != nil {
 		return re.BadRequestError(err.Error(), err)
 	}

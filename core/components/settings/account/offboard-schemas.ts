@@ -3,7 +3,7 @@ import { confirmTextSchema, z } from '@tinycld/core/ui/form'
 
 export const offboardPlanSchema = z
     .object({
-        mode: z.enum(['reassign', 'delete_my_data']),
+        mode: z.enum(['keep', 'reassign', 'delete_my_data']),
         successor_user_id: z.string().optional(),
     })
     .refine(plan => plan.mode !== 'reassign' || Boolean(plan.successor_user_id), {
@@ -32,12 +32,9 @@ export function removeMemberSchemaFor(displayName: string) {
 }
 
 /**
- * The plan an admin removal submits when the admin has not picked one:
- * reassign to the first peer when there is one, else delete. Derived during
- * render, so the default follows the peer list once it loads.
+ * The plan an admin removal submits when the admin has not picked one: keep
+ * the member's work, credited to the deleted user.
  */
-export function defaultRemovalPlan(peers: { id: string }[]): OffboardPlan {
-    const first = peers[0]
-    if (first) return { mode: 'reassign', successor_user_id: first.id }
-    return { mode: 'delete_my_data' }
+export function defaultRemovalPlan(): OffboardPlan {
+    return { mode: 'keep' }
 }

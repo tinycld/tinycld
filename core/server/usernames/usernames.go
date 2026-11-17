@@ -36,3 +36,10 @@ var usernameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 // alphanumeric with dash or underscore, 1..32 chars, must start with
 // alphanumeric.
 func Valid(s string) bool { return usernameRE.MatchString(s) }
+
+// TombstonePrefix starts the username of every deleted (offboarded) user. A
+// live account may not take it, so a live login never looks like a deleted one.
+const TombstonePrefix = "deleted-"
+
+// Reserved reports whether s is a username no live account may take.
+func Reserved(s string) bool { return strings.HasPrefix(s, TombstonePrefix) }
