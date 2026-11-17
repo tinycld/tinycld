@@ -260,6 +260,64 @@ func TestAChoiceParamWithAHeaderBinds(t *testing.T) {
 	}
 }
 
+// kindsParam is a multiple choice of listed options whose header line names
+// every pick.
+func kindsParam(header string) ParamDef {
+	return ParamDef{
+		ID: "kinds", Type: ParamChoice, Multiple: true, Header: header,
+		Options: []Option{{Value: "hay", Label: "Hay"}, {Value: "fish", Label: "Fish"}},
+	}
+}
+
+// headedTeams is a multiple choice from a source, grouped by region with a
+// group pick text, whose header line names the picks.
+func headedTeams(header string) ParamDef {
+	d := groupedTeams("All {group} teams", Path{{Field: "region"}})
+	d.Header = header
+	return d
+}
+
+// A header line also names the picks of a multiple choice, and of a choice
+// whose options come from a source.
+func TestCheckParamDefsAcceptsAHeaderOnAMultipleOrSourceChoice(t *testing.T) {
+	if err := checkParamDefs([]ParamDef{kindsParam("Feed: {label}")}); err != nil {
+		t.Fatalf("a multiple choice header: %v", err)
+	}
+	if err := checkParamDefs([]ParamDef{headedTeams("Teams: {label}")}); err != nil {
+		t.Fatalf("a multiple choice from a source with a header: %v", err)
+	}
+	one := headedTeams("Team: {label}")
+	one.Multiple = false
+	if err := checkParamDefs([]ParamDef{one}); err != nil {
+		t.Fatalf("a single choice from a source with a header: %v", err)
+	}
+}
+
+// A multiple or source choice's header with no {label} is refused as a
+// single choice's is.
+func TestCheckParamDefsRefusesAHeaderWithNoLabelOnAMultipleOrSourceChoice(t *testing.T) {
+	requireSpecError(t, checkParamDefs([]ParamDef{kindsParam("Feed")}), 400, "params.0.header", "{label}")
+	requireSpecError(t, checkParamDefs([]ParamDef{headedTeams("Teams")}), 400, "params.0.header", "{label}")
+}
+
+// A multiple choice from a source with a header loads, keeps its header and
+// validates against the sources.
+func TestAMultipleSourceChoiceWithAHeaderBinds(t *testing.T) {
+	app := withZooRegistry(t)
+	spec := loadSpec(t, `{"version":4,"source":"zoo.feedings",
+		"params":[{"id":"animals","type":"choice","multiple":true,"header":"Animals: {label}",
+			"optionsFrom":{"source":"zoo.animals","value":[{"field":"id"}],"label":[{"field":"name"}],
+				"group":[{"link":"site"}],"groupLabel":"All {group} animals"}}],
+		"columns":[{"id":"note","path":[{"field":"note"}]}],
+		"filter":{"op":"in","args":[{"path":[{"link":"animal"}]},{"param":"animals"}]}}`)
+	if got := spec.Params[0].Header; got != "Animals: {label}" {
+		t.Fatalf("header = %q", got)
+	}
+	if err := Validate(app, spec); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 // groupedTeams is a multiple choice of records whose group pick reads label.
 func groupedTeams(label string, group Path) ParamDef {
 	return ParamDef{ID: "teams", Type: ParamChoice, Multiple: true, OptionsFrom: &OptionsFrom{

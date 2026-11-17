@@ -256,6 +256,73 @@ func TestRunGivesOneHeaderLinePerHeaderInParamOrder(t *testing.T) {
 	}
 }
 
+// requireNoHeaderLine fails when the run prints a header line: an unset
+// param's slot, if any, is "".
+func requireNoHeaderLine(t *testing.T, res *Result, what string) {
+	t.Helper()
+	for _, line := range res.HeaderLines {
+		if line != "" {
+			t.Fatalf("%s: headerLines = %#v, want no line", what, res.HeaderLines)
+		}
+	}
+}
+
+// kindsSpec has a multiple choice of listed options whose header names
+// every pick.
+const kindsSpec = `{"version":4,"source":"zoo.feedings","params":[
+	{"id":"kinds","type":"choice","multiple":true,"header":"Feed: {label}",
+		"options":[{"value":"hay","label":"Hay"},{"value":"fish","label":"Fish"},{"value":"meat","label":"Meat"}]}],
+	"columns":[{"id":"note","path":[{"field":"note"}]}],"sort":[{"col":"note"}]}`
+
+// A multiple choice's header line names every pick, joined by ", ", in the
+// order of the options, not the order they were posted in.
+func TestRunHeaderLineNamesEveryPickOfAMultipleChoiceInOptionOrder(t *testing.T) {
+	z := newZoo(t)
+	res := z.run(t, "ann", kindsSpec, Options{}, map[string]string{"kinds": `["meat","hay"]`})
+	if want := []string{"Feed: Hay, Meat"}; !reflect.DeepEqual(res.HeaderLines, want) {
+		t.Fatalf("headerLines = %#v, want %#v", res.HeaderLines, want)
+	}
+	requireNoHeaderLine(t, z.run(t, "ann", kindsSpec, Options{}, nil), "unset")
+	requireNoHeaderLine(t, z.run(t, "ann", kindsSpec, Options{}, map[string]string{"kinds": `[]`}), "an empty list")
+}
+
+// animalsHeaderSpec has a multiple choice of the reader's animals, grouped by
+// site with a group pick text, whose header names the picks; animalHeaderSpec
+// a single choice of them.
+const animalsHeaderSpec = `{"version":4,"source":"zoo.feedings","params":[
+	{"id":"animals","type":"choice","multiple":true,"header":"Animals: {label}",
+		"optionsFrom":{"source":"zoo.animals","value":[{"field":"id"}],"label":[{"field":"name"}],
+			"group":[{"link":"site"}],"groupLabel":"All {group} animals"}}],
+	"columns":[{"id":"note","path":[{"field":"note"}]}],
+	"filter":{"op":"in","args":[{"path":[{"link":"animal"}]},{"param":"animals"}]},
+	"sort":[{"col":"note"}]}`
+
+const animalHeaderSpec = `{"version":4,"source":"zoo.feedings","params":[
+	{"id":"animal","type":"choice","header":"Animal: {label}",
+		"optionsFrom":{"source":"zoo.animals","value":[{"field":"id"}],"label":[{"field":"name"}]}}],
+	"columns":[{"id":"note","path":[{"field":"note"}]}],
+	"filter":{"op":"eq","args":[{"path":[{"link":"animal"}]},{"param":"animal"}]},
+	"sort":[{"col":"note"}]}`
+
+// A choice from a source names a picked record by its label, read from the
+// options source (never its id), and a whole-group pick by its groupLabel
+// text with the group's label (the site's name, not its id).
+func TestRunHeaderLineNamesTheSourcePicksAndAWholeGroup(t *testing.T) {
+	z := newZoo(t)
+	picks := `["` + z.id("kit") + `",{"group":"` + z.id("north") + `"}]`
+	res := z.run(t, "ann", animalsHeaderSpec, Options{}, map[string]string{"animals": picks})
+	if want := []string{"Animals: Kit, All North animals"}; !reflect.DeepEqual(res.HeaderLines, want) {
+		t.Fatalf("headerLines = %#v, want %#v", res.HeaderLines, want)
+	}
+	requireNoHeaderLine(t, z.run(t, "ann", animalsHeaderSpec, Options{}, nil), "unset")
+
+	one := z.run(t, "ann", animalHeaderSpec, Options{}, map[string]string{"animal": `"` + z.id("leo") + `"`})
+	if want := []string{"Animal: Leo"}; !reflect.DeepEqual(one.HeaderLines, want) {
+		t.Fatalf("a single source choice: headerLines = %#v, want %#v", one.HeaderLines, want)
+	}
+	requireNoHeaderLine(t, z.run(t, "ann", animalHeaderSpec, Options{}, nil), "a single source choice unset")
+}
+
 func TestRunReturnsSpecErrors(t *testing.T) {
 	z := newZoo(t)
 	_, err := z.try(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}],"sort":[{"col":"x"}]}`, Options{}, nil)
