@@ -31,8 +31,18 @@ func setupTestApp(t *testing.T) *tests.TestApp {
 	if err != nil {
 		t.Fatalf("users collection: %v", err)
 	}
+	// The fixture users collection lacks the fields the tombstone writes.
+	if users.Fields.GetByName("disabled") == nil {
+		users.Fields.Add(&core.BoolField{Name: "disabled"})
+	}
+	if users.Fields.GetByName("deleted") == nil {
+		users.Fields.Add(&core.DateField{Name: "deleted"})
+	}
+	if err := app.Save(users); err != nil {
+		t.Fatalf("save users: %v", err)
+	}
 
-	events := core.NewBaseCollection("test_events")
+	events :=core.NewBaseCollection("test_events")
 	events.Fields.Add(&core.TextField{Name: "title", Required: true})
 	events.Fields.Add(&core.RelationField{
 		Name: "created_by", Required: true, CollectionId: users.Id,
@@ -380,5 +390,40 @@ func TestOffboardUser_RemovesGroupMemberships(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("want no group_members rows left for the offboarded user, got %d", n)
+	}
+}
+
+// A deleted user keeps its row (work stays credited) but frees its username
+// and its seat, and is marked deleted so lists can hide it.
+func TestOffboardUser_TombstonesTheUser(t *testing.T) {
+	app := setupTestApp(t)
+	alice := makeUser(t, app, "alice@test.local")
+	oldUsername := alice.GetString("username")
+
+	if _, err := OffboardUser(app, alice.Id, Plan{Mode: ModeKeep}, ""); err != nil {
+		t.Fatalf("OffboardUser: %v", err)
+	}
+
+	got, err := app.FindRecordById("users", alice.Id)
+	if err != nil {
+		t.Fatalf("re-find alice: %v", err)
+	}
+	if want := "deleted-" + alice.Id; got.GetString("username") != want {
+		t.Errorf("username = %q, want %q", got.GetString("username"), want)
+	}
+	if !got.GetBool("disabled") {
+		t.Error("disabled = false, want true")
+	}
+	if got.GetDateTime("deleted").IsZero() {
+		t.Error("deleted is empty, want a time")
+	}
+
+	users, _ := app.FindCollectionByNameOrId("users")
+	reuse := core.NewRecord(users)
+	reuse.SetEmail("alice2@test.local")
+	reuse.Set("username", oldUsername)
+	reuse.SetPassword("Password123!")
+	if err := app.Save(reuse); err != nil {
+		t.Fatalf("the freed username %q must be reusable: %v", oldUsername, err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
 
 	"tinycld.org/core/groups"
 	"tinycld.org/core/logging"
@@ -58,6 +59,12 @@ const deletedEmailDomain = "@deleted.tinycld.org"
 // sentinelEmail is the email anonymizeUser writes for a user id.
 func sentinelEmail(id string) string {
 	return "deleted-" + id + deletedEmailDomain
+}
+
+// tombstoneUsername is the username anonymizeUser writes. It is a valid
+// username, so the row still saves, and the id makes it unique.
+func tombstoneUsername(id string) string {
+	return "deleted-" + id
 }
 
 // IsOffboarded reports whether user has been anonymized by OffboardUser or
@@ -314,6 +321,12 @@ func anonymizeUser(app core.App, userID string) error {
 	user.SetVerified(false)
 	user.SetPassword(randomPwd)
 	user.RefreshTokenKey()
+	// A tombstone: the row stays so authored work keeps its author, but the
+	// username is freed for a new person, the account holds no seat and cannot
+	// sign in, and lists hide it by `deleted`.
+	user.Set("username", tombstoneUsername(userID))
+	user.Set("disabled", true)
+	user.Set("deleted", types.NowDateTime())
 	return app.Save(user)
 }
 
