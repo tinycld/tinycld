@@ -430,7 +430,7 @@ func TestColumnTypesDoNotDependOnWhetherRowsLoaded(t *testing.T) {
 	want := []ResultColumn{
 		{ID: "species", Label: "Species", Type: Text, TotalType: Number, Aggregate: Count, Sortable: true},
 		{ID: "cost", Label: "Cost", Type: Money, CurrencyCell: "cost@currency", Aggregate: Sum, Sortable: true},
-		{ID: "share", Label: "share", Type: Percent},
+		{ID: "share", Label: "share", Type: Percent, Scale: ptr(1)},
 		{ID: "notes", Label: "notes", Type: Text, TotalType: Number, Aggregate: Count, Sortable: true},
 	}
 	if !reflect.DeepEqual(collapsed.Columns, want) {

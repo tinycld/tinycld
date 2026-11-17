@@ -73,6 +73,11 @@ export interface ResultColumn {
     totalType?: FieldType
     aggregate?: Aggregate
     format?: string
+    /**
+     * The decimal places a percent part's column (percentOfTotal, percentOfParent,
+     * percentOfSection) prints, 0 included; none means a percent prints 1 place.
+     */
+    scale?: number
     options?: SelectOption[]
     /** A money column's fixed currency. */
     currency?: string

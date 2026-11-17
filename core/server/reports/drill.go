@@ -129,7 +129,22 @@ func isPercentColumn(c *Column) bool {
 	if c.Format == "percent" {
 		return true
 	}
+	return isPercentPart(c)
+}
+
+// isPercentPart is a column whose formula root is a percent part.
+func isPercentPart(c *Column) bool {
 	return c.Formula != nil && slices.Contains([]string{"percentOfParent", "percentOfTotal", "percentOfSection"}, c.Formula.Op)
+}
+
+// percentScale is the places a percent part's column prints: its root node's
+// scale. Any other column has none (a percent then prints 1 place).
+func percentScale(c *Column) *int {
+	if !isPercentPart(c) || c.Formula.Scale == nil {
+		return nil
+	}
+	places := *c.Formula.Scale
+	return &places
 }
 
 // drills binds every drilled column against its target's params; every

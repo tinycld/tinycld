@@ -131,6 +131,17 @@ describe('formatReportPercent', () => {
         expect(formatReportPercent(-0.05)).toBe('-0.1%')
         expect(formatReportPercent(Number.NaN)).toBe('')
     })
+
+    it('shows the places it is given, rounding half away from zero', () => {
+        expect(formatReportPercent(12.345, 2)).toBe('12.35%')
+        expect(formatReportPercent(-0.005, 2)).toBe('-0.01%')
+        expect(formatReportPercent(100, 2)).toBe('100.00%')
+        expect(formatReportPercent(12.5, 0)).toBe('13%')
+        expect(formatReportPercent(-12.5, 0)).toBe('-13%')
+        expect(formatReportPercent(12.34, 1)).toBe('12.3%')
+        expect(formatReportPercent(Number.NaN, 2)).toBe('')
+        expect(formatReportPercent(Number.POSITIVE_INFINITY, 0)).toBe('')
+    })
 })
 
 const ANIMAL: ResultColumn = {
@@ -285,6 +296,23 @@ describe('cellDisplay', () => {
             format: 'percent',
         }
         expect(cellDisplay(ratio, row('detail'), 12.5, PLAIN).text).toBe('12.5%')
+    })
+
+    it('prints a percent column at its scale, and at 1 place with none', () => {
+        const share: ResultColumn = { id: 'share', label: 'Share', type: 'percent' }
+        expect(cellDisplay({ ...share, scale: 2 }, row('total'), 100, PLAIN)).toMatchObject({
+            text: '100.00%',
+            align: 'right',
+        })
+        expect(cellDisplay({ ...share, scale: 0 }, row('total'), 100, PLAIN).text).toBe('100%')
+        expect(cellDisplay(share, row('total'), 100, PLAIN).text).toBe('100.0%')
+        const ratio: ResultColumn = {
+            id: 'ratio',
+            label: 'Ratio',
+            type: 'number',
+            format: 'percent',
+        }
+        expect(cellDisplay(ratio, row('detail'), 12.34, PLAIN).text).toBe('12.3%')
     })
 
     it('shows nothing for a blank cell', () => {

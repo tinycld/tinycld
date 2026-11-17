@@ -25,7 +25,7 @@ func (rn *runner) columns() []ResultColumn {
 		if cp.col.Hidden {
 			continue
 		}
-		rc := ResultColumn{ID: cp.col.ID, Label: labelOf(cp), Aggregate: cp.col.Aggregate, Format: cp.col.Format}
+		rc := ResultColumn{ID: cp.col.ID, Label: labelOf(cp), Aggregate: cp.col.Aggregate, Format: cp.col.Format, Scale: percentScale(cp.col)}
 		rc.Type, rc.TotalType = c.resultType(cp)
 		if cp.path != nil && cp.path.field.Type == Select {
 			rc.Options = cp.path.field.Options
@@ -63,7 +63,7 @@ func (rn *runner) pivotColumns() []ResultColumn {
 		label := rn.pivotLabel(j, v.key)
 		rc := ResultColumn{
 			ID: fmt.Sprintf("%s.p%d", cell.col.ID, j), Label: label.text,
-			Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format,
+			Type: c.levelTypes[cell.col.ID], Aggregate: cell.col.Aggregate, Format: cell.col.Format, Scale: percentScale(cell.col),
 			Pivot: &PivotColumn{Cell: cell.col.ID, Key: v.key, LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency},
 			Drill: rn.pivotDrill(cell),
 		}

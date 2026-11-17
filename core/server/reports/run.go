@@ -105,7 +105,11 @@ type ResultColumn struct {
 	TotalType FieldType `json:"totalType,omitempty"`
 	Aggregate Aggregate `json:"aggregate,omitempty"`
 	Format    string    `json:"format,omitempty"`
-	Options   []Option  `json:"options,omitempty"`
+	// Scale is the decimal places a percent part's column (percentOfTotal,
+	// percentOfParent, percentOfSection) prints, 0 included; no value means
+	// a percent prints 1 place.
+	Scale   *int     `json:"scale,omitempty"`
+	Options []Option `json:"options,omitempty"`
 	// Currency is a money column's fixed currency; CurrencyCell names the
 	// cell that holds each row's currency instead.
 	Currency      string       `json:"currency,omitempty"`

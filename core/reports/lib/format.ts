@@ -92,10 +92,14 @@ export function formatReportAmount(
     return unitsText(units, currency, format, options.withSymbol)
 }
 
-/** `value` is already a percent: 12.345 shows as 12.3%. A share of nothing shows nothing. */
-export function formatReportPercent(value: number): string {
+/**
+ * `value` is already a percent, rounded half away from zero at `places`: 12.345
+ * shows as 12.3% at 1 place, 12.35% at 2. A share of nothing shows nothing.
+ */
+export function formatReportPercent(value: number, places = 1): string {
     if (!Number.isFinite(value)) return ''
-    return `${(roundHalfAwayFromZero(value * 10) / 10).toFixed(1)}%`
+    const factor = 10 ** places
+    return `${(roundHalfAwayFromZero(value * factor) / factor).toFixed(places)}%`
 }
 
 export function formatNumber(value: number): string {
@@ -196,7 +200,7 @@ export function cellDisplay(
     if (type === 'money' && typeof value === 'number')
         return moneyDisplay(column, row, value, format)
     if (typeof value === 'number' && (type === 'percent' || column.format === 'percent')) {
-        return plainDisplay(formatReportPercent(value), 'right')
+        return plainDisplay(formatReportPercent(value, column.scale), 'right')
     }
     if (typeof value === 'number') return plainDisplay(formatNumber(value), align)
     if (typeof value === 'boolean') return plainDisplay(value ? 'Yes' : 'No', align)
