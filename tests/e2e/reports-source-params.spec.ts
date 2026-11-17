@@ -518,6 +518,49 @@ test.describe('params from a source, headings and unpublished shipped reports', 
         }
     })
 
+    // A team with no region has no group: it is listed first, under no head, and
+    // there is no "(none)" head or "All (none)" pick. It is picked on its own.
+    test('Ask when run lists a team with no region first, under no head', async ({ page }) => {
+        const { inviteePage: p, close } = await createInvitedUser(page, 'rptaskblank')
+        try {
+            const stem = uniqueName('Blank')
+            await seedRegions(p, stem)
+            await addTeam(p, `${stem} X1`, 'none')
+            await addSale(p, {
+                team: `${stem} X1`,
+                customer: 'Xan',
+                amount: 100,
+                cost: 0,
+                day: '2026-01-05',
+            })
+            await askTeamsByRegion(p)
+
+            await p.getByTestId('report-add-filter').click()
+            await p.getByTestId('report-add-filter-team').click()
+            const picker = p.getByTestId('report-filter-picker')
+            await picker.getByTestId('report-filter-search').fill(stem)
+            // The options and whole-group picks, in the order the picker shows them.
+            await expect(picker.getByRole('checkbox')).toHaveText([
+                `${stem} X1`,
+                'All North',
+                `${stem} N1`,
+                `${stem} N2`,
+                'All South',
+                `${stem} S1`,
+            ])
+            await expect(picker.getByText('(none)', { exact: true })).toHaveCount(0)
+            await picker.getByRole('checkbox', { name: `${stem} X1`, exact: true }).click()
+            await picker.getByTestId('report-filter-apply').click()
+            await expect(picker).toBeHidden()
+
+            const table = p.getByTestId('report-table')
+            await expect(table.getByText('Xan', { exact: true })).toBeVisible()
+            await expect(table.getByText('Nia', { exact: true })).toHaveCount(0)
+        } finally {
+            await close()
+        }
+    })
+
     // E1: "Order the groups by" orders the regions a team list is grouped in: by
     // name (East, North, South), or in the region field's own order (North, South,
     // East, as the stub declares them). The preview's picker follows each choice,

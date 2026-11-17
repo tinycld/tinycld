@@ -11,9 +11,10 @@ import { chipText } from '../params'
 import type { ParamDef } from '../spec'
 
 describe('options from a source', () => {
-    it('sections the loaded pages by group, in the groups order, the blank group first', () => {
+    it('sections the loaded pages by group, in the groups order, the blank group first with no head', () => {
         // The server lists the blank group ("" value, "(none)") first and sends its
-        // options with no group (options.go: Group is omitted when empty).
+        // options with no group (options.go: Group is omitted when empty). Its section
+        // has no group, so the picker draws no head and no whole-group pick for it.
         const pages = [
             {
                 options: [
@@ -36,7 +37,7 @@ describe('options from a source', () => {
             },
         ]
         expect(optionSections(pages, true)).toEqual([
-            { group: { value: '', label: '(none)' }, options: [{ value: 'd', label: 'Misc' }] },
+            { group: null, options: [{ value: 'd', label: 'Misc' }] },
             {
                 group: { value: 'asset', label: 'Asset' },
                 options: [

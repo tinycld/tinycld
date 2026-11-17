@@ -98,7 +98,7 @@ export async function openReportStub(page: Page) {
     await navigateToPackage(page, 'salesstub', { waitFor: page.getByTestId('salesstub-landing') })
 }
 
-const REGION_LABELS = { north: 'North', south: 'South', east: 'East' } as const
+const REGION_LABELS = { north: 'North', south: 'South', east: 'East', none: 'No region' } as const
 
 export async function addTeam(
     page: Page,
