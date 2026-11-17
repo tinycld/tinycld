@@ -122,7 +122,7 @@ export const paramDefSchema = z.strictObject({
     options: z.array(optionSchema).optional(),
     optionsFrom: optionsFromSchema.optional(),
     multiple: z.boolean().optional(),
-    /** A single choice's line under the period, `{label}` for the chosen option (N1). */
+    /** A choice's line under the period, `{label}` for the picks' labels joined by ", " (N1). */
     header: z.string().optional(),
 })
 export type ParamDef = z.infer<typeof paramDefSchema>
@@ -360,8 +360,8 @@ export interface HeaderLine {
 
 /**
  * The run's header lines with their params: the server gives line i for the i-th choice
- * param with a `header` (params.go headerLines), and '' for one that is unset, which
- * prints no line.
+ * param with a `header` (params.go headerLines), and '' for one that is unset or has no
+ * pick the reader may list, which prints no line.
  */
 export function headerLinesOf(
     spec: { params?: readonly ParamDef[] | null },

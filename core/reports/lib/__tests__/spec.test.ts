@@ -795,6 +795,49 @@ describe('a header line on a choice param (N1)', () => {
         ])
     })
 
+    it('accepts a header on a multiple choice and on a choice from a source, and keeps it', () => {
+        const KINDS = {
+            id: 'kinds',
+            type: 'choice',
+            multiple: true,
+            header: 'Feed: {label}',
+            options: [
+                { value: 'hay', label: 'Hay' },
+                { value: 'fish', label: 'Fish' },
+            ],
+        }
+        const ANIMALS = {
+            id: 'animals',
+            type: 'choice',
+            multiple: true,
+            header: 'Animals: {label}',
+            optionsFrom: {
+                source: 'zoo.animals',
+                value: [{ field: 'id' }],
+                label: [{ field: 'name' }],
+                group: [{ field: 'species' }],
+                groupLabel: 'All {group} animals',
+            },
+        }
+        expect(paramDefSchema.parse(KINDS)).toEqual(KINDS)
+        expect(paramDefSchema.parse(ANIMALS)).toEqual(ANIMALS)
+        const withPicks = { ...FEEDINGS, params: [...FEEDINGS.params, KINDS, ANIMALS] }
+        const spec = parseSpec(withPicks)
+        expect(spec).toEqual(withPicks)
+        expect(spec?.params?.map(param => param.header)).toEqual([
+            ...FEEDINGS.params.map(() => undefined),
+            'Feed: {label}',
+            'Animals: {label}',
+        ])
+        if (!spec) return
+        expect(
+            headerLinesOf(spec, result(['Feed: Fish', 'Animals: Kit, All cat animals']))
+        ).toEqual([
+            { id: 'kinds', text: 'Feed: Fish' },
+            { id: 'animals', text: 'Animals: Kit, All cat animals' },
+        ])
+    })
+
     it('gives no lines for a spec with no header', () => {
         const spec = parseSpec(FEEDINGS)
         expect(spec).not.toBeNull()
