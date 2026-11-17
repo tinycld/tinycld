@@ -1,5 +1,5 @@
 import { getShortcuts } from './registry'
-import { type ScopeEntry, topScopeEntry } from './scopes'
+import { activeScopeChain, type ScopeEntry, topScopeEntry } from './scopes'
 import type { Shortcut } from './types'
 
 const SEQUENCE_TIMEOUT_MS = 1000
@@ -35,17 +35,25 @@ export interface MatcherContext {
 }
 
 /**
- * Is this shortcut's scope the one currently holding the keyboard? Exported so
+ * Is this shortcut's scope one currently holding the keyboard? Exported so
  * the help overlay lists exactly what can fire, rather than restating this and
  * drifting from it. `top` is the scope entry to judge against: the live top by
- * default; the overlay passes the top entry below its own.
+ * default; the overlay passes the top entry below its own. The active entries
+ * are `top` and those under it that stay active (`activeScopeChain`).
  */
 export function isScopeActive(
     shortcut: Shortcut,
     top: ScopeEntry | null = topScopeEntry()
 ): boolean {
     if (shortcut.scope === 'global') return true
-    if (!top || shortcut.scope !== top.scope) return false
+    return ownerIndex(shortcut, activeScopeChain(top)) !== -1
+}
+
+/**
+ * The position in `chain` (newest first) of the active entry that owns a
+ * scoped shortcut, or -1 when no active entry owns it.
+ */
+function ownerIndex(shortcut: Shortcut, chain: readonly ScopeEntry[]): number {
     // A blurred screen stays mounted and keeps its shortcuts registered (on web
     // `freezeOnBlur` only hides the subtree), so the live screen is not the only
     // owner of its scope's keys — mail's list and a Boards board both register
@@ -61,9 +69,29 @@ export function isScopeActive(
     // — it won the match and swallowed the keypress.
     //
     // `scopeId === undefined` means the shortcut was registered with no scope
-    // owner at all; it keeps the original scope-only behavior.
-    if (shortcut.scopeId === undefined) return true
-    return shortcut.scopeId === top.id
+    // owner at all; it keeps the original scope-only behavior, and belongs to
+    // the newest active entry of its scope. `null` never matches.
+    const { scope, scopeId } = shortcut
+    if (scopeId === undefined) return chain.findIndex(entry => entry.scope === scope)
+    return chain.findIndex(entry => entry.scope === scope && entry.id === scopeId)
+}
+
+/**
+ * How strongly a shortcut claims its keys: the lower, the stronger. A scoped
+ * shortcut ranks by its owning entry's position in the active chain from
+ * `top` (0 is the newest), so a newer scope wins a key it shares with an older
+ * one that stays active under it. A scoped shortcut no active entry owns ranks
+ * after every active one; a `global` ranks last. Exported so the help overlay
+ * leaves out the same losers the matcher does.
+ */
+export function firingRank(shortcut: Shortcut, top: ScopeEntry | null = topScopeEntry()): number {
+    return rankIn(shortcut, activeScopeChain(top))
+}
+
+function rankIn(shortcut: Shortcut, chain: readonly ScopeEntry[]): number {
+    if (shortcut.scope === 'global') return Number.POSITIVE_INFINITY
+    const index = ownerIndex(shortcut, chain)
+    return index === -1 ? chain.length : index
 }
 
 function matches(shortcut: Shortcut, ctx: MatcherContext): boolean {
@@ -77,20 +105,29 @@ function matches(shortcut: Shortcut, ctx: MatcherContext): boolean {
 
 /**
  * Of shortcuts with the same keys that can all fire, the one that does. A
- * shortcut of the active scope wins over a `global` one: core registers its
+ * shortcut of an active scope wins over a `global` one: core registers its
  * globals (`/` search) at app start, before any screen mounts, so registry
- * order alone would let them shadow a screen's own key. Only the top scope
- * entry is active (`isScopeActive`), so at most one scope's shortcuts are
- * candidates; among those, and among globals, the first in order wins.
- * Exported so the help overlay lists the same winner the matcher fires.
+ * order alone would let them shadow a screen's own key. Among scoped
+ * shortcuts of different active entries, the newest entry's wins
+ * (`firingRank`), whatever the registry order: the newer scope is the one the
+ * user just opened. Within one entry, and among globals, the first in order
+ * wins. Exported so the help overlay lists the same winner the matcher fires.
  */
-export function pickFiring(candidates: Iterable<Shortcut>): Shortcut | null {
-    let globalMatch: Shortcut | null = null
+export function pickFiring(
+    candidates: Iterable<Shortcut>,
+    top: ScopeEntry | null = topScopeEntry()
+): Shortcut | null {
+    const chain = activeScopeChain(top)
+    let best: Shortcut | null = null
+    let bestRank = Number.POSITIVE_INFINITY
     for (const shortcut of candidates) {
-        if (shortcut.scope !== 'global') return shortcut
-        globalMatch ??= shortcut
+        const rank = rankIn(shortcut, chain)
+        if (best === null || rank < bestRank) {
+            best = shortcut
+            bestRank = rank
+        }
     }
-    return globalMatch
+    return best
 }
 
 function* exactCandidates(keys: string, ctx: MatcherContext): Generator<Shortcut> {

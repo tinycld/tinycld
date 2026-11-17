@@ -4,6 +4,7 @@ import { helpGroups, useShortcutHelpStore } from '@tinycld/core/lib/shortcuts/he
 import { createMatcher, isScopeActive } from '@tinycld/core/lib/shortcuts/matcher'
 import { useShortcutRegistry } from '@tinycld/core/lib/shortcuts/registry'
 import {
+    activeScopeEntries,
     currentScopeId,
     nextScopeId,
     popScope,
@@ -1246,6 +1247,304 @@ describe('help list', () => {
                 expect.objectContaining({ id: 't.broken' })
             )
             warn.mockRestore()
+        })
+    })
+})
+
+// A scope can opt in to stay active under a newer scope (a list screen that
+// keeps its own keys while an inline form on it holds the keyboard). On a key
+// both own the newest scope wins; the older scope's other keys still fire. A
+// scope that does not opt in keeps the old rule: only the top entry is active.
+describe('scope active under a newer scope', () => {
+    beforeEach(resetShortcutState)
+    afterEach(resetShortcutState)
+
+    const ids = (entries: { id: number }[]) => entries.map(e => e.id)
+
+    function listShortcut(id: string, keys: string, scopeId: number | undefined, run = vi.fn()) {
+        return {
+            id,
+            keys,
+            scope: 'list',
+            scopeId,
+            description: `List ${id}`,
+            group: 'Rows',
+            run,
+        } satisfies Shortcut
+    }
+
+    function composeShortcut(id: string, keys: string, scopeId: number, run = vi.fn()) {
+        return {
+            id,
+            keys,
+            scope: 'compose',
+            scopeId,
+            description: `Form ${id}`,
+            group: 'Form',
+            run,
+        } satisfies Shortcut
+    }
+
+    const listedIds = (groups: Record<string, Shortcut[]>) =>
+        Object.values(groups)
+            .flat()
+            .map(s => s.id)
+            .sort()
+
+    describe('activeScopeEntries', () => {
+        it('one entry is the whole active chain', () => {
+            const listId = pushScope('list')
+            expect(ids(activeScopeEntries())).toEqual([listId])
+        })
+
+        it('a lower entry without activeUnder is inactive under a newer entry', () => {
+            pushScope('list')
+            const composeId = pushScope('compose')
+            expect(ids(activeScopeEntries())).toEqual([composeId])
+        })
+
+        it('a lower entry active under compose stays active under a compose entry, newest first', () => {
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+            const composeId = pushScope('compose')
+            const entries = activeScopeEntries()
+            expect(ids(entries)).toEqual([composeId, listId])
+            expect(entries.map(e => e.scope)).toEqual(['compose', 'list'])
+        })
+
+        it('a modal above the compose entry leaves only the modal active', () => {
+            pushScope('list', { activeUnder: ['compose'] })
+            pushScope('compose')
+            const modalId = pushScope('modal')
+            expect(ids(activeScopeEntries())).toEqual([modalId])
+        })
+
+        it('a floor below the modal gives the compose entry and the lower entry', () => {
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+            const composeId = pushScope('compose')
+            const floor = nextScopeId()
+            pushScope('modal')
+            expect(ids(activeScopeEntries(floor))).toEqual([composeId, listId])
+        })
+
+        it('an empty stack has no active entries', () => {
+            expect(activeScopeEntries()).toEqual([])
+        })
+    })
+
+    describe('isScopeActive', () => {
+        it('a stamped shortcut of an opted-in lower entry is active under compose and not under a modal; one without the option stays inactive', () => {
+            const plainId = pushScope('list')
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+            pushScope('compose')
+            const optedIn = listShortcut('t.opted', 'n', listId)
+            const plain = listShortcut('t.plain', 'n', plainId)
+
+            expect(isScopeActive(optedIn)).toBe(true)
+            // The default does not change: an entry that did not opt in stays
+            // shadowed by the newer scope.
+            expect(isScopeActive(plain)).toBe(false)
+
+            const modalId = pushScope('modal')
+            expect(isScopeActive(optedIn)).toBe(false)
+
+            popScope(modalId)
+            expect(isScopeActive(optedIn)).toBe(true)
+        })
+
+        it('a legacy shortcut of the lower entry’s scope is active through the chain', () => {
+            pushScope('list', { activeUnder: ['compose'] })
+            pushScope('compose')
+            const legacy = listShortcut('t.legacy', 'n', undefined)
+            expect(isScopeActive(legacy)).toBe(true)
+        })
+    })
+
+    describe('matcher', () => {
+        it('a key both own runs the newer scope’s shortcut when the older registered first; the older one’s own key still fires', () => {
+            const listEnter = vi.fn()
+            const listNext = vi.fn()
+            const formEnter = vi.fn()
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+            register(listShortcut('t.list-enter', 'Enter', listId, listEnter))
+            register(listShortcut('t.list-next', 'n', listId, listNext))
+            const composeId = pushScope('compose')
+            register(composeShortcut('t.form-enter', 'Enter', composeId, formEnter))
+            const m = createMatcher()
+
+            expect(m.feedAtom('Enter', { inInput: false })).toBe(true)
+            expect(formEnter).toHaveBeenCalledTimes(1)
+            expect(listEnter).not.toHaveBeenCalled()
+
+            expect(m.feedAtom('n', { inInput: false })).toBe(true)
+            expect(listNext).toHaveBeenCalledTimes(1)
+        })
+
+        it('a key both own runs the newer scope’s shortcut when the older registered last', () => {
+            const listEnter = vi.fn()
+            const listNext = vi.fn()
+            const formEnter = vi.fn()
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+            const composeId = pushScope('compose')
+            register(composeShortcut('t.form-enter', 'Enter', composeId, formEnter))
+            register(listShortcut('t.list-enter', 'Enter', listId, listEnter))
+            register(listShortcut('t.list-next', 'n', listId, listNext))
+            const m = createMatcher()
+
+            expect(m.feedAtom('Enter', { inInput: false })).toBe(true)
+            expect(formEnter).toHaveBeenCalledTimes(1)
+            expect(listEnter).not.toHaveBeenCalled()
+
+            expect(m.feedAtom('n', { inInput: false })).toBe(true)
+            expect(listNext).toHaveBeenCalledTimes(1)
+        })
+
+        it('a modal on top runs neither scope’s keys', () => {
+            const listEnter = vi.fn()
+            const listNext = vi.fn()
+            const formEnter = vi.fn()
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+            register(listShortcut('t.list-enter', 'Enter', listId, listEnter))
+            register(listShortcut('t.list-next', 'n', listId, listNext))
+            const composeId = pushScope('compose')
+            register(composeShortcut('t.form-enter', 'Enter', composeId, formEnter))
+            const modalId = pushScope('modal')
+            const m = createMatcher()
+
+            expect(m.feedAtom('Enter', { inInput: false })).toBe(false)
+            expect(m.feedAtom('n', { inInput: false })).toBe(false)
+            expect(formEnter).not.toHaveBeenCalled()
+            expect(listEnter).not.toHaveBeenCalled()
+            expect(listNext).not.toHaveBeenCalled()
+
+            // Closing the modal gives the keys back to the chain under it.
+            popScope(modalId)
+            expect(m.feedAtom('n', { inInput: false })).toBe(true)
+            expect(listNext).toHaveBeenCalledTimes(1)
+        })
+
+        it('a global with the same key as the older scope’s shortcut loses to it', () => {
+            const globalNext = vi.fn()
+            const listNext = vi.fn()
+            register({
+                id: 't.global-next',
+                keys: 'n',
+                scope: 'global',
+                description: 'Global next',
+                run: globalNext,
+            })
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+            register(listShortcut('t.list-next', 'n', listId, listNext))
+            const composeId = pushScope('compose')
+            register(composeShortcut('t.form-enter', 'Enter', composeId))
+            const m = createMatcher()
+
+            expect(m.feedAtom('n', { inInput: false })).toBe(true)
+            expect(listNext).toHaveBeenCalledTimes(1)
+            expect(globalNext).not.toHaveBeenCalled()
+        })
+    })
+
+    describe('helpGroups', () => {
+        it('lists the newer scope’s shortcut for a shared key and the older scope’s own keys, live and under the overlay', () => {
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+            register(listShortcut('t.list-enter', 'Enter', listId))
+            register(listShortcut('t.list-next', 'n', listId))
+            const composeId = pushScope('compose')
+            register(composeShortcut('t.form-enter', 'Enter', composeId))
+            const shortcuts = useShortcutRegistry.getState().shortcuts
+
+            expect(listedIds(helpGroups(shortcuts, null))).toEqual(['t.form-enter', 't.list-next'])
+
+            // The overlay's own modal entry is pushed after open() reads the floor.
+            useShortcutHelpStore.getState().open()
+            const { scopeFloor } = useShortcutHelpStore.getState()
+            const modalId = pushScope('modal')
+            register({
+                id: 't.overlay-close',
+                keys: 'Escape',
+                scope: 'modal',
+                scopeId: modalId,
+                description: 'Close',
+                run: () => {},
+            })
+
+            expect(
+                listedIds(helpGroups(useShortcutRegistry.getState().shortcuts, scopeFloor))
+            ).toEqual(['t.form-enter', 't.list-next'])
+        })
+    })
+
+    // React runs a child's effects before its parent's, so an opted-in entry
+    // (a list) can be pushed after the entry of a scope it names (the document
+    // it holds). It must go under that entry, or it shadows the document's keys.
+    describe('pushed after an entry of a scope it names', () => {
+        it('goes under the compose entry on top, and both scopes’ keys fire', () => {
+            const formCopy = vi.fn()
+            const listNext = vi.fn()
+            const composeId = pushScope('compose')
+            register(composeShortcut('t.form-copy', 'c', composeId, formCopy))
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+            register(listShortcut('t.list-next', 'j', listId, listNext))
+
+            expect(topScopeEntry()?.id).toBe(composeId)
+            expect(ids(activeScopeEntries())).toEqual([composeId, listId])
+
+            const m = createMatcher()
+            expect(m.feedAtom('c', { inInput: false })).toBe(true)
+            expect(formCopy).toHaveBeenCalledTimes(1)
+            expect(m.feedAtom('j', { inInput: false })).toBe(true)
+            expect(listNext).toHaveBeenCalledTimes(1)
+        })
+
+        it('goes under the whole run of compose entries on top', () => {
+            const lowerComposeId = pushScope('compose')
+            const upperComposeId = pushScope('compose')
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+
+            expect(topScopeEntry()?.id).toBe(upperComposeId)
+
+            // With the list under both, the next entry down is the other compose.
+            popScope(upperComposeId)
+            expect(topScopeEntry()?.id).toBe(lowerComposeId)
+            expect(ids(activeScopeEntries())).toEqual([lowerComposeId, listId])
+        })
+
+        it('goes under a run of two different scopes it names', () => {
+            const threadId = pushScope('thread')
+            const composeId = pushScope('compose')
+            const listId = pushScope('list', { activeUnder: ['compose', 'thread'] })
+
+            expect(topScopeEntry()?.id).toBe(composeId)
+
+            popScope(composeId)
+            expect(topScopeEntry()?.id).toBe(threadId)
+            expect(ids(activeScopeEntries())).toEqual([threadId, listId])
+        })
+
+        it('goes on top of a modal it does not name', () => {
+            pushScope('compose')
+            pushScope('modal')
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+
+            expect(topScopeEntry()?.id).toBe(listId)
+            expect(ids(activeScopeEntries())).toEqual([listId])
+        })
+
+        it('an entry without activeUnder goes on top of the compose entry, as before', () => {
+            pushScope('compose')
+            const listId = pushScope('list')
+
+            expect(topScopeEntry()?.id).toBe(listId)
+            expect(ids(activeScopeEntries())).toEqual([listId])
+        })
+
+        it('popping the compose entry afterwards leaves the list on top', () => {
+            const composeId = pushScope('compose')
+            const listId = pushScope('list', { activeUnder: ['compose'] })
+
+            popScope(composeId)
+            expect(topScopeEntry()?.id).toBe(listId)
+            expect(ids(activeScopeEntries())).toEqual([listId])
         })
     })
 })
