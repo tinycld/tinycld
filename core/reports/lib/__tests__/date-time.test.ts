@@ -129,15 +129,29 @@ describe('timeZoneWords', () => {
     describe('fallbacks', () => {
         const RealDateTimeFormat = Intl.DateTimeFormat
 
+        // The code under test calls the constructor with `new`, and a spy can
+        // only be constructed when its implementation is a function declaration
+        // or a class: an arrow function throws "is not a constructor".
+        function spyOnDateTimeFormat(
+            implementation: (
+                locale?: Intl.LocalesArgument,
+                options?: Intl.DateTimeFormatOptions
+            ) => Intl.DateTimeFormat
+        ) {
+            return vi
+                .spyOn(Intl, 'DateTimeFormat')
+                .mockImplementation(implementation as unknown as typeof Intl.DateTimeFormat)
+        }
+
         // Wraps the real constructor; `override` may replace what one style answers.
         // timeZoneWords caches per zone, so each test names a zone of its own.
         function spyOnZoneNames(
             override: (style: string) => Intl.DateTimeFormatPart[] | 'throw' | undefined
         ) {
-            return vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(((
+            function ZoneNames(
                 locale?: Intl.LocalesArgument,
                 options?: Intl.DateTimeFormatOptions
-            ) => {
+            ) {
                 const real = new RealDateTimeFormat(locale, options)
                 const style = options?.timeZoneName
                 if (!style) return real
@@ -145,7 +159,8 @@ describe('timeZoneWords', () => {
                 if (answer === 'throw') throw new RangeError('invalid timeZoneName')
                 if (!answer) return real
                 return { formatToParts: () => answer } as unknown as Intl.DateTimeFormat
-            }) as unknown as typeof Intl.DateTimeFormat)
+            }
+            return spyOnDateTimeFormat(ZoneNames)
         }
 
         afterEach(() => {
@@ -170,21 +185,23 @@ describe('timeZoneWords', () => {
         // An engine may refuse with an error type that is not a RangeError; the
         // header still has a line to show.
         it('reads an unknown zone as UTC when the engine throws a plain Error', () => {
-            vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((() => {
+            function Failing(): Intl.DateTimeFormat {
                 throw new Error('engine failure')
-            }) as unknown as typeof Intl.DateTimeFormat)
+            }
+            spyOnDateTimeFormat(Failing)
             expect(timeZoneWords('America/Edmonton')).toBe('UTC')
         })
 
         // zoneName's catch takes any error type, not only a RangeError.
         it('falls back to the long name when the generic style throws a plain Error', () => {
-            vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(((
+            function FailingGeneric(
                 locale?: Intl.LocalesArgument,
                 options?: Intl.DateTimeFormatOptions
-            ) => {
+            ) {
                 if (options?.timeZoneName === 'longGeneric') throw new Error('engine failure')
                 return new RealDateTimeFormat(locale, options)
-            }) as unknown as typeof Intl.DateTimeFormat)
+            }
+            spyOnDateTimeFormat(FailingGeneric)
             expect(timeZoneWords('Asia/Tokyo')).toBe('Japan Time')
         })
 

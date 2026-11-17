@@ -3,7 +3,7 @@ import {
     MODIFIER_HOLD_MS,
     type ModifierKeyEvent,
 } from '@tinycld/core/lib/shortcuts/modifier-held'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 function key(name: string, extra: Partial<ModifierKeyEvent> = {}): ModifierKeyEvent {
     return {
@@ -18,11 +18,11 @@ function key(name: string, extra: Partial<ModifierKeyEvent> = {}): ModifierKeyEv
 }
 
 describe('createModifierTracker', () => {
-    let onChange: ReturnType<typeof vi.fn>
+    let onChange: Mock<(isHeld: boolean) => void>
 
     beforeEach(() => {
         vi.useFakeTimers()
-        onChange = vi.fn()
+        onChange = vi.fn<(isHeld: boolean) => void>()
     })
 
     afterEach(() => {
