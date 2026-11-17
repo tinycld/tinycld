@@ -1,20 +1,12 @@
-import {
-    errorToString,
-    extractValidationErrors,
-    handleMutationErrorsWithForm,
-} from '@tinycld/core/lib/errors'
+import { errorToString, extractValidationErrors } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { z } from '@tinycld/core/ui/form'
 import type { UseFormGetValues, UseFormSetError } from 'react-hook-form'
+import { usernameField } from './username-schema'
 
 export const inviteSchema = z.object({
-    username: z
-        .string()
-        .regex(
-            /^[a-z0-9][a-z0-9_-]{0,31}$/,
-            'Use 1-32 chars: lowercase letters, digits, dash or underscore'
-        ),
+    username: usernameField,
     email: z.string().email('Enter a valid email address').or(z.literal('')).optional(),
     role: z.enum(['admin', 'member', 'guest']),
 })
@@ -34,9 +26,8 @@ interface InviteForm {
 }
 
 /**
- * Error handling for a screen with no toast-watching context (the setup
- * wizard): a refusal such as a seat limit has no field, and a toast would be
- * easy to miss next to the form that caused it, so it goes on the form itself.
+ * A refusal with no field (such as the seat limit) goes on the form root, next
+ * to the form that caused it; a toast would be easy to miss.
  */
 export function inviteErrorsOnForm(form: {
     setError: UseFormSetError<InviteFormValues>
@@ -56,13 +47,7 @@ export function inviteErrorsOnForm(form: {
 }
 
 /** Creates a pending member and returns the link that lets them set a password. */
-export function useInviteMember(
-    opts: InviteForm & {
-        onInvited: (result: InviteResult) => void
-        /** Show every refusal on the form instead of as a toast. */
-        errorsOnForm?: boolean
-    }
-) {
+export function useInviteMember(opts: InviteForm & { onInvited: (result: InviteResult) => void }) {
     return useMutation({
         // Single-org: /api/invite-member returns `userId` (the user_org
         // junction is gone). Reading a junction-row id here yielded
@@ -73,7 +58,7 @@ export function useInviteMember(
             pb.send<InviteResult>('/api/invite-member', {
                 method: 'POST',
                 body: JSON.stringify({
-                    username: data.username.trim().toLowerCase(),
+                    username: data.username,
                     email: data.email?.trim() ?? '',
                     role: data.role,
                 }),
@@ -85,11 +70,6 @@ export function useInviteMember(
                 inviteUrl: data.inviteUrl,
                 emailedTo: data.emailedTo,
             }),
-        onError: opts.errorsOnForm
-            ? inviteErrorsOnForm(opts)
-            : handleMutationErrorsWithForm({
-                  setError: opts.setError,
-                  getValues: opts.getValues,
-              }),
+        onError: inviteErrorsOnForm(opts),
     })
 }

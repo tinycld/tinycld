@@ -52,10 +52,9 @@ function RemoveMemberFlowOpen({ onClose, onSuccess, userId, displayName }: Remov
         defaultValues: { confirm: '', plan: undefined },
         mode: 'onChange',
     })
-    // Until the admin picks, the plan is derived from the peer list during
-    // render, so the highlighted option and the submitted plan stay the same
-    // thing even when the peers load after the dialog opens.
-    const plan = watch('plan') ?? defaultRemovalPlan(peers)
+    // Until the admin picks, the plan is the default (keep), so the highlighted
+    // option and the submitted plan stay the same thing.
+    const plan = watch('plan') ?? defaultRemovalPlan()
 
     const mutation = useMutation({
         mutationFn: (chosen: OffboardPlan) => offboardMember(userId, chosen),
@@ -70,9 +69,10 @@ function RemoveMemberFlowOpen({ onClose, onSuccess, userId, displayName }: Remov
             <View className="gap-4">
                 <Text className="text-foreground text-lg font-bold">Remove {displayName}?</Text>
                 <Text className="text-muted-foreground text-sm">
-                    Their account is anonymized and they're signed out everywhere. This cannot be
-                    undone — <Text className="text-foreground font-semibold">disable</Text> the
-                    account instead if the change might be temporary.
+                    They're signed out everywhere and leave the members list. Their username becomes
+                    free. This cannot be undone —{' '}
+                    <Text className="text-foreground font-semibold">disable</Text> the account
+                    instead if the change might be temporary.
                 </Text>
 
                 <Controller
@@ -85,6 +85,7 @@ function RemoveMemberFlowOpen({ onClose, onSuccess, userId, displayName }: Remov
                             value={plan}
                             onChange={field.onChange}
                             disabled={mutation.isPending}
+                            allowKeep
                         />
                     )}
                 />

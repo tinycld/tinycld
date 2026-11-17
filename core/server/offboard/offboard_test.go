@@ -31,6 +31,16 @@ func setupTestApp(t *testing.T) *tests.TestApp {
 	if err != nil {
 		t.Fatalf("users collection: %v", err)
 	}
+	// The fixture users collection lacks the fields the tombstone writes.
+	if users.Fields.GetByName("disabled") == nil {
+		users.Fields.Add(&core.BoolField{Name: "disabled"})
+	}
+	if users.Fields.GetByName("deleted") == nil {
+		users.Fields.Add(&core.DateField{Name: "deleted"})
+	}
+	if err := app.Save(users); err != nil {
+		t.Fatalf("save users: %v", err)
+	}
 
 	events := core.NewBaseCollection("test_events")
 	events.Fields.Add(&core.TextField{Name: "title", Required: true})
@@ -110,13 +120,14 @@ func TestOffboardUser_ReassignRewritesOwnedFKs(t *testing.T) {
 		t.Errorf("created_by: got %s, want %s", updated.GetString("created_by"), bob.Id)
 	}
 
-	// Alice's PII is scrubbed.
+	// Alice keeps her name, so her work stays credited to her; her email and
+	// sign-in are scrubbed.
 	scrubbed, err := app.FindRecordById("users", alice.Id)
 	if err != nil {
 		t.Fatalf("re-find alice: %v", err)
 	}
-	if scrubbed.GetString("name") != "Deleted user" {
-		t.Errorf("name = %q, want %q", scrubbed.GetString("name"), "Deleted user")
+	if scrubbed.GetString("name") != "T" || !IsOffboarded(scrubbed) {
+		t.Errorf("name = %q offboarded=%v, want the name kept and offboarded", scrubbed.GetString("name"), IsOffboarded(scrubbed))
 	}
 	if scrubbed.Email() == "alice@test.local" {
 		t.Error("expected email to be scrubbed")
@@ -145,8 +156,8 @@ func TestOffboardUser_KeepLeavesContent(t *testing.T) {
 		t.Errorf("created_by = %q, want %q", kept.GetString("created_by"), alice.Id)
 	}
 	scrubbed, _ := app.FindRecordById("users", alice.Id)
-	if scrubbed.GetString("name") != "Deleted user" {
-		t.Errorf("name = %q, want %q", scrubbed.GetString("name"), "Deleted user")
+	if scrubbed.GetString("name") != "T" || !IsOffboarded(scrubbed) {
+		t.Errorf("name = %q offboarded=%v, want the name kept and offboarded", scrubbed.GetString("name"), IsOffboarded(scrubbed))
 	}
 }
 
@@ -185,7 +196,7 @@ func TestOffboardUser_ReassignRequiresSuccessor(t *testing.T) {
 
 	// Alice must NOT have been anonymized on a rejected plan.
 	still, _ := app.FindRecordById("users", alice.Id)
-	if still.GetString("name") == "Deleted user" {
+	if IsOffboarded(still) {
 		t.Error("user should not be anonymized when the plan is rejected")
 	}
 }
@@ -317,8 +328,8 @@ func TestAnonymizeUser(t *testing.T) {
 		t.Fatalf("AnonymizeUser: %v", err)
 	}
 	scrubbed, _ := app.FindRecordById("users", alice.Id)
-	if scrubbed.GetString("name") != "Deleted user" {
-		t.Errorf("name = %q, want %q", scrubbed.GetString("name"), "Deleted user")
+	if scrubbed.GetString("name") != "T" || !IsOffboarded(scrubbed) {
+		t.Errorf("name = %q offboarded=%v, want the name kept and offboarded", scrubbed.GetString("name"), IsOffboarded(scrubbed))
 	}
 	if scrubbed.Verified() {
 		t.Error("expected verified=false after anonymize")
@@ -380,5 +391,40 @@ func TestOffboardUser_RemovesGroupMemberships(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("want no group_members rows left for the offboarded user, got %d", n)
+	}
+}
+
+// A deleted user keeps its row (work stays credited) but frees its username
+// and its seat, and is marked deleted so lists can hide it.
+func TestOffboardUser_TombstonesTheUser(t *testing.T) {
+	app := setupTestApp(t)
+	alice := makeUser(t, app, "alice@test.local")
+	oldUsername := alice.GetString("username")
+
+	if _, err := OffboardUser(app, alice.Id, Plan{Mode: ModeKeep}, ""); err != nil {
+		t.Fatalf("OffboardUser: %v", err)
+	}
+
+	got, err := app.FindRecordById("users", alice.Id)
+	if err != nil {
+		t.Fatalf("re-find alice: %v", err)
+	}
+	if want := "deleted-" + alice.Id; got.GetString("username") != want {
+		t.Errorf("username = %q, want %q", got.GetString("username"), want)
+	}
+	if !got.GetBool("disabled") {
+		t.Error("disabled = false, want true")
+	}
+	if got.GetDateTime("deleted").IsZero() {
+		t.Error("deleted is empty, want a time")
+	}
+
+	users, _ := app.FindCollectionByNameOrId("users")
+	reuse := core.NewRecord(users)
+	reuse.SetEmail("alice2@test.local")
+	reuse.Set("username", oldUsername)
+	reuse.SetPassword("Password123!")
+	if err := app.Save(reuse); err != nil {
+		t.Fatalf("the freed username %q must be reusable: %v", oldUsername, err)
 	}
 }

@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/apierr"
 	"tinycld.org/core/offboard"
 )
 
@@ -119,7 +121,7 @@ func handleAccountDelete(app core.App, re *core.RequestEvent) error {
 		if errors.Is(err, offboard.ErrInvalidPlan) {
 			return re.BadRequestError(err.Error(), err)
 		}
-		return re.InternalServerError("offboard", err)
+		return apierr.Wrap(re, http.StatusInternalServerError, "Could not delete the account", err)
 	}
 
 	// Kept at 204: callers that send no plan have always got an empty
@@ -160,7 +162,7 @@ func handleAccountDisable(app core.App, re *core.RequestEvent) error {
 	authRecord.RefreshTokenKey()
 
 	if err := app.Save(authRecord); err != nil {
-		return re.InternalServerError("disable account", err)
+		return apierr.Wrap(re, http.StatusInternalServerError, "Could not disable the account", err)
 	}
 	return re.NoContent(204)
 }
@@ -189,9 +191,12 @@ func handleAccountEnable(app core.App, re *core.RequestEvent) error {
 	if err != nil {
 		return re.NotFoundError("user not found", err)
 	}
+	if offboard.IsOffboarded(target) {
+		return re.BadRequestError("This user was deleted and cannot be enabled", nil)
+	}
 	target.Set("disabled", false)
 	if err := app.Save(target); err != nil {
-		return re.InternalServerError("enable account", err)
+		return apierr.Wrap(re, http.StatusInternalServerError, "Could not enable the account", err)
 	}
 	return re.NoContent(204)
 }

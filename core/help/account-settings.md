@@ -46,8 +46,8 @@ restored.
 ## Deleting your account
 
 Deleting is **permanent and cannot be undone**. In **Settings → Account access**,
-select **Delete my account**. Your name, email and avatar are removed and you're
-signed out everywhere.
+select **Delete my account**. Your email and password are removed and you're
+signed out everywhere. Your name stays on the work you leave in place.
 
 Before confirming, choose what happens to your files, documents and comments:
 
@@ -57,7 +57,7 @@ Before confirming, choose what happens to your files, documents and comments:
   account.
 
 If there's nobody to reassign to, your content stays in place attributed to
-"Deleted user". Type your email to confirm the deletion.
+you. Type your email to confirm the deletion.
 
 If you are the only owner of something that other people use, and you do not
 reassign your content, the deletion is refused. The message names the item. Make another member an owner,

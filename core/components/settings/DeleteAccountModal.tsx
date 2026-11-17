@@ -25,7 +25,7 @@ export function useDeleteAccountForm(onClose: () => void) {
     const { user, logout } = useAuth()
     // Who could inherit this user's files/documents/comments. Empty when
     // they're the only non-guest account, in which case the picker hides and
-    // the plan stays undefined — content is left attributed to "Deleted user".
+    // the plan stays undefined — content stays, attributed to them.
     const peers = usePeers(user.id)
     const hasPeers = peers.length > 0
     const schema = useMemo(

@@ -1,6 +1,8 @@
+import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { Avatar } from '@tinycld/core/components/Avatar'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
+import { LimitReachedNotice } from '@tinycld/core/components/settings/members/LimitReachedNotice'
 import {
     PendingBadge,
     RoleBadge,
@@ -15,6 +17,7 @@ import {
     ROLE_ORDER,
 } from '@tinycld/core/components/settings/members/types'
 import { useAuth } from '@tinycld/core/lib/auth'
+import { useSeatUsage } from '@tinycld/core/lib/members/use-seat-usage'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -34,24 +37,29 @@ export default function MembersSettings() {
 
     const fgColor = useThemeColor('foreground')
     const mutedColor = useThemeColor('muted-foreground')
-    const primaryFgColor = useThemeColor('primary-foreground')
+
+    const seats = useSeatUsage()
 
     // Single-org deployment: every user in the DB is a member of the one org, so
-    // list `users` directly. Role lives on the users record.
+    // list `users` directly. Role lives on the users record. A deleted user keeps
+    // its row (so its work keeps an author) but is no longer a member.
     const { data: memberRows } = useLiveQuery(query =>
-        query.from({ u: usersCollection }).select(({ u }) => ({
-            userId: u.id,
-            username: u.username,
-            name: u.name,
-            email: u.email,
-            role: u.role,
-            verified: u.verified,
-            isDemo: u.is_demo,
-            avatar: u.avatar,
-            avatarCrop: u.avatar_crop,
-            avatarColor: u.avatar_color,
-            avatarEmoji: u.avatar_emoji,
-        }))
+        query
+            .from({ u: usersCollection })
+            .where(({ u }) => eq(u.deleted, ''))
+            .select(({ u }) => ({
+                userId: u.id,
+                username: u.username,
+                name: u.name,
+                email: u.email,
+                role: u.role,
+                verified: u.verified,
+                isDemo: u.is_demo,
+                avatar: u.avatar,
+                avatarCrop: u.avatar_crop,
+                avatarColor: u.avatar_color,
+                avatarEmoji: u.avatar_emoji,
+            }))
     )
 
     const members: MemberRow[] = useMemo(
@@ -183,26 +191,17 @@ export default function MembersSettings() {
                                 Members
                             </Text>
                         </View>
-                        <Pressable
+                        <InviteButton
+                            isVisible={!seats.isAtLimit}
                             onPress={() => setDrawerMode({ kind: 'invite' })}
-                            className="flex-row items-center gap-1.5 rounded-lg bg-primary"
-                            style={{
-                                paddingVertical: 9,
-                                paddingHorizontal: 14,
-                            }}
-                        >
-                            <UserPlus size={14} color={primaryFgColor} />
-                            <Text
-                                className="text-primary-foreground"
-                                style={{
-                                    fontSize: 13,
-                                    fontWeight: '700',
-                                }}
-                            >
-                                Invite
-                            </Text>
-                        </Pressable>
+                        />
                     </View>
+
+                    <LimitReachedNotice
+                        isVisible={seats.isAtLimit}
+                        used={seats.used}
+                        limit={seats.limit}
+                    />
 
                     <View className="flex-row items-center gap-3 flex-wrap">
                         <StatChip label="Total" value={counts.all} tone="neutral" />
@@ -291,6 +290,33 @@ export default function MembersSettings() {
                 isCurrentUserOwner={isOwner}
             />
         </>
+    )
+}
+
+function InviteButton({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
+    const primaryFgColor = useThemeColor('primary-foreground')
+    if (!isVisible) return null
+    return (
+        <Pressable
+            testID="members-invite"
+            onPress={onPress}
+            className="flex-row items-center gap-1.5 rounded-lg bg-primary"
+            style={{
+                paddingVertical: 9,
+                paddingHorizontal: 14,
+            }}
+        >
+            <UserPlus size={14} color={primaryFgColor} />
+            <Text
+                className="text-primary-foreground"
+                style={{
+                    fontSize: 13,
+                    fontWeight: '700',
+                }}
+            >
+                Invite
+            </Text>
+        </Pressable>
     )
 }
 
