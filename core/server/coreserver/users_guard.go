@@ -84,7 +84,7 @@ func checkUsernameChange(record, original *core.Record) error {
 	}
 	if !usernames.Valid(name) {
 		return validation.Errors{"username": validation.NewError("username_invalid",
-			"Use 3-32 characters: lowercase letters, digits, dash or underscore.")}
+			"Use 1-32 characters: lowercase letters, digits, dash or underscore.")}
 	}
 	if strings.HasPrefix(name, tombstonePrefix) {
 		return validation.Errors{"username": validation.NewError("username_reserved",
