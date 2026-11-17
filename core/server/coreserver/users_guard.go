@@ -2,7 +2,6 @@ package coreserver
 
 import (
 	"reflect"
-	"strings"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase"
@@ -71,24 +70,28 @@ var adminEditableUserFields = map[string]bool{
 	"username": true,
 }
 
-// tombstonePrefix starts every deleted user's username (see offboard). A live
-// user may not take it, so a live login can never look like a deleted one.
-const tombstonePrefix = "deleted-"
+// errUsernameReserved refuses a username with the tombstone prefix.
+var errUsernameReserved = validation.Errors{"username": validation.NewError("username_reserved",
+	"Usernames that start with "+usernames.TombstonePrefix+" are reserved.")}
 
 // checkUsernameChange validates an admin rename. Uniqueness is the unique
-// index's job: PocketBase returns it as a field error.
-func checkUsernameChange(record, original *core.Record) error {
-	name := record.GetString("username")
+// index's job: PocketBase returns it as a field error. Renaming an owner
+// changes how they sign in, so only an owner may do it (as with an owner's
+// password).
+func checkUsernameChange(e *core.RecordRequestEvent, original *core.Record) error {
+	name := e.Record.GetString("username")
 	if name == original.GetString("username") {
 		return nil
+	}
+	if original.GetString("role") == "owner" && e.Auth.GetString("role") != "owner" {
+		return e.ForbiddenError("Only an owner can change another owner's username", nil)
 	}
 	if !usernames.Valid(name) {
 		return validation.Errors{"username": validation.NewError("username_invalid",
 			"Use 1-32 characters: lowercase letters, digits, dash or underscore.")}
 	}
-	if strings.HasPrefix(name, tombstonePrefix) {
-		return validation.Errors{"username": validation.NewError("username_reserved",
-			"Usernames that start with deleted- are reserved.")}
+	if usernames.Reserved(name) {
+		return errUsernameReserved
 	}
 	return nil
 }
@@ -265,7 +268,7 @@ func registerUsersFieldGuardCore(app core.App) {
 		if !isOrgAdmin(e.Auth) {
 			return e.ForbiddenError("Org admin role required", nil)
 		}
-		if err := checkUsernameChange(e.Record, original); err != nil {
+		if err := checkUsernameChange(e, original); err != nil {
 			return err
 		}
 

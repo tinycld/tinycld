@@ -13,6 +13,7 @@ import (
 
 	"tinycld.org/core/groups"
 	"tinycld.org/core/logging"
+	"tinycld.org/core/usernames"
 )
 
 var log = logging.ForPackage("offboard")
@@ -64,7 +65,7 @@ func sentinelEmail(id string) string {
 // tombstoneUsername is the username anonymizeUser writes. It is a valid
 // username, so the row still saves, and the id makes it unique.
 func tombstoneUsername(id string) string {
-	return "deleted-" + id
+	return usernames.TombstonePrefix + id
 }
 
 // IsOffboarded reports whether user has been anonymized by OffboardUser or

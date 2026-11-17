@@ -87,6 +87,9 @@ func handleInviteMember(app core.App, jobs *background.Jobs, re *core.RequestEve
 		return re.BadRequestError(
 			"username must be 3-32 chars, lowercase letters, digits, dash or underscore", nil)
 	}
+	if usernames.Reserved(req.Username) {
+		return re.BadRequestError("Usernames that start with "+usernames.TombstonePrefix+" are reserved", nil)
+	}
 
 	validRoles := map[string]bool{"admin": true, "member": true, "guest": true}
 	if !validRoles[req.Role] {
@@ -108,14 +111,10 @@ func handleInviteMember(app core.App, jobs *background.Jobs, re *core.RequestEve
 
 	existing, _ := app.FindFirstRecordByFilter(
 		"users", "username = {:u}", map[string]any{"u": req.Username})
-	// A user deleted before deleting freed the username still holds it. Free
-	// it now and invite a new person: the deleted account must never get an
-	// invite link, which would bring it back.
+	// A user deleted before deleting freed the username still holds it. The
+	// deleted account must never get an invite link, which would bring it back.
 	if existing != nil && offboard.IsOffboarded(existing) {
-		if err := offboard.AnonymizeUser(app, existing.Id); err != nil {
-			return apierr.Wrap(re, http.StatusInternalServerError, "Could not free the username", err)
-		}
-		existing = nil
+		return re.BadRequestError("This username belongs to a removed account", nil)
 	}
 	if existing != nil {
 		userRecord = existing

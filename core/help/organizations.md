@@ -64,9 +64,6 @@ The username is the name a person uses to sign in. To change it, open
 **Settings → Members**, select the person, type the new name in **Username**,
 and click **Change username**. They sign in with the new name at once.
 
-If their email address came from their username, it changes too. The old
-address continues to receive mail.
-
 You cannot change your own username. Ask another owner or admin.
 
 ## Remove a member

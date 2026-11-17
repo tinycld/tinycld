@@ -42,7 +42,7 @@ func setupTestApp(t *testing.T) *tests.TestApp {
 		t.Fatalf("save users: %v", err)
 	}
 
-	events :=core.NewBaseCollection("test_events")
+	events := core.NewBaseCollection("test_events")
 	events.Fields.Add(&core.TextField{Name: "title", Required: true})
 	events.Fields.Add(&core.RelationField{
 		Name: "created_by", Required: true, CollectionId: users.Id,

@@ -131,9 +131,9 @@ func checkSeat(app core.App) error {
 	if used < limit {
 		return nil
 	}
-	// Info, not Warn: reaching the limit is the plan working, not an incident.
+	// Info, not Warn: reaching the limit is the limit working, not an incident.
 	log.Info("seat check: refused a write at the limit", "used", used, "limit", limit)
 	return router.NewApiError(http.StatusPaymentRequired,
-		fmt.Sprintf("User limit reached: %d of %d seats in use. Remove a user or upgrade the plan.", used, limit),
+		fmt.Sprintf("User limit reached: %d of %d seats in use. Remove a user to free a seat.", used, limit),
 		nil)
 }

@@ -121,7 +121,7 @@ func TestSeats_RefusesACreateOverTheCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("a third member on a 2-seat plan must be refused")
 	}
-	if !strings.Contains(err.Error(), "User limit reached: 2 of 2 seats in use") {
+	if !strings.Contains(err.Error(), "User limit reached: 2 of 2 seats in use. Remove a user to free a seat.") {
 		t.Fatalf("error = %q, want the seat message", err.Error())
 	}
 }

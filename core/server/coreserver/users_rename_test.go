@@ -127,3 +127,23 @@ func TestTombstone_CannotBeEnabled(t *testing.T) {
 		t.Fatalf("got %d %s, want 400", code, body)
 	}
 }
+
+// Renaming an owner changes how they sign in, so only an owner may do it,
+// as with setting an owner's password.
+func TestRename_AdminCannotRenameAnOwner(t *testing.T) {
+	env := newRenameEnv(t)
+	admin := env.user("admin@x.test", "admin")
+	owner := env.user("boss@x.test", "owner")
+	if code, body := env.rename(owner, admin, "newboss"); code != http.StatusForbidden {
+		t.Fatalf("got %d %s, want 403", code, body)
+	}
+}
+
+func TestRename_OwnerCanRenameAnOwner(t *testing.T) {
+	env := newRenameEnv(t)
+	owner := env.user("boss@x.test", "owner")
+	other := env.user("boss2@x.test", "owner")
+	if code, body := env.rename(other, owner, "newboss"); code != http.StatusOK {
+		t.Fatalf("got %d %s, want 200", code, body)
+	}
+}

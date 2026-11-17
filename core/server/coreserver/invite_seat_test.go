@@ -46,9 +46,9 @@ func TestInviteMember_SeatLimitMessageReachesTheClient(t *testing.T) {
 }
 
 // A row deleted before tombstones freed the username (old data) still holds
-// it. Inviting that username frees it and creates a new member; it must never
-// re-send the deleted account's invite.
-func TestInviteMember_UsernameOfAnOldDeletedUserMakesANewMember(t *testing.T) {
+// it. Inviting that username is refused; it must never re-send the deleted
+// account's invite.
+func TestInviteMember_UsernameOfAnOldDeletedUserIsRefused(t *testing.T) {
 	app := setupInviteTestApp(t)
 	users, _ := app.FindCollectionByNameOrId("users")
 	users.Fields.Add(&core.DateField{Name: "deleted"})
@@ -84,8 +84,8 @@ func TestInviteMember_UsernameOfAnOldDeletedUserMakesANewMember(t *testing.T) {
 		URL:                   "/api/invite-member",
 		Body:                  strings.NewReader(string(body)),
 		Headers:               map[string]string{"Authorization": tok},
-		ExpectedStatus:        http.StatusOK,
-		ExpectedContent:       []string{`"isNew":true`},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{"removed account"},
 		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
@@ -93,8 +93,11 @@ func TestInviteMember_UsernameOfAnOldDeletedUserMakesANewMember(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if gone.GetString("username") != "deleted-"+old.Id || !gone.GetBool("disabled") {
-				t.Fatalf("old row = %q disabled=%v, want a tombstone", gone.GetString("username"), gone.GetBool("disabled"))
+			if gone.GetString("username") != "holiday" || gone.GetBool("verified") {
+				t.Fatalf("old row changed: %q verified=%v", gone.GetString("username"), gone.GetBool("verified"))
+			}
+			if live, _ := liveTokenForUser(app, gone); live != nil {
+				t.Fatal("the removed account got an invite token")
 			}
 		},
 	}
@@ -162,6 +165,30 @@ func TestInviteLink_RefusesADeletedUser(t *testing.T) {
 		Headers:               map[string]string{"Authorization": tok},
 		ExpectedStatus:        http.StatusNotFound,
 		ExpectedContent:       []string{"User not found"},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}
+	scenario.Test(t)
+}
+
+// The deleted- prefix belongs to removed accounts; a new member cannot take it.
+func TestInviteMember_RefusesTheTombstonePrefix(t *testing.T) {
+	app := setupInviteTestApp(t)
+	owner := mustCreateUser(t, app, "owner-prefix@test.local", false)
+	setUserRole(t, app, owner, "owner")
+	registerInviteEndpointCore(app)
+	tok, err := tokenForUser(app, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"username": "deleted-foo", "role": "member"})
+	scenario := &tests.ApiScenario{
+		Method:                http.MethodPost,
+		URL:                   "/api/invite-member",
+		Body:                  strings.NewReader(string(body)),
+		Headers:               map[string]string{"Authorization": tok},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{"reserved"},
 		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 	}

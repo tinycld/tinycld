@@ -7,7 +7,7 @@ import { View } from 'react-native'
 import { type RenameFormValues, renameSchema } from './username-schema'
 
 // An admin renames a member's login. The member signs in with the new name at
-// once; a package that derives an address from the username follows it.
+// once.
 export function UsernameSection({
     isVisible,
     userId,
@@ -52,7 +52,7 @@ function UsernameForm({ userId, username }: { userId: string; username: string }
                 name="username"
                 testID="rename-username"
                 label="Username"
-                hint="Used to sign in. Changing it also changes their email address."
+                hint="Used to sign in."
                 autoCapitalize="none"
                 autoCorrect={false}
             />
