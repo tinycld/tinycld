@@ -81,7 +81,7 @@ var hostHookCounts = map[string]int{
 	"OnRecordUpdateExecute":               4,
 	"OnRecordUpdateRequest":               19,
 	"OnRecordValidate":                    6,
-	"OnServe":                             41, // incl. the batch settings applied on every start, the classifier routes and GET /api/seats (all shared, via RegisterSharedCore)
+	"OnServe":                             42, // incl. the batch settings applied on every start, the classifier routes and GET /api/seats (all shared, via RegisterSharedCore); the macOS write retry on the listener (host-only: the listener is this composition's own)
 	"OnSettingsReload":                    1,
 	"OnTerminate":                         12, // the start of the terminate's shared deadline (shutdown.Register, shared: the first shared registration that waits binds it, readonly.Register in RegisterSharedEarly); readonly.Register ending tail waits (shared, via RegisterSharedEarly); realtime storing every collaborative document; the background runners of notify (mention notifications), coreserver (invite email + notification; boot notices and the auto-upgrade checks reuse it), audit (audit rows) and search (search sources), all shared, via RegisterSharedCore; drainhooks dropping the app from the process drain (shared, via realtime's drain hook); the package-operation stop and watcher-restart veto (host-only, rebuildJobsFor)
 }
