@@ -19,6 +19,7 @@ import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { openE2eOutput, printLogTail } from '../scripts/e2e-output'
+import { assertServerOwnsDataDir } from '../scripts/e2e-server-owner'
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..')
 export const TMP_DIR = path.join(PROJECT_ROOT, 'tmp')
@@ -73,6 +74,15 @@ function seedFixtures(port: number): Promise<void> {
 export default async function globalSetup() {
     fs.mkdirSync(TMP_DIR, { recursive: true })
     fs.writeFileSync(EMAIL_LOG_PATH, '')
+
+    // Off CI the config reuses a server already up on an e2e port, which can
+    // be another workspace's. Check before the seed, which would otherwise
+    // write into that workspace's database. The dirs are the --data-dir values
+    // of the e2e:serve scripts in package.json. CI never reuses a server.
+    if (!process.env.CI) {
+        assertServerOwnsDataDir(PORT, path.join(PROJECT_ROOT, 'server', 'pb_test_data'))
+        assertServerOwnsDataDir(SECOND_PORT, path.join(PROJECT_ROOT, 'server', 'pb_test_data_2'))
+    }
 
     // Both deployments the config starts. The saved-server switcher spec signs
     // into the second one, so it needs the same fixture user as the first.
