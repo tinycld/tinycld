@@ -14,33 +14,40 @@ import {
 import { Platform } from 'react-native'
 
 /**
- * What the Discard confirm holds back: an in-app navigation (with
- * `usePreventRemove`'s `repeat`, which replays it), or a move of the browser's
- * Back or Forward button (`delta` steps, negative for Back). `leaving`: the
- * user picked Discard, so nothing is held and the guard is off until the
- * screen is focused again.
+ * What the Discard confirm holds back: an in-app navigation action, which
+ * Discard replays with its own `source` and `target` (see `useLeaveGuard`),
+ * or a move of the browser's Back or Forward button (`delta` steps, negative
+ * for Back). `leaving`: the user picked Discard, so nothing is held and the
+ * guard is off until the screen is focused again.
  */
 type Held =
-    | { kind: 'action'; action: NavigationAction; repeat: () => void }
+    | { kind: 'action'; action: NavigationAction }
     | { kind: 'browser'; delta: number }
     | { kind: 'leaving' }
 
 /**
  * Asks before a dirty editor is left. Every in-app way out (the header's Back,
  * hardware back, a swipe) removes the screen, which `usePreventRemove` holds
- * back until the user picks Discard. On web expo-router also reduces the
- * browser's Back and Forward through removal prevention: it moves the browser
- * back by itself and reports the blocked move as a `RESET` action, whose
- * replay would replace the history entry instead of moving it. So
- * `useBrowserHistoryGuard` holds those moves first, through the shared
- * `popstate` listener the app installs at start (installBrowserBackGuard),
- * and Discard turns removal prevention off before it replays the move, or
- * expo-router would block the replay too. `usePreventRemove` also asks
- * before a reload or tab close on web (`beforeunload`). The guard's effect
- * reaches the browser's events, which only exist outside React: it arms the
- * guard in the shared listener's list (and, until the guard takes its entry,
- * listens for the Navigation API's `currententrychange`). On native it does
- * nothing.
+ * back until the user picks Discard. Discard turns removal prevention off and
+ * replays the held action with the `source` it had, none when it had none,
+ * not through `usePreventRemove`'s `repeat`: a screen's `navigation.dispatch`
+ * stamps the screen's route key as the `source` of an action without one, and
+ * a parent stack's move (a `router.replace` to one of its routes, or its pop)
+ * has none; the parent stack does not know the nested screen's key, so it
+ * would do nothing. The action keeps its `target`, so an action the screen's
+ * own navigator does not handle goes up to the navigator it names. On web
+ * expo-router also reduces the browser's Back and Forward through removal
+ * prevention: it moves the browser back by itself and reports the blocked move
+ * as a `RESET` action, whose replay would replace the history entry instead of
+ * moving it. So `useBrowserHistoryGuard` holds those moves first, through the
+ * shared `popstate` listener the app installs at start
+ * (installBrowserBackGuard), and Discard turns removal prevention off before
+ * it replays the move, or expo-router would block the replay too.
+ * `usePreventRemove` also asks before a reload or tab close on web
+ * (`beforeunload`). The guard's effect reaches the browser's events, which
+ * only exist outside React: it arms the guard in the shared listener's list
+ * (and, until the guard takes its entry, listens for the Navigation API's
+ * `currententrychange`). On native it does nothing.
  *
  * After Discard the guard stays off while the screen is left. A move that
  * keeps the screen mounted (a browser Forward covers it) turns it on again
@@ -85,8 +92,9 @@ export function useLeaveGuard(isDirty: boolean) {
     // The navigation held back while the Discard confirm is open: local UI state.
     const [held, setHeld] = useState<Held | null>(null)
     const guarding = isDirty && held?.kind !== 'leaving'
-    const disablePrevention = usePreventRemove(guarding, ({ data, repeat }) =>
-        setHeld({ kind: 'action', action: data.action, repeat })
+    const navigation = useNavigation()
+    const disablePrevention = usePreventRemove(guarding, ({ data }) =>
+        setHeld({ kind: 'action', action: data.action })
     )
     useBrowserHistoryGuard(guarding, setHeld)
     useFocusEffect(
@@ -105,7 +113,10 @@ export function useLeaveGuard(isDirty: boolean) {
         // The held action moves the browser history too (expo-router's
         // `history.go(n)` fires a `popstate`), which no guard may swallow.
         passInAppMove()
-        held.repeat()
+        disablePrevention()
+        // An explicit `source` key wins over the route key the screen's
+        // dispatch stamps first, so the action reaches its navigator as held.
+        navigation.dispatch({ ...held.action, source: held.action.source })
     }
     const isConfirming = held?.kind === 'action' || held?.kind === 'browser'
     return { isConfirming, cancel: () => setHeld(null), discard }
