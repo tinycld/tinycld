@@ -43,6 +43,7 @@ import {
     ROLE_ORDER,
     ROLE_SWATCH,
 } from './types'
+import { UsernameSection } from './UsernameSection'
 import {
     type InviteFormValues,
     type InviteResult,
@@ -123,6 +124,7 @@ function ViewMember({
     // text — the server backstop (RegisterLastOwnerGuard) rejects it anyway,
     // but the control should not offer an action that always fails.
     const canChangeRole = !isSelf && !isLastOwner && (isCurrentUserOwner || member.role !== 'owner')
+    const canRename = !isSelf && (isCurrentUserOwner || member.role !== 'owner')
     const showPackageAccess = member.role === 'member' || member.role === 'guest'
     // Only an owner may help an owner sign in (the server enforces it too).
     const canHelpSignIn =
@@ -257,6 +259,12 @@ function ViewMember({
                             </View>
                         </View>
                     )}
+
+                    <UsernameSection
+                        isVisible={canRename}
+                        userId={member.userId}
+                        username={member.username}
+                    />
 
                     <RolePicker
                         currentRole={member.role}

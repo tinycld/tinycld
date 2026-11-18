@@ -248,6 +248,8 @@ export default function StubLayout() {
     writeFileSync(
         join(dir, 'index.tsx'),
         `import { notify } from '@tinycld/core/lib/notify'
+import { appHref } from '@tinycld/core/lib/org-routes'
+import { router } from 'expo-router'
 import { Pressable, Text, View } from 'react-native'
 
 function ping() {
@@ -256,6 +258,10 @@ function ping() {
         title: 'Pinged',
         data: { at: new Date().toISOString() },
     })
+}
+
+function openGuard() {
+    router.push(appHref('${STUB_SLUG}/guard'))
 }
 
 export default function StubIndex() {
@@ -267,6 +273,95 @@ export default function StubIndex() {
             <Pressable onPress={ping} accessibilityRole="button" testID="shortcut-stub-ping">
                 <Text className="text-foreground">Ping</Text>
             </Pressable>
+            <Pressable onPress={openGuard} accessibilityRole="button" testID="stub-open-guard">
+                <Text className="text-foreground">Open guarded stack</Text>
+            </Pressable>
+        </View>
+    )
+}
+`
+    )
+    writeGuardStack(dir)
+}
+
+// A child Stack under the stub's root navigator, whose editor is guarded by
+// core useLeaveGuard. The editor's Leave button replaces to the stub's index,
+// a route of the PARENT navigator, so the leave-guard-replay spec proves that
+// Discard replays a parent navigator's move held on a nested screen.
+function writeGuardStack(screensDir: string): void {
+    const dir = join(screensDir, 'guard')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+        join(dir, '_layout.tsx'),
+        `import { Stack } from 'expo-router'
+
+export default function StubGuardLayout() {
+    return <Stack screenOptions={{ headerShown: false }} />
+}
+`
+    )
+    writeFileSync(
+        join(dir, 'index.tsx'),
+        `import { appHref } from '@tinycld/core/lib/org-routes'
+import { router } from 'expo-router'
+import { Pressable, Text, View } from 'react-native'
+
+function openEditor() {
+    router.push(appHref('${STUB_SLUG}/guard/edit'))
+}
+
+export default function StubGuardIndex() {
+    return (
+        <View className="flex-1 p-4 bg-background" testID="stub-guard-index">
+            <Pressable onPress={openEditor} accessibilityRole="button" testID="stub-guard-open-editor">
+                <Text className="text-foreground">Open editor</Text>
+            </Pressable>
+        </View>
+    )
+}
+`
+    )
+    writeFileSync(
+        join(dir, 'edit.tsx'),
+        `import { useLeaveGuard } from '@tinycld/core/components/forms-builder/use-leave-guard'
+import { appHref } from '@tinycld/core/lib/org-routes'
+import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
+import { router } from 'expo-router'
+import { useState } from 'react'
+import { Pressable, Text, TextInput, View } from 'react-native'
+
+function leaveToLanding() {
+    router.replace(appHref('${STUB_SLUG}'))
+}
+
+export default function StubGuardEdit() {
+    // A test fixture's one draft field: local UI state, no validation.
+    const [draft, setDraft] = useState('')
+    const leave = useLeaveGuard(draft !== '')
+    return (
+        <View className="flex-1 p-4 bg-background" testID="stub-guard-editor">
+            <TextInput
+                className="text-foreground"
+                value={draft}
+                onChangeText={setDraft}
+                placeholder="Draft"
+                testID="stub-guard-input"
+            />
+            <Pressable onPress={leaveToLanding} accessibilityRole="button" testID="stub-guard-leave">
+                <Text className="text-foreground">Leave</Text>
+            </Pressable>
+            <ConfirmDialog
+                isOpen={leave.isConfirming}
+                onClose={leave.cancel}
+                onConfirm={leave.discard}
+                title="Discard changes?"
+                message="Your draft will be lost."
+                confirmLabel="Discard"
+                cancelLabel="Keep editing"
+                isDestructive
+                requiresServer={false}
+                confirmTestID="stub-leave-discard"
+            />
         </View>
     )
 }

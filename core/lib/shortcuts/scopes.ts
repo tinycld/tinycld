@@ -13,14 +13,65 @@ import type { Scope } from './types'
 export interface ScopeEntry {
     id: number
     scope: Scope
+    /**
+     * The newer scopes this entry stays active under (see
+     * `activeScopeEntries`). Absent for an entry that did not opt in, which is
+     * shadowed by any newer entry.
+     */
+    activeUnder?: readonly Scope[]
+}
+
+export interface ScopeOptions {
+    /**
+     * Keep this scope's shortcuts live while a newer entry of one of these
+     * scopes is on top — a list screen that keeps its own keys while an inline
+     * form on it holds the keyboard. On a key both own, the newer scope wins.
+     *
+     * An entry with this option is never placed above an entry of a scope it
+     * names: pushed while such entries are on top, it goes below them. React
+     * runs a child's effects first, so a list can be pushed after the `compose`
+     * entry of the document it holds, and on top it would shadow that entry.
+     */
+    activeUnder?: readonly Scope[]
 }
 
 const stack: ScopeEntry[] = []
 let nextId = 1
 
-export function pushScope(scope: Scope): number {
+// `activeUnder` is set only when given, so an entry that did not opt in has
+// the same shape as before the option existed.
+function makeEntry(
+    id: number,
+    scope: Scope,
+    activeUnder: readonly Scope[] | undefined
+): ScopeEntry {
+    return activeUnder === undefined ? { id, scope } : { id, scope, activeUnder }
+}
+
+/**
+ * Put an entry on the stack. An entry without `activeUnder` goes on top. An
+ * entry with `activeUnder` goes below the run of entries at the top whose scope
+ * it names, and on top when the top entry's scope is not named.
+ *
+ * Why: React runs a child's effects before its parent's, and a nested navigator
+ * can focus a parent route and its child route in one commit. So a list that
+ * stays active under `compose` can be pushed AFTER the `compose` entry of the
+ * document it holds. On top, the list would cut the chain (`compose` did not
+ * opt in) and every key of the document would be dead. An entry of a scope the
+ * list names is always meant to be above it.
+ */
+function insertEntry(entry: ScopeEntry) {
+    const activeUnder = entry.activeUnder
+    let index = stack.length
+    if (activeUnder) {
+        while (index > 0 && activeUnder.includes(stack[index - 1].scope)) index -= 1
+    }
+    stack.splice(index, 0, entry)
+}
+
+export function pushScope(scope: Scope, options?: ScopeOptions): number {
     const id = nextId++
-    stack.push({ id, scope })
+    insertEntry(makeEntry(id, scope, options?.activeUnder))
     return id
 }
 
@@ -68,6 +119,39 @@ export function topScopeEntry(floor?: number): ScopeEntry | null {
     return null
 }
 
+/**
+ * The scope entries whose shortcuts can fire, newest first, starting at `top`.
+ *
+ * Walking down the stack from `top`, the next lower entry is active too when
+ * its `activeUnder` names the scope of every active entry above it; the walk
+ * stops at the first entry that does not. So an entry that did not opt in, or
+ * a scope it did not name (a `modal` dialog), shadows everything below it, as
+ * when only the top entry was ever active. A `top` that is not on the stack is
+ * the whole chain.
+ */
+export function activeScopeChain(top: ScopeEntry | null): ScopeEntry[] {
+    if (!top) return []
+    const chain: ScopeEntry[] = [{ ...top }]
+    const index = stack.findIndex(e => e.id === top.id)
+    for (let i = index - 1; i >= 0; i -= 1) {
+        const entry = stack[i]
+        const activeUnder = entry.activeUnder
+        if (!activeUnder) break
+        if (!chain.every(above => activeUnder.includes(above.scope))) break
+        chain.push({ ...entry })
+    }
+    return chain
+}
+
+/**
+ * The active scope entries, newest first: the top entry below `floor` (the
+ * live top when no floor is given) and the entries under it that stay active
+ * (`activeScopeChain`). Empty when no entry is below the floor.
+ */
+export function activeScopeEntries(floor?: number): ScopeEntry[] {
+    return activeScopeChain(topScopeEntry(floor))
+}
+
 /** The id a scope-bound shortcut registered under, for `Shortcut.scopeId`. */
 export function currentScopeId(scope: Scope): number | null {
     for (let i = stack.length - 1; i >= 0; i -= 1) {
@@ -111,8 +195,9 @@ export function useScopeOwner(): ScopeOwner | null {
 
 /**
  * Push a scope onto the stack while the owning route is focused. The matcher
- * fires a shortcut only when its scope === 'global' or matches the top of the
- * stack.
+ * fires a shortcut only when its scope === 'global' or it belongs to an active
+ * scope entry (the top of the stack, and the entries under it that stay active
+ * under it, `activeScopeEntries`).
  *
  * Stack MEMBERSHIP is keyed on FOCUS, not mount: the package tabs leave a
  * blurred screen mounted, so a mount-keyed push never popped when the user
@@ -133,8 +218,11 @@ export function useScopeOwner(): ScopeOwner | null {
  * — the matcher fired mail's handler for a keypress meant for the board, which
  * did nothing visible. That is the bug this hook's split of identity (mount)
  * from stack membership (focus) exists to prevent.
+ *
+ * `options.activeUnder` keeps this scope active under a newer entry of the
+ * named scopes (see `activeScopeEntries`).
  */
-export function useShortcutScope(scope: Scope): ScopeOwner {
+export function useShortcutScope(scope: Scope, options?: ScopeOptions): ScopeOwner {
     // The id is assigned ONCE and kept for this instance's whole life. It is
     // read through an accessor rather than returned as a value because no id
     // exists during the render that sets this up; it is assigned on the first
@@ -176,16 +264,31 @@ export function useShortcutScope(scope: Scope): ScopeOwner {
         }
     }, [owner])
 
+    // Keyed on the option's content, not its identity: a caller that passes a
+    // new array literal each render must not pop and re-push its entry (which
+    // would move it above a newer entry) on every render.
+    const activeUnderKey = activeUnderKeyOf(options?.activeUnder)
+
     useFocusEffect(
         useCallback(() => {
             const id = owner.read()
             if (id === null) return
-            stack.push({ id, scope })
+            insertEntry(makeEntry(id, scope, activeUnderFromKey(activeUnderKey)))
             return () => popScope(id)
-        }, [scope, owner])
+        }, [scope, owner, activeUnderKey])
     )
 
     return owner.read
+}
+
+function activeUnderKeyOf(activeUnder: readonly Scope[] | undefined): string | null {
+    if (activeUnder === undefined) return null
+    return JSON.stringify([...new Set(activeUnder)].sort())
+}
+
+function activeUnderFromKey(key: string | null): readonly Scope[] | undefined {
+    if (key === null) return undefined
+    return JSON.parse(key) as Scope[]
 }
 
 /**

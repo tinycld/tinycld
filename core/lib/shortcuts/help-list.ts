@@ -1,6 +1,6 @@
 import { log } from '@tinycld/core/lib/logger'
 import { create } from '@tinycld/core/lib/store'
-import { isScopeActive, pickFiring } from './matcher'
+import { firingRank, isScopeActive, pickFiring } from './matcher'
 import { nextScopeId, topScopeEntry } from './scopes'
 import type { Shortcut } from './types'
 
@@ -54,7 +54,8 @@ export function helpGroups(
         // Only what can actually fire on the screen under the overlay. The
         // registry holds every MOUNTED screen's shortcuts, which is more than
         // the live set two ways: an inner scope shadows the screen underneath
-        // (a board's keys cannot fire while a card is open), and
+        // (a board's keys cannot fire while a card is open), unless that
+        // screen opted to stay active under it (`activeUnder`), and
         // `freezeOnBlur` keeps a departed package's screens registered.
         // Listing those advertises keys that do nothing, and duplicates every
         // entry the two screens have in common.
@@ -66,11 +67,14 @@ export function helpGroups(
     const groups: Record<string, Shortcut[]> = {}
     for (const registered of byKeys.values()) {
         const sameKeys = settleByWhen(registered)
-        // A global whose keys an active scoped shortcut also binds never fires
-        // (the matcher's rule, `pickFiring`), so it is left out too.
-        const scopedWins = pickFiring(sameKeys)?.scope !== 'global'
+        // Only the entry that wins these keys is listed (the matcher's rule,
+        // `pickFiring`): a global whose keys an active scoped shortcut also
+        // binds never fires, nor does an older active scope's shortcut whose
+        // keys a newer active scope owns.
+        const winner = pickFiring(sameKeys, top)
+        const winningRank = winner ? firingRank(winner, top) : null
         for (const s of sameKeys) {
-            if (scopedWins && s.scope === 'global') continue
+            if (firingRank(s, top) !== winningRank) continue
             addToGroup(groups, s)
         }
     }

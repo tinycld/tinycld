@@ -201,7 +201,9 @@ func registerSupervised(app core.App) {
 			// it wraps the listener before PocketBase starts serving on it.
 			dr := supervise.NewDrainer(e.Server)
 			if e.Listener != nil {
-				e.Listener = dr.Listener(e.Listener)
+				// The retry goes under the drainer: the drainer must record
+				// the same connection value that net/http reports to it.
+				e.Listener = dr.Listener(retryWritesOnNoBufferSpace(e.Listener))
 			}
 			if err := e.Next(); err != nil {
 				return err

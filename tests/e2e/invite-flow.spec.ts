@@ -9,6 +9,7 @@ import {
     TEST_USER_PASSWORD,
     TEST_USER_USERNAME,
 } from './helpers'
+import { settleRealtimeReleases, trackRealtimeClients } from './realtime-release.ts'
 
 // SPA-navigate to Settings → Members via the shell chrome (rail → settings
 // index → Members). A page.goto here would tear down the SPA and cancel the
@@ -111,6 +112,9 @@ test.describe('Invite flow', () => {
         // --- 3. Invited user accepts the invite in a fresh browser context ---
         // Use a new context so the owner's auth doesn't bleed in.
         const inviteePage = await page.context().browser()!.newContext()
+        // This context signs in by hand, not through a helper, so it is tracked
+        // here: else its last realtime client stays detached for the fork's grace.
+        trackRealtimeClients(inviteePage)
         const invitee = await inviteePage.newPage()
 
         await invitee.goto(`/a/accept-invite/${token}`)
@@ -161,6 +165,7 @@ test.describe('Invite flow', () => {
         await appShell(invitee).waitFor({ state: 'visible', timeout: 15_000 })
 
         await inviteePage.close()
+        await settleRealtimeReleases()
     })
 
     test('an invite with an email address emails the link to it', async ({ page }) => {

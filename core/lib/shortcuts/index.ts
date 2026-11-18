@@ -4,6 +4,12 @@ export { formatKeys, isApplePlatform } from './keys'
 export { useModifierHeld } from './modifier-held'
 export { ShortcutsProvider } from './provider'
 export { useShortcutRegistry } from './registry'
-export { type ScopeOwner, ScopeProvider, useScopeOwner, useShortcutScope } from './scopes'
+export {
+    type ScopeOptions,
+    type ScopeOwner,
+    ScopeProvider,
+    useScopeOwner,
+    useShortcutScope,
+} from './scopes'
 export type { Scope, Shortcut, ShortcutEvent } from './types'
 export { useRegisterShortcut, useRegisterShortcuts } from './use-register'

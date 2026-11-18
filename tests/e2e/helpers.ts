@@ -5,6 +5,7 @@ import { expect, type Locator, type Page, type WebSocketRoute } from '@playwrigh
 // org-routes has no runtime dependency (its only import is `import type`), so
 // it is safe to pull into Playwright's plain-Node context.
 import { APP_PREFIX, appHref } from '@tinycld/core/lib/org-routes'
+import { settleRealtimeReleases, trackRealtimeClients } from './realtime-release.ts'
 
 export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
 
@@ -130,10 +131,19 @@ export function packageScreen(page: Page, pkg: string): Locator {
     return page.getByTestId(`pkg-active-${pkg}`)
 }
 
+// Every signed-in page this file gives a spec releases its realtime client
+// when it closes (see realtime-release.ts). The releases of earlier tests are
+// awaited first, so their detached clients do not slow this test's writes.
+async function startTrackedSession(page: Page) {
+    await settleRealtimeReleases()
+    trackRealtimeClients(page.context())
+}
+
 // `startAt` lets a spec begin at a deep route instead of '/', to exercise the
 // "sign in, land back on the route you asked for" path. Defaults to '/', so
 // every existing caller is unaffected.
 export async function login(page: Page, options: { startAt?: string } = {}) {
+    await startTrackedSession(page)
     await page.goto(options.startAt ?? '/')
     // Idempotent: a helper earlier in the same test (createInvitedUser) may
     // have left the fixture session authenticated, in which case '/' redirects
@@ -272,7 +282,10 @@ export async function signInAsCollaborator(
             email: TEST_COLLABORATOR_EMAIL,
             password: TEST_COLLABORATOR_PASSWORD,
         },
-        close: () => context.close(),
+        close: async () => {
+            await context.close()
+            await settleRealtimeReleases()
+        },
     }
 }
 
@@ -358,6 +371,7 @@ export async function acceptInvite(
     // to also forward the pre-/a shape, which this line exercised; that
     // redirect is gone, so the legacy form now 404s like any other unknown
     // path.
+    await startTrackedSession(inviteePage)
     await inviteePage.goto(`/a/accept-invite/${token}`)
     await expect(inviteePage.getByText("You're invited", { exact: true })).toBeVisible({
         timeout: 10_000,
@@ -385,7 +399,11 @@ export async function createInvitedUser(
     const inviteePage = await inviteeContext.newPage()
     await acceptInvite(inviteePage, token, user, options.name)
 
-    return { user, inviteePage, close: () => inviteeContext.close() }
+    const close = async () => {
+        await inviteeContext.close()
+        await settleRealtimeReleases()
+    }
+    return { user, inviteePage, close }
 }
 
 // Signs the browser out by clearing its storage on /api/health, a same-origin
@@ -410,6 +428,7 @@ export async function loginAs(
     password: string,
     options: { startAt?: string } = {}
 ) {
+    await startTrackedSession(page)
     await clearSession(page)
     await page.goto(options.startAt ?? '/')
     await page.getByTestId('identifier').fill(identifier)

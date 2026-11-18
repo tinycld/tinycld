@@ -40,8 +40,10 @@ type HeldAction = { data: { action: { type: string } } }
 
 /**
  * The in-app removal the screen's `usePreventRemove` holds back, while it
- * prevents one. As in expo-router 58, the callback gets `repeat`, which
- * dispatches the held action again, and the hook returns `disablePrevention`.
+ * prevents one. As in expo-router 58, the callback gets `repeat` and the hook
+ * returns `disablePrevention`. The guard does not use `repeat`: on Discard it
+ * turns prevention off and dispatches the held action through the screen's
+ * navigation with the action's own `source`.
  */
 const preventRemove = vi.hoisted(() => ({
     onPrevent: null as null | ((event: HeldAction) => void),

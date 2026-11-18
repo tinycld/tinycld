@@ -14,6 +14,9 @@ export * from '../tests/e2e/auth-key-helpers.ts'
 export * from '../tests/e2e/helpers.ts'
 // Cheap members of a spec's own: `test` with the `p` and `freshMember` fixtures.
 export * from '../tests/e2e/member-fixtures.ts'
+// For a package spec that signs a context in without login/loginAs/acceptInvite:
+// releases the realtime clients its pages leave when the context closes.
+export * from '../tests/e2e/realtime-release.ts'
 // The generic report view helpers (E11): a package's report e2e opens core's view with them.
 export * from '../tests/e2e/report-view-helpers.ts'
 export * from '../tests/e2e/web-forms-helpers.ts'

@@ -50,6 +50,37 @@ invite link. The link also shows on screen, so you can copy it and share it
 another way, or email it to a different address. The person opens the link to
 set a password. The link expires after 7 days.
 
+## User limit
+
+Your organization can have a limit on how many people it has. Owners, admins
+and members each use one seat. Guests and disabled accounts do not use a seat.
+
+When all seats are in use, **Settings → Members** shows **User limit reached**
+and no **Invite** button. To free a seat, remove or disable a user.
+
+## Change a username
+
+The username is the name a person uses to sign in. To change it, open
+**Settings → Members**, select the person, type the new name in **Username**,
+and click **Change username**. They sign in with the new name at once.
+
+You cannot change your own username. Ask another owner or admin.
+
+## Remove a member
+
+To remove someone, open **Settings → Members**, select the person, and click
+**Remove**. Choose what happens to their work:
+
+- **Keep their work** — their files, events and comments stay, with their name
+  on them. This is the default.
+- **Reassign to another member** — the work moves to the person you choose.
+- **Delete everything** — the work is deleted. You cannot undo this.
+
+The person is signed out at once and leaves the members list. Their seat and
+their username become free, so you can invite someone new with the same
+username. You cannot undo a removal. If the change might be temporary, disable
+the account instead.
+
 ## Administering the organization
 
 Everything administrative lives in **Settings**, reached from the gear icon in

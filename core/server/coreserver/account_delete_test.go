@@ -77,8 +77,9 @@ func TestAccountDeleteSoft(t *testing.T) {
 			if !strings.HasSuffix(updated.GetString("email"), "@deleted.tinycld.org") {
 				t.Errorf("email not anonymized: %q", updated.GetString("email"))
 			}
-			if updated.GetString("name") != "Deleted user" {
-				t.Errorf("name not anonymized: %q", updated.GetString("name"))
+			// The name stays so their work stays credited to them.
+			if updated.GetString("name") != user.GetString("name") {
+				t.Errorf("name = %q, want %q kept", updated.GetString("name"), user.GetString("name"))
 			}
 			if updated.GetBool("verified") {
 				t.Error("verified not cleared")
