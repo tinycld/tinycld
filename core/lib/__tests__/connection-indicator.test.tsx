@@ -7,6 +7,7 @@ import {
     connectionNotice,
     noticeLabel,
     serverHostLabel,
+    syncOutageOf,
 } from '@tinycld/core/lib/connection-indicator'
 import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
 import type { SyncStatus } from 'pbtsdb'
@@ -38,23 +39,19 @@ vi.mock('@tinycld/core/lib/auth', () => ({
 
 vi.mock('@tinycld/core/lib/pocketbase', () => ({ pb: {} }))
 
-// pbtsdb's status for the hook: a store the test sets, read through
-// useSyncExternalStore the way pbtsdb's own useSyncStatus reads its client.
-vi.mock('pbtsdb', async () => {
-    const { useSyncExternalStore } = await import('react')
-    return {
-        disconnectRealtime: vi.fn(),
-        resetRealtime: vi.fn(),
-        useSyncStatus: () =>
-            useSyncExternalStore(
-                listener => {
-                    h.listeners.add(listener)
-                    return () => h.listeners.delete(listener)
-                },
-                () => h.status
-            ),
-    }
-})
+// pbtsdb's status for the hook: a store the test sets, served through
+// subscribeSyncStatus / getSyncStatus.
+vi.mock('pbtsdb', () => ({
+    disconnectRealtime: vi.fn(),
+    resetRealtime: vi.fn(),
+    getSyncStatus: () => h.status,
+    subscribeSyncStatus: (_pb: unknown, listener: () => void) => {
+        h.listeners.add(listener)
+        return () => {
+            h.listeners.delete(listener)
+        }
+    },
+}))
 
 function setStatus(status: SyncStatus) {
     h.status = status
@@ -66,8 +63,46 @@ const healthy: ConnectionSignals = {
     isServerReachable: true,
     isSignedIn: true,
     isRealtimeEnabled: true,
-    sync: connected,
+    sync: syncOutageOf(connected),
 }
+
+describe('syncOutageOf', () => {
+    it('is the same value for statuses that differ only in refused loads', () => {
+        const refused = (failed: number): SyncStatus => ({
+            ...connected,
+            loads: { retrying: 0, failed },
+        })
+        expect(syncOutageOf(refused(1))).toBe(syncOutageOf(connected))
+        expect(syncOutageOf(refused(23))).toBe(syncOutageOf(refused(1)))
+        const retrying = (failed: number): SyncStatus => ({
+            ...connected,
+            loads: { retrying: 1, failingSince: T0, failed },
+        })
+        expect(syncOutageOf(retrying(4))).toBe(syncOutageOf(retrying(0)))
+        const stream = (failed: number): SyncStatus => ({
+            ...reconnecting,
+            loads: { retrying: 0, failed },
+        })
+        expect(syncOutageOf(stream(2))).toBe(syncOutageOf(stream(0)))
+    })
+
+    it('changes when the retrying loads or the realtime stream change', () => {
+        const retryingSince = (since: number): SyncStatus => ({
+            ...connected,
+            loads: { retrying: 1, failingSince: since, failed: 0 },
+        })
+        expect(syncOutageOf(retryingSince(T0))).not.toBe(syncOutageOf(connected))
+        expect(syncOutageOf(retryingSince(T0))).not.toBe(syncOutageOf(retryingSince(T0 - 5000)))
+        expect(syncOutageOf(reconnecting)).not.toBe(syncOutageOf(connected))
+        expect(syncOutageOf(reconnectingSince(T0))).not.toBe(
+            syncOutageOf(reconnectingSince(T0 + 1000))
+        )
+    })
+
+    it('is undated for retrying loads with no failing-since time', () => {
+        expect(syncOutageOf({ ...connected, loads: { retrying: 1, failed: 0 } })).toBe('undated')
+    })
+})
 
 function stateAt(signals: ConnectionSignals, now = T0) {
     return connectionNotice(signals, now).state
@@ -83,7 +118,7 @@ describe('connectionNotice', () => {
             ...healthy,
             isOnline: false,
             isServerReachable: false,
-            sync: reconnecting,
+            sync: syncOutageOf(reconnecting),
         }
         expect(connectionNotice(signals, T0 + CONNECTION_ESCALATE_AFTER_MS * 10)).toEqual({
             state: 'offline',
@@ -92,20 +127,33 @@ describe('connectionNotice', () => {
     })
 
     it('says reconnecting for a short outage and names when it escalates', () => {
-        expect(connectionNotice({ ...healthy, sync: reconnecting }, T0 + 1000)).toEqual({
+        expect(
+            connectionNotice({ ...healthy, sync: syncOutageOf(reconnecting) }, T0 + 1000)
+        ).toEqual({
             state: 'reconnecting',
             escalatesAt: T0 + CONNECTION_ESCALATE_AFTER_MS,
         })
         expect(
             stateAt({
                 ...healthy,
-                sync: { ...connected, loads: { retrying: 2, failingSince: T0, failed: 0 } },
+                sync: syncOutageOf({
+                    ...connected,
+                    loads: { retrying: 2, failingSince: T0, failed: 0 },
+                }),
             })
         ).toBe('reconnecting')
     })
 
+    it('says reconnecting without an escalation time for an undated outage', () => {
+        const sync = syncOutageOf({ ...connected, loads: { retrying: 1, failed: 0 } })
+        expect(connectionNotice({ ...healthy, sync }, T0)).toEqual({
+            state: 'reconnecting',
+            escalatesAt: null,
+        })
+    })
+
     it('escalates once the outage passes the threshold', () => {
-        const signals = { ...healthy, sync: reconnecting }
+        const signals = { ...healthy, sync: syncOutageOf(reconnecting) }
         expect(stateAt(signals, T0 + CONNECTION_ESCALATE_AFTER_MS - 1)).toBe('reconnecting')
         expect(stateAt(signals, T0 + CONNECTION_ESCALATE_AFTER_MS)).toBe('unreachable')
     })
@@ -115,7 +163,7 @@ describe('connectionNotice', () => {
             realtime: { state: 'reconnecting', attempt: 3, nextRetryAt: T0, since: T0 },
             loads: { retrying: 1, failingSince: T0 - 5000, failed: 0 },
         }
-        expect(connectionNotice({ ...healthy, sync }, T0).escalatesAt).toBe(
+        expect(connectionNotice({ ...healthy, sync: syncOutageOf(sync) }, T0).escalatesAt).toBe(
             T0 - 5000 + CONNECTION_ESCALATE_AFTER_MS
         )
     })
@@ -129,10 +177,16 @@ describe('connectionNotice', () => {
 
     it('does not treat a refused load or a disabled stream as an outage', () => {
         expect(
-            stateAt({ ...healthy, sync: { ...connected, loads: { retrying: 0, failed: 3 } } })
+            stateAt({
+                ...healthy,
+                sync: syncOutageOf({ ...connected, loads: { retrying: 0, failed: 3 } }),
+            })
         ).toBe('hidden')
         expect(
-            stateAt({ ...healthy, sync: { ...connected, realtime: { state: 'disabled' } } })
+            stateAt({
+                ...healthy,
+                sync: syncOutageOf({ ...connected, realtime: { state: 'disabled' } }),
+            })
         ).toBe('hidden')
     })
 
@@ -226,6 +280,29 @@ describe('useConnectionIndicator', () => {
             vi.advanceTimersByTime(CONNECTION_ESCALATE_AFTER_MS - CONNECTION_INDICATOR_DELAY_MS)
         )
         expect(result.current).toBe('unreachable')
+    })
+
+    it('does not render again when only the count of refused loads changes', async () => {
+        const { useConnectionIndicator } = await import(
+            '@tinycld/core/lib/use-connection-indicator'
+        )
+        let renders = 0
+        const { result } = renderHook(() => {
+            renders += 1
+            return useConnectionIndicator()
+        })
+        act(() => vi.advanceTimersByTime(CONNECTION_INDICATOR_DELAY_MS))
+        const settled = renders
+
+        for (const failed of [1, 2, 3, 2]) {
+            act(() => setStatus({ ...connected, loads: { retrying: 0, failed } }))
+        }
+        expect(renders).toBe(settled)
+        expect(result.current).toBe('hidden')
+
+        // A real outage still reaches the hook.
+        act(() => setStatus({ ...reconnecting, loads: { retrying: 0, failed: 2 } }))
+        expect(renders).toBeGreaterThan(settled)
     })
 
     it('escalates when the health check fails while the network is up', async () => {

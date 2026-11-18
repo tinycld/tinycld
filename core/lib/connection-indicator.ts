@@ -18,8 +18,20 @@ export interface ConnectionSignals {
     isSignedIn: boolean
     /** False on a page that turned realtime off on purpose (an embed). */
     isRealtimeEnabled: boolean
-    sync: SyncStatus
+    /** pbtsdb's sync status, narrowed by syncOutageOf. */
+    sync: SyncOutage
 }
+
+/**
+ * The part of pbtsdb's sync status the notice reads: null when live updates
+ * and loads are healthy, else when the outage began (epoch ms), or `undated`
+ * when a load retries without a start time.
+ *
+ * A primitive, so a `useSyncExternalStore` over it compares with Object.is
+ * and a change the notice does not read (`loads.failed`, a retry attempt)
+ * does not render the indicator again.
+ */
+export type SyncOutage = number | 'undated' | null
 
 /** How long a problem must last before the notice shows it at all. */
 export const CONNECTION_INDICATOR_DELAY_MS = 1500
@@ -37,27 +49,29 @@ export interface ConnectionNotice {
 }
 
 /**
- * When the current outage began, from pbtsdb's own timestamps: the realtime
- * stream's `since` and the oldest retrying load's `failingSince`.
+ * The sync outage in pbtsdb's status, dated from its own timestamps: the
+ * realtime stream's `since` and the oldest retrying load's `failingSince`.
+ *
+ * An outage means the live-update stream dropped and is retrying, or a list's
+ * load is sleeping in its retry backoff. A load the server refused (a 403 or
+ * 404, `loads.failed`) is an answer, not an outage, and a disabled stream is
+ * deliberate (logged out, an embed, nothing subscribed yet), so neither counts.
  */
-function outageSince(sync: SyncStatus): number | null {
+export function syncOutageOf(sync: SyncStatus): SyncOutage {
+    const { realtime, loads } = sync
     const times: number[] = []
-    if (sync.realtime.state === 'reconnecting') times.push(sync.realtime.since)
-    if (sync.loads.retrying > 0 && sync.loads.failingSince !== undefined) {
-        times.push(sync.loads.failingSince)
-    }
-    return times.length > 0 ? Math.min(...times) : null
+    if (realtime.state === 'reconnecting') times.push(realtime.since)
+    if (loads.retrying > 0 && loads.failingSince !== undefined) times.push(loads.failingSince)
+    if (times.length > 0) return Math.min(...times)
+    return loads.retrying > 0 ? 'undated' : null
 }
 
 /**
  * What the notice should say at `now`, before the anti-flicker delay.
  *
- * Reconnecting means pbtsdb's live-update stream dropped and is retrying, or a
- * list's load is sleeping in its retry backoff. A load the server refused (a
- * 403 or 404, `loads.failed`) is an answer, not an outage, and a disabled
- * stream is deliberate (logged out, an embed, nothing subscribed yet), so
- * neither counts. Without a network the notice says offline and offers
- * nothing: no server option helps until the network is back.
+ * Reconnecting means a sync outage (see syncOutageOf). Without a network the
+ * notice says offline and offers nothing: no server option helps until the
+ * network is back.
  */
 export function connectionNotice(signals: ConnectionSignals, now: number): ConnectionNotice {
     const hidden: ConnectionNotice = { state: 'hidden', escalatesAt: null }
@@ -65,11 +79,9 @@ export function connectionNotice(signals: ConnectionSignals, now: number): Conne
     if (!signals.isOnline) return { state: 'offline', escalatesAt: null }
     if (!signals.isServerReachable) return { state: 'unreachable', escalatesAt: null }
 
-    const { realtime, loads } = signals.sync
-    if (realtime.state !== 'reconnecting' && loads.retrying === 0) return hidden
-
-    const since = outageSince(signals.sync)
-    if (since === null) return { state: 'reconnecting', escalatesAt: null }
+    const since = signals.sync
+    if (since === null) return hidden
+    if (since === 'undated') return { state: 'reconnecting', escalatesAt: null }
     const escalatesAt = since + CONNECTION_ESCALATE_AFTER_MS
     return now >= escalatesAt
         ? { state: 'unreachable', escalatesAt: null }
