@@ -129,6 +129,11 @@ type ResultColumn struct {
 	// column, not in a pivot report; the first column by its detail label
 	// when the report has one.
 	Sortable bool `json:"sortable,omitempty"`
+	// BlankAbove says the column has no cell above a group level: its own
+	// blankAbove, or that of a column it reads. The rows that show it can all
+	// be closed when a run lands, so the client keeps room for its type's
+	// worst case (column-measure.ts widestCell).
+	BlankAbove bool `json:"blankAbove,omitempty"`
 	// Heading is the value the column's heading shows (Column.Heading), absent
 	// when the column has none or it is blank this run.
 	Heading *ColumnHeading `json:"heading,omitempty"`
@@ -2304,9 +2309,6 @@ func (c *compiler) compileAll() error {
 		pivot = make([]pivotValue, p.pivot.max)
 	}
 	if _, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1); err != nil {
-		return err
-	}
-	if err := fitRefusals(c); err != nil {
 		return err
 	}
 	if _, err := c.headings(s); err != nil {

@@ -15,6 +15,7 @@ import {
     TEXT_MIN_WIDTH,
     WORD_MARGIN,
 } from '../column-measure'
+import { shortDay } from '../dates'
 import { cellDisplay, DEFAULT_DISPLAY } from '../format'
 import type { VisibleRow } from '../rows'
 import type { ColumnFit } from '../spec'
@@ -432,10 +433,48 @@ describe('column fit in the measure', () => {
         expect(withFits({ debit: { flexGrow: 2 } }).debit).toEqual({ ...plain.debit, grow: 2 })
     })
 
-    it('ignores a setting that would cut a figure (the engine refuses it)', () => {
-        expect(withFits({ debit: { width: '2ch', whiteSpace: 'normal' } }).debit).toEqual(
-            plain.debit
-        )
+    it('holds a figure at its whole value under every setting', () => {
+        const debit = plain.debit ?? { natural: 0, min: 0, grow: 0 }
+        const floor = debit.min
+        const held = { natural: floor, min: floor, max: floor, grow: 0 }
+        // A width under the floor, and wrap settings: never narrower, never wrapped.
+        expect(
+            withFits({
+                debit: {
+                    width: '2ch',
+                    whiteSpace: 'normal',
+                    lineClamp: 2,
+                    overflowWrap: 'anywhere',
+                },
+            }).debit
+        ).toEqual(held)
+        // A cap under the floor is held at the floor.
+        expect(withFits({ debit: { maxWidth: '2ch' } }).debit).toEqual(held)
+        // A width above the floor is taken, with the cell's padding.
+        expect(ch(40)).toBeGreaterThan(floor)
+        expect(withFits({ debit: { width: '40ch' } }).debit).toEqual({
+            natural: ch(40),
+            min: ch(40),
+            max: ch(40),
+            grow: 0,
+        })
+        // minWidth widens.
+        expect(withFits({ debit: { minWidth: '40ch' } }).debit).toEqual({
+            natural: ch(40),
+            min: ch(40),
+            grow: 0,
+        })
+        expect(withFits({ debit: { maxWidth: '40ch' } }).debit).toEqual({ ...debit, max: ch(40) })
+        // On a figure each of these means the whole value.
+        for (const minWidth of ['6ch', 'auto', 'min-content', 'max-content']) {
+            expect(withFits({ debit: { minWidth } }).debit).toEqual(debit)
+        }
+        // A % width is resolved at the line, never under the floor.
+        const pct = withFits({ debit: { width: '25%' } }).debit ?? debit
+        expect(pct).toEqual({ ...debit, pct: { width: 0.25 } })
+        expect(atWidth(pct, 200).min).toBe(floor)
+        const wide = atWidth(pct, 2000)
+        expect([wide.natural, wide.min, wide.max]).toEqual([500, 500, 500])
     })
 
     it('pads a label length with the label chrome', () => {
@@ -459,7 +498,102 @@ describe('column fit in the measure', () => {
             levels: GROUPED,
             fits: { account: { width: '2ch' } },
         })
-        expect(set.account).toEqual(base.account)
+        const account = base.account ?? { natural: 0, min: 0, grow: 0 }
+        expect(set.account).toEqual({ ...account, natural: account.min, max: account.min })
+        const wrapped = measureColumns({
+            columns: COLUMNS,
+            rows: typed,
+            format: DEFAULT_DISPLAY,
+            levels: GROUPED,
+            fits: { account: { whiteSpace: 'normal', lineClamp: 2 } },
+        })
+        expect(wrapped.account).toEqual(account)
+    })
+
+    describe('every kind of figure', () => {
+        const PIVOT: ResultColumn[] = [
+            { id: 'account', label: 'Account', type: 'text' },
+            { id: 'note_q1', label: 'Q1', type: 'text', pivot: { cell: 'note', key: 'q1' } },
+            {
+                id: 'amount_q1',
+                label: 'Q1',
+                type: 'money',
+                currency: 'USD',
+                pivot: { cell: 'amount', key: 'q1' },
+            },
+        ]
+        const COUNT: ResultColumn[] = [
+            { id: 'name', label: 'Name', type: 'text' },
+            { id: 'count', label: 'Count', type: 'text', totalType: 'number' },
+        ]
+        const FIGURE_FIRST: ResultColumn[] = [
+            { id: 'amount', label: 'Amt', type: 'money', currency: 'USD' },
+            { id: 'memo', label: 'Memo', type: 'text' },
+        ]
+        const cases = [
+            {
+                kind: 'a pivot cell column',
+                columns: PIVOT,
+                rows: [item('detail', 'Rent', { note_q1: 'Paid late', amount_q1: 1200 })],
+                levels: FLAT,
+                id: 'amount_q1',
+                fitKey: 'amount',
+                pad: CELL_PADDING,
+            },
+            {
+                kind: 'a count column',
+                columns: COUNT,
+                rows: [
+                    item('detail', 'Hay', { name: 'Hay', count: 'Hay' }),
+                    item('subtotal', 'Subtotal', { count: 3 }, { depth: 0 }),
+                ],
+                levels: GROUPED,
+                id: 'count',
+                fitKey: 'count',
+                pad: CELL_PADDING,
+            },
+            {
+                kind: 'a figure-typed first column',
+                columns: FIGURE_FIRST,
+                rows: [item('detail', '$12,345.67 paid in full on account', { memo: 'x' })],
+                levels: FLAT,
+                id: 'amount',
+                fitKey: 'amount',
+                pad: labelChrome(FLAT),
+            },
+            {
+                kind: 'a typed label column',
+                columns: COLUMNS,
+                rows: [GROUP, DETAIL, TOTAL],
+                levels: GROUPED,
+                id: 'account',
+                fitKey: 'account',
+                pad: labelChrome(GROUPED),
+            },
+        ]
+
+        it.each(cases)('holds $kind at its whole value and lets minWidth widen it', ({
+            columns,
+            rows,
+            levels,
+            id,
+            fitKey,
+            pad,
+        }) => {
+            const run = (fits?: Record<string, ColumnFit>) =>
+                measureColumns({ columns, rows, format: DEFAULT_DISPLAY, levels, fits })[id]
+            const base = run() ?? { natural: 0, min: 0, grow: 0 }
+            expect(Math.ceil(2 * CH_WIDTH) + pad).toBeLessThan(base.min)
+            const narrow = run({ [fitKey]: { width: '2ch' } })
+            expect([narrow?.natural, narrow?.min, narrow?.max]).toEqual([
+                base.min,
+                base.min,
+                base.min,
+            ])
+            const wide = run({ [fitKey]: { minWidth: '60ch' } })
+            expect(wide?.min).toBe(Math.ceil(60 * CH_WIDTH) + pad)
+            expect(wide?.max).toBeUndefined()
+        })
     })
 
     it('never cuts a label column of figures, even when its rows carry no label type', () => {
@@ -518,6 +652,125 @@ describe('measureKey with fits', () => {
             measureKey(base)
         )
         expect(measureKey({ ...base, fits: {} })).toBe(measureKey(base))
+    })
+})
+
+describe('a column that is blank above a group level', () => {
+    const NAME: ResultColumn = { id: 'name', label: 'Name', type: 'text' }
+    const GROUP_ROW = item('group', 'Hay', { name: 'Hay' }, { depth: 0 }, true)
+    const TOTAL_ROW = item('total', 'Total', { name: 'Total' }, { depth: 0 })
+    const SUBTOTAL: ResultRow = { id: 's', kind: 'subtotal', depth: 0, label: '', cells: {} }
+    const run = (column: ResultColumn, rows = [GROUP_ROW, TOTAL_ROW], format = DEFAULT_DISPLAY) => {
+        const m = measureColumns({ columns: [NAME, column], rows, format, levels: GROUPED })
+        return m[column.id] ?? { natural: 0, min: 0, grow: 0 }
+    }
+    const plainDue: ResultColumn = { id: 'due', label: 'Due', type: 'date' }
+    const DUE: ResultColumn = { ...plainDue, blankAbove: true }
+    const DAYS_2026 = Array.from({ length: 365 }, (_, i) =>
+        new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10)
+    )
+    const boldDay = (day: string) =>
+        textWidth(cellDisplay(DUE, GROUP_ROW.row, day, DEFAULT_DISPLAY).text, BOLD) + CELL_PADDING
+
+    it('keeps room for every day of the year in bold for a date', () => {
+        const m = run(DUE)
+        for (const day of DAYS_2026) expect(boldDay(day)).toBeLessThanOrEqual(m.min)
+        expect(m.natural).toBe(m.min)
+    })
+
+    it('leaves a column without the flag as wide as its heading', () => {
+        expect(run(plainDue).min).toBe(longestWordWidth('Due', HEADING) + CELL_PADDING)
+    })
+
+    it('keeps room for an amount with its currency symbol, in each number format', () => {
+        const cost: ResultColumn = {
+            id: 'cost',
+            label: 'Cost',
+            type: 'money',
+            currency: 'USD',
+            blankAbove: true,
+        }
+        const worst = (format: typeof DEFAULT_DISPLAY) =>
+            textWidth(cellDisplay(cost, SUBTOTAL, -9_999_999, format).text, BOLD) + CELL_PADDING
+        expect(run(cost).min).toBe(worst(DEFAULT_DISPLAY))
+        const parens = { ...DEFAULT_DISPLAY, negative: 'parens' as const }
+        expect(run(cost, undefined, parens).min).toBe(worst(parens))
+    })
+
+    // A money column whose currency is a row cell (assemble.go currencyOfColumn:
+    // `<id>@currency`), as Books money columns come out: no fixed `currency`.
+    const rowCost: ResultColumn = {
+        id: 'cost',
+        label: 'Cost',
+        type: 'money',
+        currencyCell: 'cost@currency',
+        blankAbove: true,
+    }
+
+    it('keeps room for the symbol of a currency the rows carry', () => {
+        const rows = [
+            item('group', 'Hay', { name: 'Hay', 'cost@currency': 'CAD' }, { depth: 0 }, true),
+            item('total', 'Total', { name: 'Total', 'cost@currency': 'CAD' }, { depth: 0 }),
+        ]
+        const cad = { ...rowCost, currency: 'CAD' }
+        const worst =
+            textWidth(cellDisplay(cad, SUBTOTAL, -9_999_999, DEFAULT_DISPLAY).text, BOLD) +
+            CELL_PADDING
+        expect(run(rowCost, rows).min).toBeGreaterThanOrEqual(worst)
+    })
+
+    it('keeps room for a currency symbol when no row carries a currency', () => {
+        const bare =
+            textWidth(cellDisplay(rowCost, SUBTOTAL, -9_999_999, DEFAULT_DISPLAY).text, BOLD) +
+            CELL_PADDING
+        expect(run(rowCost).min).toBeGreaterThan(bare)
+    })
+
+    it('keeps room for a count as the total rows draw it', () => {
+        const count: ResultColumn = {
+            id: 'count',
+            label: 'N',
+            type: 'text',
+            totalType: 'number',
+            blankAbove: true,
+        }
+        expect(run(count).min).toBe(
+            textWidth(cellDisplay(count, SUBTOTAL, -99_999, DEFAULT_DISPLAY).text, BOLD) +
+                CELL_PADDING
+        )
+    })
+
+    it('keeps room for every month and the widest time for a date-time', () => {
+        const at: ResultColumn = { id: 'at', label: 'At', type: 'datetime', blankAbove: true }
+        const m = run(at)
+        for (let month = 1; month <= 12; month++) {
+            const day = shortDay(`2026-${String(month).padStart(2, '0')}-28`)
+            expect(textWidth(`${day}, 12:59 PM`, BOLD) + CELL_PADDING).toBeLessThanOrEqual(m.min)
+        }
+    })
+
+    it('leaves a text column as wide as its heading: text has no worst case', () => {
+        const note: ResultColumn = { id: 'note', label: 'Note', type: 'text', blankAbove: true }
+        expect(run(note).min).toBe(longestWordWidth('Note', HEADING) + CELL_PADDING)
+    })
+
+    describe('with a value on a shown row', () => {
+        const VALUED = item('group', 'Hay', { name: 'Hay', due: '2026-09-30' }, { depth: 0 }, true)
+        const rows = [VALUED, TOTAL_ROW]
+
+        it('keeps the blank worst case: an item opened later is not cut', () => {
+            const m = run(DUE, rows)
+            for (const day of DAYS_2026) expect(boldDay(day)).toBeLessThanOrEqual(m.min)
+            expect(m.min).toBeGreaterThan(run(plainDue, rows).min)
+        })
+
+        it('measures a column without the flag as before', () => {
+            const shown = textWidth(shortDay('2026-09-30'), BOLD)
+            const worst = textWidth(shortDay('2026-09-30'), CELL)
+            const m = run(plainDue, rows)
+            expect(m.min).toBe(Math.max(shown, worst) + CELL_PADDING)
+            expect(m.natural).toBe(m.min)
+        })
     })
 })
 

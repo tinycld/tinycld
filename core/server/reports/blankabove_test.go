@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -16,6 +17,63 @@ const blankAboveRun = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
 	"groups":[{"id":"bySpecies","col":"species","subtotals":true},{"id":"byAnimal","col":"animal","subtotals":true}],
 	"sort":[{"col":"note"}]}`
+
+// blankAboveFlags maps each result column of res to its BlankAbove.
+func blankAboveFlags(res *Result) map[string]bool {
+	flags := map[string]bool{}
+	for _, c := range res.Columns {
+		flags[c.ID] = c.BlankAbove
+	}
+	return flags
+}
+
+func requireBlankAbove(t *testing.T, res *Result, want map[string]bool) {
+	t.Helper()
+	got := blankAboveFlags(res)
+	for id, w := range want {
+		if v, ok := got[id]; !ok || v != w {
+			t.Fatalf("column %s: BlankAbove = %v (present %v), want %v; all %v", id, v, ok, w, got)
+		}
+	}
+}
+
+// The result column carries blankAbove: by its own setting, or because it
+// reads a blank-above column; never sent as false.
+func TestBlankAboveMarksTheResultColumn(t *testing.T) {
+	z := newZoo(t)
+	for _, level := range []string{"byAnimal", "bySpecies"} {
+		res := z.run(t, "ann", fmt.Sprintf(blankAboveRun, level), Options{}, nil)
+		requireBlankAbove(t, res, map[string]bool{"cost": true, "twice": true, "note": false, "grams": false})
+	}
+
+	derived := `{"version":4,"source":"zoo.feedings","columns":[
+		{"id":"species","path":[{"link":"animal"},{"field":"species"}]},
+		{"id":"animal","path":[{"link":"animal"}],"hidden":true},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum","blankAbove":"byAnimal"},
+		{"id":"twice","formula":{"op":"add","args":[{"col":"cost"},{"col":"cost"}]}},
+		{"id":"plus","formula":{"op":"add","args":[{"col":"cost"},
+			{"op":"lookup","source":"zoo.feedings","pick":"sum","value":{"path":[{"field":"grams"}]}}]}}],
+		"groups":[{"id":"g","col":"species"},{"id":"byAnimal","col":"animal","subtotals":true}]}`
+	res := z.run(t, "ann", derived, Options{}, nil)
+	requireBlankAbove(t, res, map[string]bool{"cost": true, "twice": true, "plus": true, "species": false})
+
+	for _, c := range res.Columns {
+		raw, err := json.Marshal(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch c.ID {
+		case "cost":
+			if !strings.Contains(string(raw), `"blankAbove":true`) {
+				t.Fatalf("cost column json %s has no blankAbove true", raw)
+			}
+		case "species":
+			if strings.Contains(string(raw), `"blankAbove"`) {
+				t.Fatalf("species column json %s carries blankAbove", raw)
+			}
+		}
+	}
+}
 
 // outer is a row of the levels above level: its group and subtotal rows, and
 // the Total.

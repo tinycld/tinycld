@@ -106,7 +106,7 @@ func TestColumnFitIsChecked(t *testing.T) {
 	requireSpecError(t, err, 400, "spec", "unknown field")
 }
 
-func TestAFigureIsNeverCut(t *testing.T) {
+func TestAFigureTakesEveryFit(t *testing.T) {
 	app := withZooRegistry(t)
 	spec := func(first, fits string) string {
 		return `{"version":4,"source":"zoo.feedings","columns":[` + first + `,
@@ -116,22 +116,36 @@ func TestAFigureIsNeverCut(t *testing.T) {
 			"groups":[{"id":"g","col":"animal"}],"display":{"columns":` + fits + `}}`
 	}
 	const animal = `{"id":"animal","path":[{"link":"animal"}]}`
-	for name, c := range map[string]struct{ raw, at string }{
-		"money with a min":           {spec(animal, `{"cost":{"minWidth":"8ch"}}`), "display.columns.cost.minWidth"},
-		"money with a width":         {spec(animal, `{"cost":{"width":"100px"}}`), "display.columns.cost.width"},
-		"a date that wraps":          {spec(animal, `{"fed":{"whiteSpace":"normal"}}`), "display.columns.fed.whiteSpace"},
-		"a summed number with a max": {spec(animal, `{"grams":{"maxWidth":"10ch"}}`), "display.columns.grams.maxWidth"},
-		"money with an ellipsis":     {spec(animal, `{"cost":{"textOverflow":"ellipsis"}}`), "display.columns.cost.textOverflow"},
-		"money that breaks words":    {spec(animal, `{"cost":{"whiteSpace":"normal","overflowWrap":"anywhere"}}`), "display.columns.cost.overflowWrap"},
-		"a formula giving money":     {spec(animal, `{"double":{"minWidth":"min-content"}}`), "display.columns.double.minWidth"},
-		"a label typed as a date":    {spec(`{"id":"animal","path":[{"link":"animal"}],"labelField":"born"}`, `{"animal":{"width":"20ch"}}`), "display.columns.animal.width"},
+	// Every column type takes every fit setting: a figure keeps its whole value
+	// in the client's measure (column-measure.ts wholeMeasure), so none can cut it.
+	for name, raw := range map[string]string{
+		"money with a min":           spec(animal, `{"cost":{"minWidth":"8ch"}}`),
+		"money with a width":         spec(animal, `{"cost":{"width":"100px"}}`),
+		"a date that wraps":          spec(animal, `{"fed":{"whiteSpace":"normal"}}`),
+		"a summed number with a max": spec(animal, `{"grams":{"maxWidth":"10ch"}}`),
+		"money with an ellipsis":     spec(animal, `{"cost":{"textOverflow":"ellipsis"}}`),
+		"money that breaks words":    spec(animal, `{"cost":{"whiteSpace":"normal","overflowWrap":"anywhere"}}`),
+		"a formula giving money":     spec(animal, `{"double":{"minWidth":"min-content"}}`),
+		"a label typed as a date":    spec(`{"id":"animal","path":[{"link":"animal"}],"labelField":"born"}`, `{"animal":{"width":"20ch"}}`),
 		// Text in its detail rows, a number (a count) in its group rows (TotalType).
-		"a count of text that wraps": {spec(animal+`,{"id":"notes","path":[{"field":"note"}],"aggregate":"count"}`, `{"notes":{"whiteSpace":"normal"}}`), "display.columns.notes.whiteSpace"},
+		"a count of text that wraps": spec(animal+`,{"id":"notes","path":[{"field":"note"}],"aggregate":"count"}`, `{"notes":{"whiteSpace":"normal"}}`),
 		// The first column labels the detail rows with a date formula.
-		"a detail label typed as a date": {strings.TrimSuffix(spec(animal, `{"animal":{"width":"20ch"}}`), "}") + `,"detail":{"label":{"path":[{"field":"fed"}]}}}`, "display.columns.animal.width"},
+		"a detail label typed as a date": strings.TrimSuffix(spec(animal, `{"animal":{"width":"20ch"}}`), "}") + `,"detail":{"label":{"path":[{"field":"fed"}]}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			requireSpecError(t, Validate(app, loadSpec(t, c.raw)), 400, c.at, neverCutMessage)
+			if err := Validate(app, loadSpec(t, raw)); err != nil {
+				t.Fatalf("a figure's fit was refused: %v", err)
+			}
+		})
+	}
+	// A figure's values are checked as a text column's are.
+	for name, c := range map[string]struct{ fits, at, msg string }{
+		"a width too wide":         {`{"cost":{"width":"5000px"}}`, "display.columns.cost.width", "a length in px is 1 to 4000"},
+		"a lineClamp with no wrap": {`{"cost":{"lineClamp":2}}`, "display.columns.cost.lineClamp", "lineClamp goes with whiteSpace normal"},
+		"a min over its max":       {`{"fed":{"minWidth":"30ch","maxWidth":"20ch"}}`, "display.columns.fed.minWidth", "minWidth is at most maxWidth"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireSpecError(t, Validate(app, loadSpec(t, spec(animal, c.fits))), 400, c.at, c.msg)
 		})
 	}
 	// flexGrow and a whole-value min are free on a figure; text may narrow and wrap.

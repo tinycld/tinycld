@@ -66,9 +66,9 @@ describe('builder errors', () => {
             describeProblem({
                 path: 'display.columns.amount.minWidth',
                 code: 'invalid',
-                message: 'a figure is never cut',
+                message: 'minWidth is at most maxWidth',
             })
-        ).toBe('Column amount: a figure is never cut')
+        ).toBe('Column amount: minWidth is at most maxWidth')
         expect(
             describeProblem({
                 path: 'display.oneLine.minWidth',

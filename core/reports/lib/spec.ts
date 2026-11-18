@@ -253,8 +253,9 @@ export function parseFitLength(s: string): FitLength | null {
 const fitLength = z.string().regex(FIT_LENGTH)
 const pxLength = z.string().regex(PX_LENGTH)
 
-// One column's fit, after CSS (design §3.2). The engine refuses each setting that
-// could cut a figure; flexGrow is free on every column. overflowWrap "anywhere" lets
+// One column's fit, after CSS (design §3.2). Every column type takes every setting:
+// a figure keeps its whole value (column-measure.ts wholeMeasure holds width and
+// maxWidth at it, and a wrap does nothing on it). overflowWrap "anywhere" lets
 // a wrapping column break a word wider than its line (fit.go columnFit: only with
 // whiteSpace normal, and not with lineClamp 1, a line that never breaks a word). The
 // issues are filed on the fit itself, where the builder reads a column's fit error.

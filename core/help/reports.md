@@ -167,7 +167,7 @@ A formula is built from parts you pick from menus: **Number**, **Text**, **Colum
 
 ## When columns do not fit
 
-A report never scrolls sideways. Each column gets at least its least width. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". On one line, the rest of the room goes to the columns by their **Extra room**: while two columns both need more room for their text, a column with **Double** gets twice the room of a column with **Normal**, also when its text is shorter. A column stops at the width its values need while another column's text is still cut, and its share goes to the others; when every column shows its whole text, the room left goes by **Extra room** again. A column with **None** gets the room that its values need, and no more. A column with no value is as wide as its heading.
+A report never scrolls sideways. Each column gets at least its least width. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". On one line, the rest of the room goes to the columns by their **Extra room**: while two columns both need more room for their text, a column with **Double** gets twice the room of a column with **Normal**, also when its text is shorter. A column stops at the width its values need while another column's text is still cut, and its share goes to the others; when every column shows its whole text, the room left goes by **Extra room** again. A column with **None** gets the room that its values need, and no more. A column with no value is as wide as its heading. A column set to show its figure only up to a group keeps room for the figure while the groups are closed.
 
 Group, opening, subtotal and total rows show their whole label: it runs across the empty cells after it. When the rows wrap, a total's label moves onto the line of its figures if there is room.
 
@@ -175,12 +175,12 @@ When the columns do not fit on one line (or the rows are narrower than **One lin
 
 To change how a column fits, open the column in **Columns**:
 
-- **Narrowest** is the least width a text column gets before the report wraps its rows: **Automatic** (about eight letters), **Whole value** (never cut), or a number of letters.
+- **Narrowest** is the least width a column gets before the report wraps its rows: **Automatic** (about eight letters; for a number, amount, percent, date or yes/no value: its whole value), **Whole value** (never cut), or a number of letters. On a number, amount, percent, date or yes/no column it can only make the column wider.
 - **Long text** keeps the text on **One line, ends in …**, or wraps it to 2 or 3 lines. A column that wraps is never narrower than its longest word, whatever its **Narrowest** setting, so its words stay whole, unless **Long words** is **Break long words**. A colon ends a word too: a name such as Expenses:Travel can go on to the next line after its colon, and the colon stays on the first line.
 - **Long words** shows while a column wraps. **Keep words whole** (the default) keeps the column at least as wide as its longest word. **Break long words** lets a word that is wider than its line go on to the next line inside the word, so one long name or code does not make the column wide and push the rows onto more lines.
 - **Extra room** is the column's share of the spare room on one line: **None**, **Normal**, **Double** or **Triple**. A column with **Double** gets twice the spare room of a column with **Normal**, whichever column has the longer text, but no column takes room past its values' width while another column's text is still cut. Text and the first column start at **Normal**; other numbers, amounts, percents, dates and yes/no values start at **None**. In a pivot, the setting applies to every column the pivot makes from that column.
 
-Numbers, amounts, percents, dates and yes/no values show **Never cut**: you can change only their extra room.
+Numbers, amounts, percents, dates and yes/no values show **Never cut**: you can change their narrowest width and their extra room, and they never wrap.
 
 In **Arrange**, **One line from** is the least row width at which the report uses one line; below it, the report uses an arrangement or wraps its rows. **Use from** on an arrangement is the least row width at which it is used. On a computer the rows are the window's width less the side rail.
 

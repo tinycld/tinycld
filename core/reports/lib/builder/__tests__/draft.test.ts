@@ -28,7 +28,6 @@ import {
     labelStart,
     layoutWithMinWidth,
     levelScope,
-    NEVER_CUT,
     offersBlankAbove,
     offersBlankSkip,
     offersDetailBlank,
@@ -1948,7 +1947,7 @@ describe('column fit choices', () => {
         ),
     })
 
-    it('lets text narrow and wrap, and a figure take only extra room or its whole value', () => {
+    it('lets text narrow and wrap', () => {
         const ok = withFits(
             { minWidth: '12ch', whiteSpace: 'normal', lineClamp: 2 },
             { minWidth: 'max-content', flexGrow: 2 }
@@ -1957,11 +1956,16 @@ describe('column fit choices', () => {
         expect(builderSchema(CATALOG).safeParse(ok).success).toBe(true)
     })
 
-    it('refuses a setting that would cut a figure, on the column', () => {
-        const cut = withFits(undefined, { minWidth: '6ch' })
-        expect(draftIssues(cut, CATALOG)).toEqual([
-            { path: ['columns', 1, 'fit'], message: NEVER_CUT },
-        ])
+    it('takes every fit on a figure', () => {
+        const fitted = withFits(undefined, {
+            width: '10ch',
+            minWidth: '6ch',
+            maxWidth: '20ch',
+            whiteSpace: 'normal',
+            lineClamp: 2,
+        })
+        expect(draftIssues(fitted, CATALOG)).toEqual([])
+        expect(builderSchema(CATALOG).safeParse(fitted).success).toBe(true)
     })
 
     it('clears an empty fit', () => {

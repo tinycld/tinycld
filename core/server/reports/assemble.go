@@ -39,6 +39,7 @@ func (rn *runner) columns() []ResultColumn {
 			}
 		}
 		rc.Sortable = c.p.pivot == nil && c.sortable[cp.col.ID]
+		rc.BlankAbove = cp.blankReadLevel > 0
 		rc.Heading = rn.headings[cp.col.ID]
 		rc.Drill = rn.drillTargets[cp.col.ID]
 		rn.currencyOfColumn(cp, &rc)
