@@ -155,7 +155,7 @@ func TestRegisterHandler_ErrorRollsBack(t *testing.T) {
 		t.Errorf("first handler's write not rolled back: %d widget_members rows", n)
 	}
 	still, _ := app.FindRecordById("users", alice.Id)
-	if still.GetString("name") == "Deleted user" {
+	if IsOffboarded(still) {
 		t.Error("user anonymized despite a handler error")
 	}
 }

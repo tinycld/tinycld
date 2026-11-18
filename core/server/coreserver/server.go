@@ -283,6 +283,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// listeners, so this is not shared. Binds nothing unless a supervisor
 	// started this process, so it changes no hook count.
 	registerSupervised(app)
+	registerWriteRetry(app)
 
 	// Which deployment shape wrote an archive is recorded in every manifest, so
 	// a restore can tell what it is reading before it starts. Set in Register
@@ -404,6 +405,12 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 	// matters most on a managed deployment: it is the composition that has an
 	// operator.
 	RegisterSystemConfig(app)
+
+	// Seat limit hooks on users. Shared and early: they are record hooks, which
+	// must precede jsvm, and every composition enforces the same rule. The
+	// limit is unlimited unless the deployment sets max_users or a supervising
+	// composition claims it (quota.SetSeatLimit).
+	quota.BindSeats(app)
 }
 
 // RegisterSharedCore is the bulk of the shared composition: everything both
@@ -450,6 +457,8 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	// same "which of my users is filling the disk" question as a self-hoster,
 	// and it reports no ceiling the org could not already read.
 	RegisterStorageUsageEndpoint(app)
+	// Seat use against the limit, for the members screen.
+	RegisterSeatsEndpoint(app)
 	RegisterPasswordResetMailer(app)
 	RegisterAuditHooks(app)
 	RegisterAccountDelete(app)

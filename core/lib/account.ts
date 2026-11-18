@@ -18,9 +18,10 @@ import { pb } from '@tinycld/core/lib/pocketbase'
 //   3. Delete settles authored content and anonymizes inside one transaction;
 //      a client can't do that atomically.
 
-// OffboardMode decides what happens to the records the user authored.
-// Omitting the mode entirely (see deleteAccount) leaves content in place.
-export type OffboardMode = 'reassign' | 'delete_my_data'
+// OffboardMode decides what happens to the records the user authored. 'keep'
+// (also what an omitted plan means for deleteAccount) leaves them in place,
+// credited to the deleted user.
+export type OffboardMode = 'keep' | 'reassign' | 'delete_my_data'
 
 export interface OffboardPlan {
     mode: OffboardMode
@@ -58,9 +59,9 @@ export async function enableAccount(userId: string): Promise<void> {
 // deleteAccount irreversibly anonymizes the caller's own account, confirmed by
 // re-typing their email.
 //
-// `plan` is optional: omitting it leaves authored content in place (attributed
-// to "Deleted user"), which is the safe default — a malformed request must
-// never be read as "delete everything I ever wrote".
+// `plan` is optional: omitting it leaves authored content in place, still
+// credited to the user by name, which is the safe default — a malformed
+// request must never be read as "delete everything I ever wrote".
 export async function deleteMyAccount(email: string, plan?: OffboardPlan): Promise<OffboardResult> {
     return (await pb.send('/api/account/delete', {
         method: 'POST',

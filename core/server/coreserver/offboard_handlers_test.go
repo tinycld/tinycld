@@ -130,7 +130,7 @@ func TestAccountDelete_HandlerRefusalIsBadRequest(t *testing.T) {
 	scenario.Test(t)
 
 	still, _ := app.FindRecordById("users", leaver.Id)
-	if still.GetString("name") == "Deleted user" {
+	if offboard.IsOffboarded(still) {
 		t.Error("account anonymized despite the handler refusal")
 	}
 }
@@ -163,7 +163,7 @@ func TestAccountDelete_NoPlanRunsHandlersInKeepMode(t *testing.T) {
 		t.Errorf("handler calls = %+v, want [%+v]", *calls, want)
 	}
 	gone, _ := app.FindRecordById("users", leaver.Id)
-	if gone.GetString("name") != "Deleted user" {
+	if !offboard.IsOffboarded(gone) {
 		t.Error("account not anonymized")
 	}
 }
@@ -196,7 +196,7 @@ func TestAccountDelete_NoPlanRefusedBySoleOwnership(t *testing.T) {
 	scenario.Test(t)
 
 	still, _ := app.FindRecordById("users", leaver.Id)
-	if still.GetString("name") == "Deleted user" || still.Email() != "leaver@test.local" {
+	if offboard.IsOffboarded(still) || still.Email() != "leaver@test.local" {
 		t.Error("account anonymized despite the refusal")
 	}
 }

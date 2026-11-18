@@ -3,10 +3,12 @@ package coreserver
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/apierr"
 	"tinycld.org/core/offboard"
 )
 
@@ -75,7 +77,7 @@ func handleAdminOffboard(app core.App, re *core.RequestEvent) error {
 		if errors.Is(err, offboard.ErrInvalidPlan) {
 			return re.BadRequestError(err.Error(), err)
 		}
-		return re.InternalServerError("offboard", err)
+		return apierr.Wrap(re, http.StatusInternalServerError, "Could not remove the user", err)
 	}
 	return re.JSON(200, result)
 }
