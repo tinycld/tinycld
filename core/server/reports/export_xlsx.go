@@ -237,7 +237,7 @@ func writeXLSXCell(se *xlsx.SheetEdit, f *exportFormatter, c xlsxColumn, n, col 
 		}
 		format := xlsxMoneyFormat
 		if raw.Kind == rawPercent {
-			number, format = number/100, xlsxPctFormat
+			number, format = number/100, xlsxPercentFormat(percentPlaces(c.Col))
 		}
 		return raw.Text, format, se.SetNumber(n, col, number)
 	case rawDate:
@@ -259,6 +259,18 @@ func writeXLSXCell(se *xlsx.SheetEdit, f *exportFormatter, c xlsxColumn, n, col 
 		return "", "", nil
 	}
 	return raw.Text, "", se.SetString(n, col, raw.Text)
+}
+
+// xlsxPercentFormat is the number format of a percent at places: "0%" at 0,
+// xlsxPctFormat at 1, else one "0" per place after the point.
+func xlsxPercentFormat(places int) string {
+	switch {
+	case places <= 0:
+		return "0%"
+	case places == 1:
+		return xlsxPctFormat
+	}
+	return "0." + strings.Repeat("0", places) + "%"
 }
 
 // ptr is a pointer to v, for omnidoc's style patches.

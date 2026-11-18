@@ -1,6 +1,12 @@
 import { CARET_ROOM, INDENT } from '../components/report-table-layout'
 import { shortDay } from './dates'
-import { cellDisplay, headingText, type NumberFormat, rowLabelText } from './format'
+import {
+    cellDisplay,
+    formatReportPercent,
+    headingText,
+    type NumberFormat,
+    rowLabelText,
+} from './format'
 import type { VisibleRow } from './rows'
 import { type ColumnFit, type FitLength, parseFitLength, type SpecColumn } from './spec'
 import { longestWordWidth, type TextStyle, textWidth } from './text-width'
@@ -85,16 +91,18 @@ const WORST_TEXT: Partial<Record<FieldType, string>> = {
     date: WORST_DAY,
     datetime: WORST_DATE_TIME,
     bool: 'Yes',
-    percent: '-100.0%',
 }
 /** −99,999.99 in cents, and −99,999. */
 const WORST_VALUE: Partial<Record<FieldType, number>> = { money: -9_999_999, number: -99_999 }
+/** The widest share: −100%, at the column's own places. */
+const WORST_PERCENT = -100
 
 function worstText(
     column: ResultColumn,
     item: VisibleRow,
     format: NumberFormat
 ): string | undefined {
+    if (column.type === 'percent') return formatReportPercent(WORST_PERCENT, column.scale)
     const value = WORST_VALUE[column.type]
     if (value === undefined) return WORST_TEXT[column.type]
     return cellDisplay(column, item.row, value, format).text

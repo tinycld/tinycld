@@ -87,6 +87,36 @@ describe('statement docs', () => {
         expect(table).toContain('`percentOfSection`')
     })
 
+    it('names the places of a percent column in the docs and the help', () => {
+        const docs = read('docs/packages.md')
+        // The result notes: a percent part's result column carries its places.
+        expect(docs).toMatch(/result column[^.]*percent[^.]*carries `scale`/)
+        const start = docs.indexOf('**Fields added in version 4.**')
+        const table = docs.slice(start, docs.indexOf('\n\n', docs.indexOf('| Field |', start)))
+        const row = table.split('\n').find(line => line.includes('`percentOfSection` |')) ?? ''
+        expect(row).toContain('`scale` places')
+        expect(row).toContain('`percentOfTotal`')
+        expect(row).toContain('`percentOfParent`')
+        const help = read('core/help/reports.md')
+        const at = help.indexOf('## Show a row as a percent of a section')
+        const section = help.slice(at, help.indexOf('\n## ', at + 1))
+        expect(section).toContain('decimal places')
+    })
+
+    it('names the percent parts and their places in the formula help', () => {
+        const help = read('core/help/reports.md')
+        const at = help.indexOf('## Formulas')
+        expect(at).toBeGreaterThan(-1)
+        const end = help.indexOf('\n## ', at + 1)
+        const section = help.slice(at, end === -1 ? undefined : end)
+        // The builder labels these parts so (builder/formula-parts.ts).
+        expect(section).toContain('**Percent of total**')
+        expect(section).toContain('**Percent of group**')
+        // One sentence: a percent part shows its chosen decimal places on
+        // screen and in the PDF and Excel exports.
+        expect(section).toMatch(/percent part[^.]*decimal places[^.]*PDF and Excel/)
+    })
+
     it('names the Totals choice in the help', () => {
         const help = read('core/help/reports.md')
         expect(help).toContain('**Totals**')

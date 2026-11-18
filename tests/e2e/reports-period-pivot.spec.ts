@@ -263,10 +263,10 @@ test.describe('reports: period pivot', () => {
         await p.keyboard.press('Escape')
 
         await expect(p.getByTestId(`${formula}-root-section`)).toContainText('Open sales')
-        await expect(await cellOf(p, 'formula', 'Total Open sales')).toHaveText('100.0%')
+        await expect(await cellOf(p, 'formula', 'Total Open sales')).toHaveText('100.00%')
         await chooseOption(p, `${formula}-root-section`, 'section2')
         await expect(p.getByTestId(`${formula}-root-section`)).toContainText('Paid sales')
-        await expect(await cellOf(p, 'formula', 'Total Open sales')).toHaveText('60.0%')
+        await expect(await cellOf(p, 'formula', 'Total Open sales')).toHaveText('60.00%')
 
         // A section the layout no longer has: Save is refused, and the refusal shows
         // under the percent's formula, the only place that column's issue can be seen.

@@ -342,17 +342,27 @@ func moneyDigits(magnitude float64) string {
 	return groupDigits(whole) + "." + fraction
 }
 
-// formatReportPercent (format.ts): value is already a percent, 12.345 shows
-// as 12.3%; a share of nothing shows nothing.
-func formatReportPercent(value float64) string {
+// formatReportPercent (format.ts): value is already a percent, rounded half
+// away from zero at places (12.345 at 2 shows as 12.35%, at 1 as 12.3%); a
+// share of nothing shows nothing.
+func formatReportPercent(value float64, places int) string {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return ""
 	}
-	r := roundHalfAwayFromZero(value*10) / 10
+	factor := math.Pow(10, float64(places))
+	r := roundHalfAwayFromZero(value*factor) / factor
 	if r == 0 {
 		r = 0 // toFixed writes -0 as 0
 	}
-	return strconv.FormatFloat(r, 'f', 1, 64) + "%"
+	return strconv.FormatFloat(r, 'f', places, 64) + "%"
+}
+
+// percentPlaces is the places a column's percent prints: its scale, else 1.
+func percentPlaces(col ResultColumn) int {
+	if col.Scale == nil {
+		return 1
+	}
+	return *col.Scale
 }
 
 // formatNumber (format.ts): a safe integer grouped; else at most 6 fraction
@@ -487,7 +497,7 @@ func (f *exportFormatter) CellText(col ResultColumn, row Row, value any) cellTex
 		case t == Money:
 			return f.moneyText(col, row, n)
 		case t == Percent || col.Format == "percent":
-			return cellText{Text: formatReportPercent(n)}
+			return cellText{Text: formatReportPercent(n, percentPlaces(col))}
 		}
 		return cellText{Text: formatNumber(n)}
 	}

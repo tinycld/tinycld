@@ -114,6 +114,25 @@ describe('measureColumns', () => {
         expect(worst(parens)).toBeGreaterThan(worst(DEFAULT_DISPLAY))
     })
 
+    it('measures a percent column for its widest value at its own places', () => {
+        const share: ResultColumn = { id: 'share', label: '%', type: 'percent' }
+        const small = item('detail', 'Hay', { share: 5 })
+        const natural = (column: ResultColumn) =>
+            measureColumns({
+                columns: [{ id: 'name', label: 'Name', type: 'text' }, column],
+                rows: [small],
+                format: DEFAULT_DISPLAY,
+                levels: FLAT,
+            }).share?.natural
+        expect(natural({ ...share, scale: 2 })).toBe(textWidth('-100.00%', CELL) + CELL_PADDING)
+        expect(natural({ ...share, scale: 0 })).toBe(textWidth('-100%', CELL) + CELL_PADDING)
+        expect(natural(share)).toBe(textWidth('-100.0%', CELL) + CELL_PADDING)
+        // A 2-place column is wide enough for its Total's "100.00%".
+        expect(natural({ ...share, scale: 2 })).toBeGreaterThanOrEqual(
+            textWidth('100.00%', BOLD) + CELL_PADDING
+        )
+    })
+
     it('never cuts short text, and holds long text to eight characters at the least', () => {
         const m = measure([DETAIL])
         expect(m.number.natural).toBe(textWidth('JE-41', CELL) + CELL_PADDING)

@@ -987,6 +987,122 @@
             "isError": false
         },
         {
+            "name": "percent 12.345 at scale 2",
+            "column": {
+                "id": "pct",
+                "label": "Share",
+                "type": "percent",
+                "scale": 2
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 12.345,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "12.35%",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "percent 100 at scale 2 on a total row",
+            "column": {
+                "id": "pct",
+                "label": "Share",
+                "type": "percent",
+                "scale": 2
+            },
+            "row": {
+                "id": "r-total",
+                "kind": "total",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 100,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "100.00%",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "percent -0.005 at scale 2",
+            "column": {
+                "id": "pct",
+                "label": "Share",
+                "type": "percent",
+                "scale": 2
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": -0.005,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "-0.01%",
+            "isRed": false,
+            "isError": false
+        },
+        {
+            "name": "percent 12.5 at scale 0",
+            "column": {
+                "id": "pct",
+                "label": "Share",
+                "type": "percent",
+                "scale": 0
+            },
+            "row": {
+                "id": "r-detail",
+                "kind": "detail",
+                "depth": 0,
+                "label": "",
+                "cells": {}
+            },
+            "value": 12.5,
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "timeZone": "UTC",
+            "hour12": false,
+            "text": "13%",
+            "isRed": false,
+            "isError": false
+        },
+        {
             "name": "a non-finite percent",
             "column": {
                 "id": "pct",
