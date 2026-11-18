@@ -283,6 +283,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// listeners, so this is not shared. Binds nothing unless a supervisor
 	// started this process, so it changes no hook count.
 	registerSupervised(app)
+	registerWriteRetry(app)
 
 	// Which deployment shape wrote an archive is recorded in every manifest, so
 	// a restore can tell what it is reading before it starts. Set in Register
