@@ -126,21 +126,38 @@ export function buildHelpScreenshotsCommand(
     }
 }
 
-// check runs lint + typecheck + unit; passthrough only makes sense for one
-// runner at a time, so it is intentionally NOT forwarded here (a combined
-// run has no single target for a filter). Use `test` or `typecheck`
-// directly to pass args. Order: lint first because it's the cheapest and
-// catches issues that often surface as compile/test failures downstream.
+// Loads every spec file and prints the test list, without starting a server or
+// running a test. A spec that does not load (a missing import, a syntax error)
+// makes it exit non-zero, so `check` fails before a full e2e run does.
+// --pass-with-no-tests: a member with a playwright.config.ts and no spec yet
+// (a scaffolded member) has nothing to load, so the list passes.
+export function buildE2eListCommand(pkg: CurrentPackage): Command {
+    return {
+        bin: 'playwright',
+        args: ['test', '--list', '--pass-with-no-tests', '--config', playwrightConfigFor(pkg)],
+        cwd: pkg.dir,
+    }
+}
+
+// check runs lint + typecheck + unit + the e2e spec list; passthrough only
+// makes sense for one runner at a time, so it is intentionally NOT forwarded
+// here (a combined run has no single target for a filter). Use `test` or
+// `typecheck` directly to pass args. Order: lint first because it's the
+// cheapest and catches issues that often surface as compile/test failures
+// downstream.
 //
 // A member without a vitest.config.ts has no unit tests (a scaffolded test
 // stub, say); `test` skips it (targets.ts), and so does `check` — vitest would
-// otherwise fail to load the missing config.
+// otherwise fail to load the missing config. Likewise a member without a
+// playwright.config.ts has no e2e specs to list.
 export function buildCheckCommands(
     pkg: CurrentPackage,
     appDir: string,
-    hasUnitTests = fs.existsSync(vitestConfigFor(pkg))
+    hasUnitTests = fs.existsSync(vitestConfigFor(pkg)),
+    hasE2eSpecs = fs.existsSync(playwrightConfigFor(pkg))
 ): Command[] {
     const commands = [buildLintCommand(pkg, appDir), buildTypecheckCommand(pkg, appDir)]
     if (hasUnitTests) commands.push(buildTestCommand(pkg, appDir))
+    if (hasE2eSpecs) commands.push(buildE2eListCommand(pkg))
     return commands
 }

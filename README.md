@@ -209,7 +209,8 @@ cd server && go build -o tinycld . && ./tinycld --help
 ```
 
 Per-member checks run via the `tinycld-pkg` CLI (`@tinycld/package-scripts`): from any
-member dir, `pnpm exec tinycld-pkg check` runs biome, then tsc, then vitest for just that member;
+member dir, `pnpm exec tinycld-pkg check` runs biome, then tsc, then vitest for just that member,
+and, for a member with e2e specs, a load check of the specs (`playwright test --list`);
 `tinycld-pkg check --all` runs every member (the `tinycld` shell, core, and each feature sibling).
 
 ## Code style
