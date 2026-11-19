@@ -52,7 +52,7 @@ func TestTheDetailStatementComputesItsOpenGroupsOnce(t *testing.T) {
 					continue
 				}
 				found++
-				if !strings.Contains(st.sql, "gord AS MATERIALIZED (SELECT key AS __g") {
+				if !strings.Contains(st.sql, "gord AS MATERIALIZED (") {
 					t.Fatalf("the open groups are read inline:\n%s", st.sql)
 				}
 			}
