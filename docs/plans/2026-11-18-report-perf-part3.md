@@ -1,5 +1,7 @@
 # Report Engine Performance Implementation Plan — part 3 (task 4)
 
+> **Dropped by the human 2026-11-19: not needed for the §9 bars.** The A/R Aging scale run with the export in one page (`2026-11-19-report-perf-export.md`) meets every bar without this task or the unplanned tasks 5 to 10. Do not execute this plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Report runs on a book with 500,000 journal lines meet the time bars of the A/R Aging spec §9 (each run ≤ 1,000 ms, CSV ≤ 5,000 ms, L ≤ 15 × S), with every other report's result unchanged.
