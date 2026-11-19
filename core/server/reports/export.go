@@ -21,7 +21,7 @@ import (
 )
 
 // POST /api/reports/export answers a saved report as a file for a reader
-// who can open it: the whole report, read page by page as that reader with
+// who can open it: the whole report, read in one page as that reader with
 // the view's state, written by the format's writer and named by
 // exportFileName. Every download writes one audit row. The route takes a
 // signed-in session only (Register binds it as the run route); oauth
@@ -324,82 +324,44 @@ func exportDisplayOf(raw json.RawMessage) (exportDisplay, error) {
 	return display, nil
 }
 
-// readWholeReport runs the report page by page as the reader and joins the
-// pages as mergePages (rows.ts) joins them. It returns nil with no error when
-// the report holds more rows than the writer takes, or when a cap stopped
-// the run, so no file is ever cut short.
+// readWholeReport runs the report as the reader in one page of maxRows+1
+// rows (Request.PageCap). It never reads a second page: each page of a
+// grouped run computes every group level again, so pages of maxPage rows
+// cost pages x rows. It returns nil with no error when the report holds more
+// rows than the writer takes (the page is past maxRows, or a row follows
+// it), or when a cap stopped the run, so no file is ever cut short.
 func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loaded *LoadInfo, body exportBody, writer exportWriter) (*Result, error) {
 	maxRows := writer.MaxRows()
 	opts := body.Options
-	opts.Limit = runLimits.maxPage
+	opts.Limit = maxRows + 1
 	opts.Cursor = ""
 	if writer.ExpandAll {
 		opts.ExpandAll = true
 		opts.Expand, opts.Collapse = nil, nil
 	}
 	headers := ruleHeaders(re.Request.Header)
-	var merged *Result
-	rows := []Row{}
-	seen := map[string]bool{}
-	for {
-		page, err := Run(ctx, re.App, Request{
-			Spec: spec, Loaded: loaded, Params: body.Params, Options: opts,
-			Auth: re.Auth, Headers: headers, RowCap: maxRows + 1,
-		})
-		if err != nil {
-			return nil, err
-		}
-		rows = withoutAppendedTotals(rows, seen)
-		for _, row := range page.Rows {
-			if !seen[row.ID] {
-				seen[row.ID] = true
-				rows = append(rows, row)
-			}
-		}
-		if merged == nil {
-			merged = page
-		} else {
-			notices := append(merged.Notices, page.Notices...)
-			merged = page
-			merged.Notices = notices
-		}
-		if len(rows) > maxRows {
-			return nil, nil
-		}
-		if page.Page == nil || page.Page.Next == "" {
-			break
-		}
-		opts.Cursor = page.Page.Next
+	res, err := Run(ctx, re.App, Request{
+		Spec: spec, Loaded: loaded, Params: body.Params, Options: opts,
+		Auth: re.Auth, Headers: headers, RowCap: maxRows + 1, PageCap: maxRows + 1,
+	})
+	if err != nil {
+		return nil, err
 	}
-	merged.Rows = rows
-	merged.Notices = uniqueNotices(merged.Notices)
-	capped := slices.ContainsFunc(merged.Notices, func(n Notice) bool { return n.Code == "rowCap" || n.Code == "nestCap" })
+	// A page ends one row short of its limit when a group row and its opening
+	// row do not both fit (cutPage): a next page means a row past maxRows.
+	if len(res.Rows) > maxRows || (res.Page != nil && res.Page.Next != "") {
+		return nil, nil
+	}
+	res.Notices = uniqueNotices(res.Notices)
+	capped := slices.ContainsFunc(res.Notices, func(n Notice) bool { return n.Code == "rowCap" || n.Code == "nestCap" })
 	if capped {
 		return nil, nil
 	}
-	return merged, nil
+	return res, nil
 }
 
 // isSectionRow (rows.ts): a computed row inside a section belongs to it.
 func isSectionRow(row Row) bool { return row.Kind == KindComputed && row.Section != "" }
-
-// isWholeReportRow (rows.ts): a total, or a computed row of the whole report.
-func isWholeReportRow(row Row) bool {
-	return row.Kind == KindTotal || (row.Kind == KindComputed && !isSectionRow(row))
-}
-
-// withoutAppendedTotals (rows.ts) drops the whole-report rows a page appends
-// after its slice: they repeat on every page, and only the newest page's
-// figures are current. The dropped rows leave seen, so the next page's copy
-// is kept.
-func withoutAppendedTotals(rows []Row, seen map[string]bool) []Row {
-	end := len(rows)
-	for end > 0 && isWholeReportRow(rows[end-1]) {
-		end--
-		delete(seen, rows[end].ID)
-	}
-	return rows[:end]
-}
 
 // uniqueNotices (rows.ts): one notice per code, the notices of several pages
 // joined.

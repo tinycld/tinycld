@@ -76,6 +76,11 @@ type Request struct {
 	// stops with a rowCap or nestCap notice.
 	// 0: the default cap. Only the export read sets it; the run endpoint never does.
 	RowCap int
+	// PageCap is the most rows a page holds, in place of maxPage: a caller
+	// that needs every row reads them in one page, as each page of a grouped
+	// run computes every group level again. 0: maxPage. Only the export read
+	// sets it; the run endpoint never does.
+	PageCap int
 }
 
 // Result is the run's answer, in the shell's ReportModel row shape.
@@ -285,6 +290,9 @@ type runner struct {
 	// askedRowCap is the request's RowCap (0: runLimits.rowCap); read it
 	// through rowCap.
 	askedRowCap int
+	// askedPageCap is the request's PageCap (0: runLimits.maxPage); read it
+	// through pageLimit.
+	askedPageCap int
 	// openDropped is set once a detail row's open value was dropped, so a run
 	// logs a bad open path once, not once per row.
 	openDropped bool
@@ -370,7 +378,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	// No expansion state: the levels marked open expand (openLevels).
 	openLevels(p, req.Options, expand)
 	rn := &runner{
-		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap,
+		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
 		topics: map[string]bool{}, ruleTopics: map[string][]string{},
 	}
@@ -690,13 +698,16 @@ func (rn *runner) pagedGroups() bool {
 	return len(p.groups) > 0 && p.pivot == nil && len(p.layout) == 0 && len(p.nest) == 0
 }
 
-// pageLimit is the most rows a page holds: options.limit up to maxPage, else
-// pageSize.
+// pageLimit is the most rows a page holds: options.limit up to maxPage (up
+// to the request's PageCap when it is set), else pageSize.
 func (rn *runner) pageLimit() int {
-	if rn.opts.Limit > 0 {
-		return min(rn.opts.Limit, runLimits.maxPage)
+	if rn.opts.Limit <= 0 {
+		return runLimits.pageSize
 	}
-	return runLimits.pageSize
+	if rn.askedPageCap > 0 {
+		return min(rn.opts.Limit, rn.askedPageCap)
+	}
+	return min(rn.opts.Limit, runLimits.maxPage)
 }
 
 // pagedGroupPass reads one page of a grouped run's level rows (J1a), then
