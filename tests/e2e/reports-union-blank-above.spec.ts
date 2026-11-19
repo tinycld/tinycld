@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { skipWithoutReportsStub } from './helpers'
 import { expect, test } from './member-fixtures'
-import { cellOf } from './report-view-helpers'
+import { cellOf, rowOf } from './report-view-helpers'
 import {
     ACTIVITY_SOURCE,
     addColumn,
@@ -159,5 +159,72 @@ test.describe('reports: union source and blank above', () => {
         await expect
             .poll(async () => totals(await amounts(p)))
             .toEqual({ ...upToTeam, kind: [null, null] })
+    })
+
+    test('a day shown only up to the team is whole when a closed kind is opened', async ({
+        freshMember,
+    }) => {
+        const p = freshMember.page
+        const team = uniqueName('Day team')
+        await seedStub(p, {
+            teams: [{ name: team }],
+            sales: [
+                {
+                    team,
+                    customer: uniqueName('Day sold'),
+                    amount: 1000,
+                    cost: 0,
+                    day: '2026-09-28',
+                },
+            ],
+        })
+
+        // Columns customer (0), kind (1), team (2), the earliest day (3); grouped by
+        // kind, then team, neither open; the day shows only up to the team.
+        await openReportsHub(p)
+        await startReport(p, ACTIVITY_SOURCE)
+        await addColumn(p, ['kind'])
+        await p.getByTestId('report-builder-add-column').click()
+        await p
+            .getByTestId('report-builder-picker')
+            .getByTestId('report-builder-pick-record-team')
+            .click()
+        await addColumn(p, ['day'])
+        await chooseOption(p, 'report-builder-column-3-aggregate', 'min')
+        await p.getByTestId('report-builder-section-group').click()
+        await p.getByTestId('report-builder-group-add').click()
+        await chooseOption(p, 'report-builder-group-0-col', 'kind')
+        await p.getByTestId('report-builder-group-add').click()
+        await chooseOption(p, 'report-builder-group-1-col', 'team')
+        await chooseOption(p, 'report-builder-column-3-blank-above', 'up-1')
+        await saveNewReport(p, uniqueName('Day up to team'))
+        await p.setViewportSize({ width: 1280, height: 800 })
+
+        // The run lands with every kind closed: no drawn row shows a day, so the
+        // column is measured with no value in it.
+        const kind = rowOf(p, 'Sale')
+        await expect(kind).toBeVisible()
+        const shownDays = () =>
+            p
+                .getByTestId('report-table')
+                .evaluate(table =>
+                    [...table.querySelectorAll('[data-testid^="report-cell-day-"]')]
+                        .map(cell => (cell.textContent ?? '').trim())
+                        .filter(text => text !== '')
+                )
+        expect(await shownDays()).toEqual([])
+
+        // Opened, the kind shows its team, whose day is drawn whole.
+        await kind.click()
+        await expect(rowOf(p, team)).toBeVisible()
+        const day = await cellOf(p, 'day', team)
+        await expect(day).toHaveText(/2026$/)
+        await expect
+            .poll(() =>
+                day
+                    .locator('div[dir="auto"]')
+                    .evaluate(element => element.scrollWidth - element.clientWidth)
+            )
+            .toBeLessThanOrEqual(0)
     })
 })

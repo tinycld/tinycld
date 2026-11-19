@@ -254,8 +254,8 @@ func TestExportReadsAPivotPastTheEngineCap(t *testing.T) {
 		`"message":"This report has more than 50,000 rows. Narrow the period."`)
 }
 
-// The server reads the whole report page by page: a build that reads only
-// the first page fails on the count.
+// The file holds every row of a report longer than a page of the viewer
+// (maxPage): a build that stops at a viewer's page fails on the count.
 func TestExportReadsEveryPage(t *testing.T) {
 	s := newSavedZoo(t)
 	rep := s.saved(t, "costs", "ann", "Feeding Costs", feedingsFlat, false)

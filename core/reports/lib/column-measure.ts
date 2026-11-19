@@ -10,7 +10,7 @@ import {
 import type { VisibleRow } from './rows'
 import { type ColumnFit, type FitLength, parseFitLength, type SpecColumn } from './spec'
 import { longestWordWidth, type TextStyle, textWidth } from './text-width'
-import type { FieldType, ResultColumn, RowKind } from './types'
+import type { FieldType, ResultColumn, ResultRow, RowKind } from './types'
 
 // Review §7.1-1: every column's width comes from its content — its heading, the
 // rows of the run as it first lands (group, subtotal and Total rows included) and
@@ -97,15 +97,78 @@ const WORST_VALUE: Partial<Record<FieldType, number>> = { money: -9_999_999, num
 /** The widest share: −100%, at the column's own places. */
 const WORST_PERCENT = -100
 
-function worstText(
-    column: ResultColumn,
-    item: VisibleRow,
-    format: NumberFormat
-): string | undefined {
+function worstText(column: ResultColumn, row: ResultRow, format: NumberFormat): string | undefined {
     if (column.type === 'percent') return formatReportPercent(WORST_PERCENT, column.scale)
     const value = WORST_VALUE[column.type]
     if (value === undefined) return WORST_TEXT[column.type]
-    return cellDisplay(column, item.row, value, format).text
+    return cellDisplay(column, row, value, format).text
+}
+
+// A subtotal row: it shows the currency symbol (format.ts SYMBOL_ROWS), the
+// widest form a blank-above column can show.
+const NO_ROW: ResultRow = { id: '', kind: 'subtotal', depth: 0, label: '', cells: {} }
+
+// Every month's widest day (text-width.ts gives every digit one width, so the
+// 28th stands for each two-digit day), and its time for a date-time.
+const WORST_DAYS = Array.from({ length: 12 }, (_, month) =>
+    shortDay(`2026-${String(month + 1).padStart(2, '0')}-28`)
+)
+
+// Stand-ins for an amount whose currency is a row cell when no measured row
+// carries one yet: the widest symbol among common currencies. A fixed list, not
+// one code, because Intl draws some as a symbol ("$", "€"), some with a prefix
+// ("CA$", "MX$") and some as the code itself ("CHF "); the widest of them is kept.
+const STAND_IN_CURRENCIES = ['USD', 'CAD', 'EUR', 'GBP', 'CHF', 'MXN'] as const
+
+const isCurrencyKey = (key: string) => key.endsWith('@currency')
+
+// The currencies a column without a fixed one can show (assemble.go
+// currencyOfColumn sends it in `<id>@currency`): each one the measured rows carry
+// in any `@currency` cell, else the stand-ins.
+function currenciesOf(column: ResultColumn, rows: readonly VisibleRow[]): readonly string[] {
+    if (column.currency || !column.currencyCell) return [column.currency ?? '']
+    const found = new Set<string>()
+    for (const { row } of rows) {
+        for (const [key, value] of Object.entries(row.cells)) {
+            if (isCurrencyKey(key) && typeof value === 'string' && value) found.add(value)
+        }
+    }
+    return found.size > 0 ? [...found] : STAND_IN_CURRENCIES
+}
+
+// The worst amount a blank-above money column can show, in each currency it can show.
+function blankMoneyTexts(
+    column: ResultColumn,
+    rows: readonly VisibleRow[],
+    format: NumberFormat
+): string[] {
+    return currenciesOf(column, rows).map(
+        currency => worstText({ ...column, type: 'money', currency }, NO_ROW, format) ?? ''
+    )
+}
+
+// The worst case of a blank-above column: the rows that show it can open
+// later, and they are group or subtotal rows, so it is measured in bold and
+// in the type those rows draw (a count of text is a number there).
+function blankWorstWidth(
+    column: ResultColumn,
+    rows: readonly VisibleRow[],
+    format: NumberFormat
+): number {
+    const texts = blankWorstTexts(column, rows, format)
+    return Math.max(0, ...texts.map(text => textWidth(text, CELL_BOLD)))
+}
+
+function blankWorstTexts(
+    column: ResultColumn,
+    rows: readonly VisibleRow[],
+    format: NumberFormat
+): readonly string[] {
+    const type = column.totalType ?? column.type
+    if (type === 'datetime') return WORST_DAYS.map(day => `${day}, 12:59 PM`)
+    if (type === 'date') return WORST_DAYS
+    if (type === 'money') return blankMoneyTexts(column, rows, format)
+    return [worstText({ ...column, type }, NO_ROW, format) ?? '']
 }
 
 /**
@@ -182,7 +245,11 @@ function headingWidths(column: ResultColumn, format: NumberFormat): Widths {
 const hasValue = (value: unknown) => value !== undefined && value !== null
 
 // The widest shown value of a column, with its type's worst case when it has any
-// value; 0 when every cell is blank (D3: it is then as wide as its heading).
+// value; 0 when every cell is blank (D3: it is then as wide as its heading). A
+// column that is blank above a group level (blankAbove) always keeps its blank
+// worst case, value or not: the rows that show it can be closed when the measure
+// is taken, and a fold never measures again (useTableLayout.ts measures again only
+// for the first detail rows, which must not make the column narrower).
 function widestCell(column: ResultColumn, rows: readonly VisibleRow[], format: NumberFormat) {
     let widest = 0
     let longestWord = 0
@@ -195,8 +262,9 @@ function widestCell(column: ResultColumn, rows: readonly VisibleRow[], format: N
         widest = Math.max(widest, textWidth(text, style))
         longestWord = Math.max(longestWord, longestWordWidth(text, style))
     }
-    const worst = valued ? worstText(column, valued, format) : undefined
+    const worst = valued ? worstText(column, valued.row, format) : undefined
     if (worst) widest = Math.max(widest, textWidth(worst, CELL))
+    if (column.blankAbove) widest = Math.max(widest, blankWorstWidth(column, rows, format))
     return {
         widest: widest === 0 ? 0 : widest + CELL_PADDING,
         longestWord: longestWord === 0 ? 0 : longestWord + CELL_PADDING,
@@ -346,12 +414,24 @@ function fitted(c: Content, fit: ColumnFit | undefined, grow: number): ColumnMea
     return out
 }
 
-// A figure is never cut (decision 2): its fit gives only its share of spare room.
-const wholeMeasure = (c: Content, fit: ColumnFit | undefined, grow: number): ColumnMeasure => ({
-    natural: c.natural,
-    min: autoMin(c),
-    grow: fit?.flexGrow ?? grow,
-})
+// A figure is never cut and never wraps (decision 2; human, 2026-11-18: every
+// column takes every fit setting). Its floor is its whole value: its heading's
+// longest word, its widest value and its type's worst case. `width` and
+// `maxWidth` are preferences held at the floor, `minWidth` only widens, and
+// auto, min-content and max-content all mean the whole value. The wrap
+// settings are not read: ReportRow never wraps a figure.
+function wholeMeasure(c: Content, fit: ColumnFit | undefined, grow: number): ColumnMeasure {
+    const floor = autoMin(c)
+    const out: ColumnMeasure = { natural: c.natural, min: floor, grow: fit?.flexGrow ?? grow }
+    if (!fit) return out
+    const pct: Pct = {}
+    const held: Content = { ...c, natural: floor, headingMin: floor, minContent: floor }
+    applyWidth(out, held, fit.width, pct)
+    applyMin(out, held, fit.minWidth, pct)
+    applyMax(out, held, fit.maxWidth, pct)
+    if (Object.keys(pct).length > 0) out.pct = pct
+    return out
+}
 
 const NO_FITS: Readonly<Record<string, ColumnFit>> = {}
 
@@ -431,12 +511,12 @@ export function measureColumns(input: {
         const natural = Math.max(heading.natural, cells.widest)
         const fit = fitOf(fits, column)
         if (isFigureColumn(column)) {
-            const whole = {
+            const whole: Content = {
                 natural,
                 headingMin: heading.min,
                 floor: cells.widest,
                 minContent: 0,
-                pad: 0,
+                pad: CELL_PADDING,
             }
             measures[column.id] = wholeMeasure(
                 whole,

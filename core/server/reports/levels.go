@@ -2,6 +2,7 @@ package reports
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -30,8 +31,12 @@ type level struct {
 	keys     []string // w columns the level groups by
 	aggs     []string // a<L> values, "expr AS name"
 	aggNames map[string]bool
-	tms      []*tmGroup // d<L> CTEs, one per parent row
-	tmCols   []tmCol    // g<L> values taken from d<L>
+	// aggMemo holds each aggregate a formula of the level read, by its
+	// operator, scale and argument (aggregateKey): a second read of the same
+	// aggregate gets the first one's value of a<L>.
+	aggMemo map[string]expr
+	tms     []*tmGroup // d<L> CTEs, one per parent row
+	tmCols  []tmCol    // g<L> values taken from d<L>
 	// childCells are the cells of the next level whose sums the level reads
 	// (childSum), all in one CTE rs<L>.
 	childCells []string
@@ -104,7 +109,7 @@ type levelLookup struct {
 // level prepares level n: its keys, its parent partition, and the order of
 // its sibling rows, which running values read.
 func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
-	lv := &level{c: c, r: r, n: n, aggNames: map[string]bool{}, visiting: map[string]bool{}, reads: map[string]bool{}, recs: newRecordJoins(r.s, "a"),
+	lv := &level{c: c, r: r, n: n, aggNames: map[string]bool{}, aggMemo: map[string]expr{}, visiting: map[string]bool{}, reads: map[string]bool{}, recs: newRecordJoins(r.s, "a"),
 		lookups: &windowFrame{name: "kh"}, lookupMemo: map[string]levelLookup{}}
 	for i := range n {
 		lv.keys = append(lv.keys, fmt.Sprintf("k%d", i))
@@ -1397,19 +1402,84 @@ func (lc *levelCtx) param(id, at string) (expr, error) {
 	return paramLeaf(lc.lv.c, lc.lv.r.s, lc, id, v)
 }
 
+// aggregateKey names an aggregate of a formula for aggMemo: two reads with
+// the same operator, scale and argument are one aggregate.
+func aggregateKey(op Aggregate, arg *Node, scale int) (string, bool) {
+	raw, err := json.Marshal(arg)
+	if err != nil {
+		return "", false
+	}
+	return fmt.Sprintf("%s|%d|%s", op, scale, raw), true
+}
+
+// columnsRead adds to seen the ids of the columns n reads, and of the columns
+// those read.
+func (p *plan) columnsRead(n *Node, seen map[string]bool) {
+	if n == nil {
+		return
+	}
+	if n.Col != "" && !seen[n.Col] {
+		seen[n.Col] = true
+		if cp := p.byID[n.Col]; cp != nil {
+			p.columnsRead(cp.col.Formula, seen)
+		}
+	}
+	p.columnsRead(n.Where, seen)
+	if n.Op == "lookup" {
+		// A lookup's value is raw JSON until decoded; it may read a report
+		// column (lookupCtx.col). A value that fails to decode is refused at bind.
+		if v, err := p.lookupOf(n, ""); err == nil {
+			p.columnsRead(v, seen)
+		}
+	}
+	for _, a := range n.Args {
+		p.columnsRead(a, seen)
+	}
+}
+
+// readsVisiting is true when arg reads a column that is being compiled: the
+// compile refuses such a formula ("reads itself"), which a kept value would
+// skip.
+func (lc *levelCtx) readsVisiting(arg *Node) bool {
+	read := map[string]bool{}
+	lc.lv.c.p.columnsRead(arg, read)
+	for id := range read {
+		if lc.visiting[id] {
+			return true
+		}
+	}
+	return false
+}
+
+// aggregate adds an aggregate of a formula to a<L>, once per level: a formula
+// that reads the same aggregate twice (a sum shown blank when it is 0) reads
+// one value. SQLite does not find the two equal itself, as each compile binds
+// its literals under new names. An argument whose compile added a condition
+// probe (a lookup's where that may be unknown, compiler.probe) is compiled
+// again at each read, so each read's probe keeps its own place in the spec.
 func (lc *levelCtx) aggregate(op Aggregate, arg *Node, scale int, at string) (expr, error) {
-	e, err := lc.aggregateArg(lc.lv.r, lc.visiting, false, op, arg, scale, at)
+	lv := lc.lv
+	key, keyed := aggregateKey(op, arg, scale)
+	if e, ok := lv.aggMemo[key]; ok && keyed && !legacySQL.repeatAggregates && !lc.readsVisiting(arg) {
+		return e, nil
+	}
+	probes, levelWheres, rowWheres := len(lv.c.probed), len(lv.wheres), len(lv.r.wheres)
+	e, err := lc.aggregateArg(lv.r, lc.visiting, false, op, arg, scale, at)
 	if err != nil {
 		return expr{}, err
 	}
-	cur, err := lc.lv.c.totalCurrency(e, at+".args.0")
+	cur, err := lv.c.totalCurrency(e, at+".args.0")
 	if err != nil {
 		return expr{}, err
 	}
-	name := fmt.Sprintf("y%d", len(lc.lv.aggs))
+	name := fmt.Sprintf("y%d", len(lv.aggs))
 	e = countedArg(op, e)
-	total := expr{sql: lc.lv.agg(name, aggregateSQL(op, e.sql, scale)), typ: aggregateType(op, e.typ, scale)}
-	return withCurrency(lc.lv.mixedTotal(name, e, total), cur), nil
+	total := expr{sql: lv.agg(name, aggregateSQL(op, e.sql, scale)), typ: aggregateType(op, e.typ, scale)}
+	out := withCurrency(lv.mixedTotal(name, e, total), cur)
+	if keyed && len(lv.c.probed) == probes && len(lv.wheres) == levelWheres && len(lv.r.wheres) == rowWheres {
+		lv.aggMemo[key] = out
+	}
+	return out, nil
 }
 
 func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, error) {

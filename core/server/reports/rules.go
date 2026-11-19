@@ -12,24 +12,55 @@ import (
 )
 
 // ruleSelect returns the SELECT of the rows of col that the reader's list
-// rule allows, built by PocketBase's own rule resolver exactly as the list
-// API builds it: the rule's expression, the joins it needs (a back-relation,
-// an @collection reference) and DISTINCT when it joined. The compiler puts it
-// in a CTE, and every reference to the collection reads that CTE.
+// rule allows, from the expression and joins of PocketBase's own rule
+// resolver. The list API builds the rule as that expression, the joins it
+// needs (a back-relation, an @collection reference) and DISTINCT when it
+// joined; the paragraphs below name the form core writes for a rule that
+// joined. The compiler puts it in a CTE, and every reference to the
+// collection reads that CTE.
 //
 // A null rule (superusers only) selects nothing: a report never runs as a
 // superuser. An empty rule (public) selects every row.
+//
+// A rule that joins is written in one of two forms. A rule that reads no row
+// of the collection (every name it resolves is the request's or another
+// collection's, as a grant rule is) is one EXISTS filter with the rule's
+// joins on a one-row table in place of the collection: SQLite computes it one
+// time for the statement and reads the collection through its indexes, where
+// the id list of such a rule is every row or none, read whole for each read
+// of the CTE. A comparison with every joined row (no "?") carries a subquery
+// on the row's id, which the EXISTS form runs for each row it reads. A rule
+// that joins and reads its row (a column of the row, a relation path, a
+// back-relation) keeps the id-list form below. A rule that joins nothing is
+// a plain condition in place.
 func ruleSelect(app core.App, col *core.Collection, info *core.RequestInfo) (string, dbx.Params, error) {
 	q := app.DB().Select("{{" + col.Name + "}}.*").From(col.Name)
 	switch {
 	case col.ListRule == nil:
 		q.AndWhere(dbx.NewExp("1=0"))
 	case *col.ListRule != "":
-		resolver := core.NewRecordFieldResolver(app, col, info, true)
+		resolver := &ruleNames{RecordFieldResolver: core.NewRecordFieldResolver(app, col, info, true)}
 		expr, err := search.FilterData(*col.ListRule).BuildExpr(resolver)
 		if err != nil {
 			return "", nil, fmt.Errorf("the list rule of %q cannot be built: %w", col.Name, err)
 		}
+		if resolver.readsNoRow() {
+			// The joins of the rule hang on a one-row table in place of the
+			// collection, and EXISTS keeps a row once however many joined rows
+			// meet the rule, as DISTINCT did.
+			inner := app.DB().Select("(1)").From("(SELECT 1) __rule").AndWhere(expr)
+			if err := resolver.UpdateQuery(inner); err != nil {
+				return "", nil, fmt.Errorf("the list rule of %q cannot be built: %w", col.Name, err)
+			}
+			if inner.Info().Distinct {
+				inner.Distinct(false)
+				built := inner.Build()
+				table := app.DB().QuoteSimpleTableName(col.Name)
+				return fmt.Sprintf("SELECT %s.* FROM %s WHERE EXISTS (%s)", table, table, built.SQL()), built.Params(), nil
+			}
+		}
+		// A rule that reads no row and joined nothing reaches here after the
+		// first UpdateQuery, which added no join, so nothing is added twice.
 		q.AndWhere(expr)
 		if err := resolver.UpdateQuery(q); err != nil {
 			return "", nil, fmt.Errorf("the list rule of %q cannot be built: %w", col.Name, err)
@@ -49,6 +80,41 @@ func ruleSelect(app core.App, col *core.Collection, info *core.RequestInfo) (str
 	table := app.DB().QuoteSimpleTableName(col.Name)
 	id := app.DB().QuoteSimpleColumnName("id")
 	return fmt.Sprintf("SELECT %s.* FROM %s WHERE +%s.%s IN (SELECT %s FROM (%s))", table, table, table, id, id, built.SQL()), built.Params(), nil
+}
+
+// ruleNames is PocketBase's rule resolver, recording each name of the rule
+// that it resolves. The filter builder asks it for every identifier of the
+// rule, one at a time, so "@collection.x.f ?= col" records col by itself. It
+// also asks for true, false and null, which the resolver refuses (the
+// builder then uses its own constant): a refused name is not a name of the
+// row and is not recorded.
+type ruleNames struct {
+	*core.RecordFieldResolver
+	names []string
+}
+
+func (r *ruleNames) Resolve(field string) (*search.ResolverResult, error) {
+	res, err := r.RecordFieldResolver.Resolve(field)
+	if err == nil && res != nil && res.Identifier != "" {
+		r.names = append(r.names, field)
+	}
+	return res, err
+}
+
+// readsNoRow reports whether the rule names only the request and other
+// collections: no column of the collection's own row, no relation path and
+// no back-relation. Such a rule gives one answer for every row. Two shapes
+// pass and still read the row: a comparison with every joined row (no "?")
+// reads its id, and "@request.body.x:changed" is built by PocketBase's own
+// inner resolver. Their rows stay right, because the EXISTS form may read
+// the outer row; it is then run for each row.
+func (r *ruleNames) readsNoRow() bool {
+	for _, name := range r.names {
+		if !strings.HasPrefix(name, "@request.") && !strings.HasPrefix(name, "@collection.") {
+			return false
+		}
+	}
+	return true
 }
 
 // unionSelect is a union source's rule CTE: each part's rule select

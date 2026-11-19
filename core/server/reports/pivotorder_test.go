@@ -72,7 +72,9 @@ func TestPivotOrderKeepsTheLabelColumnsFit(t *testing.T) {
 	typed := `{"id":"label","path":[{"link":"animal"}],"labelField":"born"}`
 	text := `{"id":"label","path":[{"link":"animal"},{"field":"species"}]}`
 	for _, order := range []string{"", `,"order":"spec"`} {
-		requireSpecError(t, Validate(app, loadSpec(t, fittedByMonth(typed, order))), 400, "display.columns.label.width", neverCutMessage)
+		if err := Validate(app, loadSpec(t, fittedByMonth(typed, order))); err != nil {
+			t.Fatalf("order %q: a typed label's width was refused: %v", order, err)
+		}
 		if err := Validate(app, loadSpec(t, fittedByMonth(text, order))); err != nil {
 			t.Fatalf("order %q: a text label's width was refused: %v", order, err)
 		}

@@ -103,6 +103,11 @@ export interface ResultColumn {
     labelCurrencyCell?: string
     /** The run accepts this column as a reader's sort key (options.sort). */
     sortable?: boolean
+    /**
+     * The column has no cell above a group level (the engine's blankAbove):
+     * column-measure.ts widestCell keeps room for its worst case.
+     */
+    blankAbove?: boolean
     /** What the heading shows in place of `label` this run (a day, a text or a number). */
     heading?: { value: CellValue; type: FieldType }
     /** The report this column's figures open; absent when it has none or the reader may not view it. */
