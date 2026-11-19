@@ -332,8 +332,9 @@ func exportDisplayOf(raw json.RawMessage) (exportDisplay, error) {
 // it), or when a cap stopped the run, so no file is ever cut short.
 func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loaded *LoadInfo, body exportBody, writer exportWriter) (*Result, error) {
 	maxRows := writer.MaxRows()
+	limit := maxRows + 1
 	opts := body.Options
-	opts.Limit = maxRows + 1
+	opts.Limit = limit
 	opts.Cursor = ""
 	if writer.ExpandAll {
 		opts.ExpandAll = true
@@ -342,7 +343,7 @@ func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loa
 	headers := ruleHeaders(re.Request.Header)
 	res, err := Run(ctx, re.App, Request{
 		Spec: spec, Loaded: loaded, Params: body.Params, Options: opts,
-		Auth: re.Auth, Headers: headers, RowCap: maxRows + 1, PageCap: maxRows + 1,
+		Auth: re.Auth, Headers: headers, RowCap: limit, PageCap: limit,
 	})
 	if err != nil {
 		return nil, err
@@ -363,8 +364,9 @@ func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loa
 // isSectionRow (rows.ts): a computed row inside a section belongs to it.
 func isSectionRow(row Row) bool { return row.Kind == KindComputed && row.Section != "" }
 
-// uniqueNotices (rows.ts): one notice per code, the notices of several pages
-// joined.
+// uniqueNotices (rows.ts): one notice per code. A run appends a notice each
+// time it raises one, so a code can come twice; the file lists it once, with
+// the sentences and columns of every occurrence.
 func uniqueNotices(notices []Notice) []Notice {
 	out := []Notice{}
 	at := map[string]int{}
