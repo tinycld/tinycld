@@ -18,7 +18,8 @@ import (
 
 // The layout benchmark runs a Balance-Sheet-shaped statement and a
 // Trial-Balance-shaped baseline over a ledger of a given number of lines,
-// listed through the balance fixture's DISTINCT access rule (withBalanceZoo).
+// listed through the balance fixture's grant rule (withBalanceZoo), which core
+// writes as one filter that reads no row of the collection (rules.go).
 // Beside the run time it reports what the statement costs: its size, how
 // often it reads the lines' rule CTE, the Go time before the group statement
 // is sent, and SQLite's prepare and execution time of that statement alone.

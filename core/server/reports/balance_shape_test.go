@@ -24,8 +24,10 @@ import (
 //
 // Every ledger collection is listed through a grant row in a separate access
 // collection (zoo_ledger_access: user, can_read), the rule shape a package
-// that keeps its own members writes: PocketBase compiles it to a DISTINCT
-// join, so the plan check below covers a rule SQLite cannot read in place.
+// that keeps its own members writes. The rule joins the access collection and
+// names no column of the row, so core writes it as one filter that reads no
+// row of the collection (ruleSelect, rules.go), and the plan check below
+// covers a joined rule that SQLite reads through the table's indexes.
 func withBalanceZoo(t testing.TB, z *zoo) {
 	t.Helper()
 	access := core.NewBaseCollection("zoo_ledger_access")

@@ -1393,6 +1393,14 @@ A report runs as its reader, through `POST /api/reports/run`:
 
 - Every collection it reads, in every join and subquery, is filtered by the
   reader's own list rule.
+- A list rule that names no field of its own collection (only `@request.*`
+  and `@collection.*`, as a rule that reads a grant row of the reader does)
+  is one condition for the whole statement, and a link to the collection
+  reads the linked row by its key. The exception is a comparison with every
+  joined row, written with no `?`: it is checked for each row read. A rule
+  that joins and names a field of its row (a back-relation, an `@collection`
+  field compared with a field of the row) lists the ids the reader may see
+  first, which reads every row of the collection.
 - A linked row the reader cannot see leaves empty cells. Totals across a
   to-many link leave it out.
 - A superuser-only rule (null) selects nothing. A report never runs as a
