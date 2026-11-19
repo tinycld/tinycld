@@ -1727,6 +1727,8 @@ func (c *compiler) groupLevels() string {
 // leafOrder is the CTE gord: one row per open innermost group, __g its place
 // in document order (json_each's index), g<j> its key values (group keys,
 // then currency keys), bound as one JSON list as expansion.where binds keys.
+// It is MATERIALIZED: read inline, the detail statement's time grows with
+// rows x open groups (4,000 open groups: 6.7 s inline, 40 ms materialized).
 func (c *compiler) leafOrder(s *stmt, leaves [][]any) string {
 	encoded := make([]string, len(leaves))
 	for i, key := range leaves {
@@ -1736,7 +1738,7 @@ func (c *compiler) leafOrder(s *stmt, leaves [][]any) string {
 	for j := range len(c.p.groups) + len(c.currencies) {
 		cols = append(cols, fmt.Sprintf("json_extract(value, '$[%d]') AS g%d", j, j))
 	}
-	return fmt.Sprintf("gord AS (SELECT %s FROM json_each(%s))", strings.Join(cols, ", "), s.bind("["+strings.Join(encoded, ",")+"]"))
+	return fmt.Sprintf("gord AS MATERIALIZED (SELECT %s FROM json_each(%s))", strings.Join(cols, ", "), s.bind("["+strings.Join(encoded, ",")+"]"))
 }
 
 // leafJoin matches a detail row (d) to its open group by each key value with
