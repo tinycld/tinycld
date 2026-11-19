@@ -112,7 +112,7 @@ async function expectBasisUnderPeriod(p: Page) {
 }
 
 test.describe('reports: period pivot', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     // Its own member: it changes the basis, and the phone test below reads the
     // default basis on the shared member.

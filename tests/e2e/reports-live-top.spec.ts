@@ -180,7 +180,7 @@ async function expectNewRowsShownAtTop(
 }
 
 test.describe('report-exports: live rows at the top', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a reader at the top of a wide report sees the rows a live run adds', async ({
         freshMember,

@@ -69,7 +69,7 @@ async function seedOneSale(p: Page, teamPrefix: string, customerPrefix: string) 
  * width, and a phone below both gets automatic lines.
  */
 test.describe('report column fit', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('one line from 1040, a tablet arrangement from 600, automatic lines on a phone', async ({
         freshMember,

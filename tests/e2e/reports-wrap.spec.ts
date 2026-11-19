@@ -156,7 +156,7 @@ async function isScrolledAway(row: Locator, headingBottom: number): Promise<bool
 }
 
 test.describe('report rows per width', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('on a phone a wide row wraps under aligned wrapped headings, with no sideways scroll, and an open group sticks', async ({
         p,
@@ -1062,7 +1062,7 @@ test.describe('report rows per width', () => {
 })
 
 test.describe('report rows on a touch phone', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
     test.use({ hasTouch: true })
 
     test('the table keeps the browser touch gestures, and a swipe scrolls its rows', async ({

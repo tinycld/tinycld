@@ -23,7 +23,7 @@ async function openOrder(page: Page, name: string) {
 }
 
 test.describe('forms table', () => {
-    test.skip(skipWithoutFormsStub(), 'forms-host-stub not scaffolded in this workspace')
+    test.skip(() => skipWithoutFormsStub(), 'forms-host-stub not scaffolded in this workspace')
 
     test('adds, fills, reorders by keyboard, removes and saves rows', async ({ page }) => {
         const name = `Order ${Date.now()}`
@@ -302,7 +302,7 @@ function cellsNotFitting(
 }
 
 test.describe('forms-table: column widths', () => {
-    test.skip(skipWithoutFormsStub(), 'forms-host-stub not scaffolded in this workspace')
+    test.skip(() => skipWithoutFormsStub(), 'forms-host-stub not scaffolded in this workspace')
 
     test('keeps column floors, gives free width to the weighted column and aligns the header with the rows', async ({
         page,

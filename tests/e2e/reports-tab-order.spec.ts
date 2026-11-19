@@ -55,7 +55,7 @@ async function labelsOf(p: Page, ids: string[]): Promise<string[]> {
 }
 
 test.describe('tab order on web', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('Tab follows the screen order after a sort change and a fold', async ({ freshMember }) => {
         const p = freshMember.page

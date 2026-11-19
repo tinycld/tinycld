@@ -36,7 +36,7 @@ shareMember('rptcreate', async p => {
 })
 
 test.describe('creating a report', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a new report shows its columns through a to-one link, then opens from the hub', async ({
         freshMember,

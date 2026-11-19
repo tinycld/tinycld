@@ -238,7 +238,7 @@ async function foldNearFirstPageEnd(page: Page, prefix: string, size: typeof DES
 }
 
 test.describe('reports: paged groups', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a grouped report with more groups than one page loads the next groups on scroll and ends in the Total', async ({
         page,

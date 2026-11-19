@@ -108,7 +108,7 @@ async function expectRegionOnGroupOnly(p: Page, team: string) {
 }
 
 test.describe('group levels', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a group by a linked team shows every team, labelled and sorted by a team field', async ({
         p,

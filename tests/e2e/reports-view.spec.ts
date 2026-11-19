@@ -137,7 +137,7 @@ async function addCustomerFilter(p: Page, text: string) {
 }
 
 test.describe('the report view', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('the period chip and a filter chip edit the run, and a copied link keeps them', async ({
         freshMember,

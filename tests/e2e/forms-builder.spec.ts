@@ -249,7 +249,7 @@ async function entryUrl(page: Page, offset: number): Promise<string> {
 }
 
 test.describe('Forms builder', () => {
-    test.skip(skipWithoutFormsStub(), 'forms-host-stub not scaffolded in this workspace')
+    test.skip(() => skipWithoutFormsStub(), 'forms-host-stub not scaffolded in this workspace')
 
     test.beforeEach(async ({ page }) => {
         await login(page)

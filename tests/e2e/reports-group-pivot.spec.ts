@@ -65,7 +65,7 @@ async function expectMonthPivot(p: Page) {
 }
 
 test.describe('grouping and pivoting a report', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a group level with subtotals opens and closes on the report view', async ({ p }) => {
         await openReportsHub(p)

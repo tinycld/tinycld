@@ -220,7 +220,7 @@ async function expectSheetOpensAtRest(p: Page, testId: string, open: () => Promi
 }
 
 test.describe('params from a source, headings and unpublished shipped reports', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('an unpublished shipped report prints its heading and reaches only who it is shared with', async ({
         page,

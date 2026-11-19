@@ -69,7 +69,7 @@ async function expectStatusLayout(p: Page) {
 }
 
 test.describe('formulas, related rows and layouts', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a formula column subtracts cost from amount', async ({ freshMember }) => {
         const p = freshMember.page
