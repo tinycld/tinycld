@@ -10,7 +10,9 @@
 
 **Spec:** `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-perf/stored-receivables-design.md` (approved 2026-11-18) and `/Users/nas/tmp/tinycld/books-purchases/books/docs/specs/ar-aging-design.md` (§3 Live, §4 Data, §9). Outline of all six tasks: `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-perf/plan-outline-stored.md`.
 
-**This part:** tasks 1 to 3 of the outline (S1 to S3). Part 2 (`2026-11-18-report-perf-stored-part-2.md`, not written) holds S4 (the views go), S5 (spec and record) and S6 (L profile).
+**This part:** tasks 1 to 3 of the outline (S1 to S3). Part 2 (`2026-11-18-report-perf-stored-part-2.md`) holds S4 (the views go), S5 (spec and record) and S6 (L profile).
+
+**Human decisions (2026-11-19):** `settled` as a `Text` source field and `settled` per customer and item are accepted. A rule "the first item of a sub-customer is never settled" with a fifth hook on customers was REJECTED: `settled` has no sub-customer rule and there are four hook points. The family header (D7) is kept on the report side: in `arGroups` the family level's `Inline` reads records through a lookup, over a new to-many link `receivable_items` on `books.customers` (task 3). Check: `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-perf/family-header-check.md`.
 
 **Repos:** workspace `/Users/nas/tmp/tinycld/books-purchases`; every change is in `books/` (branch `books/p5-report-perf`). No core change. All Go commands run in `/Users/nas/tmp/tinycld/books-purchases/books/server`.
 
@@ -33,7 +35,9 @@ The whole of tasks 1 to 3 was built in a scratch copy of `books/server` and `boo
 
 - After task 2 the whole package (`go test -count=1 .`, about 185 s) is green with `verifyReceivables` in `requireNoDrift`: no existing test needs a rebuild call.
 - The engine writes a `Date`/`TextDay` field in a filter as `NULLIF(substr(col, 1, 10), '')`, which no index serves; with `settled` declared `reports.Date` runs 4, 5 and 6 fail the plan bar "a bound statement has no SCAN of a large table". Declared `reports.Text`, core accepts `gt(settled, asOf)`, writes the bare column, and `TestARAgingQueryPlans` passes every bar. So `settled` is a `Text` field.
-- Dropping the rows of settled items changes one result: a family whose sub-customer has only settled items lost its header and total (`TestARAgingFamilies`, D7; the family's `Inline` formula counts rows that name a sub-customer). Fix (in this plan, a change to the approved design): the first item of a sub-customer is open for good, and a customer update settles that customer's rows again (a fifth hook point). With it `TestARAgingFamilies` passes unchanged.
+- Dropping the rows of settled items changes one result: a family whose sub-customer has only settled items loses its header and total (`TestARAgingFamilies`, "Keeper Parent", D7), because the family's `Inline` formula of `customerFamilyGroups` counts the rows of the run that name a sub-customer. Fix (report side, task 3): `arGroups` replaces that `Inline` with a lookup that counts the family's sub-customers (in the Customer pick) that have a stored row on or before As of, settled or not. A lookup on a level reads the group record once per family; the spec filter does not apply inside it. Measured with `go test -overlay` (family-header-check.md): `TestARAgingFamilies` passes unchanged, `TestARAgingQueryPlans` passes every bar, and the lookup's plan is `SEARCH books_customers USING INDEX idx_books_customers_sibling_name (parent>? AND parent<?)` and `SEARCH books_receivable_items USING INDEX idx_books_receivable_items_customer (customer=?)`. The Customer Balance keeps the row rule (its D1).
+- `isEmpty(rec("byTop", "id"))` in that `Inline` keeps "No customer" inline: without it `eq(parent, NULL)` matches every top-level customer (core writes a link comparison with `IS`).
+- `server/testdata/ar_aging_stat1.json` holds an empty list (`[]`: no scale run has reached its end), so it has no row for `books_receivable_items` or any other table, and the "L statistics" reading of `TestARAgingQueryPlans` equals the "no statistics" reading until task S6 of part 2 writes the file from the L run and runs the test again.
 - `settled` is per customer and item (the report's item group is under the customer group).
 - The lines query starts `FROM books_journal_lines l JOIN books_accounts a` (the view's `FROM books_accounts a CROSS JOIN books_journal_lines l` would read every A/R line to refresh one entry).
 - In a set-operator chain SQLite reads `a EXCEPT b UNION ALL c` left to right: the computed side of the verify is one subquery.
@@ -42,8 +46,8 @@ The whole of tasks 1 to 3 was built in a scratch copy of `books/server` and `boo
 ## Review Focus
 
 1. A payment that paid an invoice in full is voided later: the invoice must show as open again, with no application row left. Test: `TestReceivableRefreshOnVoid` (task 2).
-2. A sub-customer whose every item is paid: its family keeps its header and total, and loses them only when the customer leaves the family. Tests: `TestReceivableSettledFollowsParent` (task 2), the unchanged `TestARAgingFamilies` (task 3, step 5).
-3. An As of day before, on and after the day an item was paid in full, and after that payment's void: the item shows whole before, not at all from the day on, and whole again after the void. Tests: `TestARAgingSettledItemOnPastDay` (task 3, step 1; the one report-level pin of the strict `settled > asOf` filter), `TestReceivableSettled` pins the stored day (task 1); the unchanged `TestARAgingAsOfDay` and `TestARAgingHiddenItems` (task 3, step 5).
+2. A sub-customer whose every item is paid: its family keeps its header and total (D7), but not on a day before the sub-customer's first row and not when the Customer pick leaves the sub-customer out; "No customer" never gets a header. Tests: `TestARAgingFamilyHeaderFollowsPickAndDay` (task 3, step 1), the unchanged `TestARAgingFamilies` and `TestARAgingNoCustomer` rows (task 3, step 6).
+3. An As of day before, on and after the day an item was paid in full, and after that payment's void: the item shows whole before, not at all from the day on, and whole again after the void. Tests: `TestARAgingSettledItemOnPastDay` (task 3, step 1; the one report-level pin of the strict `settled > asOf` filter), `TestReceivableSettled` pins the stored day (task 1); the unchanged `TestARAgingAsOfDay` and `TestARAgingHiddenItems` (task 3, step 6).
 4. An invoice correction while a live payment pays the original: the application row must name the correction. Test: `TestReceivableRefreshOnInvoiceCorrection` (task 2).
 5. A book whose rows were written past the hooks (a raw import, a repair): the report would show stale rows with no error. Tests: `TestVerifyReceivablesFindsDrift` (task 1), `TestRebuildRoute_RepairsReceivables` (task 2).
 
@@ -443,13 +447,6 @@ const receivableApplicationsSQL = "SELECT pa.id AS id, '" + receivableSourceAppl
 // each customer whole), the day its balance becomes zero and stays zero: the
 // first day with no later day (itself included) whose end-of-day balance is
 // not zero. An item whose last balance is not zero is open.
-//
-// The first item of a sub-customer (f: by date, then item id) is open for
-// good. The A/R Aging draws a family with its header and total when a row of
-// the run names a sub-customer (customerFamilyGroups, Inline), also when that
-// sub-customer has no open item (D7); the rows of this one item keep that
-// true on every day from the sub-customer's first row on. They add up to the
-// item's balance on any day, so a settled first item still shows nothing.
 const receivableSettledSQL = `
 	WITH d AS (
 		SELECT customer, item, date, SUM(debit - credit) AS net
@@ -463,17 +460,10 @@ const receivableSettledSQL = `
 		       SUM(bal != 0) OVER (PARTITION BY customer, item ORDER BY date
 		                           ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS later
 		FROM r
-	), f AS (
-		SELECT customer, item FROM (
-			SELECT d.customer AS customer, d.item AS item,
-			       ROW_NUMBER() OVER (PARTITION BY d.customer ORDER BY d.date, d.item) AS n
-			FROM d JOIN books_customers c ON c.id = d.customer WHERE c.parent != ''
-		) WHERE n = 1
 	)
 	SELECT z.customer AS customer, z.item AS item,
-	       CASE WHEN f.item IS NOT NULL THEN '` + receivableOpen + `'
-	            ELSE COALESCE(MIN(CASE WHEN z.later = 0 THEN z.date END), '` + receivableOpen + `') END AS settled
-	FROM z LEFT JOIN f ON f.customer = z.customer AND f.item = z.item
+	       COALESCE(MIN(CASE WHEN z.later = 0 THEN z.date END), '` + receivableOpen + `') AS settled
+	FROM z
 	GROUP BY z.customer, z.item`
 
 // insertReceivables stores the rows query gives; where narrows it (" AND
@@ -635,10 +625,10 @@ git commit -m "feat(books): stored receivable items with rebuild and verify"
   - `type receivablePart struct{ query, where string }`;
   - `refreshReceivables(tx core.App, stale string, params dbx.Params, parts ...receivablePart) error`;
   - `refreshReceivableEntry(tx core.App, entryID string) error`, `refreshReceivablePayment(tx core.App, payment *core.Record) error`, `refreshReceivableInvoice(tx core.App, invoice *core.Record) error`;
-  - `bindReceivableEntryRefresh(app core.App)`, `bindReceivableCustomerRefresh(app core.App)`, `bindReceivablePaymentRefresh(app core.App)`, `bindReceivableInvoiceRefresh(app core.App)`, `registerReceivableWriteGuard(app core.App)`, `repairReceivables(tx core.App) error`, const `msgReceivableItemsReadOnly`;
+  - `bindReceivableEntryRefresh(app core.App)`, `bindReceivablePaymentRefresh(app core.App)`, `bindReceivableInvoiceRefresh(app core.App)`, `registerReceivableWriteGuard(app core.App)`, `repairReceivables(tx core.App) error`, const `msgReceivableItemsReadOnly`;
   - `requireNoDrift` fails on a receivable drift; the route `POST /api/books/balances/rebuild` answers one more key, `receivableDrifts` (the list of `ReceivableDrift` read before the repair, at most 100).
 
-The hook points (design §3, plus the customer one): an entry update whose status is not draft (hook 1); a payment update (hook 2: post, void, replacement); a payment application update (hook 3: an invoice correction moves it); an invoice update whose status is not draft (hook 4); a customer update (hook 5: the sub-customer rule of `receivableSettledSQL`). Each is bound inside the function that binds the collection's serialized guard, after it, so `e.App` is the guard's transaction when the refresh runs and every test env that binds the guard binds the refresh. `TestRegister_BindsEachPartOnce` needs no change: no new part is called from `Register`.
+The four hook points (design §3): an entry update whose status is not draft (hook 1); a payment update (hook 2: post, void, replacement); a payment application update (hook 3: an invoice correction moves it); an invoice update whose status is not draft (hook 4). No hook is bound on `books_customers`: a customer change moves no stored row and no `settled` day. Each is bound inside the function that binds the collection's serialized guard, after it, so `e.App` is the guard's transaction when the refresh runs and every test env that binds the guard binds the refresh. `TestRegister_BindsEachPartOnce` needs no change: no new part is called from `Register`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -710,22 +700,17 @@ func TestReceivableRefreshOnVoid(t *testing.T) {
 	}
 }
 
-// The first item of a sub-customer stays open for good, so the family keeps
-// its header and total (D7); the rule follows the customer's parent.
-func TestReceivableSettledFollowsParent(t *testing.T) {
+// settled has no customer rule: each paid item of a sub-customer settles on
+// its day, and a change of the customer's parent moves no settled day.
+func TestReceivableSettledIgnoresParent(t *testing.T) {
 	b := newARBook(t)
 	parent := mkCustomer(t, b.app, "Keeper Parent", "")
 	sub := mkCustomer(t, b.app, "Keeper sub", parent.Id)
 	first := arInvoice(t, b, sub, "2026-08-04", "2026-09-03", 7000)
 	arPayment(t, b, sub, "2026-09-10", 7000, map[string]int{first.Id: 7000})
-	second := arInvoice(t, b, sub, "2026-08-05", "2026-09-04", 8000)
-	arPayment(t, b, sub, "2026-09-11", 8000, map[string]int{second.Id: 8000})
 	requireNoReceivableDrift(t, b.app)
-	if got := settledOf(t, b.app, first.Id); got != receivableOpen {
-		t.Errorf("a sub-customer's first item: settled = %q, want open for good", got)
-	}
-	if got := settledOf(t, b.app, second.Id); got != "2026-09-11" {
-		t.Errorf("a sub-customer's later item: settled = %q, want 2026-09-11", got)
+	if got := settledOf(t, b.app, first.Id); got != "2026-09-10" {
+		t.Errorf("a sub-customer's paid item: settled = %q, want 2026-09-10", got)
 	}
 
 	sub, err := b.app.FindRecordById("books_customers", sub.Id)
@@ -738,7 +723,7 @@ func TestReceivableSettledFollowsParent(t *testing.T) {
 	}
 	requireNoReceivableDrift(t, b.app)
 	if got := settledOf(t, b.app, first.Id); got != "2026-09-10" {
-		t.Errorf("after the customer left its parent: settled = %q, want 2026-09-10", got)
+		t.Errorf("after the customer left its parent: settled = %q, want 2026-09-10 still", got)
 	}
 }
 
@@ -832,7 +817,7 @@ func TestReceivableSettleReadsOneCustomer(t *testing.T) {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test -run 'TestReceivableRefresh|TestReceivableSettledFollowsParent|TestReceivableItemsRefuseWrites|TestRebuildRoute_RepairsReceivables' -count=1 .`
+Run: `go test -run 'TestReceivableRefresh|TestReceivableSettledIgnoresParent|TestReceivableItemsRefuseWrites|TestRebuildRoute_RepairsReceivables' -count=1 .`
 Expected: FAIL, the build fails with `undefined: refreshReceivableEntry` and `undefined: msgReceivableItemsReadOnly`.
 
 - [ ] **Step 3: Write the refresh**
@@ -999,25 +984,6 @@ func bindReceivableInvoiceRefresh(app core.App) {
 	})
 }
 
-// bindReceivableCustomerRefresh settles a customer's rows again after each
-// update of the customer: a customer that gets or loses its parent gains or
-// loses the item that stays open for good (receivableSettledSQL).
-func bindReceivableCustomerRefresh(app core.App) {
-	bindReceivableRefresh(app, "books_customers", func(tx core.App, r *core.Record) error {
-		if !tx.IsTransactional() {
-			return errors.New("books: receivable rows are settled only inside the transaction of the write")
-		}
-		changed, err := settleReceivables(tx, []string{r.Id})
-		if err != nil {
-			return err
-		}
-		if changed > 0 {
-			changesignal.Touch(tx, receivableItemsCollection)
-		}
-		return nil
-	})
-}
-
 // msgReceivableItemsReadOnly refuses a REST write of a stored receivable row.
 const msgReceivableItemsReadOnly = "Books writes the receivable items itself. They cannot be changed."
 
@@ -1047,7 +1013,6 @@ func repairReceivables(tx core.App) error {
 
 ```go
 	bindReceivableEntryRefresh(app)
-	bindReceivableCustomerRefresh(app)
 	registerReceivableWriteGuard(app)
 ```
 
@@ -1070,15 +1035,15 @@ func repairReceivables(tx core.App) error {
 `server/balances.go`, in `rebuildBalances`, replace
 
 ```go
-			fixed = len(drifts) + documents + cash
-			return nil
+		fixed = len(drifts) + documents + cash
+		return nil
 ```
 
 with
 
 ```go
-			fixed = len(drifts) + documents + cash
-			return repairReceivables(tx)
+		fixed = len(drifts) + documents + cash
+		return repairReceivables(tx)
 ```
 
 and extend the function's comment with the sentence: `It also rebuilds the stored receivable rows when they disagree with the book (repairReceivables); those rows are not in the count.`
@@ -1141,17 +1106,18 @@ git commit -m "feat(books): receivable rows refresh in the write transaction"
 ### Task 3: The report reads the stored table
 
 **Files:**
-- Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/report_sources.go:251-293`
-- Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/report_ar_aging.go:24-37`
+- Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/report_sources.go:123-126, 251-293`
+- Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/report_ar_aging.go:24-37, 90-101`
+- Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/report_spec_helpers.go:180-185` (comment only)
 - Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/report_ar_aging_scale_test.go:211-212, 1159, 1322`
 - Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/report_ar_aging_test.go:1213-1222`
 - Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/receivable_items_test.go:743-752`
-- Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/report_sources_test.go:492-523`
+- Modify: `/Users/nas/tmp/tinycld/books-purchases/books/server/report_sources_test.go:313-316, 492-523`
 - Modify: `/Users/nas/tmp/tinycld/books-purchases/books/tinycld/books/lib/ar-aging-fixture.ts:700-706`
 
 **Interfaces:**
 - Consumes (tasks 1, 2): `receivableItemsCollection`, `rebuildReceivables(tx core.App) error`, the hooks of task 2 (every test book that posts through the guards has current rows).
-- Produces: the source `books.receivable_items` is a single-collection source over `books_receivable_items` with one more field, `settled` (`reports.Text`); the A/R Aging filter is `settled > asOf and date <= asOf and customerKey in customers`; a run's topics hold `collection/books_receivable_items` and no topic of a ledger table. The two views and `registerReceivableItems` still exist and nothing reads them through a report (part 2, task S4, drops them).
+- Produces: the source `books.receivable_items` is a single-collection source over `books_receivable_items` with one more field, `settled` (`reports.Text`); the A/R Aging filter is `settled > asOf and date <= asOf and customerKey in customers`; a run's topics hold `collection/books_receivable_items` and no topic of a ledger table; the source `books.customers` has one more link, `receivable_items` (to-many to `books.receivable_items`, `BackField: "customer"`); in `arGroups` the family level's `Inline` is `isEmpty(byTop.id) or <count of the family's sub-customers, in the Customer pick, with a stored row on or before As of> = 0` (`customerFamilyGroups` itself does not change: the Customer Balance keeps its row rule). The two views and `registerReceivableItems` still exist and nothing reads them through a report (part 2, task S4, drops them).
 
 - [ ] **Step 1: Pin the strict filter, and change the expectations (the failing tests)**
 
@@ -1193,6 +1159,49 @@ func TestARAgingSettledItemOnPastDay(t *testing.T) {
 	}
 }
 
+```
+
+`server/report_ar_aging_test.go`: add this test directly above `func TestARAgingNoCustomer(t *testing.T) {`. It passes before step 3 too (the old row rule gives the same rows); it fails after step 4 and passes again after step 5.
+
+```go
+// D7 reads records: a family keeps its header and total while a sub-customer
+// in the Customer pick has a row on or before As of, settled or not.
+func TestARAgingFamilyHeaderFollowsPickAndDay(t *testing.T) {
+	b := newARBook(t)
+	parent := mkCustomer(t, b.app, "Pick Parent", "")
+	arInvoice(t, b, parent, "2026-09-01", "2026-09-30", 6000)
+	sub := mkCustomer(t, b.app, "Pick sub", parent.Id)
+	inv := arInvoice(t, b, sub, "2026-10-01", "2026-10-31", 7000)
+	arPayment(t, b, sub, "2026-10-05", 7000, map[string]int{inv.Id: 7000})
+
+	for name, tc := range map[string]struct {
+		params map[string]any
+		family bool
+	}{
+		"the sub-customer's item is settled before the day": {map[string]any{"asOf": "2026-10-06"}, true},
+		"a day before the sub-customer's first row":         {map[string]any{"asOf": "2026-09-15"}, false},
+		"only the parent is picked":                         {map[string]any{"asOf": "2026-10-06", "customers": []string{parent.Id}}, false},
+		"the parent and the sub-customer are picked":        {map[string]any{"asOf": "2026-10-06", "customers": []string{parent.Id, sub.Id}}, true},
+	} {
+		res := b.run(t, tc.params)
+		if !bsHas(res, "Pick Parent") {
+			t.Errorf("%s: no Pick Parent row; rows %q", name, bsLabels(res))
+		}
+		if got := bsHas(res, "Total Pick Parent"); got != tc.family {
+			t.Errorf("%s: the family total shows = %v, want %v; rows %q", name, got, tc.family, bsLabels(res))
+		}
+		if bsHas(res, "Pick sub") {
+			t.Errorf("%s: the sub-customer with no open item has a row; rows %q", name, bsLabels(res))
+		}
+	}
+}
+
+```
+
+`server/report_sources_test.go`, the `books.customers` entry of `expectedCatalog`: directly under its line `toMany("sub_customers", "books.customers", "parent"),` add:
+
+```go
+				toMany("receivable_items", "books.receivable_items", "customer"),
 ```
 
 `server/report_ar_aging_test.go`, `TestARAgingTopics`: replace the topic list
@@ -1292,7 +1301,7 @@ with (the bulk writer writes past the hooks, so it rebuilds the stored rows in i
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `go test -run 'TestARAgingTopics|TestReceivableItemsEngine|TestReportSourcesCatalog|TestARAgingQueryPlans' -count=1 . 2>&1 | command grep -E '^(--- FAIL|FAIL|ok)|want collection/books_receivable_items|reads books_receivable_items' | cut -c1-220`
-Expected: FAIL for the four tests: `topics = […], want collection/books_receivable_items`; the catalog's `collection, label = "", …`; `none of its 6 SELECTs reads books_receivable_items`.
+Expected: FAIL for the four tests: `topics = […], want collection/books_receivable_items`; the catalog's `collection, label = "", …` and its missing `receivable_items` link of `books.customers`; `none of its 6 SELECTs reads books_receivable_items`. `TestARAgingFamilyHeaderFollowsPickAndDay` and `TestARAgingSettledItemOnPastDay` pass here (pins).
 
 - [ ] **Step 3: The source reads the table**
 
@@ -1340,6 +1349,14 @@ and add, directly under the field line `{Key: "due_date", Label: "Due date", Typ
 			{Key: "settled", Label: "Settled", Type: reports.Text},
 ```
 
+In the same file, in the `books.customers` source, directly under the link line `{Key: "sub_customers", Label: "Sub-customers", Target: "books.customers", Cardinality: reports.ToMany, BackField: "parent"},` add:
+
+```go
+				// The A/R Aging's family level reads it (arGroups): which
+				// sub-customers have a receivable row, settled or not.
+				{Key: "receivable_items", Label: "Receivable items", Target: "books.receivable_items", Cardinality: reports.ToMany, BackField: "customer"},
+```
+
 - [ ] **Step 4: The A/R Aging reads only the items open on the day**
 
 `server/report_ar_aging.go`, in `arAgingSpec`, replace
@@ -1352,8 +1369,8 @@ with
 
 ```go
 		// settled after the day: an item whose balance is zero on the day and
-		// stays zero adds nothing to any sum, so its rows are not read (the
-		// first item of a sub-customer is never settled: receivableSettledSQL).
+		// stays zero adds nothing to any sum, so its rows are not read. The
+		// family level does not count these rows: arGroups, Inline.
 		Filter: op("and",
 			op("gt", fld("settled"), prm("asOf")),
 			op("lte", fld("date"), prm("asOf")),
@@ -1363,12 +1380,74 @@ with
 
 Keep `Revision: 1` in `arAgingShipped` (the report is unreleased).
 
-- [ ] **Step 5: Run the A/R Aging and source tests**
+- [ ] **Step 5: The family header reads records (D7)**
 
-Run: `gofmt -l . ; go vet . && go test -run 'ARAging|Receivable|ReportSources|TestRebuildRoute' -count=1 . 2>&1 | command grep -E '^(--- FAIL|FAIL|ok)'`
-Expected: `gofmt -l` prints nothing; one line `ok  tinycld.org/packages/books`. `TestARAgingFamilies`, `TestARAgingAsOfDay`, `TestARAgingHiddenItems`, `TestARAgingQueryPlans` and `TestARAgingRunsAgreeWithSmallBook` pass with no expected figure, row or bar changed. If `TestARAgingQueryPlans` reports `SCAN books_receivable_items` in a bound run, the `settled` field is not `reports.Text` or the index `idx_books_receivable_items_settled` is missing: fix that, do not change a bar.
+Run: `go test -run 'TestARAgingFamilies|TestARAgingFamilyHeaderFollowsPickAndDay' -count=1 . 2>&1 | command grep -E '^(--- FAIL|FAIL|ok)|no family|family total' | cut -c1-220`
+Expected: FAIL for both: `no family Keeper Parent (header at -1, total at -1)`, and `the family total shows = false, want true` for the cases "the sub-customer's item is settled before the day" and "the parent and the sub-customer are picked". The filter of step 4 no longer reads the rows of a settled item, and the family's `Inline` of `customerFamilyGroups` counts rows.
 
-- [ ] **Step 6: The fixture's topics**
+`server/report_ar_aging.go`: replace the comment and the body of `arGroups`
+
+```go
+// arGroups are the family and customer levels of customerFamilyGroups, a
+// customer shown only with an open item, then the open item: labelled
+// "<type> <number>" and shown only when its amount on the day is not zero.
+func arGroups() []reports.Group {
+	groups := customerFamilyGroups()
+	groups[1].HideEmpty = true
+```
+
+with
+
+```go
+// arGroups are the family and customer levels of customerFamilyGroups, a
+// customer shown only with an open item, then the open item: labelled
+// "<type> <number>" and shown only when its amount on the day is not zero.
+//
+// The family level's Inline is replaced (D7). The run reads no row of a
+// settled item, so "no row names a sub-customer" would inline a family whose
+// sub-customers have only settled items. The family is drawn with its header
+// and total when a sub-customer of it, in the Customer pick, has a stored row
+// on or before As of, settled or not: a lookup on the level reads the group
+// record one time per family, and the spec filter does not apply inside it.
+// A blank family key (No customer) is always inline: a link comparison with a
+// blank key would match every customer that has no parent.
+func arGroups() []reports.Group {
+	groups := customerFamilyGroups()
+	subCustomers := &reports.Node{
+		Op: "lookup", Source: "books.customers", Pick: "count", Value: mustJSON(fld("id")),
+		Where: op("and",
+			op("eq", link("parent"), rec("byTop", "id")),
+			op("in", fld("id"), prm("customers")),
+			&reports.Node{Op: "exists", Link: reports.Path{{Link: "receivable_items"}}, Where: op("lte", fld("date"), prm("asOf"))},
+		),
+	}
+	groups[0].Inline = op("or", op("isEmpty", rec("byTop", "id")), op("eq", subCustomers, lit(0)))
+	groups[1].HideEmpty = true
+```
+
+`server/report_spec_helpers.go`, the comment of `customerFamilyGroups`: replace its last sentence
+
+```go
+// customer) are their keys. The customer level has no Having and no
+// HideEmpty: each report sets its own.
+```
+
+with
+
+```go
+// customer) are their keys. The customer level has no Having and no
+// HideEmpty: each report sets its own. The A/R Aging replaces the family
+// level's Inline (arGroups): its run does not read the rows of settled items.
+```
+
+- [ ] **Step 6: Run the A/R Aging and source tests**
+
+Run: `gofmt -l . ; go vet . && go test -run 'ARAging|Receivable|ReportSources|CustomerBalance|TestRebuildRoute' -count=1 . 2>&1 | command grep -E '^(--- FAIL|FAIL|ok)'`
+Expected: `gofmt -l` prints nothing; one line `ok  tinycld.org/packages/books`. `TestARAgingFamilies`, `TestARAgingNoCustomer`, `TestARAgingCustomersParam`, `TestARAgingAsOfDay`, `TestARAgingHiddenItems`, `TestARAgingQueryPlans` and `TestARAgingRunsAgreeWithSmallBook` pass with no expected figure, row or bar changed, and every Customer Balance test passes unchanged. If `TestARAgingQueryPlans` reports `SCAN books_receivable_items` in a bound run, the `settled` field is not `reports.Text` or an index of task 1 is missing (`idx_books_receivable_items_settled` for the filter, `idx_books_receivable_items_customer` for the family lookup): fix that, do not change a bar.
+
+The "L statistics" reading of `TestARAgingQueryPlans` has no statistics for `books_receivable_items` yet: `server/testdata/ar_aging_stat1.json` holds an empty list. Do not edit that file by hand. Task S6 of part 2 writes it again from the L run and runs this test again; write this open check in your report.
+
+- [ ] **Step 7: The fixture's topics**
 
 `tinycld/books/lib/ar-aging-fixture.ts`, in `arAgingResult`, replace
 
@@ -1395,22 +1474,29 @@ with
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/books && command grep -rl "ar-aging-fixture" tests tinycld | command grep -m 20 ""` and, for each vitest file it lists under `tests/`, `PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg test <file>`; then `PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg typecheck`.
 Expected: the tests pass and the typecheck prints no error.
 
-- [ ] **Step 7: Run the package**
+Do not change `isInlined` in that file (line 501, "no row of the family names a sub-customer"): the fixture is a static result with no settled item, so the row rule and the record rule give the same rows for it. Change only its comment, to:
+
+```ts
+// The spec's `inline` condition for a fixture with no settled item: no member
+// of the family is a sub-customer.
+```
+
+- [ ] **Step 8: Run the package**
 
 Run: `cd /Users/nas/tmp/tinycld/books-purchases/books/server && go test -count=1 . 2>&1 | command grep -E '^(--- FAIL|FAIL|ok)'` (about 3 minutes, foreground)
 Expected: one line, `ok  tinycld.org/packages/books`.
 
-- [ ] **Step 8: The e2e spec (live re-run through the change signal)**
+- [ ] **Step 9: The e2e spec (live re-run through the change signal)**
 
 `tests/e2e/books-ar-aging.spec.ts` must pass unchanged: it posts an invoice and a payment through the UI and reads the report again, which now depends on `changesignal.Touch` of `books_receivable_items`. The run takes more than 4 minutes: hand back
 `NEEDS-RUN: cd /Users/nas/tmp/tinycld/books-purchases && lsof -iTCP -sTCP:LISTEN -nP | grep -qE ':(7210|7211) ' && { echo PORTS-BUSY; exit 1; }; E2E_PORT=7210 E2E_PORT_2=7211 E2E_IMAP_PORT=1210 E2E_IMAP_PORT_2=1211 pnpm exec tinycld-pkg test:e2e books/tests/e2e/books-ar-aging.spec.ts`
 with what is needed from it: every test of the file passes. A failure is fixed at its cause (a missing refresh or touch), never in the spec.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 cd /Users/nas/tmp/tinycld/books-purchases/books
-git add server/report_sources.go server/report_ar_aging.go server/report_ar_aging_scale_test.go server/report_ar_aging_test.go server/receivable_items_test.go server/report_sources_test.go tinycld/books/lib/ar-aging-fixture.ts
+git add server/report_sources.go server/report_ar_aging.go server/report_spec_helpers.go server/report_ar_aging_scale_test.go server/report_ar_aging_test.go server/receivable_items_test.go server/report_sources_test.go tinycld/books/lib/ar-aging-fixture.ts
 git commit -m "feat(books): A/R Aging reads the stored receivable items open on the day"
 ```
 
@@ -1419,5 +1505,5 @@ git commit -m "feat(books): A/R Aging reads the stored receivable items open on 
 ## What part 2 holds
 
 - **S4 The views go.** The migration without the two views and `VIEWS`; `receivableLinesView`, `receivableApplicationsView`, `registerReceivableItems` (also in `register.go:38` and `registrations_test.go:922`), the two OAuth entries and `TestOAuth_ReceivableViews`; `server/receivable_items_test.go` reads the table by `source` (`arRows`, `allRows`, `TestReceivableViewsShape`, `TestReceivableViewsAccess`); `TestReceivableRebuildMatchesViews` of this part compares with the views and is rewritten to literal rows; `report_ar_aging_scale_test.go:1417` and `:1681`; `report_ar_aging_profile_test.go:93-98` (`arProfileFloor`).
-- **S5 Spec and record.** `docs/specs/ar-aging-design.md` §3 Live, §4 Data, §8, §9 (the large tables, "When a bar fails"); the ledger. The spec text must say the sub-customer rule and the fifth hook point.
-- **S6 L profile and record.** The `NEEDS-RUN` of `TestARAgingProfile` at L and of the scale test (which writes `testdata/ar_aging_stat1.json` again), the numbers in the ledger, and the stop rule.
+- **S5 Spec and record.** `docs/specs/ar-aging-design.md` §3 (Rows, Live), §4 Data, §8, §9 (the large tables, "When a bar fails"); the ledger. The spec text says the stored table, `settled` as a text field per customer and item, the four hook points, and the family level's record rule.
+- **S6 L profile and record.** The `NEEDS-RUN` of `TestARAgingProfile` at L and of the scale test (which writes `testdata/ar_aging_stat1.json` again, now with `books_receivable_items`), `TestARAgingQueryPlans` again under the new statistics, the numbers in the ledger, and the stop rule.
