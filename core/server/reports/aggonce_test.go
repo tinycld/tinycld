@@ -140,3 +140,15 @@ func TestAnAggregateOfALookupReadTwiceKeepsTheResult(t *testing.T) {
 		requireSameAsLegacy(t, z, user, lookupTwice, Options{ExpandAll: true}, nil, &legacySQL.repeatAggregates)
 	}
 }
+
+// A column a lookup's value reads is a column the aggregate reads: the memo
+// must not hide a self-read from the compile that refuses it.
+func TestColumnsReadSeesAColumnALookupsValueReads(t *testing.T) {
+	p := &plan{byID: map[string]*colPlan{}, lookups: map[*Node]decodedLookup{}}
+	look := &Node{Op: "lookup", Value: json.RawMessage(`{"col":"k"}`)}
+	read := map[string]bool{}
+	p.columnsRead(&Node{Op: "sum", Args: []*Node{look}}, read)
+	if !read["k"] {
+		t.Fatalf("columnsRead = %v, want k", read)
+	}
+}

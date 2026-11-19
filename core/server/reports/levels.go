@@ -1425,6 +1425,13 @@ func (p *plan) columnsRead(n *Node, seen map[string]bool) {
 		}
 	}
 	p.columnsRead(n.Where, seen)
+	if n.Op == "lookup" {
+		// A lookup's value is raw JSON until decoded; it may read a report
+		// column (lookupCtx.col). A value that fails to decode is refused at bind.
+		if v, err := p.lookupOf(n, ""); err == nil {
+			p.columnsRead(v, seen)
+		}
+	}
 	for _, a := range n.Args {
 		p.columnsRead(a, seen)
 	}
