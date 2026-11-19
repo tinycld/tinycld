@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"slices"
@@ -89,7 +90,37 @@ func TestExportOfAGroupedReportStopsAtTheFormatsLimit(t *testing.T) {
 	requireStatus(t, s.exportAs(t, "ann", csvExportBody(rep.Id)), http.StatusUnprocessableEntity,
 		`"message":"This report has more than 50,000 rows. Narrow the period."`)
 	if n := len(exportAuditRows(t, s.app)); n != 1 {
-		t.Fatalf("%d audit rows, want 1: the refused export wrote one", n)
+		t.Fatalf("%d audit rows, want 1: the whole export writes one, the refused one none", n)
+	}
+}
+
+// A PDF keeps the reader's folds (byNoteClosed opens closed, so a PDF of it is
+// only the group rows): the reader opens every group (expandAll), the report
+// is 1,351 rows, and that is the PDF's limit. At the limit it is written
+// whole, one row under it is refused with the PDF's sentence and no audit row.
+func TestExportOfAGroupedPDFStopsAtTheFormatsLimit(t *testing.T) {
+	s := newSavedZoo(t)
+	hermeticExportFonts(t)
+	rep := s.saved(t, "byNote", "ann", "Feedings by Note", byNoteClosed, false)
+	bulkFeedings(t, s.zoo, 446)
+	keepExportLimits(t)
+	body := fmt.Sprintf(`{"reportId":%q,"params":{},"options":{"today":"2026-11-16","timeZone":"UTC","expandAll":true},"format":"pdf","hour12":false}`, rep.Id)
+
+	exportLimits.pdfRows = 1351
+	whole := s.exportAs(t, "ann", body)
+	requireFile(t, whole, "application/pdf", ".pdf")
+	if !bytes.HasPrefix(whole.Body.Bytes(), []byte("%PDF-")) {
+		t.Fatalf("the file does not start %%PDF-: %q", whole.Body.Bytes()[:min(whole.Body.Len(), 20)])
+	}
+	if n := len(exportAuditRows(t, s.app)); n != 1 {
+		t.Fatalf("%d audit rows after the whole export, want 1", n)
+	}
+
+	exportLimits.pdfRows = 1350
+	requireStatus(t, s.exportAs(t, "ann", body), http.StatusUnprocessableEntity,
+		`"message":"This report has more than 5,000 rows. Narrow the period or download CSV."`)
+	if n := len(exportAuditRows(t, s.app)); n != 1 {
+		t.Fatalf("%d audit rows, want 1: the whole export writes one, the refused one none", n)
 	}
 }
 
