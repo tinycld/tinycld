@@ -226,11 +226,10 @@ func TestAFillRecordSkipsItsOwnBlankParentLevel(t *testing.T) {
 // own site: East (Eli, no feeding) and "(none)" (Kit, no site) have no base
 // row. Every group is open, so the feedings show, each labeled with its site;
 // the statement of the feedings, which compiles only the levels down to the
-// having, still
-// reads the fill records, with a "rows" column (the site's having reads the
-// animals' sums) and without one. A having that keeps every site shows East
-// and "(none)"; one that keeps the sites with a cost hides them and their
-// animals.
+// having, still reads the fill records, with a "rows" column (the site's
+// having reads the animals' sums) and without one. A having that keeps every
+// site shows East and "(none)"; one that keeps the sites with a cost hides
+// them and their animals.
 func TestAFillRecordNamesItsParentUnderAHavingAbove(t *testing.T) {
 	spec := func(total, having string) string {
 		return `{"version":4,"source":"zoo.feedings","columns":[
