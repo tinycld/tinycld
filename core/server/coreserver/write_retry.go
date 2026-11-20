@@ -5,8 +5,6 @@ import (
 	"net"
 	"syscall"
 	"time"
-
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // A write that fails with ENOBUFS is tried again this many times in a row
@@ -30,18 +28,6 @@ const (
 type writeRetryListener struct {
 	net.Listener
 	sleep func(time.Duration)
-}
-
-// registerWriteRetry binds on every platform, so that the count of OnServe
-// handlers does not depend on the platform; the handler does work on macOS
-// only.
-func registerWriteRetry(app core.App) {
-	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
-		if err := serveWithWriteRetry(e); err != nil {
-			return err
-		}
-		return e.Next()
-	})
 }
 
 func newWriteRetryListener(l net.Listener) *writeRetryListener {

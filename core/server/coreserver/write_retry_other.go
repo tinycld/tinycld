@@ -12,4 +12,5 @@ import (
 // with ENOBUFS (see writeRetryListener).
 func retryWritesOnNoBufferSpace(l net.Listener) net.Listener { return l }
 
-func serveWithWriteRetry(*core.ServeEvent) error { return nil }
+// registerWriteRetry binds nothing: there is no error to try again.
+func registerWriteRetry(core.App) {}
