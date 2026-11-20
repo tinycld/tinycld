@@ -7,7 +7,7 @@ import { login, navigateToPackage, skipWithoutShortcutStub } from './helpers'
 // manifest. This proves a package's declared event reaches the toast with the
 // policy the package gave it, without core naming any package.
 test.describe('Notify registry', () => {
-    test.skip(skipWithoutShortcutStub(), 'shortcut-stub not scaffolded in this workspace')
+    test.skip(() => skipWithoutShortcutStub(), 'shortcut-stub not scaffolded in this workspace')
 
     test("a package's declared event shows as a toast with its variant", async ({ page }) => {
         await login(page)

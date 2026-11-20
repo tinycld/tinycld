@@ -121,7 +121,7 @@ async function seedStatement(p: Page, large?: number) {
 }
 
 test.describe('reports: statements', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a statement on a desktop: ragged levels, dated headings, a row inside a section', async ({
         freshMember,

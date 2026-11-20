@@ -33,7 +33,7 @@ function discardButton(page: Page) {
 }
 
 test.describe('leave-guard-replay: a dirty nested screen left by a parent stack replace', () => {
-    test.skip(skipWithoutShortcutStub(), 'shortcut-stub not scaffolded in this workspace')
+    test.skip(() => skipWithoutShortcutStub(), 'shortcut-stub not scaffolded in this workspace')
 
     test('Keep editing stays; Discard lands on the parent route', async ({ page }) => {
         await openStub(page)

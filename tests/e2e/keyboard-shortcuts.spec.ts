@@ -27,7 +27,7 @@ test.describe('Keyboard shortcuts', () => {
     // Needs the shortcut-stub package scaffolded; skip on a plain dev workspace
     // where it isn't present (CI's scaffold step makes it mandatory there — see
     // skipWithoutShortcutStub, which refuses to silently skip on CI).
-    test.skip(skipWithoutShortcutStub(), 'shortcut-stub not scaffolded in this workspace')
+    test.skip(() => skipWithoutShortcutStub(), 'shortcut-stub not scaffolded in this workspace')
 
     test.beforeEach(async ({ page }) => {
         await login(page)

@@ -20,7 +20,7 @@ import {
  * nothing is written outside the UI.
  */
 test.describe('a shipped report', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('is published, cannot be deleted, and a copy edits its formula and saves it unchanged', async ({
         page,

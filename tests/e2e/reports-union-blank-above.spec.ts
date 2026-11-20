@@ -57,7 +57,7 @@ function totals(shots: Shot[]) {
 }
 
 test.describe('reports: union source and blank above', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('sales and returns in one report; a total up to the team leaves the kinds and the Total blank, also on a phone', async ({
         freshMember,

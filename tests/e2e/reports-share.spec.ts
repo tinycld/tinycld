@@ -63,7 +63,7 @@ function rowMenu(page: Page, title: string) {
 }
 
 test.describe('sharing reports', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a viewer sees only their own rows, cannot edit, saves a copy, and loses a removed share at once', async ({
         page,

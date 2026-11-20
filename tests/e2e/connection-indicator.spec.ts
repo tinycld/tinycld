@@ -5,7 +5,7 @@ test.describe('Connection notice', () => {
     // Drives the shortcut-stub package as a stable navigation target; needs it
     // scaffolded. Skip on a plain dev workspace where it isn't present (CI's scaffold
     // step makes it mandatory there — see skipWithoutShortcutStub).
-    test.skip(skipWithoutShortcutStub(), 'shortcut-stub not scaffolded in this workspace')
+    test.skip(() => skipWithoutShortcutStub(), 'shortcut-stub not scaffolded in this workspace')
 
     test('says offline when the browser goes offline and stops on recovery', async ({
         page,

@@ -25,7 +25,7 @@ import {
  * member and its own sales, so related-row totals count only this test's sales.
  */
 test.describe('filtering a report', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('has and has no related rows filter teams by their sales', async ({ freshMember }) => {
         const p = freshMember.page
@@ -529,7 +529,7 @@ async function addSaleElsewhere(
 }
 
 test.describe('where a report run starts', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a run with new params starts at the top of the report', async ({ p }) => {
         await askedAmountReport(p)

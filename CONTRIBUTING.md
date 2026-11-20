@@ -39,7 +39,8 @@ workspace-root `tinycld.packages.ts`) and wires installed members into the
 routes, registry, Go server, and PocketBase migrations.
 
 Validate changes from inside the member you touched: `pnpm exec tinycld-pkg check`
-(biome + tsc + vitest, scoped to that member). For an ecosystem-wide sweep,
+(biome + tsc + vitest, scoped to that member, and, for a member with e2e specs,
+a load check of the specs with `playwright test --list`). For an ecosystem-wide sweep,
 run from `tinycld/`: `pnpm run pkg:check` (every member) or `pnpm run checks`
 (biome + app typecheck + core-isolation and fork-drift checks). The Go side runs `pnpm run test:server`, which uses
 the `no_ui` build tag so PocketBase's admin UI routes are skipped during tests
@@ -59,7 +60,7 @@ available in production.
 - Comments: Only add comments that explain "why", not "what". Avoid trivial comments like `// Delete users` before `deleteFrom('user')` or `// Create profile` before `insertInto('profile')`. If the code is self-explanatory, no comment is needed.
 - Testing: Write unit tests for new features. Only mock through the shared stubs in `tests/` (the `*-stub.cjs` files that `vitest.config.ts` aliases in), do not mock out any of our own components or actions.
 - Run quality checks after any changes:
-   - From inside the member: `pnpm exec tinycld-pkg check` (biome + tsc + vitest, scoped)
+   - From inside the member: `pnpm exec tinycld-pkg check` (biome + tsc + vitest, scoped, and, for a member with e2e specs, a load check of the specs)
    - From `tinycld/` for an ecosystem-wide sweep: `pnpm run checks` (biome + tsc + core-isolation and fork-drift checks) and `pnpm run pkg:test:unit` (vitest across all members)
 - Embrace Type Inference: Do not over-specify types, allow TypeScript to infer types whenever possible.
   - DO NOT USE `any` to pass type checks, even with biome ignore comments.

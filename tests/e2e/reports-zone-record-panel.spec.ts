@@ -83,7 +83,7 @@ function param(page: Page, key: string): string | null {
 }
 
 test.describe('reports: zone times and record panel', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
     test.use({ timezoneId: ZONE, locale: 'en-US' })
 
     test("date-time cells and the zone line are in the reader's time zone", async ({ page }) => {

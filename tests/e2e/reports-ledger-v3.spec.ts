@@ -125,7 +125,7 @@ async function pickIn(page: Page, trigger: string, key: string) {
 }
 
 test.describe('general-ledger: report engine v3', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('an open group starts with its opening row, runs a balance from it and ends with its rollup', async ({
         page,

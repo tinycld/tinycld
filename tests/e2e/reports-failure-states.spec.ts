@@ -70,7 +70,7 @@ async function openTeamTotals(page: Page) {
 }
 
 test.describe('report failure states', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a run that fails shows the error, and Retry runs it again', async ({ page }) => {
         const team = await seedTeam(page)

@@ -69,13 +69,33 @@ describe('buildLintCommand', () => {
 })
 
 describe('buildCheckCommands', () => {
-    it('is lint then typecheck then test (NOT e2e)', () => {
-        const cmds = buildCheckCommands(featurePkg, appDir, true)
+    it('is lint then typecheck then test, with no playwright for a member without e2e specs', () => {
+        const cmds = buildCheckCommands(featurePkg, appDir, true, false)
         expect(cmds.map(c => c.bin)).toEqual(['biome', 'tsc', 'vitest'])
     })
     it('skips the unit tests of a member without a vitest.config.ts', () => {
-        const cmds = buildCheckCommands(featurePkg, appDir, false)
+        const cmds = buildCheckCommands(featurePkg, appDir, false, false)
         expect(cmds.map(c => c.bin)).toEqual(['biome', 'tsc'])
+    })
+    it('ends with a playwright run for a member with e2e specs', () => {
+        const cmds = buildCheckCommands(featurePkg, appDir, true, true)
+        expect(cmds.map(c => c.bin)).toEqual(['biome', 'tsc', 'vitest', 'playwright'])
+    })
+    it('lists the e2e specs with the member playwright.config, from the member dir', () => {
+        const cmds = buildCheckCommands(featurePkg, appDir, true, true)
+        const last = cmds[cmds.length - 1]
+        expect(last.args).toEqual([
+            'test',
+            '--list',
+            '--pass-with-no-tests',
+            '--config',
+            path.join('/ws/doodads', 'playwright.config.ts'),
+        ])
+        expect(last.cwd).toBe('/ws/doodads')
+    })
+    it('lists the e2e specs also for a member without unit tests', () => {
+        const cmds = buildCheckCommands(featurePkg, appDir, false, true)
+        expect(cmds.map(c => c.bin)).toEqual(['biome', 'tsc', 'playwright'])
     })
 })
 

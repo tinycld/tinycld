@@ -153,7 +153,7 @@ async function expectFreshBack(browser: Browser, targetUrl: string, sourceId: st
 }
 
 test.describe('reports: drill', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a figure opens its report as a screen, and the back link names the source', async ({
         page,

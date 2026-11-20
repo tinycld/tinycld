@@ -97,7 +97,7 @@ const textColor = (element: Locator) =>
     })
 
 test.describe('reports: inline and muted groups', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('an inlined group shows its child in its place, and a muted child is drawn muted', async ({
         p,
