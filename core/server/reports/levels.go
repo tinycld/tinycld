@@ -665,9 +665,44 @@ func (lv *level) rowsCells() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		foreign, err := lv.foreignRollup(cp, e)
+		if err != nil {
+			return nil, err
+		}
+		// The helper is for the rows above only: the row's own cell is not
+		// blank, and keeps its figure and code.
+		e.mixed, e.condMixed = orSQL(e.blankFor(), foreign), ""
 		out = append(out, fmt.Sprintf("%s AS v%d", e.sql, idx), mixedCell(e, idx))
 	}
 	return out, nil
+}
+
+// foreignRollup is true on a row of this level whose cell e of a "rows"
+// column is a rollup in another currency than the one the rows above add it
+// in, "" when no row can be. A rollup can be in a currency of its own (a
+// looked-up amount's on each row, an amount param's), and the rows above have
+// one code for their sum, so adding such a row would show EUR cents as USD
+// (R3). A missing code is not a second currency (currencyGuard).
+func (lv *level) foreignRollup(cp *colPlan, e expr) (string, error) {
+	if !lv.showsRollup(cp) || e.typ != Money || e.cur.none() {
+		return "", nil
+	}
+	at := cp.at + ".total"
+	d, err := lv.detailCell(cp, at)
+	if err != nil {
+		return "", err
+	}
+	cur, err := lv.c.totalCurrency(d, at)
+	if err != nil {
+		return "", err
+	}
+	// A param's code is known only in the run, so it is compared on each row.
+	if cur.none() || e.cur.param == "" && cur.param == "" && e.cur.sameRead(cur) {
+		return "", nil
+	}
+	lc := &levelCtx{lv: lv, visiting: lv.visiting, rows: lv.sumsFrame}
+	own, sum := lc.currencySQL(e.cur), lc.currencySQL(cur)
+	return fmt.Sprintf("((%s) IS NOT NULL AND %s IS NOT %s AND %s IS NOT NULL AND %s IS NOT NULL)", e.sql, own, sum, own, sum), nil
 }
 
 // havingAbove is the deepest level above level n whose group has a having, 0
@@ -948,13 +983,24 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 		}
 		return e.withoutValue(), nil
 	}
-	if cp.col.Rollup != nil {
+	if lc.lv.showsRollup(cp) {
 		return lc.rollup(cp)
 	}
 	if cp.col.Total == TotalRows {
 		return lc.rowsTotal(cp)
 	}
 	return lc.recompute(cp, at)
+}
+
+// showsRollup is true where a column's cell on this level is its rollup: on
+// every level, or, for a "rows" column, on the innermost group only. The
+// levels above that group add its cells (rowsTotal), so a rollup that reads
+// the group's record still totals.
+func (lv *level) showsRollup(cp *colPlan) bool {
+	if cp.col.Rollup == nil {
+		return false
+	}
+	return cp.col.Total != TotalRows || lv.n == len(lv.c.p.groups)
 }
 
 // rollup is a column's cell on this level from its rollup formula (F6, R6),
@@ -1033,9 +1079,10 @@ func (lc *levelCtx) rowsTotal(cp *colPlan) (expr, error) {
 	idx := lv.c.p.index(cp)
 	if lv.n < len(lv.c.p.groups) {
 		total := expr{sql: lv.childSum(fmt.Sprintf("v%d", idx)), typ: d.typ}
-		if d.blankFor() != "" {
+		if d.blankFor() != "" || cp.col.Rollup != nil {
 			// A child row that is blank for mixed currencies makes its sum
-			// blank too (rowsCells gives each child row its vmx helper).
+			// blank too (rowsCells gives each child row its vmx helper). A
+			// rollup can be blank where the detail cell never is.
 			total.mixed = lv.childSum(fmt.Sprintf("vmx%d", idx)) + " > 0"
 			total.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", total.mixed, total.sql)
 		}
@@ -1291,7 +1338,7 @@ func (lv *level) readsRowValue(n *Node, inAggregate bool, seen map[string]bool) 
 			return true
 		}
 		// A column with a rollup shows the rollup on the level's rows.
-		if cp != nil && cp.col.Rollup != nil {
+		if cp != nil && lv.showsRollup(cp) {
 			seen[n.Col] = true
 			defer delete(seen, n.Col)
 			return lv.readsRowValue(cp.col.Rollup, false, seen)

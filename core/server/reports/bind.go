@@ -371,8 +371,10 @@ func (b *binder) columns(p *plan) {
 		}
 		if c.Rollup != nil {
 			switch {
-			case c.Total == TotalRows:
-				b.bad(at+".rollup", `a rollup replaces the column's totals: it does not go with total "rows"`)
+			case c.Total == TotalRows && len(p.spec.Groups) == 0:
+				b.bad(at+".rollup", `with total "rows" a rollup is the cell of the innermost group's rows: the report needs a group`)
+			case c.Total == TotalRows && (p.spec.Pivot != nil || len(p.spec.Layout) > 0):
+				b.bad(at+".rollup", `a rollup does not go with total "rows" in a report with a pivot or a layout`)
 			case cp.nest > 0:
 				b.bad(at+".rollup", "a child row column has no totals to replace")
 			}
