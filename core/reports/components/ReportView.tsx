@@ -1,4 +1,5 @@
 import type { ToolbarItem } from '@tinycld/core/components/ResponsiveToolbar'
+import { type ScopeOwner, useShortcutScope } from '@tinycld/core/lib/shortcuts/scopes'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
 import { Platform, View } from 'react-native'
@@ -199,8 +200,8 @@ interface ReportTopProps {
     isSortMenuShown: boolean
     layoutNotice: string | undefined
     isCompact: boolean
-    /** Refresh has a shortcut; false while the report is covered. */
-    hasRefreshShortcut: boolean
+    /** The `list` scope owner of Refresh's shortcut; not given while the report is covered. */
+    refreshScope: ScopeOwner | undefined
 }
 
 // Everything above the rows: the header, the chips, the manual band, the notices
@@ -210,7 +211,7 @@ function ReportTop({
     isSortMenuShown,
     layoutNotice,
     isCompact,
-    hasRefreshShortcut,
+    refreshScope,
 }: ReportTopProps) {
     // The status slot says so at every width, also when Export is folded into "⋯" (D3).
     const busyLabel = model.export?.isPreparing ? 'Preparing…' : undefined
@@ -226,7 +227,7 @@ function ReportTop({
                 busyLabel={busyLabel}
             />
             <ReportControls model={model} isSortMenuShown={isSortMenuShown} />
-            <ReportManualBand run={model.run} hasShortcut={hasRefreshShortcut} />
+            <ReportManualBand run={model.run} scopeOwner={refreshScope} />
             <ReportNotices
                 notices={model.notices}
                 layoutNotice={layoutNotice}
@@ -280,6 +281,10 @@ export function ReportView({
     /** The side covers the report as a page (the drill panel under 1360 px). */
     isCovered?: boolean
 }) {
+    // Pushed at mount so a dialog's modal scope, opened later, stays above it. A
+    // host screen that embeds a report and has its own scoped shortcuts must set
+    // `activeUnder: ['list']` on them to stay active under this scope.
+    const scopeOwner = useShortcutScope('list')
     const table = useTableLayout(model)
     const isSortMenuShown = table.layout.kind === 'blocks'
     // The table's layout notice joins the run's in the band, once the table is drawn.
@@ -292,7 +297,7 @@ export function ReportView({
             layoutNotice={layoutNotice}
             isCompact={isCompact}
             // A covered report is not in view, so its Refresh takes no key.
-            hasRefreshShortcut={!isCovered}
+            refreshScope={isCovered ? undefined : scopeOwner}
         />
     )
     // D9: on a phone the top area is the list's header and scrolls away with the rows.
