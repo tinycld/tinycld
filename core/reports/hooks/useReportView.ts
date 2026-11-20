@@ -355,7 +355,9 @@ export function useReportView(input: ReportViewInput) {
         zoneWords: zoneLine(columns),
         allColumns,
         notices: run.result?.notices ?? NO_NOTICES,
-        isUpdating: run.isUpdating,
+        // The reader's Refresh runs the same body again, which is not a changed run;
+        // every "Updating…" slot (the header's, the builder's) reads this.
+        isUpdating: run.isUpdating || run.isRefreshing === true,
         // While the builder lies over the view (a sheet on a phone, a drawer on a
         // tablet) it shows "Updating…" in its own header; the view's slot then
         // stays, empty and silent, so one live region speaks.

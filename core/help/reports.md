@@ -206,6 +206,13 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
   group is open, the same button reads **Collapse all**.
 - A report that is open stays current: when someone changes the data it reads, it
   runs again.
+- A report that reads a very large list does not run again by itself. It says so
+  under the chips: **This report does not update by itself. Press Refresh to see new
+  changes.** Select **Refresh** to run it again; the button reads **Refreshing…**
+  while it runs, and the rows you loaded stay. With a keyboard, press R while the
+  report itself is in view (not in a panel beside it, and not while you type in a
+  box). On a phone, scroll back to the top to reach the button. A report you build
+  over such a list works the same way, and so does a copy of a report.
 
 ## Dates with a time
 

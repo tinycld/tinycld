@@ -187,6 +187,11 @@ export interface RunResult {
     rows: ResultRow[]
     notices: Notice[]
     topics: string[]
+    /**
+     * The run read a source that is too large to follow, so it carries no data
+     * topics and does not run again by itself. The reader runs it again with Refresh.
+     */
+    manual?: boolean
     /** The source's heading, printed above the title; absent: the organization's name. */
     heading?: string
     page: RunPage | null

@@ -35,7 +35,18 @@ describe('runView', () => {
             isUpdating: false,
             heldRows: [],
             topics: [],
+            isManual: false,
         })
+    })
+
+    it('says a run is manual only when its figures carry the mark', () => {
+        const manual: RunOutcome = { kind: 'ok', result: { ...result([]), manual: true } }
+        expect(runView(query({ pages: [manual] })).isManual).toBe(true)
+        expect(runView(query({ pages: [ok()] })).isManual).toBe(false)
+        // The joined pages keep the mark (mergePages spreads the last page).
+        expect(runView(query({ pages: [manual, manual] })).isManual).toBe(true)
+        // A refusal shows no figures, so there is nothing to refresh.
+        expect(runView(query({ pages: [manual, invalid] })).isManual).toBe(false)
     })
 
     // R8: a failed next page keeps the pages already shown and the run ready; the

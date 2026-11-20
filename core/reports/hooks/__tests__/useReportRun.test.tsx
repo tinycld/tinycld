@@ -294,6 +294,57 @@ describe('useReportRun', () => {
     })
 })
 
+describe('useReportRun of a manual run', () => {
+    const manual = (rows: ResultRow[], next = ''): RunResult => ({
+        ...result(rows, next),
+        topics: [],
+        manual: true,
+    })
+
+    it('Refresh runs the report again, once for two presses, and says so while it runs', async () => {
+        let asked = 0
+        const second = held(manual([row('d:1'), row('d:2')]))
+        answer = () => {
+            asked++
+            return asked === 1 ? Promise.resolve(manual([row('d:1')])) : second.promise
+        }
+        const { result: run } = renderRun()
+        await waitFor(() => expect(run.current.state).toBe('ready'))
+        expect(run.current.isManual).toBe(true)
+        expect(run.current.isRefreshing).toBe(false)
+        act(() => {
+            run.current.refresh?.()
+            run.current.refresh?.()
+        })
+        await waitFor(() => expect(asked).toBe(2))
+        expect(run.current.isRefreshing).toBe(true)
+        expect(rowIds(run.current)).toEqual(['d:1'])
+        await act(async () => second.release())
+        await waitFor(() => expect(run.current.isRefreshing).toBe(false))
+        expect(rowIds(run.current)).toEqual(['d:1', 'd:2'])
+        expect(asked).toBe(2)
+    })
+
+    it('Refresh keeps the pages loaded and the manual mark', async () => {
+        const asks: string[] = []
+        answer = sent => {
+            const from = sent.options.cursor ?? ''
+            asks.push(from)
+            return Promise.resolve(from === '' ? manual([row('d:1')], 'n1') : manual([row('d:2')]))
+        }
+        const { result: run } = renderRun()
+        await waitFor(() => expect(run.current.hasMore).toBe(true))
+        act(() => run.current.loadMore())
+        await waitFor(() => expect(rowIds(run.current)).toEqual(['d:1', 'd:2']))
+        const before = asks.length
+        act(() => run.current.refresh?.())
+        await waitFor(() => expect(asks.length).toBeGreaterThan(before))
+        await waitFor(() => expect(run.current.isRefreshing).toBe(false))
+        expect(rowIds(run.current)).toEqual(['d:1', 'd:2'])
+        expect(run.current.isManual).toBe(true)
+    })
+})
+
 // F11 and F7: a fold keeps the reader's place, and loads no further than that place.
 // With every group closed the first page holds every group row of the report; the
 // place is the group row in view (the list reports its top row), not the last one.
