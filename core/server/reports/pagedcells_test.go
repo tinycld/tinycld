@@ -148,6 +148,24 @@ const runningLookup = `{"version":4,"source":"zoo.ledger_lines","columns":[
 		"value":{"path":[{"field":"id"}]},"pick":"count"}}],
 	"sort":[{"formula":{"path":[{"field":"date"}]}},{"formula":{"path":[{"field":"position"}]}}]}`
 
+// markedByRunningLookup is runningLookup with a where that also reads a sum
+// that meets two currencies (with withMixedCash's lines): such a where is
+// probed below the cut, on every row, to name the lookup in the run's notice,
+// and the probe reads the running value. The lines cell is a layer nothing
+// below the cut reads, which would move above it: the fallback is what keeps
+// the select whole. (A sort key over a lookup of a running
+// value is refused: a running value is not a sort key.)
+const markedByRunningLookup = `{"version":4,"source":"zoo.ledger_lines","columns":[
+	{"id":"date","label":"Date","path":[{"field":"date"}]},
+	{"id":"lines","label":"Lines","formula":` + glCount + `},
+	{"id":"run","label":"Run","formula":{"op":"runningSum","args":[{"path":[{"field":"position"}]}]}},
+	{"id":"below","label":"Below","formula":{"op":"lookup","source":"zoo.ledger_lines",
+		"where":{"op":"or","args":[
+			{"op":"lt","args":[{"path":[{"field":"position"}]},{"col":"run"}]},
+			{"op":"gt","args":[{"op":"lookup","source":"zoo.ledger_lines","pick":"sum","value":{"path":[{"field":"debit"}]}},{"value":0}]}]},
+		"value":{"path":[{"field":"id"}]},"pick":"count"}}],
+	"sort":[{"formula":{"path":[{"field":"date"}]}},{"formula":{"path":[{"field":"position"}]}}]}`
+
 func TestCellsComputedForThePageKeepTheResult(t *testing.T) {
 	z := newZoo(t)
 	withBalanceZoo(t, z)
@@ -222,7 +240,7 @@ func TestGroupsWithChildRowsComputeTheirCellsForThePage(t *testing.T) {
 	if !strings.Contains(sql[cut:], ") d ORDER BY d.__g, ") {
 		t.Fatalf("the page's rows are not put in order again:\n%s", sql)
 	}
-	if !strings.Contains(sql[from:cut], " AS ww0") && !strings.Contains(sql[:from], " AS ww0") {
+	if !strings.Contains(sql[from:cut], " AS ww0") || !strings.Contains(sql[from:cut], " OVER (") {
 		t.Fatalf("the running value is not computed below the page cut:\n%s", sql)
 	}
 	legacySQL.cellsBeforeThePage = true
@@ -259,6 +277,30 @@ func TestALookupOfARunningValueIsComputedAboveTheCutOverTheRunningValue(t *testi
 	}
 	if strings.Contains(sql[from:cut], " AS wh0") {
 		t.Fatalf("the lookup's layer is computed below the page cut:\n%s", sql)
+	}
+}
+
+// A lookup whose where reads a running value and a sum that meets two
+// currencies is probed below the cut (its mark is read before the page is
+// cut), and the probe reads the running value: no running value can be named
+// there, so the statement is the whole select, and its pages are still the
+// old select's.
+func TestAProbedLookupOfARunningValueKeepsTheWholeSelect(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	withMixedCash(t, z)
+	opts := Options{Today: "2026-07-15", Limit: 2}
+	seen := observeReads(t)
+	z.run(t, "ann", markedByRunningLookup, opts, nil)
+	sql := detailStatement(t, *seen)
+	if strings.Contains(sql, "FROM (SELECT * FROM (") || strings.Contains(sql, " AS ww0") {
+		t.Fatalf("the select is cut, or names a running value:\n%s", sql)
+	}
+	if !strings.Contains(sql, " OVER (") || !strings.Contains(sql, " AS __wmx0") {
+		t.Fatalf("the running value or the probe mark is not in the statement:\n%s", sql)
+	}
+	if got := requirePagesSameAsLegacy(t, z, markedByRunningLookup, opts, nil); got < 2 {
+		t.Fatalf("%d pages, want at least 2", got)
 	}
 }
 
