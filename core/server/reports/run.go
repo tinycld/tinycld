@@ -233,6 +233,11 @@ type Row struct {
 	LabelType     FieldType `json:"labelType,omitempty"`
 	LabelValue    any       `json:"labelValue,omitempty"`
 	LabelCurrency string    `json:"labelCurrency,omitempty"`
+	// LabelTemplate is set on an opening row whose label names a value of the
+	// run (Opening.LabelValue): the label with LabelValueToken where the value
+	// goes. LabelType and LabelValue then hold the value, which a view
+	// formats and puts in the token's place; Label has it as plain text.
+	LabelTemplate string `json:"labelTemplate,omitempty"`
 }
 
 type Notice struct {
@@ -335,6 +340,9 @@ type runner struct {
 	mixedConditions []string
 	// headings are the run's column headings by column id (readHeadings).
 	headings map[string]*ColumnHeading
+	// openingLabels are the run's opening label values by group level
+	// (readHeadings); a level whose value is blank on this run has none.
+	openingLabels map[int]*ColumnHeading
 	// A run that pages its group rows (pagedGroups) reads its cursor into
 	// groupCur, with each level's order terms (groupShape), the detail sort
 	// keys (groupKeys) and the fingerprint its cursors carry (groupFP).
@@ -2435,6 +2443,9 @@ func (c *compiler) compileAll() error {
 		return err
 	}
 	if _, err := c.headings(s); err != nil {
+		return err
+	}
+	if _, err := c.openingLabels(s); err != nil {
 		return err
 	}
 	for _, d := range p.spec.Params {

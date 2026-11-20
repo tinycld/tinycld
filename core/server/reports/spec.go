@@ -337,9 +337,22 @@ const GroupBlankSkip = "skip"
 // by column id, each a formula on the group's level. A column it does not
 // name is blank on the row.
 type Opening struct {
-	Label string           `json:"label"`
-	Cells map[string]*Node `json:"cells,omitempty"`
+	Label string `json:"label"`
+	// LabelValue is a value of the run the label names, a formula of params
+	// and values only (as Column.Heading): a text, a day or a number. Label
+	// then holds LabelValueToken once, where the value goes. The row carries
+	// the value typed (Row.LabelTemplate), so a view writes it in the reader's
+	// form. A value that is blank on a run leaves the token out of the label.
+	LabelValue *Node `json:"labelValue,omitempty"`
+	// LabelBucket cuts a LabelValue that is a day to its day, month, quarter,
+	// year or fiscalYear, as Group.Bucket cuts a group's key: the label then
+	// names the period ("Jul 2026"), not the day.
+	LabelBucket string           `json:"labelBucket,omitempty"`
+	Cells       map[string]*Node `json:"cells,omitempty"`
 }
+
+// LabelValueToken stands for the label value in Opening.Label.
+const LabelValueToken = "{value}"
 
 // cellIDs are the opening's cell column ids in order, so every walk over its
 // cells reports problems in one order.

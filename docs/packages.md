@@ -1497,6 +1497,14 @@ away before the run ends.
   `total`. An `opening` row (id `opening:<group key JSON>`) is the first row
   under an opened group whose level has `opening`; it carries only the cells
   its `cells` name, and its `section` is the group row.
+  When the level's `opening` has a `labelValue` that has a value on the run,
+  the row also carries `labelTemplate` (the spec's label, with `{value}`),
+  `labelType` and `labelValue` (a text, a day, a number, or a bucket key such
+  as `"2026-11"` with `labelType` `month`). The view formats the value as it
+  formats any typed label and puts it in place of `{value}` ("Balance before
+  Nov 2026"); `label` holds the same text with the raw value. With no value on
+  the run the row has none of the three, and `label` is the spec's label
+  without `{value}`.
 - `options.sort` (`[{ col, dir }]`, at most 10) orders detail rows inside their
   groups before the spec's own sort keys; group order and running values keep
   the spec's order. A `ResultColumn` with `sortable: true` accepts it. A sort
@@ -1558,7 +1566,7 @@ away before the run ends.
 | formula leaf `{ outer: [path] }` | Inside a lookup's `where` or `value`: the report row's value of a to-one path of the base source (a nested lookup still reads the report's row). Blank on group, subtotal and total rows. Refused outside a lookup and on a to-many path. |
 | formula leaf `{ param, bound: "from" \| "to" }` | The first or last day of a date range param, as a `Date`. Blank (not unset) on an unset range or on All dates, so a comparison with it matches no row. |
 | range preset `allDates` | A date range with no bounds: `between` on it matches every row, a row with a blank day included. The resolved param has no `from` or `to`. |
-| `groups[].opening` | `{ label, cells? }`: the opening row of each opened group of the level. Each cell is a formula on the level (totals, records of this and outer groups, lookups, params) whose type and currency are its column's; not on the first column; not on a pivot's last level. A level with `opening` lets a group with no base rows open (a fill group included). |
+| `groups[].opening` | `{ label, labelValue?, labelBucket?, cells? }`: the opening row of each opened group of the level. Each cell is a formula on the level (totals, records of this and outer groups, lookups, params) whose type and currency are its column's; not on the first column; not on a pivot's last level. A level with `opening` lets a group with no base rows open (a fill group included). `labelValue` is a formula of params and values only (as `columns[].heading`: a text, a day or a number) that the label names: `label` then holds `{value}` exactly once, with other text. `labelBucket` (`day`, `month`, `quarter`, `year`, `fiscalYear`; only on a `labelValue` that is a day, not a date-time) cuts the day to its period, so `{ label: "Balance before {value}", labelValue: { param: "period", bound: "from" }, labelBucket: "month" }` reads "Balance before Nov 2026". A value that is blank on the run (an unset param) leaves `{value}` out: only the token and the spaces around it go, so write the label so that it reads well without it ("Balance before {value}", not "Balance ({value})"). Refused (400): `{value}` in a label with no `labelValue`, a `labelValue` whose label does not hold `{value}` exactly once, or holds no other text (`groups.<i>.opening.label`); a `labelBucket` with no `labelValue`, an unknown one, or one on a value that is not a day (`groups.<i>.opening.labelBucket`); a `labelValue` that reads a row, a column or a total, or is not a text, a day or a number (`groups.<i>.opening.labelValue`). |
 | `columns[].rollup` | A formula shown on group, subtotal and total rows (and layout sections) in place of the column's total; detail rows keep the column's value. Blank where it reads a value the row does not have (a group's record on the Total). With `total: "rows"` the rollup is the cell of the innermost group's rows only, and every row above them adds the rows shown under it (a blank cell adds 0; a cell that is blank for two currencies, or is in another currency than the sum's, makes that sum blank); that pair needs a group and is refused in a report with a pivot or a layout. Refused on a child row column, on a pivot's cell column and on a column a group level groups by with no `bucket`. |
 | run `options.sort` | See "What a report returns". |
 

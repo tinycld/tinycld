@@ -160,6 +160,7 @@ func walkSpecFormulas(p *plan, visit func(n *Node, at string, columnRoot bool)) 
 			walk(g.Fill.Where, at+".fill.where", false)
 		}
 		if g.Opening != nil {
+			walk(g.Opening.LabelValue, at+".opening.labelValue", false)
 			for _, id := range g.Opening.cellIDs() {
 				walk(g.Opening.Cells[id], at+".opening.cells."+id, false)
 			}
