@@ -39,7 +39,12 @@ func (c *compiler) filterBounds(r *rowsCTE) (string, error) {
 	// a bound compares the stored value as text.
 	stored := func(name string, kinds ...string) bool {
 		field := col.Fields.GetByName(name)
-		return field != nil && slices.Contains(kinds, field.Type())
+		if field == nil || !slices.Contains(kinds, field.Type()) {
+			return false
+		}
+		// A multi-select relation holds a JSON array, never an id.
+		rel, isRel := field.(*core.RelationField)
+		return !isRel || !rel.IsMultiple()
 	}
 	terms := []*Node{f}
 	if f.Op == "and" {

@@ -205,6 +205,73 @@ func TestFilterBoundsKeepADayWithATimeAndLeaveTheFilterToDecide(t *testing.T) {
 	}
 }
 
+// A multi-select relation column holds a JSON array, so "column IN list" would
+// drop rows the filter keeps. CheckSources refuses a to-one link over such a
+// column (relationCheck: "holds many values"); this source is registered with
+// no check, as withCrates does, so the bound's own guard is what is tested.
+func TestFilterBoundsLeaveAMultiSelectLinkAlone(t *testing.T) {
+	z := newZoo(t)
+	boxes := core.NewBaseCollection("zoo_boxes")
+	boxes.ListRule, boxes.ViewRule = rule(`@request.auth.id != ""`), rule(`@request.auth.id != ""`)
+	boxes.Fields.Add(
+		&core.RelationField{Name: "animals", CollectionId: z.recs["leo"].Collection().Id, MaxSelect: 5},
+		&core.TextField{Name: "tag"},
+	)
+	z.save(t, boxes)
+	z.rec(t, "one", "zoo_boxes", map[string]any{"tag": "one", "animals": []string{z.id("leo")}})
+	z.rec(t, "two", "zoo_boxes", map[string]any{"tag": "two", "animals": []string{z.id("leo"), z.id("mo")}})
+	RegisterSource(Source{
+		Key: "zoo.boxes", Collection: "zoo_boxes", Label: "Boxes",
+		Fields: []Field{{Key: "tag", Label: "Tag", Type: Text, Aggregates: MinMax}},
+		Links:  []Link{{Key: "animals", Label: "Animals", Target: "zoo.animals", Cardinality: ToOne, Field: "animals"}},
+	})
+	spec := fmt.Sprintf(`{"version":4,"source":"zoo.boxes",
+		"params":[{"id":"pets","type":"choice","label":"Pets","multiple":true,"options":[{"value":%q,"label":"Leo"}]}],
+		"columns":[{"id":"tag","path":[{"field":"tag"}]},{"id":"pet","path":[{"link":"animals"}]}],
+		"filter":{"op":"in","args":[{"path":[{"link":"animals"}]},{"param":"pets"}]},
+		"sort":[{"col":"tag"}]}`, z.id("leo"))
+	params := map[string]string{"pets": fmt.Sprintf(`[%q]`, z.id("leo"))}
+	seen := observeReads(t)
+	z.run(t, "ann", spec, Options{}, params)
+	requireRowsWhere(t, *seen, false, "[[t1.animals]] IN ")
+	requireSameAsLegacy(t, z, "ann", spec, Options{}, params, &legacySQL.noFilterBounds)
+}
+
+// A dry compile has no database and no reader: it writes no bound and reads
+// no statement. A bound would read the collection through the app, which a
+// bare app has no database for.
+func TestADryCompileOfAFilteredSpecWritesNoBound(t *testing.T) {
+	z := newZoo(t)
+	withCrates(t, z)
+	app := bareApp(t)
+	seen := observeReads(t)
+	spec, _, err := Load([]byte(cratesSpec(z)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, se := bind(app, spec)
+	if se != nil {
+		t.Fatal(se)
+	}
+	c := newCompiler(p, nil, nil, nil)
+	if !c.dry() {
+		t.Fatal("a compiler with no app and no reader is not dry")
+	}
+	r, err := c.rows(newStmt(nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.bounds != "" {
+		t.Fatalf("a dry compile wrote the bound %q", r.bounds)
+	}
+	if err := Validate(app, spec); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("a dry compile read the database: %v", *seen)
+	}
+}
+
 // A union has no one stored column to bound: w's WHERE is the filter alone.
 func TestFilterBoundsLeaveAUnionAlone(t *testing.T) {
 	z := newUnionZoo(t)
