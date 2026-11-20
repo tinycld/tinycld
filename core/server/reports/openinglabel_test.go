@@ -91,10 +91,15 @@ func TestAnOpeningLabelValueByBucket(t *testing.T) {
 func TestAnOpeningLabelNamesATextOrAComputedValue(t *testing.T) {
 	z := newZoo(t)
 	f := newExportFormatter(exportDisplay{}, "UTC", false)
-	text := z.run(t, "ann", gramsWithOpening(`{"label":"Before {value}","labelValue":{"param":"note"}}`), Options{}, map[string]string{"note": `"the $1 audit"`})
+	text := z.run(t, "ann", gramsWithOpening(`{"label":"Before {value}","labelValue":{"param":"note"}}`), Options{}, map[string]string{"note": `"the $1 $& audit"`})
 	r := openingRows(t, text)[0]
-	if r.Label != "Before the $1 audit" || r.LabelType != Text || r.LabelValue != "the $1 audit" || f.RowLabel(r) != "Before the $1 audit" {
+	if r.Label != "Before the $1 $& audit" || r.LabelType != Text || r.LabelValue != "the $1 $& audit" || f.RowLabel(r) != "Before the $1 $& audit" {
 		t.Fatalf("text opening row = %+v, exported %q", r, f.RowLabel(r))
+	}
+	// A number is a value of the run too.
+	r = openingRows(t, z.run(t, "ann", gramsWithOpening(`{"label":"Before {value}","labelValue":{"value":12}}`), Options{}, nil))[0]
+	if r.Label != "Before 12" || r.LabelType != Number || fmt.Sprint(r.LabelValue) != "12" || f.RowLabel(r) != "Before 12" {
+		t.Fatalf("number opening row = %+v, exported %q", r, f.RowLabel(r))
 	}
 	// The first day of a period: the bound of a date range is a day too.
 	period := `{"version":4,"source":"zoo.feedings","params":[{"id":"period","type":"dateRange"}],
@@ -131,6 +136,28 @@ func TestAnOpeningLabelWithNoValueLeavesTheTokenOut(t *testing.T) {
 				}
 				if got := f.RowLabel(r); got != "Balance before (opening)" {
 					t.Fatalf("exported label = %q", got)
+				}
+			}
+		})
+	}
+}
+
+// Only the token and the spaces around it go; the rest of the label keeps its
+// spacing, and a token at an end leaves no space there.
+func TestAnOpeningLabelWithNoValueKeepsTheRestOfTheLabelAsItIs(t *testing.T) {
+	z := newZoo(t)
+	cases := map[string]struct{ label, want string }{
+		"double space away from the token": {"Balance  before {value} (opening)", "Balance  before (opening)"},
+		"token at the start":               {"{value} opening balance", "opening balance"},
+		"token at the end":                 {"Balance before  {value}", "Balance before"},
+		"spaces around the token":          {"Balance   {value}   (opening)", "Balance (opening)"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			spec := gramsWithOpening(`{"label":"` + c.label + `","labelValue":{"param":"note"}}`)
+			for _, r := range openingRows(t, z.run(t, "ann", spec, Options{}, nil)) {
+				if r.Label != c.want {
+					t.Fatalf("label = %q, want %q", r.Label, c.want)
 				}
 			}
 		})
