@@ -1617,17 +1617,18 @@ describe('spec version 3 in the builder', () => {
         expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(spec))
         expect(draftIssues(draft, CATALOG).filter(issue => issue.path[2] === 'opening')).toEqual([])
         // Nothing but the label value reads the param: it stays.
-        const onlyLabel = {
-            ...draft,
-            filter: emptyGroup(),
-            columns: draft.columns
-                .map(c => ({ ...c, rollup: null }))
-                .filter(c => c.id !== 'balance'),
-            groups: draft.groups.map(g => ({
-                ...g,
-                opening: g.opening ? { ...g.opening, cells: {} } : null,
-            })),
+        const { filter: _filter, ...noFilter } = spec
+        const onlyLabelSpec: ReportSpec = {
+            ...noFilter,
+            columns: spec.columns.filter(c => c.id !== 'balance'),
+            groups: [
+                {
+                    ...(spec.groups?.[0] ?? { id: 'byTeam', col: 'team' }),
+                    opening: { ...opening, cells: {} },
+                },
+            ],
         }
+        const onlyLabel = draftFromSpec(onlyLabelSpec, META, CATALOG)
         expect(keptParams(onlyLabel).map(p => p.id)).toEqual(['period'])
     })
 
@@ -1653,6 +1654,28 @@ describe('spec version 3 in the builder', () => {
         expect(issueOf('Balance before {value}')).toBe(
             'This row has no value to name: take {value} out of the label'
         )
+    })
+
+    it('shows a bad opening label together with a bad opening cell, each at its own path', () => {
+        const draft = draftFromSpec(V3, META, CATALOG)
+        const from: FormulaDraft = { kind: 'fixed', node: { param: 'period', bound: 'from' } }
+        const opening = setOpeningCell(
+            { label: 'Balance before', labelValue: from, cells: {} },
+            'team',
+            { kind: 'editable', node: { value: null } }
+        )
+        const both = { ...draft, groups: draft.groups.map(g => ({ ...g, opening })) }
+        const issues = draftIssues(both, CATALOG).filter(issue => issue.path[2] === 'opening')
+        expect(issues).toEqual([
+            {
+                path: ['groups', 0, 'opening', 'label'],
+                message: 'Write {value} once, where the row’s value goes',
+            },
+            {
+                path: ['groups', 0, 'opening', 'cells', 'team'],
+                message: "The opening row's label fills the first column",
+            },
+        ])
     })
 
     it('"A formula" on group and total rows writes the column rollup, and the total takes it out', () => {

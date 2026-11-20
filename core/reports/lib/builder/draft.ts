@@ -1036,8 +1036,8 @@ function openingIssues(draft: BuilderDraft): Issue[] {
         if (draft.pivot.on && i === draft.groups.length - 1)
             return [{ path: at, message: OPENING_PIVOT }]
         const label = openingLabelIssue(group.opening)
-        if (label) return [{ path: [...at, 'label'], message: label }]
-        return Object.keys(group.opening.cells).flatMap((col): Issue[] => {
+        const labelIssues: Issue[] = label ? [{ path: [...at, 'label'], message: label }] : []
+        const openingCellIssues = Object.keys(group.opening.cells).flatMap((col): Issue[] => {
             const path = [...at, 'cells', col]
             const column = byId.get(col)
             if (!column) return [{ path, message: `The report has no column "${col}"` }]
@@ -1045,6 +1045,7 @@ function openingIssues(draft: BuilderDraft): Issue[] {
             if (nestDepth(column) > 0) return [{ path, message: OPENING_NESTED }]
             return []
         })
+        return [...labelIssues, ...openingCellIssues]
     })
 }
 
