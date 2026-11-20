@@ -10,4 +10,7 @@ var legacySQL struct {
 	// noFilterBounds leaves the bounds on the base table's stored columns out
 	// of w's WHERE, as before filterBounds wrote them.
 	noFilterBounds bool
+	// inlineDetailRows keeps w inline in every detail statement, as before
+	// materializeShared marked the ones whose CTEs read it twice or more.
+	inlineDetailRows bool
 }

@@ -644,22 +644,32 @@ func (r *rowsCTE) render() string {
 // rowsRead finds a read of the report rows CTE w (not ws or w2).
 var rowsRead = regexp.MustCompile(`(?:FROM|JOIN) w\b`)
 
-// materializeShared makes w MATERIALIZED when a group statement (its body
-// names __level) reads it twice or more (one read per group level, the
-// fills): SQLite otherwise computes the rows, and reads the rule under them,
-// once per read. A detail page keeps w inline, also when a probe reads it a
-// second time, so it can stop at its LIMIT. The rule CTEs are never
-// materialized: a correlated lookup must keep searching the table by its
-// index.
+// materializeShared makes w MATERIALIZED when a statement reads it twice or
+// more: SQLite otherwise computes the rows, and reads the rule under them,
+// once per read. A group statement (its body names __level) counts every
+// read (one per group level, the fills). Any other statement (a detail page,
+// the Total row's statement, a read of the rows shown now, a probe of the
+// conditions) counts only the reads of its other CTEs (a section's fills,
+// its aggregates, the sorted rows, the levels under the Total row): two of
+// them mean the statement computes every row of w before its page, so one
+// copy costs less than a read each. The count includes a CTE the body does
+// not reach; there the cost is the copy alone. A detail page whose only
+// reads are its body's (the page, a probe) keeps w inline, so it can stop at
+// its LIMIT. The rule CTEs are never materialized: a correlated lookup must
+// keep searching the table by its index.
 func materializeShared(ctes []string, body string) []string {
-	if !strings.Contains(body, "__level") {
+	grouped := strings.Contains(body, "__level")
+	if !grouped && legacySQL.inlineDetailRows {
 		return ctes
 	}
 	for i, cte := range ctes {
 		if !strings.HasPrefix(cte, "w AS (") {
 			continue
 		}
-		reads := len(rowsRead.FindAllString(body, -1))
+		reads := 0
+		if grouped {
+			reads = len(rowsRead.FindAllString(body, -1))
+		}
 		for j, other := range ctes {
 			if j != i {
 				reads += len(rowsRead.FindAllString(other, -1))
