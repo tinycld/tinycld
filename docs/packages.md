@@ -1605,7 +1605,11 @@ under the whole value, `minWidth` only widens and its three keywords (`auto`,
 `<col>` is a spec column id. A pivot's cell columns (one per pivot value) all take
 the fit of their spec column.
 
-A param of type `amount` holds cents and a currency. A multiple choice param
+A param of type `amount` holds cents and a currency. Where it meets an amount
+whose code is known and differs, a value made of both (or a ratio of two
+amounts in two codes) is blank for two currencies: it shows no code, a total
+over it is blank, and the run adds a `mixedCurrency` notice. An amount with no
+code is not a second currency. A multiple choice param
 may hold a whole group as `{"group": "<value>"}`; the server expands it under
 the reader's rules at run time. Report option lists and group keys bind as one
 JSON parameter, so there is no SQL variable limit on them.

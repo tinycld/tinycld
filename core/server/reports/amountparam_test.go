@@ -235,8 +235,9 @@ func TestARatioAndATotalKeepToTheParamsCurrency(t *testing.T) {
 	requireRows(t, res, "label", "lion", "Total", "lion", "zebra", "Total")
 	requireRows(t, res, "share", nil, nil, 3.5, 1.0, 4.5)
 	// Per row: 1000-1000 and 1000-2500 for the lion, 1000-700 and 1000-300 for
-	// the zebra; the EUR row's amount is blank, so its total adds nothing.
-	requireRows(t, res, "left", int64(0), int64(0), int64(-1500), int64(1000), int64(-500))
+	// the zebra; the EUR row's amount is blank for two currencies, so its
+	// totals are blank too (R3).
+	requireRows(t, res, "left", nil, nil, int64(-1500), int64(1000), int64(-500))
 }
 
 // An amount param in an exists' where holds against the linked rows'

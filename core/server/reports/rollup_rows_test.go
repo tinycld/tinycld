@@ -258,3 +258,92 @@ func TestARowsTotalOverAnAmountParamInAnotherCurrencyIsBlank(t *testing.T) {
 		})
 	}
 }
+
+// paramRollupSpec is a balance list by account whose debit rollup is the
+// formula ROLLUP over the account's stored months (MONTHS) and an amount
+// param (budget).
+func paramRollupSpec(rollup string) string {
+	months := strings.ReplaceAll(monthsOf, "ACCOUNT", `{"record":"g","path":[{"field":"id"}]}`)
+	return `{"version":4,"source":"zoo.ledger_lines","params":[{"id":"budget","type":"amount","label":"Budget"}],"columns":[
+		{"id":"account","path":[{"link":"account"}],"labelField":"number"},
+		{"id":"debit","formula":{"path":[{"field":"debit"}]},"total":"rows","rollup":` + strings.ReplaceAll(rollup, "MONTHS", months) + `}],
+		"groups":[{"id":"g","col":"account","fill":{},"label":{"record":"g","path":[{"field":"number"}]}}],
+		"sort":[{"formula":{"record":"g","path":[{"field":"number"}]}}]}`
+}
+
+func budgetOf(code string) map[string]string {
+	return map[string]string{"budget": `{"amount":50,"currency":"` + code + `"}`}
+}
+
+func namesMixed(res *Result, col string) bool {
+	return slices.ContainsFunc(res.Notices, func(n Notice) bool {
+		return n.Code == "mixedCurrency" && slices.Contains(n.Columns, col)
+	})
+}
+
+// A rollup that adds a USD param to a month in EUR or GBP is blank for two
+// currencies on that row: it shows no code, and the Total over it is blank
+// with the notice (R3). A row with no month has no second currency, so it
+// keeps its figure (the param's 50).
+func TestARowsTotalOverAParamAddedToAnotherCurrencyIsBlank(t *testing.T) {
+	res := rowsRollupZoo(t).run(t, "ann", paramRollupSpec(`{"op":"add","args":[MONTHS,{"param":"budget"}]}`), Options{}, budgetOf("USD"))
+	var got []rowsRollupLine
+	for _, r := range res.Rows {
+		got = append(got, rowsRollupLine{r.Kind, r.Label, r.Cells["debit"], nil, nil, r.Cells["debit@currency"]})
+	}
+	requireRowsRollupLines(t, got, []rowsRollupLine{
+		{KindGroup, "1000", int64(550), nil, nil, "USD"},
+		{KindGroup, "1100", nil, nil, nil, nil},
+		{KindGroup, "1200", nil, nil, nil, nil},
+		{KindGroup, "1300", int64(350), nil, nil, "USD"},
+		{KindGroup, "2000", int64(50), nil, nil, "USD"},
+		{KindGroup, "3900", int64(50), nil, nil, "USD"},
+		{KindGroup, "4000", int64(50), nil, nil, "USD"},
+		{KindGroup, "5000", int64(50), nil, nil, "USD"},
+		{KindTotal, "Total", nil, nil, nil, nil},
+	})
+	if !namesMixed(res, "debit") {
+		t.Fatalf("notices = %+v, want mixedCurrency naming debit", res.Notices)
+	}
+}
+
+// Other rollups that read a month and a USD param: where the month is in
+// another currency the row is blank, so the Total is blank with the notice.
+func TestARowsTotalOverAParamRollupOfTwoCurrenciesIsBlank(t *testing.T) {
+	for name, rollup := range map[string]string{
+		"coalesce": `{"op":"coalesce","args":[{"op":"lookup","source":"zoo.ledger_months",
+			"where":{"op":"eq","args":[{"path":[{"link":"account"}]},{"record":"g","path":[{"field":"id"}]}]},
+			"value":{"path":[{"field":"debit_total"}]},"pick":"sum"},{"param":"budget"}]}`,
+		"if": `{"op":"if","args":[{"op":"gt","args":[MONTHS,{"value":0}]},MONTHS,{"param":"budget"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := rowsRollupZoo(t).run(t, "ann", paramRollupSpec(rollup), Options{}, budgetOf("USD"))
+			total := res.Rows[len(res.Rows)-1]
+			if total.Kind != KindTotal || total.Cells["debit"] != nil || total.Cells["debit@currency"] != nil {
+				t.Fatalf("Total = %s %v %v, want blank with no code", total.Kind, total.Cells["debit"], total.Cells["debit@currency"])
+			}
+			if !namesMixed(res, "debit") {
+				t.Fatalf("notices = %+v, want mixedCurrency naming debit", res.Notices)
+			}
+		})
+	}
+}
+
+// A detail cell that adds a param in another currency than the row's is
+// blank for two currencies (no code), and so is a "rows" Total over it.
+func TestARowsTotalOverADetailParamInAnotherCurrencyIsBlank(t *testing.T) {
+	const spec = `{"version":4,"source":"zoo.feedings","params":[{"id":"budget","type":"amount","label":"Budget"}],"columns":[
+		{"id":"cost","formula":{"op":"add","args":[{"path":[{"field":"cost"}]},{"param":"budget"}]},"total":"rows"}]}`
+	res := newZoo(t).run(t, "ann", spec, Options{}, budgetOf("EUR"))
+	if len(res.Rows) < 2 {
+		t.Fatalf("rows = %d, want detail rows and a Total", len(res.Rows))
+	}
+	for _, r := range res.Rows {
+		if r.Cells["cost"] != nil || r.Cells["cost@currency"] != nil {
+			t.Fatalf("%s row %q = %v %v, want blank with no code", r.Kind, r.Label, r.Cells["cost"], r.Cells["cost@currency"])
+		}
+	}
+	if !namesMixed(res, "cost") {
+		t.Fatalf("notices = %+v, want mixedCurrency naming cost", res.Notices)
+	}
+}
