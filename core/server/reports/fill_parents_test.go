@@ -111,7 +111,7 @@ func TestAFillRecordOfAnotherCurrencyBlanksItsOwnParent(t *testing.T) {
 // under it.
 func TestAClosedSectionAddsItsFillRecords(t *testing.T) {
 	z := ownParentsZoo(t, "USD")
-	spec := strings.Replace(ownParentsSpec(rowsRollupHaving), `"open":true,`, ``, 1)
+	spec := replaceOnce(t, ownParentsSpec(rowsRollupHaving), `"open":true,`, ``)
 	res := z.run(t, "ann", spec, Options{}, nil)
 	requireRowsRollupLines(t, rowsRollupLines(res), []rowsRollupLine{
 		{KindGroup, "Assets", int64(300), int64(6500), int64(-6200), "USD"},
@@ -333,11 +333,25 @@ func TestAFillRecordSitsUnderEachParentOfAShownKey(t *testing.T) {
 // a stored month and no line, so it is a fill record under Assets. The sections
 // are closed unless the run opens them, and every "rows" cell adds the rows
 // below it.
-func closedSectionsSpec() string {
-	groups := strings.NewReplacer(`,"open":true,"subtotals":true`, ``, "HAVING", rowsRollupHaving).Replace(rowsRollupUnderSections)
+func closedSectionsSpec(t *testing.T) string {
+	t.Helper()
+	groups := replaceOnce(t, rowsRollupUnderSections, `,"open":true,"subtotals":true`, ``)
+	groups = replaceOnce(t, groups, "HAVING", rowsRollupHaving)
 	kind := `{"id":"kind","path":[{"link":"account"},{"field":"type"}]}`
 	byLine := `{"id":"kind","formula":{"op":"if","args":[{"op":"eq","args":[{"path":[{"field":"posted"}]},{"value":true}]},{"path":[{"link":"account"},{"field":"type"}]},{"path":[{"link":"account"},{"field":"type"}]}]}}`
-	return strings.Replace(rowsRollupSpec(groups), kind, byLine, 1)
+	return replaceOnce(t, rowsRollupSpec(groups), kind, byLine)
+}
+
+// replaceOnce edits a spec text and fails the test when the text to replace is
+// not in it: a missed edit would leave the plain spec, which the test would
+// then run and read as the one it pins.
+func replaceOnce(t *testing.T, spec, old, replacement string) string {
+	t.Helper()
+	out := strings.Replace(spec, old, replacement, 1)
+	if out == spec {
+		t.Fatalf("the spec has no %q to replace:\n%s", old, spec)
+	}
+	return out
 }
 
 // A closed section adds its fill records to its "rows" cells though no account
@@ -346,9 +360,9 @@ func closedSectionsSpec() string {
 // fill records when closed would read 1000's alone (a blank debit, 6500 credit).
 func TestAClosedParentOfAFillThatNamesNoParentAddsItsRows(t *testing.T) {
 	z := rowsRollupZoo(t)
-	spec := closedSectionsSpec()
+	spec := closedSectionsSpec(t)
 	closed := ownParentsGroups(z.run(t, "ann", spec, Options{}, nil))
-	open := ownParentsGroups(z.run(t, "ann", spec, Options{ExpandAll: true}, nil))
+	opened := ownParentsGroups(z.run(t, "ann", spec, Options{ExpandAll: true}, nil))
 	want := []rowsRollupLine{
 		{KindGroup, "Asset", int64(300), int64(6500), int64(-6200), "USD"},
 		{KindGroup, "Expense", int64(10000), int64(0), int64(10000), "USD"},
@@ -357,9 +371,13 @@ func TestAClosedParentOfAFillThatNamesNoParentAddsItsRows(t *testing.T) {
 		{KindTotal, "Total", int64(11800), int64(11000), int64(800), "USD"},
 	}
 	requireRowsRollupLines(t, closed, want)
-	for _, line := range want {
-		if !slices.Contains(open, line) {
-			t.Fatalf("open rows =\n%#v\nwant the closed row %#v", open, line)
+	// The open run also shows an account row under each section; its section
+	// rows, in order, are the closed run's rows.
+	var sections []rowsRollupLine
+	for _, line := range opened {
+		if slices.ContainsFunc(want, func(w rowsRollupLine) bool { return w.Label == line.Label }) {
+			sections = append(sections, line)
 		}
 	}
+	requireRowsRollupLines(t, sections, want)
 }
