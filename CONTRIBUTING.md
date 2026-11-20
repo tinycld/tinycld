@@ -127,6 +127,17 @@ available in production.
   })
   ```
   Give `handleMutationErrorsWithForm` the `collection` the form edits: rows of several collections can have a field of the same name, so a field error of the failed row goes on the form only when that row is of this collection, and to a toast otherwise. The callback is synchronous — never `await` in it; the calls only record the mutations. A mutation that is one atomic write needs no generator. In a generator, `yield atomic(() => { ... })` waits for the one request. `atomic` does not detect a stale editor, a file upload cannot be part of it, and one batch holds at most 1,100 operations.
+- **Show now, send in order** — when the server must receive the calls in the order the user made them (a number the server gives out on arrival) and the user must not wait for an earlier call, use `useStagedMutation` from `@tinycld/core/lib/mutations`. Its `stage` callback holds the collection writes of one call and runs when `mutate` is called, so the rows show at once. Calls with the same `scope.id` then send one `atomic` request each, one at a time, in call order. A plain `useMutation` with a `scope` keeps the order too, but its rows show only after the earlier request returns.
+  ```ts
+  const create = useStagedMutation({
+      scope: { id: `cards.create.${boardId}` },
+      stage: (input: { title: string }) => {
+          const id = newRecordId()
+          cardsCollection.insert({ id, board: boardId, title: input.title })
+          return id
+      },
+  })
+  ```
 - Use `performMutations` from `@tinycld/core/lib/mutations` when you need to await Transactions inside an async function
 - Core collections are configured in `tinycld/core/lib/pocketbase.ts`; each feature registers its own in `collections.ts` (via the manifest's `collections.register`). **Every collection is `syncMode: 'on-demand'` + `realtime: 'query'`** (core spreads a shared `onDemand` const into each one): only the rows a live query asks for enter the store, and the realtime subscription carries that same filter, so a filtered view stays correct across updates — the server emits a delete to a subscription a row leaves. Nothing holds a whole collection in memory, so a `.toArray` / `readCollectionCached` read answers "among the rows we hold", not "among all rows".
 - `relations` declares where PocketBase's expanded records are filed — rows never carry `expand`, so read a relation from its own collection with `materialize()` or a join inside the live query that needs it. A join or `materialize()` over an on-demand target **batch-loads that target by id, once per query** (not once per row), and nothing at all for rows already held. A filed row lives only as long as a parent row in the store files it: it leaves when the last parent filing it leaves, or when a parent fetch no longer expands it. Add `alwaysFetchRelations` (expanded on every request of the parent) only when the parent collection is the sole path by which rows enter the target — a target no query of its own loads; otherwise it only enlarges every parent request. `collection.fetchRelations('<path>')` expands a path for the one query that reads through it.
