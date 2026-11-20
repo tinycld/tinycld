@@ -158,7 +158,7 @@ func decodeStrict(re *core.RequestEvent, into any, what string) error {
 // requestSpec is a request's spec: the posted draft, or a saved report's
 // spec read through its view rule. Never both.
 func requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, error) {
-	raw, _, err := requestRun(re, spec, reportID)
+	raw, _, err := requestSource(re, spec, reportID)
 	return raw, err
 }
 
@@ -167,19 +167,29 @@ func requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) (
 // posted draft never does, so the builder's preview of such a report is
 // manual too.
 func requestRun(re *core.RequestEvent, spec json.RawMessage, reportID string) (raw []byte, live bool, err error) {
+	raw, rec, err := requestSource(re, spec, reportID)
+	if err != nil || rec == nil {
+		return raw, false, err
+	}
+	return raw, shippedLive(rec), nil
+}
+
+// requestSource picks the spec bytes of a request and the saved report the
+// caller may view, nil for a posted draft.
+func requestSource(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, *core.Record, error) {
 	switch {
 	case reportID != "" && spec != nil:
-		return nil, false, re.BadRequestError("The request has a spec or a reportId, not both.", nil)
+		return nil, nil, re.BadRequestError("The request has a spec or a reportId, not both.", nil)
 	case reportID != "":
 		rec, err := viewableReport(re, reportID)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, err
 		}
-		return specBytes(rec), shippedLive(rec), nil
+		return specBytes(rec), rec, nil
 	case spec == nil:
-		return nil, false, re.BadRequestError("The request has no spec and no reportId.", nil)
+		return nil, nil, re.BadRequestError("The request has no spec and no reportId.", nil)
 	}
-	return []byte(spec), false, nil
+	return []byte(spec), nil, nil
 }
 
 const noAccess = "You cannot view this report."

@@ -115,7 +115,8 @@ func TestAUserCannotClaimALiveShippedKey(t *testing.T) {
 	sh := feedCosts(1, "Feed costs")
 	sh.Live = true
 	RegisterShipped(sh)
-	s.call(t, "ann", http.MethodPatch, reportsURL+"/"+s.id("R"), `{"shipped_key":"zoo.feed_costs"}`)
+	// The serverOwned guard (saved.go) drops the field and the update answers 200.
+	s.expect(t, "ann", http.MethodPatch, reportsURL+"/"+s.id("R"), `{"shipped_key":"zoo.feed_costs"}`, http.StatusOK)
 	rec, err := s.app.FindRecordById(reportsCollection, s.id("R"))
 	if err != nil {
 		t.Fatal(err)
