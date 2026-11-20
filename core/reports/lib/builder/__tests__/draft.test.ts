@@ -1598,6 +1598,63 @@ describe('spec version 3 in the builder', () => {
         expect(setOpeningCell(withCell, 'balance', null)).toEqual(bare)
     })
 
+    it('keeps an opening label value and its bucket through the draft, and the param it reads', () => {
+        const labelValue: SpecNode = { param: 'period', bound: 'from' }
+        const opening = {
+            label: 'Balance before {value}',
+            labelValue,
+            labelBucket: 'month' as const,
+            cells: { balance: OPEN_BALANCE },
+        }
+        const spec: ReportSpec = {
+            ...V3,
+            groups: [{ ...(V3.groups?.[0] ?? { id: 'byTeam', col: 'team' }), opening }],
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        expect(draft.groups[0]?.opening?.labelBucket).toBe('month')
+        expect(draft.groups[0]?.opening?.labelValue?.node).toEqual(opening.labelValue)
+        expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(spec))
+        expect(draftIssues(draft, CATALOG).filter(issue => issue.path[2] === 'opening')).toEqual([])
+        // Nothing but the label value reads the param: it stays.
+        const onlyLabel = {
+            ...draft,
+            filter: emptyGroup(),
+            columns: draft.columns
+                .map(c => ({ ...c, rollup: null }))
+                .filter(c => c.id !== 'balance'),
+            groups: draft.groups.map(g => ({
+                ...g,
+                opening: g.opening ? { ...g.opening, cells: {} } : null,
+            })),
+        }
+        expect(keptParams(onlyLabel).map(p => p.id)).toEqual(['period'])
+    })
+
+    it('flags an opening label whose {value} does not fit its label value', () => {
+        const draft = draftFromSpec(V3, META, CATALOG)
+        const from: FormulaDraft = { kind: 'fixed', node: { param: 'period', bound: 'from' } }
+        const issueOf = (label: string, labelValue?: FormulaDraft) => {
+            const opening = { label, cells: {}, ...(labelValue ? { labelValue } : {}) }
+            const labelled = { ...draft, groups: draft.groups.map(g => ({ ...g, opening })) }
+            return draftIssues(labelled, CATALOG).find(
+                issue => issue.path.join('.') === 'groups.0.opening.label'
+            )?.message
+        }
+        expect(issueOf('Balance before {value}', from)).toBeUndefined()
+        expect(issueOf('Balance before')).toBeUndefined()
+        expect(issueOf('Balance before', from)).toBe(
+            'Write {value} once, where the row’s value goes'
+        )
+        expect(issueOf('{value} to {value}', from)).toBe(
+            'Write {value} once, where the row’s value goes'
+        )
+        expect(issueOf(' {value} ', from)).toBe('Write some text besides {value}')
+        expect(issueOf('Balance before {value}')).toBe(
+            'This row has no value to name: take {value} out of the label'
+        )
+    })
+
     it('"A formula" on group and total rows writes the column rollup, and the total takes it out', () => {
         const draft = draftFromSpec(V3, META, CATALOG)
         const sum: SpecNode = { op: 'sum', args: [{ path: [{ field: 'amount' }] }] }
