@@ -1526,10 +1526,13 @@ func (w levelWhere) from(lv *level, g string) string {
 
 // unread is e with no value, for a formula that reads a value of one row,
 // which a group of rows has none of: the lookups' wheres it compiled since
-// the level held wheres of them are not read either, so none is probed.
+// the level held wheres of them are not read either, so none is probed. A
+// blank cell names no currency.
 func (lv *level) unread(e expr, wheres int) expr {
 	lv.wheres = lv.wheres[:wheres]
-	return e.withoutValue()
+	e = e.withoutValue()
+	e.cur = currency{}
+	return e
 }
 
 // probeWhere takes a lookup's where on the level's rows, which render

@@ -35,7 +35,10 @@ func CheckSources(app core.App) error {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if problems := append(checkSource(app, sources[key]), checkSameCurrency(sources[key])...); len(problems) > 0 {
+		var problems []string
+		problems = append(problems, checkSource(app, sources[key])...)
+		problems = append(problems, checkSameCurrency(sources[key])...)
+		if len(problems) > 0 {
 			refused[key] = strings.Join(problems, "; ")
 		}
 	}
