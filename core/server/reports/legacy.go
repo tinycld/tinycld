@@ -14,6 +14,6 @@ var legacySQL struct {
 	// materializeShared marked the ones whose CTEs read it twice or more.
 	inlineDetailRows bool
 	// noLookupDayBounds leaves the bounds on a looked-up source's stored day
-	// column out of a lookup's WHERE, as before dayBound wrote them.
+	// column out of a lookup's WHERE, as before lookupDayBound wrote them.
 	noLookupDayBounds bool
 }

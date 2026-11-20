@@ -529,7 +529,7 @@ func (l *lookupCtx) storedDayCol(f *Field) string {
 	return q(l.sc.alias, f.Column)
 }
 
-// dayBound is the bound a comparison in a lookup's where implies on a stored
+// lookupDayBound is the bound a comparison in a lookup's where implies on a stored
 // day column of the looked-up row: for lt, lte, gt or gte of such a day with a
 // day that reads nothing of that row (a param's day, a bound of a range, a
 // formula over them, a value of the report's row), and for between of it with
@@ -537,12 +537,13 @@ func (l *lookupCtx) storedDayCol(f *Field) string {
 // comparison reads the day through substr(), which no index serves; the bound
 // names the column itself (dayBounds). It holds on every row the comparison
 // holds for: where the other day is blank the comparison holds for no row,
-// and neither does the bound.
-func dayBound(n *Node, args []expr) string {
+// and neither does the bound. The other day holds no lookup: the bound
+// repeats its SQL, and a lookup's subquery would be written and computed twice.
+func lookupDayBound(n *Node, args []expr) string {
 	stored := func(e expr) bool { return e.day.col != "" && e.day.sql == e.sql }
 	free := func(i int) bool {
 		e := args[i]
-		return e.typ == Date && !e.rng && !e.unset && !e.all && !readsLookedUpRow(n.Args[i])
+		return e.typ == Date && !e.rng && !e.unset && !e.all && !readsLookedUpRow(n.Args[i]) && !containsLookup(n.Args[i])
 	}
 	if n.Op == "between" {
 		switch {
@@ -591,6 +592,11 @@ func readsLookedUpRow(n *Node) bool {
 		return true
 	}
 	return slices.ContainsFunc(n.Args, readsLookedUpRow)
+}
+
+// containsLookup is true when a node is a lookup or has one among its args.
+func containsLookup(n *Node) bool {
+	return n != nil && (n.Op == "lookup" || slices.ContainsFunc(n.Args, containsLookup))
 }
 
 // outerPath reads a path on the report's row: what a path means in the

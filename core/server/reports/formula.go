@@ -61,7 +61,7 @@ type expr struct {
 	link storedLink
 	// day is, in a lookup's where, the stored column a Date field of the
 	// looked-up row itself is read from; a comparison of it with a day bounds
-	// that column too (dayBound).
+	// that column too (lookupDayBound).
 	day storedDay
 	// bound is, on a condition in a lookup's where, bounds on stored columns of
 	// the looked-up row that hold on every row the condition holds for. Only
@@ -880,13 +880,13 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if e, ok := zonedCompare(c, n.Op, args[0], args[1]); ok {
 			return e, nil
 		}
-		return expr{sql: "(" + args[0].sql + " " + comparisons[n.Op] + " " + args[1].sql + ")", typ: Bool, bound: dayBound(n, args)}, nil
+		return expr{sql: "(" + args[0].sql + " " + comparisons[n.Op] + " " + args[1].sql + ")", typ: Bool, bound: lookupDayBound(n, args)}, nil
 	case "between":
 		e, err := between(c, args, at)
 		if err != nil {
 			return expr{}, err
 		}
-		e.bound = dayBound(n, args)
+		e.bound = lookupDayBound(n, args)
 		return e, nil
 	case "in":
 		if err := argc(2, 2); err != nil {
