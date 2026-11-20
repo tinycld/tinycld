@@ -6,17 +6,17 @@
 
 **Architecture:** The engine sends typed values and each view formats them; an opening row follows that rule. The spec's `opening` gets `labelValue` (a formula of params and values only, compiled as a column heading is) and `labelBucket` (cuts a day to its month, quarter or year); its `label` holds the token `{value}` once. The run reads the value in the statement that already reads the column headings (no new statement), and the opening row carries `labelTemplate` (the spec's label), `labelType` and `labelValue` (for a month: `month` and `"2026-11"`). The client (`rowLabelText`) and the exporter (`RowLabel`) format the value with the code they have (`bucketWords` gives "Nov 2026") and put it in the token's place.
 
-**Tech Stack:** Go and SQLite (PocketBase) in `core/server/reports`; TypeScript, zod and vitest in `core/reports/lib`.
+**Tech Stack:** Go and SQLite (PocketBase) in `core/server/reports`; TypeScript, zod and vitest in `core/reports/lib`; Playwright in `tests/e2e`.
 
-**Spec:** `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-engine-scale/handoff-plan-part16.md` (sections "What the human asked" and "Design"). Outline of all tasks: `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-engine-scale/plan-outline.md`. The code of both tasks was built and run against core `68c6d3d4` before this plan was written; the diff is kept in `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-engine-scale/part16-scratch/part16.patch` (reference only: write the code from the steps).
+**Spec:** `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-engine-scale/handoff-plan-part16.md` (sections "What the human asked" and "Design"). Outline of all tasks: `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-engine-scale/plan-outline.md`. The code of the three tasks was built and run against core `68c6d3d4` before this plan was written (but not the e2e step of task 3: the planner did not run e2e); the diff is kept in `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-engine-scale/part16-scratch/part16.patch` (reference only: write the code from the steps).
 
 This part holds part (b) of task 9c-0b only. Part (a) is `docs/plans/2026-11-20-report-engine-scale-part15.md`.
 
-**Open before task 2 runs (the review's issue 3, not yet in this plan):** the builder message "This row has no value to name: take {value} out of the label" can be reached on a core screen today, so it needs an e2e step, and task 2 then has more than 8 files and must be split. Both are described in `/Users/nas/tmp/tinycld/auto-helix-books/staging/p5-report-engine-scale/handoff-plan-part16b.md`. Task 1 is complete and can run as it is.
-
 ## Global Constraints
 
-- Workspace root: `/Users/nas/tmp/tinycld/books-purchases`. Core is `/Users/nas/tmp/tinycld/books-purchases/tinycld`. Branch `books/p5-report-engine-scale`. Both tasks are core tasks: they edit only files under `tinycld/core/server/reports`, `tinycld/core/reports/lib`, `tinycld/core/help` and `tinycld/docs/packages.md`.
+- Workspace root: `/Users/nas/tmp/tinycld/books-purchases`. Core is `/Users/nas/tmp/tinycld/books-purchases/tinycld`. Branch `books/p5-report-engine-scale`. The three tasks are core tasks: they edit only files under `tinycld/core/server/reports`, `tinycld/core/reports/lib`, `tinycld/core/help`, `tinycld/tests/e2e` and `tinycld/docs/packages.md`.
+- The tasks run in order: task 2 reads the JSON of task 1, and task 3 reads `LABEL_VALUE_TOKEN` and the two schema keys of task 2. Between task 2 and task 3 the builder drops `labelValue` and `labelBucket` on save; task 3 ends that.
+- E2E: only `tinycld/tests/e2e/reports-ledger-v3.spec.ts`, in one foreground command, with the lane ports and the port check of the lane rules. The spec drives the builder through the UI: no `page.goto()` for in-app navigation, no raw PocketBase write, no bumped timeout.
 - Core names no package: no feature slug, collection or route in code, tests, comments, docs or help. Go tests use the zoo sources (`zoo.*`).
 - Native and web both: the label is made in `rowLabelText` (`core/reports/lib/format.ts`), which every platform's row component and the column measure call. No platform file changes.
 - The token is `{value}`, exactly. Go: `LabelValueToken`. TS: `LABEL_VALUE_TOKEN`.
@@ -28,14 +28,17 @@ This part holds part (b) of task 9c-0b only. Part (a) is `docs/plans/2026-11-20-
 
 ## Review Focus
 
-- A text value that holds `$&` or `$1`: JavaScript's `String.replace` reads those as patterns in a string replacement. The label must show the value as it is. Pinned by the vitest test "puts the typed value of an opening row in its label template" (task 2) and by the Go test `TestAnOpeningLabelNamesATextOrAComputedValue` (task 1).
+- A text value that holds `$&` or `$1`: JavaScript's `String.replace` reads those as patterns in a string replacement. The label must show the value as it is. Pinned by the vitest test "puts the typed value of an opening row in its label template" (task 2), by the two shared cases of `format-cases.json` (task 2) and by the Go test `TestAnOpeningLabelNamesATextOrAComputedValue` (task 1).
 - A value that is blank on the run (an unset param, an empty or spaces-only text): the label shows without the token and without a double space, and the row has no typed label. Pinned by `TestAnOpeningLabelWithNoValueLeavesTheTokenOut`.
 - A page after the first: the value is read on every run, so each page's opening rows have it. Pinned by `TestAnOpeningLabelValueIsOnEveryPage`.
 - An opening on an inner level, and on a layout section: the value is found by the group's level (not the row's depth). Pinned by `TestAnOpeningLabelValueOnALayoutSectionAndAnInnerLevel`.
-- A report opened in the builder and saved: the builder has no control for the label value, so it must keep `labelValue` and `labelBucket`, keep the param that only the label value reads, and refuse a label whose `{value}` was deleted before the server does. Pinned by the two draft tests of task 2.
+- A report opened in the builder and saved: the builder has no control for the label value, so it must keep `labelValue` and `labelBucket`, keep the param that only the label value reads, and refuse a label whose `{value}` was deleted before the server does. Pinned by the two draft tests of task 3, and on the builder screen by the e2e step of task 3 (a `{value}` typed in the **Row label** of a row that has no label value).
 - A `labelBucket` on a value that is not a day (a text, a date-time, nothing): refused at `groups.<i>.opening.labelBucket`, because a date-time's day depends on the reader's time zone. Pinned by `TestOpeningLabelValueRefusals` ("bucket of a text", "bucket of nothing").
 
-Not pinned by a test of this part: the label on the report screen. No shipped report of core has an opening row with a label value, so there is no screen to drive; task 9c-1 (Books) uses the field and its e2e spec reads the label on the screen.
+Not pinned by a test of this part:
+
+- The label on the report screen. No shipped report of core has an opening row with a label value, so there is no screen to drive; task 9c-1 (Books) uses the field and its e2e spec reads the label on the screen.
+- The builder messages `Write {value} once, where the row’s value goes` and `Write some text besides {value}` on the builder screen. They show only for a report that has a label value, and such a report comes only from a package, so no core screen can reach them. The draft test of task 3 pins their text and their path (`groups.<i>.opening.label`, the field the e2e step of task 3 reads the third message from); task 9c-1 (Books) covers them on the screen.
 
 ## File Structure
 
@@ -49,9 +52,12 @@ Not pinned by a test of this part: the label on the report screen. No shipped re
 - Create `core/server/reports/openinglabel_test.go`: the zoo tests.
 - Modify `docs/packages.md`: the row kinds bullet and the `groups[].opening` row.
 - Modify `core/reports/lib/types.ts`, `spec.ts`, `format.ts`: the row field, the spec fields and token, the label text.
-- Modify `core/reports/lib/builder/draft.ts`: the builder keeps the two fields and checks the label.
-- Modify `core/reports/lib/__tests__/format.test.ts`, `spec.test.ts`, `core/reports/lib/builder/__tests__/draft.test.ts`: the tests.
-- Modify `core/help/reports.md`: the "Opening rows" topic.
+- Modify `core/reports/lib/fixtures/format-cases.json`: two label cases that the client test (`core/reports/lib/__tests__/format-cases.test.ts`) and the exporter test (`TestExportFormatterRowLabelsMatchTheClient`) both read (task 2).
+- Modify `core/reports/lib/__tests__/format.test.ts`, `spec.test.ts`: the tests of task 2.
+- Modify `core/reports/lib/builder/draft.ts`: the builder keeps the two fields and checks the label (task 3).
+- Modify `core/reports/lib/builder/__tests__/draft.test.ts`: the tests of task 3.
+- Modify `tests/e2e/reports-ledger-v3.spec.ts`: the builder shows the message for a `{value}` in a label with no label value (task 3).
+- Modify `core/help/reports.md`: the "Opening rows" topic (task 3).
 
 ---
 
@@ -730,20 +736,20 @@ git commit -m "feat(reports): an opening row's label names a value of the run"
 
 ---
 
-### Task 2: The client shows the label value, and the builder keeps it
+### Task 2: The client reads the label value and shows it in the row label
 
 **Files:**
 - Modify: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/types.ts` (`ResultRow`, near line 144)
 - Modify: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/spec.ts` (near lines 114 and 202)
 - Modify: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/format.ts` (imports, `rowLabelText` near line 244)
-- Modify: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/builder/draft.ts` (imports; near lines 104, 775, 1009, 1334, 1543, 1606, 1611)
-- Modify: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/help/reports.md` (line 144)
-- Test: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/__tests__/format.test.ts`, `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/__tests__/spec.test.ts`, `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/builder/__tests__/draft.test.ts`
+- Modify: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/fixtures/format-cases.json` (the list `"labels"`, line 1869)
+- Test: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/__tests__/format.test.ts`, `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/__tests__/spec.test.ts`; `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/__tests__/format-cases.test.ts` (it reads the fixture; do not change it)
 
 **Interfaces:**
-- Consumes from task 1 (JSON only): a result row's `labelTemplate` with `labelType` and `labelValue`; the spec's `groups[].opening.labelValue` and `labelBucket`; the token `{value}`.
-- Consumes (they exist, do not change them): `typedLabelText(type, value, currency, format)` (`format.ts`), `BUCKETS`, `specNodeSchema`, `GROUP_LABEL_TOKEN` (`spec.ts`), `formulaDraftSchema`, `formulaDraft(node, params)`, `specFormula(formula, ctx)`, `specCells(cells, ctx)`, `formulaContext(draft, catalog, { kind: 'heading' })`, `keptParams`, `draftIssues`, `openingIssues` (`draft.ts`); in the tests: `labelled`, `PLAIN` (`format.test.ts`), `FEEDINGS`, `parseSpec` (`spec.test.ts`), `V3`, `META`, `CATALOG`, `OPEN_BALANCE`, `draftFromSpec`, `specFromDraft`, `builderSchema`, `emptyGroup` (`draft.test.ts`).
-- Produces: `ResultRow.labelTemplate?: string`; `export const LABEL_VALUE_TOKEN = '{value}'` (`spec.ts`); `rowLabelText(row, format)` fills the template; `OpeningDraft` with `labelValue?: FormulaDraft` and `labelBucket?: Bucket`.
+- Consumes from task 1 (JSON only): a result row's `labelTemplate` with `labelType` and `labelValue`; the spec's `groups[].opening.labelValue` and `labelBucket`; the token `{value}`. Task 1's `RowLabel` (Go) reads the same fixture cases through `TestExportFormatterRowLabelsMatchTheClient`.
+- Consumes (they exist, do not change them): `typedLabelText(type, value, currency, format)` (`format.ts`), `BUCKETS`, `specNodeSchema`, `GROUP_LABEL_TOKEN` (`spec.ts`); in the tests: `labelled`, `PLAIN` (`format.test.ts`), `FEEDINGS`, `parseSpec` (`spec.test.ts`).
+- Produces for task 3: `export const LABEL_VALUE_TOKEN = '{value}'` (`spec.ts`); in `specGroupSchema`, `opening.labelValue?: SpecNode` and `opening.labelBucket?: Bucket` (so `SpecGroup['opening']` has them). Also `ResultRow.labelTemplate?: string`, and `rowLabelText(row, format)` fills the template.
+- This task does not change `builder/draft.ts`: the builder drops the two fields on save until task 3.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -792,70 +798,6 @@ In `core/reports/lib/__tests__/spec.test.ts`, inside `describe('the parts of ver
 
 ```
 
-In `core/reports/lib/builder/__tests__/draft.test.ts`, inside `describe('spec version 3 in the builder', …)`, directly before `it('"A formula" on group and total rows writes the column rollup, and the total takes it out', …)`, add:
-
-```ts
-    it('keeps an opening label value and its bucket through the draft, and the param it reads', () => {
-        const labelValue: SpecNode = { param: 'period', bound: 'from' }
-        const opening = {
-            label: 'Balance before {value}',
-            labelValue,
-            labelBucket: 'month' as const,
-            cells: { balance: OPEN_BALANCE },
-        }
-        const spec: ReportSpec = {
-            ...V3,
-            groups: [{ ...(V3.groups?.[0] ?? { id: 'byTeam', col: 'team' }), opening }],
-        }
-        const draft = draftFromSpec(spec, META, CATALOG)
-        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
-        expect(draft.groups[0]?.opening?.labelBucket).toBe('month')
-        expect(draft.groups[0]?.opening?.labelValue?.node).toEqual(opening.labelValue)
-        expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(spec))
-        expect(draftIssues(draft, CATALOG).filter(issue => issue.path[2] === 'opening')).toEqual([])
-        // Nothing but the label value reads the param: it stays.
-        const onlyLabel = {
-            ...draft,
-            filter: emptyGroup(),
-            columns: draft.columns
-                .map(c => ({ ...c, rollup: null }))
-                .filter(c => c.id !== 'balance'),
-            groups: draft.groups.map(g => ({
-                ...g,
-                opening: g.opening ? { ...g.opening, cells: {} } : null,
-            })),
-        }
-        expect(keptParams(onlyLabel).map(p => p.id)).toEqual(['period'])
-    })
-
-    it('flags an opening label whose {value} does not fit its label value', () => {
-        const draft = draftFromSpec(V3, META, CATALOG)
-        const from: FormulaDraft = { kind: 'fixed', node: { param: 'period', bound: 'from' } }
-        const issueOf = (label: string, labelValue?: FormulaDraft) => {
-            const opening = { label, cells: {}, ...(labelValue ? { labelValue } : {}) }
-            const labelled = { ...draft, groups: draft.groups.map(g => ({ ...g, opening })) }
-            return draftIssues(labelled, CATALOG).find(
-                issue => issue.path.join('.') === 'groups.0.opening.label'
-            )?.message
-        }
-        expect(issueOf('Balance before {value}', from)).toBeUndefined()
-        expect(issueOf('Balance before')).toBeUndefined()
-        expect(issueOf('Balance before', from)).toBe(
-            'Write {value} once, where the row’s value goes'
-        )
-        expect(issueOf('{value} to {value}', from)).toBe(
-            'Write {value} once, where the row’s value goes'
-        )
-        expect(issueOf(' {value} ', from)).toBe('Write some text besides {value}')
-        expect(issueOf('Balance before {value}')).toBe(
-            'This row has no value to name: take {value} out of the label'
-        )
-    })
-
-```
-
-(The quote in `row’s` is the typographic apostrophe U+2019, as in the message of step 6.)
-
 In `core/reports/lib/fixtures/format-cases.json`, in the list `"labels"` (line 1869), add these two cases before the first case (`"name": "a text label"`). The Go test `TestExportFormatterRowLabelsMatchTheClient` and `core/reports/lib/__tests__/format-cases.test.ts` both read this list, so the client and the exporter are pinned on the same rows:
 
 ```json
@@ -903,12 +845,12 @@ In `core/reports/lib/fixtures/format-cases.json`, in the list `"labels"` (line 1
         },
 ```
 
-After step 5, also run `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test ./reports/ -run 'RowLabelsMatchTheClient' -count=1` (expected `ok`) and add `core/reports/lib/__tests__/format-cases.test.ts` to the vitest command of step 7 (expected `Test Files  4 passed (4)`, `Tests  340 passed (340)`). Add the fixture file to the `git add` of step 10.
+(Each case becomes one test of `format-cases.test.ts`, named `label: <name>`. The Go side already passes these two cases after task 1; step 6 runs it.)
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH vitest run core/reports/lib/__tests__/format.test.ts core/reports/lib/__tests__/spec.test.ts core/reports/lib/builder/__tests__/draft.test.ts 2>&1 | command grep -m 20 -E 'FAIL|Tests |AssertionError'`
-Expected: 4 failed tests, the four added above (the format test reads `'Nov 2026'` where it wants `'Balance before Nov 2026'`; the spec test gets `undefined`, because the strict schema refuses `labelValue`).
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH vitest run core/reports/lib/__tests__/format.test.ts core/reports/lib/__tests__/spec.test.ts core/reports/lib/__tests__/format-cases.test.ts 2>&1 | command grep -m 20 -E 'FAIL|Tests |AssertionError'`
+Expected: `Tests  4 failed | 213 passed (217)`. The four are the two added tests and the two fixture cases: the format test and the month case read `'Nov 2026'` where they want `'Balance before Nov 2026'`; the text case reads `'the $& and $1 audit'`; the spec test gets `undefined`, because the strict schema refuses `labelValue`.
 
 - [ ] **Step 3: Add the row field (`types.ts`)**
 
@@ -972,7 +914,149 @@ export function rowLabelText(row: ResultRow, format: NumberFormat): string {
 }
 ```
 
-- [ ] **Step 6: Keep the fields in the builder (`builder/draft.ts`)**
+- [ ] **Step 6: Run the tests**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH vitest run core/reports/lib/__tests__/format.test.ts core/reports/lib/__tests__/spec.test.ts core/reports/lib/__tests__/format-cases.test.ts core/reports/lib/builder/__tests__/draft.test.ts 2>&1 | command grep -m 20 -E 'FAIL|Tests |Test Files|AssertionError'`
+Expected: `Test Files  4 passed (4)` and `Tests  338 passed (338)` (the builder's tests stay green: `draft.ts` reads a spec with the two new keys and leaves them out).
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld/core/server && go test ./reports/ -run 'RowLabelsMatchTheClient' -count=1`
+Expected: `ok  	tinycld.org/core/reports` (the exporter of task 1 writes the two fixture labels as the client does).
+
+- [ ] **Step 7: Lint and typecheck**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH biome check core/reports/lib 2>&1 | command grep -m 10 . ; PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg typecheck 2>&1 | command grep -m 20 -E 'error TS|exit'`
+Expected: biome prints `Checked … files … No fixes applied.` and no error; the typecheck prints no `error TS` line. When biome reports a format error in a file of this task, run `biome check --write <that file>` and run the check again.
+
+- [ ] **Step 8: Commit**
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases/tinycld
+git add core/reports/lib/types.ts core/reports/lib/spec.ts core/reports/lib/format.ts core/reports/lib/fixtures/format-cases.json core/reports/lib/__tests__/format.test.ts core/reports/lib/__tests__/spec.test.ts
+git commit -m "feat(reports): the client shows an opening row's label value"
+```
+
+---
+
+### Task 3: The builder keeps the label value and checks the label
+
+**Files:**
+- Modify: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/builder/draft.ts` (imports; near lines 104, 775, 1009, 1334, 1543, 1606, 1611)
+- Modify: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/help/reports.md` (line 144)
+- Test: `/Users/nas/tmp/tinycld/books-purchases/tinycld/core/reports/lib/builder/__tests__/draft.test.ts`
+- Test: `/Users/nas/tmp/tinycld/books-purchases/tinycld/tests/e2e/reports-ledger-v3.spec.ts` (the last test, lines 564-566)
+
+**Interfaces:**
+- Consumes from task 2: `LABEL_VALUE_TOKEN` (`'{value}'`, exported by `core/reports/lib/spec.ts`); `opening.labelValue?: SpecNode` and `opening.labelBucket?: Bucket` in `specGroupSchema` (so `SpecGroup['opening']` has them).
+- Consumes (they exist, do not change them): `BUCKETS`, `GROUP_LABEL_TOKEN` (`spec.ts`); `labelSchema`, `formulaDraftSchema`, `formulaDraft(node, params)`, `specFormula(formula, ctx)`, `specCells(cells, ctx)`, `formulaContext(draft, catalog, { kind: 'heading' })`, `keptParams`, `draftIssues`, `openingIssues` (`draft.ts`); in the unit tests: `V3`, `META`, `CATALOG`, `OPEN_BALANCE`, `draftFromSpec`, `specFromDraft`, `builderSchema`, `emptyGroup`, and the types `SpecNode`, `ReportSpec`, `FormulaDraft` (`draft.test.ts` imports them all today).
+- Consumes on the screen (no component changes): the builder form validates on each change (`mode: 'onChange'`, `core/reports/hooks/useReportBuilder.ts`); `builderSchema` gives each issue of `draftIssues` to the form at the issue's path (`draft.ts`, `superRefine`); the **Row label** input is the form field `groups.<i>.opening.label` (`OpeningFields`, `core/reports/components/builder/GroupLevelParts.tsx`), and the form `TextInput` (`core/ui/form/TextInput.tsx`) draws the field's error message as plain text under the input.
+- Produces: `OpeningDraft` with `labelValue?: FormulaDraft` and `labelBucket?: Bucket`; a draft issue at `['groups', i, 'opening', 'label']` with one of the three messages of step 4.
+
+- [ ] **Step 1: Write the failing unit tests**
+
+In `core/reports/lib/builder/__tests__/draft.test.ts`, inside `describe('spec version 3 in the builder', …)`, directly before `it('"A formula" on group and total rows writes the column rollup, and the total takes it out', …)`, add:
+
+```ts
+    it('keeps an opening label value and its bucket through the draft, and the param it reads', () => {
+        const labelValue: SpecNode = { param: 'period', bound: 'from' }
+        const opening = {
+            label: 'Balance before {value}',
+            labelValue,
+            labelBucket: 'month' as const,
+            cells: { balance: OPEN_BALANCE },
+        }
+        const spec: ReportSpec = {
+            ...V3,
+            groups: [{ ...(V3.groups?.[0] ?? { id: 'byTeam', col: 'team' }), opening }],
+        }
+        const draft = draftFromSpec(spec, META, CATALOG)
+        expect(builderSchema(CATALOG).safeParse(draft).success).toBe(true)
+        expect(draft.groups[0]?.opening?.labelBucket).toBe('month')
+        expect(draft.groups[0]?.opening?.labelValue?.node).toEqual(opening.labelValue)
+        expect(JSON.stringify(specFromDraft(draft, CATALOG))).toBe(JSON.stringify(spec))
+        expect(draftIssues(draft, CATALOG).filter(issue => issue.path[2] === 'opening')).toEqual([])
+        // Nothing but the label value reads the param: it stays.
+        const onlyLabel = {
+            ...draft,
+            filter: emptyGroup(),
+            columns: draft.columns
+                .map(c => ({ ...c, rollup: null }))
+                .filter(c => c.id !== 'balance'),
+            groups: draft.groups.map(g => ({
+                ...g,
+                opening: g.opening ? { ...g.opening, cells: {} } : null,
+            })),
+        }
+        expect(keptParams(onlyLabel).map(p => p.id)).toEqual(['period'])
+    })
+
+    it('flags an opening label whose {value} does not fit its label value', () => {
+        const draft = draftFromSpec(V3, META, CATALOG)
+        const from: FormulaDraft = { kind: 'fixed', node: { param: 'period', bound: 'from' } }
+        const issueOf = (label: string, labelValue?: FormulaDraft) => {
+            const opening = { label, cells: {}, ...(labelValue ? { labelValue } : {}) }
+            const labelled = { ...draft, groups: draft.groups.map(g => ({ ...g, opening })) }
+            return draftIssues(labelled, CATALOG).find(
+                issue => issue.path.join('.') === 'groups.0.opening.label'
+            )?.message
+        }
+        expect(issueOf('Balance before {value}', from)).toBeUndefined()
+        expect(issueOf('Balance before')).toBeUndefined()
+        expect(issueOf('Balance before', from)).toBe(
+            'Write {value} once, where the row’s value goes'
+        )
+        expect(issueOf('{value} to {value}', from)).toBe(
+            'Write {value} once, where the row’s value goes'
+        )
+        expect(issueOf(' {value} ', from)).toBe('Write some text besides {value}')
+        expect(issueOf('Balance before {value}')).toBe(
+            'This row has no value to name: take {value} out of the label'
+        )
+    })
+
+```
+
+(The quote in `row’s` is the typographic apostrophe U+2019, as in the message of step 4.)
+
+- [ ] **Step 2: Write the failing e2e step**
+
+In `tests/e2e/reports-ledger-v3.spec.ts`, in the last test (`'the builder counts a lookup on this row, shows a formula on group and total rows, and starts each group with a row'`), replace
+
+```ts
+        await p.getByTestId(o).click()
+        await p.getByTestId(`${o}-label`).fill('Brought forward')
+```
+
+with
+
+```ts
+        await p.getByTestId(o).click()
+        // This report gives the row no value to name, so the label takes no {value}.
+        const noValue = p.getByText(
+            'This row has no value to name: take {value} out of the label',
+            { exact: true }
+        )
+        await p.getByTestId(`${o}-label`).fill('Brought {value}')
+        await expect(noValue).toBeVisible()
+        await p.getByTestId(`${o}-label`).fill('Brought forward')
+        await expect(noValue).toBeHidden()
+```
+
+Change nothing else in the test: the report is still saved with the label `Brought forward`, and the lines after it read that label.
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH vitest run core/reports/lib/builder/__tests__/draft.test.ts 2>&1 | command grep -m 20 -E 'FAIL|Tests |AssertionError'`
+Expected: `Tests  2 failed | 121 passed (123)`: the first added test with `expected undefined to be 'month'`, the second with `expected undefined to be 'Write {value} once, where the row’s v…'`.
+
+Run (one foreground command, about 5 minutes: it builds the web export and seeds the fixtures; when the lane rules give you no time for it, hand back `NEEDS-RUN:` with this command):
+
+```bash
+cd /Users/nas/tmp/tinycld/books-purchases && lsof -iTCP -sTCP:LISTEN -nP | grep -qE ':(7210|7211) ' && { echo PORTS-BUSY; exit 1; }; E2E_PORT=7210 E2E_PORT_2=7211 E2E_IMAP_PORT=1210 E2E_IMAP_PORT_2=1211 pnpm exec tinycld-pkg test:e2e tinycld/tests/e2e/reports-ledger-v3.spec.ts -- -g "the builder counts a lookup"
+```
+
+Expected: `Running 1 test`, then 1 failed: `expect(locator).toBeVisible()` on `getByText('This row has no value to name: take {value} out of the label', { exact: true })` finds no element, at the line `await expect(noValue).toBeVisible()`. (The planner did not run e2e. When the run fails at another line, or does not fail, stop and report what it printed; do not change the test to make it fail.)
+
+- [ ] **Step 4: Keep the fields in the builder (`builder/draft.ts`)**
 
 In the import from `'../spec'`, add `LABEL_VALUE_TOKEN,` after `GROUP_LABEL_TOKEN,`.
 
@@ -1087,12 +1171,12 @@ and in the same function replace `...(g.opening ? { opening: specOpening(g.openi
 
 The builder's **Row label** field writes `groups.<i>.opening.label` only (`GroupLevelParts.tsx`), so an edit of the label keeps `labelValue` and `labelBucket`. No component changes.
 
-- [ ] **Step 7: Run the tests**
+- [ ] **Step 5: Run the unit tests**
 
-Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH vitest run core/reports/lib/__tests__/format.test.ts core/reports/lib/__tests__/spec.test.ts core/reports/lib/builder/__tests__/draft.test.ts 2>&1 | command grep -m 20 -E 'FAIL|Tests |Test Files|AssertionError'`
-Expected: `Test Files  3 passed (3)` and `Tests  217 passed (217)`.
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH vitest run core/reports/lib/__tests__/format.test.ts core/reports/lib/__tests__/spec.test.ts core/reports/lib/__tests__/format-cases.test.ts core/reports/lib/builder/__tests__/draft.test.ts 2>&1 | command grep -m 20 -E 'FAIL|Tests |Test Files|AssertionError'`
+Expected: `Test Files  4 passed (4)` and `Tests  340 passed (340)`.
 
-- [ ] **Step 8: Write the help text (`core/help/reports.md`)**
+- [ ] **Step 6: Write the help text (`core/help/reports.md`)**
 
 In the section `## Opening rows`, add at the end of its paragraph (line 144, after `The last group level of a pivot report cannot have an opening row.`), on the same line:
 
@@ -1100,15 +1184,22 @@ In the section `## Opening rows`, add at the end of its paragraph (line 144, aft
  A report that an app supplies can name a value in the row label, for example the month before the period ("Balance before Nov 2026"). The **Row label** then shows `{value}` where the value goes. Keep `{value}` in the label one time, with other text. When the report has no value to show, the label shows without `{value}`, so write a label that reads well without it. You cannot add `{value}` to the row label of a report that has no such value.
 ```
 
-- [ ] **Step 9: Lint and typecheck**
+- [ ] **Step 7: Lint and typecheck**
 
-Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH biome check core/reports/lib 2>&1 | command grep -m 10 . ; PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg typecheck 2>&1 | command grep -m 20 -E 'error TS|exit'`
+Run: `cd /Users/nas/tmp/tinycld/books-purchases/tinycld && PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH biome check core/reports/lib tests/e2e/reports-ledger-v3.spec.ts 2>&1 | command grep -m 10 . ; PATH=/Users/nas/tmp/tinycld/books-purchases/node_modules/.bin:$PATH tinycld-pkg typecheck 2>&1 | command grep -m 20 -E 'error TS|exit'`
 Expected: biome prints `Checked … files … No fixes applied.` and no error; the typecheck prints no `error TS` line. When biome reports a format error in a file of this task, run `biome check --write <that file>` and run the check again.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 8: Run the e2e test**
+
+Run the e2e command of step 3 again (the same one command, the same port check).
+Expected: `Running 1 test` and `1 passed`. The message shows under **Row label** after `Brought {value}` and goes away after `Brought forward`; the rest of the test reads the saved report as before.
+
+When the message does not show, find the cause in the form path named in **Interfaces** (the draft issue's path must be `groups.0.opening.label`, the name of the input). Do not add a timeout, a wait or a retry.
+
+- [ ] **Step 9: Commit**
 
 ```bash
 cd /Users/nas/tmp/tinycld/books-purchases/tinycld
-git add core/reports/lib/types.ts core/reports/lib/spec.ts core/reports/lib/format.ts core/reports/lib/builder/draft.ts core/reports/lib/__tests__/format.test.ts core/reports/lib/__tests__/spec.test.ts core/reports/lib/builder/__tests__/draft.test.ts core/help/reports.md
-git commit -m "feat(reports): the client shows an opening row's label value and the builder keeps it"
+git add core/reports/lib/builder/draft.ts core/reports/lib/builder/__tests__/draft.test.ts tests/e2e/reports-ledger-v3.spec.ts core/help/reports.md
+git commit -m "feat(reports): the builder keeps an opening row's label value and checks its label"
 ```
