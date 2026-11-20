@@ -454,6 +454,20 @@
             "expect": "2026-08-01"
         },
         {
+            "name": "startOfMonth of a date-time value",
+            "types": { "a": "datetime" },
+            "values": { "a": "2026-08-15 10:00:00.000Z" },
+            "formula": { "op": "startOfMonth", "args": [{ "col": "a" }] },
+            "expect": "2026-08-01"
+        },
+        {
+            "name": "startOfMonth of a blank text is blank",
+            "types": { "a": "text" },
+            "values": { "a": "" },
+            "formula": { "op": "startOfMonth", "args": [{ "col": "a" }] },
+            "expect": null
+        },
+        {
             "name": "startOfMonth of a blank day is blank",
             "types": { "a": "date" },
             "values": { "a": null },
