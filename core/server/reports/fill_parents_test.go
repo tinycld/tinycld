@@ -221,3 +221,50 @@ func TestAFillRecordSkipsItsOwnBlankParentLevel(t *testing.T) {
 		{KindComputed, "Assets and liabilities", int64(300), int64(11000), int64(-10700), "USD"},
 	})
 }
+
+// A having on the site group, above the filled animals. Each animal names its
+// own site: East (Eli, no feeding) and "(none)" (Kit, no site) have no base
+// row. Every group is open, so the feedings show, each labeled with its site;
+// the statement of the feedings, which compiles only the levels down to the
+// having, still
+// reads the fill records, with a "rows" column (the site's having reads the
+// animals' sums) and without one. A having that keeps every site shows East
+// and "(none)"; one that keeps the sites with a cost hides them and their
+// animals.
+func TestAFillRecordNamesItsParentUnderAHavingAbove(t *testing.T) {
+	spec := func(total, having string) string {
+		return `{"version":4,"source":"zoo.feedings","columns":[
+			{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
+			{"id":"animal","path":[{"link":"animal"}]},
+			{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"` + total + `}],
+			"groups":[
+				{"id":"s","col":"site","having":{"op":"` + having + `","args":[{"col":"cost"},{"value":0}]}},
+				{"id":"a","col":"animal","fill":{}}],
+			"sort":[{"formula":{"record":"s","path":[{"field":"name"}]}},{"formula":{"record":"a","path":[{"field":"name"}]}},{"col":"cost"}]}`
+	}
+	every := []any{"East", "Eli", "North", "Leo", "North", "North", "Lia", "South", "Zed", "South", "South", "(none)", "Kit", "Total"}
+	everyCost := []any{int64(0), int64(0), int64(3500), int64(3500), int64(1000), int64(2500), int64(0),
+		int64(1000), int64(1000), int64(300), int64(700), int64(0), int64(0), int64(4500)}
+	withCost := []any{"North", "Leo", "North", "North", "Lia", "South", "Zed", "South", "South", "Total"}
+	withCostCost := []any{int64(3500), int64(3500), int64(1000), int64(2500), int64(0), int64(1000), int64(1000), int64(300), int64(700), int64(4500)}
+	for _, tc := range []struct {
+		name, total, having string
+		labels, cost        []any
+	}{
+		{"no rows column, every site", "", "gte", every, everyCost},
+		{"no rows column, the sites with a cost", "", "gt", withCost, withCostCost},
+		{"a rows column, every site", `,"total":"rows"`, "gte", every, everyCost},
+		{"a rows column, the sites with a cost", `,"total":"rows"`, "gt", withCost, withCostCost},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			z := newZoo(t)
+			withEmptyAnimals(t, z)
+			res, err := z.try(t, "ann", spec(tc.total, tc.having), Options{ExpandAll: true}, nil)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			requireRows(t, res, "label", tc.labels...)
+			requireRows(t, res, "cost", tc.cost...)
+		})
+	}
+}

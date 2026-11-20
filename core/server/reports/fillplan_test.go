@@ -2,6 +2,7 @@ package reports
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -19,14 +20,23 @@ var parentLoop = regexp.MustCompile(`: (?:SCAN|SEARCH) (?:p|f\d+)(?: |$)`)
 var fillRecordsCTE = regexp.MustCompile(`^(?:MATERIALIZE|CO-ROUTINE) fr\d+$`)
 
 // readsFillRecords is the loop of a keyset that reads fr<n>.
-var readsFillRecords = regexp.MustCompile(`^SCAN fr\d+(?: |$)`)
+var readsFillRecords = regexp.MustCompile(`^(?:SCAN|SEARCH) fr\d+(?: |$)`)
+
+// loops are the tables a select loops over, outermost first.
+func loops(rows []planRow) []string {
+	var out []string
+	for _, r := range rows {
+		if strings.HasPrefix(r.detail, "SCAN ") || strings.HasPrefix(r.detail, "SEARCH ") {
+			out = append(out, r.detail)
+		}
+	}
+	return out
+}
 
 // firstLoop is the first table a select loops over, "" when it has no loop.
 func firstLoop(rows []planRow) string {
-	for _, r := range rows {
-		if strings.HasPrefix(r.detail, "SCAN ") || strings.HasPrefix(r.detail, "SEARCH ") {
-			return r.detail
-		}
+	if l := loops(rows); len(l) > 0 {
+		return l[0]
 	}
 	return ""
 }
@@ -88,12 +98,16 @@ func fillOuterLoops(t *testing.T, z *zoo, seen []readStatement) []string {
 			if len(branches) < 2 {
 				t.Fatalf("%s: plan %v, want a compound select", f.detail, children(f.id))
 			}
-			loop := firstLoop(children(branches[len(branches)-1].id))
-			// A keyset that reads fr<n> joins nothing: fr<n> is the one checked.
-			if readsFillRecords.MatchString(loop) {
+			branch := loops(children(branches[len(branches)-1].id))
+			// A keyset that reads fr<n> loops over it alone: the join of the
+			// parent rows with the records is in fr<n>, the one checked above.
+			if slices.ContainsFunc(branch, readsFillRecords.MatchString) {
+				if len(branch) != 1 {
+					t.Errorf("%s: loops %v, want fr<n> alone", f.detail, branch)
+				}
 				continue
 			}
-			outer = append(outer, f.detail+": "+loop)
+			outer = append(outer, f.detail+": "+firstLoop(children(branches[len(branches)-1].id)))
 		}
 	}
 	return outer

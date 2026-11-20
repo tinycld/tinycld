@@ -43,9 +43,11 @@ type level struct {
 	// fill is the level's keyset when its group fills in the records with no
 	// rows (fillKeys), "" otherwise; render emits it as the CTE f<L>.
 	fill string
-	// fillRecords is the level's fill records with their own parents' keys
-	// (fillKeys), "" when they sit under each parent row; base emits it as the
-	// CTE fr<L>, which the keysets of this level and the levels above read.
+	// fillRecords, on level 1 only, is the fill records of level L with their
+	// own parents' keys (fillKeys), "" when they sit under each parent row.
+	// base emits it as the CTE fr<L>, which the keysets of levels 1 to L read:
+	// every statement that compiles one of them compiles level 1, also one
+	// that stops above L (shownLevels), so each defines fr<L> once.
 	fillRecords string
 	frame       *windowFrame
 	// sumsFrame holds the lookups the cells of rt<L> compute once per row
@@ -119,16 +121,26 @@ func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
 		lv.keys = append(lv.keys, fmt.Sprintf("k%d", i))
 	}
 	lv.keys = append(lv.keys, c.currencies...)
-	if n >= 1 && c.p.groups[n-1].group.Fill != nil {
-		fill, records, err := c.fillKeys(r, n, expand, c.p.groups[n-1].at+".fill")
+	switch {
+	case c.fillOwn != nil && n >= 1 && n <= c.fillOwn.level:
+		// The filled level or a parent of its records: its keys in w and the
+		// records' own, which level 1 computes.
+		if n == 1 {
+			at := c.p.groups[c.fillOwn.level-1].at + ".fill"
+			_, records, err := c.fillKeys(r, c.fillOwn.level, expand, at)
+			if err != nil {
+				return nil, err
+			}
+			lv.fillRecords = records
+		}
+		lv.fill = c.ownFillKeys(r.s, n, c.fillOwn.level, expand)
+		c.fillSets[n] = fmt.Sprintf("f%d", n)
+	case n >= 1 && c.p.groups[n-1].group.Fill != nil:
+		fill, _, err := c.fillKeys(r, n, expand, c.p.groups[n-1].at+".fill")
 		if err != nil {
 			return nil, err
 		}
-		lv.fill, lv.fillRecords = fill, records
-		c.fillSets[n] = fmt.Sprintf("f%d", n)
-	} else if c.filled(n) {
-		// A parent of the filled records: its keys in w and the records' own.
-		lv.fill = c.ownFillKeys(r.s, n, c.fillOwn.level, expand)
+		lv.fill = fill
 		c.fillSets[n] = fmt.Sprintf("f%d", n)
 	}
 	parent := slices.Clone(c.currencies)
@@ -443,8 +455,8 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	rows := fmt.Sprintf("SELECT %s FROM w%s", strings.Join(append(append(keyCols, lv.aggs...), "count(*) AS __n"), ", "), groupBy(lv.keys))
 	var ctes []string
 	if lv.fillRecords != "" {
-		// Materialized: the keyset of every level down to this one reads it.
-		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (%s)", fillRecords(lv.n), lv.fillRecords))
+		// Materialized: the keyset of every level down to the filled one reads it.
+		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (%s)", fillRecords(lv.c.fillOwn.level), lv.fillRecords))
 	}
 	if lv.fill != "" {
 		// The keyset is one CTE, which the level below reads by name.
