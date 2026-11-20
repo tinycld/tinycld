@@ -23,35 +23,143 @@ func detailStatement(t *testing.T, seen []readStatement) string {
 }
 
 // The Split lookups read nothing a sort key or the running balance needs, so
-// they are computed over the rows the page cut left: the select that cuts
-// the page (it holds the running balance, ww0) is read inside the select
-// that computes them.
+// they are computed over the rows the page cut left. The page is a CTE of its
+// own (wpage, materialized: SQLite would otherwise flatten it under the
+// lookups); it holds the running balance, ww0, and the layers it reads. The
+// layers above the cut are a second materialized CTE (wcells) over it.
 func TestARowsOwnLookupsAreComputedForThePagesRows(t *testing.T) {
 	z := newZoo(t)
 	withBalanceZoo(t, z)
 	seen := observeReads(t)
 	z.run(t, "ann", balanceSpec(), Options{Today: "2026-07-15", Limit: 3}, map[string]string{"period": glJuly})
+	st := (*seen)[0]
 	sql := detailStatement(t, *seen)
-	cut := strings.Index(sql, "d.__id LIMIT ")
-	window := strings.Index(sql, " AS ww0")
-	if window < 0 || window > cut {
+	for _, s := range *seen {
+		if s.sql == sql {
+			st = s
+		}
+	}
+	page := strings.Index(sql, "wpage AS MATERIALIZED (")
+	cells := strings.Index(sql, ", wcells AS MATERIALIZED (")
+	end := strings.LastIndex(sql, ") d ORDER BY d.__g, ")
+	if page < 0 || cells < page || end < cells {
+		t.Fatalf("the page and the cells above it are not two materialized CTEs:\n%s", sql)
+	}
+	pageText, cellsText := sql[page:cells], sql[cells:end]
+	if !strings.Contains(pageText, "d.__id LIMIT ") {
+		t.Fatalf("the page is not cut in its CTE:\n%s", sql)
+	}
+	if !strings.Contains(pageText, " AS ww0") {
 		t.Fatalf("the running balance is not computed below the page cut:\n%s", sql)
 	}
-	from := strings.LastIndex(sql[:cut], "FROM (SELECT * FROM (")
-	if from < 0 {
-		t.Fatalf("the page is not cut inside another select:\n%s", sql)
-	}
-	if !strings.Contains(sql[:from], splitRead) {
-		t.Fatalf("the Split lookups are not computed over the page:\n%s", sql)
-	}
-	if strings.Contains(sql[from:cut], splitRead) {
-		t.Fatalf("a Split lookup is computed below the page cut:\n%s", sql)
-	}
-	if !strings.Contains(sql[from:cut], " AS wh") {
+	if !strings.Contains(pageText, " AS wh") {
 		t.Fatalf("the layers the running balance reads are not below the page cut:\n%s", sql)
 	}
-	if !strings.Contains(sql[cut:], ") d ORDER BY d.__g, ") {
+	if strings.Contains(pageText, splitRead) {
+		t.Fatalf("a Split lookup is computed below the page cut:\n%s", sql)
+	}
+	if !strings.Contains(cellsText, splitRead) || !strings.Contains(cellsText, "wpage") {
+		t.Fatalf("the Split lookups are not computed over the page:\n%s", sql)
+	}
+	if !strings.Contains(sql[end:], ") d ORDER BY d.__g, ") {
 		t.Fatalf("the page's rows are not put in order again:\n%s", sql)
+	}
+	plan := strings.Join(explainPlan(t, z, st), "\n")
+	for _, step := range []string{"MATERIALIZE wpage", "MATERIALIZE wcells"} {
+		if !strings.Contains(plan, step) {
+			t.Fatalf("the plan has no %q:\n%s", step, plan)
+		}
+	}
+}
+
+// pageAndCells splits a statement into the text of its page CTE and the text
+// of the CTE of the layers above the cut and the cells select after it.
+func pageAndCells(t *testing.T, sql string) (page, cells string) {
+	t.Helper()
+	p := strings.Index(sql, pageCTE+" AS MATERIALIZED (")
+	c := strings.Index(sql, ", "+cellsCTE+" AS MATERIALIZED (")
+	if p < 0 || c < p {
+		t.Fatalf("the page and the cells above it are not two materialized CTEs:\n%s", sql)
+	}
+	return sql[p:c], sql[c:]
+}
+
+// explainPlan is the lines of SQLite's plan of one observed statement.
+func explainPlan(t *testing.T, z *zoo, st readStatement) []string {
+	t.Helper()
+	rows, err := z.app.DB().NewQuery("EXPLAIN QUERY PLAN " + st.sql).Bind(st.params).Rows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, detail)
+	}
+	return out
+}
+
+// SQLite flattens a layer select into the select that reads it, and copies
+// the expression of a hoisted value into each place that reads it (the Split
+// cell reads its count twice; a beginning balance is read by several cells).
+// Each copy is a scalar subquery of the plan, run once more. The paged
+// statement must hold no more of them than the old one, which computes each
+// hoisted value once.
+func TestAHoistedValueTheCellsReadSeveralTimesIsComputedOnce(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	t.Cleanup(func() { legacySQL.cellsBeforeThePage = false })
+	subqueries := func(old bool) int {
+		legacySQL.cellsBeforeThePage = old
+		seen := observeReads(t)
+		z.run(t, "ann", balanceSpec(), Options{Today: "2026-07-15", Limit: 3}, map[string]string{"period": glJuly})
+		sql := detailStatement(t, *seen)
+		for _, st := range *seen {
+			if st.sql == sql {
+				n := 0
+				for _, line := range explainPlan(t, z, st) {
+					if strings.Contains(line, "SCALAR SUBQUERY") {
+						n++
+					}
+				}
+				return n
+			}
+		}
+		return -1
+	}
+	old, paged := subqueries(true), subqueries(false)
+	if old <= 0 {
+		t.Fatalf("the old statement has %d scalar subqueries: the case compares nothing", old)
+	}
+	if paged > old {
+		t.Fatalf("the paged statement has %d scalar subqueries, the old one %d", paged, old)
+	}
+}
+
+// A detail page with no groups reads w once, under its LIMIT: w stays inline,
+// also when the cells are computed above the page cut (the CTEs of the cut
+// sit in the body's own select, where materializeShared does not count them).
+func TestAPagedDetailWithNoGroupsKeepsTheRowsInline(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	spec := `{"version":4,"source":"zoo.ledger_lines","columns":[
+		{"id":"date","label":"Date","path":[{"field":"date"}]},
+		{"id":"split","label":"Split","formula":` + strings.ReplaceAll(glSplit, "COUNT", glCount) + `},
+		{"id":"run","label":"Run","formula":{"op":"runningSum","args":[` + glNet + `]}}],
+		"sort":[{"formula":{"path":[{"field":"date"}]}},{"formula":{"path":[{"field":"position"}]}}]}`
+	seen := observeReads(t)
+	z.run(t, "ann", spec, Options{Today: "2026-07-15", Limit: 2}, nil)
+	sql := detailStatement(t, *seen)
+	if !strings.Contains(sql, "wcells AS MATERIALIZED (") || !strings.Contains(sql, splitRead) {
+		t.Fatalf("the cells are not computed above the page cut:\n%s", sql)
+	}
+	if strings.Contains(sql, "w AS MATERIALIZED (") {
+		t.Fatalf("a detail page with no groups materializes w:\n%s", sql)
 	}
 }
 
@@ -232,22 +340,18 @@ func TestGroupsWithChildRowsComputeTheirCellsForThePage(t *testing.T) {
 	if !strings.Contains(sql, "d.__g > ") || !strings.Contains(sql, " AS __n0") {
 		t.Fatalf("the page does not follow the group cursor (groupedAfter):\n%s", sql)
 	}
-	cut := strings.Index(sql, "d.__id LIMIT ")
-	from := strings.LastIndex(sql[:cut], "FROM (SELECT * FROM (")
-	if from < 0 {
-		t.Fatalf("the page is not cut inside another select:\n%s", sql)
-	}
-	if !strings.Contains(sql[cut:], ") d ORDER BY d.__g, ") {
+	page, _ := pageAndCells(t, sql)
+	if !strings.Contains(sql, ") d ORDER BY d.__g, ") {
 		t.Fatalf("the page's rows are not put in order again:\n%s", sql)
 	}
-	if !strings.Contains(sql[from:cut], " AS ww0") || !strings.Contains(sql[from:cut], " OVER (") {
+	if !strings.Contains(page, " AS ww0") || !strings.Contains(page, " OVER (") {
 		t.Fatalf("the running value is not computed below the page cut:\n%s", sql)
 	}
 	legacySQL.cellsBeforeThePage = true
 	t.Cleanup(func() { legacySQL.cellsBeforeThePage = false })
 	seen = observeReads(t)
 	z.run(t, "ann", groupedNest, opts, nil)
-	if old := detailStatement(t, *seen); strings.Contains(old, "FROM (SELECT * FROM (") {
+	if old := detailStatement(t, *seen); strings.Contains(old, pageCTE) {
 		t.Fatalf("the old detail select cuts the page last:\n%s", old)
 	}
 }
@@ -263,19 +367,14 @@ func TestALookupOfARunningValueIsComputedAboveTheCutOverTheRunningValue(t *testi
 	seen := observeReads(t)
 	z.run(t, "ann", runningLookup, Options{Today: "2026-07-15", Limit: 2}, nil)
 	sql := detailStatement(t, *seen)
-	cut := strings.Index(sql, "d.__id LIMIT ")
-	from := strings.LastIndex(sql[:cut], "FROM (SELECT * FROM (")
-	if from < 0 {
-		t.Fatalf("the page is not cut inside another select:\n%s", sql)
-	}
-	if !strings.Contains(sql[from:cut], " AS ww0") || !strings.Contains(sql[from:cut], " OVER (") {
+	page, cells := pageAndCells(t, sql)
+	if !strings.Contains(page, " AS ww0") || !strings.Contains(page, " OVER (") {
 		t.Fatalf("the running value is not computed below the page cut:\n%s", sql)
 	}
-	layer := strings.Index(sql[:from], "w.ww0 AS wh0")
-	if layer < 0 {
+	if !strings.Contains(cells, "w.ww0 AS wh0") {
 		t.Fatalf("the lookup's layer does not read the running value above the cut:\n%s", sql)
 	}
-	if strings.Contains(sql[from:cut], " AS wh0") {
+	if strings.Contains(page, " AS wh0") {
 		t.Fatalf("the lookup's layer is computed below the page cut:\n%s", sql)
 	}
 }

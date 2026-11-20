@@ -1967,6 +1967,12 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	return rows, order, nil
 }
 
+// The CTEs of a page's cells: the page cut, and the layers above the cut.
+const (
+	pageCTE  = "wpage"
+	cellsCTE = "wcells"
+)
+
 // earlyCol is a value of the detail select that is read before the page is
 // cut: its place in the select list and its name.
 type earlyCol struct {
@@ -2020,8 +2026,18 @@ func pagedCells(frame *windowFrame, table string, sel []string, early []earlyCol
 		if strings.HasPrefix(by, "d.__g") {
 			cols = append(slices.Clone(last), "w.__g AS __g")
 		}
-		from := frame.layers("("+page+") w", table+" w", "w", func(i int) bool { return !isEarly[i] })
-		return fmt.Sprintf("SELECT * FROM (SELECT %s FROM %s) d ORDER BY %s", strings.Join(cols, ", "), from, by)
+		from := frame.layers("(SELECT * FROM "+pageCTE+") w", table+" w", "w", func(i int) bool { return !isEarly[i] })
+		// Both selects are materialized. SQLite flattens a layer select into
+		// the select that reads it and writes a hoisted value's expression in
+		// each place that reads it (the Split count twice, a beginning balance
+		// in every cell), so the layers are a CTE of their own: each hoisted
+		// value is one column, computed once for a page row. The page is a CTE
+		// too, or SQLite flattens it (it has a LIMIT) into the layers and runs
+		// the lookups for every row again. The CTEs sit in the body's select,
+		// not in the statement's list, so materializeShared does not count
+		// their reads of w and a detail page with no groups keeps w inline.
+		return fmt.Sprintf("SELECT * FROM (WITH %s AS MATERIALIZED (%s), %s AS MATERIALIZED (SELECT * FROM %s) SELECT %s FROM %s w) d ORDER BY %s",
+			pageCTE, page, cellsCTE, from, strings.Join(cols, ", "), cellsCTE, by)
 	}
 }
 
