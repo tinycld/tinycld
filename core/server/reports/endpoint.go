@@ -155,17 +155,17 @@ func decodeStrict(re *core.RequestEvent, into any, what string) error {
 	return nil
 }
 
-// requestSpec is a request's spec: the posted draft, or a saved report's
-// spec read through its view rule. Never both.
+// requestSpec returns only the spec bytes. The param-options endpoint needs
+// no saved record, so it takes this instead of requestSource.
 func requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, error) {
 	raw, _, err := requestSource(re, spec, reportID)
 	return raw, err
 }
 
-// requestRun is requestSpec, with whether the run stays live over a source
-// that is NotLive: only a saved report that a package ships as Live does. A
-// posted draft never does, so the builder's preview of such a report is
-// manual too.
+// requestRun returns the spec and whether the run stays live over a NotLive
+// source. Only a saved report that a package ships as Live keeps it live, and
+// only while it still holds the shipped spec. A posted draft never does, so
+// the builder's preview of such a report runs manually.
 func requestRun(re *core.RequestEvent, spec json.RawMessage, reportID string) (raw []byte, live bool, err error) {
 	raw, rec, err := requestSource(re, spec, reportID)
 	if err != nil || rec == nil {
@@ -174,8 +174,10 @@ func requestRun(re *core.RequestEvent, spec json.RawMessage, reportID string) (r
 	return raw, shippedLive(rec), nil
 }
 
-// requestSource picks the spec bytes of a request and the saved report the
-// caller may view, nil for a posted draft.
+// requestSource reads the spec of a run request: a posted draft, or a saved
+// report the caller can view. It refuses both or neither, so a request never
+// runs a spec the caller did not mean. It returns the saved record, nil for a
+// draft, so requestRun can check the shipped state only for a saved report.
 func requestSource(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, *core.Record, error) {
 	switch {
 	case reportID != "" && spec != nil:
