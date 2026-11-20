@@ -32,12 +32,16 @@ func TestARowsOwnLookupsAreComputedForThePagesRows(t *testing.T) {
 	withBalanceZoo(t, z)
 	seen := observeReads(t)
 	z.run(t, "ann", balanceSpec(), Options{Today: "2026-07-15", Limit: 3}, map[string]string{"period": glJuly})
-	st := (*seen)[0]
 	sql := detailStatement(t, *seen)
+	var st readStatement
+	found := false
 	for _, s := range *seen {
 		if s.sql == sql {
-			st = s
+			st, found = s, true
 		}
+	}
+	if !found {
+		t.Fatal("no observed statement is the detail statement")
 	}
 	page := strings.Index(sql, "wpage AS MATERIALIZED (")
 	cells := strings.Index(sql, ", wcells AS MATERIALIZED (")
@@ -64,10 +68,22 @@ func TestARowsOwnLookupsAreComputedForThePagesRows(t *testing.T) {
 	if !strings.Contains(sql[end:], ") d ORDER BY d.__g, ") {
 		t.Fatalf("the page's rows are not put in order again:\n%s", sql)
 	}
-	plan := strings.Join(explainPlan(t, z, st), "\n")
-	for _, step := range []string{"MATERIALIZE wpage", "MATERIALIZE wcells"} {
-		if !strings.Contains(plan, step) {
-			t.Fatalf("the plan has no %q:\n%s", step, plan)
+	// The text above is not enough: SQLite flattens a CTE it is not told to
+	// materialize. In the plan tree, the Split lookups lie under wcells and
+	// none of them under wpage.
+	nodes := explainTree(t, z, st)
+	pageNode := planNodeNamed(t, nodes, "MATERIALIZE wpage")
+	cellsNode := planNodeNamed(t, nodes, "MATERIALIZE wcells")
+	lookups := splitLookupNodes(nodes)
+	if len(lookups) == 0 {
+		t.Fatalf("the plan has no Split lookup: %+v", nodes)
+	}
+	for id := range lookups {
+		if under(nodes, id, pageNode) {
+			t.Fatalf("the Split lookup of plan node %d is under MATERIALIZE wpage: %+v", id, nodes)
+		}
+		if !under(nodes, id, cellsNode) {
+			t.Fatalf("the Split lookup of plan node %d is not under MATERIALIZE wcells: %+v", id, nodes)
 		}
 	}
 }
@@ -84,22 +100,87 @@ func pageAndCells(t *testing.T, sql string) (page, cells string) {
 	return sql[p:c], sql[c:]
 }
 
-// explainPlan is the lines of SQLite's plan of one observed statement.
-func explainPlan(t *testing.T, z *zoo, st readStatement) []string {
+// planNode is a node of SQLite's plan tree: its id, its parent's, its text.
+type planNode struct {
+	id, parent int
+	detail     string
+}
+
+// explainTree is the nodes of SQLite's plan of one observed statement.
+func explainTree(t *testing.T, z *zoo, st readStatement) []planNode {
 	t.Helper()
 	rows, err := z.app.DB().NewQuery("EXPLAIN QUERY PLAN " + st.sql).Bind(st.params).Rows()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	var out []string
+	var out []planNode
 	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+		var n planNode
+		var unused int
+		if err := rows.Scan(&n.id, &n.parent, &unused, &n.detail); err != nil {
 			t.Fatal(err)
 		}
-		out = append(out, detail)
+		out = append(out, n)
+	}
+	return out
+}
+
+// explainPlan is the lines of SQLite's plan of one observed statement.
+func explainPlan(t *testing.T, z *zoo, st readStatement) []string {
+	t.Helper()
+	var out []string
+	for _, n := range explainTree(t, z, st) {
+		out = append(out, n.detail)
+	}
+	return out
+}
+
+// under reports whether the node id lies in the subtree of root.
+func under(nodes []planNode, id, root int) bool {
+	parent := map[int]int{}
+	for _, n := range nodes {
+		parent[n.id] = n.parent
+	}
+	for ; id != 0; id = parent[id] {
+		if id == root {
+			return true
+		}
+	}
+	return false
+}
+
+// planNodeNamed is the id of the plan node whose text is detail.
+func planNodeNamed(t *testing.T, nodes []planNode, detail string) int {
+	t.Helper()
+	for _, n := range nodes {
+		if n.detail == detail {
+			return n.id
+		}
+	}
+	t.Fatalf("the plan has no %q", detail)
+	return 0
+}
+
+// splitLookupNodes is the scalar subquery nodes of the plan that read the
+// looked-up line's entry (the Split column's lookups): the nearest scalar
+// subquery above each search by the entry index.
+func splitLookupNodes(nodes []planNode) map[int]bool {
+	byID := map[int]planNode{}
+	for _, n := range nodes {
+		byID[n.id] = n
+	}
+	out := map[int]bool{}
+	for _, n := range nodes {
+		if !strings.Contains(n.detail, "_entry (entry") {
+			continue
+		}
+		for a, ok := byID[n.parent]; ok; a, ok = byID[a.parent] {
+			if strings.Contains(a.detail, "SCALAR SUBQUERY") {
+				out[a.id] = true
+				break
+			}
+		}
 	}
 	return out
 }
