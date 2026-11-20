@@ -4,7 +4,7 @@
 
 **Goal:** A measure that times the Trial Balance, the Balance Sheet and Transaction Detail by Account at 10,000, 100,000 and 500,000 journal lines and holds each run to the human's bar, with its 100,000-line baseline recorded, so that the next part can choose the change with the largest measured gain.
 
-**Architecture:** One new Go test file in Books, beside the General Ledger's scale harness. It uses that harness's book (`writeGLScaleBook`) and adds cash-basis rows to it, runs the three shipped reports through `reports.Run`, and writes the times and the query plans to files. It changes no report and no engine code. The changes that make the runs fast are tasks 9b to 9d (the outline, section "State after plan part 12"); they are not in this part, because no time could be measured when this part was written (the machine was not quiet).
+**Architecture:** One new Go test file in Books, beside the General Ledger's scale harness. It uses that harness's book (`writeGLScaleBook`) and adds cash-basis rows to it, runs the three shipped reports through `reports.Run`, and writes the times and the query plans to files. It changes no report and no engine code. The changes that make the runs fast are tasks 9b to 9d (the outline, section "State after plan part 12"); they are not in this part: the next part chooses among them from this part's measured baseline. The planner measured the current tree at 100k with this harness (`part12-scratch/scale-100k/st-results.md`: Trial Balance 435-742 ms, Balance Sheet 1,288 ms Accrual and 1,591 ms Cash, Transaction Detail refused at 10 s on five of its six runs); step 6 measures it again on the committed code for the record.
 
 **Tech Stack:** Go, SQLite (PocketBase fork), core report engine `tinycld.org/core/reports`.
 
