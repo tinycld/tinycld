@@ -281,8 +281,9 @@ export function ReportView({
     /** The side covers the report as a page (the drill panel under 1360 px). */
     isCovered?: boolean
 }) {
-    // Pushed at mount so a dialog's modal scope, opened later, stays above it. A
-    // host screen that embeds a report and has its own scoped shortcuts must set
+    // Pushed when the screen gains focus (its id is set at mount), so a dialog
+    // opened later, while the screen has focus, sits above it. A host screen that
+    // embeds a report and has its own scoped shortcuts must set
     // `activeUnder: ['list']` on them to stay active under this scope.
     const scopeOwner = useShortcutScope('list')
     const table = useTableLayout(model)
