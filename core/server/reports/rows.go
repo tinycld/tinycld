@@ -91,6 +91,10 @@ type compiler struct {
 	// fillSets names the keyset CTE (f<L>) of each level whose group fills in
 	// its records (fillKeys); the level below joins its records to its rows.
 	fillSets map[int]string
+	// fillOwn is set when the first filled group's records name their own
+	// parents (ownParentsOf): they show under their own parent rows, also
+	// when no base row made that parent.
+	fillOwn *ownParents
 	// expanding holds the params whose group references are being expanded,
 	// so options whose where reads such a param back are refused, not
 	// expanded forever.
@@ -320,11 +324,13 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	c.p.spec.drillNodes(func(n *Node, _ string) { r.formulaCurrencies(n) })
 	c.groupTargets = make([]*Source, len(c.p.groups))
 	c.groupOptions, c.groupShown = make([][]Option, len(c.p.groups)), make([]bool, len(c.p.groups))
+	keyTypes := make([]FieldType, len(c.p.groups))
 	for i, g := range c.p.groups {
 		e, err := r.rowValue(g.col, g.at+".col", map[string]bool{})
 		if err != nil {
 			return nil, err
 		}
+		keyTypes[i] = e.typ
 		if g.group.Bucket != "" {
 			if e.typ != Date && e.typ != DateTime {
 				return nil, invalid(g.at+".bucket", "only a date column has a bucket")
@@ -354,6 +360,7 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 		}
 		r.add(fmt.Sprintf("k%d", i), e.sql)
 	}
+	c.fillOwn = c.ownParentsOf(keyTypes)
 	// The filter compiles once the currency keys are known, so an amount it
 	// reads by path has the key a column of it has (joinCtx.path).
 	if f := c.p.spec.Filter; f != nil {

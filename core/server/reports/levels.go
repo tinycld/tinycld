@@ -42,8 +42,12 @@ type level struct {
 	childCells []string
 	// fill is the level's keyset when its group fills in the records with no
 	// rows (fillKeys), "" otherwise; render emits it as the CTE f<L>.
-	fill  string
-	frame *windowFrame
+	fill string
+	// fillRecords is the level's fill records with their own parents' keys
+	// (fillKeys), "" when they sit under each parent row; base emits it as the
+	// CTE fr<L>, which the keysets of this level and the levels above read.
+	fillRecords string
+	frame       *windowFrame
 	// sumsFrame holds the lookups the cells of rt<L> compute once per row
 	// (rowsCells), as frame holds o<L>'s.
 	sumsFrame *windowFrame
@@ -116,11 +120,15 @@ func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
 	}
 	lv.keys = append(lv.keys, c.currencies...)
 	if n >= 1 && c.p.groups[n-1].group.Fill != nil {
-		fill, err := c.fillKeys(r, n, expand, c.p.groups[n-1].at+".fill")
+		fill, records, err := c.fillKeys(r, n, expand, c.p.groups[n-1].at+".fill")
 		if err != nil {
 			return nil, err
 		}
-		lv.fill = fill
+		lv.fill, lv.fillRecords = fill, records
+		c.fillSets[n] = fmt.Sprintf("f%d", n)
+	} else if c.filled(n) {
+		// A parent of the filled records: its keys in w and the records' own.
+		lv.fill = c.ownFillKeys(r.s, n, c.fillOwn.level, expand)
 		c.fillSets[n] = fmt.Sprintf("f%d", n)
 	}
 	parent := slices.Clone(c.currencies)
@@ -434,6 +442,10 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	// level with no aggregate valid.
 	rows := fmt.Sprintf("SELECT %s FROM w%s", strings.Join(append(append(keyCols, lv.aggs...), "count(*) AS __n"), ", "), groupBy(lv.keys))
 	var ctes []string
+	if lv.fillRecords != "" {
+		// Materialized: the keyset of every level down to this one reads it.
+		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (%s)", fillRecords(lv.n), lv.fillRecords))
+	}
 	if lv.fill != "" {
 		// The keyset is one CTE, which the level below reads by name.
 		ctes = append(ctes, fmt.Sprintf("%s AS (%s)", lv.c.fillSets[lv.n], lv.fill))

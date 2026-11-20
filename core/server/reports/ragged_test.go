@@ -225,25 +225,20 @@ func TestRaggedCursorFromAnotherGroupingIsRefused(t *testing.T) {
 	requireSpecError(t, err, 400, "options.cursor", "not one this report gave")
 }
 
-// A fill on the animal level below the skipped region: the animals Ann may list
-// with no feeding under "cat" fill in under "cat" itself, where Kit's rows go.
-func TestRaggedFillFillsUnderTheParentTheRowsReach(t *testing.T) {
+// A fill on the animal level below the skipped region. The species and the
+// region read only the animal, so an animal with no feeding fills in under its
+// own species and region: Lia (a lion at North) beside Leo, Eli under a species
+// and a region no feeding reaches, and Pip (a cat with no site) directly under
+// "cat" beside Kit, where its rows would go. Leo and Zed are not cats, so they
+// do not fill in under "cat".
+func TestRaggedFillFillsUnderTheRecordsOwnParents(t *testing.T) {
 	z := raggedZoo(t)
+	withEmptyAnimals(t, z)
+	z.rec(t, "pip", "zoo_animals", map[string]any{"name": "Pip", "species": "cat", "owner": z.id("ann"), "active": true})
 	raw := strings.Replace(fmt.Sprintf(zooRagged, ""), `{"id":"a","col":"animal","subtotals":true}`, `{"id":"a","col":"animal","subtotals":true,"fill":{}}`, 1)
 	res := z.run(t, "ann", raw, Options{}, nil)
-	var underCat []any
-	for _, r := range res.Rows[1:] {
-		if r.Label == "Total cat" {
-			break
-		}
-		if r.Depth != 1 || r.Level != 3 {
-			t.Fatalf("row %q under cat at depth %d level %d", r.Label, r.Depth, r.Level)
-		}
-		underCat = append(underCat, r.Label)
-	}
-	// Ann lists Leo and Kit (owner) and Zed (keeper); Leo and Zed have no cat
-	// feeding, so they fill in beside Kit.
-	if !reflect.DeepEqual(underCat, []any{"Kit", "Leo", "Zed"}) {
-		t.Fatalf("under cat: %v", underCat)
-	}
+	requireRows(t, res, "label", "cat", "Kit", "Pip", "Total cat", "elk", "North", "Eli", "Total North", "Total elk",
+		"lion", "North", "Leo", "Lia", "Total North", "Total lion", "zebra", "South", "Zed", "Total South", "Total zebra", "Total")
+	requireRows(t, res, "depth", 0, 1, 1, 0, 0, 1, 2, 1, 0, 0, 1, 2, 2, 1, 0, 0, 1, 2, 1, 0, 0)
+	requireRows(t, res, "level", 1, 3, 3, 1, 1, 2, 3, 2, 1, 1, 2, 3, 3, 2, 1, 1, 2, 3, 2, 1, 0)
 }
