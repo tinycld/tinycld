@@ -94,19 +94,22 @@ func TestARollupWithRowsTotalsNeedsAGroup(t *testing.T) {
 	}
 }
 
-// A pivot's columns and a layout's sections make their own figures from a
-// column's totals; a rollup that shows on one level only is not defined there.
-func TestARollupWithRowsTotalsIsRefusedWithAPivotOrALayout(t *testing.T) {
+// A pivot's columns make their own figures from a column's totals; a rollup
+// that shows on one level only is not defined there. A layout's sections add
+// the rows under them, so the rollup needs a group below the section group: on
+// a section row itself each section would carry its own currency, and a
+// computed row could not add two of them.
+func TestARollupWithRowsTotalsIsRefusedWithAPivotOrOnALayoutSection(t *testing.T) {
 	app := withZooRegistry(t)
-	const refusal = `a rollup does not go with total "rows" in a report with a pivot or a layout`
 	const cost = `{"id":"cost","path":[{"field":"cost"}],"total":"rows","rollup":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}}`
 	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"species","path":[{"link":"animal"},{"field":"species"}]},`+cost+`],
 		"groups":[{"id":"g","col":"species"}],"layout":[{"section":"cats","title":"Lions","key":"lion"}]}`))
-	requireSpecError(t, err, 400, "columns.1.rollup", refusal)
+	requireSpecError(t, err, 400, "columns.1.rollup",
+		`with total "rows" and a layout a rollup is the cell of the rows under a section: the report needs a group below the section group`)
 	err = Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"month","path":[{"field":"fed"}]},
 		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},`+cost+`],
 		"groups":[{"id":"m","col":"month","bucket":"month"}],"pivot":{"path":[{"link":"animal"}],"cell":"grams"}}`))
-	requireSpecError(t, err, 400, "columns.2.rollup", refusal)
+	requireSpecError(t, err, 400, "columns.2.rollup", `a rollup does not go with total "rows" in a report with a pivot`)
 }
 
 func TestARollupIsRefusedOnAChildRowOrPivotCellColumn(t *testing.T) {

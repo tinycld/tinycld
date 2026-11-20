@@ -214,7 +214,8 @@ type Column struct {
 	// that reads the group's record (a looked-up balance) still totals. A
 	// blank cell adds 0; a cell that is blank for two currencies, or is in
 	// another currency than the sum's, makes the sum blank. Such a report has
-	// a group.
+	// a group. With a layout it has a group below the section group: a section
+	// and a computed row that reads it add the rows shown under the section.
 	Rollup *Node `json:"rollup,omitempty"`
 	// Hidden computes the column (a group key, a sort key, a {col} read, a
 	// section key) but never shows it: the result leaves the column and its
