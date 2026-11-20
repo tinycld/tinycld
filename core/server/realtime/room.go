@@ -127,7 +127,7 @@ func (r *Room) adoptParked(p *parkedDoc) bool {
 		r.serverDoc = p.handle
 		r.epoch = p.epoch
 		r.openedFrom = "parked"
-		log.Info("room reopened from its parked document",
+		log.Debug("room reopened from its parked document",
 			"kind", r.key.kind, "roomID", r.key.id, "epoch", r.epoch)
 		return true
 	}
@@ -135,7 +135,7 @@ func (r *Room) adoptParked(p *parkedDoc) bool {
 		log.Warn("fingerprint failed; dropping the parked document",
 			"kind", r.key.kind, "roomID", r.key.id, "err", err)
 	} else {
-		log.Info("source changed while the document was parked; re-seeding",
+		log.Debug("source changed while the document was parked; re-seeding",
 			"kind", r.key.kind, "roomID", r.key.id)
 	}
 	p.close(r.key)
@@ -180,7 +180,7 @@ func (r *Room) openDoc(handle DocHandle, floor int64) (DocHandle, bool) {
 				if restoreCheckpoint(handle, cp.State) {
 					r.epoch = cp.Epoch
 					r.openedFrom = "checkpoint"
-					log.Info("room opened from its checkpoint",
+					log.Debug("room opened from its checkpoint",
 						"kind", r.key.kind, "roomID", r.key.id, "epoch", r.epoch, "bytes", len(cp.State))
 					return handle, true
 				}
@@ -197,7 +197,7 @@ func (r *Room) openDoc(handle DocHandle, floor int64) (DocHandle, bool) {
 					return nil, false
 				}
 			} else {
-				log.Info("source changed since the checkpoint; re-seeding",
+				log.Debug("source changed since the checkpoint; re-seeding",
 					"kind", r.key.kind, "roomID", r.key.id)
 			}
 			if err := r.opts.Checkpoints.Delete(r.key.kind, r.key.id); err != nil {
