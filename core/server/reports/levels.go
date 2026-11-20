@@ -439,6 +439,9 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 		ctes = append(ctes, fmt.Sprintf("%s AS (%s)", lv.c.fillSets[lv.n], lv.fill))
 		rows += "\nUNION ALL\n" + lv.fillRows()
 	}
+	if lv.totalOverFillRows() {
+		rows += "\nUNION ALL\n" + lv.noRowTotal()
+	}
 	ctes = append(ctes, fmt.Sprintf("%s AS (%s)", a, rows))
 	for _, g := range lv.tms {
 		ctes = append(ctes, g.render(lv.keys))

@@ -27,6 +27,30 @@ func (lv *level) fillRows() string {
 		strings.Join(prefixed("kx.", lv.keys), ", "), keys, lv.c.fillSets[lv.n], keys, empty)
 }
 
+// totalOverFillRows is true for the total (level 0) of a report that splits by
+// currency, whose first group fills in records, and that adds the rows below
+// it (a "rows" cell). Its rows are grouped by the currency keys, so a run that
+// reads no base row gives it no row, while the fill records still show under
+// the sources' currencies (parentKeys). A currency key with no source
+// currency names none on that row: a fill row may then carry a code of its
+// own, and the total would add two currencies as one (R3), so that total
+// stays as it is, with no cells.
+func (lv *level) totalOverFillRows() bool {
+	if lv.n != 0 || len(lv.c.currencies) == 0 || len(lv.childCells) == 0 || !lv.c.nextFill(0) {
+		return false
+	}
+	return !slices.ContainsFunc(lv.c.currencies, func(ck string) bool { return lv.c.noRowCurrency(ck) == nil })
+}
+
+// noRowTotal is a0's one row when the report reads no base row: the currency
+// keys the fill records sit under (noRowCurrencies), and the level's totals
+// of no rows, as a fill row's are (fillRows). The level then joins the sums
+// of its child rows (rs0) to it as to any other total.
+func (lv *level) noRowTotal() string {
+	empty := fmt.Sprintf("SELECT %s FROM w WHERE 0", strings.Join(append(slices.Clone(lv.aggs), "count(*) AS __n"), ", "))
+	return fmt.Sprintf("SELECT %s, e.* FROM (%s) e WHERE NOT EXISTS (SELECT 1 FROM w)", lv.c.noRowCurrencies(lv.r.s), empty)
+}
+
 // parentKeys selects the parent rows of level n: the currencies for level 1
 // (or one row in the sources' currencies, noRowCurrency, when there are no
 // rows); for a deeper level the rows of level n-1 that show and are open,

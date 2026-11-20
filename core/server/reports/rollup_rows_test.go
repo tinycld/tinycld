@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // A balance list by account: a line's debit or credit on detail rows; on the
@@ -113,6 +115,96 @@ func TestARowsColumnShowsItsRollupOnTheInnermostGroup(t *testing.T) {
 	}) {
 		t.Fatalf("notices = %+v, want mixedCurrency naming groups.0.having", res.Notices)
 	}
+}
+
+// withLedgerCurrency gives zoo.ledger_lines a home currency, as a package
+// whose lines name a per-row currency field also does. newZoo's cleanup
+// resets the registry.
+func withLedgerCurrency(t *testing.T, code string) {
+	t.Helper()
+	src := *lookupRegistered("zoo.ledger_lines")
+	src.Currency = func(core.App, *core.RequestInfo) string { return code }
+	RegisterSource(src)
+}
+
+// With no line in the period every account row is a fill row, and the Total
+// still adds the rows shown: it is a row of the statement, in the source's
+// currency, as the account rows are. A source with no currency of its own
+// names none for the Total, while each account row shows its months' code:
+// the Total would add three currencies as one, so it keeps no cells (R3).
+func TestARowsTotalAddsTheRollupsWhenNoBaseRowPasses(t *testing.T) {
+	noLine := func(having string) string {
+		spec := rowsRollupSpec(strings.ReplaceAll(rowsRollupFilled, "HAVING", having))
+		return strings.Replace(spec, `"2026-07-01"`, `"2026-08-01"`, 1)
+	}
+	t.Run("the source's currency", func(t *testing.T) {
+		z := rowsRollupZoo(t)
+		withLedgerCurrency(t, "USD")
+		res := z.run(t, "ann", noLine(rowsRollupHaving), Options{}, nil)
+		requireRowsRollupLines(t, rowsRollupLines(res), []rowsRollupLine{
+			{KindGroup, "1000", int64(500), nil, int64(500), "USD"},
+			{KindGroup, "1300", int64(300), nil, int64(300), "USD"},
+			{KindTotal, "Total", int64(800), int64(0), int64(800), "USD"},
+		})
+	})
+	t.Run("two currencies", func(t *testing.T) {
+		z := rowsRollupZoo(t)
+		withLedgerCurrency(t, "USD")
+		res := z.run(t, "ann", noLine(""), Options{}, nil)
+		total := res.Rows[len(res.Rows)-1]
+		if _, has := total.Cells["debit"]; total.Kind != KindTotal || !has || total.Cells["debit"] != nil || total.Cells["debit@currency"] != nil {
+			t.Fatalf("Total = %s %#v, want a blank debit cell with no code", total.Kind, total.Cells)
+		}
+		if !namesMixed(res, "debit") {
+			t.Fatalf("notices = %+v, want mixedCurrency naming debit", res.Notices)
+		}
+	})
+	t.Run("no source currency", func(t *testing.T) {
+		res := rowsRollupZoo(t).run(t, "ann", noLine(""), Options{}, nil)
+		total := res.Rows[len(res.Rows)-1]
+		if total.Kind != KindTotal || len(total.Cells) != 0 {
+			t.Fatalf("Total = %s %#v, want no cells", total.Kind, total.Cells)
+		}
+	})
+	// A fill that matches no record shows no row; the Total adds none.
+	t.Run("no fill record", func(t *testing.T) {
+		z := rowsRollupZoo(t)
+		withLedgerCurrency(t, "USD")
+		spec := strings.Replace(noLine(""), `"fill":{}`, `"fill":{"where":{"op":"eq","args":[{"path":[{"field":"number"}]},{"value":"none"}]}}`, 1)
+		res := z.run(t, "ann", spec, Options{}, nil)
+		requireRowsRollupLines(t, rowsRollupLines(res), []rowsRollupLine{{KindTotal, "Total", int64(0), int64(0), int64(0), "USD"}})
+	})
+	// A report with no currency key has its one total already.
+	t.Run("no currency key", func(t *testing.T) {
+		const spec = `{"version":4,"source":"zoo.feedings","columns":[
+			{"id":"animal","path":[{"link":"animal"}]},
+			{"id":"grams","path":[{"field":"grams"}],"total":"rows"}],
+			"filter":{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"no such note"}]},
+			"groups":[{"id":"g","col":"animal","fill":{}}]}`
+		res := newZoo(t).run(t, "ann", spec, Options{}, nil)
+		var totals []Row
+		for _, r := range res.Rows {
+			if r.Kind == KindTotal {
+				totals = append(totals, r)
+			}
+		}
+		if len(totals) != 1 || totals[0].ID != "total" || totals[0].Cells["grams"] != int64(0) {
+			t.Fatalf("totals = %#v, want one, id total, grams 0", totals)
+		}
+	})
+	// A sum column adds no rows of the level below, so its Total over no rows
+	// stays as it was: no cells.
+	t.Run("a sum column keeps its total", func(t *testing.T) {
+		z := newZoo(t)
+		withEmptyAnimals(t, z)
+		withFeedingsCurrency(t)
+		none := `{"op":"eq","args":[{"path":[{"field":"note"}]},{"value":"none"}]}`
+		res := z.run(t, "ann", animalFill(`{}`, none), Options{}, nil)
+		total := res.Rows[len(res.Rows)-1]
+		if total.ID != `total:["GBP"]` || len(total.Cells) != 0 {
+			t.Fatalf("Total = %s %#v, want total:[\"GBP\"] with no cells", total.ID, total.Cells)
+		}
+	})
 }
 
 // Above the innermost group every row adds the rows shown under it: a type's
