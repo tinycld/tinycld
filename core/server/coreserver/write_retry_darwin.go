@@ -13,6 +13,17 @@ func retryWritesOnNoBufferSpace(l net.Listener) net.Listener {
 	return newWriteRetryListener(l)
 }
 
+// registerWriteRetry binds on macOS only: no other platform has the error, so
+// no other platform pays for a handler.
+func registerWriteRetry(app core.App) {
+	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		if err := serveWithWriteRetry(e); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+}
+
 // serveWithWriteRetry covers a server with no supervisor. A supervised server
 // wraps its inherited listener in registerSupervised, under the drainer.
 func serveWithWriteRetry(e *core.ServeEvent) error {
