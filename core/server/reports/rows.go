@@ -494,10 +494,16 @@ func (r *rowsCTE) pathCurrency(p *pathPlan) currency {
 
 // currencyField names the currency field of p's amount for combining (R24):
 // "<source key>.<currency field key>", "" for a value that is not an amount
-// or an amount with no currency field.
+// or an amount with no currency field. A currency field that declares
+// SameCurrencyAs takes the name of the field it names, so amounts of the two
+// sources have one name: they combine (currency.same) and fieldGuard checks
+// their codes on each row.
 func currencyField(p *pathPlan) string {
 	if p.field.Type != Money || p.field.Currency == "" {
 		return ""
+	}
+	if cur := p.src.field(p.field.Currency); cur != nil && cur.SameCurrencyAs != "" {
+		return cur.SameCurrencyAs
 	}
 	return p.src.Key + "." + p.field.Currency
 }

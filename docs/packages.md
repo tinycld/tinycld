@@ -1333,6 +1333,15 @@ reports.RegisterSource(reports.Source{
   `YYYY-MM-DD`. Filters, buckets, presets and pivots treat it as a date.
   `CheckSources` refuses `TextDay` on any other type, and on a column that is
   not text.
+- `Field.SameCurrencyAs`, on the text field a money field names as its
+  `Currency`, names another source's currency field as
+  `"<source key>.<field key>"`: the two fields hold one currency (a stored
+  summary of rows and the rows themselves). A formula may then add amounts
+  of the two sources. The engine checks the codes on each row: where two
+  known codes differ, the amount is blank and the run adds a `mixedCurrency`
+  notice. `RegisterSource` refuses a declaration on any other field, or one
+  that names its own source; `CheckSources` refuses one that names no
+  registered currency field, or a field that declares another.
 - A `Select` field may read a text column as well as a select column. Its
   `Options` give the labels; a stored value that no option names shows as
   itself. `CheckSources` checks the options against the values only of a
@@ -1440,7 +1449,8 @@ away before the run ends.
   `add`, `sub`, `min`, `max`, `if`, `case` and `coalesce`. Each currency
   field is a source, and so is each source's fixed `Source.Currency`, even
   when two sources give the same code. An amount combines with amounts of
-  its own source.
+  its own source, and with amounts of a source whose currency field
+  declares `SameCurrencyAs` its own.
 - `options.expand` and `options.collapse` each list at most 5,000 group keys.
   `options.collapse` closes groups under a level that is open by default or
   under `options.expandAll`. When `collapse` is sent (also empty), the levels
