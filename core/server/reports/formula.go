@@ -68,6 +68,11 @@ type expr struct {
 	// and passes it up (a row an and holds for passes each of its terms), and
 	// only lookupIn reads it, on the where itself. "" for any other value.
 	bound string
+	// bounds is an and's bound term by term (nested ands flattened); bound is
+	// their join. A union part holds each term it stores (partWhere), so a
+	// part that cannot hold one term still holds the others. nil on a single
+	// term, whose one bound is bound.
+	bounds []string
 	// scan is a sum lookup's value, mixed check and currency as one select
 	// over the looked-up rows (columns u, m, c), for a context that computes
 	// the lookup once in a CTE (layoutCtx.lookup). "" for any other value.
@@ -78,6 +83,17 @@ type expr struct {
 	// with them compares the instants of those local days (R1). All nil for a
 	// UTC reader, whose SQL stays as it was.
 	zoned, zonedFrom, zonedTo *zonedDay
+}
+
+// boundTerms is e's bound term by term: an and's terms, or e's one bound.
+func (e expr) boundTerms() []string {
+	if len(e.bounds) > 0 {
+		return e.bounds
+	}
+	if e.bound != "" {
+		return []string{e.bound}
+	}
+	return nil
 }
 
 // storedLink is the stored relation column (col) a link path reads its
@@ -919,14 +935,14 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			}
 			// A row an and holds for passes each of its terms, so it is inside
 			// each term's bounds. An or passes none up.
-			if n.Op == "and" && !a.unset && a.bound != "" {
-				bounds = append(bounds, a.bound)
+			if n.Op == "and" && !a.unset {
+				bounds = append(bounds, a.boundTerms()...)
 			}
 		}
 		if len(parts) == 0 {
 			return unsetCondition, nil
 		}
-		return expr{sql: "(" + strings.Join(parts, " "+strings.ToUpper(n.Op)+" ") + ")", typ: Bool, bound: strings.Join(bounds, " AND ")}, nil
+		return expr{sql: "(" + strings.Join(parts, " "+strings.ToUpper(n.Op)+" ") + ")", typ: Bool, bound: strings.Join(bounds, " AND "), bounds: bounds}, nil
 	case "not":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err

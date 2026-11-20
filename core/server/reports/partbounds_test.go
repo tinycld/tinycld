@@ -221,3 +221,94 @@ func TestPartBoundsKeepTheTopics(t *testing.T) {
 		t.Fatalf("the topics name no part: %v", bounded.Topics)
 	}
 }
+
+// registerZooSnacks registers zoo.snacks: zoo.meals with a part, zoo_treats,
+// that stores the animal link but has no column for the day.
+func registerZooSnacks() {
+	RegisterSource(Source{
+		Key: "zoo.snacks", Label: "Snacks",
+		Parts: []SourcePart{
+			{Collection: "zoo_feedings", Columns: map[string]string{"cost": "cost", "currency": "currency", "fed": "fed", "animal": "animal"}},
+			{Collection: "zoo_treats", Columns: map[string]string{"cost": "price", "currency": "currency", "animal": "pet"}},
+		},
+		Fields: []Field{
+			{Key: "cost", Label: "Cost", Type: Money, Aggregates: SumAll, Currency: "currency"},
+			{Key: "currency", Label: "Currency", Type: Text},
+			{Key: "fed", Label: "Fed", Type: Date, Aggregates: MinMax},
+		},
+		Links:    []Link{{Key: "animal", Label: "Animal", Target: "zoo.animals", Cardinality: ToOne, Field: "animal"}},
+		Currency: func(core.App, *core.RequestInfo) string { return "USD" },
+	})
+}
+
+// A lookup's where is an and of a link term and a day term: each term is a
+// bound of its own, so a part that stores the link but not the day still
+// holds the link bound, and a part that stores both holds both.
+func TestALookupOverAUnionBoundsEachTermInsideAPart(t *testing.T) {
+	z := newUnionZoo(t)
+	registerZooSnacks()
+	if err := CheckSources(z.app); err != nil {
+		t.Fatalf("CheckSources: %v", err)
+	}
+	spec := strings.Replace(mealsLookupSpec, `"source":"zoo.meals"`, `"source":"zoo.snacks"`, 1)
+	seen := observeReads(t)
+	z.run(t, "ann", spec, Options{}, mealDays)
+	partSelect := regexp.MustCompile(`FROM r\d+ p WHERE [^\n]*`)
+	var feedings, treats bool
+	for _, st := range *seen {
+		for _, where := range partSelect.FindAllString(st.sql, -1) {
+			link := strings.Contains(where, "[[p.animal]] >=") || strings.Contains(where, "[[p.pet]] >=")
+			day := strings.Contains(where, "[[p.fed]]")
+			feedings = feedings || (strings.Contains(where, "[[p.animal]]") && link && day)
+			treats = treats || (strings.Contains(where, "[[p.pet]]") && link && !day)
+		}
+	}
+	if !feedings || !treats {
+		t.Fatalf("zoo_feedings holds both bounds: %v; zoo_treats holds its link bound: %v", feedings, treats)
+	}
+	for _, user := range []string{"ann", "bob", "dan", "eve"} {
+		for _, params := range []map[string]string{mealDays, nil} {
+			requireSameAsLegacy(t, z, user, spec, Options{}, params, &legacySQL.noPartBounds)
+		}
+	}
+}
+
+// unionCTE is a union's rule CTE (unionSelect): each part's rule select read
+// as a subquery p, joined by UNION ALL. A bounded union reads each part's
+// collection rule CTE (FROM r<n> p) instead.
+var unionCTE = regexp.MustCompile(`\) p\nUNION ALL\n`)
+
+// A run whose every read of a union is bounded sends no rule CTE for the
+// union: each statement reads the parts' collection rule CTEs alone, and the
+// topics still name each part. With the switch on, the union's CTE is back.
+func TestABoundedUnionSendsNoUnionCTE(t *testing.T) {
+	z := newUnionZoo(t)
+	withMealIndexes(t, z, "day")
+	seen := observeReads(t)
+	res := z.run(t, "ann", mealsFilterSpec, Options{}, mealDays)
+	if len(*seen) == 0 {
+		t.Fatal("no statement was read")
+	}
+	for _, st := range *seen {
+		if unionCTE.MatchString(st.sql) {
+			t.Fatalf("a statement whose union reads are all bounded sends the union's CTE:\n%s", st.sql)
+		}
+	}
+	topics := strings.Join(res.Topics, ",")
+	for _, part := range []string{"zoo_feedings", "zoo_treats"} {
+		if !strings.Contains(topics, part) {
+			t.Fatalf("the topics %v name no %s", res.Topics, part)
+		}
+	}
+	legacySQL.noPartBounds = true
+	t.Cleanup(func() { legacySQL.noPartBounds = false })
+	*seen = nil
+	z.run(t, "ann", mealsFilterSpec, Options{}, mealDays)
+	sent := false
+	for _, st := range *seen {
+		sent = sent || unionCTE.MatchString(st.sql)
+	}
+	if !sent {
+		t.Fatal("with the switch on, no statement sends the union's CTE")
+	}
+}

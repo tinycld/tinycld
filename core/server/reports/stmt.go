@@ -275,7 +275,6 @@ func fieldSQL(alias string, f *Field) string {
 type scope struct {
 	s     *stmt
 	src   *Source
-	from  string // "r0 t1"
 	alias string
 	joins map[string]string
 	sql   []string
@@ -287,14 +286,21 @@ type scope struct {
 
 // newScope reads src's rule CTE as "FROM r<n> <alias>" (and join as
 // "JOIN r<n> <alias>"): stmt.topics finds the collections a statement reads by
-// that form (ruleRef).
+// that form (ruleRef). A union's rule CTE is registered (and so sent) only
+// when a read of the scope uses it (from): a scope whose reads are all
+// bounded reads its parts' collection rule CTEs alone (boundedFrom).
 func newScope(s *stmt, src *Source) *scope {
-	alias := s.alias("t")
-	return &scope{
-		s: s, src: src, alias: alias,
-		from:  s.sourceRule(src) + " " + alias,
-		joins: map[string]string{},
+	sc := &scope{s: s, src: src, alias: s.alias("t"), joins: map[string]string{}}
+	if len(src.Parts) == 0 || legacySQL.noPartBounds {
+		sc.from()
 	}
+	return sc
+}
+
+// from is the scope's rows read whole from its source's rule CTE: "r0 t1".
+// It registers the rule CTE on first use.
+func (sc *scope) from() string {
+	return sc.s.sourceRule(sc.src) + " " + sc.alias
 }
 
 // join follows to-one hops from the scope's base and returns the alias of
@@ -355,7 +361,7 @@ var partColRef = regexp.MustCompile(`\[\[__part(link|day)\.([A-Za-z0-9_]+)\]\]`)
 // rows inside the bounds: the columns and the list rules are the same.
 func (sc *scope) boundedFrom() string {
 	if len(sc.partBounds) == 0 || len(sc.src.Parts) == 0 || sc.s.app == nil || legacySQL.noPartBounds {
-		return sc.from
+		return sc.from()
 	}
 	wheres := make([]string, len(sc.src.Parts))
 	bounded := false
@@ -364,7 +370,7 @@ func (sc *scope) boundedFrom() string {
 		bounded = bounded || wheres[i] != ""
 	}
 	if !bounded {
-		return sc.from
+		return sc.from()
 	}
 	keys := sc.src.unionKeys()
 	selects := make([]string, len(sc.src.Parts))

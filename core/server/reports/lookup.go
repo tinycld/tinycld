@@ -169,10 +169,11 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 			unknown = whereUnknown(outer, sc, w, at+".where")
 		}
 		// A union has no one stored column: its bounds go inside each part
-		// (boundedFrom). The test for an unknown where above reads the whole
-		// union, as it reads a collection without the bounds.
-		if !w.unset && w.bound != "" && len(src.Parts) > 0 {
-			sc.partBounds = append(sc.partBounds, w.bound)
+		// (boundedFrom), one for each term, so a part that cannot hold one
+		// term still holds the others. The test for an unknown where above
+		// reads the whole union, as it reads a collection without the bounds.
+		if !w.unset && len(src.Parts) > 0 {
+			sc.partBounds = append(sc.partBounds, w.boundTerms()...)
 		}
 	}
 	e, err := pickedLookup(outer, r, n, v, sc, where, out, at)
