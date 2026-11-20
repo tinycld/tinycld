@@ -234,6 +234,10 @@ type rowsCTE struct {
 	// filterMixed is the filter's condMixed: true on a row where a sum
 	// lookup the filter reads met two currencies.
 	filterMixed string
+	// bounds are the bounds on the base table's stored columns that the filter
+	// implies (filterBounds), "" for none: w's WHERE holds them before the
+	// filter, so SQLite reads the base rows through an index on them.
+	bounds string
 	// wheres are the lookups' wheres compiled on the report's base rows (in
 	// w or in the filter) that may be unknown on one (whereProber); the
 	// group statement probes them (probeWheres).
@@ -357,6 +361,9 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 			return nil, invalid("filter", "the filter is a condition")
 		}
 		r.filter, r.filterMixed = e.sql, e.condMixed
+		if r.bounds, err = c.filterBounds(r); err != nil {
+			return nil, err
+		}
 	}
 	r.valueCurrencies()
 	r.pivotKey()
@@ -619,7 +626,10 @@ func (r *rowsCTE) render() string {
 		cols[i] = r.raw[name] + " AS " + name
 	}
 	sql := "w AS (SELECT " + strings.Join(cols, ", ") + "\n" + r.root.render()
-	if r.filter != "" {
+	switch {
+	case r.filter != "" && r.bounds != "":
+		sql += "\nWHERE " + r.bounds + " AND " + r.filter
+	case r.filter != "":
 		sql += "\nWHERE " + r.filter
 	}
 	return sql + ")"

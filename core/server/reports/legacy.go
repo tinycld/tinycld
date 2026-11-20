@@ -7,4 +7,7 @@ var legacySQL struct {
 	// repeatAggregates writes an aggregate a level reads twice as two values
 	// of a<L>, as before levelCtx.aggregate kept each one.
 	repeatAggregates bool
+	// noFilterBounds leaves the bounds on the base table's stored columns out
+	// of w's WHERE, as before filterBounds wrote them.
+	noFilterBounds bool
 }
