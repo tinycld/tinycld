@@ -88,6 +88,9 @@ type storedLink struct {
 	col, sql string
 	sc       *scope
 	eqs      *[]linkEq
+	// part is the link's column of a union source, under partLink: no one
+	// stored column, so eq bounds each part of the union instead (partLinkBound).
+	part string
 }
 
 // storedDay is the stored column (col) a Date field of a lookup's own row is
@@ -871,7 +874,7 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if sql := linkedEq(c, n, args); sql != "" {
 			return expr{sql: sql, typ: Bool}, nil
 		}
-		return expr{sql: "(" + args[0].sql + " IS " + args[1].sql + ")", typ: Bool}, nil
+		return expr{sql: "(" + args[0].sql + " IS " + args[1].sql + ")", typ: Bool, bound: partLinkBound(c, n, args)}, nil
 	case "lt", "lte", "gt", "gte":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err

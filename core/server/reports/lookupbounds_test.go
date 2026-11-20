@@ -188,33 +188,53 @@ func TestALookupsDayBoundSkipsAColumnThatIsALookup(t *testing.T) {
 }
 
 // A union source has no one stored column for its day (each part maps its
-// own, and a part may map none): a lookup on it gets no bound and counts the
-// same documents.
-func TestALookupOnAUnionGetsNoDayBound(t *testing.T) {
+// own): a lookup on it bounds the day inside each part, on the part's own
+// column, never on the union's rows, and counts the same documents as with no
+// bound.
+func TestALookupOnAUnionBoundsTheDayInsideEachPart(t *testing.T) {
 	z := newZoo(t)
 	addZooSales(t, z)
 	registerZooSalesSources()
-	seen := observeReads(t)
-	res := z.run(t, "ann", `{"version":4,"source":"zoo.sites",
+	spec := `{"version":4,"source":"zoo.sites",
 		"params":[{"id":"period","type":"dateRange","label":"Period","default":{"preset":"thisMonthToDate"}}],
 		"columns":[{"id":"name","path":[{"field":"name"}]},
 			{"id":"n","formula":{"op":"lookup","source":"zoo.documents","pick":"count","value":{"path":[{"field":"id"}]},
 				"where":{"op":"lt","args":[{"path":[{"field":"day"}]},{"param":"period","bound":"from"}]}}}],
-		"sort":[{"col":"name"}]}`, Options{Today: "2026-10-15"}, map[string]string{"period": `{"from":"2026-10-04","to":"2026-10-31"}`})
-	// o1 (10-02) and k1 (10-03) are before the period; o2 and o3 are in it.
-	for _, r := range res.Rows {
-		if r.Cells["n"] != int64(2) {
-			t.Fatalf("%v: %v documents before the period, want 2", r.Cells["name"], r.Cells["n"])
+		"sort":[{"col":"name"}]}`
+	params := map[string]string{"period": `{"from":"2026-10-04","to":"2026-10-31"}`}
+	// bounds runs the report and lists the alias of every bound on a stored
+	// day in the statements it read.
+	bound := regexp.MustCompile(`\[\[(\w+)\.day\]\] (>=|<=) `)
+	bounds := func() []string {
+		seen := observeReads(t)
+		res := z.run(t, "ann", spec, Options{Today: "2026-10-15"}, params)
+		// o1 (10-02) and k1 (10-03) are before the period; o2 and o3 are in it.
+		for _, r := range res.Rows {
+			if r.Cells["n"] != int64(2) {
+				t.Fatalf("%v: %v documents before the period, want 2", r.Cells["name"], r.Cells["n"])
+			}
 		}
-	}
-	if len(res.Rows) == 0 {
-		t.Fatal("no rows")
-	}
-	bound := regexp.MustCompile(`\.day\]\] (>=|<=) `)
-	for _, st := range *seen {
-		if bound.MatchString(st.sql) {
-			t.Fatalf("a lookup on a union bounds a stored day:\n%s", st.sql)
+		if len(res.Rows) == 0 {
+			t.Fatal("no rows")
 		}
+		var aliases []string
+		for _, st := range *seen {
+			for _, m := range bound.FindAllStringSubmatch(st.sql, -1) {
+				aliases = append(aliases, m[1])
+			}
+		}
+		return aliases
+	}
+	// Each statement that holds the lookup bounds both parts (zoo_orders and
+	// zoo_tickets both store the day), and only inside a part (alias p).
+	got := bounds()
+	if len(got) < 2 || slices.ContainsFunc(got, func(alias string) bool { return alias != "p" }) {
+		t.Fatalf("bounds on a stored day are on %v, want two or more, each inside a part (p)", got)
+	}
+	legacySQL.noPartBounds = true
+	t.Cleanup(func() { legacySQL.noPartBounds = false })
+	if got := bounds(); len(got) != 0 {
+		t.Fatalf("with the switch on, a lookup on a union bounds a stored day on %v", got)
 	}
 }
 

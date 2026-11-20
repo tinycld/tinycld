@@ -160,13 +160,19 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 			where = "(" + w.sql + ")"
 			// The bounds name the stored day column itself, which an index on
 			// it serves; they leave out only rows the where refuses.
-			if w.bound != "" {
+			if w.bound != "" && len(src.Parts) == 0 {
 				where += " AND " + w.bound
 			}
 		}
 		out.agg, out.win = out.agg || w.agg, out.win || w.win
 		if w.condMixed != "" {
 			unknown = whereUnknown(outer, sc, w, at+".where")
+		}
+		// A union has no one stored column: its bounds go inside each part
+		// (boundedFrom). The test for an unknown where above reads the whole
+		// union, as it reads a collection without the bounds.
+		if !w.unset && w.bound != "" && len(src.Parts) > 0 {
+			sc.partBounds = append(sc.partBounds, w.bound)
 		}
 	}
 	e, err := pickedLookup(outer, r, n, v, sc, where, out, at)
@@ -501,6 +507,8 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	if l.inWhere && bound.endsAtLink {
 		if col := l.storedLinkCol(hops); col != "" {
 			e.link = storedLink{col: col, sql: e.sql, sc: l.sc, eqs: l.eqs}
+		} else if l.unionParts() && len(hops) == 1 {
+			e.link = storedLink{part: q(partLink, hops[0].link.Field), sql: e.sql}
 		}
 	}
 	if l.inWhere && len(hops) == 0 && !bound.endsAtLink && bound.field != nil && bound.field.Type == Date {
@@ -588,11 +596,41 @@ func linkedEq(c fctx, n *Node, args []expr) string {
 	return ""
 }
 
+// unionParts is true where a lookup's where may bound the parts of its union
+// source: the path starts at the looked-up row itself (no prefix), and the
+// compile has a database to read each part's collection from.
+func (l *lookupCtx) unionParts() bool {
+	return len(l.src.Parts) > 0 && len(l.prefix) == 0 && l.sc.src == l.src && !l.r.c.dry() && !legacySQL.noPartBounds
+}
+
+// partLinkBound is the bound of eq(link, V) in the where of a lookup over a
+// union source, on the link's partLink column: the range linkedEq writes on a
+// stored column (V gives the column V, a blank V every column), "" for any
+// other eq. V reads nothing of the looked-up row and holds no lookup: the
+// bound is written inside each part of the union, which reads the report's
+// row but no table beside the union (so V is not computed once in oneValue),
+// and repeats V's SQL.
+func partLinkBound(c fctx, n *Node, args []expr) string {
+	for i, a := range args[:2] {
+		other := n.Args[1-i]
+		if a.link.part == "" || a.link.sql != a.sql || readsLookedUpRow(other) || containsLookup(other) || readsLookupColumn(c, other, map[string]bool{}) {
+			continue
+		}
+		v := args[1-i].sql
+		return fmt.Sprintf("%s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff')", a.link.part, v, a.link.part, v)
+	}
+	return ""
+}
+
 // storedDayCol is the stored column of a Date field of the lookup scope's own
-// row, or "" where a bound on it is not safe: a view's or a union's column
-// (which may hold NULL, or no day), or a column that is not text or a
-// PocketBase date. filterBounds makes the same test of the report's base.
+// row, or "" where a bound on it is not safe: a view's column (which may hold
+// NULL, or no day), or a column that is not text or a PocketBase date.
+// filterBounds makes the same test of the report's base. A union's day is its
+// partDay column: each part tests its own column (partWhere).
 func (l *lookupCtx) storedDayCol(f *Field) string {
+	if l.unionParts() && !legacySQL.noLookupDayBounds {
+		return q(partDay, f.Column)
+	}
 	// A dry compile (Validate) has no database to read the collection from.
 	if legacySQL.noLookupDayBounds || l.r.c.dry() || len(l.src.Parts) > 0 {
 		return ""

@@ -17,34 +17,51 @@ import (
 // only leaves out rows the filter refuses.
 //
 // Only a term of the filter's top-level and (or the filter itself) gives a
-// bound: a row the filter keeps passes every such term. The base must be a
-// collection that is not a view and has no union parts, as storedLinkCol
-// requires of a lookup's source.
+// bound: a row the filter keeps passes every such term. A base collection
+// must not be a view, as storedLinkCol requires of a lookup's source. A union
+// base has no one stored column: its bounds go on the root scope, which
+// writes them inside each part (boundedFrom), and w's WHERE gets none.
 func (c *compiler) filterBounds(r *rowsCTE) (string, error) {
 	f := c.p.spec.Filter
 	// A dry compile (Validate) has no database to read the collection from.
-	if f == nil || legacySQL.noFilterBounds || c.dry() || len(c.p.base.Parts) > 0 {
+	if f == nil || legacySQL.noFilterBounds || c.dry() {
 		return "", nil
 	}
-	col, err := c.app.FindCachedCollectionByNameOrId(c.p.base.Collection)
-	if err != nil {
-		// Without the bounds the rows are still right, only slower.
-		log.Warn("filter not bounded", "collection", c.p.base.Collection, "err", err)
+	union := len(c.p.base.Parts) > 0
+	if union && legacySQL.noPartBounds {
 		return "", nil
 	}
-	if col.IsView() {
-		return "", nil
-	}
-	// stored is true when the collection keeps column name as one of kinds:
-	// a bound compares the stored value as text.
-	stored := func(name string, kinds ...string) bool {
-		field := col.Fields.GetByName(name)
-		if field == nil || !slices.Contains(kinds, field.Type()) {
-			return false
+	// stored is the stored column a bound names for column name of the base
+	// row, "" when the base does not keep it as one of kinds: a bound compares
+	// the stored value as text. A union's column is a partLink or partDay
+	// column, which each part tests for itself (partWhere).
+	stored := func(name string, kinds ...string) string {
+		if kinds[0] == core.FieldTypeRelation {
+			return q(partLink, name)
 		}
-		// A multi-select relation holds a JSON array, never an id.
-		rel, isRel := field.(*core.RelationField)
-		return !isRel || !rel.IsMultiple()
+		return q(partDay, name)
+	}
+	if !union {
+		col, err := c.app.FindCachedCollectionByNameOrId(c.p.base.Collection)
+		if err != nil {
+			// Without the bounds the rows are still right, only slower.
+			log.Warn("filter not bounded", "collection", c.p.base.Collection, "err", err)
+			return "", nil
+		}
+		if col.IsView() {
+			return "", nil
+		}
+		stored = func(name string, kinds ...string) string {
+			field := col.Fields.GetByName(name)
+			if field == nil || !slices.Contains(kinds, field.Type()) {
+				return ""
+			}
+			// A multi-select relation holds a JSON array, never an id.
+			if rel, isRel := field.(*core.RelationField); isRel && rel.IsMultiple() {
+				return ""
+			}
+			return q(r.root.alias, name)
+		}
 	}
 	terms := []*Node{f}
 	if f.Op == "and" {
@@ -60,6 +77,7 @@ func (c *compiler) filterBounds(r *rowsCTE) (string, error) {
 			at = fmt.Sprintf("filter.args.%d", i)
 		}
 		var bound string
+		var err error
 		switch term.Op {
 		case "in":
 			bound, err = r.listBound(term, at, stored)
@@ -72,6 +90,12 @@ func (c *compiler) filterBounds(r *rowsCTE) (string, error) {
 		if bound != "" {
 			bounds = append(bounds, bound)
 		}
+	}
+	if union {
+		// Each term is one bound, so a part that cannot hold one still holds
+		// the others.
+		r.root.partBounds = bounds
+		return "", nil
 	}
 	return strings.Join(bounds, " AND "), nil
 }
@@ -105,38 +129,39 @@ func rowFreeLeaf(n *Node) bool {
 // base row: the row's stored relation column is in the list. The filter reads
 // the linked row's id through a join on that column, so where it holds the
 // column holds that id.
-func (r *rowsCTE) listBound(term *Node, at string, stored func(string, ...string) bool) (string, error) {
+func (r *rowsCTE) listBound(term *Node, at string, stored func(string, ...string) string) (string, error) {
 	p, err := r.basePath(term.Args[0], at+".args.0")
 	if err != nil || p == nil || !p.endsAtLink || len(p.hops) != 1 || !rowFreeLeaf(term.Args[1]) {
 		return "", err
 	}
-	if !stored(p.hops[0].link.Field, core.FieldTypeRelation) {
+	col := stored(p.hops[0].link.Field, core.FieldTypeRelation)
+	if col == "" {
 		return "", nil
 	}
 	list, err := compileFormula(r.join(true), term.Args[1], at+".args.1")
 	if err != nil || !list.list || list.unset || list.sql == "()" {
 		return "", err
 	}
-	return linkBound(q(r.root.alias, p.hops[0].link.Field), list.sql), nil
+	return linkBound(col, list.sql), nil
 }
 
 // dayBound is the bound of between(D, range) and of lt, lte, gt or gte(D,
 // day), where D is a Date field of the base row itself and the other value a
 // param's day (a day typed as a constant is text to the compiler and gives no
 // bound). The column must hold text or a PocketBase date.
-func (r *rowsCTE) dayBound(term *Node, at string, stored func(string, ...string) bool) (string, error) {
+func (r *rowsCTE) dayBound(term *Node, at string, stored func(string, ...string) string) (string, error) {
 	p, err := r.basePath(term.Args[0], at+".args.0")
 	if err != nil || p == nil || len(p.hops) != 0 || p.endsAtLink || p.field.Type != Date || !rowFreeLeaf(term.Args[1]) {
 		return "", err
 	}
-	if !stored(p.field.Column, core.FieldTypeText, core.FieldTypeDate, core.FieldTypeAutodate) {
+	col := stored(p.field.Column, core.FieldTypeText, core.FieldTypeDate, core.FieldTypeAutodate)
+	if col == "" {
 		return "", nil
 	}
 	v, err := compileFormula(r.join(true), term.Args[1], at+".args.1")
 	if err != nil || v.unset || v.all {
 		return "", err
 	}
-	col := q(r.root.alias, p.field.Column)
 	switch {
 	case term.Op == "between" && v.rng:
 		return dayBounds(col, v.lo, v.hi), nil

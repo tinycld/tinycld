@@ -272,8 +272,9 @@ func TestADryCompileOfAFilteredSpecWritesNoBound(t *testing.T) {
 	}
 }
 
-// A union has no one stored column to bound: w's WHERE is the filter alone.
-func TestFilterBoundsLeaveAUnionAlone(t *testing.T) {
+// A union has no one stored column to bound in w's WHERE, which stays the
+// filter alone: its bounds are inside the parts (partbounds_test.go).
+func TestFilterBoundsStayOutOfAUnionsWhere(t *testing.T) {
 	z := newUnionZoo(t)
 	spec := `{"version":4,"source":"zoo.meals","params":[{"id":"days","type":"dateRange","label":"Days","default":{"preset":"allDates"}}],
 		"columns":[{"id":"type","path":[{"field":"kind"}]}],

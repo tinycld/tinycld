@@ -24,4 +24,7 @@ var legacySQL struct {
 	// the page is cut from, as before a row's own lookups moved above the cut
 	// (pagedCells).
 	cellsBeforeThePage bool
+	// noPartBounds reads a union source through its rule CTE with no bound
+	// inside its parts, as before partBounds wrote them.
+	noPartBounds bool
 }
