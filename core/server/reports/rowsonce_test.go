@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -116,4 +117,86 @@ func TestDetailRowsComputedOnceKeepTheResult(t *testing.T) {
 		requireSameAsLegacy(t, z, "bob", balanceSpec(), Options{Today: "2025-07-15", ExpandAll: true},
 			map[string]string{"period": ledgerPeriod, "accounts": ledgerAccounts(0, 2)}, &legacySQL.inlineDetailRows)
 	}
+}
+
+// sameWithAndWithoutRowsOnce runs pages twice, with w inline in the detail
+// statements and with w computed once, and requires the same pages. It also
+// requires that a statement isTarget picks ran in both, with w inline in the
+// first and MATERIALIZED in the second: a fixture that never reaches the
+// statement, or reaches it with w inline in both, compares nothing.
+func sameWithAndWithoutRowsOnce(t *testing.T, name string, isTarget func(sql string) bool, pages func() []*Result) {
+	t.Helper()
+	t.Cleanup(func() { legacySQL.inlineDetailRows = false })
+	seen := observeReads(t)
+	var canonical [2]string
+	for i, inline := range []bool{true, false} {
+		legacySQL.inlineDetailRows = inline
+		*seen = nil
+		out, err := json.Marshal(pages())
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonical[i] = string(out)
+		ran, once := 0, 0
+		for _, st := range *seen {
+			if !isTarget(st.sql) {
+				continue
+			}
+			ran++
+			if strings.Contains(st.sql, "w AS MATERIALIZED (") {
+				once++
+			}
+		}
+		if ran == 0 {
+			t.Fatalf("%s: no statement ran (inline %v)", name, inline)
+		}
+		if want := map[bool]int{true: 0, false: ran}[inline]; once != want {
+			t.Fatalf("%s: %d of %d statements have w MATERIALIZED (inline %v), want %d", name, once, ran, inline, want)
+		}
+	}
+	if canonical[0] != canonical[1] {
+		t.Fatalf("%s: the pages changed\ninline: %s\nonce:   %s", name, canonical[0], canonical[1])
+	}
+}
+
+// A paged grouped run whose group has a having and moved between pages reads
+// the shown rows now (readShownNow): the detail select of the page's groups,
+// filtered to the cursor's row ids. Its w is computed once, as the page's.
+func TestTheShownRowsReadOfAMovedGroupKeepsThePages(t *testing.T) {
+	z := newZoo(t)
+	z.feeding(t, "m2", z.recs["mo"], 40, "2026-02-20", 5)
+	spec := strings.Replace(byAnimalWeight, `"open":true,"subtotals":true}`,
+		`"open":true,"subtotals":true,"having":{"op":"gt","args":[{"op":"sum","args":[{"path":[{"field":"cost"}]}]},{"value":0}]}}`, 1)
+	first := z.run(t, "bob", spec, Options{Limit: 2}, nil)
+	if first.Page == nil || first.Page.Next == "" {
+		t.Fatalf("the first page has no next cursor: %+v", first.Page)
+	}
+	mo := z.recs["mo"]
+	mo.Set("weight", 999)
+	if err := z.app.Save(mo); err != nil {
+		t.Fatal(err)
+	}
+	sameWithAndWithoutRowsOnce(t, "the shown rows read",
+		func(sql string) bool { return strings.Contains(sql, "WHERE d.__id IN (") },
+		func() []*Result { return groupedPages(t, z, "bob", spec, Options{Limit: 2, Cursor: first.Page.Next}) })
+}
+
+// A view sort over a sum lookup that met two currencies, in a report whose
+// group has a having, is probed over the rows the detail pass reads
+// (detailSortMixed): an EXISTS statement over the detail select, with w
+// computed once as the page's is.
+func TestTheDetailProbeOfAMixedSortKeepsThePages(t *testing.T) {
+	z := newZoo(t)
+	withEuroFeeding(t, z)
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"note","path":[{"field":"note"}]},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"}],
+		"groups":[{"id":"g","col":"animal","open":true,"having":{"op":"gt","args":[{"op":"count","args":[{"path":[{"field":"id"}]}]},{"value":0}]}}],
+		"sort":[{"formula":` + allCosts + `},{"col":"note"}]}`
+	sameWithAndWithoutRowsOnce(t, "the detail probe",
+		func(sql string) bool {
+			return strings.Contains(sql, "SELECT EXISTS (") && strings.Contains(sql, "__smx0 = 1") && !strings.Contains(sql, "__level")
+		},
+		func() []*Result { return []*Result{z.run(t, "ann", spec, Options{ExpandAll: true}, nil)} })
 }

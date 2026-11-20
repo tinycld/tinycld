@@ -652,8 +652,9 @@ var rowsRead = regexp.MustCompile(`(?:FROM|JOIN) w\b`)
 // conditions) counts only the reads of its other CTEs (a section's fills,
 // its aggregates, the sorted rows, the levels under the Total row): two of
 // them mean the statement computes every row of w before its page, so one
-// copy costs less than a read each. The count includes a CTE the body does
-// not reach; there the cost is the copy alone. A detail page whose only
+// copy costs less than a read each. A CTE the body does not reach still
+// counts, so w becomes a full copy and the page no longer stops at its LIMIT;
+// no caller writes such a CTE today. A detail page whose only
 // reads are its body's (the page, a probe) keeps w inline, so it can stop at
 // its LIMIT. The rule CTEs are never materialized: a correlated lookup must
 // keep searching the table by its index.
