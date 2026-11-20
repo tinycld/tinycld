@@ -58,6 +58,7 @@ const DATES = [
     'fiscalPeriod',
     'addDays',
     'addMonths',
+    'startOfMonth',
     'diffDays',
 ] as const
 const RELATED = ['exists', 'notExists'] as const
@@ -142,6 +143,7 @@ export const ARITY: Readonly<Record<string, Arity>> = {
     fiscalPeriod: [1, 1],
     addDays: [2, 2],
     addMonths: [2, 2],
+    startOfMonth: [1, 1],
     diffDays: [2, 2],
 }
 
@@ -202,6 +204,7 @@ export const PART_LABELS: Record<ReportPart, string> = {
     fiscalPeriod: 'Fiscal period of',
     addDays: 'Add days',
     addMonths: 'Add months',
+    startOfMonth: 'First day of the month of',
     diffDays: 'Days between',
     exists: 'Has related',
     notExists: 'Has no related',

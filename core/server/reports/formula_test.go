@@ -72,6 +72,7 @@ func TestCompileFormulaTypes(t *testing.T) {
 		`{"op":"avg","args":[{"col":"amount"}],"scale":0}`:                  Money,
 		`{"op":"count","args":[{"col":"day"}]}`:                             Number,
 		`{"op":"addMonths","args":[{"col":"day"},{"value":1}]}`:             Date,
+		`{"op":"startOfMonth","args":[{"col":"day"}]}`:                      Date,
 		`{"op":"coalesce","args":[{"value":null},{"col":"n"}]}`:             Number,
 	}
 	for raw, want := range cases {

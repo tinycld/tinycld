@@ -165,6 +165,7 @@ export function formulaType(node: SpecNode, types: FormulaTypes): FormulaType {
             return 'percent'
         case 'addDays':
         case 'addMonths':
+        case 'startOfMonth':
             return 'date'
         case 'concat':
         case 'upper':

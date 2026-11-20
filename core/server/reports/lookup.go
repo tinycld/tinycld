@@ -656,6 +656,6 @@ var rowFreeOps = map[string]bool{
 	"between": true, "in": true, "and": true, "or": true, "not": true,
 	"concat": true, "upper": true, "lower": true, "contains": true, "startsWith": true,
 	"year": true, "quarter": true, "month": true, "fiscalYear": true, "fiscalPeriod": true,
-	"addDays": true, "addMonths": true, "diffDays": true,
+	"addDays": true, "addMonths": true, "diffDays": true, "startOfMonth": true,
 	"if": true, "case": true, "coalesce": true, "isEmpty": true,
 }

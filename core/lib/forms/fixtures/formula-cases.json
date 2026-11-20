@@ -447,6 +447,20 @@
             "expect": "2026-02-28"
         },
         {
+            "name": "startOfMonth",
+            "types": { "a": "date" },
+            "values": { "a": "2026-08-15" },
+            "formula": { "op": "startOfMonth", "args": [{ "col": "a" }] },
+            "expect": "2026-08-01"
+        },
+        {
+            "name": "startOfMonth of a blank day is blank",
+            "types": { "a": "date" },
+            "values": { "a": null },
+            "formula": { "op": "startOfMonth", "args": [{ "col": "a" }] },
+            "expect": null
+        },
+        {
             "name": "diffDays",
             "types": { "a": "date", "b": "date" },
             "values": { "a": "2026-01-01", "b": "2026-03-01" },

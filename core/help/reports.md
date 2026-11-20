@@ -109,6 +109,8 @@ To mark some groups, for example inactive customers, add a condition under **Sho
 
 To group or sort by a value you do not want to show, add the formula as a column and turn on **Use only to group or sort (do not show)**. The report still groups and sorts by it, but the column has no heading or cells, is not listed in **Customize**, and is not in an export. The first column cannot be hidden, and neither can the first column of child rows, because it names them. Neither can a column that a width layout places, a column that the opening row of a group level has a value for, or the cell column of a pivot.
 
+To turn a day into the first day of its month in a formula, pick **First day of the month of** and the date. For example, a day of August 15, 2026 gives August 1, 2026. Use it to compare a date with the start of a month, or to group days by month in a formula.
+
 ## Group by a linked record
 
 To group by a linked record (for example each team of a sale), add the link as a column: in **Add column**, pick **Team (record)**. In **Group and sort**, select **Add group level** and set **Group by** to that column. The group row shows the record's name. To show another field, or a formula, change **Label**. On any level, turn on **Show every Team, even with no rows** to list records that have no rows, and add conditions to choose which. Under another group, a condition can be **Same as the Region above** (the name of the group level above), so each region lists only its own teams.

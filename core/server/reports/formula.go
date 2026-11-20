@@ -953,6 +953,16 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{sql: "date(" + args[0].sql + ", printf('%+d days', " + count + "))", typ: Date}, nil
 		}
 		return expr{sql: "tc_add_months(" + args[0].sql + ", " + count + ")", typ: Date}, nil
+	case "startOfMonth":
+		if err := argc(1, 1); err != nil {
+			return expr{}, err
+		}
+		if !isDateLike(args[0].typ) {
+			return expr{}, invalid(at+".args.0", "startOfMonth needs a date")
+		}
+		// A day's first 8 characters are its year and month with both dashes.
+		// A blank day stays blank: NULL || '01' is NULL.
+		return expr{sql: "(substr(" + args[0].sql + ", 1, 8) || '01')", typ: Date}, nil
 	case "diffDays":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err
