@@ -1,5 +1,4 @@
 import type { ToolbarItem } from '@tinycld/core/components/ResponsiveToolbar'
-import { type ScopeOwner, useShortcutScope } from '@tinycld/core/lib/shortcuts/scopes'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
 import { Platform, View } from 'react-native'
@@ -200,8 +199,8 @@ interface ReportTopProps {
     isSortMenuShown: boolean
     layoutNotice: string | undefined
     isCompact: boolean
-    /** The owner of Refresh's shortcut; absent while the report is covered. */
-    refreshScope: ScopeOwner | undefined
+    /** Refresh has a shortcut; false while the report is covered. */
+    hasRefreshShortcut: boolean
 }
 
 // Everything above the rows: the header, the chips, the manual band, the notices
@@ -211,7 +210,7 @@ function ReportTop({
     isSortMenuShown,
     layoutNotice,
     isCompact,
-    refreshScope,
+    hasRefreshShortcut,
 }: ReportTopProps) {
     // The status slot says so at every width, also when Export is folded into "⋯" (D3).
     const busyLabel = model.export?.isPreparing ? 'Preparing…' : undefined
@@ -227,7 +226,7 @@ function ReportTop({
                 busyLabel={busyLabel}
             />
             <ReportControls model={model} isSortMenuShown={isSortMenuShown} />
-            <ReportManualBand run={model.run} scopeOwner={refreshScope} />
+            <ReportManualBand run={model.run} hasShortcut={hasRefreshShortcut} />
             <ReportNotices
                 notices={model.notices}
                 layoutNotice={layoutNotice}
@@ -286,16 +285,14 @@ export function ReportView({
     // The table's layout notice joins the run's in the band, once the table is drawn.
     const layoutNotice = model.state === 'ready' ? layoutNoticeOf(table.layout) : undefined
     const isCompact = model.breakpoint === 'mobile'
-    const scopeOwner = useShortcutScope('list')
-    // A covered report is not in view, so its Refresh takes no key.
-    const refreshScope = isCovered ? undefined : scopeOwner
     const top = (
         <ReportTop
             model={model}
             isSortMenuShown={isSortMenuShown}
             layoutNotice={layoutNotice}
             isCompact={isCompact}
-            refreshScope={refreshScope}
+            // A covered report is not in view, so its Refresh takes no key.
+            hasRefreshShortcut={!isCovered}
         />
     )
     // D9: on a phone the top area is the list's header and scrolls away with the rows.

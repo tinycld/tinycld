@@ -1,4 +1,4 @@
-import type { ScopeOwner } from '@tinycld/core/lib/shortcuts/scopes'
+import { useShortcutScope } from '@tinycld/core/lib/shortcuts/scopes'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { ShortcutButton } from '@tinycld/core/ui/shortcut-button'
 import { Text, View } from 'react-native'
@@ -16,32 +16,53 @@ interface RefreshButtonProps {
     testID: string
     isRefreshing: boolean
     onPress: () => void
-    scopeOwner: ScopeOwner | undefined
+    // A run with no refresh function has nothing to run: the button stays off.
+    isDisabled: boolean
 }
 
-// With a scope owner the button has the shortcut R. A second report on the same
-// screen (the drill panel, the builder's preview) gives none, so one key never
-// runs two reports. The label says a Refresh runs: not every surface that shows
-// the band has an "Updating…" slot.
-function RefreshButton({ testID, isRefreshing, onPress, scopeOwner }: RefreshButtonProps) {
-    const label = isRefreshing ? REFRESHING_LABEL : REFRESH_LABEL
-    if (!scopeOwner) {
-        return (
-            <Button testID={testID} variant="outline" isDisabled={isRefreshing} onPress={onPress}>
-                <ButtonText>{label}</ButtonText>
-            </Button>
-        )
-    }
+// The scope is pushed here, not by the screen: a pushed scope hides every
+// shortcut under it that did not opt in with `activeUnder`, so it exists only
+// while a button that needs it shows (a manual run, never a plain report).
+function ShortcutRefreshButton({ testID, isRefreshing, onPress, isDisabled }: RefreshButtonProps) {
+    const scopeOwner = useShortcutScope('list')
     return (
         <ShortcutButton
             testID={testID}
-            label={label}
+            label={isRefreshing ? REFRESHING_LABEL : REFRESH_LABEL}
             shortcut={REFRESH_SHORTCUT}
             variant="outline"
-            isDisabled={isRefreshing}
+            isDisabled={isDisabled}
             onPress={onPress}
             scopeOwner={scopeOwner}
         />
+    )
+}
+
+// With `hasShortcut` the button has the shortcut R. A second report on the same
+// screen (the drill panel, the builder's preview) gives none, so one key never
+// runs two reports. The label says a Refresh runs: not every surface that shows
+// the band has an "Updating…" slot.
+function RefreshButton({
+    testID,
+    isRefreshing,
+    onPress,
+    isDisabled,
+    hasShortcut,
+}: RefreshButtonProps & { hasShortcut: boolean }) {
+    if (hasShortcut) {
+        return (
+            <ShortcutRefreshButton
+                testID={testID}
+                isRefreshing={isRefreshing}
+                onPress={onPress}
+                isDisabled={isDisabled}
+            />
+        )
+    }
+    return (
+        <Button testID={testID} variant="outline" isDisabled={isDisabled} onPress={onPress}>
+            <ButtonText>{isRefreshing ? REFRESHING_LABEL : REFRESH_LABEL}</ButtonText>
+        </Button>
     )
 }
 
@@ -50,12 +71,12 @@ function RefreshButton({ testID, isRefreshing, onPress, scopeOwner }: RefreshBut
 // on every width, so a phone has the button in view and not under "⋯".
 export function ReportManualBand({
     run,
-    scopeOwner,
+    hasShortcut = false,
     idPrefix = 'report',
 }: {
     run: ReportRun
-    /** The screen's `useShortcutScope()`; absent: Refresh has no shortcut. */
-    scopeOwner?: ScopeOwner
+    /** Refresh has the shortcut R (and pushes the `list` scope while it shows). */
+    hasShortcut?: boolean
     /** Starts the test ids, so each surface's band is told from the report's. */
     idPrefix?: string
 }) {
@@ -72,7 +93,8 @@ export function ReportManualBand({
                 testID={`${idPrefix}-refresh`}
                 isRefreshing={run.isRefreshing === true}
                 onPress={run.refresh ?? NO_REFRESH}
-                scopeOwner={scopeOwner}
+                isDisabled={run.isRefreshing === true || !run.refresh}
+                hasShortcut={hasShortcut}
             />
         </View>
     )
