@@ -119,7 +119,7 @@ func handleRun(re *core.RequestEvent) error {
 	if err := decodeStrict(re, &body, "a report run"); err != nil {
 		return err
 	}
-	raw, err := requestSpec(re, body.Spec, body.ReportID)
+	raw, live, err := requestRun(re, body.Spec, body.ReportID)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func handleRun(re *core.RequestEvent) error {
 	}
 	res, err := Run(re.Request.Context(), re.App, Request{
 		Spec: spec, Loaded: loaded, Params: body.Params, Options: body.Options,
-		Auth: re.Auth, Headers: ruleHeaders(re.Request.Header),
+		Auth: re.Auth, Headers: ruleHeaders(re.Request.Header), Live: live,
 	})
 	if err != nil {
 		return runError(re, err)
@@ -158,35 +158,38 @@ func decodeStrict(re *core.RequestEvent, into any, what string) error {
 // requestSpec is a request's spec: the posted draft, or a saved report's
 // spec read through its view rule. Never both.
 func requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, error) {
+	raw, _, err := requestRun(re, spec, reportID)
+	return raw, err
+}
+
+// requestRun is requestSpec, with whether the run stays live over a source
+// that is NotLive: only a saved report that a package ships as Live does. A
+// posted draft never does, so the builder's preview of such a report is
+// manual too.
+func requestRun(re *core.RequestEvent, spec json.RawMessage, reportID string) (raw []byte, live bool, err error) {
 	switch {
 	case reportID != "" && spec != nil:
-		return nil, re.BadRequestError("The request has a spec or a reportId, not both.", nil)
+		return nil, false, re.BadRequestError("The request has a spec or a reportId, not both.", nil)
 	case reportID != "":
-		return viewableSpec(re, reportID)
+		rec, err := viewableReport(re, reportID)
+		if err != nil {
+			return nil, false, err
+		}
+		return specBytes(rec), shippedLive(rec), nil
 	case spec == nil:
-		return nil, re.BadRequestError("The request has no spec and no reportId.", nil)
+		return nil, false, re.BadRequestError("The request has no spec and no reportId.", nil)
 	}
-	return []byte(spec), nil
+	return []byte(spec), false, nil
 }
 
 const noAccess = "You cannot view this report."
 
-// viewableSpec reads a saved report's spec for the caller, through the
+// viewableReport reads a saved report record for the caller, through the
 // reports view rule as PocketBase's view API applies it. A report that does
 // not exist answers as one the caller cannot view, so an id tells nobody
 // whether a report exists. Any other failure, such as a database error or a
 // rule that cannot be built, is a server fault: it is logged and answered
 // 500, never as a refusal.
-func viewableSpec(re *core.RequestEvent, id string) ([]byte, error) {
-	rec, err := viewableReport(re, id)
-	if err != nil {
-		return nil, err
-	}
-	return specBytes(rec), nil
-}
-
-// viewableReport reads a saved report record for the caller, with
-// viewableSpec's check and answers.
 func viewableReport(re *core.RequestEvent, id string) (*core.Record, error) {
 	ctx := re.Request.Context()
 	col, err := re.App.FindCachedCollectionByNameOrId(reportsCollection)

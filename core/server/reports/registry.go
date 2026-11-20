@@ -197,6 +197,11 @@ type Source struct {
 	// read. A run that reads this source subscribes to them too, so a
 	// settings change runs an open report again.
 	Watch []string
+	// NotLive marks a source too large to read again on every change. A run
+	// that reads one of this source's collections is Manual: it carries no
+	// data topics, so it runs again only when the reader asks. A shipped
+	// report with Live set is the exception.
+	NotLive bool
 }
 
 var (

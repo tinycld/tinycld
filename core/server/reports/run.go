@@ -81,6 +81,10 @@ type Request struct {
 	// run computes every group level again. 0: maxPage. Only the export read
 	// sets it; the run endpoint never does.
 	PageCap int
+	// Live keeps the run's data topics though it reads a source that is
+	// NotLive. Only the run endpoint sets it, for a shipped report that is
+	// registered Live.
+	Live bool
 }
 
 // Result is the run's answer, in the shell's ReportModel row shape.
@@ -89,6 +93,10 @@ type Result struct {
 	Rows    []Row          `json:"rows"`
 	Notices []Notice       `json:"notices"`
 	Topics  []string       `json:"topics"`
+	// Manual is set when the run reads a source that is NotLive and the
+	// request is not Live: Topics is then empty, and the reader runs the
+	// report again by hand.
+	Manual bool `json:"manual,omitzero"`
 	// Heading is what the report prints above its title: the base source's
 	// Heading, or "" for the organization's name.
 	Heading string `json:"heading,omitempty"`
@@ -293,6 +301,8 @@ type runner struct {
 	// askedPageCap is the request's PageCap (0: runLimits.maxPage); read it
 	// through pageLimit.
 	askedPageCap int
+	// live is the request's Live.
+	live bool
 	// openDropped is set once a detail row's open value was dropped, so a run
 	// logs a bad open path once, not once per row.
 	openDropped bool
@@ -378,7 +388,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	// No expansion state: the levels marked open expand (openLevels).
 	openLevels(p, req.Options, expand)
 	rn := &runner{
-		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap,
+		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap, live: req.Live,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
 		topics: map[string]bool{}, ruleTopics: map[string][]string{},
 	}
@@ -553,17 +563,27 @@ func (rn *runner) run() error {
 	rn.markMixedLookups()
 	// A source's Go hooks read collections no statement reads, so their
 	// topics are added by name.
-	for _, src := range Sources(rn.app) {
-		reads := slices.ContainsFunc(src.collections(), func(c string) bool {
+	all := Sources(rn.app)
+	reads := func(src Source) bool {
+		return slices.ContainsFunc(src.collections(), func(c string) bool {
 			return rn.topics[changesignal.Topic(c)]
 		})
-		if reads {
+	}
+	for _, src := range all {
+		if reads(src) {
 			for _, w := range src.Watch {
 				rn.topics[changesignal.Topic(w)] = true
 			}
 		}
 	}
 	rn.res.Topics = make([]string, 0, len(rn.topics))
+	// A manual run follows no data: its topics stay empty. This is decided
+	// after every Watch is added, so a watched collection counts as read
+	// whatever the order of the sources.
+	if !rn.live && slices.ContainsFunc(all, func(src Source) bool { return src.NotLive && reads(src) }) {
+		rn.res.Manual = true
+		return nil
+	}
 	for t := range rn.topics {
 		rn.res.Topics = append(rn.res.Topics, t)
 	}
