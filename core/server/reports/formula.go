@@ -868,7 +868,7 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if n.Op == "ne" {
 			return expr{sql: "(" + args[0].sql + " IS NOT " + args[1].sql + ")", typ: Bool}, nil
 		}
-		if sql := linkedEq(n, args); sql != "" {
+		if sql := linkedEq(c, n, args); sql != "" {
 			return expr{sql: sql, typ: Bool}, nil
 		}
 		return expr{sql: "(" + args[0].sql + " IS " + args[1].sql + ")", typ: Bool}, nil

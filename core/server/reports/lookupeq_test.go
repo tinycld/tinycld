@@ -1,6 +1,8 @@
 package reports
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -138,5 +140,138 @@ func TestKnownLinksKeepTheResult(t *testing.T) {
 		}
 		requireSameAsLegacy(t, z, "bob", balanceSpec(), Options{Today: "2025-07-15", ExpandAll: true},
 			map[string]string{"period": ledgerPeriod, "accounts": ledgerAccounts(0, 2)}, &legacySQL.rangeLinkBounds)
+	}
+}
+
+// readsOf runs a spec and returns the text of the statements it sent.
+func readsOf(t *testing.T, z *zoo, spec string, params map[string]string) string {
+	t.Helper()
+	seen := observeReads(t)
+	z.run(t, "ann", spec, Options{}, params)
+	var all []string
+	for _, st := range *seen {
+		all = append(all, st.sql)
+	}
+	if len(all) == 0 {
+		t.Fatal("no statement was read")
+	}
+	return strings.Join(all, "\n")
+}
+
+// linesByAccount is a lookup of the ledger lines of one account, matched by
+// the looked-for value v.
+func linesByAccount(v string) string {
+	return `{"op":"lookup","source":"zoo.ledger_lines","pick":"count","value":{"path":[{"field":"id"}]},
+		"where":{"op":"eq","args":[{"path":[{"link":"account"}]},` + v + `]}}`
+}
+
+// A looked-for value that is a column whose formula holds a lookup is computed
+// by the formula in every place the column is read, so the lookup that matches
+// it keeps the range alone: a second form would read the formula again in the
+// test that picks the form. The result is the one the range gives.
+func TestAFormulaColumnAsTheLookedForValueKeepsTheRange(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	spec := `{"version":4,"source":"zoo.ledger_accounts","columns":[
+		{"id":"number","path":[{"field":"number"}]},
+		{"id":"own","formula":{"op":"lookup","source":"zoo.ledger_accounts","pick":"max","value":{"path":[{"field":"id"}]},
+			"where":{"op":"eq","args":[{"path":[{"field":"number"}]},{"outer":[{"field":"number"}]}]}}},
+		{"id":"lines","formula":` + linesByAccount(`{"col":"own"}`) + `}],
+		"sort":[{"col":"number"}]}`
+	t.Cleanup(func() { legacySQL.rangeLinkBounds = false })
+	legacySQL.rangeLinkBounds = false
+	text := readsOf(t, z, spec, nil)
+	if !strings.Contains(text, ".account]] >= ") {
+		t.Fatalf("the range form was not written:\n%s", text)
+	}
+	if strings.Contains(text, ".account]] = ") {
+		t.Fatalf("a formula column got the equality form:\n%s", text)
+	}
+	legacySQL.rangeLinkBounds = true
+	if rangeOnly := readsOf(t, z, spec, nil); strings.Count(text, "max(") != strings.Count(rangeOnly, "max(") {
+		t.Fatalf("the column's lookup is computed %d times, with the range alone %d", strings.Count(text, "max("), strings.Count(rangeOnly, "max("))
+	}
+	requireSameAsLegacy(t, z, "ann", spec, Options{}, nil, &legacySQL.rangeLinkBounds)
+	res := z.run(t, "ann", spec, Options{}, nil)
+	if got := rowsOf(res, "lines")[0]; got != int64(3) {
+		t.Fatalf("the first account (cash) holds %v lines, want 3", got)
+	}
+}
+
+// A looked-for value that is a param or a constant is known before the lookup
+// runs, so the lookup gets the equality form: the statement has it with the
+// switch off and not with it on, and the result is the same.
+func TestAParamOrAConstantAsTheLookedForValueGetsTheEquality(t *testing.T) {
+	for _, c := range []struct{ name, value string }{
+		{"a param", `{"param":"acct"}`},
+		{"a constant", `{"value":"%s"}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			z := newZoo(t)
+			withBalanceZoo(t, z)
+			value := c.value
+			if strings.Contains(value, "%s") {
+				value = fmt.Sprintf(value, z.id("cash"))
+			}
+			spec := `{"version":4,"source":"zoo.ledger_accounts","params":[{"id":"acct","type":"text"}],"columns":[
+				{"id":"number","path":[{"field":"number"}]},
+				{"id":"lines","formula":` + linesByAccount(value) + `}],
+				"sort":[{"col":"number"}]}`
+			params := map[string]string{"acct": fmt.Sprintf("%q", z.id("cash"))}
+			t.Cleanup(func() { legacySQL.rangeLinkBounds = false })
+			legacySQL.rangeLinkBounds = false
+			text := readsOf(t, z, spec, params)
+			if !strings.Contains(text, ".account]] = ") || !strings.Contains(text, ".account]] >= ") {
+				t.Fatalf("the statement lacks the equality or the range form:\n%s", text)
+			}
+			legacySQL.rangeLinkBounds = true
+			if text := readsOf(t, z, spec, params); strings.Contains(text, ".account]] = ") {
+				t.Fatalf("with the switch on, the statement has the equality form:\n%s", text)
+			}
+			requireSameAsLegacy(t, z, "ann", spec, Options{}, params, &legacySQL.rangeLinkBounds)
+			res := z.run(t, "ann", spec, Options{}, params)
+			if got := rowsOf(res, "lines")[0]; got != int64(3) {
+				t.Fatalf("the first account (cash) holds %v lines, want 3", got)
+			}
+		})
+	}
+}
+
+// bothKnown matches a test that names two values.
+var bothKnown = regexp.MustCompile(`CASE WHEN [^\n]*? IS NOT NULL AND [^\n]*? IS NOT NULL THEN`)
+
+// A where with two link bounds writes both as equalities in the one form, and
+// the form is chosen by a test that names both values.
+func TestAWhereWithTwoLinkBoundsTakesBothEqualities(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	spec := `{"version":4,"source":"zoo.ledger_lines","columns":[
+		{"id":"date","path":[{"field":"date"}]},
+		{"id":"same","formula":{"op":"lookup","source":"zoo.ledger_lines","pick":"count","value":{"path":[{"field":"id"}]},
+			"where":{"op":"and","args":[
+				{"op":"eq","args":[{"path":[{"link":"account"}]},{"outer":[{"link":"account"}]}]},
+				{"op":"eq","args":[{"path":[{"link":"entry"}]},{"outer":[{"link":"entry"}]}]}]}}}],
+		"sort":[{"col":"date"}]}`
+	t.Cleanup(func() { legacySQL.rangeLinkBounds = false })
+	legacySQL.rangeLinkBounds = false
+	text := readsOf(t, z, spec, nil)
+	for _, link := range []string{"account", "entry"} {
+		if !strings.Contains(text, "."+link+"]] = ") || !strings.Contains(text, "."+link+"]] >= ") {
+			t.Fatalf("the statement lacks the equality or the range form of %s:\n%s", link, text)
+		}
+	}
+	if !bothKnown.MatchString(text) {
+		t.Fatalf("no test names both values:\n%s", text)
+	}
+	legacySQL.rangeLinkBounds = true
+	if text := readsOf(t, z, spec, nil); strings.Contains(text, ".account]] = ") || strings.Contains(text, ".entry]] = ") {
+		t.Fatalf("with the switch on, the statement has an equality form:\n%s", text)
+	}
+	requireSameAsLegacy(t, z, "ann", spec, Options{}, nil, &legacySQL.rangeLinkBounds)
+	res := z.run(t, "ann", spec, Options{}, nil)
+	for i, got := range rowsOf(res, "same") {
+		if res.Rows[i].Kind == "detail" && got != int64(1) {
+			t.Fatalf("row %d holds %v lines of its account and entry, want 1", i, got)
+		}
 	}
 }

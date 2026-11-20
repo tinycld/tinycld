@@ -557,7 +557,7 @@ func (l *lookupCtx) storedLinkCol(hops []hopPlan) string {
 // a one-row table of the lookup's scope (oneValue), and the three read it
 // there. A V that reads the looked-up row is one of its fields (a path) or
 // a condition on it, which a table in the same FROM cannot read.
-func linkedEq(n *Node, args []expr) string {
+func linkedEq(c fctx, n *Node, args []expr) string {
 	for i, a := range args[:2] {
 		if a.link.col == "" || a.link.sql != a.sql {
 			continue
@@ -573,10 +573,11 @@ func linkedEq(n *Node, args []expr) string {
 		// outside the lookup, so its bound stays a range. A group record reads
 		// the report's row, though readsLookedUpRow counts its path as a read
 		// of the looked-up row and the range reads it in place. Only a leaf
-		// (a record, a column, an outer path, a param, a constant) gets the
-		// second form: the test outside the lookup reads the value once more,
-		// which a formula or a lookup would compute again.
-		if other := n.Args[1-i]; a.link.eqs != nil && other.Op == "" && (free || other.Record != "") {
+		// (a record, a stored column, an outer path, a param, a constant) gets
+		// the second form: the test outside the lookup reads the value once
+		// more, which a formula or a lookup would compute again. A formula
+		// column is no leaf: the lookup compiles it inline (isFormulaColumn).
+		if other := n.Args[1-i]; a.link.eqs != nil && other.Op == "" && !isFormulaColumn(c, other) && (free || other.Record != "") {
 			*a.link.eqs = append(*a.link.eqs, linkEq{
 				rng: rng, v: args[1-i].sql,
 				eq: fmt.Sprintf("(%s IS %s AND %s = %s)", a.sql, v, a.link.col, v),
@@ -663,6 +664,17 @@ func (sc *scope) oneValue(sql string) string {
 	alias := sc.s.alias("lb")
 	sc.sql = append(sc.sql, fmt.Sprintf("JOIN (SELECT %s AS v) %s", sql, alias))
 	return alias + ".v"
+}
+
+// isFormulaColumn is true for a {col} leaf whose column is a formula: a
+// lookup's compile reads it inline, as its formula, not as a stored value.
+func isFormulaColumn(c fctx, n *Node) bool {
+	l, ok := c.(*lookupCtx)
+	if !ok || n.Col == "" {
+		return false
+	}
+	cp := l.r.c.p.byID[n.Col]
+	return cp != nil && cp.path == nil
 }
 
 // readsLookedUpRow is true when a node in a lookup's where reads the
