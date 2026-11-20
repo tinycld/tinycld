@@ -268,6 +268,45 @@ func TestAFillRecordNamesItsParentUnderAHavingAbove(t *testing.T) {
 	}
 }
 
+// The upper group's key is a formula over the animal's species and a param: the
+// animals of the species the reader picks are "chosen", the rest "rest". It
+// reads only the record, so each animal names its own parent: with sp = elk,
+// Eli (no feeding) sits under "chosen", a parent no feeding reaches, and Lia
+// and Kit sit under "rest" beside Leo and Zed.
+func TestAFillRecordNamesItsParentByAParamFormula(t *testing.T) {
+	z := newZoo(t)
+	withEmptyAnimals(t, z)
+	species := `{"path":[{"link":"animal"},{"field":"species"}]}`
+	spec := `{"version":4,"source":"zoo.feedings","params":[{"id":"sp","type":"text"}],"columns":[
+		{"id":"up","formula":{"op":"if","args":[{"op":"eq","args":[` + species + `,{"param":"sp"}]},{"value":"chosen"},{"value":"rest"}]}},
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"groups":[{"id":"u","col":"up"},{"id":"a","col":"animal","fill":{}}],
+		"sort":[{"col":"up"},{"formula":{"record":"a","path":[{"field":"name"}]}}]}`
+	open := Options{Expand: [][]any{{"chosen", "USD"}, {"rest", "USD"}}}
+	res := z.run(t, "ann", spec, open, map[string]string{"sp": `"elk"`})
+	requireRows(t, res, "label", "chosen", "Eli", "rest", "Kit", "Leo", "Lia", "Zed", "Total")
+	requireRows(t, res, "cost", int64(0), int64(0), int64(4500), int64(0), int64(3500), int64(0), int64(1000), int64(4500))
+}
+
+// With no base row passing and a source with no currency, a filled record group
+// below an upper group that reads only the record lists no record: its parents
+// would name no currency. This is not a layout report (the case of
+// TestFillRecordsNameTheirParentsWhenNoBaseRowPasses).
+func TestFillRecordsNameNoParentsWithNoRowAndNoCurrency(t *testing.T) {
+	z := newZoo(t)
+	withEmptyAnimals(t, z)
+	spec := `{"version":4,"source":"zoo.feedings","columns":[
+		{"id":"site","path":[{"link":"animal"},{"link":"site"}]},
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"}],
+		"filter":{"op":"gt","args":[{"path":[{"field":"cost"}]},{"value":1000000}]},
+		"groups":[{"id":"s","col":"site"},{"id":"a","col":"animal","fill":{}}],
+		"sort":[{"formula":{"record":"s","path":[{"field":"name"}]}},{"formula":{"record":"a","path":[{"field":"name"}]}}]}`
+	res := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
+	requireRows(t, res, "label", "Total")
+}
+
 // A feedings report whose upper group u (the column "up", given by upCol) sits
 // above the animals, which fill in with no where: every animal the reader may
 // list. ann has feedings of Leo and Zed only, and may also list Eli, Kit and

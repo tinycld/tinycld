@@ -242,3 +242,24 @@ func TestRaggedFillFillsUnderTheRecordsOwnParents(t *testing.T) {
 	requireRows(t, res, "depth", 0, 1, 1, 0, 0, 1, 2, 1, 0, 0, 1, 2, 2, 1, 0, 0, 1, 2, 1, 0, 0)
 	requireRows(t, res, "level", 1, 3, 3, 1, 1, 2, 3, 2, 1, 1, 2, 3, 3, 2, 1, 1, 2, 3, 2, 1, 0)
 }
+
+// The same report with the region read through a formula that also reads the
+// feeding's own grams: a group above the animals that does not read only the
+// animal, so no animal names its own parents. A fill record sits under each
+// parent the rows reach: every animal with no feeding under a species sits
+// under it, Eli and Lia under "cat" (where Kit's blank region skips the level),
+// and under "lion" and "zebra" with their region rows.
+func TestRaggedFillBelowASkipLevelFillsUnderTheParentTheRowsReach(t *testing.T) {
+	z := raggedZoo(t)
+	withEmptyAnimals(t, z)
+	region := `{"path":[{"link":"animal"},{"link":"site"},{"field":"name"}]}`
+	byGrams := `{"id":"region","formula":{"op":"if","args":[{"op":"gt","args":[{"path":[{"field":"grams"}]},{"value":-1}]},` + region + `,{"value":""}]}}`
+	raw := fmt.Sprintf(zooRagged, "")
+	raw = replaceOnce(t, raw, `{"id":"region","path":[{"link":"animal"},{"link":"site"},{"field":"region"}]}`, byGrams)
+	raw = replaceOnce(t, raw, `{"id":"a","col":"animal","subtotals":true}`, `{"id":"a","col":"animal","subtotals":true,"fill":{}}`)
+	res := z.run(t, "ann", raw, Options{}, nil)
+	requireRows(t, res, "label", "cat", "Eli", "Kit", "Leo", "Lia", "Zed", "Total cat", "lion", "North", "Eli", "Kit", "Leo", "Lia", "Zed", "Total North", "Total lion",
+		"zebra", "South", "Eli", "Kit", "Leo", "Lia", "Zed", "Total South", "Total zebra", "Total")
+	requireRows(t, res, "depth", 0, 1, 1, 1, 1, 1, 0, 0, 1, 2, 2, 2, 2, 2, 1, 0, 0, 1, 2, 2, 2, 2, 2, 1, 0, 0)
+	requireRows(t, res, "level", 1, 3, 3, 3, 3, 3, 1, 1, 2, 3, 3, 3, 3, 3, 2, 1, 1, 2, 3, 3, 3, 3, 3, 2, 1, 0)
+}
