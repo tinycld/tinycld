@@ -674,7 +674,7 @@ func isFormulaColumn(c fctx, n *Node) bool {
 		return false
 	}
 	cp := l.r.c.p.byID[n.Col]
-	return cp != nil && cp.path == nil
+	return cp != nil && cp.col.Formula != nil
 }
 
 // readsLookedUpRow is true when a node in a lookup's where reads the
