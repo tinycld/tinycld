@@ -155,8 +155,9 @@ func decodeStrict(re *core.RequestEvent, into any, what string) error {
 	return nil
 }
 
-// requestSpec returns only the spec bytes. The param-options endpoint needs
-// no saved record, so it takes this instead of requestSource.
+// requestSpec returns only the spec bytes. The param-options endpoint reads a
+// posted spec or a saved report too, but needs only the spec bytes, not the
+// record or whether the run is live, so it takes this instead of requestSource.
 func requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, error) {
 	raw, _, err := requestSource(re, spec, reportID)
 	return raw, err
