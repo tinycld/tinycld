@@ -880,13 +880,13 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if e, ok := zonedCompare(c, n.Op, args[0], args[1]); ok {
 			return e, nil
 		}
-		return expr{sql: "(" + args[0].sql + " " + comparisons[n.Op] + " " + args[1].sql + ")", typ: Bool, bound: lookupDayBound(n, args)}, nil
+		return expr{sql: "(" + args[0].sql + " " + comparisons[n.Op] + " " + args[1].sql + ")", typ: Bool, bound: lookupDayBound(c, n, args)}, nil
 	case "between":
 		e, err := between(c, args, at)
 		if err != nil {
 			return expr{}, err
 		}
-		e.bound = lookupDayBound(n, args)
+		e.bound = lookupDayBound(c, n, args)
 		return e, nil
 	case "in":
 		if err := argc(2, 2); err != nil {

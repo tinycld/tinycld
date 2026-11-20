@@ -152,6 +152,41 @@ func TestALookupsDayComparisonBoundsTheStoredDay(t *testing.T) {
 	}
 }
 
+// A {col} leaf on the other side of the comparison reads the report's column,
+// whose formula is compiled inline: a lookup column would be written in the
+// bound too and computed twice, so it gets no bound. A column that holds no
+// lookup stays bounded.
+func TestALookupsDayBoundSkipsAColumnThatIsALookup(t *testing.T) {
+	z := newZoo(t)
+	withBalanceZoo(t, z)
+	withEdgeDays(t, z)
+	where := `{"op":"lt","args":[` + lbDay + `,{"col":"last"}]}`
+	lookupCol := `{"version":4,"source":"zoo.ledger_accounts",
+		"columns":[{"id":"name","path":[{"field":"full_name"}]},
+			{"id":"last","formula":{"op":"lookup","source":"zoo.ledger_lines","pick":"max","value":` + lbDay + `,"where":` + lbLink + `}},
+			{"id":"n","formula":{"op":"lookup","source":"zoo.ledger_lines","pick":"count","value":{"path":[{"field":"id"}]},"where":{"op":"and","args":[` + lbLink + `,` + where + `]}}}],
+		"sort":[{"col":"name"}]}`
+	plainCol := `{"version":4,"source":"zoo.ledger_lines",
+		"columns":[{"id":"last","path":[{"field":"date"}]},
+			{"id":"n","formula":{"op":"lookup","source":"zoo.ledger_lines","pick":"count","value":{"path":[{"field":"id"}]},"where":` + where + `}}],
+		"sort":[{"col":"last"}]}`
+	t.Cleanup(func() { legacySQL.noLookupDayBounds = false })
+	for _, c := range []struct {
+		name, spec string
+		want       []string
+	}{
+		{"a column that is a lookup", lookupCol, nil},
+		{"a column that is a day", plainCol, []string{"<="}},
+	} {
+		seen := observeReads(t)
+		z.run(t, "ann", c.spec, Options{Today: "2026-07-15"}, nil)
+		if got := dayBoundsOf(*seen); !slices.Equal(got, c.want) {
+			t.Errorf("%s: bounds on the stored day %v, want %v", c.name, got, c.want)
+		}
+		requireSameAsLegacy(t, z, "ann", c.spec, Options{Today: "2026-07-15"}, nil, &legacySQL.noLookupDayBounds)
+	}
+}
+
 // A union source has no one stored column for its day (each part maps its
 // own, and a part may map none): a lookup on it gets no bound and counts the
 // same documents.

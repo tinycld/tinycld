@@ -537,13 +537,14 @@ func (l *lookupCtx) storedDayCol(f *Field) string {
 // comparison reads the day through substr(), which no index serves; the bound
 // names the column itself (dayBounds). It holds on every row the comparison
 // holds for: where the other day is blank the comparison holds for no row,
-// and neither does the bound. The other day holds no lookup: the bound
-// repeats its SQL, and a lookup's subquery would be written and computed twice.
-func lookupDayBound(n *Node, args []expr) string {
+// and neither does the bound. The other day holds no lookup, nor reads a
+// report column that does (its formula is compiled inline): the bound repeats
+// its SQL, and a lookup's subquery would be written and computed twice.
+func lookupDayBound(c fctx, n *Node, args []expr) string {
 	stored := func(e expr) bool { return e.day.col != "" && e.day.sql == e.sql }
 	free := func(i int) bool {
 		e := args[i]
-		return e.typ == Date && !e.rng && !e.unset && !e.all && !readsLookedUpRow(n.Args[i]) && !containsLookup(n.Args[i])
+		return e.typ == Date && !e.rng && !e.unset && !e.all && !readsLookedUpRow(n.Args[i]) && !containsLookup(n.Args[i]) && !readsLookupColumn(c, n.Args[i], map[string]bool{})
 	}
 	if n.Op == "between" {
 		switch {
@@ -597,6 +598,24 @@ func readsLookedUpRow(n *Node) bool {
 // containsLookup is true when a node is a lookup or has one among its args.
 func containsLookup(n *Node) bool {
 	return n != nil && (n.Op == "lookup" || slices.ContainsFunc(n.Args, containsLookup))
+}
+
+// readsLookupColumn is true when a node reads, through a {col} leaf, a report
+// column whose formula holds a lookup (directly or through other columns).
+// seen stops a column that reads itself, which the compile refuses.
+func readsLookupColumn(c fctx, n *Node, seen map[string]bool) bool {
+	l, ok := c.(*lookupCtx)
+	if !ok || n == nil {
+		return false
+	}
+	if n.Col != "" && !seen[n.Col] {
+		seen[n.Col] = true
+		cp := l.r.c.p.byID[n.Col]
+		if cp != nil && cp.col.Formula != nil && (containsLookup(cp.col.Formula) || readsLookupColumn(c, cp.col.Formula, seen)) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(n.Args, func(a *Node) bool { return readsLookupColumn(c, a, seen) })
 }
 
 // outerPath reads a path on the report's row: what a path means in the
