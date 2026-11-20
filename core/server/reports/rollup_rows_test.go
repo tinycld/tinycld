@@ -131,7 +131,8 @@ func withLedgerCurrency(t *testing.T, code string) {
 // still adds the rows shown: it is a row of the statement, in the source's
 // currency, as the account rows are. A source with no currency of its own
 // names none for the Total, while each account row shows its months' code:
-// the Total would add three currencies as one, so it keeps no cells (R3).
+// the Total would add those months' currencies as one figure with no code and
+// no notice, so it keeps no cells, as before.
 func TestARowsTotalAddsTheRollupsWhenNoBaseRowPasses(t *testing.T) {
 	noLine := func(having string) string {
 		spec := rowsRollupSpec(strings.ReplaceAll(rowsRollupFilled, "HAVING", having))
@@ -203,6 +204,60 @@ func TestARowsTotalAddsTheRollupsWhenNoBaseRowPasses(t *testing.T) {
 		total := res.Rows[len(res.Rows)-1]
 		if total.ID != `total:["GBP"]` || len(total.Cells) != 0 {
 			t.Fatalf("Total = %s %#v, want total:[\"GBP\"] with no cells", total.ID, total.Cells)
+		}
+	})
+	// A pivot report runs the unpaged group statement (pagedGroups is false),
+	// which has the same a0 leg.
+	t.Run("a pivot report", func(t *testing.T) {
+		z := rowsRollupZoo(t)
+		withLedgerCurrency(t, "USD")
+		const spec = `{"version":4,"source":"zoo.ledger_lines","columns":[
+			{"id":"account","path":[{"link":"account"}],"labelField":"number"},
+			{"id":"amt","path":[{"field":"debit"}],"aggregate":"sum","total":"rows"}],
+			"filter":{"op":"gte","args":[{"path":[{"field":"date"}]},{"value":"2026-08-01"}]},
+			"pivot":{"path":[{"field":"date"}],"bucket":"month","cell":"amt"},
+			"groups":[{"id":"g","col":"account","fill":{}}]}`
+		res := z.run(t, "ann", spec, Options{}, nil)
+		total := res.Rows[len(res.Rows)-1]
+		if total.Kind != KindTotal || total.Cells["amt"] != int64(0) || total.Cells["amt@currency"] != "USD" {
+			t.Fatalf("Total = %s %#v, want amt 0 USD", total.Kind, total.Cells)
+		}
+	})
+	// The fill rows read no row, so they are paged: the Total comes with every
+	// page, and a page that shows no fill row still adds all of them.
+	t.Run("on every page", func(t *testing.T) {
+		z := rowsRollupZoo(t)
+		withLedgerCurrency(t, "USD")
+		opts := Options{Limit: 1, ExpandAll: true}
+		var totals []rowsRollupLine
+		for range 5 {
+			res := z.run(t, "ann", noLine(rowsRollupHaving), opts, nil)
+			lines := rowsRollupLines(res)
+			totals = append(totals, lines[len(lines)-1])
+			if res.Page == nil || res.Page.Next == "" {
+				break
+			}
+			opts.Cursor = res.Page.Next
+		}
+		want := rowsRollupLine{KindTotal, "Total", int64(800), int64(0), int64(800), "USD"}
+		if len(totals) != 2 || totals[0] != want || totals[1] != want {
+			t.Fatalf("Totals of the pages = %#v, want two of %#v", totals, want)
+		}
+	})
+	// A column that is not money has its cell on this Total as a run with rows
+	// has it: a count of no rows is 0, a "rows" count adds the counts below.
+	t.Run("a count column reads 0", func(t *testing.T) {
+		z := rowsRollupZoo(t)
+		withLedgerCurrency(t, "USD")
+		spec := strings.Replace(noLine(rowsRollupHaving), `{"id":"gap"`,
+			`{"id":"n","path":[{"field":"debit"}],"aggregate":"count"},{"id":"nr","path":[{"field":"debit"}],"aggregate":"count","total":"rows"},{"id":"gap"`, 1)
+		res := z.run(t, "ann", spec, Options{}, nil)
+		total := res.Rows[len(res.Rows)-1]
+		if total.Kind != KindTotal || total.Cells["n"] != int64(0) || total.Cells["nr"] != int64(0) {
+			t.Fatalf("Total = %s %#v, want n 0 and nr 0", total.Kind, total.Cells)
+		}
+		if _, has := total.Cells["n@currency"]; has {
+			t.Fatalf("Total = %#v: a count carries no currency", total.Cells)
 		}
 	})
 }

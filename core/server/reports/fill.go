@@ -32,9 +32,10 @@ func (lv *level) fillRows() string {
 // it (a "rows" cell). Its rows are grouped by the currency keys, so a run that
 // reads no base row gives it no row, while the fill records still show under
 // the sources' currencies (parentKeys). A currency key with no source
-// currency names none on that row: a fill row may then carry a code of its
-// own, and the total would add two currencies as one (R3), so that total
-// stays as it is, with no cells.
+// currency names none on that row, so the row would add the fill rows'
+// months of several currencies into one figure with no code and no notice:
+// R3 only blanks a sum it can see mixes codes, and a row with no code names
+// none. That total stays as it was, with no cells.
 func (lv *level) totalOverFillRows() bool {
 	if lv.n != 0 || len(lv.c.currencies) == 0 || len(lv.childCells) == 0 || !lv.c.nextFill(0) {
 		return false
