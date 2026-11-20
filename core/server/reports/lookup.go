@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // lookupValue decodes a lookup's value: a formula node over the looked-up
@@ -150,6 +152,11 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		// the looked-up source can serve one (linkedEq).
 		if !w.unset {
 			where = "(" + w.sql + ")"
+			// The bounds name the stored day column itself, which an index on
+			// it serves; they leave out only rows the where refuses.
+			if w.bound != "" {
+				where += " AND " + w.bound
+			}
 		}
 		out.agg, out.win = out.agg || w.agg, out.win || w.win
 		if w.condMixed != "" {
@@ -429,6 +436,11 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 			e.link = storedLink{col: col, sql: e.sql, sc: l.sc}
 		}
 	}
+	if l.inWhere && len(hops) == 0 && !bound.endsAtLink && bound.field != nil && bound.field.Type == Date {
+		if col := l.storedDayCol(bound.field); col != "" {
+			e.day = storedDay{col: col, sql: e.sql}
+		}
+	}
 	switch cur, fixed := amountCurrencyOf(l.sc, hops, bound); {
 	case cur != "":
 		e.cur = currency{sql: cur, id: "row:" + cur, field: currencyField(bound)}
@@ -488,6 +500,72 @@ func linkedEq(n *Node, args []expr) string {
 			v = a.link.sc.oneValue(v)
 		}
 		return fmt.Sprintf("(%s IS %s AND %s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff'))", a.sql, v, a.link.col, v, a.link.col, v)
+	}
+	return ""
+}
+
+// storedDayCol is the stored column of a Date field of the lookup scope's own
+// row, or "" where a bound on it is not safe: a view's or a union's column
+// (which may hold NULL, or no day), or a column that is not text or a
+// PocketBase date. filterBounds makes the same test of the report's base.
+func (l *lookupCtx) storedDayCol(f *Field) string {
+	// A dry compile (Validate) has no database to read the collection from.
+	if legacySQL.noLookupDayBounds || l.r.c.dry() || len(l.src.Parts) > 0 {
+		return ""
+	}
+	col, err := l.r.c.p.app.FindCachedCollectionByNameOrId(l.src.Collection)
+	if err != nil {
+		// Without the bound the lookup is still right, only slower.
+		log.Warn("lookup day column not bounded", "collection", l.src.Collection, "err", err)
+		return ""
+	}
+	if col.IsView() {
+		return ""
+	}
+	field := col.Fields.GetByName(f.Column)
+	if field == nil || !slices.Contains([]string{core.FieldTypeText, core.FieldTypeDate, core.FieldTypeAutodate}, field.Type()) {
+		return ""
+	}
+	return q(l.sc.alias, f.Column)
+}
+
+// dayBound is the bound a comparison in a lookup's where implies on a stored
+// day column of the looked-up row: for lt, lte, gt or gte of such a day with a
+// day that reads nothing of that row (a param's day, a bound of a range, a
+// formula over them, a value of the report's row), and for between of it with
+// a date range param or with two such days. "" for any other comparison. The
+// comparison reads the day through substr(), which no index serves; the bound
+// names the column itself (dayBounds). It holds on every row the comparison
+// holds for: where the other day is blank the comparison holds for no row,
+// and neither does the bound.
+func dayBound(n *Node, args []expr) string {
+	stored := func(e expr) bool { return e.day.col != "" && e.day.sql == e.sql }
+	free := func(i int) bool {
+		e := args[i]
+		return e.typ == Date && !e.rng && !e.unset && !e.all && !readsLookedUpRow(n.Args[i])
+	}
+	if n.Op == "between" {
+		switch {
+		case len(args) < 2 || !stored(args[0]):
+		case len(args) == 2 && args[1].rng && !args[1].all && !args[1].unset:
+			return dayBounds(args[0].day.col, args[1].lo, args[1].hi)
+		case len(args) == 3 && free(1) && free(2):
+			return dayBounds(args[0].day.col, args[1].sql, args[2].sql)
+		}
+		return ""
+	}
+	for i := range 2 {
+		if !stored(args[i]) || !free(1-i) {
+			continue
+		}
+		op := n.Op
+		if i == 1 {
+			op = mirrored[op]
+		}
+		if op == "lt" || op == "lte" {
+			return dayBounds(args[i].day.col, "", args[1-i].sql)
+		}
+		return dayBounds(args[i].day.col, args[1-i].sql, "")
 	}
 	return ""
 }

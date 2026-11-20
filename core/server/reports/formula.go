@@ -59,6 +59,15 @@ type expr struct {
 	// link is, in a lookup's where, the stored relation column a path that
 	// ends at a to-one link follows to read sql; eq bounds that column too.
 	link storedLink
+	// day is, in a lookup's where, the stored column a Date field of the
+	// looked-up row itself is read from; a comparison of it with a day bounds
+	// that column too (dayBound).
+	day storedDay
+	// bound is, on a condition in a lookup's where, bounds on stored columns of
+	// the looked-up row that hold on every row the condition holds for. Only
+	// and passes it up (a row an and holds for passes each of its terms), and
+	// only lookupIn reads it, on the where itself. "" for any other value.
+	bound string
 	// scan is a sum lookup's value, mixed check and currency as one select
 	// over the looked-up rows (columns u, m, c), for a context that computes
 	// the lookup once in a CTE (layoutCtx.lookup). "" for any other value.
@@ -78,6 +87,10 @@ type storedLink struct {
 	col, sql string
 	sc       *scope
 }
+
+// storedDay is the stored column (col) a Date field of a lookup's own row is
+// read from as sql; a copy of the expr whose sql changed no longer reads it.
+type storedDay struct{ col, sql string }
 
 // currency is where a money value's currency comes from: a currency key of w
 // (the ck<n> that holds each row's currency), a source's fixed currency, or a
@@ -867,9 +880,14 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if e, ok := zonedCompare(c, n.Op, args[0], args[1]); ok {
 			return e, nil
 		}
-		return expr{sql: "(" + args[0].sql + " " + comparisons[n.Op] + " " + args[1].sql + ")", typ: Bool}, nil
+		return expr{sql: "(" + args[0].sql + " " + comparisons[n.Op] + " " + args[1].sql + ")", typ: Bool, bound: dayBound(n, args)}, nil
 	case "between":
-		return between(c, args, at)
+		e, err := between(c, args, at)
+		if err != nil {
+			return expr{}, err
+		}
+		e.bound = dayBound(n, args)
+		return e, nil
 	case "in":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err
@@ -886,6 +904,7 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{}, err
 		}
 		parts := make([]string, 0, len(args))
+		var bounds []string
 		for i, a := range args {
 			if a.typ != Bool && a.typ != "" {
 				return expr{}, invalid(fmt.Sprintf("%s.args.%d", at, i), n.Op+" needs conditions")
@@ -893,11 +912,16 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			if !a.unset {
 				parts = append(parts, a.sql)
 			}
+			// A row an and holds for passes each of its terms, so it is inside
+			// each term's bounds. An or passes none up.
+			if n.Op == "and" && !a.unset && a.bound != "" {
+				bounds = append(bounds, a.bound)
+			}
 		}
 		if len(parts) == 0 {
 			return unsetCondition, nil
 		}
-		return expr{sql: "(" + strings.Join(parts, " "+strings.ToUpper(n.Op)+" ") + ")", typ: Bool}, nil
+		return expr{sql: "(" + strings.Join(parts, " "+strings.ToUpper(n.Op)+" ") + ")", typ: Bool, bound: strings.Join(bounds, " AND ")}, nil
 	case "not":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err

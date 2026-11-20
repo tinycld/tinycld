@@ -13,4 +13,7 @@ var legacySQL struct {
 	// inlineDetailRows keeps w inline in every detail statement, as before
 	// materializeShared marked the ones whose CTEs read it twice or more.
 	inlineDetailRows bool
+	// noLookupDayBounds leaves the bounds on a looked-up source's stored day
+	// column out of a lookup's WHERE, as before dayBound wrote them.
+	noLookupDayBounds bool
 }
