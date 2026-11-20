@@ -9,8 +9,8 @@ import (
 // A statement by account type: the balance list's columns under layout
 // sections, one per type, and a computed row that adds two sections. Each
 // account fills in under its own type, so an account with a stored month and
-// no line of July has a row, under a section that has a line of July; a
-// section with no line of July shows no account row.
+// no line of July has a row, also under a section no line of July reaches
+// (fill_parents_test.go).
 const (
 	rowsRollupSections = `,"layout":[
 		{"section":"assets","title":"Assets","key":"asset"},
