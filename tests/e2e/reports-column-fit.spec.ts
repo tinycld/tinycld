@@ -92,9 +92,12 @@ test.describe('report column fit', () => {
         await openReportsHub(p)
         await startReport(p, SALES_SOURCE)
         await addColumn(p, ['amount'])
-        // An amount is never cut: it offers only Extra room.
+        // An amount is never cut and never wraps: it offers its narrowest width (which
+        // only widens it) and Extra room, and no wrap settings.
         await expect(p.getByTestId('report-builder-column-1-fit-never-cut')).toBeVisible()
-        await expect(p.getByTestId('report-builder-column-1-fit-min')).toHaveCount(0)
+        await expect(p.getByTestId('report-builder-column-1-fit-min')).toBeVisible()
+        await expect(p.getByTestId('report-builder-column-1-fit-min')).toContainText('Automatic')
+        await expect(p.getByTestId('report-builder-column-1-fit-wrap')).toHaveCount(0)
         await expect(p.getByTestId('report-builder-column-1-fit-grow')).toContainText('None')
         // As the label column the amount takes a share of 1 (Normal), and None can be set.
         await p.getByTestId('report-builder-column-1-up').click()
@@ -103,6 +106,10 @@ test.describe('report column fit', () => {
         await expect(p.getByTestId('report-builder-column-0-fit-grow')).toContainText('None')
         await chooseOption(p, 'report-builder-column-0-fit-grow', '1')
         await p.getByTestId('report-builder-column-0-down').click()
+        // The amount's narrowest width is taken, not refused.
+        await chooseOption(p, 'report-builder-column-1-fit-min', '24')
+        await expect(p.getByTestId('report-builder-column-1-fit-min')).toContainText('24 letters')
+        await expect(p.getByTestId('report-builder-column-1-fit-problem')).toHaveCount(0)
         await chooseOption(p, 'report-builder-column-0-fit-min', '12')
         await expect(p.getByTestId('report-builder-column-0-fit-min')).toContainText('12 letters')
         await p.getByTestId('report-builder-section-arrange').click()
@@ -117,6 +124,19 @@ test.describe('report column fit', () => {
         // Rows on /a/reports are the window less the 64 px rail: 1216 and 960.
         await p.setViewportSize({ width: 1280, height: 800 })
         expect(await waitForTableFit(p)).toBe('one-line')
+        // 24 letters hold the amount at about 206 px (about 105 px without the setting),
+        // and its whole value shows.
+        const amount = p.locator('[data-testid^="report-cell-amount-d:"]').first()
+        await expect
+            .poll(async () => (await amount.boundingBox())?.width ?? 0)
+            .toBeGreaterThanOrEqual(200)
+        await expect
+            .poll(() =>
+                amount
+                    .locator('div[dir="auto"]')
+                    .evaluate(element => element.scrollWidth - element.clientWidth)
+            )
+            .toBeLessThanOrEqual(0)
         await p.setViewportSize({ width: 1024, height: 800 })
         expect(await waitForTableFit(p)).toBe('tablet')
         // A phone has no rail: 390 is under both gates.

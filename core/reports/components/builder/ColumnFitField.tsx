@@ -8,9 +8,10 @@ import type { ColumnFit } from '../../lib/spec'
 import { FieldError, IconButton } from './parts'
 
 // Design §3.6: a text column sets its narrowest width, whether long text wraps (and,
-// while it wraps, whether it breaks long words) and its share of extra room; a figure
-// is never cut, so it sets only extra room. Width, widest and % settings are kept as
-// read (CLI or API) and not offered here.
+// while it wraps, whether it breaks long words) and its share of extra room. A figure
+// is never cut and never wraps, so it sets its narrowest width (which only widens it:
+// column-measure.ts wholeMeasure) and its extra room. Width, widest and % settings
+// are kept as read (CLI or API) and not offered here.
 
 const NARROWEST: { id: string; label: string; minWidth?: string }[] = [
     { id: 'auto', label: 'Automatic' },
@@ -52,7 +53,7 @@ function useColumnFit(
     const setFit = (next: ColumnFit) =>
         builder.setColumns(columns.map((c, i) => (i === index ? columnWithFit(c, next) : c)))
     const lines = fit.whiteSpace === 'normal' ? (fit.lineClamp ?? 2) : undefined
-    // The label column is the spec's first column (fit.go fitRefusals).
+    // The label column is the spec's first column (column-measure.ts measureColumns).
     const defaultGrow = defaultFlexGrow({ isLabel: index === 0, isFigure })
     const grow = fit.flexGrow ?? defaultGrow
     const narrowest: PickItem[] = NARROWEST.map(item => ({
@@ -112,7 +113,7 @@ interface ColumnFitFieldProps {
     builder: ReportBuilder
     columns: ColumnDraft[]
     index: number
-    /** The column shows numbers, amounts, percents, dates or yes/no values: never cut. */
+    /** The column shows numbers, amounts, percents, dates or yes/no values: never cut, never wrapped. */
     isFigure: boolean
 }
 
@@ -124,7 +125,13 @@ export function ColumnFitField({ builder, columns, index, isFigure }: ColumnFitF
     return (
         <View className="gap-1">
             <View className="flex-row flex-wrap items-center gap-2">
-                <TextFitMenus isVisible={!isFigure} fit={fit} name={name} testID={testID} />
+                <PickMenu
+                    label={`Narrowest: ${fit.narrowestLabel}`}
+                    purpose={`${name} narrowest width`}
+                    items={fit.narrowest}
+                    testID={`${testID}-min`}
+                />
+                <WrapMenus isVisible={!isFigure} fit={fit} name={name} testID={testID} />
                 <NeverCut isVisible={isFigure} testID={testID} />
                 <PickMenu
                     label={`Extra room: ${fit.extraRoomLabel}`}
@@ -147,7 +154,9 @@ export function ColumnFitField({ builder, columns, index, isFigure }: ColumnFitF
 
 type ColumnFitState = ReturnType<typeof useColumnFit>
 
-function TextFitMenus({
+// A wrap setting does nothing on a figure (ReportRow never wraps one), so only a
+// text column offers it.
+function WrapMenus({
     isVisible,
     fit,
     name,
@@ -161,12 +170,6 @@ function TextFitMenus({
     if (!isVisible) return null
     return (
         <>
-            <PickMenu
-                label={`Narrowest: ${fit.narrowestLabel}`}
-                purpose={`${name} narrowest width`}
-                items={fit.narrowest}
-                testID={`${testID}-min`}
-            />
             <PickMenu
                 label={`Long text: ${fit.longTextLabel}`}
                 purpose={`${name} long text`}

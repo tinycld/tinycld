@@ -76,6 +76,11 @@ type Request struct {
 	// stops with a rowCap or nestCap notice.
 	// 0: the default cap. Only the export read sets it; the run endpoint never does.
 	RowCap int
+	// PageCap is the most rows a page holds, in place of maxPage: a caller
+	// that needs every row reads them in one page, as each page of a grouped
+	// run computes every group level again. 0: maxPage. Only the export read
+	// sets it; the run endpoint never does.
+	PageCap int
 }
 
 // Result is the run's answer, in the shell's ReportModel row shape.
@@ -129,6 +134,11 @@ type ResultColumn struct {
 	// column, not in a pivot report; the first column by its detail label
 	// when the report has one.
 	Sortable bool `json:"sortable,omitempty"`
+	// BlankAbove says the column has no cell above a group level: its own
+	// blankAbove, or that of a column it reads. The rows that show it can all
+	// be closed when a run lands, so the client keeps room for its type's
+	// worst case (column-measure.ts widestCell).
+	BlankAbove bool `json:"blankAbove,omitempty"`
 	// Heading is the value the column's heading shows (Column.Heading), absent
 	// when the column has none or it is blank this run.
 	Heading *ColumnHeading `json:"heading,omitempty"`
@@ -280,6 +290,9 @@ type runner struct {
 	// askedRowCap is the request's RowCap (0: runLimits.rowCap); read it
 	// through rowCap.
 	askedRowCap int
+	// askedPageCap is the request's PageCap (0: runLimits.maxPage); read it
+	// through pageLimit.
+	askedPageCap int
 	// openDropped is set once a detail row's open value was dropped, so a run
 	// logs a bad open path once, not once per row.
 	openDropped bool
@@ -365,7 +378,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	// No expansion state: the levels marked open expand (openLevels).
 	openLevels(p, req.Options, expand)
 	rn := &runner{
-		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap,
+		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
 		topics: map[string]bool{}, ruleTopics: map[string][]string{},
 	}
@@ -685,13 +698,16 @@ func (rn *runner) pagedGroups() bool {
 	return len(p.groups) > 0 && p.pivot == nil && len(p.layout) == 0 && len(p.nest) == 0
 }
 
-// pageLimit is the most rows a page holds: options.limit up to maxPage, else
-// pageSize.
+// pageLimit is the most rows a page holds: options.limit up to maxPage (up
+// to the request's PageCap when it is set), else pageSize.
 func (rn *runner) pageLimit() int {
-	if rn.opts.Limit > 0 {
-		return min(rn.opts.Limit, runLimits.maxPage)
+	if rn.opts.Limit <= 0 {
+		return runLimits.pageSize
 	}
-	return runLimits.pageSize
+	if rn.askedPageCap > 0 {
+		return min(rn.opts.Limit, rn.askedPageCap)
+	}
+	return min(rn.opts.Limit, runLimits.maxPage)
 }
 
 // pagedGroupPass reads one page of a grouped run's level rows (J1a), then
@@ -1711,6 +1727,8 @@ func (c *compiler) groupLevels() string {
 // leafOrder is the CTE gord: one row per open innermost group, __g its place
 // in document order (json_each's index), g<j> its key values (group keys,
 // then currency keys), bound as one JSON list as expansion.where binds keys.
+// It is MATERIALIZED: read inline, the detail statement's time grows with
+// rows x open groups (4,000 open groups: 6.7 s inline, 40 ms materialized).
 func (c *compiler) leafOrder(s *stmt, leaves [][]any) string {
 	encoded := make([]string, len(leaves))
 	for i, key := range leaves {
@@ -1720,7 +1738,7 @@ func (c *compiler) leafOrder(s *stmt, leaves [][]any) string {
 	for j := range len(c.p.groups) + len(c.currencies) {
 		cols = append(cols, fmt.Sprintf("json_extract(value, '$[%d]') AS g%d", j, j))
 	}
-	return fmt.Sprintf("gord AS (SELECT %s FROM json_each(%s))", strings.Join(cols, ", "), s.bind("["+strings.Join(encoded, ",")+"]"))
+	return fmt.Sprintf("gord AS MATERIALIZED (SELECT %s FROM json_each(%s))", strings.Join(cols, ", "), s.bind("["+strings.Join(encoded, ",")+"]"))
 }
 
 // leafJoin matches a detail row (d) to its open group by each key value with
@@ -2304,9 +2322,6 @@ func (c *compiler) compileAll() error {
 		pivot = make([]pivotValue, p.pivot.max)
 	}
 	if _, _, err = c.groupStatement(s, r, &expansion{}, pivot, 1); err != nil {
-		return err
-	}
-	if err := fitRefusals(c); err != nil {
 		return err
 	}
 	if _, err := c.headings(s); err != nil {
