@@ -383,6 +383,7 @@ Do not start it. Hand back:
 
 ```
 NEEDS-RUN: cd /Users/nas/tmp/tinycld/books-purchases && lsof -iTCP -sTCP:LISTEN -nP | grep -qE ':(7210|7211) ' && { echo PORTS-BUSY; exit 1; }; E2E_PORT=7210 E2E_PORT_2=7211 E2E_IMAP_PORT=1210 E2E_IMAP_PORT_2=1211 pnpm exec tinycld-pkg test:e2e books/tests/e2e/trial-balance.spec.ts books/tests/e2e/report-drill-down.spec.ts books/tests/e2e/report-exports.spec.ts books/tests/e2e/report-manual-refresh.spec.ts
+Before it: the help file changed, so run `pnpm run packages:generate` in /Users/nas/tmp/tinycld/books-purchases/tinycld once, when no other run is in progress.
 Needed from it: the `Running N tests` line (N is the tests of these four files, not the whole suite), the line of dots, and each failure in full.
 ```
 
@@ -417,7 +418,7 @@ What the reader sees (human decision, 2026-11-20): an opened account shows "Bala
 
 Then add, under them:
 
-1. The line `At 100,000 lines (median of 5, core <core hash>, books <books hash>):` with the short hashes of the two trees the run of step 8 used: `git -C /Users/nas/tmp/tinycld/books-purchases/tinycld rev-parse --short HEAD` and the Books commit of step 6 (`git -C /Users/nas/tmp/tinycld/books-purchases/books rev-parse --short HEAD`).
+1. The line `At 100,000 lines (median of 5, core <core hash>, books <books hash>):` with the short hashes of the two trees the run of step 8 used: `git -C /Users/nas/tmp/tinycld/books-purchases/tinycld rev-parse --short HEAD` and the Books HEAD at the time of the run of step 8 (`git -C /Users/nas/tmp/tinycld/books-purchases/books rev-parse --short HEAD`, read before the commit of step 10).
 2. A table with the header `| run | after task 9b | after task 9c-1 | group rows | rows |` and one row for each of the eleven runs, in the order of `st-results.md`. The column `after task 9b` is this text, one for each run in order: `738ms`, `432ms`, `516ms`, `1.373s`, `1.746s`, `153ms`, `1.554s`, `29ms`, `18ms`, `125ms`, `31ms` (TB 1, TB 2, TB 3, BS 1, BS 2, TD 1 to TD 6). The three other columns are the columns `median of 5`, `group rows` and `rows` of `scale-task9c1/st-results.md`, copied as they are; a refused run is written `refused after <time>`.
 3. The heading line `Reads of the line tables and of the stored months in the longest statement of TB 1 all accounts, as of, and of TB 2 busy account, as of (scale-task9c1/st-plans.md):` and under it, for each of the two runs, the statement's heading line of `st-plans.md` as plain text (for example `TB 1 all accounts, as of (statement 5: 488.1ms, 106 rows, 10129 chars):`) and, in one fenced block, every plan line of that statement that `st-plans.md` prints (the measure prints the lines that name `books_journal_lines`, `books_cash_basis_lines` or `books_account_balances`). The longest statement of a run is the one with the largest time in its heading. Write what the file shows.
 4. One sentence that says whether a `SCAN books_journal_lines` line is still in a Trial Balance statement, and in which run.
