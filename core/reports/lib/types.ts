@@ -143,6 +143,12 @@ export interface ResultRow {
     labelValue?: CellValue
     labelCurrency?: string
     /**
+     * Set on an opening row whose label names a value of the run (spec
+     * `opening.labelValue`): the label with `{value}` where the value goes.
+     * `labelType` and `labelValue` hold the value; `label` has it as plain text.
+     */
+    labelTemplate?: string
+    /**
      * A group row its level's `muted` condition holds for: its label and figures are
      * drawn in muted text. Never set on a subtotal or total row.
      */

@@ -112,6 +112,8 @@ export const optionsFromSchema = z.strictObject({
 
 /** Stands for the group's label in `optionsFrom.groupLabel` (spec.go GroupLabelToken). */
 export const GROUP_LABEL_TOKEN = '{group}'
+/** Stands for the label value in `groups[].opening.label` and a row's `labelTemplate` (spec.go LabelValueToken). */
+export const LABEL_VALUE_TOKEN = '{value}'
 export type OptionsFrom = z.infer<typeof optionsFromSchema>
 
 export const paramDefSchema = z.strictObject({
@@ -202,6 +204,10 @@ export const specGroupSchema = z.strictObject({
     opening: z
         .strictObject({
             label: z.string().min(1).max(200),
+            // A formula over params and values the label names, where it holds
+            // `{value}`; `labelBucket` cuts a day to its month, quarter or year.
+            labelValue: specNodeSchema.optional(),
+            labelBucket: z.enum(BUCKETS).optional(),
             cells: z.record(z.string(), specNodeSchema).optional(),
         })
         .optional(),

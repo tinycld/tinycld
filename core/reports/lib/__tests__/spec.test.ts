@@ -443,6 +443,20 @@ describe('the parts of version 3', () => {
         })
     })
 
+    it('reads an opening row whose label names a value, and refuses a bucket it does not know', () => {
+        const opening = {
+            label: 'Balance before {value}',
+            labelValue: { param: 'period', bound: 'from' },
+            labelBucket: 'month',
+        }
+        const groups = (bucket: string) => [
+            { id: 'g', col: 'species', opening: { ...opening, labelBucket: bucket } },
+        ]
+        const read = parseSpec({ ...FEEDINGS, version: 4, groups: groups('month') })
+        expect(read?.groups?.[0]?.opening).toEqual(opening)
+        expect(parseSpec({ ...FEEDINGS, version: 4, groups: groups('week') })).toBeNull()
+    })
+
     it('refuses a pick, a bound or an opening label the engine refuses', () => {
         const lookup = (pick: string) => ({
             ...FEEDINGS,

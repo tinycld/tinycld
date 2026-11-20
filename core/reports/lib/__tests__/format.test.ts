@@ -407,6 +407,27 @@ describe('typed labels', () => {
         expect(rowLabelText(fiscal, PLAIN)).toBe('FY 2027')
     })
 
+    it('puts the typed value of an opening row in its label template', () => {
+        const opening = labelled({
+            kind: 'opening',
+            label: 'Balance before 2026-11',
+            labelTemplate: 'Balance before {value}',
+            labelType: 'month',
+            labelValue: '2026-11',
+        })
+        expect(rowLabelText(opening, PLAIN)).toBe('Balance before Nov 2026')
+        const day = labelled({ ...opening, labelType: 'date', labelValue: '2026-11-01' })
+        expect(rowLabelText(day, PLAIN)).toBe('Balance before Nov 1, 2026')
+        const middle = labelled({ ...opening, labelTemplate: 'Before {value} (opening)' })
+        expect(rowLabelText(middle, PLAIN)).toBe('Before Nov 2026 (opening)')
+        // A text value goes in as it is: "$&" and "$1" are no patterns.
+        const text = labelled({ ...opening, labelType: 'text', labelValue: 'the $& and $1 audit' })
+        expect(rowLabelText(text, PLAIN)).toBe('Balance before the $& and $1 audit')
+        // No value on this run: the engine wrote the label without the token.
+        const none = labelled({ kind: 'opening', label: 'Balance before' })
+        expect(rowLabelText(none, PLAIN)).toBe('Balance before')
+    })
+
     it('shows a bucketed label with no value as blank', () => {
         expect(typedLabelText('month', null, '', PLAIN)).toBe('')
         expect(typedLabelText('fiscalYear', null, '', PLAIN)).toBe('')

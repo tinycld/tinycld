@@ -1868,6 +1868,48 @@
     ],
     "labels": [
         {
+            "name": "an opening row that names a month in its label",
+            "row": {
+                "id": "r-opening",
+                "kind": "opening",
+                "depth": 1,
+                "label": "Balance before 2026-11",
+                "labelTemplate": "Balance before {value}",
+                "labelType": "month",
+                "labelValue": "2026-11",
+                "cells": {}
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Balance before Nov 2026"
+        },
+        {
+            "name": "an opening row that names a text with pattern signs",
+            "row": {
+                "id": "r-opening-text",
+                "kind": "opening",
+                "depth": 1,
+                "label": "Balance before the $& and $1 audit",
+                "labelTemplate": "Balance before {value}",
+                "labelType": "text",
+                "labelValue": "the $& and $1 audit",
+                "cells": {}
+            },
+            "display": {
+                "divideBy1000": false,
+                "withoutCents": false,
+                "negative": "minus",
+                "negativeRed": false,
+                "hidden": []
+            },
+            "text": "Balance before the $& and $1 audit"
+        },
+        {
             "name": "a text label",
             "row": {
                 "id": "r-detail",
