@@ -267,3 +267,99 @@ func TestAFillRecordNamesItsParentUnderAHavingAbove(t *testing.T) {
 		})
 	}
 }
+
+// A feedings report whose upper group u (the column "up", given by upCol) sits
+// above the animals, which fill in with no where: every animal the reader may
+// list. ann has feedings of Leo and Zed only, and may also list Eli, Kit and
+// Lia, so a record with no feeding under a parent is a fill record.
+func fillUnderUpperSpec(upCol, total string) string {
+	return `{"version":4,"source":"zoo.feedings","columns":[` + upCol + `,
+		{"id":"animal","path":[{"link":"animal"}]},
+		{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum"` + total + `}],
+		"groups":[{"id":"u","col":"up"},{"id":"a","col":"animal","fill":{}}],
+		"sort":[{"col":"up"},{"formula":{"record":"a","path":[{"field":"name"}]}}]}`
+}
+
+// The upper group reads a column of the feeding itself (its grams), not the
+// animal, so an animal has no parent of its own: ownParentsOf is nil. Leo's
+// feedings weigh over 400 grams ("big"), Zed's under ("small"), and every
+// other animal sits under each open parent as a fill record, Leo under "small"
+// and Zed under "big" included.
+func TestAFillRecordSitsUnderEachParentOfABaseRowColumn(t *testing.T) {
+	z := newZoo(t)
+	withEmptyAnimals(t, z)
+	up := `{"id":"up","formula":{"op":"if","args":[{"op":"gt","args":[{"path":[{"field":"grams"}]},{"value":400}]},{"value":"big"},{"value":"small"}]}}`
+	res := z.run(t, "ann", fillUnderUpperSpec(up, ""), Options{Expand: [][]any{{"big", "USD"}, {"small", "USD"}}}, nil)
+	requireRows(t, res, "label", "big", "Eli", "Kit", "Leo", "Lia", "Zed", "small", "Eli", "Kit", "Leo", "Lia", "Zed", "Total")
+	requireRows(t, res, "cost", int64(3500), int64(0), int64(0), int64(3500), int64(0), int64(0), int64(1000), int64(0), int64(0), int64(0), int64(0), int64(1000), int64(4500))
+}
+
+// The upper group is an amount, the animal's price: a group by an amount does
+// not name its own parent, though its path reads only the animal. Leo's price
+// is 500000 and Zed's 120000; the other animals have none. Each parent shows
+// every animal with no feeding under it, Leo under 120000 and Zed under 500000
+// included, and Eli and Lia (no price) sit under both, not under a blank price.
+func TestAFillRecordSitsUnderEachParentOfAnAmount(t *testing.T) {
+	z := newZoo(t)
+	withEmptyAnimals(t, z)
+	up := `{"id":"up","path":[{"link":"animal"},{"field":"price"}]}`
+	open := Options{Expand: [][]any{{float64(120000), "USD"}, {float64(500000), "USD"}}}
+	res := z.run(t, "ann", fillUnderUpperSpec(up, ""), open, nil)
+	requireRows(t, res, "cost", int64(1000), int64(0), int64(0), int64(0), int64(0), int64(1000), int64(3500), int64(0), int64(0), int64(3500), int64(0), int64(0), int64(4500))
+	requireRows(t, res, "label", "120000", "Eli", "Kit", "Leo", "Lia", "Zed", "500000", "Eli", "Kit", "Leo", "Lia", "Zed", "Total")
+}
+
+// The upper group is a region that mixes a select's values with other text:
+// the north site's region as the select shows it, any other site's as
+// "elsewhere". Such a key has a shown form (groupShown), so it names no parent
+// of its own. Leo (North) sits in the first parent, Zed (South) in the second,
+// and each animal with no feeding sits under both (the animal with the feeding
+// first, as a shown key orders the rows below it).
+func TestAFillRecordSitsUnderEachParentOfAShownKey(t *testing.T) {
+	z := newZoo(t)
+	withEmptyAnimals(t, z)
+	region := `{"path":[{"link":"animal"},{"link":"site"},{"field":"region"}]}`
+	up := `{"id":"up","formula":{"op":"if","args":[{"op":"eq","args":[` + region + `,{"value":"north"}]},` + region + `,{"value":"elsewhere"}]}}`
+	open := Options{Expand: [][]any{{"north", "USD"}, {"elsewhere", "USD"}}}
+	res := z.run(t, "ann", fillUnderUpperSpec(up, ""), open, nil)
+	requireRows(t, res, "label", "North", "Leo", "Eli", "Kit", "Lia", "Zed", "elsewhere", "Zed", "Eli", "Kit", "Leo", "Lia", "Total")
+	requireRows(t, res, "cost", int64(3500), int64(3500), int64(0), int64(0), int64(0), int64(0), int64(1000), int64(1000), int64(0), int64(0), int64(0), int64(0), int64(4500))
+}
+
+// The balance list by account type and account, with the type read through a
+// formula that also reads the line's own "posted": a group above the accounts
+// that does not read only the account, so no account names its own section
+// (ownParentsOf is nil) and a section with no line of July has no row. 1300 has
+// a stored month and no line, so it is a fill record under Assets. The sections
+// are closed unless the run opens them, and every "rows" cell adds the rows
+// below it.
+func closedSectionsSpec() string {
+	groups := strings.NewReplacer(`,"open":true,"subtotals":true`, ``, "HAVING", rowsRollupHaving).Replace(rowsRollupUnderSections)
+	kind := `{"id":"kind","path":[{"link":"account"},{"field":"type"}]}`
+	byLine := `{"id":"kind","formula":{"op":"if","args":[{"op":"eq","args":[{"path":[{"field":"posted"}]},{"value":true}]},{"path":[{"link":"account"},{"field":"type"}]},{"path":[{"link":"account"},{"field":"type"}]}]}}`
+	return strings.Replace(rowsRollupSpec(groups), kind, byLine, 1)
+}
+
+// A closed section adds its fill records to its "rows" cells though no account
+// row shows under it, as the open section does: Asset adds 1300's 300 to its
+// debit either way, and the Total adds the sections. A section that skipped the
+// fill records when closed would read 1000's alone (a blank debit, 6500 credit).
+func TestAClosedParentOfAFillThatNamesNoParentAddsItsRows(t *testing.T) {
+	z := rowsRollupZoo(t)
+	spec := closedSectionsSpec()
+	closed := ownParentsGroups(z.run(t, "ann", spec, Options{}, nil))
+	open := ownParentsGroups(z.run(t, "ann", spec, Options{ExpandAll: true}, nil))
+	want := []rowsRollupLine{
+		{KindGroup, "Asset", int64(300), int64(6500), int64(-6200), "USD"},
+		{KindGroup, "Expense", int64(10000), int64(0), int64(10000), "USD"},
+		{KindGroup, "Income", int64(1500), int64(0), int64(1500), "USD"},
+		{KindGroup, "Liability", int64(0), int64(4500), int64(-4500), "USD"},
+		{KindTotal, "Total", int64(11800), int64(11000), int64(800), "USD"},
+	}
+	requireRowsRollupLines(t, closed, want)
+	for _, line := range want {
+		if !slices.Contains(open, line) {
+			t.Fatalf("open rows =\n%#v\nwant the closed row %#v", open, line)
+		}
+	}
+}
