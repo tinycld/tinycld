@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -102,6 +103,11 @@ type windowFrame struct {
 	// the copies of one lookup in a formula (an if that reads it in both
 	// branches) are computed once (rowsCtx.lookup).
 	lookups map[string]detailLookup
+	// paged is a frame whose select is cut to a page before its cells are
+	// computed (pagedCells): a running value or a percent reads every row, so
+	// it is kept in windows and read as w.ww<n>.
+	paged   bool
+	windows []string
 }
 
 // detailLookup is a lookup compiled on a frame's detail rows: its value as
@@ -168,8 +174,12 @@ func (f *windowFrame) hoistLayer(alias string, keys []string, sqls ...string) []
 // grouped by its keys, as alias, so its values read the keys as they read
 // them on a row; it reads nothing hoisted.
 func (f *windowFrame) from(table, alias string) string {
-	base := table + " " + alias
-	from := base
+	return f.layers(f.rows(table, alias), table+" "+alias, alias, nil)
+}
+
+// rows is table read as alias, with the group records the frame joins.
+func (f *windowFrame) rows(table, alias string) string {
+	from := table + " " + alias
 	if len(f.hoisted) == 0 && table == alias && !f.recs.any() {
 		from = table
 	}
@@ -177,7 +187,17 @@ func (f *windowFrame) from(table, alias string) string {
 	if f.recs.any() {
 		from = f.recs.from(from)
 	}
+	return from
+}
+
+// layers adds the hoisted layers that pick keeps (every layer when pick is
+// nil) to from, in the order they were hoisted. base is the rows a keyed
+// layer groups.
+func (f *windowFrame) layers(from, base, alias string, pick func(int) bool) string {
 	for i, h := range f.hoisted {
+		if pick != nil && !pick(i) {
+			continue
+		}
 		if len(h.keys) == 0 {
 			from = fmt.Sprintf("(SELECT %s.*, %s FROM %s) %s", alias, strings.Join(h.cols, ", "), from, alias)
 			continue
@@ -391,6 +411,85 @@ func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) {
 	return e, nil
 }
 
+// window keeps a running value or a percent of a paged frame to compute over
+// every row, below the page cut, and returns its reference; any other frame
+// computes it in place.
+func (f *windowFrame) window(sql string) string {
+	if !f.paged {
+		return sql
+	}
+	i := slices.Index(f.windows, sql)
+	if i < 0 {
+		i = len(f.windows)
+		f.windows = append(f.windows, sql)
+	}
+	return fmt.Sprintf("w.ww%d", i)
+}
+
+// windowRef is a reference to a paged frame's running value or percent.
+var windowRef = regexp.MustCompile(`\bw\.ww(\d+)\b`)
+
+// inline writes each running value or percent back in the place that reads
+// it: the form of a select that is not cut before its cells.
+func (f *windowFrame) inline(sql string) string {
+	return windowRef.ReplaceAllStringFunc(sql, func(ref string) string {
+		n, _ := strconv.Atoi(strings.TrimPrefix(ref, "w.ww"))
+		return f.windows[n]
+	})
+}
+
+// readsHoisted reports whether sql reads the frame's hoisted value name on a
+// row (w.wh12 does not read w.wh1).
+func readsHoisted(sql, name string) bool {
+	ref := "w." + name
+	for at := 0; ; {
+		i := strings.Index(sql[at:], ref)
+		if i < 0 {
+			return false
+		}
+		start, end := at+i, at+i+len(ref)
+		before := start == 0 || !isNamePart(sql[start-1])
+		after := end == len(sql) || !isNamePart(sql[end])
+		if before && after {
+			return true
+		}
+		at = end
+	}
+}
+
+func isNamePart(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+// earlyLayers marks the hoisted layers a paged select computes before its
+// page is cut: a keyed layer (it reads every row of its group), a layer that
+// one of texts reads (a sort key, a running value, a probe mark), and a layer
+// that an early layer reads. The other layers are computed for the page's
+// rows only.
+func (f *windowFrame) earlyLayers(texts []string) []bool {
+	early := make([]bool, len(f.hoisted))
+	read := slices.Clone(texts)
+	for i, h := range f.hoisted {
+		if len(h.keys) > 0 {
+			early[i] = true
+			read = append(read, h.cols...)
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for i, h := range f.hoisted {
+			if early[i] || !slices.ContainsFunc(h.names, func(name string) bool {
+				return slices.ContainsFunc(read, func(sql string) bool { return readsHoisted(sql, name) })
+			}) {
+				continue
+			}
+			early[i], changed = true, true
+			read = append(read, h.cols...)
+		}
+	}
+	return early
+}
+
 // lookupOf is the lookup compiled on the frame's rows under key, if any.
 func (f *windowFrame) lookupOf(key string) (detailLookup, bool) {
 	if f == nil {
@@ -523,11 +622,11 @@ func windowSQL(op string, e expr, scale int, f *windowFrame, at string) (expr, e
 	switch op {
 	case "runningSum":
 		over := "OVER (" + partitionBy(f.parent) + " ORDER BY " + strings.Join(f.order, ", ") + " ROWS UNBOUNDED PRECEDING)"
-		return withCurrency(expr{sql: "SUM(" + num(e) + ") " + over, typ: sumType([]expr{e}), win: true}, e.cur), nil
+		return withCurrency(expr{sql: f.window("SUM(" + num(e) + ") " + over), typ: sumType([]expr{e}), win: true}, e.cur), nil
 	case "percentOfParent":
-		return expr{sql: fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %d)", num(e), num(e), partitionBy(f.parent), scale), typ: Percent, win: true}, nil
+		return expr{sql: f.window(fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %d)", num(e), num(e), partitionBy(f.parent), scale)), typ: Percent, win: true}, nil
 	}
-	return expr{sql: fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %d)", num(e), num(e), partitionBy(f.total), scale), typ: Percent, win: true}, nil
+	return expr{sql: f.window(fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %d)", num(e), num(e), partitionBy(f.total), scale)), typ: Percent, win: true}, nil
 }
 
 func partitionBy(keys []string) string {

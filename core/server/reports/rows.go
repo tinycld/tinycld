@@ -105,6 +105,10 @@ type compiler struct {
 	// such a sum, and the lookups' wheres on its rows that may (rowsCtx
 	// probeWhere): sql names the select's column that is 1 where one did.
 	detailSortMixed []condProbe
+	// detailCells writes the statement of a page cut from the detail select
+	// last built, when that select leaves cells to compute for the page's
+	// rows only (pagedCells); nil when it holds every cell.
+	detailCells func(page, by string) string
 	// detailWheres are the lookups' wheres the detail select being built
 	// probes on each of its rows (whereProber): sql is true on a row where
 	// one was unknown.

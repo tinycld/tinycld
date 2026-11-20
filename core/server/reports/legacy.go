@@ -20,4 +20,8 @@ var legacySQL struct {
 	// the link column bounded by a range, as before knownLinks added the form
 	// with an equality.
 	rangeLinkBounds bool
+	// cellsBeforeThePage computes every cell of a detail row in the select
+	// the page is cut from, as before a row's own lookups moved above the cut
+	// (pagedCells).
+	cellsBeforeThePage bool
 }

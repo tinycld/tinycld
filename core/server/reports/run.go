@@ -1466,8 +1466,10 @@ func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, er
 // detailPass runs the detail statement: one row per base row, a page at a
 // time. Without groups a page follows the detail order; with groups it holds
 // the rows of the open innermost groups (leaves) in document order: the
-// groups' order, then the detail order (R9b). Window values are computed
-// before the page is cut, so a running value goes on across pages. Rows under
+// groups' order, then the detail order (R9b). Window values, sort keys and
+// what they read are computed before the page is cut, so a running value goes
+// on across pages; a row's other lookups and its cells are computed for the
+// page's rows (pagedCells). Rows under
 // a hidden group are left out before any running value reads them.
 func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	c := rn.c
@@ -1524,6 +1526,10 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 		return nil, err
 	}
 	body := fmt.Sprintf("SELECT * FROM %s WHERE %s ORDER BY %s LIMIT %s", from, where, by, limitSQL(int64(limit+1)))
+	// The cells that nothing below the cut reads are computed for the page.
+	if c.detailCells != nil {
+		body = c.detailCells(body, by)
+	}
 	rows, err := rn.query(s, ctes, body)
 	if err != nil {
 		return nil, err
@@ -1822,12 +1828,20 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		parent: append(prefixed("w.", c.currencies), keys...),
 		total:  prefixed("w.", c.currencies),
 		recs:   newRecordJoins(r.s, "w"),
+		paged:  !legacySQL.cellsBeforeThePage,
 	}
 	visiting := map[string]bool{}
 	labels := newLabelRefs(c, r.s, frame, "w")
 	c.detailWheres = nil
 	var order []sortKey
 	sel := []string{"w.__id AS __id"}
+	// early names the values of sel that are read before the page is cut:
+	// the sort keys and the probe marks.
+	var early []earlyCol
+	before := func(sql, name string) {
+		early = append(early, earlyCol{at: len(sel), name: name})
+		sel = append(sel, sql+" AS "+name)
+	}
 	for _, k := range append(keys, prefixed("w.", c.currencies)...) {
 		sel = append(sel, k+" AS "+strings.TrimPrefix(k, "w."))
 	}
@@ -1853,24 +1867,24 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		// either (typ "").
 		if ref, ok := c.sortLabel(labels, s, e); ok {
 			key := labelOrder(r.s, ref.value)
-			sel = append(sel, key+" AS "+name)
+			before(key, name)
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@label"})
 			inFrame("("+key+" IS NULL)", key+dirOf(s.desc))
 			name = name + "_id"
 		} else if key, ok := shownOrder(r.s.bind, e); ok {
-			sel = append(sel, key+" AS "+name)
+			before(key, name)
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@shown", typ: Text})
 			inFrame("("+key+" IS NULL)", key+dirOf(s.desc))
 			name = name + "_value"
 		}
-		sel = append(sel, e.sql+" AS "+name)
+		before(e.sql, name)
 		order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: e.typ})
 		inFrame("("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
 		// A spec key over a sum that met two currencies sorts as blank there;
 		// a viewer key sorts by a column, whose blank cell is named already.
 		if m := e.blankFor(); spec && m != "" {
 			mx := fmt.Sprintf("__smx%d", len(c.detailSortMixed))
-			sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", m, mx))
+			before(fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END)", m), mx)
 			c.detailSortMixed = append(c.detailSortMixed, condProbe{at: s.at, sql: mx})
 		}
 		return nil
@@ -1945,10 +1959,70 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	// show, as a sort key over a mixed sum is.
 	for i, w := range c.detailWheres {
 		mx := fmt.Sprintf("__wmx%d", i)
-		sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", w.sql, mx))
+		before(fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END)", w.sql), mx)
 		c.detailSortMixed = append(c.detailSortMixed, condProbe{at: w.at, sql: mx})
 	}
-	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"), order, nil
+	rows, cells := pagedCells(frame, table, sel, early)
+	c.detailCells = cells
+	return rows, order, nil
+}
+
+// earlyCol is a value of the detail select that is read before the page is
+// cut: its place in the select list and its name.
+type earlyCol struct {
+	at   int
+	name string
+}
+
+// pagedCells writes the detail select (sel over table, read as w) so that a
+// row's own lookups run for the rows of the page only. rows is the select the
+// page is cut from: every row with its sort keys and probe marks (early), its
+// running values and percents, and the hoisted layers one of those reads.
+// cells writes the statement of a page cut from rows (page, ordered by by):
+// the other layers and the cells, over the page's rows.
+//
+// cells is nil, and rows is the whole select, when no layer would move above
+// the cut, or when a value read before the cut reads a running value (a
+// lookup's where over one).
+func pagedCells(frame *windowFrame, table string, sel []string, early []earlyCol) (rows string, cells func(page, by string) string) {
+	whole := frame.inline("SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"))
+	if !frame.paged {
+		return whole, nil
+	}
+	texts := slices.Clone(frame.windows)
+	for _, e := range early {
+		texts = append(texts, sel[e.at])
+	}
+	isEarly := frame.earlyLayers(texts)
+	if !slices.Contains(isEarly, false) {
+		return whole, nil
+	}
+	for i, h := range frame.hoisted {
+		if isEarly[i] {
+			texts = append(texts, h.cols...)
+		}
+	}
+	if slices.ContainsFunc(texts, windowRef.MatchString) {
+		return whole, nil
+	}
+	first, last := []string{"w.*"}, slices.Clone(sel)
+	for _, e := range early {
+		first = append(first, sel[e.at])
+		last[e.at] = "w." + e.name + " AS " + e.name
+	}
+	for i, sql := range frame.windows {
+		first = append(first, fmt.Sprintf("%s AS ww%d", sql, i))
+	}
+	rows = "SELECT " + strings.Join(first, ", ") + " FROM " +
+		frame.layers(frame.rows(table, "w"), table+" w", "w", func(i int) bool { return isEarly[i] })
+	return rows, func(page, by string) string {
+		cols := last
+		if strings.HasPrefix(by, "d.__g") {
+			cols = append(slices.Clone(last), "w.__g AS __g")
+		}
+		from := frame.layers("("+page+") w", table+" w", "w", func(i int) bool { return !isEarly[i] })
+		return fmt.Sprintf("SELECT * FROM (SELECT %s FROM %s) d ORDER BY %s", strings.Join(cols, ", "), from, by)
+	}
 }
 
 // carriedCell is the currency a column's value e carries on a row (a record's
