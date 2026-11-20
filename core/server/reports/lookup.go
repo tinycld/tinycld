@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -142,8 +143,13 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 	}
 	out := expr{typ: v.typ, target: v.target, cur: v.cur, agg: v.agg, win: v.win, options: v.options}
 	where, unknown := "1", ""
+	var eqs []linkEq
 	if n.Where != nil {
-		w, err := compileWhere(&lookupCtx{outer: outer, r: r, sc: sc, src: src, inWhere: true}, n.Where, at)
+		wc := &lookupCtx{outer: outer, r: r, sc: sc, src: src, inWhere: true}
+		if !legacySQL.rangeLinkBounds {
+			wc.eqs = &eqs
+		}
+		w, err := compileWhere(wc, n.Where, at)
 		if err != nil {
 			return expr{}, err
 		}
@@ -164,6 +170,11 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		}
 	}
 	e, err := pickedLookup(outer, r, n, v, sc, where, out, at)
+	if err == nil {
+		e, err = knownLinks(e, eqs, where, func(where string) (expr, error) {
+			return pickedLookup(outer, r, n, v, sc, where, out, at)
+		})
+	}
 	if err != nil || unknown == "" || n.Pick == "count" {
 		return e, err
 	}
@@ -175,6 +186,59 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		return e.guarded(unknown, e.sql), nil
 	}
 	return e.guarded(orSQL(e.mixed, unknown), e.unguarded), nil
+}
+
+// linkEq is one bound linkedEq wrote on a stored link column in a lookup's
+// where, for a looked-for value V that reads nothing of the looked-up row:
+// rng is the bound as a range, as the where holds it (no other text of the
+// where is the same: it names the lookup's own scope and V); eq is the bound
+// as an equality, right where V is not blank; v is V as the report's row
+// reads it.
+type linkEq struct{ rng, eq, v string }
+
+// knownLinks gives a lookup whose where bounds a link column by a range a
+// second form, for the rows where every looked-for value is known. A range
+// (col >= V AND col <= V) lets SQLite use only the link column of an index;
+// an equality lets it use the columns after it too (a day bound, lookupDayBound),
+// so a lookup of one account's lines before a day reads those lines and not
+// the account's whole history. The equality is wrong where V is blank (a
+// group whose record is blank or hidden, the Total row): there the range
+// matches every row, and the where's own comparison keeps those whose link is
+// blank or hidden. So each part of the lookup becomes
+//
+//	CASE WHEN <every V> IS NOT NULL THEN <the part, equalities> ELSE <the part, ranges> END
+//
+// and SQLite computes only the form a row takes. rng is the lookup over where
+// as it is; pick builds the lookup over another where. scan stays the range
+// form: the layout computes it once in a CTE, with no row to test V on.
+func knownLinks(rng expr, eqs []linkEq, where string, pick func(where string) (expr, error)) (expr, error) {
+	var known []string
+	for _, l := range eqs {
+		if !strings.Contains(where, l.rng) {
+			continue
+		}
+		where = strings.ReplaceAll(where, l.rng, l.eq)
+		known = append(known, l.v+" IS NOT NULL")
+	}
+	if len(known) == 0 {
+		return rng, nil
+	}
+	eq, err := pick(where)
+	if err != nil {
+		return expr{}, err
+	}
+	cond := strings.Join(known, " AND ")
+	either := func(eq, rng string) string {
+		if eq == "" || eq == rng {
+			return rng
+		}
+		return fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", cond, eq, rng)
+	}
+	out := rng
+	out.sql, out.unguarded = either(eq.sql, rng.sql), either(eq.unguarded, rng.unguarded)
+	out.mixed, out.shown = either(eq.mixed, rng.mixed), either(eq.shown, rng.shown)
+	out.cur.sql = either(eq.cur.sql, rng.cur.sql)
+	return out, nil
 }
 
 // whereProber is a context that probes, over the rows it compiles for,
@@ -383,6 +447,9 @@ type lookupCtx struct {
 	src     *Source
 	prefix  []hopPlan
 	inWhere bool
+	// eqs collects, in a where, the link bounds eq writes for a value that
+	// reads nothing of the looked-up row (linkEq); nil keeps none.
+	eqs *[]linkEq
 }
 
 // col reads the report's row; a running value is computed in the outer
@@ -433,7 +500,7 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	// combining.
 	if l.inWhere && bound.endsAtLink {
 		if col := l.storedLinkCol(hops); col != "" {
-			e.link = storedLink{col: col, sql: e.sql, sc: l.sc}
+			e.link = storedLink{col: col, sql: e.sql, sc: l.sc, eqs: l.eqs}
 		}
 	}
 	if l.inWhere && len(hops) == 0 && !bound.endsAtLink && bound.field != nil && bound.field.Type == Date {
@@ -496,10 +563,26 @@ func linkedEq(n *Node, args []expr) string {
 			continue
 		}
 		v := args[1-i].sql
-		if !readsLookedUpRow(n.Args[1-i]) {
+		free := !readsLookedUpRow(n.Args[1-i])
+		if free {
 			v = a.link.sc.oneValue(v)
 		}
-		return fmt.Sprintf("(%s IS %s AND %s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff'))", a.sql, v, a.link.col, v, a.link.col, v)
+		rng := fmt.Sprintf("(%s IS %s AND %s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff'))", a.sql, v, a.link.col, v, a.link.col, v)
+		// The same bound as an equality, for the rows where the value is known
+		// (knownLinks). A value that reads the looked-up row cannot be tested
+		// outside the lookup, so its bound stays a range. A group record reads
+		// the report's row, though readsLookedUpRow counts its path as a read
+		// of the looked-up row and the range reads it in place. Only a leaf
+		// (a record, a column, an outer path, a param, a constant) gets the
+		// second form: the test outside the lookup reads the value once more,
+		// which a formula or a lookup would compute again.
+		if other := n.Args[1-i]; a.link.eqs != nil && other.Op == "" && (free || other.Record != "") {
+			*a.link.eqs = append(*a.link.eqs, linkEq{
+				rng: rng, v: args[1-i].sql,
+				eq: fmt.Sprintf("(%s IS %s AND %s = %s)", a.sql, v, a.link.col, v),
+			})
+		}
+		return rng
 	}
 	return ""
 }

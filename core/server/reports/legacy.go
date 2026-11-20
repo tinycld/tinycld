@@ -16,4 +16,8 @@ var legacySQL struct {
 	// noLookupDayBounds leaves the bounds on a looked-up source's stored day
 	// column out of a lookup's WHERE, as before lookupDayBound wrote them.
 	noLookupDayBounds bool
+	// rangeLinkBounds writes a lookup whose where matches a link once, with
+	// the link column bounded by a range, as before knownLinks added the form
+	// with an equality.
+	rangeLinkBounds bool
 }

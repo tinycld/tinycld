@@ -82,10 +82,12 @@ type expr struct {
 
 // storedLink is the stored relation column (col) a link path reads its
 // value (sql) through, in the lookup scope sc; a copy of the expr whose sql
-// changed no longer reads through it.
+// changed no longer reads through it. eqs collects the bounds eq writes on
+// col for the lookup the where belongs to (linkEq), nil when it keeps none.
 type storedLink struct {
 	col, sql string
 	sc       *scope
+	eqs      *[]linkEq
 }
 
 // storedDay is the stored column (col) a Date field of a lookup's own row is
