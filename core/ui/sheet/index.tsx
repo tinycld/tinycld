@@ -1,5 +1,6 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
+import { useIsInOverlayDrawer } from '@tinycld/core/ui/drawer/overlay-context'
 import {
     LayerScope,
     OverlayPortal,
@@ -48,6 +49,10 @@ const SIDE_CLASS: Record<SheetSide, string> = {
 // descendant, so the side reaches it by context rather than a prop.
 const SheetSideContext = createContext<SheetSide>('bottom')
 
+// True when the surface itself already clears the home indicator (a bottom
+// sheet in the root host), so the footer must not add the inset a second time.
+const SheetPadsBottomInsetContext = createContext(false)
+
 /**
  * The edge surface: what a Dialog, a Menu and a Popover become on a phone,
  * and what the mobile More menu, the notification drawer and the file picker
@@ -59,7 +64,10 @@ const SheetSideContext = createContext<SheetSide>('bottom')
  * region, which ends at the top of the tab bar and starts below the status
  * bar — so a bottom sheet rests exactly on the bar and a top sheet clears the
  * status bar, with no offset either way. Where no such host is mounted it
- * falls back to the root host and insets its own top edge. Backdrop first,
+ * falls back to the root host and insets its own resting edge (the top edge
+ * under the status bar, the bottom edge over the home indicator); a sheet opened
+ * inside an overlay Drawer takes the root host too, since the Drawer's portal
+ * draws above the `sheet` host. Backdrop first,
  * sheet second: the sheet paints above the backdrop by sibling order, no
  * z-index needed.
  *
@@ -107,6 +115,10 @@ function SheetRoot({
     const handleColor = useThemeColor('border')
     const insets = useDeviceInsets()
     const hasSheetHost = useHasSheetHost()
+    // An overlay Drawer is a gluestack portal drawn above the `sheet` host, so
+    // a sheet opened from inside one takes the root host, which draws above it.
+    const host = useIsInOverlayDrawer() ? 'root' : 'sheet'
+    const rendersInSheetHost = host === 'sheet' && hasSheetHost
     // The OS setting, read once at start as reanimated's own animations read
     // it. Reduced, the sheet is drawn at rest and leaves at once.
     const isReducedMotion = useReducedMotion()
@@ -202,14 +214,20 @@ function SheetRoot({
         opacity: backdropOpacity.value,
     }))
 
-    // The sheet host already sits below the status bar; only the root-host
-    // fallback puts a top sheet's edge under it.
-    const paddingTop = side === 'top' && !hasSheetHost ? insets.top : 0
+    // The sheet host already sits below the status bar; only the root host
+    // (the fallback, or the host a sheet inside a Drawer takes) puts a top
+    // sheet's edge under it.
+    const paddingTop = side === 'top' && !rendersInSheetHost ? insets.top : 0
+    // Likewise the sheet host ends above the home indicator (at the tab bar),
+    // but the root host reaches the screen edge: a bottom sheet there pads its
+    // own bottom, so its last row clears the indicator with or without a footer.
+    const padsBottomInset = side === 'bottom' && !rendersInSheetHost
+    const paddingBottom = padsBottomInset ? insets.bottom : 0
 
     if (!mounted) return null
 
     return (
-        <OverlayPortal host="sheet">
+        <OverlayPortal host={host}>
             <LayerScope onEscape={close} isActive={isOpen}>
                 <View style={StyleSheet.absoluteFill} pointerEvents={isOpen ? 'auto' : 'none'}>
                     <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
@@ -254,25 +272,28 @@ function SheetRoot({
                                         maxHeight: `${maxHeightPercent * 100}%`,
                                         backgroundColor: surfaceBg,
                                         paddingTop,
+                                        paddingBottom,
                                     },
                                     sheetStyle,
                                 ]}
                             >
                                 <SheetSideContext.Provider value={side}>
-                                    <Handle
-                                        isVisible={!hideHandle && side === 'bottom'}
-                                        color={handleColor}
-                                    />
-                                    <SheetHeader
-                                        title={title}
-                                        description={description}
-                                        onClose={close}
-                                    />
-                                    {children}
-                                    <Handle
-                                        isVisible={!hideHandle && side === 'top'}
-                                        color={handleColor}
-                                    />
+                                    <SheetPadsBottomInsetContext.Provider value={padsBottomInset}>
+                                        <Handle
+                                            isVisible={!hideHandle && side === 'bottom'}
+                                            color={handleColor}
+                                        />
+                                        <SheetHeader
+                                            title={title}
+                                            description={description}
+                                            onClose={close}
+                                        />
+                                        {children}
+                                        <Handle
+                                            isVisible={!hideHandle && side === 'top'}
+                                            color={handleColor}
+                                        />
+                                    </SheetPadsBottomInsetContext.Provider>
                                 </SheetSideContext.Provider>
                             </Animated.View>
                         </GestureDetector>
@@ -373,11 +394,16 @@ function SheetBody({
  */
 const sheetBodyContentStyle = { alignItems: 'stretch' } as const
 
-/** The button row, pinned under the body — above the home indicator when the sheet rests on the bottom edge. */
+/**
+ * The button row, pinned under the body — above the home indicator when the
+ * sheet rests on the bottom edge, unless the surface already pads for it.
+ */
 function SheetFooter({ children, className }: { children: ReactNode; className?: string }) {
     const insets = useDeviceInsets()
     const side = useContext(SheetSideContext)
-    const paddingBottom = side === 'bottom' ? Math.max(12, insets.bottom) : 12
+    const surfacePadsBottomInset = useContext(SheetPadsBottomInsetContext)
+    const clearsHomeIndicator = side === 'bottom' && !surfacePadsBottomInset
+    const paddingBottom = clearsHomeIndicator ? Math.max(12, insets.bottom) : 12
     return (
         <View
             className={`flex-row justify-end items-center gap-2 px-5 pt-3 border-t border-border ${className ?? ''}`}
