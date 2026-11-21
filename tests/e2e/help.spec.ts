@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { readFirstFrame, watchFirstFrame } from './first-frame-helpers'
 import { login } from './helpers'
+import { slowAnimationFrames } from './slow-frames'
 
 test.describe('Help', () => {
     test('nav rail Help button opens the hub, search finds a core topic, permalink renders', async ({
@@ -54,5 +55,19 @@ test.describe('Help', () => {
         expect(frame.reducedMotion).toBe(true)
         expect(frame.animationName).toBe('tinycld-help-palette-in')
         expect(frame.animations).toEqual([])
+    })
+
+    // The help palette's input once took focus a frame after the palette
+    // mounted, so the first keys typed on a busy machine went to the page.
+    // Slow frames make that gap certain.
+    test('the first key typed right after opening the help palette reaches its search', async ({
+        page,
+    }) => {
+        await slowAnimationFrames(page)
+        await login(page)
+        await page.keyboard.press('ControlOrMeta+/')
+        await expect(page.getByRole('dialog', { name: 'Search help' })).toBeVisible()
+        await page.keyboard.type('themes')
+        await expect(page.getByRole('textbox', { name: 'Search help' })).toHaveValue('themes')
     })
 })

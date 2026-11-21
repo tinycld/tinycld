@@ -1,6 +1,7 @@
 import { expect, type Page, test } from '@playwright/test'
 import { readFirstFrame, watchFirstFrame } from './first-frame-helpers'
 import { login, navigateToPackage } from './helpers'
+import { slowAnimationFrames } from './slow-frames'
 
 /**
  * The palette's e2e runs against two stub packages (search-alpha, search-beta)
@@ -238,6 +239,19 @@ test.describe('Search palette', () => {
 
         expect(searches.length).toBeGreaterThan(0)
         expect(searches.every(url => new URL(url).searchParams.get('q') === 'roadmap')).toBe(true)
+    })
+
+    // A user types the moment the palette shows. The input once took focus a
+    // frame after the palette mounted, so on a busy machine the first key went
+    // to the page and the search lost its first letter. Slow frames make that
+    // gap certain: the input must hold focus as soon as the palette is visible.
+    test('the first key typed right after opening reaches the search', async ({ page }) => {
+        await slowAnimationFrames(page)
+        await login(page)
+        await navigateToPackage(page, ALPHA)
+        await openPalette(page)
+        await page.keyboard.type('roadmap')
+        await expect(page.getByLabel('Search across packages')).toHaveValue('roadmap')
     })
 
     // The canonical config emulates reduced motion (playwright.config.ts), as a user
