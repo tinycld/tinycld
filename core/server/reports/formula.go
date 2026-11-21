@@ -39,6 +39,9 @@ type expr struct {
 	// options are a select value's options: a label or a text operator shows
 	// a stored value by its option's label.
 	options []Option
+	// sel is the stored column a Select field's value was read from; eq
+	// with a text literal tests that column too (selectEq).
+	sel storedSelect
 	// shown is how a value that mixes a select's values with other text is
 	// shown (each select value by its option's label); sql keeps the stored
 	// values, which conditions compare. "" for any other value.
@@ -849,6 +852,11 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		}
 		if !comparable(args[0].typ, args[1].typ) {
 			return expr{}, invalid(at, fmt.Sprintf("%s compares values of one kind, not %s and %s", n.Op, args[0].typ, args[1].typ))
+		}
+		if n.Op == "eq" {
+			if sql := selectEq(args); sql != "" {
+				return expr{sql: sql, typ: Bool}, nil
+			}
 		}
 		if n.Op == "ne" {
 			return expr{sql: "(" + args[0].sql + " IS NOT " + args[1].sql + ")", typ: Bool}, nil

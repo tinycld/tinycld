@@ -341,8 +341,12 @@ func observeReads(t *testing.T) *[]readStatement {
 
 // Every statement the engine sends (group, detail, nest, pivot, options and
 // option groups), and the EXPLAIN that finds a run's change topics, is
-// prepared once. The engine's own SQL binds nothing SQLite plans by; a rule
-// CTE is PocketBase's SQL (TestAPocketBaseRuleLikePreparesTheStatementAgain).
+// prepared once. The engine's own SQL binds one value SQLite plans by: the
+// stored-column term c = {:p} of an eq of a Select with an option value
+// (selectEq), which SQLite prepares again when sqlite_stat4 has rows. That
+// value is bound because the engine never writes a value into the SQL text.
+// A rule CTE is PocketBase's SQL
+// (TestAPocketBaseRuleLikePreparesTheStatementAgain).
 func TestEveryReportStatementIsPreparedOnce(t *testing.T) {
 	z := newZoo(t)
 	db := readPool(t, z)
