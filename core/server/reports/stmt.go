@@ -319,9 +319,15 @@ func (sc *scope) join(hops []hopPlan) string {
 	return alias
 }
 
-// value reads a to-one path's field in this scope.
+// value reads a to-one path's field in this scope. A Select keeps the
+// stored column it was read from (selectEq).
 func (sc *scope) value(p *pathPlan) expr {
-	return pathExpr(fieldSQL(sc.join(p.hops), p.field), p)
+	alias := sc.join(p.hops)
+	e := pathExpr(fieldSQL(alias, p.field), p)
+	if p.field.Type == Select {
+		e.sel = storedSelect{col: q(alias, p.field.Column), sql: e.sql}
+	}
+	return e
 }
 
 // sql renders the FROM clause, its joins and its to-many subqueries.

@@ -280,8 +280,11 @@ const blankLabel = "(none)"
 
 // runner holds one run's state.
 type runner struct {
-	ctx    context.Context
-	app    core.App
+	ctx context.Context
+	app core.App
+	// db is the run's read transaction (beginRead): every statement of the
+	// run reads through it.
+	db     dbx.Builder
 	c      *compiler
 	opts   Options
 	expand *expansion
@@ -377,8 +380,20 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	}
 	// No expansion state: the levels marked open expand (openLevels).
 	openLevels(p, req.Options, expand)
+	// The group or page, Total, detail, nest, pivot, heading, probe and
+	// held-group statements all read through rn.query in this one
+	// transaction, so a write saved while the run reads is in none of them.
+	// Reads of labels and settings, not figures, stay outside it: the fiscal
+	// start (fiscalStartOf, above), the drill targets (drillTargets), the
+	// topics of a statement (topicsRead), the header lines (headerLines →
+	// pickLabels) and the source's Heading hook.
+	db, endRead, err := beginRead(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	defer endRead()
 	rn := &runner{
-		ctx: ctx, app: app, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap,
+		ctx: ctx, app: app, db: db, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
 		topics: map[string]bool{}, ruleTopics: map[string][]string{},
 	}
@@ -599,10 +614,11 @@ var topicsRead = changesignal.TopicsRead
 // the whole statement. Nothing else sets it.
 var checkTopics func(ctx context.Context, app core.App, sql string, params dbx.Params, topics []string)
 
-// readRows runs one read statement with the rule CTEs and ctes under the run
-// time limit; with topics (a run's cache of each rule's topics), it also
-// returns the change-signal topics of every collection the statement reads.
-func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body string, topics map[string][]string) ([]map[string]any, []string, error) {
+// readRows runs one read statement with the rule CTEs and ctes through db
+// under the run time limit; with topics (a run's cache of each rule's
+// topics), it also returns the change-signal topics of every collection the
+// statement reads.
+func readRows(ctx context.Context, app core.App, db dbx.Builder, s *stmt, ctes []string, body string, topics map[string][]string) ([]map[string]any, []string, error) {
 	ctes = materializeShared(ctes, body)
 	with, err := s.with(ctes...)
 	if err != nil {
@@ -623,7 +639,7 @@ func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body st
 			checkTopics(ctx, app, sql, s.params, read)
 		}
 	}
-	rows, err := app.DB().NewQuery(sql).Bind(s.params).WithContext(ctx).Rows()
+	rows, err := db.NewQuery(sql).Bind(s.params).WithContext(ctx).Rows()
 	if err != nil {
 		return nil, nil, mapRunError(err)
 	}
@@ -635,9 +651,15 @@ func readRows(ctx context.Context, app core.App, s *stmt, ctes []string, body st
 }
 
 // query runs one statement under the time limit and records the topics of
-// every collection it reads.
+// every collection it reads. It reads through the run's read transaction; a
+// runner built outside Run (a test of one pass) has none and reads through
+// the app.
 func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, error) {
-	rows, topics, err := readRows(rn.ctx, rn.app, s, ctes, body, rn.ruleTopics)
+	db := rn.db
+	if db == nil {
+		db = rn.app.DB()
+	}
+	rows, topics, err := readRows(rn.ctx, rn.app, db, s, ctes, body, rn.ruleTopics)
 	for _, t := range topics {
 		rn.topics[t] = true
 	}
@@ -1432,35 +1454,37 @@ func splitCell(cell string) (string, string) {
 // detail statement reads only the base rows under them. It compiles levels 1
 // to m, and past m each next level whose rt<L> the level before it reads (any
 // "rows" sum a compiled level reads: in its having, its sort keys or its own
-// rt cells); no others.
-func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, error) {
+// rt cells); no others. win is true when a value of those CTEs is a running
+// value or a percent (expr.win), which reads rows of other groups.
+func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, bool, error) {
 	m := c.havingAbove(len(c.p.groups) + 1)
 	if m == 0 {
-		return nil, 0, nil
+		return nil, 0, false, nil
 	}
 	c.fillSets = map[int]string{}
 	var ctes []string
-	readsSums := false
+	readsSums, win := false, false
 	for n := 1; n <= m || readsSums; n++ {
 		lv, err := c.level(r, n, expand)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 		own, err := lv.own()
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 		var totals []string
 		if readsSums {
 			if totals, err = lv.rowsCells(); err != nil {
-				return nil, 0, err
+				return nil, 0, false, err
 			}
 		}
 		base, _ := lv.base(own, totals)
 		ctes = append(ctes, base...)
 		readsSums = len(lv.childCells) > 0
+		win = win || lv.win
 	}
-	return ctes, m, nil
+	return ctes, m, win, nil
 }
 
 // detailPass runs the detail statement: one row per base row, a page at a
@@ -1476,7 +1500,7 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	shown, m, err := c.shownLevels(r, rn.expand)
+	shown, m, win, err := c.shownLevels(r, rn.expand)
 	if err != nil {
 		return nil, err
 	}
@@ -1491,9 +1515,24 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	}
 	limit := rn.pageLimit()
 	rn.readDetails = true
-	ctes := append([]string{r.render()}, shown...)
 	grouped := len(c.p.groups) > 0
 	paged := rn.pagedGroups()
+	// With open leaves, w reads only the base rows that can be in one of them
+	// (leafCut), so it reads gord, which then comes first. heldCTEs is the CTE
+	// list readShownNow reads a held group over: one with every row of w, as
+	// a held group may be no leaf of this page.
+	whole := append([]string{r.render()}, shown...)
+	ctes, heldCTEs := whole, whole
+	if paged || grouped {
+		gord := c.leafOrder(s, leaves)
+		r.cut = c.leafCut(r, leaves, m > 0, c.detailWin || win)
+		if r.cut != "" {
+			ctes = append([]string{gord, r.render()}, shown...)
+		} else {
+			ctes = append(slices.Clone(whole), gord)
+			heldCTEs = ctes
+		}
+	}
 	// The group cursor's fingerprint and values hold the sort keys the group
 	// pass compiled: this pass orders by the same ones, or a cursor's values
 	// would be read against other columns.
@@ -1504,15 +1543,13 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	var where string
 	switch {
 	case paged:
-		ctes = append(ctes, c.leafOrder(s, leaves))
 		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
 		by = "d.__g, " + by
-		if err = rn.readShownNow(s, ctes, sel, order); err == nil {
+		if err = rn.readShownNow(s, heldCTEs, sel, order); err == nil {
 			where = rn.pagedDetailAfter(s, order, leaves)
 		}
 	case grouped:
 		levels = c.groupLevels()
-		ctes = append(ctes, c.leafOrder(s, leaves))
 		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
 		by = "d.__g, " + by
 		rn.page = &groupedPage{}
@@ -1608,7 +1645,8 @@ func (rn *runner) shownBefore() (out []held, moved []bool) {
 // and the cursor holds the old one: compared with it, every detail of the
 // group would sort before or after the cursor. A row that is gone or in
 // another group now keeps the cursor's values. sel is the detail select, read
-// over ctes.
+// over ctes, whose w holds every row: a held group may be no open leaf of this
+// page, so a w cut to the page's leaves (leafCut) would not hold its rows.
 func (rn *runner) readShownNow(s *stmt, ctes []string, sel string, keys []sortKey) error {
 	shown, moved := rn.shownBefore()
 	rn.shown = shown
@@ -1948,6 +1986,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", w.sql, mx))
 		c.detailSortMixed = append(c.detailSortMixed, condProbe{at: w.at, sql: mx})
 	}
+	c.detailWin = frame.win
 	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"), order, nil
 }
 

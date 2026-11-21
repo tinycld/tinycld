@@ -92,15 +92,23 @@ async function groupedByDay(p: Page) {
 // be in view).
 async function toTop(row: Locator, below = 0) {
     await scrollRowTo(row, below)
-    const list = await listScroller(row)
-    const gap = await row.evaluate(
-        (element, scroller) =>
-            element.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
-        list
-    )
-    expect(Math.abs(gap - below), `the row is ${below} px under the list top`).toBeLessThanOrEqual(
-        1
-    )
+    // Polled, not read once: the jump away from offset 0 turns the list's anchor
+    // on, and FlashList then corrects the offset over the next renders, so a read
+    // right after the scroll can see the row some rows away from where it settles.
+    await expect
+        .poll(
+            async () => {
+                const list = await listScroller(row)
+                const gap = await row.evaluate(
+                    (element, scroller) =>
+                        element.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+                    list
+                )
+                return Math.abs(gap - below)
+            },
+            { message: `the row is ${below} px under the list top` }
+        )
+        .toBeLessThanOrEqual(1)
 }
 
 /** How tall the list's content is: it grows when rows arrive. */

@@ -95,6 +95,9 @@ type level struct {
 	// rows' order values (__s<L>_<j>) and is materialized, as the path CTE of
 	// the level reads it a second time.
 	paged bool
+	// win is true once a running value or a percent (expr.win) is compiled
+	// on the level's rows (levelCtx.window); leafCut reads it.
+	win bool
 }
 
 // levelLookup is a lookup compiled on a level's rows, and the wheres it
@@ -1487,7 +1490,9 @@ func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, er
 	if err != nil {
 		return expr{}, err
 	}
-	return windowSQL(op, e, scale, lc.lv.frame, at)
+	w, err := windowSQL(op, e, scale, lc.lv.frame, at)
+	lc.lv.win = lc.lv.win || w.win
+	return w, err
 }
 
 func (lc *levelCtx) bind(v any) string              { return lc.lv.r.s.bind(v) }

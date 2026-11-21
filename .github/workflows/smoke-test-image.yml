@@ -199,9 +199,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: smoke-test-artifacts-${{ steps.imgref.outputs.ref }}
+          # Playwright runs in the sandbox dir, not the checkout.
           path: |
-            playwright-report/
-            test-results/
+            ${{ steps.pw.outputs.root }}/playwright-report/
+            ${{ steps.pw.outputs.root }}/test-results/
             smoke-logs/
           if-no-files-found: warn
           retention-days: 7
