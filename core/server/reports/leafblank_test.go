@@ -2,6 +2,7 @@ package reports
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -71,7 +72,7 @@ func addZooChores(t *testing.T, z *zoo) {
 // choreName is the key and name of the chore at i: c1 to c10, sorted by
 // their place (c01 sorts before c10).
 func choreName(i int) string {
-	return "c" + string(rune('0'+(i+1)/10)) + string(rune('0'+(i+1)%10))
+	return fmt.Sprintf("c%02d", i+1)
 }
 
 // choresByHut groups the chores by their hut, each group open, with a running
