@@ -79,8 +79,10 @@ const monthOfFed = `{"version":4,"source":"zoo.feedings","columns":[
 	{"id":"month","formula":{"op":"startOfMonth","args":[{"col":"fed"}]}}],
 	"sort":[{"col":"fed"}]}`
 
-// addedDay captures the day startOfMonth appends to a day's year and month.
-var addedDay = regexp.MustCompile(`NULLIF\(substr\([^)]*, 1, 8\), ''\) \|\| (\S+)\)`)
+// addedDay captures the day startOfMonth appends to a day's year and month. It
+// keys on the tail after the day's argument, because that argument may hold
+// nested calls.
+var addedDay = regexp.MustCompile(`, 1, 8\), ''\) \|\| (\S+?)\)`)
 
 // startOfMonth binds the day it adds to a day's year and month, and its
 // figures stay: the first day of each feeding's month, blank for a feeding
