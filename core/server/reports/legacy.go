@@ -35,4 +35,8 @@ var legacySQL struct {
 	// open group of its page, as before leafRows left out the groups the page
 	// cannot reach.
 	everyLeafRows bool
+	// noSelectIn writes in of a Select with a list of its option values as
+	// the one test of the value read, as before selectIn added the test of
+	// the stored column.
+	noSelectIn bool
 }

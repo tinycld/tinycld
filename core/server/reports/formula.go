@@ -48,6 +48,10 @@ type expr struct {
 	shown string
 	// text is a text literal's value.
 	text *string
+	// listed are the values of a list that holds texts only (a literal list
+	// or a multiple choice param); in tests a Select's stored column against
+	// them too (selectIn). nil for any other value.
+	listed []string
 	// mixed is SQL that is true where a sum lookup in the value met amounts
 	// in two currencies (R3), "" when none can.
 	mixed string
@@ -606,10 +610,12 @@ func literal(c fctx, raw json.RawMessage, at string) (expr, error) {
 	case []any:
 		values := make([]any, 0, len(x))
 		var typ FieldType
+		var listed []string
 		for _, item := range x {
 			switch y := item.(type) {
 			case string:
 				values = append(values, y)
+				listed = append(listed, y)
 				typ = Text
 			case json.Number:
 				values = append(values, numberValue(y))
@@ -622,7 +628,10 @@ func literal(c fctx, raw json.RawMessage, at string) (expr, error) {
 		if err != nil {
 			return expr{}, err
 		}
-		return expr{sql: list, typ: typ, list: true}, nil
+		if len(listed) != len(values) {
+			listed = nil
+		}
+		return expr{sql: list, typ: typ, list: true, listed: listed}, nil
 	}
 	return expr{}, invalid(at, "a value is text, a number, true, false, null or a list")
 }
@@ -937,6 +946,9 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		}
 		if args[1].sql == "()" {
 			return expr{sql: "0", typ: Bool}, nil
+		}
+		if sql := selectIn(c.bind, args[0], args[1]); sql != "" {
+			return expr{sql: sql, typ: Bool}, nil
 		}
 		return expr{sql: "(" + args[0].sql + " IN " + args[1].sql + ")", typ: Bool}, nil
 	case "and", "or":
