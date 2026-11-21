@@ -361,6 +361,11 @@ type runner struct {
 	// shown are the groups whose first details earlier pages showed, up to
 	// which detail row (shownBefore, readShownNow).
 	shown []held
+	// leafCut is true when the page's detail statement may leave out the rows
+	// of the open groups its page cannot reach (leafRows): its select holds no
+	// percent of the whole report, which reads the rows of every group, and
+	// probes no condition, which is probed over every open group of the page.
+	leafCut bool
 	// readDetails is set when the detail pass ran: such a run always had a
 	// page, even one that fits.
 	readDetails bool
@@ -776,6 +781,7 @@ func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	if _, rn.groupKeys, err = c.detailSelect(keysOf, "w"); err != nil {
 		return nil, err
 	}
+	rn.leafCut = !c.detailWholeReport && len(c.detailSortMixed) == 0
 	rn.groupFP = groupFingerprint(c.groupLevels(), c.inlineLevels(), levelShape(rn.groupShape), foldPrint(rn.expand), rn.groupKeys)
 	if rn.opts.Cursor != "" {
 		cur, err := readGroupCursor(rn.groupFP, rn.groupShape, rn.groupKeys, len(c.p.groups), len(c.currencies), rn.opts.Cursor)
@@ -1515,15 +1521,21 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 		table = "ws"
 		shown = append(shown, "ws AS (SELECT w.* FROM w WHERE "+c.inShown(m, "w")+")")
 	}
+	limit := rn.pageLimit()
+	paged := rn.pagedGroups()
+	// A page of two or more open groups computes only the rows of the groups
+	// it can reach (leafRows), when its select lets it (leafCut).
+	cut, all := paged && rn.leafCut && len(leaves) > 1 && !legacySQL.everyLeafRows, table
+	if cut {
+		table = "wl"
+	}
 	sel, order, err := c.detailSelect(r, table)
 	if err != nil {
 		return nil, err
 	}
-	limit := rn.pageLimit()
 	rn.readDetails = true
 	ctes := append([]string{r.render()}, shown...)
 	grouped := len(c.p.groups) > 0
-	paged := rn.pagedGroups()
 	// The group cursor's fingerprint and values hold the sort keys the group
 	// pass compiled: this pass orders by the same ones, or a cursor's values
 	// would be read against other columns.
@@ -1535,6 +1547,10 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	switch {
 	case paged:
 		ctes = append(ctes, c.leafOrder(s, leaves))
+		if cut {
+			held, away := rn.heldLeaves(leaves)
+			ctes = append(ctes, c.leafRows(s, all, held, away, limit+1)...)
+		}
 		from = c.leafFrom(sel)
 		by = "d.__g, " + by
 		if err = rn.readShownNow(s, ctes, sel, order); err == nil {
@@ -1801,11 +1817,93 @@ func (c *compiler) leafJoin(row string) string {
 //     of json_extract) have none. A key and its group's value have the same
 //     storage class, so the comparison gives the same answer without it.
 func (c *compiler) leafFrom(sel string) string {
-	join, row := "CROSS JOIN", "+d."
+	return fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d %s) d", sel, c.leafOn("d"))
+}
+
+// leafOn joins the rows read as alias to their open group, as leafFrom
+// explains.
+func (c *compiler) leafOn(alias string) string {
+	join, on := c.leafTerms(alias)
+	return join + " gord ON " + on
+}
+
+// leafTerms are the join and the condition of leafOn.
+func (c *compiler) leafTerms(alias string) (join, on string) {
+	join, row := "CROSS JOIN", "+"+alias+"."
 	if legacySQL.plannedLeafJoin {
-		join, row = "JOIN", "d."
+		join, row = "JOIN", alias+"."
 	}
-	return fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d %s gord ON %s) d", sel, join, c.leafJoin(row))
+	return join, c.leafJoin(row)
+}
+
+// leafRows is the CTEs of the rows a page's detail statement computes: wl,
+// the rows of table under the open groups the page can reach. A page shows
+// its rows in the groups' order and holds at most want of them, so it ends in
+// the first group at which the groups up to it hold want rows (gcut, NULL
+// when all of them hold fewer: every group is read). The rows of the groups
+// after it would be sorted, and their running values computed, to be thrown
+// away. A group in held (its place in gord) shows only its rows after a
+// cursor: its rows count as none, and it is read wherever it is, so the rows
+// readShownNow asks for are there.
+//
+// A group the cursor holds that is not a leaf of the page (it moved after
+// the page's groups) has no rows in gord. readShownNow still reads its shown
+// row (an id in away) for the sort values the next cursor holds, so wl keeps
+// that row too: the rows are joined to gord with a LEFT JOIN, and a row with
+// no open group is kept by its id. The page's own join to gord leaves it
+// out of the page.
+//
+// What the select reads of other rows is the same over wl: a running value
+// and a percent of the parent read the rows of the row's own group, all of
+// which wl holds, and a keyed layer reads its group keys. A sort key is no
+// running value (notASortKey), so a row kept by its id alone has its own
+// sort values. A percent of the whole report reads every group's rows, and a
+// probed condition is probed over every open group: neither select is cut
+// (runner.leafCut).
+func (c *compiler) leafRows(s *stmt, table string, held []int, away []string, want int) []string {
+	on := c.leafOn("w")
+	counted, kept := "", ""
+	if len(held) > 0 {
+		places := make([]string, len(held))
+		for i, at := range held {
+			places[i] = s.bind(int64(at))
+		}
+		in := strings.Join(places, ", ")
+		counted, kept = " WHERE gord.__g NOT IN ("+in+")", " OR gord.__g IN ("+in+")"
+	}
+	rowsOn := on
+	if len(away) > 0 {
+		ids := make([]string, len(away))
+		for i, id := range away {
+			ids[i] = s.bind(id)
+		}
+		_, cond := c.leafTerms("w")
+		rowsOn = "LEFT JOIN gord ON " + cond
+		kept += " OR (gord.__g IS NULL AND w.__id IN (" + strings.Join(ids, ", ") + "))"
+	}
+	return []string{
+		// The integer LIMIT literal of limitSQL is approved by the human
+		// (2026-11-21).
+		fmt.Sprintf("gcut AS MATERIALIZED (SELECT MIN(c.__g) AS __g FROM (SELECT n.__g AS __g, SUM(n.n) OVER (ORDER BY n.__g ROWS UNBOUNDED PRECEDING) AS seen FROM (SELECT gord.__g AS __g, COUNT(*) AS n FROM %s w %s%s GROUP BY gord.__g) n) c WHERE c.seen >= %s)",
+			table, on, counted, limitSQL(int64(want))),
+		fmt.Sprintf("wl AS MATERIALIZED (SELECT w.* FROM %s w %s WHERE gord.__g <= COALESCE((SELECT __g FROM gcut), gord.__g)%s)", table, rowsOn, kept),
+	}
+}
+
+// heldLeaves are the places in leaves of the groups whose first details
+// earlier pages showed (shownBefore), and away the ids of the shown rows
+// readShownNow reads of such groups that are not leaves.
+func (rn *runner) heldLeaves(leaves [][]any) (held []int, away []string) {
+	shown, moved := rn.shownBefore()
+	for i, h := range shown {
+		if at := slices.IndexFunc(leaves, func(k []any) bool { return keyString(k) == keyString(h.Group) }); at >= 0 {
+			held = append(held, at)
+		} else if moved[i] {
+			id, _ := h.Values[len(h.Values)-1].(string)
+			away = append(away, id)
+		}
+	}
+	return held, away
 }
 
 // groupedAfter selects the detail rows after a grouped report's cursor: the
@@ -2012,6 +2110,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	}
 	rows, cells := pagedCells(frame, table, sel, early)
 	c.detailCells = cells
+	c.detailWholeReport = frame.wholeReport
 	return rows, order, nil
 }
 

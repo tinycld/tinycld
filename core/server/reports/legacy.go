@@ -31,4 +31,8 @@ var legacySQL struct {
 	// on the bare keys, whose order SQLite's planner picks, as before leafFrom
 	// fixed the order with CROSS JOIN and took the keys' affinity off.
 	plannedLeafJoin bool
+	// everyLeafRows computes a paged detail statement over the rows of every
+	// open group of its page, as before leafRows left out the groups the page
+	// cannot reach.
+	everyLeafRows bool
 }

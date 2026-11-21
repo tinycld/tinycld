@@ -113,6 +113,9 @@ type compiler struct {
 	// last built, when that select leaves cells to compute for the page's
 	// rows only (pagedCells); nil when it holds every cell.
 	detailCells func(page, by string) string
+	// detailWholeReport is true when the detail select last built holds a
+	// percent of the whole report (windowFrame.wholeReport).
+	detailWholeReport bool
 	// detailWheres are the lookups' wheres the detail select being built
 	// probes on each of its rows (whereProber): sql is true on a row where
 	// one was unknown.

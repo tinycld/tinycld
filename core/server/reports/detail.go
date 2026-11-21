@@ -108,6 +108,10 @@ type windowFrame struct {
 	// it is kept in windows and read as w.ww<n>.
 	paged   bool
 	windows []string
+	// wholeReport is set when a percent of the whole report was compiled on
+	// the frame: its value on a row reads the rows of every group, so no group
+	// may be left out below it (leafRows).
+	wholeReport bool
 }
 
 // detailLookup is a lookup compiled on a frame's detail rows: its value as
@@ -626,6 +630,7 @@ func windowSQL(op string, e expr, scale int, f *windowFrame, bind func(any) stri
 	case "percentOfParent":
 		return expr{sql: f.window(fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %s)", num(e), num(e), partitionBy(f.parent), bind(int64(scale)))), typ: Percent, win: true}, nil
 	}
+	f.wholeReport = true
 	return expr{sql: f.window(fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %s)", num(e), num(e), partitionBy(f.total), bind(int64(scale)))), typ: Percent, win: true}, nil
 }
 
