@@ -154,7 +154,26 @@ func ruleFormOf(app core.App, col *core.Collection, info *core.RequestInfo) (rul
 // not. A longer name that holds it (zoo_ledger in zoo_ledger_access) is not
 // the table.
 func namesTable(sql, table string) bool {
-	return regexp.MustCompile(`\b` + regexp.QuoteMeta(table) + `\b`).MatchString(sql)
+	if table == "" {
+		return false
+	}
+	for from := 0; ; {
+		i := strings.Index(sql[from:], table)
+		if i < 0 {
+			return false
+		}
+		start := from + i
+		end := start + len(table)
+		if (start == 0 || !isWordByte(sql[start-1])) && (end == len(sql) || !isWordByte(sql[end])) {
+			return true
+		}
+		from = start + 1
+	}
+}
+
+// isWordByte is a word character of a rule's SQL: an ASCII letter, digit or _.
+func isWordByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 // ruleAnswer runs a rule's probe through db and returns its answer; a test

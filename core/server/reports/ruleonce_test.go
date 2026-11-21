@@ -591,6 +591,15 @@ func TestParamOptionsUnderAnAnsweredRule(t *testing.T) {
 	if got := optionLabels(z.options(t, "bob", grantedOptions, OptionsRequest{Param: "accounts", Values: []string{z.id("cash")}})); len(got) != 0 {
 		t.Fatalf("bob gets the option of an id he names: %v", got)
 	}
+	// An answer is not kept past a read outside a run: bob's grant, given
+	// now, shows in his next options call.
+	z.recs["bobLedger"].Set("can_read", true)
+	if err := z.app.Save(z.recs["bobLedger"]); err != nil {
+		t.Fatal(err)
+	}
+	if got := optionLabels(z.options(t, "bob", grantedOptions, OptionsRequest{Param: "accounts"})); len(got) != 8 {
+		t.Fatalf("bob's options after his grant = %v, want the 8 accounts", got)
+	}
 	if len(*seen) == 0 || len(*probes) == 0 {
 		t.Fatalf("%d statements, %d probes: nothing was checked", len(*seen), len(*probes))
 	}
