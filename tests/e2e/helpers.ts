@@ -63,6 +63,12 @@ export function shortcutStubInstalled(): boolean {
 // silent skip there: if the stub is missing on CI the scaffold step regressed, and
 // the specs should fail loudly rather than vanish into a green run. Returns the
 // `test.skip` condition (true = skip); throws on CI when the stub is absent.
+//
+// Pass it to `test.skip` as a callback (`test.skip(() => skipWithoutShortcutStub(), …)`),
+// never as a value. The callback runs before each test, so on CI a missing stub
+// fails each test of the e2e run. A value runs when the spec file loads, so the
+// throw would also break `playwright test --list` in `tinycld-pkg check`, which
+// runs on CI without the stubs.
 export function skipWithoutShortcutStub(): boolean {
     if (shortcutStubInstalled()) return false
     if (process.env.CI) {
@@ -76,7 +82,7 @@ export function skipWithoutShortcutStub(): boolean {
 // The forms builder spec drives the form host declared by the forms-host-stub
 // package (tests/scripts/scaffold-forms-host-stub.ts), a sibling of tinycld/.
 // Same rule as skipWithoutShortcutStub: skip in a dev workspace without it,
-// fail loudly on CI, where the scaffold step is mandatory.
+// fail loudly on CI, where the scaffold step is mandatory. Pass it as a callback.
 export function skipWithoutFormsStub(): boolean {
     const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', 'forms-host-stub')
     if (fs.existsSync(stubDir)) return false
@@ -91,6 +97,7 @@ export function skipWithoutFormsStub(): boolean {
 // The reports specs drive the salesstub package (tests/scripts/scaffold-reports-stub.ts),
 // whose report sources and rows exist only there. Same rule as skipWithoutFormsStub:
 // skip in a dev workspace without it, fail loudly on CI, where the scaffold step runs.
+// Pass it as a callback.
 export function skipWithoutReportsStub(): boolean {
     const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', 'salesstub')
     if (fs.existsSync(stubDir)) return false

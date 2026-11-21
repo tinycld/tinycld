@@ -373,7 +373,7 @@ function jumps(frames: Frame[]): Jumps {
 }
 
 test.describe('scroll position on web', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('rows opening or arriving above a still list keep the row in view in place', async ({
         freshMember,

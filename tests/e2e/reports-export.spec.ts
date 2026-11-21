@@ -118,7 +118,7 @@ function isExportPost(url: string, method: string): boolean {
 }
 
 test.describe('report-exports: download', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('Download CSV saves the view as it is, and writes an audit row', async ({ page }) => {
         const customer = await seedSale(page, 'Export csv')

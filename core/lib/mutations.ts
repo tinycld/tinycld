@@ -9,7 +9,7 @@ import { log } from '@tinycld/core/lib/logger'
 import { notify } from '@tinycld/core/lib/notify/dispatcher'
 import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
 import { writesAvailability } from '@tinycld/core/lib/writes-available'
-import { batch } from 'pbtsdb'
+import { batch, type StagedBatch, stagedBatch } from 'pbtsdb'
 
 // A generator yields what it must wait for: a pbtsdb Transaction (one request
 // for one row) or a Promise (an atomic() batch), alone or as an array to wait
@@ -248,4 +248,81 @@ export function useMutation<TData = unknown, TError = Error, TVariables = void>(
         onError: restOptions.onError ?? reportUnhandledMutationError(restOptions.mutationKey),
         mutationFn: wrappedMutationFn,
     } as UseMutationOptions<TData, TError, TVariables>)
+}
+
+type StagedMutationOptions<TData, TError, TVariables> = Omit<
+    UseMutationOptions<TData, TError, TVariables>,
+    'mutationFn' | 'onMutate' | 'scope'
+> & {
+    /**
+     * The collection mutations of one call. Synchronous, as the callback of
+     * `atomic` is. It runs when `mutate` is called, so the rows show at once.
+     * The value it returns is the data of the mutation.
+     */
+    stage: (variables: TVariables) => TData
+    /** Calls with the same id send their requests one at a time, in call order. */
+    scope: { id: string }
+}
+
+/**
+ * A mutation that shows its rows at once and sends its request in turn.
+ *
+ * Use it when the server must receive the calls in the order the user made
+ * them (a number the server gives out on arrival), and the user must not wait
+ * for an earlier call to see the result of the next one. A plain `useMutation`
+ * with a `scope` keeps the order too, but its rows show only when the earlier
+ * request has returned.
+ *
+ * Each call is one `atomic` request. A failed request rolls back its own rows
+ * and does not stop the calls behind it.
+ *
+ * @example
+ * ```ts
+ * const create = useStagedMutation({
+ *     scope: { id: `cards.create.${boardId}` },
+ *     stage: (input: { title: string }) => {
+ *         const id = newRecordId()
+ *         cardsCollection.insert({ id, board: boardId, title: input.title })
+ *         return id
+ *     },
+ * })
+ * ```
+ */
+export function useStagedMutation<TData = unknown, TError = Error, TVariables = void>(
+    options: StagedMutationOptions<TData, TError, TVariables>
+): UseMutationResult<TData, TError, TVariables> {
+    const { stage, ...restOptions } = options
+
+    return useTanStackMutation<TData, TError, TVariables>({
+        ...restOptions,
+        onError: restOptions.onError ?? reportUnhandledMutationError(restOptions.mutationKey),
+        // onMutate runs when mutate is called; a scope delays mutationFn only.
+        onMutate: (variables, context) => {
+            stagedCalls.set(context, stageCall(stage, variables))
+        },
+        mutationFn: async (variables, context) => {
+            // A mutation that TanStack Query restored skipped onMutate.
+            const staged = stagedCalls.get(context) ?? stageCall(stage, variables)
+            stagedCalls.delete(context)
+            await staged.batch.commit()
+            return staged.data as TData
+        },
+    })
+}
+
+type StagedCall = { batch: StagedBatch; data: unknown }
+
+// TanStack Query gives one context object to onMutate and to mutationFn of the
+// same call, which is the only link between the two.
+const stagedCalls = new WeakMap<object, StagedCall>()
+
+function stageCall<TData, TVariables>(
+    stage: (variables: TVariables) => TData,
+    variables: TVariables
+): StagedCall {
+    let data: unknown
+    const staged = stagedBatch(() => {
+        data = stage(variables)
+    })
+    return { batch: staged, data }
 }

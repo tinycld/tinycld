@@ -69,7 +69,7 @@ async function fitProblems(p: Page) {
 }
 
 test.describe('report fit at four widths', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a ledger-like report fits 390, 768, 1024 and 1280 with nothing cut that must not be', async ({
         freshMember,

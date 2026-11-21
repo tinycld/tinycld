@@ -39,7 +39,8 @@ workspace-root `tinycld.packages.ts`) and wires installed members into the
 routes, registry, Go server, and PocketBase migrations.
 
 Validate changes from inside the member you touched: `pnpm exec tinycld-pkg check`
-(biome + tsc + vitest, scoped to that member). For an ecosystem-wide sweep,
+(biome + tsc + vitest, scoped to that member, and, for a member with e2e specs,
+a load check of the specs with `playwright test --list`). For an ecosystem-wide sweep,
 run from `tinycld/`: `pnpm run pkg:check` (every member) or `pnpm run checks`
 (biome + app typecheck + core-isolation and fork-drift checks). The Go side runs `pnpm run test:server`, which uses
 the `no_ui` build tag so PocketBase's admin UI routes are skipped during tests
@@ -59,7 +60,7 @@ available in production.
 - Comments: Only add comments that explain "why", not "what". Avoid trivial comments like `// Delete users` before `deleteFrom('user')` or `// Create profile` before `insertInto('profile')`. If the code is self-explanatory, no comment is needed.
 - Testing: Write unit tests for new features. Only mock through the shared stubs in `tests/` (the `*-stub.cjs` files that `vitest.config.ts` aliases in), do not mock out any of our own components or actions.
 - Run quality checks after any changes:
-   - From inside the member: `pnpm exec tinycld-pkg check` (biome + tsc + vitest, scoped)
+   - From inside the member: `pnpm exec tinycld-pkg check` (biome + tsc + vitest, scoped, and, for a member with e2e specs, a load check of the specs)
    - From `tinycld/` for an ecosystem-wide sweep: `pnpm run checks` (biome + tsc + core-isolation and fork-drift checks) and `pnpm run pkg:test:unit` (vitest across all members)
 - Embrace Type Inference: Do not over-specify types, allow TypeScript to infer types whenever possible.
   - DO NOT USE `any` to pass type checks, even with biome ignore comments.
@@ -126,6 +127,17 @@ available in production.
   })
   ```
   Give `handleMutationErrorsWithForm` the `collection` the form edits: rows of several collections can have a field of the same name, so a field error of the failed row goes on the form only when that row is of this collection, and to a toast otherwise. The callback is synchronous — never `await` in it; the calls only record the mutations. A mutation that is one atomic write needs no generator. In a generator, `yield atomic(() => { ... })` waits for the one request. `atomic` does not detect a stale editor, a file upload cannot be part of it, and one batch holds at most 1,100 operations.
+- **Show now, send in order** — when the server must receive the calls in the order the user made them (a number the server gives out on arrival) and the user must not wait for an earlier call, use `useStagedMutation` from `@tinycld/core/lib/mutations`. Its `stage` callback holds the collection writes of one call and runs when `mutate` is called, so the rows show at once. Calls with the same `scope.id` then send one `atomic` request each, one at a time, in call order. A plain `useMutation` with a `scope` keeps the order too, but its rows show only after the earlier request returns.
+  ```ts
+  const create = useStagedMutation({
+      scope: { id: `cards.create.${boardId}` },
+      stage: (input: { title: string }) => {
+          const id = newRecordId()
+          cardsCollection.insert({ id, board: boardId, title: input.title })
+          return id
+      },
+  })
+  ```
 - Use `performMutations` from `@tinycld/core/lib/mutations` when you need to await Transactions inside an async function
 - Core collections are configured in `tinycld/core/lib/pocketbase.ts`; each feature registers its own in `collections.ts` (via the manifest's `collections.register`). **Every collection is `syncMode: 'on-demand'` + `realtime: 'query'`** (core spreads a shared `onDemand` const into each one): only the rows a live query asks for enter the store, and the realtime subscription carries that same filter, so a filtered view stays correct across updates — the server emits a delete to a subscription a row leaves. Nothing holds a whole collection in memory, so a `.toArray` / `readCollectionCached` read answers "among the rows we hold", not "among all rows".
 - `relations` declares where PocketBase's expanded records are filed — rows never carry `expand`, so read a relation from its own collection with `materialize()` or a join inside the live query that needs it. A join or `materialize()` over an on-demand target **batch-loads that target by id, once per query** (not once per row), and nothing at all for rows already held. A filed row lives only as long as a parent row in the store files it: it leaves when the last parent filing it leaves, or when a parent fetch no longer expands it. Add `alwaysFetchRelations` (expanded on every request of the parent) only when the parent collection is the sole path by which rows enter the target — a target no query of its own loads; otherwise it only enlarges every parent request. `collection.fetchRelations('<path>')` expands a path for the one query that reads through it.

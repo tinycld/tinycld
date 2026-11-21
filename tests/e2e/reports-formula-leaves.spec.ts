@@ -43,7 +43,7 @@ async function askQuantity(p: Page) {
 }
 
 test.describe('report formula leaves', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('an asked value, whole cents and yes or no in columns', async ({ p }) => {
         await openReportsHub(p)

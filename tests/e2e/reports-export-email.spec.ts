@@ -70,7 +70,7 @@ function isEmailSend(url: string, method: string): boolean {
 }
 
 test.describe('report-exports: email', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('send a report from the keyboard', async ({ page }) => {
         await openReport(page)

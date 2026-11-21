@@ -283,6 +283,8 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// listeners, so this is not shared. Binds nothing unless a supervisor
 	// started this process, so it changes no hook count.
 	registerSupervised(app)
+	// The listener is this composition's own. Binds on macOS only, the one
+	// platform with the error, so OnServe has one more handler there.
 	registerWriteRetry(app)
 
 	// Which deployment shape wrote an archive is recorded in every manifest, so

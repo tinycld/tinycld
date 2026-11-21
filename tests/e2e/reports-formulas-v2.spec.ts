@@ -64,7 +64,7 @@ async function buildTeamLookup(p: Page, team: string) {
 }
 
 test.describe('report formulas', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('an if over a comparison picks the larger of amount and cost', async ({ freshMember }) => {
         const p = freshMember.page

@@ -38,7 +38,7 @@ async function expectShares(p: Page, labels: string[], shares: string[]) {
 }
 
 test.describe('sales-reports: percent places', () => {
-    test.skip(skipWithoutReportsStub(), 'needs the salesstub package')
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
     test('a percent of the total prints the places its formula chooses', async ({ page }) => {
         await login(page)

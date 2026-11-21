@@ -51,8 +51,7 @@ interface TakeoutImportState {
     updateProgress: (service: ImportService, update: Partial<ImportProgress>) => void
     setPhase: (phase: OverallPhase) => void
     setOverallError: (error: string | null) => void
-    setActiveServices: (services: ImportService[]) => void
-    setProgressHref: (href: string) => void
+    beginImport: (services: ImportService[], progressHref: string) => void
     requestCancel: () => void
     reset: () => void
 }
@@ -133,8 +132,17 @@ export const useTakeoutImportStore = create<TakeoutImportState>()(set => ({
         }),
     setPhase: phase => set({ phase }),
     setOverallError: overallError => set({ overallError }),
-    setActiveServices: activeServices => set({ activeServices }),
-    setProgressHref: progressHref => set({ progressHref }),
+    // A run starts clean: a cancel request and the counts of an earlier run
+    // must not reach it, or a run started after a cancel drops every batch.
+    beginImport: (activeServices, progressHref) =>
+        set({
+            phase: 'importing',
+            activeServices,
+            progressHref,
+            progress: emptyProgress(),
+            overallError: null,
+            cancelRequested: false,
+        }),
     requestCancel: () => set({ cancelRequested: true }),
     reset: () =>
         set({
