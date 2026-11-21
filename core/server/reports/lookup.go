@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // lookupValue decodes a lookup's value: a formula node over the looked-up
@@ -140,8 +143,13 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 	}
 	out := expr{typ: v.typ, target: v.target, cur: v.cur, agg: v.agg, win: v.win, options: v.options}
 	where, unknown := "1", ""
+	var eqs []linkEq
 	if n.Where != nil {
-		w, err := compileWhere(&lookupCtx{outer: outer, r: r, sc: sc, src: src, inWhere: true}, n.Where, at)
+		wc := &lookupCtx{outer: outer, r: r, sc: sc, src: src, inWhere: true}
+		if !legacySQL.rangeLinkBounds {
+			wc.eqs = &eqs
+		}
+		w, err := compileWhere(wc, n.Where, at)
 		if err != nil {
 			return expr{}, err
 		}
@@ -150,13 +158,30 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		// the looked-up source can serve one (linkedEq).
 		if !w.unset {
 			where = "(" + w.sql + ")"
+			// The bounds name the stored day column itself, which an index on
+			// it serves; they leave out only rows the where refuses.
+			if w.bound != "" && len(src.Parts) == 0 {
+				where += " AND " + w.bound
+			}
 		}
 		out.agg, out.win = out.agg || w.agg, out.win || w.win
 		if w.condMixed != "" {
 			unknown = whereUnknown(outer, sc, w, at+".where")
 		}
+		// A union has no one stored column: its bounds go inside each part
+		// (boundedFrom), one for each term, so a part that cannot hold one
+		// term still holds the others. The test for an unknown where above
+		// reads the whole union, as it reads a collection without the bounds.
+		if !w.unset && len(src.Parts) > 0 {
+			sc.partBounds = append(sc.partBounds, w.boundTerms()...)
+		}
 	}
 	e, err := pickedLookup(outer, r, n, v, sc, where, out, at)
+	if err == nil {
+		e, err = knownLinks(e, eqs, where, func(where string) (expr, error) {
+			return pickedLookup(outer, r, n, v, sc, where, out, at)
+		})
+	}
 	if err != nil || unknown == "" || n.Pick == "count" {
 		return e, err
 	}
@@ -168,6 +193,59 @@ func lookupIn(outer fctx, r *rowsCTE, n *Node, at string) (expr, error) {
 		return e.guarded(unknown, e.sql), nil
 	}
 	return e.guarded(orSQL(e.mixed, unknown), e.unguarded), nil
+}
+
+// linkEq is one bound linkedEq wrote on a stored link column in a lookup's
+// where, for a looked-for value V that reads nothing of the looked-up row:
+// rng is the bound as a range, as the where holds it (no other text of the
+// where is the same: it names the lookup's own scope and V); eq is the bound
+// as an equality, right where V is not blank; v is V as the report's row
+// reads it.
+type linkEq struct{ rng, eq, v string }
+
+// knownLinks gives a lookup whose where bounds a link column by a range a
+// second form, for the rows where every looked-for value is known. A range
+// (col >= V AND col <= V) lets SQLite use only the link column of an index;
+// an equality lets it use the columns after it too (a day bound, lookupDayBound),
+// so a lookup of one account's lines before a day reads those lines and not
+// the account's whole history. The equality is wrong where V is blank (a
+// group whose record is blank or hidden, the Total row): there the range
+// matches every row, and the where's own comparison keeps those whose link is
+// blank or hidden. So each part of the lookup becomes
+//
+//	CASE WHEN <every V> IS NOT NULL THEN <the part, equalities> ELSE <the part, ranges> END
+//
+// and SQLite computes only the form a row takes. rng is the lookup over where
+// as it is; pick builds the lookup over another where. scan stays the range
+// form: the layout computes it once in a CTE, with no row to test V on.
+func knownLinks(rng expr, eqs []linkEq, where string, pick func(where string) (expr, error)) (expr, error) {
+	var known []string
+	for _, l := range eqs {
+		if !strings.Contains(where, l.rng) {
+			continue
+		}
+		where = strings.ReplaceAll(where, l.rng, l.eq)
+		known = append(known, l.v+" IS NOT NULL")
+	}
+	if len(known) == 0 {
+		return rng, nil
+	}
+	eq, err := pick(where)
+	if err != nil {
+		return expr{}, err
+	}
+	cond := strings.Join(known, " AND ")
+	either := func(eq, rng string) string {
+		if eq == "" || eq == rng {
+			return rng
+		}
+		return fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", cond, eq, rng)
+	}
+	out := rng
+	out.sql, out.unguarded = either(eq.sql, rng.sql), either(eq.unguarded, rng.unguarded)
+	out.mixed, out.shown = either(eq.mixed, rng.mixed), either(eq.shown, rng.shown)
+	out.cur.sql = either(eq.cur.sql, rng.cur.sql)
+	return out, nil
 }
 
 // whereProber is a context that probes, over the rows it compiles for,
@@ -376,6 +454,9 @@ type lookupCtx struct {
 	src     *Source
 	prefix  []hopPlan
 	inWhere bool
+	// eqs collects, in a where, the link bounds eq writes for a value that
+	// reads nothing of the looked-up row (linkEq); nil keeps none.
+	eqs *[]linkEq
 }
 
 // col reads the report's row; a running value is computed in the outer
@@ -426,7 +507,14 @@ func (l *lookupCtx) path(p Path, at string) (expr, error) {
 	// combining.
 	if l.inWhere && bound.endsAtLink {
 		if col := l.storedLinkCol(hops); col != "" {
-			e.link = storedLink{col: col, sql: e.sql, sc: l.sc}
+			e.link = storedLink{col: col, sql: e.sql, sc: l.sc, eqs: l.eqs}
+		} else if l.unionParts() && len(hops) == 1 {
+			e.link = storedLink{part: q(partLink, hops[0].link.Field), sql: e.sql}
+		}
+	}
+	if l.inWhere && len(hops) == 0 && !bound.endsAtLink && bound.field != nil && bound.field.Type == Date {
+		if col := l.storedDayCol(bound.field); col != "" {
+			e.day = storedDay{col: col, sql: e.sql}
 		}
 	}
 	switch cur, fixed := amountCurrencyOf(l.sc, hops, bound); {
@@ -478,16 +566,131 @@ func (l *lookupCtx) storedLinkCol(hops []hopPlan) string {
 // a one-row table of the lookup's scope (oneValue), and the three read it
 // there. A V that reads the looked-up row is one of its fields (a path) or
 // a condition on it, which a table in the same FROM cannot read.
-func linkedEq(n *Node, args []expr) string {
+func linkedEq(c fctx, n *Node, args []expr) string {
 	for i, a := range args[:2] {
 		if a.link.col == "" || a.link.sql != a.sql {
 			continue
 		}
 		v := args[1-i].sql
-		if !readsLookedUpRow(n.Args[1-i]) {
+		free := !readsLookedUpRow(n.Args[1-i])
+		if free {
 			v = a.link.sc.oneValue(v)
 		}
-		return fmt.Sprintf("(%s IS %s AND %s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff'))", a.sql, v, a.link.col, v, a.link.col, v)
+		rng := fmt.Sprintf("(%s IS %s AND %s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff'))", a.sql, v, a.link.col, v, a.link.col, v)
+		// The same bound as an equality, for the rows where the value is known
+		// (knownLinks). A value that reads the looked-up row cannot be tested
+		// outside the lookup, so its bound stays a range. A group record reads
+		// the report's row, though readsLookedUpRow counts its path as a read
+		// of the looked-up row and the range reads it in place. Only a leaf
+		// (a record, a stored column, an outer path, a param, a constant) gets
+		// the second form: the test outside the lookup reads the value once
+		// more, which a formula or a lookup would compute again. A formula
+		// column is no leaf: the lookup compiles it inline (isFormulaColumn).
+		if other := n.Args[1-i]; a.link.eqs != nil && other.Op == "" && !isFormulaColumn(c, other) && (free || other.Record != "") {
+			*a.link.eqs = append(*a.link.eqs, linkEq{
+				rng: rng, v: args[1-i].sql,
+				eq: fmt.Sprintf("(%s IS %s AND %s = %s)", a.sql, v, a.link.col, v),
+			})
+		}
+		return rng
+	}
+	return ""
+}
+
+// unionParts is true where a lookup's where may bound the parts of its union
+// source: the path starts at the looked-up row itself (no prefix), and the
+// compile has a database to read each part's collection from.
+func (l *lookupCtx) unionParts() bool {
+	return len(l.src.Parts) > 0 && len(l.prefix) == 0 && l.sc.src == l.src && !l.r.c.dry() && !legacySQL.noPartBounds
+}
+
+// partLinkBound is the bound of eq(link, V) in the where of a lookup over a
+// union source, on the link's partLink column: the range linkedEq writes on a
+// stored column (V gives the column V, a blank V every column), "" for any
+// other eq. V reads nothing of the looked-up row and holds no lookup: the
+// bound is written inside each part of the union, which reads the report's
+// row but no table beside the union (so V is not computed once in oneValue),
+// and repeats V's SQL.
+func partLinkBound(c fctx, n *Node, args []expr) string {
+	for i, a := range args[:2] {
+		other := n.Args[1-i]
+		if a.link.part == "" || a.link.sql != a.sql || readsLookedUpRow(other) || containsLookup(other) || readsLookupColumn(c, other, map[string]bool{}) {
+			continue
+		}
+		v := args[1-i].sql
+		return fmt.Sprintf("%s >= COALESCE(%s, '') AND %s <= COALESCE(%s, x'ff')", a.link.part, v, a.link.part, v)
+	}
+	return ""
+}
+
+// storedDayCol is the stored column of a Date field of the lookup scope's own
+// row, or "" where a bound on it is not safe: a view's column (which may hold
+// NULL, or no day), or a column that is not text or a PocketBase date.
+// filterBounds makes the same test of the report's base. A union's day is its
+// partDay column: each part tests its own column (partWhere).
+func (l *lookupCtx) storedDayCol(f *Field) string {
+	if l.unionParts() && !legacySQL.noLookupDayBounds {
+		return q(partDay, f.Column)
+	}
+	// A dry compile (Validate) has no database to read the collection from.
+	if legacySQL.noLookupDayBounds || l.r.c.dry() || len(l.src.Parts) > 0 {
+		return ""
+	}
+	col, err := l.r.c.p.app.FindCachedCollectionByNameOrId(l.src.Collection)
+	if err != nil {
+		// Without the bound the lookup is still right, only slower.
+		log.Warn("lookup day column not bounded", "collection", l.src.Collection, "err", err)
+		return ""
+	}
+	if col.IsView() {
+		return ""
+	}
+	field := col.Fields.GetByName(f.Column)
+	if field == nil || !slices.Contains([]string{core.FieldTypeText, core.FieldTypeDate, core.FieldTypeAutodate}, field.Type()) {
+		return ""
+	}
+	return q(l.sc.alias, f.Column)
+}
+
+// lookupDayBound is the bound a comparison in a lookup's where implies on a stored
+// day column of the looked-up row: for lt, lte, gt or gte of such a day with a
+// day that reads nothing of that row (a param's day, a bound of a range, a
+// formula over them, a value of the report's row), and for between of it with
+// a date range param or with two such days. "" for any other comparison. The
+// comparison reads the day through substr(), which no index serves; the bound
+// names the column itself (dayBounds). It holds on every row the comparison
+// holds for: where the other day is blank the comparison holds for no row,
+// and neither does the bound. The other day holds no lookup, nor reads a
+// report column that does (its formula is compiled inline): the bound repeats
+// its SQL, and a lookup's subquery would be written and computed twice.
+func lookupDayBound(c fctx, n *Node, args []expr) string {
+	stored := func(e expr) bool { return e.day.col != "" && e.day.sql == e.sql }
+	free := func(i int) bool {
+		e := args[i]
+		return e.typ == Date && !e.rng && !e.unset && !e.all && !readsLookedUpRow(n.Args[i]) && !containsLookup(n.Args[i]) && !readsLookupColumn(c, n.Args[i], map[string]bool{})
+	}
+	if n.Op == "between" {
+		switch {
+		case len(args) < 2 || !stored(args[0]):
+		case len(args) == 2 && args[1].rng && !args[1].all && !args[1].unset:
+			return dayBounds(args[0].day.col, args[1].lo, args[1].hi)
+		case len(args) == 3 && free(1) && free(2):
+			return dayBounds(args[0].day.col, args[1].sql, args[2].sql)
+		}
+		return ""
+	}
+	for i := range 2 {
+		if !stored(args[i]) || !free(1-i) {
+			continue
+		}
+		op := n.Op
+		if i == 1 {
+			op = mirrored[op]
+		}
+		if op == "lt" || op == "lte" {
+			return dayBounds(args[i].day.col, "", args[1-i].sql)
+		}
+		return dayBounds(args[i].day.col, args[1-i].sql, "")
 	}
 	return ""
 }
@@ -502,6 +705,17 @@ func (sc *scope) oneValue(sql string) string {
 	return alias + ".v"
 }
 
+// isFormulaColumn is true for a {col} leaf whose column is a formula: a
+// lookup's compile reads it inline, as its formula, not as a stored value.
+func isFormulaColumn(c fctx, n *Node) bool {
+	l, ok := c.(*lookupCtx)
+	if !ok || n.Col == "" {
+		return false
+	}
+	cp := l.r.c.p.byID[n.Col]
+	return cp != nil && cp.col.Formula != nil
+}
+
 // readsLookedUpRow is true when a node in a lookup's where reads the
 // looked-up row: a path, or an exists over a link of it. A lookup inside it
 // reads its own source, and every other leaf the report's row.
@@ -513,6 +727,29 @@ func readsLookedUpRow(n *Node) bool {
 		return true
 	}
 	return slices.ContainsFunc(n.Args, readsLookedUpRow)
+}
+
+// containsLookup is true when a node is a lookup or has one among its args.
+func containsLookup(n *Node) bool {
+	return n != nil && (n.Op == "lookup" || slices.ContainsFunc(n.Args, containsLookup))
+}
+
+// readsLookupColumn is true when a node reads, through a {col} leaf, a report
+// column whose formula holds a lookup (directly or through other columns).
+// seen stops a column that reads itself, which the compile refuses.
+func readsLookupColumn(c fctx, n *Node, seen map[string]bool) bool {
+	l, ok := c.(*lookupCtx)
+	if !ok || n == nil {
+		return false
+	}
+	if n.Col != "" && !seen[n.Col] {
+		seen[n.Col] = true
+		cp := l.r.c.p.byID[n.Col]
+		if cp != nil && cp.col.Formula != nil && (containsLookup(cp.col.Formula) || readsLookupColumn(c, cp.col.Formula, seen)) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(n.Args, func(a *Node) bool { return readsLookupColumn(c, a, seen) })
 }
 
 // outerPath reads a path on the report's row: what a path means in the
@@ -656,6 +893,6 @@ var rowFreeOps = map[string]bool{
 	"between": true, "in": true, "and": true, "or": true, "not": true,
 	"concat": true, "upper": true, "lower": true, "contains": true, "startsWith": true,
 	"year": true, "quarter": true, "month": true, "fiscalYear": true, "fiscalPeriod": true,
-	"addDays": true, "addMonths": true, "diffDays": true,
+	"addDays": true, "addMonths": true, "diffDays": true, "startOfMonth": true,
 	"if": true, "case": true, "coalesce": true, "isEmpty": true,
 }

@@ -42,8 +42,14 @@ type level struct {
 	childCells []string
 	// fill is the level's keyset when its group fills in the records with no
 	// rows (fillKeys), "" otherwise; render emits it as the CTE f<L>.
-	fill  string
-	frame *windowFrame
+	fill string
+	// fillRecords, on level 1 only, is the fill records of level L with their
+	// own parents' keys (fillKeys), "" when they sit under each parent row.
+	// base emits it as the CTE fr<L>, which the keysets of levels 1 to L read:
+	// every statement that compiles one of them compiles level 1, also one
+	// that stops above L (shownLevels), so each defines fr<L> once.
+	fillRecords string
+	frame       *windowFrame
 	// sumsFrame holds the lookups the cells of rt<L> compute once per row
 	// (rowsCells), as frame holds o<L>'s.
 	sumsFrame *windowFrame
@@ -118,8 +124,22 @@ func (c *compiler) level(r *rowsCTE, n int, expand *expansion) (*level, error) {
 		lv.keys = append(lv.keys, fmt.Sprintf("k%d", i))
 	}
 	lv.keys = append(lv.keys, c.currencies...)
-	if n >= 1 && c.p.groups[n-1].group.Fill != nil {
-		fill, err := c.fillKeys(r, n, expand, c.p.groups[n-1].at+".fill")
+	switch {
+	case c.fillOwn != nil && n >= 1 && n <= c.fillOwn.level:
+		// The filled level or a parent of its records: its keys in w and the
+		// records' own, which level 1 computes.
+		if n == 1 {
+			at := c.p.groups[c.fillOwn.level-1].at + ".fill"
+			_, records, err := c.fillKeys(r, c.fillOwn.level, expand, at)
+			if err != nil {
+				return nil, err
+			}
+			lv.fillRecords = records
+		}
+		lv.fill = c.ownFillKeys(r.s, n, c.fillOwn.level, expand)
+		c.fillSets[n] = fmt.Sprintf("f%d", n)
+	case n >= 1 && c.p.groups[n-1].group.Fill != nil:
+		fill, _, err := c.fillKeys(r, n, expand, c.p.groups[n-1].at+".fill")
 		if err != nil {
 			return nil, err
 		}
@@ -437,10 +457,17 @@ func (lv *level) base(own string, totals []string) ([]string, string) {
 	// level with no aggregate valid.
 	rows := fmt.Sprintf("SELECT %s FROM w%s", strings.Join(append(append(keyCols, lv.aggs...), "count(*) AS __n"), ", "), groupBy(lv.keys))
 	var ctes []string
+	if lv.fillRecords != "" {
+		// Materialized: the keyset of every level down to the filled one reads it.
+		ctes = append(ctes, fmt.Sprintf("%s AS MATERIALIZED (%s)", fillRecords(lv.c.fillOwn.level), lv.fillRecords))
+	}
 	if lv.fill != "" {
 		// The keyset is one CTE, which the level below reads by name.
 		ctes = append(ctes, fmt.Sprintf("%s AS (%s)", lv.c.fillSets[lv.n], lv.fill))
 		rows += "\nUNION ALL\n" + lv.fillRows()
+	}
+	if lv.totalOverFillRows() {
+		rows += "\nUNION ALL\n" + lv.noRowTotal()
 	}
 	ctes = append(ctes, fmt.Sprintf("%s AS (%s)", a, rows))
 	for _, g := range lv.tms {
@@ -668,9 +695,44 @@ func (lv *level) rowsCells() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		foreign, err := lv.foreignRollup(cp, e)
+		if err != nil {
+			return nil, err
+		}
+		// The helper is for the rows above only: the row's own cell is not
+		// blank, and keeps its figure and code.
+		e.mixed, e.condMixed = orSQL(e.blankFor(), foreign), ""
 		out = append(out, fmt.Sprintf("%s AS v%d", e.sql, idx), mixedCell(e, idx))
 	}
 	return out, nil
+}
+
+// foreignRollup is true on a row of this level whose cell e of a "rows"
+// column is a rollup in another currency than the one the rows above add it
+// in, "" when no row can be. A rollup can be in a currency of its own (a
+// looked-up amount's on each row, an amount param's), and the rows above have
+// one code for their sum, so adding such a row would show EUR cents as USD
+// (R3). A missing code is not a second currency (currencyGuard).
+func (lv *level) foreignRollup(cp *colPlan, e expr) (string, error) {
+	if !lv.showsRollup(cp) || e.typ != Money || e.cur.none() {
+		return "", nil
+	}
+	at := cp.at + ".total"
+	d, err := lv.detailCell(cp, at)
+	if err != nil {
+		return "", err
+	}
+	cur, err := lv.c.totalCurrency(d, at)
+	if err != nil {
+		return "", err
+	}
+	// A param's code is known only in the run, so it is compared on each row.
+	if cur.none() || e.cur.param == "" && cur.param == "" && e.cur.sameRead(cur) {
+		return "", nil
+	}
+	lc := &levelCtx{lv: lv, visiting: lv.visiting, rows: lv.sumsFrame}
+	own, sum := lc.currencySQL(e.cur), lc.currencySQL(cur)
+	return fmt.Sprintf("((%s) IS NOT NULL AND %s IS NOT %s AND %s IS NOT NULL AND %s IS NOT NULL)", e.sql, own, sum, own, sum), nil
 }
 
 // havingAbove is the deepest level above level n whose group has a having, 0
@@ -951,13 +1013,24 @@ func (lc *levelCtx) col(id, at string) (expr, error) {
 		}
 		return e.withoutValue(), nil
 	}
-	if cp.col.Rollup != nil {
+	if lc.lv.showsRollup(cp) {
 		return lc.rollup(cp)
 	}
 	if cp.col.Total == TotalRows {
 		return lc.rowsTotal(cp)
 	}
 	return lc.recompute(cp, at)
+}
+
+// showsRollup is true where a column's cell on this level is its rollup: on
+// every level, or, for a "rows" column, on the innermost group only. The
+// levels above that group add its cells (rowsTotal), so a rollup that reads
+// the group's record still totals.
+func (lv *level) showsRollup(cp *colPlan) bool {
+	if cp.col.Rollup == nil {
+		return false
+	}
+	return cp.col.Total != TotalRows || lv.n == len(lv.c.p.groups)
 }
 
 // rollup is a column's cell on this level from its rollup formula (F6, R6),
@@ -1036,9 +1109,10 @@ func (lc *levelCtx) rowsTotal(cp *colPlan) (expr, error) {
 	idx := lv.c.p.index(cp)
 	if lv.n < len(lv.c.p.groups) {
 		total := expr{sql: lv.childSum(fmt.Sprintf("v%d", idx)), typ: d.typ}
-		if d.blankFor() != "" {
+		if d.blankFor() != "" || cp.col.Rollup != nil {
 			// A child row that is blank for mixed currencies makes its sum
-			// blank too (rowsCells gives each child row its vmx helper).
+			// blank too (rowsCells gives each child row its vmx helper). A
+			// rollup can be blank where the detail cell never is.
 			total.mixed = lv.childSum(fmt.Sprintf("vmx%d", idx)) + " > 0"
 			total.sql = fmt.Sprintf("(CASE WHEN %s THEN NULL ELSE %s END)", total.mixed, total.sql)
 		}
@@ -1294,7 +1368,7 @@ func (lv *level) readsRowValue(n *Node, inAggregate bool, seen map[string]bool) 
 			return true
 		}
 		// A column with a rollup shows the rollup on the level's rows.
-		if cp != nil && cp.col.Rollup != nil {
+		if cp != nil && lv.showsRollup(cp) {
 			seen[n.Col] = true
 			defer delete(seen, n.Col)
 			return lv.readsRowValue(cp.col.Rollup, false, seen)
@@ -1490,7 +1564,7 @@ func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, er
 	if err != nil {
 		return expr{}, err
 	}
-	w, err := windowSQL(op, e, scale, lc.lv.frame, at)
+	w, err := windowSQL(op, e, scale, lc.lv.frame, lc.bind, at)
 	lc.lv.win = lc.lv.win || w.win
 	return w, err
 }
@@ -1531,10 +1605,13 @@ func (w levelWhere) from(lv *level, g string) string {
 
 // unread is e with no value, for a formula that reads a value of one row,
 // which a group of rows has none of: the lookups' wheres it compiled since
-// the level held wheres of them are not read either, so none is probed.
+// the level held wheres of them are not read either, so none is probed. A
+// blank cell names no currency.
 func (lv *level) unread(e expr, wheres int) expr {
 	lv.wheres = lv.wheres[:wheres]
-	return e.withoutValue()
+	e = e.withoutValue()
+	e.cur = currency{}
+	return e
 }
 
 // probeWhere takes a lookup's where on the level's rows, which render

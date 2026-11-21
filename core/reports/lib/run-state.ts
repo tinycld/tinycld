@@ -36,6 +36,8 @@ export interface RunView {
     isUpdating: boolean
     /** The topics of the figures received, which keep the run live. */
     topics: string[]
+    /** The figures shown do not update by themselves; the reader presses Refresh. */
+    isManual: boolean
 }
 
 const NO_PROBLEMS: Problem[] = []
@@ -82,5 +84,6 @@ export function runView(query: RunQueryState): RunView {
             !isStaleRefusal && refusal && 'problems' in refusal ? refusal.problems : NO_PROBLEMS,
         isUpdating: query.isPlaceholderData && !refusal,
         topics: shown?.result.topics ?? NO_TOPICS,
+        isManual: !refusal && shown?.result.manual === true,
     }
 }

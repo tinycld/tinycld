@@ -8,24 +8,8 @@ import { useSearchPaletteStore } from '@tinycld/core/lib/search/search-palette-s
 import type { SearchAdapterModule, SearchRow } from '@tinycld/core/lib/search/types'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { LayerEscape, OverlayPortal, useOverlayLayer } from '@tinycld/core/ui/overlay'
-import {
-    type ReactNode,
-    type RefObject,
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-} from 'react'
-import {
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    type TextInputInstance,
-    View,
-    type ViewInstance,
-} from 'react-native'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Pressable, StyleSheet, Text, TextInput, View, type ViewInstance } from 'react-native'
 import { useSearchResults } from './useSearchResults'
 
 const PALETTE_WIDTH_PX = 560
@@ -110,18 +94,6 @@ function OpenSearchPalette() {
         [flatRows, selectedRow, setSelectedRowId]
     )
 
-    const inputRef = useRef<TextInputInstance>(null)
-
-    useEffect(() => {
-        // Focus the input on open. RN's TextInput needs a microtask before its
-        // DOM node is mounted under the portal, so we defer via
-        // requestAnimationFrame.
-        const raf = requestAnimationFrame(() => {
-            inputRef.current?.focus()
-        })
-        return () => cancelAnimationFrame(raf)
-    }, [])
-
     // Anything outside the card closes it — matches Spotlight. The card is
     // state from a callback ref so the layer sees the node once it mounts.
     const [card, setCard] = useState<ViewInstance | null>(null)
@@ -178,7 +150,6 @@ function OpenSearchPalette() {
                 <PaletteOverlay>
                     <PaletteCard cardRef={setCard}>
                         <SearchField
-                            inputRef={inputRef}
                             chips={parsed.chips}
                             remainder={remainder}
                             onChangeRemainder={next => setText(chipsToText(parsed.chips) + next)}
@@ -303,7 +274,6 @@ function PaletteCard({
 }
 
 interface SearchFieldProps {
-    inputRef: RefObject<TextInputInstance | null>
     chips: string[]
     remainder: string
     onChangeRemainder: (v: string) => void
@@ -316,7 +286,12 @@ interface SearchFieldProps {
 // chips + remainder back into the store's single `text` field, which stays
 // the source of truth parseQuery re-derives BOTH chips and remainder from on
 // every render — the renderer never re-slices the remainder itself.
-function SearchField({ inputRef, chips, remainder, onChangeRemainder }: SearchFieldProps) {
+//
+// The input mounts with the open palette and takes focus in that same commit
+// (`autoFocus`, which React DOM runs at mount). A focus deferred to a later
+// frame left a gap after the palette showed in which the user's first keys
+// went to the page instead of the search.
+function SearchField({ chips, remainder, onChangeRemainder }: SearchFieldProps) {
     const placeholderColor = useThemeColor('muted-foreground')
     return (
         <View className="px-4 pt-4 pb-2 flex-row items-center flex-wrap gap-1.5">
@@ -324,7 +299,7 @@ function SearchField({ inputRef, chips, remainder, onChangeRemainder }: SearchFi
                 <SearchChip key={slug} slug={slug} />
             ))}
             <TextInput
-                ref={inputRef}
+                autoFocus
                 value={remainder}
                 onChangeText={onChangeRemainder}
                 placeholder={chips.length === 0 ? 'Search everywhere…' : 'Search…'}

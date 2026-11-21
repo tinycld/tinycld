@@ -345,6 +345,9 @@ func observeReads(t *testing.T) *[]readStatement {
 // stored-column term c = {:p} of an eq of a Select with an option value
 // (selectEq), which SQLite prepares again when sqlite_stat4 has rows. That
 // value is bound because the engine never writes a value into the SQL text.
+// The term c IN ({:p}, …, NULL) of an in of a Select with a list of option
+// values (selectIn) binds its values the same way; its prepare count with
+// no statistics is pinned by TestASelectInAListIsPreparedOnceWithoutStatistics.
 // A rule CTE is PocketBase's SQL
 // (TestAPocketBaseRuleLikePreparesTheStatementAgain).
 func TestEveryReportStatementIsPreparedOnce(t *testing.T) {

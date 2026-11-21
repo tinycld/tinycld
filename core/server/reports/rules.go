@@ -1,9 +1,12 @@
 package reports
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/pocketbase/dbx"
@@ -33,7 +36,58 @@ import (
 // that joins and reads its row (a column of the row, a relation path, a
 // back-relation) keeps the id-list form below. A rule that joins nothing is
 // a plain condition in place.
+//
+// ruleSelect is the rule in full. A statement of a run holds a rule that one
+// answer serves as every row or no row (ruleFormOf, ruleForm.sent).
 func ruleSelect(app core.App, col *core.Collection, info *core.RequestInfo) (string, dbx.Params, error) {
+	f, err := ruleFormOf(app, col, info)
+	if err != nil {
+		return "", nil, err
+	}
+	return f.sql, f.params, nil
+}
+
+// ruleForm is a collection's rule select in full (ruleSelect) and, for a rule
+// that one answer serves, the statement that gives the answer.
+type ruleForm struct {
+	ruleRead
+	// probe is "SELECT EXISTS (<the rule on a one-row table>)", bound by the
+	// rule's params: 1 when the reader's rule passes. It is set only for a
+	// rule that reads no row, joined, and does not name the collection's own
+	// table; every other rule has none and stays in its statement.
+	probe string
+	// table is the collection's table, quoted.
+	table string
+}
+
+// ruleAsk answers a rule's probe for the statement being written: true when
+// the reader's rule passes.
+type ruleAsk func(probe string, params dbx.Params) (bool, error)
+
+// sent is the rule select a statement holds. A rule with a probe is asked one
+// time, outside the statement, and the statement reads every row of the table
+// or none: SQLite copies a CTE at each reference, so a rule left in a
+// statement that reads its CTE thousands of times is prepared thousands of
+// times. With no ask (a caller that only builds), or for a rule with no
+// probe, the statement holds the rule in full. An ask that fails gives no
+// select: a reader is never shown rows on a failed answer.
+func (f ruleForm) sent(ask ruleAsk) (ruleRead, error) {
+	if f.probe == "" || ask == nil {
+		return f.ruleRead, nil
+	}
+	ok, err := ask(f.probe, f.params)
+	if err != nil {
+		return ruleRead{}, err
+	}
+	sql := fmt.Sprintf("SELECT %s.* FROM %s", f.table, f.table)
+	if !ok {
+		sql += " WHERE 0"
+	}
+	return ruleRead{sql: sql, params: dbx.Params{}}, nil
+}
+
+// ruleFormOf builds the list rule of col for the reader of info.
+func ruleFormOf(app core.App, col *core.Collection, info *core.RequestInfo) (ruleForm, error) {
 	q := app.DB().Select("{{" + col.Name + "}}.*").From(col.Name)
 	switch {
 	case col.ListRule == nil:
@@ -42,7 +96,7 @@ func ruleSelect(app core.App, col *core.Collection, info *core.RequestInfo) (str
 		resolver := &ruleNames{RecordFieldResolver: core.NewRecordFieldResolver(app, col, info, true)}
 		expr, err := search.FilterData(*col.ListRule).BuildExpr(resolver)
 		if err != nil {
-			return "", nil, fmt.Errorf("the list rule of %q cannot be built: %w", col.Name, err)
+			return ruleForm{}, fmt.Errorf("the list rule of %q cannot be built: %w", col.Name, err)
 		}
 		if resolver.readsNoRow() {
 			// The joins of the rule hang on a one-row table in place of the
@@ -50,25 +104,36 @@ func ruleSelect(app core.App, col *core.Collection, info *core.RequestInfo) (str
 			// meet the rule, as DISTINCT did.
 			inner := app.DB().Select("(1)").From("(SELECT 1) __rule").AndWhere(expr)
 			if err := resolver.UpdateQuery(inner); err != nil {
-				return "", nil, fmt.Errorf("the list rule of %q cannot be built: %w", col.Name, err)
+				return ruleForm{}, fmt.Errorf("the list rule of %q cannot be built: %w", col.Name, err)
 			}
 			if inner.Info().Distinct {
 				inner.Distinct(false)
 				built := inner.Build()
 				table := app.DB().QuoteSimpleTableName(col.Name)
-				return fmt.Sprintf("SELECT %s.* FROM %s WHERE EXISTS (%s)", table, table, built.SQL()), built.Params(), nil
+				form := ruleForm{ruleRead: ruleRead{
+					sql:    fmt.Sprintf("SELECT %s.* FROM %s WHERE EXISTS (%s)", table, table, built.SQL()),
+					params: built.Params(),
+				}}
+				// The two shapes of readsNoRow that still read the row name
+				// the collection's table in the filter; they keep the EXISTS
+				// form, which SQLite runs for each row.
+				if !namesTable(built.SQL(), col.Name) {
+					form.probe = "SELECT EXISTS (" + built.SQL() + ")"
+					form.table = table
+				}
+				return form, nil
 			}
 		}
 		// A rule that reads no row and joined nothing reaches here after the
 		// first UpdateQuery, which added no join, so nothing is added twice.
 		q.AndWhere(expr)
 		if err := resolver.UpdateQuery(q); err != nil {
-			return "", nil, fmt.Errorf("the list rule of %q cannot be built: %w", col.Name, err)
+			return ruleForm{}, fmt.Errorf("the list rule of %q cannot be built: %w", col.Name, err)
 		}
 	}
 	built := q.Build()
 	if !q.Info().Distinct {
-		return built.SQL(), built.Params(), nil
+		return ruleForm{ruleRead: ruleRead{sql: built.SQL(), params: built.Params()}}, nil
 	}
 	// A rule that joined is a DISTINCT select, which SQLite cannot read in
 	// place: it copies the rows first, and a subquery run for every report
@@ -79,7 +144,92 @@ func ruleSelect(app core.App, col *core.Collection, info *core.RequestInfo) (str
 	// every allowed row where an index of the table finds the few it needs.
 	table := app.DB().QuoteSimpleTableName(col.Name)
 	id := app.DB().QuoteSimpleColumnName("id")
-	return fmt.Sprintf("SELECT %s.* FROM %s WHERE +%s.%s IN (SELECT %s FROM (%s))", table, table, table, id, id, built.SQL()), built.Params(), nil
+	return ruleForm{ruleRead: ruleRead{
+		sql:    fmt.Sprintf("SELECT %s.* FROM %s WHERE +%s.%s IN (SELECT %s FROM (%s))", table, table, table, id, id, built.SQL()),
+		params: built.Params(),
+	}}, nil
+}
+
+// namesTable reports whether sql names the table as a whole word, quoted or
+// not. A longer name that holds it (zoo_ledger in zoo_ledger_access) is not
+// the table.
+func namesTable(sql, table string) bool {
+	if table == "" {
+		return false
+	}
+	for from := 0; ; {
+		i := strings.Index(sql[from:], table)
+		if i < 0 {
+			return false
+		}
+		start := from + i
+		end := start + len(table)
+		if (start == 0 || !isWordByte(sql[start-1])) && (end == len(sql) || !isWordByte(sql[end])) {
+			return true
+		}
+		from = start + 1
+	}
+}
+
+// isWordByte is a word character of a rule's SQL: an ASCII letter, digit or _.
+func isWordByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// ruleAnswer runs a rule's probe through db and returns its answer; a test
+// wraps it to see what a run asks.
+var ruleAnswer = func(ctx context.Context, db dbx.Builder, probe string, params dbx.Params) (bool, error) {
+	var ok bool
+	err := db.NewQuery(probe).Bind(params).WithContext(ctx).Row(&ok)
+	return ok, err
+}
+
+// askRules is the ruleAsk of the statements of one run: each distinct probe
+// is run one time through db, under the run time limit, and answers holds
+// what it gave. The answers belong to the one run that made the map (one
+// reader, one read transaction): no run reads another's. With no map, each
+// statement asks for itself.
+func askRules(ctx context.Context, db dbx.Builder, answers map[string]bool) ruleAsk {
+	if answers == nil {
+		answers = map[string]bool{}
+	}
+	return func(probe string, params dbx.Params) (bool, error) {
+		key := probeKey(probe, params)
+		if ok, asked := answers[key]; asked {
+			return ok, nil
+		}
+		ctx, cancel := context.WithTimeout(ctx, runLimits.timeout)
+		defer cancel()
+		ok, err := ruleAnswer(ctx, db, probe, params)
+		if err != nil {
+			return false, mapRunError(err)
+		}
+		answers[key] = ok
+		return ok, nil
+	}
+}
+
+var probeParam = regexp.MustCompile(`\{:(\w+)\}`)
+
+// probeKey names a probe by its text and the values it binds, in the order
+// the text reads them. PocketBase gives a rule's placeholders new names at
+// every build, so the names are numbered here: the collections of one package
+// that share a rule text then share one answer, and two readers never do (the
+// reader's id is one of the values).
+func probeKey(probe string, params dbx.Params) string {
+	index := map[string]int{}
+	var values []any
+	text := probeParam.ReplaceAllStringFunc(probe, func(tok string) string {
+		name := tok[2 : len(tok)-1]
+		i, ok := index[name]
+		if !ok {
+			i = len(index)
+			index[name] = i
+			values = append(values, params[name])
+		}
+		return "{:" + strconv.Itoa(i) + "}"
+	})
+	return text + "\x00" + fmt.Sprintf("%#v", values)
 }
 
 // ruleNames is PocketBase's rule resolver, recording each name of the rule
@@ -117,47 +267,72 @@ func (r *ruleNames) readsNoRow() bool {
 	return true
 }
 
-// unionSelect is a union source's rule CTE: each part's rule select
+// unionSelect is a union source's rule CTE in full: each part's rule select
 // (ruleSelect, the part's own list rule), projected to the source's keys and
 // joined by UNION ALL. A key a part does not map reads NULL there; a part's
 // constants are bound, under names that hold the source key, so two unions in
 // one statement never bind one name twice.
 func unionSelect(app core.App, src *Source, info *core.RequestInfo) (string, dbx.Params, error) {
+	full, _, err := unionForms(app, src, info, nil)
+	return full.sql, full.params, err
+}
+
+// unionForms is a union source's rule CTE in full (unionSelect) and as a
+// statement holds it: each part's rule as ruleForm.sent writes it for ask.
+func unionForms(app core.App, src *Source, info *core.RequestInfo, ask ruleAsk) (full, sent ruleRead, err error) {
 	keys := src.unionKeys()
-	stem := "u_" + strings.ReplaceAll(src.Key, ".", "_")
-	params := dbx.Params{}
-	selects := make([]string, 0, len(src.Parts))
+	full.params, sent.params = dbx.Params{}, dbx.Params{}
+	fulls := make([]string, 0, len(src.Parts))
+	sents := make([]string, 0, len(src.Parts))
 	for i, part := range src.Parts {
 		col, err := app.FindCachedCollectionByNameOrId(part.Collection)
 		if err != nil {
-			return "", nil, fmt.Errorf("reports: collection %q: %w", part.Collection, err)
+			return ruleRead{}, ruleRead{}, fmt.Errorf("reports: collection %q: %w", part.Collection, err)
 		}
-		ruleSQL, ruleParams, err := ruleSelect(app, col, info)
+		form, err := ruleFormOf(app, col, info)
 		if err != nil {
-			return "", nil, err
+			return ruleRead{}, ruleRead{}, err
 		}
-		if err := mergeParams(params, ruleParams); err != nil {
-			return "", nil, err
+		partSent, err := form.sent(ask)
+		if err != nil {
+			return ruleRead{}, ruleRead{}, err
 		}
-		cols := make([]string, 0, len(keys)+1)
-		cols = append(cols, "[[p.id]] AS [[id]]")
-		for _, key := range keys {
-			column, mapped := part.Columns[key]
-			value, constant := part.Values[key]
-			switch {
-			case mapped:
-				cols = append(cols, fmt.Sprintf("[[p.%s]] AS [[%s]]", column, key))
-			case constant:
-				name := fmt.Sprintf("%s_%d_%s", stem, i, key)
-				params[name] = value
-				cols = append(cols, fmt.Sprintf("{:%s} AS [[%s]]", name, key))
-			default:
-				cols = append(cols, fmt.Sprintf("NULL AS [[%s]]", key))
-			}
+		if err := mergeParams(full.params, form.params); err != nil {
+			return ruleRead{}, ruleRead{}, err
 		}
-		selects = append(selects, "SELECT "+strings.Join(cols, ", ")+" FROM ("+ruleSQL+") p")
+		if err := mergeParams(sent.params, partSent.params); err != nil {
+			return ruleRead{}, ruleRead{}, err
+		}
+		fulls = append(fulls, "SELECT "+unionPartCols(src, i, keys, full.params)+" FROM ("+form.sql+") p")
+		sents = append(sents, "SELECT "+unionPartCols(src, i, keys, sent.params)+" FROM ("+partSent.sql+") p")
 	}
-	return strings.Join(selects, "\nUNION ALL\n"), params, nil
+	full.sql = strings.Join(fulls, "\nUNION ALL\n")
+	sent.sql = strings.Join(sents, "\nUNION ALL\n")
+	return full, sent, nil
+}
+
+// unionPartCols is the select list of part i of a union source, read as p:
+// the row's id, then each of the source's keys. A constant is bound in params.
+func unionPartCols(src *Source, i int, keys []string, params dbx.Params) string {
+	part := src.Parts[i]
+	stem := "u_" + strings.ReplaceAll(src.Key, ".", "_")
+	cols := make([]string, 0, len(keys)+1)
+	cols = append(cols, "[[p.id]] AS [[id]]")
+	for _, key := range keys {
+		column, mapped := part.Columns[key]
+		value, constant := part.Values[key]
+		switch {
+		case mapped:
+			cols = append(cols, fmt.Sprintf("[[p.%s]] AS [[%s]]", column, key))
+		case constant:
+			name := fmt.Sprintf("%s_%d_%s", stem, i, key)
+			params[name] = value
+			cols = append(cols, fmt.Sprintf("{:%s} AS [[%s]]", name, key))
+		default:
+			cols = append(cols, fmt.Sprintf("NULL AS [[%s]]", key))
+		}
+	}
+	return strings.Join(cols, ", ")
 }
 
 // mergeParams copies src into dst for a statement that holds several rule

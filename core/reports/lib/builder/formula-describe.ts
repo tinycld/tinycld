@@ -40,6 +40,7 @@ const WORDS: Partial<Record<string, string>> = {
     month: 'month of',
     fiscalYear: 'fiscal year of',
     fiscalPeriod: 'fiscal period of',
+    startOfMonth: 'first day of the month of',
     not: 'not',
 }
 

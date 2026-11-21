@@ -119,7 +119,7 @@ func handleRun(re *core.RequestEvent) error {
 	if err := decodeStrict(re, &body, "a report run"); err != nil {
 		return err
 	}
-	raw, err := requestSpec(re, body.Spec, body.ReportID)
+	raw, live, err := requestRun(re, body.Spec, body.ReportID)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func handleRun(re *core.RequestEvent) error {
 	}
 	res, err := Run(re.Request.Context(), re.App, Request{
 		Spec: spec, Loaded: loaded, Params: body.Params, Options: body.Options,
-		Auth: re.Auth, Headers: ruleHeaders(re.Request.Header),
+		Auth: re.Auth, Headers: ruleHeaders(re.Request.Header), Live: live,
 	})
 	if err != nil {
 		return runError(re, err)
@@ -155,38 +155,54 @@ func decodeStrict(re *core.RequestEvent, into any, what string) error {
 	return nil
 }
 
-// requestSpec is a request's spec: the posted draft, or a saved report's
-// spec read through its view rule. Never both.
+// requestSpec returns only the spec bytes. The param-options endpoint reads a
+// posted spec or a saved report too, but needs only the spec bytes, not the
+// record or whether the run is live, so it takes this instead of requestSource.
 func requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, error) {
+	raw, _, err := requestSource(re, spec, reportID)
+	return raw, err
+}
+
+// requestRun returns the spec and whether the run stays live over a NotLive
+// source. Only a saved report that a package ships as Live keeps it live, and
+// only while it still holds the shipped spec. A posted draft never does, so
+// the builder's preview of such a report runs manually.
+func requestRun(re *core.RequestEvent, spec json.RawMessage, reportID string) (raw []byte, live bool, err error) {
+	raw, rec, err := requestSource(re, spec, reportID)
+	if err != nil || rec == nil {
+		return raw, false, err
+	}
+	return raw, shippedLive(rec), nil
+}
+
+// requestSource reads the spec of a run request: a posted draft, or a saved
+// report the caller can view. It refuses both or neither, so a request never
+// runs a spec the caller did not mean. It returns the saved record, nil for a
+// draft, so requestRun can check the shipped state only for a saved report.
+func requestSource(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, *core.Record, error) {
 	switch {
 	case reportID != "" && spec != nil:
-		return nil, re.BadRequestError("The request has a spec or a reportId, not both.", nil)
+		return nil, nil, re.BadRequestError("The request has a spec or a reportId, not both.", nil)
 	case reportID != "":
-		return viewableSpec(re, reportID)
+		rec, err := viewableReport(re, reportID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return specBytes(rec), rec, nil
 	case spec == nil:
-		return nil, re.BadRequestError("The request has no spec and no reportId.", nil)
+		return nil, nil, re.BadRequestError("The request has no spec and no reportId.", nil)
 	}
-	return []byte(spec), nil
+	return []byte(spec), nil, nil
 }
 
 const noAccess = "You cannot view this report."
 
-// viewableSpec reads a saved report's spec for the caller, through the
+// viewableReport reads a saved report record for the caller, through the
 // reports view rule as PocketBase's view API applies it. A report that does
 // not exist answers as one the caller cannot view, so an id tells nobody
 // whether a report exists. Any other failure, such as a database error or a
 // rule that cannot be built, is a server fault: it is logged and answered
 // 500, never as a refusal.
-func viewableSpec(re *core.RequestEvent, id string) ([]byte, error) {
-	rec, err := viewableReport(re, id)
-	if err != nil {
-		return nil, err
-	}
-	return specBytes(rec), nil
-}
-
-// viewableReport reads a saved report record for the caller, with
-// viewableSpec's check and answers.
 func viewableReport(re *core.RequestEvent, id string) (*core.Record, error) {
 	ctx := re.Request.Context()
 	col, err := re.App.FindCachedCollectionByNameOrId(reportsCollection)

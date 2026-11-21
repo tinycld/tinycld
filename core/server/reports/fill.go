@@ -27,6 +27,31 @@ func (lv *level) fillRows() string {
 		strings.Join(prefixed("kx.", lv.keys), ", "), keys, lv.c.fillSets[lv.n], keys, empty)
 }
 
+// totalOverFillRows is true for the total (level 0) of a report that splits by
+// currency, whose first group fills in records, and that adds the rows below
+// it (a "rows" cell). Its rows are grouped by the currency keys, so a run that
+// reads no base row gives it no row, while the fill records still show under
+// the sources' currencies (parentKeys). A currency key with no source
+// currency names none on that row, so the row would add the fill rows'
+// months of several currencies into one figure with no code and no notice:
+// R3 only blanks a sum it can see mixes codes, and a row with no code names
+// none. That total stays as it was, with no cells.
+func (lv *level) totalOverFillRows() bool {
+	if lv.n != 0 || len(lv.c.currencies) == 0 || len(lv.childCells) == 0 || !lv.c.nextFill(0) {
+		return false
+	}
+	return !slices.ContainsFunc(lv.c.currencies, func(ck string) bool { return lv.c.noRowCurrency(ck) == nil })
+}
+
+// noRowTotal is a0's one row when the report reads no base row: the currency
+// keys the fill records sit under (noRowCurrencies), and the level's totals
+// of no rows, as a fill row's are (fillRows). The level then joins the sums
+// of its child rows (rs0) to it as to any other total.
+func (lv *level) noRowTotal() string {
+	empty := fmt.Sprintf("SELECT %s FROM w WHERE 0", strings.Join(append(slices.Clone(lv.aggs), "count(*) AS __n"), ", "))
+	return fmt.Sprintf("SELECT %s, e.* FROM (%s) e WHERE NOT EXISTS (SELECT 1 FROM w)", lv.c.noRowCurrencies(lv.r.s), empty)
+}
+
 // parentKeys selects the parent rows of level n: the currencies for level 1
 // (or one row in the sources' currencies, noRowCurrency, when there are no
 // rows); for a deeper level the rows of level n-1 that show and are open,
@@ -46,7 +71,7 @@ func (c *compiler) parentKeys(s *stmt, n int, expand *expansion) string {
 		cks := strings.Join(c.currencies, ", ")
 		return fmt.Sprintf("SELECT DISTINCT %s FROM w UNION ALL SELECT %s WHERE NOT EXISTS (SELECT 1 FROM w)", cks, c.noRowCurrencies(s))
 	}
-	expanded := expand.mayShowUnder(c, s, n-1, "")
+	expanded := c.fillsUnder(s, n-1, expand)
 	if set, ok := c.fillSets[n-1]; ok {
 		return fmt.Sprintf("SELECT * FROM %s WHERE %s", set, expanded)
 	}
@@ -68,18 +93,26 @@ func (c *compiler) parentKeys(s *stmt, n int, expand *expansion) string {
 // With a plain join SQLite may put the records outer (it reads them in id
 // order for the UNION) and run p, a read of w or of the keyset above, again
 // for each record: records times base rows.
-func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (string, error) {
+//
+// When the records name their own parents (ownParentsOf), p is the currencies
+// only, the keys above are each record's own, and the second result is those
+// records (the CTE fr<n>), which the keysets of the levels above read too.
+func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (string, string, error) {
 	target := c.groupTargets[n-1]
 	if target == nil {
-		return "", invalid(at, "only a group by a link to one record shows records with no rows")
+		return "", "", invalid(at, "only a group by a link to one record shows records with no rows")
 	}
 	sc := newScope(r.s, target)
+	own, err := c.ownKeys(r, sc, target, n)
+	if err != nil {
+		return "", "", err
+	}
 	where, mixed := "", ""
 	if w := c.p.groups[n-1].group.Fill.Where; w != nil {
 		j := &joinCtx{r: r, sc: sc, src: target, isFilter: true, visiting: map[string]bool{}}
-		e, err := compileWhere(&fillCtx{joinCtx: j, n: n}, w, at)
+		e, err := compileWhere(&fillCtx{joinCtx: j, n: n, own: own}, w, at)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		// A blank condition is NULL, which WHERE drops as it drops false.
 		if !e.unset {
@@ -93,6 +126,10 @@ func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (st
 	picked := make([]string, 0, n+len(c.currencies))
 	for i := range n - 1 {
 		keys = append(keys, fmt.Sprintf("k%d", i))
+		if own != nil {
+			picked = append(picked, fmt.Sprintf("%s AS k%d", own[i].sql, i))
+			continue
+		}
 		picked = append(picked, fmt.Sprintf("p.k%d AS k%d", i, i))
 	}
 	keys = append(keys, fmt.Sprintf("k%d", n-1))
@@ -103,25 +140,36 @@ func (c *compiler) fillKeys(r *rowsCTE, n int, expand *expansion, at string) (st
 	}
 	from := strings.TrimPrefix(sc.render(), "FROM ")
 	parents := c.parentKeys(r.s, n, expand)
+	if own != nil {
+		parents = c.ownParentCurrencies(r.s, expand)
+	}
 	if mixed != "" {
 		c.probe(c.p.groups[n-1].at+".fill.where", fmt.Sprintf("SELECT 1 FROM (%s) p\nCROSS JOIN %s\nWHERE %s", parents, from, mixed))
 	}
-	return fmt.Sprintf("SELECT %s FROM w UNION SELECT %s\nFROM (%s) p\nCROSS JOIN %s%s",
-		strings.Join(keys, ", "), strings.Join(picked, ", "), parents, from, where), nil
+	records := fmt.Sprintf("SELECT %s\nFROM (%s) p\nCROSS JOIN %s%s", strings.Join(picked, ", "), parents, from, where)
+	if own != nil {
+		return c.ownFillKeys(r.s, n, n, expand), records, nil
+	}
+	return fmt.Sprintf("SELECT %s FROM w UNION %s", strings.Join(keys, ", "), records), "", nil
 }
 
-// nextFill is true when the group below level n fills in its records, so a
+// nextFill is true when level n+1 has rows with no base row (filled), so a
 // level-n row with no base rows still has rows to open onto.
 func (c *compiler) nextFill(n int) bool {
-	return n < len(c.p.groups) && c.p.groups[n].group.Fill != nil
+	return c.filled(n + 1)
 }
 
 // fillCtx compiles a fill's where: the target's paths (joinCtx on its scope),
 // and the parent row p: {col} naming an enclosing group's column reads that
 // parent's key, {record} naming an enclosing record group reads its record.
+//
+// own, when set, holds the keys of the groups above as the record's own
+// values (ownKeys): there is no parent row to read them from, and each is
+// what the record's row will have.
 type fillCtx struct {
 	*joinCtx
-	n int
+	n   int
+	own []expr
 }
 
 func (f *fillCtx) col(id, at string) (expr, error) {
@@ -130,6 +178,9 @@ func (f *fillCtx) col(id, at string) (expr, error) {
 		g := c.p.groups[i]
 		if g.col.col.ID != id {
 			continue
+		}
+		if f.own != nil {
+			return f.own[i], nil
 		}
 		key := fmt.Sprintf("p.k%d", i)
 		// A bucketed group's key is its bucket's text (2026-01), not a day.
@@ -169,6 +220,9 @@ func (f *fillCtx) record(group string, p Path, at string) (expr, error) {
 		return expr{}, err
 	}
 	key := fmt.Sprintf("p.k%d", gi)
+	if f.own != nil {
+		key = f.own[gi].sql
+	}
 	e := recordExpr(bound)
 	e.sql = recordSQL(f.r.s, target, bound, key)
 	e.cur = recordCurrency(f.r.s, target, bound, key, recordCurrencyID(group, p))

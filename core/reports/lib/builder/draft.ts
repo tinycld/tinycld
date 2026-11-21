@@ -10,6 +10,7 @@ import {
     displayLayoutSchema,
     displayOneLineSchema,
     GROUP_LABEL_TOKEN,
+    LABEL_VALUE_TOKEN,
     type ParamDef,
     paramDefSchema,
     type ReportSpec,
@@ -104,6 +105,10 @@ export function formulaDraft(node: SpecNode, params: readonly ParamDef[]): Formu
 export const openingDraftSchema = z.object({
     label: labelSchema,
     cells: z.record(z.string(), formulaDraftSchema),
+    // The value the label names at `{value}`, and the period a day is cut to. The
+    // builder has no control for them: it keeps them as the spec gave them.
+    labelValue: formulaDraftSchema.optional(),
+    labelBucket: z.enum(BUCKETS).optional(),
 })
 export type OpeningDraft = z.infer<typeof openingDraftSchema>
 
@@ -776,6 +781,9 @@ const OPENING_PIVOT = 'This level never opens, so it has no opening row'
 const ROLLUP_GROUPED = 'A column a group is grouped by shows the group on its total rows'
 const OPENING_LABEL_COLUMN = "The opening row's label fills the first column"
 const OPENING_NESTED = 'A child row column has no opening cell'
+const OPENING_TOKEN_ONCE = `Write ${LABEL_VALUE_TOKEN} once, where the row’s value goes`
+const OPENING_TOKEN_ONLY = `Write some text besides ${LABEL_VALUE_TOKEN}`
+const OPENING_TOKEN_PLAIN = `This row has no value to name: take ${LABEL_VALUE_TOKEN} out of the label`
 
 // bind.go columns and groupsAndPivot: a rollup replaces a recomputed total of the
 // report's own rows, which an unbucketed group's column never has.
@@ -1006,6 +1014,17 @@ function blankDrillMessage(draft: BlankAboveDraft, column: ColumnDraft) {
     return `"${found.drilled.label}" opens a report from the ${rows} rows, where this column is blank: total it up to ${rows} or above`
 }
 
+// bind.go opening: a label that names a value holds the token once, with other
+// text (a run with no value shows the label without it); any other label has none.
+function openingLabelIssue(opening: OpeningDraft): string | undefined {
+    const parts = opening.label.split(LABEL_VALUE_TOKEN)
+    if (!opening.labelValue) {
+        return parts.length > 1 ? OPENING_TOKEN_PLAIN : undefined
+    }
+    if (parts.length !== 2) return OPENING_TOKEN_ONCE
+    return parts.join('').trim() === '' ? OPENING_TOKEN_ONLY : undefined
+}
+
 // bind.go groupsAndPivot: an opening row shows under a level that opens, in the
 // report's own-row columns, with its label in the first.
 function openingIssues(draft: BuilderDraft): Issue[] {
@@ -1016,7 +1035,9 @@ function openingIssues(draft: BuilderDraft): Issue[] {
         const at = ['groups', i, 'opening']
         if (draft.pivot.on && i === draft.groups.length - 1)
             return [{ path: at, message: OPENING_PIVOT }]
-        return Object.keys(group.opening.cells).flatMap((col): Issue[] => {
+        const label = openingLabelIssue(group.opening)
+        const labelIssues: Issue[] = label ? [{ path: [...at, 'label'], message: label }] : []
+        const openingCellIssues = Object.keys(group.opening.cells).flatMap((col): Issue[] => {
             const path = [...at, 'cells', col]
             const column = byId.get(col)
             if (!column) return [{ path, message: `The report has no column "${col}"` }]
@@ -1024,6 +1045,7 @@ function openingIssues(draft: BuilderDraft): Issue[] {
             if (nestDepth(column) > 0) return [{ path, message: OPENING_NESTED }]
             return []
         })
+        return [...labelIssues, ...openingCellIssues]
     })
 }
 
@@ -1338,7 +1360,12 @@ function openingFromSpec(
     const cells = Object.entries(opening.cells ?? {}).map(
         ([col, node]) => [col, formulaDraft(node, params)] as const
     )
-    return { label: opening.label, cells: Object.fromEntries(cells) }
+    return {
+        label: opening.label,
+        cells: Object.fromEntries(cells),
+        ...(opening.labelValue ? { labelValue: formulaDraft(opening.labelValue, params) } : {}),
+        ...(opening.labelBucket ? { labelBucket: opening.labelBucket } : {}),
+    }
 }
 
 // A fill on a group that is not by a link (refused by the server) reads against the
@@ -1541,6 +1568,7 @@ export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[
         if (group.fill.on) paramsInGroup(group.fill.where, read)
         node(group.label?.node)
         for (const cell of Object.values(group.opening?.cells ?? {})) node(cell.node)
+        node(group.opening?.labelValue?.node)
     }
     for (const key of draft.sort) if (key.kind === 'formula') node(key.formula.node)
     for (const item of draft.layout) {
@@ -1603,12 +1631,24 @@ function specSort(draft: BuilderDraft, catalog: Catalog): SpecSortKey[] {
     })
 }
 
-function specOpening(opening: OpeningDraft, ctx: ReportFormulaContext) {
-    if (Object.keys(opening.cells).length === 0) return { label: opening.label }
-    return { label: opening.label, cells: specCells(opening.cells, ctx) }
+// The keys are written in the order spec.go Opening holds them.
+function specOpening(
+    opening: OpeningDraft,
+    ctx: ReportFormulaContext,
+    valueCtx: ReportFormulaContext
+) {
+    const { label, labelValue, labelBucket, cells } = opening
+    return {
+        label,
+        ...(labelValue ? { labelValue: specFormula(labelValue, valueCtx) } : {}),
+        ...(labelBucket ? { labelBucket } : {}),
+        ...(Object.keys(cells).length > 0 ? { cells: specCells(cells, ctx) } : {}),
+    }
 }
 
 function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
+    // An opening row's label value is one value per run, as a heading is.
+    const valueCtx = formulaContext(draft, catalog, { kind: 'heading' })
     return draft.groups.map((g, index) => {
         const level = levelScope(draft, catalog, index)
         const ctx = formulaContext(draft, catalog, { kind: 'level', index })
@@ -1629,7 +1669,7 @@ function specGroups(draft: BuilderDraft, catalog: Catalog): SpecGroup[] {
             ...(having ? { having } : {}),
             ...(g.fill.on ? { fill: where ? { where } : {} } : {}),
             ...(g.open ? { open: true } : {}),
-            ...(g.opening ? { opening: specOpening(g.opening, ctx) } : {}),
+            ...(g.opening ? { opening: specOpening(g.opening, ctx, valueCtx) } : {}),
             ...(g.blank === 'skip' ? { blank: 'skip' as const } : {}),
             ...(g.hideEmpty ? { hideEmpty: true } : {}),
             ...(inline ? { inline } : {}),

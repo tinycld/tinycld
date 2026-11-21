@@ -741,6 +741,29 @@ func (rn *runner) currencyOf(row map[string]any, cur currency) string {
 	return ""
 }
 
+// openingLabel writes the label of an opening row that names a value of the
+// run: the row carries the value typed with the label as its template, and
+// Label holds it as plain text. With no value on this run the token leaves
+// the label, with the spaces around it: the text on its two sides joins with
+// one space, and the rest of the label keeps its spacing.
+func (rn *runner) openingLabel(r *Row, n int, op *Opening) {
+	if op.LabelValue == nil {
+		return
+	}
+	v := rn.openingLabels[n]
+	if v == nil {
+		before, after, _ := strings.Cut(op.Label, LabelValueToken)
+		before, after = strings.TrimRight(before, " "), strings.TrimLeft(after, " ")
+		r.Label = before + after
+		if before != "" && after != "" {
+			r.Label = before + " " + after
+		}
+		return
+	}
+	r.LabelTemplate, r.LabelType, r.LabelValue = op.Label, v.Type, v.Value
+	r.Label = strings.Replace(op.Label, LabelValueToken, valueString(v.Value), 1)
+}
+
 // groupWithLabel emits a group row; subtotal says whether an expanded group
 // ends in a subtotal row (a layout section always does). layoutSection is the
 // layout section the row draws, nil for any other group: its within rows
@@ -775,7 +798,9 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n, depth int, sect
 		LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency, Muted: toInt(row["__muted"]) == 1,
 	}, row)
 	if expanded && opening != nil {
-		rn.push(Row{ID: "opening:" + keyString(key), Kind: KindOpening, Depth: depth + 1, Label: opening.Label, Section: id, GroupKey: key, Cells: rn.openingCells(row, opening)}, row)
+		r := Row{ID: "opening:" + keyString(key), Kind: KindOpening, Depth: depth + 1, Label: opening.Label, Section: id, GroupKey: key, Cells: rn.openingCells(row, opening)}
+		rn.openingLabel(&r, n, opening)
+		rn.push(r, row)
 	}
 	if expanded {
 		if n < len(p.groups) {

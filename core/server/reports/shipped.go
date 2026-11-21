@@ -33,6 +33,11 @@ type Shipped struct {
 	// Unpublished ships the report unpublished: core never publishes it, and
 	// the package shares it with the people who should see it.
 	Unpublished bool
+	// Live keeps this report live though it reads a source that is NotLive:
+	// its runs carry their data topics. Set it only on a report whose run
+	// stays fast on the largest data set. A copy of the report, and the
+	// shipped record after someone changed its spec, are not live.
+	Live bool
 }
 
 var (
@@ -73,6 +78,21 @@ func validateShipped(s Shipped) error {
 		return fmt.Errorf("the spec is not JSON of at most %d bytes", maxSpecBytes)
 	}
 	return nil
+}
+
+// shippedLive reports whether the saved report rec is a shipped report that
+// is registered Live and still holds the shipped spec. Its owner or an
+// editor can change the spec of a shipped record; the changed report is not
+// the one the package measured, so it is not live.
+func shippedLive(rec *core.Record) bool {
+	shippedMu.Lock()
+	s, ok := shipped[rec.GetString("shipped_key")]
+	shippedMu.Unlock()
+	if !ok || !s.Live {
+		return false
+	}
+	_, stored, err := loadStored(s.Spec)
+	return err == nil && sameJSON(specBytes(rec), stored)
 }
 
 func isShipped(key string) bool {

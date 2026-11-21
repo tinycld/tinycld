@@ -5,16 +5,8 @@ import type { HelpTopicId } from '@tinycld/core/lib/help/types'
 import { useHelpTopics } from '@tinycld/core/lib/help/use-help-topics'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { LayerEscape, OverlayPortal, useOverlayLayer } from '@tinycld/core/ui/overlay'
-import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react'
-import {
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    type TextInputInstance,
-    View,
-    type ViewInstance,
-} from 'react-native'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { Pressable, StyleSheet, Text, TextInput, View, type ViewInstance } from 'react-native'
 
 const PALETTE_WIDTH_PX = 560
 const PALETTE_TOP_OFFSET_PX = 96
@@ -58,19 +50,6 @@ export function HelpSearchPalette() {
     // user could type a narrower query and shorten the list out from
     // under the highlight.
     const clampedIndex = results.length === 0 ? 0 : Math.min(selectedIndex, results.length - 1)
-
-    const inputRef = useRef<TextInputInstance>(null)
-
-    useEffect(() => {
-        if (!isOpen) return
-        // Focus the input on open. RN's TextInput needs a microtask
-        // before its DOM node is mounted under the portal, so we defer
-        // via requestAnimationFrame.
-        const raf = requestAnimationFrame(() => {
-            inputRef.current?.focus()
-        })
-        return () => cancelAnimationFrame(raf)
-    }, [isOpen])
 
     // Anything outside the card closes it — matches Spotlight. The card is
     // state from a callback ref so the layer sees the node once it mounts.
@@ -121,7 +100,7 @@ export function HelpSearchPalette() {
             <LayerEscape onEscape={close} />
             <PaletteOverlay>
                 <PaletteCard cardRef={setCard}>
-                    <SearchField inputRef={inputRef} value={query} onChange={setQuery} />
+                    <SearchField value={query} onChange={setQuery} />
                     <ResultList
                         results={results}
                         query={query}
@@ -195,17 +174,19 @@ function PaletteCard({
 }
 
 interface SearchFieldProps {
-    inputRef: RefObject<TextInputInstance | null>
     value: string
     onChange: (v: string) => void
 }
 
-function SearchField({ inputRef, value, onChange }: SearchFieldProps) {
+// Focus at mount, in the commit that shows the palette (see the search
+// palette's SearchField): a focus deferred to a later frame lost the first
+// keys typed.
+function SearchField({ value, onChange }: SearchFieldProps) {
     const placeholderColor = useThemeColor('muted-foreground')
     return (
         <View className="px-4 pt-4 pb-2">
             <TextInput
-                ref={inputRef}
+                autoFocus
                 value={value}
                 onChangeText={onChange}
                 placeholder="Search help topics…"

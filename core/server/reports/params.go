@@ -596,7 +596,7 @@ func paramExpr(c fctx, v paramValue) (expr, error) {
 			if err != nil {
 				return expr{}, err
 			}
-			return expr{sql: list, typ: Text, list: true, unset: v.unset}, nil
+			return expr{sql: list, typ: Text, list: true, unset: v.unset, listed: v.list}, nil
 		}
 	case ParamAmount:
 		if v.unset {

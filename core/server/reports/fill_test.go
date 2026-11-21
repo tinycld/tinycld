@@ -277,7 +277,10 @@ func TestFillRowsTotalNoRows(t *testing.T) {
 }
 
 // A fill's where reads an enclosing group's record and params; a where on an
-// unset param fills in every record the reader may list.
+// unset param fills in every record the reader may list. The site group reads
+// only the animal, so each animal names its own site: East has an animal (Eli)
+// and no feeding, and Kit has no site, so it sits under "(none)", where a
+// feeding of Kit would sit ("eq" holds for two blanks).
 func TestFillWhereReadsTheParentRecordAndParams(t *testing.T) {
 	z := newZoo(t)
 	withEmptyAnimals(t, z)
@@ -293,7 +296,9 @@ func TestFillWhereReadsTheParentRecordAndParams(t *testing.T) {
 		"sort":[{"formula":{"record":"s","path":[{"field":"name"}]}},{"formula":{"record":"a","path":[{"field":"name"}]}}]}`
 	sites := Options{Expand: [][]any{{z.id("north"), "USD"}, {z.id("south"), "USD"}}}
 	all := z.run(t, "ann", spec, sites, nil)
-	requireRows(t, all, "label", "North", "Leo", "Lia", "South", "Zed", "Total")
+	requireRows(t, all, "label", "East", "North", "Leo", "Lia", "South", "Zed", "(none)", "Total")
+	open := Options{Expand: [][]any{{z.id("east"), "USD"}, {nil, "USD"}}}
+	requireRows(t, z.run(t, "ann", spec, open, nil), "label", "East", "Eli", "North", "South", "(none)", "Kit", "Total")
 	zebras := z.run(t, "ann", spec, sites, map[string]string{"sp": `"zebra"`})
 	requireRows(t, zebras, "label", "North", "Leo", "South", "Zed", "Total")
 }

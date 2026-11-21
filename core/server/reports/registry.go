@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -108,6 +109,16 @@ type Field struct {
 	// Currency, for a Money field, is the key of a Text field of the same
 	// source that holds each row's currency code. "" uses Source.Currency.
 	Currency string
+	// SameCurrencyAs, on a Text field that a Money field of this source names
+	// as its Currency, names the currency field of another source,
+	// "<source key>.<field key>": the two fields hold the code of one currency
+	// (a stored summary of rows and the rows themselves, say). Amounts of the
+	// two sources then combine as amounts of one currency field do, and the
+	// engine still checks the codes on each row: where they differ the amount
+	// is blank and the run says so. The named field declares no SameCurrencyAs
+	// itself; CheckSources refuses a source whose declaration names no
+	// registered currency field.
+	SameCurrencyAs string
 	// Options label a Select field's values.
 	Options []Option
 	// TextDay, on a Date field, reads a text column that holds a day as
@@ -186,6 +197,11 @@ type Source struct {
 	// read. A run that reads this source subscribes to them too, so a
 	// settings change runs an open report again.
 	Watch []string
+	// NotLive marks a source too large to read again on every change. A run
+	// that reads one of this source's collections is Manual: it carries no
+	// data topics, so it runs again only when the reader asks. A shipped
+	// report with Live set is the exception.
+	NotLive bool
 }
 
 var (
@@ -341,6 +357,18 @@ func validateField(src *Source, f *Field) error {
 		i := slices.IndexFunc(src.Fields, func(c Field) bool { return c.Key == f.Currency })
 		if i < 0 || src.Fields[i].Type != Text {
 			return fmt.Errorf("currency field %q is not a text field of this source", f.Currency)
+		}
+	}
+	if f.SameCurrencyAs != "" {
+		names := func(m Field) bool { return m.Type == Money && m.Currency == f.Key }
+		dot := strings.LastIndex(f.SameCurrencyAs, ".")
+		switch {
+		case f.Type != Text || !slices.ContainsFunc(src.Fields, names):
+			return fmt.Errorf("only a currency field of a money field names another source's currency field")
+		case dot < 0 || !sourceKeyRe.MatchString(f.SameCurrencyAs[:dot]) || !memberKeyRe.MatchString(f.SameCurrencyAs[dot+1:]):
+			return fmt.Errorf("the same-currency field %q must look like \"<source key>.<field key>\"", f.SameCurrencyAs)
+		case f.SameCurrencyAs[:dot] == src.Key:
+			return fmt.Errorf("the same-currency field %q is a field of this source", f.SameCurrencyAs)
 		}
 	}
 	// The engine never adds amounts it cannot tell apart by currency.

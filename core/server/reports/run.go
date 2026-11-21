@@ -81,6 +81,10 @@ type Request struct {
 	// run computes every group level again. 0: maxPage. Only the export read
 	// sets it; the run endpoint never does.
 	PageCap int
+	// Live keeps the run's data topics though it reads a source that is
+	// NotLive. Only the run endpoint sets it, for a shipped report that is
+	// registered Live.
+	Live bool
 }
 
 // Result is the run's answer, in the shell's ReportModel row shape.
@@ -89,6 +93,10 @@ type Result struct {
 	Rows    []Row          `json:"rows"`
 	Notices []Notice       `json:"notices"`
 	Topics  []string       `json:"topics"`
+	// Manual is set when the run reads a source that is NotLive and the
+	// request is not Live: Topics is then empty, and the reader runs the
+	// report again by hand.
+	Manual bool `json:"manual,omitzero"`
 	// Heading is what the report prints above its title: the base source's
 	// Heading, or "" for the organization's name.
 	Heading string `json:"heading,omitempty"`
@@ -225,6 +233,11 @@ type Row struct {
 	LabelType     FieldType `json:"labelType,omitempty"`
 	LabelValue    any       `json:"labelValue,omitempty"`
 	LabelCurrency string    `json:"labelCurrency,omitempty"`
+	// LabelTemplate is set on an opening row whose label names a value of the
+	// run (Opening.LabelValue): the label with LabelValueToken where the value
+	// goes. LabelType and LabelValue then hold the value, which a view
+	// formats and puts in the token's place; Label has it as plain text.
+	LabelTemplate string `json:"labelTemplate,omitempty"`
 }
 
 type Notice struct {
@@ -296,6 +309,8 @@ type runner struct {
 	// askedPageCap is the request's PageCap (0: runLimits.maxPage); read it
 	// through pageLimit.
 	askedPageCap int
+	// live is the request's Live.
+	live bool
 	// openDropped is set once a detail row's open value was dropped, so a run
 	// logs a bad open path once, not once per row.
 	openDropped bool
@@ -312,6 +327,9 @@ type runner struct {
 	// ruleTopics holds the topics of each rule CTE select the run read, so
 	// its statements explain each rule once.
 	ruleTopics map[string][]string
+	// ruleAnswers holds the answer of each rule probe the run asked
+	// (askRules), so its statements ask each rule once.
+	ruleAnswers map[string]bool
 	// pivotValues are the pivot's columns, from its first pass, and
 	// pivotLabels their records' labels for a pivot over a link.
 	pivotValues []pivotValue
@@ -328,6 +346,9 @@ type runner struct {
 	mixedConditions []string
 	// headings are the run's column headings by column id (readHeadings).
 	headings map[string]*ColumnHeading
+	// openingLabels are the run's opening label values by group level
+	// (readHeadings); a level whose value is blank on this run has none.
+	openingLabels map[int]*ColumnHeading
 	// A run that pages its group rows (pagedGroups) reads its cursor into
 	// groupCur, with each level's order terms (groupShape), the detail sort
 	// keys (groupKeys) and the fingerprint its cursors carry (groupFP).
@@ -346,6 +367,12 @@ type runner struct {
 	// shown are the groups whose first details earlier pages showed, up to
 	// which detail row (shownBefore, readShownNow).
 	shown []held
+	// reachCut is true when the page's detail statement may leave out the
+	// rows of the open groups its page cannot reach (leafRows): its select
+	// holds no percent of the whole report, which reads the rows of every
+	// group, and probes no condition, which is probed over every open group of
+	// the page. It is not compiler.leafCut, which cuts w to the open groups.
+	reachCut bool
 	// readDetails is set when the detail pass ran: such a run always had a
 	// page, even one that fits.
 	readDetails bool
@@ -393,9 +420,9 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	}
 	defer endRead()
 	rn := &runner{
-		ctx: ctx, app: app, db: db, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap,
+		ctx: ctx, app: app, db: db, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap, live: req.Live,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
-		topics: map[string]bool{}, ruleTopics: map[string][]string{},
+		topics: map[string]bool{}, ruleTopics: map[string][]string{}, ruleAnswers: map[string]bool{},
 	}
 	if req.Loaded != nil {
 		rn.loadNotices(req.Loaded)
@@ -568,17 +595,27 @@ func (rn *runner) run() error {
 	rn.markMixedLookups()
 	// A source's Go hooks read collections no statement reads, so their
 	// topics are added by name.
-	for _, src := range Sources(rn.app) {
-		reads := slices.ContainsFunc(src.collections(), func(c string) bool {
+	all := Sources(rn.app)
+	reads := func(src Source) bool {
+		return slices.ContainsFunc(src.collections(), func(c string) bool {
 			return rn.topics[changesignal.Topic(c)]
 		})
-		if reads {
+	}
+	for _, src := range all {
+		if reads(src) {
 			for _, w := range src.Watch {
 				rn.topics[changesignal.Topic(w)] = true
 			}
 		}
 	}
 	rn.res.Topics = make([]string, 0, len(rn.topics))
+	// A manual run follows no data: its topics stay empty. This is decided
+	// after every Watch is added, so a watched collection counts as read
+	// whatever the order of the sources.
+	if !rn.live && slices.ContainsFunc(all, func(src Source) bool { return src.NotLive && reads(src) }) {
+		rn.res.Manual = true
+		return nil
+	}
 	for t := range rn.topics {
 		rn.res.Topics = append(rn.res.Topics, t)
 	}
@@ -617,9 +654,12 @@ var checkTopics func(ctx context.Context, app core.App, sql string, params dbx.P
 // readRows runs one read statement with the rule CTEs and ctes through db
 // under the run time limit; with topics (a run's cache of each rule's
 // topics), it also returns the change-signal topics of every collection the
-// statement reads.
-func readRows(ctx context.Context, app core.App, db dbx.Builder, s *stmt, ctes []string, body string, topics map[string][]string) ([]map[string]any, []string, error) {
+// statement reads. A rule that one answer serves is asked through db before
+// the statement is written (askRules); answers is a run's map of them, nil
+// for a read that is no part of a run.
+func readRows(ctx context.Context, app core.App, db dbx.Builder, s *stmt, ctes []string, body string, topics map[string][]string, answers map[string]bool) ([]map[string]any, []string, error) {
 	ctes = materializeShared(ctes, body)
+	s.ask = askRules(ctx, db, answers)
 	with, err := s.with(ctes...)
 	if err != nil {
 		return nil, nil, err
@@ -659,7 +699,7 @@ func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, 
 	if db == nil {
 		db = rn.app.DB()
 	}
-	rows, topics, err := readRows(rn.ctx, rn.app, db, s, ctes, body, rn.ruleTopics)
+	rows, topics, err := readRows(rn.ctx, rn.app, db, s, ctes, body, rn.ruleTopics, rn.ruleAnswers)
 	for _, t := range topics {
 		rn.topics[t] = true
 	}
@@ -770,6 +810,7 @@ func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	if _, rn.groupKeys, err = c.detailSelect(keysOf, "w"); err != nil {
 		return nil, err
 	}
+	rn.reachCut = !c.detailWholeReport && len(c.detailSortMixed) == 0
 	rn.groupFP = groupFingerprint(c.groupLevels(), c.inlineLevels(), levelShape(rn.groupShape), foldPrint(rn.expand), rn.groupKeys)
 	if rn.opts.Cursor != "" {
 		cur, err := readGroupCursor(rn.groupFP, rn.groupShape, rn.groupKeys, len(c.p.groups), len(c.currencies), rn.opts.Cursor)
@@ -1490,8 +1531,10 @@ func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, bo
 // detailPass runs the detail statement: one row per base row, a page at a
 // time. Without groups a page follows the detail order; with groups it holds
 // the rows of the open innermost groups (leaves) in document order: the
-// groups' order, then the detail order (R9b). Window values are computed
-// before the page is cut, so a running value goes on across pages. Rows under
+// groups' order, then the detail order (R9b). Window values, sort keys and
+// what they read are computed before the page is cut, so a running value goes
+// on across pages; a row's other lookups and its cells are computed for the
+// page's rows (pagedCells). Rows under
 // a hidden group are left out before any running value reads them.
 func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	c := rn.c
@@ -1509,28 +1552,40 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 		table = "ws"
 		shown = append(shown, "ws AS (SELECT w.* FROM w WHERE "+c.inShown(m, "w")+")")
 	}
+	limit := rn.pageLimit()
+	paged := rn.pagedGroups()
+	// A page of two or more open groups computes only the rows of the groups
+	// it can reach (leafRows), when its select lets it (reachCut).
+	cut, all := paged && rn.reachCut && len(leaves) > 1 && !legacySQL.everyLeafRows, table
+	if cut {
+		table = "wl"
+	}
 	sel, order, err := c.detailSelect(r, table)
 	if err != nil {
 		return nil, err
 	}
-	limit := rn.pageLimit()
 	rn.readDetails = true
 	grouped := len(c.p.groups) > 0
-	paged := rn.pagedGroups()
 	// With open leaves, w reads only the base rows that can be in one of them
 	// (leafCut), so it reads gord, which then comes first. heldCTEs is the CTE
 	// list readShownNow reads a held group over: one with every row of w, as
-	// a held group may be no leaf of this page.
+	// a held group may be no leaf of this page. Both lists end with the
+	// reached rows (leafRows) the select reads as wl: over the cut w they are
+	// the same rows of each open group, and over the whole w they also keep
+	// the shown row of a held group that is no leaf (away).
 	whole := append([]string{r.render()}, shown...)
 	ctes, heldCTEs := whole, whole
 	if paged || grouped {
 		gord := c.leafOrder(s, leaves)
-		r.cut = c.leafCut(r, leaves, m > 0, c.detailWin || win)
-		if r.cut != "" {
-			ctes = append([]string{gord, r.render()}, shown...)
-		} else {
-			ctes = append(slices.Clone(whole), gord)
-			heldCTEs = ctes
+		var reached []string
+		if cut {
+			held, away := rn.heldLeaves(leaves)
+			reached = c.leafRows(s, all, held, away, limit+1)
+		}
+		heldCTEs = slices.Concat(whole, []string{gord}, reached)
+		ctes = heldCTEs
+		if r.cut = c.leafCut(r, leaves, m > 0, c.detailWin || win); r.cut != "" {
+			ctes = slices.Concat([]string{gord, r.render()}, shown, reached)
 		}
 	}
 	// The group cursor's fingerprint and values hold the sort keys the group
@@ -1543,14 +1598,14 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	var where string
 	switch {
 	case paged:
-		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
+		from = c.leafFrom(sel)
 		by = "d.__g, " + by
 		if err = rn.readShownNow(s, heldCTEs, sel, order); err == nil {
 			where = rn.pagedDetailAfter(s, order, leaves)
 		}
 	case grouped:
 		levels = c.groupLevels()
-		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
+		from = c.leafFrom(sel)
 		by = "d.__g, " + by
 		rn.page = &groupedPage{}
 		where, rn.page.after, err = groupedAfter(s, levels, order, rn.opts.Cursor, leaves)
@@ -1561,6 +1616,10 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 		return nil, err
 	}
 	body := fmt.Sprintf("SELECT * FROM %s WHERE %s ORDER BY %s LIMIT %s", from, where, by, limitSQL(int64(limit+1)))
+	// The cells that nothing below the cut reads are computed for the page.
+	if c.detailCells != nil {
+		body = c.detailCells(body, by)
+	}
 	rows, err := rn.query(s, ctes, body)
 	if err != nil {
 		return nil, err
@@ -1652,12 +1711,9 @@ func (rn *runner) readShownNow(s *stmt, ctes []string, sel string, keys []sortKe
 	rn.shown = shown
 	var ids []string
 	at := map[string]int{}
-	for i, h := range shown {
-		if moved[i] {
-			id, _ := h.Values[len(h.Values)-1].(string)
-			ids = append(ids, s.bind(id))
-			at[id] = i
-		}
+	for _, m := range movedShown(shown, moved) {
+		ids = append(ids, s.bind(m.id))
+		at[m.id] = m.at
 	}
 	if len(ids) == 0 {
 		return nil
@@ -1779,17 +1835,143 @@ func (c *compiler) leafOrder(s *stmt, leaves [][]any) string {
 	return fmt.Sprintf("gord AS MATERIALIZED (SELECT %s FROM json_each(%s))", strings.Join(cols, ", "), s.bind("["+strings.Join(encoded, ",")+"]"))
 }
 
-// leafJoin matches a detail row (d) to its open group by each key value with
-// IS, so a blank key matches a blank one, as a group row's key reads.
-func (c *compiler) leafJoin() string {
+// leafJoin matches a detail row to its open group by each key value with IS,
+// so a blank key matches a blank one, as a group row's key reads. row is what
+// stands before a key's name on the row's side: "d." or "+d.".
+func (c *compiler) leafJoin(row string) string {
 	on := make([]string, 0, len(c.p.groups)+len(c.currencies))
 	for i := range c.p.groups {
-		on = append(on, fmt.Sprintf("d.k%d IS gord.g%d", i, i))
+		on = append(on, fmt.Sprintf("%sk%d IS gord.g%d", row, i, i))
 	}
 	for j, ck := range c.currencies {
-		on = append(on, fmt.Sprintf("d.%s IS gord.g%d", ck, len(c.p.groups)+j))
+		on = append(on, fmt.Sprintf("%s%s IS gord.g%d", row, ck, len(c.p.groups)+j))
 	}
 	return strings.Join(on, " AND ")
+}
+
+// leafFrom is the detail rows (sel) with each row's open group: __g, the
+// group's place in document order. The rows are read once, and each finds its
+// group through the index SQLite builds on gord (an automatic index):
+//   - CROSS JOIN fixes the join order in SQLite. Left to the planner, the
+//     open groups were read first, and a key that is not a stored column of
+//     the rows (a link's id, read from the joined row) is in no index of the
+//     rows: every open group read every row.
+//   - The unary + takes the column affinity off a key. A term that compares
+//     with a column's affinity cannot use an index on gord, whose values (out
+//     of json_extract) have none. A key and its group's value have the same
+//     storage class, so the comparison gives the same answer without it.
+func (c *compiler) leafFrom(sel string) string {
+	return fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d %s) d", sel, c.leafOn("d"))
+}
+
+// leafOn joins the rows read as alias to their open group, as leafFrom
+// explains.
+func (c *compiler) leafOn(alias string) string {
+	join, on := c.leafTerms(alias)
+	return join + " gord ON " + on
+}
+
+// leafTerms are the join and the condition of leafOn.
+func (c *compiler) leafTerms(alias string) (join, on string) {
+	join, row := "CROSS JOIN", "+"+alias+"."
+	if legacySQL.plannedLeafJoin {
+		join, row = "JOIN", alias+"."
+	}
+	return join, c.leafJoin(row)
+}
+
+// leafRows is the CTEs of the rows a page's detail statement computes: wl,
+// the rows of table under the open groups the page can reach. A page shows
+// its rows in the groups' order and holds at most want of them, so it ends in
+// the first group at which the groups up to it hold want rows (gcut, NULL
+// when all of them hold fewer: every group is read). The rows of the groups
+// after it would be sorted, and their running values computed, to be thrown
+// away. A group in held (its place in gord) shows only its rows after a
+// cursor: its rows count as none, and it is read wherever it is, so the rows
+// readShownNow asks for are there.
+//
+// A group the cursor holds that is not a leaf of the page (it moved after
+// the page's groups) has no rows in gord. readShownNow still reads its shown
+// row (an id in away) for the sort values the next cursor holds, so wl keeps
+// that row too: the rows are joined to gord with a LEFT JOIN, and a row with
+// no open group is kept by its id. The page's own join to gord leaves it
+// out of the page.
+//
+// What the select reads of other rows is the same over wl: a running value
+// and a percent of the parent read the rows of the row's own group, all of
+// which wl holds, and a keyed layer reads its group keys. A sort key is no
+// running value (notASortKey), so a row kept by its id alone has its own
+// sort values. A percent of the whole report reads every group's rows, and a
+// probed condition is probed over every open group: neither select is cut
+// (runner.reachCut).
+func (c *compiler) leafRows(s *stmt, table string, held []int, away []string, want int) []string {
+	on := c.leafOn("w")
+	counted, kept := "", ""
+	if len(held) > 0 {
+		places := make([]string, len(held))
+		for i, at := range held {
+			places[i] = s.bind(int64(at))
+		}
+		in := strings.Join(places, ", ")
+		counted, kept = " WHERE gord.__g NOT IN ("+in+")", " OR gord.__g IN ("+in+")"
+	}
+	rowsOn := on
+	if len(away) > 0 {
+		ids := make([]string, len(away))
+		for i, id := range away {
+			ids[i] = s.bind(id)
+		}
+		_, cond := c.leafTerms("w")
+		rowsOn = "LEFT JOIN gord ON " + cond
+		kept += " OR (gord.__g IS NULL AND w.__id IN (" + strings.Join(ids, ", ") + "))"
+	}
+	return []string{
+		// The integer LIMIT literal of limitSQL is approved by the human
+		// (2026-11-21).
+		fmt.Sprintf("gcut AS MATERIALIZED (SELECT MIN(c.__g) AS __g FROM (SELECT n.__g AS __g, SUM(n.n) OVER (ORDER BY n.__g ROWS UNBOUNDED PRECEDING) AS seen FROM (SELECT gord.__g AS __g, COUNT(*) AS n FROM %s w %s%s GROUP BY gord.__g) n) c WHERE c.seen >= %s)",
+			table, on, counted, limitSQL(int64(want))),
+		fmt.Sprintf("wl AS MATERIALIZED (SELECT w.* FROM %s w %s WHERE gord.__g <= COALESCE((SELECT __g FROM gcut), gord.__g)%s)", table, rowsOn, kept),
+	}
+}
+
+// heldLeaves are the places in leaves of the groups whose first details
+// earlier pages showed (shownBefore), and away the ids of the shown rows
+// readShownNow reads of such groups that are not leaves.
+func (rn *runner) heldLeaves(leaves [][]any) (held []int, away []string) {
+	shown, moved := rn.shownBefore()
+	movedAt := map[int]string{}
+	for _, m := range movedShown(shown, moved) {
+		movedAt[m.at] = m.id
+	}
+	for i, h := range shown {
+		if at := slices.IndexFunc(leaves, func(k []any) bool { return keyString(k) == keyString(h.Group) }); at >= 0 {
+			held = append(held, at)
+		} else if id, ok := movedAt[i]; ok {
+			away = append(away, id)
+		}
+	}
+	return held, away
+}
+
+// movedShownRow is the shown row of a moved group: its place in shownBefore's
+// list and the id its values end at.
+type movedShownRow struct {
+	at int
+	id string
+}
+
+// movedShown is the one rule that names the shown rows read by id: those of
+// the moved groups of shownBefore. readShownNow reads them and heldLeaves
+// keeps them in wl, so a change here moves both.
+func movedShown(shown []held, moved []bool) []movedShownRow {
+	var out []movedShownRow
+	for i, h := range shown {
+		if moved[i] {
+			id, _ := h.Values[len(h.Values)-1].(string)
+			out = append(out, movedShownRow{at: i, id: id})
+		}
+	}
+	return out
 }
 
 // groupedAfter selects the detail rows after a grouped report's cursor: the
@@ -1860,12 +2042,20 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		parent: append(prefixed("w.", c.currencies), keys...),
 		total:  prefixed("w.", c.currencies),
 		recs:   newRecordJoins(r.s, "w"),
+		paged:  !legacySQL.cellsBeforeThePage,
 	}
 	visiting := map[string]bool{}
 	labels := newLabelRefs(c, r.s, frame, "w")
 	c.detailWheres = nil
 	var order []sortKey
 	sel := []string{"w.__id AS __id"}
+	// early names the values of sel that are read before the page is cut:
+	// the sort keys and the probe marks.
+	var early []earlyCol
+	before := func(sql, name string) {
+		early = append(early, earlyCol{at: len(sel), name: name})
+		sel = append(sel, sql+" AS "+name)
+	}
 	for _, k := range append(keys, prefixed("w.", c.currencies)...) {
 		sel = append(sel, k+" AS "+strings.TrimPrefix(k, "w."))
 	}
@@ -1891,24 +2081,24 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		// either (typ "").
 		if ref, ok := c.sortLabel(labels, s, e); ok {
 			key := labelOrder(r.s, ref.value)
-			sel = append(sel, key+" AS "+name)
+			before(key, name)
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@label"})
 			inFrame("("+key+" IS NULL)", key+dirOf(s.desc))
 			name = name + "_id"
 		} else if key, ok := shownOrder(r.s.bind, e); ok {
-			sel = append(sel, key+" AS "+name)
+			before(key, name)
 			order = append(order, sortKey{name: name, desc: s.desc, col: col + "@shown", typ: Text})
 			inFrame("("+key+" IS NULL)", key+dirOf(s.desc))
 			name = name + "_value"
 		}
-		sel = append(sel, e.sql+" AS "+name)
+		before(e.sql, name)
 		order = append(order, sortKey{name: name, desc: s.desc, col: col, typ: e.typ})
 		inFrame("("+e.sql+" IS NULL)", e.sql+dirOf(s.desc))
 		// A spec key over a sum that met two currencies sorts as blank there;
 		// a viewer key sorts by a column, whose blank cell is named already.
 		if m := e.blankFor(); spec && m != "" {
 			mx := fmt.Sprintf("__smx%d", len(c.detailSortMixed))
-			sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", m, mx))
+			before(fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END)", m), mx)
 			c.detailSortMixed = append(c.detailSortMixed, condProbe{at: s.at, sql: mx})
 		}
 		return nil
@@ -1983,11 +2173,88 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 	// show, as a sort key over a mixed sum is.
 	for i, w := range c.detailWheres {
 		mx := fmt.Sprintf("__wmx%d", i)
-		sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", w.sql, mx))
+		before(fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END)", w.sql), mx)
 		c.detailSortMixed = append(c.detailSortMixed, condProbe{at: w.at, sql: mx})
 	}
+	rows, cells := pagedCells(frame, table, sel, early)
+	c.detailCells = cells
+	c.detailWholeReport = frame.wholeReport
 	c.detailWin = frame.win
-	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"), order, nil
+	return rows, order, nil
+}
+
+// The CTEs of a page's cells: the page cut, and the layers above the cut.
+const (
+	pageCTE  = "wpage"
+	cellsCTE = "wcells"
+)
+
+// earlyCol is a value of the detail select that is read before the page is
+// cut: its place in the select list and its name.
+type earlyCol struct {
+	at   int
+	name string
+}
+
+// pagedCells writes the detail select (sel over table, read as w) so that a
+// row's own lookups run for the rows of the page only. rows is the select the
+// page is cut from: every row with its sort keys and probe marks (early), its
+// running values and percents, and the hoisted layers one of those reads.
+// cells writes the statement of a page cut from rows (page, ordered by by):
+// the other layers and the cells, over the page's rows.
+//
+// cells is nil, and rows is the whole select, when no layer would move above
+// the cut, or when a value read before the cut reads a running value (a
+// lookup's where over one).
+func pagedCells(frame *windowFrame, table string, sel []string, early []earlyCol) (rows string, cells func(page, by string) string) {
+	whole := frame.inline("SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"))
+	if !frame.paged {
+		return whole, nil
+	}
+	texts := slices.Clone(frame.windows)
+	for _, e := range early {
+		texts = append(texts, sel[e.at])
+	}
+	isEarly := frame.earlyLayers(texts)
+	if !slices.Contains(isEarly, false) {
+		return whole, nil
+	}
+	for i, h := range frame.hoisted {
+		if isEarly[i] {
+			texts = append(texts, h.cols...)
+		}
+	}
+	if slices.ContainsFunc(texts, windowRef.MatchString) {
+		return whole, nil
+	}
+	first, last := []string{"w.*"}, slices.Clone(sel)
+	for _, e := range early {
+		first = append(first, sel[e.at])
+		last[e.at] = "w." + e.name + " AS " + e.name
+	}
+	for i, sql := range frame.windows {
+		first = append(first, fmt.Sprintf("%s AS ww%d", sql, i))
+	}
+	rows = "SELECT " + strings.Join(first, ", ") + " FROM " +
+		frame.layers(frame.rows(table, "w"), table+" w", "w", func(i int) bool { return isEarly[i] })
+	return rows, func(page, by string) string {
+		cols := last
+		if strings.HasPrefix(by, "d.__g") {
+			cols = append(slices.Clone(last), "w.__g AS __g")
+		}
+		from := frame.layers("(SELECT * FROM "+pageCTE+") w", table+" w", "w", func(i int) bool { return !isEarly[i] })
+		// Both selects are materialized. SQLite flattens a layer select into
+		// the select that reads it and writes a hoisted value's expression in
+		// each place that reads it (the Split count twice, a beginning balance
+		// in every cell), so the layers are a CTE of their own: each hoisted
+		// value is one column, computed once for a page row. The page is a CTE
+		// too, or SQLite flattens it (it has a LIMIT) into the layers and runs
+		// the lookups for every row again. The CTEs sit in the body's select,
+		// not in the statement's list, so materializeShared does not count
+		// their reads of w and a detail page with no groups keeps w inline.
+		return fmt.Sprintf("SELECT * FROM (WITH %s AS MATERIALIZED (%s), %s AS MATERIALIZED (SELECT * FROM %s) SELECT %s FROM %s w) d ORDER BY %s",
+			pageCTE, page, cellsCTE, from, strings.Join(cols, ", "), cellsCTE, by)
+	}
 }
 
 // carriedCell is the currency a column's value e carries on a row (a record's
@@ -2364,6 +2631,9 @@ func (c *compiler) compileAll() error {
 		return err
 	}
 	if _, err := c.headings(s); err != nil {
+		return err
+	}
+	if _, err := c.openingLabels(s); err != nil {
 		return err
 	}
 	for _, d := range p.spec.Params {
