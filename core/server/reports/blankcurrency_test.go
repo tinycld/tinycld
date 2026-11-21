@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -62,6 +63,43 @@ func TestABlankMismatchedCellCarriesNoCurrency(t *testing.T) {
 		t.Fatalf("want a blank detail, group and total row, got %d blank rows", blank)
 	}
 	requireNoCurrencyWhereBlank(t, res, "rolled", "USD")
+}
+
+// A formula that reads a row's value is blank on a group and a total row
+// (it has no value there), and a blank cell names no currency: the sum of
+// the lines' debits added to a stored month looked up by the group's account,
+// in the record-leaf and the outer-leaf form. The bank group (USD lines, EUR
+// month) is blank on its detail rows too.
+func TestAUnreadFormulaCellCarriesNoCurrency(t *testing.T) {
+	for name, account := range map[string]string{
+		"record leaf": `{"record":"g","path":[{"field":"id"}]}`,
+		"outer leaf":  `{"outer":[{"link":"account"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			z := newZoo(t)
+			withBalanceZoo(t, z)
+			withLedgerMonths(t, z, "zoo.ledger_lines.currency")
+			months := strings.ReplaceAll(monthsOf, "ACCOUNT", account)
+			spec := `{"version":4,"source":"zoo.ledger_lines","columns":[
+				{"id":"acct","path":[{"link":"account"}]},
+				{"id":"day","path":[{"field":"date"}]},
+				{"id":"rolled","formula":{"op":"add","args":[{"op":"sum","args":[{"path":[{"field":"debit"}]}]},` + months + `]}}],
+				"filter":{"op":"eq","args":[{"path":[{"field":"posted"}]},{"value":true}]},
+				"groups":[{"id":"g","col":"acct"}],
+				"sort":[{"col":"acct"},{"col":"day"}]}`
+			res := z.run(t, "ann", spec, Options{ExpandAll: true}, nil)
+			blankGroups := 0
+			for _, r := range res.Rows {
+				if r.Kind != KindDetail && r.Cells["rolled"] == nil {
+					blankGroups++
+				}
+			}
+			if blankGroups == 0 {
+				t.Fatalf("want a blank group or total row: %v", rowsOf(res, "rolled"))
+			}
+			requireNoCurrencyWhereBlank(t, res, "rolled", "USD")
+		})
+	}
 }
 
 // A count of a sum lookup is a number: it carries no currency on any row,

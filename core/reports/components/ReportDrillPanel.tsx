@@ -24,6 +24,7 @@ import { DRILL_KEY, RECORD_KEY } from '../lib/view-url'
 import { ReportControls } from './ReportControls'
 import { ReportDocumentHeader } from './ReportDocumentHeader'
 import { REPORT_TAP_TARGET, ReportBackLink } from './ReportHeader'
+import { ReportManualBand } from './ReportManualBand'
 import { ReportNotices } from './ReportNotices'
 import { MessageBody } from './ReportStates'
 import { ReportBody } from './ReportView'
@@ -195,6 +196,7 @@ function DrillReport({ view, targetId }: { view: ReportViewModel; targetId: stri
     return (
         <View className="min-h-0 flex-1">
             <ReportControls model={view} isSortMenuShown={table.layout.kind === 'blocks'} />
+            <ReportManualBand run={view.run} idPrefix="report-drill" />
             <ReportNotices
                 notices={view.notices}
                 layoutNotice={layoutNotice}

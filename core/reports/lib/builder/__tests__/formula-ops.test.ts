@@ -371,6 +371,7 @@ describe('what a part offers where it sits', () => {
             'case',
             'coalesce',
             'fiscalPeriod',
+            'startOfMonth',
             'diffDays',
         ]
         for (const p of offered) expect(parts).toContain(p)

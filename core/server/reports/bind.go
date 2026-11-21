@@ -371,8 +371,12 @@ func (b *binder) columns(p *plan) {
 		}
 		if c.Rollup != nil {
 			switch {
-			case c.Total == TotalRows:
-				b.bad(at+".rollup", `a rollup replaces the column's totals: it does not go with total "rows"`)
+			case c.Total == TotalRows && len(p.spec.Groups) == 0:
+				b.bad(at+".rollup", `with total "rows" a rollup is the cell of the innermost group's rows: the report needs a group`)
+			case c.Total == TotalRows && p.spec.Pivot != nil:
+				b.bad(at+".rollup", `a rollup does not go with total "rows" in a report with a pivot`)
+			case c.Total == TotalRows && len(p.spec.Layout) > 0 && len(p.spec.Groups) < 2:
+				b.bad(at+".rollup", `with total "rows" and a layout a rollup is the cell of the rows under a section: the report needs a group below the section group`)
 			case cp.nest > 0:
 				b.bad(at+".rollup", "a child row column has no totals to replace")
 			}
@@ -504,6 +508,9 @@ func (b *binder) formulaSizes(p *plan) {
 			check(fmt.Sprintf("groups.%d.muted", i), p.nodeSize(n, memo, map[string]bool{}, true))
 		}
 		if o := p.spec.Groups[i].Opening; o != nil {
+			if n := o.LabelValue; n != nil {
+				check(fmt.Sprintf("groups.%d.opening.labelValue", i), p.nodeSize(n, memo, map[string]bool{}, true))
+			}
 			for _, id := range o.cellIDs() {
 				if n := o.Cells[id]; n != nil {
 					check(fmt.Sprintf("groups.%d.opening.cells.%s", i, id), p.nodeSize(n, memo, map[string]bool{}, true))
@@ -1037,12 +1044,30 @@ func (b *binder) pivotRange(p *plan, pp *pivotPlan) {
 }
 
 // opening checks a group's opening row: a label of 1 to maxLabel characters,
-// and cells only in the report's columns after the first, whose cell the
-// label fills, and not in a child row column. A cell's type and currency are
-// checked where it compiles, on its level (level.openingCells).
+// which holds LabelValueToken once exactly when the row has a label value; a
+// label bucket only with a label value; and cells only in the report's columns
+// after the first, whose cell the label fills, and not in a child row column.
+// A cell's type and currency are checked where it compiles, on its level
+// (level.openingCells).
 func (b *binder) opening(p *plan, op *Opening, at string) {
-	if n := characters(op.Label); n < 1 || n > maxLabel {
+	tokens := strings.Count(op.Label, LabelValueToken)
+	switch n := characters(op.Label); {
+	case n < 1 || n > maxLabel:
 		b.bad(at+".label", fmt.Sprintf("an opening row has a label of 1 to %d characters", maxLabel))
+	case op.LabelValue == nil && tokens > 0:
+		b.bad(at+".label", fmt.Sprintf("%s in an opening row's label needs a labelValue", LabelValueToken))
+	case op.LabelValue != nil && tokens != 1:
+		b.bad(at+".label", fmt.Sprintf("an opening row with a labelValue has %s once in its label", LabelValueToken))
+	case op.LabelValue != nil && strings.TrimSpace(strings.Replace(op.Label, LabelValueToken, "", 1)) == "":
+		// A run with no value leaves the token out: the row still needs a name.
+		b.bad(at+".label", fmt.Sprintf("an opening row's label has text besides %s", LabelValueToken))
+	}
+	switch {
+	case op.LabelBucket == "":
+	case op.LabelValue == nil:
+		b.bad(at+".labelBucket", "a labelBucket needs a labelValue")
+	case bucketType(op.LabelBucket) == "":
+		b.bad(at+".labelBucket", "a labelBucket is day, month, quarter, year or fiscalYear")
 	}
 	for _, id := range op.cellIDs() {
 		cellAt := at + ".cells." + id

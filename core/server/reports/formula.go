@@ -62,6 +62,20 @@ type expr struct {
 	// link is, in a lookup's where, the stored relation column a path that
 	// ends at a to-one link follows to read sql; eq bounds that column too.
 	link storedLink
+	// day is, in a lookup's where, the stored column a Date field of the
+	// looked-up row itself is read from; a comparison of it with a day bounds
+	// that column too (lookupDayBound).
+	day storedDay
+	// bound is, on a condition in a lookup's where, bounds on stored columns of
+	// the looked-up row that hold on every row the condition holds for. Only
+	// and passes it up (a row an and holds for passes each of its terms), and
+	// only lookupIn reads it, on the where itself. "" for any other value.
+	bound string
+	// bounds is an and's bound term by term (nested ands flattened); bound is
+	// their join. A union part holds each term it stores (partWhere), so a
+	// part that cannot hold one term still holds the others. nil on a single
+	// term, whose one bound is bound.
+	bounds []string
 	// scan is a sum lookup's value, mixed check and currency as one select
 	// over the looked-up rows (columns u, m, c), for a context that computes
 	// the lookup once in a CTE (layoutCtx.lookup). "" for any other value.
@@ -74,13 +88,33 @@ type expr struct {
 	zoned, zonedFrom, zonedTo *zonedDay
 }
 
+// boundTerms is e's bound term by term: an and's terms, or e's one bound.
+func (e expr) boundTerms() []string {
+	if len(e.bounds) > 0 {
+		return e.bounds
+	}
+	if e.bound != "" {
+		return []string{e.bound}
+	}
+	return nil
+}
+
 // storedLink is the stored relation column (col) a link path reads its
 // value (sql) through, in the lookup scope sc; a copy of the expr whose sql
-// changed no longer reads through it.
+// changed no longer reads through it. eqs collects the bounds eq writes on
+// col for the lookup the where belongs to (linkEq), nil when it keeps none.
 type storedLink struct {
 	col, sql string
 	sc       *scope
+	eqs      *[]linkEq
+	// part is the link's column of a union source, under partLink: no one
+	// stored column, so eq bounds each part of the union instead (partLinkBound).
+	part string
 }
+
+// storedDay is the stored column (col) a Date field of a lookup's own row is
+// read from as sql; a copy of the expr whose sql changed no longer reads it.
+type storedDay struct{ col, sql string }
 
 // currency is where a money value's currency comes from: a currency key of w
 // (the ck<n> that holds each row's currency), a source's fixed currency, or a
@@ -174,12 +208,14 @@ func combined(values []expr, at string) (currency, error) {
 // ratio does not combine (combined refuses other amounts in two currencies
 // only for an amount), so the currencies are checked on each row. Where they
 // are known and differ, a comparison compares the amount AND the currency (ne
-// is true, every other comparison false) and anything else is blank. A missing
-// currency (an empty link, a record outside its group) is not a second
-// currency: the comparison is as within one. sql is e's unchanged when the
-// values are in one currency source, or when neither a param with a currency,
-// a comparison nor a ratio is among them.
-func currencyGuard(c fctx, op string, values []expr, sql string) string {
+// is true, every other comparison false) and anything else is blank: mixed is
+// true there, so a sum over it is blank too and the run names it (R3). A
+// missing currency (an empty link, a record outside its group) is not a
+// second currency: the value is as within one. sql is e's unchanged and mixed
+// "" when the values are in one currency source, or when neither a param with
+// a currency, a comparison nor a ratio is among them; a comparison has no
+// mixed.
+func currencyGuard(c fctx, op string, values []expr, sql string) (string, string) {
 	var curs []currency
 	param := false
 	for _, v := range values {
@@ -190,20 +226,27 @@ func currencyGuard(c fctx, op string, values []expr, sql string) string {
 		param = param || v.cur.param != ""
 	}
 	if len(curs) < 2 || !(param || conditionOps[op] || op == "div") {
-		return sql
+		return sql, ""
 	}
 	codes := make([]string, len(curs))
 	for i, cur := range curs {
 		codes[i] = c.currencySQL(cur)
+	}
+	if !conditionOps[op] {
+		var differ []string
+		for i, a := range codes {
+			for _, b := range codes[i+1:] {
+				differ = append(differ, fmt.Sprintf("(%s IS NOT NULL AND %s IS NOT NULL AND %s <> %s)", a, b, a, b))
+			}
+		}
+		mixed := "(" + strings.Join(differ, " OR ") + ")"
+		return "(CASE WHEN " + mixed + " THEN NULL ELSE " + sql + " END)", mixed
 	}
 	same := make([]string, 0, len(codes)-1)
 	for _, code := range codes[1:] {
 		same = append(same, codes[0]+" IS "+code)
 	}
 	one := strings.Join(same, " AND ")
-	if !conditionOps[op] {
-		return "(CASE WHEN " + one + " THEN " + sql + " END)"
-	}
 	known := make([]string, len(codes))
 	for i, code := range codes {
 		known[i] = code + " IS NOT NULL"
@@ -212,7 +255,7 @@ func currencyGuard(c fctx, op string, values []expr, sql string) string {
 	if op == "ne" {
 		apart = "1"
 	}
-	return fmt.Sprintf("(CASE WHEN %s AND NOT (%s) THEN %s ELSE %s END)", strings.Join(known, " AND "), one, apart, sql)
+	return fmt.Sprintf("(CASE WHEN %s AND NOT (%s) THEN %s ELSE %s END)", strings.Join(known, " AND "), one, apart, sql), ""
 }
 
 // fieldGuard is an amount e made of values whose currencies are read from
@@ -638,7 +681,9 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 	}
 	// Amounts are compared, divided, and combined with an amount param only
 	// in one currency (R29): a USD budget never compares with EUR cents.
-	e.sql = currencyGuard(c, n.Op, args, e.sql)
+	var mixed string
+	e.sql, mixed = currencyGuard(c, n.Op, args, e.sql)
+	e.mixed = orSQL(e.mixed, mixed)
 	if c.filter() && conditionOps[n.Op] && slices.ContainsFunc(args, func(a expr) bool { return a.unset }) {
 		return unsetCondition, nil
 	}
@@ -861,10 +906,10 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if n.Op == "ne" {
 			return expr{sql: "(" + args[0].sql + " IS NOT " + args[1].sql + ")", typ: Bool}, nil
 		}
-		if sql := linkedEq(n, args); sql != "" {
+		if sql := linkedEq(c, n, args); sql != "" {
 			return expr{sql: sql, typ: Bool}, nil
 		}
-		return expr{sql: "(" + args[0].sql + " IS " + args[1].sql + ")", typ: Bool}, nil
+		return expr{sql: "(" + args[0].sql + " IS " + args[1].sql + ")", typ: Bool, bound: partLinkBound(c, n, args)}, nil
 	case "lt", "lte", "gt", "gte":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err
@@ -875,9 +920,14 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if e, ok := zonedCompare(c, n.Op, args[0], args[1]); ok {
 			return e, nil
 		}
-		return expr{sql: "(" + args[0].sql + " " + comparisons[n.Op] + " " + args[1].sql + ")", typ: Bool}, nil
+		return expr{sql: "(" + args[0].sql + " " + comparisons[n.Op] + " " + args[1].sql + ")", typ: Bool, bound: lookupDayBound(c, n, args)}, nil
 	case "between":
-		return between(c, args, at)
+		e, err := between(c, args, at)
+		if err != nil {
+			return expr{}, err
+		}
+		e.bound = lookupDayBound(c, n, args)
+		return e, nil
 	case "in":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err
@@ -894,6 +944,7 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{}, err
 		}
 		parts := make([]string, 0, len(args))
+		var bounds []string
 		for i, a := range args {
 			if a.typ != Bool && a.typ != "" {
 				return expr{}, invalid(fmt.Sprintf("%s.args.%d", at, i), n.Op+" needs conditions")
@@ -901,11 +952,16 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			if !a.unset {
 				parts = append(parts, a.sql)
 			}
+			// A row an and holds for passes each of its terms, so it is inside
+			// each term's bounds. An or passes none up.
+			if n.Op == "and" && !a.unset {
+				bounds = append(bounds, a.boundTerms()...)
+			}
 		}
 		if len(parts) == 0 {
 			return unsetCondition, nil
 		}
-		return expr{sql: "(" + strings.Join(parts, " "+strings.ToUpper(n.Op)+" ") + ")", typ: Bool}, nil
+		return expr{sql: "(" + strings.Join(parts, " "+strings.ToUpper(n.Op)+" ") + ")", typ: Bool, bound: strings.Join(bounds, " AND "), bounds: bounds}, nil
 	case "not":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err
@@ -961,6 +1017,17 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 			return expr{sql: "date(" + args[0].sql + ", printf('%+d days', " + count + "))", typ: Date}, nil
 		}
 		return expr{sql: "tc_add_months(" + args[0].sql + ", " + count + ")", typ: Date}, nil
+	case "startOfMonth":
+		if err := argc(1, 1); err != nil {
+			return expr{}, err
+		}
+		if !isDateLike(args[0].typ) {
+			return expr{}, invalid(at+".args.0", "startOfMonth needs a date")
+		}
+		// A day's first 8 characters are its year and month with both dashes.
+		// A blank day stays blank: a NULL day gives NULL, and NULLIF turns an
+		// empty text into NULL too, so NULL || the bound day is NULL.
+		return expr{sql: "(NULLIF(substr(" + args[0].sql + ", 1, 8), '') || " + c.bind("01") + ")", typ: Date}, nil
 	case "diffDays":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err

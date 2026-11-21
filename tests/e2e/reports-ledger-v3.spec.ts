@@ -563,7 +563,15 @@ test.describe('general-ledger: report engine v3', () => {
         await p.getByTestId('report-builder-group-0-open').click()
         const o = 'report-builder-group-0-opening'
         await p.getByTestId(o).click()
+        // This report gives the row no value to name, so the label takes no {value}.
+        const noValue = p.getByText(
+            'This row has no value to name: take {value} out of the label',
+            { exact: true }
+        )
+        await p.getByTestId(`${o}-label`).fill('Brought {value}')
+        await expect(noValue).toBeVisible()
         await p.getByTestId(`${o}-label`).fill('Brought forward')
+        await expect(noValue).toBeHidden()
         await p.getByTestId(`${o}-cell-amount-add`).click()
         const cell = `${o}-cell-amount-formula`
         await chooseOption(p, `${cell}-root-part`, 'sum')

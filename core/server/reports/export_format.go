@@ -719,13 +719,17 @@ func (f *exportFormatter) typedLabelText(t FieldType, value any, currency string
 	return f.CellText(ResultColumn{Type: t, Currency: currency}, Row{Kind: KindDetail, Cells: map[string]any{}}, value).Text
 }
 
-// RowLabel is rowLabelText (format.ts): a typed label formatted, a
-// subtotal's with "Total " before it; else the row's label.
+// RowLabel is rowLabelText (format.ts): a typed label formatted, in its
+// template's token when the row has one, a subtotal's with "Total " before
+// it; else the row's label.
 func (f *exportFormatter) RowLabel(row Row) string {
 	if row.LabelType == "" || row.LabelValue == nil {
 		return row.Label
 	}
 	text := f.typedLabelText(row.LabelType, row.LabelValue, row.LabelCurrency)
+	if row.LabelTemplate != "" {
+		return strings.Replace(row.LabelTemplate, LabelValueToken, text, 1)
+	}
 	if row.Kind == KindSubtotal {
 		return "Total " + text
 	}

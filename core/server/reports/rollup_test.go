@@ -81,11 +81,35 @@ func TestARollupAddsALookedUpAmountOfItsColumnsField(t *testing.T) {
 	requireRows(t, res, "cost@currency", "USD", "USD", "USD", "USD", "USD", "USD", "USD")
 }
 
-func TestARollupIsRefusedWithRowsTotals(t *testing.T) {
+// With total "rows" a rollup is the cell of the innermost group's rows; a
+// report with no group has no such row, so its rollup would never show.
+func TestARollupWithRowsTotalsNeedsAGroup(t *testing.T) {
 	app := withZooRegistry(t)
-	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"cost","path":[{"field":"cost"}],"aggregate":"sum",
-		"total":"rows","rollup":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}}]}`))
-	requireSpecError(t, err, 400, "columns.0.rollup", `a rollup replaces the column's totals: it does not go with total "rows"`)
+	const columns = `"columns":[{"id":"animal","path":[{"link":"animal"}]},{"id":"cost","path":[{"field":"cost"}],
+		"total":"rows","rollup":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}}]`
+	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings",`+columns+`}`))
+	requireSpecError(t, err, 400, "columns.1.rollup", `with total "rows" a rollup is the cell of the innermost group's rows: the report needs a group`)
+	if err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings",`+columns+`,"groups":[{"id":"g","col":"animal"}]}`)); err != nil {
+		t.Fatalf("Validate with a group = %v", err)
+	}
+}
+
+// A pivot's columns make their own figures from a column's totals; a rollup
+// that shows on one level only is not defined there. A layout's sections add
+// the rows under them, so the rollup needs a group below the section group: on
+// a section row itself each section would carry its own currency, and a
+// computed row could not add two of them.
+func TestARollupWithRowsTotalsIsRefusedWithAPivotOrOnALayoutSection(t *testing.T) {
+	app := withZooRegistry(t)
+	const cost = `{"id":"cost","path":[{"field":"cost"}],"total":"rows","rollup":{"op":"sum","args":[{"path":[{"field":"cost"}]}]}}`
+	err := Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"species","path":[{"link":"animal"},{"field":"species"}]},`+cost+`],
+		"groups":[{"id":"g","col":"species"}],"layout":[{"section":"cats","title":"Lions","key":"lion"}]}`))
+	requireSpecError(t, err, 400, "columns.1.rollup",
+		`with total "rows" and a layout a rollup is the cell of the rows under a section: the report needs a group below the section group`)
+	err = Validate(app, loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"month","path":[{"field":"fed"}]},
+		{"id":"grams","path":[{"field":"grams"}],"aggregate":"sum"},`+cost+`],
+		"groups":[{"id":"m","col":"month","bucket":"month"}],"pivot":{"path":[{"link":"animal"}],"cell":"grams"}}`))
+	requireSpecError(t, err, 400, "columns.2.rollup", `a rollup does not go with total "rows" in a report with a pivot`)
 }
 
 func TestARollupIsRefusedOnAChildRowOrPivotCellColumn(t *testing.T) {

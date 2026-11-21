@@ -35,7 +35,10 @@ func CheckSources(app core.App) error {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if problems := checkSource(app, sources[key]); len(problems) > 0 {
+		var problems []string
+		problems = append(problems, checkSource(app, sources[key])...)
+		problems = append(problems, checkSameCurrency(sources[key])...)
+		if len(problems) > 0 {
 			refused[key] = strings.Join(problems, "; ")
 		}
 	}
@@ -66,6 +69,35 @@ func CheckSources(app core.App) error {
 		}
 	}
 	return errors.New("reports: " + strings.Join(lines, "; "))
+}
+
+// checkSameCurrency checks each SameCurrencyAs of src: it names a text field
+// of a registered source that a money field there names as its currency, and
+// that field declares none itself, so two fields that share a currency have
+// one name (currencyField). It runs under mu (read) and reads no database.
+func checkSameCurrency(src *Source) []string {
+	var problems []string
+	for _, f := range src.Fields {
+		if f.SameCurrencyAs == "" {
+			continue
+		}
+		dot := strings.LastIndex(f.SameCurrencyAs, ".")
+		target, key := sources[f.SameCurrencyAs[:dot]], f.SameCurrencyAs[dot+1:]
+		msg := ""
+		switch {
+		case target == nil:
+			msg = fmt.Sprintf("same-currency source %q is not registered", f.SameCurrencyAs[:dot])
+		case target.field(key) == nil || target.field(key).Type != Text ||
+			!slices.ContainsFunc(target.Fields, func(m Field) bool { return m.Type == Money && m.Currency == key }):
+			msg = fmt.Sprintf("%q is not the currency field of a money field", f.SameCurrencyAs)
+		case target.field(key).SameCurrencyAs != "":
+			msg = fmt.Sprintf("%q names %q itself: name that field", f.SameCurrencyAs, target.field(key).SameCurrencyAs)
+		}
+		if msg != "" {
+			problems = append(problems, fmt.Sprintf("field %q: %s", f.Key, msg))
+		}
+	}
+	return problems
 }
 
 // checkSource runs under mu (read).

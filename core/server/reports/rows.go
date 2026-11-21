@@ -94,6 +94,10 @@ type compiler struct {
 	// fillSets names the keyset CTE (f<L>) of each level whose group fills in
 	// its records (fillKeys); the level below joins its records to its rows.
 	fillSets map[int]string
+	// fillOwn is set when the first filled group's records name their own
+	// parents (ownParentsOf): they show under their own parent rows, also
+	// when no base row made that parent.
+	fillOwn *ownParents
 	// expanding holds the params whose group references are being expanded,
 	// so options whose where reads such a param back are refused, not
 	// expanded forever.
@@ -108,6 +112,13 @@ type compiler struct {
 	// such a sum, and the lookups' wheres on its rows that may (rowsCtx
 	// probeWhere): sql names the select's column that is 1 where one did.
 	detailSortMixed []condProbe
+	// detailCells writes the statement of a page cut from the detail select
+	// last built, when that select leaves cells to compute for the page's
+	// rows only (pagedCells); nil when it holds every cell.
+	detailCells func(page, by string) string
+	// detailWholeReport is true when the detail select last built holds a
+	// percent of the whole report (windowFrame.wholeReport).
+	detailWholeReport bool
 	// detailWheres are the lookups' wheres the detail select being built
 	// probes on each of its rows (whereProber): sql is true on a row where
 	// one was unknown.
@@ -240,6 +251,10 @@ type rowsCTE struct {
 	// filterMixed is the filter's condMixed: true on a row where a sum
 	// lookup the filter reads met two currencies.
 	filterMixed string
+	// bounds are the bounds on the base table's stored columns that the filter
+	// implies (filterBounds), "" for none: w's WHERE holds them before the
+	// filter, so SQLite reads the base rows through an index on them.
+	bounds string
 	// wheres are the lookups' wheres compiled on the report's base rows (in
 	// w or in the filter) that may be unknown on one (whereProber); the
 	// group statement probes them (probeWheres).
@@ -318,11 +333,13 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 	c.p.spec.drillNodes(func(n *Node, _ string) { r.formulaCurrencies(n) })
 	c.groupTargets = make([]*Source, len(c.p.groups))
 	c.groupOptions, c.groupShown = make([][]Option, len(c.p.groups)), make([]bool, len(c.p.groups))
+	keyTypes := make([]FieldType, len(c.p.groups))
 	for i, g := range c.p.groups {
 		e, err := r.rowValue(g.col, g.at+".col", map[string]bool{})
 		if err != nil {
 			return nil, err
 		}
+		keyTypes[i] = e.typ
 		if g.group.Bucket != "" {
 			if e.typ != Date && e.typ != DateTime {
 				return nil, invalid(g.at+".bucket", "only a date column has a bucket")
@@ -352,6 +369,7 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 		}
 		r.add(fmt.Sprintf("k%d", i), e.sql)
 	}
+	c.fillOwn = c.ownParentsOf(keyTypes)
 	// The filter compiles once the currency keys are known, so an amount it
 	// reads by path has the key a column of it has (joinCtx.path).
 	if f := c.p.spec.Filter; f != nil {
@@ -363,6 +381,9 @@ func (c *compiler) rows(s *stmt) (*rowsCTE, error) {
 			return nil, invalid("filter", "the filter is a condition")
 		}
 		r.filter, r.filterMixed = e.sql, e.condMixed
+		if r.bounds, err = c.filterBounds(r); err != nil {
+			return nil, err
+		}
 	}
 	r.valueCurrencies()
 	r.pivotKey()
@@ -493,10 +514,16 @@ func (r *rowsCTE) pathCurrency(p *pathPlan) currency {
 
 // currencyField names the currency field of p's amount for combining (R24):
 // "<source key>.<currency field key>", "" for a value that is not an amount
-// or an amount with no currency field.
+// or an amount with no currency field. A currency field that declares
+// SameCurrencyAs takes the name of the field it names, so amounts of the two
+// sources have one name: they combine (currency.same) and fieldGuard checks
+// their codes on each row.
 func currencyField(p *pathPlan) string {
 	if p.field.Type != Money || p.field.Currency == "" {
 		return ""
+	}
+	if cur := p.src.field(p.field.Currency); cur != nil && cur.SameCurrencyAs != "" {
+		return cur.SameCurrencyAs
 	}
 	return p.src.Key + "." + p.field.Currency
 }
@@ -625,11 +652,17 @@ func (r *rowsCTE) render() string {
 		cols[i] = r.raw[name] + " AS " + name
 	}
 	sql := "w AS (SELECT " + strings.Join(cols, ", ") + "\n" + r.root.render()
+	// The bounds come before the filter, so SQLite reads the base rows
+	// through an index on them; the cut comes after both, on its own.
+	where := r.filter
+	if r.bounds != "" && r.filter != "" {
+		where = r.bounds + " AND " + r.filter
+	}
 	switch {
-	case r.filter != "" && r.cut != "":
-		sql += "\nWHERE (" + r.filter + ") AND " + r.cut
-	case r.filter != "":
-		sql += "\nWHERE " + r.filter
+	case where != "" && r.cut != "":
+		sql += "\nWHERE (" + where + ") AND " + r.cut
+	case where != "":
+		sql += "\nWHERE " + where
 	case r.cut != "":
 		sql += "\nWHERE " + r.cut
 	}
@@ -639,22 +672,33 @@ func (r *rowsCTE) render() string {
 // rowsRead finds a read of the report rows CTE w (not ws or w2).
 var rowsRead = regexp.MustCompile(`(?:FROM|JOIN) w\b`)
 
-// materializeShared makes w MATERIALIZED when a group statement (its body
-// names __level) reads it twice or more (one read per group level, the
-// fills): SQLite otherwise computes the rows, and reads the rule under them,
-// once per read. A detail page keeps w inline, also when a probe reads it a
-// second time, so it can stop at its LIMIT. The rule CTEs are never
-// materialized: a correlated lookup must keep searching the table by its
-// index.
+// materializeShared makes w MATERIALIZED when a statement reads it twice or
+// more: SQLite otherwise computes the rows, and reads the rule under them,
+// once per read. A group statement (its body names __level) counts every
+// read (one per group level, the fills). Any other statement (a detail page,
+// the Total row's statement, a read of the rows shown now, a probe of the
+// conditions) counts only the reads of its other CTEs (a section's fills,
+// its aggregates, the sorted rows, the levels under the Total row): two of
+// them mean the statement computes every row of w before its page, so one
+// copy costs less than a read each. A CTE the body does not reach still
+// counts, so w becomes a full copy and the page no longer stops at its LIMIT;
+// no caller writes such a CTE today. A detail page whose only
+// reads are its body's (the page, a probe) keeps w inline, so it can stop at
+// its LIMIT. The rule CTEs are never materialized: a correlated lookup must
+// keep searching the table by its index.
 func materializeShared(ctes []string, body string) []string {
-	if !strings.Contains(body, "__level") {
+	grouped := strings.Contains(body, "__level")
+	if !grouped && legacySQL.inlineDetailRows {
 		return ctes
 	}
 	for i, cte := range ctes {
 		if !strings.HasPrefix(cte, "w AS (") {
 			continue
 		}
-		reads := len(rowsRead.FindAllString(body, -1))
+		reads := 0
+		if grouped {
+			reads = len(rowsRead.FindAllString(body, -1))
+		}
 		for j, other := range ctes {
 			if j != i {
 				reads += len(rowsRead.FindAllString(other, -1))

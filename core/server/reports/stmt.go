@@ -275,23 +275,32 @@ func fieldSQL(alias string, f *Field) string {
 type scope struct {
 	s     *stmt
 	src   *Source
-	from  string // "r0 t1"
 	alias string
 	joins map[string]string
 	sql   []string
 	tms   []*tmSub
+	// partBounds are the bounds a union scope's rows lie inside, each written
+	// on partLink and partDay columns (boundedFrom).
+	partBounds []string
 }
 
 // newScope reads src's rule CTE as "FROM r<n> <alias>" (and join as
 // "JOIN r<n> <alias>"): stmt.topics finds the collections a statement reads by
-// that form (ruleRef).
+// that form (ruleRef). A union's rule CTE is registered (and so sent) only
+// when a read of the scope uses it (from): a scope whose reads are all
+// bounded reads its parts' collection rule CTEs alone (boundedFrom).
 func newScope(s *stmt, src *Source) *scope {
-	alias := s.alias("t")
-	return &scope{
-		s: s, src: src, alias: alias,
-		from:  s.sourceRule(src) + " " + alias,
-		joins: map[string]string{},
+	sc := &scope{s: s, src: src, alias: s.alias("t"), joins: map[string]string{}}
+	if len(src.Parts) == 0 || legacySQL.noPartBounds {
+		sc.from()
 	}
+	return sc
+}
+
+// from is the scope's rows read whole from its source's rule CTE: "r0 t1".
+// It registers the rule CTE on first use.
+func (sc *scope) from() string {
+	return sc.s.sourceRule(sc.src) + " " + sc.alias
 }
 
 // join follows to-one hops from the scope's base and returns the alias of
@@ -332,11 +341,90 @@ func (sc *scope) value(p *pathPlan) expr {
 
 // sql renders the FROM clause, its joins and its to-many subqueries.
 func (sc *scope) render() string {
-	parts := append([]string{"FROM " + sc.from}, sc.sql...)
+	parts := append([]string{"FROM " + sc.boundedFrom()}, sc.sql...)
 	for _, tm := range sc.tms {
 		parts = append(parts, tm.render())
 	}
 	return strings.Join(parts, "\n")
+}
+
+// partLink and partDay are the aliases a part bound names a union source's
+// key under before the part is known: a to-one link's column, and a Date
+// field's. partWhere puts each part's own column in their place.
+const (
+	partLink = "__partlink"
+	partDay  = "__partday"
+)
+
+var partColRef = regexp.MustCompile(`\[\[__part(link|day)\.([A-Za-z0-9_]+)\]\]`)
+
+// boundedFrom is the scope's FROM. A union scope with part bounds reads its
+// own union in place of the union's rule CTE: each part is read from its
+// collection's rule CTE with the bounds it can hold in its WHERE, on the
+// part's own columns. SQLite moves no condition on the union's rows into its
+// parts, so a bound outside the union reads every row of every part; inside a
+// part, an index of the part's table serves it. The rows are the rule CTE's
+// rows inside the bounds: the columns and the list rules are the same.
+func (sc *scope) boundedFrom() string {
+	if len(sc.partBounds) == 0 || len(sc.src.Parts) == 0 || sc.s.app == nil || legacySQL.noPartBounds {
+		return sc.from()
+	}
+	wheres := make([]string, len(sc.src.Parts))
+	bounded := false
+	for i, part := range sc.src.Parts {
+		wheres[i] = partWhere(sc.s.app, part, sc.partBounds)
+		bounded = bounded || wheres[i] != ""
+	}
+	if !bounded {
+		return sc.from()
+	}
+	keys := sc.src.unionKeys()
+	selects := make([]string, len(sc.src.Parts))
+	for i, part := range sc.src.Parts {
+		selects[i] = "SELECT " + unionPartCols(sc.src, i, keys, sc.s.params) + " FROM " + sc.s.rule(part.Collection) + " p"
+		if wheres[i] != "" {
+			selects[i] += " WHERE " + wheres[i]
+		}
+	}
+	return "(" + strings.Join(selects, "\nUNION ALL\n") + ") " + sc.alias
+}
+
+// partWhere is the bounds one part of a union holds, joined with AND: each
+// bound whose every key the part maps to a column its collection stores (a
+// single relation for a link, text or a PocketBase date for a day; never a
+// view's column, which may hold NULL). A part that cannot hold a bound reads
+// its rows without it: the rows stay right, only slower.
+func partWhere(app core.App, part SourcePart, bounds []string) string {
+	col, err := app.FindCachedCollectionByNameOrId(part.Collection)
+	if err != nil || col.IsView() {
+		return ""
+	}
+	var held []string
+	for _, bound := range bounds {
+		ok := true
+		sql := partColRef.ReplaceAllStringFunc(bound, func(ref string) string {
+			m := partColRef.FindStringSubmatch(ref)
+			kinds := []string{core.FieldTypeRelation}
+			if m[1] == "day" {
+				kinds = []string{core.FieldTypeText, core.FieldTypeDate, core.FieldTypeAutodate}
+			}
+			field := col.Fields.GetByName(part.Columns[m[2]])
+			if field == nil || !slices.Contains(kinds, field.Type()) {
+				ok = false
+				return ref
+			}
+			// A multi-select relation holds a JSON array, never an id.
+			if rel, isRel := field.(*core.RelationField); isRel && rel.IsMultiple() {
+				ok = false
+				return ref
+			}
+			return q("p", field.GetName())
+		})
+		if ok {
+			held = append(held, sql)
+		}
+	}
+	return strings.Join(held, " AND ")
 }
 
 // tmSub is one to-many path totalled per parent row: a subquery grouped by

@@ -109,6 +109,8 @@ To mark some groups, for example inactive customers, add a condition under **Sho
 
 To group or sort by a value you do not want to show, add the formula as a column and turn on **Use only to group or sort (do not show)**. The report still groups and sorts by it, but the column has no heading or cells, is not listed in **Customize**, and is not in an export. The first column cannot be hidden, and neither can the first column of child rows, because it names them. Neither can a column that a width layout places, a column that the opening row of a group level has a value for, or the cell column of a pivot.
 
+To turn a day into the first day of its month in a formula, pick **First day of the month of** and the date. For example, a day of August 15, 2026 gives August 1, 2026. Use it to compare a date with the start of a month, or to group days by month in a formula.
+
 ## Group by a linked record
 
 To group by a linked record (for example each team of a sale), add the link as a column: in **Add column**, pick **Team (record)**. In **Group and sort**, select **Add group level** and set **Group by** to that column. The group row shows the record's name. To show another field, or a formula, change **Label**. On any level, turn on **Show every Team, even with no rows** to list records that have no rows, and add conditions to choose which. Under another group, a condition can be **Same as the Region above** (the name of the group level above), so each region lists only its own teams.
@@ -139,7 +141,7 @@ Some columns only name the group, for example an account's number on each line o
 
 ## Opening rows
 
-To start each group with a row of its own, open **Group and sort**, find the level, and turn on **Start each group with a row**. Enter a **Row label**, for example "Beginning balance". For each column after the first, select **Add a value** and build a formula from totals, group fields, lookups and asked values, or leave it with no value. Child row columns have no value on this row. The row shows first under each group that you open. It also shows under a group that has no rows of its own, if the level shows every record with **Show every …, even with no rows**. A closed group and a group that **Show only groups where…** hides have no opening row. The last group level of a pivot report cannot have an opening row.
+To start each group with a row of its own, open **Group and sort**, find the level, and turn on **Start each group with a row**. Enter a **Row label**, for example "Beginning balance". For each column after the first, select **Add a value** and build a formula from totals, group fields, lookups and asked values, or leave it with no value. Child row columns have no value on this row. The row shows first under each group that you open. It also shows under a group that has no rows of its own, if the level shows every record with **Show every …, even with no rows**. A closed group and a group that **Show only groups where…** hides have no opening row. The last group level of a pivot report cannot have an opening row. A report that an app supplies can name a value in the row label, for example the month before the period ("Balance before Nov 2026"). The **Row label** then shows `{value}` where the value goes. Keep `{value}` in the label one time, with other text. When the report has no value to show, the label shows without `{value}`, so write a label that reads well without it. You cannot add `{value}` to the row label of a report that has no such value.
 
 ## Filters that list records
 
@@ -204,6 +206,13 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
   group is open, the same button reads **Collapse all**.
 - A report that is open stays current: when someone changes the data it reads, it
   runs again.
+- A report that reads a very large list does not run again by itself. It says so
+  under the chips: **This report does not update by itself. Press Refresh to see new
+  changes.** Select **Refresh** to run it again; the button reads **Refreshing…**
+  while it runs, and the rows you loaded stay. With a keyboard, press R while the
+  report itself is in view (not in a panel beside it, and not while you type in a
+  box). On a phone, scroll back to the top to reach the button. A report you build
+  over such a list works the same way, and so does a copy of a report.
 
 ## Dates with a time
 

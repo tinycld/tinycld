@@ -1333,6 +1333,15 @@ reports.RegisterSource(reports.Source{
   `YYYY-MM-DD`. Filters, buckets, presets and pivots treat it as a date.
   `CheckSources` refuses `TextDay` on any other type, and on a column that is
   not text.
+- `Field.SameCurrencyAs`, on the text field a money field names as its
+  `Currency`, names another source's currency field as
+  `"<source key>.<field key>"`: the two fields hold one currency (a stored
+  summary of rows and the rows themselves). A formula may then add amounts
+  of the two sources. The engine checks the codes on each row: where two
+  known codes differ, the amount is blank and the run adds a `mixedCurrency`
+  notice. `RegisterSource` refuses a declaration on any other field, or one
+  that names its own source; `CheckSources` refuses one that names no
+  registered currency field, or a field that declares another.
 - A `Select` field may read a text column as well as a select column. Its
   `Options` give the labels; a stored value that no option names shows as
   itself. `CheckSources` checks the options against the values only of a
@@ -1440,7 +1449,8 @@ away before the run ends.
   `add`, `sub`, `min`, `max`, `if`, `case` and `coalesce`. Each currency
   field is a source, and so is each source's fixed `Source.Currency`, even
   when two sources give the same code. An amount combines with amounts of
-  its own source.
+  its own source, and with amounts of a source whose currency field
+  declares `SameCurrencyAs` its own.
 - `options.expand` and `options.collapse` each list at most 5,000 group keys.
   `options.collapse` closes groups under a level that is open by default or
   under `options.expandAll`. When `collapse` is sent (also empty), the levels
@@ -1487,6 +1497,14 @@ away before the run ends.
   `total`. An `opening` row (id `opening:<group key JSON>`) is the first row
   under an opened group whose level has `opening`; it carries only the cells
   its `cells` name, and its `section` is the group row.
+  When the level's `opening` has a `labelValue` that has a value on the run,
+  the row also carries `labelTemplate` (the spec's label, with `{value}`),
+  `labelType` and `labelValue` (a text, a day, a number, or a bucket key such
+  as `"2026-11"` with `labelType` `month`). The view formats the value as it
+  formats any typed label and puts it in place of `{value}` ("Balance before
+  Nov 2026"); `label` holds the same text with the raw value. With no value on
+  the run the row has none of the three, and `label` is the spec's label
+  without `{value}`.
 - `options.sort` (`[{ col, dir }]`, at most 10) orders detail rows inside their
   groups before the spec's own sort keys; group order and running values keep
   the spec's order. A `ResultColumn` with `sortable: true` accepts it. A sort
@@ -1531,7 +1549,7 @@ away before the run ends.
 | `columns[].detail` | `"blank"`: the column has no cell (and no `@currency` or `@label` cell) on any detail row, nested child rows included. Group, subtotal and total rows are unchanged. This is a column's string member, not the spec's top-level `detail` object (`detail.label`). Refused (`columns.N.detail`) for any other value, in a report with no groups, on a pivot report, on the column that labels detail rows (the first column when `detail.label` is not set, or the column a `detail.label` of exactly `{ col }` names), and on the first column of each nest level, which labels that level's child rows. Use it on a column that reads the group's record (a `record` formula): a plain path column that is not the group key has no value on group rows, so with `"blank"` it shows nowhere. |
 | `groups[].having` | A condition on the level's totals, columns and record fields. A hidden group hides its children. Refused on the first group of a layout report. |
 | `groups[].label` | A formula that labels the group's row. |
-| `groups[].fill` | `{ where? }` lists the target's records that have no rows, on any level, under each parent group. |
+| `groups[].fill` | `{ where? }` lists the target's records that have no rows, on any level, under each parent group that is open. When the first filled group is below other groups and each of those groups reads only the filled group's record, each record sits under its own parent rows only, also when no row gave the report that parent: the parent row then shows with the totals of no rows. A group reads only the record when its key is a path through the group's link, or a formula over such paths, params and values. A group with a `bucket`, an amount, or a key that mixes a select's values with other values does not. A `having` on a group above the filled group hides the fill records of a parent it hides, and shows them under a parent it keeps, also when no row made that parent. A record whose own parent key is blank sits under `(none)`, as its rows do. A `{col}` or `{record}` of a group above in the `where` then reads the record's own parent. In every other report a record sits under each open parent row the `where` admits. In a report with a `total: "rows"` column a parent adds its fill records also while it is closed, with any fill. When a run reads no row at all, the first level's fill records sit under one Total in the source's currency; a `total: "rows"` column's cell on that Total adds the rows shown, as in a run with rows, and a cell that is not money (a count) reads 0 there, as in a run with rows. A source with no currency of its own names none there, so that Total has no cells. In that case (no row at all, a source with no currency) records that name their own parents are not listed. |
 | `groups[].open` | The level is open when the report opens and no expansion state is sent. |
 | `sort[]` | `{ col, dir }` or `{ formula, dir }`. A formula sort key that reads a row's fields sorts detail rows only; group levels skip it. |
 | `detail.label` | A formula that labels each detail row. Default: the first column. |
@@ -1548,8 +1566,8 @@ away before the run ends.
 | formula leaf `{ outer: [path] }` | Inside a lookup's `where` or `value`: the report row's value of a to-one path of the base source (a nested lookup still reads the report's row). Blank on group, subtotal and total rows. Refused outside a lookup and on a to-many path. |
 | formula leaf `{ param, bound: "from" \| "to" }` | The first or last day of a date range param, as a `Date`. Blank (not unset) on an unset range or on All dates, so a comparison with it matches no row. |
 | range preset `allDates` | A date range with no bounds: `between` on it matches every row, a row with a blank day included. The resolved param has no `from` or `to`. |
-| `groups[].opening` | `{ label, cells? }`: the opening row of each opened group of the level. Each cell is a formula on the level (totals, records of this and outer groups, lookups, params) whose type and currency are its column's; not on the first column; not on a pivot's last level. A level with `opening` lets a group with no base rows open (a fill group included). |
-| `columns[].rollup` | A formula shown on group, subtotal and total rows (and layout sections) in place of the column's total; detail rows keep the column's value. Blank where it reads a value the row does not have (a group's record on the Total). Refused with `total: "rows"`, on a child row column, on a pivot's cell column and on a column a group level groups by with no `bucket`. |
+| `groups[].opening` | `{ label, labelValue?, labelBucket?, cells? }`: the opening row of each opened group of the level. Each cell is a formula on the level (totals, records of this and outer groups, lookups, params) whose type and currency are its column's; not on the first column; not on a pivot's last level. A level with `opening` lets a group with no base rows open (a fill group included). `labelValue` is a formula of params and values only (as `columns[].heading`: a text, a day or a number) that the label names: `label` then holds `{value}` exactly once, with other text. `labelBucket` (`day`, `month`, `quarter`, `year`, `fiscalYear`; only on a `labelValue` that is a day, not a date-time) cuts the day to its period, so `{ label: "Balance before {value}", labelValue: { param: "period", bound: "from" }, labelBucket: "month" }` reads "Balance before Nov 2026". A value that is blank on the run (an unset param) leaves `{value}` out: only the token and the spaces around it go, so write the label so that it reads well without it ("Balance before {value}", not "Balance ({value})"). Refused (400): `{value}` in a label with no `labelValue`, a `labelValue` whose label does not hold `{value}` exactly once, or holds no other text (`groups.<i>.opening.label`); a `labelBucket` with no `labelValue`, an unknown one, or one on a value that is not a day (`groups.<i>.opening.labelBucket`); a `labelValue` that reads a row, a column or a total, or is not a text, a day or a number (`groups.<i>.opening.labelValue`). |
+| `columns[].rollup` | A formula shown on group, subtotal and total rows (and layout sections) in place of the column's total; detail rows keep the column's value. Blank where it reads a value the row does not have (a group's record on the Total). With `total: "rows"` the rollup is the cell of the innermost group's rows only, and every row above them adds the rows shown under it (a blank cell adds 0; a cell that is blank for two currencies, or is in another currency than the sum's, makes that sum blank); that pair needs a group and is refused in a report with a pivot. In a report with a layout it needs a group below the section group: a section, its subtotal and a computed row that reads the section add the rows shown under it. A filled record group below a section group that reads only that record (the account's type above the account) puts each record under its own section, also a section with no row of its own in the period: the section, its subtotal and a computed row that reads it add the record's cells. A record in another currency than the report's rows makes its section blank, with a `mixedCurrency` notice. When the run reads no row at all and the source has no currency, the sections show no record and 0. Refused on a child row column, on a pivot's cell column and on a column a group level groups by with no `bucket`. |
 | run `options.sort` | See "What a report returns". |
 
 **Spec version 4.** `reports.CurrentVersion` is 4, and it is the only version a
@@ -1575,7 +1593,7 @@ under the whole value, `minWidth` only widens and its three keywords (`auto`,
 | `display.columns.<col>.textOverflow` | `ellipsis` only. |
 | `display.columns.<col>.overflowWrap` | `anywhere` only, with `whiteSpace: "normal"` and a column of 2 or more lines (`lineClamp` absent or 2 to 4; refused with `lineClamp: 1`): a word wider than its line breaks inside the word, on web and native. The longest word then does not hold the column: its automatic least width is eight letters (never under the heading's longest word, and never more than its content's width); `width` and `minWidth` apply as on any text column. Absent: words are kept whole. |
 | `display.columns.<col>.flexGrow` | 0 to 10: the column's share of the spare room on one line, the room past every column's least width. While both are below their content's width, a column with 2 gets twice the room of a column with 1, whatever their content. A growing column stops at its content's width while another growing column is still below its own, and the others share what it leaves by grow; once every growing column has its content's width, the rest is shared by grow again. A column with 0 gets at most its content's width (default 1 for text and the label column, 0 for other figures). |
-| `groups[].blank` | `"skip"`: a base row whose key at this level is blank skips the level: no group row and no subtotal for it; its rows sit directly under the parent group (or layout section), one depth less per skipped level, keep their full group key (with the blank), and count in the parent's totals. Absent: a blank key forms a `(none)` group. A fill below a skipped level fills under the parent the rows reach. Refused on the first and the last group level, on a bucketed level and for any other value. |
+| `groups[].blank` | `"skip"`: a base row whose key at this level is blank skips the level: no group row and no subtotal for it; its rows sit directly under the parent group (or layout section), one depth less per skipped level, keep their full group key (with the blank), and count in the parent's totals. Absent: a blank key forms a `(none)` group. A fill record that names its own parents (see `groups[].fill`) skips the level when its own key there is blank, as its rows do; any other fill below a skipped level fills under the parent the rows reach. Refused on the first and the last group level, on a bucketed level and for any other value. |
 | `groups[].hideEmpty` | `true`: a group whose child groups are all hidden, with no shown row passed up from a skipped level, is hidden with its subtotal, as a having would hide it (a `"rows"` total above it adds nothing it did not show; a `"recompute"` total counts every row the filter keeps, the rows of hidden groups included, as with any having). Allowed on a bucketed level. Refused on the last level, and on the first group of a layout report (its sections always show). |
 | `groups[].inline` | A condition on the level, read as `having` reads it (the level's totals, columns, record fields and params; an unset param matches as in `having`). A group for which it holds draws no group row, no subtotal and no opening row; its child rows take its place, at its depth, with its `section`, in its place in the order, and keep its key in their `groupKey`. The group counts as open: its children show whatever the level's `open` and the reader's expansion say, and `options.expand` and `options.collapse` keys that name it are ignored; its children open and fold as usual. A page's row count does not count it. Its rows count in the parent's totals and in the Total as before; exports and drills read the same rows. Refused (400, `groups.<i>.inline`) on the last level (a pivot's too), on a bucketed level, on the first group of a layout report (its sections always show), when the formula is not a condition, and when it reads a value of one row. |
 | `groups[].muted` | A condition on the level, read as `having` reads it. A group row for which it holds carries `muted: true`, and core's view draws its label and figures in muted text (red and error figures keep their tone). Subtotal and total rows are never muted. Exports ignore it: put any words the reader needs in the label. Refused (400, `groups.<i>.muted`) when the formula is not a condition, and when it reads a value of one row. |
@@ -1595,7 +1613,11 @@ under the whole value, `minWidth` only widens and its three keywords (`auto`,
 `<col>` is a spec column id. A pivot's cell columns (one per pivot value) all take
 the fit of their spec column.
 
-A param of type `amount` holds cents and a currency. A multiple choice param
+A param of type `amount` holds cents and a currency. Where it meets an amount
+whose code is known and differs, a value made of both (or a ratio of two
+amounts in two codes) is blank for two currencies: it shows no code, a total
+over it is blank, and the run adds a `mixedCurrency` notice. An amount with no
+code is not a second currency. A multiple choice param
 may hold a whole group as `{"group": "<value>"}`; the server expands it under
 the reader's rules at run time. Report option lists and group keys bind as one
 JSON parameter, so there is no SQL variable limit on them.

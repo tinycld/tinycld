@@ -48,8 +48,9 @@ func TestALookedUpAmountCombinesWithAmountsOfItsField(t *testing.T) {
 	requireOrderedRows(t, feedingsWithLookedUpCost, res, "largest", int64(3500), int64(5000), int64(3200), int64(2800), nil)
 	// A lookup that matches nothing has no currency: the sum takes the row's.
 	requireOrderedRows(t, feedingsWithLookedUpCost, res, "none", int64(1000), int64(2500), int64(700), int64(300), nil)
-	requireRows(t, res, "none@currency", "USD", "USD", "USD", "USD", "USD")
-	requireRows(t, res, "plus@currency", "USD", "USD", "USD", "USD", "USD")
+	// The total row has no value for a formula that reads a row's, so no currency.
+	requireRows(t, res, "none@currency", "USD", "USD", "USD", "USD", nil)
+	requireRows(t, res, "plus@currency", "USD", "USD", "USD", "USD", nil)
 	if len(res.Notices) != 0 {
 		t.Fatalf("notices = %+v", res.Notices)
 	}

@@ -2,6 +2,7 @@ package reports
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,33 @@ var fillCTE = regexp.MustCompile(`^(?:MATERIALIZE|CO-ROUTINE) f\d+$`)
 // parentLoop is a loop over the parent rows p, or over the level above's
 // keyset when SQLite flattens p into the join.
 var parentLoop = regexp.MustCompile(`: (?:SCAN|SEARCH) (?:p|f\d+)(?: |$)`)
+
+// fillRecordsCTE is the fill records of a level whose records name their own
+// parents (fr<n>, fill_parents.go): the join of p with the target's records
+// is in it, and the keysets f<n> only read it.
+var fillRecordsCTE = regexp.MustCompile(`^(?:MATERIALIZE|CO-ROUTINE) fr\d+$`)
+
+// readsFillRecords is the loop of a keyset that reads fr<n>.
+var readsFillRecords = regexp.MustCompile(`^(?:SCAN|SEARCH) fr\d+(?: |$)`)
+
+// loops are the tables a select loops over, outermost first.
+func loops(rows []planRow) []string {
+	var out []string
+	for _, r := range rows {
+		if strings.HasPrefix(r.detail, "SCAN ") || strings.HasPrefix(r.detail, "SEARCH ") {
+			out = append(out, r.detail)
+		}
+	}
+	return out
+}
+
+// firstLoop is the first table a select loops over, "" when it has no loop.
+func firstLoop(rows []planRow) string {
+	if l := loops(rows); len(l) > 0 {
+		return l[0]
+	}
+	return ""
+}
 
 type planRow struct {
 	id, parent int
@@ -51,6 +79,10 @@ func fillOuterLoops(t *testing.T, z *zoo, seen []readStatement) []string {
 			return out
 		}
 		for _, f := range plan {
+			if fillRecordsCTE.MatchString(f.detail) {
+				outer = append(outer, f.detail+": "+firstLoop(children(f.id)))
+				continue
+			}
 			if !fillCTE.MatchString(f.detail) {
 				continue
 			}
@@ -66,14 +98,16 @@ func fillOuterLoops(t *testing.T, z *zoo, seen []readStatement) []string {
 			if len(branches) < 2 {
 				t.Fatalf("%s: plan %v, want a compound select", f.detail, children(f.id))
 			}
-			loop := ""
-			for _, r := range children(branches[len(branches)-1].id) {
-				if strings.HasPrefix(r.detail, "SCAN ") || strings.HasPrefix(r.detail, "SEARCH ") {
-					loop = r.detail
-					break
+			branch := loops(children(branches[len(branches)-1].id))
+			// A keyset that reads fr<n> loops over it alone: the join of the
+			// parent rows with the records is in fr<n>, the one checked above.
+			if slices.ContainsFunc(branch, readsFillRecords.MatchString) {
+				if len(branch) != 1 {
+					t.Errorf("%s: loops %v, want fr<n> alone", f.detail, branch)
 				}
+				continue
 			}
-			outer = append(outer, f.detail+": "+loop)
+			outer = append(outer, f.detail+": "+firstLoop(children(branches[len(branches)-1].id)))
 		}
 	}
 	return outer
@@ -112,6 +146,8 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 			withEmptyAnimals(t, z)
 			z.run(t, "ann", sitesThenAnimals, Options{ExpandAll: true}, nil)
 		}},
+		// 1: the animals name their own site, so the join is in fr2 (once), and
+		// f1 and f2 read it.
 		{"a fill under a group with no fill, its where reads links and the parent record", 1, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
 			z.run(t, "ann", `{"version":4,"source":"zoo.feedings","columns":[

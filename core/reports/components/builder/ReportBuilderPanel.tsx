@@ -24,6 +24,7 @@ import { useTableLayout } from '../../hooks/useTableLayout'
 import { layoutNoticeOf } from '../../lib/notices'
 import type { Problem } from '../../lib/types'
 import { REPORT_TAP_TARGET } from '../ReportHeader'
+import { ReportManualBand } from '../ReportManualBand'
 import { ReportNotices } from '../ReportNotices'
 import { ReportUpdating } from '../ReportUpdating'
 import { ReportBody } from '../ReportView'
@@ -266,6 +267,7 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
                     </ScrollView>
                 </ModeBody>
                 <ModeBody isVisible={mode === 'preview'}>
+                    <ReportManualBand run={preview.run} idPrefix="report-builder" />
                     <ReportNotices
                         notices={preview.notices}
                         layoutNotice={layoutNotice}

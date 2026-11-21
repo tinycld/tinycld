@@ -42,9 +42,11 @@ func TestABalanceShapedReportComputesItsBeginningBalanceOncePerStatement(t *test
 		}
 		kinds = append(kinds, kind)
 		// Two lookups, on two levels (the total and the accounts) or in two
-		// selects (the shown accounts and the lines).
-		if n := strings.Count(st.sql, "(SELECT sum("); n > 4 {
-			t.Errorf("the %s statement holds %d sum lookups, want at most 4 (2 lookups, once per level)", kind, n)
+		// selects (the shown accounts and the lines). The lookup that matches
+		// the account is written in two forms (knownLinks), and a row runs one
+		// of them: 3 sums a level.
+		if n := strings.Count(st.sql, "(SELECT sum("); n > 6 {
+			t.Errorf("the %s statement holds %d sum lookups, want at most 6 (2 lookups, one of them in two forms, once per level)", kind, n)
 		}
 		byLevel, byLine := 0, 0
 		for _, m := range recordSubquery.FindAllStringSubmatch(st.sql, -1) {
@@ -59,9 +61,12 @@ func TestABalanceShapedReportComputesItsBeginningBalanceOncePerStatement(t *test
 		}
 		// The 3 reads of the account inside the beginning-balance lookup's
 		// where, in each of its 3 parts (the sum, its mixed check, its
-		// currency), all computed once per account.
-		if byLine > 9 {
-			t.Errorf("the %s statement reads a group record by %d subqueries on a line, want at most 9", kind, byLine)
+		// currency), all computed once per account. With the two forms of
+		// that lookup (knownLinks) each part also reads the account 2 times in
+		// its equality form and once in the test that picks the form: 18 in
+		// the text, of which a row runs 9 (a known account) or 12 (a blank one).
+		if byLine > 18 {
+			t.Errorf("the %s statement reads a group record by %d subqueries on a line, want at most 18", kind, byLine)
 		}
 	}
 	got := append([]string(nil), kinds...)
@@ -103,8 +108,8 @@ func TestACursorPageComputesItsBeginningBalanceOncePerStatement(t *testing.T) {
 		case "total":
 			requireTotalLevelRowsOnce(t, db, st)
 		}
-		if n := strings.Count(st.sql, "(SELECT sum("); n > 4 {
-			t.Errorf("the %s statement holds %d sum lookups, want at most 4", kind, n)
+		if n := strings.Count(st.sql, "(SELECT sum("); n > 6 {
+			t.Errorf("the %s statement holds %d sum lookups, want at most 6", kind, n)
 		}
 		for _, m := range recordSubquery.FindAllStringSubmatch(st.sql, -1) {
 			if m[1] == "a" {

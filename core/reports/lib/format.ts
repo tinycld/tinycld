@@ -1,6 +1,7 @@
 import { dateTimeText, timeZoneWords } from './date-time'
 import { bucketWords, isIsoDay, shortDay } from './dates'
 import { formatMoney, groupDigits, MAX_STORED_AMOUNT, roundHalfAwayFromZero } from './money'
+import { LABEL_VALUE_TOKEN } from './spec'
 import {
     type CellValue,
     type FieldType,
@@ -239,12 +240,15 @@ export function typedLabelText(
 /**
  * A row's label as the table shows it. The engine types a label that is not text
  * (an amount, a date, a yes/no) and writes `label` as its plain text; a subtotal's
- * label is "Total " and its group's label.
+ * label is "Total " and its group's label. An opening row that names a value of the
+ * run has the typed value in its template's token.
  */
 export function rowLabelText(row: ResultRow, format: NumberFormat): string {
     const { labelType, labelValue } = row
     if (!labelType || labelValue === undefined || labelValue === null) return row.label
     const text = typedLabelText(labelType, labelValue, row.labelCurrency ?? '', format)
+    // A function, so a "$&" or "$1" in a text value is not read as a pattern.
+    if (row.labelTemplate) return row.labelTemplate.replace(LABEL_VALUE_TOKEN, () => text)
     return row.kind === 'subtotal' ? `Total ${text}` : text
 }
 

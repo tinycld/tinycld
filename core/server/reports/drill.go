@@ -92,11 +92,8 @@ func (lc *levelCtx) pivotBound(bound, at string) (expr, error) {
 	if lc.drill == nil || !lc.drill.pivot {
 		return expr{}, invalid(at, errPivotBoundOutside)
 	}
-	// A blank bucket's cell is NULL, so its bound is a literal: binding it
-	// would add a param that no SQL reads.
-	if lc.drill.blank {
-		return expr{sql: "'" + placeholderDay + "'", typ: Date}, nil
-	}
+	// A blank bucket's bounds are placeholderDay, bound as any other day. Its
+	// cell is NULL, so no SQL reads that param.
 	day := lc.drill.from
 	if bound == "to" {
 		day = lc.drill.to
@@ -458,8 +455,8 @@ func (lv *level) drillCells(pivot []pivotValue) ([]string, error) {
 
 // placeholderDay stands for the bounds of a pivot value that is no bucket
 // (a dry compile's, a blank date's): the part still compiles, so Validate
-// refuses a misfit, and its cell is NULL (R6). pivotBound writes it as a
-// literal, never a bound param.
+// refuses a misfit, and its cell is NULL (R6). pivotBound binds it, as it
+// binds a bucket's day.
 const placeholderDay = "0001-01-01"
 
 // pivotBounds is pivot value v's first and last day, cut to the pivot's

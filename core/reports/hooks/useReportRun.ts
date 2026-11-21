@@ -55,6 +55,13 @@ export interface ReportRun extends Omit<RunView, 'topics' | 'heldRows'> {
     /** Asks again for the next page that failed. Optional, as `loadMoreFailed`. */
     retryLoadMore?(): void
     retry(): void
+    /**
+     * Runs the report again and keeps the pages loaded (the Refresh of a manual
+     * run). Optional, because a hand-built ReportRun (a mockup) has no query.
+     */
+    refresh?(): void
+    /** A Refresh is in progress. Optional, as `refresh`. */
+    isRefreshing?: boolean
 }
 
 const resultsOf = (pages: readonly RunPage[]) =>
@@ -224,6 +231,21 @@ export function useReportRun({
         startNextPage()
     }
     const isLoadingMore = query.isFetchingNextPage || isWaitingForMore
+    // Set at once by refresh, so a second press while it runs starts nothing.
+    const refreshing = useRef(false)
+    // A refetch of the same body is not `isUpdating` (that is a changed body), so
+    // the reader's own Refresh has its own state, or nothing would show it runs.
+    const [isRefreshing, setIsRefreshing] = useState(false)
+    // Waits as a live rerun does (whenIdle), so it never cancels a next page.
+    const refresh = () => {
+        if (refreshing.current) return
+        refreshing.current = true
+        setIsRefreshing(true)
+        void whenIdle(() => query.refetch()).finally(() => {
+            refreshing.current = false
+            setIsRefreshing(false)
+        })
+    }
     return {
         ...view,
         shownRowsKey: pages[0]?.rowsKey,
@@ -234,5 +256,7 @@ export function useReportRun({
         loadMoreFailed: isLoadMoreError && !isLoadingMore,
         retryLoadMore: startNextPage,
         retry: () => void query.refetch(),
+        refresh,
+        isRefreshing,
     }
 }

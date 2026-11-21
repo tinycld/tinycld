@@ -124,7 +124,6 @@ func (r *ruleNames) readsNoRow() bool {
 // one statement never bind one name twice.
 func unionSelect(app core.App, src *Source, info *core.RequestInfo) (string, dbx.Params, error) {
 	keys := src.unionKeys()
-	stem := "u_" + strings.ReplaceAll(src.Key, ".", "_")
 	params := dbx.Params{}
 	selects := make([]string, 0, len(src.Parts))
 	for i, part := range src.Parts {
@@ -139,25 +138,33 @@ func unionSelect(app core.App, src *Source, info *core.RequestInfo) (string, dbx
 		if err := mergeParams(params, ruleParams); err != nil {
 			return "", nil, err
 		}
-		cols := make([]string, 0, len(keys)+1)
-		cols = append(cols, "[[p.id]] AS [[id]]")
-		for _, key := range keys {
-			column, mapped := part.Columns[key]
-			value, constant := part.Values[key]
-			switch {
-			case mapped:
-				cols = append(cols, fmt.Sprintf("[[p.%s]] AS [[%s]]", column, key))
-			case constant:
-				name := fmt.Sprintf("%s_%d_%s", stem, i, key)
-				params[name] = value
-				cols = append(cols, fmt.Sprintf("{:%s} AS [[%s]]", name, key))
-			default:
-				cols = append(cols, fmt.Sprintf("NULL AS [[%s]]", key))
-			}
-		}
-		selects = append(selects, "SELECT "+strings.Join(cols, ", ")+" FROM ("+ruleSQL+") p")
+		selects = append(selects, "SELECT "+unionPartCols(src, i, keys, params)+" FROM ("+ruleSQL+") p")
 	}
 	return strings.Join(selects, "\nUNION ALL\n"), params, nil
+}
+
+// unionPartCols is the select list of part i of a union source, read as p:
+// the row's id, then each of the source's keys. A constant is bound in params.
+func unionPartCols(src *Source, i int, keys []string, params dbx.Params) string {
+	part := src.Parts[i]
+	stem := "u_" + strings.ReplaceAll(src.Key, ".", "_")
+	cols := make([]string, 0, len(keys)+1)
+	cols = append(cols, "[[p.id]] AS [[id]]")
+	for _, key := range keys {
+		column, mapped := part.Columns[key]
+		value, constant := part.Values[key]
+		switch {
+		case mapped:
+			cols = append(cols, fmt.Sprintf("[[p.%s]] AS [[%s]]", column, key))
+		case constant:
+			name := fmt.Sprintf("%s_%d_%s", stem, i, key)
+			params[name] = value
+			cols = append(cols, fmt.Sprintf("{:%s} AS [[%s]]", name, key))
+		default:
+			cols = append(cols, fmt.Sprintf("NULL AS [[%s]]", key))
+		}
+	}
+	return strings.Join(cols, ", ")
 }
 
 // mergeParams copies src into dst for a statement that holds several rule
