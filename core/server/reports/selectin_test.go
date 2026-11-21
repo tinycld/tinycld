@@ -195,18 +195,24 @@ func TestASelectInAListKeepsItsResult(t *testing.T) {
 			// No pick: the condition matches every sale.
 			{``, []any{"S1", "S2", "S3", "S4", "S5"}, 0},
 		} {
-			var params map[string]string
+			name := "no pick"
 			if c.picked != "" {
-				params = map[string]string{"kinds": c.picked}
+				name = c.picked
 			}
-			reads := salesReads(t, z, salesOfKinds, params)
-			if got := detailCells(z.run(t, "ann", salesOfKinds, Options{}, params), "name"); !reflect.DeepEqual(got, c.want) {
-				t.Fatalf("picked %s: sales %#v, want %#v", c.picked, got, c.want)
-			}
-			if got := storedInTerms(reads[:1]); got != c.terms {
-				t.Fatalf("picked %s: %d stored-column terms, want %d:\n%s", c.picked, got, c.terms, reads[0].sql)
-			}
-			requireSameAsLegacy(t, z, "ann", salesOfKinds, Options{}, params, &legacySQL.noSelectIn)
+			t.Run(name, func(t *testing.T) {
+				var params map[string]string
+				if c.picked != "" {
+					params = map[string]string{"kinds": c.picked}
+				}
+				reads := salesReads(t, z, salesOfKinds, params)
+				if got := detailCells(z.run(t, "ann", salesOfKinds, Options{}, params), "name"); !reflect.DeepEqual(got, c.want) {
+					t.Fatalf("picked %s: sales %#v, want %#v", c.picked, got, c.want)
+				}
+				if got := storedInTerms(reads[:1]); got != c.terms {
+					t.Fatalf("picked %s: %d stored-column terms, want %d:\n%s", c.picked, got, c.terms, reads[0].sql)
+				}
+				requireSameAsLegacy(t, z, "ann", salesOfKinds, Options{}, params, &legacySQL.noSelectIn)
+			})
 		}
 	})
 
