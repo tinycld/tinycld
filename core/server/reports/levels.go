@@ -1561,7 +1561,7 @@ func (lc *levelCtx) window(op string, arg *Node, scale int, at string) (expr, er
 	if err != nil {
 		return expr{}, err
 	}
-	return windowSQL(op, e, scale, lc.lv.frame, at)
+	return windowSQL(op, e, scale, lc.lv.frame, lc.bind, at)
 }
 
 func (lc *levelCtx) bind(v any) string              { return lc.lv.r.s.bind(v) }

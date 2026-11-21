@@ -1018,8 +1018,8 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		}
 		// A day's first 8 characters are its year and month with both dashes.
 		// A blank day stays blank: a NULL day gives NULL, and NULLIF turns an
-		// empty text into NULL too, so NULL || '01' is NULL.
-		return expr{sql: "(NULLIF(substr(" + args[0].sql + ", 1, 8), '') || '01')", typ: Date}, nil
+		// empty text into NULL too, so NULL || the bound day is NULL.
+		return expr{sql: "(NULLIF(substr(" + args[0].sql + ", 1, 8), '') || " + c.bind("01") + ")", typ: Date}, nil
 	case "diffDays":
 		if err := argc(2, 2); err != nil {
 			return expr{}, err

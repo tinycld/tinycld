@@ -357,7 +357,7 @@ func (rc *rowsCtx) window(op string, arg *Node, scale int, at string) (expr, err
 	if err != nil {
 		return expr{}, err
 	}
-	return windowSQL(op, e, scale, rc.detail, at)
+	return windowSQL(op, e, scale, rc.detail, rc.bind, at)
 }
 
 func (rc *rowsCtx) bind(v any) string              { return rc.r.s.bind(v) }
@@ -605,8 +605,8 @@ func hoistLookupParts(e expr, hoist func([]lookupPart) []string) expr {
 // windowSQL is a running value or a percent over a frame. A running sum
 // adds in the frame's order within the parent; a percent divides by the sum
 // over the parent or over the whole report, with no figure when that sum is
-// zero.
-func windowSQL(op string, e expr, scale int, f *windowFrame, at string) (expr, error) {
+// zero. bind binds the percent's scale on the statement the value is in.
+func windowSQL(op string, e expr, scale int, f *windowFrame, bind func(any) string, at string) (expr, error) {
 	if !isNumeric(e.typ) || e.win {
 		return expr{}, invalid(at, op+" needs a number that is not itself a running value")
 	}
@@ -624,9 +624,9 @@ func windowSQL(op string, e expr, scale int, f *windowFrame, at string) (expr, e
 		over := "OVER (" + partitionBy(f.parent) + " ORDER BY " + strings.Join(f.order, ", ") + " ROWS UNBOUNDED PRECEDING)"
 		return withCurrency(expr{sql: f.window("SUM(" + num(e) + ") " + over), typ: sumType([]expr{e}), win: true}, e.cur), nil
 	case "percentOfParent":
-		return expr{sql: f.window(fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %d)", num(e), num(e), partitionBy(f.parent), scale)), typ: Percent, win: true}, nil
+		return expr{sql: f.window(fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %s)", num(e), num(e), partitionBy(f.parent), bind(int64(scale)))), typ: Percent, win: true}, nil
 	}
-	return expr{sql: f.window(fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %d)", num(e), num(e), partitionBy(f.total), scale)), typ: Percent, win: true}, nil
+	return expr{sql: f.window(fmt.Sprintf("tc_pct(%s, SUM(%s) OVER (%s), %s)", num(e), num(e), partitionBy(f.total), bind(int64(scale)))), typ: Percent, win: true}, nil
 }
 
 func partitionBy(keys []string) string {
