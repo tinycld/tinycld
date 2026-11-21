@@ -1664,12 +1664,9 @@ func (rn *runner) readShownNow(s *stmt, ctes []string, sel string, keys []sortKe
 	rn.shown = shown
 	var ids []string
 	at := map[string]int{}
-	for i, h := range shown {
-		if moved[i] {
-			id, _ := h.Values[len(h.Values)-1].(string)
-			ids = append(ids, s.bind(id))
-			at[id] = i
-		}
+	for _, m := range movedShown(shown, moved) {
+		ids = append(ids, s.bind(m.id))
+		at[m.id] = m.at
 	}
 	if len(ids) == 0 {
 		return nil
@@ -1895,15 +1892,39 @@ func (c *compiler) leafRows(s *stmt, table string, held []int, away []string, wa
 // readShownNow reads of such groups that are not leaves.
 func (rn *runner) heldLeaves(leaves [][]any) (held []int, away []string) {
 	shown, moved := rn.shownBefore()
+	movedAt := map[int]string{}
+	for _, m := range movedShown(shown, moved) {
+		movedAt[m.at] = m.id
+	}
 	for i, h := range shown {
 		if at := slices.IndexFunc(leaves, func(k []any) bool { return keyString(k) == keyString(h.Group) }); at >= 0 {
 			held = append(held, at)
-		} else if moved[i] {
-			id, _ := h.Values[len(h.Values)-1].(string)
+		} else if id, ok := movedAt[i]; ok {
 			away = append(away, id)
 		}
 	}
 	return held, away
+}
+
+// movedShownRow is the shown row of a moved group: its place in shownBefore's
+// list and the id its values end at.
+type movedShownRow struct {
+	at int
+	id string
+}
+
+// movedShown is the one rule that names the shown rows read by id: those of
+// the moved groups of shownBefore. readShownNow reads them and heldLeaves
+// keeps them in wl, so a change here moves both.
+func movedShown(shown []held, moved []bool) []movedShownRow {
+	var out []movedShownRow
+	for i, h := range shown {
+		if moved[i] {
+			id, _ := h.Values[len(h.Values)-1].(string)
+			out = append(out, movedShownRow{at: i, id: id})
+		}
+	}
+	return out
 }
 
 // groupedAfter selects the detail rows after a grouped report's cursor: the

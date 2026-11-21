@@ -284,6 +284,23 @@ func TestAMovedGroupOffThePageIsReadOverTheGroupsAPageCanReach(t *testing.T) {
 	if cut == 0 || kept != cut || shownRead == 0 {
 		t.Fatalf("%d cut statements, %d of them keep Mo's shown row, %d reads of the shown rows over them: the test compared nothing", cut, kept, shownRead)
 	}
+	// The LEFT JOIN form of wl must still find each row's group by its keys:
+	// a scan of gord would read every open group for each row.
+	planned := 0
+	for _, st := range *seen {
+		if !strings.Contains(st.sql, "LEFT JOIN gord ON") {
+			continue
+		}
+		planned++
+		for _, line := range explainPlan(t, z, st) {
+			if strings.Contains(line, "SCAN gord") {
+				t.Fatalf("the LEFT JOIN form of wl scans the open groups: %q", line)
+			}
+		}
+	}
+	if planned == 0 {
+		t.Fatal("no statement holds LEFT JOIN gord ON: the test checked no plan")
+	}
 	if second.Page == nil || second.Page.Next == "" {
 		t.Fatal("page 2 has no next cursor")
 	}
