@@ -49,7 +49,12 @@ const factsByEvent = new WeakMap<KeyboardEvent, KeyFacts>()
 function factsOf(event: KeyboardEvent): KeyFacts {
     const known = factsByEvent.get(event)
     if (known) return known
-    const layer = topLayer()
+    // A panel (an overlay Drawer) holds the screen's own content and pushes no
+    // shortcut scope, so its keys are read as if no layer were open: ⌘↵ in a
+    // drawer field still takes the capture path, and a screen's Escape in a
+    // field (allowInInputs) still runs before the stack closes the drawer.
+    const top = topLayer()
+    const layer = top?.isPanel ? null : top
     const facts: KeyFacts = {
         key: event.key,
         ctrlKey: event.ctrlKey,

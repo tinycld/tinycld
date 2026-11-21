@@ -149,8 +149,46 @@ const Pressable = React.forwardRef(function Pressable({ onPress, disabled, onCli
 })
 Pressable.displayName = 'rn-pressable'
 
+// One shared object: a test that exercises a native path sets `Platform.OS`
+// (e.g. 'android') and puts it back after, and every module that imported
+// Platform sees the change. `select` follows OS the way React Native and
+// react-native-web do.
+const Platform = {
+    OS: 'web',
+    select: (map) =>
+        Platform.OS === 'web'
+            ? (map.web ?? map.default)
+            : (map[Platform.OS] ?? map.native ?? map.default),
+}
+
+// Android's hardware back button. React Native calls the `hardwareBackPress`
+// listeners newest first and stops at the first one that returns true; a test
+// presses the button with `fireHardwareBackPress()` (not part of React
+// Native), which returns whether a listener handled it.
+const backListeners = []
+const BackHandler = {
+    addEventListener: (type, handler) => {
+        if (type !== 'hardwareBackPress') return { remove: () => {} }
+        backListeners.push(handler)
+        return {
+            remove: () => {
+                const index = backListeners.lastIndexOf(handler)
+                if (index !== -1) backListeners.splice(index, 1)
+            },
+        }
+    },
+    exitApp: () => {},
+    fireHardwareBackPress: () => {
+        for (const handler of [...backListeners].reverse()) {
+            if (handler()) return true
+        }
+        return false
+    },
+}
+
 module.exports = {
-    Platform: { OS: 'web', select: (map) => map.web ?? map.default },
+    Platform,
+    BackHandler,
     Dimensions: {
         get: () => ({ width: 1024, height: 768 }),
         addEventListener: () => ({ remove: () => {} }),

@@ -138,4 +138,66 @@ test.describe('sheet-in-drawer: a menu opened inside a drawer', () => {
         await expect(drawer.getByTestId('salesstub-drawer-chosen')).toHaveText('East')
         await expect(drawer).toBeVisible()
     })
+
+    test('a press beside the drawer closes only the menu popover on a wide window, then the drawer', async ({
+        page,
+    }) => {
+        const drawer = await openDrawer(page, WIDE)
+        const menu = page.getByTestId('salesstub-drawer-menu')
+        await expect(menu).toBeVisible()
+        await expect(menu.getByTestId('sheet-handle')).toHaveCount(0)
+
+        // The drawer is anchored right; the backdrop fills the window beside it.
+        await page.mouse.click(100, WIDE.height / 2)
+        await expect(menu).toBeHidden()
+        await expect(drawer).toBeVisible()
+
+        await page.mouse.click(100, WIDE.height / 2)
+        await expect(drawer).toBeHidden()
+    })
+})
+
+test.describe('sheet-in-drawer: Escape closes only the topmost layer', () => {
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
+    async function escapeMenuThenDrawer(page: Page, viewport: { width: number; height: number }) {
+        await login(page)
+        await openReportStub(page)
+        await page.setViewportSize(viewport)
+        await page.getByTestId('salesstub-drawer-open').click()
+        const drawer = page.getByTestId('salesstub-drawer')
+        await expect(drawer).toBeVisible()
+        await drawer.getByTestId('salesstub-drawer-menu-trigger').click()
+        const menu = page.getByTestId('salesstub-drawer-menu')
+        await expect(menu).toBeVisible()
+        return { drawer, menu }
+    }
+
+    test('Escape closes the menu sheet and keeps the drawer on a phone, then closes the drawer', async ({
+        page,
+    }) => {
+        const { drawer, menu } = await escapeMenuThenDrawer(page, PHONE)
+        await expect(menu.getByTestId('sheet-handle')).toBeVisible()
+
+        await page.keyboard.press('Escape')
+        await expect(menu).toBeHidden()
+        await expect(drawer).toBeVisible()
+
+        await page.keyboard.press('Escape')
+        await expect(drawer).toBeHidden()
+    })
+
+    test('Escape closes the menu popover and keeps the drawer on a wide window, then closes the drawer', async ({
+        page,
+    }) => {
+        const { drawer, menu } = await escapeMenuThenDrawer(page, WIDE)
+        await expect(menu.getByTestId('sheet-handle')).toHaveCount(0)
+
+        await page.keyboard.press('Escape')
+        await expect(menu).toBeHidden()
+        await expect(drawer).toBeVisible()
+
+        await page.keyboard.press('Escape')
+        await expect(drawer).toBeHidden()
+    })
 })
