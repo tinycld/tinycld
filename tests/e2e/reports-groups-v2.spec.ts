@@ -62,6 +62,10 @@ async function seedTeams(p: Page, stem: string) {
     })
 }
 
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptrec', p => seedTeams(p, SHARED))
 
 async function pickIn(p: Page, trigger: string, key: string) {
@@ -108,8 +112,6 @@ async function expectRegionOnGroupOnly(p: Page, team: string) {
 }
 
 test.describe('group levels', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('a group by a linked team shows every team, labelled and sorted by a team field', async ({
         p,
     }) => {

@@ -71,6 +71,10 @@ const QUARTER_SALES: readonly Sale[] = [
     { customer: 'Bo', amount: 2500, day: '2026-03-10' },
 ]
 
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptpd', p => seed(p, QUARTER_SALES))
 
 async function expectMonthHeadings(p: Page) {
@@ -112,8 +116,6 @@ async function expectBasisUnderPeriod(p: Page) {
 }
 
 test.describe('reports: period pivot', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     // Its own member: it changes the basis, and the phone test below reads the
     // default basis on the shared member.
     test('the document header prints the chosen basis under the period', async ({

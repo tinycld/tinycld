@@ -22,6 +22,10 @@ import {
  * shared, so names are unique.
  */
 
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptleaves', async p => {
     const team = uniqueName('Leaf team')
     await seedStub(p, {
@@ -43,8 +47,6 @@ async function askQuantity(p: Page) {
 }
 
 test.describe('report formula leaves', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('an asked value, whole cents and yes or no in columns', async ({ p }) => {
         await openReportsHub(p)
         await startReport(p, SALES_SOURCE)

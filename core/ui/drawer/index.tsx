@@ -4,9 +4,10 @@ import { ExitAnimationContext } from '@gluestack-ui/core/overlay/creator'
 import type { VariantProps } from '@gluestack-ui/utils/nativewind-utils'
 import { tva, useStyleContext, withStyleContext } from '@gluestack-ui/utils/nativewind-utils'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
+import { useOverlayLayer, wasConsumedByLayerDismissal } from '@tinycld/core/ui/overlay/layer-stack'
 import { useSwipeToDismiss } from '@tinycld/core/ui/swipe-dismiss'
 import React from 'react'
-import { Platform, Pressable, ScrollView, View } from 'react-native'
+import { type GestureResponderEvent, Platform, Pressable, ScrollView, View } from 'react-native'
 import { GestureDetector } from 'react-native-gesture-handler'
 import Animated, {
     Easing,
@@ -21,16 +22,10 @@ import Animated, {
     SlideOutRight,
     SlideOutUp,
 } from 'react-native-reanimated'
+import { DrawerCloseContext, DrawerOverlayContext, useDrawerClose } from './overlay-context'
 import { useCloseOnNavigate } from './use-close-on-navigate'
 
 const SCOPE = 'MODAL'
-
-// The swipe gesture lives on DrawerContent but the dismiss callback is given to
-// Drawer, so it reaches the content by context rather than by threading a prop
-// through every call site. Ours rather than gluestack's ModalContext: that one
-// is an implementation detail of the modal creator, and nothing guarantees it
-// keeps carrying handleClose across a version bump.
-const DrawerCloseContext = React.createContext<(() => void) | undefined>(undefined)
 
 // How a Drawer appears. `overlay` (the default) is a modal panel over the
 // screen, with a backdrop that dismisses it. `inline` is a non-modal panel that
@@ -270,32 +265,64 @@ type IDrawerFooterProps = React.ComponentProps<typeof UIDrawer.Footer> &
 type IDrawerCloseButtonProps = React.ComponentProps<typeof UIDrawer.CloseButton> &
     VariantProps<typeof drawerCloseButtonStyle> & { className?: string }
 
-// Close the drawer on Escape while it's open. Bound directly to a
-// document-level keydown listener in the CAPTURE phase (web only) rather than
-// the app shortcut system: react-native-web's TextInput swallows Escape on its
-// own internal handler, so the window-level (bubble-phase) shortcut matcher
-// never sees it when focus is inside the drawer's inputs — capture-phase on
-// document fires first. This mirrors HelpSearchPalette / FindReplaceBar, the
-// overlays whose Escape-to-close is verified by e2e. Without this the only way
-// to dismiss a drawer is the close button or backdrop click — an a11y gap.
-function useDrawerEscape(isOpen: boolean | undefined, onClose?: () => void) {
-    React.useEffect(() => {
-        if (!isOpen || !onClose) return
-        // Web-only: this is keyboard a11y for the browser. On native, React
-        // Native polyfills a partial `document` global that is defined but lacks
-        // addEventListener, so a `typeof document === 'undefined'` check passes
-        // through and then crashes on the call. Guard on the platform instead.
-        if (Platform.OS !== 'web') return
-        const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                e.preventDefault()
-                e.stopPropagation()
-                onClose()
-            }
-        }
-        document.addEventListener('keydown', onKeyDown, true)
-        return () => document.removeEventListener('keydown', onKeyDown, true)
-    }, [isOpen, onClose])
+const NO_NODES = () => []
+
+// An open overlay Drawer is a layer of the overlay stack (layer-stack.ts), so
+// Escape and Android back close only the topmost layer. A Menu, Sheet or
+// Dialog opened from the drawer sits above it and closes first; the next
+// Escape closes the drawer; a layer open below the drawer stays open. The
+// stack's one Escape listener is on `document` in the CAPTURE phase, because
+// react-native-web's TextInput swallows Escape in its own handler, so a key
+// pressed in a drawer field never reaches a bubble-phase listener. One
+// listener for every layer means no order between listeners decides which
+// layer a key closes.
+//
+// Not a modal layer: the app-root inert (inert-siblings.ts) keeps only the
+// paths to the overlay hosts, and gluestack portals the drawer outside them
+// (its PortalProvider's items), so `isModal` would make the drawer itself
+// inert. Not dismissed by an outside press: the backdrop owns that, and it
+// follows the same rule: it closes the drawer only while the drawer is the top
+// layer and the press did not already close a layer above it
+// (`backdropPress`). A panel (`isPanel`): its content belongs to the
+// screen, so the shortcut system reads keys in it as if no layer were open.
+//
+// A drawer without onClose has nothing to close and stays out of the stack.
+function useDrawerLayer(isOpen: boolean, onClose?: () => void) {
+    return useOverlayLayer({
+        isOpen: isOpen && onClose !== undefined,
+        nodes: NO_NODES,
+        onDismiss: onClose ?? NOOP,
+        dismissOnOutside: false,
+        dismissOnEscape: true,
+        isModal: false,
+        isPanel: true,
+    })
+}
+
+type BackdropPress = (event?: GestureResponderEvent) => void
+
+// The backdrop's press handler, set by the overlay Drawer inside its portal.
+// Undefined when a press on the backdrop must not close the drawer.
+const DrawerBackdropPressContext = React.createContext<BackdropPress | undefined>(undefined)
+
+// A popover opened from the drawer draws over the backdrop, so one press
+// outside it gives a pointerdown that closes the popover and then a click on
+// the backdrop, when the drawer is the top layer again. Both guards are needed,
+// as in Dialog: `isTopLayer` for a press while the popover is still open, and
+// `wasConsumedByLayerDismissal` for the click after the press that closed it.
+// A second press closes the drawer.
+function backdropPress(
+    isTopLayer: () => boolean,
+    closeOnOverlayClick: boolean,
+    onClose?: () => void
+): BackdropPress | undefined {
+    if (!closeOnOverlayClick || !onClose) return undefined
+    return event => {
+        if (!isTopLayer()) return
+        const native = event?.nativeEvent as { pointerId?: number } | undefined
+        if (wasConsumedByLayerDismissal(native)) return
+        onClose()
+    }
 }
 
 const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProps>(function Drawer(
@@ -305,6 +332,7 @@ const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProp
         anchor = 'left',
         presentation = 'overlay',
         closesOnNavigate = true,
+        closeOnOverlayClick = true,
         ...props
     },
     ref
@@ -312,8 +340,19 @@ const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProp
     const isInline = presentation === 'inline'
     // Escape belongs to whatever has focus beside an inline panel, which is
     // not modal; only an overlay claims it.
-    useDrawerEscape(props.isOpen && !isInline, props.onClose)
+    const { isTopLayer } = useDrawerLayer(props.isOpen === true && !isInline, props.onClose)
+    const onBackdropPress = backdropPress(isTopLayer, closeOnOverlayClick, props.onClose)
     useCloseOnNavigate(props.isOpen && closesOnNavigate, props.onClose)
+    // Gluestack never closes an overlay Drawer by key. On web its Overlay puts
+    // an Escape `keyup` listener on document.body that calls onClose whatever
+    // its `isKeyboardDismissable` (@gluestack-ui/utils useBackHandler), so the
+    // keyup of the Escape that closed a Menu above the drawer closed the drawer
+    // too: on web it gets no onClose. `isKeyboardDismissable={false}` removes
+    // its Android back handler, which closed the drawer under an open Sheet.
+    // The layer stack does both now (useDrawerLayer); the backdrop and the
+    // close button close through DrawerCloseContext. On native gluestack keeps
+    // onClose for the VoiceOver escape gesture on the content.
+    const gluestackClose = Platform.OS === 'web' ? undefined : props.onClose
 
     // Don't mount the gluestack Modal at all while closed. GlueStack's exit
     // handshake runs through RN Animated with useNativeDriver:true, whose
@@ -346,31 +385,50 @@ const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProp
         )
     }
 
+    // The providers wrap the children, not UIDrawer: gluestack's portal renders
+    // the content at its provider (PortalProvider), so a context set above
+    // UIDrawer does not reach the drawer's content. Around all the children, so
+    // a Sheet placed beside DrawerContent (also inside the portal) sees it too.
     return (
-        <DrawerCloseContext.Provider value={props.onClose}>
-            <UIDrawer
-                ref={ref}
-                {...props}
-                pointerEvents="box-none"
-                className={drawerStyle({ size, anchor, class: className })}
-                context={{ size, anchor }}
-            />
-        </DrawerCloseContext.Provider>
+        <UIDrawer
+            ref={ref}
+            {...props}
+            onClose={gluestackClose}
+            closeOnOverlayClick={closeOnOverlayClick}
+            isKeyboardDismissable={false}
+            pointerEvents="box-none"
+            className={drawerStyle({ size, anchor, class: className })}
+            context={{ size, anchor }}
+        >
+            <DrawerCloseContext.Provider value={props.onClose}>
+                <DrawerBackdropPressContext.Provider value={onBackdropPress}>
+                    <DrawerOverlayContext.Provider value>
+                        {props.children}
+                    </DrawerOverlayContext.Provider>
+                </DrawerBackdropPressContext.Provider>
+            </DrawerCloseContext.Provider>
+        </UIDrawer>
     )
 })
 
 const DrawerBackdrop = React.forwardRef<
     React.ComponentRef<typeof UIDrawer.Backdrop>,
     IDrawerBackdropProps
->(function DrawerBackdrop({ className, ...props }, ref) {
+>(function DrawerBackdrop({ className, onPress, ...props }, ref) {
     const presentation = React.useContext(DrawerPresentationContext)
+    const onBackdropPress = React.useContext(DrawerBackdropPressContext)
     if (presentation === 'inline') return null
+    // Gluestack has no onClose on web (see Drawer), so the press closes
+    // through the Drawer's guarded handler (`backdropPress`). Gluestack spreads
+    // these props over its own handler, so on native too it is replaced.
+    const close = onPress ?? onBackdropPress
     return (
         <UIDrawer.Backdrop
             ref={ref}
             entering={FadeIn.duration(200).easing(Easing.in(Easing.cubic))}
             exiting={FadeOut.duration(150)}
             {...props}
+            onPress={close}
             className={drawerBackdropStyle({
                 class: className,
             })}
@@ -384,7 +442,7 @@ const DrawerContent = React.forwardRef<
 >(function DrawerContent({ className, style, ...props }, ref) {
     const { size: parentSize, anchor: parentAnchor } = useStyleContext(SCOPE)
     const insets = useDeviceInsets()
-    const onClose = React.useContext(DrawerCloseContext)
+    const onClose = useDrawerClose()
     const presentation = React.useContext(DrawerPresentationContext)
 
     // How far the panel must travel to clear the screen. Measured rather than
@@ -531,12 +589,11 @@ const DrawerCloseButton = React.forwardRef<
     React.ComponentRef<typeof UIDrawer.CloseButton>,
     IDrawerCloseButtonProps
 >(function DrawerCloseButton({ className, accessibilityLabel = 'Close', ...props }, ref) {
-    const onClose = React.useContext(DrawerCloseContext)
-    const presentation = React.useContext(DrawerPresentationContext)
-    // An overlay's button closes through gluestack's modal context, which an
-    // inline Drawer does not mount. Gluestack spreads these props over its own
-    // close handler, so an overlay must not receive an onPress key at all.
-    const inlineClose = presentation === 'inline' && !props.onPress ? { onPress: onClose } : {}
+    const onClose = useDrawerClose()
+    // The button closes through the context: an inline Drawer mounts no
+    // gluestack modal context, and an overlay's gluestack has no onClose on
+    // web (see Drawer). Gluestack spreads these props over its own handler.
+    const close = props.onPress ? {} : { onPress: onClose }
     return (
         <UIDrawer.CloseButton
             ref={ref}
@@ -545,7 +602,7 @@ const DrawerCloseButton = React.forwardRef<
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
             {...props}
-            {...inlineClose}
+            {...close}
             className={drawerCloseButtonStyle({
                 class: className,
             })}

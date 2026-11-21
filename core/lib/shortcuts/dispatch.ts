@@ -29,9 +29,16 @@ export interface KeyFacts {
     altKey: boolean
     /** The key was typed in a text field (`isInputKeyEvent`). */
     inInput: boolean
-    /** The top open layer dismisses itself on Escape. */
+    /**
+     * The top open layer dismisses itself on Escape. False for a panel top
+     * layer (an overlay Drawer, `isPanel`): `factsOf` (provider.web.tsx) reads
+     * it as no layer.
+     */
     layerTakesEscape: boolean
-    /** The top open layer is not modal: a menu, a popover or a search palette. */
+    /**
+     * The top open layer is not modal: a menu, a popover or a search palette.
+     * False for a panel top layer, for the same reason.
+     */
     menuOpen: boolean
 }
 
@@ -43,7 +50,10 @@ export interface KeyFacts {
  * stack listens on `document` in the capture phase, and the window capture
  * listener always runs before it (capture runs window, then document), so
  * without this yield a screen's `allowInInputs` Escape would run on the
- * press that was meant only to close the menu or dialog on top.
+ * press that was meant only to close the menu or dialog on top. A panel top
+ * layer (an overlay Drawer) is the exception: its facts read as no layer, so
+ * a screen's `allowInInputs` Escape typed in a drawer field runs before the
+ * stack closes the drawer.
  *
  * While a menu is open every other key takes the bubble path. A menu pushes
  * no shortcut scope, so the screen's keys stay active under it; read in the
