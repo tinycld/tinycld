@@ -27,6 +27,10 @@ import {
  * report and adds no sale.
  */
 
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptinl', async p => {
     const team = uniqueName('Inline')
     const sales = (
@@ -97,8 +101,6 @@ const textColor = (element: Locator) =>
     })
 
 test.describe('reports: inline and muted groups', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('an inlined group shows its child in its place, and a muted child is drawn muted', async ({
         p,
     }) => {

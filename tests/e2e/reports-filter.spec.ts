@@ -24,9 +24,11 @@ import {
  * user, so the first test scopes its teams by a name stem; each test has its own
  * member and its own sales, so related-row totals count only this test's sales.
  */
-test.describe('filtering a report', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
 
+test.describe('filtering a report', () => {
     test('has and has no related rows filter teams by their sales', async ({ freshMember }) => {
         const p = freshMember.page
         const stem = uniqueName('F')
@@ -529,8 +531,6 @@ async function addSaleElsewhere(
 }
 
 test.describe('where a report run starts', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('a run with new params starts at the top of the report', async ({ p }) => {
         await askedAmountReport(p)
         await expectNewParamsStartAtTop(p)

@@ -27,6 +27,14 @@ export interface LayerRecord {
      * while this is set. See `useIsModalLayerOpen`.
      */
     isModal: boolean
+    /**
+     * A panel over the screen that pushes no shortcut scope: an overlay
+     * Drawer. Its content belongs to the screen (the screen's shortcuts stay
+     * active in it), so the shortcut system reads a key as if no layer were
+     * open while a panel is on top (provider.web.tsx `factsOf`). The stack
+     * still closes it on Escape and Android back when it is on top.
+     */
+    isPanel?: boolean
 }
 
 const stack: LayerRecord[] = []
@@ -176,8 +184,13 @@ function now(): number {
  * and the layer stayed open. The shortcut system's own capture listener sits
  * on `window` and so runs before this one; it leaves Escape alone while a
  * layer that dismisses on Escape is open (`keyPhase`, lib/shortcuts/dispatch.ts),
- * so this is the only handler for that press. Stopping propagation here keeps
- * the key from the field and from the bubble phase.
+ * so this is the only handler for that press. The exception is a panel top
+ * layer (`isPanel`, an overlay Drawer): the shortcut system reads it as no
+ * layer (`factsOf`, lib/shortcuts/provider.web.tsx), so a screen's
+ * `allowInInputs` Escape typed in a field matches in the window capture phase
+ * first and, when it matches, stops the key before it reaches this listener.
+ * Stopping propagation here keeps the key from the field and from the bubble
+ * phase.
  */
 function onKeyDown(event: KeyboardEvent) {
     if (event.key !== 'Escape') return
@@ -228,13 +241,17 @@ interface UseOverlayLayerOptions {
     dismissOnEscape?: boolean
     /** See LayerRecord.isModal. Default false: a menu or popover leaves the page usable. */
     isModal?: boolean
+    /** See LayerRecord.isPanel. Default false. */
+    isPanel?: boolean
 }
 
 /**
- * Joins the layer stack while `isOpen`. Handles outside pointerdown (web) and
- * the Android back button. Escape is `<LayerEscape>` (escape.tsx), rendered
- * INSIDE the open layer: it joins the shortcut scope stack on mount, so it
- * must not exist while the layer is closed.
+ * Joins the layer stack while `isOpen`. Handles outside pointerdown and
+ * Escape (web, `onPointerDown` / `onKeyDown` above) and the Android back
+ * button. The `modal` shortcut scope and the Escape entry of the shortcut
+ * help are `<LayerScope>` (escape.tsx), rendered INSIDE the open layer: it
+ * joins the shortcut scope stack on mount, so it must not exist while the
+ * layer is closed.
  *
  * Returns `isTopLayer()`, read at event time. A layer that dismisses itself
  * from its own surface — a dialog's backdrop — must consult it first, or it
@@ -251,6 +268,7 @@ export function useOverlayLayer({
     dismissOnOutside = true,
     dismissOnEscape = true,
     isModal = false,
+    isPanel = false,
 }: UseOverlayLayerOptions) {
     const idRef = useRef<number | null>(null)
     const nodesRef = useRef(nodes)
@@ -269,12 +287,13 @@ export function useOverlayLayer({
             dismissOnOutside,
             dismissOnEscape,
             isModal,
+            isPanel,
         })
         return () => {
             popLayer(id)
             idRef.current = null
         }
-    }, [isOpen, dismissOnOutside, dismissOnEscape, isModal])
+    }, [isOpen, dismissOnOutside, dismissOnEscape, isModal, isPanel])
 
     // A function, not a boolean: the stack changes without re-rendering this
     // component, so the answer has to be read when the press happens.
