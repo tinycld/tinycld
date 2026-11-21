@@ -23,10 +23,13 @@ type stmt struct {
 	params dbx.Params
 	rules  []string // collections, in first-use order
 	ruleOf map[string]string
-	// ruleReads holds each rule CTE's own select and params, by CTE name, as
-	// with rendered them, so a run finds the topics a rule reads (topics).
+	// ruleReads holds each rule CTE's select in full and its params, by CTE
+	// name, so a run finds the topics a rule reads (topics).
 	ruleReads map[string]ruleRead
-	n         int
+	// ask answers the rules that one answer serves (ruleForm.sent); readRows
+	// sets it. Without it with writes every rule in full.
+	ask ruleAsk
+	n   int
 }
 
 // ruleRead is a rule CTE's select and its params.
@@ -151,20 +154,29 @@ func (s *stmt) sourceRule(src *Source) string {
 	return s.rule(src.Collection)
 }
 
-// ruleRead is the select and params of one entry of s.rules.
-func (s *stmt) ruleRead(name string) (string, dbx.Params, error) {
+// ruleRead is the select and params of one entry of s.rules: in full, and as
+// the statement holds it (ruleForm.sent).
+func (s *stmt) ruleRead(name string) (full, sent ruleRead, err error) {
 	if key, union := strings.CutPrefix(name, unionRulePrefix); union {
 		src := lookupRegistered(key)
 		if src == nil {
-			return "", nil, fmt.Errorf("reports: union source %q is not registered", key)
+			return ruleRead{}, ruleRead{}, fmt.Errorf("reports: union source %q is not registered", key)
 		}
-		return unionSelect(s.app, src, s.info)
+		return unionForms(s.app, src, s.info, s.ask)
 	}
 	col, err := s.app.FindCachedCollectionByNameOrId(name)
 	if err != nil {
-		return "", nil, fmt.Errorf("reports: collection %q: %w", name, err)
+		return ruleRead{}, ruleRead{}, fmt.Errorf("reports: collection %q: %w", name, err)
 	}
-	return ruleSelect(s.app, col, s.info)
+	form, err := ruleFormOf(s.app, col, s.info)
+	if err != nil {
+		return ruleRead{}, ruleRead{}, err
+	}
+	sent, err = form.sent(s.ask)
+	if err != nil {
+		return ruleRead{}, ruleRead{}, err
+	}
+	return form.ruleRead, sent, nil
 }
 
 // rule names the CTE that holds the rows the reader may list of a s.rules
@@ -186,15 +198,18 @@ func (s *stmt) with(ctes ...string) (string, error) {
 	for _, name := range s.rules {
 		sql := "SELECT 1 AS id WHERE 0"
 		if s.app != nil {
-			ruleSQL, params, err := s.ruleRead(name)
+			full, sent, err := s.ruleRead(name)
 			if err != nil {
 				return "", err
 			}
-			if err := mergeParams(s.params, params); err != nil {
+			if err := mergeParams(s.params, sent.params); err != nil {
 				return "", err
 			}
-			sql = ruleSQL
-			s.ruleReads[s.ruleOf[name]] = ruleRead{sql: ruleSQL, params: params}
+			sql = sent.sql
+			// The rule in full, not as sent: a run's topics name what the
+			// rule reads (the grant collection, the reader's user row) also
+			// when the statement holds only the rule's answer.
+			s.ruleReads[s.ruleOf[name]] = full
 		}
 		parts = append(parts, s.ruleOf[name]+" AS ("+sql+")")
 	}

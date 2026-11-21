@@ -327,6 +327,9 @@ type runner struct {
 	// ruleTopics holds the topics of each rule CTE select the run read, so
 	// its statements explain each rule once.
 	ruleTopics map[string][]string
+	// ruleAnswers holds the answer of each rule probe the run asked
+	// (askRules), so its statements ask each rule once.
+	ruleAnswers map[string]bool
 	// pivotValues are the pivot's columns, from its first pass, and
 	// pivotLabels their records' labels for a pivot over a link.
 	pivotValues []pivotValue
@@ -419,7 +422,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	rn := &runner{
 		ctx: ctx, app: app, db: db, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap, live: req.Live,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
-		topics: map[string]bool{}, ruleTopics: map[string][]string{},
+		topics: map[string]bool{}, ruleTopics: map[string][]string{}, ruleAnswers: map[string]bool{},
 	}
 	if req.Loaded != nil {
 		rn.loadNotices(req.Loaded)
@@ -651,9 +654,12 @@ var checkTopics func(ctx context.Context, app core.App, sql string, params dbx.P
 // readRows runs one read statement with the rule CTEs and ctes through db
 // under the run time limit; with topics (a run's cache of each rule's
 // topics), it also returns the change-signal topics of every collection the
-// statement reads.
-func readRows(ctx context.Context, app core.App, db dbx.Builder, s *stmt, ctes []string, body string, topics map[string][]string) ([]map[string]any, []string, error) {
+// statement reads. A rule that one answer serves is asked through db before
+// the statement is written (askRules); answers is a run's map of them, nil
+// for a read that is no part of a run.
+func readRows(ctx context.Context, app core.App, db dbx.Builder, s *stmt, ctes []string, body string, topics map[string][]string, answers map[string]bool) ([]map[string]any, []string, error) {
 	ctes = materializeShared(ctes, body)
+	s.ask = askRules(ctx, db, answers)
 	with, err := s.with(ctes...)
 	if err != nil {
 		return nil, nil, err
@@ -693,7 +699,7 @@ func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, 
 	if db == nil {
 		db = rn.app.DB()
 	}
-	rows, topics, err := readRows(rn.ctx, rn.app, db, s, ctes, body, rn.ruleTopics)
+	rows, topics, err := readRows(rn.ctx, rn.app, db, s, ctes, body, rn.ruleTopics, rn.ruleAnswers)
 	for _, t := range topics {
 		rn.topics[t] = true
 	}
