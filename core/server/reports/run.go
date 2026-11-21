@@ -1432,35 +1432,37 @@ func splitCell(cell string) (string, string) {
 // detail statement reads only the base rows under them. It compiles levels 1
 // to m, and past m each next level whose rt<L> the level before it reads (any
 // "rows" sum a compiled level reads: in its having, its sort keys or its own
-// rt cells); no others.
-func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, error) {
+// rt cells); no others. win is true when a value of those CTEs is a running
+// value or a percent (expr.win), which reads rows of other groups.
+func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, bool, error) {
 	m := c.havingAbove(len(c.p.groups) + 1)
 	if m == 0 {
-		return nil, 0, nil
+		return nil, 0, false, nil
 	}
 	c.fillSets = map[int]string{}
 	var ctes []string
-	readsSums := false
+	readsSums, win := false, false
 	for n := 1; n <= m || readsSums; n++ {
 		lv, err := c.level(r, n, expand)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 		own, err := lv.own()
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 		var totals []string
 		if readsSums {
 			if totals, err = lv.rowsCells(); err != nil {
-				return nil, 0, err
+				return nil, 0, false, err
 			}
 		}
 		base, _ := lv.base(own, totals)
 		ctes = append(ctes, base...)
 		readsSums = len(lv.childCells) > 0
+		win = win || lv.win
 	}
-	return ctes, m, nil
+	return ctes, m, win, nil
 }
 
 // detailPass runs the detail statement: one row per base row, a page at a
@@ -1476,7 +1478,7 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	shown, m, err := c.shownLevels(r, rn.expand)
+	shown, m, win, err := c.shownLevels(r, rn.expand)
 	if err != nil {
 		return nil, err
 	}
@@ -1491,9 +1493,24 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	}
 	limit := rn.pageLimit()
 	rn.readDetails = true
-	ctes := append([]string{r.render()}, shown...)
 	grouped := len(c.p.groups) > 0
 	paged := rn.pagedGroups()
+	// With open leaves, w reads only the base rows that can be in one of them
+	// (leafCut), so it reads gord, which then comes first. heldCTEs is the CTE
+	// list readShownNow reads a held group over: one with every row of w, as
+	// a held group may be no leaf of this page.
+	whole := append([]string{r.render()}, shown...)
+	ctes, heldCTEs := whole, whole
+	if paged || grouped {
+		gord := c.leafOrder(s, leaves)
+		r.cut = c.leafCut(r, leaves, m > 0, c.detailWin || win)
+		if r.cut != "" {
+			ctes = append([]string{gord, r.render()}, shown...)
+		} else {
+			ctes = append(slices.Clone(whole), gord)
+			heldCTEs = ctes
+		}
+	}
 	// The group cursor's fingerprint and values hold the sort keys the group
 	// pass compiled: this pass orders by the same ones, or a cursor's values
 	// would be read against other columns.
@@ -1504,15 +1521,13 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	var where string
 	switch {
 	case paged:
-		ctes = append(ctes, c.leafOrder(s, leaves))
 		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
 		by = "d.__g, " + by
-		if err = rn.readShownNow(s, ctes, sel, order); err == nil {
+		if err = rn.readShownNow(s, heldCTEs, sel, order); err == nil {
 			where = rn.pagedDetailAfter(s, order, leaves)
 		}
 	case grouped:
 		levels = c.groupLevels()
-		ctes = append(ctes, c.leafOrder(s, leaves))
 		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
 		by = "d.__g, " + by
 		rn.page = &groupedPage{}
@@ -1608,7 +1623,8 @@ func (rn *runner) shownBefore() (out []held, moved []bool) {
 // and the cursor holds the old one: compared with it, every detail of the
 // group would sort before or after the cursor. A row that is gone or in
 // another group now keeps the cursor's values. sel is the detail select, read
-// over ctes.
+// over ctes, whose w holds every row: a held group may be no open leaf of this
+// page, so a w cut to the page's leaves (leafCut) would not hold its rows.
 func (rn *runner) readShownNow(s *stmt, ctes []string, sel string, keys []sortKey) error {
 	shown, moved := rn.shownBefore()
 	rn.shown = shown
@@ -1948,6 +1964,7 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 		sel = append(sel, fmt.Sprintf("(CASE WHEN %s THEN 1 ELSE 0 END) AS %s", w.sql, mx))
 		c.detailSortMixed = append(c.detailSortMixed, condProbe{at: w.at, sql: mx})
 	}
+	c.detailWin = frame.win
 	return "SELECT " + strings.Join(sel, ", ") + " FROM " + frame.from(table, "w"), order, nil
 }
 

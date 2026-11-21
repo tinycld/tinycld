@@ -98,6 +98,9 @@ type windowFrame struct {
 	recs *recordJoins
 	// name prefixes the hoisted values' names (wh when "").
 	name string
+	// win is true once a running value or a percent (expr.win) is compiled
+	// over the frame's rows (rowsCtx.window).
+	win bool
 	// lookups holds each lookup compiled on the frame's rows by its node, so
 	// the copies of one lookup in a formula (an if that reads it in both
 	// branches) are computed once (rowsCtx.lookup).
@@ -337,7 +340,9 @@ func (rc *rowsCtx) window(op string, arg *Node, scale int, at string) (expr, err
 	if err != nil {
 		return expr{}, err
 	}
-	return windowSQL(op, e, scale, rc.detail, at)
+	w, err := windowSQL(op, e, scale, rc.detail, at)
+	rc.detail.win = rc.detail.win || w.win
+	return w, err
 }
 
 func (rc *rowsCtx) bind(v any) string              { return rc.r.s.bind(v) }
