@@ -4,6 +4,13 @@ import { useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import {
+    Drawer,
+    DrawerBackdrop,
+    DrawerBody,
+    DrawerContent,
+    DrawerHeader,
+} from '@tinycld/core/ui/drawer'
+import {
     ButtonGroup,
     NumberInput,
     SelectInput,
@@ -12,6 +19,7 @@ import {
     z,
     zodResolver,
 } from '@tinycld/core/ui/form'
+import { Menu } from '@tinycld/core/ui/menu'
 import { newRecordId } from 'pbtsdb/core'
 import { useState } from 'react'
 import { ScrollView, Text, View } from 'react-native'
@@ -515,6 +523,56 @@ function DataSetForm() {
     )
 }
 
+const DRAWER_MENU_CHOICES = ['North', 'South', 'East']
+
+// A core Menu (default `auto` presentation) inside a core overlay Drawer, for
+// tests/e2e/sheet-in-drawer.spec.ts: on a phone the Menu is a Sheet that must
+// draw above the Drawer it opens from; on a wide window it is a popover.
+function DrawerMenuDemo() {
+    const [isOpen, setIsOpen] = useState(false)
+    const [chosen, setChosen] = useState('None')
+    const items = DRAWER_MENU_CHOICES.map(label => (
+        <Menu.Item
+            key={label}
+            label={label}
+            isSelected={label === chosen}
+            onSelect={() => setChosen(label)}
+            testID={`salesstub-drawer-menu-${label.toLowerCase()}`}
+        />
+    ))
+    return (
+        <View className="gap-2">
+            <Button onPress={() => setIsOpen(true)} testID="salesstub-drawer-open">
+                <ButtonText>Open drawer</ButtonText>
+            </Button>
+            <Drawer isOpen={isOpen} onClose={() => setIsOpen(false)} anchor="right">
+                <DrawerBackdrop />
+                <DrawerContent testID="salesstub-drawer">
+                    <DrawerHeader>
+                        <Text className="text-lg font-semibold text-foreground">Stub drawer</Text>
+                    </DrawerHeader>
+                    <DrawerBody>
+                        <Text testID="salesstub-drawer-chosen" className="text-foreground">
+                            {chosen}
+                        </Text>
+                        <Menu
+                            title="Region"
+                            testID="salesstub-drawer-menu"
+                            trigger={
+                                <Button testID="salesstub-drawer-menu-trigger">
+                                    <ButtonText>Choose region</ButtonText>
+                                </Button>
+                            }
+                        >
+                            {items}
+                        </Menu>
+                    </DrawerBody>
+                </DrawerContent>
+            </Drawer>
+        </View>
+    )
+}
+
 export default function ReportStubIndex() {
     return (
         <ScrollView className="flex-1 bg-background" contentContainerClassName="gap-6 p-4">
@@ -526,6 +584,7 @@ export default function ReportStubIndex() {
             <ManySalesForm />
             <ReturnForm />
             <DataSetForm />
+            <DrawerMenuDemo />
         </ScrollView>
     )
 }

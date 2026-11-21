@@ -20,6 +20,10 @@ import {
  * but one reads; no test adds a sale to them. The pivot by team has its own member,
  * because its columns are the teams.
  */
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptgroup', async p => {
     const team = uniqueName('Team')
     await seedStub(p, {
@@ -65,8 +69,6 @@ async function expectMonthPivot(p: Page) {
 }
 
 test.describe('grouping and pivoting a report', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('a group level with subtotals opens and closes on the report view', async ({ p }) => {
         await openReportsHub(p)
         await groupByStatus(p)

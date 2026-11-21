@@ -63,6 +63,10 @@ async function seedAnchorSales(p: Page) {
     return team
 }
 
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptanchor', async p => {
     await seedAnchorSales(p)
 })
@@ -373,8 +377,6 @@ function jumps(frames: Frame[]): Jumps {
 }
 
 test.describe('scroll position on web', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('rows opening or arriving above a still list keep the row in view in place', async ({
         freshMember,
         browser,

@@ -21,16 +21,10 @@ import Animated, {
     SlideOutRight,
     SlideOutUp,
 } from 'react-native-reanimated'
+import { DrawerCloseContext, DrawerOverlayContext, useDrawerClose } from './overlay-context'
 import { useCloseOnNavigate } from './use-close-on-navigate'
 
 const SCOPE = 'MODAL'
-
-// The swipe gesture lives on DrawerContent but the dismiss callback is given to
-// Drawer, so it reaches the content by context rather than by threading a prop
-// through every call site. Ours rather than gluestack's ModalContext: that one
-// is an implementation detail of the modal creator, and nothing guarantees it
-// keeps carrying handleClose across a version bump.
-const DrawerCloseContext = React.createContext<(() => void) | undefined>(undefined)
 
 // How a Drawer appears. `overlay` (the default) is a modal panel over the
 // screen, with a backdrop that dismisses it. `inline` is a non-modal panel that
@@ -346,16 +340,24 @@ const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProp
         )
     }
 
+    // The providers wrap the children, not UIDrawer: gluestack's portal renders
+    // the content at its provider (PortalProvider), so a context set above
+    // UIDrawer does not reach the drawer's content. Around all the children, so
+    // a Sheet placed beside DrawerContent (also inside the portal) sees it too.
     return (
-        <DrawerCloseContext.Provider value={props.onClose}>
-            <UIDrawer
-                ref={ref}
-                {...props}
-                pointerEvents="box-none"
-                className={drawerStyle({ size, anchor, class: className })}
-                context={{ size, anchor }}
-            />
-        </DrawerCloseContext.Provider>
+        <UIDrawer
+            ref={ref}
+            {...props}
+            pointerEvents="box-none"
+            className={drawerStyle({ size, anchor, class: className })}
+            context={{ size, anchor }}
+        >
+            <DrawerCloseContext.Provider value={props.onClose}>
+                <DrawerOverlayContext.Provider value>
+                    {props.children}
+                </DrawerOverlayContext.Provider>
+            </DrawerCloseContext.Provider>
+        </UIDrawer>
     )
 })
 
@@ -384,7 +386,7 @@ const DrawerContent = React.forwardRef<
 >(function DrawerContent({ className, style, ...props }, ref) {
     const { size: parentSize, anchor: parentAnchor } = useStyleContext(SCOPE)
     const insets = useDeviceInsets()
-    const onClose = React.useContext(DrawerCloseContext)
+    const onClose = useDrawerClose()
     const presentation = React.useContext(DrawerPresentationContext)
 
     // How far the panel must travel to clear the screen. Measured rather than
@@ -531,7 +533,7 @@ const DrawerCloseButton = React.forwardRef<
     React.ComponentRef<typeof UIDrawer.CloseButton>,
     IDrawerCloseButtonProps
 >(function DrawerCloseButton({ className, accessibilityLabel = 'Close', ...props }, ref) {
-    const onClose = React.useContext(DrawerCloseContext)
+    const onClose = useDrawerClose()
     const presentation = React.useContext(DrawerPresentationContext)
     // An overlay's button closes through gluestack's modal context, which an
     // inline Drawer does not mount. Gluestack spreads these props over its own

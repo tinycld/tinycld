@@ -76,6 +76,10 @@ async function seedSales(p: Page) {
     })
 }
 
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptview', seedSales)
 
 // A saved report over the seedSales sales, open on its view.
@@ -137,8 +141,6 @@ async function addCustomerFilter(p: Page, text: string) {
 }
 
 test.describe('the report view', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('the period chip and a filter chip edit the run, and a copied link keeps them', async ({
         freshMember,
         browser,

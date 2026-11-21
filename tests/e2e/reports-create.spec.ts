@@ -23,6 +23,10 @@ import {
  * neither test counts the rows or adds one, and each finds its report by a title
  * of its own.
  */
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptcreate', async p => {
     const editTeam = uniqueName('Team')
     const phoneTeam = uniqueName('Team')
@@ -36,8 +40,6 @@ shareMember('rptcreate', async p => {
 })
 
 test.describe('creating a report', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('a new report shows its columns through a to-one link, then opens from the hub', async ({
         freshMember,
     }) => {

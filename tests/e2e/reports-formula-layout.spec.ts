@@ -22,6 +22,10 @@ import {
  * teams are scoped by a name stem.
  */
 
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptlayout', async p => {
     const team = uniqueName('Team')
     await seedStub(p, {
@@ -69,8 +73,6 @@ async function expectStatusLayout(p: Page) {
 }
 
 test.describe('formulas, related rows and layouts', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('a formula column subtracts cost from amount', async ({ freshMember }) => {
         const p = freshMember.page
         const team = uniqueName('Team')

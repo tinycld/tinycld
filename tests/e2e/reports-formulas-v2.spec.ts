@@ -24,6 +24,10 @@ import {
 // new name together with its new member.
 const LOOKUP_TEAM = uniqueName('Lookup team')
 
+// At the file level: shareMember's beforeAll seeds through the stub, and a
+// describe's skip runs only after the file's beforeAll.
+test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
 shareMember('rptlookup', async p => {
     await seedStub(p, {
         teams: [{ name: LOOKUP_TEAM }],
@@ -64,8 +68,6 @@ async function buildTeamLookup(p: Page, team: string) {
 }
 
 test.describe('report formulas', () => {
-    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
-
     test('an if over a comparison picks the larger of amount and cost', async ({ freshMember }) => {
         const p = freshMember.page
         const team = uniqueName('Team')
