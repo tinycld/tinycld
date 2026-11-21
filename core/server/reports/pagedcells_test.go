@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -132,6 +133,27 @@ func explainPlan(t *testing.T, z *zoo, st readStatement) []string {
 	var out []string
 	for _, n := range explainTree(t, z, st) {
 		out = append(out, n.detail)
+	}
+	return out
+}
+
+// loopPlan is explainPlan without the subtrees of a LIST SUBQUERY: SQLite
+// builds such a list once for the statement (the IN over gord of leafCut),
+// so a scan inside it reads no table again for each row.
+func loopPlan(t *testing.T, z *zoo, st readStatement) []string {
+	t.Helper()
+	nodes := explainTree(t, z, st)
+	var lists []int
+	for _, n := range nodes {
+		if strings.HasPrefix(n.detail, "LIST SUBQUERY") {
+			lists = append(lists, n.id)
+		}
+	}
+	var out []string
+	for _, n := range nodes {
+		if !slices.ContainsFunc(lists, func(root int) bool { return under(nodes, n.id, root) }) {
+			out = append(out, n.detail)
+		}
 	}
 	return out
 }

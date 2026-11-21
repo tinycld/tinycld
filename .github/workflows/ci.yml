@@ -313,6 +313,10 @@ jobs:
       # video, error-context.md) so a CI failure can be diagnosed
       # without a re-run. `if: failure()` skips the upload on green
       # runs to save bandwidth + retention.
+      # Playwright puts outputDir next to the package.json of the config it
+      # runs: the whole suite runs tinycld/playwright.config.ts (test-results/),
+      # and named spec files run package-scripts' multi-member config
+      # (package-scripts/test-results/).
       - name: Upload Playwright artifacts
         if: failure()
         uses: actions/upload-artifact@v7
@@ -320,6 +324,7 @@ jobs:
           name: playwright-artifacts-${{ matrix.shard }}
           path: |
             ws/tinycld/test-results/
+            ws/tinycld/package-scripts/test-results/
             ws/tinycld/playwright-report/
           retention-days: 14
 

@@ -85,6 +85,9 @@ type compiler struct {
 	// sortable holds the columns a viewer may sort by, as detailSelect
 	// compiled them.
 	sortable map[string]bool
+	// detailWin is true when the detail select detailSelect built last holds
+	// a running value or a percent (its frame's win), so leafCut cuts no rows.
+	detailWin bool
 	// labelTypes holds the type of the record label of each column whose
 	// values point at a record (vl<idx>, the cell <id>@label).
 	labelTypes map[string]FieldType
@@ -242,6 +245,9 @@ type rowsCTE struct {
 	order  []string
 	byExpr map[string]string
 	filter string
+	// cut is a detail statement's cut of the rows to its open leaves
+	// (leafCut), "" for none.
+	cut string
 	// filterMixed is the filter's condMixed: true on a row where a sum
 	// lookup the filter reads met two currencies.
 	filterMixed string
@@ -646,11 +652,19 @@ func (r *rowsCTE) render() string {
 		cols[i] = r.raw[name] + " AS " + name
 	}
 	sql := "w AS (SELECT " + strings.Join(cols, ", ") + "\n" + r.root.render()
+	// The bounds come before the filter, so SQLite reads the base rows
+	// through an index on them; the cut comes after both, on its own.
+	where := r.filter
+	if r.bounds != "" && r.filter != "" {
+		where = r.bounds + " AND " + r.filter
+	}
 	switch {
-	case r.filter != "" && r.bounds != "":
-		sql += "\nWHERE " + r.bounds + " AND " + r.filter
-	case r.filter != "":
-		sql += "\nWHERE " + r.filter
+	case where != "" && r.cut != "":
+		sql += "\nWHERE (" + where + ") AND " + r.cut
+	case where != "":
+		sql += "\nWHERE " + where
+	case r.cut != "":
+		sql += "\nWHERE " + r.cut
 	}
 	return sql + ")"
 }

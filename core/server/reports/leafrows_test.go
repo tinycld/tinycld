@@ -285,14 +285,15 @@ func TestAMovedGroupOffThePageIsReadOverTheGroupsAPageCanReach(t *testing.T) {
 		t.Fatalf("%d cut statements, %d of them keep Mo's shown row, %d reads of the shown rows over them: the test compared nothing", cut, kept, shownRead)
 	}
 	// The LEFT JOIN form of wl must still find each row's group by its keys:
-	// a scan of gord would read every open group for each row.
+	// a scan of gord would read every open group for each row. The list of
+	// open keys the cut w reads (leafCut) is built once (loopPlan).
 	planned := 0
 	for _, st := range *seen {
 		if !strings.Contains(st.sql, "LEFT JOIN gord ON") {
 			continue
 		}
 		planned++
-		for _, line := range explainPlan(t, z, st) {
+		for _, line := range loopPlan(t, z, st) {
 			if strings.Contains(line, "SCAN gord") {
 				t.Fatalf("the LEFT JOIN form of wl scans the open groups: %q", line)
 			}

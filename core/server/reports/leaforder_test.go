@@ -89,7 +89,8 @@ func addOddTreats(t *testing.T, z *zoo) {
 }
 
 // gordPlans is the plan lines of the grouped detail statement of a run that
-// name the open groups (gord) or the detail rows' base (t1).
+// name the open groups (gord) or the detail rows' base (t1), outside a list
+// built once (loopPlan).
 func gordPlans(t *testing.T, z *zoo, seen []readStatement) []string {
 	t.Helper()
 	var lines []string
@@ -99,7 +100,7 @@ func gordPlans(t *testing.T, z *zoo, seen []readStatement) []string {
 			continue
 		}
 		found++
-		for _, line := range explainPlan(t, z, st) {
+		for _, line := range loopPlan(t, z, st) {
 			if strings.Contains(line, "gord") || strings.HasSuffix(line, " t1") || strings.Contains(line, " t1 ") {
 				lines = append(lines, line)
 			}
