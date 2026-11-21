@@ -27,4 +27,8 @@ var legacySQL struct {
 	// noPartBounds reads a union source through its rule CTE with no bound
 	// inside its parts, as before partBounds wrote them.
 	noPartBounds bool
+	// plannedLeafJoin joins a detail row to its open group with a plain JOIN
+	// on the bare keys, whose order SQLite's planner picks, as before leafFrom
+	// fixed the order with CROSS JOIN and took the keys' affinity off.
+	plannedLeafJoin bool
 }

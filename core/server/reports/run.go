@@ -1535,7 +1535,7 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	switch {
 	case paged:
 		ctes = append(ctes, c.leafOrder(s, leaves))
-		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
+		from = c.leafFrom(sel)
 		by = "d.__g, " + by
 		if err = rn.readShownNow(s, ctes, sel, order); err == nil {
 			where = rn.pagedDetailAfter(s, order, leaves)
@@ -1543,7 +1543,7 @@ func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	case grouped:
 		levels = c.groupLevels()
 		ctes = append(ctes, c.leafOrder(s, leaves))
-		from = fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d JOIN gord ON %s) d", sel, c.leafJoin())
+		from = c.leafFrom(sel)
 		by = "d.__g, " + by
 		rn.page = &groupedPage{}
 		where, rn.page.after, err = groupedAfter(s, levels, order, rn.opts.Cursor, leaves)
@@ -1775,17 +1775,37 @@ func (c *compiler) leafOrder(s *stmt, leaves [][]any) string {
 	return fmt.Sprintf("gord AS MATERIALIZED (SELECT %s FROM json_each(%s))", strings.Join(cols, ", "), s.bind("["+strings.Join(encoded, ",")+"]"))
 }
 
-// leafJoin matches a detail row (d) to its open group by each key value with
-// IS, so a blank key matches a blank one, as a group row's key reads.
-func (c *compiler) leafJoin() string {
+// leafJoin matches a detail row to its open group by each key value with IS,
+// so a blank key matches a blank one, as a group row's key reads. row is what
+// stands before a key's name on the row's side: "d." or "+d.".
+func (c *compiler) leafJoin(row string) string {
 	on := make([]string, 0, len(c.p.groups)+len(c.currencies))
 	for i := range c.p.groups {
-		on = append(on, fmt.Sprintf("d.k%d IS gord.g%d", i, i))
+		on = append(on, fmt.Sprintf("%sk%d IS gord.g%d", row, i, i))
 	}
 	for j, ck := range c.currencies {
-		on = append(on, fmt.Sprintf("d.%s IS gord.g%d", ck, len(c.p.groups)+j))
+		on = append(on, fmt.Sprintf("%s%s IS gord.g%d", row, ck, len(c.p.groups)+j))
 	}
 	return strings.Join(on, " AND ")
+}
+
+// leafFrom is the detail rows (sel) with each row's open group: __g, the
+// group's place in document order. The rows are read once, and each finds its
+// group through the index SQLite builds on gord (an automatic index):
+//   - CROSS JOIN fixes the join order in SQLite. Left to the planner, the
+//     open groups were read first, and a key that is not a stored column of
+//     the rows (a link's id, read from the joined row) is in no index of the
+//     rows: every open group read every row.
+//   - The unary + takes the column affinity off a key. A term that compares
+//     with a column's affinity cannot use an index on gord, whose values (out
+//     of json_extract) have none. A key and its group's value have the same
+//     storage class, so the comparison gives the same answer without it.
+func (c *compiler) leafFrom(sel string) string {
+	join, row := "CROSS JOIN", "+d."
+	if legacySQL.plannedLeafJoin {
+		join, row = "JOIN", "d."
+	}
+	return fmt.Sprintf("(SELECT d.*, gord.__g AS __g FROM (%s) d %s gord ON %s) d", sel, join, c.leafJoin(row))
 }
 
 // groupedAfter selects the detail rows after a grouped report's cursor: the
