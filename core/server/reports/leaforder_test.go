@@ -269,25 +269,51 @@ func TestAGroupedRunOfAUnionWithManyOpenGroupsReadsItsRowsOnce(t *testing.T) {
 	}
 }
 
+// opensMidGroup is true when a page starts with a detail row: the page before
+// it ended inside a group, so the cursor between them sat inside that group.
+func opensMidGroup(pages []*Result) bool {
+	for _, p := range pages[1:] {
+		if len(p.Rows) > 0 && p.Rows[0].Kind == KindDetail {
+			return true
+		}
+	}
+	return false
+}
+
 // A run cut into pages gives the same pages whichever side drives the join.
+// ann's meals by note have one detail row in each group, so every cursor of
+// that run falls after a group; by animal, a limit of 3 cuts kit's group (three
+// meals) inside, which is the cursor that must find its detail rows' group.
 func TestTheOpenGroupJoinOrderKeepsEveryPage(t *testing.T) {
 	z := newUnionZoo(t)
 	addOddTreats(t, z)
-	for _, spec := range []string{mealsByNote, mealsByAnimal} {
-		opts := Options{ExpandAll: true, Limit: 3}
-		after, err := json.Marshal(mergedRows(t, groupedPages(t, z, "ann", spec, opts)))
+	t.Cleanup(func() { legacySQL.plannedLeafJoin = false })
+	cuts := []struct {
+		name, spec string
+		limit      int
+		midGroup   bool
+	}{
+		{"by note", mealsByNote, 3, false},
+		{"by animal", mealsByAnimal, 3, true},
+	}
+	for _, c := range cuts {
+		opts := Options{ExpandAll: true, Limit: c.limit}
+		pages := groupedPages(t, z, "ann", c.spec, opts)
+		if c.midGroup && !opensMidGroup(pages) {
+			t.Fatalf("%s: no page starts inside a group, so no cursor of the run falls inside one (%d pages)", c.name, len(pages))
+		}
+		after, err := json.Marshal(mergedRows(t, pages))
 		if err != nil {
 			t.Fatal(err)
 		}
 		legacySQL.plannedLeafJoin = true
-		t.Cleanup(func() { legacySQL.plannedLeafJoin = false })
-		before, err := json.Marshal(mergedRows(t, groupedPages(t, z, "ann", spec, opts)))
+		before, err := json.Marshal(mergedRows(t, groupedPages(t, z, "ann", c.spec, opts)))
 		legacySQL.plannedLeafJoin = false
 		if err != nil {
 			t.Fatal(err)
 		}
 		if string(before) != string(after) {
-			t.Fatalf("the pages changed\nbefore: %s\nafter:  %s", before, after)
+			t.Fatalf("%s: the pages changed\nbefore: %s\nafter:  %s", c.name, before, after)
 		}
 	}
 }
