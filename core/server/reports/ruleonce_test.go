@@ -560,10 +560,19 @@ func TestNamesTable(t *testing.T) {
 		"FROM {{zoo_ledger}}":                                                                               true,
 		"WHERE zoo_ledger.id = 1":                                                                           true,
 		"WHERE [[__collection_zoo_ledger.note]] = {:zoo_ledger_p}":                                          false,
+		"zoo_ledger":                                 true,
+		"zoo_ledger.id = 1":                          true,
+		"WHERE 1 = zoo_ledger":                       true,
+		"WHERE zoo_ledger1.id = 1":                   false,
+		"WHERE 1zoo_ledger.id = 1":                   false,
+		"WHERE zoo_ledger_access.id = zoo_ledger.id": true,
 	} {
 		if got := namesTable(sql, "zoo_ledger"); got != want {
 			t.Errorf("namesTable(%q) = %v, want %v", sql, got, want)
 		}
+	}
+	if namesTable("WHERE zoo_ledger.id = 1", "") {
+		t.Error(`namesTable(sql, "") = true, want false`)
 	}
 }
 
