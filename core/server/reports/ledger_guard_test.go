@@ -71,14 +71,15 @@ func TestABalanceShapedReportComputesItsBeginningBalanceOncePerStatement(t *test
 	}
 	got := append([]string(nil), kinds...)
 	sort.Strings(got)
-	if !slices.Equal(got, []string{"detail", "group", "total"}) {
-		t.Fatalf("statements %v, want the group, the Total and the detail statement", got)
+	// The group statement reads the Total too.
+	if !slices.Equal(got, []string{"detail", "group"}) {
+		t.Fatalf("statements %v, want the group statement (with the Total) and the detail statement", got)
 	}
 }
 
-// J1a: a cursor page's level statement keeps the #452 shape (each lookup
-// once per group row, the group record joined once per level), and so does
-// the Total statement of its own.
+// J1a: a cursor page's level statement, which reads the Total too, keeps the
+// #452 shape (each lookup once per group row, the group record joined once
+// per level).
 func TestACursorPageComputesItsBeginningBalanceOncePerStatement(t *testing.T) {
 	z := newZoo(t)
 	withBalanceZoo(t, z)
@@ -102,11 +103,8 @@ func TestACursorPageComputesItsBeginningBalanceOncePerStatement(t *testing.T) {
 			kind = "page"
 		}
 		kinds[kind]++
-		switch kind {
-		case "page":
+		if kind == "page" {
 			requireLevelRowsOnce(t, db, st)
-		case "total":
-			requireTotalLevelRowsOnce(t, db, st)
 		}
 		if n := strings.Count(st.sql, "(SELECT sum("); n > 6 {
 			t.Errorf("the %s statement holds %d sum lookups, want at most 6", kind, n)
@@ -117,8 +115,8 @@ func TestACursorPageComputesItsBeginningBalanceOncePerStatement(t *testing.T) {
 			}
 		}
 	}
-	if kinds["page"] != 1 || kinds["total"] != 1 {
-		t.Fatalf("statements %v, want one page and one Total statement", kinds)
+	if kinds["page"] != 1 || kinds["total"] != 0 {
+		t.Fatalf("statements %v, want one page statement (with the Total) and no Total statement of its own", kinds)
 	}
 }
 
@@ -126,10 +124,12 @@ func TestACursorPageComputesItsBeginningBalanceOncePerStatement(t *testing.T) {
 var levelRowsStep = regexp.MustCompile(`^\s*(MATERIALIZE|CO-ROUTINE) (o\d+)$`)
 
 // requireLevelRowsOnce fails unless the plan of a page statement computes
-// each o<L> once, materialized: its leg and the cursor's sibling counts both
-// read it, and SQLite computes an inlined o<L> again for each reader, its
-// lookups with it. The SQL text is the same either way, so this reads the
-// plan.
+// each o<L> of a group level once, materialized: its leg, the cursor's
+// sibling counts and the Total's levels read it, and SQLite computes an
+// inlined o<L> again for each reader, its lookups with it. o0, the Total
+// rows, is read by the Total's leg alone, so it may be a co-routine, but it
+// too is computed once. The SQL text is the same either way, so this reads
+// the plan.
 func requireLevelRowsOnce(t *testing.T, db *sql.DB, st readStatement) {
 	t.Helper()
 	raw, args := rawStatement(t, st.sql, st.params)
@@ -144,42 +144,14 @@ func requireLevelRowsOnce(t *testing.T, db *sql.DB, st readStatement) {
 		t.Fatalf("the page statement's plan computes no o<L>:\n%s", strings.Join(plan, "\n"))
 	}
 	for name, how := range computed {
+		if name == "o0" {
+			if len(how) != 1 {
+				t.Errorf("the page statement's plan computes o0 as %v, want once", how)
+			}
+			continue
+		}
 		if !slices.Equal(how, []string{"MATERIALIZE"}) {
 			t.Errorf("the page statement's plan computes %s as %v, want MATERIALIZE once", name, how)
-		}
-	}
-}
-
-// pathCTEName is a CTE only a page statement needs: a level's paths (pp<L>)
-// or the cursor's sibling counts (pc).
-var pathCTEName = regexp.MustCompile(`^(pp\d+|pc)$`)
-
-// requireTotalLevelRowsOnce is requireLevelRowsOnce for the Total statement
-// (review B, deferral 3): its plan computes each o<L> it reads exactly once,
-// and with it each lookup of that level. It checks first that the statement
-// holds no path CTE, the one thing that reads an o<L> a second time; so an
-// o<L> computed once may be a co-routine here, and a Total statement that
-// gained a path CTE fails here rather than passing on a plan that happens to
-// materialize.
-func requireTotalLevelRowsOnce(t *testing.T, db *sql.DB, st readStatement) {
-	t.Helper()
-	if names := ctesOf(st.sql); slices.ContainsFunc(names, pathCTEName.MatchString) {
-		t.Fatalf("the Total statement holds a path CTE: %v", names)
-	}
-	raw, args := rawStatement(t, st.sql, st.params)
-	plan := queryPlan(t, db, raw, args)
-	computed := map[string][]string{}
-	for _, step := range plan {
-		if m := levelRowsStep.FindStringSubmatch(step); m != nil {
-			computed[m[2]] = append(computed[m[2]], m[1])
-		}
-	}
-	if len(computed) == 0 {
-		t.Fatalf("the Total statement's plan computes no o<L>:\n%s", strings.Join(plan, "\n"))
-	}
-	for name, how := range computed {
-		if len(how) != 1 {
-			t.Errorf("the Total statement's plan computes %s as %v, want once", name, how)
 		}
 	}
 }

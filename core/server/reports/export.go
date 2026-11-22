@@ -329,7 +329,9 @@ func exportDisplayOf(raw json.RawMessage) (exportDisplay, error) {
 // grouped run computes every group level again, so pages of maxPage rows
 // cost pages x rows. It returns nil with no error when the report holds more
 // rows than the writer takes (the page is past maxRows, or a row follows
-// it), or when a cap stopped the run, so no file is ever cut short.
+// it), when the run stopped before its details because its group rows
+// already count more (errPastRows), or when a cap stopped the run, so no file
+// is ever cut short.
 func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loaded *LoadInfo, body exportBody, writer exportWriter) (*Result, error) {
 	maxRows := writer.MaxRows()
 	limit := maxRows + 1
@@ -341,10 +343,20 @@ func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loa
 		opts.Expand, opts.Collapse = nil, nil
 	}
 	headers := ruleHeaders(re.Request.Header)
-	res, err := Run(ctx, re.App, Request{
+	req := Request{
 		Spec: spec, Loaded: loaded, Params: body.Params, Options: opts,
 		Auth: re.Auth, Headers: headers, RowCap: limit, PageCap: limit,
-	})
+	}
+	if writer.ExpandAll {
+		// With every group open, a paged grouped run whose group statement
+		// already counts more rows than maxRows stops before its detail
+		// statement (pastRefusal): the same refusal, without the largest read.
+		req.refuseOver = maxRows
+	}
+	res, err := Run(ctx, re.App, req)
+	if errors.Is(err, errPastRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
