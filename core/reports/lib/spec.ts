@@ -95,20 +95,30 @@ export type GroupOrderBy = GroupOrder['by']
 
 /**
  * A choice param's options read from a source under the reader's list rules: `value`
- * is what the param holds, `label` what the picker shows, `group` how it groups them,
- * `groupOrder` the order of the groups (absent: by label), `groupLabel` the text of a
- * whole-group pick (`GROUP_LABEL_TOKEN` stands for the group's label; absent or empty:
- * "All {group}"), `where` which rows count.
+ * is what the param holds, `label` what the picker shows, or in its place
+ * `labelFormula`, a text formula over the source's paths ("1000 Business Checking"),
+ * `order` a path whose value orders the options inside a group (blank last; absent or
+ * a tie: by label), `group` how it groups them, `groupOrder` the order of the groups
+ * (absent: by label), `groupLabel` the text of a whole-group pick (`GROUP_LABEL_TOKEN`
+ * stands for the group's label; absent or empty: "All {group}"), `where` which rows
+ * count. The server labels and orders the options; the client shows them as sent.
  */
-export const optionsFromSchema = z.strictObject({
-    source: z.string(),
-    value: z.array(specHopSchema),
-    label: z.array(specHopSchema),
-    group: z.array(specHopSchema).optional(),
-    groupOrder: groupOrderSchema.optional(),
-    groupLabel: z.string().optional(),
-    where: specNodeSchema.optional(),
-})
+export const optionsFromSchema = z
+    .strictObject({
+        source: z.string(),
+        value: z.array(specHopSchema),
+        label: z.array(specHopSchema).optional(),
+        labelFormula: specNodeSchema.optional(),
+        order: z.array(specHopSchema).optional(),
+        group: z.array(specHopSchema).optional(),
+        groupOrder: groupOrderSchema.optional(),
+        groupLabel: z.string().optional(),
+        where: specNodeSchema.optional(),
+    })
+    .refine(from => (from.label === undefined) !== (from.labelFormula === undefined), {
+        message: 'options are labelled by a label path or a labelFormula: one of the two',
+        path: ['label'],
+    })
 
 /** Stands for the group's label in `optionsFrom.groupLabel` (spec.go GroupLabelToken). */
 export const GROUP_LABEL_TOKEN = '{group}'

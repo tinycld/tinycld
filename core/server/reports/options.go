@@ -31,33 +31,32 @@ func (c *compiler) optionsSelect(s *stmt, op *optionsPlan) (string, error) {
 }
 
 // optionsSelectOf is optionsSelect, and when ordered, with the option's
-// smallest value (k) of its group order's path, a blank text being no value.
+// smallest value (k) of its group order's path and (ok) of its order path, a
+// blank text being no value.
 // Only a list read for the picker is ordered: a run that expands a group
 // reads no order path.
 func (c *compiler) optionsSelectOf(s *stmt, op *optionsPlan, ordered bool) (string, error) {
 	sc := newScope(s, op.src)
 	value := "CAST(" + sc.value(op.value).sql + " AS TEXT)"
-	lv := sc.value(op.label)
-	label := optionLabelOf(s, lv)
-	if shownType(op.label) == Bool {
-		label = fmt.Sprintf("(CASE WHEN %[1]s IS NULL OR %[1]s = %[2]s THEN %[1]s WHEN %[1]s THEN 'Yes' ELSE 'No' END)", label, s.bind(noName))
+	label, labelCur, err := c.optionLabelSQL(s, sc, op)
+	if err != nil {
+		return "", err
 	}
 	label = "COALESCE(min(NULLIF(CAST(" + label + " AS TEXT), '')), '')"
-	labelCur := "min(" + c.shownCurrencySQL(s, sc, op.label, lv) + ")"
 	group := "NULL"
 	if op.group != nil {
 		group = "COALESCE(min(NULLIF(" + c.amountGroupSQL(s, sc, op.group) + ", '')), '')"
 	}
-	orderValue := "NULL"
+	orderValue, optionOrder := "NULL", "NULL"
 	if ordered && op.orderPath != nil {
 		orderValue = "min(NULLIF(" + sc.value(op.orderPath).sql + ", ''))"
 	}
+	if ordered && op.optionOrder != nil {
+		optionOrder = "min(NULLIF(" + sc.value(op.optionOrder).sql + ", ''))"
+	}
 	where := "1"
 	if w := op.def.OptionsFrom.Where; w != nil {
-		// A rows CTE with no root: a where reads its source's paths, never a
-		// report column (joinCtx.col refuses outside the root scope).
-		r := &rowsCTE{c: c, s: s}
-		e, err := compileWhere(&joinCtx{r: r, sc: sc, src: op.src, isFilter: true, visiting: map[string]bool{}}, w, op.at)
+		e, err := compileWhere(optionsCtx(c, s, sc, op, true), w, op.at)
 		if err != nil {
 			return "", err
 		}
@@ -65,8 +64,41 @@ func (c *compiler) optionsSelectOf(s *stmt, op *optionsPlan, ordered bool) (stri
 			where = "COALESCE(" + e.sql + ", 0)"
 		}
 	}
-	return fmt.Sprintf("SELECT %s AS v, %s AS l, %s AS lc, %s AS g, %s AS k\n%s\nWHERE %s AND %s IS NOT NULL\nGROUP BY 1",
-		value, label, labelCur, group, orderValue, sc.render(), where, value), nil
+	return fmt.Sprintf("SELECT %s AS v, %s AS l, %s AS lc, %s AS g, %s AS k, %s AS ok\n%s\nWHERE %s AND %s IS NOT NULL\nGROUP BY 1",
+		value, label, labelCur, group, orderValue, optionOrder, sc.render(), where, value), nil
+}
+
+// optionsCtx compiles a formula over an options source's paths: a rows CTE
+// with no root, so it reads its source's paths, never a report column
+// (joinCtx.col refuses outside the root scope).
+func optionsCtx(c *compiler, s *stmt, sc *scope, op *optionsPlan, isFilter bool) *joinCtx {
+	return &joinCtx{r: &rowsCTE{c: c, s: s}, sc: sc, src: op.src, isFilter: isFilter, visiting: map[string]bool{}}
+}
+
+// optionLabelSQL is an option's label on one source row, before the options
+// select takes one per value, and the label's currency (an aggregate): a
+// label formula's text, or the label path as the picker shows it.
+func (c *compiler) optionLabelSQL(s *stmt, sc *scope, op *optionsPlan) (string, string, error) {
+	if f := op.def.OptionsFrom.LabelFormula; f != nil {
+		at := op.at + ".labelFormula"
+		e, err := compileFormula(optionsCtx(c, s, sc, op, false), f, at)
+		if err != nil {
+			return "", "", err
+		}
+		if e.typ != Text {
+			return "", "", invalid(at, "a label formula gives text")
+		}
+		if e.unset {
+			return "NULL", "NULL", nil
+		}
+		return e.sql, "NULL", nil
+	}
+	lv := sc.value(op.label)
+	label := optionLabelOf(s, lv)
+	if shownType(op.label) == Bool {
+		label = fmt.Sprintf("(CASE WHEN %[1]s IS NULL OR %[1]s = %[2]s THEN %[1]s WHEN %[1]s THEN 'Yes' ELSE 'No' END)", label, s.bind(noName))
+	}
+	return label, "min(" + c.shownCurrencySQL(s, sc, op.label, lv) + ")", nil
 }
 
 // rankedOptionsSQL is the options select (o) with, for grouped options,
@@ -95,7 +127,7 @@ func (c *compiler) rankedOptionsSQL(s *stmt, op *optionsPlan) (string, []string,
 	if op.orderPath != nil {
 		groupValue = "min(o.k) OVER (PARTITION BY o.g)"
 	}
-	sql := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g, %s AS gl, %s AS glc, %s AS gk FROM (%s) o",
+	sql := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g, o.ok AS ok, %s AS gl, %s AS glc, %s AS gk FROM (%s) o",
 		label, cur, groupValue, inner)
 	exprs := []string{"o.g <> ''"}
 	switch op.orderBy {
@@ -302,7 +334,8 @@ type OptionGroup struct {
 	Currency string    `json:"currency,omitempty"`
 }
 
-// ParamOptions is one page of options, ordered by label then value; grouped
+// ParamOptions is one page of options, ordered by the order path (when the
+// spec names one), then label, then value; grouped
 // options come group by group in the groups' order first. Groups are the
 // groups of every option that matches the search, in the group order, at most
 // maxOptionGroups of them (GroupsCut says the list stops there); they come
@@ -372,14 +405,20 @@ func optionsLimit(req OptionsRequest) (int, error) {
 
 // optionsPage reads the options of one page (or of the asked values) into
 // res, with the next page's cursor when there is one. Grouped options come
-// group by group, in the groups list's order, then by label, then value.
+// group by group, in the groups list's order, then by the order path, then
+// by label, then value.
 func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req OptionsRequest, limit int, res *ParamOptions) error {
 	s := newStmt(c.app, c.info)
 	ranked, keys, err := c.rankedOptionsSQL(s, op)
 	if err != nil {
 		return err
 	}
-	typ := shownType(op.label)
+	if op.optionOrder != nil {
+		// Inside a group, by the order path's value, a blank one last; the
+		// cursor carries these keys as it carries the group's.
+		keys = append(keys, "o.ok IS NULL", "COALESCE(o.ok, '')")
+	}
+	typ := op.labelType()
 	conds := optionConds(s, req.Search, req.Group)
 	switch {
 	case len(req.Values) > 0:
@@ -430,8 +469,9 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 	return nil
 }
 
-// optionOrder is the options page's order over o: the group keys, then the
-// label (a blank one last, a number by its value), then the value.
+// optionOrder is the options page's order over o: the group keys and the
+// order path's keys, then the label (a blank one last, a number by its
+// value), then the value.
 func optionOrder(keys []string, typ FieldType) []string {
 	return append(slices.Clone(keys), "o.l <> ''", orderKey(typ, "o.l"), "o.v")
 }

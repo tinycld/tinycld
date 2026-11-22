@@ -70,6 +70,8 @@ func resolveAliases(spec *Spec) []Alias {
 		if src := lookupRegistered(of.Source); src != nil {
 			a.path(src, of.Value)
 			a.path(src, of.Label)
+			a.node(src, of.LabelFormula)
+			a.path(src, of.Order)
 			a.path(src, of.Group)
 			if of.GroupOrder != nil {
 				a.path(src, of.GroupOrder.Path)

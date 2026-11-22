@@ -439,15 +439,21 @@ const HeaderLabelToken = "{label}"
 // GroupLabelToken where the group's label goes; empty means "All {group}".
 // The client writes the text; the engine only checks it. GroupOrder
 // (optional, with Group) is the order of the groups; nil orders them by
-// label.
+// label. LabelFormula, in place of Label, is a text formula over the
+// source's paths (and params) that labels each option, so a label can join
+// fields ("1000 Business Checking"). Order (optional) is a to-one path whose
+// value orders the options (inside each group): a blank value comes after
+// the others, and a tie, or no Order, goes by label, then value.
 type OptionsFrom struct {
-	Source     string      `json:"source"`
-	Value      Path        `json:"value"`
-	Label      Path        `json:"label"`
-	Group      Path        `json:"group,omitempty"`
-	GroupOrder *GroupOrder `json:"groupOrder,omitempty"`
-	GroupLabel string      `json:"groupLabel,omitempty"`
-	Where      *Node       `json:"where,omitempty"`
+	Source       string      `json:"source"`
+	Value        Path        `json:"value"`
+	Label        Path        `json:"label,omitempty"`
+	LabelFormula *Node       `json:"labelFormula,omitempty"`
+	Order        Path        `json:"order,omitempty"`
+	Group        Path        `json:"group,omitempty"`
+	GroupOrder   *GroupOrder `json:"groupOrder,omitempty"`
+	GroupLabel   string      `json:"groupLabel,omitempty"`
+	Where        *Node       `json:"where,omitempty"`
 }
 
 // GroupLabelToken stands for the group's label in OptionsFrom.GroupLabel.

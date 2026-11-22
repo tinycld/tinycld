@@ -297,6 +297,28 @@ describe('the order of a listed param’s groups', () => {
         expect(withOptionsGroup(ordered, null, CATALOG).optionsFrom).toEqual(teamsFrom({ where }))
     })
 
+    // A label formula in place of the label path, and an order path, keep their place
+    // in the spec's key order (spec.go OptionsFrom) through a save.
+    it('keeps a label formula and an order path, in the spec’s key order', () => {
+        const labelFormula: SpecNode = { op: 'concat', args: [{ path: [{ field: 'name' }] }] }
+        const { label: _label, ...unlabelled } = teamsFrom({ group: [{ field: 'region' }] })
+        const formula: ParamDef = {
+            id: 'teams',
+            type: 'choice',
+            optionsFrom: { ...unlabelled, order: [{ field: 'name' }], labelFormula },
+        }
+        const tidied = tidyParam(formula).optionsFrom
+        expect(tidied?.labelFormula).toEqual(labelFormula)
+        expect(tidied?.order).toEqual([{ field: 'name' }])
+        expect(Object.keys(tidied ?? {})).toEqual([
+            'source',
+            'value',
+            'labelFormula',
+            'order',
+            'group',
+        ])
+    })
+
     // A group that is not a select has no order of its own: the field's own order
     // leaves with a select group, and a label or path order stays.
     it('clears the field’s own order when the list is grouped by a field that is not a select', () => {

@@ -1553,7 +1553,7 @@ away before the run ends.
 | `groups[].open` | The level is open when the report opens and no expansion state is sent. |
 | `sort[]` | `{ col, dir }` or `{ formula, dir }`. A formula sort key that reads a row's fields sorts detail rows only; group levels skip it. |
 | `detail.label` | A formula that labels each detail row. Default: the first column. |
-| `params[].optionsFrom` | `{ source, value, label, group?, groupOrder?, groupLabel?, where? }`: a choice param reads its options from a source, under the reader's rules. `groupOrder` (with `group`) orders the groups: `{ "by": "label" }` (default) by the group's label, a number by its value; `{ "by": "declared" }` in the order the group's select field declares its options (refused unless `group` ends at a select field; a stored value no option names comes after the named ones, by label); `{ "by": "path", "path": [...] }` by the smallest value of `path` (a to-one path on the options source, bound as `group` is; it reads the field's stored value, so a select orders by its stored value, not its label or declared place; a blank text is no value) over each group's options, with groups that have no value after the others. Ties and every order end by label; the blank group is always first. The options come group by group in that order, then by label, and a page's `next` carries the group, so each page only appends. `groupLabel` (with `group`) is the text of a whole-group pick, with `{group}` where the group's label goes (`"All {group} accounts"`); absent: `All {group}`. |
+| `params[].optionsFrom` | `{ source, value, label \| labelFormula, order?, group?, groupOrder?, groupLabel?, where? }`: a choice param reads its options from a source, under the reader's rules. `label` is a to-one path the picker shows; `labelFormula`, in its place, is a formula over the options source's paths (and params) that gives text, so a label can join fields (`concat`, `if`, …): it reads no report column and totals nothing. The search, the chips, the header line and the order all read the label so made. Refused (400, `params.<i>.optionsFrom.label`) with both or neither; a formula that does not give text is refused at `params.<i>.optionsFrom.labelFormula`. `order` is a to-one path whose stored value orders the options (inside each group, after the group order): a blank value comes after the others, and a tie, or no `order`, goes by label, then value. `groupOrder` (with `group`) orders the groups: `{ "by": "label" }` (default) by the group's label, a number by its value; `{ "by": "declared" }` in the order the group's select field declares its options (refused unless `group` ends at a select field; a stored value no option names comes after the named ones, by label); `{ "by": "path", "path": [...] }` by the smallest value of `path` (a to-one path on the options source, bound as `group` is; it reads the field's stored value, so a select orders by its stored value, not its label or declared place; a blank text is no value) over each group's options, with groups that have no value after the others. Ties and every order end by label; the blank group is always first. The options come group by group in that order, then by `order` and label, and a page's `next` carries the group, so each page only appends. `groupLabel` (with `group`) is the text of a whole-group pick, with `{group}` where the group's label goes (`"All {group} accounts"`); absent: `All {group}`. |
 | formula leaf `{ record, path }` | Reads a field of a record group's record. |
 | operator `lookup` | `{ op: "lookup", source, where?, value, pick? }`: from the rows of another source that the reader may see, one value (`min` by default, or `max`), their sum (`sum`: numbers or amounts; no match is empty), or the count of rows with a value (`count`: no match is 0). |
 | `pivot.labelField` | The field of a link's record that a pivot over that link names its columns by. |
@@ -1644,6 +1644,25 @@ Accounts filter's groups in that order, not A–Z:
 
 To order the types by a number the source keeps instead, use
 `"groupOrder": { "by": "path", "path": [{ "field": "sort" }] }`.
+
+To label each account "1000 Business Checking" (the name alone when the
+account has no number) and list the accounts by number, give a `labelFormula`
+in place of `label`, and an `order` path:
+
+```json
+"optionsFrom": {
+  "source": "zoo.accounts",
+  "value": [{ "field": "id" }],
+  "labelFormula": { "op": "if", "args": [
+    { "op": "isEmpty", "args": [{ "path": [{ "field": "number" }] }] },
+    { "path": [{ "field": "name" }] },
+    { "op": "concat", "args": [
+      { "path": [{ "field": "number" }] }, { "value": " " }, { "path": [{ "field": "name" }] }
+    ] }
+  ] },
+  "order": [{ "field": "number" }]
+}
+```
 
 For example, a ledger of lines (`zoo.lines`) grouped by account shows each
 account's number on the account's row and leaves it out of the opened lines,
