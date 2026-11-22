@@ -8,26 +8,32 @@ import (
 	"testing"
 )
 
-// isTotalStatement is the Total statement of a paged grouped run: its body
-// ends reading o0 alone (totalPass).
+// isTotalStatement is a Total statement of its own: its body ends reading o0
+// alone, and it reads no level rows beside their path. A paged grouped run
+// reads its Total in its page statement (isGroupPageStatement), so it sends
+// none.
 func isTotalStatement(sql string) bool {
-	return strings.HasSuffix(strings.TrimSpace(sql), " FROM o0")
+	return strings.HasSuffix(strings.TrimSpace(sql), " FROM o0") && !isGroupPageStatement(sql)
 }
 
-// J1a: the Total is computed over every row the filter keeps, in a statement
-// of its own, so a page of group rows never decides it.
-func TestAGroupedRunReadsItsTotalInAStatementOfItsOwn(t *testing.T) {
+// J1a: the Total is computed over every row the filter keeps, so a page of
+// group rows never decides it; it is read in the page statement, beside the
+// page's level rows, over the same w and level CTEs.
+func TestAGroupedRunReadsItsTotalWithItsPage(t *testing.T) {
 	z := newZoo(t)
 	seen := observeReads(t)
 	res := z.run(t, "ann", feedingsBySpecies, Options{}, nil)
-	totals := 0
+	totals, pages := 0, 0
 	for _, st := range *seen {
 		if isTotalStatement(st.sql) {
 			totals++
 		}
+		if isGroupPageStatement(st.sql) && strings.Contains(st.sql, "FROM o0") {
+			pages++
+		}
 	}
-	if totals != 1 {
-		t.Fatalf("%d Total statements, want 1", totals)
+	if totals != 0 || pages != 1 {
+		t.Fatalf("%d Total statements of their own and %d page statements that read o0, want 0 and 1", totals, pages)
 	}
 	if last := res.Rows[len(res.Rows)-1]; last.Kind != "total" || last.Cells["cost"] != int64(4500) {
 		t.Fatalf("total = %+v", last)
@@ -396,9 +402,10 @@ func TestAFoldedGroupPagesAsOneRow(t *testing.T) {
 	requireCut(t, pages, whole, opts.Limit)
 }
 
-// checkTopics (TestMain) sees the page statement and the Total statement of
-// a cursor page; this test makes sure both are sent on a cursor page.
-func TestAPagedGroupRunSendsAPageAndATotalStatement(t *testing.T) {
+// checkTopics (TestMain) sees the page statement of a cursor page, which
+// reads the Total too; this test makes sure it is sent, and no Total
+// statement of its own, on a cursor page.
+func TestAPagedGroupRunSendsOnePageStatementWithItsTotal(t *testing.T) {
 	z := newZoo(t)
 	bulkFeedings(t, z, 4)
 	first := z.run(t, "ann", byNoteClosed, Options{Limit: 2}, nil)
@@ -411,19 +418,18 @@ func TestAPagedGroupRunSendsAPageAndATotalStatement(t *testing.T) {
 			kinds["total"]++
 		case strings.Contains(st.sql, "__p1"):
 			kinds["page"]++
-			// The Total's probes and its o0 leg are the Total statement's.
-			if strings.Contains(st.sql, "__probe") || strings.Contains(st.sql, "FROM o0") {
-				t.Fatalf("the page statement reads the Total's probes or o0:\n%s", st.sql)
+			if !strings.Contains(st.sql, "FROM o0") {
+				t.Fatalf("the page statement does not read the Total (o0):\n%s", st.sql)
 			}
 		}
 	}
-	if kinds["total"] != 1 || kinds["page"] != 1 {
-		t.Fatalf("statements %v", kinds)
+	if kinds["total"] != 0 || kinds["page"] != 1 {
+		t.Fatalf("statements %v, want one page statement and no Total statement of its own", kinds)
 	}
 }
 
 // The detail sort keys are compiled for the cursor's fingerprint over a w of
-// their own: the page and Total statements never read them, so they do not
+// their own: the page statement (with its Total) never reads them, so it does not
 // join the site the sort key reads. The detail statement does.
 func TestThePageAndTotalStatementsComputeNoDetailSortKey(t *testing.T) {
 	z := newZoo(t)
@@ -448,7 +454,8 @@ func TestThePageAndTotalStatementsComputeNoDetailSortKey(t *testing.T) {
 			t.Fatalf("%s statement reads zoo_sites: %v\n%s", kind, reads, st.sql)
 		}
 	}
-	if kinds["total"] != 1 || kinds["page"] != 1 || kinds["detail"] != 1 {
+	// The page statement reads the Total too: no Total statement of its own.
+	if kinds["total"] != 0 || kinds["page"] != 1 || kinds["detail"] != 1 {
 		t.Fatalf("statements %v", kinds)
 	}
 }

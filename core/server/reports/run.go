@@ -85,6 +85,10 @@ type Request struct {
 	// NotLive. Only the run endpoint sets it, for a shipped report that is
 	// registered Live.
 	Live bool
+	// refuseOver, when set, stops a paged grouped run before its detail
+	// statement with errPastRows once the rows it certainly shows are more
+	// than refuseOver (pastRefusal). Only the export read sets it.
+	refuseOver int
 }
 
 // Result is the run's answer, in the shell's ReportModel row shape.
@@ -272,6 +276,9 @@ var (
 	// ErrNoReader is a run without a signed-in user: a report never runs
 	// as a superuser or as nobody.
 	ErrNoReader = errors.New("reports: a report runs as a signed-in user")
+	// errPastRows is a run stopped because it certainly shows more rows than
+	// its Request.refuseOver.
+	errPastRows = errors.New("reports: the report has more rows than the read takes")
 )
 
 type limits struct {
@@ -311,6 +318,8 @@ type runner struct {
 	askedPageCap int
 	// live is the request's Live.
 	live bool
+	// refuseOver is the request's refuseOver.
+	refuseOver int
 	// openDropped is set once a detail row's open value was dropped, so a run
 	// logs a bad open path once, not once per row.
 	openDropped bool
@@ -420,7 +429,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	}
 	defer endRead()
 	rn := &runner{
-		ctx: ctx, app: app, db: db, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap, live: req.Live,
+		ctx: ctx, app: app, db: db, c: c, opts: req.Options, expand: expand, askedRowCap: req.RowCap, askedPageCap: req.PageCap, live: req.Live, refuseOver: req.refuseOver,
 		res:    &Result{Rows: []Row{}, Notices: []Notice{}},
 		topics: map[string]bool{}, ruleTopics: map[string][]string{}, ruleAnswers: map[string]bool{},
 	}
@@ -541,9 +550,14 @@ func (rn *runner) run() error {
 		// The page's open innermost groups, anchors included, in document
 		// order. In mode after the cursor's own group was not read, so it is
 		// never one of them; the group cursor was read and checked already.
-		leaves, err := rn.openGroups(groupRows)
+		leaves, shown, err := rn.openGroups(groupRows)
 		if err != nil {
 			return err
+		}
+		// An export past its row cap stops before the detail statement, the
+		// largest of the run, when the group statement's counts already say so.
+		if rn.pastRefusal(groupRows, leaves, shown) {
+			return errPastRows
 		}
 		if len(leaves) > 0 {
 			if details, err = rn.detailPass(leaves); err != nil {
@@ -554,7 +568,7 @@ func (rn *runner) run() error {
 		var leaves [][]any
 		grouped := len(rn.c.p.groups) > 0
 		if grouped {
-			if leaves, err = rn.openGroups(groupRows); err != nil {
+			if leaves, _, err = rn.openGroups(groupRows); err != nil {
 				return err
 			}
 		}
@@ -772,10 +786,10 @@ func (rn *runner) pageLimit() int {
 	return min(rn.opts.Limit, runLimits.maxPage)
 }
 
-// pagedGroupPass reads one page of a grouped run's level rows (J1a), then
-// the Total in a statement of its own. The levels compile once; the cursor
-// is read from their order terms before the page statement is written, as
-// its keyset compares their values.
+// pagedGroupPass reads one page of a grouped run's level rows (J1a) and the
+// Total rows in one statement, so w and the level CTEs are built once for
+// both. The levels compile once; the cursor is read from their order terms
+// before the page statement is written, as its keyset compares their values.
 func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	c := rn.c
 	s := newStmt(rn.app, c.info)
@@ -800,8 +814,8 @@ func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	// another sort is refused even on a page with no detail row. This compile
 	// also gives the columns their detail types (detailTypes). It runs over a
 	// w of its own, as detailTypes does: over r, the sort keys' columns and
-	// binds would go into the page and Total statements, which never read
-	// them. A second rows() gives the same currency keys, and the levels are
+	// binds would go into the page statement (with its Total), which never
+	// reads them. A second rows() gives the same currency keys, and the levels are
 	// compiled already.
 	keysOf, err := c.rows(newStmt(rn.app, c.info))
 	if err != nil {
@@ -823,22 +837,22 @@ func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	levelCTEs = append([]string{r.render()}, levelCTEs...)
-	rows, err := rn.query(s, slices.Concat(levelCTEs, pageCTEs), body)
+	ctes := slices.Concat([]string{r.render()}, levelCTEs, pageCTEs)
+	read, err := rn.query(s, ctes, body)
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) > 0 && rn.groupCur != nil {
-		rn.anchored = int(toInt(rows[0]["__anchored"]))
+	if err := rn.readProbes(s, ctes, read, c.condProbes); err != nil {
+		return nil, err
+	}
+	// The statement returns the page's level rows, then the Total rows; the
+	// first level row carries the anchors the page read again.
+	if len(read) > 0 && toInt(read[0]["__level"]) != 0 && rn.groupCur != nil {
+		rn.anchored = int(toInt(read[0]["__anchored"]))
 	}
 	rn.shown, _ = rn.shownBefore()
-	// totalPass adds the probes' CTE to the list it gets: its own copy.
-	totals, err := rn.totalPass(s, slices.Clone(levelCTEs))
-	if err != nil {
-		return nil, err
-	}
 	rn.rawGroups, rn.rawDetails = map[string]map[string]any{}, map[string]map[string]any{}
-	return append(rows, totals...), nil
+	return read, nil
 }
 
 // pagedGroupStatement selects one page of level rows (J1a) in document order:
@@ -875,6 +889,20 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 	skipping := false
 	for n := 1; n <= groups; n++ {
 		skipping = skipping || c.skips(n) || c.inlines(n)
+	}
+	// pageOnly are the columns a page row has past base, which the Total leg
+	// reads as NULL.
+	var pageOnly []string
+	if skipping {
+		pageOnly = append(pageOnly, uncountedCell)
+	}
+	for i := 1; i <= groups; i++ {
+		pageOnly = append(pageOnly, fmt.Sprintf("__p%d", i))
+	}
+	for m := 1; m <= groups; m++ {
+		for j := range levels[m].lv.terms {
+			pageOnly = append(pageOnly, orderValue(m, j))
+		}
 	}
 	legs := make([]string, 0, groups)
 	for n := 1; n <= groups; n++ {
@@ -923,6 +951,7 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 	if pc != "" {
 		pageCTEs = append(pageCTEs, pc)
 		selected = "*, (SELECT an FROM pc) AS __anchored"
+		pageOnly = append(pageOnly, "__anchored")
 	}
 	var order []string
 	for _, ck := range c.currencies {
@@ -934,16 +963,33 @@ func (c *compiler) pagedGroupStatement(s *stmt, levels []compiledLevel, expand *
 	rows := limitSQL(limit + 1 + int64(anchors))
 	orderBy := strings.Join(order, ", ")
 	union := strings.Join(legs, "\nUNION ALL\n")
-	if !skipping {
-		body = fmt.Sprintf("SELECT %s FROM (%s)\nWHERE %s\nORDER BY %s LIMIT %s", selected, union, keyset, orderBy, rows)
-		return levelCTEs, pageCTEs, body, nil
+	var page string
+	if skipping {
+		// A LIMIT would count the blank keys of skip levels and the inlined
+		// groups, which draw no row: a page of them would end early and look
+		// like the last one. The running count of the rows that draw takes its
+		// place.
+		page = fmt.Sprintf("SELECT * FROM (SELECT %s, SUM(1 - %s) OVER (ORDER BY %s ROWS UNBOUNDED PRECEDING) AS __counted FROM (%s)\nWHERE %s)\nWHERE __counted <= %s\nORDER BY %s",
+			selected, uncountedCell, orderBy, union, keyset, rows, orderBy)
+		pageOnly = append(pageOnly, "__counted")
+	} else {
+		page = fmt.Sprintf("SELECT %s FROM (%s)\nWHERE %s\nORDER BY %s LIMIT %s", selected, union, keyset, orderBy, rows)
 	}
-	// A LIMIT would count the blank keys of skip levels and the inlined
-	// groups, which draw no row: a page of them would end early and look like
-	// the last one. The running
-	// count of the rows that draw takes its place.
-	body = fmt.Sprintf("SELECT * FROM (SELECT %s, SUM(1 - %s) OVER (ORDER BY %s ROWS UNBOUNDED PRECEDING) AS __counted FROM (%s)\nWHERE %s)\nWHERE __counted <= %s\nORDER BY %s",
-		selected, uncountedCell, orderBy, union, keyset, rows, orderBy)
+	// The Total rows (o0, one per currency) are read in the same statement,
+	// over the same w and level CTEs, after the page's rows: every row the
+	// filter keeps, whatever page the group rows are on. The condition probes
+	// ride on it (readProbes), as the Total always returns a row unless there
+	// are no rows at all.
+	total := slices.Clone(base)
+	for _, name := range pageOnly {
+		total = append(total, "NULL AS "+name)
+	}
+	probes := c.probeCells()
+	if cte := c.probeCTE(); cte != "" {
+		pageCTEs = append(pageCTEs, cte)
+	}
+	body = fmt.Sprintf("SELECT %s FROM (SELECT * FROM (%s)\nUNION ALL\nSELECT %s FROM o0)\nORDER BY (__level = 0), %s",
+		strings.Join(append([]string{"*"}, probes...), ", "), page, strings.Join(total, ", "), orderBy)
 	return levelCTEs, pageCTEs, body, nil
 }
 
@@ -1074,27 +1120,6 @@ func (c *compiler) groupKeyset(s *stmt, levels []compiledLevel, cur *groupCursor
 	}
 	counts = append(counts, anchored+" AS an")
 	return anyOf(terms), "pc AS (SELECT " + strings.Join(counts, ", ") + ")", anchors
-}
-
-// totalPass reads the Total rows (o0, one per currency) over the group
-// statement's CTEs, in a statement of their own: every row the filter keeps,
-// whatever page the group rows are on. The condition probes ride on it, as
-// it always returns a row unless there are no rows at all.
-func (rn *runner) totalPass(s *stmt, ctes []string) ([]map[string]any, error) {
-	c := rn.c
-	probes := c.probeCells()
-	if cte := c.probeCTE(); cte != "" {
-		ctes = append(ctes, cte)
-	}
-	body := "SELECT " + strings.Join(append([]string{"*"}, probes...), ", ") + " FROM o0"
-	rows, err := rn.query(s, ctes, body)
-	if err != nil {
-		return nil, err
-	}
-	if err := rn.readProbes(s, ctes, rows, c.condProbes); err != nil {
-		return nil, err
-	}
-	return rows, nil
 }
 
 // probesCTE is the CTE that computes, once, whether each condition probe
@@ -1740,12 +1765,12 @@ func (rn *runner) readShownNow(s *stmt, ctes []string, sel string, keys []sortKe
 // them (R9a): the group rows that an assembly with no detail rows marks
 // expanded at the innermost depth. That assembly is thrown away, but an error
 // it met (a percent that overflows) is the run's.
-func (rn *runner) openGroups(groupRows []map[string]any) ([][]any, error) {
+func (rn *runner) openGroups(groupRows []map[string]any) ([][]any, int, error) {
 	rows, notices := rn.res.Rows, rn.res.Notices
 	rn.res.Rows, rn.res.Notices = []Row{}, slices.Clone(notices)
 	rn.assemble(groupRows, nil, nil)
 	if rn.assembleErr != nil {
-		return nil, rn.assembleErr
+		return nil, 0, rn.assembleErr
 	}
 	var out [][]any
 	for _, r := range rn.res.Rows {
@@ -1753,8 +1778,37 @@ func (rn *runner) openGroups(groupRows []map[string]any) ([][]any, error) {
 			out = append(out, r.GroupKey)
 		}
 	}
+	shown := len(rn.res.Rows)
 	rn.res.Rows, rn.res.Notices = rows, notices
-	return out, nil
+	return out, shown, nil
+}
+
+// pastRefusal is true when a run asked to stop past refuseOver rows
+// (Request.refuseOver) certainly shows more: the rows of its group statement
+// as assembled before the details (shown: group, opening, subtotal and Total
+// rows), and the base rows its open innermost groups hold (their __n), each
+// of which is a detail row under its group. A run with a cursor reads anchors
+// again, so it never stops here.
+func (rn *runner) pastRefusal(groupRows []map[string]any, leaves [][]any, shown int) bool {
+	if rn.refuseOver <= 0 || rn.opts.Cursor != "" {
+		return false
+	}
+	groups := len(rn.c.p.groups)
+	open := make(map[string]bool, len(leaves))
+	for _, key := range leaves {
+		open[keyString(key)] = true
+	}
+	certain := shown
+	for _, row := range groupRows {
+		if row["__row"] != nil || toInt(row["__level"]) != int64(groups) {
+			continue
+		}
+		if key := keyString(rn.rowKey(row, groups)); open[key] {
+			delete(open, key)
+			certain += int(toInt(row["__n"]))
+		}
+	}
+	return certain > rn.refuseOver
 }
 
 // skips is true when group level n (1 for the first) passes its blank keys up.
@@ -2128,17 +2182,37 @@ func (c *compiler) detailSelect(r *rowsCTE, table string) (string, []sortKey, er
 			c.detailTypes[cp.col.ID] = cp.path.field.Type
 			continue
 		}
-		ctx := &rowsCtx{r: r, visiting: visiting, detail: frame}
+		// A column blank on detail rows shows no value there (detailCells): it
+		// compiles with blank set, so its running values and percents are NULL
+		// and add no window to the frame, and they turn off no cut (leafCut,
+		// leafRows). Its mixed cell and its lookups' where probes stay, as the
+		// mixedCurrency notice reads them on the rows shown. When one of those
+		// reads a running value or a percent, the column compiles again on the
+		// frame, so the notice reads the real value (and the cut is off). It
+		// still gives the column's type, sortability, currency and options.
+		blank := cp.col.Detail == DetailBlank
+		wheres := len(c.detailWheres)
+		ctx := &rowsCtx{r: r, visiting: visiting, detail: frame, blank: blank}
 		e, err := ctx.col(cp.col.ID, cp.at)
+		if err == nil && ctx.nulled && (e.blankFor() != "" || len(c.detailWheres) > wheres) {
+			c.detailWheres = c.detailWheres[:wheres]
+			e, err = (&rowsCtx{r: r, visiting: visiting, detail: frame}).col(cp.col.ID, cp.at)
+		}
 		if err != nil {
 			return "", nil, err
 		}
 		if err := c.checkLabelField(cp, e.target); err != nil {
 			return "", nil, err
 		}
-		ref, _ := c.columnLabel(labels, cp, e)
-		sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(r.s, cp, e, idx), mixedCell(e, idx))
-		sel = append(sel, ref.cells(idx)...)
+		if blank {
+			c.markCarried(cp, e)
+			sel = append(sel, fmt.Sprintf("NULL AS v%d", idx), noCarriedCell(idx), mixedCell(e, idx))
+			sel = append(sel, labelRef{}.cells(idx)...)
+		} else {
+			ref, _ := c.columnLabel(labels, cp, e)
+			sel = append(sel, fmt.Sprintf("%s AS v%d", cellSQL(e), idx), c.carriedCell(r.s, cp, e, idx), mixedCell(e, idx))
+			sel = append(sel, ref.cells(idx)...)
+		}
 		c.detailTypes[cp.col.ID] = e.typ
 		c.sortable[cp.col.ID] = !e.win
 		if cp.path == nil {
@@ -2261,11 +2335,20 @@ func pagedCells(frame *windowFrame, table string, sel []string, early []earlyCol
 // or a looked-up row's own, or an amount param's code: vcur<idx>), NULL when
 // it carries none. A column that carries one has the cell <id>@currency.
 func (c *compiler) carriedCell(s *stmt, cp *colPlan, e expr, idx int) string {
-	if e.cur.sql == "" && e.cur.param == "" {
+	if !c.markCarried(cp, e) {
 		return noCarriedCell(idx)
 	}
-	c.carried[cp.col.ID] = true
 	return fmt.Sprintf("%s AS vcur%d", carriedSQL(s, e), idx)
+}
+
+// markCarried records that cp's value e carries a currency on a row, so the
+// column has the cell <id>@currency; it is false when e carries none.
+func (c *compiler) markCarried(cp *colPlan, e expr) bool {
+	if e.cur.sql == "" && e.cur.param == "" {
+		return false
+	}
+	c.carried[cp.col.ID] = true
+	return true
 }
 
 // carriedSQL is the currency a value carries on a row (a record's or a

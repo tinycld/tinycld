@@ -67,9 +67,9 @@ func onRead(t *testing.T, n int, write func()) *int {
 	return &count
 }
 
-// A grouped run with its groups open reads a page statement, a Total
-// statement and a detail statement. A feeding saved after the first of them
-// and before the others is in none of them: the run reads one snapshot, so
+// A grouped run with its groups open reads a page statement (its group rows
+// and its Total) and a detail statement. A feeding saved after the first of
+// them and before the second is in neither: the run reads one snapshot, so
 // its Total is the sum of its group subtotals and of its detail rows.
 func TestARunReadsOneSnapshot(t *testing.T) {
 	z := newZoo(t)
@@ -80,8 +80,8 @@ func TestARunReadsOneSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if *count < 3 {
-		t.Fatalf("the run read %d statements, want the page, Total and detail statements", *count)
+	if *count < 2 {
+		t.Fatalf("the run read %d statements, want the page (with its Total) and detail statements", *count)
 	}
 	total := cents(t, lastTotal(t, res).Cells["cost"])
 	subtotals := sumKind(t, res, KindSubtotal)

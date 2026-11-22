@@ -54,14 +54,18 @@ func TestExportReadsAGroupedReportInOnePage(t *testing.T) {
 		switch {
 		case isGroupPageStatement(st.sql):
 			pages++
+			if !strings.Contains(st.sql, "FROM o0") {
+				t.Fatalf("the group statement does not read the Total (o0):\n%.2000s", st.sql)
+			}
 		case isTotalStatement(st.sql):
 			totals++
 		case isGroupedDetailStatement(st.sql):
 			details++
 		}
 	}
-	if pages != 1 || totals != 1 || details != 1 {
-		t.Fatalf("%d group, %d Total and %d detail statements, want 1 of each", pages, totals, details)
+	// The group statement reads the Total too: no Total statement of its own.
+	if pages != 1 || totals != 0 || details != 1 {
+		t.Fatalf("%d group, %d Total and %d detail statements, want 1, 0 and 1", pages, totals, details)
 	}
 	if got, want := firstFields(csvRecords(t, file.Bytes)), byNoteRows(446); !slices.Equal(got, want) {
 		t.Fatalf("%d rows, want %d: the file is not the report in order\nfirst %q\nlast %q", len(got), len(want), got[:min(len(got), 7)], got[max(0, len(got)-4):])
