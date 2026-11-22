@@ -56,6 +56,9 @@ func resolveAliases(spec *Spec) []Alias {
 	for i := range spec.Layout {
 		a.node(base, spec.Layout[i].Formula)
 	}
+	for i := range spec.Header {
+		a.node(base, spec.Header[i].Value)
+	}
 	if pv := spec.Pivot; pv != nil {
 		if t := a.path(base, pv.Path); t != nil && pv.LabelField != "" {
 			pv.LabelField = a.key(t, pv.LabelField)

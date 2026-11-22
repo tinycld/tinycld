@@ -109,7 +109,8 @@ type Result struct {
 	// order, so the shell shows the period the server ran.
 	Params []ResolvedParam `json:"params"`
 	// HeaderLines are the lines the report prints under its period: one per
-	// param with a header (ParamDef.Header), in spec order, never nil.
+	// param with a header (ParamDef.Header), in spec order, then one per spec
+	// header line (Spec.Header, "" for a blank value), never nil.
 	HeaderLines []string `json:"headerLines"`
 }
 
@@ -389,6 +390,9 @@ type runner struct {
 	// total), so a layout section with no row may have rows the run did not
 	// read.
 	sectionsCapped bool
+	// specLines are the spec header lines' text (readSpecHeaderLines), which
+	// Run puts after the params' header lines.
+	specLines []string
 }
 
 // groupedPage is a grouped run's page: after is the open group the previous
@@ -417,7 +421,8 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	// No expansion state: the levels marked open expand (openLevels).
 	openLevels(p, req.Options, expand)
 	// The group or page, Total, detail, nest, pivot, heading, probe and
-	// held-group statements all read through rn.query in this one
+	// held-group statements, and the spec header lines' values, all read
+	// through rn.query in this one
 	// transaction, so a write saved while the run reads is in none of them.
 	// Reads of labels and settings, not figures, stay outside it: the fiscal
 	// start (fiscalStartOf, above), the drill targets (drillTargets), the
@@ -443,6 +448,7 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	if rn.res.HeaderLines, err = c.headerLines(ctx); err != nil {
 		return nil, err
 	}
+	rn.res.HeaderLines = append(rn.res.HeaderLines, rn.specLines...)
 	if h := p.base.Heading; h != nil {
 		rn.res.Heading = strings.TrimSpace(h(app, c.info))
 	}
@@ -591,6 +597,11 @@ func (rn *runner) run() error {
 		return err
 	}
 	if err := rn.readHeadings(); err != nil {
+		return err
+	}
+	// Before the topics below, so a live run follows what a header line's
+	// lookup reads.
+	if rn.specLines, err = rn.readSpecHeaderLines(); err != nil {
 		return err
 	}
 	rn.res.Columns = rn.columns()
@@ -2717,6 +2728,9 @@ func (c *compiler) compileAll() error {
 		return err
 	}
 	if _, err := c.openingLabels(s); err != nil {
+		return err
+	}
+	if _, err := c.headerValues(s); err != nil {
 		return err
 	}
 	for _, d := range p.spec.Params {

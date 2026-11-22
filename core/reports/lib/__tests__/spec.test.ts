@@ -859,3 +859,82 @@ describe('a header line on a choice param (N1)', () => {
         expect(headerLinesOf(spec, result([]))).toEqual([])
     })
 })
+
+// E2 (D4): a spec's own header lines print a value the run reads, after the param lines.
+describe('a spec header line with a value the run reads (E2)', () => {
+    const BASIS = {
+        id: 'basis',
+        type: 'choice',
+        default: 'accrual',
+        header: '{label} basis',
+        options: [
+            { value: 'accrual', label: 'Accrual' },
+            { value: 'cash', label: 'Cash' },
+        ],
+    }
+    const FLOOR = {
+        text: 'Floor: {value}',
+        value: {
+            op: 'lookup',
+            source: 'zoo.settings',
+            value: { path: [{ field: 'floor' }] },
+            pick: 'min',
+        },
+    }
+    const NOTE = { text: 'Note: {value}', value: { value: 'fed daily' } }
+    const result = (headerLines: string[]): RunResult => ({
+        columns: [],
+        rows: [],
+        notices: [],
+        topics: [],
+        page: null,
+        params: [],
+        headerLines,
+    })
+
+    it('accepts header lines of text and value and keeps them through parse', () => {
+        const withHeader = { ...FEEDINGS, header: [FLOOR, NOTE] }
+        expect(reportSpecSchema.safeParse(withHeader).success).toBe(true)
+        expect(parseSpec(withHeader)).toEqual(withHeader)
+    })
+
+    it('refuses a header line with another key', () => {
+        const extra = { ...FEEDINGS, header: [{ ...FLOOR, label: 'Floor' }] }
+        expect(reportSpecSchema.safeParse(extra).success).toBe(false)
+        expect(parseSpec(extra)).toBeNull()
+    })
+
+    it('gives the param lines, then the spec lines with the ids header-<i>', () => {
+        const spec = parseSpec({
+            ...FEEDINGS,
+            params: [...FEEDINGS.params, BASIS],
+            header: [FLOOR, NOTE],
+        })
+        expect(spec).not.toBeNull()
+        if (!spec) return
+        expect(
+            headerLinesOf(spec, result(['Cash basis', 'Floor: $2,000.00', 'Note: fed daily']))
+        ).toEqual([
+            { id: 'basis', text: 'Cash basis' },
+            { id: 'header-0', text: 'Floor: $2,000.00' },
+            { id: 'header-1', text: 'Note: fed daily' },
+        ])
+    })
+
+    it('keeps the index of a spec line after a blank one', () => {
+        const spec = parseSpec({
+            ...FEEDINGS,
+            params: [...FEEDINGS.params, BASIS],
+            header: [FLOOR, NOTE],
+        })
+        expect(spec).not.toBeNull()
+        if (!spec) return
+        expect(headerLinesOf(spec, result(['', '', 'Note: fed daily']))).toEqual([
+            { id: 'header-1', text: 'Note: fed daily' },
+        ])
+        expect(headerLinesOf(spec, result(['Cash basis', 'Floor: $2,000.00', '']))).toEqual([
+            { id: 'basis', text: 'Cash basis' },
+            { id: 'header-0', text: 'Floor: $2,000.00' },
+        ])
+    })
+})

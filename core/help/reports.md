@@ -194,9 +194,14 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
   period, such as **This month**, and the dates show under the chips. **Add filter**
   adds a chip for a filter you can set while you read. On a narrow screen, swipe the
   chips sideways to see the rest; the right edge fades while there are more. In the period chip, **All dates** shows
-  every row, also a row with no date. A link copied with **Copy link** opens the
-  report with the same choices. Some reports print a choice you made under the
-  period, such as **Cash basis**.
+  every row, also a row with no date. **This calendar year** and **Last calendar year**
+  are January 1 to December 31 of this year or of last year, whatever month your
+  fiscal year starts in. When a report with no filter set has no rows for the
+  period you chose, it offers to show its default year: **Show this calendar year** for a report that
+  opens on a calendar year, **Show this fiscal year** for the others. A link copied
+  with **Copy link** opens the report with the same choices. Some reports print
+  lines under the period: a choice you made, such as **Cash basis**, or a value the
+  report reads, such as a setting.
 - To sort, press a column heading: each press sorts up, then down, then back to the
   report's order. When the rows wrap (on a phone), use the **Sort** chip above the
   report instead (on a phone, scroll back to the top to reach it).

@@ -1,5 +1,6 @@
 import { type ElementHandle, expect, type Locator, type Page } from '@playwright/test'
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
+import { strFromU8, unzipSync } from 'fflate'
 import PocketBase from 'pocketbase'
 import { inStatement, loginAs, navigateToPackage } from './helpers'
 import { chooseParamOption, hubRow, openReportsHub, rowOf } from './report-view-helpers'
@@ -25,9 +26,17 @@ export {
 // drilled sales" and "Stub drilled by month", whose Amount opens the unpublished
 // "Stub sales by team" (only the shipped owner may open it). The published "Stub
 // sales by time" shows `created` and opens each row in the stub's record panel (path `panel`).
+// salesstub.floors ("Stub floors") holds one row that every signed-in user reads,
+// and the published "Stub calendar year" opens on This calendar year and prints
+// that row's floor in its spec header line.
 export const SALES_SOURCE = 'salesstub.sales'
 export const TEAMS_SOURCE = 'salesstub.teams'
 export const ACTIVITY_SOURCE = 'salesstub.activity'
+export const FLOORS_SOURCE = 'salesstub.floors'
+/** The calendar-year report (register.go.txt `salesstub.calendar_year`). */
+export const CALENDAR_YEAR_TITLE = 'Stub calendar year'
+/** Its spec header line: the one floor row, 1,234.56 USD (2090000300_salesstub.js.txt). */
+export const STUB_FLOOR_LINE = 'Stub floor: $1,234.56'
 export const SHIPPED_TITLE = 'Stub larger side'
 export const TEAM_TOTALS_TITLE = 'Stub team totals'
 /** The heading the stub's sources print above a report's title. */
@@ -322,8 +331,12 @@ export function detailLabels(page: Page) {
     return page.getByTestId('report-table').locator('[data-testid^="report-row-d:"]')
 }
 
-/** A run request as the client sent it, before openPagedTeams' route shrinks its page. */
-export type SentRun = { cursor?: string; limit?: number }
+/**
+ * A run request as the client sent it, before openPagedTeams' route shrinks its page.
+ * `expandAll` is the fold the request asked for, so a test can tell an Expand all
+ * run from a live rerun of the earlier, collapsed state.
+ */
+export type SentRun = { cursor?: string; limit?: number; expandAll: boolean }
 
 // The client's page sizes: its usual page (RUN_PAGE_SIZE) and the server's most
 // (RUN_MAX_PAGE), which a fold run asks for while it looks for the group in view.
@@ -411,7 +424,11 @@ export async function openPagedTeams(page: Page, prefix: string, opts: PagedTeam
         }
         if (cursor && nextPages) await nextPages
         if (cursor && isTeamsRun) cursors.push(cursor)
-        sent.push({ cursor, limit: body.options?.limit })
+        sent.push({
+            cursor,
+            limit: body.options?.limit,
+            expandAll: body.options?.expandAll === true,
+        })
         // The client's page sizes become pageRows. A fold run asks for max(200, the
         // rows in view), which is 200 here, and then the server's most while it looks
         // for the group in view, so it also gets pages of pageRows and joins them
@@ -524,4 +541,50 @@ export async function superuserClient(): Promise<PocketBase> {
  */
 export async function loginAsShippedOwner(page: Page) {
     await loginAs(page, deriveUsername(ADMIN_LOGIN), ADMIN_PASSWORD)
+}
+
+const XML_ENTITIES: Record<string, string> = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+}
+
+function xmlText(xml: string): string {
+    const texts = [...xml.matchAll(/<t(?:\s[^>]*)?>([^<]*)<\/t>/g)].map(m => m[1])
+    return texts
+        .join('')
+        .replace(/&(amp|lt|gt|quot|apos);/g, (_, name: string) => XML_ENTITIES[name])
+}
+
+/**
+ * The text of each row of an exported Excel file's first sheet, by row number
+ * (1-based): its cells in order, the blank ones left out. A cell's text is its
+ * shared string, its inline string or its value.
+ */
+export function xlsxRows(bytes: Uint8Array): Map<number, string[]> {
+    const files = unzipSync(bytes)
+    const read = (name: string) => (files[name] ? strFromU8(files[name]) : '')
+    const shared = [...read('xl/sharedStrings.xml').matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m =>
+        xmlText(m[1])
+    )
+    const rows = new Map<number, string[]>()
+    for (const row of read('xl/worksheets/sheet1.xml').matchAll(
+        /<row\b[^>]*\br="(\d+)"[^>]*>([\s\S]*?)<\/row>/g
+    )) {
+        const cells: string[] = []
+        for (const cell of row[2].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+            const body = cell[2] ?? ''
+            const value = /<v>([^<]*)<\/v>/.exec(body)?.[1]
+            const text = /\bt="s"/.test(cell[1])
+                ? (shared[Number(value)] ?? '')
+                : /\bt="inlineStr"/.test(cell[1])
+                  ? xmlText(body)
+                  : (value ?? '')
+            if (text !== '') cells.push(text)
+        }
+        rows.set(Number(row[1]), cells)
+    }
+    return rows
 }

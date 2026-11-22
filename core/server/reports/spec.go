@@ -30,7 +30,21 @@ type Spec struct {
 	Layout  []LayoutItem `json:"layout,omitempty"`
 	Detail  *Detail      `json:"detail,omitempty"`
 	Display *Display     `json:"display,omitempty"`
+	// Header are the report's own document header lines, printed after the
+	// params' header lines (header.go).
+	Header []HeaderLine `json:"header,omitempty"`
 }
+
+// HeaderLine is one document header line: Text with HeaderValueToken once,
+// where the run writes Value, a formula of params, values and lookups that is
+// one text, day, number or amount for the whole run (header.go).
+type HeaderLine struct {
+	Text  string `json:"text"`
+	Value *Node  `json:"value"`
+}
+
+// HeaderValueToken stands for a header line's value in HeaderLine.Text.
+const HeaderValueToken = "{value}"
 
 // Display is how the report table lays its columns out (E14): the width from
 // which one line is tried, each column's fit, and the arrangements per width.
@@ -528,6 +542,9 @@ func Load(raw []byte) (*Spec, *LoadInfo, error) {
 	}
 	if n, ok := doc["version"].(json.Number); !ok || n.String() != strconv.Itoa(CurrentVersion) {
 		return nil, nil, invalid("version", fmt.Sprintf("version must be %d", CurrentVersion))
+	}
+	if err := checkHeaderShape(raw); err != nil {
+		return nil, nil, err
 	}
 	var spec Spec
 	strict := json.NewDecoder(bytes.NewReader(raw))

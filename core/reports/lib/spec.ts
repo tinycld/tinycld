@@ -303,6 +303,14 @@ export type DisplayLayout = z.infer<typeof displayLayoutSchema>
 /** The fit settings the table reads besides the arrangements. */
 export type DisplayFit = { oneLine?: DisplayOneLine; columns?: Record<string, ColumnFit> }
 
+/**
+ * A line the document header prints under the param lines (spec.go HeaderLine, E2):
+ * `text` holds `{value}` once, and the run writes there the value a formula of
+ * params, values and lookups reads.
+ */
+export const specHeaderLineSchema = z.strictObject({ text: z.string(), value: specNodeSchema })
+export type SpecHeaderLine = z.infer<typeof specHeaderLineSchema>
+
 const layoutItemSchema = z.strictObject({
     section: z.string().optional(),
     title: z.string().optional(),
@@ -351,6 +359,7 @@ export const reportSpecSchema = z.strictObject({
             layouts: z.array(displayLayoutSchema).optional(),
         })
         .nullish(),
+    header: z.array(specHeaderLineSchema).nullish(),
 })
 export type ReportSpec = z.infer<typeof reportSpecSchema>
 
@@ -359,25 +368,35 @@ export function parseSpec(value: unknown): ReportSpec | null {
     return parsed.success ? parsed.data : null
 }
 
-/** One line printed under the period, with the id of the choice param it names (N1). */
+/**
+ * One line printed under the period: the id of the choice param it names (N1), or
+ * `header-<i>` for the i-th line of the spec's `header` (E2).
+ */
 export interface HeaderLine {
     id: string
     text: string
 }
 
 /**
- * The run's header lines with their params: the server gives line i for the i-th choice
- * param with a `header` (params.go headerLines), and '' for one that is unset or has no
- * pick the reader may list, which prints no line.
+ * The run's header lines with their ids: the server gives line i for the i-th choice
+ * param with a `header` (params.go headerLines), then one line for each line of the
+ * spec's `header` (header.go). '' is a param that is unset or has no pick the reader
+ * may list, or a blank value; it prints no line, and the lines after it keep their ids.
  */
 export function headerLinesOf(
-    spec: { params?: readonly ParamDef[] | null },
+    spec: { params?: readonly ParamDef[] | null; header?: readonly SpecHeaderLine[] | null },
     result: Pick<RunResult, 'headerLines'>
 ): HeaderLine[] {
     const headed = (spec.params ?? []).filter(param => param.type === 'choice' && param.header)
-    return headed
-        .map((param, i) => ({ id: param.id, text: result.headerLines[i] ?? '' }))
-        .filter(line => line.text !== '')
+    const paramLines = headed.map((param, i) => ({
+        id: param.id,
+        text: result.headerLines[i] ?? '',
+    }))
+    const specLines = (spec.header ?? []).map((_, i) => ({
+        id: `header-${i}`,
+        text: result.headerLines[headed.length + i] ?? '',
+    }))
+    return [...paramLines, ...specLines].filter(line => line.text !== '')
 }
 
 /** The fit settings of a spec's display that the table reads besides its arrangements. */

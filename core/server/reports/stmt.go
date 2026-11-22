@@ -396,7 +396,7 @@ func (sc *scope) boundedFrom() string {
 	keys := sc.src.unionKeys()
 	selects := make([]string, len(sc.src.Parts))
 	for i, part := range sc.src.Parts {
-		selects[i] = "SELECT " + unionPartCols(sc.src, i, keys, sc.s.params) + " FROM " + sc.s.rule(part.Collection) + " p"
+		selects[i] = "SELECT " + unionPartCols(sc.s.app, sc.src, i, keys, sc.s.params) + " FROM " + sc.s.rule(part.Collection) + " p"
 		if wheres[i] != "" {
 			selects[i] += " WHERE " + wheres[i]
 		}
