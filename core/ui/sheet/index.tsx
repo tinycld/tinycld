@@ -71,7 +71,8 @@ const SheetPadsBottomInsetContext = createContext(false)
  * sheet second: the sheet paints above the backdrop by sibling order, no
  * z-index needed.
  *
- * Drag away from the edge past a threshold (or a fast flick) dismisses; a
+ * Drag away from the edge past a threshold (or a fast flick) asks the owner to
+ * close, and the sheet springs back to rest when the owner keeps it open; a
  * short drag snaps back; the backdrop and Escape dismiss. Height is intrinsic
  * to the content, capped at `maxHeightPercent` of the host; a `Sheet.Body`
  * inside scrolls once that cap bites while the title row and `Sheet.Footer`
@@ -138,6 +139,27 @@ function SheetRoot({
 
     const close = useCallback(() => onClose(), [onClose])
 
+    // A swipe only asks to close: the owner may refuse and keep `isOpen` true
+    // (a write on the way). The sheet stays where the finger left it until the
+    // commit after the request shows the answer, so a close slides on from
+    // there and a refusal springs back with no exit animation to undo. The
+    // count is state so that commit happens even when the owner changes nothing.
+    const [swipeDismissRequest, setSwipeDismissRequest] = useState(0)
+    const answeredSwipeDismiss = useRef(0)
+    const requestSwipeDismiss = useCallback(() => {
+        onClose()
+        setSwipeDismissRequest(n => n + 1)
+    }, [onClose])
+
+    useLayoutEffect(() => {
+        if (answeredSwipeDismiss.current === swipeDismissRequest) return
+        answeredSwipeDismiss.current = swipeDismissRequest
+        // Closed: the open/close effect below slides the sheet out from the
+        // drag position.
+        if (!isOpen) return
+        translateY.value = isReducedMotion ? 0 : withSpring(0, SPRING_CONFIG)
+    }, [swipeDismissRequest, isOpen, translateY, isReducedMotion])
+
     useLayoutEffect(() => {
         if (isOpen) {
             // The side can change while the sheet is closed, or in the commit
@@ -186,7 +208,10 @@ function SheetRoot({
     })
 
     const panGesture = Gesture.Pan()
-        .activeOffsetY(10)
+        // A signed offset starts the pan only on a drag away from the edge:
+        // down for a bottom sheet, up for a top sheet. A plain 10 would start
+        // it on a downward drag only, so a top sheet could never be swiped.
+        .activeOffsetY(dir * 10)
         .onUpdate(e => {
             // Only movement away from the edge moves the sheet.
             translateY.value = dir * Math.max(0, dir * e.translationY)
@@ -194,15 +219,14 @@ function SheetRoot({
         .onEnd(e => {
             // Threshold inlined (kept in sync with shouldDismissSwipe in
             // ui/swipe-dismiss, which the unit test pins): dragged past 100px or
-            // flicked away from the edge faster than 500px/s dismisses. This
+            // flicked away from the edge faster than 500px/s asks the owner to
+            // close (the request effect above springs it back on a refusal). This
             // runs on the UI thread, so it must not call a non-worklet JS
             // function — hence the literal comparison here.
             if (dir * e.translationY > 100 || dir * e.velocityY > 500) {
-                translateY.value = withSpring(dir * sheetHeight.value, SPRING_CONFIG)
-                backdropOpacity.value = withTiming(0, { duration: 150 })
-                runOnJS(close)()
+                runOnJS(requestSwipeDismiss)()
             } else {
-                translateY.value = withSpring(0, SPRING_CONFIG)
+                translateY.value = isReducedMotion ? 0 : withSpring(0, SPRING_CONFIG)
             }
         })
 
