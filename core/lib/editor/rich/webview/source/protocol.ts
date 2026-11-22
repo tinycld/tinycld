@@ -59,6 +59,8 @@ export const APP_EDITOR_MOUNTED = 'editor-mounted'
 export const APP_PARK = 'park'
 /** WebView → host, ⌘/Ctrl+Enter inside the editor. */
 export const APP_SUBMIT_SHORTCUT = 'submit-shortcut'
+/** WebView → host, ⌘/Ctrl+K inside the editor. */
+export const APP_LINK_SHORTCUT = 'link-shortcut'
 /** WebView → host, Escape inside the editor. */
 export const APP_ESCAPE = 'escape'
 /**

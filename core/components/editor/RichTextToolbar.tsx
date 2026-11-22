@@ -3,7 +3,7 @@ import type { EditorCommands, EditorToolbarState } from '@tinycld/core/lib/edito
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { PromptDialog } from '@tinycld/core/ui/PromptDialog'
 import { Bold, Italic, Link2, List, ListOrdered, Quote, Underline } from 'lucide-react-native'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Platform, Pressable, View } from 'react-native'
 
 export interface RichTextToolbarProps {
@@ -24,7 +24,8 @@ const NO_ITEMS: ToolbarItem[] = []
 /**
  * The formatting row of a rich-text editor (`useRichEditor`): Bold, Italic,
  * Underline, the two lists, Blockquote and Link, through `ResponsiveToolbar`,
- * so buttons that do not fit fold into its More menu. Link opens a
+ * so buttons that do not fit fold into its More menu. Link, and ⌘K while
+ * the editor has focus (`commands.subscribeLinkShortcut`), opens a
  * `PromptDialog`: a value sets the link, an empty value removes it.
  */
 export function RichTextToolbar({
@@ -41,6 +42,7 @@ export function RichTextToolbar({
 
     const openLink = useCallback(() => setIsLinkOpen(true), [])
     const closeLink = useCallback(() => setIsLinkOpen(false), [])
+    useEffect(() => commands.subscribeLinkShortcut?.(openLink), [commands, openLink])
     const applyLink = useCallback(
         (value: string) => {
             if (value) {

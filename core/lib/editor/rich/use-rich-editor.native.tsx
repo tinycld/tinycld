@@ -11,6 +11,7 @@ import type { EditorHandle, EditorResult } from '../types'
 import { useWebViewEditor } from '../use-webview-editor'
 import { AwarenessWebViewHost } from './awareness-webview-host'
 import { HtmlWebViewHost } from './html-webview-host'
+import { useLinkShortcutListeners } from './link-shortcut-listeners'
 import { MarkdownWebViewHost } from './markdown-webview-host'
 import type { UseRichEditorOptions } from './options'
 import { TriggerItemsWebViewHost } from './trigger-items-webview-host'
@@ -20,6 +21,7 @@ import {
     APP_EDITOR_MOUNTED,
     APP_ESCAPE,
     APP_FILE_TOKEN,
+    APP_LINK_SHORTCUT,
     APP_PAGE_ERROR,
     APP_SUBMIT_SHORTCUT,
     type RichEditorInitPayload,
@@ -94,6 +96,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     focusRef.current = onFocus
     const blurRef = useRef(onBlur)
     blurRef.current = onBlur
+    const linkShortcut = useLinkShortcutListeners()
     // Mirrors the focus flag published to editor-focus-state, so an editor that
     // unmounts while focused can release its claim — no blur is delivered in
     // that case, and the count would stay raised, muting shortcuts app-wide.
@@ -381,6 +384,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             if (htmlHost.handleMessage(message as never)) return
             if (message.namespace !== 'app') return
             if (message.type === APP_SUBMIT_SHORTCUT) submitRef.current?.()
+            else if (message.type === APP_LINK_SHORTCUT) linkShortcut.fire()
             else if (message.type === APP_ESCAPE) escapeRef.current?.()
             else if (message.type === APP_EDITOR_MOUNTED) {
                 log.debug('core.editor.webview', 'editor-mounted', {
@@ -405,7 +409,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 })
             }
         },
-        [markdownHost, htmlHost, yjsHost, awarenessHost, editorInstanceId, generation]
+        [markdownHost, htmlHost, yjsHost, awarenessHost, editorInstanceId, generation, linkShortcut]
     )
 
     const result = useWebViewEditor({
@@ -502,5 +506,10 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         [result.editor, markdownHost, htmlHost]
     )
 
-    return { ...result, editor }
+    const commands = useMemo(
+        () => ({ ...result.commands, subscribeLinkShortcut: linkShortcut.subscribe }),
+        [result.commands, linkShortcut]
+    )
+
+    return { ...result, editor, commands }
 }

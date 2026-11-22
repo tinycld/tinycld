@@ -10,6 +10,7 @@ import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import type { Awareness } from 'y-protocols/awareness'
 import type * as Y from 'yjs'
+import { LinkShortcut } from './link-shortcut'
 import { MentionNode, setMentionLabels } from './mention-node'
 import { SubmitShortcut } from './submit-shortcut'
 import { createTriggerExtension, type TriggerConfig } from './triggers'
@@ -33,6 +34,8 @@ export interface BuildRichEditorExtensionsOptions {
     placeholder?: string
     characterLimit?: number
     onSubmitShortcut?: () => void
+    /** ⌘/Ctrl+K handler; returns true when it handled the key. See LinkShortcut. */
+    onLinkShortcut?: () => boolean
     collab?: RichEditorCollabOptions
     /**
      * Custom renderer for image nodes. An option rather than baked in because
@@ -68,8 +71,15 @@ export interface BuildRichEditorExtensionsOptions {
 export function buildRichEditorExtensions(
     options: BuildRichEditorExtensionsOptions = {}
 ): Extensions {
-    const { placeholder, characterLimit, onSubmitShortcut, collab, imageNodeView, triggers } =
-        options
+    const {
+        placeholder,
+        characterLimit,
+        onSubmitShortcut,
+        onLinkShortcut,
+        collab,
+        imageNodeView,
+        triggers,
+    } = options
 
     const extensions: Extensions = [
         StarterKit.configure({
@@ -109,6 +119,9 @@ export function buildRichEditorExtensions(
     }
     if (onSubmitShortcut) {
         extensions.push(SubmitShortcut.configure({ onSubmit: onSubmitShortcut }))
+    }
+    if (onLinkShortcut) {
+        extensions.push(LinkShortcut.configure({ onLink: onLinkShortcut }))
     }
     for (const trigger of triggers ?? []) {
         extensions.push(createTriggerExtension(trigger))

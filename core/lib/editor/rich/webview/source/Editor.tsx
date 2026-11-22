@@ -35,6 +35,7 @@ import {
     APP_FILE_TOKEN,
     APP_FOCUS,
     APP_KEYBOARD_INSET,
+    APP_LINK_SHORTCUT,
     APP_PAGE_ERROR,
     APP_PARK,
     APP_SUBMIT_SHORTCUT,
@@ -271,6 +272,12 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
             characterLimit: init.characterLimit,
             imageNodeView: AUTHED_IMAGE_NODE_VIEW,
             onSubmitShortcut: () => postToNative(makeMessage('app', APP_SUBMIT_SHORTCUT, null)),
+            // The page cannot know whether the host has a listener, so it
+            // always takes the key; a WebView gives ⌘K no default action.
+            onLinkShortcut: () => {
+                postToNative(makeMessage('app', APP_LINK_SHORTCUT, null))
+                return true
+            },
             // Candidates come from the store rather than the init payload's
             // frozen copy, so a roster pushed later is picked up without
             // rebuilding the editor. `onStateChange` is the web callback

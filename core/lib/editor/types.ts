@@ -121,6 +121,11 @@ export interface EditorCommands {
     toggleCodeBlock?(): void
     setLink(url: string): void
     removeLink(): void
+    // Calls `listener` when ⌘/Ctrl+K is pressed while this editor has focus
+    // (a ProseMirror keymap, rich/link-shortcut.ts; on native the page posts
+    // it to the host). Returns the unsubscribe. RichTextToolbar opens its Link
+    // dialog from it. Only the rich editor (useRichEditor) has it.
+    subscribeLinkShortcut?(listener: () => void): () => void
     undo(): void
     redo(): void
     insertTable?(rows: number, cols: number): void
