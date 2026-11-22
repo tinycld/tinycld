@@ -125,9 +125,9 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 		keysets int
 		run     func(t *testing.T, z *zoo)
 	}{
-		// 3: the page and the Total statement each read f1 (J1a: the Total has a
-		// statement of its own).
-		{"ledger, 200 accounts", 3, func(t *testing.T, z *zoo) {
+		// 2: the page statement, which also returns the Total row, and the
+		// detail statement each read f1.
+		{"ledger, 200 accounts", 2, func(t *testing.T, z *zoo) {
 			withBalanceZoo(t, z)
 			withLedgerScale(t, z, 200)
 			if _, err := runLedger(z, map[string]string{"period": ledgerPeriod}, Options{Today: "2025-07-15"}); err != nil {
@@ -159,8 +159,8 @@ func TestAFillKeysetLoopsOverItsParentRowsFirst(t *testing.T) {
 					{"id":"a","col":"animal","fill":{"where":{"op":"eq","args":[{"path":[{"link":"site"},{"field":"name"}]},{"record":"s","path":[{"field":"name"}]}]}}}],
 				"sort":[{"formula":{"record":"s","path":[{"field":"name"}]}}]}`, Options{ExpandAll: true}, nil)
 		}},
-		// 4: the case runs two pages, and each page statement reads f1 and f2;
-		// the Total statement (J1a: a statement of its own) reads no fill.
+		// 4: the case runs two pages, and each page statement (with its Total)
+		// reads f1 and f2.
 		{"a cursor page that starts inside fill groups", 4, func(t *testing.T, z *zoo) {
 			withEmptyAnimals(t, z)
 			// Page 1 is the East site's group row alone; page 2 starts at Eli,

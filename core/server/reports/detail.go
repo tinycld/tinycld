@@ -25,6 +25,12 @@ type rowsCtx struct {
 	// idText reads a relation inside a text operator as its record's id, not
 	// its label: a detail row's open path holds ids (R2).
 	idText bool
+	// blank compiles a column blank on detail rows (DetailBlank): a running
+	// value or a percent in it compiles to NULL with its type, and adds no
+	// window to the frame, so it turns off no cut. nulled is set once one
+	// did.
+	blank  bool
+	nulled bool
 }
 
 // rowReads is what a lookup on a detail row reads of the report's row,
@@ -364,6 +370,14 @@ func (rc *rowsCtx) window(op string, arg *Node, scale int, at string) (expr, err
 	if err != nil {
 		return expr{}, err
 	}
+	if rc.blank {
+		// Compiled on a frame of its own for its checks, type and currency;
+		// the detail rows never show it.
+		w, err := windowSQL(op, e, scale, &windowFrame{}, func(any) string { return "NULL" }, at)
+		rc.nulled = true
+		w.sql = "NULL"
+		return w, err
+	}
 	w, err := windowSQL(op, e, scale, rc.detail, rc.bind, at)
 	rc.detail.win = rc.detail.win || w.win
 	return w, err
@@ -411,7 +425,9 @@ func (rc *rowsCtx) lookup(n *Node, at string) (expr, error) {
 	if hoisted {
 		around.value()
 	}
-	if memo {
+	// A lookup over a running value compiled blank reads NULL for it, so it
+	// is not kept for the columns that show it.
+	if memo && !(rc.blank && e.win) {
 		if f.lookups == nil {
 			f.lookups = map[string]detailLookup{}
 		}
@@ -533,7 +549,8 @@ func (rc *rowsCtx) currencySQL(cur currency) string {
 // Only a detail row has one (inside a total a running value is refused).
 func (rc *rowsCtx) hoist(sql string) string {
 	rc.reads.value()
-	if rc.detail == nil {
+	// A blank column's running value is NULL: there is nothing to compute.
+	if rc.detail == nil || rc.blank {
 		return sql
 	}
 	return rc.detail.hoist("w", sql)
