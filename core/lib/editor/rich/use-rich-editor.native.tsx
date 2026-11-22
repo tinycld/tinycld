@@ -1,5 +1,5 @@
 import { useFileToken } from '@tinycld/core/file-viewer/use-authed-file-url'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { log } from '../../logger'
 import { pb } from '../../pocketbase'
 import { useThemeColor } from '../../use-app-theme'
@@ -22,6 +22,7 @@ import {
     APP_ESCAPE,
     APP_FILE_TOKEN,
     APP_LINK_SHORTCUT,
+    APP_LINK_SHORTCUT_ENABLED,
     APP_PAGE_ERROR,
     APP_SUBMIT_SHORTCUT,
     type RichEditorInitPayload,
@@ -97,6 +98,12 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const blurRef = useRef(onBlur)
     blurRef.current = onBlur
     const linkShortcut = useLinkShortcutListeners()
+    // The page cannot see the host's listeners, so it is told whether a
+    // toolbar listens; with none, ⌘K stays with the page's defaults.
+    const hasLinkShortcut = useSyncExternalStore(
+        linkShortcut.subscribePresence,
+        linkShortcut.hasListeners
+    )
     // Mirrors the focus flag published to editor-focus-state, so an editor that
     // unmounts while focused can release its claim — no blur is delivered in
     // that case, and the count would stay raised, muting shortcuts app-wide.
@@ -200,6 +207,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             },
             ...(fileToken ? { fileAuth: { baseURL: pb.baseURL, token: fileToken } } : {}),
             editorInstanceId,
+            hasLinkShortcut,
             // Seeded with an EMPTY roster: the real one follows immediately as
             // a push, and baking it in here would rebuild the whole handshake
             // every time someone joined the board.
@@ -261,6 +269,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         collabUserColor,
         fileToken,
         editorInstanceId,
+        hasLinkShortcut,
         triggerSignature,
     ])
 
@@ -360,6 +369,14 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             triggerItemsHost.push(id, items)
         }
     }, [rosterSignature, triggerItemsHost, liveEpoch])
+
+    // Init is not posted again for the same generation, and the toolbar
+    // subscribes in an effect that can land after the handshake, so the flag
+    // is also pushed to each live editor, gated like the roster above.
+    useEffect(() => {
+        if (liveEpoch === 0) return
+        posterRef.current?.(makeMessage('app', APP_LINK_SHORTCUT_ENABLED, hasLinkShortcut) as never)
+    }, [hasLinkShortcut, liveEpoch])
 
     const onDocumentScroll = useCallback(() => {
         publishUiMessage({ namespace: 'ui', type: UI_POPOVER_DISMISS_ON_SCROLL, payload: null })

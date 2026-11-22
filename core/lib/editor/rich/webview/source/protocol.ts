@@ -61,6 +61,13 @@ export const APP_PARK = 'park'
 export const APP_SUBMIT_SHORTCUT = 'submit-shortcut'
 /** WebView → host, ⌘/Ctrl+K inside the editor. */
 export const APP_LINK_SHORTCUT = 'link-shortcut'
+/**
+ * host → WebView: whether the host has a ⌘/Ctrl+K listener (a toolbar that
+ * opens its Link dialog), as a boolean payload. The page takes the key only
+ * while this is true. Init carries the same value as `hasLinkShortcut`; this
+ * message follows when a toolbar subscribes or goes away after the handshake.
+ */
+export const APP_LINK_SHORTCUT_ENABLED = 'link-shortcut-enabled'
 /** WebView → host, Escape inside the editor. */
 export const APP_ESCAPE = 'escape'
 /**
@@ -249,6 +256,12 @@ export interface RichEditorInitPayload {
      * the page installs none. Rosters are refreshed by {@link APP_TRIGGER_ITEMS}.
      */
     triggers?: SerializableTriggerConfig[]
+    /**
+     * True when the host has a ⌘/Ctrl+K listener at handshake time. Absent or
+     * false → the page leaves ⌘K alone. Later changes arrive as
+     * {@link APP_LINK_SHORTCUT_ENABLED}.
+     */
+    hasLinkShortcut?: boolean
     /**
      * Identifies this editor among any others mounted on the same screen, so a
      * host overlay can tell whose popover it is drawing. See
