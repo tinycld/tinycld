@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import groupRowCells from '../fixtures/group-row-cells.json'
 import {
     DEFAULT_EXPANSION,
     EXPAND_ALL,
@@ -14,7 +15,7 @@ import {
     visibleRows,
     withPendingOpen,
 } from '../rows'
-import type { Notice, ResultRow, RunResult } from '../types'
+import type { Notice, ResultColumn, ResultRow, RunResult } from '../types'
 
 const group = (id: string, key: unknown[], extra: Partial<ResultRow> = {}): ResultRow => ({
     id,
@@ -865,5 +866,66 @@ describe('figureTone', () => {
         expect(figureTone(plain, display(true, false))).toBe('danger')
         expect(figureTone(plain, display(false, true))).toBe('danger')
         expect(figureTone(subtotal('s:mo', 'g:mo'), display(false, false))).toBe('normal')
+    })
+})
+
+// The case table that export_grouponly_test.go runs through exportRows too, so
+// the view and the export keep a group-only column's cell on the same rows.
+type GroupRowCase = (typeof groupRowCells.cases)[number]
+type GroupOnlyColumn = Pick<ResultColumn, 'id' | 'groupOnly'>
+
+const caseRows = (c: GroupRowCase): ResultRow[] =>
+    c.rows.map(row => ({
+        ...row,
+        kind: row.kind as ResultRow['kind'],
+        label: row.id,
+        // JSON infers each case row's cells as a union with `<key>?: undefined`
+        // members; every cell the file sends is a value, so they are row cells.
+        cells: row.cells as ResultRow['cells'],
+    }))
+
+const caseSpec = (c: GroupRowCase) => ({
+    groups: c.groups,
+    layout: 'layout' in c ? c.layout : null,
+})
+
+const shownKeys = (shown: { row: ResultRow; cells: Record<string, unknown> }[]) =>
+    Object.fromEntries(shown.map(item => [item.row.id, Object.keys(item.cells).sort()]))
+
+const unmarked = (c: GroupRowCase): GroupOnlyColumn[] =>
+    c.columns.map(column => ({ id: column.id }))
+
+describe('group-only cells (group-row-cells.json)', () => {
+    it.each(groupRowCells.cases.map(c => [c.name, c] as const))('%s', (_name, c) => {
+        const shown = visibleRows(caseRows(c), caseSpec(c), c.columns as GroupOnlyColumn[])
+        expect(shownKeys(shown)).toEqual(c.shown)
+    })
+
+    // A caller that passes no columns keeps the rule before group-only columns: a
+    // group row that ends in a subtotal (the case's endsInSubtotal: its subtotal
+    // row follows, it is open at a level with subtotals, or it is a layout
+    // section) shows none; every other row shows what the case shows.
+    it('without columns, every group row that ends in a subtotal shows no cell', () => {
+        for (const c of groupRowCells.cases) {
+            const rows = caseRows(c)
+            const endsInSubtotal: readonly string[] = c.endsInSubtotal
+            const want = Object.fromEntries(
+                rows.map(row => {
+                    const keys = c.shown[row.id as keyof typeof c.shown] as string[]
+                    return [row.id, endsInSubtotal.includes(row.id) ? [] : keys]
+                })
+            )
+            expect(shownKeys(visibleRows(rows, caseSpec(c))), c.name).toEqual(want)
+        }
+    })
+
+    it('with no group-only column, each group row that ends in a subtotal gets the one empty object', () => {
+        const twoLevels = groupRowCells.cases.find(c => c.groups.length === 2)
+        if (!twoLevels) throw new Error('the case table has no two-level case')
+        const shown = visibleRows(caseRows(twoLevels), caseSpec(twoLevels), unmarked(twoLevels))
+        const outer = shown.find(item => item.row.id === 'g:a')
+        const inner = shown.find(item => item.row.id === 'g:a|x')
+        expect(outer?.cells).toEqual({})
+        expect(outer?.cells).toBe(inner?.cells)
     })
 })

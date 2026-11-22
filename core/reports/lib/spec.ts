@@ -163,7 +163,9 @@ export const specColumnSchema = z.strictObject({
     // The field a link column shows each record by; absent: the record's first text field.
     labelField: z.string().optional(),
     // 'blank': the column has no cell on detail rows, so a value read from the group's
-    // record shows on the group row only. Absent: shown on detail rows.
+    // record shows on the group row only. Such a column whose group cell is not a figure
+    // (not a number, money or percent) is group-only (ResultColumn.groupOnly): it shows
+    // on the group row and not on the group's subtotal row. Absent: shown on detail rows.
     detail: z.literal('blank').optional(),
     // A formula shown on group, subtotal and total rows in place of the column's
     // totals; detail rows keep `path` or `formula`.

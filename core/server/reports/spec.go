@@ -205,7 +205,10 @@ type Column struct {
 	LabelField string `json:"labelField,omitempty"`
 	// Detail "blank" leaves the column's cells out of every detail row, so a
 	// column that names the open group (a value read from the group's record)
-	// shows on the group row only. Empty: the column shows on detail rows.
+	// shows on the group row only. Such a column whose group cell is not a
+	// figure (not a number, money or percent) is group-only
+	// (ResultColumn.GroupOnly): it shows on the group row and not on the
+	// group's subtotal row. Empty: the column shows on detail rows.
 	Detail string `json:"detail,omitempty"`
 	// Rollup is the column's cell on group, subtotal and total rows in place
 	// of its total: a formula on the row's level. Detail rows keep Path or

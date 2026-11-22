@@ -270,7 +270,7 @@ func buildExport(re *core.RequestEvent, body exportBody) (*exportFile, error) {
 		ReportID:    rec.Id,
 		Heading:     res.Heading,
 		Columns:     shownExportColumns(res.Columns, display.Hidden),
-		Rows:        exportRows(res.Rows, spec),
+		Rows:        exportRows(res.Rows, spec, res.Columns),
 		Params:      res.Params,
 		Defs:        spec.Params,
 		Notices:     res.Notices,
@@ -450,12 +450,19 @@ func hasRows(rows []Row) bool {
 }
 
 // exportRows is visibleRows (rows.ts) over the joined rows: a group row that
-// its own subtotal row follows has no figures, a detail row's label cell is
+// its own subtotal row follows has no figures (it keeps the cells of its
+// group-only columns, ResultColumn.GroupOnly), a detail row's label cell is
 // not repeated, and a section's computed row under a folded section is left
 // out. An empty report has no rows (D8).
-func exportRows(rows []Row, spec *Spec) []exportRow {
+func exportRows(rows []Row, spec *Spec, columns []ResultColumn) []exportRow {
 	if !hasRows(rows) {
 		return []exportRow{}
+	}
+	var groupOnly []string
+	for _, c := range columns {
+		if c.GroupOnly {
+			groupOnly = append(groupOnly, c.ID)
+		}
 	}
 	withSubtotal := map[string]bool{}
 	folded := map[string]bool{}
@@ -472,7 +479,7 @@ func exportRows(rows []Row, spec *Spec) []exportRow {
 		if isSectionRow(r) && folded[r.Section] {
 			continue
 		}
-		out = append(out, exportRow{Row: r, Cells: exportRowCells(r, withSubtotal, spec)})
+		out = append(out, exportRow{Row: r, Cells: exportRowCells(r, withSubtotal, spec, groupOnly)})
 	}
 	return out
 }
@@ -490,11 +497,18 @@ func endsInSubtotal(row Row, spec *Spec) bool {
 	return hasSubtotals && (row.Expanded || isLayout)
 }
 
-// exportRowCells is rowCells (rows.ts).
-func exportRowCells(row Row, withSubtotal map[string]bool, spec *Spec) map[string]any {
+// exportRowCells is rowCells (rows.ts): a group row that ends in a subtotal
+// keeps only the cells of the group-only columns (each <id> and <id>@ key).
+func exportRowCells(row Row, withSubtotal map[string]bool, spec *Spec, groupOnly []string) map[string]any {
 	switch {
 	case row.Kind == KindGroup && (withSubtotal[row.ID] || endsInSubtotal(row, spec)):
-		return map[string]any{}
+		cells := map[string]any{}
+		for key, v := range row.Cells {
+			if isGroupOnlyKey(key, groupOnly) {
+				cells[key] = v
+			}
+		}
+		return cells
 	case row.Kind == KindDetail && row.LabelColumn != "":
 		cells := make(map[string]any, len(row.Cells))
 		for id, v := range row.Cells {
@@ -505,6 +519,14 @@ func exportRowCells(row Row, withSubtotal map[string]bool, spec *Spec) map[strin
 		return cells
 	}
 	return row.Cells
+}
+
+// isGroupOnlyKey is true for a group-only column's cell <id> and its <id>@
+// cells.
+func isGroupOnlyKey(key string, groupOnly []string) bool {
+	return slices.ContainsFunc(groupOnly, func(id string) bool {
+		return key == id || strings.HasPrefix(key, id+"@")
+	})
 }
 
 // readParamLabels reads the shown labels of each choice param from a source
