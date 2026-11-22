@@ -3,19 +3,13 @@ import type { ViewStyle } from 'react-native'
 import { Platform } from 'react-native'
 import { Gesture } from 'react-native-gesture-handler'
 import { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'
+import { shouldDismissSwipe } from './should-dismiss'
 
 /** The edge a panel rests on, and therefore the direction it leaves in. */
 export type SwipeAnchor = 'left' | 'right' | 'top' | 'bottom'
 
 // Shared with Sheet (ui/sheet) so every edge surface settles identically.
 const SPRING_CONFIG = { damping: 28, stiffness: 220, mass: 0.8 }
-
-// A drag has to travel this far before it counts as a dismissal rather than a
-// scroll that wandered sideways. Mirrors shouldDismissSwipe, which the unit
-// test pins; the worklets below inline the comparison because they run on the
-// UI thread and cannot call a non-worklet JS function.
-const DISMISS_DISTANCE = 100
-const DISMISS_VELOCITY = 500
 
 /** +1 when the panel leaves rightward or downward, -1 when it leaves the other way. */
 const DIRECTION: Record<SwipeAnchor, number> = { right: 1, bottom: 1, left: -1, top: -1 }
@@ -104,9 +98,7 @@ export function useSwipeToDismiss({
         .onEnd(e => {
             const travel = isHorizontal ? e.translationX : e.translationY
             const velocity = isHorizontal ? e.velocityX : e.velocityY
-            // Inlined rather than calling shouldDismissSwipe: this runs on the
-            // UI thread, which cannot call a non-worklet JS function.
-            if (dir * travel > DISMISS_DISTANCE || dir * velocity > DISMISS_VELOCITY) {
+            if (shouldDismissSwipe(travel, velocity, dir)) {
                 offset.value = withSpring(dir * distance, SPRING_CONFIG, finished => {
                     if (finished) runOnJS(close)()
                 })

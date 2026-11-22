@@ -47,4 +47,11 @@ describe('shouldDismissSwipe', () => {
         expect(shouldDismissSwipe(300, 800, TOWARD)).toBe(false)
         expect(shouldDismissSwipe(20, 800, TOWARD)).toBe(false)
     })
+
+    // Unevenly stamped input events can report a fling against the drag's
+    // net travel; that fling is noise, so the distance decides.
+    it('ignores a flick away from the edge when the drag went toward it', () => {
+        expect(shouldDismissSwipe(-20, 800, AWAY)).toBe(false)
+        expect(shouldDismissSwipe(20, -800, TOWARD)).toBe(false)
+    })
 })
