@@ -1,8 +1,6 @@
 import { useLeaveGuard } from '@tinycld/core/components/forms-builder/use-leave-guard'
 import { HelpIcon } from '@tinycld/core/components/help/HelpIcon'
-import { useWindowHeight } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { Button, ButtonText, ServerActionButton } from '@tinycld/core/ui/button'
 import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
 import {
@@ -236,12 +234,11 @@ function ModeBody({ isVisible, children }: { isVisible: boolean; children: React
 }
 
 // A phone cannot show the design and the report together, so a full-height sheet
-// switches between them. The switch is this sheet's own UI state. A sheet takes its
-// content's height, so the content is given the screen's.
+// switches between them. The switch is this sheet's own UI state. The sheet fills
+// its host, which is shorter than the window (it ends at the phone's tab bar), so
+// the content flexes into the sheet rather than taking a height of its own.
 function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
     const [mode, setMode] = useState<Mode>('design')
-    const insets = useDeviceInsets()
-    const height = useWindowHeight() - insets.top
     const table = useTableLayout(preview)
     const layoutNotice = preview.state === 'ready' ? layoutNoticeOf(table.layout) : undefined
     return (
@@ -249,10 +246,11 @@ function SheetSurface({ builder, preview, problems, onSaveAs }: SurfaceProps) {
             isOpen
             onClose={builder.onClose}
             maxHeightPercent={1}
+            fillsHost
             hideHandle
             testID="report-builder"
         >
-            <View style={{ height }}>
+            <View className="min-h-0 flex-1">
                 <View className="flex-row items-center justify-between gap-2 px-3">
                     <PanelTitle builder={builder} />
                     <View className="flex-row items-center gap-1">

@@ -74,9 +74,9 @@ const SheetPadsBottomInsetContext = createContext(false)
  * Drag away from the edge past a threshold (or a fast flick) asks the owner to
  * close, and the sheet springs back to rest when the owner keeps it open; a
  * short drag snaps back; the backdrop and Escape dismiss. Height is intrinsic
- * to the content, capped at `maxHeightPercent` of the host; a `Sheet.Body`
- * inside scrolls once that cap bites while the title row and `Sheet.Footer`
- * stay put.
+ * to the content, capped at `maxHeightPercent` of the host (or fixed at it with
+ * `fillsHost`); a `Sheet.Body` inside scrolls once that cap bites while the
+ * title row and `Sheet.Footer` stay put.
  */
 interface SheetProps {
     isOpen: boolean
@@ -89,6 +89,14 @@ interface SheetProps {
     side?: SheetSide
     /** Max height as a fraction of the host (0–1). Default 0.85. */
     maxHeightPercent?: number
+    /**
+     * Take `maxHeightPercent` of the host as a fixed height instead of the
+     * content's height, so a child with `flex: 1` fills the space the host
+     * really gives (the host is not the window: on a phone it ends at the tab
+     * bar). In the root host a filled sheet reaches both screen edges, so it
+     * clears the status bar and the home indicator. Default false.
+     */
+    fillsHost?: boolean
     /** Background theme token for the sheet surface. Default 'background'. */
     surface?: Parameters<typeof useThemeColor>[0]
     /** Hide the drag-handle pill (shown by default). */
@@ -106,6 +114,7 @@ function SheetRoot({
     description,
     side = 'bottom',
     maxHeightPercent = 0.85,
+    fillsHost = false,
     surface = 'background',
     hideHandle = false,
     initialFocusRef,
@@ -238,15 +247,21 @@ function SheetRoot({
         opacity: backdropOpacity.value,
     }))
 
-    // The sheet host already sits below the status bar; only the root host
-    // (the fallback, or the host a sheet inside a Drawer takes) puts a top
-    // sheet's edge under it.
-    const paddingTop = side === 'top' && !rendersInSheetHost ? insets.top : 0
+    // The sheet host already sits below the status bar, but the root host (the
+    // fallback, or the host a sheet inside a Drawer takes) reaches the top of
+    // the screen: there a top sheet, or a sheet that fills the host from either
+    // side, has its top edge under the status bar and pads it.
+    const reachesTop = side === 'top' || fillsHost
+    const paddingTop = reachesTop && !rendersInSheetHost ? insets.top : 0
     // Likewise the sheet host ends above the home indicator (at the tab bar),
     // but the root host reaches the screen edge: a bottom sheet there pads its
     // own bottom, so its last row clears the indicator with or without a footer.
-    const padsBottomInset = side === 'bottom' && !rendersInSheetHost
+    const reachesBottom = side === 'bottom' || fillsHost
+    const padsBottomInset = reachesBottom && !rendersInSheetHost
     const paddingBottom = padsBottomInset ? insets.bottom : 0
+    // A percentage of the absolute-filled host, on web and native alike.
+    const hostShare = `${maxHeightPercent * 100}%` as const
+    const heightStyle = fillsHost ? { height: hostShare } : { maxHeight: hostShare }
 
     if (!mounted) return null
 
@@ -292,8 +307,8 @@ function SheetRoot({
                                 }}
                                 className={SIDE_CLASS[side]}
                                 style={[
+                                    heightStyle,
                                     {
-                                        maxHeight: `${maxHeightPercent * 100}%`,
                                         backgroundColor: surfaceBg,
                                         paddingTop,
                                         paddingBottom,
