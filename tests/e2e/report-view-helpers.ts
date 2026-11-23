@@ -4,8 +4,8 @@ import { inStatement } from './helpers.ts'
 // Helpers for any spec that drives the reports hub and core's report view: they
 // name no source, so a package's own report e2e uses them through
 // @tinycld/core/e2e-helpers (E11). None opens the hub: core's navigation has no
-// entry for it, so a spec opens it through its package's own link. The `.ts` extension is required there (see
-// core/e2e-helpers.ts).
+// entry for it, so a spec opens it through its package's own link. The `.ts`
+// extension is required there (see core/e2e-helpers.ts).
 
 export function hubRow(page: Page, title: string): Locator {
     return page.locator('[data-testid^="reports-hub-row-"]').filter({ hasText: title })

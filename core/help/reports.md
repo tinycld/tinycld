@@ -11,7 +11,7 @@ has three tabs: **Mine** (reports you own), **Shared with me**, and **Published*
 (reports an admin published for everyone). **Last run** shows when you last ran a
 report on this device.
 
-A package can open the hub for its own reports only. The
+A package's link can also open the hub showing only that package's reports. The
 hub then shows "Showing reports from" and the package's name, and one list of every
 report of that package you can open: your own, the ones shared with you, and the
 published ones. To see all reports in the tabs again, select **Show all reports**.
