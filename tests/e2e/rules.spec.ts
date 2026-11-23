@@ -263,17 +263,25 @@ test.describe('Rules', () => {
                 nodes.map(n => (n.getAttribute('data-testid') ?? '').replace('trigger-group-', ''))
             )
 
-        // core always contributes package-neutral triggers, so it leads whatever
-        // else is installed. In a lean shell it is the only group.
-        expect(groupOrder[0]).toBe('core')
+        // The rail's package buttons (testID nav-<slug>) in the order the rail
+        // shows them. Only visible ones: MobileTabBar and MoreDrawer use the
+        // same ids. The rail's own buttons (nav-home, nav-settings, …) share
+        // the prefix; the filter below drops every id that is not a group.
+        const railIds = await page
+            .locator('[data-testid^="nav-"]:visible')
+            .evaluateAll(nodes =>
+                nodes.map(n => (n.getAttribute('data-testid') ?? '').replace('nav-', ''))
+            )
+        const railOrder = [...new Set(railIds)]
 
-        // Ordering only has meaning once a feature package joins core. Where one
-        // is installed, assert the sidebar order actually differs from the
-        // alphabetical order this replaced — which would have put calc/calendar
-        // ahead of core.
-        if (groupOrder.length > 1) {
-            expect(groupOrder).not.toEqual([...groupOrder].sort())
-        }
+        // Expected order, derived from the rail and not from a list of slugs,
+        // so it holds on any member set (CI's lean shell, a lane, a full
+        // workspace): core first, then the groups in rail order, then the groups
+        // with no rail entry (settings-only contributors) alphabetically.
+        const groups = new Set(groupOrder.filter(slug => slug !== 'core'))
+        const inRail = railOrder.filter(slug => groups.has(slug))
+        const notInRail = [...groups].filter(slug => !inRail.includes(slug)).sort()
+        expect(groupOrder).toEqual(['core', ...inRail, ...notInRail])
     })
 
     // Naming is the first thing a new rule needs, and `autoFocus` alone does
