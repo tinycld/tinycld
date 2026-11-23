@@ -1,4 +1,4 @@
-import { type RefObject, useEffect } from 'react'
+import { type RefObject, useEffect, useRef } from 'react'
 import { Platform } from 'react-native'
 
 const FOCUSABLE =
@@ -26,6 +26,21 @@ interface UseFocusTrapOptions {
     trap?: boolean
     /** Give focus back to whatever had it before the layer opened. */
     restore?: boolean
+    /**
+     * Moves the focus itself when the layer closes, in place of giving it
+     * back to the element that had it before: for a layer whose opener may
+     * be gone by then (an action that re-renders the screen). Called at the
+     * same point and under the same rules as the default restore — one frame
+     * after close, only while nothing else holds the focus — but also when
+     * the opener is no longer in the document. Native has no focus restore:
+     * there it is called one frame after the layer closes.
+     */
+    onRestoreFocus?: () => void
+}
+
+const nextFrame = (cb: () => void) => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(cb)
+    else setTimeout(cb, 0)
 }
 
 const AUTOFOCUS_SELECTOR = '[data-autofocus="true"]'
@@ -78,7 +93,18 @@ export function useLayerFocus({
     initialFocusRef,
     trap = true,
     restore = true,
+    onRestoreFocus,
 }: UseFocusTrapOptions) {
+    // The latest callback, read at close: an inline function must not re-run
+    // the focus effect (and so restore focus) on every render.
+    const onRestoreFocusRef = useRef(onRestoreFocus)
+    onRestoreFocusRef.current = onRestoreFocus
+
+    useEffect(() => {
+        if (Platform.OS === 'web' || !isActive || !restore) return
+        return () => nextFrame(() => onRestoreFocusRef.current?.())
+    }, [isActive, restore])
+
     useEffect(() => {
         if (Platform.OS !== 'web' || !isActive || typeof document === 'undefined') return
         if (!container) return
@@ -108,7 +134,11 @@ export function useLayerFocus({
 
         return () => {
             container.removeEventListener('keydown', onKeyDown)
-            if (!restore || !previous?.isConnected || typeof previous.focus !== 'function') return
+            if (!restore) return
+            const moveFocus = onRestoreFocusRef.current
+            const canRestorePrevious =
+                previous?.isConnected === true && typeof previous.focus === 'function'
+            if (!moveFocus && !canRestorePrevious) return
             // Hand focus back ONLY if nothing else has claimed it. A menu row
             // may act by moving focus somewhere new — the board header's
             // "Rename board" mounts an autoFocus input — and that focus lands
@@ -127,15 +157,15 @@ export function useLayerFocus({
             // inert silently does nothing, and focus falls to the body — so
             // wait for the removal to land. Re-check on the way in, because a
             // frame is long enough for something else to claim focus.
-            const raf =
-                typeof requestAnimationFrame === 'function'
-                    ? requestAnimationFrame
-                    : (cb: () => void) => setTimeout(cb, 0)
-            raf(() => {
-                if (!previous.isConnected) return
+            nextFrame(() => {
                 const now = document.activeElement as HTMLElement | null
-                if (now && now !== document.body) return
-                previous.focus()
+                const latest = onRestoreFocusRef.current
+                // A Sheet stays in the document while it slides out, with the
+                // focus still inside it: for the callback that is unclaimed too.
+                const isStillInLayer = !!latest && !!now && container.contains(now)
+                if (now && now !== document.body && !isStillInLayer) return
+                if (latest) latest()
+                else if (previous?.isConnected) previous.focus()
             })
         }
     }, [isActive, container, initialFocusRef, trap, restore])

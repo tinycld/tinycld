@@ -80,6 +80,11 @@ The engine (`core/ui/overlay/`, internal) owns:
   on a phone (a confirm).
 - `hasCloseButton={false}` for a dialog that must be answered. Escape and the
   backdrop still dismiss.
+- `onRestoreFocus` moves the focus on close in place of the default restore to
+  the opener, for a dialog whose opener may be gone by then (an action that
+  re-renders the screen). On web it is called one frame after close, only
+  while nothing else holds the focus; native has no default restore, and it
+  is called one frame after close. The Sheet presentation takes the same prop.
 - `ConfirmDialog` and `PromptDialog` are Dialogs; use them rather than
   building a third.
 
