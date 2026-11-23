@@ -1,5 +1,5 @@
 import type { CellDisplay } from './format'
-import type { CellValue, Notice, ResultRow, RunResult } from './types'
+import type { CellValue, Notice, ResultColumn, ResultRow, RunResult } from './types'
 
 // The rows of a run as the table draws them. Groups load lazily on the server
 // (options.expand), so a closed group's children are simply not in the result:
@@ -46,9 +46,26 @@ function endsInSubtotal(row: ResultRow, spec: SubtotalSpec): boolean {
     return hasSubtotals && (row.expanded === true || isLayout)
 }
 
-function rowCells(row: ResultRow, withSubtotal: Set<string>, spec: SubtotalSpec | null) {
-    if (row.kind === 'group' && withSubtotal.has(row.id)) return NO_CELLS
-    if (row.kind === 'group' && spec && endsInSubtotal(row, spec)) return NO_CELLS
+const isGroupOnlyKey = (key: string, groupOnly: readonly string[]) =>
+    groupOnly.some(id => key === id || key.startsWith(`${id}@`))
+
+// A group row that ends in a subtotal keeps only the cells of the group-only
+// columns (each <id> and <id>@ key); with none of them it gets the one NO_CELLS.
+function groupOnlyCells(row: ResultRow, groupOnly: readonly string[]) {
+    if (groupOnly.length === 0) return NO_CELLS
+    const kept = Object.entries(row.cells).filter(([key]) => isGroupOnlyKey(key, groupOnly))
+    return kept.length === 0 ? NO_CELLS : Object.fromEntries(kept)
+}
+
+function rowCells(
+    row: ResultRow,
+    withSubtotal: Set<string>,
+    spec: SubtotalSpec | null,
+    groupOnly: readonly string[]
+) {
+    if (row.kind === 'group' && withSubtotal.has(row.id)) return groupOnlyCells(row, groupOnly)
+    if (row.kind === 'group' && spec && endsInSubtotal(row, spec))
+        return groupOnlyCells(row, groupOnly)
     if (row.kind === 'detail') return unlabelledCells(row)
     return row.cells
 }
@@ -57,11 +74,16 @@ function rowCells(row: ResultRow, withSubtotal: Set<string>, spec: SubtotalSpec 
 // subtotal row follows shows no figures (a closed group with no subtotal row keeps
 // its figures), and a detail row shows its label once, not again in a cell. With
 // the spec, a group row whose subtotal row has not loaded yet (it comes on a later
-// page) shows no figures either, so its figures never show and then go.
+// page) shows no figures either, so its figures never show and then go. Such a
+// group row keeps the cells of the group-only columns (ResultColumn.groupOnly):
+// they name the group, and the engine leaves them off the subtotal row. With no
+// columns given, no column is group-only.
 export function visibleRows(
     rows: readonly ResultRow[],
-    spec: SubtotalSpec | null = null
+    spec: SubtotalSpec | null = null,
+    columns: readonly Pick<ResultColumn, 'id' | 'groupOnly'>[] = []
 ): VisibleRow[] {
+    const groupOnly = columns.filter(column => column.groupOnly).map(column => column.id)
     const withSubtotal = new Set(
         rows.flatMap(row => (row.kind === 'subtotal' && row.section ? [row.section] : []))
     )
@@ -75,7 +97,7 @@ export function visibleRows(
         const isGroup = row.kind === 'group'
         return {
             row,
-            cells: rowCells(row, withSubtotal, spec),
+            cells: rowCells(row, withSubtotal, spec, groupOnly),
             isToggle: isGroup && row.canExpand === true,
             isOpen: isGroup && row.expanded === true,
             isPending: false,

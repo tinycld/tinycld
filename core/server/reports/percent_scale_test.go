@@ -122,7 +122,7 @@ func clientSharesExport(t *testing.T) *exportData {
 		Title:       "Client shares",
 		ReportID:    "sharesreport00",
 		Columns:     shownExportColumns(res.Columns, nil),
-		Rows:        exportRows(res.Rows, loadSpec(t, clientShares)),
+		Rows:        exportRows(res.Rows, loadSpec(t, clientShares), res.Columns),
 		Params:      res.Params,
 		Notices:     []Notice{},
 		ParamLabels: map[string]map[string]string{},

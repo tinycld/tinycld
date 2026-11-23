@@ -184,13 +184,17 @@ func withoutDetailCells(rows []Row, ids ...string) []Row {
 
 // A column blank on detail rows keeps the column's metadata of the same
 // report with the column shown: a money formula keeps its currency, a formula
-// over a select field keeps its options, and every other cell stays.
+// over a select field keeps its options, and every other cell stays. The one
+// difference is GroupOnly: the blank column is group-only exactly when its
+// type is not a figure (Number, Money or Percent), so the select formula gets
+// GroupOnly and the money formula does not; the shown run has it on no column.
 func TestABlankColumnKeepsItsCurrencyAndOptions(t *testing.T) {
 	z := newZoo(t)
 	withStalls(t, z, false)
 	for _, c := range []struct {
 		name, user, spec, col string
 		has                   func(ResultColumn) bool
+		groupOnly             bool
 	}{
 		{"a money formula", "ann", `{"version":4,"source":"zoo.feedings","columns":[
 			{"id":"animal","path":[{"link":"animal"}]},
@@ -200,14 +204,14 @@ func TestABlankColumnKeepsItsCurrencyAndOptions(t *testing.T) {
 			"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"note"}]}`, "twice",
 			func(col ResultColumn) bool {
 				return col.Type == Money && (col.Currency != "" || col.CurrencyCell != "")
-			}},
+			}, false},
 		{"a formula with options", "ann", `{"version":4,"source":"zoo.sales","columns":[
 			{"id":"stall","path":[{"link":"stall"}]},
 			{"id":"name","path":[{"field":"name"}]},
 			{"id":"amount","path":[{"field":"amount"}],"aggregate":"sum"},
 			{"id":"st","formula":{"path":[{"field":"state"}]}BLANK}],
 			"groups":[{"id":"g","col":"stall"}],"sort":[{"col":"name"}]}`, "st",
-			func(col ResultColumn) bool { return len(col.Options) > 0 }},
+			func(col ResultColumn) bool { return len(col.Options) > 0 }, true},
 	} {
 		blank := strings.Replace(c.spec, "BLANK", blankOnDetail, 1)
 		shown := strings.Replace(c.spec, "BLANK", "", 1)
@@ -222,8 +226,18 @@ func TestABlankColumnKeepsItsCurrencyAndOptions(t *testing.T) {
 				if i < 0 || !c.has(want.Columns[i]) {
 					t.Fatalf("the shown spec's %s column is not the case under test: %+v", c.col, want.Columns)
 				}
-				if !reflect.DeepEqual(got.Columns, want.Columns) {
-					t.Fatalf("columns:\n got  %+v\n want %+v", got.Columns, want.Columns)
+				for _, col := range want.Columns {
+					if col.GroupOnly {
+						t.Fatalf("the shown run's %s column is group-only", col.ID)
+					}
+				}
+				if g := slices.IndexFunc(got.Columns, func(col ResultColumn) bool { return col.ID == c.col }); g < 0 || got.Columns[g].GroupOnly != c.groupOnly {
+					t.Fatalf("the blank %s column: GroupOnly is not %v: %+v", c.col, c.groupOnly, got.Columns)
+				}
+				wantCols := slices.Clone(want.Columns)
+				wantCols[i].GroupOnly = c.groupOnly
+				if !reflect.DeepEqual(got.Columns, wantCols) {
+					t.Fatalf("columns:\n got  %+v\n want %+v", got.Columns, wantCols)
 				}
 				if w := withoutDetailCells(want.Rows, c.col); !reflect.DeepEqual(got.Rows, w) {
 					t.Fatalf("rows:\n got  %+v\n want %+v", got.Rows, w)

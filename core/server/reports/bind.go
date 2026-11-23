@@ -72,6 +72,17 @@ type optionsPlan struct {
 	// orderPath its bound path when it orders by path.
 	orderBy   string
 	orderPath *pathPlan
+	// optionOrder is the bound OptionsFrom.Order, nil for none.
+	optionOrder *pathPlan
+}
+
+// labelType is the type of what an option's label shows: a label formula's
+// is text.
+func (op *optionsPlan) labelType() FieldType {
+	if op.label == nil {
+		return Text
+	}
+	return shownType(op.label)
 }
 
 type hopPlan struct {
@@ -300,14 +311,22 @@ func (b *binder) optionSources(p *plan) {
 		}
 		op := &optionsPlan{def: d, at: at, src: src, orderBy: GroupOrderLabel}
 		op.value = b.path(src, of.Value, at+".value", pathValue, "")
-		op.label = b.path(src, of.Label, at+".label", pathValue, "")
+		// A label formula compiles with the options select (optionsSelectOf).
+		labelled := of.LabelFormula != nil
+		if !labelled {
+			op.label = b.path(src, of.Label, at+".label", pathValue, "")
+			labelled = op.label != nil
+		}
+		if len(of.Order) > 0 {
+			op.optionOrder = b.path(src, of.Order, at+".order", pathValue, "")
+		}
 		if of.Group != nil {
 			op.group = b.path(src, of.Group, at+".group", pathValue, "")
 		}
 		if op.group != nil && of.GroupOrder != nil {
 			b.groupOrder(src, op, of.GroupOrder, at+".groupOrder")
 		}
-		if op.value != nil && op.label != nil {
+		if op.value != nil && labelled {
 			p.options[d.ID] = op
 		}
 	}

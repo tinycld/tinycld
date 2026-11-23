@@ -42,6 +42,7 @@ func (rn *runner) columns() []ResultColumn {
 		rc.BlankAbove = cp.blankReadLevel > 0
 		rc.Heading = rn.headings[cp.col.ID]
 		rc.Drill = rn.drillTargets[cp.col.ID]
+		rc.GroupOnly = c.groupOnly(cp)
 		rn.currencyOfColumn(cp, &rc)
 		out = append(out, rc)
 	}
@@ -828,10 +829,41 @@ func (rn *runner) groupWithLabel(t *tree, row map[string]any, n, depth int, sect
 		// change the other's.
 		subCells := rn.cells(row)
 		rn.drillCellsOf(row, n, subCells)
+		rn.dropGroupOnlyCells(subCells)
 		rn.push(Row{
 			ID: "s:" + keyString(key), Kind: KindSubtotal, Depth: depth, Level: n, Label: "Total " + label.text, Section: id, GroupKey: key, Cells: subCells,
 			LabelType: label.typ, LabelValue: label.value, LabelCurrency: label.currency,
 		}, row)
+	}
+}
+
+// groupOnly is ResultColumn.GroupOnly: a shown column blank on detail rows
+// whose group cell is not a figure. A pivot column is never one (it is not in
+// c.p.cols).
+func (c *compiler) groupOnly(cp *colPlan) bool {
+	if cp.col.Detail != DetailBlank || cp.col.Hidden {
+		return false
+	}
+	switch c.levelTypes[cp.col.ID] {
+	case Number, Money, Percent:
+		return false
+	}
+	return true
+}
+
+// dropGroupOnlyCells removes from a subtotal row's cells each group-only
+// column's cell and its <id>@ cells: the group row above shows them.
+func (rn *runner) dropGroupOnlyCells(cells map[string]any) {
+	for _, cp := range rn.c.p.cols {
+		if !rn.c.groupOnly(cp) {
+			continue
+		}
+		prefix := cp.col.ID + "@"
+		for key := range cells {
+			if key == cp.col.ID || strings.HasPrefix(key, prefix) {
+				delete(cells, key)
+			}
+		}
 	}
 }
 

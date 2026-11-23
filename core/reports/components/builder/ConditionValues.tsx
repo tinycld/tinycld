@@ -149,13 +149,19 @@ const RECORD_OPS: ReadonlySet<string> = new Set(['eq', 'ne', 'in'])
 // one param a run of this condition would ask (askParamFor), so the options are the
 // records the reader may list there (R19), shown by the same label field.
 function recordPickerSpec(def: ParamDef, target: CatalogSource): ReportSpec {
-    const label = def.optionsFrom?.label ?? [{ field: 'id' }]
     return {
         version: CURRENT_SPEC_VERSION,
         source: target.key,
-        columns: [{ id: 'label', path: label }],
+        columns: [recordLabelColumn(def)],
         params: [def],
     }
+}
+
+// The picker's one column, labelled as the param's options are.
+function recordLabelColumn(def: ParamDef) {
+    const from = def.optionsFrom
+    if (from?.labelFormula) return { id: 'label', formula: from.labelFormula }
+    return { id: 'label', path: from?.label ?? [{ field: 'id' }] }
 }
 
 function chosenRecords(item: ConditionDraft): string[] {
@@ -424,11 +430,12 @@ const GROUP_ORDER_LABELS: Record<GroupOrderBy, string> = {
     path: 'A field',
 }
 
-// A new order by a field starts at the options' own label field: each group then
-// comes by its first option.
+// A new order by a field starts at the options' own label field (with a label
+// formula, their order field, else their value): each group then comes by its
+// first option.
 function orderFor(by: GroupOrderBy, from: OptionsFrom): GroupOrder | undefined {
     if (by === 'declared') return { by }
-    if (by === 'path') return { by, path: from.label }
+    if (by === 'path') return { by, path: from.label ?? from.order ?? from.value }
     return undefined
 }
 
