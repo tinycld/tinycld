@@ -233,6 +233,25 @@ describe('useUserPreference writes', () => {
         })
     })
 
+    // Two saves with no render between them: a hook that read the row at render
+    // time hands both the same "no row" and inserts twice. The mutation must
+    // see the first save's optimistic row and update it.
+    it('finds the row inside the mutation, so a second save before a render updates it', async () => {
+        const { writes } = makePreferences([])
+        const { result } = renderPreference()
+        await waitFor(() => expect(result.current[2].isReady).toBe(true))
+
+        act(() => {
+            result.current[1]('first')
+            result.current[1]('second')
+        })
+
+        await waitFor(() => expect(writes).toHaveLength(2))
+        expect(writes.map(write => write.kind)).toEqual(['create', 'update'])
+        expect(writes[1].id).toBe(writes[0].id)
+        await waitFor(() => expect(result.current[0]).toBe('second'))
+    })
+
     it("shows core's toast for a failed save when no onSaveError is given", async () => {
         const { server } = makePreferences([savedRow('saved')])
         server.write = async () => {
@@ -266,5 +285,28 @@ describe('useUserPreference writes', () => {
         expect(onSaveError.mock.calls[0][0].message).toContain('write refused')
         await waitFor(() => expect(result.current[0]).toBe('saved'))
         expect(useToastStore.getState().toasts).toEqual([])
+    })
+
+    // onSaveError replaces useMutation's default, which also sends the error
+    // to Sentry; the hook keeps that capture so a failed save is not lost.
+    it('still reports a failed save to Sentry when onSaveError is given', async () => {
+        const { captureExceptionToSentry } = await import('@tinycld/core/lib/sentry')
+        silenceConsoleErrors()
+        const { server } = makePreferences([savedRow('saved')])
+        server.write = async () => {
+            throw refused('write refused')
+        }
+        const onSaveError = vi.fn((_error: Error) => undefined)
+        const { result } = renderPreference({ onSaveError })
+        await waitFor(() => expect(result.current[0]).toBe('saved'))
+
+        act(() => result.current[1]('lost'))
+
+        await waitFor(() => expect(onSaveError).toHaveBeenCalledTimes(1))
+        expect(captureExceptionToSentry).toHaveBeenCalledWith(
+            'core.user-preference',
+            expect.objectContaining({ message: expect.stringContaining('write refused') }),
+            { app: 'books', key: 'dashboard' }
+        )
     })
 })

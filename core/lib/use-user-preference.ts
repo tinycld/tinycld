@@ -11,7 +11,9 @@ import { useCallback } from 'react'
 export interface UserPreferenceOptions {
     /**
      * Called when a save fails, in place of the default error toast of
-     * `useMutation`. The optimistic value is rolled back either way.
+     * `useMutation` (and its offline wording; show your own). The hook still
+     * logs the error with `log.error`. The optimistic value is rolled back
+     * either way.
      */
     onSaveError?: (error: Error) => void
 }
@@ -85,6 +87,16 @@ export function useUserPreference<T>(
     // on-demand, so the store is empty until THIS query's fetch lands — a
     // pre-load `toArray` is indistinguishable from "no row exists". setValue
     // therefore waits on the query's own isReady before mutating.
+    //
+    // Without onSaveError, useMutation's default toast and Sentry capture run.
+    // A caller's onSaveError replaces both, so the hook keeps the capture.
+    const { onSaveError } = options
+    const saveErrorHandler = onSaveError
+        ? (error: Error) => {
+              log.error('core.user-preference', error, { app, key })
+              onSaveError(error)
+          }
+        : undefined
     const upsert = useMutation({
         mutationFn: mutation(function* (newValue: T) {
             if (!user) return
@@ -105,8 +117,7 @@ export function useUserPreference<T>(
                 })
             }
         }),
-        // undefined keeps useMutation's default toast and Sentry capture.
-        onError: options.onSaveError,
+        onError: saveErrorHandler,
     })
 
     const setValue = useCallback(
@@ -121,6 +132,9 @@ export function useUserPreference<T>(
         [isLoggedIn, isReady, upsert]
     )
 
+    // The shared collection is a source so a source in `error` gets restarted.
+    // A failed on-demand load leaves the source `ready` (recover-live-queries.ts),
+    // so in practice only this hook's query is restarted.
     const retry = useCallback(
         () =>
             recoverLiveQueries({
