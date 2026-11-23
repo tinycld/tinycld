@@ -1215,6 +1215,24 @@ declares, by SQLite's affinity rules (a JSON column, such as a multi relation, i
 numeric, as is a number or yes/no column; a text, date or single relation column
 is text), so SQLite reads the union as part of the outer query and a filter on an
 indexed column reaches each part's index. A key no part maps is an untyped blank.
+A part that sets a text, select, number or yes/no key by `Values` decides, on
+its own rows, each `eq`, `ne` or `in` of that key with a literal, and each
+`not`, `and` and `or` over those (`and(eq(kind, "treat"), …)` is false on the
+other parts' rows), and so the result an `if` or a `case` picks. This holds in
+the filter, a group key, a lookup in either that reads the key through
+`outer`, a detail column or sort key, and an aggregate's argument in a group
+formula, when its `if` or `case` reads only literals and text, select, number,
+yes/no or date fields of the row or of a to-one link. When that leaves a link
+that only a result the part never picks reads, the run reads the rows one part
+at a time and joins that link only in the parts that can pick it. The rest of
+a group's formula is computed over the rows of every part and is not folded.
+On any source, a value that reads only a link's key
+(`[{"link": "animal"}, {"field": "id"}]`) reads the row's own single relation
+column with no join when the target's list rule is empty, or names only
+`@request` and `@collection` values (one answer for every row) and that answer
+lets the reader see every row. A target rule that reads the row, a required or
+multiple link, and a view or union target keep the join, so the key of a row
+the reader cannot see still reads blank.
 
 ```go
 reports.RegisterSource(reports.Source{

@@ -705,7 +705,7 @@ func lookupDayBound(c fctx, n *Node, args []expr) string {
 // first, so an index on the scope's table still serves a bound on it.
 func (sc *scope) oneValue(sql string) string {
 	alias := sc.s.alias("lb")
-	sc.sql = append(sc.sql, fmt.Sprintf("JOIN (SELECT %s AS v) %s", sql, alias))
+	sc.sql = append(sc.sql, scopeJoin{sql: fmt.Sprintf("JOIN (SELECT %s AS v) %s", sql, alias)})
 	return alias + ".v"
 }
 

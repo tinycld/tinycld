@@ -30,6 +30,20 @@ type stmt struct {
 	// sets it. Without it with writes every rule in full.
 	ask ruleAsk
 	n   int
+	// keyReads are the rules in full of the link targets whose keys a value
+	// reads from the row's own column (storedKey): the statement holds no
+	// rule CTE of them, but the key a reader may read changes with the rule's
+	// answer, so a run's topics name what each rule reads.
+	keyReads []ruleRead
+	// everyRow holds, by collection, whether the reader's list rule shows every
+	// row of it (showsEveryRow).
+	everyRow map[string]bool
+	// folds holds, by the number of its mark (partMark), what a span of w's SQL
+	// is on each part's rows of a union: "0" or "1" for a condition a part's
+	// constant decides, "NULL" for a result of an if or a case that the part's
+	// constant never picks, "" where the part's rows do not know it
+	// (partConstantFold). partArms writes each part's select with those values.
+	folds [][]string
 }
 
 // ruleRead is a rule CTE's select and its params.
@@ -39,7 +53,7 @@ type ruleRead struct {
 }
 
 func newStmt(app core.App, info *core.RequestInfo) *stmt {
-	return &stmt{app: app, info: info, params: dbx.Params{}, ruleOf: map[string]string{}, ruleReads: map[string]ruleRead{}}
+	return &stmt{app: app, info: info, params: dbx.Params{}, ruleOf: map[string]string{}, ruleReads: map[string]ruleRead{}, everyRow: map[string]bool{}}
 }
 
 // bind adds a value to the statement's parameters and returns its
@@ -226,16 +240,21 @@ var ruleRef = regexp.MustCompile(`(?:FROM|JOIN) (r\d+) `)
 
 // topics returns the change-signal topics of every collection a statement
 // built on s reads (sql, as with rendered it): the topics of the rule CTEs it
-// reads, each found by explaining the rule's own select once per run (cache
-// holds them by select). Every collection a statement reads is read through
+// reads and of the rules whose answer lets a value read a link key with no
+// join (keyReads), each found by explaining the rule's own select once per run
+// (cache holds them by select). Every collection a statement reads is read through
 // its rule CTE, so the statement is not compiled a second time for them. The
 // result may name a collection SQLite's plan of the statement leaves out (a
 // join no value reads): that topic only signals a change that cannot change
 // the result, which costs a client one more run, never an old result; do not
-// go back to explaining the whole statement to drop it.
+// go back to explaining the whole statement to drop it. A link that only terms
+// a part's constant makes false read is joined in no part's select (partArms),
+// so its topic is not in the result: that cannot give an old result either,
+// because the folded term is the same constant whatever the target holds.
 func (s *stmt) topics(ctx context.Context, app core.App, sql string, cache map[string][]string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
+	reads := []ruleRead{}
 	for _, m := range ruleRef.FindAllStringSubmatch(sql, -1) {
 		name := m[1]
 		if seen[name] {
@@ -246,6 +265,9 @@ func (s *stmt) topics(ctx context.Context, app core.App, sql string, cache map[s
 		if !ok {
 			return nil, fmt.Errorf("reports: the statement reads %s, which it holds no rule for", name)
 		}
+		reads = append(reads, r)
+	}
+	for _, r := range append(reads, s.keyReads...) {
 		key := r.sql + "\x00" + fmt.Sprint(r.params)
 		topics, ok := cache[key]
 		if !ok {
@@ -292,11 +314,20 @@ type scope struct {
 	src   *Source
 	alias string
 	joins map[string]string
-	sql   []string
+	sql   []scopeJoin
 	tms   []*tmSub
 	// partBounds are the bounds a union scope's rows lie inside, each written
 	// on partLink and partDay columns (boundedFrom).
 	partBounds []string
+}
+
+// scopeJoin is one table a scope joins: its SQL and, for a LEFT JOIN of a
+// to-one link on its target's id, the alias it reads the target under
+// (blank for any other join). Such a join keeps every row and adds at most
+// one, so a select of a part that reads nothing of the alias may leave it out
+// (partArms).
+type scopeJoin struct {
+	sql, alias string
 }
 
 // newScope reads src's rule CTE as "FROM r<n> <alias>" (and join as
@@ -331,12 +362,17 @@ func (sc *scope) join(hops []hopPlan) string {
 		}
 		h := hops[i]
 		next := sc.s.alias("t")
-		kind := "LEFT JOIN"
+		kind, left := "LEFT JOIN", next
 		if h.required {
-			kind = "JOIN"
+			kind, left = "JOIN", ""
 		}
-		sc.sql = append(sc.sql, fmt.Sprintf("%s %s %s ON %s = %s",
-			kind, sc.s.sourceRule(h.to), next, q(next, "id"), q(alias, h.link.Field)))
+		// A union's ids are unique within each part only, so a join of one may
+		// match two rows.
+		if len(h.to.Parts) > 0 {
+			left = ""
+		}
+		sc.sql = append(sc.sql, scopeJoin{alias: left, sql: fmt.Sprintf("%s %s %s ON %s = %s",
+			kind, sc.s.sourceRule(h.to), next, q(next, "id"), q(alias, h.link.Field))})
 		sc.joins[key] = next
 		alias = next
 	}
@@ -346,6 +382,9 @@ func (sc *scope) join(hops []hopPlan) string {
 // value reads a to-one path's field in this scope. A Select keeps the
 // stored column it was read from (selectEq).
 func (sc *scope) value(p *pathPlan) expr {
+	if col := sc.storedKey(p); col != "" {
+		return pathExpr("NULLIF("+col+", '')", p)
+	}
 	alias := sc.join(p.hops)
 	e := pathExpr(fieldSQL(alias, p.field), p)
 	if p.field.Type == Select {
@@ -354,9 +393,107 @@ func (sc *scope) value(p *pathPlan) expr {
 	return e
 }
 
+// storedKey is the row's own link column that a path reading only the key of
+// its last to-one link reads in place of the join's id, "" where the two may
+// differ for this reader. The join reads NULL for a blank link and for a
+// linked row the reader cannot see; the column reads NULL for a blank link
+// only. So the column is read only where the reader sees every row of the
+// target (showsEveryRow) and the column holds only ids of rows that exist
+// (storesKeys). PocketBase keeps a relation column so: a save checks that
+// every id it holds exists (RelationField.ValidateValue), the column's
+// collection cannot be changed (validation_field_relation_change), and a
+// delete of the target row deletes the row that links it or takes the id out
+// of its column (cascadeRecordDelete, deleteRefRecords). A required hop keeps
+// its JOIN, which drops a row with no visible linked row.
+func (sc *scope) storedKey(p *pathPlan) string {
+	n := len(p.hops)
+	if legacySQL.joinLinkKeys || n == 0 || p.field == nil || p.field.Key != idField.Key || sc.s.app == nil || sc.s.ask == nil {
+		return ""
+	}
+	h := p.hops[n-1]
+	if h.required || h.mode != "" || h.link.Cardinality != ToOne || h.link.Field == "" || len(h.to.Parts) > 0 {
+		return ""
+	}
+	target, err := sc.s.app.FindCachedCollectionByNameOrId(h.to.Collection)
+	if err != nil || target.IsView() || !storesKeys(sc.s.app, h.from, h.link.Field, target) || !sc.s.showsEveryRow(target) {
+		return ""
+	}
+	return q(sc.join(p.hops[:n-1]), h.link.Field)
+}
+
+// storesKeys is true when every row of src holds in its column for key only a
+// single id of a row of target, or a blank: a base collection's single
+// relation to target. A union's part that does not map the key reads a typed
+// NULL (unionBlank); a part that sets it to a constant may hold any value.
+func storesKeys(app core.App, src *Source, key string, target *core.Collection) bool {
+	stores := func(collection, column string) bool {
+		col, err := app.FindCachedCollectionByNameOrId(collection)
+		if err != nil || col.IsView() {
+			return false
+		}
+		rel, ok := col.Fields.GetByName(column).(*core.RelationField)
+		return ok && !rel.IsMultiple() && rel.CollectionId == target.Id
+	}
+	if len(src.Parts) == 0 {
+		return stores(src.Collection, key)
+	}
+	for _, part := range src.Parts {
+		if column, mapped := part.Columns[key]; mapped {
+			if !stores(part.Collection, column) {
+				return false
+			}
+			continue
+		}
+		if _, constant := part.Values[key]; constant {
+			return false
+		}
+	}
+	return true
+}
+
+// showsEveryRow is true when the reader's list rule of col passes for every
+// row: an empty rule, or a rule one answer serves whose answer for this reader
+// is yes (ruleForm.probe for a rule that joins, ruleForm.answer for one that
+// joins nothing). A rule that reads the row, a failed answer and a rule that
+// cannot be built are false: the value keeps its join, which reads the rule
+// as before. For a probe rule, an ask that fails here is not kept in the
+// run's answers (askRules), so with() asks the probe again for the join's rule
+// CTE and the statement comes back with that error. An answer rule's CTE
+// keeps the rule in full and sent never asks it, so its join reads the rule
+// as before and the rows are right. The rule in full joins the
+// statement's topics.
+func (s *stmt) showsEveryRow(col *core.Collection) bool {
+	if every, asked := s.everyRow[col.Name]; asked {
+		return every
+	}
+	every := false
+	if col.ListRule != nil {
+		form, err := ruleFormOf(s.app, col, s.info)
+		switch {
+		case err != nil:
+		case *col.ListRule == "":
+			every = true
+		case form.probe != "":
+			ok, err := s.ask(form.probe, form.params)
+			every = err == nil && ok
+		case form.answer.sql != "":
+			ok, err := s.ask(form.answer.sql, form.answer.params)
+			every = err == nil && ok
+		}
+		if every {
+			s.keyReads = append(s.keyReads, form.ruleRead)
+		}
+	}
+	s.everyRow[col.Name] = every
+	return every
+}
+
 // sql renders the FROM clause, its joins and its to-many subqueries.
 func (sc *scope) render() string {
-	parts := append([]string{"FROM " + sc.boundedFrom()}, sc.sql...)
+	parts := []string{"FROM " + sc.boundedFrom()}
+	for _, j := range sc.sql {
+		parts = append(parts, j.sql)
+	}
 	for _, tm := range sc.tms {
 		parts = append(parts, tm.render())
 	}

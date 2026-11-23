@@ -649,7 +649,8 @@ func (rn *runner) run() error {
 }
 
 // detailTypes fills the columns' detail-row types when the detail pass did
-// not run. Nothing is sent to the database.
+// not run. Nothing is sent to the database, so its statement has no rule ask
+// and reads a link's key through the join (storedKey): the types are the same.
 func (rn *runner) detailTypes() error {
 	if rn.c.detailTypes != nil {
 		return nil
@@ -715,16 +716,31 @@ func readRows(ctx context.Context, app core.App, db dbx.Builder, s *stmt, ctes [
 	return out, read, nil
 }
 
+// readDB is the run's read transaction; a runner built outside Run (a test of
+// one pass) has none and reads through the app.
+func (rn *runner) readDB() dbx.Builder {
+	if rn.db == nil {
+		return rn.app.DB()
+	}
+	return rn.db
+}
+
+// statement is a statement of the run that reads the run's rule answers
+// (askRules over ruleAnswers) while it is written, so a value can read a link
+// key from the row's own column where the target's rule shows the reader
+// every row (storedKey), as well as when it is read (readRows).
+func (rn *runner) statement() *stmt {
+	s := newStmt(rn.app, rn.c.info)
+	s.ask = askRules(rn.ctx, rn.readDB(), rn.ruleAnswers)
+	return s
+}
+
 // query runs one statement under the time limit and records the topics of
 // every collection it reads. It reads through the run's read transaction; a
 // runner built outside Run (a test of one pass) has none and reads through
 // the app.
 func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, error) {
-	db := rn.db
-	if db == nil {
-		db = rn.app.DB()
-	}
-	rows, topics, err := readRows(rn.ctx, rn.app, db, s, ctes, body, rn.ruleTopics, rn.ruleAnswers)
+	rows, topics, err := readRows(rn.ctx, rn.app, rn.readDB(), s, ctes, body, rn.ruleTopics, rn.ruleAnswers)
 	for _, t := range topics {
 		rn.topics[t] = true
 	}
@@ -745,7 +761,7 @@ func mapRunError(err error) error {
 // layout's computed rows, capped at rowCap rows.
 func (rn *runner) groupPass() ([]map[string]any, error) {
 	c := rn.c
-	s := newStmt(rn.app, c.info)
+	s := rn.statement()
 	r, err := c.rows(s)
 	if err != nil {
 		return nil, err
@@ -803,7 +819,7 @@ func (rn *runner) pageLimit() int {
 // before the page statement is written, as its keyset compares their values.
 func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	c := rn.c
-	s := newStmt(rn.app, c.info)
+	s := rn.statement()
 	r, err := c.rows(s)
 	if err != nil {
 		return nil, err
@@ -827,7 +843,9 @@ func (rn *runner) pagedGroupPass() ([]map[string]any, error) {
 	// w of its own, as detailTypes does: over r, the sort keys' columns and
 	// binds would go into the page statement (with its Total), which never
 	// reads them. A second rows() gives the same currency keys, and the levels are
-	// compiled already.
+	// compiled already. Its statement is never sent, so it has no rule ask and
+	// reads a link's key through the join (storedKey); the group keys it gives
+	// are the same.
 	keysOf, err := c.rows(newStmt(rn.app, c.info))
 	if err != nil {
 		return nil, err
@@ -1574,7 +1592,7 @@ func (c *compiler) shownLevels(r *rowsCTE, expand *expansion) ([]string, int, bo
 // a hidden group are left out before any running value reads them.
 func (rn *runner) detailPass(leaves [][]any) ([]map[string]any, error) {
 	c := rn.c
-	s := newStmt(rn.app, c.info)
+	s := rn.statement()
 	r, err := c.rows(s)
 	if err != nil {
 		return nil, err
@@ -2707,6 +2725,8 @@ func compileDry(p *plan) error {
 // compileAll compiles every statement of c's plan, as compileDry.
 func (c *compiler) compileAll() error {
 	p := c.p
+	// A dry statement has no reader and no ask: a link's key is read through
+	// the join (storedKey) and no part's constant is folded (partBaseOf).
 	s := newStmt(nil, nil)
 	r, err := c.rows(s)
 	if err != nil {

@@ -58,6 +58,12 @@ type ruleForm struct {
 	probe string
 	// table is the collection's table, quoted.
 	table string
+	// answer is "SELECT EXISTS (<the rule on a one-row table>)" for a rule
+	// that reads no row and joins nothing (`@request.auth.id != ""`): one
+	// answer for every row, as a probe gives. The statement keeps such a rule
+	// in place (sent never reads answer), so its rule CTE text is unchanged;
+	// only showsEveryRow asks it. Blank for every other rule.
+	answer ruleRead
 }
 
 // ruleAsk answers a rule's probe for the statement being written: true when
@@ -89,6 +95,7 @@ func (f ruleForm) sent(ask ruleAsk) (ruleRead, error) {
 // ruleFormOf builds the list rule of col for the reader of info.
 func ruleFormOf(app core.App, col *core.Collection, info *core.RequestInfo) (ruleForm, error) {
 	q := app.DB().Select("{{" + col.Name + "}}.*").From(col.Name)
+	var answer ruleRead
 	switch {
 	case col.ListRule == nil:
 		q.AndWhere(dbx.NewExp("1=0"))
@@ -123,6 +130,11 @@ func ruleFormOf(app core.App, col *core.Collection, info *core.RequestInfo) (rul
 				}
 				return form, nil
 			}
+			// It joined nothing: the rule on the one-row table is its one
+			// answer, unless it names the table, as the probe above.
+			if one := inner.Build(); !namesTable(one.SQL(), col.Name) {
+				answer = ruleRead{sql: "SELECT EXISTS (" + one.SQL() + ")", params: one.Params()}
+			}
 		}
 		// A rule that reads no row and joined nothing reaches here after the
 		// first UpdateQuery, which added no join, so nothing is added twice.
@@ -133,7 +145,7 @@ func ruleFormOf(app core.App, col *core.Collection, info *core.RequestInfo) (rul
 	}
 	built := q.Build()
 	if !q.Info().Distinct {
-		return ruleForm{ruleRead: ruleRead{sql: built.SQL(), params: built.Params()}}, nil
+		return ruleForm{ruleRead: ruleRead{sql: built.SQL(), params: built.Params()}, answer: answer}, nil
 	}
 	// A rule that joined is a DISTINCT select, which SQLite cannot read in
 	// place: it copies the rows first, and a subquery run for every report

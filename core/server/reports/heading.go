@@ -178,7 +178,7 @@ func shownRunValue(v any, typ FieldType) (any, FieldType, bool) {
 // readHeadings computes the run's headings and its opening rows' label
 // values in one statement.
 func (rn *runner) readHeadings() error {
-	s := newStmt(rn.app, rn.c.info)
+	s := rn.statement()
 	plans, err := rn.c.headings(s)
 	if err != nil {
 		return err

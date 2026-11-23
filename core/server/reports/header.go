@@ -87,7 +87,7 @@ func (rn *runner) readSpecHeaderLines() ([]string, error) {
 	if len(lines) == 0 {
 		return nil, nil
 	}
-	s := newStmt(rn.app, rn.c.info)
+	s := rn.statement()
 	plans, err := rn.c.headerValues(s)
 	if err != nil {
 		return nil, err
