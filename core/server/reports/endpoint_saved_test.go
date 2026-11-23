@@ -10,14 +10,12 @@ const runURL = "/api/reports/run"
 
 func savedRun(id string) string { return fmt.Sprintf(`{"reportId":%q}`, id) }
 
-const savedTopics = `"topics":["collection/report_shares","collection/reports","collection/zoo_animals","collection/zoo_feedings","collection/zoo_keepers"]`
-
 // A saved report runs for anyone who can view it, each with their own
 // rights: sharing gives the design, never the data.
 func TestASavedReportRunsAsItsReader(t *testing.T) {
 	s := newSavedZoo(t)
 	s.share(t, "R.bob", "R", "bob", "", "viewer")
-	s.expect(t, "ann", http.MethodPost, runURL, savedRun(s.id("R")), http.StatusOK, `"kind":"total"`, `"cost":4500`, savedTopics)
+	s.expect(t, "ann", http.MethodPost, runURL, savedRun(s.id("R")), http.StatusOK, `"kind":"total"`, `"cost":4500`, savedTopics(s.id("R"), s.id("ann")))
 	s.expect(t, "bob", http.MethodPost, runURL, savedRun(s.id("R")), http.StatusOK, `"cost":1150`)
 	// bob's own draft run of the same spec gives the same figure.
 	s.expect(t, "bob", http.MethodPost, runURL, runBodyOf(savedSpec), http.StatusOK, `"cost":1150`)

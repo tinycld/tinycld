@@ -333,9 +333,10 @@ test.describe('general-ledger: report engine v3', () => {
         // is missing) starts with it. Before J1 the target counted detail rows only
         // (0 here), so request 2 already asked for the server's most.
         // Only the requests that ask for every group open count. Each change to the
-        // rows the report read (another worker's report_shares or sales write) runs
-        // the report again in its earlier, collapsed state, and such a live rerun can
-        // reach the server just after the press. It is not the fold run.
+        // rows the report read (another worker's stub sales or teams write: seedStub
+        // in most report specs) runs the report again in its earlier, collapsed state,
+        // and such a live rerun can reach the server just after the press. It is not
+        // the fold run.
         expect(
             sent
                 .filter(run => run.expandAll)

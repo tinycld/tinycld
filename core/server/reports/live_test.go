@@ -63,8 +63,6 @@ func TestALiveRequestKeepsItsTopics(t *testing.T) {
 
 const feedingNotes = `{"version":4,"source":"zoo.feedings","columns":[{"id":"n","path":[{"field":"note"}]}]}`
 
-const savedOnlyTopics = `"topics":["collection/report_shares","collection/reports"]`
-
 func saysManual(body string) bool { return strings.Contains(body, `"manual"`) }
 
 // The run endpoint: only a shipped report registered Live stays live. A
@@ -84,21 +82,21 @@ func TestTheRunEndpointMarksAManualRun(t *testing.T) {
 		return shippedRow(t, s, "zoo.feed_costs").Id
 	}
 	id := ship(true)
-	body := s.expect(t, "ann", http.MethodPost, runURL, savedRun(id), http.StatusOK, savedTopics)
+	body := s.expect(t, "ann", http.MethodPost, runURL, savedRun(id), http.StatusOK, savedTopics(id, s.id("ann")))
 	if saysManual(body) {
 		t.Fatalf("a live shipped report ran manual\n%s", body)
 	}
 	// The same report, shipped without Live.
 	ship(false)
-	s.expect(t, "ann", http.MethodPost, runURL, savedRun(id), http.StatusOK, `"manual":true`, savedOnlyTopics)
+	s.expect(t, "ann", http.MethodPost, runURL, savedRun(id), http.StatusOK, `"manual":true`, savedOnlyTopics(id, s.id("ann")))
 	ship(true)
 	// Its owner changes the spec of the live shipped record: it is no longer
 	// the report the package shipped.
-	s.expect(t, "ad", http.MethodPost, runURL, savedRun(id), http.StatusOK, savedTopics)
+	s.expect(t, "ad", http.MethodPost, runURL, savedRun(id), http.StatusOK, savedTopics(id, s.id("ad")))
 	s.expect(t, "ad", http.MethodPatch, reportsURL+"/"+id, `{"spec":`+feedingNotes+`}`, http.StatusOK)
-	s.expect(t, "ad", http.MethodPost, runURL, savedRun(id), http.StatusOK, `"manual":true`, savedOnlyTopics)
+	s.expect(t, "ad", http.MethodPost, runURL, savedRun(id), http.StatusOK, `"manual":true`, savedOnlyTopics(id, s.id("ad")))
 	// A user's saved report with the live report's spec is not shipped.
-	s.expect(t, "ann", http.MethodPost, runURL, savedRun(s.id("R")), http.StatusOK, `"manual":true`, savedOnlyTopics)
+	s.expect(t, "ann", http.MethodPost, runURL, savedRun(s.id("R")), http.StatusOK, `"manual":true`, savedOnlyTopics(s.id("R"), s.id("ann")))
 	// A draft: the builder's preview.
 	s.expect(t, "ann", http.MethodPost, runURL, runBodyOf(savedSpec), http.StatusOK, `"manual":true`, `"topics":[]`)
 	// A report that reads no such source says nothing of manual.

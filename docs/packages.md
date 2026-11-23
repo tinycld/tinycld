@@ -1439,7 +1439,13 @@ A report runs as its reader, through `POST /api/reports/run`:
   superuser.
 - A result lists the change-signal topics of every collection it read. A
   raw-SQL write to a source's collection must call `changesignal.Touch` (see
-  "Change signals and live views" above).
+  "Change signals and live views" above). A saved report's run also lists two
+  record-level realtime topics: `reports/<id>` (the report row, under its view
+  rule) and a `report_shares/*?options=…` topic whose filter names this report
+  and this reader. So the open report runs again when the report is edited,
+  unpublished or deleted, or when the reader's own share is added, changed or
+  removed, and never for another report's or another user's share writes. A
+  draft run lists neither.
 
 **What a report refuses.** The engine answers 400 with the problem list when
 a spec breaks one of these limits. It answers 422 when the spec names a field

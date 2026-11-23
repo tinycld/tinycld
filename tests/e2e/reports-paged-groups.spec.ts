@@ -210,9 +210,9 @@ async function foldNearFirstPageEnd(page: Page, prefix: string, size: typeof DES
     // The distinct cursors of the teams run so far are the list's own next pages: at
     // most pages 2 and 3. Team H is on page 4, so at least one team loads only after
     // the fold, which is what the test is about. Count distinct cursors, not requests:
-    // a rerun (a live rerun after another worker's writes, or the mount refetch when
-    // the phone layout mounts the screen again) fetches every loaded page again with
-    // the same cursor, and loads no new page.
+    // a rerun (a live rerun after another worker's stub sales or teams writes from
+    // seedStub, or the mount refetch when the phone layout mounts the screen again)
+    // fetches every loaded page again with the same cursor, and loads no new page.
     expect(new Set(cursors).size, 'next pages loaded before the fold').toBeLessThan(3)
 
     await groupB.click()
