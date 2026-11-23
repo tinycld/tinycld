@@ -1819,14 +1819,17 @@ nothing changes.
 
 #### Report e2e helpers
 
-A package's e2e opens core's report view with `openReportsHub`, `hubRow`,
-`rowOf`, `cellOf`, `pressToolbar` and `chooseParamOption`, all from
-`@tinycld/core/e2e-helpers`.
+A package's e2e drives the hub and core's report view with `hubRow`, `rowOf`,
+`cellOf`, `pressToolbar` and `chooseParamOption`, all from
+`@tinycld/core/e2e-helpers`. No helper opens the hub: core's navigation has no
+entry for it, so the spec presses the package's own link to it.
 
 #### Linking to a package's reports
 
-Core's Reports hub is at `/a/reports`. To show only your package's reports and
-report sources (for a sidebar "Reports" entry), link to it with your slug:
+Core's Reports hub is at `/a/reports`. Core's navigation (the rail, and **More**
+on a phone) has no entry for it: a package that has reports links to it. To show
+only your package's reports and report sources (for a sidebar "Reports" entry),
+link to it with your slug:
 
 ```ts
 router.push(orgHref('reports', { package: '<slug>' }))

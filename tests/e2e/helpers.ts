@@ -495,16 +495,15 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     // is still loading, which is why the URL-based version needed
     // `waitUntil: 'commit'` everywhere and still raced.
     //
-    // settings/help/reports are app chrome, not packages: app/(app)/_layout maps them
+    // settings/help are app chrome, not packages: app/(app)/_layout maps them
     // to activePkgSlug=null on purpose (they leave the rail highlight where it
     // was), so no `pkg-active-*` marker ever appears for them. Gate those on
     // their own heading instead — waiting for the marker would hang forever.
-    // Reports has a hub-only heading id: its report screens show a "Reports"
-    // back link, which a text match would take for the hub.
+    // The Reports hub is chrome too, but the rail has no link to it: a spec
+    // opens it through a package's own link (openReportsHub of reports-helpers).
     const CHROME_HEADINGS: Record<string, (p: Page) => Locator> = {
         settings: p => p.getByText('Settings', { exact: true }).first(),
         help: p => p.getByText('Help', { exact: true }).first(),
-        reports: p => p.getByTestId('reports-hub-heading'),
     }
     const chromeHeading = CHROME_HEADINGS[pkg]
     const onTarget = chromeHeading ? chromeHeading(page) : packageScreen(page, pkg)

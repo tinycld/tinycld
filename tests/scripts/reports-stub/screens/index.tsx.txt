@@ -1,6 +1,7 @@
 import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useMutation } from '@tinycld/core/lib/mutations'
+import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import {
@@ -20,6 +21,7 @@ import {
     zodResolver,
 } from '@tinycld/core/ui/form'
 import { Menu } from '@tinycld/core/ui/menu'
+import { router } from 'expo-router'
 import { newRecordId } from 'pbtsdb/core'
 import { useState } from 'react'
 import { ScrollView, Text, View } from 'react-native'
@@ -573,12 +575,29 @@ function DrawerMenuDemo() {
     )
 }
 
+// Core's navigation has no entry for the Reports hub: a package links to it. This is
+// the link the reports specs open the hub with (all tabs, no package filter).
+function OpenReportsLink() {
+    const orgHref = useOrgHref()
+    return (
+        <Button
+            testID="salesstub-open-reports"
+            variant="outline"
+            className="self-start"
+            onPress={() => router.push(orgHref('reports'))}
+        >
+            <ButtonText>Open Reports</ButtonText>
+        </Button>
+    )
+}
+
 export default function ReportStubIndex() {
     return (
         <ScrollView className="flex-1 bg-background" contentContainerClassName="gap-6 p-4">
             <Text testID="salesstub-landing" className="text-lg font-semibold text-foreground">
                 Sales stub
             </Text>
+            <OpenReportsLink />
             <TeamForm />
             <SaleForm />
             <ManySalesForm />
