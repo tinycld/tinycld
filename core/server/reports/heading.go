@@ -2,6 +2,7 @@ package reports
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -13,9 +14,16 @@ type headingCtx struct {
 	// what names the value in a refusal: "a heading", or an opening row's
 	// label value, which is one value for the whole run too.
 	what string
+	// lookups lets the value read lookups and be an amount: a spec header
+	// line's value (header.go), the only run value that prints an amount with
+	// its currency.
+	lookups bool
 }
 
 func (h *headingCtx) only(at string) error {
+	if h.lookups {
+		return invalid(at, h.what+" reads params, values and lookups only")
+	}
 	return invalid(at, h.what+" reads params and values only")
 }
 func (h *headingCtx) col(_, at string) (expr, error) { return expr{}, h.only(at) }
@@ -27,7 +35,16 @@ func (h *headingCtx) path(_ Path, at string) (expr, error) {
 }
 func (h *headingCtx) subtotal(_, at string) (expr, error)     { return expr{}, h.only(at) }
 func (h *headingCtx) exists(_ *Node, at string) (expr, error) { return expr{}, h.only(at) }
-func (h *headingCtx) lookup(_ *Node, at string) (expr, error) { return expr{}, h.only(at) }
+
+// lookup reads the looked-up source under the reader's rules, as a lookup in a
+// column does; it has no report row, so the lookup reads only params and
+// values beside its own source.
+func (h *headingCtx) lookup(n *Node, at string) (expr, error) {
+	if !h.lookups {
+		return expr{}, h.only(at)
+	}
+	return lookupIn(h, &rowsCTE{c: h.c, s: h.s}, n, at)
+}
 func (h *headingCtx) record(_ string, _ Path, at string) (expr, error) {
 	return expr{}, h.only(at)
 }
@@ -83,20 +100,19 @@ func (c *compiler) headings(s *stmt) ([]headingPlan, error) {
 
 // runValue compiles a formula that is one value for the whole run. A date
 // range or a list is no one value a view can show; an amount has no currency
-// to print it in.
+// to print it in, but in a header line (h.lookups), which reads its currency
+// beside it. A header line prints a text, a day, a number or an amount.
 func runValue(h *headingCtx, n *Node, at string) (expr, error) {
 	e, err := compileFormula(h, n, at)
 	if err != nil {
 		return expr{}, err
 	}
-	ok := !e.rng && !e.list
-	switch e.typ {
-	case Text, Date, DateTime, Number, "":
-	default:
-		ok = false
+	types, what := []FieldType{Text, Date, DateTime, Number, ""}, "a text, a day or a number"
+	if h.lookups {
+		types, what = []FieldType{Text, Date, Number, Money, ""}, "a text, a day, a number or an amount"
 	}
-	if !ok {
-		return expr{}, invalid(at, h.what+" is a text, a day or a number")
+	if e.rng || e.list || !slices.Contains(types, e.typ) {
+		return expr{}, invalid(at, h.what+" is "+what)
 	}
 	return e, nil
 }
@@ -162,7 +178,7 @@ func shownRunValue(v any, typ FieldType) (any, FieldType, bool) {
 // readHeadings computes the run's headings and its opening rows' label
 // values in one statement.
 func (rn *runner) readHeadings() error {
-	s := newStmt(rn.app, rn.c.info)
+	s := rn.statement()
 	plans, err := rn.c.headings(s)
 	if err != nil {
 		return err

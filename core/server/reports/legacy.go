@@ -39,4 +39,13 @@ var legacySQL struct {
 	// the one test of the value read, as before selectIn added the test of
 	// the stored column.
 	noSelectIn bool
+	// joinLinkKeys reads a to-one link's key through the join to its target,
+	// as before storedKey read the row's own link column.
+	joinLinkKeys bool
+	// noPartConstants writes w over a union's rows as one select, and a
+	// detail row's if or case over w's rows, as before partArms wrote one
+	// select per part with the conditions a part's constant decides and the
+	// results it never picks folded (partConstantFold, partBranches,
+	// pushPartFold).
+	noPartConstants bool
 }

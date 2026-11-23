@@ -475,6 +475,9 @@ func compileNode(c fctx, n *Node, at string, depth int, count *int) (expr, error
 		e.win = true
 		return e, err
 	}
+	if e, pushed := pushPartFold(c, n, at, depth, count); pushed {
+		return e, nil
+	}
 	args := make([]expr, len(n.Args))
 	for i, a := range n.Args {
 		e, err := compileNode(c, a, fmt.Sprintf("%s.args.%d", at, i), depth+1, count)
@@ -676,7 +679,7 @@ var unsetCondition = expr{sql: "1", typ: Bool, unset: true}
 // unsetCondition, after its arguments are checked as they are for a set
 // one, so Validate refuses what a run would.
 func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
-	e, err := operatorExpr(c, n, args, at)
+	e, err := operatorExpr(c, n, partBranches(c, n, args), at)
 	if err != nil {
 		return expr{}, err
 	}
@@ -696,7 +699,7 @@ func operator(c fctx, n *Node, args []expr, at string) (expr, error) {
 	if c.filter() && conditionOps[n.Op] && slices.ContainsFunc(args, func(a expr) bool { return a.unset }) {
 		return unsetCondition, nil
 	}
-	return e, nil
+	return partConstantFold(c, n, e), nil
 }
 
 // asText is a value a text operator reads: a relation as the label of the
@@ -973,7 +976,8 @@ func operatorExpr(c fctx, n *Node, args []expr, at string) (expr, error) {
 		if len(parts) == 0 {
 			return unsetCondition, nil
 		}
-		return expr{sql: "(" + strings.Join(parts, " "+strings.ToUpper(n.Op)+" ") + ")", typ: Bool, bound: strings.Join(bounds, " AND "), bounds: bounds}, nil
+		sql := "(" + strings.Join(parts, " "+strings.ToUpper(n.Op)+" ") + ")"
+		return expr{sql: sql, typ: Bool, bound: strings.Join(bounds, " AND "), bounds: bounds}, nil
 	case "not":
 		if err := argc(1, 1); err != nil {
 			return expr{}, err

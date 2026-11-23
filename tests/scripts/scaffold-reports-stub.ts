@@ -6,9 +6,10 @@
  * Why a stub: the reports hub, view and builder read report sources, which only
  * packages register, and core must not name a package. App-shell CI installs no
  * feature package, so without a stub the reports e2e (tests/e2e/reports-*.spec.ts)
- * has nothing to report on. The stub registers three sources from Go (a to-one and
+ * has nothing to report on. The stub registers four sources from Go (a to-one and
  * a to-many link, money with a currency field, a number, a date, a day kept as
- * text, selects and a heading; one a union of sales and returns) over its own
+ * text, selects and a heading; one a union of sales and returns; one a one-row
+ * source that a document header line reads by a lookup) over its own
  * collections and shipped reports, published and unpublished, over the spec parts
  * they exercise (the drill reports open another shipped report). Its landing
  * screen adds rows through the UI, as the specs must. Its sale screen is the

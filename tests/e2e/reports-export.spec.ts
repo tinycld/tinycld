@@ -4,16 +4,20 @@ import { authStorageKey } from './auth-key-helpers'
 import { openSettingsItem, skipWithoutReportsStub, waitForTableFit } from './helpers'
 import { downloadReport, openExportMenu } from './report-view-helpers'
 import {
+    CALENDAR_YEAR_TITLE,
     cellOf,
     holdRuns,
     loginAsShippedOwner,
+    openDrilled,
     openTeamBalance,
     pressToolbar,
     rowOf,
+    STUB_FLOOR_LINE,
     seedStub,
     setPeriod,
     TEAM_BALANCE_TITLE,
     uniqueName,
+    xlsxRows,
 } from './reports-helpers'
 
 /**
@@ -370,5 +374,40 @@ test.describe('report-exports: download', () => {
         await second
         await page.unrouteAll({ behavior: 'wait' })
         await expect(page.getByTestId('report-preparing')).toHaveCount(0)
+    })
+})
+
+// The shipped "Stub calendar year" prints its spec header line, the stub's one
+// floor row, which the run looks up (E2).
+test.describe('reports: header lines in the export', () => {
+    test.skip(() => skipWithoutReportsStub(), 'needs the salesstub package')
+
+    test('the Excel export prints the header line under the period', async ({ page }) => {
+        await loginAsShippedOwner(page)
+        const team = uniqueName('Header team')
+        const customer = uniqueName('Header rep')
+        await seedStub(page, {
+            teams: [{ name: team }],
+            sales: [
+                {
+                    team,
+                    customer,
+                    amount: SALE_AMOUNT,
+                    cost: 0,
+                    day: `${new Date().getFullYear()}-01-02`,
+                },
+            ],
+        })
+        await page.setViewportSize(DESKTOP)
+        await openDrilled(page, CALENDAR_YEAR_TITLE)
+        await expect(rowOf(page, customer)).toBeVisible()
+        await expect(page.getByTestId('report-header-param-header-0')).toHaveText(STUB_FLOOR_LINE)
+        const period = (await page.getByTestId('report-document-period').textContent()) ?? ''
+        expect(period).not.toBe('')
+
+        const rows = xlsxRows(await fileBytes(await downloadReport(page, 'xlsx')))
+        const periodRow = [...rows].find(([, cells]) => cells[0] === period)?.[0]
+        expect(periodRow, `a row that reads ${period}`).toBeDefined()
+        expect(rows.get((periodRow ?? 0) + 1)?.[0]).toBe(STUB_FLOOR_LINE)
     })
 })

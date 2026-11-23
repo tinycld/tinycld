@@ -129,7 +129,7 @@ func exportPDFHTML(d *exportData) ([]byte, error) {
 		Logo:         logoURL(d.Org),
 		Heading:      d.headingText(),
 		Title:        d.Title,
-		Lines:        nonEmpty(d.periodWords(), f.ZoneLine(d.Columns), thousandsLine(d.Display), d.paramsLine()),
+		Lines:        d.pdfLines(f),
 		Notices:      noticeLines(d.Notices),
 		LabelHeading: labelHeading,
 	}
@@ -256,6 +256,14 @@ func noticeLines(notices []Notice) []string {
 		}
 	}
 	return out
+}
+
+// pdfLines are the header's lines under the title: the period, the spec's
+// header lines, the zone line, the thousands line and the params line, each
+// that has text.
+func (d *exportData) pdfLines(f *exportFormatter) []string {
+	lines := append([]string{d.periodWords()}, d.SpecLines...)
+	return nonEmpty(append(lines, f.ZoneLine(d.Columns), thousandsLine(d.Display), d.paramsLine())...)
 }
 
 // nonEmpty is the lines that have text.

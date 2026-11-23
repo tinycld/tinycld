@@ -17,7 +17,8 @@ function Line({
     )
 }
 
-// A chosen option the report prints under its period (N1), such as "Cash basis".
+// A chosen option the report prints under its period (N1), such as "Cash basis", or
+// a line of the spec's `header` with the value the run read (E2).
 function HeaderLine({ id, text }: { id: string; text: string }) {
     return (
         <Text testID={`report-header-param-${id}`} className="text-sm text-muted-foreground">
@@ -33,7 +34,7 @@ interface ReportDocumentHeaderProps {
     periodWords: string | null
     /** "Times in Central Time" when a shown column is a date-time (T1); else null. */
     zoneWords: string | null
-    /** The run's header lines with the ids of their params (spec.ts headerLinesOf). */
+    /** The run's header lines with their param ids or `header-<i>` (spec.ts headerLinesOf). */
     headerLines: readonly { id: string; text: string }[]
     isThousands: boolean
 }

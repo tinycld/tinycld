@@ -651,7 +651,7 @@ func (r *rowsCTE) render() string {
 	for i, name := range r.order {
 		cols[i] = r.raw[name] + " AS " + name
 	}
-	sql := "w AS (SELECT " + strings.Join(cols, ", ") + "\n" + r.root.render()
+	sel := strings.Join(cols, ", ")
 	// The bounds come before the filter, so SQLite reads the base rows
 	// through an index on them; the cut comes after both, on its own.
 	where := r.filter
@@ -660,11 +660,18 @@ func (r *rowsCTE) render() string {
 	}
 	switch {
 	case where != "" && r.cut != "":
-		sql += "\nWHERE (" + where + ") AND " + r.cut
-	case where != "":
-		sql += "\nWHERE " + where
+		where = "(" + where + ") AND " + r.cut
 	case r.cut != "":
-		sql += "\nWHERE " + r.cut
+		where = r.cut
+	}
+	// A union whose terms a part's constant makes false is read one part at
+	// a time, so a part's rows join no link only those terms read.
+	if arms := r.root.partArms(sel, where); arms != "" {
+		return "w AS (" + arms + ")"
+	}
+	sql := "w AS (SELECT " + sel + "\n" + r.root.render()
+	if where != "" {
+		sql += "\nWHERE " + where
 	}
 	return sql + ")"
 }
