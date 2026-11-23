@@ -312,9 +312,14 @@ export function useReportView(input: ReportViewInput) {
 
     // Kept while the run's rows and the open groups stay, so the table redraws
     // its rows only when they change. The spec says which group rows end in a
-    // subtotal row, also before a later page brings it.
+    // subtotal row, also before a later page brings it; the run's columns say which
+    // cells such a row keeps (groupOnly). allColumns is the run's own array, so the
+    // memo holds while the reader hides or shows a column.
     const viewSpec = input.spec ?? null
-    const shownRows = useMemo(() => visibleRows(rows, viewSpec), [rows, viewSpec])
+    const shownRows = useMemo(
+        () => visibleRows(rows, viewSpec, allColumns),
+        [rows, viewSpec, allColumns]
+    )
     // The group the reader just opened shows open at once, with a spinner, until
     // the run that opens it lands (findings: a slow statement left the press silent).
     const pendingRows = useMemo(

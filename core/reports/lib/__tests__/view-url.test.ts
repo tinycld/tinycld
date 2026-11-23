@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_DISPLAY } from '../format'
+import { PARAM_KEY_PREFIX, paramKey } from '../param-key'
 import { type ParamValue, rangeValue } from '../params'
 import type { ParamDef } from '../spec'
 import type { ResultColumn } from '../types'
@@ -20,6 +21,8 @@ import {
     sortChipText,
     sortChoices,
     type ViewOptions,
+    paramKey as viewUrlParamKey,
+    PARAM_KEY_PREFIX as viewUrlPrefix,
 } from '../view-url'
 
 const PERIOD: ParamDef = { id: 'period', type: 'dateRange', default: { preset: 'thisMonth' } }
@@ -37,6 +40,21 @@ const MIN: ParamDef = { id: 'min', type: 'number' }
 const DEFS = [PERIOD, KINDS, NAME, MIN]
 
 describe('the view URL', () => {
+    // A package builds a report link in Node from param-key, which imports nothing;
+    // view-url gives the same key.
+    it('keys a param as param-key does', () => {
+        expect(viewUrlParamKey).toBe(paramKey)
+        expect(viewUrlPrefix).toBe(PARAM_KEY_PREFIX)
+        expect(paramKey('statement')).toBe('p-statement')
+        expect(
+            serializeViewOptions([NAME], {
+                params: { name: { kind: 'text', text: 'x' } },
+                display: DEFAULT_DISPLAY,
+                sort: null,
+            })
+        ).toHaveProperty(paramKey('name'), 'x')
+    })
+
     it('round-trips params and display options', () => {
         const options: ViewOptions = {
             params: {

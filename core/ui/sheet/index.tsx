@@ -9,6 +9,7 @@ import {
     useOverlayLayer,
     wasConsumedByLayerDismissal,
 } from '@tinycld/core/ui/overlay'
+import { shouldDismissSwipe } from '@tinycld/core/ui/swipe-dismiss/should-dismiss'
 import { X } from 'lucide-react-native'
 import type { ReactNode, RefObject } from 'react'
 import { createContext, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react'
@@ -226,13 +227,9 @@ function SheetRoot({
             translateY.value = dir * Math.max(0, dir * e.translationY)
         })
         .onEnd(e => {
-            // Threshold inlined (kept in sync with shouldDismissSwipe in
-            // ui/swipe-dismiss, which the unit test pins): dragged past 100px or
-            // flicked away from the edge faster than 500px/s asks the owner to
-            // close (the request effect above springs it back on a refusal). This
-            // runs on the UI thread, so it must not call a non-worklet JS
-            // function — hence the literal comparison here.
-            if (dir * e.translationY > 100 || dir * e.velocityY > 500) {
+            // A dismissal asks the owner to close; the request effect above
+            // springs the sheet back on a refusal.
+            if (shouldDismissSwipe(e.translationY, e.velocityY, dir)) {
                 runOnJS(requestSwipeDismiss)()
             } else {
                 translateY.value = isReducedMotion ? 0 : withSpring(0, SPRING_CONFIG)

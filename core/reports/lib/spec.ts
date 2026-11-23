@@ -95,20 +95,30 @@ export type GroupOrderBy = GroupOrder['by']
 
 /**
  * A choice param's options read from a source under the reader's list rules: `value`
- * is what the param holds, `label` what the picker shows, `group` how it groups them,
- * `groupOrder` the order of the groups (absent: by label), `groupLabel` the text of a
- * whole-group pick (`GROUP_LABEL_TOKEN` stands for the group's label; absent or empty:
- * "All {group}"), `where` which rows count.
+ * is what the param holds, `label` what the picker shows, or in its place
+ * `labelFormula`, a text formula over the source's paths ("1000 Business Checking"),
+ * `order` a path whose value orders the options inside a group (blank last; absent or
+ * a tie: by label), `group` how it groups them, `groupOrder` the order of the groups
+ * (absent: by label), `groupLabel` the text of a whole-group pick (`GROUP_LABEL_TOKEN`
+ * stands for the group's label; absent or empty: "All {group}"), `where` which rows
+ * count. The server labels and orders the options; the client shows them as sent.
  */
-export const optionsFromSchema = z.strictObject({
-    source: z.string(),
-    value: z.array(specHopSchema),
-    label: z.array(specHopSchema),
-    group: z.array(specHopSchema).optional(),
-    groupOrder: groupOrderSchema.optional(),
-    groupLabel: z.string().optional(),
-    where: specNodeSchema.optional(),
-})
+export const optionsFromSchema = z
+    .strictObject({
+        source: z.string(),
+        value: z.array(specHopSchema),
+        label: z.array(specHopSchema).optional(),
+        labelFormula: specNodeSchema.optional(),
+        order: z.array(specHopSchema).optional(),
+        group: z.array(specHopSchema).optional(),
+        groupOrder: groupOrderSchema.optional(),
+        groupLabel: z.string().optional(),
+        where: specNodeSchema.optional(),
+    })
+    .refine(from => (from.label === undefined) !== (from.labelFormula === undefined), {
+        message: 'options are labelled by a label path or a labelFormula: one of the two',
+        path: ['label'],
+    })
 
 /** Stands for the group's label in `optionsFrom.groupLabel` (spec.go GroupLabelToken). */
 export const GROUP_LABEL_TOKEN = '{group}'
@@ -163,7 +173,9 @@ export const specColumnSchema = z.strictObject({
     // The field a link column shows each record by; absent: the record's first text field.
     labelField: z.string().optional(),
     // 'blank': the column has no cell on detail rows, so a value read from the group's
-    // record shows on the group row only. Absent: shown on detail rows.
+    // record shows on the group row only. Such a column whose group cell is not a figure
+    // (not a number, money or percent) is group-only (ResultColumn.groupOnly): it shows
+    // on the group row and not on the group's subtotal row. Absent: shown on detail rows.
     detail: z.literal('blank').optional(),
     // A formula shown on group, subtotal and total rows in place of the column's
     // totals; detail rows keep `path` or `formula`.

@@ -112,6 +112,13 @@ export interface ResultColumn {
     heading?: { value: CellValue; type: FieldType }
     /** The report this column's figures open; absent when it has none or the reader may not view it. */
     drill?: DrillTarget
+    /**
+     * A column that is blank on detail rows (detail "blank") and whose group cell is
+     * not a figure (not a number, money or percent). It names the group, so its cell
+     * shows on the group row, also when the group's subtotal row follows, and the
+     * subtotal row does not carry it.
+     */
+    groupOnly?: boolean
 }
 
 export interface ResultRow {

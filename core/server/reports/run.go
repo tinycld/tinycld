@@ -159,6 +159,11 @@ type ResultColumn struct {
 	// when the column has none or the reader may not view it; the rows'
 	// <id>@drill cells then are absent too.
 	Drill *DrillTarget `json:"drill,omitempty"`
+	// GroupOnly: a column that is blank on detail rows (Column.Detail) and whose
+	// group cell is not a figure (not a number, money or percent). It names the
+	// group, so its cell shows on the group row, also when the group's subtotal
+	// row follows, and the subtotal row does not carry it.
+	GroupOnly bool `json:"groupOnly,omitempty"`
 }
 
 // DrillTarget is the report a drilled column opens, as the reader sees it.
