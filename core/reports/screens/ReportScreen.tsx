@@ -17,6 +17,7 @@ import { useReportRecord } from '../hooks/useReportRecord'
 import { useReportView } from '../hooks/useReportView'
 import type { Catalog } from '../lib/builder/columns'
 import { HUB_BACK_LABEL } from '../lib/report-back'
+import { REPORTS_BASE, ReportBaseProvider } from '../lib/report-base'
 import { canCopyReport, UNREADABLE_SPEC } from '../lib/spec'
 import type { CatalogSource } from '../lib/types'
 import { EDIT_KEY, FROM_KEY } from '../lib/view-url'
@@ -193,7 +194,27 @@ function EditingReport({ record, catalog, base, back }: EditingReportProps) {
 
 // A drilled report (`from`) names its source on its back link; the hub's reads
 // Reports and reads no record.
-export function ReportScreen({ reportId }: { reportId: string }) {
+interface ReportScreenProps {
+    reportId: string
+    /**
+     * The route this screen is drawn under, without the org prefix, when it is not
+     * core's own: a drill and a saved copy open `<basePath>/<id>`, and Back with no
+     * history opens `<basePath>`. The host owns both routes. Edit stays on the
+     * current route (`?edit=1`). New report and the copied share link are core's
+     * routes.
+     */
+    basePath?: string
+}
+
+export function ReportScreen({ reportId, basePath = REPORTS_BASE }: ReportScreenProps) {
+    return (
+        <ReportBaseProvider base={basePath}>
+            <ReportByOrigin reportId={reportId} />
+        </ReportBaseProvider>
+    )
+}
+
+function ReportByOrigin({ reportId }: { reportId: string }) {
     const search = useLocalSearchParams<{ [FROM_KEY]?: string }>()
     const fromId = search[FROM_KEY]
     if (fromId) return <ReportFromSource reportId={reportId} fromId={fromId} />

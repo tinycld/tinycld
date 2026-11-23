@@ -14,6 +14,7 @@ import {
     tabRouteOf,
 } from '../lib/record-return'
 import { registeredPanels } from '../lib/registered-panels'
+import { useReportBase } from '../lib/report-base'
 import type { ResultColumn, ResultRow } from '../lib/types'
 import { RECORD_KEY } from '../lib/view-url'
 import { type ReportUIScope, useReportUIStore } from '../stores/report-ui-store'
@@ -88,6 +89,7 @@ function useOpenRecordPanel(hasPanel: boolean) {
  */
 export function useRowLinks(drill: RowDrill | undefined): RowLinks | undefined {
     const orgHref = useOrgHref()
+    const base = useReportBase()
     const search = useLocalSearchParams()
     const shown = useStable(shownDrillParams(search))
     const shownRecord = firstOf(search[RECORD_KEY])
@@ -109,7 +111,7 @@ export function useRowLinks(drill: RowDrill | undefined): RowLinks | undefined {
         const record = { [RECORD_KEY]: shownRecord }
         return {
             figureHref: (column, row) => {
-                const href = drillHref(column, row, sourceId)
+                const href = drillHref(column, row, sourceId, base)
                 return href === null ? null : orgHref(href)
             },
             onFigure: (column, row) => {
@@ -126,7 +128,7 @@ export function useRowLinks(drill: RowDrill | undefined): RowLinks | undefined {
             rowKey: row => rowFocusKey(scope, row.id),
             isRowShown: row => isRowShown(row, openedRow, record),
         }
-    }, [sourceId, scope, shown, shownRecord, openedRow, orgHref, openScreen, setDrillOrigin])
+    }, [sourceId, scope, shown, shownRecord, openedRow, orgHref, base, openScreen, setDrillOrigin])
 }
 
 // useNavigation's own default type (its getState may be undefined), read off a call

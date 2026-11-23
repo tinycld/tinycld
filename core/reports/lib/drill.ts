@@ -3,6 +3,7 @@ import { useDetailSurface } from '@tinycld/core/lib/use-detail-surface'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useReportUIStore } from '../stores/report-ui-store'
 import { textFromCents } from './money'
+import { REPORTS_BASE, useReportBase } from './report-base'
 import type { ParamDef } from './spec'
 import type { DrillParams, ResultColumn, ResultRow } from './types'
 import {
@@ -59,12 +60,20 @@ function drillKeys(params: DrillParams, prefix: string): Record<string, string> 
     return out
 }
 
-/** The full report's screen path for a figure, with the source report (D3); wrap it with orgHref. */
-export function drillHref(column: ResultColumn, row: ResultRow, sourceId: string): string | null {
+/**
+ * The full report's screen path for a figure, with the source report (D3); wrap it
+ * with orgHref. `base` is the route the report view is drawn under (useReportBase).
+ */
+export function drillHref(
+    column: ResultColumn,
+    row: ResultRow,
+    sourceId: string,
+    base: string = REPORTS_BASE
+): string | null {
     const params = drillCellParams(column, row)
     if (!column.drill || !params) return null
     const query = new URLSearchParams({ ...drillKeys(params, ''), [FROM_KEY]: sourceId })
-    return `reports/${column.drill.reportId}?${query.toString()}`
+    return `${base}/${column.drill.reportId}?${query.toString()}`
 }
 
 /**
@@ -75,14 +84,15 @@ export function fullReportHref(
     reportId: string,
     defs: readonly ParamDef[],
     options: ViewOptions,
-    sourceId: string
+    sourceId: string,
+    base: string = REPORTS_BASE
 ): string {
     const query = new URLSearchParams()
     for (const [key, value] of Object.entries(serializeViewOptions(defs, options))) {
         if (value !== undefined) query.set(key, value)
     }
     query.set(FROM_KEY, sourceId)
-    return `reports/${reportId}?${query.toString()}`
+    return `${base}/${reportId}?${query.toString()}`
 }
 
 /** The route params that show a figure's drill in the panel; every older drill key is cleared. */
@@ -139,6 +149,7 @@ export function isDrillShown(column: ResultColumn, row: ResultRow, search: Searc
 export function useOpenDrill({ sourceId, hasPanel }: { sourceId: string; hasPanel: boolean }) {
     const router = useRouter()
     const orgHref = useOrgHref()
+    const base = useReportBase()
     const search = useLocalSearchParams()
     const surface = useDetailSurface()
     const closeCustomize = useReportUIStore(s => s.closeCustomize)
@@ -152,7 +163,7 @@ export function useOpenDrill({ sourceId, hasPanel }: { sourceId: string; hasPane
             closeCustomize('main')
             return
         }
-        const href = drillHref(column, row, sourceId)
+        const href = drillHref(column, row, sourceId, base)
         if (href) router.push(orgHref(href))
     }
 }

@@ -1840,6 +1840,31 @@ the sources from `GET /api/reports/sources` (signed-in users, not API tokens): e
 source's fields with their types and aggregates, and its links. It shows no record
 data.
 
+#### Drawing a report on a package's own route
+
+A report opened on core's route (`/a/reports/<id>`) leaves the package: its sidebar
+goes. To keep a report inside the package, draw core's report view on a route of
+the package and pass that route as `basePath`:
+
+```tsx
+import { ReportScreen } from '@tinycld/core/reports/screens/ReportScreen'
+
+// screens/reports/[id].tsx of the package `<slug>`
+export default function PackageReport() {
+    const { id } = useLocalSearchParams<{ id: string }>()
+    return <ReportScreen reportId={id} basePath="<slug>/reports" />
+}
+```
+
+With `basePath`, a drill to another report opens `<basePath>/<id>`, Back from a
+drilled report returns to `<basePath>/<id>` of its source, a copy saved with **Save
+as** opens `<basePath>/<newId>`, and Back with no history opens `<basePath>`. The
+package owns both routes: `<basePath>/[id]` and `<basePath>` (a screen of the package,
+for example its own list of its reports). **Edit** opens the builder on the current
+route (`?edit=1`), so the screen must stay mounted while the reader edits: do not
+unmount it on a failed reload of a list. **New report** and the copied share link
+are core's routes.
+
 ### Test build tag
 
 `pnpm run test:server` builds with the `no_ui` tag so PocketBase's admin UI route
