@@ -61,8 +61,11 @@ export interface DialogProps {
     /**
      * Moves the focus on close, in place of handing it back to the element
      * that opened the dialog: for a dialog whose opener may be gone by then.
-     * Called one frame after close while nothing else holds the focus (see
-     * `onRestoreFocus` of useLayerFocus, ui/overlay/focus.ts).
+     * Called one frame after the dialog closes or unmounts, on web only when
+     * the focus is then on the body or still inside the dialog. It also runs
+     * when the owner unmounts with the dialog open, so it must focus only
+     * refs of its own screen. Full rules: `onRestoreFocus` of useLayerFocus,
+     * ui/overlay/focus.ts.
      */
     onRestoreFocus?: () => void
     children: ReactNode

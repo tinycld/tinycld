@@ -1,3 +1,4 @@
+import { log } from '@tinycld/core/lib/logger'
 import { type RefObject, useEffect, useRef } from 'react'
 import { Platform } from 'react-native'
 
@@ -24,16 +25,29 @@ interface UseFocusTrapOptions {
     initialFocusRef?: RefObject<{ focus: () => void } | null>
     /** Keep Tab inside the container. Off for a menu, whose focus is roving. */
     trap?: boolean
-    /** Give focus back to whatever had it before the layer opened. */
+    /**
+     * Give focus back to whatever had it before the layer opened. Read when
+     * the layer closes: changing it while the layer is open restores nothing.
+     */
     restore?: boolean
     /**
      * Moves the focus itself when the layer closes, in place of giving it
      * back to the element that had it before: for a layer whose opener may
-     * be gone by then (an action that re-renders the screen). Called at the
-     * same point and under the same rules as the default restore — one frame
-     * after close, only while nothing else holds the focus — but also when
-     * the opener is no longer in the document. Native has no focus restore:
-     * there it is called one frame after the layer closes.
+     * be gone by then (an action that re-renders the screen).
+     *
+     * On web it is called one frame after the layer closes or unmounts, only
+     * when the focus is then on the body, on nothing, or still inside the
+     * closing layer (a Sheet sliding out) — the same rules as the default
+     * restore — and also when the opener is no longer in the document. On
+     * native, which has no default restore, it is called one frame after the
+     * layer closes or unmounts. A change of the other options while the layer
+     * stays open does not call it.
+     *
+     * It also runs when the layer's owner unmounts while the layer is open,
+     * with no close (browser Back from a screen with an open Dialog), so the
+     * next screen may already be up: focus only refs of your own screen,
+     * never an element found by a query. An error it throws is logged
+     * (`core.overlay.focus`) and goes no further.
      */
     onRestoreFocus?: () => void
 }
@@ -41,6 +55,16 @@ interface UseFocusTrapOptions {
 const nextFrame = (cb: () => void) => {
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(cb)
     else setTimeout(cb, 0)
+}
+
+// The owner's code runs from a frame callback, where a throw is uncaught (on
+// native in a release build that can end the app): report it instead.
+function callRestoreFocus(onRestoreFocus: () => void) {
+    try {
+        onRestoreFocus()
+    } catch (err) {
+        log.error('core.overlay.focus', err)
+    }
 }
 
 const AUTOFOCUS_SELECTOR = '[data-autofocus="true"]'
@@ -95,20 +119,43 @@ export function useLayerFocus({
     restore = true,
     onRestoreFocus,
 }: UseFocusTrapOptions) {
-    // The latest callback, read at close: an inline function must not re-run
-    // the focus effect (and so restore focus) on every render.
+    // The latest options, read at close. The restore belongs to the close
+    // alone: an effect keyed on them would run its cleanup, and so restore
+    // the focus, whenever one changed while the layer stayed open (an inline
+    // callback on every render, a portal that re-mounts the surface).
     const onRestoreFocusRef = useRef(onRestoreFocus)
     onRestoreFocusRef.current = onRestoreFocus
+    const restoreRef = useRef(restore)
+    restoreRef.current = restore
+    const containerRef = useRef(container)
+    containerRef.current = container
 
     useEffect(() => {
-        if (Platform.OS === 'web' || !isActive || !restore) return
-        return () => nextFrame(() => onRestoreFocusRef.current?.())
-    }, [isActive, restore])
+        if (Platform.OS === 'web' || !isActive) return
+        return () => {
+            if (!restoreRef.current) return
+            nextFrame(() => {
+                const latest = onRestoreFocusRef.current
+                if (latest) callRestoreFocus(latest)
+            })
+        }
+    }, [isActive])
+
+    // Keyed on `isActive` alone, and declared before the focus-in effect so
+    // that on the commit that opens the layer it reads the opener before the
+    // focus moves in.
+    useEffect(() => {
+        if (Platform.OS !== 'web' || !isActive || typeof document === 'undefined') return
+        const previous = document.activeElement as HTMLElement | null
+        return () => {
+            if (!restoreRef.current) return
+            restoreOnClose(previous, containerRef.current, onRestoreFocusRef)
+        }
+    }, [isActive])
 
     useEffect(() => {
         if (Platform.OS !== 'web' || !isActive || typeof document === 'undefined') return
         if (!container) return
-        const previous = document.activeElement as HTMLElement | null
 
         moveFocusIn(container, initialFocusRef?.current)
 
@@ -131,42 +178,51 @@ export function useLayerFocus({
             }
         }
         container.addEventListener('keydown', onKeyDown)
+        return () => container.removeEventListener('keydown', onKeyDown)
+    }, [isActive, container, initialFocusRef, trap])
+}
 
-        return () => {
-            container.removeEventListener('keydown', onKeyDown)
-            if (!restore) return
-            const moveFocus = onRestoreFocusRef.current
-            const canRestorePrevious =
-                previous?.isConnected === true && typeof previous.focus === 'function'
-            if (!moveFocus && !canRestorePrevious) return
-            // Hand focus back ONLY if nothing else has claimed it. A menu row
-            // may act by moving focus somewhere new — the board header's
-            // "Rename board" mounts an autoFocus input — and that focus lands
-            // BEFORE this layer unmounts. Restoring unconditionally stole it
-            // back, blurring the new field one frame after it appeared; an
-            // input that commits on blur then closed itself, so the row looked
-            // dead. Focus still inside the closing layer (or dropped to body)
-            // means no one else wanted it, which is when restoring is right.
-            const active = document.activeElement as HTMLElement | null
-            const isUnclaimed = !active || active === document.body || container.contains(active)
-            if (!isUnclaimed) return
+/**
+ * Web: at the layer's close, hand the focus back to `previous` (or call the
+ * owner's `onRestoreFocus`), if nothing else has claimed it.
+ */
+function restoreOnClose(
+    previous: HTMLElement | null,
+    container: HTMLElement | null,
+    onRestoreFocusRef: RefObject<(() => void) | undefined>
+) {
+    // A layer whose surface never mounted never took the focus.
+    if (!container) return
+    const canRestorePrevious =
+        previous?.isConnected === true && typeof previous.focus === 'function'
+    if (!onRestoreFocusRef.current && !canRestorePrevious) return
+    // Hand focus back ONLY if nothing else has claimed it. A menu row
+    // may act by moving focus somewhere new — the board header's
+    // "Rename board" mounts an autoFocus input — and that focus lands
+    // BEFORE this layer unmounts. Restoring unconditionally stole it
+    // back, blurring the new field one frame after it appeared; an
+    // input that commits on blur then closed itself, so the row looked
+    // dead. Focus still inside the closing layer (or dropped to body)
+    // means no one else wanted it, which is when restoring is right.
+    if (!isUnclaimed(container)) return
 
-            // Deferred a frame: a modal layer holds the rest of the app
-            // `inert` while it is open, and the re-render that drops it
-            // commits AFTER this cleanup. Focusing an element that is still
-            // inert silently does nothing, and focus falls to the body — so
-            // wait for the removal to land. Re-check on the way in, because a
-            // frame is long enough for something else to claim focus.
-            nextFrame(() => {
-                const now = document.activeElement as HTMLElement | null
-                const latest = onRestoreFocusRef.current
-                // A Sheet stays in the document while it slides out, with the
-                // focus still inside it: for the callback that is unclaimed too.
-                const isStillInLayer = !!latest && !!now && container.contains(now)
-                if (now && now !== document.body && !isStillInLayer) return
-                if (latest) latest()
-                else if (previous?.isConnected) previous.focus()
-            })
-        }
-    }, [isActive, container, initialFocusRef, trap, restore])
+    // Deferred a frame: a modal layer holds the rest of the app
+    // `inert` while it is open, and the re-render that drops it
+    // commits AFTER this cleanup. Focusing an element that is still
+    // inert silently does nothing, and focus falls to the body — so
+    // wait for the removal to land. Re-check on the way in, because a
+    // frame is long enough for something else to claim focus. A Sheet
+    // stays in the document while it slides out, with the focus still
+    // inside it, so the re-check counts that as unclaimed too.
+    nextFrame(() => {
+        if (!isUnclaimed(container)) return
+        const latest = onRestoreFocusRef.current
+        if (latest) callRestoreFocus(latest)
+        else if (previous?.isConnected) previous.focus()
+    })
+}
+
+function isUnclaimed(container: HTMLElement) {
+    const active = document.activeElement as HTMLElement | null
+    return !active || active === document.body || container.contains(active)
 }

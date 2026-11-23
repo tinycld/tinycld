@@ -82,9 +82,17 @@ The engine (`core/ui/overlay/`, internal) owns:
   backdrop still dismiss.
 - `onRestoreFocus` moves the focus on close in place of the default restore to
   the opener, for a dialog whose opener may be gone by then (an action that
-  re-renders the screen). On web it is called one frame after close, only
-  while nothing else holds the focus; native has no default restore, and it
-  is called one frame after close. The Sheet presentation takes the same prop.
+  re-renders the screen). It is called one frame after the dialog closes or
+  unmounts. On web it follows the same rules as the default restore: it runs
+  only when the focus is then on the body, on nothing, or still inside the
+  closing dialog (a Sheet sliding out), and also when the opener is gone.
+  Native has no default restore, and there it always runs. A change of
+  `initialFocusRef` while the dialog stays open does not call it. It also runs
+  when the owner unmounts with the dialog still open (browser Back), when the
+  next screen may already be up, so it must focus only refs of its own
+  screen, never an element found by a query. An error it throws is logged
+  (`core.overlay.focus`) and goes no further. The Sheet presentation takes
+  the same prop.
 - `ConfirmDialog` and `PromptDialog` are Dialogs; use them rather than
   building a third.
 
