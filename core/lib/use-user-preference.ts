@@ -1,16 +1,45 @@
 import { and, eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
+import { log } from '@tinycld/core/lib/logger'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
+import { recoverLiveQueries } from '@tinycld/core/lib/recover-live-queries'
 import { newRecordId } from 'pbtsdb/core'
 import { useCallback } from 'react'
 
+export interface UserPreferenceOptions {
+    /**
+     * Called when a save fails, in place of the default error toast of
+     * `useMutation` (and its offline wording; show your own). The hook still
+     * logs the error with `log.error`. The optimistic value is rolled back
+     * either way.
+     */
+    onSaveError?: (error: Error) => void
+}
+
+export interface UserPreferenceStatus {
+    /** The read has loaded (the row, or that there is none). False while signed out. */
+    isReady: boolean
+    /** The read failed. The setter writes nothing until `retry` recovers it. */
+    isError: boolean
+    /** Restarts a failed read. */
+    retry: () => Promise<void>
+}
+
+/**
+ * One preference of the signed-in user, kept in `user_preferences` under
+ * (`app`, `key`). Returns the value (`defaultValue` until a row loads), a
+ * setter, and the read's status, for a screen that shows its own loading and
+ * error states. The setter does nothing while signed out, and nothing until
+ * the read is ready.
+ */
 export function useUserPreference<T>(
     app: string,
     key: string,
-    defaultValue: T
-): readonly [T, (newValue: T) => void] {
+    defaultValue: T,
+    options: UserPreferenceOptions = {}
+): readonly [T, (newValue: T) => void, UserPreferenceStatus] {
     // Anon-tolerant: this hook runs in the theme/color path (useColorTheme →
     // useUserPreference), which mounts on every screen INCLUDING the pre-auth
     // login screen. Passing throwIfAnon: false keeps it from throwing before
@@ -24,7 +53,12 @@ export function useUserPreference<T>(
     // on-demand sync a blank id would send a real `user = ""` request from the
     // login screen instead of filtering nothing locally. setValue's own
     // isLoggedIn guard is what keeps the resulting isReady=true harmless.
-    const { data: rows, isReady } = useLiveQuery({
+    const {
+        data: rows,
+        isReady,
+        isError,
+        collection: preferenceQuery,
+    } = useLiveQuery({
         query: query =>
             userId
                 ? query
@@ -53,6 +87,16 @@ export function useUserPreference<T>(
     // on-demand, so the store is empty until THIS query's fetch lands — a
     // pre-load `toArray` is indistinguishable from "no row exists". setValue
     // therefore waits on the query's own isReady before mutating.
+    //
+    // Without onSaveError, useMutation's default toast and Sentry capture run.
+    // A caller's onSaveError replaces both, so the hook keeps the capture.
+    const { onSaveError } = options
+    const saveErrorHandler = onSaveError
+        ? (error: Error) => {
+              log.error('core.user-preference', error, { app, key })
+              onSaveError(error)
+          }
+        : undefined
     const upsert = useMutation({
         mutationFn: mutation(function* (newValue: T) {
             if (!user) return
@@ -73,6 +117,7 @@ export function useUserPreference<T>(
                 })
             }
         }),
+        onError: saveErrorHandler,
     })
 
     const setValue = useCallback(
@@ -87,5 +132,24 @@ export function useUserPreference<T>(
         [isLoggedIn, isReady, upsert]
     )
 
-    return [value, setValue] as const
+    // The shared collection is a source so a source in `error` gets restarted.
+    // A failed on-demand load leaves the source `ready` (recover-live-queries.ts),
+    // so in practice only this hook's query is restarted.
+    const retry = useCallback(
+        () =>
+            recoverLiveQueries({
+                queries: [preferenceQuery],
+                sources: [userPreferencesCollection],
+                onError: err => log.error('core.user-preference', err, { app, key }),
+            }),
+        [preferenceQuery, userPreferencesCollection, app, key]
+    )
+
+    const status: UserPreferenceStatus = {
+        isReady: isLoggedIn && isReady,
+        isError: isLoggedIn && isError,
+        retry,
+    }
+
+    return [value, setValue, status] as const
 }
