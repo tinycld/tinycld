@@ -9,6 +9,11 @@ import { SidebarItem } from '../SidebarItem'
 const PHONE = { width: 390, height: 844 }
 const DESKTOP = { width: 1280, height: 800 }
 
+// The stores are module singletons: the phone and desktop tests above must not leak
+// their window size or drawer state into the other files of the run.
+const initialWindowSize = useWindowSizeStore.getState()
+const initialWorkspace = useWorkspaceStore.getState()
+
 function isDrawerOpen() {
     return useWorkspaceStore.getState().isDrawerOpen
 }
@@ -33,6 +38,8 @@ beforeEach(() => {
 afterEach(() => {
     cleanup()
     vi.useRealTimers()
+    useWindowSizeStore.setState(initialWindowSize)
+    useWorkspaceStore.setState(initialWorkspace)
 })
 
 describe('SidebarItem and the phone drawer', () => {
