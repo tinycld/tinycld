@@ -15,10 +15,12 @@ export const RANGE_PRESETS = [
     'thisQuarter',
     'thisQuarterToDate',
     'thisFiscalYear',
+    'thisCalendarYear',
     'thisFiscalYearToDate',
     'lastMonth',
     'lastQuarter',
     'lastFiscalYear',
+    'lastCalendarYear',
     'last12Months',
     'allDates',
 ] as const
@@ -38,10 +40,12 @@ export const PRESET_LABELS: Record<Preset, string> = {
     thisQuarter: 'This quarter',
     thisQuarterToDate: 'This quarter to date',
     thisFiscalYear: 'This fiscal year',
+    thisCalendarYear: 'This calendar year',
     thisFiscalYearToDate: 'This fiscal year to date',
     lastMonth: 'Last month',
     lastQuarter: 'Last quarter',
     lastFiscalYear: 'Last fiscal year',
+    lastCalendarYear: 'Last calendar year',
     last12Months: 'Last 12 months',
     allDates: 'All dates',
     endOfLastMonth: 'End of last month',
@@ -404,26 +408,35 @@ export type EmptyAction =
     | { kind: 'clear-filters'; label: string }
     | { kind: 'preset'; paramId: string; preset: Preset; label: string }
 
+const CALENDAR_YEAR_PRESETS: readonly Preset[] = ['thisCalendarYear', 'lastCalendarYear']
+
+// The period the empty state offers: a report that opens on a calendar year offers
+// this calendar year, every other date range this fiscal year (D3).
+function emptyTarget(period: ParamDef): { preset: Preset; label: string } | null {
+    if (period.type === 'asOf')
+        return { preset: 'endOfLastFiscalYear', label: 'Show end of last fiscal year' }
+    if (period.type !== 'dateRange') return null
+    const preset = defaultValueOf(period)
+    const opensOnCalendarYear =
+        preset?.kind === 'preset' && CALENDAR_YEAR_PRESETS.includes(preset.preset)
+    if (opensOnCalendarYear) return { preset: 'thisCalendarYear', label: 'Show this calendar year' }
+    return { preset: 'thisFiscalYear', label: 'Show this fiscal year' }
+}
+
 export function emptyAction(defs: readonly ParamDef[], values: ParamValues): EmptyAction | null {
     if (defs.some(def => isOptional(def) && values[def.id]))
         return { kind: 'clear-filters', label: 'Clear filters' }
     const period = firstDateParam(defs)
     if (!period) return null
-    const target =
-        period.type === 'dateRange'
-            ? 'thisFiscalYear'
-            : period.type === 'asOf'
-              ? 'endOfLastFiscalYear'
-              : null
+    const target = emptyTarget(period)
     if (!target) return null
     // All dates is the widest period: a narrower one has no rows either.
     const current = effectiveValue(period, values)
     const isWidest =
-        current?.kind === 'preset' && (current.preset === target || current.preset === 'allDates')
+        current?.kind === 'preset' &&
+        (current.preset === target.preset || current.preset === 'allDates')
     if (isWidest) return null
-    const label =
-        target === 'thisFiscalYear' ? 'Show this fiscal year' : 'Show end of last fiscal year'
-    return { kind: 'preset', paramId: period.id, preset: target, label }
+    return { kind: 'preset', paramId: period.id, preset: target.preset, label: target.label }
 }
 
 /** The values with every optional param removed: Clear filters. */

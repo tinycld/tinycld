@@ -1,0 +1,16 @@
+[
+    { "id": "today", "label": "Today" },
+    { "id": "thisMonth", "label": "This month" },
+    { "id": "thisMonthToDate", "label": "This month to date" },
+    { "id": "thisQuarter", "label": "This quarter" },
+    { "id": "thisQuarterToDate", "label": "This quarter to date" },
+    { "id": "thisFiscalYear", "label": "This fiscal year" },
+    { "id": "thisCalendarYear", "label": "This calendar year" },
+    { "id": "thisFiscalYearToDate", "label": "This fiscal year to date" },
+    { "id": "lastMonth", "label": "Last month" },
+    { "id": "lastQuarter", "label": "Last quarter" },
+    { "id": "lastFiscalYear", "label": "Last fiscal year" },
+    { "id": "lastCalendarYear", "label": "Last calendar year" },
+    { "id": "last12Months", "label": "Last 12 months" },
+    { "id": "allDates", "label": "All dates" }
+]

@@ -125,10 +125,13 @@ type exportData struct {
 	// ParamLabels are the shown labels of each choice param from a source,
 	// by param id, keyed as the client's ChoiceLabels, for ParamsLine.
 	ParamLabels map[string]map[string]string
-	Reader      exportReader
-	Display     exportDisplay
-	Format      *exportFormatter
-	Made        time.Time
+	// SpecLines are the spec's own header lines that print (specHeaderLines),
+	// under the period; the CSV prints none.
+	SpecLines []string
+	Reader    exportReader
+	Display   exportDisplay
+	Format    *exportFormatter
+	Made      time.Time
 	// Org is the organization's name, logo and brand color; the zero Org for
 	// a format with no header block.
 	Org branding.Org
@@ -275,6 +278,7 @@ func buildExport(re *core.RequestEvent, body exportBody) (*exportFile, error) {
 		Defs:        spec.Params,
 		Notices:     res.Notices,
 		ParamLabels: labels,
+		SpecLines:   specHeaderLines(spec, res),
 		Reader:      exportReader{Zone: body.Options.TimeZone, Hour12: body.Hour12, Today: today},
 		Display:     display,
 		Format:      newExportFormatter(display, body.Options.TimeZone, body.Hour12),

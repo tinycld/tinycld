@@ -20,6 +20,7 @@ import {
     type SpecNode,
     type SpecSortKey,
     specDrillSchema,
+    specHeaderLineSchema,
     specHopSchema,
     specNodeSchema,
 } from '../spec'
@@ -290,6 +291,11 @@ const draftShape = z.object({
     }),
     /** Empty parts the read spec spelled out (`detail: {}`, `display: {}`), kept by a save. */
     explicit: z.object({ detail: z.boolean(), display: z.boolean() }),
+    /**
+     * The spec's own document header lines (E2), kept as the spec says them: the builder
+     * has no control for them, so a save writes them back unchanged.
+     */
+    header: z.array(specHeaderLineSchema).optional(),
 })
 export type BuilderDraft = z.infer<typeof draftShape>
 
@@ -1334,6 +1340,7 @@ export function draftFromSpec(
             layouts: spec.display?.layouts ?? [],
         },
         explicit: { detail: Boolean(spec.detail), display: Boolean(spec.display) },
+        ...(spec.header ? { header: spec.header } : {}),
     }
 }
 
@@ -1578,6 +1585,7 @@ export function keptParams(draft: BuilderDraft, ...added: ParamDef[]): ParamDef[
     }
     node(draft.detailLabel?.node)
     node(draft.detailOpen)
+    for (const line of draft.header ?? []) node(line.value)
     // A param with a header prints its line under the period (N1), so it stays though
     // nothing else reads it. The builder keeps the header as the spec gave it.
     for (const param of draft.params) if (param.header) read.add(param.id)
@@ -1760,5 +1768,6 @@ export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec
     } else if (draft.explicit.detail) spec.detail = {}
     const display = specDisplay(draft)
     if (display) spec.display = display
+    if (draft.header) spec.header = draft.header
     return spec
 }

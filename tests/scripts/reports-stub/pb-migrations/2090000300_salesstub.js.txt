@@ -78,8 +78,31 @@ migrate(
             ],
         })
         app.save(returns)
+        // One row every signed-in user reads and nobody edits: the floor the
+        // "Stub calendar year" report's header line looks up (spec header, E2).
+        const floors = new Collection({
+            id: 'pbc_salesstub_floors',
+            name: 'salesstub_floors',
+            type: 'base',
+            system: false,
+            listRule: SIGNED_IN,
+            viewRule: SIGNED_IN,
+            fields: [
+                { id: 'salesstub_floors_name', name: 'name', type: 'text', max: 200 },
+                { id: 'salesstub_floors_floor', name: 'floor', type: 'number', onlyInt: true },
+                { id: 'salesstub_floors_currency', name: 'currency', type: 'text', max: 3 },
+                ...stamps('salesstub_floors'),
+            ],
+        })
+        app.save(floors)
+        const floor = new Record(floors)
+        floor.set('name', 'Stub floor')
+        floor.set('floor', 123456)
+        floor.set('currency', 'USD')
+        app.save(floor)
     },
     app => {
+        app.delete(app.findCollectionByNameOrId('salesstub_floors'))
         app.delete(app.findCollectionByNameOrId('salesstub_returns'))
         app.delete(app.findCollectionByNameOrId('salesstub_sales'))
         app.delete(app.findCollectionByNameOrId('salesstub_teams'))

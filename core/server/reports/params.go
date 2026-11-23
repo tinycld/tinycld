@@ -38,8 +38,8 @@ var idRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 var (
 	rangePresets = []string{
 		"today", "thisMonth", "thisMonthToDate", "thisQuarter", "thisQuarterToDate",
-		"thisFiscalYear", "thisFiscalYearToDate", "lastMonth", "lastQuarter",
-		"lastFiscalYear", "last12Months", "allDates",
+		"thisFiscalYear", "thisCalendarYear", "thisFiscalYearToDate", "lastMonth", "lastQuarter",
+		"lastFiscalYear", "lastCalendarYear", "last12Months", "allDates",
 	}
 	asOfPresets = []string{"today", "endOfLastMonth", "endOfLastQuarter", "endOfLastFiscalYear"}
 )
@@ -563,6 +563,13 @@ func rangeDays(preset string, pc periodContext) (string, string) {
 		return firstDay(q - 3), lastDay(q - 1)
 	case "lastFiscalYear":
 		return firstDay(fy - 12), lastDay(fy - 1)
+	case "thisCalendarYear", "lastCalendarYear":
+		// January to December of the reader's year, whatever the fiscal start.
+		year := pc.today.Year()
+		if preset == "lastCalendarYear" {
+			year--
+		}
+		return firstDay(year * 12), lastDay(year*12 + 11)
 	case "allDates":
 		// A set range with no bounds (R1): every row, a row with no day too.
 		return "", ""

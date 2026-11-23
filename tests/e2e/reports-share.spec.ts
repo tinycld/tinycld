@@ -10,6 +10,7 @@ import {
     ACTIVITY_SOURCE,
     addColumn,
     chooseOption,
+    FLOORS_SOURCE,
     hubRow,
     openReportsHub,
     pressToolbar,
@@ -263,7 +264,7 @@ test.describe('sharing reports', () => {
         await expect(page.getByTestId('reports-hub-filter')).toContainText('Sales Stub')
         await page.getByTestId('reports-hub-new').click()
         const dialog = page.getByTestId('reports-new-dialog')
-        const stubSources = [SALES_SOURCE, TEAMS_SOURCE, ACTIVITY_SOURCE]
+        const stubSources = [SALES_SOURCE, TEAMS_SOURCE, ACTIVITY_SOURCE, FLOORS_SOURCE]
         await expect(dialog.locator('[data-testid^="reports-new-source-"]')).toHaveCount(
             stubSources.length
         )

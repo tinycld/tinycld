@@ -211,7 +211,8 @@ export interface RunResult {
     params: ResolvedParam[]
     /**
      * The lines printed under the period: one per choice param with a `header`, in
-     * param order, with the chosen option's label; '' for a param that is unset.
+     * param order, with the chosen option's label ('' for a param that is unset); then
+     * one per line of the spec's `header`, with its value ('' for a blank value).
      */
     headerLines: string[]
 }

@@ -99,6 +99,9 @@ func (b *binder) lookups(p *plan) {
 		walk(d.Open, "detail.open")
 	}
 	p.spec.drillNodes(walk)
+	for i, l := range p.spec.Header {
+		walk(l.Value, fmt.Sprintf("header.%d.value", i))
+	}
 }
 
 // lookupIn compiles a lookup in a context whose rows CTE is r: the smallest
@@ -422,12 +425,13 @@ func lookupCurrencyID(n *Node) string {
 }
 
 // inLevel is true when a formula is compiled on a group, subtotal or total
-// row (a levelCtx, or a lookup inside one) or on a layout's computed row:
-// there a picked or record currency is read by subquery; on a base row inside
-// a total, by its registered key.
+// row (a levelCtx, or a lookup inside one), on a layout's computed row or as
+// one value of the run (a headingCtx: a header line): there a picked or
+// record currency is read by subquery; on a base row inside a total, by its
+// registered key.
 func inLevel(f fctx) bool {
 	switch x := f.(type) {
-	case *levelCtx, *layoutCtx:
+	case *levelCtx, *layoutCtx, *headingCtx:
 		return true
 	case *lookupCtx:
 		return inLevel(x.outer)
@@ -701,7 +705,7 @@ func lookupDayBound(c fctx, n *Node, args []expr) string {
 // first, so an index on the scope's table still serves a bound on it.
 func (sc *scope) oneValue(sql string) string {
 	alias := sc.s.alias("lb")
-	sc.sql = append(sc.sql, fmt.Sprintf("JOIN (SELECT %s AS v) %s", sql, alias))
+	sc.sql = append(sc.sql, scopeJoin{sql: fmt.Sprintf("JOIN (SELECT %s AS v) %s", sql, alias)})
 	return alias + ".v"
 }
 

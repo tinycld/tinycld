@@ -174,7 +174,7 @@ func (rn *runner) pivotPass() ([]pivotValue, error) {
 		rn.pivotValues = values
 		return values, nil
 	}
-	s := newStmt(rn.app, c.info)
+	s := rn.statement()
 	r, err := c.rows(s)
 	if err != nil {
 		return nil, err

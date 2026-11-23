@@ -89,8 +89,9 @@ func addOddTreats(t *testing.T, z *zoo) {
 }
 
 // gordPlans is the plan lines of the grouped detail statement of a run that
-// name the open groups (gord) or the detail rows' base (t1), outside a list
-// built once (loopPlan).
+// name the open groups (gord), the detail rows' base (t1) or the rows read
+// once (w, the rows CTE that a flattened union base is read into), outside a
+// list built once (loopPlan).
 func gordPlans(t *testing.T, z *zoo, seen []readStatement) []string {
 	t.Helper()
 	var lines []string
@@ -101,7 +102,7 @@ func gordPlans(t *testing.T, z *zoo, seen []readStatement) []string {
 		}
 		found++
 		for _, line := range loopPlan(t, z, st) {
-			if strings.Contains(line, "gord") || strings.HasSuffix(line, " t1") || strings.Contains(line, " t1 ") {
+			if strings.Contains(line, "gord") || namesAlias(line, "t1") || namesAlias(line, "w") {
 				lines = append(lines, line)
 			}
 		}
@@ -112,19 +113,26 @@ func gordPlans(t *testing.T, z *zoo, seen []readStatement) []string {
 	return lines
 }
 
+// namesAlias is true when a plan line reads the table or CTE alias.
+func namesAlias(line, alias string) bool {
+	return strings.HasSuffix(line, " "+alias) || strings.Contains(line, " "+alias+" ")
+}
+
 // The detail statement reads its rows once and finds each row's open group by
 // its keys. Left to SQLite's planner, a base that is a union (a subquery) was
 // read once for each open group, through an index SQLite built on the rows'
 // currency: rows x open groups. The engine fixes the order with CROSS JOIN.
+// SQLite flattens the union (a key a part does not map is a typed blank), so
+// the rows CTE w holds the union's parts and the join drives from SCAN w.
 func TestAGroupedDetailStatementReadsItsRowsOnce(t *testing.T) {
 	z := newUnionZoo(t)
 	seen := observeReads(t)
 	z.run(t, "ann", mealsByAnimal, Options{ExpandAll: true}, mealDays)
 	plan := strings.Join(gordPlans(t, z, *seen), "\n")
-	if strings.Contains(plan, "SCAN gord") || strings.Contains(plan, "SEARCH t1") {
+	if strings.Contains(plan, "SCAN gord") || strings.Contains(plan, "SEARCH t1") || strings.Contains(plan, "SEARCH w") {
 		t.Fatalf("the rows are read once for each open group:\n%s", plan)
 	}
-	if !strings.Contains(plan, "SCAN t1") || !strings.Contains(plan, "SEARCH gord USING AUTOMATIC") {
+	if !strings.Contains(plan, "SCAN w") || !strings.Contains(plan, "SEARCH gord USING AUTOMATIC") {
 		t.Fatalf("the rows do not find their group by its keys:\n%s", plan)
 	}
 	legacySQL.plannedLeafJoin = true

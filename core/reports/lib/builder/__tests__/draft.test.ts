@@ -222,6 +222,37 @@ describe('draftFromSpec and specFromDraft', () => {
         expect(specFromDraft(draft, CATALOG).params).toEqual(spec.params)
     })
 
+    it('keeps the spec header lines, and a param only a header line reads', () => {
+        const spec: ReportSpec = {
+            version: CURRENT_SPEC_VERSION,
+            source: SALES_KEY,
+            params: [{ id: 'least', type: 'number', label: 'Least' }],
+            columns: [{ id: 'status', label: 'Status', path: [{ field: 'status' }] }],
+            header: [
+                { text: 'At least {value}', value: { param: 'least' } },
+                {
+                    text: 'North: {value}',
+                    value: {
+                        op: 'lookup',
+                        source: TEAMS_KEY,
+                        where: {
+                            op: 'eq',
+                            args: [{ path: [{ field: 'name' }] }, { value: 'North' }],
+                        },
+                        value: { path: [{ field: 'name' }] },
+                        pick: 'min',
+                    },
+                },
+            ],
+        }
+        const draft = draftFromSpec(spec, { title: 'T', description: '' }, CATALOG)
+        expect(keptParams(draft).map(p => p.id)).toEqual(['least'])
+        const saved = specFromDraft(draft, CATALOG)
+        expect(saved.header).toEqual(spec.header)
+        expect(saved.params).toEqual(spec.params)
+        expect(saved).toEqual(spec)
+    })
+
     it('saves a lookup with no where, and paths whose links keep only rows with them, as read', () => {
         const spec: ReportSpec = {
             version: CURRENT_SPEC_VERSION,
