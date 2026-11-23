@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import { type CurrentPackage, discover } from './discovery'
 import { buildSpecFilesCommand, groupSpecFiles, SKIP_EXPORT_ENV } from './e2e-specs'
+import { runE2eCommand } from './e2e-summary'
 import { resolveTopic } from './help-screenshots'
 import { runAll } from './orchestrator'
 import {
@@ -49,8 +50,9 @@ async function runForPackage(
     ownArgs: string[] = [],
     env: Record<string, string> = {}
 ): Promise<number> {
+    const run = verb === 'test:e2e' ? runE2eCommand : runCommand
     for (const cmd of commandsFor(verb, pkg, appDir, passthrough, ownArgs)) {
-        const code = await runCommand({ ...cmd, env: { ...cmd.env, ...env } })
+        const code = await run({ ...cmd, env: { ...cmd.env, ...env } })
         if (code !== 0) return code
     }
     return 0
@@ -121,7 +123,7 @@ async function main() {
         const members = groupSpecFiles(specFiles, { cwd: process.cwd(), workspaceRoot, appDir })
         const cmd = buildSpecFilesCommand(members, appDir, passthrough)
         const env = skipExport ? { ...cmd.env, ...SKIP_EXPORT_ENV } : cmd.env
-        process.exit(await runCommand({ ...cmd, env }))
+        process.exit(await runE2eCommand({ ...cmd, env }))
     }
 
     if (!currentPackage) {
