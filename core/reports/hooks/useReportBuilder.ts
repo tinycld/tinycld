@@ -151,7 +151,7 @@ export function useReportBuilder(input: BuilderInput) {
                 // The view comes back on the same run key; its cached run is the old spec's.
                 forgetSavedRuns(queryClient, id)
                 router.setParams({ [EDIT_KEY]: undefined })
-            } else router.replace(orgHref(`${reportBase}/${id}`))
+            } else router.replace(orgHref(`${reportBase}/[id]`, { id }))
         },
         onError: (error: unknown) => {
             const problems = problemsFromError(error)
