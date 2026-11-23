@@ -88,7 +88,7 @@ RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
     CGO_ENABLED=0 go build -o /out/export-payload-types ./cmd/export-payload-types/
 
 # Node stage: install the workspace (runs the generator), build the web app.
-FROM node:22-bookworm-slim AS web-builder
+FROM node:24-trixie-slim AS web-builder
 
 WORKDIR /ws
 
@@ -388,18 +388,25 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libcap2-bin curl git sqlite3 gnupg gosu tini \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libcap2-bin curl git sqlite3 gosu tini \
     && apt-get autoremove -y
 
-# The npm bundled with Node 22 (10.x) ships dependencies with known HIGH CVEs
-# (pacote, sigstore, brace-expansion, ...) that the npm 10 line does not fix;
-# the fixes need npm 11's dependency majors. The runtime only runs `npm pack`
-# (the in-app package installer), and the development Node (.node-version)
-# already ships npm 11. Track the npm 11 line, not one exact version, so each
-# rebuild takes its latest security fixes, as the apt upgrade above does. The
-# cache mount keeps npm's download cache out of the layer.
+# Node comes from the official image of the same Debian release, not from the
+# NodeSource `curl | bash` installer: that script exited 0 when its key
+# download failed, so the build broke later at `npm` with no sign of the cause,
+# and it put a third-party script on the build path. The image carries node,
+# npm, npx and corepack (corepack is used below to prepare pnpm).
+COPY --from=node:24-trixie-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:24-trixie-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && ln -s ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack \
+    && node --version && npm --version && corepack --version
+
+# The runtime only runs `npm pack` (the in-app package installer). Track the
+# npm 11 line, not the exact npm the Node image bundles, so each rebuild takes
+# its latest security fixes, as the apt upgrade above does. The cache mount
+# keeps npm's download cache out of the layer.
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install -g npm@11 \
     && npm --version
