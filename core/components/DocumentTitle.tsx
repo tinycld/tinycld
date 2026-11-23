@@ -29,6 +29,12 @@ interface DocumentTitleProps {
      * Defaults to 40; pass Infinity to disable.
      */
     maxDetailChars?: number
+    /**
+     * When false, the tab shows exactly `title` (not trimmed or truncated) with
+     * no brand, org or pkg: a page a customer reads, titled by the sender.
+     * Defaults to true.
+     */
+    includeBrand?: boolean
 }
 
 /**
@@ -38,7 +44,8 @@ interface DocumentTitleProps {
  *
  * Final tab string is "<brand>[: <org>][ — <pkg>][ — <title>]", with
  * empty segments dropped. When no segments are present at all the tab
- * collapses to "<brand>".
+ * collapses to "<brand>". With `includeBrand={false}` the tab is exactly
+ * `title`.
  *
  * The brand comes from CoreConfig.brandName (which the app derives
  * from app.json's expo.name), so a fork rebrands the whole app by
@@ -60,16 +67,39 @@ function DocumentTitleWeb({
     pkg,
     includeOrg = true,
     maxDetailChars = 40,
+    includeBrand = true,
 }: DocumentTitleProps) {
     const brand = getCoreConfigOptional()?.brandName ?? 'TinyCld'
     const { org } = useOrgInfo()
+    const text = includeBrand
+        ? brandedTitle({ brand, orgName: includeOrg ? org?.name : '', pkg, title, maxDetailChars })
+        : (title ?? '')
+    return (
+        <Head>
+            <title>{text}</title>
+        </Head>
+    )
+}
 
+function brandedTitle({
+    brand,
+    orgName: rawOrgName,
+    pkg,
+    title,
+    maxDetailChars,
+}: {
+    brand: string
+    orgName?: string
+    pkg?: string
+    title?: string | null
+    maxDetailChars: number
+}) {
     const segments: string[] = []
-    const orgName = org?.name?.trim() ?? ''
+    const orgName = rawOrgName?.trim() ?? ''
     // Suppress the org segment when it just repeats the brand — a standalone
     // deployment whose setup-wizard app name is the default would otherwise
     // title every tab "TinyCld: tinycld — …".
-    if (includeOrg && orgName && orgName.toLowerCase() !== brand.toLowerCase()) {
+    if (orgName && orgName.toLowerCase() !== brand.toLowerCase()) {
         segments.push(orgName)
     }
     if (pkg?.trim()) segments.push(pkg.trim())
@@ -80,10 +110,5 @@ function DocumentTitleWeb({
         segments.push(truncated)
     }
 
-    const text = segments.length > 0 ? `${brand}: ${segments.join(' — ')}` : brand
-    return (
-        <Head>
-            <title>{text}</title>
-        </Head>
-    )
+    return segments.length > 0 ? `${brand}: ${segments.join(' — ')}` : brand
 }

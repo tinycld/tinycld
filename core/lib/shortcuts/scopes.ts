@@ -28,7 +28,8 @@ export interface ScopeOptions {
      * form on it holds the keyboard. On a key both own, the newer scope wins.
      *
      * An entry with this option is never placed above an entry of a scope it
-     * names: pushed while such entries are on top, it goes below them. React
+     * names: pushed while such entries are on top, it goes below them (and
+     * below any open `modal` entries first, as every non-modal entry does). React
      * runs a child's effects first, so a list can be pushed after the `compose`
      * entry of the document it holds, and on top it would shadow that entry.
      */
@@ -49,20 +50,28 @@ function makeEntry(
 }
 
 /**
- * Put an entry on the stack. An entry without `activeUnder` goes on top. An
- * entry with `activeUnder` goes below the run of entries at the top whose scope
- * it names, and on top when the top entry's scope is not named.
+ * Put an entry on the stack. A `modal` entry goes on top. A non-modal entry
+ * goes below the run of `modal` entries at the top. Then an entry with
+ * `activeUnder` also goes below the run of entries there whose scope it names;
+ * an entry without it stays where it is.
  *
  * Why: React runs a child's effects before its parent's, and a nested navigator
- * can focus a parent route and its child route in one commit. So a list that
- * stays active under `compose` can be pushed AFTER the `compose` entry of the
- * document it holds. On top, the list would cut the chain (`compose` did not
- * opt in) and every key of the document would be dead. An entry of a scope the
- * list names is always meant to be above it.
+ * can focus a parent route and its child route in one commit.
+ * - A dialog (`modal`) that mounts in the same commit as its screen is pushed
+ *   BEFORE the screen's entry. On top, the screen would shadow the dialog, and
+ *   ⌘↵ in the dialog would run the screen's ⌘↵. A dialog is always meant to be
+ *   above the screen it opens over.
+ * - A list that stays active under `compose` can be pushed AFTER the `compose`
+ *   entry of the document it holds. On top, the list would cut the chain
+ *   (`compose` did not opt in) and every key of the document would be dead. An
+ *   entry of a scope the list names is always meant to be above it.
  */
 function insertEntry(entry: ScopeEntry) {
-    const activeUnder = entry.activeUnder
     let index = stack.length
+    if (entry.scope !== 'modal') {
+        while (index > 0 && stack[index - 1].scope === 'modal') index -= 1
+    }
+    const activeUnder = entry.activeUnder
     if (activeUnder) {
         while (index > 0 && activeUnder.includes(stack[index - 1].scope)) index -= 1
     }

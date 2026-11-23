@@ -148,7 +148,7 @@ The matcher dispatches a shortcut only when:
 2. `allowInInputs` is true, **or** focus is not currently in a text input / contenteditable / ProseMirror surface, and
 3. Its optional `when()` guard (if any) returns true.
 
-Opening a dialog, a sheet or a search palette pushes the `modal` scope (its `LayerScope`; the palettes use `LayerEscape`, which is a `LayerScope` with no content), which silences list/thread/compose shortcuts until it closes. `LayerScope` also wraps the layer's content in a `ScopeProvider`, so a shortcut registered inside the layer (a `ShortcutButton` in the footer) is stamped with that layer's id. A menu or popover pushes no scope. `Escape` is registered in the `modal` scope with `allowInInputs: true` for the help list; on web the layer stack closes the layer, even from a focused input.
+Opening a dialog, a sheet or a search palette pushes the `modal` scope (its `LayerScope`; the palettes use `LayerEscape`, which is a `LayerScope` with no content), which silences list/thread/compose shortcuts until it closes. Every `modal` entry stays above every non-modal entry: a screen entry pushed while a layer is open (for example a dialog that mounts in the same commit as its screen, whose effect runs first) goes under the layer. `LayerScope` also wraps the layer's content in a `ScopeProvider`, so a shortcut registered inside the layer (a `ShortcutButton` in the footer) is stamped with that layer's id. A menu or popover pushes no scope. `Escape` is registered in the `modal` scope with `allowInInputs: true` for the help list; on web the layer stack closes the layer, even from a focused input.
 
 ## Registering shortcuts
 

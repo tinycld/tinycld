@@ -58,6 +58,16 @@ export interface DialogProps {
     hasCloseButton?: boolean
     /** Focused on open instead of the first focusable element. */
     initialFocusRef?: RefObject<{ focus: () => void } | null>
+    /**
+     * Moves the focus on close, in place of handing it back to the element
+     * that opened the dialog: for a dialog whose opener may be gone by then.
+     * Called one frame after the dialog closes or unmounts, on web only when
+     * the focus is then on the body or still inside the dialog. It also runs
+     * when the owner unmounts with the dialog open, so it must focus only
+     * refs of its own screen. Full rules: `onRestoreFocus` of useLayerFocus,
+     * ui/overlay/focus.ts.
+     */
+    onRestoreFocus?: () => void
     children: ReactNode
 }
 
@@ -86,6 +96,7 @@ function DialogRoot({
     testID,
     hasCloseButton = true,
     initialFocusRef,
+    onRestoreFocus,
     children,
 }: DialogProps) {
     const isMobile = useBreakpoint() === 'mobile'
@@ -100,6 +111,7 @@ function DialogRoot({
                     title={header ? undefined : title}
                     description={description}
                     initialFocusRef={initialFocusRef}
+                    onRestoreFocus={onRestoreFocus}
                     testID={testID}
                 >
                     {header}
@@ -115,6 +127,7 @@ function DialogRoot({
             sizeClass={size === 'full' && isMobile ? FULL_MOBILE_CLASS : SIZE_CLASS[size]}
             testID={testID}
             initialFocusRef={initialFocusRef}
+            onRestoreFocus={onRestoreFocus}
             header={
                 header === undefined ? (
                     <DialogHeader
@@ -138,6 +151,7 @@ function DialogLayer({
     sizeClass,
     testID,
     initialFocusRef,
+    onRestoreFocus,
     header,
     children,
 }: {
@@ -145,6 +159,7 @@ function DialogLayer({
     sizeClass: string
     testID?: string
     initialFocusRef?: DialogProps['initialFocusRef']
+    onRestoreFocus?: DialogProps['onRestoreFocus']
     header: ReactNode
     children: ReactNode
 }) {
@@ -166,6 +181,7 @@ function DialogLayer({
         isActive: true,
         container: surfaceNode as unknown as HTMLElement | null,
         initialFocusRef,
+        onRestoreFocus,
     })
 
     return (

@@ -13,6 +13,7 @@ import {
 import { editorScaleVars } from './editor-scale'
 import { buildRichEditorExtensions } from './extensions'
 import { extractImageFilesFromDrop, extractImageFilesFromPaste } from './extract-image-files'
+import { useLinkShortcutListeners } from './link-shortcut-listeners'
 import { repairMarkdown } from './markdown-repair'
 import { setMentionLabels } from './mention-node'
 import type { UseRichEditorOptions } from './options'
@@ -111,6 +112,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     focusRef.current = onFocus
     const blurRef = useRef(onBlur)
     blurRef.current = onBlur
+    // Stable for the hook's life, so it can sit in the extension deps below.
+    const linkShortcut = useLinkShortcutListeners()
     // Triggers carry callbacks (`items`, `onStateChange`) that close over
     // fresh state, and callers build the array inline — so its identity churns
     // every render. Rebuilding the extension list on that identity would
@@ -226,6 +229,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 triggers: stableTriggers,
                 imageNodeView: AUTHED_IMAGE_NODE_VIEW,
                 onSubmitShortcut: hasSubmitShortcut ? () => submitRef.current?.() : undefined,
+                onLinkShortcut: linkShortcut.fire,
                 collab:
                     collabDoc && collabField
                         ? {
@@ -239,7 +243,15 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                           }
                         : undefined,
             }),
-        [placeholder, characterLimit, stableTriggers, hasSubmitShortcut, collabDoc, collabField]
+        [
+            placeholder,
+            characterLimit,
+            stableTriggers,
+            hasSubmitShortcut,
+            linkShortcut,
+            collabDoc,
+            collabField,
+        ]
     )
 
     // One identity per configuration that rebuilds the instance — the same two
@@ -441,6 +453,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             toggleCodeBlock: () => chain()?.toggleCodeBlock().run(),
             setLink: (url: string) => chain()?.setLink({ href: url }).run(),
             removeLink: () => chain()?.unsetLink().run(),
+            subscribeLinkShortcut: linkShortcut.subscribe,
             insertImage: (src: string, alt?: string) => chain()?.setImage({ src, alt }).run(),
             insertImageAt: (src: string, pos: number, alt?: string) => {
                 if (!tiptapEditor || tiptapEditor.isDestroyed) return
@@ -458,7 +471,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             undo: () => chain()?.undo().run(),
             redo: () => chain()?.redo().run(),
         }
-    }, [tiptapEditor])
+    }, [tiptapEditor, linkShortcut])
 
     const live = tiptapEditor && !tiptapEditor.isDestroyed ? tiptapEditor : null
     // Live is not enough. Right after a configuration change `live` is still

@@ -11,6 +11,8 @@
 // The per-server auth storage key (`pb_auth:<serverKey>`) is derived, not
 // literal, so any sibling spec that reads or stages the auth blob needs this.
 export * from '../tests/e2e/auth-key-helpers.ts'
+// A package spec reads the email the e2e server captured (TINYCLD_EMAIL_LOG) with these.
+export * from '../tests/e2e/email-log-helpers.ts'
 export * from '../tests/e2e/helpers.ts'
 // Cheap members of a spec's own: `test` with the `p` and `freshMember` fixtures.
 export * from '../tests/e2e/member-fixtures.ts'

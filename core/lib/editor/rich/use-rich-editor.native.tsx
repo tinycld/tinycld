@@ -1,5 +1,5 @@
 import { useFileToken } from '@tinycld/core/file-viewer/use-authed-file-url'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { log } from '../../logger'
 import { pb } from '../../pocketbase'
 import { useThemeColor } from '../../use-app-theme'
@@ -11,6 +11,7 @@ import type { EditorHandle, EditorResult } from '../types'
 import { useWebViewEditor } from '../use-webview-editor'
 import { AwarenessWebViewHost } from './awareness-webview-host'
 import { HtmlWebViewHost } from './html-webview-host'
+import { useLinkShortcutListeners } from './link-shortcut-listeners'
 import { MarkdownWebViewHost } from './markdown-webview-host'
 import type { UseRichEditorOptions } from './options'
 import { TriggerItemsWebViewHost } from './trigger-items-webview-host'
@@ -20,6 +21,8 @@ import {
     APP_EDITOR_MOUNTED,
     APP_ESCAPE,
     APP_FILE_TOKEN,
+    APP_LINK_SHORTCUT,
+    APP_LINK_SHORTCUT_ENABLED,
     APP_PAGE_ERROR,
     APP_SUBMIT_SHORTCUT,
     type RichEditorInitPayload,
@@ -94,6 +97,13 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     focusRef.current = onFocus
     const blurRef = useRef(onBlur)
     blurRef.current = onBlur
+    const linkShortcut = useLinkShortcutListeners()
+    // The page cannot see the host's listeners, so it is told whether a
+    // toolbar listens; with none, ⌘K stays with the page's defaults.
+    const hasLinkShortcut = useSyncExternalStore(
+        linkShortcut.subscribePresence,
+        linkShortcut.hasListeners
+    )
     // Mirrors the focus flag published to editor-focus-state, so an editor that
     // unmounts while focused can release its claim — no blur is delivered in
     // that case, and the count would stay raised, muting shortcuts app-wide.
@@ -197,6 +207,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             },
             ...(fileToken ? { fileAuth: { baseURL: pb.baseURL, token: fileToken } } : {}),
             editorInstanceId,
+            hasLinkShortcut,
             // Seeded with an EMPTY roster: the real one follows immediately as
             // a push, and baking it in here would rebuild the whole handshake
             // every time someone joined the board.
@@ -258,6 +269,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         collabUserColor,
         fileToken,
         editorInstanceId,
+        hasLinkShortcut,
         triggerSignature,
     ])
 
@@ -358,6 +370,14 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         }
     }, [rosterSignature, triggerItemsHost, liveEpoch])
 
+    // Init is not posted again for the same generation, and the toolbar
+    // subscribes in an effect that can land after the handshake, so the flag
+    // is also pushed to each live editor, gated like the roster above.
+    useEffect(() => {
+        if (liveEpoch === 0) return
+        posterRef.current?.(makeMessage('app', APP_LINK_SHORTCUT_ENABLED, hasLinkShortcut) as never)
+    }, [hasLinkShortcut, liveEpoch])
+
     const onDocumentScroll = useCallback(() => {
         publishUiMessage({ namespace: 'ui', type: UI_POPOVER_DISMISS_ON_SCROLL, payload: null })
     }, [])
@@ -381,6 +401,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             if (htmlHost.handleMessage(message as never)) return
             if (message.namespace !== 'app') return
             if (message.type === APP_SUBMIT_SHORTCUT) submitRef.current?.()
+            else if (message.type === APP_LINK_SHORTCUT) linkShortcut.fire()
             else if (message.type === APP_ESCAPE) escapeRef.current?.()
             else if (message.type === APP_EDITOR_MOUNTED) {
                 log.debug('core.editor.webview', 'editor-mounted', {
@@ -405,7 +426,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 })
             }
         },
-        [markdownHost, htmlHost, yjsHost, awarenessHost, editorInstanceId, generation]
+        [markdownHost, htmlHost, yjsHost, awarenessHost, editorInstanceId, generation, linkShortcut]
     )
 
     const result = useWebViewEditor({
@@ -502,5 +523,10 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         [result.editor, markdownHost, htmlHost]
     )
 
-    return { ...result, editor }
+    const commands = useMemo(
+        () => ({ ...result.commands, subscribeLinkShortcut: linkShortcut.subscribe }),
+        [result.commands, linkShortcut]
+    )
+
+    return { ...result, editor, commands }
 }

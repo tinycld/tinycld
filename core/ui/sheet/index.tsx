@@ -104,6 +104,8 @@ interface SheetProps {
     hideHandle?: boolean
     /** Focused on open (web) instead of the sheet's first focusable. */
     initialFocusRef?: RefObject<{ focus: () => void } | null>
+    /** Moves the focus on close in place of the default restore (see Dialog's `onRestoreFocus`). */
+    onRestoreFocus?: () => void
     testID?: string
 }
 
@@ -119,6 +121,7 @@ function SheetRoot({
     surface = 'background',
     hideHandle = false,
     initialFocusRef,
+    onRestoreFocus,
     testID,
 }: SheetProps) {
     const overlayBg = useThemeColor('overlay-backdrop')
@@ -215,6 +218,7 @@ function SheetRoot({
         isActive: isOpen,
         container: surfaceNode as unknown as HTMLElement | null,
         initialFocusRef,
+        onRestoreFocus,
     })
 
     const panGesture = Gesture.Pan()

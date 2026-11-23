@@ -29,12 +29,15 @@ import {
     readKeyboardInset,
     reapplyKeyboardInset,
 } from './host-commands'
+import { isLinkShortcutEnabled, setLinkShortcutEnabled } from './link-shortcut-store'
 import {
     APP_EDITOR_MOUNTED,
     APP_ESCAPE,
     APP_FILE_TOKEN,
     APP_FOCUS,
     APP_KEYBOARD_INSET,
+    APP_LINK_SHORTCUT,
+    APP_LINK_SHORTCUT_ENABLED,
     APP_PAGE_ERROR,
     APP_PARK,
     APP_SUBMIT_SHORTCUT,
@@ -261,6 +264,10 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
         for (const trigger of init.triggers ?? []) setTriggerItems(trigger.id, trigger.allItems)
     }, [init.triggers])
 
+    // Seeded during render for the same reason: a ⌘K pressed before the first
+    // effect must read this surface's value, not the previous surface's.
+    useMemo(() => setLinkShortcutEnabled(init.hasLinkShortcut === true), [init.hasLinkShortcut])
+
     const collab = useCollabDoc(init.collab)
 
     const editor = useEditor({
@@ -271,6 +278,13 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
             characterLimit: init.characterLimit,
             imageNodeView: AUTHED_IMAGE_NODE_VIEW,
             onSubmitShortcut: () => postToNative(makeMessage('app', APP_SUBMIT_SHORTCUT, null)),
+            // Taken only while the host has a listener (init's hasLinkShortcut,
+            // then APP_LINK_SHORTCUT_ENABLED); otherwise the key is left alone.
+            onLinkShortcut: () => {
+                if (!isLinkShortcutEnabled()) return false
+                postToNative(makeMessage('app', APP_LINK_SHORTCUT, null))
+                return true
+            },
             // Candidates come from the store rather than the init payload's
             // frozen copy, so a roster pushed later is picked up without
             // rebuilding the editor. `onStateChange` is the web callback
@@ -670,7 +684,8 @@ function dispatchHostMessage(editor: TiptapEditor, parsed: EditorMessage, isColl
 
 /**
  * The 'app' namespace once an editor exists: credentials for protected images,
- * the mention roster, and the caret / keyboard instructions. (Init and park
+ * the mention roster, the ⌘K listener flag, and the caret / keyboard
+ * instructions. (Init and park
  * are the stage-one Editor's, above.)
  */
 function handleAppMessage(editor: TiptapEditor, message: EditorMessage): void {
@@ -689,6 +704,9 @@ function handleAppMessage(editor: TiptapEditor, message: EditorMessage): void {
             }
             break
         }
+        case APP_LINK_SHORTCUT_ENABLED:
+            if (typeof message.payload === 'boolean') setLinkShortcutEnabled(message.payload)
+            break
         case APP_FOCUS:
             focusEditor(editor, message.payload)
             break
