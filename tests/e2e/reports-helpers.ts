@@ -171,6 +171,19 @@ export interface StubData {
 }
 
 /**
+ * Answers the page's realtime subscriptions here, so none reaches the server. A
+ * report on screen runs again after each write to a collection it read (its
+ * `collection/<name>` topics), and the other worker writes stub sales and teams at
+ * any time. Call it before login when a test counts a report's runs: then no
+ * subscription made before the route reaches the server.
+ */
+export async function cutRealtimeSubscriptions(page: Page) {
+    await page.route('**/api/realtime', route =>
+        route.request().method() === 'POST' ? route.fulfill({ status: 204 }) : route.fallback()
+    )
+}
+
+/**
  * Saves teams, sales and returns in one save through the stub's "Data set" form,
  * in the order given (teams, then sales, then returns). Use it for a spec's seed:
  * a round of the single forms for each row was most of the time of many specs. A

@@ -3,6 +3,7 @@ import { inStatement, skipWithoutReportsStub, waitForTableFit } from './helpers'
 import { expect, test } from './member-fixtures'
 import {
     cellOf,
+    cutRealtimeSubscriptions,
     DRILL_TARGET_TITLE,
     DRILLED_PIVOT_TITLE,
     DRILLED_TITLE,
@@ -429,6 +430,8 @@ test.describe('reports: drill', () => {
     test("crossing 1360 px keeps the panel's report mounted and does not run it again", async ({
         page,
     }) => {
+        // The run counts below are about the resize alone.
+        await cutRealtimeSubscriptions(page)
         await loginAsShippedOwner(page)
         const team = uniqueName('Drill Cross')
         await seed(page, [
