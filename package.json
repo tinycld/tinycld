@@ -6,7 +6,7 @@
     "main": "index.js",
     "packageManager": "pnpm@12.9.1+sha512.06b055fff5cd20dc12781de173ced3310ce0951bf2ec620211a16045d5444d5c93a663210764ef29a653a610459ba0368f0e74f84d80c54723cf95aae7bc0d6d",
     "engines": {
-        "node": ">=22"
+        "node": ">=24"
     },
     "scripts": {
         "packages:generate": "tsx scripts/generate.ts && tsx scripts/export-types.ts",
@@ -205,7 +205,7 @@
         "@testing-library/react": "^16.3.2",
         "@tinycld/package-scripts": "*",
         "@types/json-logic-js": "2.0.8",
-        "@types/node": "^25.6.0",
+        "@types/node": "^24.19.0",
         "@types/react": "~19.2.4",
         "babel-plugin-module-resolver": "^5.0.3",
         "dotenv-cli": "^11.0.0",
