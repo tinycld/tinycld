@@ -28,7 +28,8 @@ export interface ScopeOptions {
      * form on it holds the keyboard. On a key both own, the newer scope wins.
      *
      * An entry with this option is never placed above an entry of a scope it
-     * names: pushed while such entries are on top, it goes below them. React
+     * names: pushed while such entries are on top, it goes below them (and
+     * below any open `modal` entries first, as every non-modal entry does). React
      * runs a child's effects first, so a list can be pushed after the `compose`
      * entry of the document it holds, and on top it would shadow that entry.
      */
