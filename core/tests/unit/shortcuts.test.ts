@@ -1521,13 +1521,17 @@ describe('scope active under a newer scope', () => {
             expect(ids(activeScopeEntries())).toEqual([threadId, listId])
         })
 
-        it('goes on top of a modal it does not name', () => {
-            pushScope('compose')
-            pushScope('modal')
+        it('goes under a modal on top, and then under the compose entry it names', () => {
+            const composeId = pushScope('compose')
+            const modalId = pushScope('modal')
             const listId = pushScope('list', { activeUnder: ['compose'] })
 
-            expect(topScopeEntry()?.id).toBe(listId)
-            expect(ids(activeScopeEntries())).toEqual([listId])
+            expect(topScopeEntry()?.id).toBe(modalId)
+            expect(ids(activeScopeEntries())).toEqual([modalId])
+
+            popScope(modalId)
+            expect(topScopeEntry()?.id).toBe(composeId)
+            expect(ids(activeScopeEntries())).toEqual([composeId, listId])
         })
 
         it('an entry without activeUnder goes on top of the compose entry, as before', () => {
@@ -1545,6 +1549,81 @@ describe('scope active under a newer scope', () => {
             popScope(composeId)
             expect(topScopeEntry()?.id).toBe(listId)
             expect(ids(activeScopeEntries())).toEqual([listId])
+        })
+    })
+
+    // React runs a child's effects before its parent's, so a dialog that mounts
+    // in the same commit as its screen pushes its `modal` entry before the
+    // screen's entry. The dialog must stay on top, or ⌘↵ in it runs the screen's ⌘↵.
+    describe('pushed after a modal', () => {
+        function modalShortcut(id: string, keys: string, scopeId: number, run = vi.fn()) {
+            return {
+                id,
+                keys,
+                scope: 'modal',
+                scopeId,
+                description: `Dialog ${id}`,
+                allowInInputs: true,
+                run,
+            } satisfies Shortcut
+        }
+
+        it('a compose entry goes under the modal, so the dialog’s ⌘↵ runs and the screen’s does not', () => {
+            const dialogSend = vi.fn()
+            const formSave = vi.fn()
+            const modalId = pushScope('modal')
+            register(modalShortcut('t.dialog-send', '$mod+Enter', modalId, dialogSend))
+            const composeId = pushScope('compose')
+            register({
+                ...composeShortcut('t.form-save', '$mod+Enter', composeId, formSave),
+                allowInInputs: true,
+            })
+
+            expect(topScopeEntry()?.id).toBe(modalId)
+            expect(ids(activeScopeEntries())).toEqual([modalId])
+
+            const m = createMatcher()
+            expect(m.feedAtom('$mod+Enter', { inInput: true })).toBe(true)
+            expect(dialogSend).toHaveBeenCalledTimes(1)
+            expect(formSave).not.toHaveBeenCalled()
+
+            popScope(modalId)
+            expect(topScopeEntry()?.id).toBe(composeId)
+        })
+
+        it('goes under the whole run of modal entries on top', () => {
+            const lowerModalId = pushScope('modal')
+            const upperModalId = pushScope('modal')
+            const composeId = pushScope('compose')
+
+            expect(topScopeEntry()?.id).toBe(upperModalId)
+            popScope(upperModalId)
+            expect(topScopeEntry()?.id).toBe(lowerModalId)
+            popScope(lowerModalId)
+            expect(topScopeEntry()?.id).toBe(composeId)
+        })
+
+        it('a modal pushed after a compose entry goes on top, as before', () => {
+            const composeId = pushScope('compose')
+            const modalId = pushScope('modal')
+
+            expect(topScopeEntry()?.id).toBe(modalId)
+            popScope(modalId)
+            expect(topScopeEntry()?.id).toBe(composeId)
+        })
+
+        it('a modal pushed after a modal goes on top of it', () => {
+            pushScope('modal')
+            const upperModalId = pushScope('modal')
+
+            expect(topScopeEntry()?.id).toBe(upperModalId)
+        })
+
+        it('a non-modal entry under a non-modal top goes on top, as before', () => {
+            pushScope('compose')
+            const threadId = pushScope('thread')
+
+            expect(topScopeEntry()?.id).toBe(threadId)
         })
     })
 })
