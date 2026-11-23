@@ -96,6 +96,10 @@ func checkParamDefs(defs []ParamDef) *SpecError {
 			if (len(d.Options) == 0) == (d.OptionsFrom == nil) {
 				return invalid(at+".options", "a choice param lists its options, or names the source they come from")
 			}
+			// With neither, the binder refuses the empty label path.
+			if of := d.OptionsFrom; of != nil && len(of.Label) > 0 && of.LabelFormula != nil {
+				return invalid(at+".optionsFrom.label", "options are labelled by a label path or a labelFormula, not both")
+			}
 			if err := checkGroupLabel(d.OptionsFrom, at+".optionsFrom.groupLabel"); err != nil {
 				return err
 			}

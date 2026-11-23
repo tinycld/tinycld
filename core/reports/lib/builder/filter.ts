@@ -354,7 +354,9 @@ export function tidyParam(param: ParamDef): ParamDef {
     const optionsFrom = {
         source: from.source,
         value: from.value,
-        label: from.label,
+        ...(from.label ? { label: from.label } : {}),
+        ...(from.labelFormula ? { labelFormula: from.labelFormula } : {}),
+        ...(from.order ? { order: from.order } : {}),
         ...(from.group ? { group: from.group } : {}),
         ...(from.groupOrder ? { groupOrder: tidyGroupOrder(from.groupOrder) } : {}),
         ...(from.groupLabel ? { groupLabel: from.groupLabel } : {}),

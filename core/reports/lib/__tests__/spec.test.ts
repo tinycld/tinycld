@@ -126,6 +126,38 @@ describe('parseSpec', () => {
         }
     })
 
+    // optionsFrom.labelFormula (spec.go OptionsFrom) labels options in place of a
+    // label path, and optionsFrom.order orders them by a path's value.
+    it('reads a label formula or a label path, one of the two, and an order path', () => {
+        const codeName = {
+            op: 'concat',
+            args: [{ path: [{ field: 'code' }] }, { value: ' ' }, { path: [{ field: 'name' }] }],
+        }
+        const withFrom = (from: Record<string, unknown>) => ({
+            ...FEEDINGS,
+            version: 4,
+            params: [
+                {
+                    id: 'animals',
+                    type: 'choice',
+                    optionsFrom: { source: 'zoo.animals', value: [{ field: 'id' }], ...from },
+                },
+            ],
+        })
+        const formula = { labelFormula: codeName, order: [{ field: 'number' }] }
+        expect(parseSpec(withFrom(formula))?.params?.[0]?.optionsFrom).toEqual({
+            source: 'zoo.animals',
+            value: [{ field: 'id' }],
+            ...formula,
+        })
+        const path = { label: [{ field: 'name' }], order: [{ field: 'number' }] }
+        expect(parseSpec(withFrom(path))?.params?.[0]?.optionsFrom?.order).toEqual(path.order)
+        expect(
+            parseSpec(withFrom({ label: [{ field: 'name' }], labelFormula: codeName }))
+        ).toBeNull()
+        expect(parseSpec(withFrom({ order: [{ field: 'number' }] }))).toBeNull()
+    })
+
     // E2: columns[].detail "blank" (spec.go Column.Detail) leaves the column empty on
     // detail rows; "blank" is its one value.
     it('reads a column blank on detail rows and refuses any other detail', () => {

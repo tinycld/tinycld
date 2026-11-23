@@ -2,6 +2,7 @@ import { appHref } from '@tinycld/core/lib/org-routes'
 import { isIsoDay } from './dates'
 import { DEFAULT_DISPLAY, type DisplayOptions, headingText, type NumberFormat } from './format'
 import { centsFromText, textFromCents } from './money'
+import { paramKey } from './param-key'
 import {
     amountValue,
     defaultValueOf,
@@ -21,7 +22,7 @@ import type { ResultColumn } from './types'
 // its own: a bad one falls back to its default and no other. Defaults are left
 // out, so an untouched report has a clean URL.
 
-export const PARAM_KEY_PREFIX = 'p-'
+export { PARAM_KEY_PREFIX, paramKey } from './param-key'
 export const EDIT_KEY = 'edit'
 const FLAG_ON = '1'
 const FLAG_OFF = '0'
@@ -48,10 +49,6 @@ export interface ViewOptions {
     display: DisplayOptions
     /** The reader's sort of the detail rows; null: the report's own order. */
     sort: ViewSort | null
-}
-
-export function paramKey(id: string): string {
-    return `${PARAM_KEY_PREFIX}${id}`
 }
 
 function first(value: string | string[] | undefined): string | undefined {

@@ -1,3 +1,4 @@
+import { shouldSettleDrawerOpen } from '@tinycld/core/components/workspace/drawer-release'
 import { packageSidebars } from '@tinycld/core/lib/packages/derive-components'
 import { usePackage } from '@tinycld/core/lib/packages/use-packages'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
@@ -15,7 +16,6 @@ import Animated, {
 
 const PANEL_WIDTH = 280
 const EDGE_WIDTH = 20
-const VELOCITY_THRESHOLD = 500
 
 const SPRING_CONFIG = {
     damping: 25,
@@ -56,6 +56,18 @@ export function MobileDrawer({ isVisible }: MobileDrawerProps) {
         }
     }, [isVisible, translateX, activePkgSlug, openedForSlug])
 
+    const settle = (e: { translationX: number; velocityX: number }) => {
+        'worklet'
+        const shouldOpen = shouldSettleDrawerOpen(
+            translateX.value,
+            e.translationX,
+            e.velocityX,
+            PANEL_WIDTH
+        )
+        translateX.value = withSpring(shouldOpen ? 0 : -PANEL_WIDTH, SPRING_CONFIG)
+        runOnJS(shouldOpen ? openDrawer : closeDrawer)()
+    }
+
     // Disabled while a package drag is live (plus a short grace after it
     // ends): on a physical phone, a fingertip dragged into the left edge of
     // the glass can micro-lift as it reverses, and the replacement touch is
@@ -67,26 +79,14 @@ export function MobileDrawer({ isVisible }: MobileDrawerProps) {
         .onUpdate(e => {
             translateX.value = Math.max(-PANEL_WIDTH, Math.min(0, -PANEL_WIDTH + e.translationX))
         })
-        .onEnd(e => {
-            const shouldOpen =
-                e.velocityX > VELOCITY_THRESHOLD ||
-                (e.velocityX > -VELOCITY_THRESHOLD && translateX.value > -PANEL_WIDTH / 2)
-            translateX.value = withSpring(shouldOpen ? 0 : -PANEL_WIDTH, SPRING_CONFIG)
-            runOnJS(shouldOpen ? openDrawer : closeDrawer)()
-        })
+        .onEnd(settle)
 
     const closeGesture = Gesture.Pan()
         .activeOffsetX(-10)
         .onUpdate(e => {
             translateX.value = Math.max(-PANEL_WIDTH, Math.min(0, e.translationX))
         })
-        .onEnd(e => {
-            const shouldOpen =
-                e.velocityX > VELOCITY_THRESHOLD ||
-                (e.velocityX > -VELOCITY_THRESHOLD && translateX.value > -PANEL_WIDTH / 2)
-            translateX.value = withSpring(shouldOpen ? 0 : -PANEL_WIDTH, SPRING_CONFIG)
-            runOnJS(shouldOpen ? openDrawer : closeDrawer)()
-        })
+        .onEnd(settle)
 
     const panelStyle = useAnimatedStyle(() => ({
         transform: [{ translateX: translateX.value }],

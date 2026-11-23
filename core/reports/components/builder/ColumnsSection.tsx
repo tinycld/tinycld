@@ -424,12 +424,17 @@ const DETAIL_OPTIONS = [
     { value: 'blank', label: 'Leave blank' },
 ]
 
+// The rule of assemble.go groupOnly, for the report author.
+const DETAIL_HINT =
+    'Left blank, a value that is not a number, amount or percent shows on the group row, not on its subtotal row.'
+
 /**
  * "On opened rows": a column that names its group (a value from the group's record)
  * can be left blank on the group's opened rows. Offered on a grouped report that does
  * not pivot, never on a column that names opened rows or a nest level's child rows
  * (bind.go detailBlank); a column left blank before that keeps the choice in view, so
- * it can be set back.
+ * it can be set back. Such a column whose group cell is not a figure (a text, a date)
+ * shows on the group row and not on the group's subtotal row (assemble.go groupOnly).
  */
 function DetailField({ builder, columns, index }: Omit<ColumnPartProps, 'source'>) {
     const control = builder.form.control
@@ -444,6 +449,7 @@ function DetailField({ builder, columns, index }: Omit<ColumnPartProps, 'source'
             control={control}
             label="On opened rows"
             options={DETAIL_OPTIONS}
+            hint={DETAIL_HINT}
             testID={`report-builder-column-${index}-detail`}
             onValueChange={builder.validateLists}
         />

@@ -1,0 +1,295 @@
+{
+    "cases": [
+        {
+            "name": "an open group with subtotals keeps only its group-only cells; its subtotal row is as sent",
+            "columns": [
+                { "id": "statement", "groupOnly": true },
+                { "id": "statementNo" },
+                { "id": "debit" }
+            ],
+            "groups": [{ "subtotals": true }],
+            "rows": [
+                {
+                    "id": "g:a",
+                    "kind": "group",
+                    "depth": 0,
+                    "level": 1,
+                    "expanded": true,
+                    "cells": {
+                        "statement": "2026-10-31",
+                        "statement@label": "Oct 31, 2026",
+                        "statement@drill": "r1",
+                        "statementNo": 7,
+                        "debit": 100,
+                        "debit@currency": "USD"
+                    }
+                },
+                {
+                    "id": "d:1",
+                    "kind": "detail",
+                    "depth": 1,
+                    "section": "g:a",
+                    "cells": { "statementNo": 7, "debit": 100, "debit@currency": "USD" }
+                },
+                {
+                    "id": "s:a",
+                    "kind": "subtotal",
+                    "depth": 0,
+                    "level": 1,
+                    "section": "g:a",
+                    "cells": { "statementNo": 7, "debit": 100, "debit@currency": "USD" }
+                },
+                {
+                    "id": "total",
+                    "kind": "total",
+                    "depth": 0,
+                    "cells": { "debit": 100, "debit@currency": "USD" }
+                }
+            ],
+            "endsInSubtotal": ["g:a"],
+            "shown": {
+                "g:a": ["statement", "statement@drill", "statement@label"],
+                "d:1": ["debit", "debit@currency", "statementNo"],
+                "s:a": ["debit", "debit@currency", "statementNo"],
+                "total": ["debit", "debit@currency"]
+            }
+        },
+        {
+            "name": "the same rows with no column marked: the group row shows no cell",
+            "columns": [{ "id": "statement" }, { "id": "statementNo" }, { "id": "debit" }],
+            "groups": [{ "subtotals": true }],
+            "rows": [
+                {
+                    "id": "g:a",
+                    "kind": "group",
+                    "depth": 0,
+                    "level": 1,
+                    "expanded": true,
+                    "cells": {
+                        "statement": "2026-10-31",
+                        "statement@label": "Oct 31, 2026",
+                        "statement@drill": "r1",
+                        "statementNo": 7,
+                        "debit": 100,
+                        "debit@currency": "USD"
+                    }
+                },
+                {
+                    "id": "d:1",
+                    "kind": "detail",
+                    "depth": 1,
+                    "section": "g:a",
+                    "cells": { "statementNo": 7, "debit": 100, "debit@currency": "USD" }
+                },
+                {
+                    "id": "s:a",
+                    "kind": "subtotal",
+                    "depth": 0,
+                    "level": 1,
+                    "section": "g:a",
+                    "cells": { "statementNo": 7, "debit": 100, "debit@currency": "USD" }
+                }
+            ],
+            "endsInSubtotal": ["g:a"],
+            "shown": {
+                "g:a": [],
+                "d:1": ["debit", "debit@currency", "statementNo"],
+                "s:a": ["debit", "debit@currency", "statementNo"]
+            }
+        },
+        {
+            "name": "a closed group shows every cell",
+            "columns": [{ "id": "statement", "groupOnly": true }, { "id": "debit" }],
+            "groups": [{ "subtotals": true }],
+            "rows": [
+                {
+                    "id": "g:a",
+                    "kind": "group",
+                    "depth": 0,
+                    "level": 1,
+                    "cells": {
+                        "statement": "2026-10-31",
+                        "statement@label": "Oct 31, 2026",
+                        "debit": 100,
+                        "debit@currency": "USD"
+                    }
+                },
+                {
+                    "id": "g:b",
+                    "kind": "group",
+                    "depth": 0,
+                    "level": 1,
+                    "cells": { "statement": "2026-09-30", "debit": 40 }
+                }
+            ],
+            "endsInSubtotal": [],
+            "shown": {
+                "g:a": ["debit", "debit@currency", "statement", "statement@label"],
+                "g:b": ["debit", "statement"]
+            }
+        },
+        {
+            "name": "an open group of a level with no subtotals shows every cell",
+            "columns": [{ "id": "statement", "groupOnly": true }, { "id": "debit" }],
+            "groups": [{}],
+            "rows": [
+                {
+                    "id": "g:a",
+                    "kind": "group",
+                    "depth": 0,
+                    "level": 1,
+                    "expanded": true,
+                    "cells": {
+                        "statement": "2026-10-31",
+                        "statement@label": "Oct 31, 2026",
+                        "debit": 100
+                    }
+                },
+                {
+                    "id": "d:1",
+                    "kind": "detail",
+                    "depth": 1,
+                    "section": "g:a",
+                    "cells": { "debit": 100 }
+                }
+            ],
+            "endsInSubtotal": [],
+            "shown": {
+                "g:a": ["debit", "statement", "statement@label"],
+                "d:1": ["debit"]
+            }
+        },
+        {
+            "name": "a paged run whose subtotal row has not arrived: the group row shows its group-only cells only",
+            "columns": [{ "id": "statement", "groupOnly": true }, { "id": "debit" }],
+            "groups": [{ "subtotals": true }],
+            "rows": [
+                {
+                    "id": "g:a",
+                    "kind": "group",
+                    "depth": 0,
+                    "level": 1,
+                    "expanded": true,
+                    "cells": {
+                        "statement": "2026-10-31",
+                        "statement@label": "Oct 31, 2026",
+                        "debit": 100
+                    }
+                },
+                {
+                    "id": "d:1",
+                    "kind": "detail",
+                    "depth": 1,
+                    "section": "g:a",
+                    "cells": { "debit": 100 }
+                }
+            ],
+            "endsInSubtotal": ["g:a"],
+            "shown": {
+                "g:a": ["statement", "statement@label"],
+                "d:1": ["debit"]
+            }
+        },
+        {
+            "name": "a layout section shows its group-only cells only",
+            "columns": [{ "id": "statement", "groupOnly": true }, { "id": "debit" }],
+            "groups": [{ "subtotals": true }],
+            "layout": [{ "section": "Income" }],
+            "rows": [
+                {
+                    "id": "g:income",
+                    "kind": "group",
+                    "depth": 0,
+                    "level": 1,
+                    "expanded": true,
+                    "cells": {
+                        "statement": "2026-10-31",
+                        "statement@label": "Oct 31, 2026",
+                        "debit": 900
+                    }
+                },
+                {
+                    "id": "d:1",
+                    "kind": "detail",
+                    "depth": 1,
+                    "section": "g:income",
+                    "cells": { "debit": 900 }
+                },
+                {
+                    "id": "s:income",
+                    "kind": "subtotal",
+                    "depth": 0,
+                    "level": 1,
+                    "section": "g:income",
+                    "cells": { "debit": 900 }
+                }
+            ],
+            "endsInSubtotal": ["g:income"],
+            "shown": {
+                "g:income": ["statement", "statement@label"],
+                "d:1": ["debit"],
+                "s:income": ["debit"]
+            }
+        },
+        {
+            "name": "two group levels: the outer group row, which has no group-only cell, shows no cell",
+            "columns": [{ "id": "statement", "groupOnly": true }, { "id": "debit" }],
+            "groups": [{ "subtotals": true }, { "subtotals": true }],
+            "rows": [
+                {
+                    "id": "g:a",
+                    "kind": "group",
+                    "depth": 0,
+                    "level": 1,
+                    "expanded": true,
+                    "cells": { "debit": 100, "debit@currency": "USD" }
+                },
+                {
+                    "id": "g:a|x",
+                    "kind": "group",
+                    "depth": 1,
+                    "level": 2,
+                    "section": "g:a",
+                    "expanded": true,
+                    "cells": {
+                        "statement": "2026-10-31",
+                        "statement@label": "Oct 31, 2026",
+                        "debit": 100,
+                        "debit@currency": "USD"
+                    }
+                },
+                {
+                    "id": "d:1",
+                    "kind": "detail",
+                    "depth": 2,
+                    "section": "g:a|x",
+                    "cells": { "debit": 100, "debit@currency": "USD" }
+                },
+                {
+                    "id": "s:a|x",
+                    "kind": "subtotal",
+                    "depth": 1,
+                    "level": 2,
+                    "section": "g:a|x",
+                    "cells": { "debit": 100, "debit@currency": "USD" }
+                },
+                {
+                    "id": "s:a",
+                    "kind": "subtotal",
+                    "depth": 0,
+                    "level": 1,
+                    "section": "g:a",
+                    "cells": { "debit": 100, "debit@currency": "USD" }
+                }
+            ],
+            "endsInSubtotal": ["g:a", "g:a|x"],
+            "shown": {
+                "g:a": [],
+                "g:a|x": ["statement", "statement@label"],
+                "d:1": ["debit", "debit@currency"],
+                "s:a|x": ["debit", "debit@currency"],
+                "s:a": ["debit", "debit@currency"]
+            }
+        }
+    ]
+}
