@@ -154,10 +154,11 @@ func (j *recordJoins) from(from string) string {
 		sc := j.scopes[gi]
 		joins = append(joins, fmt.Sprintf("LEFT JOIN %s ON %s IS %s.k%d", sc.from(), q(sc.alias, "id"), j.alias, gi))
 		for _, join := range sc.sql {
-			if strings.HasPrefix(join, "JOIN ") {
-				join = "LEFT " + join
+			sql := join.sql
+			if strings.HasPrefix(sql, "JOIN ") {
+				sql = "LEFT " + sql
 			}
-			joins = append(joins, join)
+			joins = append(joins, sql)
 		}
 	}
 	return fmt.Sprintf("(SELECT %s.*, %s FROM %s %s) %s", j.alias, strings.Join(j.cols, ", "), from, strings.Join(joins, "\n"), j.alias)

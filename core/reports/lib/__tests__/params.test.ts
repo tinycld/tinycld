@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
     chipText,
@@ -12,9 +14,11 @@ import {
     MAX_TEXT_PARAM,
     type ParamValue,
     type ParamValues,
+    PRESET_LABELS,
     periodWords,
     postedParams,
     presetsFor,
+    RANGE_PRESETS,
     utf8Length,
     valueFromJson,
     valueToJson,
@@ -406,6 +410,91 @@ describe('All dates', () => {
         expect(defaultValueOf({ ...PERIOD, default: { preset: 'allDates' } })).toEqual({
             kind: 'preset',
             preset: 'allDates',
+        })
+    })
+})
+
+// E1: the calendar-year presets. The engine's preset list (params.go rangePresets)
+// reads the same case file, so the two sides cannot drift.
+const RANGE_PRESET_CASES: { id: string; label: string }[] = JSON.parse(
+    readFileSync(join(__dirname, '../../../server/reports/testdata/range_presets.json'), 'utf8')
+)
+
+describe('calendar-year presets (E1)', () => {
+    const CALENDAR: ParamDef = { ...PERIOD, default: { preset: 'thisCalendarYear' } }
+    const LAST_CALENDAR: ParamDef = { ...PERIOD, default: { preset: 'lastCalendarYear' } }
+    const custom: ParamValue = { kind: 'range', from: '2026-03-01', to: '2026-03-31' }
+
+    it('lists the presets of the shared case file, in its order, with its labels', () => {
+        expect([...RANGE_PRESETS]).toEqual(RANGE_PRESET_CASES.map(c => c.id))
+        for (const c of RANGE_PRESET_CASES) {
+            expect(PRESET_LABELS[c.id as keyof typeof PRESET_LABELS]).toBe(c.label)
+        }
+    })
+
+    it('puts each calendar-year preset directly after its fiscal-year twin', () => {
+        const ids: string[] = [...RANGE_PRESETS]
+        const labels: Record<string, string> = PRESET_LABELS
+        expect(ids.indexOf('thisCalendarYear')).toBe(ids.indexOf('thisFiscalYear') + 1)
+        expect(ids.indexOf('lastCalendarYear')).toBe(ids.indexOf('lastFiscalYear') + 1)
+        expect(labels.thisCalendarYear).toBe('This calendar year')
+        expect(labels.lastCalendarYear).toBe('Last calendar year')
+    })
+
+    it('reads a calendar-year preset as a preset value of a date range only', () => {
+        expect(valueFromJson(PERIOD, { preset: 'thisCalendarYear' })).toEqual({
+            kind: 'preset',
+            preset: 'thisCalendarYear',
+        })
+        expect(valueFromJson(PERIOD, { preset: 'lastCalendarYear' })).toEqual({
+            kind: 'preset',
+            preset: 'lastCalendarYear',
+        })
+        expect(presetsFor(PERIOD)).toContain('thisCalendarYear')
+        expect(presetsFor(PERIOD)).toContain('lastCalendarYear')
+        expect(presetsFor(AS_OF)).not.toContain('thisCalendarYear')
+        expect(presetsFor(AS_OF)).not.toContain('lastCalendarYear')
+        expect(valueFromJson(AS_OF, { preset: 'thisCalendarYear' })).toBeNull()
+    })
+
+    it('offers This calendar year when a calendar-year report has no rows', () => {
+        expect(emptyAction([CALENDAR], { period: custom })).toEqual({
+            kind: 'preset',
+            paramId: 'period',
+            preset: 'thisCalendarYear',
+            label: 'Show this calendar year',
+        })
+        expect(emptyAction([LAST_CALENDAR], {})).toEqual({
+            kind: 'preset',
+            paramId: 'period',
+            preset: 'thisCalendarYear',
+            label: 'Show this calendar year',
+        })
+    })
+
+    it('offers nothing when the calendar-year report already shows this calendar year or all dates', () => {
+        expect(
+            emptyAction([CALENDAR], { period: { kind: 'preset', preset: 'thisCalendarYear' } })
+        ).toBeNull()
+        expect(emptyAction([CALENDAR], {})).toBeNull()
+        expect(
+            emptyAction([CALENDAR], { period: { kind: 'preset', preset: 'allDates' } })
+        ).toBeNull()
+    })
+
+    it('keeps Show this fiscal year for a report with a fiscal default', () => {
+        const FISCAL: ParamDef = { ...PERIOD, default: { preset: 'thisFiscalYear' } }
+        expect(emptyAction([FISCAL], { period: custom })).toEqual({
+            kind: 'preset',
+            paramId: 'period',
+            preset: 'thisFiscalYear',
+            label: 'Show this fiscal year',
+        })
+        expect(emptyAction([PERIOD], { period: custom })).toEqual({
+            kind: 'preset',
+            paramId: 'period',
+            preset: 'thisFiscalYear',
+            label: 'Show this fiscal year',
         })
     })
 })

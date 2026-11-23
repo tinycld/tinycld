@@ -58,6 +58,12 @@ type ruleForm struct {
 	probe string
 	// table is the collection's table, quoted.
 	table string
+	// answer is "SELECT EXISTS (<the rule on a one-row table>)" for a rule
+	// that reads no row and joins nothing (`@request.auth.id != ""`): one
+	// answer for every row, as a probe gives. The statement keeps such a rule
+	// in place (sent never reads answer), so its rule CTE text is unchanged;
+	// only showsEveryRow asks it. Blank for every other rule.
+	answer ruleRead
 }
 
 // ruleAsk answers a rule's probe for the statement being written: true when
@@ -89,6 +95,7 @@ func (f ruleForm) sent(ask ruleAsk) (ruleRead, error) {
 // ruleFormOf builds the list rule of col for the reader of info.
 func ruleFormOf(app core.App, col *core.Collection, info *core.RequestInfo) (ruleForm, error) {
 	q := app.DB().Select("{{" + col.Name + "}}.*").From(col.Name)
+	var answer ruleRead
 	switch {
 	case col.ListRule == nil:
 		q.AndWhere(dbx.NewExp("1=0"))
@@ -123,6 +130,11 @@ func ruleFormOf(app core.App, col *core.Collection, info *core.RequestInfo) (rul
 				}
 				return form, nil
 			}
+			// It joined nothing: the rule on the one-row table is its one
+			// answer, unless it names the table, as the probe above.
+			if one := inner.Build(); !namesTable(one.SQL(), col.Name) {
+				answer = ruleRead{sql: "SELECT EXISTS (" + one.SQL() + ")", params: one.Params()}
+			}
 		}
 		// A rule that reads no row and joined nothing reaches here after the
 		// first UpdateQuery, which added no join, so nothing is added twice.
@@ -133,7 +145,7 @@ func ruleFormOf(app core.App, col *core.Collection, info *core.RequestInfo) (rul
 	}
 	built := q.Build()
 	if !q.Info().Distinct {
-		return ruleForm{ruleRead: ruleRead{sql: built.SQL(), params: built.Params()}}, nil
+		return ruleForm{ruleRead: ruleRead{sql: built.SQL(), params: built.Params()}, answer: answer}, nil
 	}
 	// A rule that joined is a DISTINCT select, which SQLite cannot read in
 	// place: it copies the rows first, and a subquery run for every report
@@ -269,7 +281,8 @@ func (r *ruleNames) readsNoRow() bool {
 
 // unionSelect is a union source's rule CTE in full: each part's rule select
 // (ruleSelect, the part's own list rule), projected to the source's keys and
-// joined by UNION ALL. A key a part does not map reads NULL there; a part's
+// joined by UNION ALL. A key a part does not map reads a blank there
+// (unionBlank); a part's
 // constants are bound, under names that hold the source key, so two unions in
 // one statement never bind one name twice.
 func unionSelect(app core.App, src *Source, info *core.RequestInfo) (string, dbx.Params, error) {
@@ -303,8 +316,8 @@ func unionForms(app core.App, src *Source, info *core.RequestInfo, ask ruleAsk) 
 		if err := mergeParams(sent.params, partSent.params); err != nil {
 			return ruleRead{}, ruleRead{}, err
 		}
-		fulls = append(fulls, "SELECT "+unionPartCols(src, i, keys, full.params)+" FROM ("+form.sql+") p")
-		sents = append(sents, "SELECT "+unionPartCols(src, i, keys, sent.params)+" FROM ("+partSent.sql+") p")
+		fulls = append(fulls, "SELECT "+unionPartCols(app, src, i, keys, full.params)+" FROM ("+form.sql+") p")
+		sents = append(sents, "SELECT "+unionPartCols(app, src, i, keys, sent.params)+" FROM ("+partSent.sql+") p")
 	}
 	full.sql = strings.Join(fulls, "\nUNION ALL\n")
 	sent.sql = strings.Join(sents, "\nUNION ALL\n")
@@ -313,7 +326,8 @@ func unionForms(app core.App, src *Source, info *core.RequestInfo, ask ruleAsk) 
 
 // unionPartCols is the select list of part i of a union source, read as p:
 // the row's id, then each of the source's keys. A constant is bound in params.
-func unionPartCols(src *Source, i int, keys []string, params dbx.Params) string {
+// A key the part does not map is a blank (unionBlank).
+func unionPartCols(app core.App, src *Source, i int, keys []string, params dbx.Params) string {
 	part := src.Parts[i]
 	stem := "u_" + strings.ReplaceAll(src.Key, ".", "_")
 	cols := make([]string, 0, len(keys)+1)
@@ -329,10 +343,72 @@ func unionPartCols(src *Source, i int, keys []string, params dbx.Params) string 
 			params[name] = value
 			cols = append(cols, fmt.Sprintf("{:%s} AS [[%s]]", name, key))
 		default:
-			cols = append(cols, fmt.Sprintf("NULL AS [[%s]]", key))
+			cols = append(cols, fmt.Sprintf("%s AS [[%s]]", unionBlank(app, src, key), key))
 		}
 	}
 	return strings.Join(cols, ", ")
+}
+
+// unionBlank is the blank a part writes for a key it does not map: a NULL
+// with the affinity of the mapped column, the column the first part that maps
+// the key stores, taken from its declared column type (columnAffinity). SQLite
+// flattens a UNION ALL into the outer query only when each column has one
+// affinity in every part; an untyped NULL has none, so a filter on the union
+// would not reach the parts and their indexes. A key no part maps to a column
+// (or whose column's collection is not found) stays an untyped NULL.
+func unionBlank(app core.App, src *Source, key string) string {
+	for _, part := range src.Parts {
+		column, ok := part.Columns[key]
+		if !ok {
+			continue
+		}
+		col, err := app.FindCachedCollectionByNameOrId(part.Collection)
+		if err != nil {
+			continue
+		}
+		f := col.Fields.GetByName(column)
+		if f == nil {
+			continue
+		}
+		return "CAST(NULL AS " + columnAffinity(f.ColumnType(app)) + ")"
+	}
+	return "NULL"
+}
+
+// columnConstraintWords start the constraints after a column's type name in a
+// column definition (PocketBase's ColumnType holds "JSON DEFAULT NULL").
+var columnConstraintWords = map[string]bool{
+	"CONSTRAINT": true, "PRIMARY": true, "NOT": true, "NULL": true, "UNIQUE": true,
+	"CHECK": true, "DEFAULT": true, "COLLATE": true, "REFERENCES": true,
+	"GENERATED": true, "AS": true,
+}
+
+// columnAffinity is the affinity SQLite gives a column of the declared type
+// def, by SQLite's rules (https://www.sqlite.org/datatype3.html, 3.1) read on
+// the type name only: INT gives INTEGER; CHAR, CLOB or TEXT gives TEXT; BLOB
+// or no type gives BLOB; REAL, FLOA or DOUB gives REAL; any other type
+// NUMERIC. So a JSON column (a multi relation, select or file, a json or geo
+// point field) is NUMERIC, as is a number or a yes/no column.
+func columnAffinity(def string) string {
+	var name []string
+	for _, word := range strings.Fields(strings.ToUpper(def)) {
+		if columnConstraintWords[word] {
+			break
+		}
+		name = append(name, word)
+	}
+	typ := strings.Join(name, " ")
+	switch {
+	case strings.Contains(typ, "INT"):
+		return "INTEGER"
+	case strings.Contains(typ, "CHAR"), strings.Contains(typ, "CLOB"), strings.Contains(typ, "TEXT"):
+		return "TEXT"
+	case typ == "", strings.Contains(typ, "BLOB"):
+		return "BLOB"
+	case strings.Contains(typ, "REAL"), strings.Contains(typ, "FLOA"), strings.Contains(typ, "DOUB"):
+		return "REAL"
+	}
+	return "NUMERIC"
 }
 
 // mergeParams copies src into dst for a statement that holds several rule

@@ -62,7 +62,7 @@ func (rn *runner) nestLevel(level int, parents []any) ([]map[string]any, error) 
 	}
 	nl := p.nest[level]
 	link := nl.hops[len(nl.hops)-1]
-	s := newStmt(rn.app, rn.c.info)
+	s := rn.statement()
 	sc := newScope(s, link.to)
 	back := q(sc.alias, link.link.BackField)
 	sel := []string{back + " AS __parent", q(sc.alias, "id") + " AS __id"}

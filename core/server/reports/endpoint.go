@@ -5,17 +5,20 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
+	"regexp"
 	"slices"
+	"strings"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/inflector"
 
-	"tinycld.org/core/changesignal"
 	"tinycld.org/core/logging"
 )
 
@@ -119,11 +122,11 @@ func handleRun(re *core.RequestEvent) error {
 	if err := decodeStrict(re, &body, "a report run"); err != nil {
 		return err
 	}
-	raw, live, err := requestRun(re, body.Spec, body.ReportID)
+	raw, rec, err := requestSource(re, body.Spec, body.ReportID)
 	if err != nil {
 		return err
 	}
-	saved := body.ReportID != ""
+	live := rec != nil && shippedLive(rec)
 	spec, loaded, err := Load(raw)
 	if err != nil {
 		return runError(re, err)
@@ -135,8 +138,13 @@ func handleRun(re *core.RequestEvent) error {
 	if err != nil {
 		return runError(re, err)
 	}
-	if saved {
-		res.Topics = withSavedTopics(res.Topics)
+	if rec != nil {
+		topics, err := withSavedTopics(res.Topics, rec.Id, re.Auth.Id)
+		if err != nil {
+			log.ErrorContext(re.Request.Context(), "saved report run: topics failed", "reportId", rec.Id, "err", err)
+			return re.InternalServerError("The report could not run.", nil)
+		}
+		res.Topics = topics
 	}
 	return re.JSON(http.StatusOK, res)
 }
@@ -163,22 +171,13 @@ func requestSpec(re *core.RequestEvent, spec json.RawMessage, reportID string) (
 	return raw, err
 }
 
-// requestRun returns the spec and whether the run stays live over a NotLive
-// source. Only a saved report that a package ships as Live keeps it live, and
-// only while it still holds the shipped spec. A posted draft never does, so
-// the builder's preview of such a report runs manually.
-func requestRun(re *core.RequestEvent, spec json.RawMessage, reportID string) (raw []byte, live bool, err error) {
-	raw, rec, err := requestSource(re, spec, reportID)
-	if err != nil || rec == nil {
-		return raw, false, err
-	}
-	return raw, shippedLive(rec), nil
-}
-
 // requestSource reads the spec of a run request: a posted draft, or a saved
 // report the caller can view. It refuses both or neither, so a request never
 // runs a spec the caller did not mean. It returns the saved record, nil for a
-// draft, so requestRun can check the shipped state only for a saved report.
+// draft. handleRun reads the shipped state and the saved topics from it, so
+// only a saved report stays live over a NotLive source (a package ships it as
+// Live and it still holds the shipped spec); the builder's preview of such a
+// report, a posted draft, runs manually.
 func requestSource(re *core.RequestEvent, spec json.RawMessage, reportID string) ([]byte, *core.Record, error) {
 	switch {
 	case reportID != "" && spec != nil:
@@ -229,17 +228,46 @@ func viewableReport(re *core.RequestEvent, id string) (*core.Record, error) {
 	return rec, nil
 }
 
-// withSavedTopics adds the saved-report collections to a run's topics, so
-// the open report runs again when someone edits it or changes its shares,
-// and learns when the reader loses access.
-func withSavedTopics(topics []string) []string {
-	for _, c := range []string{reportsCollection, sharesCollection} {
-		if t := changesignal.Topic(c); !slices.Contains(topics, t) {
-			topics = append(topics, t)
-		}
+// withSavedTopics adds the record-level realtime topics of one saved report
+// and one reader to a run's topics: the report row (its view rule), and this
+// report's share rows of this reader (the shares list rule with a filter).
+// They are the only rows the reader's access and the run's spec read, so the
+// open report runs again when the report is edited, unpublished or deleted,
+// or when the reader's own share (direct or derived from a group) is added,
+// changed or removed, and never for another report's or another user's
+// writes. The filter cannot name @request.auth.id: PocketBase refuses a
+// client filter that reads @request, so it names the reader's id.
+func withSavedTopics(topics []string, reportID, readerID string) ([]string, error) {
+	share, err := readerSharesTopic(reportID, readerID)
+	if err != nil {
+		return nil, err
 	}
+	topics = append(topics, reportsCollection+"/"+reportID, share)
 	slices.Sort(topics)
-	return topics
+	return topics, nil
+}
+
+// recordID is the shape of a PocketBase record id field's default pattern.
+// Both ids come from records (the report viewableReport found, the signed-in
+// user), never from the request; the check keeps any other text out of the
+// filter all the same.
+var recordID = regexp.MustCompile(`^[a-z0-9]+$`)
+
+// readerSharesTopic is the shares topic of one report and one reader:
+// "report_shares/*?options=" and the query-escaped options JSON whose filter
+// names both ids.
+func readerSharesTopic(reportID, readerID string) (string, error) {
+	if !recordID.MatchString(reportID) || !recordID.MatchString(readerID) {
+		return "", fmt.Errorf("saved topics need record ids, got report %q and reader %q", reportID, readerID)
+	}
+	filter := "report = '" + reportID + "' && user = '" + readerID + "'"
+	var options strings.Builder
+	enc := json.NewEncoder(&options)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(map[string]map[string]string{"query": {"filter": filter}}); err != nil {
+		return "", err
+	}
+	return sharesCollection + "/*?options=" + url.QueryEscape(strings.TrimSuffix(options.String(), "\n")), nil
 }
 
 // ruleHeaders are the headers as a rule's @request.headers reads them:

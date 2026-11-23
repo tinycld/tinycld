@@ -2,6 +2,7 @@ package reports
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,6 +66,81 @@ func TestRangePresetsMatchTheShell(t *testing.T) {
 		if from != c.from || to != c.to {
 			t.Errorf("%s (fiscal start %d): %s..%s, want %s..%s", c.preset, c.pc.fiscalStart, from, to, c.from, c.to)
 		}
+	}
+}
+
+// E1: the calendar-year presets are January 1 to December 31 of the reader's
+// year (this) or the year before it (last), whatever the fiscal start month.
+func TestCalendarYearPresetsIgnoreTheFiscalStart(t *testing.T) {
+	for _, today := range []string{"2026-11-21", "2026-01-01", "2026-12-31"} {
+		for _, start := range []int{1, 7, 12} {
+			pc := periodContext{today: day(today), fiscalStart: start}
+			for preset, want := range map[string][2]string{
+				"thisCalendarYear": {"2026-01-01", "2026-12-31"},
+				"lastCalendarYear": {"2025-01-01", "2025-12-31"},
+			} {
+				if from, to := rangeDays(preset, pc); from != want[0] || to != want[1] {
+					t.Errorf("%s (today %s, fiscal start %d): %s..%s, want %s..%s", preset, today, start, from, to, want[0], want[1])
+				}
+			}
+		}
+	}
+}
+
+// The calendar-year presets resolve as a posted value and as a default, and
+// an unknown preset keeps its refusal.
+func TestCalendarYearPresetsAreParamValuesAndDefaults(t *testing.T) {
+	pc := periodContext{today: day("2026-11-21"), fiscalStart: 7}
+	for preset, want := range map[string][2]string{
+		"thisCalendarYear": {"2026-01-01", "2026-12-31"},
+		"lastCalendarYear": {"2025-01-01", "2025-12-31"},
+	} {
+		def := ParamDef{ID: "period", Type: ParamDateRange, Default: json.RawMessage(`{"preset":"` + preset + `"}`)}
+		if err := checkParamDefs([]ParamDef{def}); err != nil {
+			t.Fatalf("a %s default: %v", preset, err)
+		}
+		got, err := resolveParams([]ParamDef{def}, raws(nil), pc)
+		if err != nil {
+			t.Fatalf("a %s default: %v", preset, err)
+		}
+		if v := got["period"]; v.from != want[0] || v.to != want[1] {
+			t.Fatalf("a %s default resolves %s..%s, want %s..%s", preset, v.from, v.to, want[0], want[1])
+		}
+		posted, err := resolveParams([]ParamDef{{ID: "period", Type: ParamDateRange}}, raws(map[string]string{"period": `{"preset":"` + preset + `"}`}), pc)
+		if err != nil {
+			t.Fatalf("a posted %s: %v", preset, err)
+		}
+		if v := posted["period"]; v.from != want[0] || v.to != want[1] {
+			t.Fatalf("a posted %s resolves %s..%s, want %s..%s", preset, v.from, v.to, want[0], want[1])
+		}
+	}
+	unknown := ParamDef{ID: "period", Type: ParamDateRange, Default: json.RawMessage(`{"preset":"thisCalendarDecade"}`)}
+	requireSpecError(t, checkParamDefs([]ParamDef{unknown}), 400, "params.0.default", "the preset is one of")
+	_, err := resolveParams([]ParamDef{{ID: "period", Type: ParamDateRange}}, raws(map[string]string{"period": `{"preset":"thisCalendarDecade"}`}), pc)
+	requireSpecError(t, err, 400, "params.period", "the preset is one of")
+}
+
+// The engine's range presets are the shared case file's ids, in its order;
+// the client's RANGE_PRESETS and PRESET_LABELS read the same file
+// (core/reports/lib/__tests__/params.test.ts).
+func TestRangePresetsMatchTheSharedCaseFile(t *testing.T) {
+	raw, err := os.ReadFile("testdata/range_presets.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(cases))
+	for _, c := range cases {
+		ids = append(ids, c.ID)
+	}
+	if !reflect.DeepEqual(rangePresets, ids) {
+		t.Fatalf("rangePresets = %v\nwant the case file's %v", rangePresets, ids)
 	}
 }
 

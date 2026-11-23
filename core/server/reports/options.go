@@ -408,7 +408,7 @@ func optionsLimit(req OptionsRequest) (int, error) {
 // group by group, in the groups list's order, then by the order path, then
 // by label, then value.
 func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req OptionsRequest, limit int, res *ParamOptions) error {
-	s := newStmt(c.app, c.info)
+	s, answers := c.readerStmt(ctx)
 	ranked, keys, err := c.rankedOptionsSQL(s, op)
 	if err != nil {
 		return err
@@ -446,7 +446,7 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 	}
 	body := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g%s FROM (%s) o\nWHERE %s\nORDER BY %s LIMIT %s",
 		cols, ranked, strings.Join(conds, " AND "), strings.Join(optionOrder(keys, typ), ", "), limitSQL(int64(limit+1)))
-	rows, _, err := readRows(ctx, c.app, c.app.DB(), s, nil, body, nil, nil)
+	rows, _, err := readRows(ctx, c.app, c.app.DB(), s, nil, body, nil, answers)
 	if err != nil {
 		return err
 	}
@@ -467,6 +467,18 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 		res.Next = optionsCursor(after, textOf(last["l"]), textOf(last["v"]))
 	}
 	return nil
+}
+
+// readerStmt is a statement of an options read for the compiler's reader that
+// asks the rules one answer serves while it is written, as a run's statement
+// does (runner.statement), so a value reads a link's key from the row's own
+// column where the target's rule shows the reader every row (storedKey).
+// answers holds what it asked; readRows reads the same answers.
+func (c *compiler) readerStmt(ctx context.Context) (*stmt, map[string]bool) {
+	s := newStmt(c.app, c.info)
+	answers := map[string]bool{}
+	s.ask = askRules(ctx, c.app.DB(), answers)
+	return s, answers
 }
 
 // optionOrder is the options page's order over o: the group keys and the
@@ -502,7 +514,7 @@ func (c *compiler) pickedGroups(ctx context.Context, op *optionsPlan, groups []s
 // readOptionGroups reads into res the groups of the options that meet the
 // conditions conds gives on the options select (o).
 func (c *compiler) readOptionGroups(ctx context.Context, op *optionsPlan, res *ParamOptions, conds func(*stmt) ([]string, error)) error {
-	s := newStmt(c.app, c.info)
+	s, answers := c.readerStmt(ctx)
 	ranked, keys, err := c.rankedOptionsSQL(s, op)
 	if err != nil {
 		return err
@@ -515,7 +527,7 @@ func (c *compiler) readOptionGroups(ctx context.Context, op *optionsPlan, res *P
 	key := pathExpr("o.g", op.group)
 	body := fmt.Sprintf("SELECT o.g AS g, o.gl AS gl, o.glc AS glc FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY %s LIMIT %s",
 		ranked, strings.Join(where, " AND "), strings.Join(keys, ", "), limitSQL(int64(maxOptionGroups+1)))
-	rows, _, err := readRows(ctx, c.app, c.app.DB(), s, nil, body, nil, nil)
+	rows, _, err := readRows(ctx, c.app, c.app.DB(), s, nil, body, nil, answers)
 	if err != nil {
 		return err
 	}

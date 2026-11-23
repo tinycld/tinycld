@@ -6,17 +6,21 @@ import {
     addColumn,
     addSale,
     addTeam,
+    CALENDAR_YEAR_TITLE,
     cellOf,
     chooseOption,
     holdRuns,
     hubRow,
+    openDrilled,
     openReportStub,
     openReportsHub,
     pressToolbar,
     rowOf,
     SALES_SOURCE,
+    STUB_FLOOR_LINE,
     saveNewReport,
     seedStub,
+    setPeriod,
     startReport,
     uniqueName,
 } from './reports-helpers'
@@ -562,5 +566,92 @@ test.describe('the report view', () => {
         await expectTitleBeforeActions(p, true)
         await p.setViewportSize({ width: 390, height: 844 })
         await expectTitleBeforeActions(p, true)
+    })
+})
+
+// The answer to the run whose period (as JSON, '' when the run sends none, which
+// is the default) passes `isPeriod`: the run of that change of the period.
+function nextRun(p: Page, isPeriod: (period: string) => boolean) {
+    return p.waitForResponse(response => {
+        const request = response.request()
+        if (request.method() !== 'POST' || !response.url().includes('/api/reports/run')) {
+            return false
+        }
+        const period = request.postDataJSON()?.params?.period
+        return isPeriod(period === undefined ? '' : JSON.stringify(period))
+    })
+}
+
+// The shipped "Stub calendar year" (register.go.txt `salesstub.calendar_year`):
+// its period opens on This calendar year (E1), and its spec header line prints
+// the stub's one floor row, which the run looks up (E2).
+test.describe('reports: calendar year and header lines', () => {
+    test('a calendar-year report opens on This calendar year, and the picker offers both calendar presets', async ({
+        freshMember,
+    }) => {
+        const p = freshMember.page
+        const team = uniqueName('Team')
+        const thisYear = uniqueName('This year')
+        const lastYear = uniqueName('Last year')
+        await seedStub(p, {
+            teams: [{ name: team }],
+            sales: [
+                { team, customer: thisYear, amount: 4000, cost: 0, day: `${YEAR}-06-15` },
+                { team, customer: lastYear, amount: 3000, cost: 0, day: `${YEAR - 1}-06-15` },
+            ],
+        })
+        await openDrilled(p, CALENDAR_YEAR_TITLE)
+        const chip = p.getByTestId('report-param-period')
+        await expect(chip).toHaveText('Period: This calendar year')
+        await expect(rowOf(p, thisYear)).toBeVisible()
+        await expect(rowOf(p, lastYear)).toHaveCount(0)
+
+        await chip.click()
+        await expect(p.getByTestId('report-period-preset-thisCalendarYear')).toHaveText(
+            'This calendar year'
+        )
+        const lastPreset = p.getByTestId('report-period-preset-lastCalendarYear')
+        await expect(lastPreset).toHaveText('Last calendar year')
+        const ran = nextRun(p, period => period.includes('lastCalendarYear'))
+        await lastPreset.click()
+        await ran
+        await p.keyboard.press('Escape')
+        await expect(p.getByTestId('report-period-popover')).toHaveCount(0)
+        await expect(chip).toHaveText('Period: Last calendar year')
+        await expect(p.getByTestId('report-document-period')).toHaveText(
+            `January 1 – December 31, ${YEAR - 1}`
+        )
+        await expect(rowOf(p, lastYear)).toBeVisible()
+        await expect(rowOf(p, thisYear)).toHaveCount(0)
+    })
+
+    // The header reads no row of the reader's, and the empty state's action runs
+    // the shared member's own sales of this year (seedSales), so it serves.
+    test('a header line prints a value the run reads, and an empty calendar-year report offers This calendar year', async ({
+        p,
+    }) => {
+        await openDrilled(p, CALENDAR_YEAR_TITLE)
+        const basis = p.getByTestId('report-header-param-basis')
+        const floor = p.getByTestId('report-header-param-header-0')
+        await expect(basis).toHaveText('Accrual basis')
+        await expect(floor).toHaveText(STUB_FLOOR_LINE)
+        await expect
+            .poll(async () => {
+                const [b, f] = await Promise.all([basis.boundingBox(), floor.boundingBox()])
+                return b && f ? f.y >= b.y + b.height - 1 : null
+            })
+            .toBe(true)
+
+        const emptyRun = nextRun(p, period => period.includes('1903-01-31'))
+        await setPeriod(p, '1903-01-01', '1903-01-31')
+        await emptyRun
+        const action = p.getByTestId('report-empty-action')
+        await expect(action).toHaveText('Show this calendar year')
+        const ran = nextRun(p, period => !period.includes('1903'))
+        await action.click()
+        await ran
+        await expect(p.getByTestId('report-param-period')).toHaveText('Period: This calendar year')
+        await expect(rowOf(p, 'Alpha')).toBeVisible()
+        await expect(floor).toHaveText(STUB_FLOOR_LINE)
     })
 })

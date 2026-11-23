@@ -10,11 +10,11 @@ import (
 	"github.com/nathanstitt/omnidoc/pkg/xlsx"
 )
 
-// The Excel file's layout: the header block in rows 1 to 4, an empty row,
-// the column headings in row 6 (frozen), the report's rows from row 7.
+// The Excel file's layout: the header block in rows 1 to 4 (and one row more
+// for each spec header line that prints), an empty row, the column headings
+// (frozen; row 6 with no spec line), then the report's rows.
 const (
 	xlsxHeadingRow  = 6
-	xlsxFirstRow    = 7
 	xlsxMaxWidth    = 60
 	xlsxMinWidth    = 8
 	xlsxSheetRunes  = 31
@@ -39,7 +39,8 @@ type xlsxColumn struct {
 }
 
 // writeXLSX writes the report as an Excel file of one sheet named after the
-// title: the header block (heading, title, period in words, params line), an
+// title: the header block (heading, title, period in words, spec header
+// lines, params line), an
 // empty row, the column headings (frozen), then one row per report row with
 // every group open. Cells are typed (RawCell's kind): money and numbers are
 // numbers with a two-place format, money in units; a percent is a fraction
@@ -59,6 +60,8 @@ func writeXLSX(ctx context.Context, d *exportData) ([]byte, error) {
 	if err := writeXLSXHeader(se, d); err != nil {
 		return nil, err
 	}
+	headingRow := xlsxHeadingRow + len(d.SpecLines)
+	firstRow := headingRow + 1
 	columns := xlsxColumns(d)
 	for i := range columns {
 		text := d.Format.Heading(columns[i].Col)
@@ -66,17 +69,17 @@ func writeXLSX(ctx context.Context, d *exportData) ([]byte, error) {
 			text += " currency"
 		}
 		columns[i].longest = utf8.RuneCountInString(text)
-		if err := se.SetString(xlsxHeadingRow, i+1, text); err != nil {
+		if err := se.SetString(headingRow, i+1, text); err != nil {
 			return nil, err
 		}
-		if err := se.PatchCellStyle(xlsxHeadingRow, i+1, xlsx.StylePatch{Font: &xlsx.FontPatch{Bold: ptr(true)}}); err != nil {
+		if err := se.PatchCellStyle(headingRow, i+1, xlsx.StylePatch{Font: &xlsx.FontPatch{Bold: ptr(true)}}); err != nil {
 			return nil, err
 		}
 	}
-	se.SetFrozen(xlsxHeadingRow, 0)
+	se.SetFrozen(headingRow, 0)
 
 	if len(d.Rows) == 0 {
-		if err := se.SetString(xlsxFirstRow, 1, d.emptyText()); err != nil {
+		if err := se.SetString(firstRow, 1, d.emptyText()); err != nil {
 			return nil, err
 		}
 	}
@@ -84,7 +87,7 @@ func writeXLSX(ctx context.Context, d *exportData) ([]byte, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := writeXLSXRow(se, d.Format, columns, xlsxFirstRow+i, r); err != nil {
+		if err := writeXLSXRow(se, d.Format, columns, firstRow+i, r); err != nil {
 			return nil, err
 		}
 	}
@@ -116,11 +119,12 @@ func xlsxSheetName(title string) string {
 	return name
 }
 
-// writeXLSXHeader writes rows 1 to 4: the heading and the title (bold), the
-// period in words and the params line. A line with no text leaves its row
-// empty.
+// writeXLSXHeader writes the header block from row 1: the heading and the
+// title (bold), the period in words, each spec header line that prints, and
+// the params line. A line with no text leaves its row empty.
 func writeXLSXHeader(se *xlsx.SheetEdit, d *exportData) error {
-	lines := []string{d.headingText(), d.Title, d.periodWords(), d.paramsLine()}
+	lines := append([]string{d.headingText(), d.Title, d.periodWords()}, d.SpecLines...)
+	lines = append(lines, d.paramsLine())
 	for i, text := range lines {
 		if text == "" {
 			continue

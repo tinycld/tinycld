@@ -332,8 +332,16 @@ test.describe('general-ledger: report engine v3', () => {
         // the next page (R3). Request 3 (the server's most: only team B's group row
         // is missing) starts with it. Before J1 the target counted detail rows only
         // (0 here), so request 2 already asked for the server's most.
+        // Only the requests that ask for every group open count. Each change to the
+        // rows the report read (another worker's stub sales or teams write: seedStub
+        // in most report specs) runs the report again in its earlier, collapsed state,
+        // and such a live rerun can reach the server just after the press. It is not
+        // the fold run.
         expect(
-            sent.slice(0, 3).map(run => [run.cursor !== undefined, run.limit]),
+            sent
+                .filter(run => run.expandAll)
+                .slice(0, 3)
+                .map(run => [run.cursor !== undefined, run.limit]),
             'requests of Expand all at team B'
         ).toEqual([
             [false, USUAL_PAGE],

@@ -132,10 +132,15 @@ function headingOf(result: RunResult | undefined, orgName: string | undefined): 
     return result.heading || orgName || ''
 }
 
-// The chosen options the run prints under the period (N1); none until a run answers.
-function headerLinesFor(defs: readonly ParamDef[], result: RunResult | undefined): HeaderLine[] {
+// The chosen options (N1) and the spec's own lines (E2) the run prints under the
+// period; none until a run answers.
+function headerLinesFor(
+    defs: readonly ParamDef[],
+    spec: ReportSpec | null | undefined,
+    result: RunResult | undefined
+): HeaderLine[] {
     if (!result) return NO_HEADER_LINES
-    return headerLinesOf({ params: defs }, result)
+    return headerLinesOf({ params: defs, header: spec?.header }, result)
 }
 
 // A param's options are read against what the view runs: the saved report, or the draft.
@@ -380,7 +385,7 @@ export function useReportView(input: ReportViewInput) {
         postedParams: posted,
         optionLabels,
         periodWords: periodWords(period, periodResolved),
-        headerLines: headerLinesFor(defs, run.result),
+        headerLines: headerLinesFor(defs, input.spec, run.result),
         emptyMessage: emptyMessage(period, periodResolved),
         emptyAction: action,
         onEmptyAction,
