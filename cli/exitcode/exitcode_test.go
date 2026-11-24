@@ -44,6 +44,26 @@ func TestNewKeepsNilAndUnwraps(t *testing.T) {
 	}
 }
 
+func TestErrorWithNoInnerErrorDoesNotPanic(t *testing.T) {
+	err := &Error{Code: Usage}
+	if got := err.Error(); got != "usage" {
+		t.Fatalf("Error() = %q, want the code name", got)
+	}
+	if err.Unwrap() != nil {
+		t.Fatal("Unwrap of an Error with no inner error must be nil")
+	}
+}
+
+// A cancelled call is the caller's own doing (Ctrl-C), not a server that is
+// down: retrying it is wrong, so it keeps Failed.
+func TestClassifyCancelledIsFailed(t *testing.T) {
+	for _, err := range []error{context.Canceled, fmt.Errorf("list: %w", context.Canceled)} {
+		if got := Of(Classify(err)); got != Failed {
+			t.Errorf("%v: code = %d, want Failed", err, got)
+		}
+	}
+}
+
 func TestClassifyByHTTPStatus(t *testing.T) {
 	for status, want := range map[int]int{
 		400: Refused, 401: Auth, 403: Forbidden, 404: NotFound, 408: Unavailable,

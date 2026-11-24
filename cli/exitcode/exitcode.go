@@ -49,7 +49,13 @@ type Error struct {
 	Err  error
 }
 
-func (e *Error) Error() string { return e.Err.Error() }
+func (e *Error) Error() string {
+	if e.Err == nil {
+		return Name(e.Code)
+	}
+	return e.Err.Error()
+}
+
 func (e *Error) Unwrap() error { return e.Err }
 
 // New gives err the exit code. A nil err stays nil.
@@ -118,6 +124,8 @@ func classOf(err error) int {
 	if errors.As(err, &api) {
 		return statusClass(api.Status)
 	}
+	// context.Canceled stays Failed: it is the caller's own cancel (Ctrl-C),
+	// not a server that is down, so "retry later" would be wrong advice.
 	// *url.Error, which every failed http.Client call returns, is a net.Error.
 	var netErr net.Error
 	if errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded) {
