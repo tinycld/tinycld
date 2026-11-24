@@ -45,9 +45,11 @@ vitest aliases (tests), and a Go `replace` directive (server).
 
 This repo is one member of a workspace, not a standalone clone target. Let
 `@tinycld/bootstrap` assemble the workspace root and clone this `tinycld` repo
-(which carries `@tinycld/core` + `@tinycld/package-scripts` nested) — it writes the
-workspace coordination files (`package.json`, `tinycld.packages.ts`, shared test
-stubs) from embedded templates and clones each member as a sibling directory:
+(which carries `@tinycld/core` + `@tinycld/package-scripts` nested) — it writes
+`tinycld.packages.ts`, the workspace `vitest.config.ts` and the shared test stubs
+from embedded templates, clones each member as a sibling directory, and runs this
+repo's `scripts/write-workspace-root.ts`, which writes the root `package.json`,
+`pnpm-workspace.yaml` and the other coordination files:
 
 ```sh
 mkdir ~/code/tinycld && cd ~/code/tinycld
