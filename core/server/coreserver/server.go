@@ -33,6 +33,7 @@ import (
 	"tinycld.org/core/offboard"
 	"tinycld.org/core/passkey"
 	"tinycld.org/core/pkgaccess"
+	"tinycld.org/core/pkgterms"
 	"tinycld.org/core/quota"
 	"tinycld.org/core/readonly"
 	"tinycld.org/core/realtime"
@@ -483,6 +484,9 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	passkey.Register(app)
 	nativeauth.Register(app)
 	pkgaccess.Register(app)
+	// Package terms: the owner's decisions, and the guard of the registry's
+	// terms fields. Shared: the decision API is the same wherever it runs.
+	pkgterms.Register(app)
 	// Saved reports and their shares. Before groups.Register: report_shares is
 	// a group grant table, and groups binds the expansion of every grant
 	// table registered by then. Shared: a share reaches its readers wherever
