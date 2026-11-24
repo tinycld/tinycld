@@ -1,10 +1,12 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { PackageManager } from '@tinycld/core/components/setup/PackageManager'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
+import { TERMS_PACKAGES } from '@tinycld/core/lib/packages/use-package-terms'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
+import { useRouter } from 'expo-router'
 import { ArrowLeft } from 'lucide-react-native'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
@@ -21,6 +23,7 @@ export default function OrgPackageSettings() {
     const orgHref = useOrgHref()
     const navigateBack = useNavigateBack(() => orgHref('settings'))
     const fgColor = useThemeColor('foreground')
+    const router = useRouter()
 
     // Gated on isReady as well as isOwner: `role` reads null while the live
     // query loads, so a bare isOwner check flashes the refusal for a
@@ -45,6 +48,10 @@ export default function OrgPackageSettings() {
                 <Pressable onPress={navigateBack} className="self-start">
                     <ArrowLeft size={24} color={fgColor} />
                 </Pressable>
+                <PackageTermsLink
+                    isVisible={TERMS_PACKAGES.length > 0}
+                    onPress={() => router.push(orgHref('settings/package-terms'))}
+                />
                 {/* PackageManager renders its own "Packages" PageHeader, so this
                     screen deliberately adds no title of its own. */}
                 <View
@@ -56,5 +63,17 @@ export default function OrgPackageSettings() {
                 </View>
             </View>
         </ScrollView>
+    )
+}
+
+// Shown only when a package of this build declares terms.
+function PackageTermsLink({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
+    if (!isVisible) return null
+    return (
+        <Pressable onPress={onPress} testID="packages-terms-link" className="self-start">
+            <Text className="text-sm text-primary underline">
+                Read or accept the terms and conditions of packages
+            </Text>
+        </Pressable>
     )
 }

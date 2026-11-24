@@ -6,7 +6,11 @@ import {
     packageSettings,
     packageSystemSettings,
 } from '@tinycld/core/lib/packages/derive-components'
-import { slugOfGroup, useTermsOpen } from '@tinycld/core/lib/packages/use-package-terms'
+import {
+    slugOfGroup,
+    TERMS_PACKAGES,
+    useTermsOpen,
+} from '@tinycld/core/lib/packages/use-package-terms'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { isManagedPrefix, useManagedSettingPrefixes } from '@tinycld/core/lib/use-managed-settings'
@@ -18,6 +22,7 @@ import {
     ChevronRight,
     ClipboardList,
     DatabaseBackup,
+    FileCheck,
     HardDrive,
     History,
     Image,
@@ -343,12 +348,38 @@ function OwnerLinks({ isVisible }: { isVisible: boolean }) {
                 onPress={() => router.push(orgHref('settings/packages'))}
                 icon={<Package size={20} color={foregroundColor} />}
             />
+            <PackageTermsLink
+                isVisible={TERMS_PACKAGES.length > 0}
+                onPress={() => router.push(orgHref('settings/package-terms'))}
+                color={foregroundColor}
+            />
             <SettingsLink
                 label="Build History"
                 onPress={() => router.push(orgHref('settings/builds'))}
                 icon={<History size={20} color={foregroundColor} />}
             />
         </>
+    )
+}
+
+// Listed only when a package of this build declares terms.
+function PackageTermsLink({
+    isVisible,
+    onPress,
+    color,
+}: {
+    isVisible: boolean
+    onPress: () => void
+    color: string
+}) {
+    if (!isVisible) return null
+    return (
+        <SettingsLink
+            label="Package terms"
+            testID="settings-link-package-terms"
+            onPress={onPress}
+            icon={<FileCheck size={20} color={color} />}
+        />
     )
 }
 
