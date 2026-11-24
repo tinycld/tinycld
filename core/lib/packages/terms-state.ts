@@ -53,6 +53,21 @@ export function blockedSlugsOf(
     return new Set(rows.filter(r => termsStateOf(r) === 'pending').map(r => r.slug))
 }
 
+/**
+ * True when the screen of a package's route may mount. A package that declares
+ * terms waits until its terms state has been known once (`wasReady`, a latch, or
+ * `isReady` now), so its screen mounts covered or open, never covered for a
+ * moment: that would take the focus from an autofocused input for good. Once it
+ * has mounted it stays, so a later reload of the state loses no unsaved input.
+ */
+export function termsRouteMayMount(
+    declaresTerms: boolean,
+    wasReady: boolean,
+    isReady: boolean
+): boolean {
+    return !declaresTerms || wasReady || isReady
+}
+
 /** The pending packages, in the order of the given rows, each with its decline mark. */
 export function pendingTermsOf(
     rows: readonly TermsRow[],

@@ -27,24 +27,26 @@ export function useActivePkgTermsBlocked(): boolean {
 }
 
 /**
- * The props for the View around the package screens. They follow the ACTIVE
- * package, because the cover is over the content area. While the cover shows, the screen under it stays mounted (so the other
- * packages keep their frozen state) but is out of play: no pointer, no focus,
- * no assistive tech. Web uses `inert`, set through the ref because
- * react-native's View props do not type it. Native uses pointerEvents and the
- * accessibility props, and the ref keeps the focus out of the screens
- * (`holdNativeFocusOut`) until the cover goes: React calls the release the ref
- * returns when the cover state changes or the View unmounts. Dialogs, shortcuts
- * and inputs follow each route's own state instead (`CoveredRoute`, PackageTabs).
+ * The props for the View around the package screens. `isCovered` follows the
+ * ACTIVE package, because the cover is over the content area. While the cover
+ * shows, the screen under it stays mounted (so the other packages keep their
+ * state) but is out of play: no pointer, no focus, no assistive tech. Web uses
+ * `inert`, set through the ref because react-native's View props do not type
+ * it. Native uses pointerEvents and the accessibility props, and the ref keeps
+ * the focus out of the screens (`holdNativeFocusOut`) until the cover goes.
+ * Both are released by the cleanup the ref returns: React runs it before the
+ * screens that mount in the same commit take their autofocus, and attaches the
+ * new ref only after them. Dialogs, shortcuts and inputs follow each route's
+ * own state instead (`CoveredRoute`, PackageTabs).
  */
-export function useCoveredContentProps() {
-    const isCovered = useActivePkgTermsBlocked()
+export function useCoveredContentProps(isCovered: boolean) {
     const ref = useCallback(
         (node: ViewInstance | null) => {
             if (node == null) return undefined
             if (Platform.OS === 'web') {
-                setInert(node as unknown as HTMLElement, isCovered)
-                return undefined
+                const element = node as unknown as HTMLElement
+                setInert(element, isCovered)
+                return isCovered ? () => setInert(element, false) : undefined
             }
             return isCovered ? holdNativeFocusOut(node) : undefined
         },
@@ -78,7 +80,7 @@ function useCover(): Cover {
 /**
  * Covers the package content area while the owner has not accepted the
  * package's terms. On top of the Tabs navigator, as PackageAccessDenied is, so
- * the other packages keep their frozen state.
+ * the other packages stay mounted and keep their state.
  */
 export function PackageTermsGate() {
     const cover = useCover()

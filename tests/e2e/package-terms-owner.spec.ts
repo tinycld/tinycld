@@ -163,6 +163,10 @@ test.describe('package terms: the owner decides', () => {
         const input = page.getByTestId(TERMS_STUB.input)
         await input.fill('abc')
         await expect(input).toHaveValue('abc')
+
+        // A cold load: the route mounts once its terms state is known, so the input keeps its autofocus.
+        await loginOnSecond(page, TERMS_STUB.slug)
+        await expect(page.getByTestId(TERMS_STUB.input)).toBeFocused()
     })
 
     test('on a phone the owner reads and accepts the terms on the package route', async ({

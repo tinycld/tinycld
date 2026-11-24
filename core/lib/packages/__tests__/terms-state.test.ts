@@ -4,6 +4,7 @@ import {
     hasUndecidedTerms,
     openEntriesOf,
     pendingTermsOf,
+    termsRouteMayMount,
     termsStateOf,
 } from '../terms-state'
 
@@ -44,6 +45,19 @@ describe('blockedSlugsOf', () => {
     })
     it('opens a declared package that has no registry row', () => {
         expect(blockedSlugsOf(['zoo'], [], true).size).toBe(0)
+    })
+})
+
+describe('termsRouteMayMount', () => {
+    it('holds the route of a package that declares terms until its state is known', () => {
+        expect(termsRouteMayMount(true, false, false)).toBe(false)
+        expect(termsRouteMayMount(true, false, true)).toBe(true)
+    })
+    it('keeps a route mounted when the state goes back to loading', () => {
+        expect(termsRouteMayMount(true, true, false)).toBe(true)
+    })
+    it('never holds the route of a package that declares no terms', () => {
+        expect(termsRouteMayMount(false, false, false)).toBe(true)
     })
 })
 

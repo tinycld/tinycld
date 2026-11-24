@@ -8,8 +8,9 @@ import { createContext, useContext } from 'react'
  * take no keys, until the cover goes.
  *
  * The value belongs to each navigator route, not to the active one: a closed
- * route that stays mounted and frozen while the user is on an open route is
- * still covered there.
+ * route that stays mounted while the user is on an open route is still covered
+ * there (bottom tabs never freeze a screen in the installed expo-router, so it
+ * keeps rendering).
  */
 const CoveredContext = createContext(false)
 
