@@ -332,7 +332,8 @@ export interface PackageManifest {
 
     /**
      * Terms and conditions the owner must accept before the package is used
-     * in the app (PackageTermsDecl); the client gates a pending package. Omit it and the package needs no acceptance.
+     * in the app (PackageTermsDecl). The client gates a pending package. Omit
+     * it and the package needs no acceptance.
      */
     terms?: PackageTermsDecl
 }

@@ -33,9 +33,10 @@ type bundledPackage struct {
 	TermsBody    string `json:"termsBody,omitempty"`
 }
 
-// syncTerms stores a bundled package's terms text after its registry row is
-// saved. A failure is logged, not fatal, as for the row itself. The caller runs
-// it only after a successful save, so a package never has a text without its row.
+// syncTerms stores a bundled package's terms text. The caller runs it only after
+// the package's registry row saved. A failed terms save is logged, not fatal.
+// After a failed save the stored text, if any, is the one of the last boot that
+// saved.
 func syncTerms(app core.App, pkg bundledPackage) {
 	if err := pkgterms.Sync(app, pkg.Slug, pkg.TermsVersion, pkg.TermsBody); err != nil {
 		srvLog.Error("failed to store package terms", "slug", pkg.Slug, "err", err)
