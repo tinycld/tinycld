@@ -1,6 +1,7 @@
 import { expect, type Page, test } from '@playwright/test'
 import { APP_PREFIX } from '@tinycld/core/lib/org-routes'
 import type PocketBase from 'pocketbase'
+import { CORE_STEP_IDS, setupStep } from '../../core/e2e-setup-helpers'
 import {
     loginOnSecond,
     PHONE_VIEWPORT,
@@ -44,6 +45,8 @@ import {
 //
 // Not covered: the gate is in the client only; no test asserts that the
 // server refuses a request.
+
+const WIZARD_KEY = 'setup.wizard'
 
 async function openStub(page: Page) {
     await page.getByTestId(`nav-${TERMS_STUB.slug}`).click()
@@ -146,5 +149,77 @@ test.describe('package terms: the owner decides', () => {
         await review.getByTestId('pkg-terms-agree').click()
         await expect(page.getByTestId('pkg-terms-review')).toHaveCount(0)
         await expect(page.getByTestId(TERMS_STUB.landing)).toBeVisible()
+    })
+
+    test.describe('the setup wizard', () => {
+        // Waits on ruling 30 (the human's approval of fixtures 2 and 3 in the header).
+        // Set only when this run made the row: a row left by a stopped run is
+        // used as it is and stays.
+        let madeWizardRowId = ''
+        let stubRowId = ''
+        let stubStatus = ''
+
+        test.beforeAll(async () => {
+            // A wizard that is complete: its steps stay open by their URL, and
+            // nobody on this deployment is sent into the wizard meanwhile.
+            const settings = pb.collection('system_settings')
+            const found = await settings.getList(1, 1, {
+                filter: pb.filter('key = {:key}', { key: WIZARD_KEY }),
+            })
+            if (found.totalItems === 0) {
+                const now = new Date().toISOString()
+                const value = JSON.stringify({
+                    startedAt: now,
+                    acknowledged: [],
+                    skipped: [],
+                    completedAt: now,
+                })
+                madeWizardRowId = (await settings.create({ key: WIZARD_KEY, value })).id
+            }
+
+            // The app is off before the owner agrees, so the test shows that
+            // the acceptance turns it on.
+            const stub = await pb
+                .collection('pkg_registry')
+                .getFirstListItem(pb.filter('slug = {:slug}', { slug: TERMS_STUB.slug }))
+            stubRowId = stub.id
+            stubStatus = String(stub.status)
+            await pb.collection('pkg_registry').update(stubRowId, { status: 'disabled' })
+        })
+
+        test.afterAll(async () => {
+            if (stubRowId !== '') {
+                await pb.collection('pkg_registry').update(stubRowId, { status: stubStatus })
+            }
+            if (madeWizardRowId !== '') {
+                await pb.collection('system_settings').delete(madeWizardRowId)
+            }
+        })
+
+        test('the Apps step shows the terms, and agreeing turns the app on', async ({ page }) => {
+            const step = setupStep(page, CORE_STEP_IDS.apps)
+            // A setup step renders outside the app shell: the step itself
+            // shows that the sign-in is done.
+            await loginOnSecond(page, 'setup/core.apps', step)
+            await expect(step).toBeVisible()
+            const card = page.getByTestId(`setup-app-${TERMS_STUB.slug}`)
+            await expect(card).toHaveAttribute('aria-checked', 'false')
+            await expect(page.getByTestId(`setup-app-terms-${TERMS_STUB.slug}`)).toBeVisible()
+
+            // Closing the terms leaves the app off.
+            await card.click()
+            const dialog = page.getByTestId('pkg-terms-dialog')
+            await expect(dialog.getByTestId('pkg-terms-body')).toContainText(TERMS_STUB.sentence)
+            await dialog.getByTestId('pkg-terms-dialog-close').click()
+            await expect(card).toHaveAttribute('aria-checked', 'false')
+
+            await card.click()
+            await page.getByTestId('pkg-terms-dialog-agree').click()
+            await expect(card).toHaveAttribute('aria-checked', 'true')
+            await expect(page.getByTestId(`setup-app-terms-${TERMS_STUB.slug}`)).toHaveCount(0)
+            // Read-only check: the acceptance also turned the app on.
+            const stub = await pb.collection('pkg_registry').getOne(stubRowId)
+            expect(stub.status).not.toBe('disabled')
+        })
     })
 })
