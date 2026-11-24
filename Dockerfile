@@ -125,6 +125,8 @@ COPY drive/ ./drive/
 COPY calc/ ./calc/
 COPY text/ ./text/
 COPY google-takeout-import/ ./google-takeout-import/
+COPY boards/ ./boards/
+COPY books/ ./books/
 
 # expo-env.d.ts is an Expo-generated, gitignored type shim (a single triple-slash
 # reference to expo/types). Because it's gitignored it isn't in the build
@@ -208,7 +210,7 @@ RUN --mount=type=cache,target=/root/.cache/pnpm,sharing=locked \
 # tar --files-from preserves relative paths.
 RUN mkdir -p /ws/go-mod-staging \
     && cd /ws \
-    && find tinycld contacts mail calendar drive calc text google-takeout-import \
+    && find tinycld contacts mail calendar drive calc text google-takeout-import boards books \
         \( -name go.mod -o -name go.sum -o -name go.work -o -name go.work.sum \) -print0 \
         | tar --null --files-from=- -cf - \
         | tar -xf - -C /ws/go-mod-staging
@@ -329,6 +331,8 @@ COPY --from=web-builder /ws/drive/ ./drive/
 COPY --from=web-builder /ws/calc/ ./calc/
 COPY --from=web-builder /ws/text/ ./text/
 COPY --from=web-builder /ws/google-takeout-import/ ./google-takeout-import/
+COPY --from=web-builder /ws/boards/ ./boards/
+COPY --from=web-builder /ws/books/ ./books/
 
 WORKDIR /ws/tinycld/server
 # No `go work sync` here. The workspace build below records any checksum a
@@ -565,6 +569,8 @@ COPY --from=web-builder --chown=tinycld:tinycld /ws/drive /opt/tinycld-baked/dri
 COPY --from=web-builder --chown=tinycld:tinycld /ws/calc /opt/tinycld-baked/calc
 COPY --from=web-builder --chown=tinycld:tinycld /ws/text /opt/tinycld-baked/text
 COPY --from=web-builder --chown=tinycld:tinycld /ws/google-takeout-import /opt/tinycld-baked/google-takeout-import
+COPY --from=web-builder --chown=tinycld:tinycld /ws/boards /opt/tinycld-baked/boards
+COPY --from=web-builder --chown=tinycld:tinycld /ws/books /opt/tinycld-baked/books
 
 # The merged member's sub-trees the runtime + in-app installer need. This is an
 # EXPLICIT ALLOW-LIST, not "everything except the binary and release-staging":

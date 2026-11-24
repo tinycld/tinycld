@@ -55,7 +55,8 @@ jq -r '.members[] | "\(.name)\t\(.repo)\t\(.sha)"' "$MANIFEST" |
 # missing. (Replaces the v1 --tooling flag, removed in bootstrap v2.)
 TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only \
     --with contacts --with mail --with calendar --with drive \
-    --with calc --with text --with google-takeout-import
+    --with calc --with text --with google-takeout-import \
+    --with boards --with books
 
 # Drop the pinned lockfile into the workspace root so a later
 # `pnpm install --frozen-lockfile` reproduces the exact dependency set.

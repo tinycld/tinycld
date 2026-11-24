@@ -237,9 +237,12 @@ The image bakes the Go binary, Expo web export, PocketBase server, and the
 [contacts](https://github.com/tinycld/contacts),
 [drive](https://github.com/tinycld/drive),
 [calc](https://github.com/tinycld/calc),
-[text](https://github.com/tinycld/text), and
-[google-takeout-import](https://github.com/tinycld/google-takeout-import)
-packages into one container (the set is fixed in `scripts/ci-assemble-workspace.sh`).
+[text](https://github.com/tinycld/text),
+[google-takeout-import](https://github.com/tinycld/google-takeout-import),
+[boards](https://github.com/tinycld/boards), and
+[books](https://github.com/tinycld/books)
+packages into one container (the set is fixed in the `Dockerfile` and in
+`scripts/ci-assemble-workspace.sh`).
 Let's Encrypt certificate handling is baked in (`AUTOCERT_ENABLED`). The `Dockerfile` also
 supports Dokku deploys; `deploy/render.yaml` configures Render, including its `/api/health`
 healthcheck.
