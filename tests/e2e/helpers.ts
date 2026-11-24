@@ -168,8 +168,7 @@ export async function login(page: Page, options: { startAt?: string; landed?: Lo
             .waitFor({ state: 'visible', timeout: 15_000 })
             .then(() => 'login-form' as const)
             .catch(() => 'neither' as const),
-        page
-            .getByTestId('nav-home')
+        (options.landed ?? page.getByTestId('nav-home'))
             .waitFor({ state: 'visible', timeout: 15_000 })
             .then(() => 'shell' as const)
             .catch(() => 'neither' as const),
