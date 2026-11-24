@@ -9,6 +9,7 @@ import {
     useOverlayLayer,
     wasConsumedByLayerDismissal,
 } from '@tinycld/core/ui/overlay'
+import { useOpenUnlessCovered } from '@tinycld/core/ui/overlay/covered'
 import { shouldDismissSwipe } from '@tinycld/core/ui/swipe-dismiss/should-dismiss'
 import { X } from 'lucide-react-native'
 import type { ReactNode, RefObject } from 'react'
@@ -110,7 +111,7 @@ interface SheetProps {
 }
 
 function SheetRoot({
-    isOpen,
+    isOpen: isOpenProp,
     onClose,
     children,
     title,
@@ -124,6 +125,8 @@ function SheetRoot({
     onRestoreFocus,
     testID,
 }: SheetProps) {
+    // A sheet that covered content opens by itself would draw over the cover.
+    const isOpen = useOpenUnlessCovered(isOpenProp)
     const overlayBg = useThemeColor('overlay-backdrop')
     const surfaceBg = useThemeColor(surface)
     const handleColor = useThemeColor('border')

@@ -37,7 +37,7 @@ import {
 } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
 import type PocketBase from 'pocketbase'
-import { useCallback, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useRef, useState } from 'react'
 import {
     ActivityIndicator,
     Pressable,
@@ -99,9 +99,11 @@ interface PackageManagerProps {
     // Gates the version-discovery fetch so it only runs when this screen is shown
     // (the dashboard keeps every tab mounted). Defaults true for any standalone use.
     isVisible?: boolean
+    // Content rendered directly under the "Packages" page header.
+    belowHeader?: ReactNode
 }
 
-export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
+export function PackageManager({ pb, isVisible = true, belowHeader }: PackageManagerProps) {
     const [showRegister, setShowRegister] = useState(false)
     const [showInstall, setShowInstall] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -234,6 +236,8 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                     </>
                 }
             />
+
+            {belowHeader}
 
             <BusyNotice isVisible={isBusy} />
 
@@ -1162,6 +1166,10 @@ function RegisterPackageModal({
                 icon: '',
                 manifest_json: '',
                 has_server: false,
+                // A source that is not installed declares no terms yet; the boot
+                // sync writes the version when its package is installed.
+                terms_version: '',
+                terms_accepted_version: '',
             })
         }),
         onSuccess: () => {

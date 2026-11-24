@@ -255,6 +255,38 @@ describe('buildBundledPackages', () => {
             source: 'github:tinycld/tinycld',
         })
     })
+
+    it('carries the terms of a package that has them, and no terms keys for one that has none', () => {
+        const rows = JSON.parse(
+            buildBundledPackages([
+                {
+                    manifest: {
+                        name: 'Gizmos',
+                        slug: 'gizmos',
+                        version: '0.1.0',
+                        description: '',
+                        terms: { file: 'TERMS.md', version: '2026-11-01' },
+                    },
+                    terms: { version: '2026-11-01', body: '# Gizmos terms' },
+                },
+                {
+                    manifest: {
+                        name: 'Trinkets',
+                        slug: 'trinkets',
+                        version: '0.2.0',
+                        description: '',
+                    },
+                },
+            ])
+        ) as Record<string, unknown>[]
+        expect(rows[0]).toMatchObject({ termsVersion: '2026-11-01', termsBody: '# Gizmos terms' })
+        expect(JSON.parse(rows[0]?.manifestJson as string).terms).toEqual({
+            file: 'TERMS.md',
+            version: '2026-11-01',
+        })
+        expect(rows[1]).not.toHaveProperty('termsVersion')
+        expect(rows[1]).not.toHaveProperty('termsBody')
+    })
 })
 
 describe('buildPortsJson', () => {

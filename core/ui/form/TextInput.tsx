@@ -1,4 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useCoveredInputProps } from '@tinycld/core/ui/overlay/covered'
 import { autoFocusDataSet } from '@tinycld/core/ui/overlay/focus'
 import type { ComponentType, ReactNode, Ref } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
@@ -80,6 +81,7 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
     } = useController({ name, control })
 
     const placeholderColor = useThemeColor('field-placeholder')
+    const focusProps = useCoveredInputProps(inputProps)
 
     const hasError = !!error
 
@@ -93,8 +95,9 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
                     // after the spread because the form binding and the field's
                     // look belong to this component.
                     {...inputProps}
+                    {...focusProps}
                     ref={inputRef}
-                    dataSet={autoFocusDataSet(inputProps)}
+                    dataSet={autoFocusDataSet({ ...inputProps, ...focusProps })}
                     value={field.value || ''}
                     onChangeText={value => {
                         field.onChange(value)

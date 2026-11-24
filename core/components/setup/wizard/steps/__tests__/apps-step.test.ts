@@ -20,6 +20,7 @@ describe('appChoicesOf', () => {
                 description: 'First app',
                 icon: 'mail',
                 isOn: true,
+                needsTerms: false,
             },
             {
                 id: 'r2',
@@ -28,7 +29,19 @@ describe('appChoicesOf', () => {
                 description: 'Second app',
                 icon: 'calendar',
                 isOn: false,
+                needsTerms: false,
             },
+        ])
+    })
+    it('shows an app with terms the owner has not accepted as off, whatever its status', () => {
+        const rows = [
+            { id: 'r1', slug: 'alpha', status: 'bundled' },
+            { id: 'r2', slug: 'beta', status: 'bundled' },
+        ]
+        const choices = appChoicesOf(rows, bundled, new Set(['beta']))
+        expect(choices.map(c => [c.slug, c.isOn, c.needsTerms])).toEqual([
+            ['alpha', true, false],
+            ['beta', false, true],
         ])
     })
     it('leaves out core and rows not compiled into this build', () => {

@@ -47,7 +47,7 @@ export function MoreDrawer() {
     }
 
     return (
-        <Sheet isOpen={isMoreOpen} onClose={close} surface="rail-background">
+        <Sheet isOpen={isMoreOpen} onClose={close} surface="rail-background" testID="more-drawer">
             <View className="flex-row items-center justify-between px-5 pb-3">
                 <View className="flex-row items-center gap-3">
                     <View

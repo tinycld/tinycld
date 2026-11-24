@@ -1,5 +1,6 @@
 import { inArray } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
+import { TermsDialog } from '@tinycld/core/components/package-terms/TermsDialog'
 import { useAutoUpgrade } from '@tinycld/core/components/setup/use-auto-upgrade'
 import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/SetupContinueButton'
 import { StepHeading } from '@tinycld/core/components/setup/wizard/StepHeading'
@@ -9,12 +10,19 @@ import { captureException, errorToString } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { notify } from '@tinycld/core/lib/notify'
 import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
+import {
+    type PackageTermsEntry,
+    usePackageTermsList,
+    useTermsBlocked,
+    useTermsDecision,
+} from '@tinycld/core/lib/packages/use-package-terms'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { enabledStatusFor } from '@tinycld/core/lib/setup/set-package-enabled'
 import type { SetupStepProps } from '@tinycld/core/lib/setup/types'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { Check } from 'lucide-react-native'
+import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { type AppChoice, appChoicesOf, autoUpdateChoiceOf } from './app-choices'
 
@@ -22,6 +30,8 @@ import { type AppChoice, appChoicesOf, autoUpdateChoiceOf } from './app-choices'
 export function useIsStepVisible() {
     return useCurrentRole().isOwner
 }
+
+const NO_CHOICES: AppChoice[] = []
 
 function useAppChoices() {
     const [pkgRegistry] = useStore('pkg_registry')
@@ -53,7 +63,31 @@ function useAppChoices() {
             })
         },
     })
-    return { choices: appChoicesOf(rows, packageRegistry), toggle: toggle.mutate }
+    // An app with terms the owner has not accepted shows as off, whatever its
+    // status: it turns on when the owner agrees in the terms dialog.
+    const { blocked, isReady } = useTermsBlocked()
+    // No cards until the terms state is known: before that every app with terms
+    // reads closed, and a press would turn on an app with unaccepted terms.
+    const choices = isReady ? appChoicesOf(rows, packageRegistry, blocked) : NO_CHOICES
+    return { choices, toggle: toggle.mutate }
+}
+
+/** The terms dialog of this step: which app's terms are open, and the decision. */
+function useAppTerms() {
+    const { entries } = usePackageTermsList()
+    // Local: only this step opens the dialog.
+    const [openSlug, setOpenSlug] = useState<string | null>(null)
+    const close = () => setOpenSlug(null)
+    const { decide, isPending } = useTermsDecision({ onDecided: close })
+    return {
+        entry: entries.find(e => e.slug === openSlug) ?? null,
+        open: setOpenSlug,
+        close,
+        isPending,
+        // Agreeing here also turns the app on: that is what the owner pressed the card for.
+        decide: (entry: PackageTermsEntry, decision: 'accepted' | 'declined') =>
+            decide({ entry, decision, shouldEnable: true }),
+    }
 }
 
 const CARD_CLASS = {
@@ -106,6 +140,7 @@ function AppCard({
             onPress={() => onToggle(choice)}
             accessibilityRole="checkbox"
             accessibilityState={{ checked: choice.isOn }}
+            aria-checked={choice.isOn}
             accessibilityLabel={choice.name}
             className={`${CARD_CLASS[state]} ${widthClass}`}
         >
@@ -117,9 +152,19 @@ function AppCard({
                 <Text className="text-xs leading-4 text-muted-foreground" numberOfLines={2}>
                     {choice.description}
                 </Text>
+                <TermsHint isVisible={choice.needsTerms} slug={choice.slug} />
             </View>
             <CheckMark isOn={choice.isOn} />
         </Pressable>
+    )
+}
+
+function TermsHint({ isVisible, slug }: { isVisible: boolean; slug: string }) {
+    if (!isVisible) return null
+    return (
+        <Text testID={`setup-app-terms-${slug}`} className="text-xs font-medium text-primary">
+            Has terms and conditions. Press to read them.
+        </Text>
     )
 }
 
@@ -133,6 +178,7 @@ function AutoUpdateChoice() {
             onPress={() => au.setOn(!choice.isOn)}
             accessibilityRole="checkbox"
             accessibilityState={{ checked: choice.isOn }}
+            aria-checked={choice.isOn}
             accessibilityLabel="Upgrade apps automatically when new versions are available"
             className="mb-6 flex-row items-center gap-3"
         >
@@ -146,20 +192,28 @@ function AutoUpdateChoice() {
 
 export default function AppsStep({ next }: SetupStepProps) {
     const { choices, toggle } = useAppChoices()
+    const terms = useAppTerms()
+    const press = (c: AppChoice) => (c.needsTerms ? terms.open(c.slug) : toggle(c))
     const widthClass =
         useBreakpoint() === 'mobile' ? CARD_WIDTH_CLASS.narrow : CARD_WIDTH_CLASS.wide
     const cards = choices.map(c => (
-        <AppCard key={c.slug} choice={c} widthClass={widthClass} onToggle={toggle} />
+        <AppCard key={c.slug} choice={c} widthClass={widthClass} onToggle={press} />
     ))
     return (
         <View>
             <StepHeading
                 title="Choose your apps"
-                lead="These apps come with your server. Clear an app to hide it from everyone. You can show it again, or add more apps, at any time in Settings → Packages."
+                lead="These apps come with your server. Clear an app to hide it from everyone. You can show it again, or add more apps, at any time in Settings → Packages. An app with terms and conditions turns on when you agree to them."
             />
             <View className="mb-6 flex-row flex-wrap gap-3">{cards}</View>
             <AutoUpdateChoice />
             <SetupContinueButton onPress={next} requiresServer={false} />
+            <TermsDialog
+                entry={terms.entry}
+                onClose={terms.close}
+                onDecide={terms.decide}
+                isSubmitting={terms.isPending}
+            />
         </View>
     )
 }

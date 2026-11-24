@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type { PortsFeature } from './describe-packages'
+import type { ResolvedTerms } from './gen-terms'
 import type { PackageManifest } from './load-manifest'
 import { goVersion } from './paths'
 import { assertSafeImportField } from './validate-generated-field'
@@ -130,6 +131,9 @@ interface BundledPkgInput {
     // so the `!!manifest.server` derivation would wrongly report false — pass
     // true here. Feature rows omit it and fall back to the manifest derivation.
     hasServer?: boolean
+    // The package's terms and conditions, already validated and read
+    // (resolveTerms in gen-terms.ts). Omitted for a package without terms.
+    terms?: ResolvedTerms
 }
 
 // Emit server/bundled-packages.json — consumed by core's Go
@@ -151,6 +155,9 @@ export function buildBundledPackages(features: BundledPkgInput[]): string {
         navOrder: f.manifest.nav?.order ?? 0,
         manifestJson: JSON.stringify(f.manifest),
         ...(f.source ? { source: f.source } : {}),
+        // Core's Go sync (SyncBundledPackages) copies these to
+        // pkg_registry.terms_version and the pkg_terms collection.
+        ...(f.terms ? { termsVersion: f.terms.version, termsBody: f.terms.body } : {}),
     }))
     return `${JSON.stringify(rows, null, 2)}\n`
 }

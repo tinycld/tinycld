@@ -72,15 +72,15 @@ var hostHookCounts = map[string]int{
 	"OnRecordAuthRequest":                 2, // the disabled-user guard and the MFA gate
 	"OnRecordAuthWithPasswordRequest":     2,
 	"OnRecordConfirmPasswordResetRequest": 1, // a reset ends an admin-set temporary password
-	"OnRecordCreate":                      8, // incl. the web form publication token and defaults, the web form auto-reply guard on rules, the proof-of-work guard on a new publication, and the seat limit (shared, via RegisterSharedEarly)
+	"OnRecordCreate":                      9, // incl. the web form publication token and defaults, the web form auto-reply guard on rules, the proof-of-work guard on a new publication, the seat limit (shared, via RegisterSharedEarly), and the check of a package terms decision (shared, via pkgterms.Register)
 	"OnRecordCreateExecute":               2,
-	"OnRecordCreateRequest":               16,
+	"OnRecordCreateRequest":               19, // incl. pkgterms: who decided, the registry's terms fields; and the audit of a terms decision
 	"OnRecordDelete":                      5,
 	"OnRecordDeleteExecute":               5,
-	"OnRecordDeleteRequest":               18,
+	"OnRecordDeleteRequest":               19, // incl. the audit of a terms decision
 	"OnRecordUpdate":                      12, // incl. app passwords revoked on a tokenKey change, the web form publication token, the web form auto-reply guards (rules, publications), and the seat limit (shared)
 	"OnRecordUpdateExecute":               4,
-	"OnRecordUpdateRequest":               19,
+	"OnRecordUpdateRequest":               21, // incl. pkgterms: the registry's terms fields; and the audit of a terms decision
 	"OnRecordValidate":                    6,
 	"OnServe":                             41, // incl. the batch settings applied on every start, the classifier routes and GET /api/seats (all shared, via RegisterSharedCore); macOS binds one more, see platformHookCounts
 	"OnSettingsReload":                    1,

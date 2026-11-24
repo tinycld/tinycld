@@ -14,6 +14,7 @@ import { useHubActions } from '../hooks/useHubActions'
 import { copyTitle, MAX_TITLE, useReportBuilder } from '../hooks/useReportBuilder'
 import { useReportCatalog } from '../hooks/useReportCatalog'
 import { useReportRecord } from '../hooks/useReportRecord'
+import { useReportTermsGate } from '../hooks/useReportTermsGate'
 import { useReportView } from '../hooks/useReportView'
 import type { Catalog } from '../lib/builder/columns'
 import { HUB_BACK_LABEL } from '../lib/report-back'
@@ -233,13 +234,18 @@ function ReportFromHub({ reportId }: { reportId: string }) {
 
 function ReportScreenBody({ reportId, back }: { reportId: string; back: ReportBack }) {
     const record = useReportRecord(reportId)
+    const terms = useReportTermsGate(record.record?.source)
     const search = useLocalSearchParams<{ [EDIT_KEY]?: string }>()
     const frame = { onBack: back.onBack, backLabel: back.label }
-    if (record.state === 'loading') return <ReportFrame title="" state="loading" {...frame} />
+    if (record.state === 'loading' || terms === 'wait') {
+        return <ReportFrame title="" state="loading" {...frame} />
+    }
     if (record.state === 'error') {
         return <ReportFrame title="" state="error" onRetry={record.retry} {...frame} />
     }
-    if (record.state === 'missing') return <ReportFrame title="" state="no-access" {...frame} />
+    if (record.state === 'missing' || terms === 'closed') {
+        return <ReportFrame title="" state="no-access" {...frame} />
+    }
     if (search[EDIT_KEY] === '1' && record.access.canEdit) {
         return <EditingBody record={record} back={back} />
     }

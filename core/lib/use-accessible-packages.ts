@@ -2,6 +2,7 @@ import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { ACTIVE_PKG_STATUSES } from '@tinycld/core/lib/packages/registry-predicates'
+import { useTermsBlocked } from '@tinycld/core/lib/packages/use-package-terms'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
@@ -24,6 +25,7 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
     const userId = user.id
     const [orgPkgAccessCollection] = useStore('org_pkg_access')
     const [pkgRegistryCollection] = useStore('pkg_registry')
+    const { blocked: termsBlocked, isReady: termsReady } = useTermsBlocked()
 
     // Global registry: which packages are active (bundled or installed)
     const { data: registryRecords, isReady: registryReady } = useLiveQuery({
@@ -59,18 +61,24 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
     // loading (empty-on-first-load), which would flash every package before the
     // registry arrives. Distinguish loaded-and-empty from not-yet-loaded via
     // isReady rather than the record count.
-    const registryLoaded = registryReady && installedReady
+    // The terms state is part of "loaded": until it is known, a package that
+    // declares terms is closed (useTermsBlocked), and a list built before that
+    // would drop it and then show it.
+    const registryLoaded = registryReady && installedReady && termsReady
     const hasRegistry = allActiveRecords.length > 0
     const filtered =
         registryLoaded && !hasRegistry
             ? packages
             : packages.filter(pkg => activeSlugs.has(pkg.slug))
 
-    // Admins/owners see everything active; they have no per-user overrides to
-    // wait on, so they're ready as soon as the registry has loaded.
-    if (role === 'owner' || role === 'admin') {
-        return { packages: filtered, isReady: registryLoaded }
-    }
+    // The owner keeps the entry of a package whose terms are not accepted: its
+    // route shows the terms. Nobody else gets an entry for it.
+    if (role === 'owner') return { packages: filtered, isReady: registryLoaded }
+    const open = filtered.filter(pkg => !termsBlocked.has(pkg.slug))
+
+    // Admins see everything active and open; they have no per-user overrides
+    // to wait on, so they're ready as soon as the registry has loaded.
+    if (role === 'admin') return { packages: open, isReady: registryLoaded }
 
     // Non-admins are gated on BOTH the registry AND their per-user overrides.
     // Default-DENY until overrides load: an empty overrideMap during the load
@@ -83,7 +91,7 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
         (overrides ?? []).map(o => [o.pkg, o.access as 'full' | 'readonly' | 'none'])
     )
 
-    const accessible = filtered.filter(pkg => {
+    const accessible = open.filter(pkg => {
         const access = overrideMap.get(pkg.slug)
         if (role === 'guest') return access === 'full' || access === 'readonly'
         return access !== 'none'

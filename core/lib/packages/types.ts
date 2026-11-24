@@ -329,6 +329,27 @@ export interface PackageManifest {
      * generator lists them in `lib/generated/report-panels.ts`.
      */
     reportPanels?: ReportPanelDecl[]
+
+    /**
+     * Terms and conditions the owner must accept before the package is used
+     * in the app (PackageTermsDecl). The client gates a pending package. Omit
+     * it and the package needs no acceptance.
+     */
+    terms?: PackageTermsDecl
+}
+
+/**
+ * A package's terms and conditions. `file` is a markdown file in the package,
+ * relative to the package root (for example `'TERMS.md'`). `version` is a label
+ * of 1 to 50 letters, digits, `.`, `_` or `-` that the author changes when the
+ * text changes; core compares it for equality only. The owner accepts one
+ * version: a new version blocks the package again until the owner accepts it.
+ * The generator reads the file (scripts/gen-terms.ts), so the text is the text
+ * of the installed package version.
+ */
+export interface PackageTermsDecl {
+    file: string
+    version: string
 }
 
 export interface PackagePort {
