@@ -102,7 +102,7 @@ test.describe('package terms: the owner decides', () => {
         await loginOnSecond(page)
         await expect
             .poll(() => new URL(page.url()).pathname)
-            .toMatch(new RegExp(`^${APP_PREFIX}/[^/]+`))
+            .toMatch(new RegExp(`^${APP_PREFIX}/(?!settings/package-terms)[^/]+`))
         expect(page.url()).not.toContain('package-terms')
     })
 
@@ -111,6 +111,13 @@ test.describe('package terms: the owner decides', () => {
     }) => {
         await resetStubTerms(pb, 'declined')
         await loginOnSecond(page)
+        // The rail does not wait for the terms state. The review cover shows
+        // only when that state is ready and the stub is pending, so the
+        // negative check below reads a loaded state.
+        await openStub(page)
+        await expect(
+            page.getByTestId('pkg-terms-review').getByTestId('pkg-terms-declined')
+        ).toBeVisible()
         await page.getByTestId('nav-settings').click()
         await expect(page.getByTestId(TERMS_STUB.settingsLink)).toHaveCount(0)
         await page.getByTestId('settings-link-package-terms').click()
@@ -149,6 +156,20 @@ test.describe('package terms: the owner decides', () => {
         await review.getByTestId('pkg-terms-agree').click()
         await expect(page.getByTestId('pkg-terms-review')).toHaveCount(0)
         await expect(page.getByTestId(TERMS_STUB.landing)).toBeVisible()
+    })
+
+    test('on a phone the first launch shows the terms in a sheet and the owner agrees', async ({
+        page,
+    }) => {
+        await page.setViewportSize(PHONE_VIEWPORT)
+        await loginOnSecond(page)
+        await expect(page.getByTestId('settings-package-terms')).toBeVisible()
+
+        await page.getByTestId(`pkg-terms-open-${TERMS_STUB.slug}`).click()
+        const dialog = page.getByTestId('pkg-terms-dialog')
+        await expect(dialog.getByTestId('pkg-terms-body')).toContainText(TERMS_STUB.sentence)
+        await dialog.getByTestId('pkg-terms-dialog-agree').click()
+        await expect(page.getByTestId(`pkg-terms-state-${TERMS_STUB.slug}`)).toHaveText('Accepted')
     })
 
     test.describe('the setup wizard', () => {

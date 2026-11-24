@@ -22,7 +22,6 @@ export default function PackageTermsSettings() {
     const { entries, isReady } = usePackageTermsList()
     const orgHref = useOrgHref()
     const navigateBack = useNavigateBack(() => orgHref('settings'))
-    const fgColor = useThemeColor('foreground')
     // Which package's terms are open. Local: no other component needs it.
     const [openSlug, setOpenSlug] = useState<string | null>(null)
     const { decide, isPending } = useTermsDecision({ onDecided: () => setOpenSlug(null) })
@@ -33,11 +32,14 @@ export default function PackageTermsSettings() {
 
     if (!isOwner) {
         return (
-            <View className="flex-1 items-center justify-center bg-background p-5">
+            <View className="flex-1 bg-background p-5">
                 <DocumentTitle pkg="Settings" title="Package terms" />
-                <Text className="text-base text-muted-foreground">
-                    Only the owner can accept the terms of a package.
-                </Text>
+                <BackButton onPress={navigateBack} />
+                <View className="flex-1 items-center justify-center">
+                    <Text className="text-base text-muted-foreground">
+                        Only the owner can accept the terms of a package.
+                    </Text>
+                </View>
             </View>
         )
     }
@@ -54,9 +56,7 @@ export default function PackageTermsSettings() {
         >
             <DocumentTitle pkg="Settings" title="Package terms" />
             <View className="w-full max-w-[720px] gap-4 p-5">
-                <Pressable onPress={navigateBack} className="self-start">
-                    <ArrowLeft size={24} color={fgColor} />
-                </Pressable>
+                <BackButton onPress={navigateBack} />
                 <Text className="text-[22px] font-bold text-foreground">Package terms</Text>
                 <Text className="text-sm text-muted-foreground">
                     A package with terms and conditions can be used only after you agree to them.
@@ -72,6 +72,15 @@ export default function PackageTermsSettings() {
                 isSubmitting={isPending}
             />
         </ScrollView>
+    )
+}
+
+function BackButton({ onPress }: { onPress: () => void }) {
+    const fgColor = useThemeColor('foreground')
+    return (
+        <Pressable onPress={onPress} className="self-start">
+            <ArrowLeft size={24} color={fgColor} />
+        </Pressable>
     )
 }
 

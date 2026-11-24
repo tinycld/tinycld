@@ -48,12 +48,9 @@ export default function OrgPackageSettings() {
                 <Pressable onPress={navigateBack} className="self-start">
                     <ArrowLeft size={24} color={fgColor} />
                 </Pressable>
-                <PackageTermsLink
-                    isVisible={TERMS_PACKAGES.length > 0}
-                    onPress={() => router.push(orgHref('settings/package-terms'))}
-                />
                 {/* PackageManager renders its own "Packages" PageHeader, so this
-                    screen deliberately adds no title of its own. */}
+                    screen deliberately adds no title of its own. It has no slot
+                    under that header, so the link follows the manager. */}
                 <View
                     className="w-full gap-4"
                     style={{ maxWidth: 1040 }}
@@ -61,6 +58,10 @@ export default function OrgPackageSettings() {
                 >
                     <PackageManager pb={pb} isVisible />
                 </View>
+                <PackageTermsLink
+                    isVisible={TERMS_PACKAGES.length > 0}
+                    onPress={() => router.push(orgHref('settings/package-terms'))}
+                />
             </View>
         </ScrollView>
     )
