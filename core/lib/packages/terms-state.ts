@@ -53,7 +53,7 @@ export function blockedSlugsOf(
     return new Set(rows.filter(r => termsStateOf(r) === 'pending').map(r => r.slug))
 }
 
-/** The pending packages, in registry order, each with its decline mark. */
+/** The pending packages, in the order of the given rows, each with its decline mark. */
 export function pendingTermsOf(
     rows: readonly TermsRow[],
     declined: readonly DeclinedRow[],

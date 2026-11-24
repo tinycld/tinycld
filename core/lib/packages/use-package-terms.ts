@@ -1,9 +1,7 @@
 import { eq, inArray } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
-import { captureException, errorToString } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
-import { notify } from '@tinycld/core/lib/notify'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { enabledStatusFor } from '@tinycld/core/lib/setup/set-package-enabled'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
@@ -34,6 +32,10 @@ const NO_SLUGS: ReadonlySet<string> = new Set()
 
 const TERMS_SLUG_SET: ReadonlySet<string> = new Set(TERMS_SLUGS)
 
+// Module-level defaults: a fresh [] each render would rebuild every useMemo while the query has no data.
+const NO_ROWS: never[] = []
+const NO_DECLINED: never[] = []
+
 /** True for a package of this build that declares terms. Static: reads no store. */
 export const declaresTerms = (slug: string) => TERMS_SLUG_SET.has(slug)
 
@@ -42,13 +44,14 @@ const nameOf = (slug: string) => TERMS_PACKAGES.find(p => p.slug === slug)?.name
 /** The registry rows of the packages that declare terms. One filter, so every caller shares one subscription. */
 function useTermsRows() {
     const [pkgRegistry] = useStore('pkg_registry')
-    const { data: rows = [], isReady } = useLiveQuery({
+    const { data: rows = NO_ROWS, isReady } = useLiveQuery({
         queryKey: ['core', 'pkg-terms', 'rows'],
         query: query =>
             HAS_TERMS
                 ? query
                       .from({ p: pkgRegistry })
                       .where(({ p }) => inArray(p.slug, TERMS_SLUGS))
+                      .orderBy(({ p }) => p.slug)
                       .select(({ p }) => ({
                           id: p.id,
                           slug: p.slug,
@@ -79,7 +82,10 @@ function useBlockedFromRegistry(): TermsBlocked {
     return useMemo(
         () => ({
             blocked: blockedSlugsOf(TERMS_SLUGS, rows, isReady),
-            stateOf: slug => termsStateOf(rows.find(r => r.slug === slug)),
+            stateOf: (slug): TermsState =>
+                !isReady && TERMS_SLUG_SET.has(slug)
+                    ? 'pending'
+                    : termsStateOf(rows.find(r => r.slug === slug)),
             isReady,
         }),
         [rows, isReady]
@@ -134,7 +140,7 @@ export function usePackageTermsList(): {
     const { isOwner, isReady: roleReady } = useCurrentRole()
     const [decisions] = useStore('pkg_terms_decisions')
     const shouldReadDecisions = HAS_TERMS && isOwner
-    const { data: declined = [], isReady: declinedReady } = useLiveQuery({
+    const { data: declined = NO_DECLINED, isReady: declinedReady } = useLiveQuery({
         queryKey: ['core', 'pkg-terms', 'declined', shouldReadDecisions],
         query: query =>
             shouldReadDecisions
@@ -187,6 +193,7 @@ export function useTermsDecision(
     const [decisions, pkgRegistry] = useStore('pkg_terms_decisions', 'pkg_registry')
     const { user } = useAuth()
     const decide = useMutation<void, Error, TermsDecisionInput>({
+        mutationKey: ['core', 'pkg-terms'],
         mutationFn: mutation(function* (input: TermsDecisionInput) {
             yield decisions.insert({
                 id: newRecordId(),
@@ -202,15 +209,6 @@ export function useTermsDecision(
             }
         }),
         onSuccess: (_data, input) => options.onDecided?.(input),
-        onError: err => {
-            captureException('core.pkg-terms', err)
-            notify.emit({
-                event: 'mutation.error',
-                title: 'Could not save your decision',
-                body: errorToString(err),
-                data: { operation: 'core.pkg-terms', error: errorToString(err) },
-            })
-        },
     })
     return { decide: decide.mutate, isPending: decide.isPending }
 }
