@@ -1162,6 +1162,10 @@ function RegisterPackageModal({
                 icon: '',
                 manifest_json: '',
                 has_server: false,
+                // A source that is not installed declares no terms yet; the boot
+                // sync writes the version when its package is installed.
+                terms_version: '',
+                terms_accepted_version: '',
             })
         }),
         onSuccess: () => {
