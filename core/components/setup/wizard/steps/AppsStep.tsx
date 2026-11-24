@@ -11,6 +11,7 @@ import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { notify } from '@tinycld/core/lib/notify'
 import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
 import {
+    type PackageTermsEntry,
     usePackageTermsList,
     useTermsBlocked,
     useTermsDecision,
@@ -29,6 +30,8 @@ import { type AppChoice, appChoicesOf, autoUpdateChoiceOf } from './app-choices'
 export function useIsStepVisible() {
     return useCurrentRole().isOwner
 }
+
+const NO_CHOICES: AppChoice[] = []
 
 function useAppChoices() {
     const [pkgRegistry] = useStore('pkg_registry')
@@ -62,8 +65,11 @@ function useAppChoices() {
     })
     // An app with terms the owner has not accepted shows as off, whatever its
     // status: it turns on when the owner agrees in the terms dialog.
-    const { blocked } = useTermsBlocked()
-    return { choices: appChoicesOf(rows, packageRegistry, blocked), toggle: toggle.mutate }
+    const { blocked, isReady } = useTermsBlocked()
+    // No cards until the terms state is known: before that every app with terms
+    // reads closed, and a press would turn on an app with unaccepted terms.
+    const choices = isReady ? appChoicesOf(rows, packageRegistry, blocked) : NO_CHOICES
+    return { choices, toggle: toggle.mutate }
 }
 
 /** The terms dialog of this step: which app's terms are open, and the decision. */
@@ -79,7 +85,7 @@ function useAppTerms() {
         close,
         isPending,
         // Agreeing here also turns the app on: that is what the owner pressed the card for.
-        decide: (entry: (typeof entries)[number], decision: 'accepted' | 'declined') =>
+        decide: (entry: PackageTermsEntry, decision: 'accepted' | 'declined') =>
             decide({ entry, decision, shouldEnable: true }),
     }
 }

@@ -232,12 +232,23 @@ test.describe('package terms: the owner decides', () => {
             const dialog = page.getByTestId('pkg-terms-dialog')
             await expect(dialog.getByTestId('pkg-terms-body')).toContainText(TERMS_STUB.sentence)
             await dialog.getByTestId('pkg-terms-dialog-close').click()
+            await expect(dialog).toHaveCount(0)
             await expect(card).toHaveAttribute('aria-checked', 'false')
+            // Read-only check: closing the terms recorded no acceptance.
+            const accepted = await pb.collection('pkg_terms_decisions').getList(1, 1, {
+                filter: pb.filter('pkg = {:slug} && decision = {:d}', {
+                    slug: TERMS_STUB.slug,
+                    d: 'accepted',
+                }),
+            })
+            expect(accepted.totalItems).toBe(0)
 
             await card.click()
             await page.getByTestId('pkg-terms-dialog-agree').click()
             await expect(card).toHaveAttribute('aria-checked', 'true')
             await expect(page.getByTestId(`setup-app-terms-${TERMS_STUB.slug}`)).toHaveCount(0)
+            // The dialog closes only after both writes are saved.
+            await expect(dialog).toHaveCount(0)
             // Read-only check: the acceptance also turned the app on.
             const stub = await pb.collection('pkg_registry').getOne(stubRowId)
             expect(stub.status).not.toBe('disabled')
