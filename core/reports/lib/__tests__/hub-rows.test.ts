@@ -11,7 +11,16 @@ import {
 describe('the package of a source', () => {
     it('is the part of the source key before the dot', () => {
         expect(slugOfSource({ key: 'zoo.animals' })).toBe('zoo')
-        expect(slugOfHubRow({ report: { source: 'acme_tools.parts' } })).toBe('acme_tools')
+        expect(
+            slugOfHubRow({ report: { source: 'acme_tools.parts', spec: { source: 'zoo.x' } } })
+        ).toBe('acme_tools')
+    })
+
+    it('reads the spec of a report the server has not saved yet', () => {
+        // The server writes `source`, so a just-inserted copy has only its spec's.
+        expect(
+            slugOfHubRow({ report: { source: undefined, spec: { source: 'zoo.animals' } } })
+        ).toBe('zoo')
     })
 
     it('is the whole key when the key has no dot', () => {

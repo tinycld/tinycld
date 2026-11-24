@@ -25,9 +25,14 @@ const slugOfSourceKey = (key: string): string => key.split('.', 1)[0] ?? key
 /** The package of a catalog source. Module-level, so useTermsOpen gets a stable reference. */
 export const slugOfSource = (source: { key: string }) => slugOfSourceKey(source.key)
 
-/** The package of a hub row: the package whose source its report reads. */
-export const slugOfHubRow = (row: { report: { source: string } }) =>
-    slugOfSourceKey(row.report.source)
+/**
+ * The package of a hub row: the package whose source its report reads. The
+ * server writes `source` from the spec (the insert omits it), so a report
+ * inserted on this device and not saved yet has only its spec's source.
+ */
+export const slugOfHubRow = (row: {
+    report: { source: string | undefined; spec: { source: string } }
+}) => slugOfSourceKey(row.report.source || row.report.spec.source)
 
 /**
  * Whether a saved report may open, by the terms of the package that owns its
