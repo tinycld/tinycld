@@ -465,8 +465,12 @@ function FooterHints({ chips, remainder, partial, packages }: FooterHintsProps) 
     // A package the server could not reach takes priority over any grammar
     // hint: results are missing, and silence would read as "nothing there"
     // rather than "we could not look".
-    if (partial.length > 0) {
-        const labels = partial.map(slug => searchPackages.find(p => p.slug === slug)?.label ?? slug)
+    // Only open packages are searched, so a closed slug the server reports
+    // must not name a package the user cannot see.
+    const openSlugs = new Set(packages.map(p => p.slug))
+    const failed = partial.filter(slug => openSlugs.has(slug))
+    if (failed.length > 0) {
+        const labels = failed.map(slug => searchPackages.find(p => p.slug === slug)?.label ?? slug)
         return (
             <View className="px-4 py-2 border-t border-border">
                 <Text className="text-xs text-muted-foreground">

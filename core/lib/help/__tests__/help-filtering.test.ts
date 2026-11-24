@@ -1,18 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { isManagedPrefix } from '../../use-managed-settings'
 import { searchHelpTopics } from '../search'
 import type { HelpGroup } from '../types'
+import { visibleGroups as filterGroups } from '../use-help-topics'
 
-// The filter use-help-topics applies. Tested against the same rule rather than
-// through the hooks, which need a React tree and a fetched org-info.
-function visibleGroups(all: HelpGroup[], managed: readonly string[]): HelpGroup[] {
-    if (managed.length === 0) return all
-    const out: HelpGroup[] = []
-    for (const group of all) {
-        const topics = group.topics.filter(t => !isManagedPrefix(managed, t.keyPrefix))
-        if (topics.length > 0) out.push({ ...group, topics })
-    }
-    return out
+// The real filter, tested directly rather than through the hooks, which need a
+// React tree and a fetched org-info. No package is blocked unless a case says so.
+function visibleGroups(
+    all: readonly HelpGroup[],
+    managed: readonly string[],
+    blocked: ReadonlySet<string> = new Set()
+) {
+    return filterGroups(all, managed, blocked)
 }
 
 const topic = (pkgSlug: string, topicId: string, keyPrefix?: string) => ({
@@ -58,6 +56,15 @@ describe('help topic filtering', () => {
     it('keeps every topic when nothing is managed', () => {
         const visible = visibleGroups(groups, [])
         expect(visible.flatMap(g => g.topics)).toHaveLength(3)
+    })
+
+    it('drops a group of a blocked package and keeps the others', () => {
+        const visible = visibleGroups(groups, [], new Set(['push']))
+        expect(visible.map(g => g.pkgSlug)).toEqual(['gizmos'])
+    })
+
+    it('returns the same array when nothing is managed or blocked', () => {
+        expect(visibleGroups(groups, [], new Set())).toBe(groups)
     })
 
     // A deep link resolves against the visible set, so a hidden topic is

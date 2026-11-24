@@ -42,7 +42,7 @@ export function useSearchResults(
 } {
     // One debounced value for the whole request: separate timers would let a
     // new chip go out paired with the previous query text. Chips are already
-    // validated against installed slugs by parseQuery, so they can be
+    // validated against the open slugs by parseQuery, so they can be
     // forwarded as-is; the server drops any it does not know.
     const typed = useMemo(
         () => ({

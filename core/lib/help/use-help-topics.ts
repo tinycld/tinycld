@@ -17,8 +17,8 @@ export function visibleGroups(
     groups: readonly HelpGroup[],
     managed: readonly string[],
     blocked: ReadonlySet<string>
-): HelpGroup[] {
-    if (managed.length === 0 && blocked.size === 0) return groups as HelpGroup[]
+): readonly HelpGroup[] {
+    if (managed.length === 0 && blocked.size === 0) return groups
     const out: HelpGroup[] = []
     for (const group of groups) {
         if (blocked.has(group.pkgSlug)) continue
@@ -30,7 +30,7 @@ export function visibleGroups(
     return out
 }
 
-export function useHelpGroups(): HelpGroup[] {
+export function useHelpGroups(): readonly HelpGroup[] {
     const managed = useManagedSettingPrefixes()
     const { blocked } = useTermsBlocked()
     return useMemo(() => visibleGroups(allGroups, managed, blocked), [managed, blocked])
