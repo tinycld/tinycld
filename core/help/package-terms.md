@@ -7,7 +7,7 @@ order: 57
 
 ## What this does
 
-Some packages come with terms and conditions. Nobody in the workspace can use such a package until the **owner** agrees to its terms. Until then the package has no entry for members and admins, and its settings, help topics and search results do not show. The owner keeps the package's entry in the navigation. The owner sees its terms there.
+Some packages come with terms and conditions. Nobody in the workspace can use such a package until the **owner** agrees to its terms. Until then the package has no entry for members and admins, and its settings, help topics and search results do not show. The owner keeps the package's entry in the navigation.
 
 ## To accept the terms of a package
 
@@ -19,9 +19,9 @@ Only the owner can accept terms.
 
 The package opens for everybody at once. You can also open the package from the navigation: the owner sees the terms there, with **Agree** and **Decline**.
 
-When you open the app at its start page and a package still waits for your decision, the app opens **Package terms** first. A link that goes straight to a page does not do this.
+When you start the app and a package still waits for your decision, the start page opens **Package terms** first. It does this one time each time you start the app, not each time you go to the start page. A link that goes straight to a page does not do this.
 
-Press **Not now** to decide later. This records nothing. The app opens **Package terms** again the next time you open the app at its start page. It does this until you agree or decline.
+Press **Not now** to decide later. This records nothing. The app opens **Package terms** again the next time you start the app. It does this until you agree or decline.
 
 ## During setup
 

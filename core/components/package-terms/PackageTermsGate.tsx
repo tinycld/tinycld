@@ -4,9 +4,12 @@ import {
     usePackageTermsList,
     useTermsBlocked,
 } from '@tinycld/core/lib/packages/use-package-terms'
+import { ScopeProvider, useShortcutScope } from '@tinycld/core/lib/shortcuts/scopes'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
-import { StyleSheet, View } from 'react-native'
+import { setInert } from '@tinycld/core/ui/overlay/set-inert'
+import { type ReactNode, useCallback } from 'react'
+import { Platform, StyleSheet, View, type ViewInstance } from 'react-native'
 import { PackageTermsReview } from './PackageTermsReview'
 import { TermsWaitingScreen } from './TermsWaitingScreen'
 
@@ -20,6 +23,30 @@ export function useActivePkgTermsBlocked(): boolean {
     const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
     const { blocked } = useTermsBlocked()
     return activePkgSlug != null && blocked.has(activePkgSlug)
+}
+
+/**
+ * Props for the View around the package screens. While the cover shows, the
+ * screen under it stays mounted (so the other packages keep their frozen
+ * state) but is out of play: no pointer, no focus, no assistive tech. Web uses
+ * `inert`, set through the ref because react-native's View props do not type
+ * it; native uses pointerEvents and the accessibility props.
+ */
+export function useCoveredContentProps() {
+    const isCovered = useActivePkgTermsBlocked()
+    const ref = useCallback(
+        (node: ViewInstance | null) => {
+            if (Platform.OS !== 'web' || node == null) return
+            setInert(node as unknown as HTMLElement, isCovered)
+        },
+        [isCovered]
+    )
+    return {
+        ref,
+        pointerEvents: isCovered ? 'none' : 'auto',
+        importantForAccessibility: isCovered ? 'no-hide-descendants' : 'auto',
+        accessibilityElementsHidden: isCovered,
+    } as const
 }
 
 type Cover =
@@ -49,9 +76,21 @@ export function PackageTermsGate() {
     if (cover.kind === 'none') return null
     return (
         <View className="bg-background" style={StyleSheet.absoluteFill}>
-            <CoverBody cover={cover} />
+            <CoverScope>
+                <CoverBody cover={cover} />
+            </CoverScope>
         </View>
     )
+}
+
+/**
+ * Holds the keyboard while the cover shows. A `modal` scope stays above the
+ * covered screen's scope whichever of the two is pushed first, so the
+ * package's own shortcuts cannot run under the cover.
+ */
+function CoverScope({ children }: { children: ReactNode }) {
+    const scopeOwner = useShortcutScope('modal')
+    return <ScopeProvider owner={scopeOwner}>{children}</ScopeProvider>
 }
 
 function CoverBody({ cover }: { cover: Cover }) {

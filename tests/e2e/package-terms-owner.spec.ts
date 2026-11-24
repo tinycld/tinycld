@@ -96,6 +96,21 @@ test.describe('package terms: the owner decides', () => {
         await review.getByTestId('pkg-terms-decline').click()
         await expect(review.getByTestId('pkg-terms-declined')).toBeVisible()
         await expect(review.getByTestId('pkg-terms-decline')).toHaveCount(0)
+        // Read-only check: the note above shows the optimistic write; wait for
+        // the saved row, or the relaunch below can cancel the request.
+        await expect
+            .poll(
+                async () =>
+                    (
+                        await pb.collection('pkg_terms_decisions').getList(1, 1, {
+                            filter: pb.filter('pkg = {:slug} && decision = {:d}', {
+                                slug: TERMS_STUB.slug,
+                                d: 'declined',
+                            }),
+                        })
+                    ).totalItems
+            )
+            .toBe(1)
 
         // A new launch: the owner lands on a package, not on the terms. Wait
         // for the launch redirect to settle before reading where it went.
@@ -144,6 +159,10 @@ test.describe('package terms: the owner decides', () => {
         await openStub(page)
         await expect(page.getByTestId(TERMS_STUB.landing)).toBeVisible()
         await expect(page.getByTestId(TERMS_STUB.sidebar)).toBeVisible()
+        // The screen that was under the cover takes input once the package opens.
+        const input = page.getByTestId(TERMS_STUB.input)
+        await input.fill('abc')
+        await expect(input).toHaveValue('abc')
     })
 
     test('on a phone the owner reads and accepts the terms on the package route', async ({

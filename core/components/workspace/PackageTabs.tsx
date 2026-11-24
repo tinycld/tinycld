@@ -1,7 +1,8 @@
 import { Tabs } from 'expo-router'
+import type { ReactNode } from 'react'
 import { View } from 'react-native'
 import { packageRegistry } from '../../lib/packages/static-registry'
-import { PackageTermsGate } from '../package-terms/PackageTermsGate'
+import { PackageTermsGate, useCoveredContentProps } from '../package-terms/PackageTermsGate'
 import { PackageAccessDenied } from './PackageAccessDenied'
 
 // The routes app/a/(app)/ holds: the app-owned ones, plus one directory per bundled
@@ -40,21 +41,37 @@ const SCREENS = [...APP_ROUTES, ...PACKAGE_ROUTES].map(name => (
 export function PackageTabs() {
     return (
         <View className="flex-1" style={{ minHeight: 0 }}>
-            <Tabs
-                tabBar={() => null}
-                backBehavior="history"
-                screenOptions={{
-                    headerShown: false,
-                    freezeOnBlur: true,
-                    lazy: true,
-                    animation: 'none',
-                }}
-            >
-                {SCREENS}
-            </Tabs>
+            <CoveredContent>
+                <Tabs
+                    tabBar={() => null}
+                    backBehavior="history"
+                    screenOptions={{
+                        headerShown: false,
+                        freezeOnBlur: true,
+                        lazy: true,
+                        animation: 'none',
+                    }}
+                >
+                    {SCREENS}
+                </Tabs>
+            </CoveredContent>
             {/* Under the access cover: a member with no access reads that first. */}
             <PackageTermsGate />
             <PackageAccessDenied />
+        </View>
+    )
+}
+
+/**
+ * Holds the screens out of play while the terms cover is over them. Its own
+ * component, so a change of the cover re-renders this View only: the Tabs
+ * element it gets as children stays the same.
+ */
+function CoveredContent({ children }: { children: ReactNode }) {
+    const coveredProps = useCoveredContentProps()
+    return (
+        <View {...coveredProps} className="flex-1" style={{ minHeight: 0 }}>
+            {children}
         </View>
     )
 }

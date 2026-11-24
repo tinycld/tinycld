@@ -31,7 +31,7 @@
  * Fixture identifiers the specs assert on (keep in sync with
  * tests/e2e/package-terms-helpers.ts): slug `termsstub`, name "Terms Stub",
  * terms version `1`, the sentence TERMS_SENTENCE in the terms text, landing
- * testID `termsstub-landing`, sidebar testID `termsstub-sidebar` (text "Terms
+ * testID `termsstub-landing`, autofocused input `termsstub-input`, sidebar testID `termsstub-sidebar` (text "Terms
  * stub sidebar"), settings panel `general` (testID
  * `termsstub-settings-panel`), help topic "Terms stub topic".
  */
@@ -145,14 +145,22 @@ function writeSources(stubDir: string): void {
     const dir = join(stubDir, 'tinycld', STUB_SLUG)
     write(
         join(dir, 'screens', 'index.tsx'),
-        `import { Text, View } from 'react-native'
+        `import { Text, TextInput, View } from 'react-native'
 
+// The input autofocuses as a data-entry screen does: the specs check that the
+// terms cover keeps typed keys out of it.
 export default function TermsStubIndex() {
     return (
-        <View className="flex-1 bg-background p-4">
+        <View className="flex-1 gap-3 bg-background p-4">
             <Text className="text-foreground" testID="termsstub-landing">
                 Terms stub landing
             </Text>
+            <TextInput
+                testID="termsstub-input"
+                accessibilityLabel="Terms stub input"
+                autoFocus
+                className="rounded-md border border-border p-2 text-foreground"
+            />
         </View>
     )
 }

@@ -18,6 +18,17 @@ function byTitle(a: HubRecord, b: HubRecord): number {
     return a.title.localeCompare(b.title) || a.id.localeCompare(b.id)
 }
 
+// The server refuses a source key that is not `<package>.<name>`, so the part
+// before the dot is the package that owns the source.
+const slugOfSourceKey = (key: string): string => key.split('.', 1)[0] ?? key
+
+/** The package of a catalog source. Module-level, so useTermsOpen gets a stable reference. */
+export const slugOfSource = (source: { key: string }) => slugOfSourceKey(source.key)
+
+/** The package of a hub row: the package whose source its report reads. */
+export const slugOfHubRow = (row: { report: { source: string } }) =>
+    slugOfSourceKey(row.report.source)
+
 const uniqueById = <R extends HubRecord>(reports: readonly R[]): R[] => [
     ...new Map(reports.map(report => [report.id, report])).values(),
 ]

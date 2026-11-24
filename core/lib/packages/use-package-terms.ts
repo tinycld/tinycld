@@ -103,7 +103,7 @@ export const useTermsBlocked: () => TermsBlocked = HAS_TERMS
     ? useBlockedFromRegistry
     : useNothingBlocked
 
-/** The package of a settings or help group. Module-level, so useTermsOpen gets a stable reference. */
+/** The package of a settings or help group, or a form host. Module-level, so useTermsOpen gets a stable reference. */
 export const slugOfGroup = (group: { pkgSlug: string }) => group.pkgSlug
 
 /** The package of an entry that carries its slug. */

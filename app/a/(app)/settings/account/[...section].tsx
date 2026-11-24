@@ -8,16 +8,20 @@
 import { PackagePanelScreen } from '@tinycld/core/components/settings/PackagePanelScreen'
 import { packageAccountSettings } from '@tinycld/core/lib/packages/derive-components'
 import {
+    declaresTerms,
     slugOfGroup,
     useTermsBlocked,
     useTermsOpen,
 } from '@tinycld/core/lib/packages/use-package-terms'
+import { useLocalSearchParams } from 'expo-router'
 
 export default function PackageAccountSettingsSection() {
     // A package whose terms the owner has not accepted has no panels.
     const groups = useTermsOpen(packageAccountSettings, slugOfGroup)
     const { isReady: termsReady } = useTermsBlocked()
+    const [pkgSlug] = useLocalSearchParams<{ section: string[] }>().section ?? []
     // Wait for the terms state: until then every package with terms is closed.
-    if (!termsReady) return null
+    // Only for such a package, so no other panel unmounts if the state is lost.
+    if (declaresTerms(pkgSlug ?? '') && !termsReady) return null
     return <PackagePanelScreen groups={groups} />
 }

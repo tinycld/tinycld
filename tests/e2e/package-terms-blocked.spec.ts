@@ -48,6 +48,13 @@ test.describe('package terms: a package nobody may use yet', () => {
         await expect(page.getByTestId('pkg-terms-waiting')).toContainText(
             'Waiting for the owner to accept the terms'
         )
+        // The stub screen stays mounted under the cover, with an autofocused
+        // input. The cover holds it out of play: typed keys do not reach it.
+        const input = page.getByTestId(TERMS_STUB.input)
+        await expect(input).toHaveCount(1)
+        await page.keyboard.type('abc')
+        await expect(input).not.toBeFocused()
+        await expect(input).toHaveValue('')
         // The member cannot decide.
         await expect(page.getByTestId('pkg-terms-agree')).toHaveCount(0)
         // The member's rail has loaded (an entry of another package shows),

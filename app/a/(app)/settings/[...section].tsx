@@ -1,12 +1,14 @@
 import { PackagePanelScreen } from '@tinycld/core/components/settings/PackagePanelScreen'
 import { packageSettings } from '@tinycld/core/lib/packages/derive-components'
 import {
+    declaresTerms,
     slugOfGroup,
     useTermsBlocked,
     useTermsOpen,
 } from '@tinycld/core/lib/packages/use-package-terms'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
+import { useLocalSearchParams } from 'expo-router'
 import { Text, View } from 'react-native'
 
 // Org-administration panels (manifest `settings`). Per-user panels live under
@@ -19,10 +21,13 @@ export default function PackageSettingsSection() {
     // reads "Settings not found".
     const groups = useTermsOpen(packageSettings, slugOfGroup)
     const { isReady: termsReady } = useTermsBlocked()
+    const [pkgSlug] = useLocalSearchParams<{ section: string[] }>().section ?? []
 
     // Until the terms state is known every package with terms is closed: wait,
-    // or an open package's panel would read "Settings not found" first.
-    if (!termsReady) return null
+    // or an open package's panel would read "Settings not found" first. Only
+    // for such a package, so no other panel unmounts (and loses its input) if
+    // the state is lost again.
+    if (declaresTerms(pkgSlug ?? '') && !termsReady) return null
 
     if (!isAdmin) {
         return (

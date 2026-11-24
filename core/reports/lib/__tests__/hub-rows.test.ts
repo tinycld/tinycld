@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { packageReports, sharedReports } from '../hub-rows'
+import { packageReports, sharedReports, slugOfHubRow, slugOfSource } from '../hub-rows'
+
+describe('the package of a source', () => {
+    it('is the part of the source key before the dot', () => {
+        expect(slugOfSource({ key: 'zoo.animals' })).toBe('zoo')
+        expect(slugOfHubRow({ report: { source: 'acme_tools.parts' } })).toBe('acme_tools')
+    })
+
+    it('is the whole key when the key has no dot', () => {
+        expect(slugOfSource({ key: 'zoo' })).toBe('zoo')
+    })
+})
 
 const report = (id: string, title: string, source: string, updated: string) => ({
     id,

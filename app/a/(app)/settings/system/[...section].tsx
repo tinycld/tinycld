@@ -12,6 +12,7 @@ import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { packageSystemSettings } from '@tinycld/core/lib/packages/derive-components'
 import { resolvePanel } from '@tinycld/core/lib/packages/resolve-panel'
 import {
+    declaresTerms,
     slugOfGroup,
     useTermsBlocked,
     useTermsOpen,
@@ -38,7 +39,8 @@ export default function PackageSystemSettingsSection() {
     const { isReady: termsReady } = useTermsBlocked()
 
     // Wait for the terms state: until then every package with terms is closed.
-    if (!termsReady) return null
+    // Only for such a package, so no other panel unmounts if the state is lost.
+    if (declaresTerms(pkgSlug ?? '') && !termsReady) return null
 
     if (!match) {
         return (

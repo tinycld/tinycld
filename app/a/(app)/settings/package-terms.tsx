@@ -6,12 +6,13 @@ import {
     usePackageTermsList,
     useTermsDecision,
 } from '@tinycld/core/lib/packages/use-package-terms'
+import { usePackageTermsPromptStore } from '@tinycld/core/lib/stores/package-terms-prompt-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { ArrowLeft } from 'lucide-react-native'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 // Owner-only: the owner alone accepts terms (the create rule of
@@ -26,6 +27,7 @@ export default function PackageTermsSettings() {
     const [openSlug, setOpenSlug] = useState<string | null>(null)
     const { decide, isPending } = useTermsDecision({ onDecided: () => setOpenSlug(null) })
     const openEntry = entries.find(e => e.slug === openSlug) ?? null
+    usePromptSeen()
 
     // `role` reads null while it loads; see settings/packages.tsx.
     if (!roleReady) return null
@@ -44,7 +46,10 @@ export default function PackageTermsSettings() {
         )
     }
 
-    const rows = entries.map(entry => (
+    // Rows wait for the decisions query: before it, a declined package reads
+    // "Not accepted yet" and its Review offers Decline.
+    const readyEntries = isReady ? entries : NO_ENTRIES
+    const rows = readyEntries.map(entry => (
         <TermsRow key={entry.slug} entry={entry} onOpen={() => setOpenSlug(entry.slug)} />
     ))
 
@@ -73,6 +78,21 @@ export default function PackageTermsSettings() {
             />
         </ScrollView>
     )
+}
+
+const NO_ENTRIES: PackageTermsEntry[] = []
+
+/**
+ * Records that the owner has seen this screen in this app load, so the start
+ * page does not send them here again (app/a/(app)/index.tsx). A store action
+ * in a mount effect, as useSignInNotice claims its notice: the screen opening
+ * is the event, and the start page, which reads the flag, is not rendering.
+ */
+function usePromptSeen() {
+    const markPrompted = usePackageTermsPromptStore(s => s.markPrompted)
+    useEffect(() => {
+        markPrompted()
+    }, [markPrompted])
 }
 
 function BackButton({ onPress }: { onPress: () => void }) {

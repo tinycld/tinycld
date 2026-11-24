@@ -3,6 +3,7 @@ import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { log } from '@tinycld/core/lib/logger'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
+import { useTermsOpen } from '@tinycld/core/lib/packages/use-package-terms'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { recoverLiveQueries } from '@tinycld/core/lib/recover-live-queries'
@@ -11,7 +12,7 @@ import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { materialize } from 'pbtsdb'
 import { type ReportAccess, reportAccess, rolesByReport, type ShareRole } from '../lib/access'
-import { packageReports, sharedReports } from '../lib/hub-rows'
+import { packageReports, sharedReports, slugOfHubRow, slugOfSource } from '../lib/hub-rows'
 import { useReportUIStore } from '../stores/report-ui-store'
 import { useReportCatalog } from './useReportCatalog'
 
@@ -181,12 +182,16 @@ export function useReportsHub() {
     const byTab = { mine: [mine], shared: [shared], published: [published] }
     const active = view === 'package' ? [mine, shared, published] : byTab[view]
     const prefix = packageSlug ? `${packageSlug}.` : null
+    // A package whose terms the owner has not accepted offers no source and
+    // lists no report until they are.
+    const rows = useTermsOpen(rowsOfView(), slugOfHubRow)
+    const openSources = useTermsOpen(catalog.sources, slugOfSource)
 
     return {
         view,
         tab,
         setTab: (next: HubTab) => router.setParams({ tab: next === 'mine' ? undefined : next }),
-        rows: rowsOfView(),
+        rows,
         state: hubState(active),
         retry: () => {
             void recoverLiveQueries({
@@ -200,9 +205,7 @@ export function useReportsHub() {
                 onError: error => log.error('reports.hub', error),
             })
         },
-        sources: prefix
-            ? catalog.sources.filter(source => source.key.startsWith(prefix))
-            : catalog.sources,
+        sources: prefix ? openSources.filter(source => source.key.startsWith(prefix)) : openSources,
         isCatalogReady: catalog.isReady,
         isCatalogError: catalog.isError,
         retryCatalog: catalog.retry,

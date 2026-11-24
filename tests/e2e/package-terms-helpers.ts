@@ -14,6 +14,7 @@ export const TERMS_STUB = {
     version: '1',
     sentence: 'You agree to feed the stub once a day.',
     landing: 'termsstub-landing',
+    input: 'termsstub-input',
     sidebar: 'termsstub-sidebar',
     settingsLink: 'settings-org-termsstub-general',
     settingsPanel: 'termsstub-settings-panel',
@@ -32,10 +33,14 @@ const ADMIN_PASSWORD = process.env.ADMIN_USER_PW || 'AdminPass1234!'
 
 // Same rule as skipWithoutFormsStub (helpers.ts): skip in a dev workspace
 // without the stub, fail loudly on CI, where the scaffold step is mandatory.
+// The installed link counts too: a stub directory that was never installed is
+// not in the build, and every test would fail on a missing route.
 // Pass it as a callback.
 export function skipWithoutTermsStub(): boolean {
-    const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', TERMS_STUB.slug)
-    if (fs.existsSync(stubDir)) return false
+    const wsRoot = path.resolve(import.meta.dirname, '..', '..', '..')
+    const stubDir = path.join(wsRoot, TERMS_STUB.slug)
+    const stubLink = path.join(wsRoot, 'node_modules', '@tinycld', TERMS_STUB.slug)
+    if (fs.existsSync(stubDir) && fs.existsSync(stubLink)) return false
     if (process.env.CI) {
         throw new Error(
             'termsstub is not scaffolded but CI is set — the terms stub scaffold step must run before e2e.'
