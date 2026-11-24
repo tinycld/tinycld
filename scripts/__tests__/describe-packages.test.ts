@@ -9,6 +9,7 @@ import {
     validateRecordLabels,
     validateSidebarContributions,
 } from '../describe-packages'
+import type { PackageManifest } from '../load-manifest'
 
 describe('schemaTypeName', () => {
     it('PascalCases the slug + Schema', () => {
@@ -179,6 +180,95 @@ describe('manifestToConfigPkg', () => {
             description: 'd',
         })
         expect(pkg.manifest).not.toHaveProperty('terms')
+    })
+})
+
+// manifestToConfigPkg copies a fixed list of fields, so a new manifest field is
+// lost unless someone adds it there: `terms` was, and the client terms gate did
+// nothing. `Required<>` makes tsc fail until a new field is set here; the test
+// then fails until the field reaches the config or is listed in NOT_IN_CONFIG.
+// Give every field an "on" value (true, a non-empty list) so its absence shows.
+const everyField: Required<PackageManifest> = {
+    name: 'Gizmo',
+    slug: 'gizmo',
+    version: '0.1.0',
+    description: 'd',
+    routes: { directory: 'screens' },
+    publicRoutes: { directory: 'public' },
+    nav: { label: 'Gizmo', icon: 'box', order: 1, shortcut: 'z' },
+    migrations: { directory: 'pb-migrations' },
+    hooks: { directory: 'pb-hooks' },
+    collections: { register: 'collections', types: 'types' },
+    sidebar: { component: 'sidebar' },
+    provider: { component: 'provider' },
+    settings: [{ slug: 's', component: 'settings/s', label: 'S' }],
+    accountSettings: [{ slug: 'a', component: 'settings/a', label: 'A' }],
+    systemSettings: [{ slug: 'y', component: 'system-settings/y', label: 'Y' }],
+    slots: ['sidebar.after-gizmo'],
+    sidebarContributions: [{ target: 'core', slot: 'setup-team', component: 'contrib' }],
+    seed: { script: 'seed' },
+    tests: { directory: 'tests' },
+    build: { script: 'build' },
+    server: { package: 'server', module: 'gizmo.example/server' },
+    ports: [{ name: 'gizmo-sync', port: 1234 }],
+    payloads: { package: 'server/api' },
+    cli: { package: 'cli', module: 'gizmo.example/cli' },
+    help: { directory: 'help' },
+    search: { adapter: 'search-adapter' },
+    automation: { definitions: 'automation' },
+    notifications: { events: 'notify-events' },
+    forms: { hosts: 'form-hosts', ui: 'form-ui' },
+    recordLabels: { gizmo_tags: { format: '{name}' } },
+    eventSources: [{ target: 'gadgets', id: 'due', label: 'Due', module: 'source' }],
+    eventSourceHost: true,
+    repository: { url: 'https://example.com/gizmo' },
+    dependencies: ['widgets'],
+    peerVersions: { '@tinycld/core': '>=1' },
+    setupSteps: [{ id: 'plan', label: 'Plan', module: 'setup/plan', order: 'a4' }],
+    reportPanels: [{ path: 'gizmo/report', component: 'report-panel' }],
+    terms: { file: 'TERMS.md', version: '1' },
+}
+
+// The ConfigPkg type requires these, so tsc fails if the copy drops one.
+const REQUIRED_BY_CONFIG_TYPE = ['name', 'slug', 'version', 'description']
+
+// Fields the client config does not carry, each with where it is read instead.
+const NOT_IN_CONFIG: Partial<Record<keyof PackageManifest, string>> = {
+    migrations: 'generate.ts links the directory into the server',
+    hooks: 'generate.ts links the directory into the server',
+    tests: 'test tooling reads it from manifest.ts',
+    build: 'generate.ts runs the script before it emits',
+    server: 'generate.ts and gen-server.ts wire the Go package',
+    ports: 'gen-server.ts passes them to the supervisor',
+    payloads: 'gen-payload-types.ts emits the API types',
+    cli: 'generate.ts wires the CLI commands',
+    help: 'generate.ts emits the help topics',
+    peerVersions: 'the server solver reads it from pkg_registry.manifest_json',
+    reportPanels: 'gen-report-panels.ts emits the panel registry',
+}
+
+describe('manifestToConfigPkg covers every manifest field', () => {
+    const full = manifestToConfigPkg('@acme/gizmo', everyField)
+    const fields = Object.keys(everyField) as (keyof PackageManifest)[]
+
+    it('copies the fields the config type requires', () => {
+        for (const key of REQUIRED_BY_CONFIG_TYPE) {
+            expect(full.manifest[key], key).toBe(everyField[key as keyof PackageManifest])
+        }
+    })
+
+    it.each(
+        fields.filter(f => !REQUIRED_BY_CONFIG_TYPE.includes(f) && !(f in NOT_IN_CONFIG))
+    )('the config changes when %s is removed', key => {
+        const without = manifestToConfigPkg('@acme/gizmo', { ...everyField, [key]: undefined })
+        expect(without).not.toEqual(full)
+    })
+
+    it.each(
+        Object.keys(NOT_IN_CONFIG)
+    )('the config ignores %s, which it lists as not in it', key => {
+        const without = manifestToConfigPkg('@acme/gizmo', { ...everyField, [key]: undefined })
+        expect(without).toEqual(full)
     })
 })
 
