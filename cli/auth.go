@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"tinycld.org/cli/client"
+	"tinycld.org/cli/exitcode"
 	"tinycld.org/cli/internal/config"
 	"tinycld.org/cli/internal/deviceflow"
 	"tinycld.org/cli/internal/keychain"
@@ -40,15 +41,20 @@ func (s contextTokenStore) Save(tok client.TokenSet) error {
 
 // resolveClientContext is the client.NewLazy hook: resolve the active
 // context to (origin, token store) on the first request a package command
-// makes.
+// makes. The error carries its exit code, because a package command only
+// passes it on: no context at all is fixed by a sign-in (Auth), a context
+// name that does not exist is a wrong call (Usage).
 func (d *deps) resolveClientContext() (string, client.TokenStore, error) {
 	cfg, err := d.loadConfig()
 	if err != nil {
 		return "", nil, err
 	}
 	name, ctx, err := cfg.Resolve(d.ctxFlag)
+	if errors.Is(err, config.ErrNoContext) {
+		return "", nil, exitcode.New(exitcode.Auth, err)
+	}
 	if err != nil {
-		return "", nil, err
+		return "", nil, Usage(err)
 	}
 	return ctx.Origin, contextTokenStore{store: d.store(), account: name}, nil
 }
