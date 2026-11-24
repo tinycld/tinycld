@@ -10,6 +10,8 @@ export interface AppChoice {
     description: string
     icon: string
     isOn: boolean
+    /** The app has terms the owner has not accepted: it is off until the owner agrees. */
+    needsTerms: boolean
 }
 
 /**
@@ -25,13 +27,16 @@ export function appChoicesOf(
         name: string
         description: string
         nav?: { icon?: string }
-    }[]
+    }[],
+    /** Slugs of the apps whose terms the owner has not accepted. */
+    termsPending: ReadonlySet<string> = new Set()
 ): AppChoice[] {
     const rowBySlug = new Map(rows.map(r => [r.slug, r]))
     return bundled.flatMap(pkg => {
         const row = rowBySlug.get(pkg.slug)
         // A package without nav has no rail icon: it is a library, not an app.
         if (!row || !pkg.nav || pkg.slug === CORE_SLUG) return []
+        const needsTerms = termsPending.has(pkg.slug)
         return [
             {
                 id: row.id,
@@ -39,7 +44,8 @@ export function appChoicesOf(
                 name: pkg.name,
                 description: pkg.description,
                 icon: pkg.nav.icon ?? '',
-                isOn: row.status !== 'disabled',
+                isOn: row.status !== 'disabled' && !needsTerms,
+                needsTerms,
             },
         ]
     })

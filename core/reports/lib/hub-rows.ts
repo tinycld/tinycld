@@ -18,6 +18,54 @@ function byTitle(a: HubRecord, b: HubRecord): number {
     return a.title.localeCompare(b.title) || a.id.localeCompare(b.id)
 }
 
+// The server refuses a source key that is not `<package>.<name>`, so the part
+// before the dot is the package that owns the source.
+const slugOfSourceKey = (key: string): string => key.split('.', 1)[0] ?? key
+
+/** The package of a catalog source. Module-level, so useTermsOpen gets a stable reference. */
+export const slugOfSource = (source: { key: string }) => slugOfSourceKey(source.key)
+
+/**
+ * The package of a hub row: the package whose source its report reads. The
+ * server writes `source` from the spec (the insert omits it), so a report
+ * inserted on this device and not saved yet has only its spec's source.
+ */
+export const slugOfHubRow = (row: {
+    report: { source: string | undefined; spec: { source: string } }
+}) => slugOfSourceKey(row.report.source || row.report.spec.source)
+
+/**
+ * Whether a saved report may open, by the terms of the package that owns its
+ * source. `wait` while the terms state of a package that declares terms is not
+ * known yet; a package without terms never waits.
+ */
+export function reportTermsGate(input: {
+    source: string
+    blocked: ReadonlySet<string>
+    isReady: boolean
+    declaresTerms: (slug: string) => boolean
+}): 'open' | 'wait' | 'closed' {
+    const slug = slugOfSourceKey(input.source)
+    if (!input.declaresTerms(slug)) return 'open'
+    if (!input.isReady) return 'wait'
+    return input.blocked.has(slug) ? 'closed' : 'open'
+}
+
+/**
+ * What `/reports/new?source=<key>` shows. A source of a closed package reads
+ * as unknown, as the hub leaves it out of New report.
+ */
+export function newReportStep(input: {
+    isCatalogReady: boolean
+    hasSource: boolean
+    terms: 'open' | 'wait' | 'closed'
+}): 'catalog' | 'wait' | 'unknown-source' | 'build' {
+    if (!input.isCatalogReady) return 'catalog'
+    if (input.terms === 'wait') return 'wait'
+    if (!input.hasSource || input.terms === 'closed') return 'unknown-source'
+    return 'build'
+}
+
 const uniqueById = <R extends HubRecord>(reports: readonly R[]): R[] => [
     ...new Map(reports.map(report => [report.id, report])).values(),
 ]

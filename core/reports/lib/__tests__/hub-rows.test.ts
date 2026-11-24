@@ -1,5 +1,77 @@
 import { describe, expect, it } from 'vitest'
-import { packageReports, sharedReports } from '../hub-rows'
+import {
+    newReportStep,
+    packageReports,
+    reportTermsGate,
+    sharedReports,
+    slugOfHubRow,
+    slugOfSource,
+} from '../hub-rows'
+
+describe('the package of a source', () => {
+    it('is the part of the source key before the dot', () => {
+        expect(slugOfSource({ key: 'zoo.animals' })).toBe('zoo')
+        expect(
+            slugOfHubRow({ report: { source: 'acme_tools.parts', spec: { source: 'zoo.x' } } })
+        ).toBe('acme_tools')
+    })
+
+    it('reads the spec of a report the server has not saved yet', () => {
+        // The server writes `source`, so a just-inserted copy has only its spec's.
+        expect(
+            slugOfHubRow({ report: { source: undefined, spec: { source: 'zoo.animals' } } })
+        ).toBe('zoo')
+    })
+
+    it('is the whole key when the key has no dot', () => {
+        expect(slugOfSource({ key: 'zoo' })).toBe('zoo')
+    })
+})
+
+describe('reportTermsGate', () => {
+    const declares = (slug: string) => slug === 'zoo'
+    const gate = (source: string, blocked: string[], isReady: boolean) =>
+        reportTermsGate({ source, blocked: new Set(blocked), isReady, declaresTerms: declares })
+
+    it('closes a report whose source belongs to a closed package', () => {
+        expect(gate('zoo.animals', ['zoo'], true)).toBe('closed')
+    })
+
+    it('opens a report of a package whose terms are accepted', () => {
+        expect(gate('zoo.animals', [], true)).toBe('open')
+    })
+
+    it('waits for the terms state only when the package declares terms', () => {
+        expect(gate('zoo.animals', ['zoo'], false)).toBe('wait')
+        expect(gate('acme.parts', ['zoo'], false)).toBe('open')
+    })
+
+    it('reads the package from the source key, not a look-alike', () => {
+        expect(gate('zoology.animals', ['zoo'], true)).toBe('open')
+    })
+})
+
+describe('newReportStep', () => {
+    const step = (isCatalogReady: boolean, hasSource: boolean, terms: 'open' | 'wait' | 'closed') =>
+        newReportStep({ isCatalogReady, hasSource, terms })
+
+    it('shows the catalog frame until the catalog is ready', () => {
+        expect(step(false, false, 'closed')).toBe('catalog')
+    })
+
+    it('waits for the terms state of the source package', () => {
+        expect(step(true, true, 'wait')).toBe('wait')
+    })
+
+    it('treats a source of a closed package as unknown', () => {
+        expect(step(true, true, 'closed')).toBe('unknown-source')
+        expect(step(true, false, 'open')).toBe('unknown-source')
+    })
+
+    it('opens the builder for a known source of an open package', () => {
+        expect(step(true, true, 'open')).toBe('build')
+    })
+})
 
 const report = (id: string, title: string, source: string, updated: string) => ({
     id,

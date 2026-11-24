@@ -1,4 +1,5 @@
 import { type FormHost, useFormHosts } from '@tinycld/core/lib/forms/use-form-hosts'
+import { slugOfGroup, useTermsOpen } from '@tinycld/core/lib/packages/use-package-terms'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { Pressable, Text, View } from 'react-native'
 
@@ -27,7 +28,8 @@ function HostRow({ host, packageName, onPick }: HostRowProps) {
 }
 
 export function FormsHostList({ onPick }: FormsHostListProps) {
-    const hosts = useFormHosts()
+    // A package whose terms the owner has not accepted offers no form host.
+    const hosts = useTermsOpen(useFormHosts(), slugOfGroup)
     const packages = usePackages()
     const nameOf = (slug: string) => packages.find(p => p.slug === slug)?.name ?? slug
     const rows = hosts.map(h => (

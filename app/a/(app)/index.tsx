@@ -5,10 +5,12 @@ import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useSortedPackagesResult } from '@tinycld/core/lib/use-sorted-packages'
 import { Redirect } from 'expo-router'
 import { usePackagePrefetch } from '~/lib/route-prefetch'
+import { useLaunchTermsPrompt } from '~/lib/use-launch-terms-prompt'
 
 export default function OrgIndex() {
     const { packages: sorted, isReady } = useSortedPackagesResult()
     const { isGuest } = useCurrentRole()
+    const termsPrompt = useLaunchTermsPrompt()
     const orgHref = useOrgHref()
     const first = sorted[0]
     // Hold the redirect until the landing package's chunks are loaded, so its
@@ -26,7 +28,12 @@ export default function OrgIndex() {
     // "still loading" rather than "genuinely nothing". Wait for isReady before
     // deciding where to land — redirecting to settings prematurely would flash
     // then bounce to the real package once the registry/overrides arrive.
-    if (!isReady || !landingLoaded) return null
+    if (!isReady || !landingLoaded || !termsPrompt.isReady) return null
+
+    if (termsPrompt.href) {
+        trace('OrgIndex redirect to package terms', { href: JSON.stringify(termsPrompt.href) })
+        return <Redirect href={termsPrompt.href} />
+    }
 
     if (first) {
         const href = orgHref(first.slug as never)

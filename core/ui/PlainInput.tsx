@@ -1,3 +1,4 @@
+import { useCoveredInputProps } from '@tinycld/core/ui/overlay/covered'
 import { autoFocusDataSet } from '@tinycld/core/ui/overlay/focus'
 import { forwardRef } from 'react'
 import {
@@ -16,12 +17,14 @@ import {
 export const PlainInput = forwardRef<TextInputInstance, TextInputProps>(
     function PlainInput(props, ref) {
         const { style, ...rest } = props
+        const focusProps = useCoveredInputProps(rest)
         return (
             <TextInput
                 ref={ref}
                 style={[styles.base, style]}
                 {...rest}
-                dataSet={autoFocusDataSet(rest)}
+                {...focusProps}
+                dataSet={autoFocusDataSet({ ...rest, ...focusProps })}
             />
         )
     }

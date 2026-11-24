@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { ReportPanelDecl } from '../core/lib/packages/types'
+import type { PackageTermsDecl, ReportPanelDecl } from '../core/lib/packages/types'
 import type { RecordLabelDecl } from '../core/lib/record-labels/label'
 
 export interface PackageManifest {
@@ -92,6 +92,9 @@ export interface PackageManifest {
     setupSteps?: { id: string; label: string; module: string; order?: string }[]
     // Record panels beside a report. See ReportPanelDecl in core/lib/packages/types.ts.
     reportPanels?: ReportPanelDecl[]
+    // Terms the owner must accept before the package is used in the app. Validated
+    // and read by scripts/gen-terms.ts. See PackageTermsDecl.
+    terms?: PackageTermsDecl
 }
 
 // Keep in step with core/lib/packages/types.ts's PackagePort.

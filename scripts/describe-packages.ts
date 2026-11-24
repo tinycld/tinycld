@@ -138,6 +138,8 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
             ...(manifest.repository ? { repository: manifest.repository } : {}),
             ...(manifest.dependencies ? { dependencies: manifest.dependencies } : {}),
             ...(recordLabels ? { recordLabels } : {}),
+            // The client closes a package that declares terms (static-registry).
+            ...(manifest.terms ? { terms: manifest.terms } : {}),
         },
     }
 }

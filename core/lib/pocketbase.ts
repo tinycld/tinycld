@@ -358,6 +358,22 @@ const pkg_registry = newCollection('pkg_registry', {
     ...indexing,
 })
 
+// The terms text of each package that declares terms. Read-only from the
+// client: the server writes it at boot (core/server/pkgterms).
+const pkg_terms = newCollection('pkg_terms', {
+    ...onDemand,
+    ...indexing,
+})
+
+// The owner's decisions on package terms. The owner inserts a row; a server
+// hook checks it and, for `accepted`, writes pkg_registry.terms_accepted_version.
+const pkg_terms_decisions = newCollection('pkg_terms_decisions', {
+    omitOnInsert: ['created'],
+    ...onDemand,
+    relations: { user: users },
+    ...indexing,
+})
+
 // Build-history catalog for the Admin panel's Builds tab. Read-only from the
 // client (the build pipeline writes it server-side); registered so the tab can
 // read it via the pbtsdb store instead of the raw PocketBase client.
@@ -556,6 +572,8 @@ const coreStores = {
     classifier_usage,
     org_pkg_access,
     pkg_registry,
+    pkg_terms,
+    pkg_terms_decisions,
     pkg_build,
     audit_logs,
     backups,

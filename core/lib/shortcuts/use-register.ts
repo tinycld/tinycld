@@ -1,3 +1,4 @@
+import { useIsCovered } from '@tinycld/core/ui/overlay/covered'
 import { useEffect } from 'react'
 import { useShortcutRegistry } from './registry'
 import { currentScopeId, type ScopeOwner, useScopeOwner } from './scopes'
@@ -34,6 +35,10 @@ function withScopeId(shortcut: Shortcut, owner: ScopeOwner | null): Shortcut {
  * Register a shortcut for the lifetime of the component. Pass a stable
  * `Shortcut` object (e.g. memoised or module-level) to avoid re-registering
  * on every render.
+ *
+ * Content under a cover (`useIsCovered`) registers nothing until the cover
+ * goes. A scope cannot hold back a `global` shortcut, so this is what keeps a
+ * covered package's globals from running under the cover.
  */
 export function useRegisterShortcut(
     shortcut: Shortcut | null | false | undefined,
@@ -43,28 +48,32 @@ export function useRegisterShortcut(
     const unregister = useShortcutRegistry(s => s.unregister)
     const contextOwner = useScopeOwner()
     const scopeOwner = owner ?? contextOwner
+    const isCovered = useIsCovered()
 
     useEffect(() => {
-        if (!shortcut) return
+        if (!shortcut || isCovered) return
         register(withScopeId(shortcut, scopeOwner))
         return () => unregister(shortcut.id)
-    }, [shortcut, scopeOwner, register, unregister])
+    }, [shortcut, scopeOwner, isCovered, register, unregister])
 }
 
 /**
  * Register multiple shortcuts. The array identity is tracked; pass a stable
- * array (module-level or `useMemo`) to avoid thrash.
+ * array (module-level or `useMemo`) to avoid thrash. Covered content
+ * registers nothing, as in `useRegisterShortcut`.
  */
 export function useRegisterShortcuts(shortcuts: Shortcut[], owner?: ScopeOwner) {
     const register = useShortcutRegistry(s => s.register)
     const unregister = useShortcutRegistry(s => s.unregister)
     const contextOwner = useScopeOwner()
     const scopeOwner = owner ?? contextOwner
+    const isCovered = useIsCovered()
 
     useEffect(() => {
+        if (isCovered) return
         for (const s of shortcuts) register(withScopeId(s, scopeOwner))
         return () => {
             for (const s of shortcuts) unregister(s.id)
         }
-    }, [shortcuts, scopeOwner, register, unregister])
+    }, [shortcuts, scopeOwner, isCovered, register, unregister])
 }

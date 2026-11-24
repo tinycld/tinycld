@@ -54,6 +54,7 @@ import {
     replaceSymlink,
     type ServerPkg,
 } from './gen-server'
+import { resolveTerms } from './gen-terms'
 import { buildUniwindSources, type UniwindSource } from './gen-uniwind'
 import { loadManifest, type PackageManifest } from './load-manifest'
 import {
@@ -559,6 +560,12 @@ async function main() {
         ports: f.manifest.ports,
     }))
     validatePorts(portsFeatures)
+    // Read each package's terms here, with the other checks, so a bad `terms`
+    // stops the run before tinycld.config.ts, tinycld.seeds.ts and the other
+    // generated files are written. The package builds above have already run.
+    const termsBySlug = new Map(
+        features.map(f => [f.manifest.slug, resolveTerms(f.dir, f.manifest.slug, f.manifest.terms)])
+    )
     for (const f of features) {
         const events = f.manifest.notifications?.events
         if (events) checkNotifyEventsModule(f.dir, f.name, events)
@@ -682,6 +689,7 @@ async function main() {
             ...features.map(f => ({
                 manifest: f.manifest,
                 source: resolveGitSource(f.dir, f.manifest.slug),
+                terms: termsBySlug.get(f.manifest.slug),
             })),
         ])
     )

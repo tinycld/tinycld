@@ -296,6 +296,7 @@ export default manifest
 | `build.script` | A build script run before bundling (e.g. an embedded webview bundle). |
 | `dependencies[]` | A **slug-only** list of other packages — **advisory + seed-ordering only.** Used to topologically sort seed execution and as a soft hint; it imposes **no** version constraint and is never a compile-time import. |
 | `peerVersions` | `{ '<slug or @tinycld/core>': '<semver range>' }` (e.g. `{ '@tinycld/core': '>=2.1 <3' }`) — **enforced** semver ranges keyed by slug. See [`dependencies` vs `peerVersions`](#dependencies-vs-peerversions) below. |
+| `terms` | `{ file, version }` — terms and conditions the **owner must accept before the package is used in the app**. `file` is a markdown file in the package (e.g. `'TERMS.md'`); `version` is a label of 1-50 characters (`A-Z a-z 0-9 . _ -`) that you change when the text changes. The server stores the text, the declared version, the accepted version and the owner's decisions; a package is pending while the declared and accepted versions differ. Core's server does not refuse a pending package: the client gates it. Omit it and the package needs no acceptance. |
 
 #### Help screenshots
 
@@ -342,6 +343,22 @@ no Go of their own. A collection named outside the convention is treated as
 core/shared data and gets **no** package-access enforcement — deliberate for
 genuinely shared infrastructure (drive's polymorphic `comment_mentions`),
 a silent hole for anything else.
+
+### Package terms (`terms`): how the gate works
+
+A package that declares `terms: { file: 'TERMS.md', version: '2026-11-01' }` is closed in the app until the **owner** accepts that version. Core does all of it; the package ships only the markdown file and the version label.
+
+- **State.** The boot sync writes the declared version to `pkg_registry.terms_version` and the text to the `pkg_terms` collection. `pkg_registry.terms_accepted_version` is the version the owner accepted. The package is **pending** while `terms_version` is not blank and differs from `terms_accepted_version`.
+- **Decision.** The owner's client inserts a `pkg_terms_decisions` row (`pkg`, `terms_version`, `decision`: `accepted` or `declined`). The server records the user and the time, writes the audit log, and on `accepted` sets `terms_accepted_version`. A decline changes nothing else. Nobody edits or deletes a decision, and a non-superuser cannot write the two registry fields.
+- **A new version.** Change `terms.version` when the text changes. After the upgrade the package is pending again. A change of the text with the same `version` does not ask again.
+- **The gate is in the client.** `useTermsBlocked()` (`core/lib/packages/use-package-terms.ts`) gives the pending slugs. While a package is pending:
+  - its route shows the terms with Agree / Decline to the owner and a waiting screen to everybody else (`PackageTermsGate`); its sidebar is hidden;
+  - admins, members and guests have no nav entry for it; the owner keeps the entry;
+  - its settings links and panels, help topics, search scope and rows, and sidebar-slot contributions are hidden for everybody;
+  - the setup wizard's Apps step shows it off, and Agree in the terms dialog turns it on;
+  - an owner who has not decided lands on Settings → Package terms at launch. A declined package does not ask again.
+- **The server does not enforce terms.** No collection rule, route or search source reads the terms state: a request for a pending package's records or routes is answered as for any other package. Do not rely on terms as access control.
+- **No terms.** A package without `terms` has a blank `terms_version` and is never pending. A build in which no package declares terms runs no terms query.
 
 ### Manifest variation across shipped packages
 
@@ -645,6 +662,8 @@ which replaces a file the old generator used to write:
 `usePackages()` still merges the static set (`packageRegistry`) with
 runtime-installed DB packages, exactly as before.
 
+`server/bundled-packages.json` also carries each package's terms: the generator reads `terms.file` and writes `termsVersion` and `termsBody` on the package's row (`scripts/gen-terms.ts`). A package without `terms` has neither key.
+
 ### Validation
 
 The generator fails fast on:
@@ -655,6 +674,7 @@ The generator fails fast on:
 - **`ports`**: a duplicate name or port number across packages, a port outside 1-65535, a name that does not match `[a-z0-9-]+`, or a name that collides with a supervisor-reserved name (`http`, `https`, `http-redirect`).
 - **`recordLabels`**: a collection the package does not own (not `<slug>` or `<slug>_*`, dashes as underscores), the same collection labelled by two packages, or a `format` that does not parse — no placeholder, a placeholder that is not `{field}` / `{relation.field}`, an unmatched brace, a relation read but not named in `relations` (or named but not read), or more than one relation.
 - **`notifications.events`**: a subpath with no plain-string `./<subpath>` entry in the package's `exports` map, an entry whose file does not exist, or a module with a runtime import from `@tinycld/core` or `@tinycld/app-generated` (use `import type`). The module must be pure data: the generated config imports it, and a runtime import that reaches the dispatcher would make `tinycldConfig` read itself while it initialises.
+- **`terms`**: a `version` that is not 1-50 characters of `A-Z a-z 0-9 . _ -` starting with a letter or digit; a `file` that is not a `.md` file, is outside the package, does not exist, is empty, or is larger than 200,000 bytes.
 
 It warns (but does not fail) when:
 

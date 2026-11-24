@@ -149,7 +149,10 @@ async function startTrackedSession(page: Page) {
 // `startAt` lets a spec begin at a deep route instead of '/', to exercise the
 // "sign in, land back on the route you asked for" path. Defaults to '/', so
 // every existing caller is unaffected.
-export async function login(page: Page, options: { startAt?: string } = {}) {
+//
+// `landed` replaces the app shell as the sign that the sign-in is done, for a
+// `startAt` route that renders outside the shell (the setup guide's steps).
+export async function login(page: Page, options: { startAt?: string; landed?: Locator } = {}) {
     await startTrackedSession(page)
     await page.goto(options.startAt ?? '/')
     // Idempotent: a helper earlier in the same test (createInvitedUser) may
@@ -165,8 +168,7 @@ export async function login(page: Page, options: { startAt?: string } = {}) {
             .waitFor({ state: 'visible', timeout: 15_000 })
             .then(() => 'login-form' as const)
             .catch(() => 'neither' as const),
-        page
-            .getByTestId('nav-home')
+        (options.landed ?? page.getByTestId('nav-home'))
             .waitFor({ state: 'visible', timeout: 15_000 })
             .then(() => 'shell' as const)
             .catch(() => 'neither' as const),
@@ -187,7 +189,7 @@ export async function login(page: Page, options: { startAt?: string } = {}) {
     // (testID nav-home) at or above it. Gating on nav-home alone made login()
     // unusable in any mobile-viewport spec — it waited out the full timeout for
     // an element that layout never renders. Accept either.
-    const shellReady = appShell(page)
+    const shellReady = options.landed ?? appShell(page)
     // Match EITHER message the sign-in form can render for a failed attempt.
     // 'Failed to authenticate' is the clean credential rejection; 'Something
     // went wrong' is the generic fallback in core/lib/errors.ts, which is what

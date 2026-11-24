@@ -4,9 +4,11 @@ import { ReportView } from '../components/ReportView'
 import { useBackToReports } from '../hooks/useBackToReports'
 import { useReportBuilder } from '../hooks/useReportBuilder'
 import { useReportCatalog } from '../hooks/useReportCatalog'
+import { useReportTermsGate } from '../hooks/useReportTermsGate'
 import { useReportView } from '../hooks/useReportView'
 import type { ReportAccess } from '../lib/access'
 import type { Catalog } from '../lib/builder/columns'
+import { newReportStep } from '../lib/hub-rows'
 import type { CatalogSource } from '../lib/types'
 import { NEW_REPORT_KEY } from '../stores/report-ui-store'
 import { catalogFrameState, ReportFrame } from './ReportScreen'
@@ -49,8 +51,10 @@ export function NewReportScreen() {
     const { source } = useLocalSearchParams<{ source?: string }>()
     const catalog = useReportCatalog()
     const onBack = useBackToReports()
+    const terms = useReportTermsGate(source)
     const base = catalog.byKey.get(source ?? '')
-    if (!catalog.isReady) {
+    const step = newReportStep({ isCatalogReady: catalog.isReady, hasSource: !!base, terms })
+    if (step === 'catalog') {
         return (
             <ReportFrame
                 title="New report"
@@ -60,6 +64,9 @@ export function NewReportScreen() {
             />
         )
     }
-    if (!base) return <ReportFrame title="New report" state="unknown-source" onBack={onBack} />
+    if (step === 'wait') return <ReportFrame title="New report" state="loading" onBack={onBack} />
+    if (step === 'unknown-source' || !base) {
+        return <ReportFrame title="New report" state="unknown-source" onBack={onBack} />
+    }
     return <NewReport catalog={catalog.byKey} base={base} onBack={onBack} />
 }

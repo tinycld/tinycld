@@ -3,6 +3,7 @@ package coreserver
 import (
 	"github.com/pocketbase/pocketbase"
 	"tinycld.org/core/audit"
+	"tinycld.org/core/pkgterms"
 )
 
 // RegisterAuditHooks registers audit logging for core collections.
@@ -22,6 +23,11 @@ func RegisterAuditHooks(app *pocketbase.PocketBase) {
 		ExtractLabel: audit.LabelFromField("name"),
 	})
 	audit.RegisterCollections(app, []string{"label_assignments", "org_pkg_access"}, nil)
+	// The owner's decision on a package's terms: which package, which
+	// version, accepted or declined. The actor and the time are the log's own.
+	audit.RegisterCollection(app, pkgterms.DecisionsCollection, &audit.CollectionConfig{
+		ExtractLabel: audit.LabelFromFields("pkg", "terms_version", "decision"),
+	})
 
 	// Group membership is an access-control change: who can see what moves
 	// with every row here, so both land in the audit log.

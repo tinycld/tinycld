@@ -1,4 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useCoveredInputProps } from '@tinycld/core/ui/overlay/covered'
 import { autoFocusDataSet } from '@tinycld/core/ui/overlay/focus'
 import type { ComponentType } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
@@ -69,6 +70,7 @@ export function TextAreaInput<T extends FieldValues = Record<string, unknown>>(
     } = useController({ name, control })
 
     const placeholderColor = useThemeColor('field-placeholder')
+    const focusProps = useCoveredInputProps(inputProps)
 
     const hasError = !!error
 
@@ -78,7 +80,8 @@ export function TextAreaInput<T extends FieldValues = Record<string, unknown>>(
             <RNTextInput
                 // Spread before the owned props for the same reason as TextInput.
                 {...inputProps}
-                dataSet={autoFocusDataSet(inputProps)}
+                {...focusProps}
+                dataSet={autoFocusDataSet({ ...inputProps, ...focusProps })}
                 multiline
                 numberOfLines={numberOfLines}
                 value={field.value || ''}

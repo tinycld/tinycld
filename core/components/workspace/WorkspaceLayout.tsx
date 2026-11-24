@@ -1,5 +1,6 @@
 import { DemoBanner } from '@tinycld/core/components/DemoBanner'
 import { NotificationDrawer } from '@tinycld/core/components/NotificationDrawer'
+import { useActivePkgTermsBlocked } from '@tinycld/core/components/package-terms/PackageTermsGate'
 import { FilePickerSheetHost } from '@tinycld/core/file-viewer/FilePickerSheetHost'
 import { usePackage } from '@tinycld/core/lib/packages/use-packages'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
@@ -27,6 +28,7 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
     const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
     const activePkg = usePackage(activePkgSlug ?? '')
     const activePkgDenied = useActivePkgDenied()
+    const activePkgTermsBlocked = useActivePkgTermsBlocked()
     const insets = useDeviceInsets()
     const isMobile = breakpoint === 'mobile'
 
@@ -37,8 +39,10 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
     // with a touch-capturing dim layer and blocked all interaction. The docked
     // panel matches the intended "contextual sidebar to the right of the rail".
     // A denied package's sidebar sits OUTSIDE the PackageAccessDenied overlay,
-    // so hide it here for the same state.
-    const hasSidebar = !isMobile && activePkg?.sidebar != null && !activePkgDenied
+    // so hide it here for the same state. The same holds for a package whose
+    // terms the owner has not accepted (PackageTermsGate).
+    const hasSidebar =
+        !isMobile && activePkg?.sidebar != null && !activePkgDenied && !activePkgTermsBlocked
     const sidebarWidth = breakpoint === 'tablet' ? SIDEBAR_WIDTH_TABLET : SIDEBAR_WIDTH_DESKTOP
 
     // One tree shape for every breakpoint: only the chrome around

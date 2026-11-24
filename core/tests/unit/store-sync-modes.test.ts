@@ -42,6 +42,8 @@ const CORE_COLLECTIONS = [
     'org_pkg_access',
     'oauth_grants',
     'pkg_registry',
+    'pkg_terms',
+    'pkg_terms_decisions',
     'pkg_build',
     'system_settings',
     'autoupgrade_state',

@@ -1,5 +1,6 @@
 import { packageHelp } from '@tinycld/app-generated/package-help'
 import { useMemo } from 'react'
+import { useTermsBlocked } from '../packages/use-package-terms'
 import { isManagedPrefix, useManagedSettingPrefixes } from '../use-managed-settings'
 import type { HelpGroup, HelpTopic, HelpTopicId } from './types'
 
@@ -9,10 +10,18 @@ const allGroups = packageHelp as unknown as HelpGroup[]
 // list, the drawer and the search palette can never disagree about what this
 // deployment documents. A topic reachable from search alone would still be a
 // set of instructions for a screen that is not here.
-function visibleGroups(managed: readonly string[]): HelpGroup[] {
-    if (managed.length === 0) return allGroups
+//
+// A package whose terms the owner has not accepted contributes no topics: its
+// help describes screens nobody can open yet.
+export function visibleGroups(
+    groups: readonly HelpGroup[],
+    managed: readonly string[],
+    blocked: ReadonlySet<string>
+): readonly HelpGroup[] {
+    if (managed.length === 0 && blocked.size === 0) return groups
     const out: HelpGroup[] = []
-    for (const group of allGroups) {
+    for (const group of groups) {
+        if (blocked.has(group.pkgSlug)) continue
         const topics = group.topics.filter(t => !isManagedPrefix(managed, t.keyPrefix))
         // A package whose every topic is hidden contributes no section at all,
         // rather than an empty heading.
@@ -21,9 +30,10 @@ function visibleGroups(managed: readonly string[]): HelpGroup[] {
     return out
 }
 
-export function useHelpGroups(): HelpGroup[] {
+export function useHelpGroups(): readonly HelpGroup[] {
     const managed = useManagedSettingPrefixes()
-    return useMemo(() => visibleGroups(managed), [managed])
+    const { blocked } = useTermsBlocked()
+    return useMemo(() => visibleGroups(allGroups, managed, blocked), [managed, blocked])
 }
 
 export function useHelpTopics(): HelpTopic[] {

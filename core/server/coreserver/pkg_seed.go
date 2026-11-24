@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/pkgterms"
 )
 
 type bundledPackage struct {
@@ -24,6 +26,21 @@ type bundledPackage struct {
 	// as an installed package. Empty for rows the generator emits without a
 	// source spec.
 	Source string `json:"source"`
+	// TermsVersion and TermsBody are the package's terms and conditions
+	// (manifest `terms`), read by the generator. Both blank for a package
+	// with no terms.
+	TermsVersion string `json:"termsVersion,omitempty"`
+	TermsBody    string `json:"termsBody,omitempty"`
+}
+
+// syncTerms stores a bundled package's terms text. The caller runs it only after
+// the package's registry row saved. A failed terms save is logged, not fatal.
+// After a failed save the stored text, if any, is the one of the last boot that
+// saved.
+func syncTerms(app core.App, pkg bundledPackage) {
+	if err := pkgterms.Sync(app, pkg.Slug, pkg.TermsVersion, pkg.TermsBody); err != nil {
+		srvLog.Error("failed to store package terms", "slug", pkg.Slug, "err", err)
+	}
 }
 
 // embeddedBundledPackages is the bundled-packages.json compiled into a
@@ -132,9 +149,14 @@ func SyncBundledPackages(app core.App) {
 			if pkg.ManifestJSON != "" {
 				record.Set("manifest_json", pkg.ManifestJSON)
 			}
+			// A new package with terms starts pending: terms_accepted_version
+			// is blank until the owner accepts.
+			record.Set(pkgterms.FieldTermsVersion, pkg.TermsVersion)
 			if err := app.Save(record); err != nil {
 				srvLog.Error("failed to create bundled package registry row", "slug", pkg.Slug, "err", err)
+				continue
 			}
+			syncTerms(app, pkg)
 			continue
 		}
 
@@ -158,9 +180,14 @@ func SyncBundledPackages(app core.App) {
 		if pkg.ManifestJSON != "" {
 			existing.Set("manifest_json", pkg.ManifestJSON)
 		}
+		// terms_accepted_version is never written here: a new terms version
+		// then differs from it, and the package is pending again.
+		existing.Set(pkgterms.FieldTermsVersion, pkg.TermsVersion)
 		if err := app.Save(existing); err != nil {
 			srvLog.Error("failed to update bundled package registry row", "slug", pkg.Slug, "err", err)
+			continue
 		}
+		syncTerms(app, pkg)
 	}
 
 	// Mark removed bundled packages as disabled
