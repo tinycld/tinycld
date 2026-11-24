@@ -140,6 +140,7 @@ function AppCard({
             onPress={() => onToggle(choice)}
             accessibilityRole="checkbox"
             accessibilityState={{ checked: choice.isOn }}
+            aria-checked={choice.isOn}
             accessibilityLabel={choice.name}
             className={`${CARD_CLASS[state]} ${widthClass}`}
         >
@@ -177,6 +178,7 @@ function AutoUpdateChoice() {
             onPress={() => au.setOn(!choice.isOn)}
             accessibilityRole="checkbox"
             accessibilityState={{ checked: choice.isOn }}
+            aria-checked={choice.isOn}
             accessibilityLabel="Upgrade apps automatically when new versions are available"
             className="mb-6 flex-row items-center gap-3"
         >
