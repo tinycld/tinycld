@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { packageReports, sharedReports, slugOfHubRow, slugOfSource } from '../hub-rows'
+import {
+    packageReports,
+    reportTermsGate,
+    sharedReports,
+    slugOfHubRow,
+    slugOfSource,
+} from '../hub-rows'
 
 describe('the package of a source', () => {
     it('is the part of the source key before the dot', () => {
@@ -9,6 +15,29 @@ describe('the package of a source', () => {
 
     it('is the whole key when the key has no dot', () => {
         expect(slugOfSource({ key: 'zoo' })).toBe('zoo')
+    })
+})
+
+describe('reportTermsGate', () => {
+    const declares = (slug: string) => slug === 'zoo'
+    const gate = (source: string, blocked: string[], isReady: boolean) =>
+        reportTermsGate({ source, blocked: new Set(blocked), isReady, declaresTerms: declares })
+
+    it('closes a report whose source belongs to a closed package', () => {
+        expect(gate('zoo.animals', ['zoo'], true)).toBe('closed')
+    })
+
+    it('opens a report of a package whose terms are accepted', () => {
+        expect(gate('zoo.animals', [], true)).toBe('open')
+    })
+
+    it('waits for the terms state only when the package declares terms', () => {
+        expect(gate('zoo.animals', ['zoo'], false)).toBe('wait')
+        expect(gate('acme.parts', ['zoo'], false)).toBe('open')
+    })
+
+    it('reads the package from the source key, not a look-alike', () => {
+        expect(gate('zoology.animals', ['zoo'], true)).toBe('open')
     })
 })
 

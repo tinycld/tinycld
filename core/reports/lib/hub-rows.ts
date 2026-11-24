@@ -29,6 +29,23 @@ export const slugOfSource = (source: { key: string }) => slugOfSourceKey(source.
 export const slugOfHubRow = (row: { report: { source: string } }) =>
     slugOfSourceKey(row.report.source)
 
+/**
+ * Whether a saved report may open, by the terms of the package that owns its
+ * source. `wait` while the terms state of a package that declares terms is not
+ * known yet; a package without terms never waits.
+ */
+export function reportTermsGate(input: {
+    source: string
+    blocked: ReadonlySet<string>
+    isReady: boolean
+    declaresTerms: (slug: string) => boolean
+}): 'open' | 'wait' | 'closed' {
+    const slug = slugOfSourceKey(input.source)
+    if (!input.declaresTerms(slug)) return 'open'
+    if (!input.isReady) return 'wait'
+    return input.blocked.has(slug) ? 'closed' : 'open'
+}
+
 const uniqueById = <R extends HubRecord>(reports: readonly R[]): R[] => [
     ...new Map(reports.map(report => [report.id, report])).values(),
 ]

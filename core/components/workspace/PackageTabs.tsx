@@ -1,3 +1,4 @@
+import { CoveredProvider } from '@tinycld/core/ui/overlay/covered'
 import { Tabs } from 'expo-router'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
@@ -65,13 +66,16 @@ export function PackageTabs() {
 /**
  * Holds the screens out of play while the terms cover is over them. Its own
  * component, so a change of the cover re-renders this View only: the Tabs
- * element it gets as children stays the same.
+ * element it gets as children stays the same. The covered context keeps the
+ * screens' dialogs, sheets and shortcuts from coming up over the cover.
  */
 function CoveredContent({ children }: { children: ReactNode }) {
-    const coveredProps = useCoveredContentProps()
+    const { isCovered, viewProps } = useCoveredContentProps()
     return (
-        <View {...coveredProps} className="flex-1" style={{ minHeight: 0 }}>
-            {children}
-        </View>
+        <CoveredProvider value={isCovered}>
+            <View {...viewProps} className="flex-1" style={{ minHeight: 0 }}>
+                {children}
+            </View>
+        </CoveredProvider>
     )
 }

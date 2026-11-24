@@ -7,6 +7,7 @@ import {
 import { ScopeProvider, useShortcutScope } from '@tinycld/core/lib/shortcuts/scopes'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
+import { holdNativeFocusOut } from '@tinycld/core/ui/overlay/hold-native-focus'
 import { setInert } from '@tinycld/core/ui/overlay/set-inert'
 import { type ReactNode, useCallback } from 'react'
 import { Platform, StyleSheet, View, type ViewInstance } from 'react-native'
@@ -26,27 +27,35 @@ export function useActivePkgTermsBlocked(): boolean {
 }
 
 /**
- * Props for the View around the package screens. While the cover shows, the
- * screen under it stays mounted (so the other packages keep their frozen
- * state) but is out of play: no pointer, no focus, no assistive tech. Web uses
- * `inert`, set through the ref because react-native's View props do not type
- * it; native uses pointerEvents and the accessibility props.
+ * Whether the package screens are covered, and the props for the View around
+ * them. While the cover shows, the screen under it stays mounted (so the other
+ * packages keep their frozen state) but is out of play: no pointer, no focus,
+ * no assistive tech. Web uses `inert`, set through the ref because
+ * react-native's View props do not type it. Native uses pointerEvents and the
+ * accessibility props, and the ref keeps the focus out of the screens
+ * (`holdNativeFocusOut`) until the cover goes: React calls the release the ref
+ * returns when the cover state changes or the View unmounts.
  */
 export function useCoveredContentProps() {
     const isCovered = useActivePkgTermsBlocked()
     const ref = useCallback(
         (node: ViewInstance | null) => {
-            if (Platform.OS !== 'web' || node == null) return
-            setInert(node as unknown as HTMLElement, isCovered)
+            if (node == null) return undefined
+            if (Platform.OS === 'web') {
+                setInert(node as unknown as HTMLElement, isCovered)
+                return undefined
+            }
+            return isCovered ? holdNativeFocusOut(node) : undefined
         },
         [isCovered]
     )
-    return {
+    const viewProps = {
         ref,
         pointerEvents: isCovered ? 'none' : 'auto',
         importantForAccessibility: isCovered ? 'no-hide-descendants' : 'auto',
         accessibilityElementsHidden: isCovered,
     } as const
+    return { isCovered, viewProps }
 }
 
 type Cover =

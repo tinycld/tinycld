@@ -9,6 +9,7 @@ import {
     useOverlayLayer,
     wasConsumedByLayerDismissal,
 } from '@tinycld/core/ui/overlay'
+import { useOpenUnlessCovered } from '@tinycld/core/ui/overlay/covered'
 import { Sheet } from '@tinycld/core/ui/sheet'
 import { type ButtonShortcut, ShortcutButton } from '@tinycld/core/ui/shortcut-button'
 import { X } from 'lucide-react-native'
@@ -86,7 +87,7 @@ const SIZE_CLASS: Record<DialogSize, string> = {
 const FULL_MOBILE_CLASS = 'w-full h-full rounded-none border-0'
 
 function DialogRoot({
-    isOpen,
+    isOpen: isOpenProp,
     onClose,
     title,
     description,
@@ -99,6 +100,8 @@ function DialogRoot({
     onRestoreFocus,
     children,
 }: DialogProps) {
+    // A dialog that covered content opens by itself would draw over the cover.
+    const isOpen = useOpenUnlessCovered(isOpenProp)
     const isMobile = useBreakpoint() === 'mobile'
     const isSheet = presentation === 'sheet' || (presentation === 'auto' && isMobile)
 
