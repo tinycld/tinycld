@@ -296,6 +296,7 @@ export default manifest
 | `build.script` | A build script run before bundling (e.g. an embedded webview bundle). |
 | `dependencies[]` | A **slug-only** list of other packages — **advisory + seed-ordering only.** Used to topologically sort seed execution and as a soft hint; it imposes **no** version constraint and is never a compile-time import. |
 | `peerVersions` | `{ '<slug or @tinycld/core>': '<semver range>' }` (e.g. `{ '@tinycld/core': '>=2.1 <3' }`) — **enforced** semver ranges keyed by slug. See [`dependencies` vs `peerVersions`](#dependencies-vs-peerversions) below. |
+| `terms` | `{ file, version }` — terms and conditions the **owner must accept before anybody uses the package**. `file` is a markdown file in the package (e.g. `'TERMS.md'`); `version` is a label of 1-50 characters (`A-Z a-z 0-9 . _ -`) that you change when the text changes. Until the owner accepts the current version, the server refuses the package's collections and routes for everybody. See [Package terms](#package-terms-terms). Omit it and the package needs no acceptance. |
 
 #### Help screenshots
 
@@ -645,6 +646,8 @@ which replaces a file the old generator used to write:
 `usePackages()` still merges the static set (`packageRegistry`) with
 runtime-installed DB packages, exactly as before.
 
+`server/bundled-packages.json` also carries each package's terms: the generator reads `terms.file` and writes `termsVersion` and `termsBody` on the package's row (`scripts/gen-terms.ts`). A package without `terms` has neither key.
+
 ### Validation
 
 The generator fails fast on:
@@ -655,6 +658,7 @@ The generator fails fast on:
 - **`ports`**: a duplicate name or port number across packages, a port outside 1-65535, a name that does not match `[a-z0-9-]+`, or a name that collides with a supervisor-reserved name (`http`, `https`, `http-redirect`).
 - **`recordLabels`**: a collection the package does not own (not `<slug>` or `<slug>_*`, dashes as underscores), the same collection labelled by two packages, or a `format` that does not parse — no placeholder, a placeholder that is not `{field}` / `{relation.field}`, an unmatched brace, a relation read but not named in `relations` (or named but not read), or more than one relation.
 - **`notifications.events`**: a subpath with no plain-string `./<subpath>` entry in the package's `exports` map, an entry whose file does not exist, or a module with a runtime import from `@tinycld/core` or `@tinycld/app-generated` (use `import type`). The module must be pure data: the generated config imports it, and a runtime import that reaches the dispatcher would make `tinycldConfig` read itself while it initialises.
+- **`terms`**: a `version` that is not 1-50 characters of `A-Z a-z 0-9 . _ -` starting with a letter or digit; a `file` that is not a `.md` file, is outside the package, does not exist, is empty, or is larger than 200,000 bytes.
 
 It warns (but does not fail) when:
 
