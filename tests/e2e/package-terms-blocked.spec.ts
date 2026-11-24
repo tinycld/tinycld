@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test'
-import { skipWithoutTermsStub, TERMS_STUB, termsSuperuser } from './package-terms-helpers'
+import { appHref } from '@tinycld/core/lib/org-routes'
+import { login, loginAs, TEST_COLLABORATOR_PASSWORD, TEST_COLLABORATOR_USERNAME } from './helpers'
+import {
+    PHONE_VIEWPORT,
+    packageNavEntries,
+    skipWithoutTermsStub,
+    TERMS_STUB,
+    termsSuperuser,
+} from './package-terms-helpers'
 
 // A package whose terms the owner has not accepted: what everybody sees.
 //
@@ -12,6 +20,8 @@ import { skipWithoutTermsStub, TERMS_STUB, termsSuperuser } from './package-term
 // Not covered here: the gate is in the client only. The server answers a
 // request for the stub's records and routes as for any other package, and no
 // test here asserts a refusal.
+
+const STUB_ROUTE = appHref(TERMS_STUB.slug)
 
 test.describe('package terms: a package nobody may use yet', () => {
     test.skip(skipWithoutTermsStub)
@@ -28,5 +38,45 @@ test.describe('package terms: a package nobody may use yet', () => {
             .getFirstListItem(pb.filter('pkg = {:slug}', { slug: TERMS_STUB.slug }))
         expect(terms.version).toBe(TERMS_STUB.version)
         expect(terms.body).toContain(TERMS_STUB.sentence)
+    })
+
+    test('a member has no nav entry and sees the waiting screen on the route', async ({ page }) => {
+        await loginAs(page, TEST_COLLABORATOR_USERNAME, TEST_COLLABORATOR_PASSWORD, {
+            startAt: STUB_ROUTE,
+        })
+        await expect(page.getByTestId('pkg-terms-waiting')).toBeVisible()
+        await expect(page.getByTestId('pkg-terms-waiting')).toContainText(
+            'Waiting for the owner to accept the terms'
+        )
+        // The member cannot decide.
+        await expect(page.getByTestId('pkg-terms-agree')).toHaveCount(0)
+        // The member's rail has loaded (an entry of another package shows),
+        // and the stub is not in it.
+        await expect(packageNavEntries(page).first()).toBeVisible()
+        await expect(page.getByTestId(`nav-${TERMS_STUB.slug}`)).toHaveCount(0)
+    })
+
+    test('a member on a phone sees the waiting screen and no tab', async ({ page }) => {
+        await page.setViewportSize(PHONE_VIEWPORT)
+        await loginAs(page, TEST_COLLABORATOR_USERNAME, TEST_COLLABORATOR_PASSWORD, {
+            startAt: STUB_ROUTE,
+        })
+        await expect(page.getByTestId('pkg-terms-waiting')).toBeVisible()
+        // The tab bar has loaded, and neither it nor the More list has the stub.
+        await expect(packageNavEntries(page).first()).toBeVisible()
+        await page.getByTestId('nav-more').click()
+        await expect(page.getByTestId(`nav-${TERMS_STUB.slug}`)).toHaveCount(0)
+    })
+
+    test('the owner keeps the nav entry and sees the terms with the declined note', async ({
+        page,
+    }) => {
+        await login(page)
+        await page.getByTestId(`nav-${TERMS_STUB.slug}`).click()
+        const review = page.getByTestId('pkg-terms-review')
+        await expect(review).toBeVisible()
+        await expect(review.getByTestId('pkg-terms-body')).toContainText(TERMS_STUB.sentence)
+        await expect(review.getByTestId('pkg-terms-declined')).toBeVisible()
+        await expect(review.getByTestId('pkg-terms-agree')).toBeVisible()
     })
 })

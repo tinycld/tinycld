@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router'
 import { View } from 'react-native'
 import { packageRegistry } from '../../lib/packages/static-registry'
+import { PackageTermsGate } from '../package-terms/PackageTermsGate'
 import { PackageAccessDenied } from './PackageAccessDenied'
 
 // The routes app/a/(app)/ holds: the app-owned ones, plus one directory per bundled
@@ -51,6 +52,8 @@ export function PackageTabs() {
             >
                 {SCREENS}
             </Tabs>
+            {/* Under the access cover: a member with no access reads that first. */}
+            <PackageTermsGate />
             <PackageAccessDenied />
         </View>
     )

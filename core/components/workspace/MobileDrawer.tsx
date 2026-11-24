@@ -1,3 +1,4 @@
+import { useActivePkgTermsBlocked } from '@tinycld/core/components/package-terms/PackageTermsGate'
 import { shouldSettleDrawerOpen } from '@tinycld/core/components/workspace/drawer-release'
 import { packageSidebars } from '@tinycld/core/lib/packages/derive-components'
 import { usePackage } from '@tinycld/core/lib/packages/use-packages'
@@ -35,6 +36,7 @@ export function MobileDrawer({ isVisible }: MobileDrawerProps) {
     const setDrawerOpen = useWorkspaceStore(s => s.setDrawerOpen)
     const isEdgeSwipeSuspended = useWorkspaceStore(s => s.isEdgeSwipeSuspended)
     const pkg = usePackage(activePkgSlug ?? '')
+    const isTermsBlocked = useActivePkgTermsBlocked()
     const translateX = useSharedValue(-PANEL_WIDTH)
 
     // Defer mounting the active package's sidebar until the drawer has been
@@ -98,7 +100,9 @@ export function MobileDrawer({ isVisible }: MobileDrawerProps) {
 
     const SidebarComponent = pkg ? packageSidebars[pkg.slug] : null
 
-    if (!pkg?.sidebar) return null
+    // A package whose terms the owner has not accepted shows no sidebar here
+    // either (PackageTermsGate covers its screen).
+    if (!pkg?.sidebar || isTermsBlocked) return null
 
     return (
         <>
