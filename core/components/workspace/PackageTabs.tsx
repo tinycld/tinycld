@@ -1,7 +1,7 @@
 import { termsRouteMayMount } from '@tinycld/core/lib/packages/terms-state'
 import { declaresTerms, useTermsBlocked } from '@tinycld/core/lib/packages/use-package-terms'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
-import { CoveredProvider, isRouteCovered } from '@tinycld/core/ui/overlay/covered'
+import { CoveredProvider, isRouteCovered, packageOfRoute } from '@tinycld/core/ui/overlay/covered'
 import { Tabs } from 'expo-router'
 import {
     createContext,
@@ -19,7 +19,8 @@ import { PackageAccessDenied } from './PackageAccessDenied'
 // The routes app/a/(app)/ holds: the app-owned ones, plus one directory per bundled
 // package with `routes`, which the generator writes. expo-router 58 renders only the
 // screens a layout declares, so each one gets a <Tabs.Screen>. A package's route is
-// named by its slug, which is what CoveredRoute reads.
+// named by its slug, or `slug/<file>` when its directory has no _layout; CoveredRoute
+// reads the slug from either (packageOfRoute).
 const APP_ROUTES = ['index', 'help', 'reports', 'settings']
 const PACKAGE_ROUTES = packageRegistry.filter(p => p.routes?.directory).map(p => p.slug)
 const SCREENS = [...APP_ROUTES, ...PACKAGE_ROUTES].map(name => (
@@ -124,7 +125,9 @@ function CoveredContent({ children }: { children: ReactNode }) {
  */
 function CoveredRoute({ routeName, children }: { routeName: string; children: ReactElement }) {
     const { blocked, isReady, wasReady } = useContext(RouteTermsContext)
-    if (!termsRouteMayMount(declaresTerms(routeName), wasReady, isReady)) return null
+    if (!termsRouteMayMount(declaresTerms(packageOfRoute(routeName)), wasReady, isReady)) {
+        return null
+    }
     return <CoveredProvider value={isRouteCovered(routeName, blocked)}>{children}</CoveredProvider>
 }
 

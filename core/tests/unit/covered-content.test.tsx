@@ -10,6 +10,7 @@ import {
     CoveredProvider,
     coveredInputProps,
     isRouteCovered,
+    packageOfRoute,
     useOpenUnlessCovered,
 } from '@tinycld/core/ui/overlay/covered'
 import type { ReactNode } from 'react'
@@ -99,6 +100,21 @@ describe('isRouteCovered', () => {
     it('leaves an open package and an app route uncovered', () => {
         expect(isRouteCovered('acme', closed)).toBe(false)
         expect(isRouteCovered('settings', closed)).toBe(false)
+    })
+
+    // A package directory without a _layout gives the navigator a route named
+    // by its file, not by the slug.
+    it('covers the route of a closed package that has no layout', () => {
+        expect(isRouteCovered('zoo/index', closed)).toBe(true)
+        expect(isRouteCovered('acme/index', closed)).toBe(false)
+    })
+})
+
+describe('packageOfRoute', () => {
+    it('reads the package slug from a navigator route name', () => {
+        expect(packageOfRoute('zoo')).toBe('zoo')
+        expect(packageOfRoute('zoo/index')).toBe('zoo')
+        expect(packageOfRoute('zoo/[id]')).toBe('zoo')
     })
 })
 

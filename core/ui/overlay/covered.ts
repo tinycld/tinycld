@@ -16,9 +16,16 @@ const CoveredContext = createContext(false)
 
 export const CoveredProvider = CoveredContext.Provider
 
-/** True for a navigator route whose content is closed (`closed` holds the closed route names). */
+/**
+ * The package a navigator route belongs to. A package directory with a
+ * `_layout` is one route named by its slug; one without a layout gives a route
+ * per file (`slug/index`, `slug/[id]`).
+ */
+export const packageOfRoute = (routeName: string) => routeName.split('/')[0] ?? routeName
+
+/** True for a navigator route whose content is closed (`closed` holds the closed package slugs). */
 export const isRouteCovered = (routeName: string, closed: ReadonlySet<string>) =>
-    closed.has(routeName)
+    closed.has(packageOfRoute(routeName))
 
 /** True inside covered content. */
 export function useIsCovered(): boolean {
