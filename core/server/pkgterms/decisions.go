@@ -1,6 +1,9 @@
 package pkgterms
 
 import (
+	"database/sql"
+	"errors"
+
 	"github.com/pocketbase/dbx"
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/core"
@@ -18,10 +21,14 @@ func Register(app core.App) {
 // registerDecisions makes a pkg_terms_decisions row the one way to accept or
 // decline. The create rule admits only the owner; the request hook records
 // who decided; the model hook checks the row against the package and, for an
-// acceptance, writes the accepted version in the same transaction, so a
-// stored `accepted` row and the registry never disagree.
+// acceptance, writes the accepted version in the same transaction. The check
+// and the registry write hold when a decision is created; a superuser can
+// still change a decision row through the dashboard, and that does not touch
+// the registry.
 func registerDecisions(app core.App) {
 	app.OnRecordCreateRequest(DecisionsCollection).BindFunc(func(e *core.RecordRequestEvent) error {
+		// A second check behind the create rule, which already admits only the
+		// owner.
 		if !e.HasSuperuserAuth() {
 			if e.Auth == nil || e.Auth.GetString("role") != "owner" {
 				return e.ForbiddenError("Only the owner decides on the terms of a package.", nil)
@@ -40,8 +47,11 @@ func registerDecisions(app core.App) {
 		defer func() { e.App = original }()
 		return original.RunInTransaction(func(txApp core.App) error {
 			pkg, err := txApp.FindFirstRecordByFilter(RegistryCollection, "slug = {:slug}", dbx.Params{"slug": slug})
-			if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
 				return validation.Errors{"pkg": validation.NewError("unknown_package", "There is no such package.")}
+			}
+			if err != nil {
+				return err
 			}
 			current := pkg.GetString(FieldTermsVersion)
 			if current == "" {

@@ -37,33 +37,51 @@ func TestATermsDecisionIsAudited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decision := core.NewRecord(decisions)
-	decision.Set("pkg", "gizmos")
-	decision.Set("terms_version", "2026-01")
-	decision.Set("decision", pkgterms.DecisionAccepted)
-	request := &core.RequestEvent{App: app, Auth: owner}
-	request.Request = httptest.NewRequest(http.MethodPost, "/api/collections/pkg_terms_decisions/records", nil)
-	request.Response = httptest.NewRecorder()
-	event := &core.RecordRequestEvent{RequestEvent: request, Collection: decisions, Record: decision}
-	err = app.OnRecordCreateRequest().Trigger(event, func(e *core.RecordRequestEvent) error {
-		return e.App.Save(e.Record)
-	})
-	if err != nil {
-		t.Fatal(err)
+	decide := func(decision string) {
+		t.Helper()
+		row := core.NewRecord(decisions)
+		row.Set("pkg", "gizmos")
+		row.Set("terms_version", "2026-01")
+		row.Set("decision", decision)
+		request := &core.RequestEvent{App: app, Auth: owner}
+		request.Request = httptest.NewRequest(http.MethodPost, "/api/collections/pkg_terms_decisions/records", nil)
+		request.Response = httptest.NewRecorder()
+		event := &core.RecordRequestEvent{RequestEvent: request, Collection: decisions, Record: row}
+		err := app.OnRecordCreateRequest().Trigger(event, func(e *core.RecordRequestEvent) error {
+			return e.App.Save(e.Record)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
+	decide(pkgterms.DecisionDeclined)
+	if !pkgterms.Pending(registryRow(t, app, "gizmos")) {
+		t.Fatal("a decline accepted the terms")
+	}
+	decide(pkgterms.DecisionAccepted)
 	if pkgterms.Pending(registryRow(t, app, "gizmos")) {
 		t.Fatal("the decision did not accept the terms")
 	}
 
 	var logs []*core.Record
 	waitFor(t, func() bool {
-		logs, _ = app.FindRecordsByFilter("audit_logs", "resource_type = 'pkg_terms_decisions'", "", 0, 0)
-		return len(logs) > 0
+		logs, _ = app.FindRecordsByFilter("audit_logs", "resource_type = 'pkg_terms_decisions'", "created", 0, 0)
+		return len(logs) >= 2
 	})
-	if len(logs) != 1 || logs[0].GetString("action") != "created" || logs[0].GetString("resource_label") != "gizmos:2026-01:accepted" {
-		t.Fatalf("the audit row: %d rows, action %q, label %q", len(logs), logs[0].GetString("action"), logs[0].GetString("resource_label"))
+	if len(logs) != 2 {
+		t.Fatalf("%d audit rows, want 2", len(logs))
 	}
-	if actor := logs[0].GetString("actor"); actor != owner.Id {
-		t.Fatalf("the actor is %q, want the owner %q", actor, owner.Id)
+	labels := map[string]bool{}
+	for _, log := range logs {
+		labels[log.GetString("resource_label")] = true
+		if log.GetString("action") != "created" {
+			t.Fatalf("the audit action is %q, want created", log.GetString("action"))
+		}
+		if actor := log.GetString("actor"); actor != owner.Id {
+			t.Fatalf("the actor is %q, want the owner %q", actor, owner.Id)
+		}
+	}
+	if !labels["gizmos:2026-01:declined"] || !labels["gizmos:2026-01:accepted"] {
+		t.Fatalf("the audit labels: %v", labels)
 	}
 }

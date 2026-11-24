@@ -1,11 +1,14 @@
 package pkgterms_test
 
 import (
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"github.com/pocketbase/pocketbase/tools/router"
 
 	"tinycld.org/core/pkgterms"
 )
@@ -77,6 +80,60 @@ func TestOnlyTheOwnerDecides(t *testing.T) {
 	}
 	if !pkgterms.Pending(reload(t, e.app, e.pkg)) {
 		t.Fatal("the package is no longer pending")
+	}
+}
+
+// triggerDecisionCreate runs the create request of the record API for a
+// decision as its handler does, but past the create rule: the hook is a second
+// check behind that rule, and only a direct trigger reaches it.
+func triggerDecisionCreate(t *testing.T, e *decisionEnv, auth *core.Record, user string) (*core.Record, error) {
+	t.Helper()
+	col, err := e.app.FindCollectionByNameOrId(pkgterms.DecisionsCollection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := core.NewRecord(col)
+	row.Set("pkg", "acme")
+	row.Set("terms_version", "2")
+	row.Set("decision", pkgterms.DecisionAccepted)
+	row.Set("user", user)
+	request := &core.RequestEvent{App: e.app, Auth: auth}
+	request.Request = httptest.NewRequest(http.MethodPost, decisionsURL, nil)
+	request.Response = httptest.NewRecorder()
+	event := &core.RecordRequestEvent{RequestEvent: request, Collection: col, Record: row}
+	err = e.app.OnRecordCreateRequest().Trigger(event, func(ev *core.RecordRequestEvent) error {
+		return ev.App.Save(ev.Record)
+	})
+	return row, err
+}
+
+func TestTheCreateHookRefusesAMemberBehindTheCreateRule(t *testing.T) {
+	e := newDecisionEnv(t)
+	member := addUser(t, e.app, "member2@terms.test", "member")
+	_, err := triggerDecisionCreate(t, e, member, member.Id)
+	var apiErr *router.ApiError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusForbidden || apiErr.Message != "Only the owner decides on the terms of a package." {
+		t.Fatalf("a member's decision: error %v", err)
+	}
+	if rows := e.decisions(t); len(rows) != 0 {
+		t.Fatalf("a member's decision was stored: %v", rows)
+	}
+	if !pkgterms.Pending(reload(t, e.app, e.pkg)) {
+		t.Fatal("a member's decision accepted the terms")
+	}
+}
+
+func TestTheCreateHookRecordsTheOwnerAsTheDecider(t *testing.T) {
+	e := newDecisionEnv(t)
+	row, err := triggerDecisionCreate(t, e, e.owner, e.admin.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row.GetString("user"); got != e.owner.Id {
+		t.Fatalf("the decider is %q, want the owner %q", got, e.owner.Id)
+	}
+	if rows := e.decisions(t); len(rows) != 1 || rows[0].GetString("user") != e.owner.Id {
+		t.Fatalf("the stored decision: %v", rows)
 	}
 }
 
@@ -207,6 +264,8 @@ func TestTheOwnerCannotWriteTheTermsFieldsOfTheRegistry(t *testing.T) {
 	call(t, e.app, http.MethodPatch, url, e.ownerT, `{"terms_version":""}`, http.StatusForbidden, refusal)
 	call(t, e.app, http.MethodPost, "/api/collections/pkg_registry/records", e.ownerT,
 		`{"name":"Other","slug":"other","status":"available","terms_accepted_version":"1"}`, http.StatusForbidden, refusal)
+	call(t, e.app, http.MethodPost, "/api/collections/pkg_registry/records", e.ownerT,
+		`{"name":"Another","slug":"another","status":"available","terms_version":"1"}`, http.StatusForbidden, refusal)
 	if !pkgterms.Pending(reload(t, e.app, e.pkg)) {
 		t.Fatal("a registry write accepted the terms")
 	}
