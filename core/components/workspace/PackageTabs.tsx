@@ -17,10 +17,11 @@ import { PackageTermsGate, useCoveredContentProps } from '../package-terms/Packa
 import { PackageAccessDenied } from './PackageAccessDenied'
 
 // The routes app/a/(app)/ holds: the app-owned ones, plus one directory per bundled
-// package with `routes`, which the generator writes. expo-router 58 renders only the
-// screens a layout declares, so each one gets a <Tabs.Screen>. A package's route is
-// named by its slug, or `slug/<file>` when its directory has no _layout; CoveredRoute
-// reads the slug from either (packageOfRoute).
+// package with `routes`, which the generator writes. The <Tabs.Screen> list sets the tab
+// order, so `index` is the first tab and the start route. A route no screen declares
+// still mounts (expo-router adds it from the filesystem) and CoveredRoute still wraps it.
+// A package's route is named by its slug, or `slug/<file>` when its directory has no
+// _layout; CoveredRoute reads the slug from either (packageOfRoute).
 const APP_ROUTES = ['index', 'help', 'reports', 'settings']
 const PACKAGE_ROUTES = packageRegistry.filter(p => p.routes?.directory).map(p => p.slug)
 const SCREENS = [...APP_ROUTES, ...PACKAGE_ROUTES].map(name => (
