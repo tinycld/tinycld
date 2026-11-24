@@ -65,6 +65,8 @@ test.describe('package terms: a package nobody may use yet', () => {
         // The tab bar has loaded, and neither it nor the More list has the stub.
         await expect(packageNavEntries(page).first()).toBeVisible()
         await page.getByTestId('nav-more').click()
+        // The More list is open: a count of 0 alone also passes while it is shut.
+        await expect(page.getByTestId('more-drawer')).toBeVisible()
         await expect(page.getByTestId(`nav-${TERMS_STUB.slug}`)).toHaveCount(0)
     })
 
@@ -78,6 +80,8 @@ test.describe('package terms: a package nobody may use yet', () => {
         await expect(review.getByTestId('pkg-terms-body')).toContainText(TERMS_STUB.sentence)
         await expect(review.getByTestId('pkg-terms-declined')).toBeVisible()
         await expect(review.getByTestId('pkg-terms-agree')).toBeVisible()
+        // The package sidebar is hidden while the terms are open.
+        await expect(page.getByTestId(TERMS_STUB.sidebar)).toHaveCount(0)
     })
 
     test('settings, help and search do not show the package', async ({ page }) => {

@@ -1,3 +1,4 @@
+import { LoadingState } from '@tinycld/core/components/LoadingState'
 import {
     type PackageTermsEntry,
     usePackageTermsList,
@@ -56,5 +57,9 @@ export function PackageTermsGate() {
 function CoverBody({ cover }: { cover: Cover }) {
     if (cover.kind === 'review') return <PackageTermsReview entry={cover.entry} />
     if (cover.kind === 'waiting') return <TermsWaitingScreen name={cover.name} />
-    return null
+    return (
+        <View className="flex-1" testID="pkg-terms-loading">
+            <LoadingState />
+        </View>
+    )
 }

@@ -8,8 +8,8 @@
  * package, and app-shell CI installs no feature package, so without a package
  * that declares terms the package-terms e2e (tests/e2e/package-terms-*.spec.ts)
  * has nothing to gate. The stub declares terms and one of each surface the gate
- * hides: a nav entry with a route, a settings panel, a help topic and a search
- * adapter.
+ * hides: a nav entry with a route, a package sidebar, a settings panel, a help
+ * topic and a search adapter.
  *
  * Its seed records a `declined` decision. So on a fresh e2e database the stub
  * is closed AND decided: the owner is not sent to Settings → Package terms on
@@ -31,7 +31,8 @@
  * Fixture identifiers the specs assert on (keep in sync with
  * tests/e2e/package-terms-helpers.ts): slug `termsstub`, name "Terms Stub",
  * terms version `1`, the sentence TERMS_SENTENCE in the terms text, landing
- * testID `termsstub-landing`, settings panel `general` (testID
+ * testID `termsstub-landing`, sidebar testID `termsstub-sidebar` (text "Terms
+ * stub sidebar"), settings panel `general` (testID
  * `termsstub-settings-panel`), help topic "Terms stub topic".
  */
 
@@ -72,6 +73,7 @@ function writePackage(stubDir: string): void {
             './manifest': './manifest.ts',
             './seed': `${src}/seed.ts`,
             './search-adapter': `${src}/search-adapter.tsx`,
+            './sidebar': `${src}/sidebar.tsx`,
             './screens/*': `${src}/screens/*.tsx`,
             './settings/*': `${src}/settings/*.tsx`,
         },
@@ -105,6 +107,7 @@ function writeManifest(stubDir: string): void {
     description: 'app E2E package-terms stub',
     routes: { directory: 'screens' },
     nav: { label: 'Terms Stub', icon: 'file-check', order: 996 },
+    sidebar: { component: 'sidebar' },
     terms: { file: 'TERMS.md', version: '${TERMS_VERSION}' },
     settings: [{ slug: 'general', label: 'Terms Stub Panel', component: 'settings/general' }],
     help: { directory: 'help' },
@@ -149,6 +152,21 @@ export default function TermsStubIndex() {
         <View className="flex-1 bg-background p-4">
             <Text className="text-foreground" testID="termsstub-landing">
                 Terms stub landing
+            </Text>
+        </View>
+    )
+}
+`
+    )
+    write(
+        join(dir, 'sidebar.tsx'),
+        `import { Text, View } from 'react-native'
+
+export default function TermsStubSidebar() {
+    return (
+        <View className="p-4">
+            <Text className="text-foreground" testID="termsstub-sidebar">
+                Terms stub sidebar
             </Text>
         </View>
     )

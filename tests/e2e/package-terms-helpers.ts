@@ -14,6 +14,7 @@ export const TERMS_STUB = {
     version: '1',
     sentence: 'You agree to feed the stub once a day.',
     landing: 'termsstub-landing',
+    sidebar: 'termsstub-sidebar',
     settingsLink: 'settings-org-termsstub-general',
     settingsPanel: 'termsstub-settings-panel',
     helpTopic: 'Terms stub topic',
