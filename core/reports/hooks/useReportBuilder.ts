@@ -20,6 +20,7 @@ import {
     specFromDraft,
 } from '../lib/builder/draft'
 import { problemsFromError } from '../lib/builder/errors'
+import { useReportBase } from '../lib/report-base'
 import { forgetSavedRuns } from '../lib/run-client'
 import { type ParamDef, parseSpec, type ReportSpec } from '../lib/spec'
 import type { CatalogSource } from '../lib/types'
@@ -71,6 +72,8 @@ export function useReportBuilder(input: BuilderInput) {
     const { mode, catalog, base, record, spec } = input
     const { user } = useAuth()
     const orgHref = useOrgHref()
+    // The route of the report view; `base` in this hook is the builder's source.
+    const reportBase = useReportBase()
     const queryClient = useQueryClient()
     const [reportsCollection] = useStore('reports')
     const schema = useMemo(() => builderSchema(catalog), [catalog])
@@ -117,7 +120,7 @@ export function useReportBuilder(input: BuilderInput) {
     const exit = () => {
         if (mode === 'edit') router.setParams({ [EDIT_KEY]: undefined })
         else if (router.canGoBack()) router.back()
-        else router.replace(orgHref('reports'))
+        else router.replace(orgHref(reportBase))
     }
 
     const save = useMutation({
@@ -148,7 +151,7 @@ export function useReportBuilder(input: BuilderInput) {
                 // The view comes back on the same run key; its cached run is the old spec's.
                 forgetSavedRuns(queryClient, id)
                 router.setParams({ [EDIT_KEY]: undefined })
-            } else router.replace(orgHref('reports/[id]', { id }))
+            } else router.replace(orgHref(`${reportBase}/[id]`, { id }))
         },
         onError: (error: unknown) => {
             const problems = problemsFromError(error)

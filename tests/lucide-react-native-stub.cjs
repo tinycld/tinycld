@@ -151,6 +151,13 @@ const knownIcons = {
     // Group admin drawer (core/tests/unit/group-drawer-removal.test.tsx)
     Search: Icon,
     UserPlus: Icon,
+    // A package's list-icon fallback, compared by value in its unit test
+    BookOpen: Icon,
+    // A package's shortcut rows: report and list icons, compared by value
+    BarChart3: Icon,
+    Package: Icon,
+    Truck: Icon,
+    Users: Icon,
     // Group share section (core/components/groups/GroupShareSection.tsx)
     UsersRound: Icon,
     // core Toast's VARIANT_ICONS table (AlertTriangle and X are seeded above)

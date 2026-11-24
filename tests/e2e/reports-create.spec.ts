@@ -137,10 +137,11 @@ test.describe('creating a report', () => {
     test('on a phone the hub shows cards and the builder is a full sheet with a preview', async ({
         p,
     }) => {
+        // The hub is opened from a package's link, at the default viewport (the helper
+        // presses a rail link, which a phone does not draw); the phone layout is the
+        // subject here, not the way in.
+        await openReportsHub(p)
         await p.setViewportSize({ width: 390, height: 844 })
-        // A phone has no rail: Reports is a row of the More sheet.
-        await p.getByTestId('nav-more').click()
-        await p.getByTestId('more-reports').click()
         await expect(p.getByTestId('reports-hub')).toBeVisible()
         await startReport(p, SALES_SOURCE)
         await expect(p.getByTestId('report-builder-mode-design')).toBeVisible()

@@ -6,6 +6,7 @@ import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { router } from 'expo-router'
 import { newRecordId } from 'pbtsdb'
+import { useReportBase } from '../lib/report-base'
 import { copyTitle } from './useReportBuilder'
 import type { HubReport } from './useReportsHub'
 
@@ -24,6 +25,8 @@ function toastError(title: string, error: unknown) {
 export function useHubActions() {
     const { user } = useAuth()
     const orgHref = useOrgHref()
+    // The hub mounts no provider, so its Duplicate stays on core's route.
+    const reportBase = useReportBase()
     const [reportsCollection] = useStore('reports')
     const copy = useMutation({
         mutationFn: function* ({ report, title }: { report: ActionReport; title: string }) {
@@ -39,7 +42,7 @@ export function useHubActions() {
             return id
         },
         // A push, so Back returns to the report the copy was made from.
-        onSuccess: id => router.push(orgHref('reports/[id]', { id })),
+        onSuccess: id => router.push(orgHref(`${reportBase}/[id]`, { id })),
         onError: error => toastError('Could not copy the report', error),
     })
     const remove = useMutation({

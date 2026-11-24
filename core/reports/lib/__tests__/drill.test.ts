@@ -98,6 +98,12 @@ describe('drillHref', () => {
         expect(Object.keys(search).sort()).toEqual(['from', 'p-status'])
     })
 
+    it('builds the path under the base of the host that draws the report', () => {
+        const href = drillHref(COLUMN, rowWith({ status: 'paid' }), 'r1', 'zoo/reports')
+        expect(href?.startsWith('zoo/reports/r2?')).toBe(true)
+        expect(searchOf(href ?? '')).toEqual({ from: 'r1', 'p-status': 'paid' })
+    })
+
     it('gives no href without a @drill cell or a column drill', () => {
         expect(drillHref(COLUMN, rowWith(undefined), 'r1')).toBeNull()
         expect(
@@ -120,6 +126,8 @@ describe('fullReportHref', () => {
         )
         const href = fullReportHref('r2', TARGET, options, 'r1')
         expect(href.startsWith('reports/r2?')).toBe(true)
+        const hosted = fullReportHref('r2', TARGET, options, 'r1', 'zoo/reports')
+        expect(hosted).toBe(href.replace('reports/r2?', 'zoo/reports/r2?'))
         const search = searchOf(href)
         expect(search).toEqual({
             'p-period': '2026-03-01..2026-03-31',

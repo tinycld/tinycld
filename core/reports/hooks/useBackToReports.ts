@@ -1,15 +1,17 @@
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { router } from 'expo-router'
 import { reportBack } from '../lib/report-back'
+import { useReportBase } from '../lib/report-base'
 import { useReportRecord } from './useReportRecord'
 
 // A report is opened from the hub, which the router history still holds. Going
 // back returns to it; a deep link with nothing to go back to lands on the hub.
 export function useBackToReports() {
     const orgHref = useOrgHref()
+    const base = useReportBase()
     return () => {
         if (router.canGoBack()) router.back()
-        else router.replace(orgHref('reports'))
+        else router.replace(orgHref(base))
     }
 }
 
@@ -20,18 +22,19 @@ export function useBackToReports() {
  */
 export function useReportBack(fromId: string): { label: string; onBack: () => void } {
     const orgHref = useOrgHref()
+    const base = useReportBase()
     const source = useReportRecord(fromId)
     const back = reportBack(source.state, source.record?.title)
     const onBack = () => {
         if (back.to === 'hub') {
-            router.replace(orgHref('reports'))
+            router.replace(orgHref(base))
             return
         }
         // A failed read stays failed for the next screen's query of the same record
         // until it is recovered, so the source screen would open on its error.
         if (source.state === 'error') source.retry()
         if (router.canGoBack()) router.back()
-        else router.replace(orgHref(`reports/${fromId}`))
+        else router.replace(orgHref(`${base}/${fromId}`))
     }
     return { label: back.label, onBack }
 }

@@ -32,9 +32,9 @@ export function SidebarItem({
 
     const handlePress = () => {
         onPress?.()
-        if (closesDrawer && isMobile) {
-            setTimeout(() => setDrawerOpen(false), 500)
-        }
+        // At once, with no timer: a timer would also close a drawer that the user opens
+        // again after the press.
+        if (closesDrawer && isMobile) setDrawerOpen(false)
     }
 
     return (

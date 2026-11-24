@@ -1819,14 +1819,17 @@ nothing changes.
 
 #### Report e2e helpers
 
-A package's e2e opens core's report view with `openReportsHub`, `hubRow`,
-`rowOf`, `cellOf`, `pressToolbar` and `chooseParamOption`, all from
-`@tinycld/core/e2e-helpers`.
+A package's e2e drives the hub and core's report view with `hubRow`, `rowOf`,
+`cellOf`, `pressToolbar` and `chooseParamOption`, all from
+`@tinycld/core/e2e-helpers`. No helper opens the hub: core's navigation has no
+entry for it, so the spec presses the package's own link to it.
 
 #### Linking to a package's reports
 
-Core's Reports hub is at `/a/reports`. To show only your package's reports and
-report sources (for a sidebar "Reports" entry), link to it with your slug:
+Core's Reports hub is at `/a/reports`. Core's navigation (the rail, and **More**
+on a phone) has no entry for it: a package that has reports links to it. To show
+only your package's reports and report sources (for a sidebar "Reports" entry),
+link to it with your slug:
 
 ```ts
 router.push(orgHref('reports', { package: '<slug>' }))
@@ -1839,6 +1842,31 @@ with your slug. The builder reads
 the sources from `GET /api/reports/sources` (signed-in users, not API tokens): each
 source's fields with their types and aggregates, and its links. It shows no record
 data.
+
+#### Drawing a report on a package's own route
+
+A report opened on core's route (`/a/reports/<id>`) leaves the package: its sidebar
+goes. To keep a report inside the package, draw core's report view on a route of
+the package and pass that route as `basePath`:
+
+```tsx
+import { ReportScreen } from '@tinycld/core/reports/screens/ReportScreen'
+
+// screens/reports/[id].tsx of the package `<slug>`
+export default function PackageReport() {
+    const { id } = useLocalSearchParams<{ id: string }>()
+    return <ReportScreen reportId={id} basePath="<slug>/reports" />
+}
+```
+
+With `basePath`, a drill to another report opens `<basePath>/<id>`, Back from a
+drilled report returns to `<basePath>/<id>` of its source, a copy saved with **Save
+as** opens `<basePath>/<newId>`, and Back with no history opens `<basePath>`. The
+package owns both routes: `<basePath>/[id]` and `<basePath>` (a screen of the package,
+for example its own list of its reports). **Edit** opens the builder on the current
+route (`?edit=1`), so the screen must stay mounted while the reader edits: do not
+unmount it on a failed reload of a list. **New report** and the copied share link
+are core's routes.
 
 ### Test build tag
 

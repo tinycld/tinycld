@@ -7,6 +7,7 @@ import { firstOf, fullReportHref } from '../lib/drill'
 import { type FocusTarget, focusFigure, focusNode, rowFocusKey } from '../lib/figure-focus'
 import { recordPanelOf } from '../lib/record-panel'
 import { registeredPanels } from '../lib/registered-panels'
+import { useReportBase } from '../lib/report-base'
 import { UNREADABLE_SPEC } from '../lib/spec'
 import { clearedDrillKeys, DRILL_KEY, DRILL_PREFIX, RECORD_KEY } from '../lib/view-url'
 import { recordTitleOf, useReportUIStore } from '../stores/report-ui-store'
@@ -31,6 +32,7 @@ export interface DrillPanelInput {
 export function useDrillPanel({ targetId, sourceId, sourceTitle }: DrillPanelInput) {
     const router = useRouter()
     const orgHref = useOrgHref()
+    const base = useReportBase()
     const search = useLocalSearchParams()
     const surface = useDetailSurface()
     const record = useReportRecord(targetId)
@@ -80,7 +82,7 @@ export function useDrillPanel({ targetId, sourceId, sourceTitle }: DrillPanelInp
         titleKey,
         onClose,
         onOpenFull: () =>
-            router.push(orgHref(fullReportHref(targetId, view.defs, view.options, sourceId))),
+            router.push(orgHref(fullReportHref(targetId, view.defs, view.options, sourceId, base))),
     }
 }
 

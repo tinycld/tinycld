@@ -5,12 +5,13 @@ tags: [reports, report builder, share report, publish, filter, group, pivot, for
 order: 40
 ---
 
-Open **Reports** from the rail (on a phone: **More → Reports**). The hub has three
-tabs: **Mine** (reports you own), **Shared with me**, and **Published** (reports an
-admin published for everyone). **Last run** shows when you last ran a report on this
-device.
+A package that has reports links to the Reports hub from its own screens (for example
+from its sidebar): there is no entry for the hub in the rail or in **More**. The hub
+has three tabs: **Mine** (reports you own), **Shared with me**, and **Published**
+(reports an admin published for everyone). **Last run** shows when you last ran a
+report on this device.
 
-A package can open the hub for its own reports (for example from its sidebar). The
+A package's link can also open the hub showing only that package's reports. The
 hub then shows "Showing reports from" and the package's name, and one list of every
 report of that package you can open: your own, the ones shared with you, and the
 published ones. To see all reports in the tabs again, select **Show all reports**.

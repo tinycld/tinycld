@@ -98,7 +98,8 @@ function ActivePkgSync() {
         // list. The full href (path + query) is captured at any depth; a
         // package root (e.g. /mail) is itself a valid href, so leaving a
         // package on its list still restores to the list. Skipped for app-owned
-        // areas (settings/help/reports), which the rail always links to their root.
+        // areas (settings/help/reports): the rail links settings and help to their root,
+        // and a package links to the Reports hub.
         if (
             nextSlug &&
             !NON_RESTORABLE_SLUGS.has(nextSlug) &&

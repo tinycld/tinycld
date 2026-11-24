@@ -3,13 +3,12 @@ import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import { strFromU8, unzipSync } from 'fflate'
 import PocketBase from 'pocketbase'
 import { inStatement, loginAs, navigateToPackage } from './helpers'
-import { chooseParamOption, hubRow, openReportsHub, rowOf } from './report-view-helpers'
+import { chooseParamOption, hubRow, rowOf } from './report-view-helpers'
 
 export {
     cellOf,
     chooseParamOption,
     hubRow,
-    openReportsHub,
     pressToolbar,
     rowOf,
 } from './report-view-helpers'
@@ -107,6 +106,19 @@ export async function openReportStub(page: Page) {
     await navigateToPackage(page, 'salesstub', { waitFor: page.getByTestId('salesstub-landing') })
 }
 
+/**
+ * Opens the Reports hub with all its tabs. Core's navigation has no entry for the
+ * hub: a package links to it, and the stub's landing screen holds that link. Call it
+ * at the default viewport (openReportStub presses a rail link), then set a phone size.
+ */
+export async function openReportsHub(page: Page) {
+    const hub = page.getByTestId('reports-hub-heading')
+    await openReportStub(page)
+    await page.getByTestId('salesstub-open-reports').click()
+    await expect(hub).toBeVisible()
+    await expect(page.getByTestId('reports-hub')).toBeVisible()
+}
+
 const REGION_LABELS = { north: 'North', south: 'South', east: 'East', none: 'No region' } as const
 
 export async function addTeam(
@@ -156,6 +168,19 @@ export interface StubData {
     teams?: StubTeam[]
     sales?: StubSale[]
     returns?: StubReturn[]
+}
+
+/**
+ * Answers the page's realtime subscriptions here, so none reaches the server. A
+ * report on screen runs again after each write to a collection it read (its
+ * `collection/<name>` topics), and the other worker writes stub sales and teams at
+ * any time. Call it before login when a test counts a report's runs: then no
+ * subscription made before the route reaches the server.
+ */
+export async function cutRealtimeSubscriptions(page: Page) {
+    await page.route('**/api/realtime', route =>
+        route.request().method() === 'POST' ? route.fulfill({ status: 204 }) : route.fallback()
+    )
 }
 
 /**

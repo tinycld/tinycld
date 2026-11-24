@@ -6,6 +6,7 @@ import { downloadReport, openExportMenu } from './report-view-helpers'
 import {
     CALENDAR_YEAR_TITLE,
     cellOf,
+    cutRealtimeSubscriptions,
     holdRuns,
     loginAsShippedOwner,
     openDrilled,
@@ -192,13 +193,8 @@ test.describe('report-exports: download', () => {
     test('while the file is prepared the button says so, and the report does not run again', async ({
         page,
     }) => {
-        // Another worker's sale would rerun the report through its live topic; the
-        // run count below is about the export alone, so topic subscriptions are
-        // answered here and never reach the server. Realtime is cut before login,
-        // so no subscription made before the route reaches the server.
-        await page.route('**/api/realtime', route =>
-            route.request().method() === 'POST' ? route.fulfill({ status: 204 }) : route.fallback()
-        )
+        // The run count below is about the export alone.
+        await cutRealtimeSubscriptions(page)
         const customer = await seedSale(page, 'Export held')
         await openOnPeriod(page, customer)
         const amountBefore = await (await cellOf(page, 'amount', customer)).textContent()

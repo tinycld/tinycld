@@ -1,14 +1,11 @@
 import { type Download, expect, type Locator, type Page } from '@playwright/test'
-import { inStatement, navigateToPackage } from './helpers.ts'
+import { inStatement } from './helpers.ts'
 
 // Helpers for any spec that drives the reports hub and core's report view: they
 // name no source, so a package's own report e2e uses them through
-// @tinycld/core/e2e-helpers (E11). The `.ts` extension is required there (see
-// core/e2e-helpers.ts).
-
-export async function openReportsHub(page: Page) {
-    await navigateToPackage(page, 'reports', { waitFor: page.getByTestId('reports-hub') })
-}
+// @tinycld/core/e2e-helpers (E11). None opens the hub: core's navigation has no
+// entry for it, so a spec opens it through its package's own link. The `.ts`
+// extension is required there (see core/e2e-helpers.ts).
 
 export function hubRow(page: Page, title: string): Locator {
     return page.locator('[data-testid^="reports-hub-row-"]').filter({ hasText: title })
