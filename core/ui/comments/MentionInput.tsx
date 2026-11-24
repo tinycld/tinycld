@@ -1,4 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useCoveredInputProps } from '@tinycld/core/ui/overlay/covered'
 import { useCallback, useRef, useState } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import type { TextInputProps as RNTextInputProps } from 'react-native'
@@ -78,6 +79,7 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
     } = useController({ name, control })
 
     const placeholderColor = useThemeColor('field-placeholder')
+    const focusProps = useCoveredInputProps(inputProps)
     const inputRef = useRef<TextInputInstance | null>(null)
 
     const value: string = field.value || ''
@@ -207,6 +209,7 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
                 }`}
                 style={{ minHeight: numberOfLines * 24 }}
                 {...inputProps}
+                {...focusProps}
             />
             {showSuggestions ? (
                 <View className="mt-1 border border-border rounded-md bg-background overflow-hidden">

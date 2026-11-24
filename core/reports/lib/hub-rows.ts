@@ -46,6 +46,21 @@ export function reportTermsGate(input: {
     return input.blocked.has(slug) ? 'closed' : 'open'
 }
 
+/**
+ * What `/reports/new?source=<key>` shows. A source of a closed package reads
+ * as unknown, as the hub leaves it out of New report.
+ */
+export function newReportStep(input: {
+    isCatalogReady: boolean
+    hasSource: boolean
+    terms: 'open' | 'wait' | 'closed'
+}): 'catalog' | 'wait' | 'unknown-source' | 'build' {
+    if (!input.isCatalogReady) return 'catalog'
+    if (input.terms === 'wait') return 'wait'
+    if (!input.hasSource || input.terms === 'closed') return 'unknown-source'
+    return 'build'
+}
+
 const uniqueById = <R extends HubRecord>(reports: readonly R[]): R[] => [
     ...new Map(reports.map(report => [report.id, report])).values(),
 ]

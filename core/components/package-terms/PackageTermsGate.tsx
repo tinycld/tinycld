@@ -27,14 +27,15 @@ export function useActivePkgTermsBlocked(): boolean {
 }
 
 /**
- * Whether the package screens are covered, and the props for the View around
- * them. While the cover shows, the screen under it stays mounted (so the other
+ * The props for the View around the package screens. They follow the ACTIVE
+ * package, because the cover is over the content area. While the cover shows, the screen under it stays mounted (so the other
  * packages keep their frozen state) but is out of play: no pointer, no focus,
  * no assistive tech. Web uses `inert`, set through the ref because
  * react-native's View props do not type it. Native uses pointerEvents and the
  * accessibility props, and the ref keeps the focus out of the screens
  * (`holdNativeFocusOut`) until the cover goes: React calls the release the ref
- * returns when the cover state changes or the View unmounts.
+ * returns when the cover state changes or the View unmounts. Dialogs, shortcuts
+ * and inputs follow each route's own state instead (`CoveredRoute`, PackageTabs).
  */
 export function useCoveredContentProps() {
     const isCovered = useActivePkgTermsBlocked()
@@ -49,13 +50,12 @@ export function useCoveredContentProps() {
         },
         [isCovered]
     )
-    const viewProps = {
+    return {
         ref,
         pointerEvents: isCovered ? 'none' : 'auto',
         importantForAccessibility: isCovered ? 'no-hide-descendants' : 'auto',
         accessibilityElementsHidden: isCovered,
     } as const
-    return { isCovered, viewProps }
 }
 
 type Cover =

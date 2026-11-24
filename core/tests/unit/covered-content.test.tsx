@@ -6,7 +6,12 @@ import { useShortcutRegistry } from '@tinycld/core/lib/shortcuts/registry'
 import { resetScopes } from '@tinycld/core/lib/shortcuts/scopes'
 import type { Shortcut } from '@tinycld/core/lib/shortcuts/types'
 import { useRegisterShortcut } from '@tinycld/core/lib/shortcuts/use-register'
-import { CoveredProvider, useOpenUnlessCovered } from '@tinycld/core/ui/overlay/covered'
+import {
+    CoveredProvider,
+    coveredInputProps,
+    isRouteCovered,
+    useOpenUnlessCovered,
+} from '@tinycld/core/ui/overlay/covered'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -81,6 +86,97 @@ describe('shortcuts under a cover', () => {
 
         expect(createMatcher().feedAtom('/', { inInput: false })).toBe(true)
         expect(run).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('isRouteCovered', () => {
+    const closed = new Set(['zoo'])
+
+    it('covers the route of a closed package, whichever route is active', () => {
+        expect(isRouteCovered('zoo', closed)).toBe(true)
+    })
+
+    it('leaves an open package and an app route uncovered', () => {
+        expect(isRouteCovered('acme', closed)).toBe(false)
+        expect(isRouteCovered('settings', closed)).toBe(false)
+    })
+})
+
+describe('a closed route under a navigator', () => {
+    // Each route gets its own value, so a move to an open route does not
+    // register the closed route's shortcuts again.
+    function Route({
+        name,
+        closed,
+        shortcut,
+    }: {
+        name: string
+        closed: Set<string>
+        shortcut: Shortcut
+    }) {
+        return (
+            <CoveredProvider value={isRouteCovered(name, closed)}>
+                <GlobalShortcut shortcut={shortcut} />
+            </CoveredProvider>
+        )
+    }
+
+    it('keeps the global shortcut of the closed route out, and the open route in', () => {
+        const zooRun = vi.fn()
+        const acmeRun = vi.fn()
+        const closed = new Set(['zoo'])
+        render(
+            <>
+                <Route
+                    name="zoo"
+                    closed={closed}
+                    shortcut={{
+                        id: 'zoo.find',
+                        keys: '$mod+f',
+                        scope: 'global',
+                        description: 'Find',
+                        run: zooRun,
+                    }}
+                />
+                <Route
+                    name="acme"
+                    closed={closed}
+                    shortcut={{
+                        id: 'acme.go',
+                        keys: '$mod+g',
+                        scope: 'global',
+                        description: 'Go',
+                        run: acmeRun,
+                    }}
+                />
+            </>
+        )
+
+        expect(createMatcher().feedAtom('$mod+f', { inInput: false })).toBe(false)
+        expect(createMatcher().feedAtom('$mod+g', { inInput: false })).toBe(true)
+        expect(zooRun).not.toHaveBeenCalled()
+        expect(acmeRun).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('coveredInputProps', () => {
+    it('makes a covered input read-only and drops its autofocus', () => {
+        expect(coveredInputProps(true, { autoFocus: true })).toEqual({
+            autoFocus: false,
+            editable: false,
+        })
+        expect(coveredInputProps(true, { editable: true })).toEqual({
+            autoFocus: false,
+            editable: false,
+        })
+    })
+
+    it('keeps the caller values of an input under no cover', () => {
+        expect(coveredInputProps(false, { autoFocus: true, editable: false })).toEqual({
+            autoFocus: true,
+            editable: false,
+        })
+        expect(coveredInputProps(false, {})).toEqual({ autoFocus: undefined, editable: undefined })
     })
 })
 

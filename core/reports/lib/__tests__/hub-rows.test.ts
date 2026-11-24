@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+    newReportStep,
     packageReports,
     reportTermsGate,
     sharedReports,
@@ -38,6 +39,28 @@ describe('reportTermsGate', () => {
 
     it('reads the package from the source key, not a look-alike', () => {
         expect(gate('zoology.animals', ['zoo'], true)).toBe('open')
+    })
+})
+
+describe('newReportStep', () => {
+    const step = (isCatalogReady: boolean, hasSource: boolean, terms: 'open' | 'wait' | 'closed') =>
+        newReportStep({ isCatalogReady, hasSource, terms })
+
+    it('shows the catalog frame until the catalog is ready', () => {
+        expect(step(false, false, 'closed')).toBe('catalog')
+    })
+
+    it('waits for the terms state of the source package', () => {
+        expect(step(true, true, 'wait')).toBe('wait')
+    })
+
+    it('treats a source of a closed package as unknown', () => {
+        expect(step(true, true, 'closed')).toBe('unknown-source')
+        expect(step(true, false, 'open')).toBe('unknown-source')
+    })
+
+    it('opens the builder for a known source of an open package', () => {
+        expect(step(true, true, 'open')).toBe('build')
     })
 })
 

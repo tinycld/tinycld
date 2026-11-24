@@ -29,7 +29,10 @@ export function holdFocusOut<N>(port: FocusPort<N>): () => void {
 /**
  * Native: `holdFocusOut` for a covered View. pointerEvents and the
  * accessibility props stop new presses and the screen reader, but a focused
- * TextInput keeps taking keys and `onSubmitEditing` without this.
+ * TextInput keeps taking keys and `onSubmitEditing` without this. A hardware
+ * keyboard (iOS) shows no keyboard, so the listener does not fire for it: core's
+ * text inputs are read-only while covered (`useCoveredInputProps`), and this is
+ * the backup for a raw RN TextInput.
  */
 export function holdNativeFocusOut(container: ViewInstance): () => void {
     return holdFocusOut({

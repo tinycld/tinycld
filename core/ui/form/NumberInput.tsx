@@ -1,4 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useCoveredInputProps } from '@tinycld/core/ui/overlay/covered'
 import { Minus, Plus } from 'lucide-react-native'
 import { type Ref, useState } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
@@ -77,6 +78,7 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
 }: NumberInputProps<T>) {
     const placeholderColor = useThemeColor('field-placeholder')
     const iconColor = useThemeColor('foreground')
+    const { editable } = useCoveredInputProps({ editable: !disabled })
     const {
         field,
         fieldState: { error },
@@ -171,7 +173,7 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
                     }}
                     keyboardType="numeric"
                     onSubmitEditing={onSubmitEditing}
-                    editable={!disabled}
+                    editable={editable}
                     accessibilityLabel={accessibilityLabel ?? label}
                     testID={testID ?? name}
                     placeholder={placeholder}

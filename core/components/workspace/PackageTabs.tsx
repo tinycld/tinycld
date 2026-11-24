@@ -1,6 +1,7 @@
-import { CoveredProvider } from '@tinycld/core/ui/overlay/covered'
+import { useTermsBlocked } from '@tinycld/core/lib/packages/use-package-terms'
+import { CoveredProvider, isRouteCovered } from '@tinycld/core/ui/overlay/covered'
 import { Tabs } from 'expo-router'
-import type { ReactNode } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { View } from 'react-native'
 import { packageRegistry } from '../../lib/packages/static-registry'
 import { PackageTermsGate, useCoveredContentProps } from '../package-terms/PackageTermsGate'
@@ -8,7 +9,8 @@ import { PackageAccessDenied } from './PackageAccessDenied'
 
 // The routes app/a/(app)/ holds: the app-owned ones, plus one directory per bundled
 // package with `routes`, which the generator writes. expo-router 58 renders only the
-// screens a layout declares, so each one gets a <Tabs.Screen>.
+// screens a layout declares, so each one gets a <Tabs.Screen>. A package's route is
+// named by its slug, which is what CoveredRoute reads.
 const APP_ROUTES = ['index', 'help', 'reports', 'settings']
 const PACKAGE_ROUTES = packageRegistry.filter(p => p.routes?.directory).map(p => p.slug)
 const SCREENS = [...APP_ROUTES, ...PACKAGE_ROUTES].map(name => (
@@ -46,6 +48,7 @@ export function PackageTabs() {
                 <Tabs
                     tabBar={() => null}
                     backBehavior="history"
+                    screenLayout={coveredScreenLayout}
                     screenOptions={{
                         headerShown: false,
                         freezeOnBlur: true,
@@ -66,16 +69,33 @@ export function PackageTabs() {
 /**
  * Holds the screens out of play while the terms cover is over them. Its own
  * component, so a change of the cover re-renders this View only: the Tabs
- * element it gets as children stays the same. The covered context keeps the
- * screens' dialogs, sheets and shortcuts from coming up over the cover.
+ * element it gets as children stays the same.
  */
 function CoveredContent({ children }: { children: ReactNode }) {
-    const { isCovered, viewProps } = useCoveredContentProps()
+    const viewProps = useCoveredContentProps()
     return (
-        <CoveredProvider value={isCovered}>
-            <View {...viewProps} className="flex-1" style={{ minHeight: 0 }}>
-                {children}
-            </View>
-        </CoveredProvider>
+        <View {...viewProps} className="flex-1" style={{ minHeight: 0 }}>
+            {children}
+        </View>
     )
+}
+
+/**
+ * Each route's own covered state: a closed package's screen stays covered while
+ * it is mounted and frozen behind an open package, so its dialogs, shortcuts
+ * and inputs stay out. Only a route whose terms state changes sees a new value.
+ */
+function CoveredRoute({ routeName, children }: { routeName: string; children: ReactElement }) {
+    const { blocked } = useTermsBlocked()
+    return <CoveredProvider value={isRouteCovered(routeName, blocked)}>{children}</CoveredProvider>
+}
+
+function coveredScreenLayout({
+    route,
+    children,
+}: {
+    route: { name: string }
+    children: ReactElement
+}) {
+    return <CoveredRoute routeName={route.name}>{children}</CoveredRoute>
 }
