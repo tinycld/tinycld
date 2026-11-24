@@ -22,11 +22,11 @@ import {
 //    a decline can only become an acceptance. No screen takes either back, so
 //    without the reset only the first test of a database could ever see an
 //    undecided package.
-// 2. (ruling 30: NOT YET APPROVED by the human) The wizard test creates the
+// 2. (ruling 30, approved by the human 2026-11-24) The wizard test creates the
 //    `setup.wizard` settings row. Why the UI cannot do it: only the two server
 //    paths that create the first owner write that row, and the e2e database is
 //    seeded with its users.
-// 3. (ruling 30: NOT YET APPROVED by the human) The wizard test turns the stub
+// 3. (ruling 30, approved by the human 2026-11-24) The wizard test turns the stub
 //    off first (registry status `disabled`) and puts the status back after.
 //    Why the UI cannot do it: the Apps step opens the terms of an app with
 //    unaccepted terms and does not toggle it. With the app off, "Agree turns
@@ -196,7 +196,6 @@ test.describe('package terms: the owner decides', () => {
     })
 
     test.describe('the setup wizard', () => {
-        // Waits on ruling 30 (the human's approval of fixtures 2 and 3 in the header).
         // Set only when this run made the row: a row left by a stopped run is
         // used as it is and stays.
         let madeWizardRowId = ''
