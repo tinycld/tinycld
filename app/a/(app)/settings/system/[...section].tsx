@@ -11,6 +11,11 @@ import { SystemSettingsScreen } from '@tinycld/core/components/settings/system/S
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { packageSystemSettings } from '@tinycld/core/lib/packages/derive-components'
 import { resolvePanel } from '@tinycld/core/lib/packages/resolve-panel'
+import {
+    slugOfGroup,
+    useTermsBlocked,
+    useTermsOpen,
+} from '@tinycld/core/lib/packages/use-package-terms'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { Suspense, useMemo } from 'react'
@@ -24,10 +29,16 @@ export default function PackageSystemSettingsSection() {
     const segments = params.section ?? []
     const [pkgSlug, panelSlug] = segments
 
+    // A package whose terms the owner has not accepted has no panels.
+    const groups = useTermsOpen(packageSystemSettings, slugOfGroup)
     const match = useMemo(
-        () => resolvePanel(packageSystemSettings, pkgSlug, panelSlug),
-        [pkgSlug, panelSlug]
+        () => resolvePanel(groups, pkgSlug, panelSlug),
+        [groups, pkgSlug, panelSlug]
     )
+    const { isReady: termsReady } = useTermsBlocked()
+
+    // Wait for the terms state: until then every package with terms is closed.
+    if (!termsReady) return null
 
     if (!match) {
         return (

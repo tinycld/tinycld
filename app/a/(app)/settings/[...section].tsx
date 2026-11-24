@@ -1,5 +1,10 @@
 import { PackagePanelScreen } from '@tinycld/core/components/settings/PackagePanelScreen'
 import { packageSettings } from '@tinycld/core/lib/packages/derive-components'
+import {
+    slugOfGroup,
+    useTermsBlocked,
+    useTermsOpen,
+} from '@tinycld/core/lib/packages/use-package-terms'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { Text, View } from 'react-native'
@@ -10,6 +15,14 @@ export default function PackageSettingsSection() {
     const { isAdmin } = useCurrentRole()
     const mutedColor = useThemeColor('muted-foreground')
     const bgColor = useThemeColor('background')
+    // A package whose terms the owner has not accepted has no panels: its URL
+    // reads "Settings not found".
+    const groups = useTermsOpen(packageSettings, slugOfGroup)
+    const { isReady: termsReady } = useTermsBlocked()
+
+    // Until the terms state is known every package with terms is closed: wait,
+    // or an open package's panel would read "Settings not found" first.
+    if (!termsReady) return null
 
     if (!isAdmin) {
         return (
@@ -24,5 +37,5 @@ export default function PackageSettingsSection() {
         )
     }
 
-    return <PackagePanelScreen groups={packageSettings} />
+    return <PackagePanelScreen groups={groups} />
 }

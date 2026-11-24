@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
+import { slugOfEntry, useTermsOpen } from '@tinycld/core/lib/packages/use-package-terms'
 import type { SearchSection } from '@tinycld/core/lib/search/build-sections'
 import { chipsToText, createPickQueue } from '@tinycld/core/lib/search/chip-text'
 import { parseQuery } from '@tinycld/core/lib/search/parse-query'
@@ -34,8 +35,6 @@ if (typeof document !== 'undefined' && !document.getElementById('tinycld-search-
     document.head.appendChild(styleEl)
 }
 
-const INSTALLED_SLUGS = searchPackages.map(p => p.slug)
-
 // SearchPalette renders the global cross-package command palette. Listens to
 // the Zustand store driven by the `/` shortcut. Web-only. A layer on the
 // overlay engine like every other surface: the engine owns the outside-press
@@ -59,8 +58,12 @@ function OpenSearchPalette() {
     const setSelectedRowId = useSearchPaletteStore(s => s.setSelectedRowId)
     const close = useSearchPaletteStore(s => s.close)
 
-    const parsed = useMemo(() => parseQuery(text, INSTALLED_SLUGS), [text])
-    const { sections, partial } = useSearchResults(parsed)
+    // A package whose terms the owner has not accepted is not searchable: no
+    // scope chip, no rows, no selection handler.
+    const openPackages = useTermsOpen(searchPackages, slugOfEntry)
+    const openSlugs = useMemo(() => openPackages.map(p => p.slug), [openPackages])
+    const parsed = useMemo(() => parseQuery(text, openSlugs), [text, openSlugs])
+    const { sections, partial } = useSearchResults(parsed, openPackages)
 
     const flatRows = useMemo(() => sections.flatMap(s => s.rows), [sections])
     const selectedRow = flatRows.find(r => r.id === selectedRowId) ?? flatRows[0]
@@ -142,7 +145,7 @@ function OpenSearchPalette() {
 
     return (
         <>
-            {searchPackages.map(pkg => (
+            {openPackages.map(pkg => (
                 <PackageActions key={pkg.slug} slug={pkg.slug} onReady={registerHandler} />
             ))}
             <OverlayPortal>
@@ -160,7 +163,12 @@ function OpenSearchPalette() {
                             onPick={selectRow}
                             onHover={id => setSelectedRowId(id)}
                         />
-                        <FooterHints chips={parsed.chips} remainder={remainder} partial={partial} />
+                        <FooterHints
+                            chips={parsed.chips}
+                            remainder={remainder}
+                            partial={partial}
+                            packages={openPackages}
+                        />
                     </PaletteCard>
                 </PaletteOverlay>
             </OverlayPortal>
@@ -447,11 +455,13 @@ interface FooterHintsProps {
     chips: string[]
     remainder: string
     partial: string[]
+    /** The searchable packages that are open; only these are offered as a scope. */
+    packages: readonly { slug: string }[]
 }
 
 // The footer is where the `:` and ⌫ grammar is discoverable, so it reacts to
 // what the user has typed rather than showing three static hints.
-function FooterHints({ chips, remainder, partial }: FooterHintsProps) {
+function FooterHints({ chips, remainder, partial, packages }: FooterHintsProps) {
     // A package the server could not reach takes priority over any grammar
     // hint: results are missing, and silence would read as "nothing there"
     // rather than "we could not look".
@@ -468,9 +478,7 @@ function FooterHints({ chips, remainder, partial }: FooterHintsProps) {
 
     // The last word matches a package but has no colon yet — offer the gesture.
     const lastWord = remainder.trim().split(/\s+/).pop() ?? ''
-    const pending = searchPackages.find(
-        p => p.slug === lastWord.toLowerCase() && !chips.includes(p.slug)
-    )
+    const pending = packages.find(p => p.slug === lastWord.toLowerCase() && !chips.includes(p.slug))
     if (pending) {
         return <Hints items={['↑↓ move', '↵ open', `: scope to ${pending.slug}`, 'esc close']} />
     }

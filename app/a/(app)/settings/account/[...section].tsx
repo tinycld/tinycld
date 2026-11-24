@@ -7,7 +7,17 @@
 
 import { PackagePanelScreen } from '@tinycld/core/components/settings/PackagePanelScreen'
 import { packageAccountSettings } from '@tinycld/core/lib/packages/derive-components'
+import {
+    slugOfGroup,
+    useTermsBlocked,
+    useTermsOpen,
+} from '@tinycld/core/lib/packages/use-package-terms'
 
 export default function PackageAccountSettingsSection() {
-    return <PackagePanelScreen groups={packageAccountSettings} />
+    // A package whose terms the owner has not accepted has no panels.
+    const groups = useTermsOpen(packageAccountSettings, slugOfGroup)
+    const { isReady: termsReady } = useTermsBlocked()
+    // Wait for the terms state: until then every package with terms is closed.
+    if (!termsReady) return null
+    return <PackagePanelScreen groups={groups} />
 }

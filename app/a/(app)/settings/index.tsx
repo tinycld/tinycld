@@ -6,6 +6,7 @@ import {
     packageSettings,
     packageSystemSettings,
 } from '@tinycld/core/lib/packages/derive-components'
+import { slugOfGroup, useTermsOpen } from '@tinycld/core/lib/packages/use-package-terms'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { isManagedPrefix, useManagedSettingPrefixes } from '@tinycld/core/lib/use-managed-settings'
@@ -108,7 +109,10 @@ function PackageAccountLinks() {
     const orgHref = useOrgHref()
     const router = useRouter()
 
-    const panels = packageAccountSettings.flatMap(group =>
+    // A package whose terms the owner has not accepted lists no panels, here
+    // and in the two package groups below.
+    const groups = useTermsOpen(packageAccountSettings, slugOfGroup)
+    const panels = groups.flatMap(group =>
         group.panels.map(panel => ({ group, panel, Icon: getIcon(group.icon ?? '') }))
     )
 
@@ -133,6 +137,7 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
     const foregroundColor = useThemeColor('foreground')
     const orgHref = useOrgHref()
     const router = useRouter()
+    const packageGroups = useTermsOpen(packageSettings, slugOfGroup)
 
     if (!isVisible) return null
 
@@ -194,7 +199,7 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
 
             <SystemSettings isVisible={isOwner} />
 
-            {packageSettings.map(group => {
+            {packageGroups.map(group => {
                 const Icon = getIcon(group.icon ?? '')
                 return (
                     <SettingsGroup key={group.pkgSlug} label={group.packageName}>
@@ -273,12 +278,13 @@ function SystemSettings({ isVisible }: { isVisible: boolean }) {
     const orgHref = useOrgHref()
     const router = useRouter()
     const managed = useManagedSettingPrefixes()
+    const systemGroups = useTermsOpen(packageSystemSettings, slugOfGroup)
 
     const coreLinks = CORE_SYSTEM_LINKS.filter(link => !isManagedPrefix(managed, link.keyPrefix))
     // A package panel is hidden by the namespace ITS OWN manifest declares, so
     // core filters it without knowing which package it belongs to. A panel that
     // declares no namespace is never hidden.
-    const packagePanels = packageSystemSettings.flatMap(group =>
+    const packagePanels = systemGroups.flatMap(group =>
         group.panels
             .filter(panel => !isManagedPrefix(managed, panel.keyPrefix))
             .map(panel => ({ group, panel }))

@@ -79,4 +79,35 @@ test.describe('package terms: a package nobody may use yet', () => {
         await expect(review.getByTestId('pkg-terms-declined')).toBeVisible()
         await expect(review.getByTestId('pkg-terms-agree')).toBeVisible()
     })
+
+    test('settings, help and search do not show the package', async ({ page }) => {
+        await login(page)
+
+        await page.getByTestId('nav-settings').click()
+        await expect(page.getByTestId('settings-index')).toBeVisible()
+        await expect(page.getByTestId(TERMS_STUB.settingsLink)).toHaveCount(0)
+
+        await page.getByTestId('nav-help').click()
+        const searchBox = page.getByPlaceholder('Search help topics')
+        await searchBox.fill('Terms stub')
+        await expect(searchBox).toHaveValue('Terms stub')
+        await expect(page.getByText(TERMS_STUB.helpTopic)).toHaveCount(0)
+
+        // The palette: a package name and a colon make a scope chip, but not
+        // for a closed package. The text stays plain text.
+        await searchBox.fill('')
+        await page.getByTestId('nav-settings').click()
+        await page.keyboard.press('/')
+        const palette = page.getByPlaceholder('Search everywhere…')
+        await expect(palette).toBeVisible()
+        await page.keyboard.type(`${TERMS_STUB.slug}:`)
+        await expect(palette).toHaveValue(`${TERMS_STUB.slug}:`)
+        await expect(page.getByTestId(`search-chip-${TERMS_STUB.slug}`)).toHaveCount(0)
+    })
+
+    test('the settings panel of the package reads not found', async ({ page }) => {
+        await login(page, { startAt: appHref(`settings/${TERMS_STUB.slug}/general`) })
+        await expect(page.getByText('Settings not found')).toBeVisible()
+        await expect(page.getByTestId(TERMS_STUB.settingsPanel)).toHaveCount(0)
+    })
 })
