@@ -1,21 +1,21 @@
 // Package pkgterms holds the terms and conditions of packages: which version
-// a package declares, which version the owner accepted, and the refusal of
-// every request to a package whose current version is not accepted.
+// a package declares, which version the owner accepted, and the owner's
+// decisions.
 //
 // A package declares terms in its manifest (`terms`). The generator carries
 // the version and the text into bundled-packages.json; the boot sync writes
 // the version to pkg_registry.terms_version and the text to pkg_terms (Sync).
 // The owner accepts by creating a pkg_terms_decisions row; a hook checks it
 // and writes pkg_registry.terms_accepted_version (Register). While the two
-// versions differ the package is pending, and SlugError / CollectionError
-// refuse it. A package with no terms has a blank terms_version and is never
-// pending.
+// versions differ the package is pending. A package with no terms has a blank
+// terms_version and is never pending.
 //
-// The package imports no core package that asks it (pkgaccess, search,
-// reports), so each of them can.
+// Core's server does not refuse a package's collections or routes for its
+// terms state: the client gates a pending package.
 package pkgterms
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -56,15 +56,16 @@ func Sync(app core.App, slug, version, body string) error {
 		}
 		return fmt.Errorf("pkgterms: package %s has terms but there is no %s collection: %w", slug, TermsCollection, err)
 	}
-	rows, err := app.FindRecordsByFilter(TermsCollection, "pkg = {:pkg}", "", 1, 0, map[string]any{"pkg": slug})
-	if err != nil {
+	existing, err := app.FindFirstRecordByFilter(TermsCollection, "pkg = {:pkg}", map[string]any{"pkg": slug})
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("pkgterms: read the terms of %s: %w", slug, err)
 	}
 	if version == "" {
-		for _, row := range rows {
-			if err := app.Delete(row); err != nil {
-				return fmt.Errorf("pkgterms: remove the terms of %s: %w", slug, err)
-			}
+		if existing == nil {
+			return nil
+		}
+		if err := app.Delete(existing); err != nil {
+			return fmt.Errorf("pkgterms: remove the terms of %s: %w", slug, err)
 		}
 		return nil
 	}
@@ -72,8 +73,8 @@ func Sync(app core.App, slug, version, body string) error {
 		return errors.New("pkgterms: package " + slug + " has a terms version but no terms text")
 	}
 	row := core.NewRecord(col)
-	if len(rows) > 0 {
-		row = rows[0]
+	if existing != nil {
+		row = existing
 		if row.GetString("version") == version && row.GetString("body") == body {
 			return nil
 		}

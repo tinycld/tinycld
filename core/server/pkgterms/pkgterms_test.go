@@ -41,37 +41,6 @@ func addPackage(t testing.TB, app core.App, slug, status, termsVersion, accepted
 	return pkg
 }
 
-// addCollection stores a collection any signed-in user may read and write,
-// so a refusal in a test is the terms guard and never a rule.
-func addCollection(t testing.TB, app core.App, name string, fields ...core.Field) *core.Collection {
-	t.Helper()
-	authed := "@request.auth.id != ''"
-	col := core.NewBaseCollection(name)
-	col.Fields.Add(&core.TextField{Name: "body"})
-	for _, f := range fields {
-		col.Fields.Add(f)
-	}
-	col.ListRule, col.ViewRule, col.CreateRule, col.UpdateRule, col.DeleteRule = &authed, &authed, &authed, &authed, &authed
-	if err := app.Save(col); err != nil {
-		t.Fatal(err)
-	}
-	return col
-}
-
-func addRecord(t testing.TB, app core.App, collection, body string) *core.Record {
-	t.Helper()
-	col, err := app.FindCollectionByNameOrId(collection)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := core.NewRecord(col)
-	rec.Set("body", body)
-	if err := app.Save(rec); err != nil {
-		t.Fatal(err)
-	}
-	return rec
-}
-
 func addUser(t testing.TB, app core.App, email, role string) *core.Record {
 	t.Helper()
 	users, err := app.FindCollectionByNameOrId("users")
@@ -184,6 +153,11 @@ func termsRow(t testing.TB, app core.App, slug string) *core.Record {
 
 func TestSyncStoresUpdatesAndRemovesTheText(t *testing.T) {
 	app := newApp(t)
+	updates := 0
+	app.OnRecordAfterUpdateSuccess(pkgterms.TermsCollection).BindFunc(func(e *core.RecordEvent) error {
+		updates++
+		return e.Next()
+	})
 
 	if err := pkgterms.Sync(app, "acme", "1", "# Acme terms"); err != nil {
 		t.Fatal(err)
@@ -193,16 +167,19 @@ func TestSyncStoresUpdatesAndRemovesTheText(t *testing.T) {
 		t.Fatalf("after the first sync: %v", first)
 	}
 
-	// The same terms again write nothing: `updated` does not move at a boot.
+	// The same terms again write nothing at a boot.
 	if err := pkgterms.Sync(app, "acme", "1", "# Acme terms"); err != nil {
 		t.Fatal(err)
 	}
-	if same := termsRow(t, app, "acme"); same.GetString("updated") != first.GetString("updated") {
-		t.Fatal("a sync of unchanged terms wrote the row")
+	if updates != 0 {
+		t.Fatalf("a sync of unchanged terms saved the row %d times", updates)
 	}
 
 	if err := pkgterms.Sync(app, "acme", "2", "# Acme terms, second"); err != nil {
 		t.Fatal(err)
+	}
+	if updates != 1 {
+		t.Fatalf("a new version saved the row %d times, want 1", updates)
 	}
 	second := termsRow(t, app, "acme")
 	if second.Id != first.Id || second.GetString("version") != "2" || second.GetString("body") != "# Acme terms, second" {

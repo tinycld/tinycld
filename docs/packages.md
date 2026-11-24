@@ -296,7 +296,7 @@ export default manifest
 | `build.script` | A build script run before bundling (e.g. an embedded webview bundle). |
 | `dependencies[]` | A **slug-only** list of other packages — **advisory + seed-ordering only.** Used to topologically sort seed execution and as a soft hint; it imposes **no** version constraint and is never a compile-time import. |
 | `peerVersions` | `{ '<slug or @tinycld/core>': '<semver range>' }` (e.g. `{ '@tinycld/core': '>=2.1 <3' }`) — **enforced** semver ranges keyed by slug. See [`dependencies` vs `peerVersions`](#dependencies-vs-peerversions) below. |
-| `terms` | `{ file, version }` — terms and conditions the **owner must accept before anybody uses the package**. `file` is a markdown file in the package (e.g. `'TERMS.md'`); `version` is a label of 1-50 characters (`A-Z a-z 0-9 . _ -`) that you change when the text changes. Until the owner accepts the current version, the server refuses the package's collections and routes for everybody. See [Package terms](#package-terms-terms). Omit it and the package needs no acceptance. |
+| `terms` | `{ file, version }` — terms and conditions the **owner must accept before the package is used in the app**. `file` is a markdown file in the package (e.g. `'TERMS.md'`); `version` is a label of 1-50 characters (`A-Z a-z 0-9 . _ -`) that you change when the text changes. The server stores the text, the declared version, the accepted version and the owner's decisions; a package is pending while the declared and accepted versions differ. Core's server does not refuse a pending package: the client gates it. Omit it and the package needs no acceptance. |
 
 #### Help screenshots
 

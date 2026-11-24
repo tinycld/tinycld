@@ -92,7 +92,7 @@ export interface PackageManifest {
     setupSteps?: { id: string; label: string; module: string; order?: string }[]
     // Record panels beside a report. See ReportPanelDecl in core/lib/packages/types.ts.
     reportPanels?: ReportPanelDecl[]
-    // Terms the owner must accept before anybody uses the package. Validated
+    // Terms the owner must accept before the package is used in the app. Validated
     // and read by scripts/gen-terms.ts. See PackageTermsDecl.
     terms?: PackageTermsDecl
 }

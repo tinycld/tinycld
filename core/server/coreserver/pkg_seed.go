@@ -34,8 +34,8 @@ type bundledPackage struct {
 }
 
 // syncTerms stores a bundled package's terms text after its registry row is
-// saved. A failure is logged, not fatal, as for the row itself: the row then
-// still carries terms_version, so the package stays refused, never open.
+// saved. A failure is logged, not fatal, as for the row itself. The caller runs
+// it only after a successful save, so a package never has a text without its row.
 func syncTerms(app core.App, pkg bundledPackage) {
 	if err := pkgterms.Sync(app, pkg.Slug, pkg.TermsVersion, pkg.TermsBody); err != nil {
 		srvLog.Error("failed to store package terms", "slug", pkg.Slug, "err", err)
@@ -153,6 +153,7 @@ func SyncBundledPackages(app core.App) {
 			record.Set(pkgterms.FieldTermsVersion, pkg.TermsVersion)
 			if err := app.Save(record); err != nil {
 				srvLog.Error("failed to create bundled package registry row", "slug", pkg.Slug, "err", err)
+				continue
 			}
 			syncTerms(app, pkg)
 			continue
@@ -183,6 +184,7 @@ func SyncBundledPackages(app core.App) {
 		existing.Set(pkgterms.FieldTermsVersion, pkg.TermsVersion)
 		if err := app.Save(existing); err != nil {
 			srvLog.Error("failed to update bundled package registry row", "slug", pkg.Slug, "err", err)
+			continue
 		}
 		syncTerms(app, pkg)
 	}

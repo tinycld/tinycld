@@ -6,7 +6,8 @@
 // written at boot from bundled-packages.json. terms_accepted_version is the
 // version the owner accepted, written only by the server when the owner
 // creates an `accepted` row in pkg_terms_decisions (core/server/pkgterms).
-// A package whose two values differ is refused to everybody.
+// A package whose two values differ is pending. Core's server does not refuse
+// a pending package's collections or routes: the client gates it.
 //
 // pkg_terms holds the text, one row per package, written only at boot. Any
 // signed-in user may read it: a member reads the terms the owner accepted.
