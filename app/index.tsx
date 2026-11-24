@@ -8,6 +8,7 @@ import { useSortedPackagesResult } from '@tinycld/core/lib/use-sorted-packages'
 import { Redirect, router } from 'expo-router'
 import { useEffect } from 'react'
 import { usePackagePrefetch } from '~/lib/route-prefetch'
+import { useLaunchTermsPrompt } from '~/lib/use-launch-terms-prompt'
 
 export default function Index() {
     const auth = useAuth({ throwIfAnon: false })
@@ -55,12 +56,15 @@ export default function Index() {
 // Waits for isReady so the default-deny empty window doesn't bounce to settings
 // before the real package list arrives, and then for the landing package's
 // route chunks and sidebar, so they mount without a Suspense fallback (see
-// lib/route-prefetch.ts).
+// lib/route-prefetch.ts). An owner with undecided package terms is sent to
+// them first, as from the org root.
 function LandingRedirect() {
     const { packages: sorted, isReady } = useSortedPackagesResult()
+    const termsPrompt = useLaunchTermsPrompt()
     const orgHref = useOrgHref()
     const landing = isReady ? (sorted[0]?.slug ?? 'settings') : null
     const landingLoaded = usePackagePrefetch(landing)
-    if (!landing || !landingLoaded) return <SkeletonLayout />
+    if (!landing || !landingLoaded || !termsPrompt.isReady) return <SkeletonLayout />
+    if (termsPrompt.href) return <Redirect href={termsPrompt.href} />
     return <Redirect href={orgHref(landing as never)} />
 }
