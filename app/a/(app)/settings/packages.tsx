@@ -49,19 +49,23 @@ export default function OrgPackageSettings() {
                     <ArrowLeft size={24} color={fgColor} />
                 </Pressable>
                 {/* PackageManager renders its own "Packages" PageHeader, so this
-                    screen deliberately adds no title of its own. It has no slot
-                    under that header, so the link follows the manager. */}
+                    screen deliberately adds no title of its own. */}
                 <View
                     className="w-full gap-4"
                     style={{ maxWidth: 1040 }}
                     testID="settings-install-manager"
                 >
-                    <PackageManager pb={pb} isVisible />
+                    <PackageManager
+                        pb={pb}
+                        isVisible
+                        belowHeader={
+                            <PackageTermsLink
+                                isVisible={TERMS_PACKAGES.length > 0}
+                                onPress={() => router.push(orgHref('settings/package-terms'))}
+                            />
+                        }
+                    />
                 </View>
-                <PackageTermsLink
-                    isVisible={TERMS_PACKAGES.length > 0}
-                    onPress={() => router.push(orgHref('settings/package-terms'))}
-                />
             </View>
         </ScrollView>
     )
