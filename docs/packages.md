@@ -344,6 +344,22 @@ core/shared data and gets **no** package-access enforcement — deliberate for
 genuinely shared infrastructure (drive's polymorphic `comment_mentions`),
 a silent hole for anything else.
 
+### Package terms (`terms`): how the gate works
+
+A package that declares `terms: { file: 'TERMS.md', version: '2026-11-01' }` is closed in the app until the **owner** accepts that version. Core does all of it; the package ships only the markdown file and the version label.
+
+- **State.** The boot sync writes the declared version to `pkg_registry.terms_version` and the text to the `pkg_terms` collection. `pkg_registry.terms_accepted_version` is the version the owner accepted. The package is **pending** while `terms_version` is not blank and differs from `terms_accepted_version`.
+- **Decision.** The owner's client inserts a `pkg_terms_decisions` row (`pkg`, `terms_version`, `decision`: `accepted` or `declined`). The server records the user and the time, writes the audit log, and on `accepted` sets `terms_accepted_version`. A decline changes nothing else. Nobody edits or deletes a decision, and a non-superuser cannot write the two registry fields.
+- **A new version.** Change `terms.version` when the text changes. After the upgrade the package is pending again. A change of the text with the same `version` does not ask again.
+- **The gate is in the client.** `useTermsBlocked()` (`core/lib/packages/use-package-terms.ts`) gives the pending slugs. While a package is pending:
+  - its route shows the terms with Agree / Decline to the owner and a waiting screen to everybody else (`PackageTermsGate`); its sidebar is hidden;
+  - admins, members and guests have no nav entry for it; the owner keeps the entry;
+  - its settings links and panels, help topics, search scope and rows, and sidebar-slot contributions are hidden for everybody;
+  - the setup wizard's Apps step shows it off, and Agree in the terms dialog turns it on;
+  - an owner who has not decided lands on Settings → Package terms at launch. A declined package does not ask again.
+- **The server does not enforce terms.** No collection rule, route or search source reads the terms state: a request for a pending package's records or routes is answered as for any other package. Do not rely on terms as access control.
+- **No terms.** A package without `terms` has a blank `terms_version` and is never pending. A build in which no package declares terms runs no terms query.
+
 ### Manifest variation across shipped packages
 
 - **contacts / mail** use `sidebar`; **calc** uses `provider`.
