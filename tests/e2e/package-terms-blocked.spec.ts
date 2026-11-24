@@ -86,9 +86,11 @@ test.describe('package terms: a package nobody may use yet', () => {
 
     test('settings, help and search do not show the package', async ({ page }) => {
         await login(page)
-        // The owner's rail lists packages only after the terms state is known, so
-        // the negative checks below read a loaded state.
-        await expect(page.getByTestId(`nav-${TERMS_STUB.slug}`)).toBeVisible()
+        // The rail does not wait for the terms state. The review cover shows only
+        // when that state is ready and the stub is pending, so the negative
+        // checks below read a loaded state.
+        await page.getByTestId(`nav-${TERMS_STUB.slug}`).click()
+        await expect(page.getByTestId('pkg-terms-review')).toBeVisible()
 
         await page.getByTestId('nav-settings').click()
         await expect(page.getByTestId('settings-index')).toBeVisible()
