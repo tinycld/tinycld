@@ -33,15 +33,23 @@ export function resolveTerms(
         )
     }
     if (typeof terms.file !== 'string' || !terms.file.endsWith('.md')) {
-        fail(`file ${JSON.stringify(terms.file)} must be a .md file in the package`)
+        fail(
+            `file ${JSON.stringify(terms.file)} must be a .md file (lowercase extension) in the package`
+        )
     }
     const root = path.resolve(packageDir)
-    const file = path.resolve(root, terms.file)
-    if (!file.startsWith(root + path.sep)) {
+    const lexical = path.resolve(root, terms.file)
+    if (!lexical.startsWith(root + path.sep)) {
         fail(`file ${JSON.stringify(terms.file)} is outside the package`)
     }
-    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
+    if (!fs.existsSync(lexical) || !fs.statSync(lexical).isFile()) {
         fail(`file ${JSON.stringify(terms.file)} does not exist`)
+    }
+    // A symlink inside the package can point out of it; compare real paths.
+    const realRoot = fs.realpathSync(root)
+    const file = fs.realpathSync(lexical)
+    if (!file.startsWith(realRoot + path.sep)) {
+        fail(`file ${JSON.stringify(terms.file)} is outside the package`)
     }
     const body = fs.readFileSync(file, 'utf8').trim()
     if (body === '') fail(`file ${JSON.stringify(terms.file)} is empty`)

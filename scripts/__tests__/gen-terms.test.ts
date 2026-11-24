@@ -3,6 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolveTerms, TERMS_MAX_BYTES } from '../gen-terms'
+import type { PackageManifest } from '../load-manifest'
 
 const dirs: string[] = []
 
@@ -54,6 +55,21 @@ describe('resolveTerms', () => {
             /gizmos: manifest\.terms version/,
         ],
         ['a file that is not markdown', { file: 'TERMS.txt', version: '1' }, /must be a \.md file/],
+        [
+            'an uppercase extension',
+            { file: 'TERMS.MD', version: '1' },
+            /must be a \.md file \(lowercase extension\)/,
+        ],
+        [
+            'a version that is not a string',
+            { file: 'TERMS.md', version: 3 },
+            /gizmos: manifest\.terms version 3 is not valid/,
+        ],
+        [
+            'a file that is not a string',
+            { file: 7, version: '1' },
+            /gizmos: manifest\.terms file 7 must be a \.md file/,
+        ],
         ['a missing file', { file: 'MISSING.md', version: '1' }, /does not exist/],
         [
             'a file outside the package',
@@ -69,7 +85,17 @@ describe('resolveTerms', () => {
             'EMPTY.md': ' \n',
             'BIG.md': 'x'.repeat(TERMS_MAX_BYTES + 1),
         })
-        expect(() => resolveTerms(dir, 'gizmos', terms)).toThrow(message)
+        const declared = terms as unknown as PackageManifest['terms']
+        expect(() => resolveTerms(dir, 'gizmos', declared)).toThrow(message)
+    })
+
+    it('refuses a symlink that points outside the package', () => {
+        const outside = packageDir({ 'secret.md': 'Not for the package' })
+        const dir = packageDir({})
+        fs.symlinkSync(path.join(outside, 'secret.md'), path.join(dir, 'TERMS.md'))
+        expect(() => resolveTerms(dir, 'gizmos', { file: 'TERMS.md', version: '1' })).toThrow(
+            /outside the package/
+        )
     })
 
     it('refuses a directory named like a markdown file', () => {

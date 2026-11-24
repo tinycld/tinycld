@@ -561,7 +561,8 @@ async function main() {
     }))
     validatePorts(portsFeatures)
     // Read each package's terms here, with the other checks, so a bad `terms`
-    // stops the run before any file is written.
+    // stops the run before tinycld.config.ts, tinycld.seeds.ts and the other
+    // generated files are written. The package builds above have already run.
     const termsBySlug = new Map(
         features.map(f => [f.manifest.slug, resolveTerms(f.dir, f.manifest.slug, f.manifest.terms)])
     )
