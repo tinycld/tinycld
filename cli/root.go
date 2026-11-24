@@ -123,7 +123,7 @@ func newRootCmd(d *deps) *cobra.Command {
 		formatFlag, _ := cmd.Flags().GetString("output")
 		format, err := output.ParseFormat(formatFlag)
 		if err != nil {
-			return err
+			return Usage(err)
 		}
 		if jsonFlag, _ := cmd.Flags().GetBool("json"); jsonFlag {
 			format = output.JSON

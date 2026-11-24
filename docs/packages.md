@@ -1084,6 +1084,18 @@ debt, each entry naming the registry that should replace it; it fails when an
 entry goes stale, so the list only shrinks. Do not add to it to make a change
 pass.
 
+A package's CLI commands set the process exit code with
+`tinycld.org/cli/exitcode`, never with `os.Exit`. `exitcode.New(exitcode.Usage,
+err)` marks a call that is wrong before anything is sent (exit 2).
+`exitcode.Classify(err)` reads the class of a client error from the error
+itself: no usable sign-in is 3 (`Auth`), HTTP 403 is 4 (`Forbidden`), 404 is 5
+(`NotFound`), another 4xx is 6 (`Refused`), and 408, 429, 5xx or no answer is
+7 (`Unavailable`). An error with no code exits 1. The numbers are a contract
+that scripts test: add a class at the end, never renumber one. The shell
+answers three calls itself, before the package's command runs: a flag it
+cannot parse and an unknown `--output` value exit 2, and a call with no
+context exits 3.
+
 ### Change signals and live views
 
 After a record of any collection is created, updated or deleted and the write

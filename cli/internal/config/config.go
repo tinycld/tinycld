@@ -97,6 +97,10 @@ func (c *Config) Save(dir string) error {
 	return os.Rename(tmp.Name(), filepath.Join(dir, fileName))
 }
 
+// ErrNoContext is Resolve's error when no context is named and none is
+// current: nobody has signed in on this machine.
+var ErrNoContext = errors.New("no context selected — run `tinycld auth login <host>` first")
+
 // Resolve picks the context to operate on: the --context flag if given,
 // otherwise the saved current context.
 func (c *Config) Resolve(flag string) (string, Context, error) {
@@ -105,7 +109,7 @@ func (c *Config) Resolve(flag string) (string, Context, error) {
 		name = c.Current
 	}
 	if name == "" {
-		return "", Context{}, errors.New("no context selected — run `tinycld auth login <host>` first")
+		return "", Context{}, ErrNoContext
 	}
 	ctx, ok := c.Contexts[name]
 	if !ok {
