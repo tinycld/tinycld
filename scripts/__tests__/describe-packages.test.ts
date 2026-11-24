@@ -157,6 +157,29 @@ describe('manifestToConfigPkg', () => {
         })
         expect(pkg.notifications).toEqual({ events: 'notify-events' })
     })
+
+    // The client's static registry reads `terms` off the generated manifest to
+    // know which packages to close until the owner accepts them.
+    it('passes manifest.terms through on the manifest', () => {
+        const pkg = manifestToConfigPkg('@acme/gizmos', {
+            name: 'Gizmos',
+            slug: 'gizmos',
+            version: '0.1.0',
+            description: 'd',
+            terms: { file: 'TERMS.md', version: '1' },
+        })
+        expect(pkg.manifest.terms).toEqual({ file: 'TERMS.md', version: '1' })
+    })
+
+    it('leaves the manifest without terms when none are declared', () => {
+        const pkg = manifestToConfigPkg('@acme/gizmos', {
+            name: 'Gizmos',
+            slug: 'gizmos',
+            version: '0.1.0',
+            description: 'd',
+        })
+        expect(pkg.manifest).not.toHaveProperty('terms')
+    })
 })
 
 describe('validateSidebarContributions', () => {
