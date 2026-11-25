@@ -346,6 +346,9 @@ type ParamOptions struct {
 	Groups    []OptionGroup `json:"groups"`
 	GroupsCut bool          `json:"groupsCut,omitempty"`
 	Next      string        `json:"next,omitempty"`
+	// collections are the collections whose rows the read selected, sorted
+	// (Result.collections).
+	collections []string
 }
 
 // ReadParamOptions reads one page of a choice param's options for its
@@ -368,14 +371,18 @@ func ReadParamOptions(ctx context.Context, app core.App, req OptionsRequest) (*P
 		return nil, err
 	}
 	res := &ParamOptions{Options: []ParamOption{}, Groups: []OptionGroup{}}
+	// An error of a read that sent a statement says something of the rows (a
+	// time limit): it comes with what the read selected from and nothing else,
+	// as a failed run's does (Run).
 	if err := c.optionsPage(ctx, op, req, limit, res); err != nil {
-		return nil, err
+		return &ParamOptions{collections: c.collectionsRead()}, err
 	}
 	if op.group != nil && len(req.Values) == 0 && req.After == "" {
 		if err := c.optionGroups(ctx, op, req.Search, res); err != nil {
-			return nil, err
+			return &ParamOptions{collections: c.collectionsRead()}, err
 		}
 	}
+	res.collections = c.collectionsRead()
 	return res, nil
 }
 
@@ -447,6 +454,7 @@ func (c *compiler) optionsPage(ctx context.Context, op *optionsPlan, req Options
 	body := fmt.Sprintf("SELECT o.v AS v, o.l AS l, o.lc AS lc, o.g AS g%s FROM (%s) o\nWHERE %s\nORDER BY %s LIMIT %s",
 		cols, ranked, strings.Join(conds, " AND "), strings.Join(optionOrder(keys, typ), ", "), limitSQL(int64(limit+1)))
 	rows, _, err := readRows(ctx, c.app, c.app.DB(), s, nil, body, nil, answers)
+	c.noteReads(s)
 	if err != nil {
 		return err
 	}
@@ -528,6 +536,7 @@ func (c *compiler) readOptionGroups(ctx context.Context, op *optionsPlan, res *P
 	body := fmt.Sprintf("SELECT o.g AS g, o.gl AS gl, o.glc AS glc FROM (%s) o\nWHERE %s\nGROUP BY o.g\nORDER BY %s LIMIT %s",
 		ranked, strings.Join(where, " AND "), strings.Join(keys, ", "), limitSQL(int64(maxOptionGroups+1)))
 	rows, _, err := readRows(ctx, c.app, c.app.DB(), s, nil, body, nil, answers)
+	c.noteReads(s)
 	if err != nil {
 		return err
 	}
