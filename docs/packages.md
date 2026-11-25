@@ -1095,6 +1095,30 @@ claim (core's `labels`, used by mail and contacts) unions their rules. A
 package pins its own CLI-reachable routes in its own tests — an unclassified
 route 403s for OAuth callers only, which nothing else notices.
 
+A token reads a related collection through `?expand=` only when its scopes
+permit a direct read of that collection. On every records route (list, view,
+and the create and update responses) core follows each expand path, relation
+by relation and back-relations (`<collection>_via_<field>`) included, to the
+collection each step returns, and applies that collection's `Read` rule. The
+request gets a 403 when one step reaches a collection that the token's scopes
+do not read, or one that no scope governs. Thus `expand=owner` on a package
+collection needs the `profile` scope, because `owner` is a `users` record. A
+package that wants a token to expand into a collection must register that
+collection with a `Read` rule. A segment that names no relation is ignored,
+as PocketBase ignores it.
+
+The same rule applies to `?filter=` and `?sort=`. A path that reads a field of
+a related collection (`owner.email ~ "a"`, `-boards_cards_via_board.title`)
+returns no related record, but the rows that match, and their order, tell the
+caller the related values. Core thus checks each collection such a path joins,
+and gives a 403 when the token's scopes do not read it. A path that reads only
+the relation's own id (`owner = "…"`, `owner.id = "…"`) joins nothing and
+needs no more scope.
+
+The batch API and realtime also accept these parameters, and both stay closed
+to tokens as a whole. A session is not checked: the collection rules alone
+govern it.
+
 The rule is enforced by `oauth.TestCoreDeclaresNoPackageScopes` (the
 registry is empty with no features present) and by
 `pnpm run check:core-isolation`, which derives the installed packages' slugs

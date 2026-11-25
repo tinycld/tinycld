@@ -290,10 +290,20 @@ func enforceGrant(re *core.RequestEvent) error {
 		return re.ForbiddenError(
 			"This endpoint is not available to API tokens", nil)
 	}
+	granted := ParseScopes(grant.GetString("scopes"))
 	if !required.isExempt() {
-		if !required.SatisfiedBy(ParseScopes(grant.GetString("scopes"))) {
+		if !required.SatisfiedBy(granted) {
 			return re.ForbiddenError(
 				fmt.Sprintf("Requires the %s scope", required.describe()), nil)
+		}
+	}
+	if name, ok := collectionFromPath(re.Request.URL.Path); ok {
+		query := re.Request.URL.Query()
+		if err := checkExpand(re.App, name, query, granted); err != nil {
+			return re.ForbiddenError(err.Error(), nil)
+		}
+		if err := checkFilterAndSort(re.App, name, query, granted); err != nil {
+			return re.ForbiddenError(err.Error(), nil)
 		}
 	}
 
@@ -309,7 +319,7 @@ func enforceGrant(re *core.RequestEvent) error {
 	// answers "may this token call this endpoint"; an endpoint that federates
 	// over several packages also needs "which of them may it see", so that a
 	// mail-only token searching everything gets mail results instead of a 403.
-	re.Set(grantedScopesKey, ParseScopes(grant.GetString("scopes")))
+	re.Set(grantedScopesKey, granted)
 
 	re.Auth = record
 	return re.Next()
