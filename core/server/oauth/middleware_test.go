@@ -49,6 +49,10 @@ func TestScopeForRouteMapsRegisteredRoutes(t *testing.T) {
 		{"GET", "/api/collections/automation_catalog/records", ScopeAutomation},
 		{"POST", "/api/automation/rules/abc/run", ScopeAutomation},
 		{"POST", "/api/automation/rules/abc/records/def/run", ScopeAutomation},
+		{"GET", "/api/collections/reports/records", ScopeReports},
+		{"GET", "/api/collections/reports/records/abc", ScopeReports},
+		{"POST", "/api/reports/run", ScopeReports},
+		{"POST", "/api/reports/export", ScopeReports},
 	}
 	for _, c := range cases {
 		if got := ScopeForRoute(c.method, c.path); !onlyScope(got, c.want) {

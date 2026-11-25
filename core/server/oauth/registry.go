@@ -115,6 +115,9 @@ const FormsScopeLabel = "Manage forms, publish web forms and read their submissi
 // AutomationScopeLabel is the consent copy for ScopeAutomation.
 const AutomationScopeLabel = "Manage and run automation rules"
 
+// ReportsScopeLabel is the consent copy for ScopeReports.
+const ReportsScopeLabel = "List, run and download the reports you can open"
+
 var (
 	slugPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	capabilityPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
@@ -329,6 +332,10 @@ func rebuild() tables {
 			"rules":              {read: ScopeRule{ScopeAutomation}, write: ScopeRule{ScopeAutomation}},
 			"rule_runs":          {read: ScopeRule{ScopeAutomation}},
 			"automation_catalog": {read: ScopeRule{ScopeAutomation}},
+			// Saved reports: the list a token picks a report from. Read-only: a
+			// report is built and shared in the app. The collection's own list
+			// rule (owner, share or published) still applies.
+			"reports": {read: ScopeRule{ScopeReports}},
 		},
 		endpoints: map[string]ScopeRule{
 			// The deployment's own backup API. Core-owned, so it is spelled
@@ -350,6 +357,12 @@ func rebuild() tables {
 			"GET /oauth/userinfo": {ScopeProfile},
 			// The installed form hosts, for `tinycld form hosts`.
 			"GET /api/forms/hosts": {ScopeForms},
+			// Run a report and download it as a file. The scope opens the two
+			// routes only; the handlers refuse a run that read a collection
+			// outside the token's scopes. The builder's routes (the source
+			// catalog, the param options) and the email route stay session-only.
+			"POST /api/reports/run":    {ScopeReports},
+			"POST /api/reports/export": {ScopeReports},
 		},
 		// The two backup routes that carry a record id cannot be spelled as
 		// exact paths. A prefix is broader than it looks, so each one names a
@@ -366,6 +379,7 @@ func rebuild() tables {
 			{ID: ScopeBackups, Label: BackupsScopeLabel},
 			{ID: ScopeForms, Label: FormsScopeLabel},
 			{ID: ScopeAutomation, Label: AutomationScopeLabel},
+			{ID: ScopeReports, Label: ReportsScopeLabel},
 		},
 	}
 	slugs := make([]string, 0, len(packages))
