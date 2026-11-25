@@ -108,10 +108,11 @@ func TestConsentSurfacesAreNotExempt(t *testing.T) {
 }
 
 // A batch runs record writes of any collection in one request. A scope names
-// collections, so no scope can cover a batch, and an OAuth bearer must never
-// reach it: the batch handler does not run the per-collection scope check for
-// the operations inside it.
-func TestBatchIsNotAvailableToOAuthTokens(t *testing.T) {
+// collections, so the batch route has no scope of its own and ScopeForRoute
+// default-denies it. The batch handler does not run the per-collection scope
+// check, so enforceGrant checks every operation of a token's batch itself
+// before the handler runs (batch_scope.go, authorizeBatch).
+func TestBatchRouteHasNoScopeOfItsOwn(t *testing.T) {
 	if got := ScopeForRoute("POST", "/api/batch"); len(got) != 0 {
 		t.Errorf("POST /api/batch resolved to %q, want default-deny", got)
 	}

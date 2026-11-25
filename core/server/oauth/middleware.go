@@ -285,13 +285,18 @@ func enforceGrant(re *core.RequestEvent) error {
 		return re.UnauthorizedError("Access token is no longer valid", nil)
 	}
 
-	required := ScopeForRoute(re.Request.Method, re.Request.URL.Path)
-	if len(required) == 0 {
-		return re.ForbiddenError(
-			"This endpoint is not available to API tokens", nil)
-	}
-	if !required.isExempt() {
-		if !required.SatisfiedBy(ParseScopes(grant.GetString("scopes"))) {
+	granted := ParseScopes(grant.GetString("scopes"))
+	if isBatchRoute(re.Request) {
+		if err := authorizeBatch(re, granted); err != nil {
+			return err
+		}
+	} else {
+		required := ScopeForRoute(re.Request.Method, re.Request.URL.Path)
+		if len(required) == 0 {
+			return re.ForbiddenError(
+				"This endpoint is not available to API tokens", nil)
+		}
+		if !required.isExempt() && !required.SatisfiedBy(granted) {
 			return re.ForbiddenError(
 				fmt.Sprintf("Requires the %s scope", required.describe()), nil)
 		}
@@ -309,7 +314,7 @@ func enforceGrant(re *core.RequestEvent) error {
 	// answers "may this token call this endpoint"; an endpoint that federates
 	// over several packages also needs "which of them may it see", so that a
 	// mail-only token searching everything gets mail results instead of a 403.
-	re.Set(grantedScopesKey, ParseScopes(grant.GetString("scopes")))
+	re.Set(grantedScopesKey, granted)
 
 	re.Auth = record
 	return re.Next()
