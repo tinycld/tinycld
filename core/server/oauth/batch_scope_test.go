@@ -178,7 +178,6 @@ func TestBatchWithATokenRunsThroughTheAPI(t *testing.T) {
 		TestAppFactory:        func(testing.TB) *tests.TestApp { return allowed },
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
-			t.Helper()
 			if got := count(t, app); got != 2 {
 				t.Fatalf("notes_items rows = %d, want 2", got)
 			}
@@ -196,7 +195,6 @@ func TestBatchWithATokenRunsThroughTheAPI(t *testing.T) {
 		TestAppFactory:        func(testing.TB) *tests.TestApp { return refused },
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
-			t.Helper()
 			if got := count(t, app); got != 0 {
 				t.Fatalf("notes_items rows = %d after a refused batch, want 0", got)
 			}
