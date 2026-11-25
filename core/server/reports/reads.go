@@ -17,6 +17,8 @@ func (c *compiler) noteReads(s *stmt) {
 			c.noteCollection(name)
 			continue
 		}
+		// An unregistered union notes nothing: stmt.ruleRead already fails the
+		// statement for it, so the read never answers.
 		if src := lookupRegistered(key); src != nil {
 			for _, part := range src.collections() {
 				c.noteCollection(part)

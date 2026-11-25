@@ -157,6 +157,16 @@ func TestAReadNamesTheWatchOfASourceWhoseHookRan(t *testing.T) {
 	}
 }
 
+// A union source is read from each of its parts: the read names every part's
+// collection.
+func TestAUnionRunNamesEveryPartsCollection(t *testing.T) {
+	z := newUnionZoo(t)
+	res := z.run(t, "ann", mealsReport, Options{}, nil)
+	if want := []string{"zoo_feedings", "zoo_treats"}; !slices.Equal(res.collections, want) {
+		t.Errorf("collections = %v, want %v (the parts of zoo.meals)", res.collections, want)
+	}
+}
+
 // A run that fails after it read rows still names what it read: its error
 // (an amount too large to total, a timeout) says something of those rows.
 func TestAFailedRunNamesWhatItRead(t *testing.T) {
