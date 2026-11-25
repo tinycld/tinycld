@@ -345,13 +345,15 @@ func exportDisplayOf(raw json.RawMessage) (exportDisplay, error) {
 // readWholeReport runs the report as the reader in one page of maxRows+1
 // rows (Request.PageCap). It never reads a second page: each page of a
 // grouped run computes every group level again, so pages of maxPage rows
-// cost pages x rows. It returns whole = false with no error, and a result that
-// holds only what the run read (Result.collections; a failed run gives the same
-// beside its error), when the report holds more
-// rows than the writer takes (the page is past maxRows, or a row follows
-// it), when the run stopped before its details because its group rows
-// already count more (errPastRows), or when a cap stopped the run, so no file
-// is ever cut short.
+// cost pages x rows.
+//
+// It returns whole = false with no error when the report holds more rows
+// than the writer takes: the page is past maxRows, or a row follows it. It
+// also does so when the run stops before its details because its group rows
+// already count more (errPastRows), and when a cap stops the run, so no file
+// is ever cut short. A failed run gives the same, beside its error.
+//
+// The result holds only what the run read (Result.collections).
 func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loaded *LoadInfo, body exportBody, writer exportWriter) (res *Result, whole bool, err error) {
 	maxRows := writer.MaxRows()
 	limit := maxRows + 1
