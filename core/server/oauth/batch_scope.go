@@ -91,8 +91,9 @@ func authorizeBatch(re *core.RequestEvent, granted []string) error {
 // isRecordWrite reports whether method and path are one of the record writes a
 // batch runs (apis.ValidBatchActions): a create or an upsert of
 // /api/collections/{c}/records, an update or a delete of
-// /api/collections/{c}/records/{id}. A method in another case
-// is no record write here, and the handler refuses it too.
+// /api/collections/{c}/records/{id}. The method must be uppercase: the
+// handler uppercases a method and runs it, but this check refuses a method in
+// another case, so such a batch fails closed.
 func isRecordWrite(method, path string) bool {
 	const prefix = "/api/collections/"
 	if !strings.HasPrefix(path, prefix) {

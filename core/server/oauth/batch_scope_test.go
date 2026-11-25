@@ -153,6 +153,13 @@ func TestEnforceGrantChecksBatchOperationQueries(t *testing.T) {
 			403, `Operation 2 of the batch: the expand "widget" requires`},
 		{"expand before a fragment", `{"method":"PATCH","url":"/api/collections/notes_items/records/abc?expand=widget#x"}`,
 			403, `Operation 2 of the batch: the expand "widget" requires`},
+		// PocketBase reads only the first expand; the check reads every one,
+		// so a second, out-of-scope value cannot hide behind an in-scope one.
+		{"duplicated expand, second out of scope", `{"method":"PATCH","url":"/api/collections/notes_items/records/abc?expand=label&expand=widget"}`,
+			403, `Operation 2 of the batch: the expand "widget" requires`},
+		// A "?" after "#" is part of the fragment: url.Parse and the handler's
+		// http.NewRequest both find no query, so there is no expand to check.
+		{"query hidden in a fragment", `{"method":"PATCH","url":"/api/collections/notes_items/records/abc#?expand=widget"}`, 0, ""},
 		{"back-relation expand", `{"method":"PUT","url":"/api/collections/notes_items/records?expand=widgets_items_via_note"}`,
 			403, `Operation 2 of the batch: the expand "widgets_items_via_note" requires`},
 		{"expand into a collection no scope governs", `{"method":"PATCH","url":"/api/collections/widgets_items/records/abc?expand=grant"}`,
