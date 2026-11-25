@@ -544,14 +544,18 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     // chrome area, so this check does not race a landing.
     const isInsideChrome =
         landingPathname === appHref(pkg) || landingPathname.startsWith(`${appHref(pkg)}/`)
+    // Where no redirect is in flight, the check looks one time, with no wait.
+    // A waitFor with a 1ms timeout is not that: it often times out before its
+    // first look, so a target that is on screen reads as absent. The rail click
+    // that follows then hangs on a phone, where the rail is not drawn.
+    const isShown = redirectMayBeInFlight
+        ? onTarget.waitFor({ state: 'visible', timeout: 2000 }).then(
+              () => true,
+              () => false
+          )
+        : onTarget.isVisible()
     const alreadyThere =
-        (!chromeHeading || isInsideChrome) &&
-        (await onTarget
-            .waitFor({ state: 'visible', timeout: redirectMayBeInFlight ? 2000 : 1 })
-            .then(
-                () => isOnTop(onTarget),
-                () => false
-            ))
+        (!chromeHeading || isInsideChrome) && (await isShown) && (await isOnTop(onTarget))
 
     if (!alreadyThere) {
         // The rail button by its own testID, not by href: a package's rail
