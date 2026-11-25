@@ -1,3 +1,4 @@
+import { uniqueKey } from '../../short-code'
 import type {
     CustomField,
     CustomKind,
@@ -7,7 +8,7 @@ import type {
     TableColumn,
 } from '../definition'
 import { definitionSchema, type TABLE_COLUMN_KINDS } from '../definition'
-import { keyFromLabel, uniqueKey } from './key'
+import { keyFromLabel } from './key'
 
 /** The editor's working shape: a definition whose rules may still be empty. */
 export type DraftDefinition = Omit<FormDefinitionInput, 'fields'> & {
