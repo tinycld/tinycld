@@ -163,7 +163,7 @@ func ensureDefault(app core.App, col *core.Collection, host *Host) (string, erro
 
 // reconcileForms brings each stored form of a host in line with the
 // built-ins the host declares now, after a package update added or removed
-// one. The definition is edited as plain JSON so properties the server does
+// one or changed one's kind. The definition is edited as plain JSON so properties the server does
 // not model (width, display, description, ...) survive.
 func reconcileForms(app core.App, host *Host) error {
 	forms, err := app.FindRecordsByFilter(formsCollection, "host = {:host}", "", 0, 0, dbx.Params{"host": host.Key})
@@ -178,7 +178,8 @@ func reconcileForms(app core.App, host *Host) error {
 			continue
 		}
 		added, removed := reconcileDefinition(def, host)
-		if len(added) == 0 && len(removed) == 0 {
+		staleRules := dropStaleOperatorRules(def, host)
+		if len(added) == 0 && len(removed) == 0 && len(staleRules) == 0 {
 			continue
 		}
 		raw, err := json.Marshal(def)
@@ -191,7 +192,7 @@ func reconcileForms(app core.App, host *Host) error {
 			errs = append(errs, fmt.Errorf("forms: reconcile form %s: %w", rec.Id, err))
 			continue
 		}
-		log.Info("form built-ins reconciled with host", "host", host.Key, "form", rec.Id, "added", added, "removed", removed)
+		log.Info("form built-ins reconciled with host", "host", host.Key, "form", rec.Id, "added", added, "removed", removed, "rulesDropped", staleRules)
 	}
 	return errors.Join(errs...)
 }
@@ -249,6 +250,44 @@ func reconcileDefinition(def map[string]any, host *Host) (added, removed []strin
 		submit["required"] = keysWithout(submit["required"], gone)
 	}
 	return added, removed
+}
+
+// dropStaleOperatorRules removes, in place, each rule with a condition whose
+// operator the built-in's current kind does not allow: a package changed the
+// built-in's kind (a text name that became a custom component), and the stored
+// form would no longer validate. The whole rule goes, as for a removed
+// built-in, since dropping only the condition would change when it fires. It
+// returns the dropped rules' keys.
+func dropStaleOperatorRules(def map[string]any, host *Host) []string {
+	rules, _ := def["rules"].([]any)
+	kept := make([]any, 0, len(rules))
+	var dropped []string
+	for _, r := range rules {
+		rule, _ := r.(map[string]any)
+		if readsWithAStaleOperator(rule["when"], host) {
+			key, _ := rule["key"].(string)
+			dropped = append(dropped, key)
+			continue
+		}
+		kept = append(kept, r)
+	}
+	if len(dropped) > 0 {
+		def["rules"] = kept
+	}
+	return dropped
+}
+
+func readsWithAStaleOperator(raw any, host *Host) bool {
+	conds, _ := raw.([]any)
+	for _, c := range conds {
+		cond, _ := c.(map[string]any)
+		key, _ := cond["field"].(string)
+		op, _ := cond["op"].(string)
+		if b := host.Builtin(key); b != nil && !opAllowed(b.Kind, op) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstPageKey(def map[string]any) string {
