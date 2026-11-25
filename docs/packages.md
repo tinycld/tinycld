@@ -983,7 +983,9 @@ it. An OAuth token may send a batch only as JSON, and only when every operation
 in it is a record write that the token's scopes allow: the grant check reads
 the operations before the batch runs (`core/server/oauth/batch_scope.go`) and
 refuses the whole batch with 403 for one operation outside the scopes, for a
-collection no package registered, and for a route that is not a record write.
+collection no package registered, for a route that is not a record write, and
+for an `?expand=`, `?filter=` or `?sort=` in an operation's URL that reads a
+collection outside the scopes (the `?expand=` rule under "Registries" below).
 
 Test a hook in a batch with `tests.ApiScenario` against `/api/batch` after
 setting `app.Settings().Batch.Enabled = true` on the test app.
@@ -1119,9 +1121,11 @@ and gives a 403 when the token's scopes do not read it. A path that reads only
 the relation's own id (`owner = "…"`, `owner.id = "…"`) joins nothing and
 needs no more scope.
 
-The batch API and realtime also accept these parameters, and both stay closed
-to tokens as a whole. A session is not checked: the collection rules alone
-govern it.
+A batch operation's URL can also carry these parameters, and core applies the
+same checks to each operation: one operation out of scope refuses the whole
+batch with 403, before anything is written. Realtime also accepts them, and
+stays closed to tokens as a whole. A session is not checked: the collection
+rules alone govern it.
 
 The rule is enforced by `oauth.TestCoreDeclaresNoPackageScopes` (the
 registry is empty with no features present) and by

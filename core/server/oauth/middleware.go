@@ -3,6 +3,7 @@ package oauth
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -213,6 +214,20 @@ func collectionFromPath(path string) (string, bool) {
 	return rest[:slash], true
 }
 
+// checkRelatedReads applies the expand, filter and sort checks to a request of
+// a records route. A batch operation gets them too, because the batch handler
+// runs it as that route.
+func checkRelatedReads(app core.App, path string, query url.Values, granted []string) error {
+	name, ok := collectionFromPath(path)
+	if !ok {
+		return nil
+	}
+	if err := checkExpand(app, name, query, granted); err != nil {
+		return err
+	}
+	return checkFilterAndSort(app, name, query, granted)
+}
+
 // grantIDFromToken reads the grant claim without verifying the signature. That
 // is safe here because it is only used to LOCATE the grant; the signature is
 // verified by PocketBase's own resolver, and the grant row is then re-checked.
@@ -300,14 +315,8 @@ func enforceGrant(re *core.RequestEvent) error {
 			return re.ForbiddenError(
 				fmt.Sprintf("Requires the %s scope", required.describe()), nil)
 		}
-		if name, ok := collectionFromPath(re.Request.URL.Path); ok {
-			query := re.Request.URL.Query()
-			if err := checkExpand(re.App, name, query, granted); err != nil {
-				return re.ForbiddenError(err.Error(), nil)
-			}
-			if err := checkFilterAndSort(re.App, name, query, granted); err != nil {
-				return re.ForbiddenError(err.Error(), nil)
-			}
+		if err := checkRelatedReads(re.App, re.Request.URL.Path, re.Request.URL.Query(), granted); err != nil {
+			return re.ForbiddenError(err.Error(), nil)
 		}
 	}
 

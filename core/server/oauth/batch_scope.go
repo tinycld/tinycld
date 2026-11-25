@@ -3,6 +3,7 @@ package oauth
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -56,12 +57,22 @@ func authorizeBatch(re *core.RequestEvent, granted []string) error {
 	if err := re.BindBody(&body); err != nil {
 		return re.BadRequestError("Failed to read the submitted batch data.", err)
 	}
+	// Each operation is checked as its record route would be: the route's
+	// scope, then the expand, filter and sort of its query.
 	for i, op := range body.Requests {
 		rule := ScopeRule(nil)
+		var path string
+		var query url.Values
 		if op != nil {
-			path, _, _ := strings.Cut(op.URL, "?")
-			if isRecordWrite(op.Method, path) {
+			path, _, _ = strings.Cut(op.URL, "?")
+			// The handler builds the operation's request with
+			// http.NewRequest, so its query is the one url.Parse reads (a
+			// fragment is not part of it). A URL that does not parse is no
+			// record write.
+			parsed, err := url.Parse(op.URL)
+			if err == nil && isRecordWrite(op.Method, path) {
 				rule = ScopeForRoute(op.Method, path)
+				query = parsed.Query()
 			}
 		}
 		if len(rule) == 0 || rule.isExempt() {
@@ -69,6 +80,9 @@ func authorizeBatch(re *core.RequestEvent, granted []string) error {
 		}
 		if !rule.SatisfiedBy(granted) {
 			return re.ForbiddenError(fmt.Sprintf("Operation %d of the batch requires the %s scope", i+1, rule.describe()), nil)
+		}
+		if err := checkRelatedReads(re.App, path, query, granted); err != nil {
+			return re.ForbiddenError(fmt.Sprintf("Operation %d of the batch: %s", i+1, err), nil)
 		}
 	}
 	return nil

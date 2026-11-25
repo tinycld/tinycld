@@ -136,6 +136,93 @@ func TestEnforceGrantRefusesBatchItCannotRead(t *testing.T) {
 	}
 }
 
+// A batch operation's URL may carry an expand, a filter or a sort, and the
+// batch handler runs it as the record route would. So each operation gets the
+// related-read checks of that route: a batch is no way around them.
+func TestEnforceGrantChecksBatchOperationQueries(t *testing.T) {
+	const create = `{"method":"POST","url":"/api/collections/notes_items/records?expand=label","body":{"title":"a"}}`
+	cases := []struct {
+		name, op   string
+		wantStatus int // 0: allowed
+		wantText   string
+	}{
+		{"expand in scope", `{"method":"PATCH","url":"/api/collections/notes_items/records/abc?expand=label"}`, 0, ""},
+		{"expand out of scope", `{"method":"PATCH","url":"/api/collections/notes_items/records/abc?expand=widget"}`,
+			403, `Operation 2 of the batch: the expand "widget" requires the "widgets:read" scope`},
+		{"encoded expand out of scope", `{"method":"POST","url":"/api/collections/notes_items/records?expand=wid%67et"}`,
+			403, `Operation 2 of the batch: the expand "widget" requires`},
+		{"expand before a fragment", `{"method":"PATCH","url":"/api/collections/notes_items/records/abc?expand=widget#x"}`,
+			403, `Operation 2 of the batch: the expand "widget" requires`},
+		{"back-relation expand", `{"method":"PUT","url":"/api/collections/notes_items/records?expand=widgets_items_via_note"}`,
+			403, `Operation 2 of the batch: the expand "widgets_items_via_note" requires`},
+		{"expand into a collection no scope governs", `{"method":"PATCH","url":"/api/collections/widgets_items/records/abc?expand=grant"}`,
+			403, `Operation 2 of the batch: the expand "grant" is not available to API tokens`},
+		{"filter out of scope", `{"method":"DELETE","url":"/api/collections/notes_items/records/abc?filter=widget.name%3D'x'"}`,
+			403, `Operation 2 of the batch: the filter "widget.name" requires`},
+		{"sort out of scope", `{"method":"PATCH","url":"/api/collections/notes_items/records/abc?sort=-widget.name"}`,
+			403, `Operation 2 of the batch: the sort "widget.name" requires`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			app := newExpandApp(t)
+			token := batchToken(t, app, scopeNotesRead, scopeNotesWrite, scopeWidgetsWrite)
+			re := batchEvent(app, token, `{"requests":[`+create+`,`+c.op+`]}`)
+			err := enforceGrant(re)
+			if c.wantStatus == 0 {
+				if err != nil {
+					t.Fatalf("enforceGrant refused a batch in scope: %v", err)
+				}
+				return
+			}
+			if apiStatus(err) != c.wantStatus || !strings.Contains(err.Error(), c.wantText) {
+				t.Fatalf("enforceGrant = %v, want %d holding %q", err, c.wantStatus, c.wantText)
+			}
+			if re.Auth != nil {
+				t.Fatal("enforceGrant must not set e.Auth when it refuses")
+			}
+		})
+	}
+}
+
+// Through the whole API: a batch with one operation whose expand leaves the
+// scopes is refused whole, and writes nothing.
+func TestBatchWithAnOutOfScopeExpandWritesNothing(t *testing.T) {
+	app := newExpandApp(t)
+	notes, err := app.FindCollectionByNameOrId("notes_items")
+	if err != nil {
+		t.Fatalf("find notes_items: %v", err)
+	}
+	rule := "@request.auth.id != ''"
+	notes.ListRule, notes.ViewRule, notes.CreateRule, notes.UpdateRule, notes.DeleteRule = &rule, &rule, &rule, &rule, &rule
+	if err := app.Save(notes); err != nil {
+		t.Fatalf("save notes_items: %v", err)
+	}
+	app.Settings().Batch.Enabled = true
+	app.Settings().Batch.MaxRequests = 50
+	bindGrantEnforcement(app)
+
+	const body = `{"requests":[{"method":"POST","url":"/api/collections/notes_items/records","body":{"title":"one"}},{"method":"POST","url":"/api/collections/notes_items/records?expand=widget","body":{"title":"two"}}]}`
+	(&tests.ApiScenario{
+		Method:                http.MethodPost,
+		URL:                   batchPath,
+		Body:                  strings.NewReader(body),
+		Headers:               map[string]string{"Authorization": "Bearer " + batchToken(t, app, scopeNotesRead, scopeNotesWrite), "Content-Type": "application/json"},
+		ExpectedStatus:        http.StatusForbidden,
+		ExpectedContent:       []string{`Operation 2 of the batch: the expand \"widget\" requires`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
+			n, err := app.CountRecords("notes_items")
+			if err != nil {
+				t.Fatalf("count notes_items: %v", err)
+			}
+			if n != 0 {
+				t.Fatalf("notes_items rows = %d after a refused batch, want 0", n)
+			}
+		},
+	}).Test(t)
+}
+
 // notesBatchApp is a served app with the grant middleware, the batch API on,
 // and the fixture collection notes_items, which any signed-in user may write.
 func notesBatchApp(t *testing.T) *tests.TestApp {
