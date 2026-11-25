@@ -1,5 +1,6 @@
 import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import {
+    SETUP_BACK_TEST_ID,
     SETUP_CONTINUE_TEST_ID,
     SETUP_SKIP_TEST_ID,
     setupStepTestId,
@@ -124,14 +125,35 @@ function ContinueButton() {
     )
 }
 
-/** Skip on the left, Continue on the right; hidden when the screen has neither. */
+/** The Back the screen's SetupBackButton published; nothing until one has. */
+function BackButton() {
+    const back = useSetupContinueStore(s => s.back)
+    if (!back) return null
+    return (
+        <Button
+            size="lg"
+            variant="outline"
+            className="min-h-11"
+            onPress={back.onPress}
+            accessibilityLabel="Back"
+            testID={SETUP_BACK_TEST_ID}
+        >
+            <ButtonText className="text-[15px]">Back</ButtonText>
+        </Button>
+    )
+}
+
+/** Skip on the left, Back and Continue on the right; hidden when the screen has none. */
 function ShellFooter({ props }: { props: SetupWizardShellProps }) {
-    const hasContinue = useSetupContinueStore(s => s.action !== null)
-    if (!props.onSkip && !hasContinue) return null
+    const hasAction = useSetupContinueStore(s => s.action !== null || s.back !== null)
+    if (!props.onSkip && !hasAction) return null
     return (
         <View className="flex-row items-center justify-between border-t border-border pt-4">
             <SkipButton onPress={props.onSkip} />
-            <ContinueButton />
+            <View className="flex-row items-center gap-3">
+                <BackButton />
+                <ContinueButton />
+            </View>
         </View>
     )
 }

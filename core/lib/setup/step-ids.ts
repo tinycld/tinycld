@@ -31,3 +31,7 @@ export const SETUP_DONE_OPEN_TEST_ID = 'setup-done-open'
 export function setupStepTestId(stepId: string): string {
     return `setup-step-${stepId}`
 }
+
+// The shell's Back, drawn left of Continue when the screen published one
+// (SetupBackButton).
+export const SETUP_BACK_TEST_ID = 'setup-back'

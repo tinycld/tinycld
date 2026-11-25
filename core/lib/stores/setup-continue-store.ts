@@ -9,16 +9,26 @@ export interface SetupContinueAction {
     requiresServer: boolean
 }
 
+/** What the wizard footer's Back does on the screen now showing. */
+export interface SetupBackAction {
+    onPress: () => void
+}
+
 interface SetupContinueState {
     action: SetupContinueAction | null
     publish: (action: SetupContinueAction | null) => void
+    back: SetupBackAction | null
+    publishBack: (back: SetupBackAction | null) => void
 }
 
 // The wizard shell draws Continue in its footer, but only the step knows what
 // pressing it does (submit a form, advance, create the owner). The step
 // publishes that here; the shell renders it. One wizard screen shows at a
-// time, so one slot is enough.
+// time, so one slot is enough. Back works the same way, for a step with parts
+// of its own that the user can step back through.
 export const useSetupContinueStore = create<SetupContinueState>()(set => ({
     action: null,
     publish: action => set({ action }),
+    back: null,
+    publishBack: back => set({ back }),
 }))
