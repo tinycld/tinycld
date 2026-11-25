@@ -24,8 +24,8 @@ import (
 // who can open it: the whole report, read in one page as that reader with
 // the view's state, written by the format's writer and named by
 // exportFileName. Every download writes one audit row. The route takes a
-// signed-in session only (Register binds it as the run route); oauth
-// classifies no scope for it, so an OAuth token is refused by default-deny.
+// signed-in session, or an OAuth token with the reports scope whose other
+// scopes cover every collection the report read (refuseTokenReads).
 
 // The refusals of an export. The limits are the spec's fixed sentences, never
 // built from exportLimits, which tests shrink.
@@ -243,17 +243,31 @@ func buildExport(re *core.RequestEvent, body exportBody) (*exportFile, error) {
 	ctx, cancel := context.WithTimeout(re.Request.Context(), exportLimits.timeout)
 	defer cancel()
 
-	res, err := readWholeReport(ctx, re, spec, loaded, body, writer)
+	res, whole, err := readWholeReport(ctx, re, spec, loaded, body, writer)
+	// Before every answer that says something of the rows: an error of the
+	// run, and "too many rows".
+	if res != nil {
+		if refused := refuseTokenReads(re, spec, res); refused != nil {
+			return nil, refused
+		}
+	}
 	if err != nil {
 		return nil, exportRunError(re, ctx, err)
 	}
-	if res == nil {
+	if !whole {
 		return nil, re.Error(http.StatusUnprocessableEntity, writer.TooMany, nil)
 	}
 	labels := map[string]map[string]string{}
 	var org branding.Org
 	if writer.Header {
-		labels, err = readParamLabels(ctx, re, spec, body, res.Params)
+		var read []string
+		labels, read, err = readParamLabels(ctx, re, spec, body, res.Params)
+		// The labels are read by statements of their own, after the run; an
+		// error of such a read is an answer too.
+		res.collections = append(res.collections, read...)
+		if refused := refuseTokenReads(re, spec, res); refused != nil {
+			return nil, refused
+		}
 		if err != nil {
 			return nil, exportRunError(re, ctx, err)
 		}
@@ -331,12 +345,14 @@ func exportDisplayOf(raw json.RawMessage) (exportDisplay, error) {
 // readWholeReport runs the report as the reader in one page of maxRows+1
 // rows (Request.PageCap). It never reads a second page: each page of a
 // grouped run computes every group level again, so pages of maxPage rows
-// cost pages x rows. It returns nil with no error when the report holds more
+// cost pages x rows. It returns whole = false with no error, and a result that
+// holds only what the run read (Result.collections; a failed run gives the same
+// beside its error), when the report holds more
 // rows than the writer takes (the page is past maxRows, or a row follows
 // it), when the run stopped before its details because its group rows
 // already count more (errPastRows), or when a cap stopped the run, so no file
 // is ever cut short.
-func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loaded *LoadInfo, body exportBody, writer exportWriter) (*Result, error) {
+func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loaded *LoadInfo, body exportBody, writer exportWriter) (res *Result, whole bool, err error) {
 	maxRows := writer.MaxRows()
 	limit := maxRows + 1
 	opts := body.Options
@@ -357,24 +373,25 @@ func readWholeReport(ctx context.Context, re *core.RequestEvent, spec *Spec, loa
 		// statement (pastRefusal): the same refusal, without the largest read.
 		req.refuseOver = maxRows
 	}
-	res, err := Run(ctx, re.App, req)
+	res, err = Run(ctx, re.App, req)
 	if errors.Is(err, errPastRows) {
-		return nil, nil
+		return res, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return res, false, err
 	}
+	read := &Result{collections: res.collections}
 	// A page ends one row short of its limit when a group row and its opening
 	// row do not both fit (cutPage): a next page means a row past maxRows.
 	if len(res.Rows) > maxRows || (res.Page != nil && res.Page.Next != "") {
-		return nil, nil
+		return read, false, nil
 	}
 	res.Notices = uniqueNotices(res.Notices)
 	capped := slices.ContainsFunc(res.Notices, func(n Notice) bool { return n.Code == "rowCap" || n.Code == "nestCap" })
 	if capped {
-		return nil, nil
+		return read, false, nil
 	}
-	return res, nil
+	return res, true, nil
 }
 
 // isSectionRow (rows.ts): a computed row inside a section belongs to it.
@@ -535,9 +552,11 @@ func isGroupOnlyKey(key string, groupOnly []string) bool {
 
 // readParamLabels reads the shown labels of each choice param from a source
 // whose header text names its choices (at most namedChoices of them), as the
-// chips read them: the values' labels, and each whole group's label.
-func readParamLabels(ctx context.Context, re *core.RequestEvent, spec *Spec, body exportBody, resolved []ResolvedParam) (map[string]map[string]string, error) {
-	out := map[string]map[string]string{}
+// chips read them: the values' labels, and each whole group's label. read
+// names the collections its statements selected rows from, beside an error
+// too.
+func readParamLabels(ctx context.Context, re *core.RequestEvent, spec *Spec, body exportBody, resolved []ResolvedParam) (out map[string]map[string]string, read []string, err error) {
+	out = map[string]map[string]string{}
 	headers := ruleHeaders(re.Request.Header)
 	for _, def := range spec.Params {
 		r := resolvedOf(resolved, def.ID)
@@ -556,8 +575,11 @@ func readParamLabels(ctx context.Context, re *core.RequestEvent, spec *Spec, bod
 		if len(values) > 0 {
 			ask.Values = values
 			page, err := ReadParamOptions(ctx, re.App, ask)
+			if page != nil {
+				read = append(read, page.collections...)
+			}
 			if err != nil {
-				return nil, err
+				return nil, read, err
 			}
 			for _, o := range page.Options {
 				labels[o.Value] = optionText(o.Label, o.Type, o.Currency)
@@ -566,8 +588,11 @@ func readParamLabels(ctx context.Context, re *core.RequestEvent, spec *Spec, bod
 		if len(r.Groups) > 0 {
 			ask.Values, ask.Limit = nil, 1
 			page, err := ReadParamOptions(ctx, re.App, ask)
+			if page != nil {
+				read = append(read, page.collections...)
+			}
 			if err != nil {
-				return nil, err
+				return nil, read, err
 			}
 			for _, g := range page.Groups {
 				labels[groupLabelKey(g.Value)] = optionText(g.Label, g.Type, g.Currency)
@@ -575,7 +600,7 @@ func readParamLabels(ctx context.Context, re *core.RequestEvent, spec *Spec, bod
 		}
 		out[def.ID] = labels
 	}
-	return out, nil
+	return out, read, nil
 }
 
 // optionText (param-options.ts): an option's or a group's label as shown, a

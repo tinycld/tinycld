@@ -423,6 +423,15 @@ func lookupEndpoint(method, path string) (ScopeRule, bool) {
 	return nil, false
 }
 
+// CanReadCollection reports whether the granted scopes let a token read a
+// collection through the records API. A handler that reads collections on a
+// token's behalf by another path (a report run) asks it for each one, so the
+// path gives the token no more than the records API does.
+func CanReadCollection(granted []string, name string) bool {
+	access, known := lookupCollection(name)
+	return known && access.read.SatisfiedBy(granted)
+}
+
 func lookupCollection(name string) (collectionAccess, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
