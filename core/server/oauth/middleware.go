@@ -300,6 +300,15 @@ func enforceGrant(re *core.RequestEvent) error {
 			return re.ForbiddenError(
 				fmt.Sprintf("Requires the %s scope", required.describe()), nil)
 		}
+		if name, ok := collectionFromPath(re.Request.URL.Path); ok {
+			query := re.Request.URL.Query()
+			if err := checkExpand(re.App, name, query, granted); err != nil {
+				return re.ForbiddenError(err.Error(), nil)
+			}
+			if err := checkFilterAndSort(re.App, name, query, granted); err != nil {
+				return re.ForbiddenError(err.Error(), nil)
+			}
+		}
 	}
 
 	if err := TouchGrant(re.App, grant); err != nil {
