@@ -139,6 +139,7 @@ func TestEnforceGrantRefusesBatchItCannotRead(t *testing.T) {
 // notesBatchApp is a served app with the grant middleware, the batch API on,
 // and the fixture collection notes_items, which any signed-in user may write.
 func notesBatchApp(t *testing.T) *tests.TestApp {
+	t.Helper()
 	app := newSchemaApp(t)
 	notes := core.NewBaseCollection("notes_items")
 	notes.Fields.Add(&core.TextField{Name: "title"})
