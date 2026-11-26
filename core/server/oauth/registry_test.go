@@ -89,7 +89,7 @@ func withEmptyRegistry(t *testing.T) {
 func TestCoreDeclaresNoPackageScopes(t *testing.T) {
 	withEmptyRegistry(t)
 
-	coreScopes := []string{ScopeProfile, ScopeBackups, ScopeForms, ScopeAutomation}
+	coreScopes := []string{ScopeProfile, ScopeBackups, ScopeForms, ScopeAutomation, ScopeReports}
 	if got := AllScopes(); strings.Join(got, " ") != strings.Join(coreScopes, " ") {
 		t.Fatalf("an empty registry must expose only %v, got %v", coreScopes, got)
 	}
@@ -119,7 +119,7 @@ func TestCoreDeclaresNoPackageScopes(t *testing.T) {
 }
 
 func TestRegisterPackageBuildsCatalog(t *testing.T) {
-	want := []string{ScopeProfile, ScopeBackups, ScopeForms, ScopeAutomation, scopeNotesRead, scopeNotesWrite, scopeWidgetsRead, scopeWidgetsWrite}
+	want := []string{ScopeProfile, ScopeBackups, ScopeForms, ScopeAutomation, ScopeReports, scopeNotesRead, scopeNotesWrite, scopeWidgetsRead, scopeWidgetsWrite}
 	if got := AllScopes(); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("AllScopes = %v, want %v (profile first, packages by slug, scopes in declaration order)", got, want)
 	}
@@ -144,8 +144,8 @@ func TestRegisterPackageIsIdempotentPerSlug(t *testing.T) {
 	delete(narrowed.Collections, "notes_folder_counts")
 	RegisterPackage(narrowed)
 
-	if got := AllScopes(); len(got) != 6 {
-		t.Errorf("AllScopes after re-registration = %v, want core's four + notes' two", got)
+	if got := AllScopes(); len(got) != 7 {
+		t.Errorf("AllScopes after re-registration = %v, want core's five + notes' two", got)
 	}
 	if got := ScopeForRoute("GET", "/api/collections/notes_folder_counts/records"); len(got) != 0 {
 		t.Errorf("a collection dropped by the re-registration must no longer be classified, got %v", got)
@@ -213,8 +213,8 @@ func TestRegisterPackageRejectsMalformedRegistrations(t *testing.T) {
 			RegisterPackage(c.pkg)
 		})
 	}
-	if got := AllScopes(); len(got) != 4 {
-		t.Errorf("a rejected registration must leave the registry untouched (core's four), got %v", got)
+	if got := AllScopes(); len(got) != 5 {
+		t.Errorf("a rejected registration must leave the registry untouched (core's five), got %v", got)
 	}
 }
 

@@ -112,6 +112,13 @@ type Result struct {
 	// param with a header (ParamDef.Header), in spec order, then one per spec
 	// header line (Spec.Header, "" for a blank value), never nil.
 	HeaderLines []string `json:"headerLines"`
+	// collections are the collections whose rows the run read: those every
+	// statement selects from under their list rules (the statements of the
+	// header lines' labels too), and the Watch of each source whose hook ran. A
+	// collection that only a list rule reads is not one: the rule's answer
+	// shows none of its rows. Sorted; refuseTokenReads holds an OAuth token's
+	// scopes to them.
+	collections []string
 }
 
 type ResultColumn struct {
@@ -446,17 +453,25 @@ func Run(ctx context.Context, app core.App, req Request) (*Result, error) {
 	if req.Loaded != nil {
 		rn.loadNotices(req.Loaded)
 	}
+	// An error of a run that read rows says something of them: an amount too
+	// large to total, a time limit, and the export's "too many rows"
+	// (errPastRows). It comes with what the run read up to there and nothing
+	// else, to hold an OAuth token to it (refuseTokenReads).
 	if err := rn.run(); err != nil {
-		return nil, err
+		return &Result{collections: c.collectionsRead()}, err
 	}
 	rn.res.Params = resolvedParams(p.spec.Params, params)
 	if rn.res.HeaderLines, err = c.headerLines(ctx); err != nil {
-		return nil, err
+		return &Result{collections: c.collectionsRead()}, err
 	}
-	rn.res.HeaderLines = append(rn.res.HeaderLines, rn.specLines...)
 	if h := p.base.Heading; h != nil {
 		rn.res.Heading = strings.TrimSpace(h(app, c.info))
+		c.noteHooks(p.base)
 	}
+	// Last: the header lines' labels are read by statements of their own, and
+	// the heading by a hook.
+	rn.res.collections = c.collectionsRead()
+	rn.res.HeaderLines = append(rn.res.HeaderLines, rn.specLines...)
 	return rn.res, nil
 }
 
@@ -486,6 +501,9 @@ func readerCompiler(app core.App, spec *Spec, auth *core.Record, headers map[str
 		return nil, specErr
 	}
 	c := newCompilerWithFiscal(p, app, info, params, fiscal)
+	if p.base.FiscalStartMonth != nil {
+		c.noteHooks(p.base)
+	}
 	c.given = given
 	c.loc = loc
 	return c, nil
@@ -749,6 +767,7 @@ func (rn *runner) query(s *stmt, ctes []string, body string) ([]map[string]any, 
 	for _, t := range topics {
 		rn.topics[t] = true
 	}
+	rn.c.noteReads(s)
 	return rows, err
 }
 

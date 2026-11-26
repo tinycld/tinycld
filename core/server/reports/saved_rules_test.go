@@ -156,14 +156,21 @@ func TestShareRulesList(t *testing.T) {
 	}
 }
 
-// No OAuth scope covers saved reports: a report reads across every
-// package, so an API token reaches neither collection (default-deny).
-func TestSavedReportsAreNotOpenToOAuthTokens(t *testing.T) {
-	for _, c := range []string{reportsCollection, sharesCollection} {
-		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete} {
-			if got := oauth.ScopeForRoute(method, "/api/collections/"+c+"/records"); len(got) != 0 {
-				t.Errorf("%s %s resolved to scopes %v, want default-deny", method, c, got)
-			}
+// The reports scope reads the saved reports, so a token can pick one to run.
+// A report is built and shared in the app: no scope writes a report, and no
+// scope reaches the shares (default-deny).
+func TestSavedReportsAreReadOnlyForOAuthTokens(t *testing.T) {
+	if got := oauth.ScopeForRoute(http.MethodGet, "/api/collections/"+reportsCollection+"/records"); len(got) != 1 || got[0] != oauth.ScopeReports {
+		t.Errorf("GET %s resolved to scopes %v, want only %q", reportsCollection, got, oauth.ScopeReports)
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPatch, http.MethodDelete} {
+		if got := oauth.ScopeForRoute(method, "/api/collections/"+reportsCollection+"/records"); len(got) != 0 {
+			t.Errorf("%s %s resolved to scopes %v, want default-deny", method, reportsCollection, got)
+		}
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete} {
+		if got := oauth.ScopeForRoute(method, "/api/collections/"+sharesCollection+"/records"); len(got) != 0 {
+			t.Errorf("%s %s resolved to scopes %v, want default-deny", method, sharesCollection, got)
 		}
 	}
 }

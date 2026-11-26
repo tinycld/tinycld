@@ -49,10 +49,13 @@ func sortedKeys(refused map[string]string) []string {
 //
 // The run and param-options endpoints are read endpoints by POST because a
 // draft spec does not fit in a URL. They read only rows the caller's list
-// rules allow and write nothing. An OAuth bearer token cannot call them:
-// oauth classifies no scope for them, so they are session-only by
-// default-deny, because a report reads across every package's collections
-// and a token's scopes cover only some.
+// rules allow and write nothing. An OAuth bearer token with the reports scope
+// can call the run and the export endpoints, and no other, for a saved report
+// only (refuseTokenDraft): a report reads across every package's collections
+// and a token's scopes cover only some, so the two handlers refuse a run that
+// read a collection the token cannot read (refuseTokenReads). The builder's
+// endpoints and the email endpoints have no scope and stay session-only by
+// default-deny.
 func Register(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		if err := CheckSources(e.App); err != nil {
@@ -122,6 +125,9 @@ func handleRun(re *core.RequestEvent) error {
 	if err := decodeStrict(re, &body, "a report run"); err != nil {
 		return err
 	}
+	if err := refuseTokenDraft(re, body.Spec); err != nil {
+		return err
+	}
 	raw, rec, err := requestSource(re, body.Spec, body.ReportID)
 	if err != nil {
 		return err
@@ -135,6 +141,12 @@ func handleRun(re *core.RequestEvent) error {
 		Spec: spec, Loaded: loaded, Params: body.Params, Options: body.Options,
 		Auth: re.Auth, Headers: ruleHeaders(re.Request.Header), Live: live,
 	})
+	// Before every answer that says something of the rows, an error too.
+	if res != nil {
+		if refused := refuseTokenReads(re, spec, res); refused != nil {
+			return refused
+		}
+	}
 	if err != nil {
 		return runError(re, err)
 	}
