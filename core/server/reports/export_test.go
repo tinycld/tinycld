@@ -16,10 +16,7 @@ import (
 
 	"github.com/nathanstitt/omnidoc/pkg/xlsx"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/hook"
-
-	"tinycld.org/core/oauth"
 )
 
 const exportURL = "/api/reports/export"
@@ -174,40 +171,6 @@ func TestExportReadsItsBodyStrictly(t *testing.T) {
 		http.StatusBadRequest, `"message":"The format is not pdf, xlsx or csv."`)
 	if n, _ := s.app.CountRecords("zoo_feedings"); n != 6 {
 		t.Fatalf("the route wrote: %d feedings", n)
-	}
-}
-
-// An OAuth access token, even one holding every scope, meets the real grant
-// middleware: the export route is session-only, as the run route is.
-func TestExportRefusesAnOAuthTokenThroughTheMiddleware(t *testing.T) {
-	z := newZoo(t)
-	oauth.Register(z.app)
-	Register(z.app)
-	rep := z.saved(t, "costs", "ann", "Feeding Costs", feedingsFlat, false)
-	client, err := oauth.FindClientByClientID(z.app, "tinycld-cli")
-	if err != nil {
-		t.Fatal(err)
-	}
-	grant, err := oauth.NewGrant(z.app, z.id("ann"), client.Id, oauth.AllScopes(), "active")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := oauth.MintAccessToken(z.app, z.recs["ann"], grant, oauth.AccessTokenTTL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, sc := range []tests.ApiScenario{
-		{Name: "an OAuth token", Headers: map[string]string{"Authorization": "Bearer " + token},
-			ExpectedStatus: http.StatusForbidden, ExpectedContent: []string{`not available to API tokens`}},
-		// The same reader's session token gets the file.
-		{Name: "a session token", Headers: map[string]string{"Authorization": z.token(t, "ann")},
-			ExpectedStatus: http.StatusOK, ExpectedContent: []string{"f1"}},
-	} {
-		sc.Method, sc.URL = http.MethodPost, exportURL
-		sc.Body = strings.NewReader(csvExportBody(rep.Id))
-		sc.TestAppFactory = func(testing.TB) *tests.TestApp { return z.app }
-		sc.DisableTestAppCleanup = true
-		sc.Test(t)
 	}
 }
 

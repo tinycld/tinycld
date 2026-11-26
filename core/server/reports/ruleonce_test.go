@@ -406,7 +406,7 @@ func TestAFailedRuleProbeFailsTheRun(t *testing.T) {
 	t.Cleanup(func() { ruleAnswer = saved })
 	seen := observeReads(t)
 	res, err := z.try(t, "ann", entryLinkSpec, Options{}, nil)
-	if !errors.Is(err, fault) || res != nil {
+	if !errors.Is(err, fault) || res == nil || len(res.Rows) != 0 {
 		t.Fatalf("Run = %+v, %v, want the probe's error and no result", res, err)
 	}
 	if len(*seen) != 0 {
@@ -432,7 +432,7 @@ func TestARuleProbeIsUnderTheRunTimeLimit(t *testing.T) {
 	t.Cleanup(func() { runLimits.timeout, ruleAnswer = limit, saved })
 	seen := observeReads(t)
 	res, err := z.try(t, "ann", entryLinkSpec, Options{}, nil)
-	if !errors.Is(err, ErrTimeout) || res != nil {
+	if !errors.Is(err, ErrTimeout) || res == nil || len(res.Rows) != 0 {
 		t.Fatalf("Run = %+v, %v, want ErrTimeout and no result", res, err)
 	}
 	if len(*seen) != 0 {

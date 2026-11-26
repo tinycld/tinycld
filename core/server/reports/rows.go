@@ -24,6 +24,9 @@ type compiler struct {
 	// loc is the reader's zone, nil for a UTC reader and a dry compile: a
 	// day typed in a condition is a day of it (readerDay, R1).
 	loc *time.Location
+	// dataRead holds the collections whose rows a statement of this read
+	// selected (noteReads), for Result.collections and ParamOptions.collections.
+	dataRead map[string]bool
 	// fixedCur is each source's fixed currency as this read's reader got it
 	// (fixedCurrency). It outlives a statement, so rows() leaves it.
 	fixedCur map[string]string
@@ -197,6 +200,7 @@ func (c *compiler) fixedCurrency(src *Source) string {
 		return code
 	}
 	code := src.Currency(c.app, c.info)
+	c.noteHooks(src)
 	c.fixedCur[src.Key] = code
 	return code
 }

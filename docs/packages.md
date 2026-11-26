@@ -978,8 +978,14 @@ A hook that holds a process lock across `e.Next()` must not take it when
 `e.App.IsTransactional()`: the transaction holds the write connection, and a
 request outside it can hold the lock while it waits for that connection.
 
-A caller with no account and an OAuth token cannot call the batch API, and
-read-only mode refuses it.
+A caller with no account cannot call the batch API, and read-only mode refuses
+it. An OAuth token may send a batch only as JSON, and only when every operation
+in it is a record write that the token's scopes allow: the grant check reads
+the operations before the batch runs (`core/server/oauth/batch_scope.go`) and
+refuses the whole batch with 403 for one operation outside the scopes, for a
+collection no package registered, for a route that is not a record write, and
+for an `?expand=`, `?filter=` or `?sort=` in an operation's URL that reads a
+collection outside the scopes (the `?expand=` rule under "Registries" below).
 
 Test a hook in a batch with `tests.ApiScenario` against `/api/batch` after
 setting `app.Settings().Batch.Enabled = true` on the test app.
@@ -1115,9 +1121,25 @@ and gives a 403 when the token's scopes do not read it. A path that reads only
 the relation's own id (`owner = "…"`, `owner.id = "…"`) joins nothing and
 needs no more scope.
 
-The batch API and realtime also accept these parameters, and both stay closed
-to tokens as a whole. A session is not checked: the collection rules alone
-govern it.
+A batch operation's URL can also carry these parameters, and core applies the
+same checks to each operation: one operation out of scope refuses the whole
+batch with 403, before anything is written. Realtime also accepts them, and
+stays closed to tokens as a whole. A session is not checked: the collection
+rules alone govern it.
+
+A report run reads collections by another path than the records API. The core
+scope `reports` opens `POST /api/reports/run`, `POST /api/reports/export` and
+the reads of the `reports` collection, and gives no data of its own: a run or
+an export answers 403 when it selected rows from a collection that the token's
+other scopes do not read (`core/server/reports/token.go`). A package thus
+registers every collection that its report sources read, a view also, under
+`Collections`: a report over a collection that no scope reads cannot run for a
+token. A collection that only a list rule reads needs no scope, as for a
+request to the records API. The collections a source names in `Watch` (those
+its `Heading`, `FiscalStartMonth` and `Currency` hooks read) need a read scope
+too: a run that called a hook counts them. A token runs a saved report only:
+the run route refuses a draft `spec` to it. The source catalog, the param
+options and the email routes of the reports stay closed to tokens.
 
 The rule is enforced by `oauth.TestCoreDeclaresNoPackageScopes` (the
 registry is empty with no features present) and by

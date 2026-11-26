@@ -55,6 +55,14 @@ const ScopeForms = "forms"
 // only an admin writes an organization rule.
 const ScopeAutomation = "automation"
 
+// ScopeReports lets a token list the saved reports its user can open, and run
+// or download one. Core's own: a report reads the collections of every
+// package that registered a source. The scope alone gives no data: the report
+// engine refuses a run that read a collection the token's other scopes do not
+// let it read (reports.refuseTokenReads), and every row is still filtered by
+// the user's own list rules.
+const ScopeReports = "reports"
+
 var (
 	// ErrInvalidGrant covers a missing, malformed, or expired grant. Maps to 401.
 	ErrInvalidGrant = errors.New("oauth: invalid grant")

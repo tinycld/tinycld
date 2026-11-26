@@ -16,8 +16,9 @@ import (
 // collection they link to.
 //
 // The check applies to every records route (list, view, and the create and
-// update responses). The batch API and realtime, which also accept an expand,
-// stay default-denied for tokens as a whole.
+// update responses) and to each operation of a batch (batch_scope.go).
+// Realtime, which also accepts an expand, stays default-denied for tokens as a
+// whole.
 
 const expandQueryParam = "expand"
 
