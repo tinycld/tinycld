@@ -14,6 +14,7 @@
 import type { Locator, Page } from '@playwright/test'
 import {
     CORE_STEP_IDS,
+    SETUP_BACK_TEST_ID,
     SETUP_CONTINUE_TEST_ID,
     SETUP_DONE_OPEN_TEST_ID,
     SETUP_DONE_TEST_ID,
@@ -25,7 +26,7 @@ import {
     setupStepTestId,
 } from '@tinycld/core/lib/setup/step-ids'
 
-export { CORE_STEP_IDS, SETUP_SKIP_TEST_ID }
+export { CORE_STEP_IDS, SETUP_BACK_TEST_ID, SETUP_SKIP_TEST_ID }
 
 export function setupStep(page: Page, stepId: string): Locator {
     return page.getByTestId(setupStepTestId(stepId))

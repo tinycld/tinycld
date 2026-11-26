@@ -40,6 +40,8 @@ export function SidebarItem({
     return (
         <Pressable
             testID={testID}
+            // Tells a screen reader (and a test) which item is the screen on show.
+            aria-current={isActive ? 'page' : undefined}
             onPress={handlePress}
             className="flex-row items-center gap-2.5 px-3 py-2 rounded-lg"
             style={isActive ? { backgroundColor: `${activeIndicatorColor}18` } : undefined}
