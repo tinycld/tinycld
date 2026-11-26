@@ -1242,10 +1242,33 @@ describe('figure-only rows in a wrapped layout', () => {
         expect(row.root.kind).toBe('stack')
     })
 
-    it('keeps every line of a detail row, and of any row with a value in every column', () => {
-        expect(rowLayout(item('detail', { balance: 1200 }), layout, 'customer', 0)).toBe(layout)
+    it('drops the lines of a detail row whose cells are all empty, keeping the label’s line and a line with one value', () => {
+        if (layout.kind !== 'blocks' || layout.root.kind !== 'stack')
+            throw new Error('expected lines')
+        // Line 1 the label, line 2 status and ref, line 3 team, line 4 the figures.
+        expect(layout.root.parts).toHaveLength(4)
+        const [labelLine, , , figures] = layout.root.parts
+        const row = rowLayout(item('detail', { balance: 1200 }), layout, 'customer', 0)
+        // Lines 2 and 3 are all empty; line 4 keeps its blank amount and cost tracks.
+        expect(row).toEqual({ ...layout, root: { kind: 'stack', parts: [labelLine, figures] } })
+    })
+
+    it('keeps the same layout for a detail row with a value on every line, and for any row with a value in every column', () => {
+        const oneEach = { status: 'open', team: 't1', balance: 3 }
+        expect(rowLayout(item('detail', oneEach), layout, 'customer', 0)).toBe(layout)
         const full = { status: 'open', ref: 'A1', team: 't1', amount: 1, cost: 2, balance: 3 }
+        expect(rowLayout(item('detail', full), layout, 'customer', 0)).toBe(layout)
         expect(rowLayout(item('total', full), layout, 'customer', 0)).toBe(layout)
+    })
+
+    it('lays a group row out by the figure-only rule, not by the detail row’s', () => {
+        // The group's label goes beside its one figure, as an opening row's (H7).
+        const row = rowLayout(item('group', { balance: 1200 }), layout, 'customer', 150)
+        if (row.kind !== 'blocks' || row.root.kind !== 'side') throw new Error('expected one line')
+        const [labelPart, figure] = row.root.parts
+        expect(labelPart?.block).toEqual(label)
+        expect(labelPart?.tracks).toBe(2)
+        expect(figure?.block).toEqual(money('balance').block)
     })
 })
 

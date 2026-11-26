@@ -9,6 +9,7 @@ import {
     CALENDAR_YEAR_TITLE,
     cellOf,
     chooseOption,
+    EMPTY_TEXT_TITLE,
     holdRuns,
     hubRow,
     openDrilled,
@@ -17,6 +18,7 @@ import {
     pressToolbar,
     rowOf,
     SALES_SOURCE,
+    STUB_EMPTY_TEXT,
     STUB_FLOOR_LINE,
     saveNewReport,
     seedStub,
@@ -645,6 +647,10 @@ test.describe('reports: calendar year and header lines', () => {
         const emptyRun = nextRun(p, period => period.includes('1903-01-31'))
         await setPeriod(p, '1903-01-01', '1903-01-31')
         await emptyRun
+        // A report without its own empty text keeps the engine's.
+        await expect(p.getByTestId('report-empty-message')).toHaveText(
+            'No rows for January 1 – January 31, 1903'
+        )
         const action = p.getByTestId('report-empty-action')
         await expect(action).toHaveText('Show this calendar year')
         const ran = nextRun(p, period => !period.includes('1903'))
@@ -653,5 +659,19 @@ test.describe('reports: calendar year and header lines', () => {
         await expect(p.getByTestId('report-param-period')).toHaveText('Period: This calendar year')
         await expect(rowOf(p, 'Alpha')).toBeVisible()
         await expect(floor).toHaveText(STUB_FLOOR_LINE)
+    })
+})
+
+// The shipped "Stub empty text" (register.go.txt `salesstub.empty_text`): no sale
+// matches its filter, so its run always has no row.
+test.describe('reports: own empty text', () => {
+    test('a report with its own empty text shows it in place of "No rows" when no row matches', async ({
+        p,
+    }) => {
+        const ran = nextRun(p, () => true)
+        await openDrilled(p, EMPTY_TEXT_TITLE)
+        await ran
+        await expect(p.getByTestId('report-param-period')).toHaveText('Period: This calendar year')
+        await expect(p.getByTestId('report-empty-message')).toHaveText(STUB_EMPTY_TEXT)
     })
 })

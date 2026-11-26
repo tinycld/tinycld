@@ -36,6 +36,9 @@ export const FLOORS_SOURCE = 'salesstub.floors'
 export const CALENDAR_YEAR_TITLE = 'Stub calendar year'
 /** Its spec header line: the one floor row, 1,234.56 USD (2090000300_salesstub.js.txt). */
 export const STUB_FLOOR_LINE = 'Stub floor: $1,234.56'
+/** The report with its own empty text (register.go.txt `salesstub.empty_text`); no sale matches it. */
+export const EMPTY_TEXT_TITLE = 'Stub empty text'
+export const STUB_EMPTY_TEXT = 'No stub sales to show'
 export const SHIPPED_TITLE = 'Stub larger side'
 export const TEAM_TOTALS_TITLE = 'Stub team totals'
 /** The heading the stub's sources print above a report's title. */

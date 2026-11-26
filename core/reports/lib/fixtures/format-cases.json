@@ -3049,6 +3049,44 @@
             "def": null,
             "resolved": null,
             "text": "No rows"
+        },
+        {
+            "name": "the spec's own text, no date param",
+            "def": null,
+            "resolved": null,
+            "emptyText": "No feedings to show",
+            "text": "No feedings to show"
+        },
+        {
+            "name": "the spec's own text over a period",
+            "def": {
+                "id": "period",
+                "type": "dateRange",
+                "label": "Period"
+            },
+            "resolved": {
+                "id": "period",
+                "type": "dateRange",
+                "from": "2026-01-01",
+                "to": "2026-03-31"
+            },
+            "emptyText": "No feedings to show",
+            "text": "No feedings to show"
+        },
+        {
+            "name": "an as-of day, no own text",
+            "def": {
+                "id": "asof",
+                "type": "asOf",
+                "label": "As of"
+            },
+            "resolved": {
+                "id": "asof",
+                "type": "asOf",
+                "value": "2026-11-15"
+            },
+            "emptyText": null,
+            "text": "No rows as of November 15, 2026"
         }
     ],
     "fileNames": [

@@ -239,3 +239,44 @@ func TestFormulaCasesThroughRun(t *testing.T) {
 		t.Fatalf("ran %d detail rows, %d totals and %d records", detailRuns, totalRuns, recordRuns)
 	}
 }
+
+// isFeeding is the test of a feeding row; feedingCount counts the feeding rows
+// under a cell (one or zero on a detail row).
+const (
+	isFeeding    = `{"op":"eq","args":[{"path":[{"field":"kind"}]},{"value":"feeding"}]}`
+	feedingCount = `{"op":"count","args":[{"op":"if","args":[` + isFeeding + `,{"value":1},{"value":null}]}]}`
+)
+
+// feedingOnlySums sums grams and cost of the feedings only, guarded by a count
+// of the feeding rows: if(eq(count(if(feeding, 1, null)), 0), null,
+// sum(if(feeding, value, null))). A treat row gives null to the sum. cost tells
+// the if from a plain sum (a treat has a cost and no grams); grams is the
+// Number column a quantity is.
+const feedingOnlySums = `{"version":4,"source":"zoo.meals","columns":[
+	{"id":"animal","path":[{"link":"animal"},{"field":"name"}]},
+	{"id":"note","path":[{"field":"note"}]},
+	{"id":"qty","formula":{"op":"if","args":[
+		{"op":"eq","args":[` + feedingCount + `,{"value":0}]},
+		{"value":null},
+		{"op":"sum","args":[{"op":"if","args":[` + isFeeding + `,{"path":[{"field":"grams"}]},{"value":null}]}]}]}},
+	{"id":"paid","formula":{"op":"if","args":[
+		{"op":"eq","args":[` + feedingCount + `,{"value":0}]},
+		{"value":null},
+		{"op":"sum","args":[{"op":"if","args":[` + isFeeding + `,{"path":[{"field":"cost"}]},{"value":null}]}]}]}}],
+	"groups":[{"id":"g","col":"animal"}],"sort":[{"col":"animal"},{"col":"note"}]}`
+
+// A count-guarded sum, if(eq(count(if(kind is X, 1, null)), 0), null,
+// sum(if(kind is X, value, null))), is blank on a detail row of another kind
+// and on a group with no row of kind X, and is the sum on a group with one,
+// though the engine writes a detail-row sum as COALESCE(x, 0).
+func TestACountGuardedSumIsBlankWhereNoRowOfTheKindIs(t *testing.T) {
+	z := newUnionZoo(t)
+	res := z.run(t, "ann", feedingOnlySums, Options{ExpandAll: true}, nil)
+	// ann reads feedings f1-f4 (leo f1 f2, zed f3 f4) and treats t1 (kit), t3 (leo).
+	requireRows(t, res, "kind", KindGroup, KindDetail, KindGroup, KindDetail, KindDetail, KindDetail, KindGroup, KindDetail, KindDetail, KindTotal)
+	requireRows(t, res, "note", nil, "t1", nil, "f1", "f2", "t3", nil, "f3", "f4", nil)
+	// The guarded sum of grams comes back as int64 where the plain sum gave
+	// float64; the column stays a Number column.
+	requireRows(t, res, "qty", nil, nil, int64(1300), int64(500), int64(800), nil, int64(400), int64(300), int64(100), int64(1700))
+	requireRows(t, res, "paid", nil, nil, int64(3500), int64(1000), int64(2500), nil, int64(1000), int64(700), int64(300), int64(4500))
+}

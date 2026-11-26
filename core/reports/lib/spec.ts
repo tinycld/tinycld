@@ -372,6 +372,15 @@ export const reportSpecSchema = z.strictObject({
         })
         .nullish(),
     header: z.array(specHeaderLineSchema).nullish(),
+    // The report's own text for a run with no rows, in place of "No rows": 1 to
+    // 120 code points, no space at either end. Go `emptyText` and
+    // `maxEmptyTextLen` (server/reports/spec.go) have the same rule.
+    emptyText: z
+        .string()
+        .min(1)
+        .refine(text => text.trim() === text)
+        .refine(text => [...text].length <= 120)
+        .optional(),
 })
 export type ReportSpec = z.infer<typeof reportSpecSchema>
 

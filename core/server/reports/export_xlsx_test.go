@@ -389,3 +389,19 @@ func TestXLSXOfAnEmptyReport(t *testing.T) {
 		t.Fatalf("the sheet has %d rows, want 7", len(sheet.Cells))
 	}
 }
+
+// An empty report with its own empty text prints that text in place of
+// "No rows".
+func TestXLSXOfAnEmptyReportPrintsItsOwnEmptyText(t *testing.T) {
+	s := newSavedZoo(t)
+	rep := s.saved(t, "notes", "ann", "Feeding Notes", `{"version":4,"source":"zoo.feedings","emptyText":"No feedings to show","columns":[
+		{"id":"note","path":[{"field":"note"}]},{"id":"fed","path":[{"field":"fed"}]}]}`, true)
+	file := buildExportAs(t, s, "ot", rep.Id, "xlsx", `{}`, `{"today":"2026-11-16"}`)
+	sheet := sheetOf(t, file.Bytes)
+	if a, b := sheetString(t, sheet, 6, 1), sheetString(t, sheet, 6, 2); a != "Note" || b != "Fed" {
+		t.Fatalf("row 6 = %q, %q; want Note, Fed", a, b)
+	}
+	if got := sheetString(t, sheet, 7, 1); got != "No feedings to show" {
+		t.Fatalf("row 7 = %q, want the report's own empty text", got)
+	}
+}

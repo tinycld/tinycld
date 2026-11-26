@@ -770,12 +770,27 @@ function labelOntoFigures(root: Block, labelId: string, need: number, indent: nu
     return rest.length === 0 ? line : stackOf([line, ...rest])
 }
 
+// A detail row's lines without each line whose cells all have no value and that
+// does not hold the label; the lines it keeps are unchanged, so a field keeps its
+// track. The same layout when no line goes.
+function detailLines(
+    layout: Extract<LineLayout, { kind: 'blocks' }>,
+    keeps: (col: string) => boolean
+): LineLayout {
+    if (layout.root.kind !== 'stack') return layout
+    const isShown = (line: Block) => !hasCell(line) || blockColumns(line).some(keeps)
+    const lines = layout.root.parts.filter(isShown)
+    if (lines.length === layout.root.parts.length) return layout
+    return { ...layout, root: stackOf(lines) }
+}
+
 /**
  * A row's lines. A row with no figures (a group its subtotal follows) draws only
  * its label, across the row. A row that is not a detail row (group, opening,
  * subtotal, total, computed) draws only the columns it has a value in, so a phone
- * opening row is its label line, then its figures line (R14); a detail row keeps
- * every line, so a field sits at the same place in each row.
+ * opening row is its label line, then its figures line (R14); a detail row drops
+ * only a line with no value in any of its cells, so a field sits at the same place on each
+ * line it keeps.
  */
 export function rowLayout(
     item: VisibleRow,
@@ -793,8 +808,8 @@ export function rowLayout(
             ...(layout.lines ? { lines: layout.lines } : {}),
             ...(layout.breakWords ? { breakWords: layout.breakWords } : {}),
         }
-    if (item.row.kind === 'detail') return layout
     const keeps = (col: string) => col === labelId || hasValue(item.cells[col])
+    if (item.row.kind === 'detail') return detailLines(layout, keeps)
     if (blockColumns(layout.root).every(keeps)) return layout
     const root = pruned(layout.root, keeps, labelId) ?? labelOnly
     return { ...layout, root: labelOntoFigures(root, labelId, need, layout.indent) }
