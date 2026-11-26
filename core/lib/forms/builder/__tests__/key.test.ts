@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { keyFromLabel, uniqueKey } from '../key'
+import { uniqueKey } from '../../../short-code'
+import { keyFromLabel } from '../key'
 
 describe('keyFromLabel', () => {
     it('slugifies to lowercase with underscores', () => {

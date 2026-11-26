@@ -372,3 +372,40 @@ func TestSeedDefaults_AppendsABuiltinWithItsLayoutNarrowWidth(t *testing.T) {
 		t.Fatalf("a built-in with no layout narrow width must have no narrowWidth key, got %v", due)
 	}
 }
+
+// A built-in whose kind changed (a text name that became a custom component) keeps
+// only the conditions its new kind allows: a rule that reads it with an operator the
+// kind no longer has goes, as a rule on a removed built-in does, since dropping only
+// the condition would change when the rule fires.
+func TestSeedDefaults_DropsARuleWhoseOperatorTheBuiltinsKindNoLongerHas(t *testing.T) {
+	e := newTestEnv(t)
+	def := strings.Replace(widgetDefault, `"rules":[]`, `"rules":[`+
+		`{"key":"name_contains","match":"all","when":[{"field":"name","op":"contains","value":"x"}],"actions":[{"action":"hide","field":"notes"}]},`+
+		`{"key":"name_empty","match":"all","when":[{"field":"name","op":"is_empty"}],"actions":[{"action":"hide","field":"due"}]}]`, 1)
+	form := e.newForm(t, "widget", def, true)
+
+	var custom []Builtin
+	for _, b := range e.host.Builtins {
+		if b.Key == "name" {
+			b.Kind = "custom"
+			b.Component = "WidgetNameField"
+		}
+		custom = append(custom, b)
+	}
+	e.withBuiltins(t, custom, func() {
+		if err := SeedDefaults(e.app, e.defs); err != nil {
+			t.Fatal(err)
+		}
+		form, _ = e.app.FindRecordById("forms", form.Id)
+		got, err := ParseDefinition([]byte(form.GetString("definition")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Rules) != 1 || got.Rules[0].Key != "name_empty" {
+			t.Fatalf("rules = %+v, want only name_empty", got.Rules)
+		}
+		if errs := ValidateDefinition(got, e.host); errs != nil {
+			t.Fatalf("a reconciled form must be valid: %v", errs)
+		}
+	})
+}

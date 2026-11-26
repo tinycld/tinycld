@@ -12,12 +12,3 @@ export function keyFromLabel(label: string): string {
     const prefixed = /^[a-z]/.test(ascii) ? ascii : `f_${ascii}`
     return prefixed.slice(0, MAX_KEY).replace(/_+$/, '')
 }
-
-export function uniqueKey(base: string, taken: Set<string>): string {
-    if (!taken.has(base)) return base
-    for (let n = 2; ; n++) {
-        const suffix = `_${n}`
-        const candidate = `${base.slice(0, MAX_KEY - suffix.length)}${suffix}`
-        if (!taken.has(candidate)) return candidate
-    }
-}
