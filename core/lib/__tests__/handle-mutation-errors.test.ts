@@ -208,7 +208,7 @@ describe('handleMutationErrorsWithForm with rootMessage', () => {
         const rootCall = setError.mock.calls.find(([name]) => name === 'root')
         expect(rootCall?.[1]).toEqual({
             type: 'server',
-            message: 'Failed to update record. quota: The daily limit is reached.',
+            message: 'The daily limit is reached.',
         })
         expect(rootCall?.[1].message).not.toContain('Must be a valid email address.')
         expect(useToastStore.getState().toasts).toHaveLength(0)
@@ -295,13 +295,47 @@ describe('handleMutationErrorsWithForm with rootMessage', () => {
             })
         )
         expect(setError).not.toHaveBeenCalledWith('unknown_field', expect.anything())
-        expect(setError).toHaveBeenCalledWith(
-            'root',
-            expect.objectContaining({
-                type: 'server',
-                message: expect.stringContaining('The email was not sent.'),
+        expect(setError).toHaveBeenCalledWith('root', { type: 'server', message: 'bad' })
+    })
+
+    // The server's top sentence is generic ("Failed to update record."); the
+    // field message is the refusal the user needs to read.
+    it('makes the root only the unplaced messages, with no field name and no base sentence', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ memo: '' }),
+            rootMessage: true,
+        })
+        handler(
+            refusal(400, 'Failed to update record.', {
+                value_change: { code: 'kept', message: 'Books keeps this value.' },
             })
         )
+        expect(setError).toHaveBeenCalledWith('root', {
+            type: 'server',
+            message: 'Books keeps this value.',
+        })
+        expect(setError).toHaveBeenCalledTimes(1)
+    })
+
+    it('joins several unplaced messages with a single space', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ memo: '' }),
+            rootMessage: true,
+        })
+        handler(
+            refusal(400, 'Failed to update record.', {
+                value_change: { code: 'kept', message: 'Books keeps this value.' },
+                quantity: { code: 'short', message: 'Only 3 are on hand.' },
+            })
+        )
+        expect(setError).toHaveBeenCalledWith('root', {
+            type: 'server',
+            message: 'Books keeps this value. Only 3 are on hand.',
+        })
     })
 })
 

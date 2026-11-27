@@ -138,9 +138,11 @@ export interface FormErrorHandler<T extends FieldValues = FieldValues> {
      * For a form that draws refusals in its own `FormErrorSummary`, in place
      * of a toast that leaves the form: the field errors the form knows go
      * inline, and `root` (type `server`) is set only for what no field shows —
-     * a message-only refusal, the fields the form does not know (after the
-     * server's sentence), or `SERVER_UNREACHED_MESSAGE` for a write that got no
-     * answer. A refusal whose every field error is placed sets no root.
+     * the server's sentence for a refusal with no field errors, else only the
+     * messages of the fields the form does not know (joined by a space, with
+     * no field name and no server sentence), or `SERVER_UNREACHED_MESSAGE` for
+     * a write that got no answer. A refusal whose every field error is placed
+     * sets no root.
      */
     rootMessage?: boolean
 }
@@ -159,7 +161,7 @@ function isUnreached(error: unknown): boolean {
     return error.status === 0 && error.isAbort !== true && 'response' in error
 }
 
-/** Places the errors of the fields the form knows; returns the rest as "field: message". */
+/** Places the errors of the fields the form knows; returns the messages of the rest. */
 function placeKnownFieldErrors<T extends FieldValues>(
     form: FormErrorHandler<T>,
     validationErrors: Record<string, string>
@@ -170,7 +172,7 @@ function placeKnownFieldErrors<T extends FieldValues>(
         if (formFields.includes(field)) {
             form.setError(field as Path<T>, { type: 'manual', message })
         } else {
-            unplaced.push(`${field}: ${message}`)
+            unplaced.push(message)
         }
     }
     return unplaced
@@ -197,9 +199,9 @@ function setRootRefusal<T extends FieldValues>(
     }
     const unplaced = placeKnownFieldErrors(form, validationErrors)
     if (unplaced.length === 0) return
-    const base = isRecord(error) ? getBaseMessage(error) : ''
-    const message = [base, ...unplaced].filter(Boolean).join(' ')
-    form.setError('root', { type: 'server', message })
+    // The server's top sentence ("Failed to update record.") is generic; the
+    // field messages are the refusal itself.
+    form.setError('root', { type: 'server', message: unplaced.join(' ') })
 }
 
 // An atomic write saves rows of several collections, and two of them can have
