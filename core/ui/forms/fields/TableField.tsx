@@ -447,8 +447,7 @@ function RowMenuItems({ base, table, row, index, count }: RowProps) {
     const insertBelow = () => table.insertNear(row.id, 1)
     const moveUp = () => table.move(row.id, -1)
     const moveDown = () => table.move(row.id, 1)
-    const duplicate = () => table.duplicate(row.id)
-    const remove = () => table.remove(row.id)
+    const isRemovable = table.isRemovable(row)
     return (
         <>
             <Menu.Item
@@ -477,6 +476,38 @@ function RowMenuItems({ base, table, row, index, count }: RowProps) {
                 onSelect={moveDown}
                 testID={itemId('down')}
             />
+            <DuplicateAndRemoveItems
+                isVisible={isRemovable}
+                table={table}
+                rowId={row.id}
+                hints={hints}
+                itemId={itemId}
+            />
+        </>
+    )
+}
+
+interface DuplicateAndRemoveItemsProps {
+    /** False on a row the host keeps (`FormHostUi.canRemoveRow`). */
+    isVisible: boolean
+    table: TableFieldApi
+    rowId: string
+    hints: { duplicate: string | undefined; remove: string | undefined }
+    itemId: (action: string) => string
+}
+
+function DuplicateAndRemoveItems({
+    isVisible,
+    table,
+    rowId,
+    hints,
+    itemId,
+}: DuplicateAndRemoveItemsProps) {
+    if (!isVisible) return null
+    const duplicate = () => table.duplicate(rowId)
+    const remove = () => table.remove(rowId)
+    return (
+        <>
             <Menu.Item
                 label="Duplicate"
                 shortcut={hints.duplicate}
@@ -877,6 +908,10 @@ export function TableField(props: TableFieldProps) {
     const rowShortcuts = props.rowShortcuts ?? false
     const isEditable = mode === 'create' || mode === 'edit'
     const columns = props.columns.filter(c => !c.hidden)
+    const hostCanRemoveRow = props.ui?.canRemoveRow
+    const canRemoveRow = hostCanRemoveRow
+        ? (row: TableRow) => hostCanRemoveRow(name, row)
+        : undefined
     const table = useTableField({
         control: props.control,
         getValues: props.getValues,
@@ -887,6 +922,7 @@ export function TableField(props: TableFieldProps) {
         isEditable,
         rowKinds,
         rowShortcuts,
+        canRemoveRow,
     })
     const base: TableBase = {
         ui: props.ui,

@@ -87,4 +87,13 @@ export interface FormHostUi {
      * cross-field rules; its issues show at their paths as field errors.
      */
     recordSchema?: ZodTypeAny
+    /**
+     * False for a row of a table built-in that the host keeps, because other
+     * records name it: that row's menu draws no Duplicate and no Remove, and
+     * the remove and duplicate row keys do nothing in it (a copy would carry
+     * the cells that make the host keep the row). `table` is the built-in's
+     * field key; `row` holds the row's current cells. Absent: every row can
+     * be removed and duplicated.
+     */
+    canRemoveRow?: (table: string, row: TableRow) => boolean
 }

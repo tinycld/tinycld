@@ -45,8 +45,9 @@ table has the same columns.
   where N is the number of the row. Select it to open the row's menu:
   **Insert line above**, **Insert line below**, **Move up**, **Move down**,
   **Duplicate** and **Remove**. The first row cannot move up, and the last
-  row cannot move down. With a keyboard, press Tab to go to the menu button,
-  then press Enter or Space.
+  row cannot move down. A row that other records name can have no
+  **Duplicate** and no **Remove**, and ⌘⌥D and ⌘⌥⌫ do nothing in it. With a
+  keyboard, press Tab to go to the menu button, then press Enter or Space.
 
 After a row action, the focus goes where you can continue:
 

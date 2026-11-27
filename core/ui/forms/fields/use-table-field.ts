@@ -69,6 +69,8 @@ export interface UseTableFieldInput {
     isEditable: boolean
     rowKinds?: HostRowKind[]
     rowShortcuts: boolean
+    /** False for a row the host keeps: `remove` and `duplicate` do nothing for it. Absent: every row. */
+    canRemoveRow?: (row: TableRow) => boolean
 }
 
 function asRows(value: unknown): TableRow[] | undefined {
@@ -132,7 +134,7 @@ const rowOrderOf = (list: readonly TableRow[]) => list.map(r => r.id).join('\n')
 
 export function useTableField(input: UseTableFieldInput) {
     const { control, getValues, name, columns, computedRows, isPendingWhenAbsent } = input
-    const { isEditable, rowKinds, rowShortcuts } = input
+    const { isEditable, rowKinds, rowShortcuts, canRemoveRow } = input
     const { field } = useController({ control, name })
     // Not exact, unlike the controller's own value: a cell edit (`lines.0.qty`)
     // must re-render the rows shown here.
@@ -256,10 +258,15 @@ export function useTableField(input: UseTableFieldInput) {
         const at = before.findIndex(r => r.id === focused.current?.rowId)
         insert(at >= 0 ? at + 1 : before.length, kindKey)
     }
+    /**
+     * One check for the row menu and the row keys. A copy of a kept row is
+     * refused too: it copies the cells that make the host keep the row.
+     */
+    const isRemovable = (row: TableRow) => canRemoveRow?.(row) ?? true
     const duplicate = (id: string, columnKey = MENU_COLUMN) => {
         const before = currentRows()
         const source = before.find(r => r.id === id)
-        if (!source) return
+        if (!source || !isRemovable(source)) return
         const copyId = newRecordId()
         const next = duplicateRow(before, id, copyId)
         field.onChange(next)
@@ -268,7 +275,8 @@ export function useTableField(input: UseTableFieldInput) {
     const remove = (id: string, columnKey = MENU_COLUMN) => {
         const before = currentRows()
         const index = before.findIndex(r => r.id === id)
-        if (index < 0) return
+        const source = before[index]
+        if (!source || !isRemovable(source)) return
         const next = before.filter(r => r.id !== id)
         field.onChange(next)
         const neighbour = before[index + 1] ?? before[index - 1]
@@ -411,6 +419,7 @@ export function useTableField(input: UseTableFieldInput) {
         insertNear,
         duplicate,
         remove,
+        isRemovable,
         move,
         replace,
         focusNext,

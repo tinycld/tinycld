@@ -262,6 +262,7 @@ const hosts: FormHostDefInput[] = [
                 label: 'Lines',
                 kind: 'table',
                 storage: 'rows',
+                rowShortcuts: true,
                 columns: [
                     {
                         key: 'item',

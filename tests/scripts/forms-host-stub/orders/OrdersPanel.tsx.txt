@@ -7,6 +7,7 @@ import { planTableWrites, tableRowsOf } from '@tinycld/core/lib/forms/table-rows
 import { useFormHost } from '@tinycld/core/lib/forms/use-form-hosts'
 import type { SplitValues, TableRow } from '@tinycld/core/lib/forms/values'
 import { useMutation } from '@tinycld/core/lib/mutations'
+import { ScopeProvider, useShortcutScope } from '@tinycld/core/lib/shortcuts'
 import type { FormHost } from '@tinycld/core/lib/packages/derive-form-hosts'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useRecord } from '@tinycld/core/lib/use-record'
@@ -20,7 +21,7 @@ import {
     useHostUi,
 } from '@tinycld/core/ui/forms'
 import { newRecordId } from 'pbtsdb/core'
-import { useMemo, useState } from 'react'
+import { type ReactNode, useMemo, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { type LineRecord, lineMapper } from './line-mapper'
 
@@ -227,6 +228,15 @@ function EditOrder({
     return <OrderEditor host={host} order={order} lineRecords={loaded} onBack={onBack} />
 }
 
+/**
+ * A record form's `compose` scope, as a host's form screen pushes it: a
+ * table's row keys are `compose` shortcuts and fire only while one is active.
+ */
+function ComposeScope({ children }: { children: ReactNode }) {
+    const owner = useShortcutScope('compose')
+    return <ScopeProvider owner={owner}>{children}</ScopeProvider>
+}
+
 /** The Order host's list, create and edit screens, all on the stub's landing page. */
 export function OrdersPanel() {
     const host = useFormHost(HOST_KEY)
@@ -234,8 +244,18 @@ export function OrdersPanel() {
     const [screen, setScreen] = useState<Screen>({ kind: 'list' })
     const toList = () => setScreen({ kind: 'list' })
     if (!host) return null
-    if (screen.kind === 'new') return <NewOrder host={host} onDone={toList} />
-    if (screen.kind === 'edit') return <EditOrder host={host} orderId={screen.id} onBack={toList} />
+    if (screen.kind === 'new')
+        return (
+            <ComposeScope>
+                <NewOrder host={host} onDone={toList} />
+            </ComposeScope>
+        )
+    if (screen.kind === 'edit')
+        return (
+            <ComposeScope>
+                <EditOrder host={host} orderId={screen.id} onBack={toList} />
+            </ComposeScope>
+        )
     return (
         <OrderList
             onNew={() => setScreen({ kind: 'new' })}

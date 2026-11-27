@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCoveredInputProps } from '@tinycld/core/ui/overlay/covered'
 import { Minus, Plus } from 'lucide-react-native'
-import { type Ref, useState } from 'react'
+import { type ReactNode, type Ref, useState } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import {
     Pressable,
@@ -30,6 +30,12 @@ export type NumberInputProps<T extends FieldValues = Record<string, unknown>> = 
     placeholder?: string
     /** A narrow stepper that sits at the start of its row instead of filling it. */
     isCompact?: boolean
+    /**
+     * No − and + buttons, so the input is the field's only Tab stop (a row of
+     * inputs the keyboard walks through). The input then fills its wrapper;
+     * size it with `wrapperProps`.
+     */
+    hideSteppers?: boolean
     testID?: string
     /** Names the input for assistive technology when no visible label is passed. */
     accessibilityLabel?: string
@@ -55,6 +61,30 @@ function addPrecisely(current: number, delta: number): number {
     return Number((current + delta).toFixed(Math.max(decimalsOf(current), decimalsOf(delta))))
 }
 
+interface StepperProps {
+    isVisible: boolean
+    onPress: () => void
+    isEnabled: boolean
+    label: string
+    sizeClass: string
+    children: ReactNode
+}
+
+function Stepper({ isVisible, onPress, isEnabled, label, sizeClass, children }: StepperProps) {
+    if (!isVisible) return null
+    return (
+        <Pressable
+            onPress={onPress}
+            disabled={!isEnabled}
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            className={`shrink-0 items-center justify-center rounded-full border border-border bg-background ${sizeClass} ${isEnabled ? 'opacity-100' : 'opacity-40'}`}
+        >
+            {children}
+        </Pressable>
+    )
+}
+
 export function NumberInput<T extends FieldValues = Record<string, unknown>>({
     name,
     control,
@@ -68,6 +98,7 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
     allowDecimal = false,
     placeholder,
     isCompact = false,
+    hideSteppers = false,
     testID,
     accessibilityLabel,
     wrapperProps = {},
@@ -147,20 +178,30 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
     const canIncrement = !disabled && (max === undefined || field.value < max)
     const stepSize = isCompact ? 'size-8' : 'size-11'
     const stepName = accessibilityLabel ?? label ?? name
+    const rowClass = hideSteppers
+        ? 'flex-row items-center'
+        : `flex-row items-center ${isCompact ? 'self-start gap-1.5' : 'gap-2'}`
+    // min-w-0: on web the <input> otherwise keeps its intrinsic width and
+    // pushes the + stepper into the next field (or out of its wrapper).
+    const inputWidthClass = hideSteppers
+        ? `flex-1 min-w-0 ${isCompact ? 'px-2' : 'px-3'}`
+        : isCompact
+          ? 'w-20 px-2'
+          : 'flex-1 min-w-0 px-3'
 
     return (
         <View className="gap-1.5 mb-3" {...wrapperProps}>
             {label ? <Text className="text-sm font-semibold text-foreground">{label}</Text> : null}
-            <View className={`flex-row items-center ${isCompact ? 'self-start gap-1.5' : 'gap-2'}`}>
-                <Pressable
+            <View className={rowClass}>
+                <Stepper
+                    isVisible={!hideSteppers}
                     onPress={handleDecrement}
-                    disabled={!canDecrement}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Decrease ${stepName}`}
-                    className={`shrink-0 items-center justify-center rounded-full border border-border bg-background ${stepSize} ${canDecrement ? 'opacity-100' : 'opacity-40'}`}
+                    isEnabled={canDecrement}
+                    label={`Decrease ${stepName}`}
+                    sizeClass={stepSize}
                 >
                     <Minus size={16} color={iconColor} />
-                </Pressable>
+                </Stepper>
                 <RNTextInput
                     ref={inputRef}
                     value={displayValue}
@@ -178,20 +219,18 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
                     testID={testID ?? name}
                     placeholder={placeholder}
                     placeholderTextColor={placeholderColor}
-                    // min-w-0: on web the <input> otherwise keeps its intrinsic
-                    // width and pushes the + stepper into the next field.
-                    className={`${isCompact ? 'w-20 px-2' : 'flex-1 min-w-0 px-3'} border rounded-lg py-2.5 text-center text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
+                    className={`${inputWidthClass} border rounded-lg py-2.5 text-center text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
                     style={iosInputCenteringStyle(16)}
                 />
-                <Pressable
+                <Stepper
+                    isVisible={!hideSteppers}
                     onPress={handleIncrement}
-                    disabled={!canIncrement}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Increase ${stepName}`}
-                    className={`shrink-0 items-center justify-center rounded-full border border-border bg-background ${stepSize} ${canIncrement ? 'opacity-100' : 'opacity-40'}`}
+                    isEnabled={canIncrement}
+                    label={`Increase ${stepName}`}
+                    sizeClass={stepSize}
                 >
                     <Plus size={16} color={iconColor} />
-                </Pressable>
+                </Stepper>
             </View>
             {hint && !hasError ? <Text className="text-xs text-muted">{hint}</Text> : null}
             {hasError && !hideError ? (

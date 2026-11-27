@@ -118,6 +118,50 @@ test.describe('forms table', () => {
         await expect(page.getByText('Item is required')).toHaveCount(2)
         await expect(page.getByTestId('forms-stub-order-create')).toBeVisible()
     })
+
+    // The stub host keeps a line whose Item is Gadget (its `canRemoveRow`), and
+    // its `lines` table has the row keys.
+    test('a kept row offers no Duplicate or Remove, by menu or key; another row does', async ({
+        page,
+    }) => {
+        await login(page)
+        await navigateToPackage(page, 'forms-stub')
+        await page.getByTestId('forms-stub-order-new').click()
+        await page.getByTestId('form-input-name').fill(`Order ${Date.now()}`)
+        await page.getByTestId('form-table-lines-add').click()
+        await page.getByTestId('form-table-lines-add').click()
+        const [free, kept] = await rowIds(page)
+        await page.getByTestId(`forms-stub-item-${free}-widget`).click()
+        await page.getByTestId(`forms-stub-item-${kept}-gadget`).click()
+
+        await page.getByTestId(`form-table-lines-menu-${kept}`).click()
+        for (const action of ['insert-above', 'insert-below', 'up', 'down'])
+            await expect(page.getByTestId(`form-table-lines-menu-${action}`)).toBeVisible()
+        await expect(page.getByTestId('form-table-lines-menu-duplicate')).toHaveCount(0)
+        await expect(page.getByTestId('form-table-lines-menu-remove')).toHaveCount(0)
+        await page.keyboard.press('Escape')
+        await expect(page.getByTestId('form-table-lines-menu-up')).toHaveCount(0)
+
+        const keptQty = page.getByTestId(`form-table-lines-${kept}-qty`)
+        await keptQty.click()
+        await expect(keptQty).toBeFocused()
+        await page.keyboard.press('ControlOrMeta+Alt+Backspace')
+        await page.keyboard.press('ControlOrMeta+Alt+d')
+        await expect.poll(() => rowIds(page)).toEqual([free, kept])
+
+        await page.getByTestId(`form-table-lines-menu-${free}`).click()
+        await expect(page.getByTestId('form-table-lines-menu-duplicate')).toBeVisible()
+        await expect(page.getByTestId('form-table-lines-menu-remove')).toBeVisible()
+        await page.keyboard.press('Escape')
+        await expect(page.getByTestId('form-table-lines-menu-remove')).toHaveCount(0)
+
+        const freeQty = page.getByTestId(`form-table-lines-${free}-qty`)
+        await freeQty.click()
+        await expect(freeQty).toBeFocused()
+        await page.keyboard.press('ControlOrMeta+Alt+Backspace')
+        // Had either key acted on the kept row, it would be gone or copied here.
+        await expect.poll(() => rowIds(page)).toEqual([kept])
+    })
 })
 
 /** The Order host's header slots, in order (forms-host stub `lines`). */
