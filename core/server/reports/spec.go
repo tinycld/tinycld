@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	validation "github.com/pocketbase/ozzo-validation/v4"
 )
@@ -33,6 +34,38 @@ type Spec struct {
 	// Header are the report's own document header lines, printed after the
 	// params' header lines (header.go).
 	Header []HeaderLine `json:"header,omitempty"`
+	// EmptyText is the report's own text for a run with no rows, shown by the
+	// view and the PDF and XLSX exports in place of the engine's "No rows"
+	// (export.go emptyText; the client's emptyMessage). Optional.
+	EmptyText string `json:"emptyText,omitempty"`
+}
+
+// maxEmptyTextLen is the most characters (code points) of a report's own empty
+// text; the client's reportSpecSchema has the same bound and the same ends rule.
+const maxEmptyTextLen = 120
+
+// emptyText refuses an empty text with a space at either end (so also a text of
+// only spaces) or longer than maxEmptyTextLen code points.
+func (b *binder) emptyText(spec *Spec) {
+	if spec.EmptyText == "" {
+		return
+	}
+	switch {
+	case strings.TrimFunc(spec.EmptyText, isTrimmedSpace) != spec.EmptyText:
+		b.bad("emptyText", "the empty text has no space at either end")
+	case characters(spec.EmptyText) > maxEmptyTextLen:
+		b.bad("emptyText", fmt.Sprintf("the empty text has at most %d characters", maxEmptyTextLen))
+	}
+}
+
+// isTrimmedSpace is a character that JavaScript's String.prototype.trim
+// removes, so the client's schema and this check refuse the same texts: Go's
+// white space with U+FEFF, without U+0085, which trim keeps.
+func isTrimmedSpace(r rune) bool {
+	if r == 0xFEFF {
+		return true
+	}
+	return r != 0x85 && unicode.IsSpace(r)
 }
 
 // HeaderLine is one document header line: Text with HeaderValueToken once,

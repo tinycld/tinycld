@@ -38,6 +38,8 @@ type PeriodCase = {
     resolved: ResolvedParam | null
     text: string | null
 }
+// emptyText is the spec's own text for no rows; absent or null for none.
+type EmptyCase = PeriodCase & { emptyText?: string | null }
 type ZoneCase = { name: string; columns: ResultColumn[]; timeZone: string; text: string | null }
 type ParamCase = {
     name: string
@@ -62,7 +64,7 @@ type FormatCases = {
     periods: PeriodCase[]
     zones: ZoneCase[]
     params: ParamCase[]
-    empty: PeriodCase[]
+    empty: EmptyCase[]
     fileNames: FileNameCase[]
 }
 
@@ -141,7 +143,9 @@ describe('format-cases.json against lib/format.ts', () => {
     })
 
     it.each(cases.empty.map(c => [c.name, c] as const))('empty: %s', (_name, c) => {
-        expect(emptyMessage(c.def ?? undefined, c.resolved ?? undefined)).toBe(c.text)
+        expect(
+            emptyMessage(c.def ?? undefined, c.resolved ?? undefined, c.emptyText ?? undefined)
+        ).toBe(c.text)
     })
 
     // export_tables.json (core/scripts/gen-export-tables.ts) is generated from

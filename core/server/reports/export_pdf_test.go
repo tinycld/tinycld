@@ -510,6 +510,36 @@ func TestPDFOfAnEmptyReport(t *testing.T) {
 	}
 }
 
+// emptyFeedingsSpec is a report of feedings in a period, with extra spec keys
+// (for example its own empty text).
+func emptyFeedingsSpec(extra string) string {
+	return `{"version":4,"source":"zoo.feedings",` + extra + `
+		"params":[{"id":"period","type":"dateRange","default":{"preset":"thisFiscalYear"}}],
+		"columns":[{"id":"note","path":[{"field":"note"}]},{"id":"cost","path":[{"field":"cost"}]}],
+		"filter":{"op":"between","args":[{"path":[{"field":"fed"}]},{"param":"period"}]}}`
+}
+
+// An empty report with its own empty text prints that text, also when it has
+// a period; without one it prints the engine's "No rows".
+func TestPDFOfAnEmptyReportPrintsItsOwnEmptyText(t *testing.T) {
+	s := newSavedZoo(t)
+	hermeticExportFonts(t)
+	// ot keeps no animal, so the report has no row for ot.
+	own := s.saved(t, "own", "ann", "Feeding Notes", emptyFeedingsSpec(`"emptyText":"No feedings to show",`), true)
+	text, _ := pdfTextOf(t, buildExportAs(t, s, "ot", own.Id, "pdf", `{}`, `{"today":"2026-11-16"}`).Bytes)
+	if !strings.Contains(text, "No feedings to show") {
+		t.Fatalf("the PDF lacks the report's own empty text:\n%s", text)
+	}
+	if strings.Contains(text, "No rows") {
+		t.Fatalf("the PDF prints the engine's empty text over the report's own:\n%s", text)
+	}
+	plain := s.saved(t, "plain", "ann", "Feeding Notes", emptyFeedingsSpec(``), true)
+	text, _ = pdfTextOf(t, buildExportAs(t, s, "ot", plain.Id, "pdf", `{}`, `{"today":"2026-11-16"}`).Bytes)
+	if !strings.Contains(text, "No rows") {
+		t.Fatalf("a report without its own empty text does not print No rows:\n%s", text)
+	}
+}
+
 // pdfWord matches a note as a whole word of the PDF text.
 func pdfWord(note string) *regexp.Regexp {
 	return regexp.MustCompile(`\b` + regexp.QuoteMeta(note) + `\b`)

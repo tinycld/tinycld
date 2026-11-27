@@ -36,6 +36,12 @@ type periodCase struct {
 	Text *string
 }
 
+// emptyCase is a periodCase with the spec's own empty text; nil for none.
+type emptyCase struct {
+	periodCase
+	EmptyText *string
+}
+
 type formatCases struct {
 	Cells  []cellCase
 	Labels []struct {
@@ -64,7 +70,7 @@ type formatCases struct {
 		Labels   map[string]string
 		Text     string
 	}
-	Empty     []periodCase
+	Empty     []emptyCase
 	FileNames []struct {
 		Name   string
 		Title  string
@@ -233,12 +239,24 @@ func TestExportFormatterZoneLinesMatchTheClient(t *testing.T) {
 	}
 }
 
-func TestExportFormatterEmptyTextMatchesTheClient(t *testing.T) {
+// The empty cases run through exportData.emptyText, the path the PDF and the
+// XLSX print, so the spec's own text (the client's emptyMessage third
+// parameter) and the engine's words read the same in a file as on screen.
+func TestExportEmptyTextMatchesTheClient(t *testing.T) {
 	for _, c := range loadFormatCases(t).Empty {
 		t.Run(c.Name, func(t *testing.T) {
-			f := newExportFormatter(exportDisplay{}, "UTC", false)
-			if got := f.EmptyText(c.Def, c.Resolved); got != orEmpty(c.Text) {
-				t.Fatalf("EmptyText = %q, want %q", got, orEmpty(c.Text))
+			d := &exportData{
+				EmptyText: orEmpty(c.EmptyText),
+				Format:    newExportFormatter(exportDisplay{}, "UTC", false),
+			}
+			if c.Def != nil {
+				d.Defs = []ParamDef{*c.Def}
+			}
+			if c.Resolved != nil {
+				d.Params = []ResolvedParam{*c.Resolved}
+			}
+			if got := d.emptyText(); got != orEmpty(c.Text) {
+				t.Fatalf("emptyText = %q, want %q", got, orEmpty(c.Text))
 			}
 		})
 	}

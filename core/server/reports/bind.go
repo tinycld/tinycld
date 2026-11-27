@@ -226,6 +226,7 @@ func bind(app core.App, spec *Spec) (*plan, *SpecError) {
 	p := &plan{app: app, spec: spec, base: base, byID: map[string]*colPlan{}, lookups: map[*Node]decodedLookup{}}
 	b.merge(checkParamDefs(spec.Params))
 	b.headerLines(p)
+	b.emptyText(spec)
 	b.optionSources(p)
 	b.columns(p)
 	b.derivedColumns(p)

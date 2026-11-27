@@ -41,6 +41,10 @@ function ItemPicker({ value, onChange, disabled, label, table }: BuiltinFieldPro
     )
 }
 
-const ui: FormHostUi = { components: { ItemPicker } }
+/** A fictional rule on the row's own cells: the Order host keeps every Gadget line. */
+const canRemoveRow: FormHostUi['canRemoveRow'] = (table, row) =>
+    !(table === 'lines' && row.item === 'gadget')
+
+const ui: FormHostUi = { components: { ItemPicker }, canRemoveRow }
 
 export default ui

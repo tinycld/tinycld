@@ -386,7 +386,7 @@ export function useReportView(input: ReportViewInput) {
         optionLabels,
         periodWords: periodWords(period, periodResolved),
         headerLines: headerLinesFor(defs, input.spec, run.result),
-        emptyMessage: emptyMessage(period, periodResolved),
+        emptyMessage: emptyMessage(period, periodResolved, input.spec?.emptyText),
         emptyAction: action,
         onEmptyAction,
         defs,

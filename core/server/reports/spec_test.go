@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -168,6 +169,81 @@ func TestAliasPathLeavesKeysAloneBehindAnUnknownLink(t *testing.T) {
 	spec := &Spec{Source: "zoo.nope", Columns: []Column{{ID: "a", Path: Path{{Field: "mass"}}}}}
 	if got := resolveAliases(spec); got != nil || spec.Columns[0].Path[0].Field != "mass" {
 		t.Fatalf("unknown source: aliased %+v", got)
+	}
+}
+
+// emptyTextSpec is a valid spec with the report's own empty text.
+func emptyTextSpec(text string) string {
+	quoted, _ := json.Marshal(text)
+	return `{"version":4,"source":"zoo.feedings","emptyText":` + string(quoted) + `,"columns":[{"id":"a","path":[{"field":"cost"}]}]}`
+}
+
+// A report's own empty text is 1 to 120 characters counted as code points (the
+// client counts [...s].length), with no whitespace at either end by the set JS
+// trim() uses (unicode.IsSpace plus U+FEFF), so a text of spaces only fails too.
+// 🐘 is one code point and two UTF-16 units.
+func TestValidateBoundsTheEmptyText(t *testing.T) {
+	app := withZooRegistry(t)
+	for name, text := range map[string]string{
+		"one character":          "x",
+		"120 characters":         strings.Repeat("a", 120),
+		"120 astral code points": strings.Repeat("🐘", 120),
+		"the feedings text":      "No feedings to show",
+		"inner spaces":           "No  feedings",
+	} {
+		t.Run("accepts "+name, func(t *testing.T) {
+			if err := Validate(app, loadSpec(t, emptyTextSpec(text))); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+		})
+	}
+	for name, text := range map[string]string{
+		"121 characters":            strings.Repeat("a", 121),
+		"121 astral code points":    strings.Repeat("🐘", 121),
+		"spaces only":               "   ",
+		"a leading space":           " No feedings",
+		"a trailing space":          "No feedings ",
+		"a trailing no-break space": "No feedings\xc2\xa0",
+		"U+FEFF only":               "\xef\xbb\xbf",
+		"a leading U+FEFF":          "\xef\xbb\xbfNo feedings",
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			// Decoded directly, not loaded: Validate must refuse a spec that
+			// skipped Load.
+			var spec Spec
+			if err := json.Unmarshal([]byte(emptyTextSpec(text)), &spec); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			requireSpecError(t, Validate(app, &spec), 400, "emptyText", "")
+		})
+	}
+}
+
+// Load keeps the empty text, and a spec saved again as Load returns it holds
+// the same text; a spec without one saves no emptyText key.
+func TestLoadRoundTripsTheEmptyText(t *testing.T) {
+	withZooRegistry(t)
+	spec := loadSpec(t, emptyTextSpec("No feedings to show"))
+	saved, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(saved), `"emptyText":"No feedings to show"`) {
+		t.Fatalf("the saved spec lacks the empty text: %s", saved)
+	}
+	again, err := json.Marshal(loadSpec(t, string(saved)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(saved) {
+		t.Fatalf("a second load changed the spec\nfirst:  %s\nsecond: %s", saved, again)
+	}
+	plain, err := json.Marshal(loadSpec(t, `{"version":4,"source":"zoo.feedings","columns":[{"id":"a","path":[{"field":"cost"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "emptyText") {
+		t.Fatalf("a spec without an empty text saves one: %s", plain)
 	}
 }
 

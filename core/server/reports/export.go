@@ -128,6 +128,9 @@ type exportData struct {
 	// SpecLines are the spec's own header lines that print (specHeaderLines),
 	// under the period; the CSV prints none.
 	SpecLines []string
+	// EmptyText is the spec's own text for a report with no rows; "" for the
+	// engine's words.
+	EmptyText string
 	Reader    exportReader
 	Display   exportDisplay
 	Format    *exportFormatter
@@ -155,8 +158,12 @@ func (d *exportData) periodWords() string {
 	return d.Format.PeriodWords(period, resolvedOf(d.Params, period.ID))
 }
 
-// emptyText is the view's text for a report with no rows.
+// emptyText is the view's text for a report with no rows: the spec's own
+// text when it has one, else the engine's "No rows" words.
 func (d *exportData) emptyText() string {
+	if d.EmptyText != "" {
+		return d.EmptyText
+	}
 	period := firstDateParam(d.Defs)
 	if period == nil {
 		return d.Format.EmptyText(nil, nil)
@@ -293,6 +300,7 @@ func buildExport(re *core.RequestEvent, body exportBody) (*exportFile, error) {
 		Notices:     res.Notices,
 		ParamLabels: labels,
 		SpecLines:   specHeaderLines(spec, res),
+		EmptyText:   spec.EmptyText,
 		Reader:      exportReader{Zone: body.Options.TimeZone, Hour12: body.Hour12, Today: today},
 		Display:     display,
 		Format:      newExportFormatter(display, body.Options.TimeZone, body.Hour12),

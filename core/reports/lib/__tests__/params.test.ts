@@ -358,6 +358,19 @@ describe('empty state', () => {
         expect(emptyMessage(undefined, undefined)).toBe('No rows')
     })
 
+    it('is the report’s own empty text when its spec has one, with or without a period', () => {
+        const own = 'No feedings to show'
+        expect(emptyMessage(PERIOD, range, own)).toBe(own)
+        expect(emptyMessage(AS_OF, { id: 'asOf', type: 'asOf', value: '2026-09-30' }, own)).toBe(
+            own
+        )
+        expect(emptyMessage(PERIOD, { id: 'period', type: 'dateRange' }, own)).toBe(own)
+        expect(emptyMessage(undefined, undefined, own)).toBe(own)
+        expect(emptyMessage(PERIOD, range, undefined)).toBe(
+            'No rows for October 1 – October 31, 2026'
+        )
+    })
+
     it('offers Clear filters first, then the wider period', () => {
         expect(
             emptyAction([PERIOD, STATUS], { status: { kind: 'choice', values: ['open'] } })

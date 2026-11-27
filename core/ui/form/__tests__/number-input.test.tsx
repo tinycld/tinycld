@@ -69,6 +69,59 @@ describe('NumberInput allowDecimal', () => {
     })
 })
 
+const stepperOf = (c: HTMLElement, glyph: keyof typeof NAMES) =>
+    c.querySelector(`[accessibilityLabel="${NAMES[glyph]}"]`)
+
+describe('NumberInput hideSteppers', () => {
+    for (const isCompact of [false, true]) {
+        describe(isCompact ? 'compact' : 'full width', () => {
+            it('draws no Decrease and no Increase button', () => {
+                const { container } = render(<Harness hideSteppers isCompact={isCompact} />)
+                expect(stepperOf(container, '−')).toBeNull()
+                expect(stepperOf(container, '+')).toBeNull()
+                expect(inputOf(container)).not.toBeNull()
+            })
+
+            it('still sets the value by typing and keeps min and max', () => {
+                const { container } = render(
+                    <Harness hideSteppers isCompact={isCompact} min={0} max={10} initial={3} />
+                )
+                type(container, '7')
+                expect(values().n).toBe(7)
+                type(container, '11')
+                expect(values().n).toBe(7)
+                type(container, '-1')
+                expect(values().n).toBe(7)
+            })
+
+            it('keeps allowDecimal', () => {
+                const { container } = render(
+                    <Harness hideSteppers isCompact={isCompact} allowDecimal />
+                )
+                type(container, '1.25')
+                expect(values().n).toBe(1.25)
+            })
+
+            it('stays integer without allowDecimal', () => {
+                const { container } = render(
+                    <Harness hideSteppers isCompact={isCompact} initial={4} />
+                )
+                type(container, '1.5')
+                expect(values().n).toBe(4)
+            })
+        })
+    }
+
+    it('draws both buttons without it, compact or not', () => {
+        for (const isCompact of [false, true]) {
+            const { container, unmount } = render(<Harness isCompact={isCompact} />)
+            expect(stepperOf(container, '−')).not.toBeNull()
+            expect(stepperOf(container, '+')).not.toBeNull()
+            unmount()
+        }
+    })
+})
+
 describe('NumberInput without allowDecimal', () => {
     it('rejects a decimal point, as before', () => {
         const { container } = render(<Harness initial={3} />)

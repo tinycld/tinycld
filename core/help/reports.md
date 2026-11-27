@@ -172,7 +172,7 @@ A formula is built from parts you pick from menus: **Number**, **Text**, **Colum
 
 A report never scrolls sideways. Each column gets at least its least width. Numbers, amounts, percents, dates and yes/no values are never cut short, and short text such as an entry number is not either. Long text gets narrower first and ends in "…". On one line, the rest of the room goes to the columns by their **Extra room**: while two columns both need more room for their text, a column with **Double** gets twice the room of a column with **Normal**, also when its text is shorter. A column stops at the width its values need while another column's text is still cut, and its share goes to the others; when every column shows its whole text, the room left goes by **Extra room** again. A column with **None** gets the room that its values need, and no more. A column with no value is as wide as its heading. A column set to show its figure only up to a group keeps room for the figure while the groups are closed.
 
-Group, opening, subtotal and total rows show their whole label: it runs across the empty cells after it. When the rows wrap, a total's label moves onto the line of its figures if there is room.
+Group, opening, subtotal and total rows show their whole label: it runs across the empty cells after it. When the rows wrap, a total's label moves onto the line of its figures if there is room. A record's row leaves out a line that has no value in any of its cells, and keeps each other line as it is, so a value stays at the same place on that line.
 
 When the columns do not fit on one line (or the rows are narrower than **One line from**), the report uses the first arrangement that fits the screen and that the rows reach (its **Use from**), widest first: **Desktop**, then **Tablet**, then **Phone**. With no arrangement that fits, each row wraps by itself: as many columns as fit go on each line, the label first, and the next lines start under the row's label. A column heading that is too long for its column uses two lines; it can go on to the second line after a colon, and the colon stays on the first line. When the rows wrap, the lines after a row's first line are shorter, so more rows fit on the screen. Notes about the report, such as a pivot that cannot follow an arrangement, show in one band above the report. On a phone the band shows two lines; select **Show all** to read every note.
 
@@ -199,7 +199,10 @@ To choose where each column goes when one line does not fit, open **Arrange**, p
   are January 1 to December 31 of this year or of last year, whatever month your
   fiscal year starts in. When a report with no filter set has no rows for the
   period you chose, it offers to show its default year: **Show this calendar year** for a report that
-  opens on a calendar year, **Show this fiscal year** for the others. A link copied
+  opens on a calendar year, **Show this fiscal year** for the others. A report that
+  an app supplies can have its own text for no rows (for example "Nothing to
+  show"), which shows in the report and in its PDF and Excel exports in place of
+  "No rows". A link copied
   with **Copy link** opens the report with the same choices. Some reports print
   lines under the period: a choice you made, such as **Cash basis**, or a value the
   report reads, such as a setting.

@@ -76,6 +76,41 @@ describe('parseSpec', () => {
         expect(spec?.layout?.[1]?.row).toBe('net')
     })
 
+    it('reads the report’s own empty text of 1 to 120 characters, not spaces only', () => {
+        expect(parseSpec({ ...FEEDINGS, emptyText: 'No feedings to show' })?.emptyText).toBe(
+            'No feedings to show'
+        )
+        expect(parseSpec({ ...FEEDINGS, emptyText: 'x' })?.emptyText).toBe('x')
+        const longest = 'a'.repeat(120)
+        expect(parseSpec({ ...FEEDINGS, emptyText: longest })?.emptyText).toBe(longest)
+        expect(parseSpec({ ...FEEDINGS, emptyText: 'a'.repeat(121) })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, emptyText: '   ' })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, emptyText: '' })).toBeNull()
+        expect(parseSpec(FEEDINGS)?.emptyText).toBeUndefined()
+    })
+
+    // The same rule as Go Validate (server/reports/spec.go): code points, not
+    // UTF-16 units (🐘 is two units), and no whitespace at either end by JS
+    // trim()'s set, kept as written (no transform).
+    it('counts the empty text in code points, as the server does', () => {
+        const astral = '🐘'.repeat(120)
+        expect(parseSpec({ ...FEEDINGS, emptyText: astral })?.emptyText).toBe(astral)
+        expect(parseSpec({ ...FEEDINGS, emptyText: '🐘'.repeat(121) })).toBeNull()
+    })
+
+    it('refuses an empty text with whitespace at either end, as the server does', () => {
+        const noBreakSpace = String.fromCodePoint(0xa0)
+        const bom = String.fromCodePoint(0xfeff)
+        expect(parseSpec({ ...FEEDINGS, emptyText: `No feedings${noBreakSpace}` })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, emptyText: bom })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, emptyText: `${bom}No feedings` })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, emptyText: ' No feedings' })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, emptyText: 'No feedings ' })).toBeNull()
+        expect(parseSpec({ ...FEEDINGS, emptyText: 'No  feedings' })?.emptyText).toBe(
+            'No  feedings'
+        )
+    })
+
     it('refuses what is not a spec', () => {
         expect(parseSpec(null)).toBeNull()
         expect(parseSpec('a spec')).toBeNull()

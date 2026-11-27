@@ -392,10 +392,14 @@ export function periodWords(
     return def.type === 'asOf' ? `As of ${dayWords(resolved.value)}` : dayWords(resolved.value)
 }
 
+// The text of a run with no rows: the spec's own `emptyText` when it has one,
+// else "No rows" with the period's words.
 export function emptyMessage(
     def: ParamDef | undefined,
-    resolved: ResolvedParam | undefined
+    resolved: ResolvedParam | undefined,
+    emptyText?: string
 ): string {
+    if (emptyText) return emptyText
     const words = periodWords(def, resolved)
     if (!def || !words) return 'No rows'
     if (words === PRESET_LABELS.allDates) return 'No rows for all dates'

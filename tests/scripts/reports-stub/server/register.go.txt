@@ -115,6 +115,29 @@ func Register(_ core.App) error {
 			"sort": [{"col": "day"}, {"col": "customer"}]
 		}`),
 	})
+	// A published report with its own empty text (spec emptyText) and a filter
+	// no sale matches, so it always shows that text, in place of "No rows for
+	// <period>" (tests/e2e/reports-view.spec.ts).
+	reports.RegisterShipped(reports.Shipped{
+		Key: "salesstub.empty_text", Title: "Stub empty text", Revision: 1,
+		Description: "A report with its own text when nothing matches.",
+		Spec: json.RawMessage(`{
+			"version": 4,
+			"source": "salesstub.sales",
+			"emptyText": "No stub sales to show",
+			"params": [
+				{"id": "period", "type": "dateRange", "label": "Period", "default": {"preset": "thisCalendarYear"}}
+			],
+			"columns": [
+				{"id": "customer", "label": "Customer", "path": [{"field": "customer"}]},
+				{"id": "amount", "label": "Amount", "path": [{"field": "amount"}]}
+			],
+			"filter": {"op": "and", "args": [
+				{"op": "between", "args": [{"path": [{"field": "day"}]}, {"param": "period"}]},
+				{"op": "eq", "args": [{"path": [{"field": "customer"}]}, {"value": "No customer has this name"}]}
+			]}
+		}`),
+	})
 	// A shipped report whose formula uses `if`, which the builder cannot edit, so the
 	// e2e covers a published template, its read-only formula and a copy saved
 	// unchanged (tests/e2e/reports-shipped.spec.ts asserts this formula).
