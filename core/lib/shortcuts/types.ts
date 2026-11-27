@@ -12,6 +12,12 @@ export interface Shortcut {
     group?: string
     allowInInputs?: boolean
     when?: () => boolean
+    /**
+     * Fires and takes part in which registration wins its keys, but the ⇧?
+     * help list never shows it: a guard that only holds a key (a ⌘S that
+     * stops the browser's Save page while the screen offers no save).
+     */
+    isUnlisted?: boolean
     run: (e: ShortcutEvent) => void
     /**
      * Which scope instance owns this shortcut. Stamped by `useRegisterShortcut`

@@ -1249,6 +1249,70 @@ describe('help list', () => {
             warn.mockRestore()
         })
     })
+
+    // A guard registration (a ⌘S that only stops the browser's Save page while
+    // the form offers no Save draft) fires but is not an action to list.
+    describe('isUnlisted', () => {
+        function saveGuard(scopeId: number) {
+            return {
+                id: 't.save-guard',
+                keys: '$mod+s',
+                scope: 'compose',
+                scopeId,
+                description: '',
+                isUnlisted: true,
+                allowInInputs: true,
+                run: () => {},
+            } satisfies Shortcut
+        }
+        const saveDraft = (scopeId: number) =>
+            ({
+                id: 't.save',
+                keys: '$mod+s',
+                scope: 'compose',
+                scopeId,
+                description: 'Save draft',
+                group: 'Invoice',
+                allowInInputs: true,
+                run: () => {},
+            }) satisfies Shortcut
+        const listedIds = (groups: Record<string, Shortcut[]>) =>
+            Object.values(groups)
+                .flat()
+                .map(s => s.id)
+
+        it('lists nothing for a lone unlisted registration', () => {
+            const composeId = pushScope('compose')
+            register(saveGuard(composeId))
+            expect(listedIds(helpGroups(useShortcutRegistry.getState().shortcuts, null))).toEqual(
+                []
+            )
+        })
+
+        it('lists the offered action once beside an unlisted guard of the same keys', () => {
+            const composeId = pushScope('compose')
+            register(saveGuard(composeId))
+            register(saveDraft(composeId))
+            expect(listedIds(helpGroups(useShortcutRegistry.getState().shortcuts, null))).toEqual([
+                't.save',
+            ])
+        })
+
+        it('still shadows a global of the same keys, as the matcher does', () => {
+            const composeId = pushScope('compose')
+            register({
+                id: 't.global-save',
+                keys: '$mod+s',
+                scope: 'global',
+                description: 'Save page',
+                run: () => {},
+            })
+            register(saveGuard(composeId))
+            expect(listedIds(helpGroups(useShortcutRegistry.getState().shortcuts, null))).toEqual(
+                []
+            )
+        })
+    })
 })
 
 // A scope can opt in to stay active under a newer scope (a list screen that
