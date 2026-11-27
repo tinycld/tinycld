@@ -4,6 +4,7 @@ import { Minus, Plus } from 'lucide-react-native'
 import { type ReactNode, type Ref, useState } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import {
+    Platform,
     Pressable,
     TextInput as RNTextInput,
     Text,
@@ -13,7 +14,7 @@ import {
     type ViewProps,
 } from 'react-native'
 import { iosInputCenteringStyle } from './ios-input-style'
-import { parseNumberText } from './number-input-text'
+import { numberKeyboardType, parseNumberText } from './number-input-text'
 
 type NumberInputCommonProps = {
     label?: string
@@ -260,6 +261,8 @@ function NumberInputView({
     hint,
     hideError = false,
     increment = 1,
+    min,
+    allowDecimal = false,
     disabled = false,
     placeholder,
     isCompact = false,
@@ -306,6 +309,7 @@ function NumberInputView({
     const showError = hasError && !hideError
     const onDecrement = () => onStep(-increment)
     const onIncrement = () => onStep(increment)
+    const keyboardType = numberKeyboardType({ allowDecimal, min }, Platform.OS)
 
     return (
         <View className="gap-1.5 mb-3" {...wrapperProps}>
@@ -326,7 +330,7 @@ function NumberInputView({
                     onChangeText={onTextChange}
                     onFocus={onFocus}
                     onBlur={onInputBlur}
-                    keyboardType="numeric"
+                    keyboardType={keyboardType}
                     onSubmitEditing={onSubmitEditing}
                     submitBehavior={submitBehavior}
                     blurOnSubmit={blurOnSubmit}
