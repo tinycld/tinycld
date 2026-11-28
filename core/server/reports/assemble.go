@@ -338,6 +338,8 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 		// still ends in a total, in the currencies the fill and computed
 		// rows over no rows are in (noRowCurrency). The statement orders by
 		// __level, so the row cap never cuts a total: no total means no rows.
+		// A spec with NoTotal pushes none of these rows, so its run over no
+		// rows has zero rows.
 		total := map[string]any{"__level": int64(0)}
 		for _, ck := range rn.c.currencies {
 			total[ck] = rn.c.noRowCurrency(ck)
@@ -360,6 +362,9 @@ func (rn *runner) assemble(groupRows, details []map[string]any, nested []map[any
 			continue
 		}
 		rn.children(t, rn.rowKey(total, 0), 1, 0, "")
+		if rn.c.p.spec.NoTotal {
+			continue
+		}
 		rn.push(Row{ID: "total" + rn.currencySuffix(total), Kind: KindTotal, Label: "Total", Cells: rn.cells(total)}, total)
 	}
 }

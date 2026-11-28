@@ -111,6 +111,14 @@ describe('parseSpec', () => {
         )
     })
 
+    // Go Spec.NoTotal (server/reports/spec.go): the run ends in no Total row.
+    it('reads noTotal as a boolean, and a spec without it as having none', () => {
+        expect(parseSpec({ ...FEEDINGS, noTotal: true })?.noTotal).toBe(true)
+        expect(parseSpec({ ...FEEDINGS, noTotal: false })?.noTotal).toBe(false)
+        expect(parseSpec({ ...FEEDINGS, noTotal: 'yes' })).toBeNull()
+        expect(parseSpec(FEEDINGS)?.noTotal).toBeUndefined()
+    })
+
     it('refuses what is not a spec', () => {
         expect(parseSpec(null)).toBeNull()
         expect(parseSpec('a spec')).toBeNull()
