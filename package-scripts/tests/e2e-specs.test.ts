@@ -83,6 +83,10 @@ describe('buildSpecFilesCommand', () => {
         expect(cmd.cwd).toBe('/ws/app')
         expect(JSON.parse(cmd.env?.[SPECS_ENV] ?? '')).toEqual(members)
     })
+    it('requires the test stubs, so a named spec file never skips silently', () => {
+        const cmd = buildSpecFilesCommand([], '/ws/app')
+        expect(cmd.env?.TINYCLD_E2E_REQUIRE_STUBS).toBe('1')
+    })
 })
 
 describe('combineMemberConfigs', () => {

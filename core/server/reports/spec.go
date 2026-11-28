@@ -38,6 +38,11 @@ type Spec struct {
 	// view and the PDF and XLSX exports in place of the engine's "No rows"
 	// (export.go emptyText; the client's emptyMessage). Optional.
 	EmptyText string `json:"emptyText,omitempty"`
+	// NoTotal leaves out the "Total" row a report without a layout ends in
+	// (assemble.go), for a report whose sum over all rows means nothing; a run
+	// with no rows then has zero rows. A layout report has no Total row either
+	// way. Optional; the client's reportSpecSchema has the same key.
+	NoTotal bool `json:"noTotal,omitempty"`
 }
 
 // maxEmptyTextLen is the most characters (code points) of a report's own empty

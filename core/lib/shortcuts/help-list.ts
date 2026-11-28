@@ -75,6 +75,9 @@ export function helpGroups(
         const winningRank = winner ? firingRank(winner, top) : null
         for (const s of sameKeys) {
             if (firingRank(s, top) !== winningRank) continue
+            // Left out only here, after the winner is picked, so an unlisted
+            // guard still hides the keys it shadows, as the matcher does.
+            if (s.isUnlisted) continue
             addToGroup(groups, s)
         }
     }

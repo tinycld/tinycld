@@ -298,6 +298,8 @@ const draftShape = z.object({
     header: z.array(specHeaderLineSchema).optional(),
     /** The spec's own text for no rows, kept as the spec says it: the builder has no control for it. */
     emptyText: z.string().optional(),
+    /** The spec's noTotal (no Total row), kept as the spec says it: the builder has no control for it. */
+    noTotal: z.literal(true).optional(),
 })
 export type BuilderDraft = z.infer<typeof draftShape>
 
@@ -1344,6 +1346,7 @@ export function draftFromSpec(
         explicit: { detail: Boolean(spec.detail), display: Boolean(spec.display) },
         ...(spec.header ? { header: spec.header } : {}),
         ...(spec.emptyText ? { emptyText: spec.emptyText } : {}),
+        ...(spec.noTotal ? { noTotal: true as const } : {}),
     }
 }
 
@@ -1773,5 +1776,6 @@ export function specFromDraft(draft: BuilderDraft, catalog: Catalog): ReportSpec
     if (display) spec.display = display
     if (draft.header) spec.header = draft.header
     if (draft.emptyText) spec.emptyText = draft.emptyText
+    if (draft.noTotal) spec.noTotal = true
     return spec
 }

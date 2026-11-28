@@ -34,6 +34,10 @@ export function groupSpecFiles(
     return [...groups.values()]
 }
 
+// A named spec file must run: without this, a stub-dependent spec skips outside
+// CI, and a run of only skipped tests reports green. tests/e2e/helpers.ts reads it.
+export const REQUIRE_STUBS_ENV = { TINYCLD_E2E_REQUIRE_STUBS: '1' }
+
 // ONE Playwright run for all the members' files, through the combined config:
 // each e2e run starts the servers, builds the web export and seeds the
 // fixtures, so a run per member (or per file) pays for all of that again.
@@ -51,6 +55,6 @@ export function buildSpecFilesCommand(
             ...passthrough,
         ],
         cwd: appDir,
-        env: { [SPECS_ENV]: JSON.stringify(members) },
+        env: { [SPECS_ENV]: JSON.stringify(members), ...REQUIRE_STUBS_ENV },
     }
 }

@@ -4,18 +4,19 @@ import { Minus, Plus } from 'lucide-react-native'
 import { type ReactNode, type Ref, useState } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import {
+    Platform,
     Pressable,
     TextInput as RNTextInput,
     Text,
+    type TextInputFocusEvent,
     type TextInputInstance,
     View,
     type ViewProps,
 } from 'react-native'
 import { iosInputCenteringStyle } from './ios-input-style'
+import { numberKeyboardType, parseNumberText } from './number-input-text'
 
-export type NumberInputProps<T extends FieldValues = Record<string, unknown>> = {
-    name: Path<T>
-    control: Control<T>
+type NumberInputCommonProps = {
     label?: string
     hint?: string
     /** The caller renders the error itself (a form cell does), so the input only colours its border. */
@@ -42,15 +43,50 @@ export type NumberInputProps<T extends FieldValues = Record<string, unknown>> = 
     wrapperProps?: ViewProps
     /** Enter on web, the return key on native (a table adds a row on it). */
     onSubmitEditing?: () => void
+    /** Enter (the return key on native) keeps the focus in the input instead of leaving it. */
+    keepFocusOnSubmit?: boolean
+    /** Selects the whole text when the input takes focus, so a typed number replaces it. */
+    selectTextOnFocus?: boolean
+    /** `end`: right aligned with tabular figures, for a column of numbers. Centered by default. */
+    align?: 'center' | 'end'
     /** The input element, for a caller that moves focus to it (a table after a row action). */
     inputRef?: Ref<TextInputInstance>
-    /** Called when the input takes focus (a table notes which row the keyboard is in). */
-    onFocus?: () => void
+    /** Called with the focus event when the input takes focus (a table notes which row the keyboard is in). */
+    onFocus?: (event: TextInputFocusEvent) => void
     /** Called when the input loses focus (a table forgets the row the keyboard left). */
     onBlur?: () => void
 }
 
-const DECIMAL_TEXT = /^-?\d*\.?\d*$/
+/** Bound to a react-hook-form field: the field holds the number (or the partial text). */
+type NumberInputFieldProps<T extends FieldValues> = {
+    name: Path<T>
+    control: Control<T>
+    value?: never
+    onChangeText?: never
+    error?: never
+}
+
+/**
+ * Text mode, for a caller that keeps the text itself (a table cell whose text
+ * drives other cells): no form field. `onChangeText` gets each accepted text,
+ * with U+2212 read as a minus; `error` colours the border and shows under the
+ * input unless `hideError`.
+ */
+type NumberInputTextProps = {
+    value: string
+    onChangeText: (text: string) => void
+    error?: string
+    name?: never
+    control?: never
+}
+
+/** The props of a NumberInput bound to a form field (the mode every caller had before text mode). */
+export type NumberInputFieldModeProps<T extends FieldValues = Record<string, unknown>> =
+    NumberInputCommonProps & NumberInputFieldProps<T>
+
+export type NumberInputProps<T extends FieldValues = Record<string, unknown>> =
+    | NumberInputFieldModeProps<T>
+    | (NumberInputCommonProps & NumberInputTextProps)
 
 function decimalsOf(value: number): number {
     return String(value).split('.')[1]?.length ?? 0
@@ -85,31 +121,28 @@ function Stepper({ isVisible, onPress, isEnabled, label, sizeClass, children }: 
     )
 }
 
-export function NumberInput<T extends FieldValues = Record<string, unknown>>({
-    name,
-    control,
-    label,
-    hint,
-    hideError = false,
-    increment = 1,
-    min,
-    max,
-    disabled = false,
-    allowDecimal = false,
-    placeholder,
-    isCompact = false,
-    hideSteppers = false,
-    testID,
-    accessibilityLabel,
-    wrapperProps = {},
-    onSubmitEditing,
-    inputRef,
-    onFocus,
-    onBlur,
-}: NumberInputProps<T>) {
-    const placeholderColor = useThemeColor('field-placeholder')
-    const iconColor = useThemeColor('foreground')
-    const { editable } = useCoveredInputProps({ editable: !disabled })
+function isTextMode<T extends FieldValues>(
+    props: NumberInputProps<T>
+): props is NumberInputCommonProps & NumberInputTextProps {
+    return props.onChangeText !== undefined
+}
+
+export function NumberInput<T extends FieldValues = Record<string, unknown>>(
+    props: NumberInputProps<T>
+) {
+    if (isTextMode(props)) return <TextNumberInput {...props} />
+    return <FieldNumberInput {...props} />
+}
+
+function stepped(current: number, delta: number, allowDecimal: boolean): number {
+    return allowDecimal ? addPrecisely(current, delta) : current + delta
+}
+
+function FieldNumberInput<T extends FieldValues>(
+    props: NumberInputCommonProps & NumberInputFieldProps<T>
+) {
+    const { name, control, min, max, disabled = false } = props
+    const allowDecimal = props.allowDecimal ?? false
     const {
         field,
         fieldState: { error },
@@ -118,52 +151,26 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
     // What the user is typing, kept while it is not yet the canonical text of a number ("1.", "0.50").
     const [typed, setTyped] = useState<string | null>(null)
 
-    const hasError = !!error
-
-    const handleDecimalChange = (text: string) => {
-        if (!DECIMAL_TEXT.test(text)) return
-        const numValue = Number(text)
-        setTyped(text)
-        if (text === '' || !Number.isFinite(numValue)) {
-            field.onChange(text)
-            return
-        }
-        if (min !== undefined && numValue < min) return
-        if (max !== undefined && numValue > max) return
-        field.onChange(numValue)
+    const handleTextChange = (raw: string) => {
+        const parsed = parseNumberText(raw, { allowDecimal, min, max })
+        if (!parsed) return
+        if (allowDecimal) setTyped(parsed.text)
+        field.onChange(parsed.value ?? parsed.text)
     }
 
-    const handleTextChange = (text: string) => {
-        if (allowDecimal) {
-            handleDecimalChange(text)
-            return
-        }
-        if (text === '' || text === '-') {
-            field.onChange(text)
-            return
-        }
-        const digitsOnly = text.replace(/[^0-9-]/g, '')
-        if (digitsOnly !== text) return
-
-        const numValue = Number.parseInt(digitsOnly, 10)
-        if (Number.isNaN(numValue)) return
-        if (min !== undefined && numValue < min) return
-        if (max !== undefined && numValue > max) return
-        field.onChange(numValue)
-    }
-
-    const handleIncrement = () => {
+    const handleStep = (delta: number) => {
         const current = typeof field.value === 'number' ? field.value : 0
-        const next = allowDecimal ? addPrecisely(current, increment) : current + increment
+        const next = stepped(current, delta, allowDecimal)
         setTyped(null)
-        if (max === undefined || next <= max) field.onChange(next)
+        if (delta > 0 && max !== undefined && next > max) return
+        if (delta < 0 && min !== undefined && next < min) return
+        field.onChange(next)
     }
 
-    const handleDecrement = () => {
-        const current = typeof field.value === 'number' ? field.value : 0
-        const next = allowDecimal ? addPrecisely(current, -increment) : current - increment
+    const handleBlur = () => {
         setTyped(null)
-        if (min === undefined || next >= min) field.onChange(next)
+        field.onBlur()
+        props.onBlur?.()
     }
 
     const isTypedCurrent =
@@ -173,11 +180,117 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
         : field.value === '' || field.value === '-'
           ? field.value
           : String(field.value ?? '')
-
     const canDecrement = !disabled && (min === undefined || field.value > min)
     const canIncrement = !disabled && (max === undefined || field.value < max)
+    const stepName = props.accessibilityLabel ?? props.label ?? name
+    const inputTestID = props.testID ?? name
+
+    return (
+        <NumberInputView
+            {...props}
+            displayValue={displayValue}
+            onTextChange={handleTextChange}
+            onStep={handleStep}
+            onInputBlur={handleBlur}
+            canDecrement={canDecrement}
+            canIncrement={canIncrement}
+            errorMessage={error?.message}
+            hasError={!!error}
+            stepName={stepName}
+            inputTestID={inputTestID}
+        />
+    )
+}
+
+function TextNumberInput(props: NumberInputCommonProps & NumberInputTextProps) {
+    const { value, onChangeText, min, max, disabled = false } = props
+    const allowDecimal = props.allowDecimal ?? false
+    const current = Number(value)
+    const currentNumber = Number.isFinite(current) ? current : 0
+
+    const handleTextChange = (raw: string) => {
+        const parsed = parseNumberText(raw, { allowDecimal, min, max })
+        if (parsed) onChangeText(parsed.text)
+    }
+
+    const handleStep = (delta: number) => {
+        const next = stepped(currentNumber, delta, allowDecimal)
+        if (delta > 0 && max !== undefined && next > max) return
+        if (delta < 0 && min !== undefined && next < min) return
+        onChangeText(String(next))
+    }
+
+    const handleBlur = () => props.onBlur?.()
+    const canDecrement = !disabled && (min === undefined || currentNumber > min)
+    const canIncrement = !disabled && (max === undefined || currentNumber < max)
+    const stepName = props.accessibilityLabel ?? props.label ?? 'value'
+    const hasError = !!props.error
+
+    return (
+        <NumberInputView
+            {...props}
+            displayValue={value}
+            onTextChange={handleTextChange}
+            onStep={handleStep}
+            onInputBlur={handleBlur}
+            canDecrement={canDecrement}
+            canIncrement={canIncrement}
+            errorMessage={props.error}
+            hasError={hasError}
+            stepName={stepName}
+            inputTestID={props.testID}
+        />
+    )
+}
+
+type NumberInputViewProps = NumberInputCommonProps & {
+    displayValue: string
+    onTextChange: (text: string) => void
+    onStep: (delta: number) => void
+    onInputBlur: () => void
+    canDecrement: boolean
+    canIncrement: boolean
+    hasError: boolean
+    errorMessage: string | undefined
+    stepName: string
+    inputTestID: string | undefined
+}
+
+function NumberInputView({
+    label,
+    hint,
+    hideError = false,
+    increment = 1,
+    min,
+    allowDecimal = false,
+    disabled = false,
+    placeholder,
+    isCompact = false,
+    hideSteppers = false,
+    accessibilityLabel,
+    wrapperProps = {},
+    onSubmitEditing,
+    keepFocusOnSubmit = false,
+    selectTextOnFocus,
+    align = 'center',
+    inputRef,
+    onFocus,
+    displayValue,
+    onTextChange,
+    onStep,
+    onInputBlur,
+    canDecrement,
+    canIncrement,
+    hasError,
+    errorMessage,
+    stepName,
+    inputTestID,
+}: NumberInputViewProps) {
+    const placeholderColor = useThemeColor('field-placeholder')
+    const iconColor = useThemeColor('foreground')
+    const { editable } = useCoveredInputProps({ editable: !disabled })
+
     const stepSize = isCompact ? 'size-8' : 'size-11'
-    const stepName = accessibilityLabel ?? label ?? name
     const rowClass = hideSteppers
         ? 'flex-row items-center'
         : `flex-row items-center ${isCompact ? 'self-start gap-1.5' : 'gap-2'}`
@@ -188,6 +301,15 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
         : isCompact
           ? 'w-20 px-2'
           : 'flex-1 min-w-0 px-3'
+    const alignClass = align === 'end' ? 'text-right tabular-nums' : 'text-center'
+    // Native reads submitBehavior; react-native-web reads only blurOnSubmit.
+    const submitBehavior = keepFocusOnSubmit ? 'submit' : undefined
+    const blurOnSubmit = keepFocusOnSubmit ? false : undefined
+    const showHint = !!hint && !hasError
+    const showError = hasError && !hideError
+    const onDecrement = () => onStep(-increment)
+    const onIncrement = () => onStep(increment)
+    const keyboardType = numberKeyboardType({ allowDecimal, min }, Platform.OS)
 
     return (
         <View className="gap-1.5 mb-3" {...wrapperProps}>
@@ -195,7 +317,7 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
             <View className={rowClass}>
                 <Stepper
                     isVisible={!hideSteppers}
-                    onPress={handleDecrement}
+                    onPress={onDecrement}
                     isEnabled={canDecrement}
                     label={`Decrease ${stepName}`}
                     sizeClass={stepSize}
@@ -205,26 +327,25 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
                 <RNTextInput
                     ref={inputRef}
                     value={displayValue}
-                    onChangeText={handleTextChange}
+                    onChangeText={onTextChange}
                     onFocus={onFocus}
-                    onBlur={() => {
-                        setTyped(null)
-                        field.onBlur()
-                        onBlur?.()
-                    }}
-                    keyboardType="numeric"
+                    onBlur={onInputBlur}
+                    keyboardType={keyboardType}
                     onSubmitEditing={onSubmitEditing}
+                    submitBehavior={submitBehavior}
+                    blurOnSubmit={blurOnSubmit}
+                    selectTextOnFocus={selectTextOnFocus}
                     editable={editable}
                     accessibilityLabel={accessibilityLabel ?? label}
-                    testID={testID ?? name}
+                    testID={inputTestID}
                     placeholder={placeholder}
                     placeholderTextColor={placeholderColor}
-                    className={`${inputWidthClass} border rounded-lg py-2.5 text-center text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
+                    className={`${inputWidthClass} border rounded-lg py-2.5 ${alignClass} text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
                     style={iosInputCenteringStyle(16)}
                 />
                 <Stepper
                     isVisible={!hideSteppers}
-                    onPress={handleIncrement}
+                    onPress={onIncrement}
                     isEnabled={canIncrement}
                     label={`Increase ${stepName}`}
                     sizeClass={stepSize}
@@ -232,10 +353,18 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
                     <Plus size={16} color={iconColor} />
                 </Stepper>
             </View>
-            {hint && !hasError ? <Text className="text-xs text-muted">{hint}</Text> : null}
-            {hasError && !hideError ? (
-                <Text className="text-xs text-danger">{error.message}</Text>
-            ) : null}
+            <HintText isVisible={showHint} text={hint} />
+            <ErrorText isVisible={showError} text={errorMessage} />
         </View>
     )
+}
+
+function HintText({ isVisible, text }: { isVisible: boolean; text: string | undefined }) {
+    if (!isVisible) return null
+    return <Text className="text-xs text-muted">{text}</Text>
+}
+
+function ErrorText({ isVisible, text }: { isVisible: boolean; text: string | undefined }) {
+    if (!isVisible) return null
+    return <Text className="text-xs text-danger">{text}</Text>
 }

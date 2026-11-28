@@ -69,42 +69,33 @@ export function shortcutStubInstalled(): boolean {
 // fails each test of the e2e run. A value runs when the spec file loads, so the
 // throw would also break `playwright test --list` in `tinycld-pkg check`, which
 // runs on CI without the stubs.
+//
+// `tinycld-pkg test:e2e <spec files>` sets TINYCLD_E2E_REQUIRE_STUBS: a run of
+// named files that all skip would otherwise report green. A bare dev
+// `playwright test` still skips.
 export function skipWithoutShortcutStub(): boolean {
-    if (shortcutStubInstalled()) return false
-    if (process.env.CI) {
-        throw new Error(
-            'shortcut-stub is not scaffolded but CI is set — the "Scaffold shortcut-stub package" step must run before e2e. Refusing to silently skip stub-dependent specs on CI.'
-        )
-    }
-    return true
+    return skipWithoutStub('shortcut-stub', 'scaffold-shortcut-stub.ts')
 }
 
 // The forms builder spec drives the form host declared by the forms-host-stub
 // package (tests/scripts/scaffold-forms-host-stub.ts), a sibling of tinycld/.
-// Same rule as skipWithoutShortcutStub: skip in a dev workspace without it,
-// fail loudly on CI, where the scaffold step is mandatory. Pass it as a callback.
+// Same rule as skipWithoutShortcutStub. Pass it as a callback.
 export function skipWithoutFormsStub(): boolean {
-    const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', 'forms-host-stub')
-    if (fs.existsSync(stubDir)) return false
-    if (process.env.CI) {
-        throw new Error(
-            'forms-host-stub is not scaffolded but CI is set — the forms-host stub scaffold step must run before e2e.'
-        )
-    }
-    return true
+    return skipWithoutStub('forms-host-stub', 'scaffold-forms-host-stub.ts')
 }
 
 // The reports specs drive the salesstub package (tests/scripts/scaffold-reports-stub.ts),
-// whose report sources and rows exist only there. Same rule as skipWithoutFormsStub:
-// skip in a dev workspace without it, fail loudly on CI, where the scaffold step runs.
+// whose report sources and rows exist only there. Same rule as skipWithoutShortcutStub.
 // Pass it as a callback.
 export function skipWithoutReportsStub(): boolean {
-    const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', 'salesstub')
+    return skipWithoutStub('salesstub', 'scaffold-reports-stub.ts')
+}
+
+function skipWithoutStub(stub: string, scaffoldScript: string): boolean {
+    const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', stub)
     if (fs.existsSync(stubDir)) return false
-    if (process.env.CI) {
-        throw new Error(
-            'salesstub is not scaffolded but CI is set — the reports stub scaffold step must run before e2e.'
-        )
+    if (process.env.CI || process.env.TINYCLD_E2E_REQUIRE_STUBS) {
+        throw new Error(`${stub} is not scaffolded: run tests/scripts/${scaffoldScript} first`)
     }
     return true
 }

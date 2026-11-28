@@ -381,6 +381,9 @@ export const reportSpecSchema = z.strictObject({
         .refine(text => text.trim() === text)
         .refine(text => [...text].length <= 120)
         .optional(),
+    // The run ends in no Total row, and a run over no rows has zero rows (Go
+    // `Spec.NoTotal`, server/reports/spec.go; assemble.go leaves the row out).
+    noTotal: z.boolean().optional(),
 })
 export type ReportSpec = z.infer<typeof reportSpecSchema>
 

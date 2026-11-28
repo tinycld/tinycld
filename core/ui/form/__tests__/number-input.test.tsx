@@ -1,13 +1,14 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render } from '@testing-library/react'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { afterEach, describe, expect, it } from 'vitest'
-import { NumberInput, type NumberInputProps } from '../NumberInput'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { NumberInput, type NumberInputFieldModeProps } from '../NumberInput'
 
 type Values = { n: number | string | undefined }
 let values: () => Values = () => ({ n: undefined })
 
-function Harness(props: Partial<NumberInputProps<Values>> & { initial?: number }) {
+function Harness(props: Partial<NumberInputFieldModeProps<Values>> & { initial?: number }) {
     const { initial, ...rest } = props
     const { control, getValues } = useForm<Values>({ defaultValues: { n: initial } })
     values = getValues
@@ -119,6 +120,59 @@ describe('NumberInput hideSteppers', () => {
             expect(stepperOf(container, '+')).not.toBeNull()
             unmount()
         }
+    })
+})
+
+describe('NumberInput bound to a field', () => {
+    it('stores a value typed with U+2212 as a negative number', () => {
+        const { container } = render(<Harness allowDecimal />)
+        type(container, '−2.5')
+        expect(values().n).toBe(-2.5)
+    })
+})
+
+describe('NumberInput text mode', () => {
+    function TextHarness(props: { initial?: string; allowDecimal?: boolean }) {
+        const [text, setText] = useState(props.initial ?? '')
+        textNow = text
+        return (
+            <NumberInput
+                value={text}
+                onChangeText={setText}
+                label="Q"
+                allowDecimal={props.allowDecimal}
+                hideSteppers
+            />
+        )
+    }
+    let textNow = ''
+
+    it('hands the typed text to onChangeText, with no form', () => {
+        const { container } = render(<TextHarness allowDecimal />)
+        type(container, '7.555')
+        expect(textNow).toBe('7.555')
+        expect(inputOf(container).value).toBe('7.555')
+    })
+
+    it('normalizes U+2212 to a minus in the text it hands on', () => {
+        const { container } = render(<TextHarness allowDecimal />)
+        type(container, '−3')
+        expect(textNow).toBe('-3')
+    })
+
+    it('ignores text that is not a number', () => {
+        const { container } = render(<TextHarness allowDecimal initial="2" />)
+        type(container, 'abc')
+        expect(textNow).toBe('2')
+    })
+})
+
+describe('NumberInput focus and submit', () => {
+    it('passes the focus event to onFocus', () => {
+        const onFocus = vi.fn()
+        const { container } = render(<Harness onFocus={onFocus} />)
+        fireEvent.focus(inputOf(container))
+        expect(onFocus).toHaveBeenCalledWith(expect.objectContaining({ type: 'focus' }))
     })
 })
 

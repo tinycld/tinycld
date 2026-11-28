@@ -1,4 +1,5 @@
-import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
+import { handleMutationErrorsWithForm, SERVER_UNREACHED_MESSAGE } from '@tinycld/core/lib/errors'
+import { ServerUnreachableError } from '@tinycld/core/lib/server-fetch'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { BatchMutationError } from 'pbtsdb'
 import { ClientResponseError } from 'pocketbase'
@@ -164,7 +165,9 @@ describe('handleMutationErrorsWithForm with rootMessage', () => {
         expect(useToastStore.getState().toasts).toHaveLength(0)
     })
 
-    it('maps known field errors inline and also sets the root message', () => {
+    // The server's generic sentence ("Failed to update record.") says nothing
+    // beside an error that already shows under its field.
+    it('maps known field errors inline and sets no root when every one is placed', () => {
         const setError = vi.fn()
         const handler = handleMutationErrorsWithForm({
             setError,
@@ -180,14 +183,103 @@ describe('handleMutationErrorsWithForm with rootMessage', () => {
             'to',
             expect.objectContaining({ message: 'Must be a valid email address.' })
         )
-        expect(setError).toHaveBeenCalledWith(
-            'root',
-            expect.objectContaining({
-                type: 'server',
-                message: expect.stringContaining('The email was not sent.'),
+        expect(setError).not.toHaveBeenCalledWith('root', expect.anything())
+        expect(setError).toHaveBeenCalledTimes(1)
+        expect(useToastStore.getState().toasts).toHaveLength(0)
+    })
+
+    it('places the known fields and puts only the unplaced ones in the root', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ to: '', subject: '' }),
+            rootMessage: true,
+        })
+        handler(
+            refusal(400, 'Failed to update record.', {
+                to: { code: 'invalid_email', message: 'Must be a valid email address.' },
+                quota: { code: 'over', message: 'The daily limit is reached.' },
             })
         )
+        expect(setError).toHaveBeenCalledWith(
+            'to',
+            expect.objectContaining({ message: 'Must be a valid email address.' })
+        )
+        const rootCall = setError.mock.calls.find(([name]) => name === 'root')
+        expect(rootCall?.[1]).toEqual({
+            type: 'server',
+            message: 'The daily limit is reached.',
+        })
+        expect(rootCall?.[1].message).not.toContain('Must be a valid email address.')
         expect(useToastStore.getState().toasts).toHaveLength(0)
+    })
+
+    it('puts a message-only refusal with an empty field map on root, not a toast', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ memo: '' }),
+            rootMessage: true,
+        })
+        handler(refusal(400, 'The adjustment account is inactive.', {}))
+        expect(setError).toHaveBeenCalledWith('root', {
+            type: 'server',
+            message: 'The adjustment account is inactive.',
+        })
+        expect(setError).toHaveBeenCalledTimes(1)
+        expect(useToastStore.getState().toasts).toHaveLength(0)
+    })
+
+    it('says the server was not reached for a status 0 refusal, in the root', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ memo: '' }),
+            rootMessage: true,
+        })
+        handler(
+            new ClientResponseError({
+                url: 'http://localhost/api/batch',
+                status: 0,
+                response: {},
+                originalError: new TypeError('Failed to fetch'),
+            })
+        )
+        expect(setError).toHaveBeenCalledWith('root', {
+            type: 'server',
+            message: SERVER_UNREACHED_MESSAGE,
+        })
+        expect(setError).toHaveBeenCalledTimes(1)
+        expect(useToastStore.getState().toasts).toHaveLength(0)
+    })
+
+    it('says the server was not reached for a fetch that never reached it', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ memo: '' }),
+            rootMessage: true,
+        })
+        handler(new ServerUnreachableError(new TypeError('Network request failed')))
+        expect(setError).toHaveBeenCalledWith('root', {
+            type: 'server',
+            message: SERVER_UNREACHED_MESSAGE,
+        })
+    })
+
+    it('keeps the toast for a status 0 refusal without rootMessage', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({ setError, getValues: () => ({ memo: '' }) })
+        handler(
+            new ClientResponseError({
+                url: 'http://localhost/api/batch',
+                status: 0,
+                response: {},
+                originalError: new TypeError('Failed to fetch'),
+            })
+        )
+        expect(setError).not.toHaveBeenCalled()
+        expect(useToastStore.getState().toasts).toHaveLength(1)
     })
 
     it('does not set an error key the form does not know as a field', () => {
@@ -203,13 +295,47 @@ describe('handleMutationErrorsWithForm with rootMessage', () => {
             })
         )
         expect(setError).not.toHaveBeenCalledWith('unknown_field', expect.anything())
-        expect(setError).toHaveBeenCalledWith(
-            'root',
-            expect.objectContaining({
-                type: 'server',
-                message: expect.stringContaining('The email was not sent.'),
+        expect(setError).toHaveBeenCalledWith('root', { type: 'server', message: 'bad' })
+    })
+
+    // The server's top sentence is generic ("Failed to update record."); the
+    // field message is the refusal the user needs to read.
+    it('makes the root only the unplaced messages, with no field name and no base sentence', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ memo: '' }),
+            rootMessage: true,
+        })
+        handler(
+            refusal(400, 'Failed to update record.', {
+                value_change: { code: 'kept', message: 'Books keeps this value.' },
             })
         )
+        expect(setError).toHaveBeenCalledWith('root', {
+            type: 'server',
+            message: 'Books keeps this value.',
+        })
+        expect(setError).toHaveBeenCalledTimes(1)
+    })
+
+    it('joins several unplaced messages with a single space', () => {
+        const setError = vi.fn()
+        const handler = handleMutationErrorsWithForm({
+            setError,
+            getValues: () => ({ memo: '' }),
+            rootMessage: true,
+        })
+        handler(
+            refusal(400, 'Failed to update record.', {
+                value_change: { code: 'kept', message: 'Books keeps this value.' },
+                quantity: { code: 'short', message: 'Only 3 are on hand.' },
+            })
+        )
+        expect(setError).toHaveBeenCalledWith('root', {
+            type: 'server',
+            message: 'Books keeps this value. Only 3 are on hand.',
+        })
     })
 })
 

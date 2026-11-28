@@ -14,6 +14,7 @@ import {
 } from './runners'
 import { runCommand } from './spawn'
 import { allTargets, type Verb } from './targets'
+import { resolveTestFiles } from './test-files'
 
 function commandsFor(
     verb: Verb,
@@ -64,6 +65,7 @@ async function main() {
     if (!verb) {
         console.error(
             'usage: tinycld-pkg <typecheck|test|test:e2e|check|help:screenshots> [--all] [--bail] [-- <runner args>]\n' +
+                '       tinycld-pkg test <test file>... [-- <vitest args>]\n' +
                 '       tinycld-pkg test:e2e <spec file>... [--skip-export] [-- <playwright args>]'
         )
         process.exit(2)
@@ -79,7 +81,13 @@ async function main() {
     const skipExport = ownArgs.includes('--skip-export')
     // Spec files named before `--`, from any members: one Playwright run (one
     // server start, one export, one seed) for the whole call.
-    const specFiles = verb === 'test:e2e' ? ownArgs.filter(arg => !arg.startsWith('--')) : []
+    const positional = ownArgs.filter(arg => !arg.startsWith('--'))
+    const specFiles = verb === 'test:e2e' ? positional : []
+    const testFiles = verb === 'test' ? positional : []
+    if (all && testFiles.length > 0) {
+        console.error('Cannot combine --all with test files.')
+        process.exit(2)
+    }
     if (skipExport && verb !== 'test:e2e') {
         console.error('--skip-export applies to test:e2e only')
         process.exit(2)
@@ -131,7 +139,13 @@ async function main() {
         process.exit(2)
     }
     const env = skipExport ? SKIP_EXPORT_ENV : {}
-    const code = await runForPackage(verb, currentPackage, appDir, passthrough, ownArgs, env)
+    const files = resolveTestFiles(testFiles, {
+        cwd: process.cwd(),
+        workspaceRoot,
+        pkg: currentPackage,
+    })
+    const runnerArgs = [...files, ...passthrough]
+    const code = await runForPackage(verb, currentPackage, appDir, runnerArgs, ownArgs, env)
     process.exit(code)
 }
 
